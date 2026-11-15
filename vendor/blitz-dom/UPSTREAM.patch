@@ -21804,13 +21804,17 @@ diff --git a/packages/blitz-dom/src/svg_refs.rs b/packages/blitz-dom/src/svg_ref
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/svg_refs.rs
-@@ -0,0 +1,185 @@
+@@ -0,0 +1,272 @@
 +//! pyro: SVG sources whose clip path, mask or filter references form a cycle longer than usvg
 +//! breaks. usvg sets a reference that closes a cycle of one or two elements to `none`
 +//! (`fix_recursive_links`), but follows a longer one without end and overflows the stack
 +//! (WPT css/css-masking/clip-path-svg-content/clip-path-recursion-001.svg: clip0, clip, clip2),
 +//! which ended the browser. The source is rewritten first as usvg would treat it: every
 +//! reference that closes a cycle becomes `none`.
++//!
++//! pyro: a `filter` that references no element is `none` as well: Chromium draws the element
++//! unfiltered (Filter Effects: the filter chain is ignored), where usvg leaves the element out (WPT
++//! css/filter-effects/filter-invalid).
 +
 +use std::borrow::Cow;
 +use std::collections::HashMap;
@@ -21835,6 +21839,7 @@ new file mode 100644
 +    for (tag, property) in [("clipPath", "clip-path"), ("mask", "mask"), ("filter", "filter")] {
 +        cuts.extend(cycle_closing_references(&doc, tag, property));
 +    }
++    cuts.extend(missing_filter_references(&doc));
 +    if cuts.is_empty() {
 +        return Cow::Borrowed(source);
 +    }
@@ -21918,6 +21923,20 @@ new file mode 100644
 +    cuts
 +}
 +
++/// pyro: the source ranges of the `filter` values that are one reference, to an id no element has
++/// (a list of several is left to usvg).
++fn missing_filter_references(doc: &roxmltree::Document<'_>) -> Vec<Range<usize>> {
++    let ids: std::collections::HashSet<&str> =
++        doc.descendants().filter(|n| n.is_element()).filter_map(|n| n.attribute("id")).collect();
++    let single = |id: &str| !id.contains(|c: char| c.is_whitespace() || c == '(' || c == ')');
++    doc.descendants()
++        .filter(|n| n.is_element())
++        .flat_map(|n| references(n, "filter"))
++        .filter(|(id, _)| single(id) && !ids.contains(id))
++        .map(|(_, range)| range)
++        .collect()
++}
++
 +/// The `url(#id)` references `node` makes with `property`, as an attribute or a declaration of
 +/// its `style` attribute: the id and the source range of the value.
 +fn references<'a>(node: roxmltree::Node<'a, '_>, property: &str) -> Vec<(&'a str, Range<usize>)> {
@@ -21953,6 +21972,48 @@ new file mode 100644
 +    found
 +}
 +
++/// pyro: `source` with the `divisor` of each `feConvolveMatrix` that is zero (an error, which
++/// Chromium reads as the default) set to the default, the sum of the kernel's values (1 when that
++/// is zero); usvg leaves such a primitive out of its filter. `None` when there is none.
++pub(crate) fn default_zero_divisors(source: &[u8]) -> Option<Vec<u8>> {
++    let text = std::str::from_utf8(source).ok()?;
++    if !text.contains("divisor") {
++        return None;
++    }
++    let options = roxmltree::ParsingOptions { allow_dtd: true, ..Default::default() };
++    let doc = roxmltree::Document::parse_with_options(text, options).ok()?;
++    let mut cuts: Vec<(Range<usize>, String)> = Vec::new();
++    for node in doc.descendants().filter(|n| n.is_element() && n.tag_name().name() == "feConvolveMatrix") {
++        let Some(divisor) = node.attributes().find(|a| a.name() == "divisor" && a.namespace().is_none()) else {
++            continue;
++        };
++        if divisor.value().trim().parse::<f32>().ok() != Some(0.0) {
++            continue;
++        }
++        let sum: f32 = node
++            .attribute("kernelMatrix")
++            .unwrap_or("")
++            .split(|c: char| c.is_ascii_whitespace() || c == ',')
++            .filter_map(|v| v.parse::<f32>().ok())
++            .sum();
++        let default = if sum.abs() < 1e-6 { 1.0 } else { sum };
++        cuts.push((divisor.range_value(), default.to_string()));
++    }
++    if cuts.is_empty() {
++        return None;
++    }
++    cuts.sort_by_key(|(range, _)| range.start);
++    let mut out = String::with_capacity(text.len());
++    let mut at = 0;
++    for (range, value) in cuts {
++        out.push_str(&text[at..range.start]);
++        out.push_str(&value);
++        at = range.end;
++    }
++    out.push_str(&text[at..]);
++    Some(out.into_bytes())
++}
++
 +/// The id of a `url(#id)` value (quoted or not).
 +fn url_id(value: &str) -> Option<&str> {
 +    let inner = value.trim().strip_prefix("url(")?.strip_suffix(')')?.trim();
@@ -21980,6 +22041,32 @@ new file mode 100644
 +        assert!(out.contains(r#"<clipPath id="c"><rect clip-path="none"/>"#), "{out}");
 +        assert!(out.ends_with(r#"<rect clip-path="url(#a)"/></svg>"#));
 +        usvg::Tree::from_str(&out, &usvg::Options::default()).unwrap();
++    }
++
++    /// pyro: WPT filter-invalid: a filter that references nothing is `none` (the element is drawn
++    /// unfiltered, where usvg left it out).
++    #[test]
++    fn a_filter_referencing_nothing_is_none() {
++        let svg = r#"<svg xmlns="http://www.w3.org/2000/svg"><filter id="f"><feFlood/></filter>
++<rect style="filter:url(#not-found)" width="10" height="10"/><rect filter="url(#f)" width="5" height="5"/></svg>"#;
++        let out = broken(svg);
++        assert!(out.contains(r#"<rect style="filter:none" width="10""#), "{out}");
++        assert!(out.contains(r#"<rect filter="url(#f)" width="5""#), "{out}");
++        let tree = usvg::Tree::from_str(&out, &usvg::Options::default()).unwrap();
++        assert_eq!(tree.root().children().len(), 2, "both rects are drawn");
++        // A list (WPT svg-multiple-filter-functions) is not one reference.
++        let list = r#"<svg xmlns="http://www.w3.org/2000/svg"><filter id="a"><feFlood/></filter>
++<rect filter="url(#a) hue-rotate(90deg)" width="5" height="5"/></svg>"#;
++        assert!(matches!(break_reference_cycles(list.as_bytes()), std::borrow::Cow::Borrowed(_)));
++    }
++
++    /// pyro: WPT feconvolve-divisor: a zero divisor is the kernel's sum.
++    #[test]
++    fn a_zero_divisor_is_the_default() {
++        let svg = br#"<svg xmlns="http://www.w3.org/2000/svg"><filter id="f"><feConvolveMatrix kernelMatrix="1 1 1  1 1 1  1 1 1" divisor="0"/></filter></svg>"#;
++        let out = String::from_utf8(super::default_zero_divisors(svg).unwrap()).unwrap();
++        assert!(out.contains(r#"divisor="9""#), "{out}");
++        assert!(super::default_zero_divisors(br#"<svg><feConvolveMatrix divisor="2"/></svg>"#).is_none());
 +    }
 +
 +    #[test]
@@ -22143,7 +22230,7 @@ diff --git a/packages/blitz-dom/src/util.rs b/packages/blitz-dom/src/util.rs
  }
  
  /// A point
-@@ -156,11 +196,33 @@
+@@ -156,11 +196,35 @@
  /// Parse an SVG image.
  #[cfg(feature = "svg")]
  pub(crate) fn parse_svg_image(source: &[u8]) -> Result<crate::node::SvgImageData, usvg::Error> {
@@ -22166,7 +22253,9 @@ diff --git a/packages/blitz-dom/src/util.rs b/packages/blitz-dom/src/util.rs
 -    crate::node::SvgImageData::from_data(source, &options)
 +    // pyro: a reference cycle usvg would follow without end (`crate::svg_refs`).
 +    let checked = crate::svg_refs::break_reference_cycles(source);
-+    let svg = crate::node::SvgImageData::from_data(&checked, &options)?;
++    // pyro: `feConvolveMatrix divisor="0"` is its default, as in Chromium (`crate::svg_refs`).
++    let defaulted = crate::svg_refs::default_zero_divisors(&checked);
++    let svg = crate::node::SvgImageData::from_data(defaulted.as_deref().unwrap_or(&checked), &options)?;
 +    PARSED.with(|p| {
 +        let mut p = p.borrow_mut();
 +        if p.len() >= MAX_ENTRIES {
@@ -22178,7 +22267,7 @@ diff --git a/packages/blitz-dom/src/util.rs b/packages/blitz-dom/src/util.rs
  }
  
  pub trait ToColorColor {
-@@ -254,3 +316,82 @@
+@@ -254,3 +318,82 @@
          }
      };
  }

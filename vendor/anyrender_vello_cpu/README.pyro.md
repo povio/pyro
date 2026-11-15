@@ -76,18 +76,40 @@ rendered apart. Covered by the unit tests in `src/filters.rs` and `src/scene.rs`
 
 `src/graph.rs`. A filter layer whose filter is no chain of blurs, drop shadows and colour functions (an SVG
 `<filter>`, from anyrender_svg) is a graph: `feFlood`, `feOffset`, `feGaussianBlur`, `feDropShadow`,
-`feColorMatrix`, `feComponentTransfer`, `feComposite` (arithmetic included), `feBlend` (separable modes) and crops,
-reading the source graphic, its alpha and each other's results. Each node is computed over one region of device
-pixels, the part of the filter region (the layer's clip) the output needs: as SVG asks, nothing outside the filter
-region is read or made, the source graphic included (a chain, CSS's, reads the content past the clip). Colour nodes
-in a row are applied to each pixel in one go, as Skia composes colour filters. A graph with a node this backend does
-not do (`feImage`, `feTile`, `feTurbulence`, `feMorphology`, `feConvolveMatrix`, `feDisplacementMap`, lighting,
-`feBlend`'s non-separable modes) is drawn unfiltered, as before.
+`feColorMatrix`, `feComponentTransfer`, `feComposite` (arithmetic included), `feBlend` (every mode),
+`feDisplacementMap`, `feTile`, `feMorphology`, `feConvolveMatrix`, `feTurbulence`, the two lighting primitives,
+`feImage` and crops, reading the source graphic, its alpha and each other's results. Each node is computed over one
+region of device pixels, the part of the filter region (the layer's clip) the output needs: as SVG asks, nothing
+outside the filter region is read or made, the source graphic included (a chain, CSS's, reads the content past the
+clip). Colour nodes in a row are applied to each pixel in one go, as Skia composes colour filters. A graph with a node
+this backend does not do (a background image input) is drawn unfiltered, as before.
 
-Two conventions hold with the producer: the graph's output is its last node (`Filter::add` leaves a graph's output at
-its first node and the setter is private), and a primitive's subregion is an `Image` node of the image id
+`src/primitives.rs` (new) does the pixel work of the newer primitives, as Chromium's (Skia's) filters do it where that
+differs from the spec's reference code: `feDisplacementMap` samples the nearest pixel to the displaced centre (the
+map unpremultiplied, the displacement mapped from the filter's user space to device pixels, so a mirrored or scaled
+space moves as it is drawn), `feTile` repeats its input's subregion from its own position, `feMorphology` takes the
+minimum or maximum over a window cut to the region (radii mapped to device pixels and rounded),
+`feConvolveMatrix` turns the kernel half a turn and computes in floats with the bias times 255, rounded once (with
+`preserveAlpha`, unpremultiplied colours), the lighting primitives take the spec's Sobel normals (edge kernels at the
+region's edges) and Skia's spot light cone (smoothed over 0.016 of the cosine), angles reduced to whole turns
+first. `feTurbulence` and the lighting normals are resvg's ports of the spec's code (resvg 0.48, `filter/`;
+Apache-2.0 OR MIT, as this crate; attributed in the file). Nodes whose output may come from anywhere in their input
+(`feTile`) read the whole filter region, up to 4096 px past what shows.
+
+Conventions with the producer: the graph's output is its last node (`Filter::add` leaves a graph's output at its
+first node and the setter is private), and a primitive's subregion is an `Image` node of the image id
 `FILTER_CROP_IMAGE` (`u32::MAX`, exported) whose transform holds the rectangle (`[x0, y0, x1, y1, ..]`, the filter's
-space) and whose input is the node it crops. Unit tests in `src/graph.rs`.
+space) and whose input is the node it crops. What anyrender's types cannot say: `FilterEffect::Tile` tiles the
+rectangle of the crop node it reads; `ConvolveMatrix`'s `size` is the number of columns and its `values` the kernel
+followed by the rows, the target's x and y and the edge mode (without those four, a square kernel centred, edges
+duplicated); a lighting node's colour is the `Flood` node that is its second input; and `Image` nodes of exported ids
+below the crop's are `FILTER_IMAGE_SOURCE` (an `feImage`'s content: `[k, 0, ..]`), `FILTER_BLUR_XY` (two deviations),
+`FILTER_MORPHOLOGY` (two radii, dilate or erode) and `FILTER_TURBULENCE` (frequencies, octaves, seed, fractal noise
+or turbulence). The content of `feImage` number `k` is drawn inside the filter layer, before the content filtered,
+as a layer of opacity 0 whose filter is one `FILTER_IMAGE_SOURCE` node of transform `[k, 1, ..]`: replayed, the
+filter layer renders each such layer over the same pixels as its source and hands them to the graph, and every
+replay skips them elsewhere; another painter draws them invisible. Unit tests in `src/graph.rs` and
+`src/primitives.rs`; WPT-shaped cases in pyro-render's `svg_filter_primitives.rs`.
 
 ## `backdrop-filter`
 

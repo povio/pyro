@@ -964,6 +964,15 @@ elements of one kind, through the references their content makes, as attributes 
 `none`, as usvg treats a short cycle. Sources without a cycle are passed on as they are. Covered by
 `crates/pyro-render/tests/svg_reference_cycles.rs`.
 
+Two more rewrites there make usvg read a filter as Chromium does (both unit-tested in `src/svg_refs.rs`, and in
+`crates/pyro-render/tests/svg_filter_primitives.rs`):
+
+- A `filter` that is one `url(#id)` naming no element is set to `none`: Chromium draws the element unfiltered (the
+  filter chain is ignored), where usvg leaves the element out (WPT css/filter-effects/filter-invalid).
+- `default_zero_divisors`: an `feConvolveMatrix` whose `divisor` is zero gets the default divisor, the sum of its
+  kernel's values (1 when that is zero), as in Chromium; usvg stands a transparent flood in for such a primitive
+  (WPT feconvolve-divisor).
+
 ## SVG elements referenced from a box's CSS
 
 `src/node/svg.rs` (`BaseDocument::svg_reference_document`): blitz-paint applies `clip-path: url(#c)` and

@@ -636,7 +636,9 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         }
 
         // Hide elements with a visibility style other than visible
-        if styles.get_inherited_box().visibility != StyloVisibility::Visible {
+        // pyro: but for the region of an SVG filter (below), which paints whatever the element does.
+        let hidden = styles.get_inherited_box().visibility != StyloVisibility::Visible;
+        if hidden && !styles.get_effects().filter.0.iter().any(|f| matches!(f, crate::filters::StyloFilter::Url(_))) {
             return;
         }
 
@@ -772,7 +774,26 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         }
 
         let current_color = styles.clone_color();
-        let filter = convert_filters(&effects.filter.0, self.scale, &current_color, self.dom).map(Arc::new);
+        // pyro: an SVG filter that is no colour chain makes the list layers of its own
+        // (`filters::filter_steps`), and paints its filter region even for an element that paints
+        // nothing (empty or hidden).
+        #[cfg(feature = "svg")]
+        let filter_steps = crate::filters::filter_steps(
+            &effects.filter.0,
+            self.scale,
+            &current_color,
+            self.dom,
+            (size.width, size.height),
+        );
+        #[cfg(not(feature = "svg"))]
+        let filter_steps: Option<Vec<()>> = None;
+        if hidden && filter_steps.is_none() {
+            return;
+        }
+        let filter = match filter_steps {
+            Some(_) => None,
+            None => convert_filters(&effects.filter.0, self.scale, &current_color, self.dom).map(Arc::new),
+        };
         let backdrop_filter =
             convert_filters(&effects.backdrop_filter.0, self.scale, &current_color, self.dom).map(Arc::new);
         // pyro: `backdrop-filter`: the backdrop is captured here, before the element's own layers
@@ -867,7 +888,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         // group is recorded first, and its layer covers what it painted (its ink, plus what the
         // filter reaches), where the layer was the border box (descendants and the outline outside
         // it were cut off, the shadow was drawn at full strength outside the layer).
-        let has_effect_layer = has_opacity || filter.is_some() || backdrop_filter.is_some();
+        let has_effect_layer = has_opacity || filter.is_some() || backdrop_filter.is_some() || filter_steps.is_some();
         let element = ElementPaint {
             node,
             paints_own_box,
@@ -894,7 +915,9 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
 
                 if has_effect_layer {
                     let mut group = Scene::new();
-                    self.paint_element(&mut cx, &mut group, &element);
+                    if !hidden {
+                        self.paint_element(&mut cx, &mut group, &element);
+                    }
                     self.paint_effect_group(
                         scene,
                         group,
@@ -906,6 +929,8 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
                             filter,
                             backdrop_filter,
                             backdrop_clip,
+                            #[cfg(feature = "svg")]
+                            steps: filter_steps,
                         },
                     );
                 } else {
@@ -1048,7 +1073,24 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             filter,
             backdrop_filter,
             backdrop_clip,
+            #[cfg(feature = "svg")]
+            steps,
         } = layer;
+        #[cfg(feature = "svg")]
+        if let Some(steps) = steps {
+            let layer = EffectLayer {
+                transform,
+                visible,
+                border_box,
+                opacity,
+                filter,
+                backdrop_filter,
+                backdrop_clip,
+                steps: None,
+            };
+            self.paint_filter_steps(scene, group, layer, steps);
+            return;
+        }
         // A group of one shape in one colour needs no layer: its opacity is that colour's.
         if filter.is_none() && backdrop_filter.is_none() && crate::bounds::fold_opacity(&mut group.commands, opacity) {
             scene.append_scene(group, Affine::IDENTITY);
@@ -1103,6 +1145,84 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             scene.pop_layer();
         }
         scene.append_scene(group, Affine::IDENTITY);
+        self.layer_manager.maybe_pop_layer(scene, pushed);
+    }
+
+    /// pyro: [`Self::paint_effect_group`] for a `filter` list with an SVG filter graph in it
+    /// (`filters::filter_steps`): a layer for each step around the group, the first innermost, a
+    /// graph's in the element's user space (CSS px from its border box's corner) clipped to its
+    /// filter region, and the opacity (and a backdrop filter) around them all. A graph paints its
+    /// region whatever the group holds, nothing included.
+    #[cfg(feature = "svg")]
+    fn paint_filter_steps(
+        &self,
+        scene: &mut impl PaintScene,
+        group: Scene,
+        layer: EffectLayer,
+        steps: Vec<crate::filters::FilterStep>,
+    ) {
+        use crate::filters::FilterStep;
+        let EffectLayer { transform, visible, border_box, opacity, backdrop_filter, backdrop_clip, .. } = layer;
+        if transform.determinant().abs() < 1e-12 {
+            return;
+        }
+        let inverse = transform.inverse();
+        let user = Affine::translate(border_box.origin().to_vec2()) * Affine::scale(self.scale);
+        // What the layers can paint, in the element's space: the ink, grown by each chain, and
+        // each graph's filter region in its place.
+        let mut extent = crate::bounds::scene_bounds(&group.commands).map(|ink| inverse.transform_rect_bbox(ink));
+        for step in &steps {
+            extent = match step {
+                FilterStep::Chain(filter) => extent.map(|b| {
+                    let reach = filter.expansion_rect();
+                    Rect::new(b.x0 + reach.x0, b.y0 + reach.y0, b.x1 + reach.x1, b.y1 + reach.y1)
+                }),
+                FilterStep::Graph(graph) => Some(user.transform_rect_bbox(graph.region)),
+            };
+        }
+        if backdrop_filter.is_some() {
+            extent = Some(extent.map_or(border_box, |extent| extent.union(border_box)));
+        }
+        let Some(extent) = extent else {
+            return;
+        };
+        let visible = visible + Vec2::new(self.initial_x, self.initial_y);
+        let bounds = extent.intersect(inverse.transform_rect_bbox(visible)).expand();
+        if !(bounds.width() > 0.0 && bounds.height() > 0.0) {
+            return;
+        }
+        let pushed = self.layer_manager.maybe_push_layer(
+            scene,
+            opacity < 1.0 || backdrop_filter.is_some(),
+            BlendMode::default(),
+            opacity,
+            transform,
+            &bounds,
+            None,
+            backdrop_filter.clone(),
+        );
+        if let (Some(backdrop), Some(clip)) = (backdrop_filter, &backdrop_clip) {
+            scene.push_layer(Fill::NonZero, BlendMode::default(), 1.0, transform, clip, None, Some(backdrop));
+            scene.pop_layer();
+        }
+        for step in steps.iter().rev() {
+            match step {
+                FilterStep::Chain(filter) => scene.push_layer(
+                    Fill::NonZero,
+                    BlendMode::default(),
+                    1.0,
+                    transform,
+                    &bounds,
+                    Some(filter.clone()),
+                    None,
+                ),
+                FilterStep::Graph(graph) => graph.push_layer(scene, transform * user),
+            }
+        }
+        scene.append_scene(group, Affine::IDENTITY);
+        for _ in &steps {
+            scene.pop_layer();
+        }
         self.layer_manager.maybe_pop_layer(scene, pushed);
     }
 
@@ -2486,6 +2606,9 @@ impl ElementCx<'_, '_> {
 
         let width = self.frame.content_box.width() as f32;
         let height = self.frame.content_box.height() as f32;
+        // pyro: whether the `<svg>` declares its size (a `width` and a `height`, or a `viewBox`).
+        let declared = svg.intrinsic_dimensions.view_box.is_some()
+            || (svg.intrinsic_dimensions.width.is_some() && svg.intrinsic_dimensions.height.is_some());
         // pyro: an inline `<svg>` without a `viewBox` lays its content out in its box, in user
         // units of a CSS px times its zoom (`zoom: 2` draws its content twice as large).
         let units = self.scale as f32 * self.style.effective_zoom.value();
@@ -2531,32 +2654,64 @@ impl ElementCx<'_, '_> {
         let viewport = svg_viewport_affine(svg, paint_size.width, paint_size.height);
         let transform = (self.transform * viewport).then_translate(Vec2 { x, y });
 
-        self.with_replaced_content_clip(
+        // pyro: what an SVG filter makes past the viewport is cut off at the content box, as the
+        // `overflow: hidden` an `<svg>` has cuts it (a flood or a displacement reaches past the
+        // content), when the filter regions reach past the tree's viewport. An `<svg>` that does
+        // not declare its size is 300 x 150 CSS px in Chromium, where its box here is its
+        // content's: the cut is at least that far from the box's corner.
+        let filter_overflow = !svg.tree.filters().is_empty() && {
+            let (bounds, size) = (svg.tree.root().abs_layer_bounding_box(), svg.tree.size());
+            bounds.left() < 0.0 || bounds.top() < 0.0 || bounds.right() > size.width() || bounds.bottom() > size.height()
+        };
+        let mut viewport = self.frame.content_box;
+        if !declared {
+            viewport.x1 = viewport.x1.max(viewport.x0 + 300.0 * self.scale);
+            viewport.y1 = viewport.y1.max(viewport.y0 + 150.0 * self.scale);
+        }
+        self.context.layer_manager.maybe_with_layer(
             scene,
-            container_size,
-            paint_size,
-            x_offset.px(),
-            y_offset.px(),
+            filter_overflow,
+            BlendMode::default(),
+            1.0,
+            self.transform,
+            &viewport,
+            None,
+            None,
             |scene| {
-                // pyro: an SVG image (not an inline `<svg>`) is an isolated group: what blends in
-                // it blends with nothing under the image.
-                let isolate = self.element.name.local != local_name!("svg")
-                    && anyrender_svg::has_blend_modes(&svg.tree);
-                if isolate {
-                    scene.push_layer(
-                        Fill::NonZero,
-                        BlendMode::default(),
-                        1.0,
-                        self.transform,
-                        &self.frame.content_box_path(),
-                        None,
-                        None,
-                    );
-                }
-                anyrender_svg::render_svg_tree(scene, &svg.tree, transform);
-                if isolate {
-                    scene.pop_layer();
-                }
+                self.with_replaced_content_clip(
+                    scene,
+                    container_size,
+                    paint_size,
+                    x_offset.px(),
+                    y_offset.px(),
+                    |scene| {
+                        // pyro: an SVG image (not an inline `<svg>`) is an isolated group: what
+                        // blends in it blends with nothing under the image.
+                        let isolate = self.element.name.local != local_name!("svg")
+                            && anyrender_svg::has_blend_modes(&svg.tree);
+                        if isolate {
+                            scene.push_layer(
+                                Fill::NonZero,
+                                BlendMode::default(),
+                                1.0,
+                                self.transform,
+                                &self.frame.content_box_path(),
+                                None,
+                                None,
+                            );
+                        }
+                        // pyro: with what the document knows of its filters (tainted primitives).
+                        match crate::filters::svg_filter_notes(self.context.dom, self.node, &svg.tree) {
+                            Some(notes) => {
+                                anyrender_svg::render_svg_tree_with_notes(scene, &svg.tree, transform, notes)
+                            }
+                            None => anyrender_svg::render_svg_tree(scene, &svg.tree, transform),
+                        }
+                        if isolate {
+                            scene.pop_layer();
+                        }
+                    },
+                );
             },
         );
     }
@@ -2780,4 +2935,8 @@ struct EffectLayer {
     backdrop_filter: Option<Arc<anyrender::Filter>>,
     /// pyro: the element's border box with its radii, in its space: what its backdrop shows in.
     backdrop_clip: Option<kurbo::BezPath>,
+    /// pyro: the `filter` list as layers when an SVG filter in it is a graph (`filter` is then
+    /// `None`): see `filters::filter_steps`.
+    #[cfg(feature = "svg")]
+    steps: Option<Vec<crate::filters::FilterStep>>,
 }
