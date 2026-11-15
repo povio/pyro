@@ -344,6 +344,14 @@ from the root of an upstream checkout at that commit) is the whole diff.
   containing block that is no layer root (a `backdrop-filter` box) is placed by its offset
   (`lifted_paint_offset`), not against the viewport (WPT `backdrop-filter-containing-block`).
 
+- `src/filters.rs` (`image_filter`), `src/render/background.rs` (`draw_image_layer_in`),
+  `src/render/border_image.rs` (`draw_border_image`): a `filter()` image (the CSS `<image>` function of Filter
+  Effects 1, parsed by the vendored stylo) is the image it filters, drawn in a layer with its filters (nested ones
+  innermost first) over the layer's painting area, or over the border image area for a border image: a
+  `drop-shadow()` stays inside that area. The filters apply to the image as drawn, after scaling, in device pixels
+  (WPT css/filter-effects/filter-function/filter-function-002, -003, the gradient pages). Tiled layers are filtered
+  as one image, not tile by tile. Covered by `crates/pyro-render/tests/filter_image_function.rs`.
+
 The linked blitz-dom patch supplies `Node::is_root_element`. Rendering regressions
 are covered in `crates/pyro-render/tests/render.rs`; persistent-tree behavior is
 covered by `crates/pyro-render/tests/mirror.rs`.

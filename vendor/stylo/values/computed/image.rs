@@ -29,7 +29,8 @@ pub use specified::{ImageDecoding, ImageRendering};
 
 /// Computed values for an image according to CSS-IMAGES.
 /// <https://drafts.csswg.org/css-images/#image-values>
-pub type Image = generic::GenericImage<Gradient, ComputedUrl, Color, Percentage, Resolution>;
+pub type Image =
+    generic::GenericImage<Gradient, ComputedUrl, Color, Percentage, Resolution, super::Filter>;
 
 impl ToTyped for Image {
     fn to_typed(&self, dest: &mut ThinVec<TypedValue>) -> Result<(), ()> {
@@ -242,6 +243,7 @@ impl ToComputedValue for specified::Image {
             Self::CrossFade(f) => Image::CrossFade(f.to_computed_value(context)),
             Self::ImageSet(s) => Image::ImageSet(s.to_computed_value(context)),
             Self::Image(color) => Image::Image(color.to_computed_value(context)),
+            Self::Filter(f) => Image::Filter(f.to_computed_value(context)),
             Self::LightDark(ld) => match ld.compute(context) {
                 // none computes to image(transparent) in light-dark(), see
                 // https://github.com/w3c/csswg-drafts/issues/13866.
@@ -267,6 +269,7 @@ impl ToComputedValue for specified::Image {
             Image::CrossFade(f) => Self::CrossFade(ToComputedValue::from_computed_value(f)),
             Image::ImageSet(s) => Self::ImageSet(ToComputedValue::from_computed_value(s)),
             Image::Image(color) => Self::Image(ToComputedValue::from_computed_value(color)),
+            Image::Filter(f) => Self::Filter(ToComputedValue::from_computed_value(f)),
             Image::LightDark(_) => unreachable!("Shouldn't have computed image-set values"),
         }
     }

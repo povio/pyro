@@ -904,6 +904,12 @@ text before parsing it as CSS. The parser already decoded those the markup has (
 an HTML `<style>` is raw text and an XML CDATA section is literal, so a `&#x46;` left there is four characters in
 every browser (WPT css/CSS2/generated-content/content-177). Covered by `crates/pyro-render/tests/style_element_text.rs`.
 
+## `filter()` images are loaded
+
+`src/util.rs` (`unfiltered_image`), `src/layout/damage.rs` (`flush_image_layers_from_style`), `src/stylo.rs`
+(`needs_style_image_flush`): a background, mask or border image layer that is a `filter()` image (vendored stylo)
+loads the image it filters, so blitz-paint can draw it with the filters (`vendor/blitz-paint/README.pyro.md`).
+
 ## Tagged images in sRGB
 
 `src/icc.rs` (new), `src/net.rs` (`ImageHandler::parse`), `Cargo.toml` (`moxcms` 0.8, the image crate's own colour

@@ -903,7 +903,8 @@ impl BaseDocument {
         elem_images.resize(len, None);
 
         for idx in 0..len {
-            let style_image = &style_images[idx];
+            // pyro: a `filter()` image loads the image it filters.
+            let style_image = crate::util::unfiltered_image(&style_images[idx]);
             let new_image = match style_image {
                 StyloImage::Url(ComputedUrl::Valid(new_url)) => {
                     let old_image = elem_images[idx].as_ref();

@@ -447,6 +447,36 @@ impl ElementCx<'_, '_> {
                 #[cfg(feature = "tracing")]
                 warn!("Implement image layer drawing for Image::ImageSet")
             }
+            // pyro: `filter()`: the image it filters, drawn in a layer with the filters over the
+            // painting area (so a `drop-shadow()` stays inside it).
+            GenericImage::Filter(_) => {
+                let (image, filter) = crate::filters::image_filter(
+                    layer.stylo_image,
+                    self.scale,
+                    current_color,
+                    self.dom,
+                );
+                let inner = ImageLayerStyles {
+                    stylo_image: image,
+                    ..*layer
+                };
+                let filtered = filter.is_some();
+                if filtered {
+                    scene.push_layer(
+                        Fill::NonZero,
+                        Mix::Normal,
+                        1.0,
+                        self.transform,
+                        &area,
+                        filter,
+                        None,
+                    );
+                }
+                self.draw_image_layer_in(scene, &inner, area, current_color);
+                if filtered {
+                    scene.pop_layer();
+                }
+            }
         }
     }
 

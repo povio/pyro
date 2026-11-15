@@ -121,7 +121,15 @@ impl ElementCx<'_, '_> {
     /// are then drawn as usual.
     pub(super) fn draw_border_image(&self, scene: &mut impl PaintScene) -> bool {
         let border = self.style.get_border();
-        let source = match &border.border_image_source {
+        // pyro: a `filter()` source is the image it filters, drawn in a layer with the filters
+        // over the border image area.
+        let (source_image, filter) = crate::filters::image_filter(
+            &border.border_image_source,
+            self.scale,
+            &self.style.clone_color(),
+            self.dom,
+        );
+        let source = match source_image {
             GenericImage::None => return false,
             GenericImage::Gradient(gradient) => Source::Gradient(gradient),
             GenericImage::Url(_) => match self.element.border_images.first() {
@@ -369,6 +377,18 @@ impl ElementCx<'_, '_> {
             source: &source,
             image: Rect::new(0.0, 0.0, iw, ih),
         };
+        let filtered = filter.is_some();
+        if filtered {
+            scene.push_layer(
+                Fill::NonZero,
+                peniko::Mix::Normal,
+                1.0,
+                self.transform,
+                &area,
+                filter,
+                None,
+            );
+        }
         for piece in &pieces {
             if piece.corner || piece.rules == (Rule::Stretch, Rule::Stretch) {
                 painter.stretched(scene, piece.source, piece.destination);
@@ -387,6 +407,9 @@ impl ElementCx<'_, '_> {
                 continue;
             };
             painter.tiled(scene, src, dst, h, v);
+        }
+        if filtered {
+            scene.pop_layer();
         }
         true
     }
