@@ -137,6 +137,20 @@ diff -ruN a/invalidation/viewport_units.rs b/invalidation/viewport_units.rs
      let usage = data.styles.viewport_unit_usage();
      let uses_viewport_units = usage != ViewportUnitUsage::None;
      if uses_viewport_units {
+diff -ruN a/properties/computed_value_flags.rs b/properties/computed_value_flags.rs
+--- a/properties/computed_value_flags.rs	2026-11-11 19:55:57
++++ b/properties/computed_value_flags.rs	2026-11-15 20:15:35
+@@ -143,6 +143,10 @@
+ 
+         /// Whether this style uses an element-scoped `random()`.
+         const USES_ELEMENT_SCOPED_RANDOM = 1 << 29;
++
++        /// pyro: the legacy line clamp applies to this box: it had `display: -webkit-box` (or
++        /// `-webkit-inline-box`), `-webkit-box-orient: vertical` and a `-webkit-line-clamp`.
++        const WEBKIT_LINE_CLAMP_APPLIES = 1 << 30;
+     }
+ }
+ 
 diff -ruN a/properties/counted_unknown_properties.py b/properties/counted_unknown_properties.py
 --- a/properties/counted_unknown_properties.py	2026-11-11 19:55:57
 +++ b/properties/counted_unknown_properties.py	2026-11-11 19:55:57
@@ -204,7 +218,7 @@ diff -ruN a/properties/helpers.mako.rs b/properties/helpers.mako.rs
                              if !context.builder.effective_zoom_for_inheritance.is_one() {
 diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 --- a/properties/longhands.toml	2026-11-11 19:55:57
-+++ b/properties/longhands.toml	2026-11-15 19:15:29
++++ b/properties/longhands.toml	2026-11-15 20:15:35
 @@ -473,7 +473,6 @@
  type = "BreakBetween"
  initial = "computed::BreakBetween::Auto"
@@ -221,16 +235,15 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/css-break/#propdef-break-before"
  animation_type = "discrete"
  affects = "layout"
-@@ -491,9 +489,26 @@
+@@ -491,11 +489,28 @@
  type = "BreakWithin"
  initial = "computed::BreakWithin::Auto"
  struct = "box"
 -engine = "gecko"
--spec = "https://drafts.csswg.org/css-break/#propdef-break-inside"
-+spec = "https://drafts.csswg.org/css-break/#propdef-break-inside"
-+animation_type = "discrete"
-+affects = "layout"
-+
+ spec = "https://drafts.csswg.org/css-break/#propdef-break-inside"
+ animation_type = "discrete"
+ affects = "layout"
+ 
 +[orphans]
 +type = "PositiveInteger"
 +initial = "From::from(2)"
@@ -245,11 +258,13 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +initial = "From::from(2)"
 +struct = "inherited_text"
 +spec = "https://drafts.csswg.org/css-break/#propdef-widows"
- animation_type = "discrete"
++animation_type = "discrete"
 +servo_restyle_damage = "repaint"
- affects = "layout"
- 
++affects = "layout"
++
  [caption-side]
+ type = "table::CaptionSide"
+ initial = "computed::table::CaptionSide::Top"
 @@ -591,7 +606,6 @@
  type = "Color"
  initial = "computed_value::T::currentcolor()"
@@ -333,6 +348,26 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/css-multicol/#propdef-column-fill"
  animation_type = "discrete"
  affects = "layout"
+@@ -4287,6 +4299,19 @@
+ affects = "layout"
+ gecko_ffi_name = "mBoxOrient"
+ aliases = ["-webkit-box-orient"]
++type = "BoxOrient"
++initial = "computed::BoxOrient::Horizontal"
++
++# pyro: `-webkit-box-orient` for the servo engine (the gecko one is `-moz-box-orient`'s alias):
++# with `display: -webkit-box` and `-webkit-line-clamp` it makes the legacy line clamp apply
++# (`StyleAdjuster::adjust_for_webkit_box`).
++[-webkit-box-orient]
++struct = "box"
++engine = "servo"
++spec = "Nonstandard (https://developer.mozilla.org/en-US/docs/Web/CSS/box-orient)"
++animation_type = "discrete"
++affects = "layout"
++servo_restyle_damage = "rebuild_box"
+ type = "BoxOrient"
+ initial = "computed::BoxOrient::Horizontal"
+ 
 diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
 --- a/properties/shorthands.rs	2026-11-11 19:55:57
 +++ b/properties/shorthands.rs	2026-11-14 13:56:06
@@ -377,7 +412,7 @@ diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
                  if has_clip && *clip != From::from(*origin) {
 diff -ruN a/properties/shorthands.toml b/properties/shorthands.toml
 --- a/properties/shorthands.toml	2026-11-11 19:55:57
-+++ b/properties/shorthands.toml	2026-11-11 20:10:18
++++ b/properties/shorthands.toml	2026-11-15 20:15:35
 @@ -209,7 +209,7 @@
  kind = "two_properties"
  
@@ -415,6 +450,14 @@ diff -ruN a/properties/shorthands.toml b/properties/shorthands.toml
  sub_properties = ["column-rule-width", "column-rule-style", "column-rule-color"]
  spec = "https://drafts.csswg.org/css-multicol/#propdef-column-rule"
  derive_serialize = true
+@@ -556,7 +552,6 @@
+ derive_serialize = true
+ 
+ [-webkit-line-clamp]
+-engine = "gecko"
+ flags = "IS_LEGACY_SHORTHAND ALLOWS_DISABLED_SUBPROPERTIES"
+ sub_properties = ["line-clamp"]
+ spec = "https://drafts.csswg.org/css-overflow-4/#webkit-line-clamp"
 diff -ruN a/rule_cache.rs b/rule_cache.rs
 --- a/rule_cache.rs	2026-11-11 19:55:57
 +++ b/rule_cache.rs	2026-11-11 19:55:57
@@ -584,6 +627,55 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
              _ => return Err(ParseError::custom(SelectorParseErrorKind::UnexpectedIdent)),
          };
  
+diff -ruN a/style_adjuster.rs b/style_adjuster.rs
+--- a/style_adjuster.rs	2026-11-11 19:55:57
++++ b/style_adjuster.rs	2026-11-15 20:15:35
+@@ -184,6 +184,36 @@
+         self.style
+             .mutate_box()
+             .set_adjusted_display(new_display, false);
++    }
++
++    /// pyro: `display: -webkit-box` in the servo engine, which has no legacy box layout. With
++    /// `-webkit-box-orient: vertical` and a line clamp the box is a block container whose lines
++    /// are clamped, as in Blink and Gecko (above); the style keeps that in
++    /// `WEBKIT_LINE_CLAMP_APPLIES`, since the display that made it apply is gone. Any other
++    /// vertical box is a block container too (its children stack), a horizontal one a flex
++    /// container (they sit in a row). Runs before every other display fixup, so none sees
++    /// `-webkit-box`.
++    #[cfg(feature = "servo")]
++    fn adjust_for_webkit_box(&mut self) {
++        use crate::values::specified::box_::{BoxOrient, DisplayInside, DisplayOutside};
++        let box_style = self.style.get_box();
++        let disp = box_style.slow_clone_display();
++        if disp.inside() != DisplayInside::WebkitBox {
++            return;
++        }
++        let block = disp.outside() == DisplayOutside::Block;
++        let vertical = box_style.slow_clone__webkit_box_orient() == BoxOrient::Vertical;
++        let clamps = vertical && !box_style.slow_clone_line_clamp().is_none();
++        let new_display = match (vertical, block) {
++            (true, true) => Display::FlowRoot,
++            (true, false) => Display::InlineBlock,
++            (false, true) => Display::Flex,
++            (false, false) => Display::InlineFlex,
++        };
++        self.style.mutate_box().set_adjusted_display(new_display, true);
++        if clamps {
++            self.style.add_flags(ComputedValueFlags::WEBKIT_LINE_CLAMP_APPLIES);
++        }
+     }
+ 
+     /// CSS 2.1 section 9.7:
+@@ -1064,6 +1094,8 @@
+         //     "Should always have an element around for non-pseudo styles"
+         // );
+ 
++        #[cfg(feature = "servo")]
++        self.adjust_for_webkit_box();
+         self.adjust_for_links(element);
+         self.adjust_for_prohibited_display_contents(element);
+         #[cfg(feature = "gecko")]
 diff -ruN a/style_resolver.rs b/style_resolver.rs
 --- a/style_resolver.rs	2026-11-11 19:55:57
 +++ b/style_resolver.rs	2026-11-11 20:10:18
@@ -1174,8 +1266,38 @@ diff -ruN a/values/specified/background.rs b/values/specified/background.rs
  }
 diff -ruN a/values/specified/box.rs b/values/specified/box.rs
 --- a/values/specified/box.rs	2026-11-11 19:55:57
-+++ b/values/specified/box.rs	2026-11-15 16:55:00
-@@ -495,6 +495,10 @@
++++ b/values/specified/box.rs	2026-11-15 20:15:35
+@@ -171,7 +171,8 @@
+     RubyText,
+     #[cfg(feature = "gecko")]
+     RubyTextContainer,
+-    #[cfg(feature = "gecko")]
++    /// pyro: parsed by the servo engine too; never a computed value there
++    /// (`StyleAdjuster::adjust_for_webkit_box`).
+     WebkitBox,
+ }
+ 
+@@ -239,7 +240,6 @@
+     );
+     pub const Block: Self =
+         Self(((DisplayOutside::Block as u16) << Self::OUTSIDE_SHIFT) | DisplayInside::Flow as u16);
+-    #[cfg(feature = "gecko")]
+     pub const FlowRoot: Self = Self(
+         ((DisplayOutside::Block as u16) << Self::OUTSIDE_SHIFT) | DisplayInside::FlowRoot as u16,
+     );
+@@ -268,11 +268,9 @@
+     #[cfg(feature = "gecko")]
+     pub const Ruby: Self =
+         Self(((DisplayOutside::Inline as u16) << Self::OUTSIDE_SHIFT) | DisplayInside::Ruby as u16);
+-    #[cfg(feature = "gecko")]
+     pub const WebkitBox: Self = Self(
+         ((DisplayOutside::Block as u16) << Self::OUTSIDE_SHIFT) | DisplayInside::WebkitBox as u16,
+     );
+-    #[cfg(feature = "gecko")]
+     pub const WebkitInlineBox: Self = Self(
+         ((DisplayOutside::Inline as u16) << Self::OUTSIDE_SHIFT) | DisplayInside::WebkitBox as u16,
+     );
+@@ -495,6 +493,10 @@
      Inside(DisplayInside),
      Outside(DisplayOutside),
      ListItem,
@@ -1186,7 +1308,17 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
  }
  
  impl DisplayKeyword {
-@@ -540,6 +544,7 @@
+@@ -525,9 +527,7 @@
+             "ruby-text" => Full(Display::RubyText),
+             #[cfg(feature = "gecko")]
+             "ruby-text-container" => Full(Display::RubyTextContainer),
+-            #[cfg(feature = "gecko")]
+             "-webkit-box" => Full(Display::WebkitBox),
+-            #[cfg(feature = "gecko")]
+             "-webkit-inline-box" => Full(Display::WebkitInlineBox),
+ 
+             /// <display-outside> = block | inline | run-in
+@@ -540,6 +540,7 @@
              /// <display-inside> = flow | flow-root | table | flex | grid | ruby
              /// https://drafts.csswg.org/css-display/#typedef-display-inside
              "flow" => Inside(DisplayInside::Flow),
@@ -1194,7 +1326,15 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
              "flex" => Inside(DisplayInside::Flex),
              "flow-root" => Inside(DisplayInside::FlowRoot),
              "table" => Inside(DisplayInside::Table),
-@@ -626,10 +631,15 @@
+@@ -561,7 +562,6 @@
+         match *self {
+             Display::Block | Display::Inline => outside.to_css(dest),
+             Display::InlineBlock => dest.write_str("inline-block"),
+-            #[cfg(feature = "gecko")]
+             Display::WebkitInlineBox => dest.write_str("-webkit-inline-box"),
+             Display::TableCaption => dest.write_str("table-caption"),
+             _ => match (outside, inside) {
+@@ -626,10 +626,15 @@
  impl Parse for Display {
      fn parse(_: &ParserContext, input: &mut Parser) -> Result<Display, ParseError> {
          let mut got_list_item = false;
@@ -1210,15 +1350,14 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
              DisplayKeyword::Outside(o) => {
                  outside = Some(o);
              },
-@@ -651,14 +661,20 @@
-                 },
+@@ -652,13 +657,19 @@
                  DisplayKeyword::Inside(i) if inside.is_none() => {
                      inside = Some(i);
-+                },
+                 },
 +                DisplayKeyword::Math if inside.is_none() => {
 +                    got_math = true;
 +                    inside = Some(DisplayInside::Flow);
-                 },
++                },
                  _ => return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError)),
              }
          }
@@ -1233,7 +1372,7 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
              return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError));
          }
  
-@@ -2013,6 +2029,8 @@
+@@ -2013,6 +2024,8 @@
      Auto,
      Page,
      Avoid,
@@ -1242,7 +1381,7 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
      Left,
      Right,
  }
-@@ -2030,7 +2048,9 @@
+@@ -2030,7 +2043,9 @@
              BreakBetween::Auto | BreakBetween::Avoid | BreakBetween::Left | BreakBetween::Right => {
                  Ok(break_value)
              },
@@ -1253,7 +1392,7 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
          }
      }
  
-@@ -2047,7 +2067,7 @@
+@@ -2047,7 +2062,7 @@
                  self.to_css(dest)
              },
              BreakBetween::Page => dest.write_str("always"),

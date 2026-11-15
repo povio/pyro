@@ -37,6 +37,7 @@ mod input_percentage_min_content;
 mod input_placeholder;
 mod lang_pseudo_class;
 mod line_break_resume;
+mod line_clamp;
 mod line_height_normal;
 mod line_paint_order;
 mod margin_trim;

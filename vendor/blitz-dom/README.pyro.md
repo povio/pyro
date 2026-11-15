@@ -60,6 +60,16 @@ against the upstream commit above); they are covered by pyro-render's rendering 
   `bench/fidelity/repros/text-overflow-ellipsis.html`. `text-overflow: "<string>"` shapes the string instead, on
   one line (white space collapsed; U+000A to U+000D, U+0085, U+2028 and U+2029 count as spaces), in the base
   direction of the root's lines (WPT `css-overflow/text-overflow-string-*`).
+- `layout/line_clamp.rs`, `layout/mod.rs` (`compute_child_layout_in_current_wm`), `layout/inline/layout.rs`,
+  `node/text.rs` (`TextLayout::clamp`, `line_box_top`, `counted_lines`, `LineClamp`), `node/node.rs`
+  (`NodeFlags::CLAMPS_LINES`): the legacy line clamp (`-webkit-line-clamp` on a vertical `-webkit-box`; Stylo's
+  `WEBKIT_LINE_CLAMP_APPLIES`). After the box's own layout its line boxes are counted in tree order: its own and
+  those of in-flow block descendants in its formatting context (not floats, positioned boxes, scroll containers,
+  fieldsets, flex/grid/table boxes). With more lines than the clamp, the block holding the clamp line gets a
+  `LineClamp` (lines kept, "…" shaped in its style) and an auto-height box ends at that line's bottom (within
+  `min-`/`max-height`). A measuring run of such a box runs as a full layout and drops the box's layout cache,
+  since the count reads laid-out content. A box that stops clamping clears the mark (`CLAMPS_LINES`). Lines in
+  later blocks are left to the box's `overflow`. Tests `crates/pyro-render/tests/line_clamp.rs`.
 - `node/svg.rs` (`SvgImageData::sized`, `inline_source`), `layout/construct.rs`: an inline `<svg>` without a
   `viewBox` keeps its source, and is parsed again (cached) with the root's `width`/`height` set to its CSS
   content box for painting: its viewport is the box, as in Chromium, so user units are CSS px and percentages (a

@@ -1762,7 +1762,8 @@ fn stroke_inline_text(
     tops: Option<crate::text::LineTops>,
     scale: f64,
 ) {
-    let Some(ellipsis) = text_layout.ellipsis.as_deref() else {
+    let clamp = text_layout.clamp.as_ref();
+    if text_layout.ellipsis.is_none() && clamp.is_none() {
         crate::text::stroke_text(
             scene,
             text_layout.layout.lines(),
@@ -1776,13 +1777,14 @@ fn stroke_inline_text(
             Some(&text_layout.layout),
         );
         return;
-    };
-    // The lines were broken in the unrounded box: a line as wide as the box (a
-    // box sized to its text) must not count as overflowing it by a rounding.
-    let width = node.unrounded_layout().content_box_width() * scale as f32;
-    for line in text_layout.layout.lines() {
-        let truncation = truncate_line(&line, ellipsis, width, scale as f32, text_layout.layout.is_rtl());
-        context.cut = truncation.map(|(cut, _)| cut);
+    }
+    for (index, line) in text_layout.layout.lines().enumerate() {
+        // pyro: the lines after a line clamp's are not painted.
+        if clamp.is_some_and(|clamp| index >= clamp.lines as usize) {
+            break;
+        }
+        let truncation = line_truncation(node, text_layout, &line, index, scale as f32);
+        context.cut = truncation.as_ref().map(|truncation| truncation.cut);
         crate::text::stroke_text(
             scene,
             std::iter::once(line.clone()),
@@ -1797,7 +1799,7 @@ fn stroke_inline_text(
         );
         context.cut = None;
         // The ellipsis on the line's baseline, next to the last atom kept.
-        if let Some((_, x)) = truncation {
+        if let Some(LineTruncation { x, ellipsis, text, .. }) = truncation {
             // pyro: in every pass of `draw_inline_effects` (its runs are not where
             // the layout's are, which `RunFilter` looks at).
             let filter = context.run_filter.take();
@@ -1812,7 +1814,7 @@ fn stroke_inline_text(
                 transform * Affine::translate(offset),
                 options,
                 node.id,
-                Some(&text_layout.ellipsis_text),
+                Some(text),
                 context,
                 None,
                 None,
@@ -1821,6 +1823,37 @@ fn stroke_inline_text(
             context.run_filter = filter;
         }
     }
+}
+
+/// pyro: what ends a line short: the atoms cut from it, and the ellipsis drawn at `x` (layout
+/// coordinates) after those kept.
+struct LineTruncation<'a> {
+    cut: crate::text::TextCut,
+    x: f32,
+    ellipsis: &'a parley::Layout<blitz_dom::node::TextBrush>,
+    text: &'a str,
+}
+
+/// pyro: how line `index` of the inline root `node` ends short, if it does: the line a line
+/// clamp ends at (`TextLayout::clamp`) always ends with "…"; any other line that overflows the
+/// content box ends with the `text-overflow` ellipsis (`TextLayout::ellipsis`).
+fn line_truncation<'a>(
+    node: &Node,
+    text_layout: &'a blitz_dom::node::TextLayout,
+    line: &parley::Line<'_, blitz_dom::node::TextBrush>,
+    index: usize,
+    scale: f32,
+) -> Option<LineTruncation<'a>> {
+    // The lines were broken in the unrounded box: a line as wide as the box (a
+    // box sized to its text) must not count as overflowing it by a rounding.
+    let width = node.unrounded_layout().content_box_width() * scale;
+    let rtl = text_layout.layout.is_rtl();
+    let (ellipsis, text, forced) = match text_layout.clamp.as_ref().filter(|clamp| index + 1 == clamp.lines as usize) {
+        Some(clamp) => (&*clamp.ellipsis, "\u{2026}", true),
+        None => (text_layout.ellipsis.as_deref()?, text_layout.ellipsis_text.as_str(), false),
+    };
+    let (cut, x) = truncate_line(line, ellipsis, width, scale, rtl, forced)?;
+    Some(LineTruncation { cut, x, ellipsis, text })
 }
 
 /// pyro: `text-overflow: ellipsis` on one line, as Chromium applies it: a line whose content
@@ -1835,10 +1868,24 @@ fn truncate_line(
     width: f32,
     scale: f32,
     rtl: bool,
+    forced: bool,
 ) -> Option<(crate::text::TextCut, f32)> {
     let epsilon = scale / 64.0;
     let metrics = line.metrics();
     let ellipsis_width = ellipsis.full_width();
+    // A line that ends with the ellipsis whether it overflows or not (`forced`: a line
+    // clamp's) keeps all of its atoms when the ellipsis fits after them.
+    if forced {
+        let (start, end) = (metrics.offset, metrics.offset + metrics.advance);
+        if !rtl && end - metrics.hanging_advance + ellipsis_width <= width + epsilon {
+            let cut = crate::text::TextCut { edge: f32::INFINITY, keep_left: true };
+            return Some((cut, end - metrics.hanging_advance));
+        }
+        if rtl && start + metrics.hanging_advance - ellipsis_width >= -epsilon {
+            let cut = crate::text::TextCut { edge: f32::NEG_INFINITY, keep_left: false };
+            return Some((cut, start + metrics.hanging_advance - ellipsis_width));
+        }
+    }
     let runs = || {
         line.items().filter_map(|item| match item {
             parley::PositionedLayoutItem::GlyphRun(run) => Some(run),
@@ -1846,7 +1893,7 @@ fn truncate_line(
         })
     };
     if !rtl {
-        if metrics.offset + metrics.advance - metrics.hanging_advance <= width + epsilon {
+        if !forced && metrics.offset + metrics.advance - metrics.hanging_advance <= width + epsilon {
             return None;
         }
         let cut = crate::text::TextCut { edge: width - ellipsis_width, keep_left: true };
@@ -1862,7 +1909,7 @@ fn truncate_line(
         };
         Some((crate::text::TextCut { edge, keep_left: true }, edge))
     } else {
-        if metrics.offset + metrics.hanging_advance >= -epsilon {
+        if !forced && metrics.offset + metrics.hanging_advance >= -epsilon {
             return None;
         }
         let cut = crate::text::TextCut { edge: ellipsis_width, keep_left: false };
@@ -2450,10 +2497,8 @@ impl ElementCx<'_, '_> {
                 // either (`stroke_inline_text`).
                 let scale = self.scale as f32;
                 let cut = self.element.inline_layout_data.as_ref().and_then(|text_layout| {
-                    let ellipsis = text_layout.ellipsis.as_deref()?;
                     let line = text_layout.layout.get(fragment.line)?;
-                    let width = self.node.unrounded_layout().content_box_width() * scale;
-                    truncate_line(&line, ellipsis, width, scale, text_layout.layout.is_rtl()).map(|(cut, _)| cut)
+                    line_truncation(self.node, text_layout, &line, fragment.line, scale).map(|truncation| truncation.cut)
                 });
                 self.context.draw_text_context.borrow_mut().inline_mask = Some(crate::text::InlineTextMask {
                     element: fragment.node,
@@ -2529,6 +2574,7 @@ impl ElementCx<'_, '_> {
             let selection = self.context.selection_ranges.get(&self.node.id).copied();
             let by_line = selection.is_none()
                 && text_layout.ellipsis.is_none()
+                && text_layout.clamp.is_none()
                 && text_layout.annotations.is_empty()
                 && fragments.iter().any(|fragment| fragment.line > 0 && fragment.reaches_above);
             if by_line {
@@ -2574,7 +2620,11 @@ impl ElementCx<'_, '_> {
             // pyro: highlighted as Chromium paints selected text (`highlight`), but in lines cut
             // by an ellipsis; a recording paint (the PDF's) draws no selection.
             let highlight = selection
-                .filter(|_| text_layout.ellipsis.is_none() && self.context.draw_text_context.borrow().runs.is_none());
+                .filter(|_| {
+                    text_layout.ellipsis.is_none()
+                        && text_layout.clamp.is_none()
+                        && self.context.draw_text_context.borrow().runs.is_none()
+                });
             if let (Some((sel_start, sel_end)), None) = (selection, highlight) {
                 crate::text::draw_text_selection(
                     scene,
@@ -2626,15 +2676,16 @@ impl ElementCx<'_, '_> {
             // pyro: ruby annotations and emphasis marks, over the text of each line.
             if !text_layout.annotations.is_empty() {
                 let recording = draw_text_context.runs.is_some();
-                for line in text_layout.layout.lines() {
+                for (index, line) in text_layout.layout.lines().enumerate() {
+                    if text_layout.clamp.as_ref().is_some_and(|clamp| index >= clamp.lines as usize) {
+                        break;
+                    }
                     let line_transform = match tops {
                         Some(tops) => transform * Affine::translate((0.0, tops.shift(line.metrics()))),
                         None => transform,
                     } * Affine::translate((text_shift, 0.0));
-                    let cut = text_layout.ellipsis.as_deref().and_then(|ellipsis| {
-                        let width = self.node.unrounded_layout().content_box_width() * self.scale as f32;
-                        truncate_line(&line, ellipsis, width, self.scale as f32, text_layout.layout.is_rtl()).map(|(cut, _)| cut)
-                    });
+                    let cut = line_truncation(self.node, text_layout, &line, index, self.scale as f32)
+                        .map(|truncation| truncation.cut);
                     crate::text::draw_text_annotations(
                         scene,
                         &line,

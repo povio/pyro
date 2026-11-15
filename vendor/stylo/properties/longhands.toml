@@ -4302,6 +4302,19 @@ aliases = ["-webkit-box-orient"]
 type = "BoxOrient"
 initial = "computed::BoxOrient::Horizontal"
 
+# pyro: `-webkit-box-orient` for the servo engine (the gecko one is `-moz-box-orient`'s alias):
+# with `display: -webkit-box` and `-webkit-line-clamp` it makes the legacy line clamp apply
+# (`StyleAdjuster::adjust_for_webkit_box`).
+[-webkit-box-orient]
+struct = "box"
+engine = "servo"
+spec = "Nonstandard (https://developer.mozilla.org/en-US/docs/Web/CSS/box-orient)"
+animation_type = "discrete"
+affects = "layout"
+servo_restyle_damage = "rebuild_box"
+type = "BoxOrient"
+initial = "computed::BoxOrient::Horizontal"
+
 [-moz-box-pack]
 struct = "xul"
 engine = "gecko"

@@ -186,6 +186,36 @@ impl<'a, 'b: 'a> StyleAdjuster<'a, 'b> {
             .set_adjusted_display(new_display, false);
     }
 
+    /// pyro: `display: -webkit-box` in the servo engine, which has no legacy box layout. With
+    /// `-webkit-box-orient: vertical` and a line clamp the box is a block container whose lines
+    /// are clamped, as in Blink and Gecko (above); the style keeps that in
+    /// `WEBKIT_LINE_CLAMP_APPLIES`, since the display that made it apply is gone. Any other
+    /// vertical box is a block container too (its children stack), a horizontal one a flex
+    /// container (they sit in a row). Runs before every other display fixup, so none sees
+    /// `-webkit-box`.
+    #[cfg(feature = "servo")]
+    fn adjust_for_webkit_box(&mut self) {
+        use crate::values::specified::box_::{BoxOrient, DisplayInside, DisplayOutside};
+        let box_style = self.style.get_box();
+        let disp = box_style.slow_clone_display();
+        if disp.inside() != DisplayInside::WebkitBox {
+            return;
+        }
+        let block = disp.outside() == DisplayOutside::Block;
+        let vertical = box_style.slow_clone__webkit_box_orient() == BoxOrient::Vertical;
+        let clamps = vertical && !box_style.slow_clone_line_clamp().is_none();
+        let new_display = match (vertical, block) {
+            (true, true) => Display::FlowRoot,
+            (true, false) => Display::InlineBlock,
+            (false, true) => Display::Flex,
+            (false, false) => Display::InlineFlex,
+        };
+        self.style.mutate_box().set_adjusted_display(new_display, true);
+        if clamps {
+            self.style.add_flags(ComputedValueFlags::WEBKIT_LINE_CLAMP_APPLIES);
+        }
+    }
+
     /// CSS 2.1 section 9.7:
     ///
     ///    If 'position' has the value 'absolute' or 'fixed', [...] the computed
@@ -1064,6 +1094,8 @@ impl<'a, 'b: 'a> StyleAdjuster<'a, 'b> {
         //     "Should always have an element around for non-pseudo styles"
         // );
 
+        #[cfg(feature = "servo")]
+        self.adjust_for_webkit_box();
         self.adjust_for_links(element);
         self.adjust_for_prohibited_display_contents(element);
         #[cfg(feature = "gecko")]

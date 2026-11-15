@@ -1378,6 +1378,14 @@ impl LayoutPassState<'_> {
         let block_offset = block_offset - text_box_shift / scale;
         inline_layout.block_offset = block_offset;
         let line_box_top = container_pb.top + block_offset;
+        // pyro: for a line clamp (`layout::line_clamp`), which a later layout of the box that
+        // clamps sets again.
+        inline_layout.line_box_top = line_box_top;
+        inline_layout.counted_lines = match has_inline_content {
+            true => trailing_empty_line.unwrap_or(line_count) as u32,
+            false => 0,
+        };
+        inline_layout.clamp = None;
 
         // Store sizes and positions of inline boxes. Walking a line's items builds every
         // glyph run on it, so lines are only walked when there are boxes to find.

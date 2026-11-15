@@ -69,6 +69,10 @@ from the root of an upstream checkout at that commit) is the whole diff.
     records the kept glyphs with their source text. A line too narrow for any atom beside the ellipsis keeps
     its first atom (Blink's `LineTruncator`; `TextCut::end_atom`), and emphasis marks skip the atoms cut
     (`draw_text_annotations`' `cut`). Covered by `crates/pyro-render/tests/text_overflow_ellipsis.rs`.
+    A line clamp (`TextLayout::clamp`, blitz-dom's `layout::line_clamp`) ends its line with "…" whether the line
+    overflows or not (`line_truncation`, `truncate_line`'s `forced`: after the whole line when the ellipsis
+    fits there), whatever `text-overflow` says, and the root's later lines, their annotations and their part
+    of a text mask are not painted. Covered by `crates/pyro-render/tests/line_clamp.rs`.
   - `src/render.rs` (`draw_svg`): an inline `<svg>` without a `viewBox` is drawn from blitz-dom's
     `SvgImageData::sized` tree for its content box, in user units of a CSS px times its `zoom` (its content
     was drawn at zoom 1 in a zoomed box: WPT `clip-path-path-with-zoom-002`). An SVG image (`<img>`, not an

@@ -29,6 +29,7 @@ pub(crate) mod damage;
 pub(crate) mod first_letter;
 pub(crate) mod first_line;
 pub(crate) mod inline;
+pub(crate) mod line_clamp;
 pub(crate) mod list;
 pub mod multicol;
 pub(crate) mod paint_tree;
@@ -219,7 +220,26 @@ impl LayoutPassState<'_> {
         // pyro: this runs once per tree level of a recursive layout; what is not part
         // of the recursion stays out of its frame (see `dispatch_child_layout`).
         let inputs = self.adjusted_child_inputs(node_id, inputs);
-        let mut output = self.dispatch_child_layout(node_id, inputs, block_ctx);
+        // pyro: a box that clamps its lines ends at the clamp line, which its laid-out
+        // content names (`layout::line_clamp`): a measuring run lays it out too, and what
+        // that leaves on its content is not the layout a cached final run stands for.
+        let line_clamp = self.line_clamp_of(dom_node_id(node_id));
+        let mut output = match line_clamp {
+            Some(_) if inputs.run_mode == RunMode::ComputeSize => {
+                let performed = taffy::tree::LayoutInput { run_mode: RunMode::PerformLayout, ..inputs };
+                let output = self.dispatch_child_layout(node_id, performed, block_ctx);
+                self.nodes[dom_node_id(node_id)].clear_layout_cache();
+                output
+            }
+            _ => self.dispatch_child_layout(node_id, inputs, block_ctx),
+        };
+        match line_clamp {
+            Some(max_lines) => self.clamp_lines(dom_node_id(node_id), max_lines, inputs, &mut output),
+            None if self.nodes[dom_node_id(node_id)].flags.contains(NodeFlags::CLAMPS_LINES) => {
+                self.unclamp_lines(dom_node_id(node_id))
+            }
+            None => {}
+        }
         if inputs.run_mode == RunMode::PerformLayout {
             // pyro: a table cell aligned on its row's baseline has its content lower in its box.
             if self.nodes[dom_node_id(node_id)].flags.contains(crate::node::NodeFlags::HAS_TABLE_BASELINE_OFFSET) {

@@ -171,6 +171,18 @@ how it is kept (pyro lays no MathML out); alone it is inline-level. The declarat
 block-level `::before` in an inline box now renders as a block). Test: `display_math_computes_to_flow` in
 `crates/pyro-render/tests/inline_leftovers.rs`.
 
+`values/specified/box.rs` (`DisplayInside::WebkitBox`, `Display::WebkitBox`, `WebkitInlineBox`, `FlowRoot`),
+`properties/longhands.toml` (`-webkit-box-orient`, servo only), `properties/shorthands.toml`
+(`-webkit-line-clamp`), `style_adjuster.rs` (`adjust_for_webkit_box`), `properties/computed_value_flags.rs`
+(`WEBKIT_LINE_CLAMP_APPLIES`): the legacy line clamp in the servo engine. `display: -webkit-box` and
+`-webkit-inline-box`, `-webkit-box-orient` and the `-webkit-line-clamp` shorthand were gecko-only, so their
+declarations were dropped and `-webkit-line-clamp` never applied. The servo engine has no legacy box layout:
+the adjuster turns the display, before any other fixup, into `flow-root`/`inline-block` for a vertical box (as
+Gecko and Blink do for one that clamps) and `flex`/`inline-flex` for a horizontal one, and flags the style when
+the box is vertical and has a line clamp; blitz-dom's `layout::line_clamp` clamps the lines of flagged boxes
+only. `-webkit-box` is never a computed value. Tests: `crates/pyro-render/tests/line_clamp.rs`, WPT
+`css/css-overflow/line-clamp/webkit-line-clamp-*`.
+
 ## Updating or dropping the patch
 
 - When upstream has the change: delete this directory and the `[patch.crates-io]` entry.

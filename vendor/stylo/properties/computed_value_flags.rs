@@ -143,6 +143,10 @@ bitflags! {
 
         /// Whether this style uses an element-scoped `random()`.
         const USES_ELEMENT_SCOPED_RANDOM = 1 << 29;
+
+        /// pyro: the legacy line clamp applies to this box: it had `display: -webkit-box` (or
+        /// `-webkit-inline-box`), `-webkit-box-orient: vertical` and a `-webkit-line-clamp`.
+        const WEBKIT_LINE_CLAMP_APPLIES = 1 << 30;
     }
 }
 

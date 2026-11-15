@@ -21,6 +21,14 @@ impl TextBrush {
     }
 }
 
+/// pyro: see [`TextLayout::clamp`].
+#[derive(Clone)]
+pub struct LineClamp {
+    pub lines: u32,
+    /// "…" shaped in the root's style.
+    pub ellipsis: Box<parley::layout::Layout<TextBrush>>,
+}
+
 #[derive(Clone, Default)]
 pub struct TextLayout {
     pub text: String,
@@ -64,6 +72,15 @@ pub struct TextLayout {
     pub ellipsis: Option<Box<parley::layout::Layout<TextBrush>>>,
     /// pyro: the text of `ellipsis` ("…", or the string of `text-overflow: "<string>"`).
     pub ellipsis_text: String,
+    /// pyro: where the line boxes start below the top of the root's border box (CSS px), and how
+    /// many of them count as lines (none of a root without inline content; not the empty line
+    /// after a final forced break). Set by each layout, for `layout::line_clamp`.
+    pub line_box_top: f32,
+    pub counted_lines: u32,
+    /// pyro: a line clamp ends in this root (`layout::line_clamp`): paint draws its first
+    /// `lines` lines and ends the last of them with the ellipsis. Reset by each layout of the
+    /// root; set by the layout of the box that clamps.
+    pub clamp: Option<LineClamp>,
     /// pyro: text drawn over or under stretches of this text (ruby annotations, emphasis marks).
     /// Empty for almost every inline root.
     pub annotations: Vec<TextAnnotation>,

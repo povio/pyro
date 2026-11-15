@@ -3618,7 +3618,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
  /// A context of loaded and hot data to draw the element from
  struct ElementCx<'dom, 'a> {
      context: &'dom BlitzDomPainter<'dom, 'a>,
-@@ -836,7 +1746,138 @@
+@@ -836,7 +1746,185 @@
      custom_widget_scene: Option<&'a Scene>,
  }
  
@@ -3639,7 +3639,8 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +    tops: Option<crate::text::LineTops>,
 +    scale: f64,
 +) {
-+    let Some(ellipsis) = text_layout.ellipsis.as_deref() else {
++    let clamp = text_layout.clamp.as_ref();
++    if text_layout.ellipsis.is_none() && clamp.is_none() {
 +        crate::text::stroke_text(
 +            scene,
 +            text_layout.layout.lines(),
@@ -3653,13 +3654,14 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +            Some(&text_layout.layout),
 +        );
 +        return;
-+    };
-+    // The lines were broken in the unrounded box: a line as wide as the box (a
-+    // box sized to its text) must not count as overflowing it by a rounding.
-+    let width = node.unrounded_layout().content_box_width() * scale as f32;
-+    for line in text_layout.layout.lines() {
-+        let truncation = truncate_line(&line, ellipsis, width, scale as f32, text_layout.layout.is_rtl());
-+        context.cut = truncation.map(|(cut, _)| cut);
++    }
++    for (index, line) in text_layout.layout.lines().enumerate() {
++        // pyro: the lines after a line clamp's are not painted.
++        if clamp.is_some_and(|clamp| index >= clamp.lines as usize) {
++            break;
++        }
++        let truncation = line_truncation(node, text_layout, &line, index, scale as f32);
++        context.cut = truncation.as_ref().map(|truncation| truncation.cut);
 +        crate::text::stroke_text(
 +            scene,
 +            std::iter::once(line.clone()),
@@ -3674,7 +3676,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +        );
 +        context.cut = None;
 +        // The ellipsis on the line's baseline, next to the last atom kept.
-+        if let Some((_, x)) = truncation {
++        if let Some(LineTruncation { x, ellipsis, text, .. }) = truncation {
 +            // pyro: in every pass of `draw_inline_effects` (its runs are not where
 +            // the layout's are, which `RunFilter` looks at).
 +            let filter = context.run_filter.take();
@@ -3689,7 +3691,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                transform * Affine::translate(offset),
 +                options,
 +                node.id,
-+                Some(&text_layout.ellipsis_text),
++                Some(text),
 +                context,
 +                None,
 +                None,
@@ -3698,6 +3700,37 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +            context.run_filter = filter;
 +        }
 +    }
++}
++
++/// pyro: what ends a line short: the atoms cut from it, and the ellipsis drawn at `x` (layout
++/// coordinates) after those kept.
++struct LineTruncation<'a> {
++    cut: crate::text::TextCut,
++    x: f32,
++    ellipsis: &'a parley::Layout<blitz_dom::node::TextBrush>,
++    text: &'a str,
++}
++
++/// pyro: how line `index` of the inline root `node` ends short, if it does: the line a line
++/// clamp ends at (`TextLayout::clamp`) always ends with "…"; any other line that overflows the
++/// content box ends with the `text-overflow` ellipsis (`TextLayout::ellipsis`).
++fn line_truncation<'a>(
++    node: &Node,
++    text_layout: &'a blitz_dom::node::TextLayout,
++    line: &parley::Line<'_, blitz_dom::node::TextBrush>,
++    index: usize,
++    scale: f32,
++) -> Option<LineTruncation<'a>> {
++    // The lines were broken in the unrounded box: a line as wide as the box (a
++    // box sized to its text) must not count as overflowing it by a rounding.
++    let width = node.unrounded_layout().content_box_width() * scale;
++    let rtl = text_layout.layout.is_rtl();
++    let (ellipsis, text, forced) = match text_layout.clamp.as_ref().filter(|clamp| index + 1 == clamp.lines as usize) {
++        Some(clamp) => (&*clamp.ellipsis, "\u{2026}", true),
++        None => (text_layout.ellipsis.as_deref()?, text_layout.ellipsis_text.as_str(), false),
++    };
++    let (cut, x) = truncate_line(line, ellipsis, width, scale, rtl, forced)?;
++    Some(LineTruncation { cut, x, ellipsis, text })
 +}
 +
 +/// pyro: `text-overflow: ellipsis` on one line, as Chromium applies it: a line whose content
@@ -3712,10 +3745,24 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +    width: f32,
 +    scale: f32,
 +    rtl: bool,
++    forced: bool,
 +) -> Option<(crate::text::TextCut, f32)> {
 +    let epsilon = scale / 64.0;
 +    let metrics = line.metrics();
 +    let ellipsis_width = ellipsis.full_width();
++    // A line that ends with the ellipsis whether it overflows or not (`forced`: a line
++    // clamp's) keeps all of its atoms when the ellipsis fits after them.
++    if forced {
++        let (start, end) = (metrics.offset, metrics.offset + metrics.advance);
++        if !rtl && end - metrics.hanging_advance + ellipsis_width <= width + epsilon {
++            let cut = crate::text::TextCut { edge: f32::INFINITY, keep_left: true };
++            return Some((cut, end - metrics.hanging_advance));
++        }
++        if rtl && start + metrics.hanging_advance - ellipsis_width >= -epsilon {
++            let cut = crate::text::TextCut { edge: f32::NEG_INFINITY, keep_left: false };
++            return Some((cut, start + metrics.hanging_advance - ellipsis_width));
++        }
++    }
 +    let runs = || {
 +        line.items().filter_map(|item| match item {
 +            parley::PositionedLayoutItem::GlyphRun(run) => Some(run),
@@ -3723,7 +3770,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +        })
 +    };
 +    if !rtl {
-+        if metrics.offset + metrics.advance - metrics.hanging_advance <= width + epsilon {
++        if !forced && metrics.offset + metrics.advance - metrics.hanging_advance <= width + epsilon {
 +            return None;
 +        }
 +        let cut = crate::text::TextCut { edge: width - ellipsis_width, keep_left: true };
@@ -3739,7 +3786,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +        };
 +        Some((crate::text::TextCut { edge, keep_left: true }, edge))
 +    } else {
-+        if metrics.offset + metrics.hanging_advance >= -epsilon {
++        if !forced && metrics.offset + metrics.hanging_advance >= -epsilon {
 +            return None;
 +        }
 +        let cut = crate::text::TextCut { edge: ellipsis_width, keep_left: false };
@@ -3758,10 +3805,14 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
  fn convert_rect(rect: &parley::BoundingBox) -> kurbo::Rect {
      peniko::kurbo::Rect::new(rect.x0, rect.y0, rect.x1, rect.y1)
  }
-@@ -967,8 +2008,494 @@
-         }
-     }
- 
+@@ -963,12 +2051,496 @@
+                     None,
+                     &stroke_rect.to_rounded_rect(radius - stroke_width / 2.0),
+                 );
++            }
++        }
++    }
++
 +    /// pyro: paints the boxes of the inline (non-atomic) elements in this inline root's lines, as
 +    /// Chromium does. An element has one fragment per line it has content on: from the start of
 +    /// its first content there to the end of its last (its own start and end edges without their
@@ -4204,10 +4255,8 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                // either (`stroke_inline_text`).
 +                let scale = self.scale as f32;
 +                let cut = self.element.inline_layout_data.as_ref().and_then(|text_layout| {
-+                    let ellipsis = text_layout.ellipsis.as_deref()?;
 +                    let line = text_layout.layout.get(fragment.line)?;
-+                    let width = self.node.unrounded_layout().content_box_width() * scale;
-+                    truncate_line(&line, ellipsis, width, scale, text_layout.layout.is_rtl()).map(|(cut, _)| cut)
++                    line_truncation(self.node, text_layout, &line, fragment.line, scale).map(|truncation| truncation.cut)
 +                });
 +                self.context.draw_text_context.borrow_mut().inline_mask = Some(crate::text::InlineTextMask {
 +                    element: fragment.node,
@@ -4218,7 +4267,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                    line: fragment.line,
 +                    cut,
 +                });
-+            }
+             }
 +            match &whole {
 +                Some(whole) => {
 +                    scene.push_clip_layer(Fill::NonZero, transform, &piece);
@@ -4230,7 +4279,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +            if text_clip {
 +                self.context.draw_text_context.borrow_mut().inline_mask = None;
 +            }
-+        }
+         }
 +        match &whole {
 +            Some(whole) => {
 +                scene.push_clip_layer(Fill::NonZero, transform, &piece);
@@ -4242,8 +4291,8 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +        cx.draw_border(scene);
 +        // Over the box, as a block's outline is (see `render_element`).
 +        cx.draw_outline(scene);
-+    }
-+
+     }
+ 
      fn draw_inline_layout(&self, scene: &mut impl PaintScene, pos: Point) {
          if self.node.flags.is_inline_root() {
 +            // pyro: inline elements with a clip path or a mask (clip_path.rs).
@@ -4253,7 +4302,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              let text_layout = self.element
                  .inline_layout_data
                  .as_ref()
-@@ -976,6 +2503,11 @@
+@@ -976,6 +2548,11 @@
                      panic!("Tried to render node marked as inline root that does not have an inline layout: {:?}", self.node);
                  });
  
@@ -4265,7 +4314,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              // Text keeps its unrounded position; only box edges are snapped to whole pixels.
              let subpixel_offset = text_layout.content_box_subpixel_offset;
              let pos = Point {
-@@ -984,23 +2516,73 @@
+@@ -984,23 +2561,78 @@
              };
              let transform =
                  self.transform * Affine::translate((pos.x * self.scale, pos.y * self.scale));
@@ -4291,6 +4340,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +            let selection = self.context.selection_ranges.get(&self.node.id).copied();
 +            let by_line = selection.is_none()
 +                && text_layout.ellipsis.is_none()
++                && text_layout.clamp.is_none()
 +                && text_layout.annotations.is_empty()
 +                && fragments.iter().any(|fragment| fragment.line > 0 && fragment.reaches_above);
 +            if by_line {
@@ -4337,7 +4387,11 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +            // pyro: highlighted as Chromium paints selected text (`highlight`), but in lines cut
 +            // by an ellipsis; a recording paint (the PDF's) draws no selection.
 +            let highlight = selection
-+                .filter(|_| text_layout.ellipsis.is_none() && self.context.draw_text_context.borrow().runs.is_none());
++                .filter(|_| {
++                    text_layout.ellipsis.is_none()
++                        && text_layout.clamp.is_none()
++                        && self.context.draw_text_context.borrow().runs.is_none()
++                });
 +            if let (Some((sel_start, sel_end)), None) = (selection, highlight) {
                  crate::text::draw_text_selection(
                      scene,
@@ -4350,7 +4404,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
                      sel_start,
                      sel_end,
                  );
-@@ -1008,18 +2590,230 @@
+@@ -1008,18 +2640,231 @@
  
              // Render text
              let mut draw_text_context = self.context.draw_text_context.borrow_mut();
@@ -4390,15 +4444,16 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +            // pyro: ruby annotations and emphasis marks, over the text of each line.
 +            if !text_layout.annotations.is_empty() {
 +                let recording = draw_text_context.runs.is_some();
-+                for line in text_layout.layout.lines() {
++                for (index, line) in text_layout.layout.lines().enumerate() {
++                    if text_layout.clamp.as_ref().is_some_and(|clamp| index >= clamp.lines as usize) {
++                        break;
++                    }
 +                    let line_transform = match tops {
 +                        Some(tops) => transform * Affine::translate((0.0, tops.shift(line.metrics()))),
 +                        None => transform,
 +                    } * Affine::translate((text_shift, 0.0));
-+                    let cut = text_layout.ellipsis.as_deref().and_then(|ellipsis| {
-+                        let width = self.node.unrounded_layout().content_box_width() * self.scale as f32;
-+                        truncate_line(&line, ellipsis, width, self.scale as f32, text_layout.layout.is_rtl()).map(|(cut, _)| cut)
-+                    });
++                    let cut = line_truncation(self.node, text_layout, &line, index, self.scale as f32)
++                        .map(|truncation| truncation.cut);
 +                    crate::text::draw_text_annotations(
 +                        scene,
 +                        &line,
@@ -4583,7 +4638,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          }
      }
  
-@@ -1030,9 +2824,15 @@
+@@ -1030,9 +2875,15 @@
              // within the content box of it's node.
              let y_offset = self.node.text_input_v_centering_offset(self.scale);
              let subpixel_offset = input_data.content_box_subpixel_offset;
@@ -4601,7 +4656,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              };
  
              // Apply the scroll offset (stored in CSS pixels, scaled here to device pixels) so
-@@ -1047,7 +2847,65 @@
+@@ -1047,7 +2898,65 @@
  
              let transform = self.transform
                  * Affine::translate((pos.x * self.scale - scroll_x, pos.y * self.scale - scroll_y));
@@ -4667,7 +4722,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              if self.node.is_focussed() {
                  // Render selection/caret
                  for (rect, _line_idx) in input_data.editor.selection_geometry().iter() {
-@@ -1078,6 +2936,7 @@
+@@ -1078,6 +2987,7 @@
  
              // Render text
              let mut draw_text_context = self.context.draw_text_context.borrow_mut();
@@ -4675,7 +4730,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              crate::text::stroke_text(
                  scene,
                  input_data.editor.try_layout().unwrap().lines(),
-@@ -1086,10 +2945,15 @@
+@@ -1086,10 +2996,15 @@
                  TextPaintOptions {
                      scale: self.scale,
                      brush_override: None,
@@ -4691,7 +4746,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          }
      }
  
-@@ -1103,7 +2967,7 @@
+@@ -1103,7 +3018,7 @@
              // Right align and pad the bullet when rendering outside
              let x_padding = match marker {
                  Marker::Char(_) => 8.0,
@@ -4700,7 +4755,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              };
              // Outside markers are placed outside the list item's border box
              // (`pos` is the origin of its content box)
-@@ -1114,14 +2978,33 @@
+@@ -1114,14 +3029,33 @@
                  + item_layout.border.left);
  
              // Align the marker with the baseline of the first line of text in the list item
@@ -4737,7 +4792,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
                      / layout.scale()
                      + text_layout.block_offset
              } else {
-@@ -1129,7 +3012,7 @@
+@@ -1129,7 +3063,7 @@
              };
  
              let pos = Point {
@@ -4746,7 +4801,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
                  y: pos.y + (content_box_subpixel_offset.y + y_offset) as f64,
              };
  
-@@ -1145,13 +3028,145 @@
+@@ -1145,13 +3079,145 @@
                  TextPaintOptions {
                      scale: self.scale,
                      brush_override: None,
@@ -4758,9 +4813,9 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                None,
 +                None,
              );
-         }
-     }
- 
++        }
++    }
++
 +    /// pyro: an outside `disc`, `circle` or `square` marker, as Chromium paints one: a shape
 +    /// sized from the item's font (Blink's `ListMarker::RelativeSymbolMarkerRect`), not a glyph
 +    /// of a bullet font. With `a` the font's ascent in whole pixels and `o = a * 2 / 3` in
@@ -4802,9 +4857,9 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                scene.stroke(&Stroke::new(self.scale), self.transform, &paint, None, &kurbo::Ellipse::from_rect(rect))
 +            }
 +            _ => scene.fill(Fill::NonZero, self.transform, &paint, None, &rect),
-+        }
-+    }
-+
+         }
+     }
+ 
 +    /// pyro: the baseline an outside marker sits on, in CSS px from the top of the list item's
 +    /// content box: that of the item's first line, the first line of the first box in it that has
 +    /// one, or, when there is none, that of the marker's own line (a line of the item's font).
@@ -4892,7 +4947,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
      fn draw_children(
          &self,
          scene: &mut impl PaintScene,
-@@ -1159,7 +3174,177 @@
+@@ -1159,7 +3225,177 @@
          clip_rect: Rect,
      ) {
          // Negative z_index hoisted nodes
@@ -5070,7 +5125,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          if let Some(hoisted) = &self.node.stacking_context {
              for hoisted_child in hoisted.neg_z_hoisted_children() {
                  let position = hoisted_child.position(self.node.tree(), self.node.id);
-@@ -1175,35 +3360,14 @@
+@@ -1175,35 +3411,14 @@
                  );
              }
          }
@@ -5113,7 +5168,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          // Positive z_index hoisted nodes
          if let Some(hoisted) = &self.node.stacking_context {
              for hoisted_child in hoisted.pos_z_hoisted_children() {
-@@ -1232,6 +3396,11 @@
+@@ -1232,6 +3447,11 @@
  
          let width = self.frame.content_box.width() as f32;
          let height = self.frame.content_box.height() as f32;
@@ -5125,7 +5180,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          let svg_size = svg.tree.size();
  
          let x = self.frame.content_box.origin().x;
-@@ -1272,20 +3441,121 @@
+@@ -1272,20 +3492,121 @@
          let viewport = svg_viewport_affine(svg, paint_size.width, paint_size.height);
          let transform = (self.transform * viewport).then_translate(Vec2 { x, y });
  
@@ -5248,7 +5303,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
      fn with_replaced_content_clip<S: PaintScene>(
          &self,
          scene: &mut S,
-@@ -1293,15 +3563,27 @@
+@@ -1293,15 +3614,27 @@
          paint_size: taffy::Size<f32>,
          x_offset: f32,
          y_offset: f32,
@@ -5277,7 +5332,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              BlendMode::default(),
              1.0,
              self.transform,
-@@ -1358,6 +3640,7 @@
+@@ -1358,6 +3691,7 @@
                  paint_size,
                  x_offset.px(),
                  y_offset.px(),
@@ -5285,7 +5340,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
                  |scene| {
                      scene.draw_image(to_peniko_image(image, quality).as_ref(), transform);
                  },
-@@ -1466,3 +3749,58 @@
+@@ -1466,3 +3800,58 @@
  
      CssBox::new(border_box, border, padding, outline_width, border_radii)
  }

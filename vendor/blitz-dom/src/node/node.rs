@@ -139,6 +139,9 @@ bitflags! {
         /// pyro: its in-flow content is taller than its box (a `height` or `max-height` shorter
         /// than its lines or blocks). Set by its layout.
         const FLOW_CONTENT_OVERFLOWS = 1 << 17;
+        /// pyro: the box's last layout clamped its lines (`layout::line_clamp`): one of
+        /// its blocks holds a clamp mark.
+        const CLAMPS_LINES = 1 << 25;
     }
 }
 
