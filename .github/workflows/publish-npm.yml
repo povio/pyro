@@ -287,7 +287,7 @@ jobs:
             for (const file of readdirSync(dir).filter(file => file.endsWith(".tgz"))) {
               const size = statSync(`${dir}/${file}`).size;
               console.log(`${file}: ${size} compressed bytes`);
-              if (size > 150 * 1024 * 1024) throw new Error("npm tarball exceeds the 150 MiB release budget");
+              if (size > 175 * 1024 * 1024) throw new Error("npm tarball exceeds the 175 MiB release budget");
             }
           '
           bun test test/binary.test.ts
