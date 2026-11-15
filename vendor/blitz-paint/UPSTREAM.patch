@@ -1363,12 +1363,10 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          // Render debug overlay
          if self.dom.devtools().highlight_hover {
              if let Some(node_id) = self.dom.as_ref().get_hover_node_id() {
-@@ -284,8 +304,151 @@
-                     self.initial_x,
-                     self.initial_y,
+@@ -286,6 +306,149 @@
                  );
-+            }
-+        }
+             }
+         }
 +    }
 +
 +    /// pyro: the canvas, in scene space: the viewport, or the root element's box where that is
@@ -1421,7 +1419,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                || !self.rendered(id)
 +            {
 +                continue;
-             }
++            }
 +            self.paint_backdrop(scene, id);
 +            // The root element paints where the document pass would have
 +            // put it (`render_element` applies its own location, transform
@@ -1484,7 +1482,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +        let visible_color = color.alpha > 0.0 && self.backgrounds;
 +        if opacity <= 0.0 || (!visible_color && backdrop_filter.is_none()) {
 +            return;
-         }
++        }
 +        let rect = Rect::new(
 +            self.initial_x,
 +            self.initial_y,
@@ -2294,14 +2292,10 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
  fn convert_rect(rect: &parley::BoundingBox) -> kurbo::Rect {
      peniko::kurbo::Rect::new(rect.x0, rect.y0, rect.x1, rect.y1)
  }
-@@ -963,12 +1517,374 @@
-                     None,
-                     &stroke_rect.to_rounded_rect(radius - stroke_width / 2.0),
-                 );
-+            }
-+        }
-+    }
-+
+@@ -967,8 +1521,370 @@
+         }
+     }
+ 
 +    /// pyro: paints the boxes of the inline (non-atomic) elements in this inline root's lines, as
 +    /// Chromium does. An element has one fragment per line it has content on: from the start of
 +    /// its first content there to the end of its last (its own start and end edges without their
@@ -2586,7 +2580,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +            if !left {
 +                cx.frame.border_radii.top_left = Vec2::ZERO;
 +                cx.frame.border_radii.bottom_left = Vec2::ZERO;
-             }
++            }
 +            if !right {
 +                cx.frame.border_radii.top_right = Vec2::ZERO;
 +                cx.frame.border_radii.bottom_right = Vec2::ZERO;
@@ -2657,9 +2651,9 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +            cx.draw_border(scene);
 +            // Over the box, as a block's outline is (see `render_element`).
 +            cx.draw_outline(scene);
-         }
-     }
- 
++        }
++    }
++
      fn draw_inline_layout(&self, scene: &mut impl PaintScene, pos: Point) {
          if self.node.flags.is_inline_root() {
 +            // pyro: inline elements with a clip path or a mask (clip_path.rs).
@@ -2718,6 +2712,8 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              // Render text
              let mut draw_text_context = self.context.draw_text_context.borrow_mut();
 -            crate::text::stroke_text(
+-                scene,
+-                text_layout.layout.lines(),
 +            draw_text_context.text_shift = text_shift;
 +            draw_text_context.line_tops = tops;
 +            let options = TextPaintOptions {
@@ -2726,8 +2722,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                shadows: true,
 +            };
 +            stroke_inline_text(
-                 scene,
--                text_layout.layout.lines(),
++                scene,
                  self.context.dom,
 +                self.node,
 +                text_layout,
@@ -3175,17 +3170,45 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
                      parent_style_transform.pre_translate(kurbo::Vec2 {
                          x: offset.x as f64 * self.scale,
                          y: offset.y as f64 * self.scale,
-@@ -1232,6 +2505,9 @@
+@@ -1232,6 +2505,11 @@
  
          let width = self.frame.content_box.width() as f32;
          let height = self.frame.content_box.height() as f32;
-+        // pyro: an inline `<svg>` without a `viewBox` lays its content out in its box.
-+        let sized = svg.sized(width / self.scale as f32, height / self.scale as f32);
++        // pyro: an inline `<svg>` without a `viewBox` lays its content out in its box, in user
++        // units of a CSS px times its zoom (`zoom: 2` draws its content twice as large).
++        let units = self.scale as f32 * self.style.effective_zoom.value();
++        let sized = svg.sized(width / units, height / units);
 +        let svg = sized.as_ref().unwrap_or(svg);
          let svg_size = svg.tree.size();
  
          let x = self.frame.content_box.origin().x;
-@@ -1299,9 +2575,21 @@
+@@ -1279,7 +2557,25 @@
+             x_offset.px(),
+             y_offset.px(),
+             |scene| {
++                // pyro: an SVG image (not an inline `<svg>`) is an isolated group: what blends in
++                // it blends with nothing under the image.
++                let isolate = self.element.name.local != local_name!("svg")
++                    && anyrender_svg::has_blend_modes(&svg.tree);
++                if isolate {
++                    scene.push_layer(
++                        Fill::NonZero,
++                        BlendMode::default(),
++                        1.0,
++                        self.transform,
++                        &self.frame.content_box_path(),
++                        None,
++                        None,
++                    );
++                }
+                 anyrender_svg::render_svg_tree(scene, &svg.tree, transform);
++                if isolate {
++                    scene.pop_layer();
++                }
+             },
+         );
+     }
+@@ -1299,9 +2595,21 @@
              || y_offset < 0.0
              || x_offset + paint_size.width > container_size.width
              || y_offset + paint_size.height > container_size.height;
@@ -3208,7 +3231,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              BlendMode::default(),
              1.0,
              self.transform,
-@@ -1466,3 +2754,29 @@
+@@ -1466,3 +2774,29 @@
  
      CssBox::new(border_box, border, padding, outline_width, border_radii)
  }

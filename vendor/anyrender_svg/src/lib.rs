@@ -92,6 +92,27 @@ pub fn render_svg_tree_with<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
     );
 }
 
+/// pyro: whether a group of `svg` (or of an SVG image in it) blends with what is under it
+/// (`mix-blend-mode`, `plus-lighter` included): an SVG image is an isolated group, which its
+/// painter draws it in then.
+pub fn has_blend_modes(svg: &usvg::Tree) -> bool {
+    fn group(g: &usvg::Group) -> bool {
+        g.children().iter().any(|node| match node {
+            usvg::Node::Group(child) => {
+                child.blend_mode() != usvg::BlendMode::Normal
+                    || render::compose_marker(child.id()).is_some()
+                    || group(child)
+            }
+            usvg::Node::Image(image) => match image.kind() {
+                usvg::ImageKind::SVG(tree) => group(tree.root()),
+                _ => false,
+            },
+            _ => false,
+        })
+    }
+    group(svg.root())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

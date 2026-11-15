@@ -51,6 +51,32 @@ for offscreen rasters and its filter conventions. Upstream draws a translucent r
   is left out: the group is drawn unfiltered, as before. Mask and pattern rasters are recorded and replayed
   (`append_scene`) as the page is, so that filters apply in them too (WPT `svg-mutation-filter-used-by-mask`).
   Covered by the unit tests in `src/filter.rs` and pyro-render's `svg_filters.rs`.
+- **Filter functions** (`filter="drop-shadow(...)"`, CSS `filter: blur(...)` on an SVG element): usvg gives one
+  a filter of one primitive named `result` over the element's bounding box widened by half (a blur, a drop
+  shadow) or a tenth, a stand-in for the region CSS filter functions do not have, which cut
+  `drop-shadow(50px 0)` on a 50 px wide shape off at 25 px (WPT `svg-shorthand-drop-shadow-001`,
+  `svg-mutation-*`). Such a filter (`function_kind`: an id usvg generated, `filterN`, and that primitive over
+  exactly that region; a `<filter>` written so is taken for one) is drawn in a layer that reaches as far as its
+  effect does from what the children draw and two device pixels around it (a drop shadow adds its offset, a blur
+  three deviations; a clip at the content's edge lightened its anti-aliased pixels), and the content is not
+  clipped to it (`filter_regions` gives each filter's layer region and whether it clips the source graphic). A
+  group's layer bounds (`layer_bounds`) take the same reach.
+- **Masks of opaque shapes from a box**: in the document blitz-dom makes for a CSS box's `mask-image: url(#m)`
+  (its content in a group of id `__pyro_box_reference`), a mask whose content is shapes in one opaque colour inside
+  its rectangle (no images, no groups with effects but a clip path of one shape, which clips them in a layer, or is
+  filled itself over a rectangle holding it) is drawn into the `DestIn` layer as those shapes (in scene
+  coordinates), in a layer of the colour's mask
+  value, instead of as a raster: a page drawing the same `<circle>` then has the same edge (the raster, at twice
+  the resolution, was up to 52 levels apart from it: WPT `mask-image-3a`...`3e`). Masks in SVG content keep the
+  raster: their references are other masks, of other descriptions of a shape (a circle as `r="25"` scaled by 2 and
+  as `r="5000"` by 0.01, 39 levels apart drawn directly), which its supersampling brings within their tolerance
+  (WPT `mask-*-content-clip-transform`). blitz-dom's `svg_reference_document` writes the group. Whether a render
+  is inside it is a scoped thread-local (`IN_BOX_REFERENCE`, cleared in offscreen rasters), not a field of `Ctx`,
+  so that code building a `Ctx` from its `cull` stays as it is.
+- **Operator groups**: a group whose id is `__pyro_compose_<operator>_<n>` (blitz-dom `svg_css` writes them for CSS
+  mask layers and `mix-blend-mode: plus-lighter`, which usvg does not know) is composited with that operator
+  (`srcout`, `srcin`, `xor`, `pluslighter`) over all the output shows (`compose_marker`). `has_blend_modes` tells
+  whether a tree (an SVG image) blends, for its painter to isolate it.
 - Groups keep the order resvg applies: children, filters, clip path, mask, then opacity and blend mode.
 - Nested trees (`<image>` of an SVG, text, subtrees of clip paths, masks and patterns) are drawn with their own
   base transform; upstream reset it to the identity below the first group, which misplaced a group inside one.

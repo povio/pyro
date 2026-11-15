@@ -2505,8 +2505,10 @@ impl ElementCx<'_, '_> {
 
         let width = self.frame.content_box.width() as f32;
         let height = self.frame.content_box.height() as f32;
-        // pyro: an inline `<svg>` without a `viewBox` lays its content out in its box.
-        let sized = svg.sized(width / self.scale as f32, height / self.scale as f32);
+        // pyro: an inline `<svg>` without a `viewBox` lays its content out in its box, in user
+        // units of a CSS px times its zoom (`zoom: 2` draws its content twice as large).
+        let units = self.scale as f32 * self.style.effective_zoom.value();
+        let sized = svg.sized(width / units, height / units);
         let svg = sized.as_ref().unwrap_or(svg);
         let svg_size = svg.tree.size();
 
@@ -2555,7 +2557,25 @@ impl ElementCx<'_, '_> {
             x_offset.px(),
             y_offset.px(),
             |scene| {
+                // pyro: an SVG image (not an inline `<svg>`) is an isolated group: what blends in
+                // it blends with nothing under the image.
+                let isolate = self.element.name.local != local_name!("svg")
+                    && anyrender_svg::has_blend_modes(&svg.tree);
+                if isolate {
+                    scene.push_layer(
+                        Fill::NonZero,
+                        BlendMode::default(),
+                        1.0,
+                        self.transform,
+                        &self.frame.content_box_path(),
+                        None,
+                        None,
+                    );
+                }
                 anyrender_svg::render_svg_tree(scene, &svg.tree, transform);
+                if isolate {
+                    scene.pop_layer();
+                }
             },
         );
     }

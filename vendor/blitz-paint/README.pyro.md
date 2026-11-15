@@ -68,7 +68,10 @@ from the root of an upstream checkout at that commit) is the whole diff.
     brush. `stroke_text` leaves out the cut glyphs, decorations span what is kept, and a recording paint
     records the kept glyphs with their source text. Covered by `crates/pyro-render/tests/text_overflow_ellipsis.rs`.
   - `src/render.rs` (`draw_svg`): an inline `<svg>` without a `viewBox` is drawn from blitz-dom's
-    `SvgImageData::sized` tree for its content box.
+    `SvgImageData::sized` tree for its content box, in user units of a CSS px times its `zoom` (its content
+    was drawn at zoom 1 in a zoomed box: WPT `clip-path-path-with-zoom-002`). An SVG image (`<img>`, not an
+    inline `<svg>`) whose content blends (`anyrender_svg::has_blend_modes`) is drawn in a layer of its own, an
+    isolated group: its `mix-blend-mode` blended with the page under it (WPT `mix-blend-mode-in-svg-image`).
   - `src/lib.rs` (`paint_scene_with`, `CORE_TEXT_GLYPHS`), `src/text.rs` (`stroke_text`): text is placed as
     Chromium places it. Screenshots draw an inline root's text, and a text input's value, placeholder and caret
     (`draw_text_input_text`), at its layout-unit x (`fractional_text_x`, which print already used) instead of its
