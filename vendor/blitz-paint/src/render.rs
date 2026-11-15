@@ -454,8 +454,78 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
     fn node_transform(&self, node: &Node, parent: Affine) -> Affine {
         let location = node.final_layout().location;
         parent
+            * self.table_part_transform(node)
             * Affine::translate(Vec2::new(location.x as f64, location.y as f64) * self.scale)
             * node.transform().as_deref().copied().unwrap_or_default()
+    }
+
+    /// pyro: the transforms of a table cell's row group and row, which are no boxes of their own
+    /// (their cells are the table's children): each about its own box, in the table's space.
+    fn table_part_transform(&self, node: &Node) -> Affine {
+        let index = node.layout_data().table_cell_index;
+        if index == u32::MAX {
+            return Affine::IDENTITY;
+        }
+        let Some(table) = node.layout_parent.get().and_then(|id| self.dom.get_node(id)) else {
+            return Affine::IDENTITY;
+        };
+        let Some(blitz_dom::node::SpecialElementData::TableRoot(ctx)) = table.element_data().map(|e| &e.special_data) else {
+            return Affine::IDENTITY;
+        };
+        let Some(cell) = ctx.cells.get(index as usize).filter(|cell| cell.node_id == node.id) else {
+            return Affine::IDENTITY;
+        };
+        let Some(row) = ctx.rows.get(cell.row as usize) else {
+            return Affine::IDENTITY;
+        };
+        let transformed = |id: NodeId| {
+            self.dom.get_node(id).and_then(|node| node.primary_styles()).is_some_and(|style| {
+                use style::values::generics::transform::{GenericRotate, GenericScale, GenericTranslate};
+                let b = style.get_box();
+                !b.transform.0.is_empty()
+                    || !matches!(b.rotate, GenericRotate::None)
+                    || !matches!(b.translate, GenericTranslate::None)
+                    || !matches!(b.scale, GenericScale::None)
+            })
+        };
+        let parts = [row.group, Some(row.node_id)];
+        if !parts.iter().flatten().any(|&id| transformed(id)) {
+            return Affine::IDENTITY;
+        }
+        let grid = ctx.computed_grid_info.borrow();
+        let Some(grid) = grid.as_ref() else { return Affine::IDENTITY };
+        let columns: Vec<taffy::Line<f32>> = PhysicalTracks::from_tracks(&grid.columns).iter().collect();
+        let rows: Vec<taffy::Line<f32>> = PhysicalTracks::from_tracks(&grid.rows).iter().collect();
+        let (Some(first), Some(last)) = (columns.first(), columns.last()) else { return Affine::IDENTITY };
+        let top = ctx.grid_box.borrow().map_or(0.0, |(top, _)| top);
+        let mut out = Affine::IDENTITY;
+        for (at, id) in parts.into_iter().enumerate() {
+            let Some(id) = id else { continue };
+            if !transformed(id) {
+                continue;
+            }
+            // The rows of the part: the row's own, or its group's.
+            let spanned: Vec<&taffy::Line<f32>> = ctx
+                .rows
+                .iter()
+                .zip(&rows)
+                .filter(|(other, _)| if at == 0 { other.group == Some(id) } else { other.node_id == id })
+                .map(|(_, track)| track)
+                .collect();
+            let (Some(y0), Some(y1)) = (spanned.first().map(|t| t.start), spanned.last().map(|t| t.end)) else {
+                continue;
+            };
+            let Some(style) = self.dom.get_node(id).and_then(|node| node.primary_styles()) else { continue };
+            let Some(t) = blitz_dom::resolve_2d_transform_for_size(style.get_box(), last.end - first.start, y1 - y0)
+            else {
+                continue;
+            };
+            let [a, b, c, d, e, f] = t.as_coeffs();
+            let t = Affine::new([a, b, c, d, e * self.scale, f * self.scale]);
+            let origin = Vec2::new(first.start as f64, (y0 + top) as f64) * self.scale;
+            out *= Affine::translate(origin) * t * Affine::translate(-origin);
+        }
+        out
     }
 
     fn scrolled_transform(&self, node: &Node, transform: Affine) -> Affine {
@@ -980,7 +1050,14 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         if cx.context.backgrounds {
             cx.draw_table_row_backgrounds(scene);
         }
-        cx.draw_table_borders(scene);
+        // pyro: a collapsed table whose cells hold half of the borders around them draws the
+        // borders over the cells' backgrounds, after its children (Chromium paints collapsed
+        // borders after the cells' backgrounds); one with uniform gutters draws them here.
+        let borders_after_cells = matches!(&cx.element.special_data,
+            blitz_dom::node::SpecialElementData::TableRoot(table) if table.collapsed_edges.is_some());
+        if !borders_after_cells {
+            cx.draw_table_borders(scene);
+        }
         if paints_own_box {
             cx.draw_border(scene);
         }
@@ -1024,6 +1101,9 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             },
         );
         cx.transform = unscrolled_transform;
+        if borders_after_cells {
+            cx.draw_table_borders(scene);
+        }
 
         // Overlay scrollbars, drawn unscrolled above the
         // clipped content.
@@ -1154,9 +1234,29 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         // todo: maybe cache this so we don't need to constantly be figuring it out
         // It is quite a bit of math to calculate during render/traverse
         // Also! we can cache the bezpaths themselves, saving us a bunch of work
-        let frame = create_css_rect(&style, &layout, scale);
-
         let element = node.element_data().unwrap();
+
+        // pyro: a table with captions is its wrapper box; it paints its own box (background,
+        // borders, shadows, outline) around its grid alone (`TableContext::grid_box`).
+        let frame = match &element.special_data {
+            blitz_dom::node::SpecialElementData::TableRoot(table) => match *table.grid_box.borrow() {
+                Some((top, height)) => {
+                    let mut grid = layout;
+                    grid.size.height = height;
+                    let frame = create_css_rect(&style, &grid, scale);
+                    let dy = Vec2::new(0.0, top as f64 * scale);
+                    CssBox::new(
+                        frame.border_box + dy,
+                        frame.border_width,
+                        frame.padding_width,
+                        frame.outline_width,
+                        frame.border_radii,
+                    )
+                }
+                None => create_css_rect(&style, &layout, scale),
+            },
+            _ => create_css_rect(&style, &layout, scale),
+        };
 
         ElementCx {
             context: self,

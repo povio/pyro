@@ -1302,6 +1302,25 @@ impl BaseDocument {
             crate::util::ensure_stack(|| self.deallocate_anonymous_block(nested_id));
         }
 
+        // pyro: the boxes it wrapped or laid out have it as their layout parent no more (a box
+        // `display: none` since keeps no pointer to a freed one; a fresh build has none).
+        let wrapped: Vec<NodeId> = self.nodes[anon_id]
+            .children
+            .iter()
+            .copied()
+            .chain(self.nodes[anon_id].layout_children.borrow().iter().flatten().copied())
+            .collect();
+        for id in wrapped {
+            if let Some(node) = self.nodes.get(id) {
+                if node.layout_parent.get() == Some(anon_id) {
+                    node.layout_parent.set(None);
+                }
+                if node.layout_child_of.get() == Some(anon_id) {
+                    node.layout_child_of.set(None);
+                }
+            }
+        }
+
         self.remove_node_from_tree(anon_id);
     }
 
@@ -1314,6 +1333,7 @@ impl BaseDocument {
     /// cells, `enter_layout_tree`; a former table's other children, `damage_former_table_parts`).
     pub(crate) fn leave_layout_tree(&mut self, node_id: NodeId) {
         let Some(node) = self.nodes.get(node_id) else { return };
+        let anonymous = node.is_anonymous();
         let children = node.layout_children.borrow_mut().take();
         for child_id in children.into_iter().flatten() {
             let Some(child) = self.nodes.get(child_id) else { continue };
@@ -1321,6 +1341,11 @@ impl BaseDocument {
                 continue;
             }
             child.layout_child_of.set(None);
+            // pyro: an anonymous box leaving the layout tree is freed with its owner's anonymous
+            // boxes: its children keep no pointer to it.
+            if anonymous && child.layout_parent.get() == Some(node_id) {
+                child.layout_parent.set(None);
+            }
             crate::util::ensure_stack(|| self.leave_layout_tree(child_id));
         }
         let anonymous_blocks = std::mem::take(&mut self.nodes[node_id].anonymous_blocks);
