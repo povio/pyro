@@ -62,6 +62,8 @@ pub struct TextLayout {
     /// `text-overflow: ellipsis` at the end of its lines: paint ends each line that overflows
     /// the content box with it.
     pub ellipsis: Option<Box<parley::layout::Layout<TextBrush>>>,
+    /// pyro: the text of `ellipsis` ("…", or the string of `text-overflow: "<string>"`).
+    pub ellipsis_text: String,
     /// pyro: text drawn over or under stretches of this text (ruby annotations, emphasis marks).
     /// Empty for almost every inline root.
     pub annotations: Vec<TextAnnotation>,

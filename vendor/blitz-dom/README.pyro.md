@@ -54,10 +54,12 @@ against the upstream commit above); they are covered by pyro-render's rendering 
   breaks); `opacity` goes into the colour. blitz-paint paints it while the value is empty. A textarea's wraps at
   its width (layout); a change of the attribute builds the box again; a new scale or font set shapes it again.
   Repro `bench/fidelity/repros/input-placeholder.html`, tests `crates/pyro-render/tests/input_placeholder.rs`.
-- `layout/inline/build.rs` (`ends_lines_with_ellipsis`), `node/text.rs` (`TextLayout::ellipsis`): an inline root
-  that clips its inline overflow and has `text-overflow: ellipsis` on its end side (Stylo keeps a single value as
-  `second`) gets "…" shaped in its own style; blitz-paint ends each overflowing line with it. Repro
-  `bench/fidelity/repros/text-overflow-ellipsis.html`.
+- `layout/inline/build.rs` (`line_end_ellipsis`), `node/text.rs` (`TextLayout::ellipsis`, `ellipsis_text`): an
+  inline root that clips its inline overflow and has `text-overflow: ellipsis` on its end side (Stylo keeps a single
+  value as `second`) gets "…" shaped in its own style; blitz-paint ends each overflowing line with it. Repro
+  `bench/fidelity/repros/text-overflow-ellipsis.html`. `text-overflow: "<string>"` shapes the string instead, on
+  one line (white space collapsed; U+000A to U+000D, U+0085, U+2028 and U+2029 count as spaces), in the base
+  direction of the root's lines (WPT `css-overflow/text-overflow-string-*`).
 - `node/svg.rs` (`SvgImageData::sized`, `inline_source`), `layout/construct.rs`: an inline `<svg>` without a
   `viewBox` keeps its source, and is parsed again (cached) with the root's `width`/`height` set to its CSS
   content box for painting: its viewport is the box, as in Chromium, so user units are CSS px and percentages (a

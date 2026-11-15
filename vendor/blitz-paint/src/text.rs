@@ -878,6 +878,23 @@ impl TextCut {
         }
         (range.unwrap_or(0..0), extent)
     }
+
+    /// The x extent of the first atom of `run` in visual order, or of its last one (`last`).
+    pub(crate) fn end_atom(run: &parley::GlyphRun<'_, TextBrush>, last: bool) -> Option<(f32, f32)> {
+        let advances: Vec<f32> = run.glyphs().map(|g| g.advance).collect();
+        let (mut pen, mut index) = (run.offset(), 0);
+        let mut found = None;
+        for (_, count) in run.atom_texts() {
+            let advance: f32 = advances.get(index..index + count)?.iter().sum();
+            found = Some((pen, pen + advance));
+            if !last {
+                break;
+            }
+            pen += advance;
+            index += count;
+        }
+        found
+    }
 }
 
 /// pyro: the thickness of a decoration line in CSS px, as Blink resolves it
@@ -2096,6 +2113,7 @@ pub(crate) fn draw_text_annotations<S: PaintScene>(
     recording: bool,
     vertical: Option<VerticalLine>,
     brush_override: Option<Color>,
+    cut: Option<TextCut>,
 ) {
     // Glyphs snap to quarter pixels as the text's do (`stroke_text`).
     let snap = !recording && vertical.is_none();
@@ -2131,7 +2149,15 @@ pub(crate) fn draw_text_annotations<S: PaintScene>(
                     for (range, count, extent) in atoms() {
                         let marked = count > 0
                             && text.get(range).and_then(|t| t.chars().next()).is_some_and(can_take_emphasis_mark);
-                        if marked {
+                        // No mark over an atom `text-overflow` cut from the line.
+                        let kept = cut.is_none_or(|cut| {
+                            if cut.keep_left {
+                                extent.1 <= f64::from(cut.edge) + 1.0 / 128.0
+                            } else {
+                                extent.0 >= f64::from(cut.edge) - 1.0 / 128.0
+                            }
+                        });
+                        if marked && kept {
                             marks.push((index, extent, content));
                         }
                     }

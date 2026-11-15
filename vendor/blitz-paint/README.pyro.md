@@ -66,7 +66,9 @@ from the root of an upstream checkout at that commit) is the whole diff.
     boundary where blitz-dom's shaped "…" still fits at the end edge (the left one for right-to-left lines),
     and the ellipsis is drawn next to the last atom kept, on the line's baseline, with the inline root as its
     brush. `stroke_text` leaves out the cut glyphs, decorations span what is kept, and a recording paint
-    records the kept glyphs with their source text. Covered by `crates/pyro-render/tests/text_overflow_ellipsis.rs`.
+    records the kept glyphs with their source text. A line too narrow for any atom beside the ellipsis keeps
+    its first atom (Blink's `LineTruncator`; `TextCut::end_atom`), and emphasis marks skip the atoms cut
+    (`draw_text_annotations`' `cut`). Covered by `crates/pyro-render/tests/text_overflow_ellipsis.rs`.
   - `src/render.rs` (`draw_svg`): an inline `<svg>` without a `viewBox` is drawn from blitz-dom's
     `SvgImageData::sized` tree for its content box, in user units of a CSS px times its `zoom` (its content
     was drawn at zoom 1 in a zoomed box: WPT `clip-path-path-with-zoom-002`). An SVG image (`<img>`, not an

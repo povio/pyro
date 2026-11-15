@@ -538,18 +538,25 @@ fn build_inline_layout_with(
             bidi,
         );
     }
-    // pyro: the "…" that `text-overflow: ellipsis` ends an overflowing line with, in the root's
-    // own style (its first available font, as in Chromium).
-    text_layout.ellipsis = root_node_style
-        .as_deref()
-        .filter(|style| ends_lines_with_ellipsis(style))
-        .map(|_| {
-            let mut builder = layout_ctx.tree_builder(font_ctx, scale, true, &parley_style);
-            builder.push_text("\u{2026}");
-            let mut layout = builder.build().0;
-            layout.break_all_lines(None);
-            Box::new(layout)
+    // pyro: the "…" (or the string of `text-overflow: "<string>"`) that `text-overflow` ends an
+    // overflowing line with, in the root's own style (its first available font, as in Chromium).
+    let ellipsis = root_node_style.as_deref().and_then(|style| line_end_ellipsis(style));
+    let rtl_lines = text_layout.layout.is_rtl();
+    text_layout.ellipsis = ellipsis.as_deref().map(|text| {
+        let mut builder = layout_ctx.tree_builder(font_ctx, scale, true, &parley_style);
+        // Its base direction is that of the root's lines (under `unicode-bidi: plaintext`, the
+        // one the root's text resolved to).
+        builder.set_base_direction(if rtl_lines {
+            parley::BaseDirection::Rtl
+        } else {
+            parley::BaseDirection::Ltr
         });
+        builder.push_text(text);
+        let mut layout = builder.build().0;
+        layout.break_all_lines(None);
+        Box::new(layout)
+    });
+    text_layout.ellipsis_text = ellipsis.unwrap_or_default();
     // pyro: the shaped text's content widths, for every layout of it (`TextLayout::
     // content_widths`): a function of the shaped clusters alone while no in-flow inline box, whose
     // size each layout sets, takes part in them. Measured with no text indent; the layout sets its
@@ -566,16 +573,18 @@ fn build_inline_layout_with(
     text_layout.percent_span_edges = bidi_scan.percent_edges;
     return true;
 
-    /// pyro: whether `text-overflow` puts an ellipsis at the end of the lines of a box with this
-    /// style: the box clips its inline overflow, and the end side's value is `ellipsis`. Stylo
-    /// keeps a single value as `second` (the end side); of two, `first` is the line-left side's,
-    /// where right-to-left lines end.
-    fn ends_lines_with_ellipsis(style: &style::properties::ComputedValues) -> bool {
+    /// pyro: what `text-overflow` puts at the end of the overflowing lines of a box with this
+    /// style: "…" for `ellipsis`, the string of a `<string>` value (one line: its white space
+    /// collapsed, with every line-breaking control character (U+000A to U+000D, U+0085, U+2028,
+    /// U+2029) as a space, as Chromium draws it), `None` when the box does not clip its inline overflow
+    /// or the end side's value is `clip`. Stylo keeps a single value as `second` (the end
+    /// side); of two, `first` is the line-left side's, where right-to-left lines end.
+    fn line_end_ellipsis(style: &style::properties::ComputedValues) -> Option<String> {
         use style::computed_values::direction::T as Direction;
         use style::values::computed::Overflow;
         use style::values::specified::text::TextOverflowSide;
         if style.get_box().overflow_x == Overflow::Visible {
-            return false;
+            return None;
         }
         let overflow = &style.get_text().text_overflow;
         let end = if !overflow.sides_are_logical && style.clone_direction() == Direction::Rtl {
@@ -583,7 +592,22 @@ fn build_inline_layout_with(
         } else {
             &overflow.second
         };
-        matches!(end, TextOverflowSide::Ellipsis)
+        match end {
+            TextOverflowSide::Clip => None,
+            TextOverflowSide::Ellipsis => Some("\u{2026}".to_string()),
+            TextOverflowSide::String(string) => {
+                let is_space = |c: char| matches!(c, ' ' | '\t' | '\n' | '\u{b}' | '\u{c}' | '\r' | '\u{85}' | '\u{2028}' | '\u{2029}');
+                let mut text = String::new();
+                for c in AsRef::<str>::as_ref(string).chars() {
+                    if !is_space(c) {
+                        text.push(c);
+                    } else if !text.ends_with(' ') {
+                        text.push(' ');
+                    }
+                }
+                Some(text)
+            }
+        }
     }
 
     /// pyro: lays out on one line what an annotation draws: a ruby annotation's content in its

@@ -137,3 +137,28 @@ fn a_printed_ellipsis_and_the_text_it_keeps_map_to_their_characters() {
     assert!(out.stats.runs_with_source >= 2, "the line's run and the ellipsis: {:?}", out.stats);
     assert_eq!(out.stats.glyphs_without_text, 0, "{:?}", out.stats);
 }
+
+#[test]
+fn a_string_value_ends_the_line_as_the_ellipsis_does() {
+    let ellipsis = render(&format!("<div class=t>{LONG}</div>"));
+    let string = render(&format!("<div class=t style='text-overflow:\"\\2026\"'>{LONG}</div>"));
+    assert_eq!(ellipsis.data, string.data, "the string \"…\" is drawn as `ellipsis` is");
+    // Line-breaking controls in the string are white space, collapsed: one line.
+    let spaced = render(&format!("<div class=t style='text-overflow:\"I I\"'>{LONG}</div>"));
+    let broken = render(&format!("<div class=t style='text-overflow:\"I\\A\\A\\2028 I\"'>{LONG}</div>"));
+    assert_eq!(spaced.data, broken.data, "controls collapse to one space");
+    assert_ne!(spaced.data, ellipsis.data, "the string is drawn");
+    let (below, _, _) = ink(&broken, 0, 400, 40, 300, dark);
+    assert_eq!(below, 0, "on the line it ends: {below} dark pixels below it");
+}
+
+#[test]
+fn a_line_too_narrow_for_the_ellipsis_keeps_its_first_atom() {
+    // 20px: an I (about 9px) fits, the ellipsis (32px) beside it does not.
+    let img = render(&format!("<div class=t style='width:20px'>{LONG}</div>"));
+    let (stem, _, last) = ink(&img, 0, 400, 8, 20, dark);
+    assert!(stem > 0, "the first I is drawn");
+    assert!(last < 10, "and only it: stems to {last}");
+    let (dots, _, end) = ink(&img, last + 2, 400, 24, 34, dark);
+    assert!(dots > 0 && end < 20, "the ellipsis follows it, clipped by the box: {dots} dark pixels to {end}");
+}

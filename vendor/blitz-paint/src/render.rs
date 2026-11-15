@@ -718,6 +718,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
                         recording,
                         None,
                         Some(Color::BLACK),
+                        None,
                     );
                 }
             }
@@ -1783,7 +1784,7 @@ fn stroke_inline_text(
                 transform * Affine::translate(offset),
                 options,
                 node.id,
-                Some("\u{2026}"),
+                Some(&text_layout.ellipsis_text),
                 context,
                 None,
                 None,
@@ -1822,14 +1823,30 @@ fn truncate_line(
         }
         let cut = crate::text::TextCut { edge: width - ellipsis_width, keep_left: true };
         let end = runs().filter_map(|run| cut.kept(&run).1).map(|(_, x1)| x1).fold(None, |a: Option<f32>, x| Some(a.map_or(x, |a| a.max(x))));
-        Some((cut, end.unwrap_or(metrics.offset)))
+        if let Some(end) = end {
+            return Some((cut, end));
+        }
+        // Nothing fits beside the ellipsis: the line keeps its first atom (Blink's
+        // `LineTruncator` never hides the first child whole).
+        let first = runs().min_by(|a, b| a.offset().total_cmp(&b.offset()));
+        let Some(edge) = first.and_then(|run| crate::text::TextCut::end_atom(&run, false)).map(|(_, x1)| x1) else {
+            return Some((cut, metrics.offset));
+        };
+        Some((crate::text::TextCut { edge, keep_left: true }, edge))
     } else {
         if metrics.offset + metrics.hanging_advance >= -epsilon {
             return None;
         }
         let cut = crate::text::TextCut { edge: ellipsis_width, keep_left: false };
         let start = runs().filter_map(|run| cut.kept(&run).1).map(|(x0, _)| x0).fold(None, |a: Option<f32>, x| Some(a.map_or(x, |a| a.min(x))));
-        Some((cut, start.unwrap_or(metrics.offset + metrics.advance) - ellipsis_width))
+        if let Some(start) = start {
+            return Some((cut, start - ellipsis_width));
+        }
+        let last = runs().max_by(|a, b| (a.offset() + a.advance()).total_cmp(&(b.offset() + b.advance())));
+        let Some(edge) = last.and_then(|run| crate::text::TextCut::end_atom(&run, true)).map(|(x0, _)| x0) else {
+            return Some((cut, metrics.offset + metrics.advance - ellipsis_width));
+        };
+        Some((crate::text::TextCut { edge, keep_left: false }, edge - ellipsis_width))
     }
 }
 
@@ -2586,6 +2603,10 @@ impl ElementCx<'_, '_> {
                         Some(tops) => transform * Affine::translate((0.0, tops.shift(line.metrics()))),
                         None => transform,
                     } * Affine::translate((text_shift, 0.0));
+                    let cut = text_layout.ellipsis.as_deref().and_then(|ellipsis| {
+                        let width = self.node.unrounded_layout().content_box_width() * self.scale as f32;
+                        truncate_line(&line, ellipsis, width, self.scale as f32, text_layout.layout.is_rtl()).map(|(cut, _)| cut)
+                    });
                     crate::text::draw_text_annotations(
                         scene,
                         &line,
@@ -2597,6 +2618,7 @@ impl ElementCx<'_, '_> {
                         recording,
                         None,
                         None,
+                        cut,
                     );
                 }
             }
@@ -2756,6 +2778,7 @@ impl ElementCx<'_, '_> {
                         self.scale,
                         recording,
                         vertical,
+                        None,
                         None,
                     );
                 }
