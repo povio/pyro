@@ -2,8 +2,9 @@
 
 `.github/workflows/wpt.yml` runs our WPT subset (the directories in `lib.mjs` `DEFAULT_DIRS`, 3,541 pages) on every
 pull request and fails when coverage goes down. `baseline.json` records, per page, which subtests pass, whether the
-page completed, and how long it took. The same gate runs over WPT's reftests in the same directories (9,842 pages,
-`reftest-baseline.json`): see [Reftests](#reftests), which also compares pyro's results with Chrome's.
+page completed, and how long it took. The same gate runs over WPT's reftests in the same directories and in 31 CSS layout
+directories (18,156 pages, 62% of WPT's 29,212 reftests; `reftest-baseline.json`): see [Reftests](#reftests), which
+also compares pyro's results with Chrome's.
 [What runs](#what-runs) lists the testharness pages by directory. And it runs over WPT's crashtests (2,031 pages,
 `crashtest-baseline.json`): see [Crashtests](#crashtests).
 
@@ -17,9 +18,11 @@ page completed, and how long it took. The same gate runs over WPT's reftests in 
    with it, for that reason alone.
 3. `build`: `cargo build --profile release-fast` (dependencies cached by `Swatinem/rust-cache`, saved from `main`
    only), the patched JavaScriptCore linked in, saved to the cache.
-4. `wpt`: four macOS shards. Each restores the pinned WPT checkout (`fetch-wpt.sh`: revision `wpt-revision.txt`,
-   only the paths in `wpt-paths.txt`, ~85 MB, cached), takes its share of the pages (longest first, balanced by the
-   baseline's durations) and runs it at `--jobs 4` (3 CPUs). Every page whose result differs from the baseline then
+4. `wpt`: one job on `lp-m1` (the matrix takes more shards: each takes its share of the pages, balanced by the
+   baseline's durations). It restores the pinned WPT checkout (`fetch-wpt.sh`: revision `wpt-revision.txt`, only the
+   paths in `wpt-paths.txt`, about 290 MB, cached) and runs the pages longest first at `--jobs 4`, the load the
+   baseline was recorded under. It was four shards until 2026-11-15: the runner takes one job at a time, so they ran
+   one after another and each paid about 25 s of setup. Every page whose result differs from the baseline then
    runs at least twice more at the same `--jobs`, padded with copies when few pages differ, so a timing-sensitive
    page reruns under about the load it first ran under.
 5. `gate` (Linux): merges the shards, checks them, writes the summary, and uploads a refreshed `baseline.json` as the
@@ -292,10 +295,12 @@ gh run download <run-id> -n wpt-reftest-baseline -D bench/wpt     # writes bench
 `lib.mjs` `discoverReftests()` classifies files as WPT's manifest does (`tools/manifest/sourcefile.py`): a markup file
 (`.html`, `.htm`, `.xht`, `.xhtml`, `.xml`, `.svg`) with a `match` or `mismatch` link is a reftest, unless it is a
 manual, visual, crash or print test, a testharness page, or under a `resources`, `support` or `tools` directory. The
-directories are `REFTEST_DIRS`: the paint directories with all of CSS2 (it costs about 50 s of the run), and the five
-testharness directories that hold reftests (501: selector invalidation, `dir=auto` and bidi, shadow trees). At the
-pinned revision they hold 9,842 reftests. wpt.fyi lists 9,855 in them: the same 9,842, and the 13 left out below for
-wptserve or testdriver.
+directories are `REFTEST_DIRS`: the paint directories with all of CSS2 (it costs about 50 s of the run), the five
+testharness directories that hold reftests (501: selector invalidation, `dir=auto` and bidi, shadow trees), and the 31
+layout directories (`LAYOUT_DIRS`, 8,314: flexbox, grid, sizing, position, tables, text, fonts, inline, overflow and
+the smaller style directories). At the pinned revision they hold 18,156 reftests, 62% of the 29,212 in WPT's
+manifest (32% before the two additions of 2026-11-15). In the first 13 directories wpt.fyi lists 9,855: the same
+9,842, and the 13 left out below for wptserve or testdriver.
 
 | directory | reftests | reference files | no reference | crash tests | manual | print | wptserve | testdriver |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
@@ -312,10 +317,98 @@ wptserve or testdriver.
 | shadow-dom | 25 | 21 | 0 | 43 | 0 | 0 | 0 | 1 |
 | dom | 4 | 3 | 65 | 44 | 0 | 0 | 0 | 0 |
 | encoding | 4 | 4 | 34 | 2 | 0 | 0 | 0 | 0 |
-| **all** | **9,842** | 4,046 | 2,552 | 233 | 73 | 43 | 10 | 3 |
+| **the 13 above** | **9,842** | 4,046 | 2,552 | 233 | 73 | 43 | 10 | 3 |
+| css/css-flexbox | 1,020 | 546 | 9 | 29 | 8 | 3 | 0 | 0 |
+| css/css-sizing | 566 | 119 | 0 | 8 | 0 | 0 | 3 | 0 |
+| css/css-position | 248 | 100 | 0 | 28 | 0 | 3 | 2 | 0 |
+| css/css-tables | 169 | 85 | 0 | 42 | 0 | 4 | 0 | 0 |
+| css/css-display | 222 | 55 | 92 | 3 | 0 | 0 | 0 | 0 |
+| css/css-align | 64 | 47 | 1 | 0 | 0 | 0 | 0 | 0 |
+| css/css-box | 42 | 7 | 0 | 0 | 0 | 0 | 0 | 0 |
+| css/css-overflow | 697 | 455 | 21 | 51 | 0 | 0 | 0 | 3 |
+| css/css-images | 474 | 248 | 4 | 6 | 0 | 0 | 8 | 0 |
+| css/css-values | 171 | 83 | 2 | 22 | 1 | 2 | 41 | 0 |
+| css/css-variables | 183 | 20 | 0 | 4 | 0 | 0 | 0 | 0 |
+| css/css-cascade | 44 | 18 | 0 | 7 | 1 | 7 | 0 | 0 |
+| css/css-conditional | 172 | 32 | 0 | 63 | 0 | 0 | 1 | 0 |
+| css/css-nesting | 17 | 8 | 0 | 6 | 0 | 0 | 0 | 0 |
+| css/css-lists | 198 | 161 | 2 | 17 | 0 | 0 | 0 | 0 |
+| css/css-pseudo | 279 | 233 | 1 | 26 | 7 | 0 | 0 | 0 |
+| css/css-content | 66 | 56 | 0 | 6 | 0 | 0 | 0 | 0 |
+| css/css-logical | 6 | 6 | 0 | 0 | 0 | 0 | 0 | 0 |
+| css/cssom | 12 | 9 | 0 | 19 | 0 | 0 | 0 | 0 |
+| css/cssom-view | 11 | 7 | 2 | 4 | 0 | 0 | 0 | 0 |
+| css/mediaqueries | 58 | 9 | 3 | 1 | 0 | 0 | 0 | 0 |
+| css/css-syntax | 1 | 1 | 4 | 3 | 0 | 0 | 0 | 0 |
+| css/css-shadow | 113 | 17 | 0 | 3 | 0 | 0 | 0 | 1 |
+| css/css-transitions | 6 | 5 | 0 | 13 | 55 | 0 | 0 | 0 |
+| css/css-animations | 36 | 25 | 0 | 46 | 66 | 0 | 0 | 0 |
+| css/css-properties-values-api | 7 | 3 | 0 | 7 | 0 | 0 | 0 | 0 |
+| css/css-grid | 826 | 1,161 | 4 | 43 | 0 | 1 | 0 | 2 |
+| css/css-text | 1,621 | 1,059 | 26 | 41 | 2 | 0 | 4 | 0 |
+| css/css-fonts | 378 | 333 | 4 | 10 | 0 | 2 | 6 | 0 |
+| css/css-inline | 373 | 170 | 0 | 7 | 0 | 3 | 0 | 0 |
+| css/css-borders | 234 | 116 | 1 | 3 | 0 | 0 | 0 | 0 |
+| **layout directories** | **8,314** | 5,194 | 176 | 518 | 140 | 25 | 65 | 6 |
+| **all** | **18,156** | 9,240 | 2,728 | 751 | 213 | 68 | 75 | 9 |
 
 In a local run of the 501 added on 2026-11-15 (not a baseline), every page completed and 376 passed (css/selectors
 294, html/dom 59, shadow-dom 16, dom 3, encoding 4); Chrome passes 481.
+
+`css/css-grid/grid-lanes/` is left out by path (`lib.mjs` `REFTEST_SKIP`, counted in `excluded`): 911 reftests of
+masonry layout, which pyro does not implement and of which Chrome passes 120. A failing page still runs on every pull
+request (only one that times out with nothing passing is skipped), so they would cost about 5% of the reftest run and
+protect nothing. Two css-fonts tests name a reference that WPT does not have (`reference not in the checkout`). The
+layout directories' testharness pages are not run: 4,771 of them can run, more than the 3,541 pages of the whole
+testharness run today.
+
+A local run of the layout directories (2026-11-15, one pass at 3 jobs on a loaded machine, not a baseline; the
+baseline comes from CI) found no crash, no hang and no browser restart. 5,203 of the 8,314 pass; Chrome passes 7,164:
+
+| directory | reftests | pyro (local) | Chrome | did not complete |
+|---|---:|---:|---:|---|
+| css/css-flexbox | 1,020 | 919 | 1,006 | timeout 2 |
+| css/css-sizing | 566 | 358 | 541 |  |
+| css/css-position | 248 | 110 | 247 |  |
+| css/css-tables | 169 | 116 | 160 |  |
+| css/css-display | 222 | 107 | 149 | timeout 1, error 1 |
+| css/css-align | 64 | 45 | 61 |  |
+| css/css-box | 42 | 2 | 42 |  |
+| css/css-overflow | 697 | 207 | 410 | timeout 4 |
+| css/css-images | 474 | 252 | 376 | timeout 3 |
+| css/css-values | 171 | 140 | 165 |  |
+| css/css-variables | 183 | 182 | 179 |  |
+| css/css-cascade | 44 | 36 | 44 |  |
+| css/css-conditional | 172 | 144 | 169 | timeout 3 |
+| css/css-nesting | 17 | 12 | 17 |  |
+| css/css-lists | 198 | 111 | 125 |  |
+| css/css-pseudo | 279 | 107 | 251 |  |
+| css/css-content | 66 | 34 | 62 |  |
+| css/css-logical | 6 | 1 | 6 |  |
+| css/cssom | 12 | 8 | 9 |  |
+| css/cssom-view | 11 | 9 | 11 |  |
+| css/mediaqueries | 58 | 42 | 56 |  |
+| css/css-syntax | 1 | 1 | 1 |  |
+| css/css-shadow | 113 | 23 | 94 | error 2 |
+| css/css-transitions | 6 | 5 | 6 | timeout 1 |
+| css/css-animations | 36 | 26 | 33 |  |
+| css/css-properties-values-api | 7 | 6 | 7 |  |
+| css/css-grid | 826 | 673 | 814 |  |
+| css/css-text | 1,621 | 1,115 | 1,328 | timeout 1 |
+| css/css-fonts | 378 | 192 | 323 | timeout 10 |
+| css/css-inline | 373 | 75 | 287 |  |
+| css/css-borders | 234 | 145 | 185 |  |
+| **layout directories** | 8,314 | 5,203 | 7,164 | timeout 25, error 3 |
+
+The 25 timeouts are pages whose `reftest-wait` is never removed, for features pyro lacks: `font-palette` and
+`@font-palette-values` (10), scroll markers (4), embedded SVG documents that change (3), container queries on
+pseudo-elements and cues (3), and `flex-item-z-ordering-003/-004`, `display-change-object-iframe`,
+`pseudo-element-transform` and `text-fit/selection-highlight-painting`. They pass nothing, so pull requests skip them.
+The 3 errors are one pyro bug, not a crash: `Page.captureScreenshot` answers `the page's tree has a repeated key` on
+`css/css-display/display-contents-shadow-dom-1.html`, `css/css-shadow/reslot-text-inheritance.html` and
+`css/css-shadow/shadow-fallback-dynamic-004.html` (all three change a shadow tree's slotting after load). The support files these pages ask for
+and do not get are missing in WPT too (`/fonts/DoulosSIL-R.woff`, `/fonts/GentiumPlus-R.woff2`,
+`css/css-pseudo/highlight-cascade/support/selections.js` and ten others).
 
 Left out, counted by reason in the run's `excluded`: reference files (named or linked as one, no links of their own),
 markup with no reference (CSS2's visual tests, support pages), crash tests, manual tests (by name, or by CSS flags
@@ -361,11 +454,20 @@ As wptrunner does (`executors/base.py`, `test-wait.js`), in `reftest.mjs`:
 The `reftest` job runs `gate.mjs run --kind reftest` in one shard on the self-hosted `lp-m1`, one page per CPU, and
 `reftest-gate` checks the result on Linux, as `wpt` and `gate` do. They share the `prepare` and `build` jobs (the
 browser, built on `lp-m1`) and the WPT checkout (`wpt-paths.txt` now lists the reftest directories and their support
-files; 171 MB). Manual runs take `suites` (`reftest` leaves the testharness shards and the client job out),
-`reftest-runner` (`macos-15`: two shards on GitHub's hosted runners, billed as macOS minutes) and `reftest-args` (for
+files; about 290 MB with its git directory). Manual runs take `suites` (`reftest` leaves the testharness shards and the client job out),
+`reftest-runner` (`macos-15`: four shards on GitHub's hosted runners, billed as macOS minutes) and `reftest-args` (for
 example `--dirs css/CSS2 --no-rerun` to time a directory).
 
-The 2026-11-15 additions need no more shards (est., from CI's means of about 85 ms per reftest and 270-320 ms per
+The layout directories (8,314 reftests) about double the reftest job, and more shards cannot shorten it: `lp-m1`
+takes one job at a time, so shards there run one after another and each adds its setup. Its run step took 129 to
+132 s for 9,842 pages in three runs (job 154 to 160 s); with 18,156 pages it is about 240 s (est., at the same 13 ms
+of wall time per page; job about 4.5 min). The testharness run became one job at the same `--jobs 4` to pay for most
+of it: four jobs of 67 to 73 s (272 to 286 s) become one of about 200 s (est.: 25 s of setup, four times 43 s of
+pages). A pull request's jobs on `lp-m1` go from about 8.2 min to about 8.8 min (est.), without the crashtest job.
+The first run with the new pages costs about 2.5 min more, once: each new page that passes runs again, and the 25
+pages that time out take 15 s each before the gate skips them.
+
+The first 2026-11-15 additions needed no more shards (est., from CI's means of about 85 ms per reftest and 270-320 ms per
 testharness page): 501 reftests are about 43 s of page time, 5 to 10 s of the one shard at 8 jobs; 728 testharness
 pages are about 200-235 s of page time, 12 to 15 s on each of the four shards at 4 jobs (locally they took 35 s of page
 time, plus one 15 s timeout that pull requests skip). The first run after pages are added runs each new page that

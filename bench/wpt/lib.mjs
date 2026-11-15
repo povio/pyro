@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 // The testharness directories, and the reftest directories (their testharness pages: parsing, computed values,
-// interpolation, CSS2 geometry). No directory is run by one kind only: REFTEST_DIRS lists the same ones, reftests first.
+// interpolation, CSS2 geometry). REFTEST_DIRS lists the same ones, reftests first, and LAYOUT_DIRS, which only the reftest run has.
 export const PAINT_DIRS = [
   'css/css-backgrounds', 'css/css-text-decor', 'css/filter-effects', 'css/compositing', 'css/css-masking',
   'css/css-color', 'css/css-transforms', 'css/CSS2',
@@ -89,9 +89,30 @@ export function discover(wpt, dirs, { sampleEncoding = 1 } = {}) {
 
 // ---------- reftest discovery ----------
 // The directories the reftest gate runs (reftest.mjs; README "Reftests"): the paint directories, with all of CSS2,
-// whose ~6,200 reftests (layout as much as paint) cost about 50 s of the run on the CI runner, and the reftests of
-// the testharness directories that have any (selector invalidation, dir=auto and bidi, shadow trees).
-export const REFTEST_DIRS = [...PAINT_DIRS, 'css/selectors', 'html/dom', 'shadow-dom', 'dom', 'encoding'];
+// whose ~6,200 reftests (layout as much as paint) cost about 50 s of the run on the CI runner, the reftests of
+// the testharness directories that have any (selector invalidation, dir=auto and bidi, shadow trees), and the
+// layout directories.
+// LAYOUT_DIRS: the core CSS layout and style directories, run as reftests only (their testharness pages, about as
+// many again as the testharness run has today, are not run yet: README "Reftests").
+export const LAYOUT_DIRS = [
+  'css/css-flexbox', 'css/css-sizing', 'css/css-position', 'css/css-tables', 'css/css-display', 'css/css-align',
+  'css/css-box', 'css/css-overflow', 'css/css-images', 'css/css-values', 'css/css-variables', 'css/css-cascade',
+  'css/css-conditional', 'css/css-nesting', 'css/css-lists', 'css/css-pseudo', 'css/css-content', 'css/css-logical',
+  'css/cssom', 'css/cssom-view', 'css/mediaqueries', 'css/css-syntax', 'css/css-shadow', 'css/css-transitions',
+  'css/css-animations', 'css/css-properties-values-api', 'css/css-grid', 'css/css-text', 'css/css-fonts',
+  'css/css-inline', 'css/css-borders',
+];
+export const REFTEST_DIRS = [...PAINT_DIRS, 'css/selectors', 'html/dom', 'shadow-dom', 'dom', 'encoding', ...LAYOUT_DIRS];
+// Reftests left out by path, with the reason discovery counts them under (`excluded`). A pattern is a prefix of the
+// page's URL or a whole URL.
+//   css/css-grid/grid-lanes/: masonry layout, which pyro (Taffy) does not implement and Chrome ships behind a flag:
+//     911 reftests of which Chrome passes 120 (13%). Failing pages still run on every pull request (only a page
+//     that times out with nothing passing is skipped), so these would cost about a fifth of the layout directories'
+//     time and protect nothing.
+export const REFTEST_SKIP = [
+  { prefix: 'css/css-grid/grid-lanes/', why: 'css-grid grid-lanes (masonry: not implemented)' },
+];
+const skipReftest = (rel) => REFTEST_SKIP.find((x) => rel === x.prefix || (x.prefix.endsWith('/') && rel.startsWith(x.prefix)));
 
 // Markup files as WPT's manifest reads them (tools/manifest/sourcefile.py): the tags it looks for, by regular
 // expression rather than a parser. A tag may carry a namespace prefix (SVG tests use <h:link>); comments are dropped.
@@ -222,6 +243,8 @@ export function discoverReftests(wpt, dirs) {
       try { fuzzy = parseFuzzy(metaOf(p.metas, 'fuzzy'), rel, refs.map((r) => r.url)); } catch { exclude('malformed fuzzy metadata'); continue; }
       const vs = metaOf(p.metas, 'viewport-size')[0]?.match(/^\s*(\d+)\s*x\s*(\d+)\s*$/);
       if (ps.slice(1).some((x) => refsOf('', x).length)) note('a reference has references of its own (compared one level, as wptrunner does)');
+      const skip = skipReftest(rel);
+      if (skip) { exclude(skip.why); continue; }
       const long = metaOf(p.metas, 'timeout').some((c) => c.trim() === 'long');
       const variants = metaOf(p.metas, 'variant');
       for (const v of variants.length ? variants : ['']) {
