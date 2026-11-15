@@ -1320,6 +1320,13 @@ impl LayoutPassState<'_> {
         inline_layout.block_offset = block_offset;
         let line_box_top = container_pb.top + block_offset;
 
+        // pyro: whether the lines are laid out in a vertical writing mode (turned): the physical
+        // geometry of inline boxes' fragments is not known here then.
+        let vertical_lines = self.nodes[node_id]
+            .primary_styles()
+            .or_else(|| self.nodes[node_id].parent.and_then(|parent| self.nodes[parent].primary_styles()))
+            .is_some_and(|style| style.writing_mode.is_vertical());
+
         // Store sizes and positions of inline boxes. Walking a line's items builds every
         // glyph run on it, so lines are only walked when there are boxes to find.
         let mut ibox_order: u32 = 0;
@@ -1415,8 +1422,10 @@ impl LayoutPassState<'_> {
                         let line_metrics = line.metrics();
                         // pyro: relatively positioned inline boxes around it move its static
                         // position, as they move what else they hold.
+                        // (Not in a vertical writing mode, where the lines are laid out turned
+                        // and the offset is not applied to them.)
                         let span_offset = match self.nodes[NodeId::from_u64(ibox.id)].parent {
-                            Some(parent) if inline_layout.relative_spans => {
+                            Some(parent) if inline_layout.relative_spans && !vertical_lines => {
                                 crate::layout::inline::inline_span_offset(&self.nodes, parent, node_id, container_content_size)
                             }
                             _ => taffy::Point::ZERO,
@@ -1566,7 +1575,7 @@ impl LayoutPassState<'_> {
                 let Some((x, y, width, height)) = span_padding_box(&self.nodes, &inline_layout, span, scale) else {
                     continue;
                 };
-                let offset = if inline_layout.relative_spans {
+                let offset = if inline_layout.relative_spans && !vertical_lines {
                     crate::layout::inline::inline_span_offset(&self.nodes, span, node_id, content_size)
                 } else {
                     taffy::Point::ZERO

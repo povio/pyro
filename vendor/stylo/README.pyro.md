@@ -160,6 +160,13 @@ last cascade, or below `display: none`, has data and no style). The 0.23 copy he
 0.24.0 as published unwraps the primary style (`ElementStyles::viewport_unit_usage`) and panics on a
 viewport resize. Test: `a_viewport_resize_with_elements_not_styled_yet` in pyro-render.
 
+`values/specified/box.rs` (`DisplayKeyword::Math`): `display` accepts the `math` inside keyword (`math`,
+`inline math`, `block math`; CSS Display 4). On an element that is not MathML it computes to `flow`, which is
+how it is kept (pyro lays no MathML out); alone it is inline-level. The declaration was dropped as invalid, so
+`display: block math` left a `::before` inline (WPT `display-math-on-pseudo-elements-002`, whose reference a
+block-level `::before` in an inline box now renders as a block). Test: `display_math_computes_to_flow` in
+`crates/pyro-render/tests/inline_leftovers.rs`.
+
 ## Updating or dropping the patch
 
 - When upstream has the change: delete this directory and the `[patch.crates-io]` entry.

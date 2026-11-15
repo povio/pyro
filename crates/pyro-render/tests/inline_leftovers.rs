@@ -270,3 +270,41 @@ fn an_inline_block_paints_over_the_background_of_a_later_block() {
     assert_eq!(pixel(&img, 6, 15), GREEN);
     assert_eq!(pixel(&img, 35, 28), RED);
 }
+
+#[test]
+fn a_spans_edges_go_beside_content_an_override_in_its_text_reorders() {
+    // WPT `bidi-011`: U+202E written in the span reverses "TSET", and "ST" after the span (in a
+    // U+202D inside that override) goes left of it. The span's start edge goes left of "TSET",
+    // not where the zero-width U+202E itself was left (before "ST").
+    let x = x_of(
+        "<div style='width:600px'>TE<span style='border:2px solid;padding:0 10px;margin:0 10px'>\u{202E}\
+         <i id=c>TSET</i></span>\u{202D}<i id=d>ST</i> </div>",
+        &["c", "d"],
+    );
+    assert_eq!(x, vec![70.0, 24.0], "{x:?}");
+}
+
+#[test]
+fn display_math_computes_to_flow() {
+    // CSS Display 4 (WPT `display-math-on-pseudo-elements-002`): `block math` on an element that
+    // is not MathML is a block, `math` an inline. The declaration was dropped (both inline).
+    let r = rects(
+        "<style>#i:after{display:block math;content:'Two'} #j:after{display:math;content:'Two'}</style>\
+         <div><span id=i>One</span></div><div id=n><span id=j>One</span></div><div id=m></div>",
+        &["n", "m"],
+    );
+    assert_eq!((r[0][1], r[1][1]), (80.0, 120.0), "{r:?}");
+}
+
+#[test]
+fn a_static_position_in_vertical_lines_is_on_its_line() {
+    // WPT css-position `static-position/vlr-ltr-ltr`: in a vertical writing mode the box stays
+    // where its line puts it, also in a relatively positioned span (which the turned lines do
+    // not move): 3 + 2 characters of 20px down the line.
+    let r = rects(
+        "<div style='writing-mode:vertical-lr;height:300px;font:20px/20px monospace'>XXX<span style='position:relative;inset-block-start:2px;inset-inline-start:2px'>XX\
+         <i id=x style='position:absolute;width:5px;height:5px'></i>XX</span></div>",
+        &["x"],
+    );
+    assert_eq!(r[0][1], 60.0, "{r:?}");
+}

@@ -8387,7 +8387,8 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
 +                                );
 +                                continue;
 +                            }
-+
+ 
+-                        let state = breaker.state_mut();
 +                            let (direction, clear, margin) = {
 +                                let style = self.child_layout_style(&self.nodes[node_id]);
 +                                // We can assume that the box is a float because we only set `break_on_box: true` for floats
@@ -8405,7 +8406,9 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
 +                                )
 +                            };
  
--                        let state = breaker.state_mut();
+-                        if !pending_floats.is_empty() {
+-                            let min_y = state.line_y() as f32 / scale;
+-                            for float in pending_floats.drain(..) {
 +                            let output = self.compute_child_layout(
 +                                crate::taffy_node_id(node_id),
 +                                float_child_inputs,
@@ -8419,10 +8422,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
 +                                direction,
 +                                clear,
 +                            };
- 
--                        if !pending_floats.is_empty() {
--                            let min_y = state.line_y() as f32 / scale;
--                            for float in pending_floats.drain(..) {
++
 +                            // A float that doesn't fit beside the content already on the line is
 +                            // placed below the line (CSS 2.1 §9.5.1), as are any floats after it
 +                            // (a float may not be higher than an earlier float).
@@ -8449,7 +8449,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
 -                            }
 -                            has_active_floats = true;
 -                        }
- 
+-
 -                        if has_active_floats {
 -                            let min_y = state.line_y() / scale as f64;
 -                            line_slot =
@@ -8460,11 +8460,6 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
 -                            state.set_line_x(0.0);
 -                            state.set_line_max_advance(max_advance);
 -                        }
-+                                let min_y = state.line_y() / scale as f64;
-+                                line_slot =
-+                                    block_ctx.find_content_slot(min_y as f32, 0.0, Clear::None, None);
-+                                has_active_floats = line_slot.segment_id.is_some();
-+                                set_line_slot(state, &line_slot, scale, slack);
  
 -                        line_start_state = has_active_floats.then(|| breaker.state().clone());
 -                        continue;
@@ -8493,7 +8488,12 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
 -                                    .resolve_or_zero(inputs.parent_size, resolve_calc_value),
 -                            )
 -                        };
--
++                                let min_y = state.line_y() / scale as f64;
++                                line_slot =
++                                    block_ctx.find_content_slot(min_y as f32, 0.0, Clear::None, None);
++                                has_active_floats = line_slot.segment_id.is_some();
++                                set_line_slot(state, &line_slot, scale, slack);
+ 
 -                        let output = self.compute_child_layout(
 -                            crate::taffy_node_id(node_id),
 -                            float_child_inputs,
@@ -8618,7 +8618,21 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
  
          let mut height = if has_inline_content {
              inline_layout.layout.height()
-@@ -1113,6 +1333,13 @@
+@@ -1100,6 +1320,13 @@
+         inline_layout.block_offset = block_offset;
+         let line_box_top = container_pb.top + block_offset;
+ 
++        // pyro: whether the lines are laid out in a vertical writing mode (turned): the physical
++        // geometry of inline boxes' fragments is not known here then.
++        let vertical_lines = self.nodes[node_id]
++            .primary_styles()
++            .or_else(|| self.nodes[node_id].parent.and_then(|parent| self.nodes[parent].primary_styles()))
++            .is_some_and(|style| style.writing_mode.is_vertical());
++
+         // Store sizes and positions of inline boxes. Walking a line's items builds every
+         // glyph run on it, so lines are only walked when there are boxes to find.
+         let mut ibox_order: u32 = 0;
+@@ -1113,6 +1340,13 @@
                      line_has_in_flow_content |= run.advance() > 0.0;
                  }
                  if let parley::layout::PositionedLayoutItem::InlineBox(ibox) = item {
@@ -8632,7 +8646,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
                      let order = ibox_order;
                      ibox_order += 1;
                      if inputs.run_mode == RunMode::PerformLayout {
-@@ -1186,10 +1413,18 @@
+@@ -1186,10 +1420,20 @@
                          //   box, or below it if in-flow content precedes it on the line (its
                          //   hypothetical box would start a new line after that content).
                          let line_metrics = line.metrics();
@@ -8640,8 +8654,10 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
 -                        let line_bottom = (line_metrics.block_max_coord / scale) + line_box_top;
 +                        // pyro: relatively positioned inline boxes around it move its static
 +                        // position, as they move what else they hold.
++                        // (Not in a vertical writing mode, where the lines are laid out turned
++                        // and the offset is not applied to them.)
 +                        let span_offset = match self.nodes[NodeId::from_u64(ibox.id)].parent {
-+                            Some(parent) if inline_layout.relative_spans => {
++                            Some(parent) if inline_layout.relative_spans && !vertical_lines => {
 +                                crate::layout::inline::inline_span_offset(&self.nodes, parent, node_id, container_content_size)
 +                            }
 +                            _ => taffy::Point::ZERO,
@@ -8654,7 +8670,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
                              (
                                  taffy::Line { start: x, end: x },
                                  taffy::Line {
-@@ -1198,21 +1433,29 @@
+@@ -1198,21 +1442,29 @@
                                  },
                              )
                          } else {
@@ -8690,7 +8706,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
                              node: taffy::NodeId::from(ibox.id),
                              order,
                              position,
-@@ -1238,10 +1481,11 @@
+@@ -1238,10 +1490,11 @@
                              },
                          });
                      } else if is_floated {
@@ -8706,7 +8722,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
                      } else {
                          line_has_in_flow_content = true;
                          // Re-measure the box to get its border-box size (this hits the layout
-@@ -1250,6 +1494,13 @@
+@@ -1250,6 +1503,13 @@
                          let mut output =
                              self.compute_child_layout(taffy::NodeId::from(ibox.id), box_inputs);
                          let size = output.size;
@@ -8720,7 +8736,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
                          let node = &mut self.nodes[NodeId::from_u64(ibox.id)];
  
                          let is_relative = position == taffy::Position::Relative;
-@@ -1266,23 +1517,25 @@
+@@ -1266,23 +1526,25 @@
                              taffy::Point::ZERO
                          };
  
@@ -8759,7 +8775,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
                              output.oof_candidates.translate(location);
                              oof_candidates.append(&mut output.oof_candidates);
                          }
-@@ -1297,6 +1550,34 @@
+@@ -1297,6 +1559,34 @@
          // println!("known_dimensions: w: {:?} h: {:?}", inputs.known_dimensions.width, inputs.known_dimensions.height);
          // println!("\n");
  
@@ -8779,7 +8795,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
 +                let Some((x, y, width, height)) = span_padding_box(&self.nodes, &inline_layout, span, scale) else {
 +                    continue;
 +                };
-+                let offset = if inline_layout.relative_spans {
++                let offset = if inline_layout.relative_spans && !vertical_lines {
 +                    crate::layout::inline::inline_span_offset(&self.nodes, span, node_id, content_size)
 +                } else {
 +                    taffy::Point::ZERO
@@ -8794,7 +8810,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
          let line_baseline =
              |line: parley::Line<'_, _>| (line.metrics().baseline / scale) + line_box_top;
          let exports_baseline = has_inline_content && !suppresses_baseline;
-@@ -1311,6 +1592,11 @@
+@@ -1311,6 +1601,11 @@
  
          if inputs.run_mode == RunMode::PerformLayout {
              inline_layout.span_cb_flags = span_cb_flags;
@@ -8806,7 +8822,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
          }
  
          // Put layout back
-@@ -1384,3 +1670,145 @@
+@@ -1384,3 +1679,145 @@
  fn f32_max(a: f32, b: f32) -> f32 {
      a.max(b)
  }

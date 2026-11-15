@@ -2085,6 +2085,19 @@ impl ElementCx<'_, '_> {
                     PositionedLayoutItem::GlyphRun(run) => {
                         let x0 = run.offset();
                         let mut x1 = x0 + run.advance();
+                        // pyro: a run of bidi formatting characters alone (U+202E written in the
+                        // text, placed at the level before it) is no content of a box: it made a
+                        // fragment of its own away from the content it reorders.
+                        if run.advance() == 0.0
+                            && text_layout.text.get(run.run().text_range()).is_some_and(|text| {
+                                !text.is_empty()
+                                    && text.chars().all(|c| {
+                                        matches!(c, '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}' | '\u{200E}' | '\u{200F}')
+                                    })
+                            })
+                        {
+                            continue;
+                        }
                         if !rtl_layout {
                             x1 = x1.min(content_end).max(x0);
                         }

@@ -717,4 +717,7 @@ Covered by `crates/pyro-render/tests/svg_viewport_clip.rs` and `svg_external_ref
   of a later one (WPT `inline-block-zorder-001`/`-002`, `inline-table-zorder-001`/`-002`, `position-absolute-007`,
   `margin-collapse-004`).
 
+- `src/render.rs` (`inline_box_fragments`): a glyph run of bidi formatting characters alone is no content of an
+  inline box's fragment (WPT `bidi-011`).
+
 Covered by `crates/pyro-render/tests/inline_leftovers.rs`.

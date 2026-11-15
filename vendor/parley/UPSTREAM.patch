@@ -854,7 +854,7 @@ index 1569071..753c0e5 100644
                  }
                  LineItem::Run(run) => {
 diff --git a/src/layout/line_break.rs b/src/layout/line_break.rs
-index 3c3798c..71b3916 100644
+index 3c3798c..bbb9db3 100644
 --- a/src/layout/line_break.rs
 +++ b/src/layout/line_break.rs
 @@ -11,6 +11,7 @@ use core_maths::CoreFloat;
@@ -1423,7 +1423,7 @@ index 3c3798c..71b3916 100644
                      break;
                  }
              }
-@@ -1968,6 +2253,151 @@ fn hanging_whitespace<B: Brush>(
+@@ -1968,6 +2253,161 @@ fn hanging_whitespace<B: Brush>(
      )
  }
  
@@ -1537,6 +1537,16 @@ index 3c3798c..71b3916 100644
 +        }
 +        style = styles[usize::from(style)].parent;
 +    };
++    // pyro: a text item without an advance (a bidi formatting character written in the text, at
++    // the level before it) is no content an edge goes beside: a span starting with U+202E had its
++    // start edge left where that character was, away from the content the override reordered.
++    let has_advance = |item: &LineItemData| match item.kind {
++        LayoutItemKind::InlineBox => true,
++        LayoutItemKind::TextRun => shaped_text.shaped_clusters()
++            [item.shaped_cluster_range.start as usize..item.shaped_cluster_range.end as usize]
++            .iter()
++            .any(|cluster| cluster.advance != 0.0),
++    };
 +    // The edges by box index, deepest span first.
 +    let mut edges: Vec<usize> = items.iter().filter(|item| is_edge(item)).map(|item| item.index).collect();
 +    edges.sort_by_key(|&index| core::cmp::Reverse(depth(boxes[index].parent_style_index)));
@@ -1552,7 +1562,7 @@ index 3c3798c..71b3916 100644
 +        let mut last = None;
 +        for (index, item) in items.iter().enumerate() {
 +            let own_edge = is_edge(item) && boxes[item.index].parent_style_index == span;
-+            if index != from && !own_edge && in_span(style_of(item), span) {
++            if index != from && !own_edge && has_advance(item) && in_span(style_of(item), span) {
 +                first.get_or_insert(index);
 +                last = Some(index);
 +            }

@@ -2363,6 +2363,16 @@ fn place_span_edges<B: Brush>(layout: &Layout<B>, items: &mut [LineItemData]) {
         }
         style = styles[usize::from(style)].parent;
     };
+    // pyro: a text item without an advance (a bidi formatting character written in the text, at
+    // the level before it) is no content an edge goes beside: a span starting with U+202E had its
+    // start edge left where that character was, away from the content the override reordered.
+    let has_advance = |item: &LineItemData| match item.kind {
+        LayoutItemKind::InlineBox => true,
+        LayoutItemKind::TextRun => shaped_text.shaped_clusters()
+            [item.shaped_cluster_range.start as usize..item.shaped_cluster_range.end as usize]
+            .iter()
+            .any(|cluster| cluster.advance != 0.0),
+    };
     // The edges by box index, deepest span first.
     let mut edges: Vec<usize> = items.iter().filter(|item| is_edge(item)).map(|item| item.index).collect();
     edges.sort_by_key(|&index| core::cmp::Reverse(depth(boxes[index].parent_style_index)));
@@ -2378,7 +2388,7 @@ fn place_span_edges<B: Brush>(layout: &Layout<B>, items: &mut [LineItemData]) {
         let mut last = None;
         for (index, item) in items.iter().enumerate() {
             let own_edge = is_edge(item) && boxes[item.index].parent_style_index == span;
-            if index != from && !own_edge && in_span(style_of(item), span) {
+            if index != from && !own_edge && has_advance(item) && in_span(style_of(item), span) {
                 first.get_or_insert(index);
                 last = Some(index);
             }
