@@ -21,6 +21,7 @@
 //! unmuted media needs sticky user activation of the document (trusted
 //! input, or a CDP evaluation with `userGesture`). Otherwise `play()`
 //! rejects with NotAllowedError and the `autoplay` attribute does nothing.
+//! `PYRO_AUTOPLAY_POLICY=no-user-gesture-required` lifts the policy (`may_play`).
 //!
 //! The DOM queues what starts a load (`pyro_dom::media_element`); the queue is
 //! drained with the iframe post-connection steps. Per-element state exists
@@ -359,9 +360,17 @@ fn muted(page: &PageDom, node: NodeId) -> bool {
     }
 }
 
-/// Chrome's autoplay policy: muted media, or a document with sticky user activation.
+/// Chrome's autoplay policy: muted media, or a document with sticky user activation. With
+/// `PYRO_AUTOPLAY_POLICY=no-user-gesture-required` in the environment (Chrome's
+/// `--autoplay-policy` of that name, which wptrunner starts Chrome with) any media may play:
+/// a WPT page with `<video autoplay>` otherwise plays only if a client evaluation (a user
+/// gesture) happens to reach the document before its media has enough data.
 fn may_play(page: &PageDom, node: NodeId) -> bool {
-    muted(page, node) || page.has_sticky_activation()
+    static NO_GESTURE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    muted(page, node)
+        || page.has_sticky_activation()
+        || *NO_GESTURE
+            .get_or_init(|| std::env::var("PYRO_AUTOPLAY_POLICY").is_ok_and(|v| v == "no-user-gesture-required"))
 }
 
 /// Sets the element's delaying-the-load-event flag.

@@ -110,7 +110,14 @@ export const REFTEST_CONTEXT = { viewport: VIEWPORT, deviceScaleFactor: 1 };
  *  (`--enable-blink-features=NoFontAntialiasing`, wptrunner's chrome.py), and Ahem installed (`--install-fonts`), here
  *  the WPT checkout's fonts/Ahem.ttf given to pyro (`--font`) rather than put in the system's font folders. Through
  *  environment variables, which a pyro without these options ignores (an older binary in an A/B run). */
-export const reftestEnv = (wpt) => ({ PYRO_TEXT_ANTIALIASING: 'off', ...ahemEnv(wpt) });
+export const reftestEnv = (wpt) => ({
+  PYRO_TEXT_ANTIALIASING: 'off',
+  // As wptrunner's Chrome (`--autoplay-policy=no-user-gesture-required`): a page whose `<video autoplay>` must play
+  // before it is done otherwise depends on the runner's first evaluation (a user gesture) beating the media's load
+  // (css/css-overflow/overflow-video-hidden.html timed out on first runs).
+  PYRO_AUTOPLAY_POLICY: 'no-user-gesture-required',
+  ...ahemEnv(wpt),
+});
 /** Ahem alone, for testharness pages (wptrunner installs it for every test; geometry pages measure its boxes). */
 export const ahemEnv = (wpt) => ({ PYRO_FONTS: path.join(wpt, 'fonts', 'Ahem.ttf') });
 
