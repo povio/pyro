@@ -2102,9 +2102,6 @@ impl ElementCx<'_, '_> {
                 && text_layout.annotations.is_empty()
                 && fragments.iter().any(|fragment| fragment.line > 0 && fragment.reaches_above);
             if by_line {
-                let mut draw_text_context = self.context.draw_text_context.borrow_mut();
-                draw_text_context.text_shift = text_shift;
-                draw_text_context.line_tops = tops;
                 let options = TextPaintOptions {
                     scale: self.scale,
                     brush_override: None,
@@ -2112,10 +2109,14 @@ impl ElementCx<'_, '_> {
                 };
                 let mut next = 0;
                 for (index, line) in text_layout.layout.lines().enumerate() {
+                    // (A fragment's `background-clip: text` mask borrows the text context.)
                     while let Some(fragment) = fragments.get(next).filter(|fragment| fragment.line == index) {
                         self.paint_inline_box_fragment(scene, fragment, transform, tops);
                         next += 1;
                     }
+                    let mut draw_text_context = self.context.draw_text_context.borrow_mut();
+                    draw_text_context.text_shift = text_shift;
+                    draw_text_context.line_tops = tops;
                     crate::text::stroke_text(
                         scene,
                         std::iter::once(line),
@@ -2128,9 +2129,9 @@ impl ElementCx<'_, '_> {
                         None,
                         Some(&text_layout.layout),
                     );
+                    draw_text_context.text_shift = 0.0;
+                    draw_text_context.line_tops = None;
                 }
-                draw_text_context.text_shift = 0.0;
-                draw_text_context.line_tops = None;
                 return;
             }
             for fragment in &fragments {

@@ -2881,7 +2881,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              // Text keeps its unrounded position; only box edges are snapped to whole pixels.
              let subpixel_offset = text_layout.content_box_subpixel_offset;
              let pos = Point {
-@@ -984,23 +2086,66 @@
+@@ -984,23 +2086,67 @@
              };
              let transform =
                  self.transform * Affine::translate((pos.x * self.scale, pos.y * self.scale));
@@ -2910,9 +2910,6 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                && text_layout.annotations.is_empty()
 +                && fragments.iter().any(|fragment| fragment.line > 0 && fragment.reaches_above);
 +            if by_line {
-+                let mut draw_text_context = self.context.draw_text_context.borrow_mut();
-+                draw_text_context.text_shift = text_shift;
-+                draw_text_context.line_tops = tops;
 +                let options = TextPaintOptions {
 +                    scale: self.scale,
 +                    brush_override: None,
@@ -2920,10 +2917,14 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                };
 +                let mut next = 0;
 +                for (index, line) in text_layout.layout.lines().enumerate() {
++                    // (A fragment's `background-clip: text` mask borrows the text context.)
 +                    while let Some(fragment) = fragments.get(next).filter(|fragment| fragment.line == index) {
 +                        self.paint_inline_box_fragment(scene, fragment, transform, tops);
 +                        next += 1;
 +                    }
++                    let mut draw_text_context = self.context.draw_text_context.borrow_mut();
++                    draw_text_context.text_shift = text_shift;
++                    draw_text_context.line_tops = tops;
 +                    crate::text::stroke_text(
 +                        scene,
 +                        std::iter::once(line),
@@ -2936,9 +2937,9 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                        None,
 +                        Some(&text_layout.layout),
 +                    );
++                    draw_text_context.text_shift = 0.0;
++                    draw_text_context.line_tops = None;
 +                }
-+                draw_text_context.text_shift = 0.0;
-+                draw_text_context.line_tops = None;
 +                return;
 +            }
 +            for fragment in &fragments {
@@ -2959,7 +2960,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
                      sel_start,
                      sel_end,
                  );
-@@ -1008,18 +2153,186 @@
+@@ -1008,18 +2154,186 @@
  
              // Render text
              let mut draw_text_context = self.context.draw_text_context.borrow_mut();
@@ -3148,7 +3149,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          }
      }
  
-@@ -1030,9 +2343,15 @@
+@@ -1030,9 +2344,15 @@
              // within the content box of it's node.
              let y_offset = self.node.text_input_v_centering_offset(self.scale);
              let subpixel_offset = input_data.content_box_subpixel_offset;
@@ -3166,7 +3167,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              };
  
              // Apply the scroll offset (stored in CSS pixels, scaled here to device pixels) so
-@@ -1047,7 +2366,65 @@
+@@ -1047,6 +2367,64 @@
  
              let transform = self.transform
                  * Affine::translate((pos.x * self.scale - scroll_x, pos.y * self.scale - scroll_y));
@@ -3181,7 +3182,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                Some(shift) => (transform * Affine::translate((0.0, shift)), None),
 +                None => (transform, tops),
 +            };
- 
++
 +            // pyro: an empty input shows its placeholder, its lines placed as the
 +            // value's (a single line centred in the content box), under the caret.
 +            if let Some(placeholder) = input_data.shown_placeholder() {
@@ -3228,11 +3229,10 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                }
 +                draw_text_context.line_tops = None;
 +            }
-+
+ 
              if self.node.is_focussed() {
                  // Render selection/caret
-                 for (rect, _line_idx) in input_data.editor.selection_geometry().iter() {
-@@ -1078,6 +2455,7 @@
+@@ -1078,6 +2456,7 @@
  
              // Render text
              let mut draw_text_context = self.context.draw_text_context.borrow_mut();
@@ -3240,7 +3240,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              crate::text::stroke_text(
                  scene,
                  input_data.editor.try_layout().unwrap().lines(),
-@@ -1086,10 +2464,15 @@
+@@ -1086,10 +2465,15 @@
                  TextPaintOptions {
                      scale: self.scale,
                      brush_override: None,
@@ -3256,7 +3256,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          }
      }
  
-@@ -1103,7 +2486,7 @@
+@@ -1103,7 +2487,7 @@
              // Right align and pad the bullet when rendering outside
              let x_padding = match marker {
                  Marker::Char(_) => 8.0,
@@ -3265,7 +3265,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              };
              // Outside markers are placed outside the list item's border box
              // (`pos` is the origin of its content box)
-@@ -1114,14 +2497,33 @@
+@@ -1114,14 +2498,33 @@
                  + item_layout.border.left);
  
              // Align the marker with the baseline of the first line of text in the list item
@@ -3302,7 +3302,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
                      / layout.scale()
                      + text_layout.block_offset
              } else {
-@@ -1129,7 +2531,7 @@
+@@ -1129,7 +2532,7 @@
              };
  
              let pos = Point {
@@ -3311,7 +3311,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
                  y: pos.y + (content_box_subpixel_offset.y + y_offset) as f64,
              };
  
-@@ -1145,13 +2547,145 @@
+@@ -1145,13 +2548,145 @@
                  TextPaintOptions {
                      scale: self.scale,
                      brush_override: None,
@@ -3457,7 +3457,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
      fn draw_children(
          &self,
          scene: &mut impl PaintScene,
-@@ -1183,16 +2717,20 @@
+@@ -1183,16 +2718,20 @@
                  // the viewport and do not scroll with it, so cancel out the viewport
                  // scroll (applied in `paint_scene`). A fixed box contained by a
                  // transformed ancestor scrolls with it like any out-of-flow box.
@@ -3479,7 +3479,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
                      parent_style_transform.pre_translate(kurbo::Vec2 {
                          x: offset.x as f64 * self.scale,
                          y: offset.y as f64 * self.scale,
-@@ -1232,6 +2770,9 @@
+@@ -1232,6 +2771,9 @@
  
          let width = self.frame.content_box.width() as f32;
          let height = self.frame.content_box.height() as f32;
@@ -3489,7 +3489,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          let svg_size = svg.tree.size();
  
          let x = self.frame.content_box.origin().x;
-@@ -1299,9 +2840,21 @@
+@@ -1299,9 +2841,21 @@
              || y_offset < 0.0
              || x_offset + paint_size.width > container_size.width
              || y_offset + paint_size.height > container_size.height;
@@ -3512,7 +3512,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              BlendMode::default(),
              1.0,
              self.transform,
-@@ -1466,3 +3019,50 @@
+@@ -1466,3 +3020,50 @@
  
      CssBox::new(border_box, border, padding, outline_width, border_radii)
  }

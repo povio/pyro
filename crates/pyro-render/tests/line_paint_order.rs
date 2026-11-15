@@ -47,3 +47,14 @@ fn a_box_reaching_into_the_line_above_paints_over_its_text() {
     assert!(dark_pixels(&without, 0, 40, 0, 30) > 0, "the first line has dark text");
     assert_eq!(dark_pixels(&img, 0, 40, 0, 30), 0, "the second line's box covers it");
 }
+
+#[test]
+fn a_text_clipped_background_paints_line_by_line() {
+    // `background-clip: text` on a box that reaches above its later lines: its mask is drawn
+    // while the root paints line by line (that panicked: the root held the text context).
+    let img = render(
+        "<p style='width:120px;font:20px/20px monospace;margin:40px 0 0'><span style='padding-top:15px;\
+         background:linear-gradient(#000,#000);background-clip:text;color:transparent'>00 00 00 00 00 00</span></p>",
+    );
+    assert!(dark_pixels(&img, 0, 120, 40, 100) > 0, "the glyphs show the background");
+}
