@@ -69,6 +69,10 @@ pub struct PageDom {
     pending_release: RefCell<Vec<NodeId>>,
     /// (DOM version, removal count) seen by the last `after_task`.
     after_task_stamp: Cell<Option<(u64, u64)>>,
+    /// The document timeline's current time (ms) as this task first read it: it does not
+    /// advance within a task (Web Animations: timelines update once per frame), so two reads
+    /// in one task agree. Cleared at each task checkpoint.
+    timeline_time: Cell<Option<f64>>,
     current_script: Cell<Option<NodeId>>,
     pub(crate) realms: RefCell<FxHashMap<RealmId, WeakRealm>>,
     /// The main-world realm (`main_world_realm`): of `realms`, the earliest
@@ -660,6 +664,7 @@ impl PageDom {
             collection_members: RefCell::default(),
             pending_release: RefCell::new(Vec::new()),
             after_task_stamp: Cell::new(None),
+            timeline_time: Cell::new(None),
             current_script: Cell::new(None),
             realms: RefCell::new(FxHashMap::default()),
             main_world: RefCell::new(None),
@@ -1507,10 +1512,29 @@ impl PageDom {
         self.resizes.pins.borrow().len()
     }
 
+    /// The document timeline's current time: the document's clock as the running task first
+    /// read it (see `timeline_time`).
+    pub(crate) fn timeline_now_ms(&self) -> f64 {
+        if let Some(time) = self.timeline_time.get() {
+            return time;
+        }
+        let time = crate::event::page_now_ms(self);
+        self.timeline_time.set(Some(time));
+        time
+    }
+
+    /// The running task ended: the document timeline's time is read afresh by the next one.
+    /// Apart from [`PageDom::after_task`], which a browser skips for a page whose DOM the
+    /// task left alone: time passes for such a page too (a timer polling an animation).
+    pub fn end_task_time(&self) {
+        self.timeline_time.set(None);
+    }
+
     /// Safe point (after each task): applies deferred releases, unpins
     /// listener-holding wrappers of disconnected nodes, re-pins reconnected
     /// ones, and frees unreachable DOM nodes.
     pub fn after_task(self: &Rc<Self>) {
+        self.timeline_time.set(None);
         // Drawing changes no DOM: offscreen frames are committed whether or
         // not the task was otherwise quiet (one empty-list check without).
         crate::canvas::commit_frames(self);

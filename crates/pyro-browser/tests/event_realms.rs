@@ -270,3 +270,61 @@ fn the_scrolling_elements_offsets_are_the_viewports() {
     run_until(&mut t, &root, "scrolls.length > 0");
     assert_eq!(eval(&root, "scrolls.join()"), "true");
 }
+
+#[test]
+fn the_document_timelines_time_holds_still_within_a_task() {
+    // Web Animations: a timeline's time updates once per frame. Two reads in one task agree
+    // however long the task runs (WPT's `waitForNextFrame` compares them to tell a new frame:
+    // with the wall clock it resolved without one), and a later frame reads a later time.
+    let (mut t, root) = page_with_frames();
+    eval(
+        &root,
+        "const first = document.timeline.currentTime;
+         const until = performance.now() + 3;
+         while (performance.now() < until);
+         globalThis.same = document.timeline.currentTime === first;
+         requestAnimationFrame(() => { globalThis.later = document.timeline.currentTime > first; }); 0",
+    );
+    run_until(&mut t, &root, "typeof later === 'boolean'");
+    assert_eq!(eval(&root, "[same, later].join()"), "true,true");
+}
+
+#[test]
+fn a_style_changed_in_the_first_frame_callback_transitions_from_the_style_before_it() {
+    // The element is styled by the frame before the first animation frame callback runs (a
+    // browser has rendered the document by then), so a change made in that callback has a
+    // before-change style: it starts a transition, whichever of the frame and the style
+    // update that follows the task was due first.
+    let (mut t, root) = page_with_frames();
+    eval(
+        &root,
+        "const style = document.head.appendChild(document.createElement('style'));
+         style.textContent = '.t { width: 100px; transition: width 10s }';
+         globalThis.el = document.body.appendChild(document.createElement('div'));
+         el.className = 't';
+         requestAnimationFrame(() => {
+           el.style.width = '200px';
+           requestAnimationFrame(() => { globalThis.running = document.getAnimations().length; });
+         }); 0",
+    );
+    run_until(&mut t, &root, "typeof running === 'number'");
+    assert_eq!(eval(&root, "String(running)"), "1");
+}
+
+#[test]
+fn the_document_timeline_advances_between_tasks_that_leave_the_dom_alone() {
+    // Timer tasks that change nothing in the document still end the task for its timeline: a
+    // script animation polled or awaited from timers finishes (WPT's `waitForCompositorReady`
+    // awaits a 1 ms animation's `finished`).
+    let (mut t, root) = page_with_frames();
+    t.run_until_idle(Some(Instant::now() + Duration::from_millis(50)));
+    eval(
+        &root,
+        "globalThis.times = [document.timeline.currentTime];
+         const poll = () => { times.push(document.timeline.currentTime); if (times.length < 4) setTimeout(poll, 5); };
+         setTimeout(poll, 5);
+         document.body.animate({ opacity: [0, 1] }, { duration: 1 }).finished.then(() => { globalThis.finished = true; }); 0",
+    );
+    run_until(&mut t, &root, "times.length === 4 && globalThis.finished === true");
+    assert_eq!(eval(&root, "String(globalThis.finished === true && times.every((time, i) => i === 0 || time > times[i - 1]))"), "true");
+}
