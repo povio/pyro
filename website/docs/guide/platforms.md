@@ -6,7 +6,7 @@ Pyro's browser runs on macOS and Linux. The client runs anywhere Node 22+ or Bun
 
 | Platform | Browser | Fork mode | JavaScriptCore | Tested in the release workflow |
 | --- | --- | --- | --- | --- |
-| macOS 14+, Apple silicon | bundled | yes | patched, linked into the binary | `macos-15` runner |
+| macOS 14+, Apple silicon | bundled | yes | patched, linked into the binary | Apple silicon Mac (self-hosted) |
 | macOS 14+, Intel | bundled | no | macOS system framework | `macos-15-intel` runner |
 | Linux x64, glibc 2.39+ | bundled | yes | patched, linked into the binary; ICU in `lib/` | `ubuntu-24.04` runner |
 | Linux arm64, glibc 2.39+ | bundled | yes | patched, linked into the binary; ICU in `lib/` | `ubuntu-24.04-arm` runner |
