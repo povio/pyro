@@ -291,7 +291,11 @@ impl Descent<'_> {
             let p = self.point(fixed, shift);
             // A zero box is never hit (pyro-dom skips it); its children may be.
             let candidate = (w > 0.0 || h > 0.0) && self.contains(&own, p);
-            let cull = if self.columns.contains(&id) { None } else { self.bound(id).map(|(r, _)| r) };
+            // pyro: nor is a multi-column container's subtree: its hit bound (its strip's overflow
+            // cut at the breaks, `resolve.rs`) missed content the scan of every box reached
+            // (`hit_adversarial`'s interleaved-mutations page 26).
+            let in_columns = self.columns.contains(&id) || (self.multicol && node.column_fragments().is_some());
+            let cull = if in_columns { None } else { self.bound(id).map(|(r, _)| r) };
             (candidate, cull)
         } else if is_table_part {
             match self.rows.get(&id).copied() {
@@ -462,6 +466,11 @@ impl Descent<'_> {
         let Some(SpecialElementData::TableRoot(ctx)) = node.element_data().map(|e| &e.special_data) else { return };
         let ctx = std::sync::Arc::clone(ctx);
         let Some((t, _)) = self.transform(id) else { return };
+        // pyro: a table in a multi-column container's strip may be cut across columns, its rows
+        // shown in other columns than its origin's: they keep no bound (nothing is culled).
+        if self.columns.contains(&id) {
+            return;
+        }
         let doc = self.doc;
         let scale = self.scale;
         let mut extents: Vec<Rect> =
