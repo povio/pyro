@@ -958,6 +958,15 @@ svg|svg:not(:root) {
     overflow: hidden;
 }
 
+/* pyro: replaced content is cut at its content box unless the author makes its
+ * overflow visible, as Chromium's UA sheet has it (html.css, which also says
+ * `overflow-clip-margin: content-box`: here the cut at the content box is
+ * blitz-paint's own, `draw_image`, inside the box's clip at its padding box).
+ * Layout ignores the overflow of a replaced element (stylo_taffy). */
+img, video, canvas {
+    overflow: clip;
+}
+
 iframe {
     border: 2px inset;
 }

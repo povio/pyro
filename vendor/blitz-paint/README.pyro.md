@@ -84,6 +84,12 @@ from the root of an upstream checkout at that commit) is the whole diff.
     boxes between it and that context on its containing-block chain: such a box makes no stacking context, so the
     child was painted outside its clip layer and showed whole outside an `overflow: hidden` ancestor. Covered by
     `crates/pyro-render/tests/overflow_clip.rs`, WPT `css-overflow/overflow-clip-margin-*`, `clip-00*`.
+  - `src/render.rs` (`replaced_overflow_is_visible`, `should_clip_node`, `draw_image`, `draw_svg`): the content of
+    an `<img>`, `<video>` or `<canvas>` whose author made `overflow` visible on both axes is not cut at its box
+    (an SVG image only at its own viewport), as in Chromium; blitz-dom's UA sheet gives these elements
+    `overflow: clip`, the default, which cuts their replaced content only (the box itself is clipped as before:
+    at its padding box when it holds a raster image, not at all otherwise). WPT `css-overflow/overflow-img*`,
+    `overflow-canvas`, `overflow-video`.
   - `src/render.rs` (`draw_svg`): an inline `<svg>` without a `viewBox` is drawn from blitz-dom's
     `SvgImageData::sized` tree for its content box, in user units of a CSS px times its `zoom` (its content
     was drawn at zoom 1 in a zoomed box: WPT `clip-path-path-with-zoom-002`). An SVG image (`<img>`, not an

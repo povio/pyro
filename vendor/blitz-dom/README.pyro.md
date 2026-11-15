@@ -75,6 +75,9 @@ against the upstream commit above); they are covered by pyro-render's rendering 
   `min-`/`max-height`). A measuring run of such a box runs as a full layout and drops the box's layout cache,
   since the count reads laid-out content. A box that stops clamping clears the mark (`CLAMPS_LINES`). Lines in
   later blocks are left to the box's `overflow`. Tests `crates/pyro-render/tests/line_clamp.rs`.
+- `assets/default.css`: `img, video, canvas { overflow: clip }`, as Chromium's
+  UA sheet: replaced content is cut at its content box unless the author's `overflow: visible` says otherwise
+  (blitz-paint `replaced_overflow_is_visible`). Layout ignores a replaced element's overflow.
 - `node/svg.rs` (`SvgImageData::sized`, `inline_source`), `layout/construct.rs`: an inline `<svg>` without a
   `viewBox` keeps its source, and is parsed again (cached) with the root's `width`/`height` set to its CSS
   content box for painting: its viewport is the box, as in Chromium, so user units are CSS px and percentages (a

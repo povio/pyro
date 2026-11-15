@@ -643,8 +643,11 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         // pyro: an SVG clips its content at its viewport itself, at its content box and only
         // where the content reaches past it (`ElementCx::draw_svg`).
         let svg = element.is_some_and(|e| matches!(e.image_data(), Some(blitz_dom::node::ImageData::Svg(_))));
+        // pyro: an image whose author made its `overflow` visible shows its content past its
+        // box (the UA sheet's `overflow: clip` is the default; `ElementCx::draw_image`).
+        let overflows_visibly = element.is_some_and(|e| replaced_overflow_is_visible(e, styles));
         self.root_element_id != Some(node.id)
-            && (element.and_then(|e| e.raster_image_data()).is_some()
+            && (element.and_then(|e| e.raster_image_data()).is_some() && !overflows_visibly
                 || element.and_then(|e| e.sub_doc_data()).is_some()
                 || element.and_then(|e| e.text_input_data()).is_some()
                 || contain_paint
@@ -652,6 +655,10 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
                 || ((!matches!(box_style.overflow_x, Overflow::Visible)
                     || !matches!(box_style.overflow_y, Overflow::Visible))
                     && !svg
+                    // pyro: the UA sheet's `overflow: clip` of an `<img>`, `<video>` or
+                    // `<canvas>` cuts its replaced content (`draw_image`), not its box: one
+                    // without an image (a canvas, a broken image) is clipped as before it.
+                    && !element.is_some_and(is_ua_clipped_replaced)
                     && !self.dom.as_ref().body_overflow_goes_to_viewport(node.id)))
     }
 
@@ -1713,6 +1720,22 @@ fn to_peniko_image(image: &RasterImageData, quality: peniko::ImageQuality) -> pe
             alpha: 1.0,
         },
     }
+}
+
+/// pyro: an `<img>`, `<video>` or `<canvas>`: the elements the UA sheet gives `overflow: clip`.
+fn is_ua_clipped_replaced(element: &ElementData) -> bool {
+    let name = &element.name.local;
+    *name == local_name!("img") || *name == local_name!("video") || *name == local_name!("canvas")
+}
+
+/// pyro: whether the replaced content of `element` (an `<img>`, `<video>` or `<canvas>`, which
+/// the UA sheet gives `overflow: clip`) is not cut at its box: its `overflow` is `visible` on
+/// both axes.
+fn replaced_overflow_is_visible(element: &ElementData, style: &ComputedValues) -> bool {
+    let box_style = style.get_box();
+    is_ua_clipped_replaced(element)
+        && matches!(box_style.overflow_x, Overflow::Visible)
+        && matches!(box_style.overflow_y, Overflow::Visible)
 }
 
 /// pyro: when replaced content is cut at its content box (`ElementCx::with_replaced_content_clip`).
@@ -3688,6 +3711,14 @@ impl ElementCx<'_, '_> {
             matches!(b.overflow_x, Overflow::Visible) && matches!(b.overflow_y, Overflow::Visible)
         } {
             ReplacedClip::Never
+        } else if !inline && replaced_overflow_is_visible(self.element, &self.style) {
+            // pyro: an SVG image whose `overflow` the author made visible is cut at its own
+            // viewport (the object rect) only, not at the box.
+            let object = Rect::new(x, y, x + paint_size.width as f64, y + paint_size.height as f64);
+            if reaches_past(ink(), object) {
+                object_clip = Some(object);
+            }
+            ReplacedClip::Never
         } else {
             let content = self.frame.content_box;
             if content.is_zero_area() {
@@ -3882,7 +3913,10 @@ impl ElementCx<'_, '_> {
                 paint_size,
                 x_offset.px(),
                 y_offset.px(),
-                ReplacedClip::Fit,
+                match replaced_overflow_is_visible(self.element, &self.style) {
+                    true => ReplacedClip::Never,
+                    false => ReplacedClip::Fit,
+                },
                 |scene| {
                     scene.draw_image(to_peniko_image(image, quality).as_ref(), transform);
                 },

@@ -224,7 +224,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  table[align="center"]>caption {
      margin-inline-start: auto;
      margin-inline-end: auto;
-@@ -838,6 +950,14 @@
+@@ -838,6 +950,23 @@
      border-radius: 0 ! important;
  }
  
@@ -236,10 +236,19 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
 +    overflow: hidden;
 +}
 +
++/* pyro: replaced content is cut at its content box unless the author makes its
++ * overflow visible, as Chromium's UA sheet has it (html.css, which also says
++ * `overflow-clip-margin: content-box`: here the cut at the content box is
++ * blitz-paint's own, `draw_image`, inside the box's clip at its padding box).
++ * Layout ignores the overflow of a replaced element (stylo_taffy). */
++img, video, canvas {
++    overflow: clip;
++}
++
  iframe {
      border: 2px inset;
  }
-@@ -851,6 +971,10 @@
+@@ -851,6 +980,10 @@
      user-select: none;
  }
  
@@ -250,7 +259,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  iframe:focus-visible,
  body:focus-visible,
  html:focus-visible {
-@@ -886,9 +1010,10 @@
+@@ -886,9 +1019,10 @@
      display: none;
  }
  
@@ -263,7 +272,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  }
  
  iframe:fullscreen {
-@@ -1128,37 +1253,35 @@
+@@ -1128,37 +1262,35 @@
  }
  
  /* Popover UA style, https://html.spec.whatwg.org/#flow-content-3 */
