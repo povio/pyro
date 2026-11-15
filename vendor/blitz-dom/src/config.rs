@@ -73,6 +73,12 @@ pub struct DocumentConfig {
     /// and a digit. Applies to every text layout of the document (line breaking and min/max
     /// content sizes alike) and is inherited by its iframes. Defaults to `None`.
     pub line_break_override: Option<&'static LineBreakOverrideFn>,
+    /// pyro: an XML document (XHTML or other XML): type and attribute selectors match names
+    /// case-sensitively there (Selectors 4, "Case sensitivity"). Defaults to `false`: HTML.
+    pub xml_document: bool,
+    /// pyro: the document's language from the protocol (HTTP `Content-Language`), the last
+    /// fallback for `:lang()` when no element and no `<meta http-equiv>` pragma gives one.
+    pub content_language: Option<String>,
     /// Devtools provider notified of DOM mutations (e.g. by a remote inspector)
     #[cfg(feature = "devtools")]
     pub devtools_provider: Option<Arc<dyn DevtoolsProvider>>,
@@ -95,6 +101,8 @@ impl Default for DocumentConfig {
             abort_signal: None,
             subdocument_depth: 0,
             line_break_override: None,
+            xml_document: false,
+            content_language: None,
             #[cfg(feature = "devtools")]
             devtools_provider: None,
         }

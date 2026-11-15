@@ -221,6 +221,14 @@ pub struct Snapshot {
     /// The animated values of a [`Live`] document's elements now
     /// ([`Renderer::set_animations`]); `None` leaves the document's.
     pub animations: Option<Arc<AnimationFrame>>,
+    /// An XML document (XHTML, SVG, other XML): selectors match element and
+    /// attribute names case-sensitively. A [`Live`] document whose value
+    /// changes is built anew.
+    pub xml_document: bool,
+    /// The document's HTTP `Content-Language` (one language tag), the last
+    /// fallback for `:lang()`. A [`Live`] document whose value changes is
+    /// built anew.
+    pub content_language: Option<String>,
 }
 
 pub use blitz_dom::animation;
@@ -857,6 +865,8 @@ impl Renderer {
             style_threading: StyleThreading::Sequential,
             media_type: Some(media_type(snap.print)),
             line_break_override: self.hyphen_digit_breaks.then_some(parley::HYPHEN_DIGIT_LINE_BREAK_OVERRIDE),
+            xml_document: snap.xml_document,
+            content_language: snap.content_language.clone(),
             ..DocumentConfig::default()
         };
         // Documents are resolved at time 0: a CSS transition or animation
@@ -875,6 +885,8 @@ impl Renderer {
             Some(m)
                 if m.scope != snap.resource_scope
                     || m.base_url != snap.base_url
+                    || m.facts.0 != snap.xml_document
+                    || m.facts.1 != snap.content_language
                     || m.doc.line_break_override().is_some() != self.hyphen_digit_breaks =>
             {
                 Some(Rebuild::Document)

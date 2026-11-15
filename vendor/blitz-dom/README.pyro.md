@@ -987,8 +987,34 @@ HTML, SVG or MathML element, else the document's pragma-set default language (th
 `<meta http-equiv="content-language">` of its `<head>`, unless it lists several); a range matches by RFC 4647
 extended filtering, ASCII case-insensitively, as in Chromium (WPT css/CSS2/selectors/lang-*, syntax/
 case-sensitive-004). `lang_attr` gives Stylo the element's own attribute for invalidation; `:lang()` is a
-revalidation selector, so style sharing stays correct. The HTTP `Content-Language` header is not seen (the
-document's response headers do not reach the renderer). Covered by `crates/pyro-render/tests/lang_pseudo_class.rs`.
+revalidation selector, so style sharing stays correct. Covered by `crates/pyro-render/tests/lang_pseudo_class.rs`.
+
+## Document facts: XML documents, HTTP `Content-Language`
+
+`src/config.rs` (`DocumentConfig::xml_document`, `content_language`), `src/tree.rs` (`NodeTree`), `src/document.rs`
+(`BaseDocument::new`), `src/iframe.rs`: what the embedder knows of the document beyond its nodes, kept on the node
+tree for the selector matching hooks to read.
+- `src/stylo.rs` (`is_html_document`, `is_html_element_in_html_document`): in an XML document (XHTML) type and
+  attribute selectors match names case-sensitively, so `DIV` does not match `div` (WPT css/CSS2/syntax/
+  case-sensitive-007). Upstream treats every document as HTML; HTML documents keep that answer for every element.
+- `src/lang.rs` (`default_language`): the response's `Content-Language` (one language tag) is the last fallback of
+  `:lang()`, after the elements' attributes and the `<meta http-equiv>` pragma (HTML, "the pragma-set default
+  language ... else language information from a higher-level protocol"; WPT css/CSS2/selectors/lang-selector-005).
+
+Covered by `crates/pyro-render/tests/document_facts.rs`.
+
+## `<style>` text is the sheet as it is
+
+`src/document.rs` (`process_style_element`): upstream decoded HTML character references in a `<style>` element's
+text before parsing it as CSS. The parser already decoded those the markup has (XML text, an SVG `<style>` in HTML);
+an HTML `<style>` is raw text and an XML CDATA section is literal, so a `&#x46;` left there is four characters in
+every browser (WPT css/CSS2/generated-content/content-177). Covered by `crates/pyro-render/tests/style_element_text.rs`.
+
+## `filter()` images are loaded
+
+`src/util.rs` (`unfiltered_image`), `src/layout/damage.rs` (`flush_image_layers_from_style`), `src/stylo.rs`
+(`needs_style_image_flush`): a background, mask or border image layer that is a `filter()` image (vendored stylo)
+loads the image it filters, so blitz-paint can draw it with the filters (`vendor/blitz-paint/README.pyro.md`).
 
 ## Tagged images in sRGB
 

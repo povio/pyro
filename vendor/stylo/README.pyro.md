@@ -95,6 +95,22 @@ crate (`diff -ruN`).
   blitz-paint skips ink by it. `text-emphasis-style` gives `rebuild_box` damage under Servo (its `affects` is
   `overflow`): Blitz lays its marks out with the text, and they take room in their lines.
 
+## The `filter()` image function
+
+- `values/generics/image.rs` (`GenericImage::Filter`, `GenericFilterImage`, a sixth type parameter for the filter
+  function type), `values/specified/image.rs` (`Image::parse_filter_args`), `values/computed/image.rs`:
+  `filter(<image> | <string>, <filter-value-list>)` is an `<image>` (Filter Effects 1, "The filter() function";
+  upstream has no such image, so the declaration was dropped). It computes its image and filters as each computes
+  elsewhere, and serializes as `filter(<image>, <filters>)`. blitz-dom loads the image it filters and blitz-paint
+  draws it with the filters. It is accepted in `background-image`, `border-image-source` (and their shorthands) and
+  in registered custom properties of `<image>` syntax. `parse_with_cors_anonymous` (`mask-image`, `shape-outside`),
+  the new `parse_without_filter` (`list-style-image`, given as its `parse_method` in `properties/longhands.toml`, so
+  `list-style` too) and the new `parse_for_content` (`content`; `parse_forbid_none` is unchanged) still reject it, as
+  Chromium and Gecko do (neither has `filter()`): blitz-paint draws it in background and border image layers only. A
+  marker draws its image as it is, so a `filter()` marker would draw the image unfiltered; a mask of a smoothly scaled
+  filtered image seams where the image's edges meet its shadow, so WPT `filter-function-008` (which WebKit, the one
+  engine with `filter()`, fails) would stop passing.
+
 ## Container queries, typed values
 
 - `stylesheets/rule_parser.rs`, `properties/shorthands.rs`, `properties/shorthands.toml`: `@container` rules

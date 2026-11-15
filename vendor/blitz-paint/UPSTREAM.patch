@@ -263,7 +263,7 @@ diff --git a/packages/blitz-paint/src/debug_overlay.rs b/packages/blitz-paint/sr
 diff --git a/packages/blitz-paint/src/filters.rs b/packages/blitz-paint/src/filters.rs
 --- a/packages/blitz-paint/src/filters.rs
 +++ b/packages/blitz-paint/src/filters.rs
-@@ -1,40 +1,769 @@
+@@ -1,40 +1,802 @@
  use blitz_dom::util::ToColorColor as _;
 +use blitz_dom::{BaseDocument, Node};
  use style::color::AbsoluteColor;
@@ -1002,6 +1002,39 @@ diff --git a/packages/blitz-paint/src/filters.rs b/packages/blitz-paint/src/filt
 +    let mut m = brightness(1.0);
 +    m[18] = amount;
 +    m
++}
++
++/// pyro: a `filter()` image (CSS `<image>`): the image it filters, through nested `filter()`s,
++/// and their filters, innermost first, in device pixels as [`convert_filters`] makes them.
++/// `None` for an image that is not one.
++pub(crate) fn image_filter<'a>(
++    image: &'a style::values::computed::Image,
++    scale: f64,
++    current_color: &AbsoluteColor,
++    dom: &BaseDocument,
++) -> (
++    &'a style::values::computed::Image,
++    Option<std::sync::Arc<Filter>>,
++) {
++    use style::values::generics::image::GenericImage;
++    let mut inner = image;
++    let mut levels = Vec::new();
++    while let GenericImage::Filter(filtered) = inner {
++        levels.push(&filtered.filters);
++        inner = &filtered.image;
++    }
++    if levels.is_empty() {
++        return (image, None);
++    }
++    let filters: Vec<StyloFilter> = levels
++        .iter()
++        .rev()
++        .flat_map(|level| level.iter().cloned())
++        .collect();
++    (
++        inner,
++        convert_filters(&filters, scale, current_color, dom).map(std::sync::Arc::new),
++    )
 +}
 +
 +#[cfg(test)]
@@ -4864,7 +4897,44 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
              }
              GenericImage::LightDark(_) => {
                  #[cfg(feature = "tracing")]
-@@ -308,11 +614,35 @@
+@@ -261,6 +567,36 @@
+                 #[cfg(feature = "tracing")]
+                 warn!("Implement image layer drawing for Image::ImageSet")
+             }
++            // pyro: `filter()`: the image it filters, drawn in a layer with the filters over the
++            // painting area (so a `drop-shadow()` stays inside it).
++            GenericImage::Filter(_) => {
++                let (image, filter) = crate::filters::image_filter(
++                    layer.stylo_image,
++                    self.scale,
++                    current_color,
++                    self.dom,
++                );
++                let inner = ImageLayerStyles {
++                    stylo_image: image,
++                    ..*layer
++                };
++                let filtered = filter.is_some();
++                if filtered {
++                    scene.push_layer(
++                        Fill::NonZero,
++                        Mix::Normal,
++                        1.0,
++                        self.transform,
++                        &area,
++                        filter,
++                        None,
++                    );
++                }
++                self.draw_image_layer_in(scene, &inner, area, current_color);
++                if filtered {
++                    scene.pop_layer();
++                }
++            }
+         }
+     }
+ 
+@@ -308,11 +644,35 @@
                  ]
              })
              .collect();
@@ -4901,7 +4971,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
  
          let cell_rect = |cell_id: NodeId| -> Option<Rect> {
              let layout = self.context.dom.get_node(cell_id)?.final_layout();
-@@ -344,13 +674,21 @@
+@@ -344,13 +704,21 @@
          let after = gutter - before;
  
          for cell in &table.cells {
@@ -4924,7 +4994,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
                  continue;
              }
              let Some(mut rect) = cell_rect(cell.node_id) else {
-@@ -367,23 +705,69 @@
+@@ -367,23 +735,69 @@
              }
  
              let shape = rect.scale_from_origin(self.scale);
@@ -5005,7 +5075,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
      }
  
      /// Whether the layer is positioned against the viewport
-@@ -410,23 +794,43 @@
+@@ -410,23 +824,43 @@
  
      /// Whether this element or any of its ancestors has a CSS transform
      ///
@@ -5054,7 +5124,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
          let Some(bg_image) = layer.image_data else {
              return;
          };
-@@ -439,14 +843,10 @@
+@@ -439,14 +873,10 @@
              return;
          }
  
@@ -5072,7 +5142,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
  
          // Size the SVG per the CSS default sizing algorithm
          // (https://drafts.csswg.org/css-images/#default-sizing). An SVG image
-@@ -461,7 +861,7 @@
+@@ -461,7 +891,7 @@
          }
          .filter(|r| r.is_finite() && *r > 0.0);
  
@@ -5081,7 +5151,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
              layer,
              frame_w,
              frame_h,
-@@ -476,29 +876,77 @@
+@@ -476,29 +906,77 @@
              return;
          }
  
@@ -5173,7 +5243,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
          let Some(bg_image) = layer.image_data else {
              return;
          };
-@@ -509,11 +957,7 @@
+@@ -509,11 +987,7 @@
          let image_rendering = self.style.clone_image_rendering();
          let quality = to_image_quality(image_rendering);
  
@@ -5186,7 +5256,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
  
          let image_width = image_data.width as f64;
          let image_height = image_data.height as f64;
-@@ -527,76 +971,125 @@
+@@ -527,76 +1001,125 @@
  
          let bg_pos = (bg_pos.to_vec2() * self.scale).to_point();
          let bg_size = bg_size * self.scale;
@@ -5352,7 +5422,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
  
          let (bg_pos, bg_size) = compute_layer_position_and_size(
              layer,
-@@ -629,24 +1122,51 @@
+@@ -629,23 +1152,50 @@
              bg_size.height,
          );
  
@@ -5391,16 +5461,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
          if x.count as u64 * y.count as u64 > 500 {
              return;
          }
-+        let brush = match &solid {
-+            Some(color) => anyrender::Paint::Solid(*color),
-+            None => anyrender::Paint::Gradient(&gradient),
-+        };
-+        let gradient_transform = if solid.is_some() {
-+            None
-+        } else {
-+            gradient_transform
-+        };
- 
+-
 -        let tile_rect = Rect::new(0.0, 0.0, x.rect_len, y.rect_len);
 -        let bounding_box = self.frame.border_box.bounding_box();
 -        let current_color = self.style.clone_color();
@@ -5413,11 +5474,19 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
 -            &current_color,
 -        );
 -        let brush = anyrender::Paint::Gradient(&gradient);
--
++        let brush = match &solid {
++            Some(color) => anyrender::Paint::Solid(*color),
++            None => anyrender::Paint::Gradient(&gradient),
++        };
++        let gradient_transform = if solid.is_some() {
++            None
++        } else {
++            gradient_transform
++        };
+ 
          let transform = base_transform.then_translate(Vec2 {
              x: x.translate,
-             y: y.translate,
-@@ -681,35 +1201,84 @@
+@@ -681,35 +1231,84 @@
  
      let bg_size = compute_layer_size(layer, container_w as f32, container_h as f32, size_mode);
  
@@ -5522,7 +5591,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
  }
  
  #[inline]
-@@ -875,48 +1444,64 @@
+@@ -875,48 +1474,64 @@
      stride: f64,
  }
  
@@ -5616,7 +5685,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
          },
      }
  }
-@@ -958,11 +1543,24 @@
+@@ -958,11 +1573,24 @@
          }
          Space => {
              let (count, stride) = compute_space_count_and_stride(origin_len, tile_len);
@@ -5646,7 +5715,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
              }
          }
          NoRepeat => AxisTiling {
-@@ -986,6 +1584,16 @@
+@@ -986,6 +1614,16 @@
      (count, stride)
  }
  
@@ -5663,7 +5732,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
  /// Whether drawing the layer is guaranteed to paint nothing, making its clip
  /// layer unnecessary
  fn layer_paints_nothing(layer: &ImageLayerStyles) -> bool {
-@@ -1009,3 +1617,55 @@
+@@ -1009,3 +1647,55 @@
          -extend_length
      }
  }
@@ -6945,7 +7014,7 @@ diff --git a/packages/blitz-paint/src/render/border_image.rs b/packages/blitz-pa
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-paint/src/render/border_image.rs
-@@ -0,0 +1,642 @@
+@@ -0,0 +1,668 @@
 +//! pyro: `border-image` (CSS Backgrounds 3 §6), painted as Blink's
 +//! `NinePieceImagePainter` and `NinePieceImageGrid` paint it.
 +
@@ -7069,7 +7138,18 @@ new file mode 100644
 +    /// are then drawn as usual.
 +    pub(super) fn draw_border_image(&self, scene: &mut impl PaintScene) -> bool {
 +        let border = self.style.get_border();
-+        let source = match &border.border_image_source {
++        // pyro: a `filter()` source is the image it filters, drawn in a layer with the filters
++        // over the border image area. Other sources (almost every element: `none`) cost nothing.
++        let (source_image, filter) = match &border.border_image_source {
++            GenericImage::Filter(_) => crate::filters::image_filter(
++                &border.border_image_source,
++                self.scale,
++                &self.style.clone_color(),
++                self.dom,
++            ),
++            source => (source, None),
++        };
++        let source = match source_image {
 +            GenericImage::None => return false,
 +            GenericImage::Gradient(gradient) => Source::Gradient(gradient),
 +            GenericImage::Url(_) => match self.element.border_images.first() {
@@ -7317,6 +7397,18 @@ new file mode 100644
 +            source: &source,
 +            image: Rect::new(0.0, 0.0, iw, ih),
 +        };
++        let filtered = filter.is_some();
++        if filtered {
++            scene.push_layer(
++                Fill::NonZero,
++                peniko::Mix::Normal,
++                1.0,
++                self.transform,
++                &area,
++                filter,
++                None,
++            );
++        }
 +        for piece in &pieces {
 +            if piece.corner || piece.rules == (Rule::Stretch, Rule::Stretch) {
 +                painter.stretched(scene, piece.source, piece.destination);
@@ -7335,6 +7427,9 @@ new file mode 100644
 +                continue;
 +            };
 +            painter.tiled(scene, src, dst, h, v);
++        }
++        if filtered {
++            scene.pop_layer();
 +        }
 +        true
 +    }

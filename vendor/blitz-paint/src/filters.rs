@@ -717,6 +717,39 @@ fn opacity(amount: f32) -> [f32; 20] {
     m
 }
 
+/// pyro: a `filter()` image (CSS `<image>`): the image it filters, through nested `filter()`s,
+/// and their filters, innermost first, in device pixels as [`convert_filters`] makes them.
+/// `None` for an image that is not one.
+pub(crate) fn image_filter<'a>(
+    image: &'a style::values::computed::Image,
+    scale: f64,
+    current_color: &AbsoluteColor,
+    dom: &BaseDocument,
+) -> (
+    &'a style::values::computed::Image,
+    Option<std::sync::Arc<Filter>>,
+) {
+    use style::values::generics::image::GenericImage;
+    let mut inner = image;
+    let mut levels = Vec::new();
+    while let GenericImage::Filter(filtered) = inner {
+        levels.push(&filtered.filters);
+        inner = &filtered.image;
+    }
+    if levels.is_empty() {
+        return (image, None);
+    }
+    let filters: Vec<StyloFilter> = levels
+        .iter()
+        .rev()
+        .flat_map(|level| level.iter().cloned())
+        .collect();
+    (
+        inner,
+        convert_filters(&filters, scale, current_color, dom).map(std::sync::Arc::new),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

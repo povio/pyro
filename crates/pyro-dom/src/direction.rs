@@ -177,7 +177,10 @@ impl Dom {
     }
 
     /// The language of element `idx`: the nearest inclusive ancestor's
-    /// `xml:lang` or `lang` attribute (the host's for a shadow tree).
+    /// `xml:lang` or `lang` attribute (the host's for a shadow tree), else
+    /// the document's default language: a `<meta http-equiv=content-language>`
+    /// pragma's, else the HTTP `Content-Language` (`Dom::set_content_language`),
+    /// as blitz-dom's `lang.rs` resolves it for rendering.
     pub(crate) fn language_idx(&self, idx: u32) -> Option<String> {
         let mut cur = Some(idx);
         while let Some(i) = cur {
@@ -192,6 +195,39 @@ impl Dom {
                 }
             }
             cur = self.dir_parent(i);
+        }
+        if !self.n(idx).is_connected() {
+            return None;
+        }
+        let doc = self.n(idx).owner_doc;
+        match &self.n(doc).kind {
+            NodeKind::Document(d) => {
+                self.pragma_language(d.head).or_else(|| d.content_language.as_deref()).map(str::to_owned)
+            }
+            _ => None,
+        }
+    }
+
+    /// The pragma-set default language of the document whose `<head>` is
+    /// `head` (NIL: none): the `content` of the last
+    /// `<meta http-equiv="content-language">` child, up to the first space,
+    /// unless it lists several (a comma).
+    fn pragma_language(&self, head: u32) -> Option<&str> {
+        if head == NIL {
+            return None;
+        }
+        let mut c = self.n(head).last_child;
+        while c != NIL {
+            let lang =
+                self.n(c).element().filter(|e| e.is_html() && e.name.local == local_name!("meta")).and_then(|e| {
+                    e.attr_local(&local_name!("http-equiv"))
+                        .filter(|v| v.trim().eq_ignore_ascii_case("content-language"))?;
+                    e.attr_local(&local_name!("content")).filter(|v| !v.contains(','))?.split_ascii_whitespace().next()
+                });
+            if lang.is_some() {
+                return lang;
+            }
+            c = self.n(c).prev;
         }
         None
     }

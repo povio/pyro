@@ -355,6 +355,8 @@ impl EngineHost {
             element_scroll: Some(s.element_scroll),
             // CSS animations, transitions and Web Animations as they are now.
             animations: Some(Arc::new(pyro_layout::animation_frame(&dom.animation_frame()))),
+            xml_document: s.xml_document,
+            content_language: s.content_language,
         })
     }
 
@@ -732,7 +734,8 @@ impl EngineHost {
                 "captured": true, "snapshotMs": ms(started.elapsed()),
                 "snapshot": { "html": s.html, "baseUrl": frame.base_url, "sheets": s.sheets,
                     "width": s.width, "height": s.height, "deviceScaleFactor": s.device_scale_factor,
-                    "dark": s.dark, "scrollX": s.scroll_x, "scrollY": s.scroll_y }
+                    "dark": s.dark, "scrollX": s.scroll_x, "scrollY": s.scroll_y,
+                    "xmlDocument": s.xml_document, "contentLanguage": s.content_language }
             });
             return Ok(std::rc::Rc::new(std::cell::RefCell::new(Some(Ok(value)))));
         }

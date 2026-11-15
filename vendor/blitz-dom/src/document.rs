@@ -641,7 +641,9 @@ impl BaseDocument {
         let device = make_device(&viewport, None, media_type.clone(), font_ctx.clone());
         let stylist = Stylist::new(device, QuirksMode::NoQuirks);
         let snapshots = SnapshotMap::new();
-        let nodes = Box::new(NodeTree::new());
+        let mut nodes = Box::new(NodeTree::new());
+        nodes.xml_document = config.xml_document;
+        nodes.content_language = config.content_language.map(Into::into);
         // pyro: one lock for the thread's documents, so a parsed
         // sheet can serve them all (`make_stylesheet`).
         let guard = crate::util::thread_style_lock();
@@ -1482,8 +1484,11 @@ impl BaseDocument {
     }
 
     pub fn process_style_element(&mut self, target_id: NodeId) {
+        // pyro: the sheet is the element's text as it is. Character references were decoded by
+        // the parser where the markup has them (XML text, SVG `<style>` in HTML); an HTML
+        // `<style>` is raw text and an XML CDATA section is literal, so a `&#x46;` left in
+        // either stays four characters, as in every browser (WPT css/CSS2 content-177).
         let css = self.nodes[target_id].text_content();
-        let css = html_escape::decode_html_entities(&css);
         let sheet = self.make_stylesheet(&css, Origin::Author);
         self.add_stylesheet_for_node(sheet, target_id);
     }

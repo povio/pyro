@@ -165,7 +165,7 @@ impl Parse for Content {
         let mut alt_start = None;
         loop {
             if alt_start.is_none()
-                && let Ok(image) = input.try_parse(|i| Image::parse_forbid_none(context, i))
+                && let Ok(image) = input.try_parse(|i| Image::parse_for_content(context, i))
             {
                 items.push(generics::ContentItem::Image(image));
                 continue;

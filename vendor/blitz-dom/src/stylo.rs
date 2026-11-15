@@ -479,7 +479,8 @@ impl<'a> TDocument for BlitzNode<'a> {
     }
 
     fn is_html_document(&self) -> bool {
-        true
+        // pyro: XHTML and other XML documents are not HTML documents.
+        !self.tree().xml_document
     }
 
     fn quirks_mode(&self) -> QuirksMode {
@@ -659,7 +660,10 @@ impl selectors::Element for BlitzNode<'_> {
     }
 
     fn is_html_element_in_html_document(&self) -> bool {
-        true // self.has_namespace(ns!(html))
+        // pyro: in an XML document, type and attribute selectors match case-sensitively (an
+        // XHTML `DIV` selector does not match `div`). HTML documents keep upstream's answer for
+        // every element.
+        !self.tree().xml_document // && self.has_namespace(ns!(html))
     }
 
     fn has_local_name(&self, local_name: &LocalName) -> bool {
@@ -2417,11 +2421,12 @@ fn needs_style_image_flush(node: &Node, style: &ComputedValues) -> bool {
             // (a style list of `none` layers and empty storage are in sync).
             return style_images
                 .iter()
-                .any(|image| matches!(image, Image::Url(_)))
+                .any(|image| matches!(crate::util::unfiltered_image(image), Image::Url(_)))
                 || stored.iter().any(Option::is_some);
         }
         std::iter::zip(style_images, stored).any(|(style_image, stored)| {
-            match (style_image, stored) {
+            // pyro: a `filter()` image loads the image it filters.
+            match (crate::util::unfiltered_image(style_image), stored) {
                 (Image::Url(ComputedUrl::Valid(url)), Some(data)) => **url != *data.url,
                 (Image::Url(ComputedUrl::Valid(_)), None) => true,
                 (_, Some(_)) => true,

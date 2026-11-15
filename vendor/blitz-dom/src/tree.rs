@@ -52,6 +52,10 @@ pub struct NodeTree {
     /// Scroll offset of the viewport (the root element scrolls the viewport,
     /// so its offset lives here rather than on the node).
     viewport_scroll: crate::Point<f64>,
+    /// pyro: [`crate::DocumentConfig::xml_document`].
+    pub(crate) xml_document: bool,
+    /// pyro: [`crate::DocumentConfig::content_language`].
+    pub(crate) content_language: Option<Box<str>>,
 }
 
 impl NodeTree {
@@ -61,6 +65,8 @@ impl NodeTree {
             container_query_sizes: Mutex::new(HashMap::new()),
             geometry_generation: AtomicU64::new(1),
             viewport_scroll: crate::Point::ZERO,
+            xml_document: false,
+            content_language: None,
         }
     }
 
