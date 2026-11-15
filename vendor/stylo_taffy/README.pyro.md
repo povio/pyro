@@ -24,3 +24,6 @@ entry) once a Blitz release carries these commits and changes.
   right-to-left direction (the box's inherited one stands in for its containing block's) `inline-start` is the right
   side. They were always left and right (WPT `tab-stop-with-float-001.html?class=rtl`;
   `crates/pyro-render/tests/tab_stops.rs`).
+- `src/convert.rs`, `src/wrapper.rs`: `BlockItemStyle::min_size_keyword`/`max_size_keyword` answer the sizing
+  keywords of `min-width`, `max-width`, `min-height` and `max-height` (`min_size`/`max_size` still say `auto` for
+  them), for Taffy's block layout (vendor/taffy/README.pyro.md).

@@ -1,5 +1,6 @@
 //! Style types for Block layout
-use crate::geometry::Line;
+use crate::geometry::{Line, Size};
+use crate::style::Dimension;
 use crate::style::{AlignContent, AlignItems, AlignSelf};
 use crate::{CoreStyle, Style};
 
@@ -40,6 +41,21 @@ pub trait BlockItemStyle: CoreStyle {
     #[inline(always)]
     fn is_table(&self) -> bool {
         false
+    }
+
+    /// pyro: `min-width`/`min-height` when they are sizing keywords (`min-content`, `max-content`,
+    /// `fit-content`, `fit-content(...)`, `stretch`), which `CoreStyle::min_size` cannot say (it
+    /// says `auto` then); `auto` in an axis without one.
+    #[inline(always)]
+    fn min_size_keyword(&self) -> Size<Dimension> {
+        Size { width: Dimension::auto(), height: Dimension::auto() }
+    }
+
+    /// pyro: `max-width`/`max-height` when they are sizing keywords (see
+    /// [`Self::min_size_keyword`]).
+    #[inline(always)]
+    fn max_size_keyword(&self) -> Size<Dimension> {
+        Size { width: Dimension::auto(), height: Dimension::auto() }
     }
 
     /// pyro: whether the item is a flex container whose lines break in the block axis (a

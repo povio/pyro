@@ -531,6 +531,24 @@ impl<T: Deref<Target = ComputedValues>> taffy::BlockItemStyle for TaffyStyloStyl
     }
 
     #[inline]
+    fn min_size_keyword(&self) -> taffy::Size<taffy::Dimension> {
+        let position = self.style.get_position();
+        self.size(taffy::Size {
+            width: convert::min_size_keyword(&position.min_width),
+            height: convert::min_size_keyword(&position.min_height),
+        })
+    }
+
+    #[inline]
+    fn max_size_keyword(&self) -> taffy::Size<taffy::Dimension> {
+        let position = self.style.get_position();
+        self.size(taffy::Size {
+            width: convert::max_size_keyword(&position.max_width),
+            height: convert::max_size_keyword(&position.max_height),
+        })
+    }
+
+    #[inline]
     fn breaks_lines_in_block_axis(&self) -> bool {
         let position = self.style.get_position();
         self.effective_display().inside() == stylo::DisplayInside::Flex

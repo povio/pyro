@@ -105,6 +105,20 @@ Not done: the flex algorithm's own rules for items with a ratio (content size su
 absolutely positioned boxes, tables. Covered by `crates/pyro-render/tests/aspect_ratio.rs`; WPT
 `css/css-sizing`: 50 more reftests pass.
 
+`compute/block.rs`, `style/block.rs`: sizing keywords in `min-width`, `max-width`, `min-height` and
+`max-height` of block-level items. `CoreStyle::min_size`/`max_size` are lengths, percentages or `auto`, so a
+keyword there was `auto`; `BlockItemStyle::min_size_keyword`/`max_size_keyword` (default: none) name it, and the
+item's block parent applies it: in the inline axis the item's content width under the keyword's constraint
+(`clamp_width_by_keywords`, measured in `SizingMode::ContentSize` with the item's height kept, so percentage
+heights in it resolve as they will; `stretch` is the stretch width), also where the parent sizes itself by its
+content; in the block axis the content height at the item's width, or the stretch height. A width the preferred
+aspect ratio gives from a height counts as an intrinsic width. Out-of-flow boxes, floats, flex and grid items
+are not done. Covered by `crates/pyro-render/tests/sizing_keywords.rs`.
+
+`compute/block.rs`, `determine_content_based_container_width`: a percentage in an item's margin resolves against
+zero in an intrinsic size, also inside `calc()`: `margin-left: calc(10% + 100px)` counts 100px (the whole
+margin was dropped). Same test file.
+
 ## Incremental rounding
 
 These hooks went unused for a while. blitz-dom's `writing-mode` feature (#199) replaced `round_layout` with

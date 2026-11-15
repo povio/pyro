@@ -369,6 +369,12 @@ struct BlockItem {
     /// pyro: the item's width is its height's through its preferred aspect ratio, with an
     /// automatic minimum: its min-content width, no larger than its `max-width` (css-sizing-4 §5.1).
     min_width_is_content: bool,
+    /// pyro: the item's width is its height's through its preferred aspect ratio.
+    width_from_ratio: bool,
+    /// pyro: `min-width`/`min-height` and `max-width`/`max-height` that are sizing keywords
+    /// (`BlockItemStyle::min_size_keyword`), which `min_size` and `max_size` do not hold.
+    min_size_keyword: Size<Dimension>,
+    max_size_keyword: Size<Dimension>,
     /// pyro: for an item that is no block container (a flex or grid container) and whose height is
     /// its width's through its preferred aspect ratio, with an automatic minimum: the ratio and
     /// what its box is smaller by than the border box. The item is as tall as its content when
@@ -1193,6 +1199,9 @@ fn generate_item_list(
                 min_size: sizes.min_size,
                 max_size: sizes.max_size,
                 min_width_is_content,
+                width_from_ratio: sizes.width_from_ratio,
+                min_size_keyword: child_style.min_size_keyword(),
+                max_size_keyword: child_style.max_size_keyword(),
                 content_min_height_ratio: aspect_ratio.filter(|_| {
                     sizes.height_from_ratio
                         && !is_block
@@ -1302,10 +1311,23 @@ fn determine_content_based_container_width(
         if let (true, Some(width)) = (item.min_width_is_content, known_dimensions.width) {
             known_dimensions.width = Some(width.max(ratio_min_content_width(tree, item, Size::NONE)));
         }
+        // pyro: `min-width`/`max-width` that are sizing keywords (`fit-content` is the content's
+        // width under this pass's own constraint)
+        if let Some(width) = known_dimensions.width {
+            let available = match available_space.width {
+                AvailableSpace::Definite(available) => Some(available),
+                AvailableSpace::MaxContent => Some(f32::INFINITY),
+                AvailableSpace::MinContent => Some(0.0),
+            };
+            known_dimensions.width = Some(clamp_width_by_keywords(tree, item, width, available, None, Size::NONE));
+        }
 
+        // pyro: in an intrinsic size a percentage resolves against zero, also inside `calc()`:
+        // `calc(10% + 100px)` counts 100px (upstream dropped the whole margin; WPT
+        // `calc-margins-block`).
         let item_x_margin_sum = item
             .margin
-            .resolve_or_zero(available_space.width.into_option(), |val, basis| tree.calc(val, basis))
+            .resolve_or_zero(available_space.width.into_option().or(Some(0.0)), |val, basis| tree.calc(val, basis))
             .horizontal_axis_sum();
         let width = known_dimensions.width.unwrap_or_else(|| {
             let item_available_width =
@@ -1372,6 +1394,52 @@ fn ratio_min_content_width(
         if item.is_in_same_bfc { Line::TRUE } else { Line::FALSE },
     );
     width.maybe_min(item.max_size.width)
+}
+
+/// pyro: a width between the item's `min-width` and `max-width` when they are sizing keywords
+/// (`min-content`, `max-content`, `fit-content`, `stretch`): each is the item's content width
+/// under that constraint, or its stretch width. `stretch_width` and `container_width`: what
+/// `fit-content`/`stretch` and `fit-content(<percentage>)` resolve against (`None` in an
+/// intrinsic sizing pass, where those keywords do nothing).
+fn clamp_width_by_keywords(
+    tree: &mut impl LayoutPartialTree,
+    item: &BlockItem,
+    width: f32,
+    stretch_width: Option<f32>,
+    container_width: Option<f32>,
+    parent_size: Size<Option<f32>>,
+) -> f32 {
+    if item.min_size_keyword.width.is_auto() && item.max_size_keyword.width.is_auto() {
+        return width;
+    }
+    let mut resolve = |keyword: Dimension| -> Option<f32> {
+        let resolution = resolve_sizing_keyword(keyword, stretch_width, container_width, |val, basis| tree.calc(val, basis))?;
+        Some(match resolution {
+            SizingKeywordResolution::Exact(width) => width,
+            SizingKeywordResolution::Measure(available_width) => {
+                let content_width = tree.measure_child_size(
+                    item.node_id,
+                    // (its height stays: percentage heights in it resolve as they will)
+                    Size { width: None, height: item.size.height.maybe_clamp(item.min_size.height, item.max_size.height) },
+                    parent_size,
+                    Size { width: available_width, height: AvailableSpace::MaxContent },
+                    // The content's width, the item's own `width` aside
+                    SizingMode::ContentSize,
+                    crate::AbsoluteAxis::Horizontal,
+                    if item.is_in_same_bfc { Line::TRUE } else { Line::FALSE },
+                );
+                // A width the preferred aspect ratio gives from a height is an intrinsic width
+                if item.width_from_ratio {
+                    content_width.max(width)
+                } else {
+                    content_width
+                }
+            }
+        })
+    };
+    let max = resolve(item.max_size_keyword.width);
+    let min = resolve(item.min_size_keyword.width);
+    width.maybe_min(max).maybe_max(min)
 }
 
 /// Resolve the known dimensions an in-flow block-level item is laid out with
@@ -1446,6 +1514,62 @@ fn block_item_known_dimensions(
             })
             .map_height(|height| height.or(keyword_height))
             .maybe_clamp(item.min_size, item.max_size);
+
+        // pyro: `min-width`/`max-width` that are sizing keywords
+        if let Some(width) = known_dimensions.width {
+            known_dimensions.width = Some(clamp_width_by_keywords(
+                tree,
+                item,
+                width,
+                Some(stretch_width),
+                Some(container_inner_width),
+                parent_size,
+            ));
+        }
+        // pyro: `min-height`/`max-height` that are sizing keywords: the content height at the
+        // item's width for the content keywords, the stretch height for `stretch`. A height of
+        // `auto` is the content height already, so only `stretch` can change it.
+        let (min_keyword, max_keyword) = (item.min_size_keyword.height, item.max_size_keyword.height);
+        if let (Some(width), false) = (known_dimensions.width, min_keyword.is_auto() && max_keyword.is_auto()) {
+            let mut content_height = None;
+            let mut resolve = |keyword: Dimension| -> Option<f32> {
+                if keyword.is_auto() {
+                    None
+                } else if keyword.is_stretch() {
+                    resolve_stretch_height(
+                        keyword,
+                        container_percentage_resolution_height,
+                        item_non_auto_margin,
+                        children_margins_adjoin_own_edges,
+                    )
+                } else {
+                    Some(*content_height.get_or_insert_with(|| {
+                        tree.measure_child_size(
+                            item.node_id,
+                            Size { width: Some(width), height: None },
+                            parent_size,
+                            Size { width: AvailableSpace::Definite(width), height: AvailableSpace::MaxContent },
+                            SizingMode::ContentSize,
+                            crate::AbsoluteAxis::Vertical,
+                            if item.is_in_same_bfc { Line::TRUE } else { Line::FALSE },
+                        )
+                    }))
+                }
+            };
+            let (max, min) = (resolve(max_keyword), resolve(min_keyword));
+            match known_dimensions.height {
+                Some(height) => known_dimensions.height = Some(height.maybe_min(max).maybe_max(min)),
+                None => {
+                    // An `auto` height: the content's, unless `min-height: stretch` is taller.
+                    if let (true, Some(min)) = (min_keyword.is_stretch(), min) {
+                        let content = resolve(Dimension::max_content()).unwrap_or(0.0);
+                        if min > content {
+                            known_dimensions.height = Some(min);
+                        }
+                    }
+                }
+            }
+        }
 
         // pyro: `BlockItem::content_min_height_ratio`
         if let (Some((ratio, inset)), Some(width), true) =
