@@ -168,7 +168,7 @@ pub enum ScrollWrite {
 }
 
 impl ScrollWrite {
-    fn target(self, axis: Axis, current: u32) -> Option<i64> {
+    fn target(self, axis: Axis, current: i32) -> Option<i64> {
         let (ScrollWrite::To { left, top } | ScrollWrite::By { left, top }) = self;
         let value = match axis {
             Axis::Width => left,
@@ -223,7 +223,10 @@ pub struct Layout {
     contents_width: std::cell::Cell<Option<f32>>,
     window_scroll: (u32, u32),
     scroll_generation: u64,
-    element_scroll: FxHashMap<NodeId, (u32, u32)>,
+    /// Each scrolled element's `scrollLeft` and `scrollTop`: negative on an axis whose scroll
+    /// origin is at its end (right-to-left, `row-reverse`, `column-reverse`, ...), as CSSOM View
+    /// and Blitz's scroll offsets have them.
+    element_scroll: FxHashMap<NodeId, (i32, i32)>,
     /// CSS Scroll Anchoring: the layout each vertically scrolled element
     /// was last settled in, to select its anchor in when the layout next
     /// changes.
@@ -2209,12 +2212,12 @@ impl Layout {
     // ----- element scroll ----------------------------------------------------
 
     /// `scrollTop` (Element.zig:1757-1761).
-    pub fn scroll_top(&self, el: NodeId) -> u32 {
+    pub fn scroll_top(&self, el: NodeId) -> i32 {
         self.element_scroll.get(&el).map_or(0, |p| p.1)
     }
 
     /// `scrollLeft` (Element.zig:1767-1771).
-    pub fn scroll_left(&self, el: NodeId) -> u32 {
+    pub fn scroll_left(&self, el: NodeId) -> i32 {
         self.element_scroll.get(&el).map_or(0, |p| p.0)
     }
 
@@ -2275,7 +2278,7 @@ impl Layout {
     /// Whether any element or the window is scrolled away from the origin.
     /// Records the layout `scroller` is settled in (nothing at the top).
     fn capture_scroll_anchor(&mut self, dom: &Dom, scroller: NodeId) {
-        if self.scroll_top(scroller) == 0 {
+        if self.scroll_top(scroller) <= 0 {
             self.scroll_anchors.remove(&scroller);
             return;
         }
@@ -2374,7 +2377,7 @@ impl Layout {
                 continue;
             }
             let Some(&(x, y)) = self.element_scroll.get(&el) else { continue };
-            if y == 0 || !dom.is_connected(el).unwrap_or(false) {
+            if y <= 0 || !dom.is_connected(el).unwrap_or(false) {
                 continue;
             }
             let keep = |n: NodeId| flow.get(n).is_some();
@@ -2385,7 +2388,7 @@ impl Layout {
                 continue;
             };
             let delta = (ab.rect.y - sb.rect.y) - (oab.rect.y - osb.rect.y);
-            let ny = (y as f64 + delta).round().max(0.0) as u32;
+            let ny = (y as f64 + delta).round().clamp(0.0, i32::MAX as f64) as i32;
             if ny != y {
                 self.element_scroll.insert(el, (x, ny));
                 self.scroll_generation = self.scroll_generation.wrapping_add(1);
@@ -2423,18 +2426,18 @@ impl Layout {
             return moved;
         }
         self.apply_scroll_anchors(dom, &mut moved);
-        let mut scrolled: Vec<(NodeId, (u32, u32))> =
+        let mut scrolled: Vec<(NodeId, (i32, i32))> =
             self.element_scroll.iter().filter(|(_, &o)| o != (0, 0)).map(|(&k, &v)| (k, v)).collect();
         scrolled.sort_by_key(|(k, _)| (k.idx, k.gen));
         for (el, (x, y)) in scrolled {
             if !dom.is_connected(el).unwrap_or(false) || !self.is_visible(dom, el) {
                 continue;
             }
-            let limit = |layout: &Self, axis: Axis, v: u32| {
+            let limit = |layout: &Self, axis: Axis, v: i32| {
                 if v == 0 {
                     return 0;
                 }
-                layout.scroll_extent(dom, el, axis).map_or(v, |e| v.min(e.floor().max(0.0) as u32))
+                layout.clamp_scroll(dom, el, axis, v as i64)
             };
             let (nx, ny) = (limit(self, Axis::Width, x), limit(self, Axis::Height, y));
             if (nx, ny) != (x, y) {
@@ -2445,7 +2448,7 @@ impl Layout {
                 }
             }
         }
-        let anchored: Vec<NodeId> = self.element_scroll.iter().filter(|(_, &(_, y))| y != 0).map(|(&k, _)| k).collect();
+        let anchored: Vec<NodeId> = self.element_scroll.iter().filter(|(_, &(_, y))| y > 0).map(|(&k, _)| k).collect();
         self.scroll_anchors.retain(|k, _| anchored.contains(k));
         for el in anchored {
             self.capture_scroll_anchor(dom, el);
@@ -2465,14 +2468,36 @@ impl Layout {
 
     /// `clampScroll` (Element.zig:2261-2270). Zero needs no extent (no
     /// layout): `scrollTop = 0` on a container at the top stays a no-op.
-    fn clamp_scroll(&self, dom: &Dom, el: NodeId, axis: Axis, target: i64) -> u32 {
-        let mut clamped = target;
-        if clamped <= 0 {
-            clamped = 0;
+    ///
+    /// pyro: an axis whose scroll origin is at its end (`direction: rtl`, `row-reverse`,
+    /// `column-reverse`, `wrap-reverse`) scrolls from 0 down to minus its extent, as in CSSOM
+    /// View (it stayed at 0, its overflow on the start side unreachable).
+    fn clamp_scroll(&self, dom: &Dom, el: NodeId, axis: Axis, target: i64) -> i32 {
+        let clamped = if target == 0 {
+            0
+        } else if self.scroll_reversed(dom, el, axis) {
+            if target >= 0 {
+                0
+            } else {
+                let extent = self.scroll_extent(dom, el, axis).map_or(0, |e| e.floor() as i64);
+                target.max(-extent)
+            }
+        } else if target < 0 {
+            0
         } else if let Some(extent) = self.scroll_extent(dom, el, axis) {
-            clamped = clamped.min(extent.floor() as i64);
-        }
-        clamped.min(u32::MAX as i64) as u32
+            target.min(extent.floor() as i64)
+        } else {
+            target
+        };
+        clamped.clamp(i32::MIN as i64, i32::MAX as i64) as i32
+    }
+
+    /// pyro: whether `el` scrolls from the end of `axis` (its scroll origin there).
+    fn scroll_reversed(&self, dom: &Dom, el: NodeId, axis: Axis) -> bool {
+        self.layout_box(dom, el).is_some_and(|b| match axis {
+            Axis::Width => b.scroll_reversed[0],
+            Axis::Height => b.scroll_reversed[1],
+        })
     }
 
     /// `scrollContainer` (Element.zig:1788-1801): nearest ancestor-or-self
@@ -2570,14 +2595,15 @@ impl Layout {
                             target.left() - container.left(),
                             target.width,
                             self.client_width(dom, node),
-                            self.scroll_left(node),
+                            self.scroll_left(node) as i64,
                         )
                     })
                     .flatten();
                 let offset = target.top() - container.top();
                 let visible = self.client_height(dom, node);
-                let top = ((axes.y || explicit) && (offset < 0.0 || offset + target.height > visible))
-                    .then(|| (offset + self.scroll_top(node) as f64).max(0.0).trunc().min(i32::MAX as f64) as i32);
+                let top = ((axes.y || explicit) && (offset < 0.0 || offset + target.height > visible)).then(|| {
+                    (offset + self.scroll_top(node) as f64).trunc().clamp(i32::MIN as f64, i32::MAX as f64) as i32
+                });
                 if self.element_scroll_to(dom, node, left, top) {
                     moved.push(ScrollTarget::Container(node));
                 }
@@ -2612,7 +2638,7 @@ impl Layout {
                             target.left() - container.left(),
                             target.width,
                             self.client_width(dom, node),
-                            self.scroll_left(node),
+                            self.scroll_left(node) as i64,
                         )
                     })
                     .flatten();
@@ -2623,7 +2649,7 @@ impl Layout {
                             target.top() - container.top(),
                             target.height,
                             self.client_height(dom, node),
-                            self.scroll_top(node),
+                            self.scroll_top(node) as i64,
                         )
                     })
                     .flatten();
@@ -2634,8 +2660,10 @@ impl Layout {
             parent = dom.parent_element(node).ok().flatten();
         }
         let target = self.bounding_client_rect(dom, el);
-        let left = focus_scroll_offset(target.left(), target.width, self.inner_width() as f64, self.window_scroll.0);
-        let top = focus_scroll_offset(target.top(), target.height, self.inner_height() as f64, self.window_scroll.1);
+        let left =
+            focus_scroll_offset(target.left(), target.width, self.inner_width() as f64, self.window_scroll.0 as i64);
+        let top =
+            focus_scroll_offset(target.top(), target.height, self.inner_height() as f64, self.window_scroll.1 as i64);
         if self.window_scroll_to(dom, left, top) {
             moved.push(ScrollTarget::Viewport);
         }
@@ -2665,7 +2693,8 @@ impl Layout {
         };
         let top = y.max(0.0).trunc().min(i32::MAX as f64) as i32;
         let target = self.bounding_client_rect(dom, el);
-        let left = nearest_scroll_offset(target.left(), target.width, self.inner_width() as f64, self.window_scroll.0);
+        let left =
+            nearest_scroll_offset(target.left(), target.width, self.inner_width() as f64, self.window_scroll.0 as i64);
         if self.window_scroll_to(dom, left, Some(top)) {
             moved.push(ScrollTarget::Viewport);
         }
@@ -2681,8 +2710,13 @@ impl Layout {
         let target = self.bounding_client_rect(dom, el);
         if target.top() >= 0.0
             && target.bottom() <= self.inner_height() as f64
-            && nearest_scroll_offset(target.left(), target.width, self.inner_width() as f64, self.window_scroll.0)
-                .is_none()
+            && nearest_scroll_offset(
+                target.left(),
+                target.width,
+                self.inner_width() as f64,
+                self.window_scroll.0 as i64,
+            )
+            .is_none()
         {
             return !moved.is_empty();
         }
@@ -2703,7 +2737,7 @@ impl Layout {
     }
 
     fn scroll_into_view_aligned_targets(&mut self, dom: &Dom, el: NodeId, center: bool) -> Vec<ScrollTarget> {
-        let offset: fn(f64, f64, f64, u32) -> Option<i32> =
+        let offset: fn(f64, f64, f64, i64) -> Option<i32> =
             if center { centered_scroll_offset } else { center_if_needed_offset };
         self.scroll_into_view_offset_targets(dom, el, offset, offset, false)
     }
@@ -2735,7 +2769,7 @@ impl Layout {
         el: NodeId,
         center_if_needed: bool,
     ) -> Vec<ScrollTarget> {
-        let offset: fn(f64, f64, f64, u32) -> Option<i32> =
+        let offset: fn(f64, f64, f64, i64) -> Option<i32> =
             if center_if_needed { center_if_needed_offset } else { nearest_scroll_offset };
         self.scroll_into_view_offset_targets(dom, el, offset, offset, true)
     }
@@ -2745,8 +2779,8 @@ impl Layout {
         &mut self,
         dom: &Dom,
         el: NodeId,
-        offset_x: fn(f64, f64, f64, u32) -> Option<i32>,
-        offset_y: fn(f64, f64, f64, u32) -> Option<i32>,
+        offset_x: fn(f64, f64, f64, i64) -> Option<i32>,
+        offset_y: fn(f64, f64, f64, i64) -> Option<i32>,
         script: bool,
     ) -> Vec<ScrollTarget> {
         if !self.is_visible(dom, el) {
@@ -2783,7 +2817,7 @@ impl Layout {
                             target.left() - container.left() - self.client_left(dom, node),
                             target.width,
                             self.client_width(dom, node),
-                            self.scroll_left(node),
+                            self.scroll_left(node) as i64,
                         )
                     })
                     .flatten();
@@ -2793,7 +2827,7 @@ impl Layout {
                             target.top() - container.top() - self.client_top(dom, node),
                             target.height,
                             self.client_height(dom, node),
-                            self.scroll_top(node),
+                            self.scroll_top(node) as i64,
                         )
                     })
                     .flatten();
@@ -2808,8 +2842,8 @@ impl Layout {
             return moved;
         }
         let target = self.bounding_client_rect(dom, el);
-        let left = offset_x(target.left(), target.width, self.inner_width() as f64, self.window_scroll.0);
-        let top = offset_y(target.top(), target.height, self.inner_height() as f64, self.window_scroll.1);
+        let left = offset_x(target.left(), target.width, self.inner_width() as f64, self.window_scroll.0 as i64);
+        let top = offset_y(target.top(), target.height, self.inner_height() as f64, self.window_scroll.1 as i64);
         if self.window_scroll_to(dom, left, top) {
             moved.push(ScrollTarget::Viewport);
         }
@@ -3092,14 +3126,14 @@ fn clamp_layout_units(value: &str) -> Option<String> {
 
 // Default inline alignment uses the nearer edge. A box spanning both edges
 // stays put; an oversized box outside one edge aligns its opposite edge.
-fn nearest_scroll_offset(start: f64, size: f64, viewport: f64, current: u32) -> Option<i32> {
+fn nearest_scroll_offset(start: f64, size: f64, viewport: f64, current: i64) -> Option<i32> {
     let end = start + size;
     if (start >= 0.0 && end <= viewport) || (start <= 0.0 && end >= viewport) {
         return None;
     }
     let delta =
         if (start < 0.0 && size <= viewport) || (end > viewport && size > viewport) { start } else { end - viewport };
-    Some((current as f64 + delta).round().clamp(0.0, i32::MAX as f64) as i32)
+    Some((current as f64 + delta).round().clamp(i32::MIN as f64, i32::MAX as f64) as i32)
 }
 
 /// A `ScrollLogicalPosition` (`scrollIntoView` `block` / `inline`).
@@ -3123,7 +3157,7 @@ impl ScrollAlign {
         })
     }
 
-    fn offset_fn(self) -> fn(f64, f64, f64, u32) -> Option<i32> {
+    fn offset_fn(self) -> fn(f64, f64, f64, i64) -> Option<i32> {
         match self {
             ScrollAlign::Start => start_scroll_offset,
             ScrollAlign::Center => centered_scroll_offset,
@@ -3133,38 +3167,41 @@ impl ScrollAlign {
     }
 }
 
-fn start_scroll_offset(start: f64, _size: f64, _viewport: f64, current: u32) -> Option<i32> {
-    Some((current as f64 + start).round().clamp(0.0, i32::MAX as f64) as i32)
+fn start_scroll_offset(start: f64, _size: f64, _viewport: f64, current: i64) -> Option<i32> {
+    Some((current as f64 + start).round().clamp(i32::MIN as f64, i32::MAX as f64) as i32)
 }
 
-fn end_scroll_offset(start: f64, size: f64, viewport: f64, current: u32) -> Option<i32> {
-    Some((current as f64 + start + size - viewport).round().clamp(0.0, i32::MAX as f64) as i32)
+fn end_scroll_offset(start: f64, size: f64, viewport: f64, current: i64) -> Option<i32> {
+    Some((current as f64 + start + size - viewport).round().clamp(i32::MIN as f64, i32::MAX as f64) as i32)
 }
 
-fn centered_scroll_offset(start: f64, size: f64, viewport: f64, current: u32) -> Option<i32> {
-    Some((current as f64 + start + size / 2.0 - viewport / 2.0).round().clamp(0.0, i32::MAX as f64) as i32)
+fn centered_scroll_offset(start: f64, size: f64, viewport: f64, current: i64) -> Option<i32> {
+    Some((current as f64 + start + size / 2.0 - viewport / 2.0).round().clamp(i32::MIN as f64, i32::MAX as f64) as i32)
 }
 
 // Blink's center-if-needed on one axis: a fully visible box, or one covering
 // the scrollport, stays; a hidden box is centered; a partly visible one is
 // brought in by its nearest edge.
-fn center_if_needed_offset(start: f64, size: f64, viewport: f64, current: u32) -> Option<i32> {
+fn center_if_needed_offset(start: f64, size: f64, viewport: f64, current: i64) -> Option<i32> {
     let end = start + size;
     if end <= 0.0 || start >= viewport {
-        return Some((current as f64 + start + size / 2.0 - viewport / 2.0).round().clamp(0.0, i32::MAX as f64) as i32);
+        return Some(
+            (current as f64 + start + size / 2.0 - viewport / 2.0).round().clamp(i32::MIN as f64, i32::MAX as f64)
+                as i32,
+        );
     }
     nearest_scroll_offset(start, size, viewport, current)
 }
 
 // Focusing a box already visible on an axis must not perturb that scroll.
-fn focus_scroll_offset(start: f64, size: f64, viewport: f64, current: u32) -> Option<i32> {
+fn focus_scroll_offset(start: f64, size: f64, viewport: f64, current: i64) -> Option<i32> {
     if start >= 0.0 && start + size <= viewport {
         return None;
     }
     if start <= 0.0 && start + size >= viewport {
         return None;
     }
-    Some((current as f64 + start + size / 2.0 - viewport / 2.0).round().clamp(0.0, i32::MAX as f64) as i32)
+    Some((current as f64 + start + size / 2.0 - viewport / 2.0).round().clamp(i32::MIN as f64, i32::MAX as f64) as i32)
 }
 
 /// Window.zig:848-851. The document's pixel-snapped size (what `scrollHeight`

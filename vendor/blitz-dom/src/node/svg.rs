@@ -329,9 +329,76 @@ fn view_box_transform(
     usvg::Transform::from_row(sx, 0.0, 0.0, sy, tx, ty)
 }
 
+impl SvgImageData {
+    /// pyro: an SVG image as loaded from `url`, `source` its data, `self` that data parsed. A
+    /// fragment naming a `<view>` element (`sprite.svg#icon`) shows the document through the
+    /// view's `viewBox` and `preserveAspectRatio` (SVG 2 §5.8.3, as Chromium draws SVG sprites):
+    /// the root takes them, so the image gets the view's aspect ratio. An image with no
+    /// `viewBox`, `width` or `height` keeps its source: its content is laid out in the box it is
+    /// drawn in (the concrete object size: a background's size, an `<img>`'s content box), as
+    /// an inline `<svg>` without a `viewBox` is ([`Self::sized`]), so percentages (a `100%`
+    /// rect, a `10%` stroke) resolve against that box rather than against usvg's 100x100.
+    pub fn for_url(self, source: &[u8], url: &str) -> Self {
+        let Ok(text) = std::str::from_utf8(source) else {
+            return self;
+        };
+        let viewed = url
+            .split_once('#')
+            .map(|(_, fragment)| fragment)
+            .filter(|fragment| !fragment.is_empty() && !fragment.starts_with("svgView("))
+            .and_then(|fragment| with_view(text, fragment));
+        let (mut svg, text) = match viewed {
+            Some(viewed) => match crate::util::parse_svg_image(viewed.as_bytes()) {
+                Ok(svg) => (svg, viewed),
+                Err(_) => (self, text.to_string()),
+            },
+            None => (self, text.to_string()),
+        };
+        if svg.intrinsic_dimensions.view_box.is_none()
+            && svg.intrinsic_width().is_none()
+            && svg.intrinsic_height().is_none()
+            && !svg.intrinsic_dimensions.degenerate_view_box
+        {
+            svg.inline_source = Some(text.into());
+        }
+        svg
+    }
+}
+
+/// pyro: `source` with its root showing the `<view>` whose id is `fragment`: the root takes the
+/// view's `viewBox` and `preserveAspectRatio`. `None` without such a view (or without a
+/// `viewBox` on it).
+fn with_view(source: &str, fragment: &str) -> Option<String> {
+    if !source.contains("<view") {
+        return None;
+    }
+    let xml_options = roxmltree::ParsingOptions {
+        allow_dtd: true,
+        ..Default::default()
+    };
+    let doc = roxmltree::Document::parse_with_options(source, xml_options).ok()?;
+    let view = doc
+        .descendants()
+        .find(|n| n.has_tag_name("view") && n.attribute("id") == Some(fragment))?;
+    let mut attrs = vec![("viewBox", view.attribute("viewBox")?.to_string())];
+    if let Some(aspect) = view.attribute("preserveAspectRatio") {
+        attrs.push(("preserveAspectRatio", aspect.to_string()));
+    }
+    with_root_attrs(source, &attrs)
+}
+
 /// pyro: `source` (an SVG document whose root is `<svg`) with the root's
 /// `width` and `height` attributes set to `width` x `height`.
 fn with_root_size(source: &str, width: f32, height: f32) -> Option<String> {
+    with_root_attrs(
+        source,
+        &[("width", width.to_string()), ("height", height.to_string())],
+    )
+}
+
+/// pyro: `source` (an SVG document whose root is `<svg`) with the root's attributes named in
+/// `attrs` set to their values there (first, in that order); its other attributes are kept.
+fn with_root_attrs(source: &str, set: &[(&str, String)]) -> Option<String> {
     let start = source.find("<svg")?;
     // The end of the root's start tag: the first `>` outside an attribute value.
     let mut quote = None;
@@ -347,7 +414,7 @@ fn with_root_size(source: &str, width: f32, height: f32) -> Option<String> {
     let tag = &source[start + 4..end];
     let mut attrs = String::with_capacity(tag.len() + 32);
     let mut rest = tag;
-    // Drops ` width="..."` and ` height="..."`, keeps every other attribute.
+    // Drops the attributes being set, keeps every other attribute.
     while let Some(i) = rest.find(|c: char| c.is_ascii_whitespace()) {
         attrs.push_str(&rest[..i]);
         let after = rest[i..].trim_start();
@@ -360,7 +427,7 @@ fn with_root_size(source: &str, width: f32, height: f32) -> Option<String> {
                 v[1..].find(q).map(|e| name_end + 1 + 1 + e + 1)
             })
             .unwrap_or(name_end);
-        if name == "width" || name == "height" {
+        if set.iter().any(|(set_name, _)| *set_name == name) {
             rest = &after[value_end..];
         } else {
             attrs.push(' ');
@@ -369,8 +436,13 @@ fn with_root_size(source: &str, width: f32, height: f32) -> Option<String> {
         }
     }
     attrs.push_str(rest);
+    let mut root = String::from("<svg");
+    for (name, value) in set {
+        let value = value.replace('&', "&amp;").replace('"', "&quot;");
+        root.push_str(&format!(" {name}=\"{value}\""));
+    }
     Some(format!(
-        "{}<svg width=\"{width}\" height=\"{height}\"{attrs}{}",
+        "{}{root}{attrs}{}",
         &source[..start],
         &source[end..]
     ))

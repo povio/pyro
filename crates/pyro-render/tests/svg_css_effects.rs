@@ -17,7 +17,7 @@ const GREEN: [u8; 3] = [0, 128, 0];
 
 /// A 20x20 SVG image whose top-left 10x10 quarter is opaque (`m.svg`), one whose green
 /// rectangle blends `difference` with what is under it (`blend.svg`), and a sprite of a `<mask>`
-/// that draws nothing itself (`sprite.svg`).
+/// that draws nothing itself (`sprite.svg`), and one without a size or `viewBox` (`sizeless.svg`).
 struct Resources;
 impl Fetcher for Resources {
     fn fetch(&self, url: String, done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>) {
@@ -27,6 +27,7 @@ impl Fetcher for Resources {
             done(match name.as_str() {
                 "m.svg" => Ok(br#"<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20"><rect width="10" height="10"/></svg>"#.to_vec()),
                 "sprite.svg" => Ok(br#"<svg xmlns="http://www.w3.org/2000/svg"><defs><mask id="m"><rect width="10" height="10" fill="white"/></mask></defs></svg>"#.to_vec()),
+                "sizeless.svg" => Ok(br#"<svg xmlns="http://www.w3.org/2000/svg"><rect width="50" height="50" fill="blue"/></svg>"#.to_vec()),
                 "blend.svg" => Ok(br#"<svg xmlns="http://www.w3.org/2000/svg" width="50" height="50"><rect width="50" height="50" style="fill:rgb(0,255,0);mix-blend-mode:difference"/></svg>"#.to_vec()),
                 _ => Err("404".into()),
             })
@@ -296,6 +297,15 @@ fn zoom_scales_inline_svg_content() {
         render(r##"<svg width="50" height="50" style="zoom: 2"><rect width="10" height="10" fill="#0000ff"/></svg>"##);
     assert_eq!(px(&img, 15, 15), BLUE);
     assert_eq!(px(&img, 25, 25), WHITE);
+}
+
+#[test]
+fn zoom_scales_a_sizeless_svg_images_content() {
+    // An `<img>` of an SVG without a size or `viewBox` lays its content out in its box, in user
+    // units of a CSS px times the zoom, as Chromium draws it (its 50-unit rect 100 px wide).
+    let img = render(r##"<img src="sizeless.svg" style="zoom: 2; width: 100px; height: 100px; display: block">"##);
+    assert_eq!(px(&img, 95, 95), BLUE);
+    assert_eq!(px(&img, 105, 105), WHITE);
 }
 
 #[test]

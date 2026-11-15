@@ -625,7 +625,7 @@ impl ImageHandler {
 
 impl NetHandler for ResourceHandler<ImageHandler> {
     fn bytes(self: Box<Self>, resolved_url: String, bytes: Bytes) {
-        let result = self.data.parse(bytes);
+        let result = self.data.parse(&resolved_url, bytes);
         self.respond(resolved_url, result)
     }
 }
@@ -646,7 +646,7 @@ fn decoded_key(bytes: &[u8]) -> u64 {
 }
 
 impl ImageHandler {
-    fn parse(&self, bytes: Bytes) -> Result<Resource, String> {
+    fn parse(&self, url: &str, bytes: Bytes) -> Result<Resource, String> {
         let key = decoded_key(&bytes);
         if let Some((_, w, h, data)) = DECODED
             .lock()
@@ -705,10 +705,12 @@ impl ImageHandler {
         let svg_err = {
             use crate::util::parse_svg_image;
             match parse_svg_image(&bytes) {
-                Ok(mut svg) => {
-                    // pyro: kept for inline SVG that masks with it (`svg_css`), up to a size: an
-                    // image of any kind can be a mask image (the cache is by URL), and most never
-                    // are; a larger one leaves the SVG element it masks unmasked.
+                // pyro: its `<view>` fragment, and its source when it has no size. The source is
+                // also kept for inline SVG that masks with it (`svg_css`), up to a size: an image of
+                // any kind can be a mask image (the cache is by URL), and most never are; a larger
+                // one leaves the SVG element it masks unmasked.
+                Ok(svg) => {
+                    let mut svg = svg.for_url(&bytes, url);
                     const MAX_KEPT_SOURCE: usize = 256 << 10;
                     if bytes.len() <= MAX_KEPT_SOURCE {
                         svg.source = Some(std::sync::Arc::from(&bytes[..]));
@@ -719,7 +721,10 @@ impl ImageHandler {
             }
         };
         #[cfg(not(feature = "svg"))]
-        let svg_err = "svg feature disabled";
+        let svg_err = {
+            let _ = url;
+            "svg feature disabled"
+        };
 
         Err(format!(
             "Could not parse image ({} bytes): image-crate error: {image_err}; svg fallback error: {svg_err}",
