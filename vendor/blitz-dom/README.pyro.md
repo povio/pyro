@@ -912,6 +912,15 @@ the fuzzy limits of WPT css-transforms/transform-input-* hide while text is anti
 (the reftest runner's text). Now such a turn is no transform at all. Covered by
 `text_turned_by_a_whole_turn_draws_as_untransformed_text` in `crates/pyro-render/tests/text_aliasing.rs`.
 
+## The `rotate` property at the transform list's precision
+
+`src/stylo_to_kurbo.rs` (`resolve_transform`): a matrix with a `rotate` in it is rounded to f32, as Stylo rounds the
+transform list's matrix (`to_transform_3d_matrix` casts its f64 matrix to f32), so `rotate: 45deg` is the matrix
+`transform: rotate(45deg)` is. The property's sine and cosine were f64, the function's f32: 1e-8 apart, which moved
+antialiased edges of a rotated box a level (WPT css-transforms individual-transform-2a/2b/2c, 27 pixels each).
+`translate` and `scale` alone resolve as before (whole products of f32 values). Covered by
+`the_rotate_property_draws_as_the_rotate_function` in `crates/pyro-render/tests/compositing_rounding.rs`.
+
 ## SVG reference cycles usvg does not break
 
 `src/svg_refs.rs` (new), `src/util.rs` (`parse_svg_image`): usvg sets a clip path, mask or filter reference that

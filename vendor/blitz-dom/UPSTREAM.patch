@@ -20028,10 +20028,17 @@ diff --git a/packages/blitz-dom/src/stylo_to_kurbo.rs b/packages/blitz-dom/src/s
      });
  
      let mut resolved = Affine::IDENTITY;
-@@ -119,11 +151,348 @@
+@@ -119,11 +151,355 @@
          resolved *= transform;
      }
  
++    // pyro: a `rotate` is in the matrix at the transform list's precision, f32 (stylo casts the
++    // list's matrix to f32): `rotate: 45deg` is then the matrix `transform: rotate(45deg)` is, where
++    // its f64 sine and cosine moved antialiased edges by a level (WPT individual-transform-2a/b/c).
++    if rotate.is_some() {
++        resolved = Affine::new(resolved.as_coeffs().map(|v| v as f32 as f64));
++    }
++
 +    // pyro: coefficients a hair from whole numbers are whole, as Chromium's rotations by multiples
 +    // of 90 degrees are exact (`SinCosDegrees`): `rotate(360deg)` is the identity, so its text is
 +    // placed and snapped as untransformed text is (WPT css-transforms/transform-input-*).

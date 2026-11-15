@@ -106,3 +106,23 @@ fn a_translucent_box_over_its_filtered_backdrop_rounds_as_chromium() {
     );
     assert_eq!(pixel(&img, 60, 60), [255, 195, 119]);
 }
+
+/// `rotate: 45deg` is the matrix `transform: rotate(45deg)` is: the property's f64 sine and
+/// cosine moved antialiased edges a level from the function's f32 ones (individual-transform-2a,
+/// -2b and -2c, 27 pixels each).
+#[test]
+fn the_rotate_property_draws_as_the_rotate_function() {
+    const BOX: &str = "position:fixed;width:100px;height:100px;top:200px;left:200px;transform-origin:0 0;\
+                       border-style:solid;border-width:10px 0;border-color:lime";
+    let reference = render(&format!(
+        "<div style='{BOX};transform:translate(50px,50px) rotate(45deg) scale(2,2)'></div>"
+    ));
+    for individual in [
+        "translate:50px 50px;rotate:45deg;scale:2 2",
+        "rotate:45deg;scale:2 2;translate:50px 50px",
+        "translate:50px 50px;rotate:45deg;transform:scale(2,2)",
+    ] {
+        let test = render(&format!("<div style='{BOX};{individual}'></div>"));
+        assert_eq!(difference(&test, &reference), (0, 0), "{individual}");
+    }
+}
