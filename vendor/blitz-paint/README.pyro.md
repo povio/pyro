@@ -187,7 +187,35 @@ from the root of an upstream checkout at that commit) is the whole diff.
   - `src/filters.rs` (`reference_filter`): a `url(#id)` filter (stylo parses it now) is the document's SVG
     `<filter>` with that id when that is a chain of `feColorMatrix` (every type) and `feComponentTransfer`, each in
     its `color-interpolation-filters` space (linearRGB unless an ancestor's attribute says sRGB; sRGB for a filter
-    in a `display: none` subtree, as in Chromium). Anything else is left out, as before.
+    in a `display: none` subtree, as in Chromium), when its functions keep transparent pixels transparent.
+  - `src/filters.rs` (`filter_steps`, `reference_graph`), `src/render.rs` (`render_element`,
+    `paint_filter_steps`): any other `url(#id)` filter is the `<filter>`'s graph (anyrender_svg's `FilterGraph`, see
+    its README): usvg parses the filter for a stand-in of the element's border box (the object bounding box, and the
+    viewport its percentages resolve against) in `svg_reference_document`'s document, and the graph applies in the
+    element's user space (CSS px from its border box's corner) within its filter region. The list then paints as a
+    layer per step around the element's group (filter functions in a row stay one CSS chain), the first innermost,
+    the opacity around them. A graph fills its region whatever the element paints: an empty element's filter
+    region is painted, and so is a `visibility: hidden` element's (its content not), as in Chromium (WPT
+    css/filter-effects/empty-element-with-filter-*, visibility-hidden-element-with-filter-001,
+    effect-reference-obb-dimensions). A `drop-shadow()` coloured from `currentcolor` (`uses_current_color`, the
+    computed colour's structure) before it taints the graph's source (see anyrender_svg's README). Culling takes
+    the steps' reach and the graphs' regions (`steps_reach`): a region reaching into view from a box outside it is
+    painted, an `feTile` in view keeps the content of its whole region, and an empty `overflow: hidden` element still
+    paints its region.
+  - `src/bounds.rs` (`layer_bounds`, `stays_with_input`): a layer whose filter can paint where its content is not (a
+    graph with a flood, turbulence, a tile, an image, a displacement, morphology or a composite; a colour function
+    adding alpha) is bounded by its whole clip, its filter region, so that an ancestor's opacity or filter layer
+    keeps an empty element's filter region and a flood past the content.
+  - `src/filters.rs` (`svg_filter_notes`, `primitive_notes`), `src/render.rs` (`draw_svg`): an inline `<svg>`'s
+    tree is rendered with what the document knows of its filters' primitives that usvg does not keep: which
+    `flood-color` or `lighting-color` is computed from `currentcolor` (tainted), which lighting primitive has no
+    light source and which is a real `feFlood`. A tree filter is the `<filter>` of its id in the `<svg>` (else in
+    the document) whose primitives it has; usvg names the second and later uses of an `objectBoundingBox` filter
+    `filterN`, and those take the notes of the uses with the same primitives and colours. A `<filter href>`
+    template's primitives are read through the reference. What its filters make past its box is cut off at the
+    content box (an `<svg>`'s `overflow: hidden`), at least 300 x 150 CSS px from its corner when it declares no
+    size (its box here is its content's, where Chromium's is that), unless the `<svg>` declares `overflow: visible`
+    (its attribute or its `style`; pyro's UA sheet has no `svg:not(:root) { overflow: hidden }`). Covered by `crates/pyro-render/tests/svg_filter_primitives.rs`.
   - `src/layers.rs` (`blend_isolation`), `src/render.rs` (`render_element`): a stacking context that holds an element
     with a `mix-blend-mode` (its nearest ancestor that is one, the root element's at the latest) is painted as an
     isolated group, as Chromium isolates one: the element blends with what the context painted, not with what lies
@@ -432,6 +460,24 @@ from the root of an upstream checkout at that commit) is the whole diff.
 - `src/render.rs` (`draw_children`): a fixed box that blitz-dom lifts into the root element's paint list from a
   containing block that is no layer root (a `backdrop-filter` box) is placed by its offset
   (`lifted_paint_offset`), not against the viewport (WPT `backdrop-filter-containing-block`).
+- `src/render.rs` (`render_element`), `src/layers.rs` (`filter_reach`, `filter_source_area`): culling counts what
+  an element's `filter` moves or spreads (the sum of its primitives' reaches, a drop shadow's offset, a blur): an
+  element out of view whose shadow is in view is painted, and so is content a clip leaves out of view that the
+  filter brings into it (its descendants are culled against the clip grown back by the reach). WPT
+  `filters-drop-shadow-003`, `drop-shadow-clipped-001`; covered by `crates/pyro-render/tests/filter_drop_shadow.rs`.
+- `src/render/background.rs` (`draw_background_layers`): `background-blend-mode`. Each image layer is drawn in a
+  layer of its blend mode, and an element with one that is not `normal` paints its background in an isolated group
+  (not blending with what lies behind it). Covered by `crates/pyro-render/tests/mix_blend_mode.rs`.
+- `src/render/clip_path.rs` (`draw_inline_effects`, `paints_alone`, `disjoint_rects`): inline elements (not
+  atomic) with `opacity` or `backdrop-filter` join those with a clip path or a mask: the layout is painted in their
+  areas in a group of their opacity (all fragments as one group), over their backdrop filtered in their fragments'
+  border boxes (snapped as `draw_inline_boxes` snaps them). Only when no inline ancestor between the element and its
+  inline root paints a box there (a background, a border, a shadow), which the group would take in. The areas go out
+  to whole device pixels around the snapped boxes, and the layout outside them is clipped by pieces that do not
+  overlap (overlapping areas, lines closer than their text is tall, were painted twice), inside the layout's ink
+  (recorded first, `bounds::scene_bounds`) rather than the whole visible area (a frame-sized clip layer). WPT
+  `t32-opacity-offscreen-multiple-boxes-1-c`/`2-c`, `backdrop-filter-inline-positioning`; covered by
+  `crates/pyro-render/tests/opacity_group.rs` and `backdrop_filter.rs`.
 - Backgrounds and box edges, wave 3 of the WPT paint reftests (lane F2); covered by
   `crates/pyro-render/tests/background_images_and_edges.rs`:
   - `src/render/background.rs` (`round_layer_size`): the round step of `background-repeat` scales an axis to a

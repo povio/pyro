@@ -2,9 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 
 use crate::util;
-use anyrender::{Filter, Paint, PaintScene, Scene};
+use anyrender::{Paint, PaintScene, Scene};
 use anyrender_vello_cpu::VelloCpuImageRenderer;
-use std::sync::Arc;
 use kurbo::{Affine, BezPath, Rect, Shape};
 use peniko::{BlendMode, Blob, Color, Compose, Fill, ImageBrush, ImageData, Mix};
 use usvg::{Node, Path};
@@ -362,20 +361,22 @@ fn render_group_node_inner<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
     }
 }
 
-/// pyro: a filter layer: the filter, the layer's clip (in the group's user space), and whether
-/// that clip is a filter region (a `<filter>`'s, which also stops its source graphic) rather than
-/// the reach of a CSS filter function, which has none.
-type FilterLayer = (Arc<Filter>, Rect, bool);
-
-/// pyro: the group's filters, each with its layer's region ([`filter_regions`]), the first
-/// applied first; none when one has a primitive anyrender_vello_cpu does not do (the group is
-/// then drawn unfiltered, as before; see `crate::filter`).
-fn filter_layers(g: &usvg::Group, ts: Affine) -> Vec<FilterLayer> {
+/// pyro: the group's filters as graphs, each with its layer's region ([`filter_regions`]:
+/// `FilterGraph::region` and `bounded`), the first applied first (a tainted result taints the
+/// source of the next); none when one has a primitive anyrender_vello_cpu does not do (the group
+/// is then drawn unfiltered, as before; see `crate::filter`).
+fn filter_layers(g: &usvg::Group, ts: Affine) -> Vec<crate::filter::FilterGraph> {
+    let mut tainted = false;
     g.filters()
         .iter()
         .zip(filter_regions(g, ts))
         .map(|(filter, (region, bounded))| {
-            crate::filter::convert(filter).map(|graph| (Arc::new(graph), region, bounded))
+            let notes = |index| crate::filter::notes(filter.id(), index);
+            let mut graph = crate::filter::FilterGraph::new(filter, &notes, tainted)?;
+            tainted = graph.tainted;
+            graph.region = region;
+            graph.bounded = bounded;
+            Some(graph)
         })
         .collect::<Option<Vec<_>>>()
         .unwrap_or_default()
@@ -542,24 +543,15 @@ fn render_filtered<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
     g: &usvg::Group,
     base: Affine,
     ts: Affine,
-    filters: &[FilterLayer],
+    filters: &[crate::filter::FilterGraph],
     global_transform: Affine,
     error_handler: &mut F,
     ctx: &Ctx,
 ) {
-    for (filter, region, _) in filters.iter().rev() {
-        scene.push_layer(
-            Fill::NonZero,
-            BlendMode::default(),
-            1.0,
-            ts,
-            region,
-            Some(filter.clone()),
-            None,
-        );
+    for graph in filters.iter().rev() {
+        graph.push_layer(scene, ts);
     }
-    let first_region = filters.first().filter(|(_, _, bounded)| *bounded);
-    let clip = first_region.map(|(_, region, _)| *region).filter(|region| {
+    let clip = filters.first().filter(|graph| graph.bounded).map(|graph| graph.region).filter(|region| {
         let content = g.stroke_bounding_box();
         let content = Rect::new(
             content.left() as f64,

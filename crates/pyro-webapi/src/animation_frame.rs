@@ -103,6 +103,21 @@ pub(crate) struct Progress {
     pub moving: bool,
 }
 
+/// pyro: an animation's progress where it is in effect ([`Level::Animation`]), or, in its delay
+/// without a backwards fill while it plays forwards (a "current" effect in Web Animations 1;
+/// not when `settled`), none ([`Level::Current`]: the progress is not read).
+fn in_effect_or_current(timing: &Timing, local: f64, rate: f64, settled: bool) -> Option<(Progress, Level)> {
+    if let Some(p) = progress(timing, local, rate) {
+        return Some((p, Level::Animation));
+    }
+    let duration = timing.duration.max(0.0);
+    let active = if duration == 0.0 || timing.iterations == 0.0 { 0.0 } else { duration * timing.iterations };
+    let end = (timing.delay + active + timing.end_delay).max(0.0);
+    let before_phase = local < timing.delay.min(end).max(0.0);
+    (!settled && rate > 0.0 && before_phase)
+        .then_some((Progress { progress: 0.0, before: true, moving: false }, Level::Current))
+}
+
 /// The iteration progress of an effect with `timing` at `local` time, for
 /// playback `rate` (Web Animations, "calculating the iteration progress";
 /// animations.js's `computeTiming` without the easing). `None`: not in
@@ -329,7 +344,7 @@ fn transition_timing(t: &crate::animation_events::Timeline) -> Timing {
 /// transitions, for a capture).
 pub(crate) fn frame(page: &PageDom, now: f64, transitions: bool) -> AnimationFrame {
     let mut out = Builder::default();
-    walk(page, now, transitions, &mut |el, transition, effect| out.push(el, transition, effect));
+    walk(page, now, transitions, &mut |el, level, effect| out.push(el, level, effect));
     let Ok(dom) = page.dom.try_borrow() else { return AnimationFrame::default() };
     AnimationFrame {
         elements: out
@@ -351,18 +366,27 @@ struct Builder {
 }
 
 impl Builder {
-    fn push(&mut self, el: NodeId, transition: bool, effect: Effect) {
+    fn push(&mut self, el: NodeId, level: Level, effect: Effect) {
         let i = *self.index.entry(el).or_insert_with(|| {
             self.elements.push((el, ElementAnimations::default()));
             self.elements.len() - 1
         });
         let e = &mut self.elements[i].1;
-        if transition {
-            e.transitions.push(effect)
-        } else {
-            e.animations.push(effect)
+        match level {
+            Level::Transition => e.transitions.push(effect),
+            Level::Animation => e.animations.push(effect),
+            Level::Current => e.current.push(effect),
         }
     }
+}
+
+/// Where a walked effect goes ([`ElementAnimations`]).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Level {
+    Transition,
+    Animation,
+    /// pyro: current but not in effect (`ElementAnimations::current`).
+    Current,
 }
 
 /// When the effects are sampled.
@@ -404,11 +428,11 @@ impl Clock {
 
 /// Every effect in effect at `now`, in composite order per level: `visit(el,
 /// transition, effect)`. Returns whether a value moves with time.
-fn walk(page: &PageDom, now: f64, transitions: bool, visit: &mut dyn FnMut(NodeId, bool, Effect)) -> bool {
+fn walk(page: &PageDom, now: f64, transitions: bool, visit: &mut dyn FnMut(NodeId, Level, Effect)) -> bool {
     walk_at(page, Clock::At(now), transitions, visit)
 }
 
-fn walk_at(page: &PageDom, clock: Clock, transitions: bool, visit: &mut dyn FnMut(NodeId, bool, Effect)) -> bool {
+fn walk_at(page: &PageDom, clock: Clock, transitions: bool, visit: &mut dyn FnMut(NodeId, Level, Effect)) -> bool {
     let now = clock.now();
     let settled = matches!(clock, Clock::Settled);
     let state = &page.animation_events;
@@ -441,11 +465,11 @@ fn walk_at(page: &PageDom, clock: Clock, transitions: bool, visit: &mut dyn FnMu
             easing,
             composite: Composite::Replace,
         };
-        visit(el, true, effect);
+        visit(el, Level::Transition, effect);
     }
     // SMIL `<animate>` elements, under the CSS animations of their targets.
     let now_or_settled = (!settled).then_some(now);
-    moving |= crate::smil::walk(page, now_or_settled, &mut |el, effect| visit(el, false, effect));
+    moving |= crate::smil::walk(page, now_or_settled, &mut |el, effect| visit(el, Level::Animation, effect));
     // CSS animations, in each element's `animation-name` order.
     for t in animations.iter().filter(|t| t.is_live()) {
         let Some((own_timing, style)) = css_animation_timing(t) else { continue };
@@ -457,7 +481,7 @@ fn walk_at(page: &PageDom, clock: Clock, transitions: bool, visit: &mut dyn FnMu
             None => (t.local_ms(now), 1.0, own_timing, t.is_paused()),
         };
         let Some(local) = clock.local(&timing, local, rate) else { continue };
-        let Some(p) = progress(&timing, local, rate) else { continue };
+        let Some((p, level)) = in_effect_or_current(&timing, local, rate, settled) else { continue };
         moving |= p.moving && !held;
         let effect = match overrides.get(&t.id()) {
             // An effect script gave the object replaces the `@keyframes`.
@@ -482,7 +506,7 @@ fn walk_at(page: &PageDom, clock: Clock, transitions: bool, visit: &mut dyn FnMu
             },
         };
         let el = overrides.get(&t.id()).and_then(|s| s.el).unwrap_or(t.el());
-        visit(el, false, effect);
+        visit(el, level, effect);
     }
     // Script animations, in the order they were made.
     let mut script: Vec<&Scripted> = scripted.values().filter(|s| s.css.is_none()).collect();
@@ -491,7 +515,7 @@ fn walk_at(page: &PageDom, clock: Clock, transitions: bool, visit: &mut dyn FnMu
         let Some(el) = s.el else { continue };
         let Some(local) = s.current(now) else { continue };
         let Some(local) = clock.local(&s.timing, local, s.rate) else { continue };
-        let Some(p) = progress(&s.timing, local, s.rate) else { continue };
+        let Some((p, level)) = in_effect_or_current(&s.timing, local, s.rate, settled) else { continue };
         moving |= p.moving && s.hold.is_none() && s.rate != 0.0;
         let effect = Effect {
             keyframes: Keyframes::Text(s.keyframes.clone()),
@@ -500,7 +524,7 @@ fn walk_at(page: &PageDom, clock: Clock, transitions: bool, visit: &mut dyn FnMu
             easing: s.easing.clone(),
             composite: s.composite,
         };
-        visit(el, false, effect);
+        visit(el, level, effect);
     }
     moving
 }
@@ -600,7 +624,7 @@ impl PageDom {
     pub fn settled_animation_frame(self: &Rc<Self>) -> AnimationFrame {
         crate::animation_events::before_render(self);
         let mut out = Builder::default();
-        walk_at(self, Clock::Settled, true, &mut |el, transition, effect| out.push(el, transition, effect));
+        walk_at(self, Clock::Settled, true, &mut |el, level, effect| out.push(el, level, effect));
         let Ok(dom) = self.dom.try_borrow() else { return AnimationFrame::default() };
         AnimationFrame {
             elements: out
@@ -663,5 +687,22 @@ mod tests {
         // A zero duration with `both` fills at its end once started.
         let t = timing(0.0, 0.0, 1.0, Fill::Both, Direction::Normal);
         assert_eq!(progress(&t, 0.0, 1.0).map(|p| p.progress), Some(1.0));
+    }
+
+    /// An animation in its delay without a backwards fill is current (it makes a stacking context
+    /// for what it animates) while it plays forwards; after its end, or settled, it is neither.
+    #[test]
+    fn an_animation_in_its_delay_is_current() {
+        let level = |t: &Timing, local: f64, rate: f64, settled: bool| {
+            in_effect_or_current(t, local, rate, settled).map(|(_, l)| l)
+        };
+        let t = timing(100_000.0, 100_000.0, 1.0, Fill::None, Direction::Normal);
+        assert!(level(&t, 50.0, 1.0, false) == Some(Level::Current), "in its delay");
+        assert!(level(&t, 150_000.0, 1.0, false) == Some(Level::Animation), "active");
+        assert!(level(&t, 250_000.0, 1.0, false).is_none(), "after its end");
+        assert!(level(&t, 50.0, 1.0, true).is_none(), "settled");
+        assert!(level(&t, 50.0, 0.0, false).is_none(), "paused at a rate of 0");
+        let t = timing(100_000.0, 100_000.0, 1.0, Fill::Backwards, Direction::Normal);
+        assert!(level(&t, 50.0, 1.0, false) == Some(Level::Animation), "a backwards fill is in effect");
     }
 }

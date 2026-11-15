@@ -229,6 +229,14 @@ impl ElementCx<'_, '_> {
             }
         };
 
+        // pyro: `background-blend-mode`: each layer blends with the layers and the colour under it,
+        // in an isolated group (Compositing 1 §8.1: not with what lies behind the element).
+        let blends = bg_styles.background_blend_mode.0.iter().any(|&blend| blend != style::values::computed::effects::Blend::Normal);
+        if blends {
+            let group = canvas.unwrap_or(self.frame.border_box);
+            scene.push_layer(Fill::NonZero, BlendMode::default(), 1.0 - f32::EPSILON, self.transform, &group, None, None);
+        }
+
         // Draw background color (if any)
         let mut text_run = last_clip == StyloBackgroundClip::Text && canvas.is_none();
         if text_run {
@@ -295,7 +303,7 @@ impl ElementCx<'_, '_> {
             self.context.layer_manager.maybe_with_layer(
                 scene,
                 true,
-                peniko::BlendMode::default(),
+                crate::blend::convert_blend_mode(*get_cyclic(&bg_styles.background_blend_mode.0, idx)),
                 1.0,
                 self.transform,
                 &background_clip_path,
@@ -311,6 +319,9 @@ impl ElementCx<'_, '_> {
         }
         if text_run {
             self.end_text_clip_group(scene);
+        }
+        if blends {
+            scene.pop_layer();
         }
     }
 

@@ -1958,6 +1958,13 @@ impl Node {
             return true;
         }
 
+        // pyro: an animation, current or in effect, of a property that makes a stacking context
+        // (the `will-change` side effect of Web Animations 1; WPT
+        // `individual-transform/stacking-context-001`: in its delay).
+        if self.element_data().is_some_and(|data| data.animation_stacking_context) {
+            return true;
+        }
+
         if style.get_box().isolation == Isolation::Isolate {
             return true;
         }
@@ -2184,7 +2191,13 @@ impl Node {
             let child_position = child.taffy_position();
             let mut child_x = x;
             let mut child_y = y;
-            if child_position.is_out_of_flow() {
+            // pyro: an out-of-flow box painted here but laid out by a containing block elsewhere
+            // (a fixed box at its stacking context's positioned level) is placed as painted.
+            let lifted = child_position.is_out_of_flow().then(|| child.lifted_paint_offset(self.id)).flatten();
+            if let Some(offset) = lifted {
+                child_x -= offset.x;
+                child_y -= offset.y;
+            } else if child_position.is_out_of_flow() {
                 // Fixed-position children of the root element are positioned
                 // against the viewport and do not scroll with it. (A fixed box
                 // whose containing block is a transformed ancestor scrolls with

@@ -42,6 +42,7 @@ mod render;
 mod sampled_animations;
 mod style_sheet_charset;
 mod svg_content;
+mod svg_filter_primitives;
 mod svg_css_effects;
 mod svg_filters;
 mod svg_image_natural_size;
