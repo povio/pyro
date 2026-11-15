@@ -228,6 +228,17 @@ pub trait GeometrySource {
     fn element_quads(&self, _key: u64) -> Option<ExternalQuads> {
         None
     }
+    /// The pieces of one element's border box when the engine splits it into fragments (column
+    /// breaks), each where it is shown (document coordinates, as [`ExternalBox`]'s: x, y, width,
+    /// height), as of the last sync; `None` when it is one piece. Hit testing asks only while
+    /// [`GeometrySource::has_fragmented_boxes`].
+    fn element_fragments(&self, _key: u64) -> Option<Vec<[f64; 4]>> {
+        None
+    }
+    /// Whether any box may be split into fragments (as of the last sync).
+    fn has_fragmented_boxes(&self) -> bool {
+        false
+    }
     /// The whole document's boxes as of the last sync.
     fn geometry(&self) -> Option<ExternalGeometry>;
     /// Every word of every text node as of the last sync, in layout order

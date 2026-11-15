@@ -5,6 +5,9 @@ mod box_shadow;
 mod clip_path;
 mod form_controls;
 mod mask;
+mod multicol;
+mod three_d;
+pub(crate) use three_d::is_projective_marker;
 
 use blitz_dom::CopyStyleGetters;
 use std::cell::RefCell;
@@ -159,6 +162,8 @@ pub struct BlitzDomPainter<'dom, 'a> {
     pub composite_3d: bool,
     /// pyro: how many local-raster layers (`composite_3d`) the element painted is in.
     pub(crate) local_raster_depth: std::cell::Cell<u32>,
+    /// pyro (lane H2): 3D rendering contexts being recorded (`render/three_d.rs`).
+    pub(crate) three_d: three_d::State,
 
     // Pre-computed `Scene`s for each CustomWidget
     pub(crate) custom_widget_scenes: &'a CustomWidgetSceneMap,
@@ -214,6 +219,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             fractional_text_x: false,
             composite_3d: false,
             local_raster_depth: std::cell::Cell::new(0),
+            three_d: Default::default(),
             custom_widget_scenes,
         }
     }
@@ -728,6 +734,12 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         }
         let has_opacity = opacity < 1.0;
 
+        // pyro (lane H2): a plane of a 3D rendering context, or a plane drawn through a
+        // perspective, is recorded and drawn sorted by depth (`render/three_d.rs`).
+        if self.paint_plane(scene, node, parent_style_transform) {
+            return;
+        }
+
         let should_clip = self.should_clip_node(node, &styles);
         let is_text_input = node
             .element_data()
@@ -940,6 +952,9 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         // through them, and its antialiased edge came out a fifth lighter along the edge of the
         // screenshot. Past the frame the margin shows nothing.
         let viewport = if self.local_raster_depth.get() > 0 { viewport.inflate(8.0, 8.0) } else { viewport };
+        // pyro (lane H2): in a plane's recording the element's stand-in transform is not where the
+        // plane is drawn: a group clipped to the viewport keeps all of the plane.
+        let viewport = if self.three_d.depth.get() > 0 { Rect::new(-1e7, -1e7, 1e7, 1e7) } else { viewport };
         let blend_layer_pushed = self.layer_manager.maybe_push_layer(
             scene,
             isolate || blend != BlendMode::default(),
@@ -975,7 +990,9 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         // Its own blend mode applies to that image; its effects, inside, in its plane.
         let local_raster_pushed = self.composite_3d
             && node.flags.contains(blitz_dom::node::NodeFlags::FLATTENS_3D)
-            && node.children.iter().any(|&child| self.dom.get_node(child).is_some_and(|child| child.is_element()));
+            && node.children.iter().any(|&child| self.dom.get_node(child).is_some_and(|child| child.is_element()))
+            // pyro (lane H2): a plane drawn through a perspective is rasterized in its plane already.
+            && !(self.three_d.depth.get() > 0 && node.plane_3d().is_some_and(|plane| plane.is_projective()));
         if local_raster_pushed {
             scene.push_layer(
                 Fill::NonZero,
@@ -1159,9 +1176,17 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
                 cx.draw_sub_document(scene);
                 cx.draw_input(scene);
                 cx.draw_text_input_text(scene, content_position);
-                cx.draw_inline_layout(scene, content_position);
-                cx.draw_marker(scene, content_position);
-                cx.draw_children(scene, cx.transform, child_clip_rect);
+                // pyro: a multi-column container paints its column rules over the border, under
+                // the content, clipped and scrolled with it, and its content once per column
+                // (`render/multicol.rs`).
+                if paints_own_box {
+                    cx.draw_column_rules(scene);
+                }
+                if !cx.draw_columns(scene, content_position, child_clip_rect) {
+                    cx.draw_inline_layout(scene, content_position);
+                    cx.draw_marker(scene, content_position);
+                    cx.draw_children(scene, cx.transform, child_clip_rect);
+                }
             },
         );
         cx.transform = unscrolled_transform;

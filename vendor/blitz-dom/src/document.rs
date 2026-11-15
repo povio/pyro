@@ -496,6 +496,9 @@ pub struct BaseDocument {
     /// to date: `ensure_hit_overflow` computes the boxes flagged
     /// `LayoutData::hit_stale` again before the next hit test.
     pub(crate) hit_overflow_dirty: bool,
+    /// pyro: a multi-column container has been laid out in this document (`layout::multicol`;
+    /// never cleared): geometry queries look for columns only then.
+    pub(crate) has_multicol: bool,
 
     /// Nodes that contain custom widgets
     #[cfg(feature = "custom-widget")]
@@ -731,6 +734,7 @@ impl BaseDocument {
             left_layout_lists: Vec::new(),
             paint_tree_dirty: true,
             hit_overflow_dirty: true,
+            has_multicol: false,
             image_cache: HashMap::new(),
             pending_images: HashMap::new(),
             pending_style_image_nodes: Vec::new(),
@@ -1663,6 +1667,12 @@ impl BaseDocument {
     pub fn take_style_changes(&mut self) -> Vec<StyleChange> {
         self.style_change_index.clear();
         std::mem::take(&mut self.style_changes)
+    }
+
+    /// pyro: whether a multi-column container has been laid out in this document (see
+    /// `layout::multicol`).
+    pub fn has_multicol(&self) -> bool {
+        self.has_multicol
     }
 
     /// pyro: whether any node of the document (attached or not) is
@@ -3027,6 +3037,10 @@ impl BaseDocument {
             pos.x += node.unrounded_layout().location.x - node.scroll_offset().x as f32;
             pos.y += node.unrounded_layout().location.y - node.scroll_offset().y as f32;
             current = node.containing_block();
+            // pyro: out of a multi-column container's strip into its columns (`layout::multicol`).
+            if let Some(containing) = current {
+                pos = self.nodes[containing].strip_to_columns(pos);
+            }
         }
         (pos, *self.nodes[node_id].unrounded_layout())
     }

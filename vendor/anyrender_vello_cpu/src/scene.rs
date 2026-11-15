@@ -362,6 +362,30 @@ impl VelloCpuScenePainter {
                 i = matching_pop(commands, i) + 1;
                 continue;
             }
+            // pyro (lane H2): a clip rasterized aliased: where a split cut a plane of a 3D
+            // rendering context, so that its pieces share each pixel along the cut without a seam.
+            if let RenderCommand::PushLayer(layer) = &commands[i]
+                && layer.filter.as_deref().is_some_and(crate::projective::is_aliased_clip_marker)
+            {
+                self.render_ctx.set_transform(transform * layer.transform);
+                self.render_ctx.set_fill_rule(layer.fill);
+                self.render_ctx.set_aliasing_threshold(Some(128));
+                self.render_ctx.push_clip_layer(&layer.clip);
+                self.render_ctx.set_aliasing_threshold(None);
+                self.clip_paths.push(Pushed::Layer);
+                open.push((i, false));
+                i += 1;
+                continue;
+            }
+            // pyro (lane H2): a plane drawn through a perspective (`crate::projective`).
+            if let RenderCommand::PushLayer(layer) = &commands[i]
+                && let Some(homography) = layer.filter.as_deref().and_then(crate::projective::homography)
+            {
+                let end = matching_pop(commands, i);
+                self.draw_projective_layer(layer, homography, &commands[i + 1..end], transform);
+                i = end + 1;
+                continue;
+            }
             if let RenderCommand::PushLayer(layer) = &commands[i]
                 && layer.filter.as_deref().is_some_and(is_local_raster_marker)
             {
@@ -714,7 +738,7 @@ fn local_raster_transform(to_frame: Affine) -> Option<Affine> {
 }
 
 /// pyro: how far past a whole pixel a local-raster layer's bound may lie and still be on it.
-const WHOLE_PIXEL_SLACK: f64 = 1e-4;
+pub(crate) const WHOLE_PIXEL_SLACK: f64 = 1e-4;
 
 /// pyro: the device pixels `commands` (under `transform`) paint, as [`content_bounds`] has them but
 /// for a layer, cut to what it holds: a group's clip is often the viewport (a `mix-blend-mode`'s
@@ -722,7 +746,7 @@ const WHOLE_PIXEL_SLACK: f64 = 1e-4;
 /// same content without the group had its own bounds. A layer that filters or draws a backdrop
 /// keeps its clip (it paints where its content does not), and a local-raster layer in it adds
 /// the whole pixels of its plane it fills.
-fn painted_bounds(commands: &[RenderCommand], transform: Affine) -> Option<Rect> {
+pub(crate) fn painted_bounds(commands: &[RenderCommand], transform: Affine) -> Option<Rect> {
     let mut bounds: Option<Rect> = None;
     let mut i = 0;
     while i < commands.len() {
@@ -739,7 +763,14 @@ fn painted_bounds(commands: &[RenderCommand], transform: Affine) -> Option<Rect>
                     None => painted_bounds(inner, transform),
                 }
             }
-            RenderCommand::PushLayer(layer) if layer.filter.is_some() || layer.backdrop_filter.is_some() => {
+            // A filter layer, a backdrop and a projective layer (`crate::projective`, its content in
+            // the plane's pixels) paint their clip. A layer with no filter effects (blitz-paint's
+            // backdrop-root mark, pyro lane H2) or an aliased clip paints only what it holds.
+            RenderCommand::PushLayer(layer)
+                if layer.filter.as_deref().is_some_and(|filter| {
+                    !filter.nodes().is_empty() && !crate::projective::is_aliased_clip_marker(filter)
+                }) || layer.backdrop_filter.is_some() =>
+            {
                 let clip = (transform * layer.transform).transform_rect_bbox(layer.clip.bounding_box());
                 i = matching_pop(commands, i);
                 Some(clip)

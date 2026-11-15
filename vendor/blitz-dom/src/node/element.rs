@@ -145,6 +145,9 @@ pub struct ElementData {
     /// Layout output state (`None` until layout first writes to this node).
     pub layout_data: Option<Box<LayoutData>>,
     pub transform: Option<Box<Affine>>,
+    /// pyro (lane H2): the plane paint draws the element in through its 4x4 matrix, when it is
+    /// one (`Node::set_transform`).
+    pub plane_3d: Option<Box<super::Plane3D>>,
 }
 
 /// Taffy layout output state (cache, layouts, scroll offset and overflow).
@@ -181,6 +184,10 @@ pub struct LayoutData {
     /// pyro: how far down a table cell's content is laid out in its box: its row's baseline less its
     /// own, for a cell aligned on its row's baseline (`NodeFlags::HAS_TABLE_BASELINE_OFFSET`).
     pub table_baseline_offset: f32,
+    /// pyro: a multi-column container's columns, from its last layout (`layout::multicol`). Read
+    /// through `Node::column_fragments`, which ignores them once the box's style makes it no
+    /// multi-column container.
+    pub columns: Option<Box<crate::layout::multicol::ColumnFragments>>,
     /// The writing mode this node's layout algorithm ran in (the root takes it from `<body>`),
     /// recorded by the layout pass for CSSOM geometry lookups.
     #[cfg(feature = "writing-mode")]
@@ -201,6 +208,7 @@ impl LayoutData {
             collapsed_border: None,
             table_cell_index: u32::MAX,
             table_baseline_offset: 0.0,
+            columns: None,
             #[cfg(feature = "writing-mode")]
             writing_mode: stylo_taffy::WritingMode::empty(),
         }
@@ -393,6 +401,7 @@ impl Clone for ElementData {
             display_constructed_as: StyloDisplay::Block,
             layout_data: None,
             transform: None,
+            plane_3d: None,
         }
     }
 }
@@ -513,6 +522,7 @@ impl ElementData {
             display_constructed_as: StyloDisplay::Block,
             layout_data: None,
             transform: None,
+            plane_3d: None,
         };
         data.flush_is_focussable();
         data.flush_link_state();

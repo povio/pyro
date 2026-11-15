@@ -467,9 +467,49 @@ from the root of an upstream checkout at that commit) is the whole diff.
   frame's edges to sample, and a clip on that edge cut through them (a fifth lighter along the screenshot's edge).
   Screenshots only (`paint_scene`): print, `paint_scene_with` and the text-recording paint stay
   vector. Covered by `crates/pyro-render/tests/transform_3d.rs`.
+- `src/render/three_d.rs` (new; `BlitzDomPainter::paint_plane`, `bsp`), `src/render.rs` (`render_element`,
+  `BlitzDomPainter::three_d`), `src/bounds.rs` (`layer_bounds`), lane H2: 3D rendering contexts and planes drawn
+  through a perspective, as Chromium's compositor draws them. blitz-dom marks the planes (`Node::plane_3d`: the
+  elements of a context with a transform node in Chromium, a context's root, a flat element its 3D transform maps
+  projectively). The root of a context (or such a flat element) records its painting and each plane's on its own
+  (a plane painted inside another leaves a marker there; culling is off and the viewport-sized group clips reach
+  everywhere in a recording, as the stand-in transforms are not where planes are drawn), cuts the recordings into
+  chunks at the markers in paint order, and draws the chunks back to front: each chunk is a polygon (its content's
+  bounds in its plane through its 4x4 matrix, cut at the viewer's plane), sorted by a BSP tree as viz's `BspTree`
+  sorts a 3D sorting context (the first polygon splits the others by its plane; coplanar ones keep paint order;
+  one crossing a plane is split and each piece drawn clipped to it). A chunk whose plane keeps W constant is drawn
+  through the affine of its matrix (its commands as recorded when that is the stand-in). One whose W varies is
+  drawn through its homography: when it holds only fills in one solid colour and clips (`project_commands`), each
+  path is flattened, cut at the viewer's plane, divided by W and snapped to a 1/1024 px grid (the same plane reached
+  by another product of matrices lands on the same pixels); otherwise it is a projective layer for
+  anyrender_vello_cpu (`projective_marker`: six offsets carrying the homography; its content in the plane's own
+  pixels, its clip the projection's bounds), which `scene_bounds` takes as its clip. A plane that reads a backdrop
+  and cannot be projected keeps its stand-in (the raster has no backdrop). The cut of a split piece is a clip layer
+  with anyrender_vello_cpu's aliased mark (`aliased_clip_marker`); without the mark (another backend) it is an
+  ordinary clip. A plane met inside a clip or layer of another stays there, flattened into that plane (the affine
+  closest to the map between the two planes, `flattened_into`). An element of a context that is no plane paints in
+  its parent's plane at its layout place (blitz-dom gives it no transform). A plane drawn through a perspective
+  skips the local-raster layer above: the projective layer rasterizes it in its plane already.
+  `backface-visibility: hidden` on a `preserve-3d` element showing its back hides its own chunks. Print
+  (`composite_3d` false) gets the sorting with the stand-ins, their polygons where the stand-ins put them; a plane
+  crossing the viewer's plane has no stand-in and is left out there.
+  WPT `transform3d-sorting-*`, `preserve3d-and-flattening-*`, `css-transform-3d-transform-style`,
+  `perspective-split-by-zero-w`, `transform-3d-rotateY-stair-*`. Covered by
+  `crates/pyro-render/tests/three_d_contexts.rs` and the unit tests in `src/render/three_d.rs`.
 - `src/render.rs` (`draw_children`): a fixed box that blitz-dom lifts into the root element's paint list from a
   containing block that is no layer root (a `backdrop-filter` box) is placed by its offset
   (`lifted_paint_offset`), not against the viewport (WPT `backdrop-filter-containing-block`).
+- `src/render/multicol.rs` (new), `src/render.rs` (`paint_element`): a multi-column container (blitz-dom
+  `layout::multicol`) paints its content once per column: moved to the column and clipped to the column's range of
+  the strip in the block axis only (what overflows a column sideways shows, as in Chromium; the first column shows what
+  lies above the strip, the last what lies below it), its content culled to the column. A box a break goes through is
+  drawn in each column it reaches, each showing its part: `box-decoration-break: slice` (its border, background,
+  shadow and clip path cut at the break, WPT `slice-block-fragmentation-*`, `clip-path-columns-shape-*`). A
+  column outside the clip is not painted. A container whose content fits one column paints as before, without a
+  clip layer. `column-rule` is painted over the border and under the content (inside the overflow clip, scrolled
+  with the content), in the middle of the gap between neighbouring columns of a row (both have content), as tall
+  as the columns, snapped to whole pixels: `solid` (and the 3D styles, as solid), `double`, `dashed` and `dotted`.
+  Covered by `crates/pyro-render/tests/multicol.rs`.
 - `src/render.rs` (`render_element`), `src/layers.rs` (`filter_reach`, `filter_source_area`): culling counts what
   an element's `filter` moves or spreads (the sum of its primitives' reaches, a drop shadow's offset, a blur): an
   element out of view whose shadow is in view is painted, and so is content a clip leaves out of view that the

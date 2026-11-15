@@ -459,6 +459,14 @@ pub trait LayoutBlockContainer: LayoutPartialTree {
         false
     }
 
+    /// pyro: whether a block-level child that is a block container by its style establishes a
+    /// formatting context of its own all the same (a multi-column container in browsers), so
+    /// that this container keeps it clear of floats, as a `flow-root`.
+    fn block_child_establishes_formatting_context(&self, child_node_id: NodeId) -> bool {
+        let _ = child_node_id;
+        false
+    }
+
     /// Compute the specified node's size or full layout given the specified constraints
     #[cfg(feature = "block_layout")]
     fn compute_block_child_layout(

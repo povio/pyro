@@ -10,4 +10,5 @@ mod has_state;
 mod hit_descent;
 mod hit_adversarial;
 mod hit_index;
+mod multicol;
 mod transform_3d;
