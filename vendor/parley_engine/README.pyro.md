@@ -77,3 +77,12 @@ an ASCII digit is allowed when the character before the hyphen is an ASCII lette
 (`4b87-|916e`, `10-|20`); every other pair, including a minus sign after a space or at the start of
 the text, is left to ICU (UAX #14 LB25 keeps `HY × NU`). It only adds opportunities, so
 `line-break: anywhere` is unaffected. pyro-render uses it for `serve --hyphen-digit-breaks on`.
+
+## Inline boxes and paragraphs in bidi resolution
+
+`analyzer.rs` (`AnalysisOptions::objects`), `analysis.rs` (`object_levels`): the caller (parley's `analysis.rs`)
+names the indices of its objects (atomic inline boxes), which are resolved as U+FFFC OBJECT REPLACEMENT CHARACTER
+(class ON) at those indices, as in browsers, and whose levels it reads back; they were left out, so the neutrals
+around a box resolved as if it were not there. Each paragraph, up to and including a paragraph separator (class B:
+a preserved line feed, U+2029), is resolved on its own (UAX #9 P1); the whole text was one paragraph. The layout's
+paragraph level is the first paragraph's. Covered by `crates/pyro-render/tests/unicode_bidi.rs`.

@@ -415,11 +415,12 @@ pub(crate) fn scroll_get<'s>(s: &Scope<'s>, n: &NodeData, top: bool) -> JsResult
     let viewport = scrolls_viewport(n.page(), n.id);
     let layout = n.page().layout();
     Ok(s.number(match (viewport, top) {
-        (true, true) => layout.scroll_y(),
-        (true, false) => layout.scroll_x(),
-        (false, true) => layout.scroll_top(n.id),
-        (false, false) => layout.scroll_left(n.id),
-    } as f64))
+        (true, true) => layout.scroll_y() as f64,
+        (true, false) => layout.scroll_x() as f64,
+        // Negative on an axis that scrolls from its end (right-to-left, reversed flex).
+        (false, true) => layout.scroll_top(n.id) as f64,
+        (false, false) => layout.scroll_left(n.id) as f64,
+    }))
 }
 
 pub(crate) fn scroll_set(_s: &Scope<'_>, n: &NodeData, v: Value<'_>, top: bool) -> JsResult<()> {

@@ -236,8 +236,16 @@ struct ResolvedDecoration {
     underline_under: bool,
     /// Whether `text-underline-position: from-font` is in effect.
     underline_from_font: bool,
-    /// `text-decoration-inset`. Resolved per run.
-    inset: GenericTextDecorationInset<LengthPercentage>,
+    /// pyro: `text-decoration-inset` at the start and the end of the box's decoration line, `auto`
+    /// resolved (`None`: no inset). Percentages are resolved per line ([`DecorationInsets`]).
+    inset: Option<(LengthPercentage, LengthPercentage)>,
+    /// pyro: what the inset applies to: `box-decoration-break: clone` insets every fragment of
+    /// the box, `slice` (the initial value) its start in its first fragment and its end in its
+    /// last; the box's direction (the start is on the right in right-to-left boxes); its inline
+    /// padding and borders (CSS px, left and right), which percentages of the box count.
+    inset_clone: bool,
+    inset_rtl: bool,
+    inset_edges: (f32, f32),
     /// pyro: `text-decoration-skip-ink`: underlines and overlines leave gaps where glyphs cross
     /// them, but for `auto` not where CJK glyphs do.
     skip_ink: TextDecorationSkipInk,
@@ -377,11 +385,15 @@ struct LineDecoration {
     /// pyro: the box is an ancestor of the inline root (a block whose decoration propagates
     /// into it): it is positioned from the line, as the root's own is.
     outer: bool,
-    /// pyro: the `text-shadow` of the first run the box covers on the line (Chromium draws a
-    /// decoration with the shadows of the text it decorates).
-    shadows: Vec<TextShadow>,
+    /// pyro: the runs the box covers on the line, in line order: their extent and their
+    /// `text-shadow` (a range of [`DrawTextContext::run_shadows`]). Chromium paints decorations
+    /// with each text fragment, so each run's part of the line casts that run's shadows.
+    segments: SmallVec<[(f64, f64, std::ops::Range<usize>); 4]>,
     min_x: f64,
     max_x: f64,
+    /// pyro: `text-decoration-inset` on this line (device px), at the left and right ends.
+    inset_left: f64,
+    inset_right: f64,
     /// Geometry from a run whose innermost node is the decorating box itself.
     own: Option<DecorationRunGeometry>,
     /// Geometry from the first run the box covers (fallback when it has no own text on
@@ -426,6 +438,200 @@ pub(crate) struct DrawTextContext {
     pub(crate) cut: Option<TextCut>,
     /// pyro: where the next `stroke_text` puts the top of each line (none: where the layout has it).
     pub(crate) line_tops: Option<LineTops>,
+    /// pyro: the next `stroke_text` draws only the runs of this element and its descendants (an
+    /// inline box's `background-clip: text` mask).
+    pub(crate) only_within: Option<NodeId>,
+    /// pyro: the inline box whose `background-clip: text` mask is being drawn, where its inline
+    /// root's text goes ([`InlineTextMask`]).
+    pub(crate) inline_mask: Option<InlineTextMask>,
+    /// pyro: the lines of the decorating boxes with an inset in the inline root being drawn, by box,
+    /// and the address of the layout they are lines of: kept while `stroke_text` draws the same
+    /// layout line by line (an ellipsis, vertical text, a text mask).
+    spans: Vec<(NodeId, Option<DecorationSpan>)>,
+    spans_layout: usize,
+}
+
+/// pyro: an inline box whose background is clipped to its text (`background-clip: text`): the
+/// mask is its own glyphs, drawn where its inline root draws them.
+#[derive(Clone, Copy)]
+pub(crate) struct InlineTextMask {
+    pub element: NodeId,
+    pub root: NodeId,
+    /// The transform of the root's text, and its whole-pixel line tops and x shift.
+    pub transform: Affine,
+    pub tops: Option<LineTops>,
+    pub text_shift: f64,
+    /// The line of the fragment being painted: the only one its clip shows.
+    pub line: usize,
+    /// Where `text-overflow: ellipsis` cuts that line, as the root's text is cut.
+    pub cut: Option<TextCut>,
+}
+
+/// pyro: draws the `background-clip: text` mask of an inline box (not atomic) whose fragment is
+/// being painted ([`DrawTextContext::inline_mask`], set by `paint_inline_box_fragment`): the glyphs of its
+/// own text and its descendants', in black, where its inline root draws them (its fragment's clip
+/// keeps this line's) and cut where `text-overflow: ellipsis` cuts the line. Returns whether
+/// `node_id` is that box.
+pub(crate) fn draw_inline_text_mask<S: PaintScene>(
+    scene: &mut S,
+    doc: &BaseDocument,
+    context: &std::cell::RefCell<DrawTextContext>,
+    node_id: NodeId,
+    scale: f64,
+) -> bool {
+    let Some(mask) = context.borrow().inline_mask.filter(|mask| mask.element == node_id) else {
+        return false;
+    };
+    let Some(layout) = doc.get_node(mask.root).and_then(|root| root.element_data()?.inline_layout_data.as_ref()) else {
+        return true;
+    };
+    let mut context = context.borrow_mut();
+    let saved = (context.text_shift, context.line_tops, context.cut);
+    (context.text_shift, context.line_tops, context.only_within, context.cut) =
+        (mask.text_shift, mask.tops, Some(mask.element), mask.cut);
+    stroke_text(
+        scene,
+        layout.layout.lines().skip(mask.line).take(1),
+        doc,
+        mask.transform,
+        TextPaintOptions { scale, brush_override: Some(Color::BLACK), shadows: false },
+        mask.root,
+        None,
+        &mut context,
+        None,
+        Some(&layout.layout),
+    );
+    (context.text_shift, context.line_tops, context.cut) = saved;
+    context.only_within = None;
+    true
+}
+
+/// pyro: the fragments of a decorating box in an inline root, laid side by side as one strip (as
+/// `box-decoration-break: slice` lays them): the lines it has text on, each by the start of its
+/// text range with where its part of the decoration line starts in the strip and how long it is,
+/// and the strip's whole length (device px).
+#[derive(Clone, Debug, PartialEq)]
+struct DecorationSpan {
+    lines: SmallVec<[(usize, f64, f64); 4]>,
+    length: f64,
+}
+
+/// pyro: the lines `node`'s text is on in `layout` (`None`: the inline root's, and those of the
+/// blocks around it), and the extent of its glyph runs on each, added up. A run is the node's
+/// when its element is the node or inside it.
+fn decoration_span(
+    layout: &Layout<TextBrush>,
+    doc: &BaseDocument,
+    root: NodeId,
+    node: Option<NodeId>,
+) -> Option<DecorationSpan> {
+    let within = |mut id: NodeId| {
+        let Some(node) = node else { return true };
+        loop {
+            if id == node {
+                return true;
+            }
+            if id == root {
+                return false;
+            }
+            match doc.get_node(id).and_then(|n| n.parent) {
+                Some(parent) => id = parent,
+                None => return false,
+            }
+        }
+    };
+    let mut span: Option<DecorationSpan> = None;
+    for line in layout.lines() {
+        // As `stroke_text` decorates the line: not the white space hanging at its end.
+        let content_end =
+            (!layout.is_rtl() && line.metrics().hanging_advance > 0.0).then(|| hanging_start(&line)).flatten();
+        let (mut x0, mut x1) = (f64::INFINITY, f64::NEG_INFINITY);
+        for item in line.items() {
+            if let PositionedLayoutItem::GlyphRun(run) = item
+                && within(run.style().brush.id)
+            {
+                let (start, end) = (f64::from(run.offset()), f64::from(run.offset() + run.advance()));
+                x0 = x0.min(start);
+                x1 = x1.max(content_end.map_or(end, |content_end| end.min(content_end).max(start)));
+            }
+        }
+        if x1 <= x0 {
+            continue;
+        }
+        let span = span.get_or_insert_with(|| DecorationSpan { lines: SmallVec::new(), length: 0.0 });
+        span.lines.push((line.text_range().start, span.length, x1 - x0));
+        span.length += x1 - x0;
+    }
+    span
+}
+
+/// pyro: where the white space hanging at the end of a left-to-right `line` starts: its last glyph
+/// run's end, less the hanging advance (`None`: no glyph runs).
+fn hanging_start(line: &Line<'_, TextBrush>) -> Option<f64> {
+    let end = line
+        .items()
+        .filter_map(|item| match item {
+            PositionedLayoutItem::GlyphRun(run) => Some(run.offset() + run.advance()),
+            _ => None,
+        })
+        .reduce(f32::max)?;
+    Some(f64::from(end - line.metrics().hanging_advance))
+}
+
+/// pyro: `text-decoration-inset` of `deco` on a line where its box's runs are `width` long (device
+/// px), as (left, right) device px. With `box-decoration-break: slice` the insets cut the box's
+/// fragments laid side by side as one strip ([`DecorationSpan`]): the start inset from the start of
+/// its first fragment (what is longer than that fragment carries into the next), the end inset
+/// from the end of its last, and percentages are of the strip, the box's inline padding and
+/// borders included; with `clone`, at both ends of each fragment, of that fragment. `span` is the
+/// box's lines (`None`: unknown, each line is taken as the whole box); `line` the start of this
+/// line's text range.
+fn line_insets(
+    deco: &ResolvedDecoration,
+    width: f64,
+    span: Option<&DecorationSpan>,
+    line: usize,
+    scale: f64,
+) -> (f64, f64) {
+    let Some((start, end)) = &deco.inset else {
+        return (0.0, 0.0);
+    };
+    // This line's place in the strip: its index, and where its part starts.
+    let place = span.and_then(|span| {
+        let index = span.lines.iter().position(|&(start, _, _)| start == line)?;
+        Some((index, span.lines[index]))
+    });
+    let (first, last) = match (span, place) {
+        (Some(span), Some((index, _))) => (index == 0, index + 1 == span.lines.len()),
+        (Some(_), None) => (false, false),
+        (None, _) => (true, true),
+    };
+    // The start and end edges' padding and borders (CSS px), in the box's direction.
+    let (start_edge, end_edge) =
+        if deco.inset_rtl { (deco.inset_edges.1, deco.inset_edges.0) } else { deco.inset_edges };
+    let edges =
+        |starts: bool, ends: bool| f64::from(if starts { start_edge } else { 0.0 } + if ends { end_edge } else { 0.0 });
+    let (applies_start, applies_end, basis) = match span {
+        Some(span) if !deco.inset_clone => (first, last, span.length / scale + edges(true, true)),
+        _ => (deco.inset_clone || first, deco.inset_clone || last, width / scale + edges(first, last)),
+    };
+    let basis = Length::new(basis as f32);
+    let resolve = |v: &LengthPercentage, applies: bool| {
+        if applies { f64::from(v.resolve(basis).px()) * scale } else { 0.0 }
+    };
+    let (mut start_px, mut end_px) = (resolve(start, applies_start), resolve(end, applies_end));
+    // A sliced box's insets cut its strip: on a line after the first, what of the start inset the
+    // lines before have not taken (none of a negative one, which reaches out of the first only);
+    // on a line before the last, what of the end inset the lines after have not.
+    if let (Some(span), Some((_, (_, offset, part))), false) = (span, place, deco.inset_clone) {
+        if !first {
+            start_px = (resolve(start, true) - offset).max(0.0);
+        }
+        if !last {
+            end_px = (resolve(end, true) - (span.length - offset - part)).max(0.0);
+        }
+    }
+    if deco.inset_rtl { (end_px, start_px) } else { (start_px, end_px) }
 }
 
 /// pyro: where Chromium paints the lines of a block's text: each line's top at the whole CSS pixel
@@ -519,6 +725,21 @@ fn whole_css_px(thickness: f64) -> f64 {
     thickness.trunc().max(1.0)
 }
 
+/// pyro: a decoration line from `x0` to `x1` (the space of `transform`) as its start and width,
+/// its ends on whole device pixels where the line is drawn only moved into a raster. Text sits at
+/// fractions of a pixel, and so do its runs' ends: a line ending there leaves a partly covered
+/// pixel where the lines of two boxes meet, or where a reference cuts a line with a box's clip
+/// (whole pixels). Chromium's lines end on whole pixels there too where its glyph advances are
+/// whole (WPT's Linux runs).
+fn snapped_ends(transform: Affine, x0: f64, x1: f64) -> (f64, f64) {
+    let [a, b, c, d, tx, _] = transform.as_coeffs();
+    if (a, b, c, d) != (1.0, 0.0, 0.0, 1.0) {
+        return (x0, x1 - x0);
+    }
+    let (x0, x1) = ((tx + x0).round() - tx, (tx + x1).round() - tx);
+    (x0, x1 - x0)
+}
+
 /// Draws a single decoration line of the given `text-decoration-style` spanning
 /// `[x0, x0 + width]`, `size` thick from `top` down (pyro: Blink's line rect). Geometry is
 /// built explicitly (rather than relying on backend dash support) so it renders consistently
@@ -541,10 +762,9 @@ fn draw_decoration_line(
     inset_start: f64,
     inset_end: f64,
 ) {
-    // Inset the line from the box's start/end edges (assumes LTR: start is the left edge).
-    // Negative insets extend the line past the text.
-    let x = x0 + inset_start;
-    let w = width - inset_start - inset_end;
+    // Inset the line from its left and right ends (pyro: `line_insets` puts the start and end
+    // insets on their sides). Negative insets extend the line past the text.
+    let (x, w) = snapped_ends(transform, x0 + inset_start, x0 + width - inset_end);
     if w <= 0.0 {
         return;
     }
@@ -681,6 +901,7 @@ fn flush_line_decorations<S: PaintScene>(
     strut: &StrutGeometry,
     phase: DecorationPhase,
     line_runs: &[parley::GlyphRun<'_, TextBrush>],
+    run_shadows: &[TextShadow],
     source: Option<&str>,
     vertical: bool,
 ) {
@@ -696,9 +917,10 @@ fn flush_line_decorations<S: PaintScene>(
         DecorationPhase::LineThrough => TextDecorationLine::LINE_THROUGH,
         DecorationPhase::UnderOver => TextDecorationLine::UNDERLINE | TextDecorationLine::OVERLINE,
     };
-    // Draw innermost boxes first so ancestors' decorations paint on top, matching the
-    // per-run drawing order this replaced (`stack.iter().rev()`).
-    for acc in deco_boxes.iter().rev() {
+    // pyro: the outermost box's lines first, each box's over those of the boxes around it, as
+    // Chromium paints a text fragment's applied decorations (WPT
+    // `text-shadow/decorations-multiple-zorder`).
+    for acc in deco_boxes.iter() {
         let deco = &acc.deco;
         if !deco.line.intersects(wanted) {
             continue;
@@ -730,28 +952,34 @@ fn flush_line_decorations<S: PaintScene>(
         let brush = anyrender::Paint::from(brush_override.unwrap_or(deco.color));
 
         // `text-decoration-inset` shortens (or, when negative, extends) the line from the
-        // inline-start/end edges. Percentages resolve against the decoration line length
-        // (the box's total advance on this line); `auto` is no inset.
-        let (inset_start, inset_end) = match &deco.inset {
-            GenericTextDecorationInset::LengthPercentage { start, end } => {
-                // The extent is in device pixels; convert to CSS pixels so the resolved
-                // result can be scaled back.
-                let line_length = Length::new((width / scale) as f32);
-                (
-                    start.resolve(line_length).px() as f64 * scale,
-                    end.resolve(line_length).px() as f64 * scale,
-                )
+        // left and right ends (pyro: resolved per box in `stroke_text`, see `line_insets`).
+        let (inset_start, inset_end) = (acc.inset_left, acc.inset_right);
+        // pyro: the shadow this phase draws over each part of the line: the runs' shadows, in
+        // pieces of consecutive runs with the same one (the first piece reaching left of the line,
+        // the last right of it); none where the box has no shadow at this index.
+        let mut shadow_pieces: SmallVec<[(f64, f64, &TextShadow); 2]> = SmallVec::new();
+        if let DecorationPhase::Shadow(index) = phase {
+            let shadow_of = |(_, _, shadows): &(f64, f64, std::ops::Range<usize>)| {
+                run_shadows.get(shadows.clone()).and_then(|shadows| shadows.get(index))
+            };
+            let mut start = f64::NEG_INFINITY;
+            for (i, segment) in acc.segments.iter().enumerate() {
+                let shadow = shadow_of(segment);
+                let next = acc.segments.get(i + 1);
+                if next.is_some_and(|next| shadow_of(next) == shadow) {
+                    continue;
+                }
+                // A piece ends where the next run starts (the runs are in line order).
+                let end = next.map_or(f64::INFINITY, |next| next.0.max(start));
+                if let Some(shadow) = shadow {
+                    shadow_pieces.push((start, end, shadow));
+                }
+                start = end;
             }
-            GenericTextDecorationInset::Auto => (0.0, 0.0),
-        };
-        // The shadow this phase draws, if the box has it.
-        let shadow = match phase {
-            DecorationPhase::Shadow(index) => match acc.shadows.get(index) {
-                Some(shadow) => Some(shadow),
-                None => continue,
-            },
-            _ => None,
-        };
+            if shadow_pieces.is_empty() {
+                continue;
+            }
+        }
         let baseline = f64::from(geom.baseline);
         // pyro: a decoration line (or its shadow), `top` CSS px below the baseline and
         // `thickness` CSS px thick (both whole); a wavy or double line reaches a few sizes further.
@@ -794,9 +1022,10 @@ fn flush_line_decorations<S: PaintScene>(
                 // inside a clip of its pieces (its pattern runs on under the gaps). A gap's edges
                 // are on whole device pixels (Blink clips them out aliased), so that a line drawn
                 // over another with the same gaps covers it.
-                let (start, end) = (acc.min_x + inset_start, acc.max_x - inset_end);
                 let [a, b, c, d, tx, _] = transform.as_coeffs();
                 let snap = |x: f64| if (a, b, c, d) == (1.0, 0.0, 0.0, 1.0) { (tx + x).round() - tx } else { x };
+                // The line's ends as `draw_decoration_line` puts them.
+                let (start, end) = (snap(acc.min_x + inset_start), snap(acc.max_x - inset_end));
                 let mut pieces: SmallVec<[(f64, f64); 8]> = SmallVec::new();
                 let mut x = start;
                 for &(gap_start, gap_end) in &gaps {
@@ -828,16 +1057,33 @@ fn flush_line_decorations<S: PaintScene>(
                     scene.pop_layer();
                 }
             };
-            match shadow {
-                Some(shadow) => {
-                    let y = top + size / 2.0;
-                    let reach = size * 4.0 + scale;
-                    let ink = Rect::new(acc.min_x - reach, y - reach, acc.max_x + reach, y + reach);
-                    draw_shadow(scene, shadow, scale, transform, ink, |scene, color, transform| {
-                        line(scene, &anyrender::Paint::from(color), transform)
-                    });
-                }
-                None => line(scene, &brush, transform),
+            if shadow_pieces.is_empty() {
+                return line(scene, &brush, transform);
+            }
+            let y = top + size / 2.0;
+            let reach = size * 4.0 + scale;
+            // Negative insets reach past the runs.
+            let (x0, x1) = (acc.min_x + inset_start.min(0.0), acc.max_x - inset_end.min(0.0));
+            // One piece reaching past both ends is the whole line: no clip. A lone piece that
+            // does not (the runs before or after it cast no shadow at this index) is cut to its
+            // runs like any other.
+            let whole =
+                matches!(shadow_pieces.as_slice(), [(s, e, _)] if *s == f64::NEG_INFINITY && *e == f64::INFINITY);
+            for &(piece_x0, piece_x1, shadow) in &shadow_pieces {
+                let ink = Rect::new(x0.max(piece_x0) - reach, y - reach, x1.min(piece_x1) + reach, y + reach);
+                draw_shadow(scene, shadow, scale, transform, ink, |scene, color, transform| {
+                    // A piece of the line (with its pattern, its gaps and insets) where its runs
+                    // are, cut on whole pixels as the lines of two boxes meet (`snapped_ends`).
+                    if !whole {
+                        let (cx0, w) = snapped_ends(transform, piece_x0.max(x0 - reach), piece_x1.min(x1 + reach));
+                        let clip = Rect::new(cx0, y - reach, cx0 + w, y + reach);
+                        scene.push_clip_layer(Fill::NonZero, transform, &clip);
+                    }
+                    line(scene, &anyrender::Paint::from(color), transform);
+                    if !whole {
+                        scene.pop_layer();
+                    }
+                });
             }
         };
         // The font's ascent and descent in whole CSS px.
@@ -903,6 +1149,34 @@ fn own_decoration(styles: &style::properties::ComputedValues) -> Option<Resolved
         .as_absolute()
         .map(ToColorColor::as_color_color)
         .unwrap_or(itext.color.as_color_color());
+    // pyro: `auto` insets by a twelfth and a half of the font size, at least 1px (Stylo's servo
+    // value, which Gecko shares), so that the lines of adjacent boxes stay apart.
+    let inset = match &text.text_decoration_inset {
+        GenericTextDecorationInset::Auto => {
+            let font_size = styles.get_font().font_size.computed_size().px();
+            let auto = LengthPercentage::new_length(Length::new((font_size / 12.5).max(1.0)));
+            Some((auto.clone(), auto))
+        }
+        GenericTextDecorationInset::LengthPercentage { start, end } => {
+            let zero = |v: &LengthPercentage| v.to_length().is_some_and(|l| l.px() == 0.0);
+            (!zero(start) || !zero(end)).then(|| (start.clone(), end.clone()))
+        }
+    };
+    // An inline box's padding and borders are part of the length its percentages resolve
+    // against; a block's (the inline root's, or one around it) are not on its lines.
+    let inset_edges = if inset.is_some() && styles.clone_display().is_inline_flow() {
+        let (border, padding) = (styles.get_border(), styles.get_padding());
+        let width = |w: &style::values::computed::BorderSideWidth, s: style::values::computed::BorderStyle| {
+            if s.none_or_hidden() { 0.0 } else { w.0.to_f32_px() }
+        };
+        let pad = |p: &LengthPercentage| p.resolve(Length::new(0.0)).px();
+        (
+            width(&border.border_left_width, border.border_left_style) + pad(&padding.padding_left.0),
+            width(&border.border_right_width, border.border_right_style) + pad(&padding.padding_right.0),
+        )
+    } else {
+        (0.0, 0.0)
+    };
     Some(ResolvedDecoration {
         line,
         style: text.text_decoration_style,
@@ -915,7 +1189,11 @@ fn own_decoration(styles: &style::properties::ComputedValues) -> Option<Resolved
         underline_from_font: itext
             .text_underline_position
             .contains(TextUnderlinePosition::FROM_FONT),
-        inset: text.text_decoration_inset.clone(),
+        inset_clone: inset.is_some()
+            && styles.get_border().box_decoration_break == style::values::computed::BoxDecorationBreak::Clone,
+        inset_rtl: inset.is_some() && styles.clone_direction() == style::computed_values::direction::T::Rtl,
+        inset,
+        inset_edges,
         skip_ink: itext.text_decoration_skip_ink,
     })
 }
@@ -1029,6 +1307,10 @@ fn shifted(transform: Affine, shift: f64) -> Affine {
     }
 }
 
+/// Draws `lines` of an inline root's text. pyro: `layout` is the whole layout they are lines of,
+/// where a decorating box's lines are known: `text-decoration-inset` then applies at the box's
+/// ends, not at each line's ([`line_insets`]).
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn stroke_text<'a, S: PaintScene>(
     scene: &mut S,
     lines: impl Iterator<Item = Line<'a, TextBrush>>,
@@ -1039,6 +1321,7 @@ pub(crate) fn stroke_text<'a, S: PaintScene>(
     source: Option<&str>,
     context: &mut DrawTextContext,
     vertical: Option<VerticalLine>,
+    layout: Option<&Layout<TextBrush>>,
 ) {
     let TextPaintOptions {
         scale,
@@ -1060,10 +1343,24 @@ pub(crate) fn stroke_text<'a, S: PaintScene>(
         text_shift,
         cut,
         line_tops,
+        only_within,
+        inline_mask: _,
+        spans,
+        spans_layout,
     } = context;
     let shift = *text_shift;
     let cut = *cut;
+    let only_within = *only_within;
+    // The document does not change while it is painted, so a layout's address names it.
+    if let Some(layout) = layout
+        && std::ptr::from_ref(layout).addr() != *spans_layout
+    {
+        spans.clear();
+        *spans_layout = std::ptr::from_ref(layout).addr();
+    }
     let line_tops = line_tops.filter(|_| vertical.is_none());
+    // pyro: the text of relatively positioned inline boxes is painted moved.
+    let relative = vertical.is_none() && doc.inline_root_has_relative_spans(inline_root_id);
     // pyro: the decorations of the root's ancestors that propagate into it.
     let outer = propagated_decorations(doc, inline_root_id, propagated, path_scratch);
     let root_font_size = doc
@@ -1095,13 +1392,36 @@ pub(crate) fn stroke_text<'a, S: PaintScene>(
         run_paints.clear();
         run_shadows.clear();
         // pyro: the line's glyph runs, walked by each pass over the line.
-        let glyph_runs: SmallVec<[parley::GlyphRun<'_, TextBrush>; 16]> = line
+        let mut glyph_runs: SmallVec<[parley::GlyphRun<'_, TextBrush>; 16]> = line
             .items()
             .filter_map(|item| match item {
                 PositionedLayoutItem::GlyphRun(run) => Some(run),
                 _ => None,
             })
             .collect();
+        // pyro: white space hanging at the end of a left-to-right line is not decorated (Chromium
+        // removes it), nor counted in a box's decoration line: the line's content ends that much
+        // before its last run does (its runs are where alignment and justification put them).
+        let hanging = line.metrics().hanging_advance;
+        let content_end = layout
+            .filter(|layout| !layout.is_rtl() && hanging > 0.0)
+            .and_then(|_| glyph_runs.iter().map(|run| run.offset() + run.advance()).reduce(f32::max))
+            .map(|end| f64::from(end - hanging));
+        // pyro: an inline box's text mask: its own runs only.
+        if let Some(element) = only_within {
+            glyph_runs.retain(|run| {
+                let mut id = run.style().brush.id;
+                loop {
+                    if id == element {
+                        return true;
+                    }
+                    match doc.get_node(id).and_then(|node| node.parent) {
+                        Some(parent) if id != inline_root_id => id = parent,
+                        _ => return false,
+                    }
+                }
+            });
+        }
 
         // pyro: the line's decorations, and what each of its glyph runs is drawn with.
         for glyph_run in &glyph_runs {
@@ -1173,6 +1493,7 @@ pub(crate) fn stroke_text<'a, S: PaintScene>(
             // pyro: decorations span what the cut keeps of the run.
             let Some((run_x0, run_x1)) = kept_extent else { continue };
             let (run_x0, run_x1) = (run_x0 as f64, run_x1 as f64);
+            let run_x1 = content_end.map_or(run_x1, |end| run_x1.min(end).max(run_x0));
 
             // pyro: the decorations of blocks the root is in come first (outermost).
             let boxes = outer
@@ -1187,9 +1508,11 @@ pub(crate) fn stroke_text<'a, S: PaintScene>(
                             node_id,
                             deco: deco.clone(),
                             outer: is_outer,
-                            shadows: shadows.to_vec(),
+                            segments: SmallVec::new(),
                             min_x: f64::INFINITY,
                             max_x: f64::NEG_INFINITY,
+                            inset_left: 0.0,
+                            inset_right: 0.0,
                             own: None,
                             first: None,
                         });
@@ -1199,6 +1522,7 @@ pub(crate) fn stroke_text<'a, S: PaintScene>(
                 let acc = &mut deco_boxes[idx];
                 acc.min_x = acc.min_x.min(run_x0);
                 acc.max_x = acc.max_x.max(run_x1);
+                acc.segments.push((run_x0, run_x1, first_shadow..run_shadows.len()));
                 if acc.first.is_none() {
                     acc.first = Some(geometry.clone());
                 }
@@ -1210,6 +1534,22 @@ pub(crate) fn stroke_text<'a, S: PaintScene>(
                     acc.own = Some(geometry.clone());
                 }
             }
+        }
+
+        // pyro: `text-decoration-inset`, at the ends of each box's decoration line.
+        for acc in deco_boxes.iter_mut().filter(|acc| acc.deco.inset.is_some()) {
+            let span = layout.and_then(|layout| {
+                let key = if acc.outer || acc.node_id == inline_root_id { inline_root_id } else { acc.node_id };
+                if let Some((_, span)) = spans.iter().find(|(id, _)| *id == key) {
+                    return span.clone();
+                }
+                let node = (key != inline_root_id).then_some(key);
+                let span = decoration_span(layout, doc, inline_root_id, node);
+                spans.push((key, span.clone()));
+                span
+            });
+            (acc.inset_left, acc.inset_right) =
+                line_insets(&acc.deco, acc.max_x - acc.min_x, span.as_ref(), line.text_range().start, scale);
         }
 
         // pyro: the root's own font on the line, for the decorations of the root (and of the
@@ -1233,6 +1573,7 @@ pub(crate) fn stroke_text<'a, S: PaintScene>(
                 &strut,
                 phase,
                 &glyph_runs,
+                run_shadows,
                 source,
                 vertical.is_some(),
             )
@@ -1260,6 +1601,12 @@ pub(crate) fn stroke_text<'a, S: PaintScene>(
                     (transform * shift, glyph_xform)
                 }
                 None => (transform, glyph_xform),
+            };
+            let transform = if relative {
+                let (dx, dy) = doc.inline_span_relative_offset(glyph_run.style().brush.id, inline_root_id);
+                transform * Affine::translate((dx as f64 * scale, dy as f64 * scale))
+            } else {
+                transform
             };
             let fill_color = paint.fill_color;
 
@@ -1352,14 +1699,10 @@ pub(crate) fn stroke_text<'a, S: PaintScene>(
         // shadow were the line drawn again in its colour). Otherwise each run's shadows go right
         // before its glyphs (Chromium paints a text fragment's shadows right before it). Then the
         // underlines and overlines, the glyphs, and the line-throughs (CSS 2 Appendix E).
-        let layered = deco_boxes.iter().any(|deco| !deco.shadows.is_empty());
+        let layered = deco_boxes.iter().any(|deco| deco.segments.iter().any(|(_, _, shadows)| !shadows.is_empty()));
         if layered {
-            let layers = run_paints
-                .iter()
-                .map(|paint| paint.shadows.len())
-                .chain(deco_boxes.iter().map(|deco| deco.shadows.len()))
-                .max()
-                .unwrap_or(0);
+            // A box's line casts the shadows of the runs it covers.
+            let layers = run_paints.iter().map(|paint| paint.shadows.len()).max().unwrap_or(0);
             for layer in (0..layers).rev() {
                 flush(scene, DecorationPhase::Shadow(layer));
                 for (glyph_run, paint) in glyph_runs.iter().zip(run_paints.iter()) {

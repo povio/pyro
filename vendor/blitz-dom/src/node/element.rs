@@ -81,6 +81,8 @@ pub struct ElementData {
 
     /// pyro: the `border-image-source` image (at most one entry).
     pub border_images: ThinVec<Option<ImageResourceData>>,
+    /// pyro: the `list-style-image` image of a list item (a list of one), its marker once loaded.
+    pub list_style_images: ThinVec<Option<ImageResourceData>>,
 
     /// Parley text layout (elements with inline inner display mode only)
     pub inline_layout_data: Option<Box<TextLayout>>,
@@ -331,6 +333,7 @@ impl std::fmt::Debug for ElementData {
             .field("background_images", &self.background_images)
             .field("mask_images", &self.mask_images)
             .field("border_images", &self.border_images)
+            .field("list_style_images", &self.list_style_images)
             .field("inline_layout_data", &self.inline_layout_data)
             .field("list_item_data", &self.list_item_data)
             .field("template_contents", &self.template_contents)
@@ -358,6 +361,7 @@ impl Clone for ElementData {
             background_images: self.background_images.clone(),
             mask_images: self.mask_images.clone(),
             border_images: self.border_images.clone(),
+            list_style_images: self.list_style_images.clone(),
             inline_layout_data: self.inline_layout_data.clone(),
             list_item_data: self.list_item_data.clone(),
             template_contents: self.template_contents,
@@ -480,6 +484,7 @@ impl ElementData {
             background_images: ThinVec::new(),
             mask_images: ThinVec::new(),
             border_images: ThinVec::new(),
+            list_style_images: ThinVec::new(),
 
             stylo_element_data: Default::default(),
             selector_flags: Cell::new(ElementSelectorFlags::empty()),
@@ -576,6 +581,23 @@ impl ElementData {
             .remove(ElementState::VISITED_OR_UNVISITED);
         if self.is_link() {
             self.element_state.insert(ElementState::UNVISITED);
+        }
+    }
+
+    /// pyro: a link whose `href` resolves (against `base`) to `document` itself is visited, as
+    /// the page a browser shows is in its history (WPT `css-color/currentcolor-004`, `href=""`):
+    /// `:visited` matches it instead of `:link`. Other links stay unvisited: there is no
+    /// history. Call after [`Self::flush_link_state`].
+    pub fn flush_link_visited(&mut self, base: &url::Url, document: &url::Url) {
+        if !self.element_state.contains(ElementState::UNVISITED) {
+            return;
+        }
+        let Some(href) = self.attr(local_name!("href")) else {
+            return;
+        };
+        if base.join(href.trim()).is_ok_and(|url| url == *document) {
+            self.element_state.remove(ElementState::UNVISITED);
+            self.element_state.insert(ElementState::VISITED);
         }
     }
 
@@ -1034,6 +1056,9 @@ pub struct ListItemLayout {
 pub enum Marker {
     Char(char),
     String(String),
+    /// pyro: the item's loaded `list-style-image` (`ElementData::list_style_images`), its
+    /// natural size in CSS px.
+    Image { width: f32, height: f32 },
 }
 
 //Value depends on list-style-position, determining whether a seperate layout is created for it

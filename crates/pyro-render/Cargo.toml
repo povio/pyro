@@ -23,7 +23,9 @@ style_dom = { version = "0.24.0", package = "stylo_dom" }
 serde = { version = "1", features = ["derive"] }
 serde_json.workspace = true
 url = "2"
-blitz-dom = { version = "=0.3.0-beta.4", default-features = false, features = ["system-fonts", "woff", "svg", "floats", "writing-mode"] }
+# `text-transform-icu`: language-specific case mappings (Turkish and Azerbaijani dotted and dotless
+# i, Lithuanian, Greek), as Chromium has them; `text-transform` uses Rust's own mappings without it.
+blitz-dom = { version = "=0.3.0-beta.4", default-features = false, features = ["system-fonts", "woff", "svg", "floats", "writing-mode", "text-transform-icu"] }
 blitz-html = { version = "=0.3.0-beta.4", default-features = false }
 blitz-traits = { version = "=0.3.0-beta.4", default-features = false }
 blitz-paint = { version = "=0.3.0-beta.4", default-features = false, features = ["svg"] }

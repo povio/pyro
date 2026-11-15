@@ -700,7 +700,7 @@ impl selectors::Element for BlitzNode<'_> {
     fn match_non_ts_pseudo_class(
         &self,
         pseudo_class: &<Self::Impl as selectors::SelectorImpl>::NonTSPseudoClass,
-        _context: &mut MatchingContext<Self::Impl>,
+        context: &mut MatchingContext<Self::Impl>,
     ) -> bool {
         match *pseudo_class {
             NonTSPseudoClass::Active => self.element_state().contains(ElementState::ACTIVE),
@@ -723,7 +723,11 @@ impl selectors::Element for BlitzNode<'_> {
             }
             NonTSPseudoClass::Lang(ref lang) => self.match_element_lang(None, lang),
             NonTSPseudoClass::CustomState(ref state) => self.has_lp_custom_state(&state.0),
-            NonTSPseudoClass::Link => self.element_state().contains(ElementState::UNVISITED),
+            // pyro: every link, visited or not, as browsers match `:link` for an element's style
+            // (only the colours a visited link paints come from `:visited`).
+            NonTSPseudoClass::Link => self
+                .element_state()
+                .intersects(ElementState::VISITED_OR_UNVISITED),
             NonTSPseudoClass::PlaceholderShown => {
                 self.element_state().contains(ElementState::PLACEHOLDER_SHOWN)
             }
@@ -731,7 +735,13 @@ impl selectors::Element for BlitzNode<'_> {
             NonTSPseudoClass::ReadOnly => self.element_state().contains(ElementState::READONLY),
             NonTSPseudoClass::ServoNonZeroBorder => false,
             NonTSPseudoClass::Target => false,
-            NonTSPseudoClass::Visited => false,
+            // pyro: links to the document itself (`ElementData::flush_link_visited`), but not
+            // inside `:has()`, where Chromium takes every link as unvisited (WPT
+            // `css/selectors/has-visited.html`, `invalidation/link-pseudo-in-has.html`).
+            NonTSPseudoClass::Visited => {
+                self.element_state().contains(ElementState::VISITED)
+                    && context.relative_selector_anchor().is_none()
+            }
             NonTSPseudoClass::Autofill => false,
             NonTSPseudoClass::Default => self.element_state().contains(ElementState::DEFAULT),
 
@@ -2142,6 +2152,25 @@ impl<'dom> DomTraversal<BlitzNode<'dom>> for RecalcStyle<'_> {
                             && resolved_border_colors(old) != resolved_border_colors(new)
                     }
                     _ => false,
+                }
+                // pyro: as does `visibility: collapse` coming or going on a row or row group
+                // (`TableRow::collapsed`: the row's track is taken away).
+                || match (&old_primary, new_primary) {
+                    (Some(old), Some(new)) if replaced => {
+                        use style::computed_values::visibility::T as Visibility;
+                        use style::values::specified::box_::DisplayInside;
+                        let (was, is) = (old.get_inherited_box().visibility, new.get_inherited_box().visibility);
+                        was != is
+                            && (was == Visibility::Collapse || is == Visibility::Collapse)
+                            && matches!(
+                                new.get_display().inside(),
+                                DisplayInside::TableRow
+                                    | DisplayInside::TableRowGroup
+                                    | DisplayInside::TableHeaderGroup
+                                    | DisplayInside::TableFooterGroup
+                            )
+                    }
+                    _ => false,
                 };
             drop(old_primary);
             if derive {
@@ -2415,6 +2444,7 @@ fn needs_style_image_flush(node: &Node, style: &ComputedValues) -> bool {
                 std::slice::from_ref(&style.get_border().border_image_source),
                 &el.border_images,
             )
+            || out_of_sync(std::slice::from_ref(&style.get_list().list_style_image), &el.list_style_images)
     })
 }
 
@@ -2841,6 +2871,52 @@ mod relative_selector_invalidation_tests {
         drop(m);
         d.resolve(0.0);
         assert_eq!(order(&d, a), 0, ".x dropped with its siblings");
+    }
+
+    /// A link to the document itself (`href=""`) is visited, yet it still matches `:link` (as
+    /// every link does for Chromium's regular style), and inside `:has()` it is unvisited, as
+    /// Chromium takes every link there (WPT `css/selectors/invalidation/link-pseudo-in-has.html`,
+    /// `css/selectors/has-visited.html`): `:has(> :link)` matches its parent and
+    /// `:has(> :visited)` does not, whether `href` was set before or after the insertion.
+    #[test]
+    fn a_link_to_the_document_is_a_link_and_unvisited_inside_has() {
+        let (mut d, body) = make_doc(
+            "a:link { order: 1 } a:visited { order: 3 } a:link { z-index: 5 } \
+             .p:has(> :link) { order: 7 } .p:has(> :visited) { z-index: 9 }",
+            "has-visited-link",
+        );
+        d.set_base_url("http://test/page.html");
+        let z_index = |d: &BaseDocument, id: NodeId| {
+            use style::values::generics::position::ZIndex;
+            match d.nodes[id].primary_styles().unwrap().get_position().z_index {
+                ZIndex::Integer(z) => z,
+                ZIndex::Auto => 0,
+            }
+        };
+        let mut m = d.mutate();
+        let (p, q) = (div(&mut m, "p"), div(&mut m, "p"));
+        // `href` set before the insertion, as the WPT page does.
+        let a = m.create_element(qual_name!("a"), vec![]);
+        m.set_attribute(a, qual_name!("href"), "");
+        m.append_children(p, &[a]);
+        let b = m.create_element(qual_name!("a"), vec![]);
+        m.append_children(q, &[b]);
+        m.append_children(body, &[p, q]);
+        drop(m);
+        d.resolve(0.0);
+        assert_eq!(order(&d, a), 3, "a:visited wins over the earlier a:link");
+        assert_eq!(z_index(&d, a), 5, "a:link applies to the visited link");
+        assert_eq!(order(&d, p), 7, ":has(> :link) matches");
+        assert_eq!(z_index(&d, p), 0, ":has(> :visited) does not");
+        assert_eq!(order(&d, q), 0, "no link yet");
+
+        // `href` set after the insertion: invalidation reaches the anchor.
+        let mut m = d.mutate();
+        m.set_attribute(b, qual_name!("href"), "");
+        drop(m);
+        d.resolve(0.0);
+        assert_eq!(order(&d, q), 7, ":has(> :link) matches after the change");
+        assert_eq!(z_index(&d, q), 0, ":has(> :visited) still does not");
     }
 }
 

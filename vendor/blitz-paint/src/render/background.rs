@@ -209,6 +209,9 @@ impl ElementCx<'_, '_> {
         let last_clip = *get_cyclic(&bg_styles.background_clip.0, layer_count - 1);
         let last_attachment = *get_cyclic(&bg_styles.background_attachment.0, layer_count - 1);
         let background_clip: BoxModelBox = last_clip.into();
+        // pyro: Chromium's bleed avoidance for a rounded box whose border hides its edge, worked
+        // out when a layer cut to the border box paints.
+        let shrunk_border_box = std::cell::OnceCell::new();
         let clip_path = |clip: BoxModelBox,
                          border_area: bool,
                          attachment: StyloBackgroundAttachment| {
@@ -216,14 +219,15 @@ impl ElementCx<'_, '_> {
                 (Some(canvas), _) => canvas.to_path(0.1),
                 (None, Some(local)) => local.box_path(clip),
                 (None, None) if border_area => self.border_area_path(),
-                (None, None) => self.box_path(clip),
+                (None, None) => match clip {
+                    BoxModelBox::BorderBox => shrunk_border_box
+                        .get_or_init(|| self.bleed_avoiding_border_box(style))
+                        .clone()
+                        .unwrap_or_else(|| self.box_path(clip)),
+                    _ => self.box_path(clip),
+                },
             }
         };
-        let background_clip_path = clip_path(
-            background_clip,
-            last_clip == StyloBackgroundClip::BorderArea,
-            last_attachment,
-        );
 
         // Draw background color (if any)
         let mut text_run = last_clip == StyloBackgroundClip::Text && canvas.is_none();
@@ -236,6 +240,12 @@ impl ElementCx<'_, '_> {
             .resolve_to_absolute(&current_color)
             .as_srgb_color();
         if bg_color != Color::TRANSPARENT {
+            // pyro: the colour's clip only when there is a colour.
+            let background_clip_path = clip_path(
+                background_clip,
+                last_clip == StyloBackgroundClip::BorderArea,
+                last_attachment,
+            );
             let local_color = local_cx(last_attachment).is_some();
             if local_color {
                 scene.push_clip_layer(
@@ -302,6 +312,97 @@ impl ElementCx<'_, '_> {
         if text_run {
             self.end_text_clip_group(scene);
         }
+    }
+
+    /// pyro: the border box that `background-clip: border-box` layers are cut to under a rounded
+    /// border that hides the background's edge, as Chromium paints it
+    /// (`BoxDecorationData::ComputeBleedAvoidance`, `kBackgroundBleedShrinkBackground`): every
+    /// side's colour opaque and its style neither dotted, dashed nor hidden, some border drawn,
+    /// no border image. The box is inset by half of each side's width (a sixth with a `double`
+    /// side) and its radii shrink with it, so the border covers the background's antialiased
+    /// edge: drawn to the outer edge, the background showed through the border's own
+    /// antialiasing there, a dark seam around a light border. `None` when the background is cut
+    /// to the border box as it is (also under a side narrower than two device pixels).
+    fn bleed_avoiding_border_box(&self, style: &ComputedValues) -> Option<BezPath> {
+        use style::values::specified::BorderStyle;
+        if !self.frame.has_border_radius() {
+            return None;
+        }
+        let border = style.get_border();
+        if !matches!(border.border_image_source, GenericImage::None) {
+            return None;
+        }
+        let current_color = style.clone_color();
+        let widths = self.frame.border_width;
+        let sides = [
+            (
+                &border.border_top_color,
+                border.border_top_style,
+                widths.y0,
+            ),
+            (
+                &border.border_right_color,
+                border.border_right_style,
+                widths.x1,
+            ),
+            (
+                &border.border_bottom_color,
+                border.border_bottom_style,
+                widths.y1,
+            ),
+            (
+                &border.border_left_color,
+                border.border_left_style,
+                widths.x0,
+            ),
+        ];
+        if !sides.iter().any(|(_, _, width)| *width > 0.0) {
+            return None;
+        }
+        let mut double = false;
+        for (color, side_style, width) in sides {
+            let opaque = color.resolve_to_absolute(&current_color).alpha >= 1.0;
+            if !opaque
+                || matches!(
+                    side_style,
+                    BorderStyle::Hidden | BorderStyle::Dotted | BorderStyle::Dashed
+                )
+            {
+                return None;
+            }
+            // A side under two device pixels keeps the background to the outer edge: the
+            // background's edge, half a pixel in, and the border's two antialiased edges share
+            // its pixels, and what is under the box showed through where their coverages met
+            // (WPT `filter-effects/blur-clip-border-radius`, a 1px border).
+            if width > 0.0 && width < 2.0 {
+                return None;
+            }
+            // A double border under 3px is drawn solid (Blink's `BorderEdge::EffectiveStyle`).
+            double |= side_style == BorderStyle::Double && width >= 3.0 * self.scale;
+        }
+        let fraction = if double { 1.0 / 6.0 } else { 0.5 };
+        let insets = kurbo::Insets::new(
+            widths.x0 * fraction,
+            widths.y0 * fraction,
+            widths.x1 * fraction,
+            widths.y1 * fraction,
+        );
+        let radii = self.frame.border_radii;
+        let shrink = |r: Vec2, dx: f64, dy: f64| Vec2::new((r.x - dx).max(0.0), (r.y - dy).max(0.0));
+        let radii = NonUniformRoundedRectRadii {
+            top_left: shrink(radii.top_left, insets.x0, insets.y0),
+            top_right: shrink(radii.top_right, insets.x1, insets.y0),
+            bottom_right: shrink(radii.bottom_right, insets.x1, insets.y1),
+            bottom_left: shrink(radii.bottom_left, insets.x0, insets.y1),
+        };
+        let shrunk = CssBox::new(
+            self.frame.border_box - insets,
+            kurbo::Insets::ZERO,
+            kurbo::Insets::ZERO,
+            0.0,
+            radii,
+        );
+        Some(shrunk.border_box_path())
     }
 
     /// pyro: this element's boxes as a `background-attachment: local` layer sees them on a scroll
@@ -524,11 +625,35 @@ impl ElementCx<'_, '_> {
                 ]
             })
             .collect();
+        // pyro: a part with a background image paints it (with its colour) cell by cell too,
+        // positioned against the part's own box (CSS 2.1 §17.5.1).
+        let has_image = |node_id: NodeId| -> bool {
+            self.context.dom.get_node(node_id).and_then(|node| node.primary_styles()).is_some_and(|style| {
+                style
+                    .get_background()
+                    .background_image
+                    .0
+                    .iter()
+                    .any(|image| !matches!(image, ComputedImage::None))
+            })
+        };
+        let column_images: Vec<[bool; 2]> =
+            table.columns.iter().map(|col| [col.group.is_some_and(has_image), has_image(col.node_id)]).collect();
+        let row_images: Vec<[bool; 2]> =
+            table.rows.iter().map(|row| [row.group.is_some_and(has_image), has_image(row.node_id)]).collect();
         let has_color =
             |colors: &[[Option<Color>; 2]]| colors.iter().flatten().any(Option::is_some);
-        if !has_color(&column_colors) && !has_color(&row_colors) {
+        let any_image = |images: &[[bool; 2]]| images.iter().flatten().any(|image| *image);
+        if !has_color(&column_colors)
+            && !has_color(&row_colors)
+            && !any_image(&column_images)
+            && !any_image(&row_images)
+        {
             return;
         }
+        let part_rects = (any_image(&column_images) || any_image(&row_images))
+            .then(|| self.table_part_rects(table))
+            .flatten();
 
         let cell_rect = |cell_id: NodeId| -> Option<Rect> {
             let layout = self.context.dom.get_node(cell_id)?.final_layout();
@@ -560,13 +685,21 @@ impl ElementCx<'_, '_> {
         let after = gutter - before;
 
         for cell in &table.cells {
+            // A collapsed row (`visibility: collapse`) paints nothing.
+            if table.rows.get(cell.row as usize).is_some_and(|row| row.collapsed) {
+                continue;
+            }
             let no_colors = [None, None];
+            let no_images = [false, false];
             let column = column_colors
                 .get(cell.column as usize)
                 .unwrap_or(&no_colors);
             let row = row_colors.get(cell.row as usize).unwrap_or(&no_colors);
+            let column_image = column_images.get(cell.column as usize).unwrap_or(&no_images);
+            let row_image = row_images.get(cell.row as usize).unwrap_or(&no_images);
+            let images = column_image.iter().chain(row_image).any(|image| *image);
             let mut colors = column.iter().chain(row).flatten().peekable();
-            if colors.peek().is_none() {
+            if colors.peek().is_none() && !images {
                 continue;
             }
             let Some(mut rect) = cell_rect(cell.node_id) else {
@@ -583,10 +716,69 @@ impl ElementCx<'_, '_> {
             }
 
             let shape = rect.scale_from_origin(self.scale);
-            for color in colors {
-                scene.fill(Fill::NonZero, self.transform, *color, None, &shape);
+            if !images {
+                for color in colors {
+                    scene.fill(Fill::NonZero, self.transform, *color, None, &shape);
+                }
+                continue;
+            }
+            // Bottom to top: column group, column, row group, row.
+            let column_node = table.columns.get(cell.column as usize);
+            let row_node = table.rows.get(cell.row as usize);
+            let parts = [
+                (column_node.and_then(|col| col.group), column[0], column_image[0], PartKind::ColumnGroup),
+                (column_node.map(|col| col.node_id), column[1], column_image[1], PartKind::Column),
+                (row_node.and_then(|row| row.group), row[0], row_image[0], PartKind::RowGroup),
+                (row_node.map(|row| row.node_id), row[1], row_image[1], PartKind::Row),
+            ];
+            for (node_id, color, image, kind) in parts {
+                let Some(node_id) = node_id else { continue };
+                match (image, part_rects.as_ref()) {
+                    (true, Some(rects)) => {
+                        let part = rects.rect(table, node_id, kind, cell);
+                        self.draw_table_part_background(scene, node_id, part, &shape);
+                    }
+                    _ => {
+                        if let Some(color) = color {
+                            scene.fill(Fill::NonZero, self.transform, color, None, &shape);
+                        }
+                    }
+                }
             }
         }
+    }
+
+    /// pyro: where a table's rows and columns are (CSS px, the table's space), for the boxes of its
+    /// parts whose backgrounds are positioned against them.
+    fn table_part_rects(&self, table: &blitz_dom::TableContext) -> Option<TablePartRects> {
+        let grid_info = table.computed_grid_info.borrow();
+        let grid_info = grid_info.as_ref()?;
+        let top = table.grid_box.borrow().map_or(0.0, |(top, _)| top as f64);
+        let columns: Vec<(f64, f64)> = super::PhysicalTracks::from_tracks(&grid_info.columns)
+            .iter()
+            .map(|track| (track.start as f64, track.end as f64))
+            .collect();
+        let rows: Vec<(f64, f64)> = super::PhysicalTracks::from_tracks(&grid_info.rows)
+            .iter()
+            .map(|track| (track.start as f64 + top, track.end as f64 + top))
+            .collect();
+        (!columns.is_empty() && !rows.is_empty()).then_some(TablePartRects { columns, rows })
+    }
+
+    /// pyro: the background of a table part (`part`, the box its images are positioned against,
+    /// CSS px in the table's space) painted in `clip` (device px, the table's space): one cell.
+    fn draw_table_part_background(&self, scene: &mut impl PaintScene, node_id: NodeId, part: Rect, clip: &Rect) {
+        let Some(node) = self.context.dom.get_node(node_id) else { return };
+        if node.element_data().is_none() || node.primary_styles().is_none() {
+            return;
+        }
+        let mut layout = taffy::Layout::new();
+        layout.size = taffy::Size { width: part.width() as f32, height: part.height() as f32 };
+        let transform = self.transform * Affine::translate(Vec2::new(part.x0, part.y0) * self.scale);
+        let part_cx = self.context.element_cx(node, layout, transform, None);
+        scene.push_clip_layer(Fill::NonZero, self.transform, clip);
+        part_cx.draw_background(scene);
+        scene.pop_layer();
     }
 
     /// Whether the layer is positioned against the viewport
@@ -695,6 +887,11 @@ impl ElementCx<'_, '_> {
             return;
         }
 
+        // pyro: an image without a `viewBox` or a size lays its content out in the size it is
+        // drawn at (`SvgImageData::for_url`); it was stretched from usvg's 100x100.
+        let sized = svg.sized(bg_size.width as f32, bg_size.height as f32);
+        let svg = sized.as_ref().unwrap_or(svg);
+
         let viewport = super::svg_viewport_affine(
             svg,
             (bg_size.width * self.scale) as f32,
@@ -727,6 +924,15 @@ impl ElementCx<'_, '_> {
         if x.count as u64 * y.count as u64 > 2_000 {
             return;
         }
+        // pyro: an image ends at its viewport: content past it (a stroke on the root's edges) is
+        // cut off, tile by tile, when there is any (it was drawn over the neighbouring tiles and
+        // the area around them).
+        let size = svg.tree.size();
+        let ink = svg.tree.root().abs_layer_bounding_box();
+        let overflows = ink.left() < -0.01
+            || ink.top() < -0.01
+            || ink.right() > size.width() + 0.01
+            || ink.bottom() > size.height() + 0.01;
         for hc in 0..y.count {
             for wc in 0..x.count {
                 let origin = Vec2::new(
@@ -734,7 +940,14 @@ impl ElementCx<'_, '_> {
                     y.start + hc as f64 * y.stride,
                 );
                 let transform = base_transform * kurbo::Affine::translate(origin) * viewport;
-                anyrender_svg::render_svg_tree(scene, &svg.tree, transform);
+                if overflows {
+                    let tile = Rect::from_origin_size(origin.to_point(), bg_size);
+                    scene.push_clip_layer(Fill::NonZero, base_transform, &tile);
+                    anyrender_svg::render_svg_tree(scene, &svg.tree, transform);
+                    scene.pop_layer();
+                } else {
+                    anyrender_svg::render_svg_tree(scene, &svg.tree, transform);
+                }
             }
         }
     }
@@ -999,35 +1212,84 @@ fn compute_layer_position_and_size(
 
     let bg_size = compute_layer_size(layer, container_w as f32, container_h as f32, size_mode);
 
+    let BackgroundRepeat(repeat_x, repeat_y) = layer.repeat;
+    let bg_size = round_layer_size(
+        bg_size,
+        container_w,
+        container_h,
+        matches!(repeat_x, Round),
+        matches!(repeat_y, Round),
+        size_is_auto(layer.size),
+    );
+
+    // pyro: the image is positioned at its final size, after `round` scaled it (CSS Backgrounds
+    // 3 §3.9: sizing, the round step, then positioning; it was positioned at its unrounded size).
     let bg_pos = compute_layer_position(
         layer,
         (container_w - bg_size.width) as f32,
         (container_h - bg_size.height) as f32,
     );
 
-    let BackgroundRepeat(repeat_x, repeat_y) = layer.repeat;
-
-    let bg_size = if matches!(repeat_x, Round) && matches!(repeat_y, Round) {
-        let count = (container_w / bg_size.width).round();
-        let width = container_w / count;
-
-        let count = (container_h / bg_size.height).round();
-        let height = container_h / count;
-
-        Size::new(width, height)
-    } else if matches!(repeat_x, Round) {
-        let count = (container_w / bg_size.width).round();
-        let width = container_w / count;
-        Size::new(width, bg_size.height)
-    } else if matches!(repeat_y, Round) {
-        let count = (container_h / bg_size.height).round();
-        let height = container_h / count;
-        Size::new(bg_size.width, height)
-    } else {
-        bg_size
-    };
-
     (bg_pos, bg_size)
+}
+
+/// Which axes of a `background-size` are `auto` (x, y).
+fn size_is_auto(size: &BackgroundSize) -> (bool, bool) {
+    use style::values::generics::length::GenericLengthPercentageOrAuto as Lpa;
+    match size {
+        BackgroundSize::ExplicitSize { width, height } => {
+            (matches!(width, Lpa::Auto), matches!(height, Lpa::Auto))
+        }
+        BackgroundSize::Cover | BackgroundSize::Contain => (false, false),
+    }
+}
+
+/// pyro: the round step of CSS Backgrounds 3 §3.9 on a layer sized `size` in a positioning area
+/// `container_w` x `container_h`: a `round` axis is scaled to fit a whole number of copies (at
+/// least one), and when only one axis rounds and `background-size` is `auto` in the other (`auto`
+/// in `auto_axes`), the other is scaled with it, so the image keeps the aspect ratio it had.
+/// Upstream left the other axis alone, and divided by zero copies for an image more than twice
+/// the area's size.
+fn round_layer_size(
+    size: Size,
+    container_w: f64,
+    container_h: f64,
+    round_x: bool,
+    round_y: bool,
+    auto_axes: (bool, bool),
+) -> Size {
+    let round = |container: f64, len: f64| {
+        if len > 0.0 && container > 0.0 {
+            container / (container / len).round().max(1.0)
+        } else {
+            len
+        }
+    };
+    match (round_x, round_y) {
+        (true, true) => Size::new(
+            round(container_w, size.width),
+            round(container_h, size.height),
+        ),
+        (true, false) => {
+            let width = round(container_w, size.width);
+            let height = if auto_axes.1 && size.width > 0.0 {
+                size.height * width / size.width
+            } else {
+                size.height
+            };
+            Size::new(width, height)
+        }
+        (false, true) => {
+            let height = round(container_h, size.height);
+            let width = if auto_axes.0 && size.height > 0.0 {
+                size.width * height / size.height
+            } else {
+                size.width
+            };
+            Size::new(width, height)
+        }
+        (false, false) => size,
+    }
 }
 
 #[inline]
@@ -1364,5 +1626,57 @@ fn extend(offset: f64, length: f64) -> f64 {
         length - extend_length
     } else {
         -extend_length
+    }
+}
+
+/// pyro: a table part whose background is painted in its cells.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PartKind {
+    ColumnGroup,
+    Column,
+    RowGroup,
+    Row,
+}
+
+/// pyro: a table's column and row tracks (CSS px, the table's space): the boxes of its parts.
+struct TablePartRects {
+    columns: Vec<(f64, f64)>,
+    rows: Vec<(f64, f64)>,
+}
+
+impl TablePartRects {
+    /// The box of a part of `table`: a row or row group spans every column, a column or column
+    /// group every row, each over its own tracks.
+    fn rect(
+        &self,
+        table: &blitz_dom::TableContext,
+        node_id: NodeId,
+        kind: PartKind,
+        cell: &blitz_dom::TableCell,
+    ) -> Rect {
+        // From the start of the first track at `indices` to the end of the last.
+        fn span(tracks: &[(f64, f64)], mut indices: impl Iterator<Item = usize>) -> Option<(f64, f64)> {
+            let first = indices.next()?;
+            let last = indices.last().unwrap_or(first);
+            Some((tracks.get(first)?.0, tracks.get(last.min(tracks.len() - 1))?.1))
+        }
+        let all_columns = (self.columns[0].0, self.columns[self.columns.len() - 1].1);
+        let all_rows = (self.rows[0].0, self.rows[self.rows.len() - 1].1);
+        let (xs, ys) = match kind {
+            PartKind::Row => (all_columns, span(&self.rows, std::iter::once(cell.row as usize)).unwrap_or(all_rows)),
+            PartKind::RowGroup => {
+                let rows = table.rows.iter().enumerate().filter(|(_, row)| row.group == Some(node_id));
+                (all_columns, span(&self.rows, rows.map(|(at, _)| at)).unwrap_or(all_rows))
+            }
+            PartKind::Column => {
+                let columns = table.columns.iter().enumerate().filter(|(_, column)| column.node_id == node_id);
+                (span(&self.columns, columns.map(|(at, _)| at)).unwrap_or(all_columns), all_rows)
+            }
+            PartKind::ColumnGroup => {
+                let columns = table.columns.iter().enumerate().filter(|(_, column)| column.group == Some(node_id));
+                (span(&self.columns, columns.map(|(at, _)| at)).unwrap_or(all_columns), all_rows)
+            }
+        };
+        Rect::new(xs.0, ys.0, xs.1, ys.1)
     }
 }

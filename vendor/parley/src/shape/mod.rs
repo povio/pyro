@@ -15,6 +15,7 @@ use super::layout::Layout;
 use super::resolve::{ResolveContext, ResolvedStyle};
 use super::style::{Brush, FontFeature};
 use crate::inline_box::LayoutInlineBox;
+use crate::InlineBoxKind;
 use crate::util::{nearly_eq, nearly_zero};
 use crate::{FontContext, FontData, Spacing};
 
@@ -201,6 +202,7 @@ pub(crate) fn shape_text<'a, B: Brush>(
         &mut layout.data.shaped_text,
     );
 
+    let box_levels = inline_box_levels(text, analysis, inline_boxes);
     let mut inline_box_iter = inline_boxes
         .iter()
         .map(|b| &b.inline_box)
@@ -212,19 +214,11 @@ pub(crate) fn shape_text<'a, B: Brush>(
         let run_style_index = char_style_indices[shaped_run.range.char_range.start];
         let run_style = &styles[usize::from(run_style_index)];
 
-        // Push inline boxes positioned before the start of this item.
-        //
-        // TODO: this lets the inline box take the bidi level of the previous run, but in principle
-        // inline boxes should be included in bidi analysis as an object replacement character
-        // (U+FFFC). The box should then take the bidi level of that character.
-        let prev_bidi_level = if shaped_run_idx > 0 {
-            layout.data.shaped_text.runs()[&shaped_run_idx - 1].bidi_level
-        } else {
-            BidiLevel::new(0)
-        };
+        // Push inline boxes positioned before the start of this item. pyro: each with its
+        // own bidi level (`inline_box_levels`).
         while let Some((box_idx, inline_box)) = inline_box_iter.peek() {
             if inline_box.index <= run_text_byte_start {
-                layout.data.push_inline_box(*box_idx, prev_bidi_level);
+                layout.data.push_inline_box(*box_idx, box_levels[*box_idx]);
                 inline_box_iter.next();
             } else {
                 break;
@@ -245,19 +239,92 @@ pub(crate) fn shape_text<'a, B: Brush>(
     }
 
     // Process any remaining inline boxes whose index is greater than the length of the text
-    //
-    // Give the box the same bidi level as the last text run (or else default to 0 if there is no
-    // text run).
-    let bidi_level = layout
-        .data
-        .shaped_text
-        .runs()
-        .last()
-        .map(|r| r.bidi_level)
-        .unwrap_or(BidiLevel::new(0));
     for (box_idx, _inline_box) in inline_box_iter {
-        layout.data.push_inline_box(box_idx, bidi_level);
+        layout.data.push_inline_box(box_idx, box_levels[box_idx]);
     }
+}
+
+/// pyro: the bidi level of each inline box. An atomic or out-of-flow box takes the level it
+/// resolved to as U+FFFC (`Analysis::object_levels`); a span's start edge takes the level of what
+/// follows it and its end edge that of what precedes it (the edges sit inside the span's bidi
+/// formatting characters), characters that rule X9 removes and other edges aside. All at the
+/// paragraph's level when the paragraph needed no resolution.
+fn inline_box_levels(text: &str, analysis: &Analysis, inline_boxes: &[LayoutInlineBox]) -> Vec<BidiLevel> {
+    let paragraph = analysis.paragraph_level();
+    let char_levels = analysis.bidi_levels();
+    let object_levels = analysis.object_levels();
+    if char_levels.is_empty() {
+        return alloc::vec![paragraph; inline_boxes.len()];
+    }
+    // The paragraph in logical order: characters, and the boxes before the character at their
+    // index. `None`: a box whose level is still to find (an edge), or a removed character.
+    enum Slot {
+        Char(Option<BidiLevel>),
+        Box(usize),
+    }
+    let removed = |c: char| {
+        matches!(c, '\u{202A}'..='\u{202E}' | '\u{200B}'..='\u{200D}' | '\u{2060}'..='\u{2064}' | '\u{FEFF}')
+    };
+    let mut slots = Vec::with_capacity(char_levels.len() + inline_boxes.len());
+    let mut levels: Vec<Option<BidiLevel>> = alloc::vec![None; inline_boxes.len()];
+    let mut boxes = inline_boxes.iter().enumerate().peekable();
+    let mut objects = object_levels.iter();
+    let mut place_box = |slots: &mut Vec<Slot>, levels: &mut Vec<Option<BidiLevel>>, index: usize, kind: InlineBoxKind| {
+        if !kind.is_span_edge() {
+            levels[index] = Some(objects.next().copied().unwrap_or(paragraph));
+        }
+        slots.push(Slot::Box(index));
+    };
+    for ((byte, c), &level) in text.char_indices().zip(char_levels) {
+        while let Some((index, b)) = boxes.next_if(|(_, b)| b.inline_box.index <= byte) {
+            place_box(&mut slots, &mut levels, index, b.inline_box.kind);
+        }
+        slots.push(Slot::Char((!removed(c)).then_some(level)));
+    }
+    for (index, b) in boxes {
+        place_box(&mut slots, &mut levels, index, b.inline_box.kind);
+    }
+    let level_of = |slot: &Slot, levels: &[Option<BidiLevel>]| match *slot {
+        Slot::Char(level) => level,
+        Slot::Box(index) => levels[index].filter(|_| !inline_boxes[index].inline_box.kind.is_span_edge()),
+    };
+    // End edges: what precedes them; start edges: what follows them.
+    let mut last = None;
+    for slot in &slots {
+        if let Slot::Box(index) = *slot
+            && inline_boxes[index].inline_box.kind == InlineBoxKind::SpanEnd
+        {
+            levels[index] = last;
+        }
+        last = level_of(slot, &levels).or(last);
+    }
+    let mut next = None;
+    for slot in slots.iter().rev() {
+        if let Slot::Box(index) = *slot
+            && inline_boxes[index].inline_box.kind == InlineBoxKind::SpanStart
+        {
+            levels[index] = next;
+        }
+        next = level_of(slot, &levels).or(next);
+    }
+    // An edge with nothing on its side takes the other side's level.
+    let (mut before, mut after) = (alloc::vec![None; inline_boxes.len()], None);
+    let mut last = None;
+    for slot in &slots {
+        if let Slot::Box(index) = *slot {
+            before[index] = last;
+        }
+        last = level_of(slot, &levels).or(last);
+    }
+    for slot in slots.iter().rev() {
+        if let Slot::Box(index) = *slot
+            && levels[index].is_none()
+        {
+            levels[index] = after.or(before[index]);
+        }
+        after = level_of(slot, &levels).or(after);
+    }
+    levels.into_iter().map(|level| level.unwrap_or(paragraph)).collect()
 }
 
 /// The font to use if a font query doesn't return any font candidates at all.

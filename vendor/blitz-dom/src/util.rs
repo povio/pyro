@@ -93,6 +93,8 @@ pub enum ImageLayerKind {
     Mask,
     /// pyro: `border-image-source`, a list of one image.
     BorderImage,
+    /// pyro: `list-style-image`, a list of one image.
+    ListStyle,
 }
 
 impl ImageLayerKind {
@@ -101,6 +103,7 @@ impl ImageLayerKind {
             Self::Background => ImageType::Background(idx),
             Self::Mask => ImageType::Mask(idx),
             Self::BorderImage => ImageType::BorderImage(idx),
+            Self::ListStyle => ImageType::ListStyle(idx),
         }
     }
 }
@@ -112,6 +115,8 @@ pub enum ImageType {
     Mask(usize),
     /// pyro: `border-image-source`.
     BorderImage(usize),
+    /// pyro: `list-style-image`.
+    ListStyle(usize),
 }
 
 /// A point

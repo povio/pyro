@@ -14,7 +14,7 @@ use icu_normalizer::properties::{
     CanonicalComposition, CanonicalCompositionBorrowed, CanonicalDecomposition,
     CanonicalDecompositionBorrowed,
 };
-use icu_properties::props::{BidiMirroringGlyph, GeneralCategory, GraphemeClusterBreak, Script};
+use icu_properties::props::{BidiClass, BidiMirroringGlyph, GeneralCategory, GraphemeClusterBreak, Script};
 use icu_properties::{
     CodePointMapData, CodePointMapDataBorrowed, PropertyNamesShort, PropertyNamesShortBorrowed,
 };
@@ -45,6 +45,11 @@ pub struct Analysis {
 
     /// The base bidi level of the paragraph of text.
     pub(crate) paragraph_level: BidiLevel,
+
+    /// pyro: the bidi level of each object of [`AnalysisOptions::objects`](crate::AnalysisOptions).
+    ///
+    /// Empty when `levels` is.
+    pub(crate) object_levels: Vec<BidiLevel>,
 }
 
 impl Analysis {
@@ -60,7 +65,17 @@ impl Analysis {
     pub(crate) fn clear(&mut self) {
         self.info.clear();
         self.levels.clear();
+        self.object_levels.clear();
         self.paragraph_level = BidiLevel::new(0);
+    }
+
+    /// pyro: the bidi level of each object of [`AnalysisOptions::objects`](crate::AnalysisOptions),
+    /// resolved as a U+FFFC OBJECT REPLACEMENT CHARACTER at its index.
+    ///
+    /// Empty when the whole paragraph is left-to-right.
+    #[inline(always)]
+    pub fn object_levels(&self) -> &[BidiLevel] {
+        &self.object_levels
     }
 
     /// The per-character info in source order.
@@ -809,17 +824,53 @@ pub(crate) fn analyze_text(
     }
 
     if needs_bidi_resolution || options.base_direction == BaseDirection::Rtl {
-        analyzer.bidi.resolve(
-            text.chars().map(|ch| {
-                let bidi_class = data_sources.properties(ch).bidi_class();
-                // TODO: maybe extend Properties to u64 to fit BidiMirroringGlyph
-                let bracket = data_sources.brackets().get(ch);
-                (ch, (bidi_class, bracket))
-            }),
-            options.base_direction,
-        );
-        core::mem::swap(&mut analysis.levels, &mut analyzer.bidi.levels);
-        analysis.paragraph_level = analyzer.bidi.base_level();
+        let class_of = |ch: char| {
+            let bidi_class = data_sources.properties(ch).bidi_class();
+            // TODO: maybe extend Properties to u64 to fit BidiMirroringGlyph
+            let bracket = data_sources.brackets().get(ch);
+            (ch, (bidi_class, bracket))
+        };
+        // pyro: the objects as U+FFFC, before the characters at their indices.
+        let object = '\u{FFFC}';
+        let mut objects = options.objects.iter().peekable();
+        let mut is_object = Vec::with_capacity(analysis.info.len() + options.objects.len());
+        let mut stream = Vec::with_capacity(is_object.capacity());
+        for (index, ch) in text.char_indices() {
+            while objects.next_if(|&&at| at <= index).is_some() {
+                stream.push(class_of(object));
+                is_object.push(true);
+            }
+            stream.push(class_of(ch));
+            is_object.push(false);
+        }
+        for _ in objects {
+            stream.push(class_of(object));
+            is_object.push(true);
+        }
+        // pyro: each paragraph, up to and including a paragraph separator (bidi class B: a
+        // preserved line feed, U+2029), is resolved on its own (UAX #9 P1). The layout's
+        // paragraph level is the first one's.
+        analysis.levels.clear();
+        analysis.object_levels.clear();
+        let mut start = 0;
+        while start < stream.len() {
+            let end = stream[start..]
+                .iter()
+                .position(|(_, (class, _))| *class == BidiClass::ParagraphSeparator)
+                .map_or(stream.len(), |at| start + at + 1);
+            analyzer.bidi.resolve(stream[start..end].iter().cloned(), options.base_direction);
+            if start == 0 {
+                analysis.paragraph_level = analyzer.bidi.base_level();
+            }
+            for (&level, &is_object) in analyzer.bidi.levels.iter().zip(&is_object[start..end]) {
+                if is_object {
+                    analysis.object_levels.push(level);
+                } else {
+                    analysis.levels.push(level);
+                }
+            }
+            start = end;
+        }
     }
 }
 

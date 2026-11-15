@@ -90,6 +90,12 @@ pub struct AnalysisOptions<'a> {
     ///
     /// See [`LineBreakOverrideFn`] for more details.
     pub line_break_override: Option<&'a LineBreakOverrideFn>,
+
+    /// pyro: the byte indices of objects in the text (atomic and out-of-flow inline boxes),
+    /// sorted. Each takes part in bidi resolution as a U+FFFC OBJECT REPLACEMENT CHARACTER before
+    /// the character at its index (after the text at its end), as browsers resolve them; their
+    /// levels are [`Analysis::object_levels`](crate::Analysis::object_levels).
+    pub objects: &'a [usize],
 }
 
 impl core::fmt::Debug for AnalysisOptions<'_> {

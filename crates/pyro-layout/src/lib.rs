@@ -308,6 +308,7 @@ fn external(b: pyro_render::LayoutBox) -> ExternalBox {
         client_height: b.client_height,
         scroll_width: b.scroll_width,
         scroll_height: b.scroll_height,
+        scroll_reversed: b.scroll_reversed,
         fixed: b.fixed,
         border: b.border,
         padding: b.padding,

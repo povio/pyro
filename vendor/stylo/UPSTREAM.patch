@@ -1,3 +1,48 @@
+diff -ruN a/device/servo.rs b/device/servo.rs
+--- a/device/servo.rs	2026-11-14 22:08:19
++++ b/device/servo.rs	2026-11-14 22:08:19
+@@ -400,15 +400,17 @@
+                 | SystemColor::Activeborder
+                 | SystemColor::Inactiveborder
+                 | SystemColor::Threeddarkshadow
++                // pyro: ThreeDHighlight and ThreeDLightShadow are ButtonBorder too (CSS Color 4
++                // §6.2; upstream mapped them to ButtonFace).
++                | SystemColor::Threedhighlight
++                | SystemColor::Threedlightshadow
+                 | SystemColor::Threedshadow
+                 | SystemColor::Windowframe => srgb(255, 255, 255),
+                 SystemColor::Buttonface
+                 // Deprecated system colors (CSS Color 4) mapped to Buttonface.
+                 | SystemColor::Buttonhighlight
+                 | SystemColor::Buttonshadow
+-                | SystemColor::Threedface
+-                | SystemColor::Threedhighlight
+-                | SystemColor::Threedlightshadow => srgb(107, 107, 107),
++                | SystemColor::Threedface => srgb(107, 107, 107),
+                 SystemColor::Buttontext => srgb(245, 245, 245),
+                 SystemColor::Canvas
+                 // Deprecated system colors (CSS Color 4) mapped to Canvas.
+@@ -450,15 +452,17 @@
+                 | SystemColor::Activeborder
+                 | SystemColor::Inactiveborder
+                 | SystemColor::Threeddarkshadow
++                // pyro: ThreeDHighlight and ThreeDLightShadow are ButtonBorder too (CSS Color 4
++                // §6.2; upstream mapped them to ButtonFace).
++                | SystemColor::Threedhighlight
++                | SystemColor::Threedlightshadow
+                 | SystemColor::Threedshadow
+                 | SystemColor::Windowframe => srgb(169, 169, 169),
+                 SystemColor::Buttonface
+                 // Deprecated system colors (CSS Color 4) mapped to Buttonface.
+                 | SystemColor::Buttonhighlight
+                 | SystemColor::Buttonshadow
+-                | SystemColor::Threedface
+-                | SystemColor::Threedhighlight
+-                | SystemColor::Threedlightshadow => srgb(220, 220, 220),
++                | SystemColor::Threedface => srgb(220, 220, 220),
+                 SystemColor::Buttontext => srgb(0, 0, 0),
+                 SystemColor::Canvas
+                 // Deprecated system colors (CSS Color 4) mapped to Canvas.
 diff -ruN a/invalidation/element/invalidation_map.rs b/invalidation/element/invalidation_map.rs
 --- a/invalidation/element/invalidation_map.rs	2026-11-11 19:55:57
 +++ b/invalidation/element/invalidation_map.rs	2026-11-11 19:55:57
@@ -104,6 +149,14 @@ diff -ruN a/properties/counted_unknown_properties.py b/properties/counted_unknow
      "-webkit-user-modify",
      "-webkit-margin-before",
      "-webkit-margin-after",
+@@ -86,7 +84,6 @@
+     "-webkit-mask-repeat-y",
+     "user-zoom",
+     "min-zoom",
+-    "-webkit-box-decoration-break",
+     "orientation",
+     "max-zoom",
+     "-webkit-app-region",
 diff -ruN a/properties/data.py b/properties/data.py
 --- a/properties/data.py	2026-11-11 19:55:57
 +++ b/properties/data.py	2026-11-11 20:10:18
@@ -168,7 +221,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/css-break/#propdef-break-before"
  animation_type = "discrete"
  affects = "layout"
-@@ -491,9 +489,26 @@
+@@ -491,11 +489,28 @@
  type = "BreakWithin"
  initial = "computed::BreakWithin::Auto"
  struct = "box"
@@ -182,20 +235,22 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +initial = "From::from(2)"
 +struct = "inherited_text"
 +spec = "https://drafts.csswg.org/css-break/#propdef-orphans"
-+animation_type = "discrete"
+ animation_type = "discrete"
 +servo_restyle_damage = "repaint"
-+affects = "layout"
-+
+ affects = "layout"
+ 
 +[widows]
 +type = "PositiveInteger"
 +initial = "From::from(2)"
 +struct = "inherited_text"
 +spec = "https://drafts.csswg.org/css-break/#propdef-widows"
- animation_type = "discrete"
++animation_type = "discrete"
 +servo_restyle_damage = "repaint"
- affects = "layout"
- 
++affects = "layout"
++
  [caption-side]
+ type = "table::CaptionSide"
+ initial = "computed::table::CaptionSide::Top"
 @@ -2117,7 +2132,6 @@
  type = "TransformBox"
  initial = "computed::TransformBox::ViewBox"
@@ -220,6 +275,14 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  affects = "overflow"
  
  [text-underline-offset]
+@@ -3694,6 +3708,7 @@
+ [box-decoration-break]
+ struct = "border"
+ spec = "https://drafts.csswg.org/css-break/#propdef-box-decoration-break"
++extra_prefixes = ["webkit"]
+ animation_type = "discrete"
+ affects = "layout"
+ type = "BoxDecorationBreak"
 diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
 --- a/properties/shorthands.rs	2026-11-11 19:55:57
 +++ b/properties/shorthands.rs	2026-11-14 13:56:06
@@ -782,6 +845,126 @@ diff -ruN a/values/computed/effects.rs b/values/computed/effects.rs
 -
  /// A computed value for the `drop-shadow()` filter.
  pub type SimpleShadow = GenericSimpleShadow<Color, Length, NonNegativeLength>;
+diff -ruN a/values/computed/image.rs b/values/computed/image.rs
+--- a/values/computed/image.rs	2026-11-11 19:55:57
++++ b/values/computed/image.rs	2026-11-15 07:03:49
+@@ -29,7 +29,8 @@
+ 
+ /// Computed values for an image according to CSS-IMAGES.
+ /// <https://drafts.csswg.org/css-images/#image-values>
+-pub type Image = generic::GenericImage<Gradient, ComputedUrl, Color, Percentage, Resolution>;
++pub type Image =
++    generic::GenericImage<Gradient, ComputedUrl, Color, Percentage, Resolution, super::Filter>;
+ 
+ impl ToTyped for Image {
+     fn to_typed(&self, dest: &mut ThinVec<TypedValue>) -> Result<(), ()> {
+@@ -242,6 +243,7 @@
+             Self::CrossFade(f) => Image::CrossFade(f.to_computed_value(context)),
+             Self::ImageSet(s) => Image::ImageSet(s.to_computed_value(context)),
+             Self::Image(color) => Image::Image(color.to_computed_value(context)),
++            Self::Filter(f) => Image::Filter(f.to_computed_value(context)),
+             Self::LightDark(ld) => match ld.compute(context) {
+                 // none computes to image(transparent) in light-dark(), see
+                 // https://github.com/w3c/csswg-drafts/issues/13866.
+@@ -267,6 +269,7 @@
+             Image::CrossFade(f) => Self::CrossFade(ToComputedValue::from_computed_value(f)),
+             Image::ImageSet(s) => Self::ImageSet(ToComputedValue::from_computed_value(s)),
+             Image::Image(color) => Self::Image(ToComputedValue::from_computed_value(color)),
++            Image::Filter(f) => Self::Filter(ToComputedValue::from_computed_value(f)),
+             Image::LightDark(_) => unreachable!("Shouldn't have computed image-set values"),
+         }
+     }
+diff -ruN a/values/generics/image.rs b/values/generics/image.rs
+--- a/values/generics/image.rs	2026-11-11 19:55:57
++++ b/values/generics/image.rs	2026-11-15 07:03:49
+@@ -21,7 +21,7 @@
+ /// https://drafts.csswg.org/css-images/#image-values
+ #[derive(Clone, MallocSizeOf, PartialEq, SpecifiedValueInfo, ToResolvedValue, ToShmem)]
+ #[repr(C, u8)]
+-pub enum GenericImage<G, ImageUrl, Color, Percentage, Resolution> {
++pub enum GenericImage<G, ImageUrl, Color, Percentage, Resolution, Filter> {
+     /// `none` variant.
+     None,
+ 
+@@ -64,9 +64,43 @@
+     /// An `image(<color>)` function.
+     #[css(function)]
+     Image(#[value_info(skip)] Box<Color>),
++
++    /// pyro: a `filter(<image>, <filter-value-list>)` function: the image with the filters
++    /// applied. <https://drafts.fxtf.org/filter-effects-1/#FilterCSSImageValue>
++    #[css(function)]
++    Filter(#[value_info(skip)] Box<GenericFilterImage<Self, Filter>>),
+ }
+ 
+ pub use self::GenericImage as Image;
++
++/// pyro: the arguments of a `filter()` image.
++/// <https://drafts.fxtf.org/filter-effects-1/#FilterCSSImageValue>
++#[derive(Clone, Debug, MallocSizeOf, PartialEq, ToComputedValue, ToResolvedValue, ToShmem)]
++#[repr(C)]
++pub struct GenericFilterImage<Image, Filter> {
++    /// The image filtered.
++    pub image: Image,
++    /// The filter functions, applied in order (one at least).
++    pub filters: crate::OwnedSlice<Filter>,
++}
++
++impl<I: ToCss, F: ToCss> ToCss for GenericFilterImage<I, F> {
++    fn to_css<W>(&self, dest: &mut CssWriter<W>) -> fmt::Result
++    where
++        W: Write,
++    {
++        dest.write_str("filter(")?;
++        self.image.to_css(dest)?;
++        dest.write_str(", ")?;
++        for (i, filter) in self.filters.iter().enumerate() {
++            if i > 0 {
++                dest.write_char(' ')?;
++            }
++            filter.to_css(dest)?;
++        }
++        dest.write_char(')')
++    }
++}
+ 
+ /// <https://drafts.csswg.org/css-images-4/#cross-fade-function>
+ #[derive(
+@@ -402,22 +436,23 @@
+     }
+ }
+ 
+-impl<G, U, C, P, Resolution> fmt::Debug for Image<G, U, C, P, Resolution>
++impl<G, U, C, P, Resolution, F> fmt::Debug for Image<G, U, C, P, Resolution, F>
+ where
+-    Image<G, U, C, P, Resolution>: ToCss,
++    Image<G, U, C, P, Resolution, F>: ToCss,
+ {
+     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+         self.to_css(&mut CssWriter::new(f))
+     }
+ }
+ 
+-impl<G, U, C, P, Resolution> ToCss for Image<G, U, C, P, Resolution>
++impl<G, U, C, P, Resolution, F> ToCss for Image<G, U, C, P, Resolution, F>
+ where
+     G: ToCss,
+     U: ToCss,
+     C: ToCss,
+     P: ToCss,
+     Resolution: ToCss,
++    F: ToCss,
+ {
+     fn to_css<W>(&self, dest: &mut CssWriter<W>) -> fmt::Result
+     where
+@@ -449,6 +484,7 @@
+             Image::ImageSet(ref is) => is.to_css(dest),
+             Image::CrossFade(ref cf) => cf.to_css(dest),
+             Image::LightDark(ref ld) => ld.to_css(dest),
++            Image::Filter(ref filter) => filter.to_css(dest),
+         }
+     }
+ }
 diff -ruN a/values/generics/mod.rs b/values/generics/mod.rs
 --- a/values/generics/mod.rs	2026-11-11 19:55:57
 +++ b/values/generics/mod.rs	2026-11-11 19:55:57
@@ -950,6 +1133,119 @@ diff -ruN a/values/specified/effects.rs b/values/specified/effects.rs
          }
          let function = {
              let f = input.expect_function()?;
+diff -ruN a/values/specified/image.rs b/values/specified/image.rs
+--- a/values/specified/image.rs	2026-11-11 19:55:57
++++ b/values/specified/image.rs	2026-11-15 07:03:49
+@@ -38,7 +38,8 @@
+ 
+ /// Specified values for an image according to CSS-IMAGES.
+ /// <https://drafts.csswg.org/css-images/#image-values>
+-pub type Image = generic::Image<Gradient, SpecifiedUrl, Color, Percentage, Resolution>;
++pub type Image =
++    generic::Image<Gradient, SpecifiedUrl, Color, Percentage, Resolution, super::effects::Filter>;
+ 
+ impl ToTyped for Image {
+     fn to_typed(&self, dest: &mut ThinVec<TypedValue>) -> Result<(), ()> {
+@@ -196,6 +197,8 @@
+         const FORBID_NONE = 1 << 0;
+         const FORBID_IMAGE_SET = 1 << 1;
+         const FORBID_NON_URL = 1 << 2;
++        /// pyro: no `filter()` image (see `parse_with_cors_anonymous`).
++        const FORBID_FILTER = 1 << 3;
+     }
+ }
+ 
+@@ -245,6 +248,10 @@
+             "paint" => Self::PaintWorklet(Box::new(<PaintWorklet>::parse_args(context, input)?)),
+             "cross-fade" if cross_fade_enabled() => Self::CrossFade(Box::new(CrossFade::parse_args(context, input, cors_mode, flags)?)),
+             "image" => Self::Image(Box::new(Color::parse(context, input)?)),
++            // pyro: `filter(<image>, <filter-value-list>)`.
++            "filter" if !flags.contains(ParseImageFlags::FORBID_FILTER) => {
++                Self::Filter(Box::new(Self::parse_filter_args(context, input, cors_mode, flags)?))
++            },
+             "light-dark" if crate::pref!("layout.css.light-dark.images.enabled", gecko = true) => {
+                 Self::LightDark(Box::new(GenericLightDark::parse_args_with(input, |input| {
+                     // `none` in `light-dark()` has a special meaning.
+@@ -261,6 +268,41 @@
+ }
+ 
+ impl Image {
++    /// pyro: the arguments of `filter()`: an image (a string is a URL), a comma, then one or more
++    /// filter functions. <https://drafts.fxtf.org/filter-effects-1/#FilterCSSImageValue>
++    fn parse_filter_args(
++        context: &ParserContext,
++        input: &mut Parser,
++        cors_mode: CorsMode,
++        flags: ParseImageFlags,
++    ) -> Result<generic::GenericFilterImage<Self, super::effects::Filter>, ParseError> {
++        let start = input.position().byte_index();
++        let image = match input.try_parse(|i| i.expect_url_or_string()) {
++            Ok(url) => {
++                let end = input.position().byte_index();
++                generic::Image::Url(SpecifiedUrl::parse_from_string(
++                    url.as_ref().into(),
++                    start,
++                    end,
++                    context,
++                    cors_mode,
++                )?)
++            },
++            Err(..) => {
++                Self::parse_with_cors_mode(context, input, cors_mode, flags | ParseImageFlags::FORBID_NONE)?
++            },
++        };
++        input.expect_comma()?;
++        let mut filters = Vec::new();
++        while let Ok(filter) = input.try_parse(|i| super::effects::Filter::parse(context, i)) {
++            filters.push(filter);
++        }
++        if filters.is_empty() {
++            return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError));
++        }
++        Ok(generic::GenericFilterImage { image, filters: filters.into() })
++    }
++
+     /// Creates an already specified image value from an already resolved URL
+     /// for insertion in the cascade.
+     #[cfg(feature = "servo")]
+@@ -280,6 +322,11 @@
+ 
+     /// Provides an alternate method for parsing that associates the URL with
+     /// anonymous CORS headers.
++    ///
++    /// pyro: without `filter()` images (`mask-image`, `shape-outside`), as Chromium and Gecko parse
++    /// them (neither has `filter()`): blitz-paint draws `filter()` in background and border image
++    /// layers only. A mask of a smoothly scaled filtered image seams where the image's edges meet
++    /// its shadow (WPT `filter-function-008` fails in WebKit, the one engine with `filter()`).
+     pub fn parse_with_cors_anonymous(
+         context: &ParserContext,
+         input: &mut Parser,
+@@ -288,16 +335,23 @@
+             context,
+             input,
+             CorsMode::Anonymous,
+-            ParseImageFlags::empty(),
++            ParseImageFlags::FORBID_FILTER,
+         )
+     }
+ 
+     /// Provides an alternate method for parsing, but forbidding `none`
++    ///
++    /// pyro: and `filter()` images (`content`), which blitz-dom does not generate.
+     pub fn parse_forbid_none(
+         context: &ParserContext,
+         input: &mut Parser,
+     ) -> Result<Image, ParseError> {
+-        Self::parse_with_cors_mode(context, input, CorsMode::None, ParseImageFlags::FORBID_NONE)
++        Self::parse_with_cors_mode(
++            context,
++            input,
++            CorsMode::None,
++            ParseImageFlags::FORBID_NONE | ParseImageFlags::FORBID_FILTER,
++        )
+     }
+ 
+     /// Provides an alternate method for parsing, but only for urls.
 diff -ruN a/values/specified/transform.rs b/values/specified/transform.rs
 --- a/values/specified/transform.rs	2026-11-11 19:55:57
 +++ b/values/specified/transform.rs	2026-11-14 18:55:29

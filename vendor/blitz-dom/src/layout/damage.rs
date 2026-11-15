@@ -251,7 +251,13 @@ impl BaseDocument {
             node.clear_layout_cache();
             invalidate_anonymous_ancestors = true;
             damage.remove(ONLY_RELAYOUT);
+            // pyro: the anonymous tables, rows and cells the node owns (`table_fixup`) wrap DOM
+            // nodes whose damage reaches their DOM parent, not them: their layouts go too.
+            if !node.anonymous_blocks.is_empty() {
+                self.clear_anonymous_table_box_caches(node_id);
+            }
         }
+        let node = &mut self.nodes[node_id];
 
         // Store damage for current node
         node.set_damage(damage);
@@ -371,6 +377,27 @@ impl BaseDocument {
         style_claims_out_of_flow(node) || owns_claiming_inline_root(self, node)
     }
 
+    /// pyro: clears the layout caches of the anonymous tables, rows and cells `node_id` owns, and of
+    /// those they own in turn.
+    fn clear_anonymous_table_box_caches(&mut self, node_id: NodeId) {
+        let owned = std::mem::take(&mut self.nodes[node_id].anonymous_blocks);
+        for &id in &owned {
+            let Some(node) = self.nodes.get_mut(id) else { continue };
+            if !super::table_fixup::is_anonymous_table_box(node) {
+                continue;
+            }
+            node.clear_layout_cache();
+            let nested = !node.anonymous_blocks.is_empty();
+            // An anonymous cell is a changed cell of its table: what it wraps changed (its
+            // widths are measured again).
+            self.note_changed_table_cell(id, true);
+            if nested {
+                crate::util::ensure_stack(|| self.clear_anonymous_table_box_caches(id));
+            }
+        }
+        self.nodes[node_id].anonymous_blocks = owned;
+    }
+
     /// Refresh owned anonymous boxes without revisiting their DOM children.
     fn refresh_anonymous_block_styles(&mut self, node_id: NodeId) -> RestyleDamage {
         // Skip owners with no anonymous boxes to refresh.
@@ -396,6 +423,20 @@ impl BaseDocument {
         let anonymous_blocks = std::mem::take(&mut self.nodes[node_id].anonymous_blocks);
         let mut damage_for_parent = RestyleDamage::empty();
         for &anonymous_id in &anonymous_blocks {
+            // pyro: an anonymous table, row or cell (`table_fixup`) is styled as one, from the box
+            // it is in (a row the owning table built an anonymous cell in, say).
+            let table_box_style = self.nodes.get(anonymous_id).and_then(|node| {
+                let old = node.primary_styles()?;
+                let pseudo = super::table_fixup::anonymous_box_pseudo(&old);
+                if pseudo == PseudoElement::ServoAnonymousBox {
+                    return None;
+                }
+                let parent_style = self.nodes[node.parent?].primary_styles()?;
+                let read_guard = self.guard.read();
+                let guards = StylesheetGuards::same(&read_guard);
+                Some(self.stylist.style_for_anonymous::<&Node>(&guards, &pseudo, &parent_style))
+            });
+            let style = table_box_style.as_ref().unwrap_or(&style);
             let (mut damage, changed, layout_changed) = {
                 // Skip boxes whose node, style data, or previous style is unavailable.
                 let Some(node) = self.nodes.get_mut(anonymous_id) else {
@@ -410,7 +451,7 @@ impl BaseDocument {
                 };
 
                 // Compute precise damage, retaining the old style allocation if unchanged.
-                let diff = RestyleDamage::compute_style_difference::<&Node>(old_style, &style);
+                let diff = RestyleDamage::compute_style_difference::<&Node>(old_style, style);
                 let changed = matches!(diff.change, StyleChange::Changed { .. });
                 if changed {
                     data.styles.primary = Some(style.clone());
@@ -660,6 +701,12 @@ pub(crate) fn compute_layout_damage(old: &ComputedValues, new: &ComputedValues) 
             return true;
         }
 
+        // pyro: a table is built in its writing mode (vertical ones without anonymous boxes:
+        // `table_fixup`), as are the anonymous tables of a box's table parts.
+        if old.writing_mode != new.writing_mode {
+            return true;
+        }
+
         if new_box.display.outside() == DisplayOutside::Block
             && new_box.display.inside() == DisplayInside::Flow
         {
@@ -862,6 +909,7 @@ impl BaseDocument {
             self.flush_image_layers_from_style(node_id, ImageLayerKind::Background);
             self.flush_image_layers_from_style(node_id, ImageLayerKind::Mask);
             self.flush_image_layers_from_style(node_id, ImageLayerKind::BorderImage);
+            self.flush_image_layers_from_style(node_id, ImageLayerKind::ListStyle);
         }
     }
 
@@ -896,6 +944,10 @@ impl BaseDocument {
             ImageLayerKind::BorderImage => (
                 std::slice::from_ref(&style.get_border().border_image_source),
                 &mut elem.border_images,
+            ),
+            ImageLayerKind::ListStyle => (
+                std::slice::from_ref(&style.get_list().list_style_image),
+                &mut elem.list_style_images,
             ),
         };
 

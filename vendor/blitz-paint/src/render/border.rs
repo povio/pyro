@@ -469,8 +469,12 @@ impl ElementCx<'_, '_> {
     /// Draw all borders for a node
     pub(crate) fn draw_border(&self, scene: &mut impl PaintScene) {
         // A table without uniform collapsed borders draws them all (`draw_collapsed_edges`).
+        // pyro: a collapsed table with cells draws its outer borders as the collapsed ones that
+        // won there, never its own (`draw_table_borders`).
         if self.node.layout_data().collapsed_border.is_some()
-            || matches!(&self.element.special_data, SpecialElementData::TableRoot(table) if table.collapsed_edges.is_some())
+            || matches!(&self.element.special_data, SpecialElementData::TableRoot(table)
+                if table.collapsed_edges.is_some()
+                    || (table.border_collapse == BorderCollapse::Collapse && !table.cells.is_empty()))
         {
             return;
         }
@@ -561,6 +565,10 @@ impl ElementCx<'_, '_> {
                     return;
                 }
             }
+        }
+
+        if self.draw_square_solid_sides_overdrawn(scene) {
+            return;
         }
 
         // (colour, path) pairs to be filled. Several entries may share a colour;
@@ -735,6 +743,97 @@ impl ElementCx<'_, '_> {
             }
         }
         path
+    }
+
+    /// pyro: a border with square corners whose sides are all solid and opaque, in more than one
+    /// colour, painted as Blink's `BoxBorderPainter` paints it, by overdraw: the sides go in its
+    /// order (top, bottom, right, left), and a side reaches into a corner in full when the side
+    /// beside it is painted later (which covers that corner) or has its colour, and stops at the
+    /// corner's diagonal only against a side of another colour painted before it. The later
+    /// side's antialiased diagonal then lies over the earlier side's colour: as two trapezoids,
+    /// both diagonals were antialiased over the background, which showed through between them
+    /// (WPT `CSS2/border-seams-001`: a red background along the seams of nearly white sides).
+    /// Returns false, painting nothing, for any other border.
+    fn draw_square_solid_sides_overdrawn(&self, scene: &mut impl PaintScene) -> bool {
+        if self.frame.has_border_radius() {
+            return false;
+        }
+        let border = self.style.get_border();
+        let current_color = self.style.clone_color();
+        // Top, right, bottom, left.
+        let sides = [
+            (Edge::Top, &border.border_top_color, border.border_top_style),
+            (Edge::Right, &border.border_right_color, border.border_right_style),
+            (Edge::Bottom, &border.border_bottom_color, border.border_bottom_style),
+            (Edge::Left, &border.border_left_color, border.border_left_style),
+        ];
+        let mut colors = [None; 4];
+        for (i, (edge, color, style)) in sides.iter().enumerate() {
+            if self.edge_width(*edge) <= 0.0 || style.none_or_hidden() {
+                continue;
+            }
+            let color = color.resolve_to_absolute(&current_color).as_srgb_color();
+            if *style != BorderStyle::Solid || color.components[3] < 1.0 {
+                return false;
+            }
+            colors[i] = Some(color);
+        }
+        let present: SmallVec<[Color; 4]> = colors.iter().flatten().copied().collect();
+        if present.len() < 2 || present.iter().all(|c| *c == present[0]) {
+            return false;
+        }
+        let bb = self.frame.border_box;
+        let w = self.frame.border_width;
+        // Blink's side order for sides of one opacity and style (`kSidePriority`).
+        const ORDER: [usize; 4] = [0, 2, 1, 3];
+        let mut painted = [false; 4];
+        for &i in &ORDER {
+            let Some(color) = colors[i] else { continue };
+            // A corner shared with side `j` is cut on its diagonal only when `j` is painted
+            // already in another colour.
+            let miter = |j: usize| painted[j] && colors[j].is_some_and(|c| c != color);
+            let (before, after) = ((i + 3) % 4, (i + 1) % 4);
+            let (mb, ma) = (miter(before), miter(after));
+            let points = match i {
+                // Top: left corner (side 3) to right corner (side 1).
+                0 => [
+                    Point::new(bb.x0, bb.y0),
+                    Point::new(bb.x1, bb.y0),
+                    Point::new(if ma { bb.x1 - w.x1 } else { bb.x1 }, bb.y0 + w.y0),
+                    Point::new(if mb { bb.x0 + w.x0 } else { bb.x0 }, bb.y0 + w.y0),
+                ],
+                // Right: top corner (side 0) to bottom corner (side 2).
+                1 => [
+                    Point::new(bb.x1, bb.y0),
+                    Point::new(bb.x1, bb.y1),
+                    Point::new(bb.x1 - w.x1, if ma { bb.y1 - w.y1 } else { bb.y1 }),
+                    Point::new(bb.x1 - w.x1, if mb { bb.y0 + w.y0 } else { bb.y0 }),
+                ],
+                // Bottom: right corner (side 1) to left corner (side 3).
+                2 => [
+                    Point::new(bb.x1, bb.y1),
+                    Point::new(bb.x0, bb.y1),
+                    Point::new(if ma { bb.x0 + w.x0 } else { bb.x0 }, bb.y1 - w.y1),
+                    Point::new(if mb { bb.x1 - w.x1 } else { bb.x1 }, bb.y1 - w.y1),
+                ],
+                // Left: bottom corner (side 2) to top corner (side 0).
+                _ => [
+                    Point::new(bb.x0, bb.y1),
+                    Point::new(bb.x0, bb.y0),
+                    Point::new(bb.x0 + w.x0, if ma { bb.y0 + w.y0 } else { bb.y0 }),
+                    Point::new(bb.x0 + w.x0, if mb { bb.y1 - w.y1 } else { bb.y1 }),
+                ],
+            };
+            let mut path = BezPath::new();
+            path.move_to(points[0]);
+            for p in &points[1..] {
+                path.line_to(*p);
+            }
+            path.close_path();
+            scene.fill(Fill::NonZero, self.transform, color, None, &path);
+            painted[i] = true;
+        }
+        true
     }
 
     /// The border width (in device pixels) of a single edge.
@@ -941,10 +1040,12 @@ impl ElementCx<'_, '_> {
         // The borders are laid out as the gutters between the tracks, and as the border
         // of the table around them. Track positions are relative to the table's border box.
         let border_width = table.style.gap.map(|gap| gap.into_raw().value() as f64);
+        // pyro: the grid sits below the captions above it.
+        let grid_top = table.grid_box.borrow().map_or(0.0, |(top, _)| top as f64);
         let left = cols.origin() as f64 - border_width.width;
         let right = (cols.origin() + cols.span()) as f64 + border_width.width;
-        let top = rows.origin() as f64 - border_width.height;
-        let bottom = (rows.origin() + rows.span()) as f64 + border_width.height;
+        let top = grid_top + rows.origin() as f64 - border_width.height;
+        let bottom = grid_top + (rows.origin() + rows.span()) as f64 + border_width.height;
 
         let mut fill = |x0: f64, y0: f64, x1: f64, y1: f64| {
             let shape = Rect::new(x0, y0, x1, y1).scale_from_origin(self.scale);
@@ -960,12 +1061,12 @@ impl ElementCx<'_, '_> {
             fill(left, bottom - border_width.height, right, bottom);
         }
         for (prev, next) in rows.iter().zip(rows.iter().skip(1)) {
-            fill(left, prev.end as f64, right, next.start as f64);
+            fill(left, grid_top + prev.end as f64, right, grid_top + next.start as f64);
         }
 
         // Vertical borders, one segment per row
         for row in rows.iter() {
-            let (y0, y1) = (row.start as f64, row.end as f64);
+            let (y0, y1) = (grid_top + row.start as f64, grid_top + row.end as f64);
             if outer_border_style.border_left_style != BorderStyle::Hidden {
                 fill(left, y0, left + border_width.width, y1);
             }
@@ -989,7 +1090,10 @@ impl ElementCx<'_, '_> {
         let cols = PhysicalTracks::from_tracks(&grid_info.columns);
         let rows = PhysicalTracks::from_tracks(&grid_info.rows);
         let xs: Vec<f64> = line_positions(&cols);
-        let ys: Vec<f64> = line_positions(&rows);
+        // pyro: the grid sits below the captions above it.
+        let SpecialElementData::TableRoot(table) = &self.element.special_data else { return };
+        let grid_top = table.grid_box.borrow().map_or(0.0, |(top, _)| top as f64);
+        let ys: Vec<f64> = line_positions(&rows).into_iter().map(|y| y + grid_top).collect();
         if xs.len() != edges.columns + 1 || ys.len() != edges.rows + 1 {
             return;
         }

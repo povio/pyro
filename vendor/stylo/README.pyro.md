@@ -76,6 +76,12 @@ crate (`diff -ruN`).
   names (`Node::transform_reference_box`: the content box for `content-box` and `fill-box`, the border box
   otherwise; "3D transforms flattened").
 
+- `properties/longhands.toml`, `properties/counted_unknown_properties.py`: `-webkit-box-decoration-break` is an alias
+  of `box-decoration-break` (`extra_prefixes = ["webkit"]`; it was a counted unknown property, so the declaration was
+  dropped), as in Chromium, which supports both. blitz-paint reads the value for `text-decoration-inset` and for the
+  shadows and backgrounds of inline boxes broken across lines (`vendor/blitz-paint/README.pyro.md`, "Inline
+  fragments and text painting").
+
 ## Text decorations and emphasis
 
 - `properties/longhands.toml`: `text-decoration-skip-ink` is parsed and computed for Servo too (upstream: Gecko only);
@@ -110,6 +116,10 @@ crate (`diff -ruN`).
   `view-box` and `no-clip`, and `mask-origin` the three SVG boxes, for servo too (upstream: gecko only, so the
   declaration was dropped); `background-clip` and `background-origin` still reject them. The `mask` shorthand
   serializes them as Gecko's does. blitz-paint clips and positions mask layers with them.
+- `device/servo.rs` (`Device::system_color`): the deprecated system colours `ThreeDHighlight` and
+  `ThreeDLightShadow` are `ButtonBorder`, as CSS Color 4 §6.2 maps them (upstream: `ButtonFace`; WPT
+  `css-color/deprecated-sameas-018`/`-019`). Test: `deprecated_three_d_colours_are_button_border` in
+  `crates/pyro-render/tests/background_images_and_edges.rs`.
 
 ## Moving from 0.22 to 0.23
 
