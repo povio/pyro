@@ -1338,3 +1338,13 @@ Main pins Stylo 0.23.0; this copy builds against the vendored 0.24.0.
 
 Covered by `block_in_inline.rs`, `unicode_bidi.rs`, `inline_relative_position.rs` and `line_paint_order.rs` in
 `crates/pyro-render/tests`.
+
+## Anonymous boxes in 3D rendering contexts
+
+- `src/node/node.rs` (`set_transform`, `transform_context_for_children`), `src/resolve.rs`
+  (`resolve_transforms`): an anonymous box (an anonymous table around a cell, an anonymous block) has no
+  `transform-style` of its own: it is in its parent's 3D rendering context, if any, and passes it on, and it
+  stands for the box it is in, whose DOM children are the boxes it lays out (`ContainingTransform::parent`), as
+  Chromium's anonymous boxes do. Flat, an anonymous table ended a `preserve-3d` cell's context (WPT css-transforms
+  `transform-table-011`). Covered by `anonymous_table_boxes_pass_a_3d_rendering_context_on` in
+  `crates/pyro-render/tests/transform_3d.rs`.
