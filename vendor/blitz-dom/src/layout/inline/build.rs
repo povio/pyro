@@ -15,7 +15,7 @@ use stylo_taffy::CopyStyleGetters;
 use crate::{
     NodeData,
     layout::list::BULLET_FONT_FAMILY,
-    layout::replaced::is_inline_box_element,
+    layout::replaced::is_inline_box,
     layout::text_transform::{CaseTransform, TextTransformer},
     node::{
         FirstLetterSplit, ListItemLayout, ListItemLayoutPosition, Marker, TextAnnotation, TextAnnotationKind, TextBrush,
@@ -743,7 +743,7 @@ fn build_inline_layout_with(
                     (DisplayOutside::Inline, DisplayInside::Flow) => {
                         let tag_name = &element_data.name.local;
 
-                        if is_inline_box_element(tag_name) {
+                        if is_inline_box(element_data) {
                             if box_kind == InlineBoxKind::InFlow {
                                 bidi_scan.atomic_boxes += 1;
                                 text_transformer.word_break(builder);
@@ -932,6 +932,10 @@ fn build_inline_layout_with(
             NodeData::Text(data) => {
                 // node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
                 // dbg!(&data.content);
+                // pyro: white space between two table parts generates no box (`table_fixup`).
+                if node.flags.contains(crate::node::NodeFlags::IS_SPACE_BETWEEN_TABLE_PARTS) {
+                    return;
+                }
 
                 let start = builder.text().len();
                 // pyro: the first letter in a span of the `::first-letter` style.

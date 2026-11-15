@@ -69,6 +69,12 @@ pub(in super::super) struct GridItem {
     /// Shim for baseline alignment that acts like an extra top margin
     /// TODO: Support last baseline and vertical text baselines
     pub baseline_shim: f32,
+    /// pyro: a table cell aligned on its row's baseline (`table_baseline`): `baseline_shim` moves its content
+    /// down inside it rather than acting as a margin.
+    pub table_baseline: bool,
+    /// pyro: a table cell whose width is not floored at its horizontal padding and borders
+    /// (`LayoutGridContainer::table_cells_narrower_than_padding`).
+    pub width_unfloored: bool,
 
     /// The item's definite row-start and row-end (same as `row` field, except in a different coordinate system)
     /// (as indexes into the Vec<GridTrack> stored in a grid's AbstractAxisTracks)
@@ -146,6 +152,8 @@ impl GridItem {
             justify_self: style.justify_self().unwrap_or(parent_justify_items),
             baseline: None,
             baseline_shim: 0.0,
+            table_baseline: false,
+            width_unfloored: false,
             row_indexes: Line { start: 0, end: 0 }, // Properly initialised later
             column_indexes: Line { start: 0, end: 0 }, // Properly initialised later
             crosses_flexible_row: false,            // Properly initialised later
@@ -319,6 +327,17 @@ impl GridItem {
         known_dimensions
     }
 
+    /// pyro: the known dimensions the item is measured with in a grid area of `grid_area_size` (see
+    /// `known_dimensions`), for `table_baseline`.
+    #[inline(always)]
+    pub(in crate::compute::grid) fn known_dimensions_in(
+        &mut self,
+        tree: &mut impl LayoutPartialTree,
+        grid_area_size: Size<Option<f32>>,
+    ) -> Size<Option<f32>> {
+        self.known_dimensions_cached(tree, grid_area_size)
+    }
+
     /// Whether the given self-alignment stretches the item: `stretch`, or `normal` unless the item is replaced
     #[inline(always)]
     fn is_stretch_aligned(&self, alignment: AlignSelf) -> bool {
@@ -356,7 +375,7 @@ impl GridItem {
             .maybe_resolve(grid_area_size, |val, basis| tree.calc(val, basis))
             .maybe_apply_aspect_ratio(aspect_ratio)
             .maybe_add(box_sizing_adjustment);
-        let min_size = self
+        let mut min_size = self
             .min_size
             .maybe_resolve(grid_area_size, |val, basis| tree.calc(val, basis))
             .maybe_apply_aspect_ratio(aspect_ratio)
@@ -364,6 +383,10 @@ impl GridItem {
             // The size of the item is floored by its padding and border
             .or(padding_border_size.map(Some))
             .maybe_max(padding_border_size);
+        // pyro: a fixed table's cell is as wide as its columns.
+        if self.width_unfloored {
+            min_size.width = None;
+        }
         let max_size = self
             .max_size
             .maybe_resolve(grid_area_size, |val, basis| tree.calc(val, basis))

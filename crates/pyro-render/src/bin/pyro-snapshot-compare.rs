@@ -23,6 +23,12 @@ struct Capture {
     dark: bool,
     scroll_x: f64,
     scroll_y: f64,
+    /// The document facts ([`Snapshot::xml_document`], [`Snapshot::content_language`]); absent in
+    /// captures written before they were recorded.
+    #[serde(default)]
+    xml_document: bool,
+    #[serde(default)]
+    content_language: Option<String>,
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -99,6 +105,8 @@ fn compare(worker: &RenderWorker, request: Request) -> Result<serde_json::Value,
         background: None,
         canvases: Vec::new(),
         animations: None,
+        xml_document: s.xml_document,
+        content_language: s.content_language,
     };
     let errors = Arc::new(Mutex::new(Vec::new()));
     let fetcher = Arc::new(Assets { root: request.asset_root, origin: request.asset_origin, errors: errors.clone() });

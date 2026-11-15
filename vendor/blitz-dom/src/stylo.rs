@@ -479,7 +479,8 @@ impl<'a> TDocument for BlitzNode<'a> {
     }
 
     fn is_html_document(&self) -> bool {
-        true
+        // pyro: XHTML and other XML documents are not HTML documents.
+        !self.tree().xml_document
     }
 
     fn quirks_mode(&self) -> QuirksMode {
@@ -659,7 +660,10 @@ impl selectors::Element for BlitzNode<'_> {
     }
 
     fn is_html_element_in_html_document(&self) -> bool {
-        true // self.has_namespace(ns!(html))
+        // pyro: in an XML document, type and attribute selectors match case-sensitively (an
+        // XHTML `DIV` selector does not match `div`). HTML documents keep upstream's answer for
+        // every element.
+        !self.tree().xml_document // && self.has_namespace(ns!(html))
     }
 
     fn has_local_name(&self, local_name: &LocalName) -> bool {
@@ -1474,15 +1478,18 @@ impl Node {
         }
 
         /// pyro: an SVG presentation attribute's value parsed as the CSS
-        /// property's value (`property` is its name).
-        fn parse_svg_presentation_attr(property: &str, value: &str) -> Option<PropertyDeclaration> {
+        /// property's value (`property` is its name): the declarations of a
+        /// shorthand's longhands (`overflow`), or the longhand's.
+        fn parse_svg_presentation_attr(property: &str, value: &str) -> Vec<PropertyDeclaration> {
             use style::properties::{PropertyId, SourcePropertyDeclaration, parse_one_declaration_into};
             use style::stylesheets::{CssRuleType, Origin};
             use style_traits::ParsingMode;
 
-            let property = PropertyId::parse_enabled_for_all_content(property).ok()?;
+            let Ok(property) = PropertyId::parse_enabled_for_all_content(property) else {
+                return Vec::new();
+            };
             let mut declarations = SourcePropertyDeclaration::default();
-            parse_one_declaration_into(
+            let parsed = parse_one_declaration_into(
                 &mut declarations,
                 property,
                 value,
@@ -1494,9 +1501,11 @@ impl Node {
                 ParsingMode::ALLOW_UNITLESS_LENGTH,
                 style::context::QuirksMode::NoQuirks,
                 CssRuleType::Style,
-            )
-            .ok()?;
-            declarations.drain().declarations.next()
+            );
+            match parsed {
+                Ok(()) => declarations.drain().declarations.collect(),
+                Err(_) => Vec::new(),
+            }
         }
 
         // `<input type=image>` is the only input type that is replaced
@@ -1519,12 +1528,16 @@ impl Node {
             // pyro: an SVG element's `clip-path` and `transform-origin` attributes are
             // the CSS properties' presentation attributes (a basic shape, CSS lengths
             // and keywords): blitz-dom's SVG serializer (`node/svg_css.rs`) writes their
-            // computed values for usvg, which knows neither form.
+            // computed values for usvg, which knows neither form. Its `overflow` is the
+            // property's too: `overflow="visible"` on an inline `<svg>` overrides the UA
+            // sheet's `hidden` (its viewport clip, blitz-paint's `draw_svg`).
             if elem.name.ns == ns!(svg)
                 && attr.name.ns == ns!()
-                && (*name == local_name!("clip-path") || *name == local_name!("transform-origin"))
+                && (*name == local_name!("clip-path")
+                    || *name == local_name!("transform-origin")
+                    || *name == local_name!("overflow"))
             {
-                if let Some(declaration) = parse_svg_presentation_attr(&**name, value) {
+                for declaration in parse_svg_presentation_attr(&**name, value) {
                     push_style(declaration);
                 }
             }
@@ -2417,11 +2430,12 @@ fn needs_style_image_flush(node: &Node, style: &ComputedValues) -> bool {
             // (a style list of `none` layers and empty storage are in sync).
             return style_images
                 .iter()
-                .any(|image| matches!(image, Image::Url(_)))
+                .any(|image| matches!(crate::util::unfiltered_image(image), Image::Url(_)))
                 || stored.iter().any(Option::is_some);
         }
         std::iter::zip(style_images, stored).any(|(style_image, stored)| {
-            match (style_image, stored) {
+            // pyro: a `filter()` image loads the image it filters.
+            match (crate::util::unfiltered_image(style_image), stored) {
                 (Image::Url(ComputedUrl::Valid(url)), Some(data)) => **url != *data.url,
                 (Image::Url(ComputedUrl::Valid(_)), None) => true,
                 (_, Some(_)) => true,

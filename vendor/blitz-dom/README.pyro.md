@@ -756,8 +756,8 @@ collected and grids laid out whole or again.
 parent whose child list or text changed with `CHILDREN_CHANGED` (`CONSTRUCT_FC`: collect its layout children again),
 not `ALL_DAMAGE`; `CONSTRUCT_BOX` means the node's own box changed. A reconstructing node forwards `RELAYOUT |
 CONSTRUCT_DESCENDENT` to its parent, plus `CONSTRUCT_FC` only when its own box changed or when its children are laid
-out by an ancestor: `display: inline` boxes (to the inline root, replaced ones included since `is_or_contains_block`
-looks through them), `display: contents`, table rows, row groups, columns and column groups (to the table) and list
+out by an ancestor: `display: inline` boxes (to the inline root, replaced ones included, though `is_or_contains_block`
+does not look through an atomic inline box: an `<object>` is one only while it shows an image), `display: contents`, table rows, row groups, columns and column groups (to the table) and list
 items (to the list). A paragraph appended deep in a page collects its container's children again, not every
 ancestor's. `phase_profile::constructions` counts the collections (and, with it, the tables built from scratch).
 Covered by `crates/pyro-render/tests/incremental_construction.rs` (each change compared with a fresh build, boxes and
@@ -987,8 +987,34 @@ HTML, SVG or MathML element, else the document's pragma-set default language (th
 `<meta http-equiv="content-language">` of its `<head>`, unless it lists several); a range matches by RFC 4647
 extended filtering, ASCII case-insensitively, as in Chromium (WPT css/CSS2/selectors/lang-*, syntax/
 case-sensitive-004). `lang_attr` gives Stylo the element's own attribute for invalidation; `:lang()` is a
-revalidation selector, so style sharing stays correct. The HTTP `Content-Language` header is not seen (the
-document's response headers do not reach the renderer). Covered by `crates/pyro-render/tests/lang_pseudo_class.rs`.
+revalidation selector, so style sharing stays correct. Covered by `crates/pyro-render/tests/lang_pseudo_class.rs`.
+
+## Document facts: XML documents, HTTP `Content-Language`
+
+`src/config.rs` (`DocumentConfig::xml_document`, `content_language`), `src/tree.rs` (`NodeTree`), `src/document.rs`
+(`BaseDocument::new`), `src/iframe.rs`: what the embedder knows of the document beyond its nodes, kept on the node
+tree for the selector matching hooks to read.
+- `src/stylo.rs` (`is_html_document`, `is_html_element_in_html_document`): in an XML document (XHTML) type and
+  attribute selectors match names case-sensitively, so `DIV` does not match `div` (WPT css/CSS2/syntax/
+  case-sensitive-007). Upstream treats every document as HTML; HTML documents keep that answer for every element.
+- `src/lang.rs` (`default_language`): the response's `Content-Language` (one language tag) is the last fallback of
+  `:lang()`, after the elements' attributes and the `<meta http-equiv>` pragma (HTML, "the pragma-set default
+  language ... else language information from a higher-level protocol"; WPT css/CSS2/selectors/lang-selector-005).
+
+Covered by `crates/pyro-render/tests/document_facts.rs`.
+
+## `<style>` text is the sheet as it is
+
+`src/document.rs` (`process_style_element`): upstream decoded HTML character references in a `<style>` element's
+text before parsing it as CSS. The parser already decoded those the markup has (XML text, an SVG `<style>` in HTML);
+an HTML `<style>` is raw text and an XML CDATA section is literal, so a `&#x46;` left there is four characters in
+every browser (WPT css/CSS2/generated-content/content-177). Covered by `crates/pyro-render/tests/style_element_text.rs`.
+
+## `filter()` images are loaded
+
+`src/util.rs` (`unfiltered_image`), `src/layout/damage.rs` (`flush_image_layers_from_style`), `src/stylo.rs`
+(`needs_style_image_flush`): a background, mask or border image layer that is a `filter()` image (vendored stylo)
+loads the image it filters, so blitz-paint can draw it with the filters (`vendor/blitz-paint/README.pyro.md`).
 
 ## Tagged images in sRGB
 
@@ -1017,6 +1043,15 @@ its text was not snapped to quarter pixels as untransformed text is, and was a f
 the fuzzy limits of WPT css-transforms/transform-input-* hide while text is antialiased but not once it is aliased
 (the reftest runner's text). Now such a turn is no transform at all. Covered by
 `text_turned_by_a_whole_turn_draws_as_untransformed_text` in `crates/pyro-render/tests/text_aliasing.rs`.
+
+## The `rotate` property at the transform list's precision
+
+`src/stylo_to_kurbo.rs` (`resolve_transform`): a matrix with a `rotate` in it is rounded to f32, as Stylo rounds the
+transform list's matrix (`to_transform_3d_matrix` casts its f64 matrix to f32), so `rotate: 45deg` is the matrix
+`transform: rotate(45deg)` is. The property's sine and cosine were f64, the function's f32: 1e-8 apart, which moved
+antialiased edges of a rotated box a level (WPT css-transforms individual-transform-2a/2b/2c, 27 pixels each).
+`translate` and `scale` alone resolve as before (whole products of f32 values). Covered by
+`the_rotate_property_draws_as_the_rotate_function` in `crates/pyro-render/tests/compositing_rounding.rs`.
 
 ## SVG reference cycles usvg does not break
 
@@ -1060,6 +1095,41 @@ blitz-paint lays its content out in the size it is drawn at (`SvgImageData::size
 generalizes `with_root_size`. Tests: `an_svg_view_fragment_shows_the_view` and
 `an_svg_background_without_a_size_is_laid_out_at_the_background_size` in pyro-render's
 `background_images_and_edges.rs`.
+
+## An inline `<svg>` clips at its viewport
+
+`assets/default.css`: Chromium's `svg:not(:root) { overflow: hidden }` (written `svg|svg:not(:root)`, with an
+`svg` namespace prefix: the sheet's default namespace is XHTML's), so an inline `<svg>`'s content stops at its box;
+blitz-paint's `draw_svg` makes the cut, at the content box. `src/stylo.rs` (`build_presentational_hints`): an SVG
+element's `overflow` attribute is the property's presentation attribute (`overflow="visible"` overrides the UA
+rule); `parse_svg_presentation_attr` returns every longhand a shorthand sets. In layout that `overflow` counts as
+on any box, as in Chromium (measured in Chrome 157): a replaced flex item whose `overflow` is not `visible` has an
+automatic minimum size of 0, so SVG icons shrink in a row too narrow for them, and a block-level replaced element
+stays clear of floats with any `overflow`. WPT CSS2 `*-replaced-*` pages with `svg:svg`; covered by
+`crates/pyro-render/tests/svg_viewport_clip.rs`.
+
+## `<object>` images
+
+`src/mutator.rs` (`load_image`, `set_attribute_impl`, `clear_attribute`, element creation), `src/layout/replaced.rs`
+(`is_image_object`, `object_loads_image`, `is_inline_box`), `src/layout/construct.rs`
+(`collect_layout_children_with_wrap`, `find_inline_layout_embedded_boxes_recursive`), `src/layout/inline/build.rs`,
+`src/layout/first_letter.rs`, `src/node/node.rs` (`is_non_atomic_inline`): an `<object>` whose `data` is an image
+(its `type` is `image/*`, or without a `type` the URL's extension names an image format) loads it as `<img>` loads
+its `src`. Once it has loaded, the object is replaced content: laid out by `compute_replaced_layout` from the image's
+natural size and ratio, an atomic inline box when inline-level, painted by blitz-paint's `draw_image` or `draw_svg`,
+and its children (the fallback) build no boxes: `Node::is_or_contains_block` does not look through an atomic
+inline box (`is_inline_box`), so a block in the fallback does not split the object. Until then, when the load fails, and for other objects (`text/html`:
+nested documents are not done), the children render as before. Removing `data` or changing `type` away from an image
+shows the fallback again. An SVG with no natural width, height or ratio keeps the fallback too
+(`object_shows_image`, `src/document.rs` `apply_loaded_image`): Chromium draws one at the default object size, which
+fails WPT `replaced-intrinsic-002`, a pass so far only because its fallback text lies under the reference's green
+square (every browser fails it). WPT CSS2 `replaced-intrinsic-003`..`005`, `margin-border-padding-003`; covered by
+`crates/pyro-render/tests/object_image.rs`.
+
+`src/layout/replaced.rs` (`compute_replaced_layout`): a replaced element with only a ratio (an SVG with a `viewBox`
+and no size) and an auto width is as wide as the available width less its borders and padding, a stretch-fit size;
+its content box took the whole width, so the box overflowed by its padding (`replaced-intrinsic-003`, test
+`a_ratio_only_image_fills_the_width_less_its_padding`).
 
 ## Links to the document itself are visited
 
@@ -1201,6 +1271,40 @@ Tests: `an_image_marker_ends_7px_before_the_item_on_its_first_baseline`,
   anonymous box leaves no `layout_parent`/`layout_child_of` pointing at it, and `drop_part_box` clears a part's.
 - `src/stylo_to_kurbo.rs`, `src/lib.rs`: `resolve_2d_transform_for_size` (blitz-paint transforms a row's cells by
   the row's transform); `TableCell` and `TableContext` are exported.
+
+- Lane P2 (tables, second pass; tests in `table_parts` in pyro-render, each fails without its change):
+  - `src/layout/table_fixup.rs` (`mark_space_between_inline_table_parts`), `src/layout/construct.rs`
+    (`find_inline_layout_embedded_boxes`), `src/layout/inline/build.rs` (the text arm), `src/node/node.rs`
+    (`NodeFlags::IS_SPACE_BETWEEN_TABLE_PARTS`, `ENCLOSES_TABLE_PARTS`): white space between two table parts of an
+    inline box (laid out there as atomic inlines) generates no box, as if they were one anonymous inline table (CSS
+    2.1 §17.2.1). The construction of the inline formatting context notes an inline box with table parts among its
+    children and, once it has visited them (its children are taken while it does), flags the white-space text
+    nodes between two parts (comments and `display: none` passed over); the inline build skips them.
+  - `src/layout/table.rs` (`TableCell::baseline`, `is_baseline_aligned`, `table_cell_baseline`,
+    `set_cell_baseline_offset`, `shift_cell_content`), `src/layout/mod.rs` (`compute_child_layout_in_current_wm`),
+    `src/node/element.rs` (`LayoutData::table_baseline_offset`), `NodeFlags::HAS_TABLE_BASELINE_OFFSET`: cells with
+    `vertical-align: baseline` (or any value but `top`, `middle`, `bottom`; `align-content: normal`), spanning one row,
+    in a horizontal table, are aligned on their row's baseline (Taffy's `table_baseline` works out the offsets from
+    each cell's baseline, `table_cell_baseline`: its own layout's, else the bottom of its content box when it has
+    content, which an empty cell does not, whatever its `height`). A cell's offset is stored on it before its final layout; a change clears its layout cache. Taffy sets the offsets
+    only in a table with such cells, so a cell collected as not aligned (`collect_table_cells`) drops its own: a table
+    that lost its last baseline-aligned cell, or turned vertical, lays its cells out as a fresh build does. Its layout
+    then moves its in-flow and floated children, its lines (`TextLayout::block_offset`), its out-of-flow candidates'
+    static positions, its overflow and its baselines down by the offset, inside the layout cache, so a cached layout
+    keeps them there. A table with such cells hands its `TableGridState` back only while none of its cells
+    or rows changed (then its last layout stands); after a change it is laid out whole.
+  - `src/layout/table.rs`: a fixed table's cells may be narrower than their horizontal padding
+    (`table_cells_narrower_than_padding`); a first-row cell's percentage width in a fixed collapsed table gets the
+    halves of the collapsed borders beside it, as a length width does; a `<col>`'s width holds the halves of the
+    collapsed borders (a cell's own width gets them added, then the larger wins); a column group without columns
+    stands for its `span` columns (`push_columns`; its width, background and borders are theirs); a cell's length
+    `max-width` caps the width it gives its column; in the automatic layout a cell spanning columns gives none of
+    them its width (it is a minimum of the columns and the gaps it spans); `TableContext::gutter_border_color`,
+    `CollapsedEdge::outranks` (for paint).
+  - `src/node/stylo_data.rs` (`cell_layout_style`): a table in the collapsing border model has its layout style
+    without padding (CSS 2.1 §17.6.2), so its container sizes it, and paint positions its background, without it.
+  - `src/layout/mod.rs` (`lay_out_table_captions`): the out-of-flow boxes of a caption whose containing block is
+    further up are passed on with the table's.
 
 Tests: `table_structure` in pyro-render (each fails without its change); `mirror` covers the incremental paths.
 
@@ -1429,3 +1533,35 @@ Main pins Stylo 0.23.0; this copy builds against the vendored 0.24.0.
 
 Covered by `block_in_inline.rs`, `unicode_bidi.rs`, `inline_relative_position.rs` and `line_paint_order.rs` in
 `crates/pyro-render/tests`.
+
+## Anonymous boxes in 3D rendering contexts
+
+- `src/node/node.rs` (`set_transform`, `transform_context_for_children`), `src/resolve.rs`
+  (`resolve_transforms`): an anonymous box (an anonymous table around a cell, an anonymous block) has no
+  `transform-style` of its own: it is in its parent's 3D rendering context, if any, and passes it on, and it
+  stands for the box it is in, whose DOM children are the boxes it lays out (`ContainingTransform::parent`), as
+  Chromium's anonymous boxes do. Flat, an anonymous table ended a `preserve-3d` cell's context (WPT css-transforms
+  `transform-table-011`). Covered by `anonymous_table_boxes_pass_a_3d_rendering_context_on` in
+  `crates/pyro-render/tests/transform_3d.rs`.
+## Floats painted in the phases of their stacking context; floats in inline formatting contexts (WPT reftests, lane P3)
+
+- `src/layout/paint_tree.rs` (`Node::paints_in_ancestor_phases`, `Node::is_inline_level`, `is_lifted_float`,
+  `NodeFlags::HAS_FLOAT_PAINT_CHILDREN`): a block box of the normal flow that is no layer root, no stacking context,
+  no float, no flex or grid item, no multi-column container and no replaced element (anonymous blocks and split
+  inlines included) paints in its painter's phases (CSS 2.1 Appendix E: block backgrounds, then floats, then inline
+  content). Its floats are lifted out of it, as positioned boxes are, to the nearest box that paints its own phases,
+  which lists them at its float level in tree order and is flagged. Floats inside an earlier block painted under a
+  later block's background, and blocks in split inlines painted over floats (WPT `stack-floats-001..004`,
+  `overhanging-float-paint-order`). An anonymous block's style keeps `display: inline`, which these checks see
+  through. blitz-paint paints the phases (`FlowPhase`). Lifted floats are marked (`HoistedPaintChild::is_float`); a
+  box that lifted floats (`NodeFlags::LIFTS_FLOATS`) or painted them is checked again before a build keeps its lists,
+  as its parent can change whether it lifts them (a block that becomes a flex item) without damaging it.
+- `src/layout/inline/layout.rs`: a float placed with nothing before it on its line leaves the line to be retried
+  after it: content that doesn't fit beside the float moves down (WPT `floats-placement-004`, `c414-flt-fit-001`,
+  `c5525-fltwidth-001`). A float left for below its line but met past the point where the line wrapped is dropped
+  there and met again on the next line (`PendingFloat::item`, parley's `BreakerState::item_index`); a float met
+  again after its line wrapped before it keeps its place (`placed_through`); before, it was placed twice (WPT
+  `floats-line-wrap-shifted-001`, `float-no-content-beside-001`). Relatively positioned inline boxes around a float
+  move it (`inline_span_offset`; WPT `block-in-inline-float-between-001`).
+
+Covered by `crates/pyro-render/tests/floats.rs`.

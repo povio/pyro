@@ -21,7 +21,7 @@ use style_traits::{CssWriter, ToCss};
 /// https://drafts.csswg.org/css-images/#image-values
 #[derive(Clone, MallocSizeOf, PartialEq, SpecifiedValueInfo, ToResolvedValue, ToShmem)]
 #[repr(C, u8)]
-pub enum GenericImage<G, ImageUrl, Color, Percentage, Resolution> {
+pub enum GenericImage<G, ImageUrl, Color, Percentage, Resolution, Filter> {
     /// `none` variant.
     None,
 
@@ -64,9 +64,43 @@ pub enum GenericImage<G, ImageUrl, Color, Percentage, Resolution> {
     /// An `image(<color>)` function.
     #[css(function)]
     Image(#[value_info(skip)] Box<Color>),
+
+    /// pyro: a `filter(<image>, <filter-value-list>)` function: the image with the filters
+    /// applied. <https://drafts.fxtf.org/filter-effects-1/#FilterCSSImageValue>
+    #[css(function)]
+    Filter(#[value_info(skip)] Box<GenericFilterImage<Self, Filter>>),
 }
 
 pub use self::GenericImage as Image;
+
+/// pyro: the arguments of a `filter()` image.
+/// <https://drafts.fxtf.org/filter-effects-1/#FilterCSSImageValue>
+#[derive(Clone, Debug, MallocSizeOf, PartialEq, ToComputedValue, ToResolvedValue, ToShmem)]
+#[repr(C)]
+pub struct GenericFilterImage<Image, Filter> {
+    /// The image filtered.
+    pub image: Image,
+    /// The filter functions, applied in order (one at least).
+    pub filters: crate::OwnedSlice<Filter>,
+}
+
+impl<I: ToCss, F: ToCss> ToCss for GenericFilterImage<I, F> {
+    fn to_css<W>(&self, dest: &mut CssWriter<W>) -> fmt::Result
+    where
+        W: Write,
+    {
+        dest.write_str("filter(")?;
+        self.image.to_css(dest)?;
+        dest.write_str(", ")?;
+        for (i, filter) in self.filters.iter().enumerate() {
+            if i > 0 {
+                dest.write_char(' ')?;
+            }
+            filter.to_css(dest)?;
+        }
+        dest.write_char(')')
+    }
+}
 
 /// <https://drafts.csswg.org/css-images-4/#cross-fade-function>
 #[derive(
@@ -402,22 +436,23 @@ impl ToCss for PaintWorklet {
     }
 }
 
-impl<G, U, C, P, Resolution> fmt::Debug for Image<G, U, C, P, Resolution>
+impl<G, U, C, P, Resolution, F> fmt::Debug for Image<G, U, C, P, Resolution, F>
 where
-    Image<G, U, C, P, Resolution>: ToCss,
+    Image<G, U, C, P, Resolution, F>: ToCss,
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         self.to_css(&mut CssWriter::new(f))
     }
 }
 
-impl<G, U, C, P, Resolution> ToCss for Image<G, U, C, P, Resolution>
+impl<G, U, C, P, Resolution, F> ToCss for Image<G, U, C, P, Resolution, F>
 where
     G: ToCss,
     U: ToCss,
     C: ToCss,
     P: ToCss,
     Resolution: ToCss,
+    F: ToCss,
 {
     fn to_css<W>(&self, dest: &mut CssWriter<W>) -> fmt::Result
     where
@@ -449,6 +484,7 @@ where
             Image::ImageSet(ref is) => is.to_css(dest),
             Image::CrossFade(ref cf) => cf.to_css(dest),
             Image::LightDark(ref ld) => ld.to_css(dest),
+            Image::Filter(ref filter) => filter.to_css(dest),
         }
     }
 }

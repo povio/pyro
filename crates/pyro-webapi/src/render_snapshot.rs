@@ -46,6 +46,11 @@ pub struct RenderSnapshot {
     /// Bitmaps of the canvases drawn on (`PageDom::canvas_bitmaps`), in
     /// every form.
     pub canvases: Vec<crate::canvas::CanvasBitmap>,
+    /// An XML document (`pyro_dom::Dom::is_xml_document`), in every form.
+    pub xml_document: bool,
+    /// The document's HTTP `Content-Language`
+    /// (`pyro_dom::Dom::content_language`), in every form.
+    pub content_language: Option<String>,
 }
 
 /// How a snapshot carries the document.
@@ -144,6 +149,8 @@ fn snapshot_of(
             hovered: dom.hovered(document).map(pyro_dom::snapshot::render_key),
             focused: dom.focused(document).ok().flatten().map(pyro_dom::snapshot::render_key),
             canvases: Vec::new(),
+            xml_document: dom.is_xml_document(document),
+            content_language: dom.content_language(document).map(str::to_owned),
         }
     }
 }

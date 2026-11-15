@@ -1019,21 +1019,24 @@ impl ElementCx<'_, '_> {
         let cols = PhysicalTracks::from_tracks(&grid_info.columns);
         let rows = PhysicalTracks::from_tracks(&grid_info.rows);
 
-        // TODO: support different colors for different borders
-        let current_color = self.style.clone_color();
-        let border_color = border_style
-            .border_top_color
-            .resolve_to_absolute(&current_color)
-            .as_srgb_color();
+        // pyro: the colour conflict resolution gave the borders (one, they are uniform), not the
+        // first cell's top border's (which may be none, or lose to another).
+        let border_color = match table.gutter_border_color() {
+            Some(Some(color)) => color.as_srgb_color(),
+            Some(None) => return,
+            None => {
+                // Border widths are not adjusted for border-style in computed styles,
+                // so a border with `none`/`hidden` style must be treated as zero-width.
+                if border_style.border_top_style.none_or_hidden() {
+                    return;
+                }
+                let current_color = self.style.clone_color();
+                border_style.border_top_color.resolve_to_absolute(&current_color).as_srgb_color()
+            }
+        };
 
         // No need to draw transparent borders (as they won't be visible anyway)
         if border_color == Color::TRANSPARENT {
-            return;
-        }
-
-        // Border widths are not adjusted for border-style in computed styles,
-        // so a border with `none`/`hidden` style must be treated as zero-width.
-        if border_style.border_top_style.none_or_hidden() {
             return;
         }
 
@@ -1148,6 +1151,38 @@ impl ElementCx<'_, '_> {
                 r = end;
             }
         }
+        // pyro: where rules cross, the square they share is the colour of the edge that wins there
+        // (the widest, then by style; among equals the first of the row line's rule on the left, the
+        // column line's above, the row line's on the right and the column line's below: the top and
+        // left ones win, as among the borders of cells).
+        for hl in 0..=edges.rows {
+            for vl in 0..=edges.columns {
+                let left = vl.checked_sub(1).map(|c| *edges.horizontal_at(hl, c));
+                let right = (vl < edges.columns).then(|| *edges.horizontal_at(hl, vl));
+                let above = hl.checked_sub(1).map(|r| *edges.vertical_at(r, vl));
+                let below = (hl < edges.rows).then(|| *edges.vertical_at(hl, vl));
+                let across = |a: Option<blitz_dom::CollapsedEdge>, b: Option<blitz_dom::CollapsedEdge>| {
+                    a.map_or(0.0, |e| e.width).max(b.map_or(0.0, |e| e.width)) as f64
+                };
+                let (h, v) = (across(left, right), across(above, below));
+                if h == 0.0 || v == 0.0 {
+                    continue;
+                }
+                let meeting = [left, above, right, below].into_iter().flatten().filter(|edge| edge.width > 0.0);
+                // (Rules of one colour leave nothing to paint again: the common case.)
+                let mut colors = meeting.clone().map(|edge| edge.color);
+                let first = colors.next();
+                if colors.all(|color| Some(color) == first) {
+                    continue;
+                }
+                let Some(winner) = meeting.reduce(|best, edge| if edge.outranks(&best) { edge } else { best }) else {
+                    continue;
+                };
+                let x0 = snap_x(xs[vl] - v / 2.0);
+                let y0 = snap_y(ys[hl] - h / 2.0);
+                fill(x0, y0, x0 + v, y0 + h, winner.color);
+            }
+        }
     }
 
     /// The outline's style, colour and width (device px), and how far its
@@ -1156,7 +1191,7 @@ impl ElementCx<'_, '_> {
     ///
     /// Blink has the width and the offset in whole pixels, and the offset no
     /// further in than to the middle of the box.
-    fn outline_line(&self) -> Option<(BorderStyle, Color, f64, f64)> {
+    pub(super) fn outline_line(&self) -> Option<(BorderStyle, Color, f64, f64)> {
         let outline = self.style.get_outline();
         let style = match outline.outline_style {
             OutlineStyle::Auto => return None,

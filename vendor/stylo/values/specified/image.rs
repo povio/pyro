@@ -38,7 +38,8 @@ use thin_vec::ThinVec;
 
 /// Specified values for an image according to CSS-IMAGES.
 /// <https://drafts.csswg.org/css-images/#image-values>
-pub type Image = generic::Image<Gradient, SpecifiedUrl, Color, Percentage, Resolution>;
+pub type Image =
+    generic::Image<Gradient, SpecifiedUrl, Color, Percentage, Resolution, super::effects::Filter>;
 
 impl ToTyped for Image {
     fn to_typed(&self, dest: &mut ThinVec<TypedValue>) -> Result<(), ()> {
@@ -196,6 +197,8 @@ bitflags! {
         const FORBID_NONE = 1 << 0;
         const FORBID_IMAGE_SET = 1 << 1;
         const FORBID_NON_URL = 1 << 2;
+        /// pyro: no `filter()` image (see `parse_with_cors_anonymous`).
+        const FORBID_FILTER = 1 << 3;
     }
 }
 
@@ -245,6 +248,10 @@ impl Image {
             "paint" => Self::PaintWorklet(Box::new(<PaintWorklet>::parse_args(context, input)?)),
             "cross-fade" if cross_fade_enabled() => Self::CrossFade(Box::new(CrossFade::parse_args(context, input, cors_mode, flags)?)),
             "image" => Self::Image(Box::new(Color::parse(context, input)?)),
+            // pyro: `filter(<image>, <filter-value-list>)`.
+            "filter" if !flags.contains(ParseImageFlags::FORBID_FILTER) => {
+                Self::Filter(Box::new(Self::parse_filter_args(context, input, cors_mode, flags)?))
+            },
             "light-dark" if crate::pref!("layout.css.light-dark.images.enabled", gecko = true) => {
                 Self::LightDark(Box::new(GenericLightDark::parse_args_with(input, |input| {
                     // `none` in `light-dark()` has a special meaning.
@@ -261,6 +268,41 @@ impl Image {
 }
 
 impl Image {
+    /// pyro: the arguments of `filter()`: an image (a string is a URL), a comma, then one or more
+    /// filter functions. <https://drafts.fxtf.org/filter-effects-1/#FilterCSSImageValue>
+    fn parse_filter_args(
+        context: &ParserContext,
+        input: &mut Parser,
+        cors_mode: CorsMode,
+        flags: ParseImageFlags,
+    ) -> Result<generic::GenericFilterImage<Self, super::effects::Filter>, ParseError> {
+        let start = input.position().byte_index();
+        let image = match input.try_parse(|i| i.expect_url_or_string()) {
+            Ok(url) => {
+                let end = input.position().byte_index();
+                generic::Image::Url(SpecifiedUrl::parse_from_string(
+                    url.as_ref().into(),
+                    start,
+                    end,
+                    context,
+                    cors_mode,
+                )?)
+            },
+            Err(..) => {
+                Self::parse_with_cors_mode(context, input, cors_mode, flags | ParseImageFlags::FORBID_NONE)?
+            },
+        };
+        input.expect_comma()?;
+        let mut filters = Vec::new();
+        while let Ok(filter) = input.try_parse(|i| super::effects::Filter::parse(context, i)) {
+            filters.push(filter);
+        }
+        if filters.is_empty() {
+            return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError));
+        }
+        Ok(generic::GenericFilterImage { image, filters: filters.into() })
+    }
+
     /// Creates an already specified image value from an already resolved URL
     /// for insertion in the cascade.
     #[cfg(feature = "servo")]
@@ -280,6 +322,11 @@ impl Image {
 
     /// Provides an alternate method for parsing that associates the URL with
     /// anonymous CORS headers.
+    ///
+    /// pyro: without `filter()` images (`mask-image`, `shape-outside`), as Chromium and Gecko parse
+    /// them (neither has `filter()`): blitz-paint draws `filter()` in background and border image
+    /// layers only. A mask of a smoothly scaled filtered image seams where the image's edges meet
+    /// its shadow (WPT `filter-function-008` fails in WebKit, the one engine with `filter()`).
     pub fn parse_with_cors_anonymous(
         context: &ParserContext,
         input: &mut Parser,
@@ -288,7 +335,7 @@ impl Image {
             context,
             input,
             CorsMode::Anonymous,
-            ParseImageFlags::empty(),
+            ParseImageFlags::FORBID_FILTER,
         )
     }
 
@@ -298,6 +345,36 @@ impl Image {
         input: &mut Parser,
     ) -> Result<Image, ParseError> {
         Self::parse_with_cors_mode(context, input, CorsMode::None, ParseImageFlags::FORBID_NONE)
+    }
+
+    /// pyro: [`Self::parse_forbid_none`] without `filter()` images (`content`), which blitz-dom
+    /// does not generate. Registered custom properties of `<image>` syntax keep `filter()`, as
+    /// `background-image` does.
+    pub fn parse_for_content(
+        context: &ParserContext,
+        input: &mut Parser,
+    ) -> Result<Image, ParseError> {
+        Self::parse_with_cors_mode(
+            context,
+            input,
+            CorsMode::None,
+            ParseImageFlags::FORBID_NONE | ParseImageFlags::FORBID_FILTER,
+        )
+    }
+
+    /// pyro: without `filter()` images (`list-style-image`, also through `list-style`), as
+    /// Chromium and Gecko parse them (neither has `filter()`): blitz-dom draws a marker image
+    /// as it is, so a `filter()` marker would draw its image unfiltered.
+    pub fn parse_without_filter(
+        context: &ParserContext,
+        input: &mut Parser,
+    ) -> Result<Image, ParseError> {
+        Self::parse_with_cors_mode(
+            context,
+            input,
+            CorsMode::None,
+            ParseImageFlags::FORBID_FILTER,
+        )
     }
 
     /// Provides an alternate method for parsing, but only for urls.

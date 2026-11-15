@@ -259,7 +259,33 @@ pub(crate) fn cell_layout_style(
 ) -> Option<Box<style::properties::ComputedValues>> {
     use style::computed_values::border_collapse::T as BorderCollapse;
     use style::values::specified::box_::DisplayInside;
-    if style.clone_display().inside() != DisplayInside::TableCell {
+    let inside = style.clone_display().inside();
+    // pyro: a table in the collapsing border model has no padding (CSS 2.1 §17.6.2): its box is
+    // sized and its background positioned without it, by its container too.
+    if inside == DisplayInside::Table {
+        let padding = style.get_padding();
+        let zero = |p: &style::values::computed::NonNegativeLengthPercentage| {
+            p.0.to_length().is_some_and(|length| length.px() == 0.0)
+        };
+        if style.clone_border_collapse() != BorderCollapse::Collapse
+            || [&padding.padding_top, &padding.padding_right, &padding.padding_bottom, &padding.padding_left]
+                .into_iter()
+                .all(zero)
+        {
+            return None;
+        }
+        let mut derived = Box::new(style.clone());
+        let padding = derived.mutate_padding();
+        let none: style::values::computed::NonNegativeLengthPercentage = style::values::generics::NonNegative(
+            style::values::computed::LengthPercentage::new_length(style::values::computed::Length::new(0.0)),
+        );
+        padding.padding_top = none.clone();
+        padding.padding_right = none.clone();
+        padding.padding_bottom = none.clone();
+        padding.padding_left = none;
+        return Some(derived);
+    }
+    if inside != DisplayInside::TableCell {
         return None;
     }
     let numeric_height = stylo_taffy::convert::dimension(&style.get_position().height)

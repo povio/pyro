@@ -116,6 +116,9 @@ pub struct DocumentData {
     /// The viewport `<meta>` this document processed last
     /// (`Dom::viewport_meta`).
     pub(crate) viewport_meta: Option<crate::viewport_meta::MetaViewport>,
+    /// The language its response's `Content-Language` header gave
+    /// (`Dom::set_content_language`): the last fallback of `:lang()`.
+    pub(crate) content_language: Option<Box<str>>,
 }
 
 #[derive(Debug, Clone)]

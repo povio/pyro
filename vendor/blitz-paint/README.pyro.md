@@ -212,10 +212,8 @@ from the root of an upstream checkout at that commit) is the whole diff.
     light source and which is a real `feFlood`. A tree filter is the `<filter>` of its id in the `<svg>` (else in
     the document) whose primitives it has; usvg names the second and later uses of an `objectBoundingBox` filter
     `filterN`, and those take the notes of the uses with the same primitives and colours. A `<filter href>`
-    template's primitives are read through the reference. What its filters make past its box is cut off at the
-    content box (an `<svg>`'s `overflow: hidden`), at least 300 x 150 CSS px from its corner when it declares no
-    size (its box here is its content's, where Chromium's is that), unless the `<svg>` declares `overflow: visible`
-    (its attribute or its `style`; pyro's UA sheet has no `svg:not(:root) { overflow: hidden }`). Covered by `crates/pyro-render/tests/svg_filter_primitives.rs`.
+    template's primitives are read through the reference. What its filters make past its box is cut off by its
+    viewport clip (below). Covered by `crates/pyro-render/tests/svg_filter_primitives.rs`.
   - `src/layers.rs` (`blend_isolation`), `src/render.rs` (`render_element`): a stacking context that holds an element
     with a `mix-blend-mode` (its nearest ancestor that is one, the root element's at the latest) is painted as an
     isolated group, as Chromium isolates one: the element blends with what the context painted, not with what lies
@@ -338,6 +336,16 @@ from the root of an upstream checkout at that commit) is the whole diff.
   - `src/render/background.rs` (`draw_table_row_backgrounds`): background images of column groups, columns, row
     groups and rows are painted in each cell, positioned against the part's own box (`TablePartRects`), in that
     order with their colours; a collapsed row (`visibility: collapse`) paints nothing.
+  - Lane P2 (tables, second pass): `src/render/background.rs` (`draw_table_part_shadow`): a row's outer box shadow
+    is painted around the row's box (`TablePartRects`) at its first cell, before its background, row after row
+    (as Chromium paints a row's shadow, then its background). `src/render/border.rs`: borders laid out as one
+    uniform grid of gutters take the colour conflict resolution gave them (`TableContext::gutter_border_color`), not
+    the first cell's top border's (which may be `none`, or lose to another); in `draw_collapsed_edges` the square
+    where rules cross is painted in the colour of the edge that wins there (by width, then style:
+    `CollapsedEdge::outranks`; among equals the first of the row line's rule on the left, the column line's above,
+    the row line's on the right and the column line's below), when its rules are not all one colour (its top half
+    was the row line's rule on the right, its bottom half the column line's below). Covered by
+    `crates/pyro-render/tests/table_parts.rs`.
 
 - Text decorations, emphasis marks and ruby (WPT reftest lane G):
   - `src/text.rs` (`flush_line_decorations`, `decoration_thickness`, `whole_css_px`, `StrutGeometry`): decoration
@@ -578,9 +586,36 @@ from the root of an upstream checkout at that commit) is the whole diff.
   (`BaseDocument::inline_span_relative_offset`), only in inline roots that have one. Covered by
   `block_in_inline.rs`, `inline_relative_position.rs` and `line_paint_order.rs` in `crates/pyro-render/tests`.
 
+- `src/filters.rs` (`image_filter`), `src/render/background.rs` (`draw_image_layer_in`),
+  `src/render/border_image.rs` (`draw_border_image`): a `filter()` image (the CSS `<image>` function of Filter
+  Effects 1, parsed by the vendored stylo) is the image it filters, drawn in a layer with its filters (nested ones
+  innermost first) over the layer's painting area, or over the border image area for a border image: a
+  `drop-shadow()` stays inside that area. The filters apply to the image as drawn, after scaling, in device pixels
+  (WPT css/filter-effects/filter-function/filter-function-002, -003, the gradient pages). Tiled layers are filtered
+  as one image, not tile by tile, and the result is not cut to the image's own size: WebKit filters each image in
+  its own rect, so there a `drop-shadow()` or blur of an image smaller than its painting area (or of one tile)
+  stops at the image's edge, while here it spreads up to the area's edge. No WPT page tells them apart (each sizes
+  its image to the area). `draw_border_image` looks for filters only when the source is a `filter()`. Covered by
+  `crates/pyro-render/tests/filter_image_function.rs`.
+
 The linked blitz-dom patch supplies `Node::is_root_element`. Rendering regressions
 are covered in `crates/pyro-render/tests/render.rs`; persistent-tree behavior is
 covered by `crates/pyro-render/tests/mirror.rs`.
+
+## The SVG viewport clip
+
+`src/render.rs` (`draw_svg`, `with_replaced_content_clip`, `ReplacedClip`, `content_edge_is_rounded`,
+`should_clip_node`): an SVG's content is cut at its viewport as Chromium cuts it (`LayoutSVGRoot::ShouldApplyViewportClip`,
+`ReplacedPainter`): an inline `<svg>` unless its `overflow` is `visible` (blitz-dom's UA sheet now has Chromium's
+`svg:not(:root) { overflow: hidden }`, and `overflow="visible"` is the presentation attribute), an SVG image always.
+The cut is the content box (`overflow-clip-margin: content-box`) along the content edge's curve, so a rounded
+`<svg>` is cut at its corners. It is a layer only where it cuts: the tree's layer bounds (strokes and filter regions
+included) reach past the content box, or the content edge is rounded; an icon that fits pays nothing. An inline
+`<svg>` with `overflow: visible` is not cut at all (Chromium skips its clip). `should_clip_node` leaves an SVG's
+`overflow` to `draw_svg`: the padding box clip it pushed for every overflowing element would cut at the wrong box
+and push a layer for every icon. Train 4's sniffing of the `overflow` attribute and `style` for filter output, and
+its 300 x 150 floor for an `<svg>` without a size, are gone with it. WPT CSS2 `absolute-replaced-width-002` and 28
+other `svg:svg` pages; covered by `crates/pyro-render/tests/svg_viewport_clip.rs`.
 
 ## Moving from 0.3.0-beta.4 to main
 
@@ -599,3 +634,20 @@ covered by `crates/pyro-render/tests/mirror.rs`.
 
 - `src/text.rs`: main skips text whose fill is fully transparent; a recording paint (the PDF's, `runs` given)
   keeps it as invisible text, so it stays selectable and searchable.
+
+## Floats painted in the phases of their stacking context (WPT reftests, lane P3)
+
+- `src/render.rs` (`FlowPhase`, `ElementCx::draw_children_in_phases`, `draw_flow_children`): a box whose paint
+  children include floats (blitz-dom `NodeFlags::HAS_FLOAT_PAINT_CHILDREN`) paints its children as CSS 2.1 Appendix
+  E does: negative `z-index`, the backgrounds of the blocks of its normal flow (`FlowPhase::Background`, the boxes
+  that paint in its phases walked through, any other block-level box whole), the floats, its and their inline
+  content (`Foreground`, inline-level boxes whole), their outlines (`Outline`, only when one has an outline, under
+  the positioned boxes as in Chromium; WPT `z-index-020`), then the positioned boxes and stacking contexts. A box
+  painted in a phase pushes no layer (it has no effect or clip). Pages without floats paint as before.
+- `src/render.rs` (`enclosing_inline_effects`): a float in inline boxes with an `opacity` or a `filter` paints in a
+  group with their effects (WPT `inline-opacity-float-child`, `filtered-inline-applies-to-float`).
+- `src/render.rs` (`inline_box_fragments`) and `src/render/clip_path.rs`: a line's content ends at its
+  `inline_min_coord` plus its advance: on a line beside a float the boxes of inline elements were cut to nothing
+  (WPT `clear-inline-001`). `src/render/border.rs`: `outline_line` is visible to `render.rs`.
+
+Covered by `crates/pyro-render/tests/floats.rs`.

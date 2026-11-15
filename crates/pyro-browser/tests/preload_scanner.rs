@@ -72,6 +72,7 @@ impl ManualLoader {
             content_disposition: None,
             header_csp: false,
             refresh: None,
+            content_language: None,
             referrer_policy: None,
             timing: None,
             partial: None,

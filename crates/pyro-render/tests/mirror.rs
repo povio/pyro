@@ -1534,6 +1534,81 @@ fn table_cell_and_row_changes_match_fresh_builds() {
     table_steps_match_fresh_builds(&page, steps);
 }
 
+/// Cells aligned on their rows' baselines (lane P2): changes that move a row's baseline, or a cell's
+/// offset in its box, lay out as a fresh build does (the offsets live in the cells' layout caches).
+#[test]
+fn baseline_cell_changes_match_fresh_builds() {
+    let rows: String = (0..6)
+        .map(|i| {
+            format!(
+                "<div class=r id=b{i}><div class=c style='padding-top:{}px'><div>cell {i} a</div></div>\
+                 <div class=c><span>text {i} b</span></div><div class=c></div><div class=c><div>{i}.5</div></div></div>",
+                i % 3 * 4
+            )
+        })
+        .collect();
+    let page = Page::new(&format!(
+        r#"<!doctype html><html><head><style>
+  body {{ margin: 0; font: 13px sans-serif }} .t {{ display: table; border-spacing: 2px }}
+  .r {{ display: table-row }} .c {{ display: table-cell; padding: 2px 3px }} .big {{ font-size: 24px }}
+</style></head><body><div class=t id=t>{rows}</div></body></html>"#
+    ));
+    let steps: Vec<(String, Mutate)> = vec![
+        attr("#b1 .c", "class", "c big"),
+        text("#b2 .c:nth-child(2) span", "a much longer text in the second cell that wraps"),
+        attr("#b3 .c", "style", "padding-top: 30px"),
+        attr("#b4 .c:nth-child(2)", "style", "vertical-align: top"),
+        attr("#b4 .c:nth-child(2)", "style", ""),
+        text("#b5 .c:nth-child(3)", "now with text"),
+        attr("#b1 .c", "class", "c"),
+        attr("#t", "style", "width: 600px"),
+        text("#b0 .c div", "edited"),
+    ];
+    table_steps_match_fresh_builds(&page, steps);
+}
+
+/// Tables whose second cell's content sits 20px down in its box, on its row's baseline (`#t`, `#w`,
+/// `#m`), and one without baseline-aligned cells (`#p`).
+fn baseline_offset_page() -> Page {
+    Page::new(
+        r#"<!doctype html><html><head><style>
+  body { margin: 0; font: 13px sans-serif } .t { display: table }
+  .r { display: table-row } .c { display: table-cell }
+  .top .c, .plain .c { vertical-align: top } .v { writing-mode: vertical-rl }
+</style></head><body>
+<div class=t id=t><div class=r><div class=c style='padding-top:20px'><div>a</div></div><div class=c><div>b</div></div></div></div>
+<div class=t id=w><div class=r><div class=c style='padding-top:20px'><div>a</div></div><div class=c><div>b</div></div></div></div>
+<div class=t id=m><div class=r><div class=c style='padding-top:20px'><div>a</div></div><div class=c id=mc><div>b</div></div></div></div>
+<div class="t plain" id=p><div class=r id=pr><div class=c style='height:40px'><div>c</div></div></div></div>
+</body></html>"#,
+    )
+}
+
+/// A table that loses its last baseline-aligned cell: the content of a cell that had an offset
+/// goes back to the top of its box, as in a fresh build (the grid only sets offsets in a table with
+/// baseline-aligned cells).
+#[test]
+fn a_table_left_without_baseline_cells_drops_their_offsets() {
+    table_steps_match_fresh_builds(&baseline_offset_page(), vec![attr("#t", "class", "t top")]);
+}
+
+/// The same for a table that turns vertical (no cell of a vertical table is baseline-aligned).
+#[test]
+fn a_table_turned_vertical_drops_its_cells_baseline_offsets() {
+    table_steps_match_fresh_builds(&baseline_offset_page(), vec![attr("#w", "class", "t v")]);
+}
+
+/// And for a cell with an offset that moves to a table without baseline-aligned cells (a guard:
+/// the table it left released it before too).
+#[test]
+fn a_cell_moved_to_a_table_without_baseline_cells_drops_its_offset() {
+    let steps = vec![edit("the cell moved", |p| {
+        let (row, cell) = (p.find("#pr"), p.find("#mc"));
+        p.dom.borrow_mut().append_child(row, cell).unwrap();
+    })];
+    table_steps_match_fresh_builds(&baseline_offset_page(), steps);
+}
+
 /// Nested tables, vertical tables, spans and `display` changes of table parts.
 #[test]
 fn table_structure_changes_match_fresh_builds() {

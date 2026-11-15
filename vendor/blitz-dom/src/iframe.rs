@@ -73,6 +73,9 @@ impl BaseDocument {
             abort_signal: Some(abort_signal),
             subdocument_depth: self.subdocument_depth + 1,
             line_break_override: self.layout_ctx.line_break_override(),
+            // pyro: a frame's document is parsed as HTML.
+            xml_document: false,
+            content_language: None,
             // A sub-document is a separate devtools target with its own provider
             #[cfg(feature = "devtools")]
             devtools_provider: None,

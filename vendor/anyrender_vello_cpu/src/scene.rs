@@ -35,6 +35,9 @@ pub struct VelloCpuScenePainter {
     /// much of it (out of 255), as Chromium draws text when WPT runs it without font
     /// antialiasing. `None` (the default): antialiased.
     pub(crate) text_aliasing_threshold: Option<u8>,
+    /// pyro: whether a replay leaves out work that shows in no pixel (see [`crate::occlusion`]);
+    /// tests turn it off to compare.
+    pub(crate) occlusion: bool,
 }
 
 impl VelloCpuScenePainter {
@@ -64,6 +67,7 @@ impl VelloCpuScenePainter {
             backdrops: Vec::new(),
             frame_to_ctx: Affine::IDENTITY,
             text_aliasing_threshold: None,
+            occlusion: true,
         }
     }
 
@@ -455,6 +459,28 @@ impl VelloCpuScenePainter {
                 i += 3;
                 continue;
             }
+            // Box shadows under the opaque fill after them: shaded only where it leaves them
+            // showing (see `crate::occlusion`). Not inside a clip path, which would let them show
+            // through the fill's pixels at its edge.
+            if self.occlusion
+                && matches!(commands[i], RenderCommand::BoxShadow(_))
+                && !self.clip_paths.contains(&Pushed::ClipPath)
+            {
+                let end = crate::occlusion::shadow_run_end(commands, i);
+                if let Some(clip) = commands.get(end).and_then(|cover| {
+                    crate::occlusion::shadow_clip(&commands[i..end], cover, transform)
+                }) {
+                    self.render_ctx.set_transform(Affine::IDENTITY);
+                    self.render_ctx.set_fill_rule(Fill::EvenOdd);
+                    self.render_ctx.push_clip_path(&clip);
+                    for command in &commands[i..end] {
+                        self.replay_command(command, transform, None);
+                    }
+                    self.render_ctx.pop_clip();
+                    i = end;
+                    continue;
+                }
+            }
             match &commands[i] {
                 RenderCommand::PushLayer(_) => {
                     open.push((i, self.backdrop_filters && crate::backdrop::is_root(commands, i)))
@@ -635,11 +661,16 @@ impl VelloCpuScenePainter {
         let region = plan.source_region(out);
         // pyro: an SVG filter's graph sees nothing outside its filter region (the clip).
         let region = if plan.bounded() { region.intersect(bounds) } else { region };
+        // pyro: a reduced drop shadow's pixels are drawn moved by its offset, so the region is
+        // aligned to whole reduced pixels where they land: the same blur of the same content, as
+        // a drop shadow or as `blur()`, then comes out on the same grid of the frame, not on
+        // grids `factor / 2` apart (up to two levels apart everywhere: WPT drop-shadow-scale).
+        let (sx, sy) = plan.grid_shift();
         let region = PixelRect {
-            x0: region.x0.div_euclid(factor) * factor,
-            y0: region.y0.div_euclid(factor) * factor,
-            x1: -(-region.x1).div_euclid(factor) * factor,
-            y1: -(-region.y1).div_euclid(factor) * factor,
+            x0: (region.x0 + sx).div_euclid(factor) * factor - sx,
+            y0: (region.y0 + sy).div_euclid(factor) * factor - sy,
+            x1: -(-(region.x1 + sx)).div_euclid(factor) * factor - sx,
+            y1: -(-(region.y1 + sy)).div_euclid(factor) * factor - sy,
         };
         let (Ok(width), Ok(height)) = (
             u16::try_from(region.width() / factor),

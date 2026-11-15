@@ -415,3 +415,20 @@ fn layout_boxes_follow_the_flattened_transform() {
     assert_eq!(rect(&boxes[0]), [125.0, 20.0, 50.0, 40.0]);
     assert_eq!(rect(&boxes[1]), [100.0, 100.0, 150.0, 150.0]);
 }
+
+/// A `display: table-cell` child of a `preserve-3d` box gets anonymous table, row group and row
+/// boxes around it, which have no `transform-style` of their own: they pass the 3D rendering
+/// context on (as Chromium's do), so two `rotateX(90deg)` across them add up to 180deg and the
+/// box shows (flipped). Flat anonymous boxes broke the context: each 90deg turn was flattened
+/// edge-on, and nothing showed (WPT css-transforms `transform-table-011`).
+#[test]
+fn anonymous_table_boxes_pass_a_3d_rendering_context_on() {
+    let img = render(
+        "<div style='margin:50px;transform:rotateX(90deg);transform-style:preserve-3d'>\
+         <div style='display:table-cell;transform-style:preserve-3d'>\
+         <div style='width:100px;height:100px;background:green;transform:rotateX(90deg)'></div></div></div>",
+        1.0,
+    );
+    let ((x0, x1), _) = extent(&img, 1.0, GREEN, 0.0, 100.0);
+    assert!(x0 >= 0.0 && x1 - x0 > 50.0, "the box shows: columns {x0}..{x1}");
+}

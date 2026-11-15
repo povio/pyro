@@ -132,6 +132,17 @@ impl Point<f64> {
     pub const ZERO: Self = Point { x: 0.0, y: 0.0 };
 }
 
+/// pyro: the image a `filter()` image filters (through nested ones), else `image` itself: the
+/// image whose resource an image layer loads and draws.
+pub fn unfiltered_image(image: &style::values::computed::Image) -> &style::values::computed::Image {
+    match image {
+        style::values::generics::image::GenericImage::Filter(filtered) => {
+            unfiltered_image(&filtered.image)
+        }
+        image => image,
+    }
+}
+
 // Debug print an RcDom
 pub fn walk_tree(indent: usize, node: &Node) {
     // Skip all-whitespace text nodes entirely

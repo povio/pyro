@@ -219,6 +219,10 @@ impl LayoutPassState<'_> {
         let inputs = self.adjusted_child_inputs(node_id, inputs);
         let mut output = self.dispatch_child_layout(node_id, inputs, block_ctx);
         if inputs.run_mode == RunMode::PerformLayout {
+            // pyro: a table cell aligned on its row's baseline has its content lower in its box.
+            if self.nodes[dom_node_id(node_id)].flags.contains(crate::node::NodeFlags::HAS_TABLE_BASELINE_OFFSET) {
+                table::shift_cell_content(self, dom_node_id(node_id), &mut output);
+            }
             self.lay_out_out_of_flow_boxes(node_id, &mut output);
         }
         output
@@ -1115,8 +1119,15 @@ impl LayoutPassState<'_> {
                 }
             }
             let (mut y_above, mut y_below) = (0.0, top + grid_height);
-            for (order, (caption, above, margin, out)) in laid_out.iter().enumerate() {
+            for (order, (caption, above, margin, out)) in laid_out.iter_mut().enumerate() {
                 let y = if *above { &mut y_above } else { &mut y_below };
+                // pyro: the out-of-flow boxes in a caption whose containing block is further up
+                // (the table, or past it) are the table's to pass on, from where the caption is.
+                if !out.oof_candidates.is_empty() {
+                    let mut candidates = out.oof_candidates.take();
+                    candidates.translate(taffy::Point { x: margin.left, y: *y + margin.top });
+                    output.oof_candidates.append(&mut candidates);
+                }
                 let layout = taffy::Layout {
                     order: (context.cells.len() + context.oof_children.len() + order) as u32,
                     location: taffy::Point { x: margin.left, y: *y + margin.top },

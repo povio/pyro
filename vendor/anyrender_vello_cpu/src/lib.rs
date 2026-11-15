@@ -18,6 +18,7 @@ pub use graph::{
     TURBULENCE as FILTER_TURBULENCE,
 };
 mod filters;
+mod occlusion;
 mod primitives;
 /// pyro (lane H2): planes drawn through a perspective.
 mod projective;

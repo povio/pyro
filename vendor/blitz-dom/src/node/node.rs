@@ -108,6 +108,27 @@ bitflags! {
         /// pyro: an anonymous block whose first child is a split inline standing for its tail:
         /// the inline content after its last block-level box, with its end.
         const STARTS_WITH_SPLIT_TAIL = 1 << 13;
+        /// pyro: a white-space text node between two table parts of an inline box (cells, rows,
+        /// ... laid out there as atomic inlines), which generates no box (CSS 2.1 § 17.2.1, as if
+        /// its parts were in one anonymous inline table). Set and cleared by the construction of
+        /// its inline formatting context (`table_fixup::mark_space_between_inline_table_parts`).
+        const IS_SPACE_BETWEEN_TABLE_PARTS = 1 << 22;
+        /// pyro: during the construction of an inline formatting context, an inline box one of whose
+        /// children is a table part (`IS_SPACE_BETWEEN_TABLE_PARTS`); cleared as the box is done.
+        const ENCLOSES_TABLE_PARTS = 1 << 24;
+        /// pyro: a table cell whose content is laid out lower in its box, by its
+        /// `LayoutData::table_baseline_offset` (a cell aligned on its row's baseline; set by its
+        /// table's layout, `layout::table::shift_cell_content`).
+        const HAS_TABLE_BASELINE_OFFSET = 1 << 23;
+        /// pyro: some of its `paint_children` are floats, its own or lifted out of the boxes of
+        /// its subtree that paint in its paint phases (`Node::paints_in_ancestor_phases`): it paints
+        /// them in the phases of CSS 2.1 Appendix E, after the block backgrounds and before the
+        /// inline content of those boxes. Set by the paint-tree build.
+        const HAS_FLOAT_PAINT_CHILDREN = 1 << 14;
+        /// pyro: it lifted floats out of itself to the box that paints them (it paints in that
+        /// box's phases), at the last paint-tree build: whether it still does is checked before
+        /// its lists are kept.
+        const LIFTS_FLOATS = 1 << 15;
     }
 }
 
@@ -807,7 +828,9 @@ impl Node {
             return context;
         };
         let box_styles = s.get_box();
-        if self.is_preserve_3d() {
+        // pyro: an anonymous box (a table wrapper, row group or row around a cell) passes on the
+        // 3D rendering context it is in, as Chromium's do (`accumulated` is its parent's there).
+        if self.is_preserve_3d() || self.is_anonymous() {
             context.preserve_3d = accumulated;
         }
         if !matches!(
@@ -843,7 +866,10 @@ impl Node {
             let box_styles = s.get_box();
             let reference_box = self.transform_reference_box(box_styles.transform_box);
             let resolved = crate::stylo_to_kurbo::resolve_transform(box_styles, reference_box);
-            let preserve_3d = self.is_preserve_3d();
+            // pyro: an anonymous box has no `transform-style` of its own: it is in its parent's
+            // 3D rendering context, if any, and passes it on (CSS Transforms 2 WPT
+            // transform-table-011: anonymous table boxes around a preserve-3d cell).
+            let preserve_3d = self.is_preserve_3d() || (self.is_anonymous() && parent.preserve_3d.is_some());
             flattens = matches!(resolved, ResolvedTransform::Spatial(_)) && !preserve_3d;
             // A 2D transform of a flat element outside a 3D rendering context resolves as it
             // always has.
@@ -1153,6 +1179,12 @@ impl Node {
             DisplayOutside::None => false,
             DisplayOutside::Block => true,
             _ => {
+                // pyro: an atomic inline box (a replaced element, an `<object>` showing an
+                // image) contains no block for its container: its children are its own
+                // content (`<svg>`) or are not rendered (an object's fallback).
+                if self.element_data().is_some_and(crate::layout::replaced::is_inline_box) {
+                    return false;
+                }
                 if display.inside() == DisplayInside::Flow {
                     self.children
                         .iter()
@@ -2610,7 +2642,7 @@ impl Node {
             return false;
         };
         if self.flags.is_inline_root()
-            || crate::layout::replaced::is_inline_box_element(&element.name.local)
+            || crate::layout::replaced::is_inline_box(element)
         {
             return false;
         }
