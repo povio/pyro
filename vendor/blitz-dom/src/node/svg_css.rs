@@ -1260,7 +1260,7 @@ impl Writer<'_> {
         }
         let mode = |i: usize| *cyclic(&svg.mask_mode.0, i);
         // A reference to one `<mask>` of this `<svg>`: usvg's `mask`.
-        let local_mask = |this: &mut Self, image: &GenericImage<_, _, _, _, _>| -> Option<String> {
+        let local_mask = |this: &mut Self, image: &GenericImage<_, _, _, _, _, _>| -> Option<String> {
             let GenericImage::Url(_) = image else {
                 return None;
             };
