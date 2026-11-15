@@ -75,6 +75,7 @@ const CRATES = {
   stylo_taffy: { files: ['src'], prefix: 'packages/stylo_taffy/', style: 'blitz-dom', order: 'path' },
   // Cargo.toml is not upstream's (the workspace sections are cut), so it is not covered.
   taffy: { files: ['src', 'examples', 'README.md'], prefix: '', style: 'git-repo', order: 'path' },
+  vello_cpu: { files: null, prefix: '', style: 'git-dirs', order: 'tree' },
 };
 const PYRO_FILES = new Set(['README.pyro.md', 'UPSTREAM.patch']);
 const APPLE_DIFF = '/usr/bin/diff';

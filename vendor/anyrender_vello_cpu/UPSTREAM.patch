@@ -290,10 +290,10 @@ index 0000000..986881c
 +    }
 +}
 diff --git a/src/filters.rs b/src/filters.rs
-index fd573d2..69b6b45 100644
+index fd573d2..48a49b1 100644
 --- a/src/filters.rs
 +++ b/src/filters.rs
-@@ -1,63 +1,1201 @@
+@@ -1,63 +1,1211 @@
 -use std::sync::Arc;
 -
 -use anyrender::{
@@ -645,6 +645,16 @@ index fd573d2..69b6b45 100644
 +        match self.steps[..] {
 +            [Step::Blur { sigma }] | [Step::DropShadow { sigma, .. }] if self.reduce => reduction(sigma),
 +            _ => 1,
++        }
++    }
++
++    /// pyro: the whole device pixels a reduced drop shadow's image is drawn moved by (its offset,
++    /// rounded), `(0, 0)` for anything else: the content is rendered for it on the grid of reduced
++    /// pixels that lands on the frame's grid of them once moved.
++    pub(crate) fn grid_shift(&self) -> (i32, i32) {
++        match self.steps[..] {
++            [Step::DropShadow { dx, dy, .. }] if self.factor() > 1 => (dx.round() as i32, dy.round() as i32),
++            _ => (0, 0),
 +        }
 +    }
 +
@@ -3761,7 +3771,7 @@ index 0000000..be15ba9
 +    }
 +}
 diff --git a/src/scene.rs b/src/scene.rs
-index 1b09a33..7751861 100644
+index 1b09a33..af1a075 100644
 --- a/src/scene.rs
 +++ b/src/scene.rs
 @@ -1,11 +1,14 @@
@@ -3960,7 +3970,7 @@ index 1b09a33..7751861 100644
      }
      fn draw_box_shadow(
          &mut self,
-@@ -216,6 +287,748 @@ impl PaintScene for VelloCpuScenePainter {
+@@ -216,6 +287,753 @@ impl PaintScene for VelloCpuScenePainter {
          self.render_ctx
              .fill_blurred_rounded_rect(&rect, radius as f32, std_dev as f32, false);
      }
@@ -4312,11 +4322,16 @@ index 1b09a33..7751861 100644
 +        let region = plan.source_region(out);
 +        // pyro: an SVG filter's graph sees nothing outside its filter region (the clip).
 +        let region = if plan.bounded() { region.intersect(bounds) } else { region };
++        // pyro: a reduced drop shadow's pixels are drawn moved by its offset, so the region is
++        // aligned to whole reduced pixels where they land: the same blur of the same content, as
++        // a drop shadow or as `blur()`, then comes out on the same grid of the frame, not on
++        // grids `factor / 2` apart (up to two levels apart everywhere: WPT drop-shadow-scale).
++        let (sx, sy) = plan.grid_shift();
 +        let region = PixelRect {
-+            x0: region.x0.div_euclid(factor) * factor,
-+            y0: region.y0.div_euclid(factor) * factor,
-+            x1: -(-region.x1).div_euclid(factor) * factor,
-+            y1: -(-region.y1).div_euclid(factor) * factor,
++            x0: (region.x0 + sx).div_euclid(factor) * factor - sx,
++            y0: (region.y0 + sy).div_euclid(factor) * factor - sy,
++            x1: -(-(region.x1 + sx)).div_euclid(factor) * factor - sx,
++            y1: -(-(region.y1 + sy)).div_euclid(factor) * factor - sy,
 +        };
 +        let (Ok(width), Ok(height)) = (
 +            u16::try_from(region.width() / factor),
@@ -4709,7 +4724,7 @@ index 1b09a33..7751861 100644
  }
  
  #[cfg(test)]
-@@ -292,4 +1105,197 @@ mod clip_rule_tests {
+@@ -292,4 +1110,197 @@ mod clip_rule_tests {
          assert_pixels(false, true);
          assert_pixels(true, true);
      }
