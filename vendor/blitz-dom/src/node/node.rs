@@ -1958,6 +1958,13 @@ impl Node {
             return true;
         }
 
+        // pyro: an animation, current or in effect, of a property that makes a stacking context
+        // (the `will-change` side effect of Web Animations 1; WPT
+        // `individual-transform/stacking-context-001`: in its delay).
+        if self.element_data().is_some_and(|data| data.animation_stacking_context) {
+            return true;
+        }
+
         if style.get_box().isolation == Isolation::Isolate {
             return true;
         }
@@ -2184,7 +2191,13 @@ impl Node {
             let child_position = child.taffy_position();
             let mut child_x = x;
             let mut child_y = y;
-            if child_position.is_out_of_flow() {
+            // pyro: an out-of-flow box painted here but laid out by a containing block elsewhere
+            // (a fixed box at its stacking context's positioned level) is placed as painted.
+            let lifted = child_position.is_out_of_flow().then(|| child.lifted_paint_offset(self.id)).flatten();
+            if let Some(offset) = lifted {
+                child_x -= offset.x;
+                child_y -= offset.y;
+            } else if child_position.is_out_of_flow() {
                 // Fixed-position children of the root element are positioned
                 // against the viewport and do not scroll with it. (A fixed box
                 // whose containing block is a transformed ancestor scrolls with
@@ -2429,6 +2442,13 @@ impl Node {
         let root_layout = inline_root.unrounded_layout();
         let content_box_inset = root_layout.padding + root_layout.border;
         let vertical = inline_root.vertical_block_axis();
+        // pyro: `sideways-lr` lines run bottom to top from the content box's bottom (its
+        // line-left side), their line-over side on the left: the content height they run up from.
+        let line_left_is_bottom = vertical.is_some() && inline_root.layout_data().writing_mode.line_left_is_bottom();
+        let inline_extent = line_left_is_bottom.then(|| {
+            let layout = inline_root.final_layout();
+            layout.size.height - layout.padding.top - layout.padding.bottom - layout.border.top - layout.border.bottom
+        });
         let (origin_x, origin_y) = match vertical {
             None => (content_box_inset.left, content_box_inset.top + inline_layout.block_offset),
             Some(block_lr) => {
@@ -2504,6 +2524,14 @@ impl Node {
                 // The lines of a vertical writing mode are logical: x inline, y block.
                 if let Some(block_lr) = vertical {
                     let (min, max) = (line_metrics.block_min_coord, line_metrics.block_max_coord);
+                    if let Some(extent) = inline_extent {
+                        return taffy::Rect {
+                            left: origin_x + rect.top / scale,
+                            top: origin_y + extent - rect.right / scale,
+                            right: origin_x + rect.bottom / scale,
+                            bottom: origin_y + extent - rect.left / scale,
+                        };
+                    }
                     let (b0, b1) = if block_lr {
                         (min + max - rect.bottom, min + max - rect.top)
                     } else {

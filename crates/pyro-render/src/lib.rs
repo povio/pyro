@@ -3192,6 +3192,37 @@ mod settle_resolution_tests {
         assert!(doc.paint_tree_matches_fresh_build());
     }
 
+    /// A fixed box without a `z-index` inside an `opacity` (or `isolation`) wrapper paints with
+    /// the wrapper (its stacking context), not with its containing block (the viewport): Blitz's
+    /// hit test finds it where it is painted, under a window scroll too (Blitz hit-tests document
+    /// coordinates: the box's viewport position plus the scroll). Without its paint offset it was
+    /// hit as if its viewport position were the wrapper's.
+    #[test]
+    fn a_fixed_box_moved_into_a_stacking_context_is_hit_where_it_is_painted() {
+        for wrapper in ["opacity:.5", "isolation:isolate"] {
+            let (mut snap, key) = fixture(&format!(
+                "<!doctype html><style>body{{margin:0}}</style><div style='height:30px'></div>\
+                 <div style='{wrapper};margin-left:40px;height:20px'>\
+                 <div id=box style='position:fixed;left:120px;top:50px;width:30px;height:30px;background:blue'></div></div>\
+                 <div style='height:1000px'></div>"
+            ));
+            for scroll in [0.0, 25.0] {
+                snap.scroll_y = scroll;
+                let fetcher: Arc<dyn Fetcher> = Arc::new(NoFetch);
+                let mut renderer = Renderer::new();
+                renderer.paint(&snap, Area::Viewport, &fetcher).unwrap();
+                let what = format!("{wrapper}, scrolled {scroll}");
+                let hit = |renderer: &mut Renderer, x: f64, y: f64| {
+                    renderer.elements_from_point(1, x, y + scroll).first().copied()
+                };
+                assert_eq!(hit(&mut renderer, 135.0, 65.0), Some(key), "{what}: where it is painted");
+                assert_eq!(hit(&mut renderer, 121.0, 51.0), Some(key), "{what}: its top left corner");
+                assert_ne!(hit(&mut renderer, 175.0, 90.0), Some(key), "{what}: moved by the wrapper");
+                assert_ne!(hit(&mut renderer, 135.0, 40.0), Some(key), "{what}: moved by the scroll");
+            }
+        }
+    }
+
     #[test]
     fn element_from_point_sees_every_resolve_since_the_last_paint() {
         let (snap, key) = fixture(STACKED);

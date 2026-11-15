@@ -11,8 +11,15 @@ mod backdrop;
 mod graph;
 /// pyro: see the `graph` module (an SVG filter primitive's subregion).
 pub use graph::CROP_IMAGE as FILTER_CROP_IMAGE;
+/// pyro: see the `graph` module (the `Image` nodes for what anyrender's filter types cannot say:
+/// an `feImage`'s content, a blur of two deviations, `feMorphology` of two radii, `feTurbulence`).
+pub use graph::{
+    BLUR_XY as FILTER_BLUR_XY, IMAGE_SOURCE as FILTER_IMAGE_SOURCE, MORPHOLOGY as FILTER_MORPHOLOGY,
+    TURBULENCE as FILTER_TURBULENCE,
+};
 mod filters;
 mod occlusion;
+mod primitives;
 
 pub use image_cache::ImageCacheConfig;
 pub use image_renderer::VelloCpuImageRenderer;

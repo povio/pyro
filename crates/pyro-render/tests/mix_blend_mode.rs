@@ -63,3 +63,19 @@ fn the_root_element_group_has_a_transparent_backdrop() {
     assert!(test.data == reference.data, "{:?} vs {:?}", pixel(&test, 20, 20), pixel(&reference, 20, 20));
     assert_ne!(pixel(&test, 20, 20), [255; 3], "the green box is painted");
 }
+
+/// `background-blend-mode`: a background layer blends with the layers and the colour under it
+/// (WPT `background-blend-mode-gradient-image`, `-plus-lighter`), in an isolated group: not with
+/// what lies behind the element. It was drawn as `normal`.
+#[test]
+fn background_layers_blend_with_the_layers_under_them_only() {
+    let img = render(
+        "<!doctype html><body style='margin:0;background:#00f'>
+         <div style='width:100px;height:100px;background:linear-gradient(#f00,#f00),#0f0;background-blend-mode:multiply'></div>
+         <div style='width:100px;height:100px;background:linear-gradient(#fff,#fff);background-blend-mode:multiply'></div>
+         <div style='width:100px;height:100px;background:linear-gradient(#800,#800),#080;background-blend-mode:plus-lighter'></div>",
+    );
+    assert_eq!(pixel(&img, 50, 50), [0, 0, 0], "red multiplied with lime");
+    assert_eq!(pixel(&img, 50, 150), [255, 255, 255], "white over no colour: the page behind is no backdrop");
+    assert_eq!(pixel(&img, 50, 250), [136, 136, 0], "dark red plus dark green");
+}

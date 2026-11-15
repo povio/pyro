@@ -68,7 +68,10 @@ from the root of an upstream checkout at that commit) is the whole diff.
     brush. `stroke_text` leaves out the cut glyphs, decorations span what is kept, and a recording paint
     records the kept glyphs with their source text. Covered by `crates/pyro-render/tests/text_overflow_ellipsis.rs`.
   - `src/render.rs` (`draw_svg`): an inline `<svg>` without a `viewBox` is drawn from blitz-dom's
-    `SvgImageData::sized` tree for its content box.
+    `SvgImageData::sized` tree for its content box, in user units of a CSS px times its `zoom` (its content
+    was drawn at zoom 1 in a zoomed box: WPT `clip-path-path-with-zoom-002`). An SVG image (`<img>`, not an
+    inline `<svg>`) whose content blends (`anyrender_svg::has_blend_modes`) is drawn in a layer of its own, an
+    isolated group: its `mix-blend-mode` blended with the page under it (WPT `mix-blend-mode-in-svg-image`).
   - `src/lib.rs` (`paint_scene_with`, `CORE_TEXT_GLYPHS`), `src/text.rs` (`stroke_text`): text is placed as
     Chromium places it. Screenshots draw an inline root's text, and a text input's value, placeholder and caret
     (`draw_text_input_text`), at its layout-unit x (`fractional_text_x`, which print already used) instead of its
@@ -184,7 +187,35 @@ from the root of an upstream checkout at that commit) is the whole diff.
   - `src/filters.rs` (`reference_filter`): a `url(#id)` filter (stylo parses it now) is the document's SVG
     `<filter>` with that id when that is a chain of `feColorMatrix` (every type) and `feComponentTransfer`, each in
     its `color-interpolation-filters` space (linearRGB unless an ancestor's attribute says sRGB; sRGB for a filter
-    in a `display: none` subtree, as in Chromium). Anything else is left out, as before.
+    in a `display: none` subtree, as in Chromium), when its functions keep transparent pixels transparent.
+  - `src/filters.rs` (`filter_steps`, `reference_graph`), `src/render.rs` (`render_element`,
+    `paint_filter_steps`): any other `url(#id)` filter is the `<filter>`'s graph (anyrender_svg's `FilterGraph`, see
+    its README): usvg parses the filter for a stand-in of the element's border box (the object bounding box, and the
+    viewport its percentages resolve against) in `svg_reference_document`'s document, and the graph applies in the
+    element's user space (CSS px from its border box's corner) within its filter region. The list then paints as a
+    layer per step around the element's group (filter functions in a row stay one CSS chain), the first innermost,
+    the opacity around them. A graph fills its region whatever the element paints: an empty element's filter
+    region is painted, and so is a `visibility: hidden` element's (its content not), as in Chromium (WPT
+    css/filter-effects/empty-element-with-filter-*, visibility-hidden-element-with-filter-001,
+    effect-reference-obb-dimensions). A `drop-shadow()` coloured from `currentcolor` (`uses_current_color`, the
+    computed colour's structure) before it taints the graph's source (see anyrender_svg's README). Culling takes
+    the steps' reach and the graphs' regions (`steps_reach`): a region reaching into view from a box outside it is
+    painted, an `feTile` in view keeps the content of its whole region, and an empty `overflow: hidden` element still
+    paints its region.
+  - `src/bounds.rs` (`layer_bounds`, `stays_with_input`): a layer whose filter can paint where its content is not (a
+    graph with a flood, turbulence, a tile, an image, a displacement, morphology or a composite; a colour function
+    adding alpha) is bounded by its whole clip, its filter region, so that an ancestor's opacity or filter layer
+    keeps an empty element's filter region and a flood past the content.
+  - `src/filters.rs` (`svg_filter_notes`, `primitive_notes`), `src/render.rs` (`draw_svg`): an inline `<svg>`'s
+    tree is rendered with what the document knows of its filters' primitives that usvg does not keep: which
+    `flood-color` or `lighting-color` is computed from `currentcolor` (tainted), which lighting primitive has no
+    light source and which is a real `feFlood`. A tree filter is the `<filter>` of its id in the `<svg>` (else in
+    the document) whose primitives it has; usvg names the second and later uses of an `objectBoundingBox` filter
+    `filterN`, and those take the notes of the uses with the same primitives and colours. A `<filter href>`
+    template's primitives are read through the reference. What its filters make past its box is cut off at the
+    content box (an `<svg>`'s `overflow: hidden`), at least 300 x 150 CSS px from its corner when it declares no
+    size (its box here is its content's, where Chromium's is that), unless the `<svg>` declares `overflow: visible`
+    (its attribute or its `style`; pyro's UA sheet has no `svg:not(:root) { overflow: hidden }`). Covered by `crates/pyro-render/tests/svg_filter_primitives.rs`.
   - `src/layers.rs` (`blend_isolation`), `src/render.rs` (`render_element`): a stacking context that holds an element
     with a `mix-blend-mode` (its nearest ancestor that is one, the root element's at the latest) is painted as an
     isolated group, as Chromium isolates one: the element blends with what the context painted, not with what lies
@@ -381,6 +412,31 @@ from the root of an upstream checkout at that commit) is the whole diff.
     the outer shadows outside it but not past its open sides (Blink's `PaintRectForImageStrip`; WPT
     `box-shadow/slice-inline-fragmentation-*`). Each fragment cast a closed shadow, and a gradient started over in
     each. A box of colours alone paints as before, one box per fragment.
+- Vertical writing modes (WPT reftest lane L):
+  - `src/text.rs` (`CentralMetrics`, `underline_over_in_vertical`, `flush_line_decorations`): on the central baseline
+    of `vertical-rl`/`vertical-lr` text (`mixed` and `upright`) underlines and overlines are placed from the text
+    fragment's line-over edge by the em box, as Blink's `TextDecorationOffset` does with `FontBaseline::kCentral`
+    (measured on Chrome 157, Inter at 10 to 54 px, whose rounded ascent and descent are Blink's float height too): an
+    underline `floor(H/2 + em/2 + offset) + 1` px from the edge (1px under the em box), an overline on the font's
+    whole-pixel ascent (`floor(H/2 - (H - floor(H/2))) - t`). H is the style's first available font's (Blink's
+    `PrimaryFont()`), centred on the central baseline, also where a fallback font draws the run.
+    `text-underline-position: right`, and Japanese or Korean text without `left`, trade their sides
+    (`ResolveUnderlinePosition`'s `kOver`): the underline goes 1px over the em box (`text-underline-offset` moving it
+    outward) and the overline where the underline would be; a `double` line's second line still goes away from the
+    text. Mongolian trades them too, as css-text-decor-3's `auto` and Gecko do (Blink leaves it out; WPT's
+    `text-underline-position-auto-001`). As in horizontal lines, each decorating box draws one straight line per line,
+    placed by the fragment of its own text (its runs share the style's first available font, so which one does not
+    matter), else of the first run it decorates; the inline root and the blocks it is in are not placed by the line's
+    strut there. That run's baseline is where `VerticalLine`
+    draws it. Sideways text keeps the alphabetic baseline and the horizontal rules. A vertical line's decorations
+    have their edges on whole device pixels (Blink draws them unantialiased; `snap_turned_band`).
+  - `src/text.rs` (`ink_gaps`, `VerticalLine::turned_run_shift`): `text-decoration-skip-ink` cuts the decorations of
+    vertical lines too, around the glyphs turned with the line (upright glyphs leave no gap), their gap edges on whole
+    device pixels (only in vertical lines: horizontal text under a quarter-turn transform keeps unsnapped gaps).
+  - `src/render.rs` (`draw_vertical_inline_layout`, `draw_turned_lines`): `sideways-lr` lines are turned a quarter
+    counterclockwise, running bottom to top from the content box's bottom with their line-over side on the left
+    (they were drawn as `sideways-rl`'s, top to bottom).
+  - Covered by `crates/pyro-render/tests/vertical_text_decorations.rs`.
 - `src/render.rs` (`render_element`): an element whose 3D transform hides it (blitz-dom's
   `NodeFlags::TRANSFORM_HIDES`: its back face shows with `backface-visibility: hidden`, it lies behind the
   viewer, or its matrix has no inverse) is not painted, nor is its content. Covered by
@@ -404,6 +460,38 @@ from the root of an upstream checkout at that commit) is the whole diff.
 - `src/render.rs` (`draw_children`): a fixed box that blitz-dom lifts into the root element's paint list from a
   containing block that is no layer root (a `backdrop-filter` box) is placed by its offset
   (`lifted_paint_offset`), not against the viewport (WPT `backdrop-filter-containing-block`).
+- `src/render.rs` (`render_element`), `src/layers.rs` (`filter_reach`, `filter_source_area`): culling counts what
+  an element's `filter` moves or spreads (the sum of its primitives' reaches, a drop shadow's offset, a blur): an
+  element out of view whose shadow is in view is painted, and so is content a clip leaves out of view that the
+  filter brings into it (its descendants are culled against the clip grown back by the reach). WPT
+  `filters-drop-shadow-003`, `drop-shadow-clipped-001`; covered by `crates/pyro-render/tests/filter_drop_shadow.rs`.
+- `src/render/background.rs` (`draw_background_layers`): `background-blend-mode`. Each image layer is drawn in a
+  layer of its blend mode, and an element with one that is not `normal` (among the modes of its image layers)
+  paints its background in an isolated group (not blending with what lies behind it), pushed through the layer
+  manager. Covered by `crates/pyro-render/tests/mix_blend_mode.rs`.
+- `src/render/clip_path.rs` (`draw_inline_effects`, `paints_alone`, `disjoint_rects`): inline elements (not
+  atomic) with `opacity` or `backdrop-filter` join those with a clip path or a mask: the layout is painted in their
+  areas in a group of their opacity (all fragments as one group), over their backdrop filtered in their fragments'
+  border boxes (snapped as `draw_inline_boxes` snaps them). Only when no inline ancestor between the element and its
+  inline root paints a box there (a background, a border, a shadow), which the group would take in. The areas go out
+  to whole device pixels around the snapped boxes, and the layout outside them is clipped by pieces that do not
+  overlap (overlapping areas, lines closer than their text is tall, were painted twice), inside the layout's ink
+  (recorded first, `bounds::scene_bounds`) rather than the whole visible area (a frame-sized clip layer). WPT
+  `t32-opacity-offscreen-multiple-boxes-1-c`/`2-c`, `backdrop-filter-inline-positioning`; covered by
+  `crates/pyro-render/tests/opacity_group.rs` and `backdrop_filter.rs`. Each element's areas leave out those of
+  the elements before it (neighbours' areas met in a pixel column, painted in both passes). A recording paint (the
+  PDF's text, `paint_scene_recording_text`) leaves inline opacity and backdrop filters out: each pass draws and
+  records glyph runs, and the PDF writes every run drawn, so the text was written once per pass (its text stays
+  unfaded, once, in reading order; `pdf_fidelity.rs`). A pass outside the areas that is left out (out of view)
+  drops the runs it recorded. Inline clip paths and masks still go through the passes in PDFs, as before. Not
+  faded: atomic inline descendants (inline-blocks, images, inline SVG, painted by `draw_children`), floats, the
+  ink of a faded element's glyphs or text shadows beyond its areas (the outside pass paints it unfaded).
+- `src/text.rs` (`RunFilter`, `stroke_text`), `src/render.rs` (`stroke_inline_text`): in an element's pass
+  `draw_inline_effects` draws only the glyph runs whose ink (an em around the run, its text shadows) can reach the
+  element's areas, in screenshots only their glyphs within that reach, and only the lines with such a run or a
+  decoration: each pass drew every glyph of the layout, so a paragraph cost its length times its faded spans (a
+  4K frame of a paragraph with 30 faded spans: 4.19 G instructions, now 0.61 G; 0.49 G unfaded). A recording paint
+  keeps whole runs (the PDF maps runs to their text). The `text-overflow` ellipsis is not filtered.
 - Backgrounds and box edges, wave 3 of the WPT paint reftests (lane F2); covered by
   `crates/pyro-render/tests/background_images_and_edges.rs`:
   - `src/render/background.rs` (`round_layer_size`): the round step of `background-repeat` scales an axis to a
