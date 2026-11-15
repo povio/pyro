@@ -695,4 +695,10 @@ Covered by `crates/pyro-render/tests/floats.rs`.
   filter is always a graph (no notes about its primitives). WPT `clip-path-url-reference-external`,
   `mask-image-1c`, `mask-image-url-remote-mask`, `filter-external-002-test`.
 
-Covered by `crates/pyro-render/tests/svg_viewport_clip.rs` and `svg_external_references.rs`.
+- `src/render/mask.rs` (`mask_layer_clip`, `names_svg_mask`, `draw_svg_mask`): a mask layer that references an
+  SVG `<mask>` is not cut to its `mask-clip` box (that cuts mask images; a `<mask>` applies in its own region), and
+  a mask in user units throughout (`maskUnits="userSpaceOnUse"`, no `objectBoundingBox` content) is taken from
+  everything visible rather than from the border box, drawn with `anyrender_svg::render_svg_tree_within`: it shows
+  the element's box shadow where its content is (WPT `mask-image-3f`, `-3g`).
+
+Covered by `crates/pyro-render/tests/svg_viewport_clip.rs`, `svg_external_references.rs` and `svg_css_effects.rs`.

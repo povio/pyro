@@ -1636,6 +1636,16 @@ Covered by `crates/pyro-render/tests/floats.rs`.
   written again into `<defs>` with that type and the element references the copy (WPT
   `mask-mode-to-mask-type-svg`).
 
+- `src/node/svg_css.rs` (`attribute_boxes`, `Writer::boxes`): an element usvg's tree of the `<svg>` does not hold
+  (the content of a `<mask>` or `<clipPath>` only a box of the page references) has the fill and stroke boxes of
+  its geometry attributes when it is a `<rect>`, `<circle>` or `<ellipse>`: its `clip-path` basic shape or
+  `transform-box` resolved against an empty box (WPT `mask-image-3h`).
+- `src/document.rs` (`with_cross_svg_references`), `src/layout/construct.rs`: an inline `<svg>` that references a
+  `<filter>`, `<clipPath>`, `<mask>`, gradient, `<pattern>` or `<marker>` of another inline `<svg>` of the page
+  (`url(#id)`, a gradient's `href="#id"`) gets a copy of it (and of what that references) in a `<defs>` first in
+  its source: ids are the document's, usvg reads each `<svg>` alone. A later change to the definitions does not
+  rebuild the `<svg>`s that use them.
+
 Covered by `crates/pyro-render/tests/svg_external_references.rs` and `svg_css_effects.rs`.
 ## A document whose root element is inline content
 

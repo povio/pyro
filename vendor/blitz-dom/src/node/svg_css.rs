@@ -923,7 +923,10 @@ impl Writer<'_> {
                 self.box_ids.insert(id, node.id);
                 Boxes::default()
             }
-            Pass::Final => self.boxes.get(&node.id).copied().unwrap_or_default(),
+            // An element usvg's tree does not hold (the content of a `<mask>` or `<clipPath>`
+            // that nothing in this document uses, which a box of the page may reference) has
+            // the box of its geometry attributes, when it is a basic shape.
+            Pass::Final => self.boxes.get(&node.id).copied().or_else(|| attribute_boxes(data)).unwrap_or_default(),
         }
     }
 
@@ -1646,6 +1649,34 @@ impl Writer<'_> {
         rewrites.push(Rewrite { name: "mask", value: Some(format!("url(#{mask_id})")), in_style: true });
         true
     }
+}
+
+/// The fill and stroke boxes of a `<rect>`, `<circle>` or `<ellipse>` from its geometry
+/// attributes in user units (no percentages or units), in its own user space; the stroke box is
+/// the fill box grown by half the `stroke-width` attribute of a stroked shape.
+fn attribute_boxes(data: &ElementData) -> Option<Boxes> {
+    let number = |name: &str| -> Option<f64> {
+        data.attr(markup5ever::LocalName::from(name)).and_then(|value| value.trim().parse::<f64>().ok())
+    };
+    let fill = match data.name.local.as_ref() {
+        "rect" => {
+            let (x, y) = (number("x").unwrap_or(0.0), number("y").unwrap_or(0.0));
+            Rect::new(x, y, x + number("width")?, y + number("height")?)
+        }
+        "circle" => {
+            let (cx, cy, r) = (number("cx").unwrap_or(0.0), number("cy").unwrap_or(0.0), number("r")?);
+            Rect::new(cx - r, cy - r, cx + r, cy + r)
+        }
+        "ellipse" => {
+            let (cx, cy) = (number("cx").unwrap_or(0.0), number("cy").unwrap_or(0.0));
+            let (rx, ry) = (number("rx")?, number("ry")?);
+            Rect::new(cx - rx, cy - ry, cx + rx, cy + ry)
+        }
+        _ => return None,
+    };
+    let stroked = data.attr(local_name!("stroke")).is_some_and(|stroke| stroke.trim() != "none");
+    let half = if stroked { number("stroke-width").unwrap_or(1.0) / 2.0 } else { 0.0 };
+    Some(Boxes { fill, stroke: fill.inflate(half, half) })
 }
 
 /// Whether the SVG document `source` has a `<mask>` of id `id`.

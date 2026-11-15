@@ -1053,7 +1053,7 @@ index 0000000..073d561
 +    }
 +}
 diff --git a/src/lib.rs b/src/lib.rs
-index 3370fa2..86bf9d8 100644
+index 3370fa2..cc4f0e6 100644
 --- a/src/lib.rs
 +++ b/src/lib.rs
 @@ -21,10 +21,13 @@
@@ -1070,7 +1070,7 @@ index 3370fa2..86bf9d8 100644
  pub use usvg;
  
  use anyrender::PaintScene;
-@@ -66,6 +69,17 @@ pub fn render_svg_tree<S: PaintScene>(scene: &mut S, svg: &usvg::Tree, transform
+@@ -66,6 +69,33 @@ pub fn render_svg_tree<S: PaintScene>(scene: &mut S, svg: &usvg::Tree, transform
      render_svg_tree_with(scene, svg, transform, &mut util::default_error_handler);
  }
  
@@ -1085,10 +1085,26 @@ index 3370fa2..86bf9d8 100644
 +    filter::with_notes(notes, || render_svg_tree(scene, svg, transform));
 +}
 +
++/// pyro: [`render_svg_tree`] for a tree whose content may lie outside its viewport: `visible`
++/// is the area of the scene the output can show (in the scene's space, after `transform`), which
++/// bounds the offscreen rasters in place of the tree's viewport. For a `<mask>` in user units a
++/// CSS box references, whose content may lie above or left of the box's corner (the origin).
++pub fn render_svg_tree_within<S: PaintScene>(scene: &mut S, svg: &usvg::Tree, transform: Affine, visible: kurbo::Rect) {
++    let ctx = render::Ctx { cull: visible };
++    render::render_group(
++        scene,
++        svg.root(),
++        Affine::IDENTITY,
++        transform,
++        &mut util::default_error_handler,
++        &ctx,
++    );
++}
++
  /// Append a [`usvg::Tree`] to an [`anyrender::PaintScene`] (with custom error handling).
  ///
  /// See the [module level documentation](crate#unsupported-features) for a list of some unsupported svg features
-@@ -75,15 +89,43 @@ pub fn render_svg_tree_with<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
+@@ -75,15 +105,43 @@ pub fn render_svg_tree_with<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
      transform: Affine,
      error_handler: &mut F,
  ) {
@@ -1132,7 +1148,7 @@ index 3370fa2..86bf9d8 100644
  #[cfg(test)]
  mod tests {
      use super::*;
-@@ -106,9 +148,13 @@ mod tests {
+@@ -106,9 +164,13 @@ mod tests {
              .iter()
              .find_map(|command| match command {
                  RenderCommand::PushLayer(layer) => Some(layer.fill),
@@ -1147,7 +1163,7 @@ index 3370fa2..86bf9d8 100644
      }
  
      #[test]
-@@ -134,6 +180,87 @@ mod tests {
+@@ -134,6 +196,87 @@ mod tests {
          );
      }
  

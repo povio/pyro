@@ -2344,7 +2344,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      pub fn clear_hover(&mut self) -> bool {
          // The pointer is no longer over the document, so stop re-resolving
          // hover state against it.
-@@ -2147,12 +2717,46 @@
+@@ -2147,12 +2717,108 @@
          self.mousedown_node_id
      }
  
@@ -2388,10 +2388,72 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
 +        svg
 +    }
 +
++    /// pyro: `svg` (an inline `<svg>`'s source) with the resources of the page's other inline
++    /// `<svg>`s that it references and does not define itself (`filter="url(#f)"`,
++    /// `fill="url(#gradient)"`, a gradient's `href="#base"`, where the `<filter>` or gradient
++    /// stands in a hidden `<svg>` of definitions), copied into a `<defs>` first in it: ids are
++    /// the document's, and usvg reads each `<svg>` alone. What a copied element references is
++    /// copied too. (A later change to the definitions does not rebuild the `<svg>`s that use
++    /// them.)
++    #[cfg(feature = "svg")]
++    pub(crate) fn with_cross_svg_references(&self, mut svg: String) -> String {
++        if !svg.contains("(#") && !svg.contains("href=\"#") {
++            return svg;
++        }
++        fn referenced(text: &str, out: &mut Vec<String>) {
++            for (open, close) in [("url(#", ')'), ("href=\"#", '"')] {
++                let mut rest = text;
++                while let Some(start) = rest.find(open) {
++                    let after = &rest[start + open.len()..];
++                    let Some(end) = after.find(close) else {
++                        break;
++                    };
++                    let id = after[..end].trim();
++                    if !id.is_empty() && !out.iter().any(|known| known == id) {
++                        out.push(id.to_string());
++                    }
++                    rest = &after[end..];
++                }
++            }
++        }
++        let defined = |text: &str, id: &str| text.contains(&format!(" id=\"{id}\""));
++        let mut ids = Vec::new();
++        referenced(&svg, &mut ids);
++        let mut defs = String::new();
++        let mut next = 0;
++        while next < ids.len() && next < 64 {
++            let id = ids[next].clone();
++            next += 1;
++            if defined(&svg, &id) || defined(&defs, &id) {
++                continue;
++            }
++            let Some(node) = self.get_element_by_id(&id).and_then(|node_id| self.get_node(node_id)) else {
++                continue;
++            };
++            let resource = node.element_data().is_some_and(|data| {
++                data.name.ns == markup5ever::ns!(svg)
++                    && matches!(
++                        data.name.local.as_ref(),
++                        "filter" | "clipPath" | "mask" | "linearGradient" | "radialGradient" | "pattern" | "marker"
++                    )
++            });
++            if !resource {
++                continue;
++            }
++            let source = node.svg_source();
++            referenced(&source, &mut ids);
++            defs.push_str(&source);
++        }
++        if let (false, Some(end)) = (defs.is_empty(), svg.find('>')) {
++            svg.insert_str(end + 1, &format!("<defs>{defs}</defs>"));
++        }
++        svg
++    }
++
      /// Returns the current CSS media type used to evaluate `@media` rules.
      pub fn media_type(&self) -> &MediaType {
          &self.media_type
-@@ -2188,6 +2792,12 @@
+@@ -2188,6 +2854,12 @@
          self.viewport.clone()
      }
  
@@ -2404,7 +2466,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      /// Returns whether incremental layout is currently enabled for this document.
      ///
      /// Both modes run the same style → damage → box construction → layout
-@@ -2266,6 +2876,7 @@
+@@ -2266,6 +2938,7 @@
  
          self.set_stylist_device(make_device(
              &self.viewport,
@@ -2412,7 +2474,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
              self.media_type.clone(),
              self.font_ctx.clone(),
          ));
-@@ -2317,6 +2928,15 @@
+@@ -2317,6 +2990,15 @@
          let viewport_size_changed = old_device.au_viewport_size() != device.au_viewport_size();
          let styles_use_viewport_units = old_device.used_viewport_size();
  
@@ -2428,7 +2490,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          let origins = {
              let guard = &self.guard;
              let guards = StylesheetGuards {
-@@ -2460,10 +3080,19 @@
+@@ -2460,10 +3142,19 @@
              pos.x += node.unrounded_layout().location.x - node.scroll_offset().x as f32;
              pos.y += node.unrounded_layout().location.y - node.scroll_offset().y as f32;
              current = node.containing_block();
@@ -2448,7 +2510,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      /// Computes the size and position of the `Node` relative to the viewport
      pub fn get_client_bounding_rect(&self, node_id: NodeId) -> Option<BoundingRect> {
          // Non-atomic inline elements have no layout box of their own: return
-@@ -2677,7 +3306,7 @@
+@@ -2677,7 +3368,7 @@
      /// Find the text position (inline_root_id, byte_offset) at a given point.
      /// Uses hit() for proper coordinate transformation, then finds the inline root
      /// and byte offset.
@@ -2457,7 +2519,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          let hit = self.hit(x, y)?;
          let hit_node = self.get_node(hit.node_id)?;
          let inline_root = hit_node.inline_root_ancestor()?;
-@@ -2835,6 +3464,10 @@
+@@ -2835,6 +3526,10 @@
      /// Get all selection ranges as Vec<(node_id, start_offset, end_offset)>.
      /// Returns empty vec if no selection.
      pub fn get_text_selection_ranges(&self) -> Vec<(NodeId, usize, usize)> {
@@ -2468,7 +2530,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          let lookup = |parent_id, idx| self.find_anonymous_block_by_index(parent_id, idx);
  
          let anchor_node = match self.text_selection.anchor.resolve_node_id(lookup) {
-@@ -3782,6 +4415,7 @@
+@@ -3782,6 +4477,7 @@
                      family_name: Some(String::from(ALIAS)),
                      weight: Some(800.0),
                      style: Some(parley::fontique::FontStyle::Italic),
@@ -2476,7 +2538,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
                  },
              )),
          };
-@@ -3804,6 +4438,52 @@
+@@ -3804,6 +4500,52 @@
               not the font file's internal `name` table entry",
          );
      }
@@ -3473,7 +3535,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
              ) {
                  create_text_editor(doc, container_node_id, false);
                  return;
-@@ -444,9 +550,37 @@
+@@ -444,9 +550,39 @@
              }
          }
  
@@ -3509,10 +3571,12 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
          if matches!(tag_name, "svg") {
 -            let outer_html = doc.get_node(container_node_id).unwrap().svg_source();
 +            let outer_html = doc.with_svg_sprites(doc.get_node(container_node_id).unwrap().svg_source());
++            // pyro: with the resources it references in the page's other `<svg>`s.
++            let outer_html = doc.with_cross_svg_references(outer_html);
  
              // Remove contruction damage from subtree
              doc.iter_subtree_mut(container_node_id, |id: NodeId, doc: &mut BaseDocument| {
-@@ -454,7 +588,12 @@
+@@ -454,7 +590,12 @@
              });
  
              match crate::util::parse_svg_image(outer_html.as_bytes()) {
@@ -3526,7 +3590,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
                      doc.get_node_mut(container_node_id)
                          .unwrap()
                          .element_data_mut()
-@@ -491,10 +630,29 @@
+@@ -491,10 +632,29 @@
          collect_list_item_children(doc, &mut index, reversed, container_node_id);
      }
  
@@ -3557,7 +3621,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
              return;
          }
      }
-@@ -530,7 +688,9 @@
+@@ -530,7 +690,9 @@
                  .any(|child| {
                      let display = child.display_style().unwrap_or(Display::inline());
                      let node_kind = child.data.kind();
@@ -3568,7 +3632,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
                  });
  
              if !has_text_node_or_contents {
-@@ -553,9 +713,9 @@
+@@ -553,9 +715,9 @@
          }
  
          DisplayInside::Table => {
@@ -3580,7 +3644,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
              doc.nodes[container_node_id]
                  .flags
                  .insert(NodeFlags::IS_TABLE_ROOT);
-@@ -564,13 +724,10 @@
+@@ -564,13 +726,10 @@
                  .downcast_element_mut()
                  .unwrap()
                  .special_data = data;
@@ -3598,7 +3662,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
          }
  
          // Flow, FlowRoot and TableCell, plus internal table displays (row,
-@@ -584,6 +741,18 @@
+@@ -584,6 +743,18 @@
              let mut classification = FlowClassification::default();
              classify_flow_children(doc, container_node_id, &mut classification);
  
@@ -3617,7 +3681,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
              // Inline box whose in-flow content is block-level only: it is laid out as block
              // boxes, so paint must not draw its own box over them.
              if doc.nodes[container_node_id]
-@@ -597,7 +766,7 @@
+@@ -597,7 +768,7 @@
                      .insert(NodeFlags::IS_INLINE_WITH_ONLY_BLOCK_CHILDREN);
              }
  
@@ -3626,7 +3690,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
                  // Contents-transparent: a display:contents child may be
                  // holding the out-of-flow elements (otherwise the contents
                  // node itself would be pushed as a layout box).
-@@ -609,18 +778,39 @@
+@@ -609,18 +780,39 @@
              }
  
              // TODO: fix display:contents
@@ -3678,7 +3742,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
                  doc.nodes[container_node_id]
                      .flags
                      .insert(NodeFlags::IS_INLINE_ROOT);
-@@ -629,6 +819,14 @@
+@@ -629,6 +821,14 @@
                  return;
              }
  
@@ -3693,7 +3757,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
              // If the children are either all inline or all block then simply return the regular children
              // as the layout children
              if classification.all_block & !classification.has_contents {
-@@ -651,29 +849,202 @@
+@@ -651,29 +851,202 @@
      }
  }
  
@@ -3913,7 +3977,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
      let (before_style, after_style, before_node_id, after_node_id) = {
          let node = &doc.nodes[node_id];
  
-@@ -689,8 +1060,23 @@
+@@ -689,8 +1062,23 @@
              .as_ref()
              .and_then(|d| d.styles.pseudos.as_array()[0].clone());
  
@@ -3937,7 +4001,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
  
      // Sync pseudo element
      // TODO: Make incremental
-@@ -719,11 +1105,11 @@
+@@ -719,11 +1107,11 @@
                      .insert(NodeFlags::IS_IN_DOCUMENT);
              }
  
@@ -3954,7 +4018,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
  
              doc.nodes[new_node_id].record_out_of_flow(pe_style);
              let mut element_data = StyloElementData::default();
-@@ -733,6 +1119,11 @@
+@@ -733,6 +1121,11 @@
              *doc.nodes[new_node_id]
                  .stylo_element_data_mut()
                  .ensure_init_mut() = element_data;
@@ -3966,7 +4030,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
  
              let node = &mut doc.nodes[node_id];
              node.set_pe_by_index(idx, Some(new_node_id));
-@@ -750,53 +1141,77 @@
+@@ -750,53 +1143,77 @@
              // the style-pointer comparison below, as the pseudo-element's style may
              // already have been updated by `sync_pseudo_element_styles` during the
              // style traversal without the text having been updated.
@@ -4082,7 +4146,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
  /// Handles the cases where there are text nodes or inline nodes that need to be wrapped in an anonymous block node
  fn collect_complex_layout_children(
      doc: &mut BaseDocument,
-@@ -805,9 +1220,41 @@
+@@ -805,9 +1222,41 @@
      hide_whitespace: bool,
      needs_wrap: fn(NodeKind, DisplayOutside) -> bool,
  ) {
@@ -4126,7 +4190,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
  
          // Get Display style. Default to inline because nodes without styles are probably text nodes
          let contains_block = doc.nodes[child_id].is_or_contains_block();
-@@ -827,9 +1274,19 @@
+@@ -827,9 +1276,19 @@
          // Taffy knows how to deal with `Display::None` children.
          //
          // Also hide all-whitespace flexbox children as these should be ignored
@@ -4147,7 +4211,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
          // Recurse into `Display::Contents` nodes, wrapping hoisted text and
          // inline children as if they were direct children of this container
          else if display_inside == DisplayInside::Contents {
-@@ -844,6 +1301,40 @@
+@@ -844,6 +1303,40 @@
          else if needs_wrap(child_node_kind, display_outside) {
              out.push_wrapped(container_node_id, child_id, doc);
          }
@@ -4188,7 +4252,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
          // Else push the child directly (and close any open "anonymous block container")
          else {
              out.push(child_id, doc);
-@@ -854,13 +1345,44 @@
+@@ -854,13 +1347,44 @@
      out.maybe_push_anon_block(doc);
  }
  
@@ -4234,7 +4298,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
      let alignment = node
          .primary_styles()
          .map(|s| stylo_to_parley::text_align(s.clone_text_align()))
-@@ -875,6 +1397,8 @@
+@@ -875,6 +1399,8 @@
      } else {
          node.attr(local_name!("value")).unwrap_or("").to_string()
      };
@@ -4243,7 +4307,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
      let is_focussed = node.is_focussed();
      let element = &mut node.data.downcast_element_mut().unwrap();
      if !matches!(element.special_data, SpecialElementData::TextInput(_)) {
-@@ -894,6 +1418,8 @@
+@@ -894,6 +1420,8 @@
          unreachable!();
      };
  
@@ -4252,7 +4316,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
      let editor = &mut text_input_data.editor;
      editor.set_scale(doc.viewport.scale_f64() as f32);
      editor.set_width(None);
-@@ -923,6 +1449,65 @@
+@@ -923,6 +1451,65 @@
      editor.refresh_layout(&mut doc.font_ctx.lock().unwrap(), &mut doc.layout_ctx);
  }
  
@@ -4318,7 +4382,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
  fn create_checkbox_input(doc: &mut BaseDocument, input_element_id: NodeId) {
      let node = &mut doc.nodes[input_element_id];
  
-@@ -944,6 +1529,25 @@
+@@ -944,6 +1531,25 @@
  ) {
      flush_inline_pseudos_recursive(doc, inline_context_root_node_id);
  
@@ -4344,7 +4408,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
      iter_children_and_pseudos!(doc.nodes[inline_context_root_node_id], |child_id| {
          find_inline_layout_embedded_boxes_recursive(
              &mut doc.nodes,
-@@ -953,10 +1557,31 @@
+@@ -953,10 +1559,31 @@
          );
      });
  
@@ -4377,7 +4441,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
                  .display_style()
                  .unwrap_or(Display::inline());
              let do_recurse = match (display.outside(), display.inside()) {
-@@ -965,7 +1590,7 @@
+@@ -965,7 +1592,7 @@
                  (_, _) => false,
              };
              if do_recurse {
@@ -4386,7 +4450,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
              }
          });
      }
-@@ -992,6 +1617,11 @@
+@@ -992,6 +1619,11 @@
  
                  let display = node.display_style().unwrap_or(Display::inline());
  
@@ -4398,7 +4462,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
                  match (display.outside(), display.inside()) {
                      (DisplayOutside::None, DisplayInside::None) => {
                          node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
-@@ -999,43 +1629,76 @@
+@@ -999,43 +1631,76 @@
                      (DisplayOutside::None, DisplayInside::Contents) => {
                          node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
                          iter_children!(nodes[node_id], |child_id| {
@@ -20726,7 +20790,7 @@ diff --git a/packages/blitz-dom/src/node/svg_css.rs b/packages/blitz-dom/src/nod
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/node/svg_css.rs
-@@ -0,0 +1,2214 @@
+@@ -0,0 +1,2245 @@
 +//! pyro: an inline `<svg>` subtree as a standalone SVG document for usvg, with
 +//! the page's CSS applied.
 +//!
@@ -21652,7 +21716,10 @@ new file mode 100644
 +                self.box_ids.insert(id, node.id);
 +                Boxes::default()
 +            }
-+            Pass::Final => self.boxes.get(&node.id).copied().unwrap_or_default(),
++            // An element usvg's tree does not hold (the content of a `<mask>` or `<clipPath>`
++            // that nothing in this document uses, which a box of the page may reference) has
++            // the box of its geometry attributes, when it is a basic shape.
++            Pass::Final => self.boxes.get(&node.id).copied().or_else(|| attribute_boxes(data)).unwrap_or_default(),
 +        }
 +    }
 +
@@ -22375,6 +22442,34 @@ new file mode 100644
 +        rewrites.push(Rewrite { name: "mask", value: Some(format!("url(#{mask_id})")), in_style: true });
 +        true
 +    }
++}
++
++/// The fill and stroke boxes of a `<rect>`, `<circle>` or `<ellipse>` from its geometry
++/// attributes in user units (no percentages or units), in its own user space; the stroke box is
++/// the fill box grown by half the `stroke-width` attribute of a stroked shape.
++fn attribute_boxes(data: &ElementData) -> Option<Boxes> {
++    let number = |name: &str| -> Option<f64> {
++        data.attr(markup5ever::LocalName::from(name)).and_then(|value| value.trim().parse::<f64>().ok())
++    };
++    let fill = match data.name.local.as_ref() {
++        "rect" => {
++            let (x, y) = (number("x").unwrap_or(0.0), number("y").unwrap_or(0.0));
++            Rect::new(x, y, x + number("width")?, y + number("height")?)
++        }
++        "circle" => {
++            let (cx, cy, r) = (number("cx").unwrap_or(0.0), number("cy").unwrap_or(0.0), number("r")?);
++            Rect::new(cx - r, cy - r, cx + r, cy + r)
++        }
++        "ellipse" => {
++            let (cx, cy) = (number("cx").unwrap_or(0.0), number("cy").unwrap_or(0.0));
++            let (rx, ry) = (number("rx")?, number("ry")?);
++            Rect::new(cx - rx, cy - ry, cx + rx, cy + ry)
++        }
++        _ => return None,
++    };
++    let stroked = data.attr(local_name!("stroke")).is_some_and(|stroke| stroke.trim() != "none");
++    let half = if stroked { number("stroke-width").unwrap_or(1.0) / 2.0 } else { 0.0 };
++    Some(Boxes { fill, stroke: fill.inflate(half, half) })
 +}
 +
 +/// Whether the SVG document `source` has a `<mask>` of id `id`.

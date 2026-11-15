@@ -2757,6 +2757,68 @@ impl BaseDocument {
         svg
     }
 
+    /// pyro: `svg` (an inline `<svg>`'s source) with the resources of the page's other inline
+    /// `<svg>`s that it references and does not define itself (`filter="url(#f)"`,
+    /// `fill="url(#gradient)"`, a gradient's `href="#base"`, where the `<filter>` or gradient
+    /// stands in a hidden `<svg>` of definitions), copied into a `<defs>` first in it: ids are
+    /// the document's, and usvg reads each `<svg>` alone. What a copied element references is
+    /// copied too. (A later change to the definitions does not rebuild the `<svg>`s that use
+    /// them.)
+    #[cfg(feature = "svg")]
+    pub(crate) fn with_cross_svg_references(&self, mut svg: String) -> String {
+        if !svg.contains("(#") && !svg.contains("href=\"#") {
+            return svg;
+        }
+        fn referenced(text: &str, out: &mut Vec<String>) {
+            for (open, close) in [("url(#", ')'), ("href=\"#", '"')] {
+                let mut rest = text;
+                while let Some(start) = rest.find(open) {
+                    let after = &rest[start + open.len()..];
+                    let Some(end) = after.find(close) else {
+                        break;
+                    };
+                    let id = after[..end].trim();
+                    if !id.is_empty() && !out.iter().any(|known| known == id) {
+                        out.push(id.to_string());
+                    }
+                    rest = &after[end..];
+                }
+            }
+        }
+        let defined = |text: &str, id: &str| text.contains(&format!(" id=\"{id}\""));
+        let mut ids = Vec::new();
+        referenced(&svg, &mut ids);
+        let mut defs = String::new();
+        let mut next = 0;
+        while next < ids.len() && next < 64 {
+            let id = ids[next].clone();
+            next += 1;
+            if defined(&svg, &id) || defined(&defs, &id) {
+                continue;
+            }
+            let Some(node) = self.get_element_by_id(&id).and_then(|node_id| self.get_node(node_id)) else {
+                continue;
+            };
+            let resource = node.element_data().is_some_and(|data| {
+                data.name.ns == markup5ever::ns!(svg)
+                    && matches!(
+                        data.name.local.as_ref(),
+                        "filter" | "clipPath" | "mask" | "linearGradient" | "radialGradient" | "pattern" | "marker"
+                    )
+            });
+            if !resource {
+                continue;
+            }
+            let source = node.svg_source();
+            referenced(&source, &mut ids);
+            defs.push_str(&source);
+        }
+        if let (false, Some(end)) = (defs.is_empty(), svg.find('>')) {
+            svg.insert_str(end + 1, &format!("<defs>{defs}</defs>"));
+        }
+        svg
+    }
+
     /// Returns the current CSS media type used to evaluate `@media` rules.
     pub fn media_type(&self) -> &MediaType {
         &self.media_type

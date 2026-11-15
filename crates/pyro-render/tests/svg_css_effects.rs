@@ -374,3 +374,57 @@ fn a_filter_element_named_as_usvg_names_filter_functions_keeps_its_region() {
     assert_eq!(px(&img, 21, 50), BLUE, "the region past the content");
     assert_eq!(px(&img, 18, 50), WHITE);
 }
+
+/// A shape in a `<mask>` that only a box of the page references has no box in usvg's tree of the
+/// `<svg>`: its CSS `clip-path` basic shape resolves against the box of its geometry attributes
+/// (WPT `mask-image-3h`). Before, the shape was clipped to nothing.
+#[test]
+fn a_basic_shape_clip_path_inside_a_mask_resolves_against_the_shapes_box() {
+    let img = render(
+        r##"<svg height="0"><mask id="m" x="0" y="0" width="1" height="1">
+              <rect x="25" y="25" width="50" height="50" fill="white" clip-path="circle(50% at 50% 50%)"/></mask></svg>
+            <div style="width:100px;height:100px;background:#0000ff;mask-image:url(#m)"></div>"##,
+    );
+    assert_eq!(px(&img, 50, 50), BLUE, "in the circle");
+    assert_eq!(px(&img, 27, 27), WHITE, "the rect's corner, outside the circle");
+    assert_eq!(px(&img, 10, 10), WHITE, "outside the rect");
+}
+
+/// A `<mask>` in user units reaches past the border box, and `mask-clip` does not cut a layer
+/// that references a `<mask>`: it shows the element's box shadow where its content is (WPT
+/// `mask-image-3f`).
+#[test]
+fn a_user_space_mask_shows_the_box_shadow_outside_the_border_box() {
+    let img = render(
+        r##"<svg height="0"><mask id="m" x="-50" y="-50" width="200" height="200" maskUnits="userSpaceOnUse">
+              <rect x="-50" y="-50" width="40" height="40" fill="white"/></mask></svg>
+            <div style="margin:60px;width:50px;height:50px;background:red;box-shadow:0 0 0 50px #0000ff;mask-image:url(#m)"></div>"##,
+    );
+    assert_eq!(px(&img, 30, 30), BLUE, "the shadow under the mask's square");
+    assert_eq!(px(&img, 55, 30), WHITE, "the shadow beside it");
+    assert_eq!(px(&img, 80, 80), WHITE, "the box, masked out");
+}
+
+/// An inline `<svg>` references resources of another inline `<svg>` of the page (a hidden one
+/// of definitions): ids are the document's. usvg reads each `<svg>` alone, so the referenced
+/// gradient (and the one its `href` names), filter and clip path are copied into the source.
+/// Before, the fill was dropped and the filter and clip path ignored (WPT
+/// `svg-filter-filter-units-user-space`).
+#[test]
+fn an_svg_references_the_resources_of_another_inline_svg() {
+    let img = render(
+        r##"<svg width="0" height="0" style="position:absolute"><defs>
+              <linearGradient id="base"><stop offset="0" stop-color="#0000ff"/><stop offset="1" stop-color="#0000ff"/></linearGradient>
+              <linearGradient id="g" href="#base"/>
+              <filter id="f" x="0" y="0" width="1" height="1"><feFlood flood-color="green"/></filter>
+              <clipPath id="c"><rect width="20" height="50"/></clipPath></defs></svg>
+            <svg width="200" height="50">
+              <rect width="50" height="50" fill="url(#g)"/>
+              <rect x="60" width="50" height="50" fill="red" filter="url(#f)"/>
+              <g transform="translate(120)"><rect width="50" height="50" fill="#0000ff" clip-path="url(#c)"/></g></svg>"##,
+    );
+    assert_eq!(px(&img, 25, 25), BLUE, "the gradient of the other svg, through its href");
+    assert_eq!(px(&img, 85, 25), GREEN, "the filter of the other svg");
+    assert_eq!(px(&img, 130, 25), BLUE, "inside the clip path of the other svg");
+    assert_eq!(px(&img, 150, 25), WHITE, "outside it");
+}
