@@ -219,7 +219,9 @@ pub(crate) fn parse_svg_image(source: &[u8]) -> Result<crate::node::SvgImageData
     };
     // pyro: a reference cycle usvg would follow without end (`crate::svg_refs`).
     let checked = crate::svg_refs::break_reference_cycles(source);
-    let svg = crate::node::SvgImageData::from_data(&checked, &options)?;
+    // pyro: `feConvolveMatrix divisor="0"` is its default, as in Chromium (`crate::svg_refs`).
+    let defaulted = crate::svg_refs::default_zero_divisors(&checked);
+    let svg = crate::node::SvgImageData::from_data(defaulted.as_deref().unwrap_or(&checked), &options)?;
     PARSED.with(|p| {
         let mut p = p.borrow_mut();
         if p.len() >= MAX_ENTRIES {

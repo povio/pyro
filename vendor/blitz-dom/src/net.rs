@@ -705,8 +705,18 @@ impl ImageHandler {
         let svg_err = {
             use crate::util::parse_svg_image;
             match parse_svg_image(&bytes) {
-                // pyro: its `<view>` fragment, and its source when it has no size.
-                Ok(svg) => return Ok(Resource::Svg(self.kind, svg.for_url(&bytes, url))),
+                // pyro: its `<view>` fragment, and its source when it has no size. The source is
+                // also kept for inline SVG that masks with it (`svg_css`), up to a size: an image of
+                // any kind can be a mask image (the cache is by URL), and most never are; a larger
+                // one leaves the SVG element it masks unmasked.
+                Ok(svg) => {
+                    let mut svg = svg.for_url(&bytes, url);
+                    const MAX_KEPT_SOURCE: usize = 256 << 10;
+                    if bytes.len() <= MAX_KEPT_SOURCE {
+                        svg.source = Some(std::sync::Arc::from(&bytes[..]));
+                    }
+                    return Ok(Resource::Svg(self.kind, svg));
+                }
                 Err(e) => e.to_string(),
             }
         };
