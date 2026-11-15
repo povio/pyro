@@ -203,8 +203,8 @@ opt-level = 0
 opt-level = 0
 
 # Blitz from upstream main (past 0.3.0-beta.4) with pyro's changes; see
-# vendor/blitz-dom/README.pyro.md. blitz-traits, blitz-html and stylo_taffy are
-# upstream main unchanged (blitz-dom main needs them).
+# vendor/blitz-dom/README.pyro.md. blitz-traits and blitz-html are upstream main
+# unchanged (blitz-dom main needs them); stylo_taffy is patched (its README.pyro.md).
 [patch.crates-io]
 blitz-dom = { path = "vendor/blitz-dom" }
 blitz-paint = { path = "vendor/blitz-paint" }

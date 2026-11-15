@@ -32,6 +32,7 @@ pub(crate) mod list;
 pub(crate) mod paint_tree;
 pub(crate) mod replaced;
 pub mod table;
+pub(crate) mod table_fixup;
 pub(crate) mod text_transform;
 #[cfg(feature = "writing-mode")]
 pub(crate) mod writing_mode;
@@ -475,6 +476,8 @@ impl LayoutPassState<'_> {
             && inputs.parent_size.width.is_none()
             && matches!(node.layout_style().size().width.expand(), taffy::style::ExpandedDimension::Percent(_));
 
+        // pyro: the root `<svg>` of an SVG document keeps usvg's size (see the `Svg` arm below).
+        let is_root_element = node.is_root_element();
         match &mut node.data {
             NodeData::Text(data) => {
                 // With the new "inline context" architecture all text nodes should be wrapped in an "inline layout context"
@@ -742,27 +745,31 @@ impl LayoutPassState<'_> {
                             }
                             #[cfg(feature = "svg")]
                             ImageData::Svg(svg) => {
+                                // pyro: an SVG's natural width and height are its root's
+                                // absolute `width` and `height`, and its ratio theirs or else its
+                                // `viewBox`'s; what it does not declare it does not have, and the
+                                // default object size (300x150) stands in, as in browsers (usvg's
+                                // resolved size of an SVG without them stood in before). Not for
+                                // the root `<svg>` of an SVG document, which fills the viewport in
+                                // browsers: it keeps usvg's size until that is done.
                                 let mut width = svg.intrinsic_width();
                                 let mut height = svg.intrinsic_height();
-                                // An SVG with no declared dimensions and no viewBox has no
-                                // intrinsic dimensions per CSS, but usvg still resolves a
-                                // concrete size; use it in place of the default object size.
-                                if width.is_none()
-                                    && height.is_none()
-                                    && svg.viewbox_aspect_ratio().is_none()
-                                {
-                                    let size = svg.tree.size();
-                                    width = Some(size.width());
-                                    height = Some(size.height());
-                                }
-                                (
-                                    IntrinsicSizes {
-                                        width,
-                                        height,
-                                        ratio: Some(svg.aspect_ratio()),
-                                    },
-                                    DEFAULT_OBJECT_SIZE,
-                                )
+                                let ratio = if is_root_element {
+                                    if width.is_none() && height.is_none() && svg.viewbox_aspect_ratio().is_none() {
+                                        let size = svg.tree.size();
+                                        width = Some(size.width());
+                                        height = Some(size.height());
+                                    }
+                                    Some(svg.aspect_ratio())
+                                } else {
+                                    match (width, height) {
+                                        (Some(width), Some(height)) if width > 0.0 && height > 0.0 => {
+                                            Some(width / height)
+                                        }
+                                        _ => svg.viewbox_aspect_ratio(),
+                                    }
+                                };
+                                (IntrinsicSizes { width, height, ratio }, DEFAULT_OBJECT_SIZE)
                             }
                             // pyro: a `<video>` whose poster did not load
                             // keeps the default object size.
@@ -925,6 +932,12 @@ impl LayoutPassState<'_> {
             panic!("Node marked as table root but doesn't have TableContext");
         };
         let context = Arc::clone(context);
+        // pyro: a table is at least as wide as its captions' min-content widths.
+        let caption_min = if context.captions.is_empty() {
+            None
+        } else {
+            Some(self.table_captions_min_width(&context, inputs))
+        };
 
         let mut table_wrapper = TableTreeWrapper {
             doc: self,
@@ -933,10 +946,26 @@ impl LayoutPassState<'_> {
         };
         table_wrapper.style = table_wrapper.auto_column_widths(&inputs);
         let mut output = compute_grid_layout(&mut table_wrapper, node_id, inputs);
+        if let Some(min) = caption_min.filter(|min| *min > output.size.width) {
+            if inputs.known_dimensions.width.is_none() {
+                let wider = taffy::tree::LayoutInput {
+                    known_dimensions: taffy::Size { width: Some(min), height: inputs.known_dimensions.height },
+                    ..inputs
+                };
+                table_wrapper.style = table_wrapper.auto_column_widths(&wider);
+                output = compute_grid_layout(&mut table_wrapper, node_id, wider);
+            }
+        }
 
         // Absolutely positioned children take no part in the table grid. Their
         // static position is the top-left of the table's content box.
         let context = table_wrapper.ctx;
+        // pyro: the captions above and below the grid.
+        let caption_top = if context.captions.is_empty() {
+            0.0
+        } else {
+            self.lay_out_table_captions(&context, inputs, &mut output)
+        };
         if inputs.run_mode == RunMode::PerformLayout && !context.oof_children.is_empty()
         {
             let style = &context.style;
@@ -949,7 +978,7 @@ impl LayoutPassState<'_> {
                 .resolve_or_zero(parent_width, resolve_calc_value);
             let static_position = taffy::Point {
                 x: padding.left + border.left,
-                y: padding.top + border.top,
+                y: caption_top + padding.top + border.top,
             }
             .map(|pos| AxisStaticPosition::from_edge(pos, AxisStaticEdge::Start));
             let in_flow_count = context.cells.len();
@@ -976,6 +1005,126 @@ impl LayoutPassState<'_> {
         );
 
         output
+    }
+}
+
+impl LayoutPassState<'_> {
+    /// pyro: the widest min-content width of a table's captions, with their margins.
+    #[inline(never)]
+    fn table_captions_min_width(
+        &mut self,
+        context: &crate::layout::table::TableContext,
+        inputs: taffy::tree::LayoutInput,
+    ) -> f32 {
+        let mut widest = 0.0f32;
+        for &caption in &context.captions {
+            if self.nodes[caption].primary_styles().is_none() {
+                continue;
+            }
+            let margin = self.nodes[caption].layout_style().margin().resolve_or_zero(None, resolve_calc_value);
+            let measure = taffy::tree::LayoutInput {
+                run_mode: RunMode::ComputeSize,
+                sizing_mode: taffy::SizingMode::InherentSize,
+                axis: taffy::RequestedAxis::Horizontal,
+                known_dimensions: taffy::Size::NONE,
+                known_dimensions_are_definite: taffy::Size { width: true, height: true },
+                parent_size: taffy::Size { width: None, height: inputs.parent_size.height },
+                available_space: taffy::Size {
+                    width: taffy::AvailableSpace::MinContent,
+                    height: taffy::AvailableSpace::MaxContent,
+                },
+                vertical_margins_are_collapsible: taffy::Line::FALSE,
+            };
+            let width = self.compute_child_layout(taffy_node_id(caption), measure).size.width;
+            widest = widest.max(width + margin.left + margin.right);
+        }
+        widest
+    }
+
+    /// pyro: lays out a table's captions (`TableContext::captions`) above (`caption-side: top`)
+    /// and below its grid, each a block as wide as the grid less its margins: the table's box is
+    /// then its wrapper box, the grid (`output`, laid out) moved down by the captions above it, as
+    /// its cells (whose positions the grid set). Returns the height of the captions above.
+    #[inline(never)]
+    fn lay_out_table_captions(
+        &mut self,
+        context: &crate::layout::table::TableContext,
+        inputs: taffy::tree::LayoutInput,
+        output: &mut taffy::LayoutOutput,
+    ) -> f32 {
+        use style::values::specified::table::CaptionSide;
+        let width = output.size.width;
+        let grid_height = output.size.height;
+        // (caption, above the grid, its margins, its layout)
+        let mut laid_out = Vec::with_capacity(context.captions.len());
+        for &caption in &context.captions {
+            let Some(style) = self.nodes[caption].primary_styles() else { continue };
+            let above = !matches!(style.slow_clone_caption_side(), CaptionSide::Bottom);
+            drop(style);
+            let margin = self.nodes[caption]
+                .layout_style()
+                .margin()
+                .resolve_or_zero(Some(width), resolve_calc_value);
+            let inner = (width - margin.left - margin.right).max(0.0);
+            let caption_inputs = taffy::tree::LayoutInput {
+                run_mode: inputs.run_mode,
+                sizing_mode: taffy::SizingMode::InherentSize,
+                axis: taffy::RequestedAxis::Both,
+                known_dimensions: taffy::Size { width: Some(inner), height: None },
+                known_dimensions_are_definite: taffy::Size { width: true, height: true },
+                parent_size: taffy::Size { width: Some(width), height: None },
+                available_space: taffy::Size {
+                    width: taffy::AvailableSpace::Definite(inner),
+                    height: taffy::AvailableSpace::MaxContent,
+                },
+                vertical_margins_are_collapsible: taffy::Line::FALSE,
+            };
+            let caption_output = self.compute_child_layout(taffy_node_id(caption), caption_inputs);
+            laid_out.push((caption, above, margin, caption_output));
+        }
+        let extent = |above: bool| -> f32 {
+            laid_out
+                .iter()
+                .filter(|(_, a, _, _)| *a == above)
+                .map(|(_, _, margin, out)| margin.top + out.size.height + margin.bottom)
+                .sum()
+        };
+        let (top, bottom) = (extent(true), extent(false));
+        if inputs.run_mode == RunMode::PerformLayout {
+            // The grid moves down by the captions above it: so do its cells.
+            if top != 0.0 {
+                for cell in &context.cells {
+                    self.nodes[cell.node_id].update_unrounded_layout(|layout| layout.location.y += top);
+                }
+            }
+            let (mut y_above, mut y_below) = (0.0, top + grid_height);
+            for (order, (caption, above, margin, out)) in laid_out.iter().enumerate() {
+                let y = if *above { &mut y_above } else { &mut y_below };
+                let layout = taffy::Layout {
+                    order: (context.cells.len() + context.oof_children.len() + order) as u32,
+                    location: taffy::Point { x: margin.left, y: *y + margin.top },
+                    size: out.size,
+                    scrollable_overflow_rect: out.scrollable_overflow_rect,
+                    scrollbar_size: taffy::Size::ZERO,
+                    border: self.nodes[*caption]
+                        .layout_style()
+                        .border()
+                        .resolve_or_zero(Some(width), resolve_calc_value),
+                    padding: self.nodes[*caption]
+                        .layout_style()
+                        .padding()
+                        .resolve_or_zero(Some(width), resolve_calc_value),
+                    margin: *margin,
+                };
+                *y += margin.top + out.size.height + margin.bottom;
+                self.set_unrounded_layout(taffy_node_id(*caption), &layout);
+            }
+            *context.grid_box.borrow_mut() = Some((top, grid_height));
+        }
+        output.size.height = top + grid_height + bottom;
+        output.baselines.first = output.baselines.first.map(|baseline| baseline + top);
+        output.baselines.last = output.baselines.last.map(|baseline| baseline + top);
+        top
     }
 }
 
