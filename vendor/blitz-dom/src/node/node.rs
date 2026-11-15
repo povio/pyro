@@ -113,6 +113,10 @@ bitflags! {
         /// them in the phases of CSS 2.1 Appendix E, after the block backgrounds and before the
         /// inline content of those boxes. Set by the paint-tree build.
         const HAS_FLOAT_PAINT_CHILDREN = 1 << 14;
+        /// pyro: it lifted floats out of itself to the box that paints them (it paints in that
+        /// box's phases), at the last paint-tree build: whether it still does is checked before
+        /// its lists are kept.
+        const LIFTS_FLOATS = 1 << 15;
     }
 }
 

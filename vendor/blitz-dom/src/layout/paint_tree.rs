@@ -100,6 +100,8 @@ pub fn hoisted_child_position(tree: &NodeTree, sc_root_id: NodeId, child_id: Nod
 pub struct HoistedPaintChild {
     pub node_id: NodeId,
     pub z_index: i32,
+    /// pyro: a float lifted to the box that paints its float phase (`Node::paints_in_ancestor_phases`).
+    is_float: bool,
     /// `(geometry generation, offset from the stacking-context root)`, see
     /// [`Self::position`]. Generation `0` is never current.
     position: Cell<(u64, Point<f32>)>,
@@ -110,8 +112,14 @@ impl HoistedPaintChild {
         Self {
             node_id,
             z_index,
+            is_float: false,
             position: Cell::new((0, Point::ZERO)),
         }
+    }
+
+    /// pyro: a float lifted out of a box that paints in its painter's phases.
+    fn float(node_id: NodeId) -> Self {
+        Self { is_float: true, ..Self::new(node_id, 0) }
     }
 
     /// The child's offset from the border box of its stacking-context root
@@ -414,11 +422,22 @@ impl BaseDocument {
             // node itself, so the role the caller resolved must match the one
             // this node was last built with.
             let role_unchanged = node.stacking_context.is_some() == stacking_context.is_none();
+            // pyro: so must whether it lifts its floats (`paints_in_ancestor_phases`, which also
+            // depends on its parent: a flex item paints its own), for a box that had floats to
+            // paint or lift.
+            let floats_role_unchanged = !node
+                .flags
+                .intersects(NodeFlags::HAS_FLOAT_PAINT_CHILDREN | NodeFlags::LIFTS_FLOATS)
+                || {
+                    let layer_root = stacking_context.is_none() || node.is_paint_layer_root();
+                    (!layer_root && node.paints_in_ancestor_phases()) == node.flags.contains(NodeFlags::LIFTS_FLOATS)
+                };
             // The build runs after the resolves it catches up with, whose
             // damage is gone by then: `PAINT_TREE_DIRTY` records it. Damage
             // still stored (none after a resolve, as every resolve clears it)
             // is honoured too, so a build can only be more thorough.
             let clean = role_unchanged
+                && floats_role_unchanged
                 && !node.flags.contains(NodeFlags::PAINT_TREE_DIRTY)
                 && !node
                     .damage()
@@ -572,7 +591,7 @@ impl BaseDocument {
                             .push(((2, paint_order.1), child_id));
                     } else if paint_order.0 == 1 && !paints_floats_here(self) {
                         // pyro: a float painted in an ancestor's float phase (see `paints_floats`).
-                        entries.push(HoistedPaintChild::new(child_id, 0))
+                        entries.push(HoistedPaintChild::float(child_id))
                     } else {
                         self.scratch.keyed_children.push((paint_order, child_id));
                     }
@@ -581,10 +600,13 @@ impl BaseDocument {
                     // this child's subtree join this node's positioned paint
                     // level, in tree order after the child.
                     // pyro: floats lifted out of them join its float level, in tree order.
-                    if entries.len() > first_entry && (is_layer_root || paints_floats_here(self)) {
+                    if entries.len() > first_entry
+                        && (is_layer_root
+                            || (entries[first_entry..].iter().any(|entry| entry.is_float) && paints_floats_here(self)))
+                    {
                         let subtree_entries: ThinVec<_> = entries.drain(first_entry..).collect();
                         for entry in subtree_entries {
-                            if entry.z_index == 0 && self.is_lifted_float(entry.node_id) && paints_floats_here(self) {
+                            if entry.is_float && paints_floats_here(self) {
                                 self.scratch.keyed_children.push(((1, 0), entry.node_id));
                             } else if entry.z_index == 0 && is_layer_root {
                                 self.scratch
@@ -623,6 +645,8 @@ impl BaseDocument {
             self.scratch.keyed_children[keyed_base..].sort_by_key(|&(paint_order, _)| paint_order);
             let has_floats = self.scratch.keyed_children[keyed_base..].iter().any(|&((level, _), _)| level == 1);
             self.nodes[node_id].flags.set(NodeFlags::HAS_FLOAT_PAINT_CHILDREN, has_floats);
+            let lifts_floats = entries.iter().any(|entry| entry.is_float);
+            self.nodes[node_id].flags.set(NodeFlags::LIFTS_FLOATS, lifts_floats);
 
             let mut paint_children = self.nodes[node_id]
                 .paint_children
@@ -641,6 +665,10 @@ impl BaseDocument {
             let node = &self.nodes[node_id];
             *node.paint_children.borrow_mut() = Some(paint_children);
             *node.layout_children.borrow_mut() = Some(children);
+        } else {
+            self.nodes[node_id]
+                .flags
+                .remove(NodeFlags::HAS_FLOAT_PAINT_CHILDREN | NodeFlags::LIFTS_FLOATS);
         }
 
         let node = &mut self.nodes[node_id];
@@ -754,15 +782,6 @@ impl BaseDocument {
                 !child.is_stacking_context_root(false) && Some(node_to_paint_order(child, false)) == first
             });
         placed.plain_paint_order = if plain { first } else { None };
-    }
-
-    /// pyro: whether the entry `id` lifted with `z-index` 0 is a float (painted at its painter's
-    /// float level), not a positioned box or a stacking context (its positioned level).
-    fn is_lifted_float(&self, id: NodeId) -> bool {
-        self.nodes[id]
-            .primary_styles()
-            .is_some_and(|style| style.clone_float() != Float::None && style.clone_position() == Position::Static)
-            && !self.is_paint_stacking_context_root(id, false)
     }
 
     /// The layout child of `node_id` whose subtree contains `id`, following
