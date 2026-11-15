@@ -188,3 +188,146 @@ fn column_rules_are_painted_between_columns() {
         );
     }
 }
+
+/// `min-height` makes the container taller, not its content: the content is balanced as if the
+/// container had none, and the columns are as tall as the container.
+#[test]
+fn min_height_is_not_balanced_as_content() {
+    for scale in [1.0, 2.0] {
+        let img = render(
+            "<div style='columns:2;column-gap:0;width:200px;min-height:200px;column-rule:2px solid black'>\
+             <div style='height:50px;background:blue'></div><div style='height:50px;background:green'></div></div>\
+             <div style='height:10px;background:black'></div>",
+            scale,
+        );
+        check(
+            &img,
+            scale,
+            &[
+                (50.0, 25.0, BLUE),
+                (150.0, 25.0, GREEN),
+                (50.0, 75.0, WHITE),
+                (150.0, 75.0, WHITE),
+                (50.0, 205.0, BLACK),
+            ],
+            "balanced under min-height",
+        );
+    }
+}
+
+/// A block multi-column container establishes a block formatting context: next to a float it is
+/// narrowed and moved past it, as a `flow-root` is, instead of laying its columns under it.
+#[test]
+fn a_block_multicol_container_avoids_floats() {
+    for scale in [1.0, 2.0] {
+        let img = render(
+            "<div style='float:left;width:100px;height:100px;background:black'></div>\
+             <div style='columns:2;column-gap:20px'><div style='height:100px;background:green'></div></div>",
+            scale,
+        );
+        check(
+            &img,
+            scale,
+            &[
+                (50.0, 50.0, BLACK),
+                (150.0, 25.0, GREEN),
+                (250.0, 25.0, GREEN),
+                (300.0, 25.0, WHITE),
+                (350.0, 25.0, GREEN),
+                (490.0, 25.0, GREEN),
+                (150.0, 75.0, WHITE),
+            ],
+            "multicol beside a float",
+        );
+    }
+}
+
+/// The column rules of a container that clips its overflow are clipped with its content: no
+/// rule is drawn between the overflow columns past its inline end.
+#[test]
+fn column_rules_are_clipped_with_the_overflow() {
+    for scale in [1.0, 2.0] {
+        let img = render(
+            "<div style='columns:2;column-fill:auto;column-gap:20px;width:200px;height:100px;overflow:hidden;\
+             column-rule:4px solid blue'><div style='height:400px;background:green'></div></div>",
+            scale,
+        );
+        check(
+            &img,
+            scale,
+            &[
+                (100.0, 50.0, BLUE),
+                (50.0, 50.0, GREEN),
+                (210.0, 50.0, WHITE),
+                (250.0, 50.0, WHITE),
+                (320.0, 50.0, WHITE),
+            ],
+            "clipped column rules",
+        );
+    }
+}
+
+/// A line of atomic inlines alone (no text, as markup without white space between boxes makes)
+/// is a line box like any other: a break goes between lines, not through a box.
+#[test]
+fn a_line_of_boxes_alone_is_not_cut() {
+    for scale in [1.0, 2.0] {
+        let img = render(
+            "<div style='columns:2;column-gap:0;width:200px;font-size:0;orphans:1;widows:1'>\
+             <span style='display:inline-block;width:100px;height:100px;background:blue'></span>\
+             <span style='display:inline-block;width:100px;height:100px;background:green'></span>\
+             <span style='display:inline-block;width:100px;height:100px;background:black'></span></div>",
+            scale,
+        );
+        check(
+            &img,
+            scale,
+            &[
+                (50.0, 50.0, BLUE),
+                (50.0, 150.0, GREEN),
+                (150.0, 50.0, BLACK),
+                (150.0, 150.0, WHITE),
+                (150.0, 99.0, BLACK),
+            ],
+            "lines of boxes",
+        );
+    }
+}
+
+/// Not a check: the time a long ordinary page (no columns, about 4,000 block boxes) takes to be
+/// built, styled, laid out and painted in a small viewport, where layout is most of the work.
+/// Run with `--ignored --nocapture` on two builds to compare them (under `/usr/bin/time -l` for
+/// instructions).
+#[test]
+#[ignore]
+fn ordinary_page_cost_probe() {
+    let para = "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore. ";
+    let cards: String = (0..400)
+        .map(|i| {
+            format!(
+                "<section style='margin:8px;padding:8px;border:1px solid #ccc'><h3>Card {i}</h3>\
+                 <div><p>{para}</p><p>{para}{para}</p></div><ul><li>a</li><li>b</li><li>c</li></ul>\
+                 <div style='display:flex;gap:4px'><div>x</div><div>y</div></div></section>"
+            )
+        })
+        .collect();
+    let fetcher: Arc<dyn Fetcher> = Arc::new(NoFetch);
+    let mut renderer = Renderer::new();
+    let mut times = Vec::new();
+    for i in 0..12 {
+        // A new document each time (the comment differs).
+        let snapshot = Snapshot {
+            html: format!("<!doctype html><!--{i}--><body style='margin:0;font:14px sans-serif'><main>{cards}</main>"),
+            base_url: "http://test/".into(),
+            width: 800,
+            height: 600,
+            device_scale_factor: 1.0,
+            ..Default::default()
+        };
+        let t = std::time::Instant::now();
+        renderer.render(&snapshot, Area::Viewport, Backend::Cpu, &fetcher).unwrap();
+        times.push(t.elapsed().as_secs_f64() * 1000.0);
+    }
+    times.sort_by(f64::total_cmp);
+    println!("ordinary page: min {:.2} ms, median {:.2} ms", times[0], times[times.len() / 2]);
+}

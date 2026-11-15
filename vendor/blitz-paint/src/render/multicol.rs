@@ -39,12 +39,13 @@ impl ElementCx<'_, '_> {
                 UNBOUNDED,
                 (fragment.end as f64 * scale).min(UNBOUNDED),
             );
-            // The column's part of what is visible, for culling its content.
+            // The column's part of what is visible, for culling its content; a column out of
+            // sight is not painted (`Rect::intersect` never gives a negative size: overlap it is).
             let shown = (screen * transform).transform_rect_bbox(range);
-            let column_clip = clip_rect.intersect(shown);
-            if !single && (column_clip.width() < 0.0 || column_clip.height() < 0.0) {
+            if !single && !clip_rect.overlaps(shown) {
                 continue;
             }
+            let column_clip = clip_rect.intersect(shown);
             let pushed = self.context.layer_manager.maybe_push_layer(
                 scene,
                 !single,

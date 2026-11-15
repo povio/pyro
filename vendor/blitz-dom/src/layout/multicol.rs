@@ -110,8 +110,10 @@ impl ColumnFragment {
 
 impl ColumnFragments {
     /// The column that shows strip position `y` (the first one before the strip, the last after).
+    /// A position in a margin truncated at a break (after one column's end, before the next
+    /// one's start) is in the column after the break, where what follows it is shown.
     pub fn fragment_at(&self, y: f32) -> Option<&ColumnFragment> {
-        self.fragments.iter().find(|f| f.shows(y)).or_else(|| self.fragments.last())
+        self.fragments.iter().find(|f| f.shows(y) || f.start > y).or_else(|| self.fragments.last())
     }
 
     /// The move (CSS px) of the column that shows strip position `y` (none past the columns).
@@ -406,13 +408,14 @@ impl LayoutPassState<'_> {
         inline_root: bool,
     ) -> LayoutOutput {
         let dom_id = dom_node_id(node_id);
-        let (multicol, padding, border, margin, size, min_size, max_size) = {
+        let (multicol, padding, border, margin, size, min_size, max_size, clamps_block_size) = {
             let node = &self.nodes[dom_id];
             let Some(style) = node.primary_styles() else {
                 return LayoutOutput::HIDDEN;
             };
             let multicol = Multicol::of(&style);
             let ls = node.layout_style();
+            let clamps_block_size = !ls.min_size().height.is_auto() || !ls.max_size().height.is_auto();
             let parent_width = inputs.parent_size.width;
             let padding = ls.padding().resolve_or_zero(parent_width, resolve_calc_value);
             let border = ls.border().resolve_or_zero(parent_width, resolve_calc_value);
@@ -432,7 +435,7 @@ impl LayoutPassState<'_> {
             } else {
                 (Size::NONE, Size::NONE, Size::NONE)
             };
-            (multicol, padding, border, margin, size, min_size, max_size)
+            (multicol, padding, border, margin, size, min_size, max_size, clamps_block_size)
         };
         let pb = padding + border;
         let pb_sum = pb.sum_axes();
@@ -494,8 +497,11 @@ impl LayoutPassState<'_> {
             self.cache_clear(node_id);
         }
         let content_top = pb.top;
-        let content_end = (strip.size.height - pb.bottom).max(content_top);
-        let breaks = self.doc.multicol_breaks(dom_id, content_top, content_end);
+        // Taffy's block algorithm clamps the strip by the container's `min-height` and
+        // `max-height` whatever the sizing mode: under either, the content's end is taken from
+        // the laid-out content instead (empty space a `min-height` adds is no content to balance).
+        let strip_end = (inline_root || !clamps_block_size).then(|| (strip.size.height - pb.bottom).max(content_top));
+        let breaks = self.doc.multicol_breaks(dom_id, content_top, strip_end);
         // The strip's parts: runs of columns, and the spanners between them (strip ranges).
         let spanners = match spanning {
             Some(_) => self.doc.column_spanner_ranges(dom_id),
@@ -792,10 +798,13 @@ impl BaseDocument {
     }
 
     /// Where the strip of the multi-column container `container` may break, from its laid-out
-    /// content: `start..end` its content.
-    fn multicol_breaks(&self, container: crate::NodeId, start: f32, end: f32) -> Breaks {
+    /// content: `start..end` its content (`start` its content box's top; `end` the strip's
+    /// content end, or `None` to take it from the content: its last in-flow child's bottom
+    /// margin edge, its floats' margin edges).
+    fn multicol_breaks(&self, container: crate::NodeId, start: f32, end: Option<f32>) -> Breaks {
         let mut found = Found::default();
-        self.collect_breaks(container, 0.0, &mut found);
+        self.collect_breaks(container, 0.0, &mut found, Some(start));
+        let end = end.unwrap_or(found.flow_end).max(start);
         // Margins only: a float reaching into the space between two blocks (the second one
         // cleared it) is content there.
         let floats = merge(found.floats);
@@ -810,20 +819,27 @@ impl BaseDocument {
     }
 
     /// Adds what `parent`'s content keeps from breaks, and the margins between its blocks, to
-    /// `found`: `parent`'s border box starts at strip position `top`.
-    fn collect_breaks(&self, parent: crate::NodeId, top: f32, found: &mut Found) {
+    /// `found`: `parent`'s border box starts at strip position `top`. `container_content_top`:
+    /// `parent` is the container, its content box's top at that (its own layout is written by its
+    /// parent after its columns are made: what it holds now is a previous layout's or none).
+    fn collect_breaks(&self, parent: crate::NodeId, top: f32, found: &mut Found, container_content_top: Option<f32>) {
         let node = &self.nodes[parent];
         if node.flags.is_inline_root() {
             let Some(text) = node.element_data().and_then(|e| e.inline_layout_data.as_deref()) else {
                 return;
             };
-            let layout = node.unrounded_layout();
-            let origin = top + layout.padding.top + layout.border.top + text.block_offset;
+            let content_top = container_content_top.unwrap_or_else(|| {
+                let layout = node.unrounded_layout();
+                layout.padding.top + layout.border.top
+            });
+            let origin = top + content_top + text.block_offset;
             let scale = text.layout.scale();
+            // Lines with text or an atomic inline (a line of boxes alone has an empty text
+            // range); parley's empty line after a trailing `<br>` has neither.
             let lines: Vec<(f32, f32)> = text
                 .layout
                 .lines()
-                .filter(|line| !line.text_range().is_empty())
+                .filter(|line| !line.text_range().is_empty() || line.items().next().is_some())
                 .map(|line| {
                     let m = line.metrics();
                     (origin + m.block_min_coord / scale, origin + m.block_max_coord / scale)
@@ -862,6 +878,10 @@ impl BaseDocument {
             let child_top = top + layout.location.y;
             let child_bottom = child_top + layout.size.height;
             found.bottom = found.bottom.max(child_bottom);
+            if container_content_top.is_some() {
+                // The content's end: margin edges (the strip is a formatting context root).
+                found.flow_end = found.flow_end.max(child_bottom + layout.margin.bottom.max(0.0));
+            }
             if style.clone_float() == Float::None {
                 if let Some((bottom, margin)) = previous.filter(|&(b, _)| child_top >= b) {
                     // The collapsed margin, no more (clearance is no margin).
@@ -879,7 +899,7 @@ impl BaseDocument {
                 if style.get_box().break_inside != BreakWithin::Auto {
                     found.strict.push((child_top, child_bottom));
                 }
-                crate::util::ensure_stack(|| self.collect_breaks(child_id, child_top, found));
+                crate::util::ensure_stack(|| self.collect_breaks(child_id, child_top, found, None));
             } else {
                 found.strict.push((child_top, child_bottom));
                 found.loose.push((child_top, child_bottom));
@@ -898,6 +918,8 @@ struct Found {
     floats: Vec<(f32, f32)>,
     /// The furthest bottom of a box or line.
     bottom: f32,
+    /// The furthest bottom margin edge of the container's children.
+    flow_end: f32,
 }
 
 /// Whether a break may go through `node`'s box (a block container that is no scroll container,
@@ -1020,6 +1042,25 @@ mod tests {
         assert_eq!(columns.columns_to_strip(Point { x: 170.0, y: 120.0 }), Point { x: 50.0, y: 220.0 });
         let rect = columns.map_rect(kurbo::Rect::new(0.0, 0.0, 100.0, 200.0), 1.0);
         assert_eq!(rect, kurbo::Rect::new(0.0, 0.0, 220.0, 100.0));
+    }
+
+    #[test]
+    fn a_position_in_a_truncated_margin_is_in_the_column_after_the_break() {
+        // The first column ends at 100 where a margin starts, the second starts past it at 120;
+        // a third follows.
+        let columns = ColumnFragments {
+            fragments: vec![
+                column(f32::NEG_INFINITY, 100.0, 0.0, 0.0, (0.0, 0.0)),
+                column(120.0, 220.0, 120.0, 0.0, (120.0, -120.0)),
+                column(220.0, f32::INFINITY, 240.0, 0.0, (240.0, -220.0)),
+            ],
+        };
+        // An empty box at the margin's start is in the second column, where what follows it is
+        // shown (not in the last).
+        assert_eq!(columns.strip_to_columns(Point { x: 10.0, y: 100.0 }), Point { x: 130.0, y: -20.0 });
+        assert_eq!(columns.shift_at(110.0), (120.0, -120.0));
+        assert_eq!(columns.shift_at(99.0), (0.0, 0.0));
+        assert_eq!(columns.shift_at(230.0), (240.0, -220.0));
     }
 
     #[test]

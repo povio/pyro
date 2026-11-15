@@ -387,10 +387,11 @@ from the root of an upstream checkout at that commit) is the whole diff.
   lies above the strip, the last what lies below it), its content culled to the column. A box a break goes through is
   drawn in each column it reaches, each showing its part: `box-decoration-break: slice` (its border, background,
   shadow and clip path cut at the break, WPT `slice-block-fragmentation-*`, `clip-path-columns-shape-*`). A
-  container whose content fits one column paints as before, without a clip layer. `column-rule` is painted over the
-  border and under the content, in the middle of the gap between neighbouring columns of a row (both have content),
-  as tall as the columns, snapped to whole pixels: `solid` (and the 3D styles, as solid), `double`, `dashed` and
-  `dotted`. Covered by `crates/pyro-render/tests/multicol.rs`.
+  column outside the clip is not painted. A container whose content fits one column paints as before, without a
+  clip layer. `column-rule` is painted over the border and under the content (inside the overflow clip, scrolled
+  with the content), in the middle of the gap between neighbouring columns of a row (both have content), as tall
+  as the columns, snapped to whole pixels: `solid` (and the 3D styles, as solid), `double`, `dashed` and `dotted`.
+  Covered by `crates/pyro-render/tests/multicol.rs`.
 - Backgrounds and box edges, wave 3 of the WPT paint reftests (lane F2); covered by
   `crates/pyro-render/tests/background_images_and_edges.rs`:
   - `src/render/background.rs` (`round_layer_size`): the round step of `background-repeat` scales an axis to a

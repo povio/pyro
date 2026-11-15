@@ -1644,15 +1644,15 @@ impl BaseDocument {
         std::mem::take(&mut self.style_changes)
     }
 
-    /// pyro: whether any node of the document (attached or not) is
-    /// styled `position: sticky`, from the set the style traversal keeps
-    /// (O(sticky nodes), not a scan of the document).
     /// pyro: whether a multi-column container has been laid out in this document (see
     /// `layout::multicol`).
     pub fn has_multicol(&self) -> bool {
         self.has_multicol
     }
 
+    /// pyro: whether any node of the document (attached or not) is
+    /// styled `position: sticky`, from the set the style traversal keeps
+    /// (O(sticky nodes), not a scan of the document).
     pub fn has_sticky(&self) -> bool {
         self.sticky_node_ids().next().is_some()
     }

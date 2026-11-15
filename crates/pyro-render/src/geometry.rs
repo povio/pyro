@@ -238,10 +238,17 @@ impl Geometry {
     }
 
     /// pyro: the border box of `id` in the columns of the nearest multi-column container on its
-    /// containing-block chain (blitz-dom `layout::multicol`): the box cut at the column breaks it
-    /// spans, each piece shown in its column, and the bounding box of the pieces (document CSS
-    /// px), as Chromium unites a box's fragments. `None` when no such container shows it.
+    /// containing-block chain (blitz-dom `layout::multicol`): the bounding box of its pieces
+    /// ([`Geometry::columns_pieces`], document CSS px), as Chromium unites a box's fragments for
+    /// `getBoundingClientRect`. `None` when no such container shows it.
     pub(crate) fn columns_box(&self, doc: &BaseDocument, id: NodeId) -> Option<Rect> {
+        self.columns_pieces(doc, id)?.into_iter().reduce(|a, b| a.union(b))
+    }
+
+    /// pyro: the border box of `id` cut at the column breaks it spans, each piece shown in its
+    /// column (document CSS px; Chromium's fragments, which `getClientRects` lists and hit
+    /// testing tests one by one). `None` when no multi-column container shows it.
+    pub(crate) fn columns_pieces(&self, doc: &BaseDocument, id: NodeId) -> Option<Vec<Rect>> {
         if !doc.has_multicol() {
             return None;
         }
@@ -266,19 +273,19 @@ impl Geometry {
         let (t, _) = self.transform(doc, container.id)?;
         let scroll = container.scroll_offset();
         let base = t * Affine::translate((-scroll.x, -scroll.y));
-        let mut out: Option<Rect> = None;
+        let mut out: Vec<Rect> = Vec::new();
         for f in &columns.fragments {
             let (y0, y1) = (strip.y0.max(f.start as f64), strip.y1.min(f.end as f64));
-            let shows = if strip.height() > 0.0 { y1 > y0 } else { strip.y0 >= f.start as f64 && strip.y0 < f.end as f64 };
+            let shows =
+                if strip.height() > 0.0 { y1 > y0 } else { strip.y0 >= f.start as f64 && strip.y0 < f.end as f64 };
             if !shows {
                 continue;
             }
-            let piece = base.transform_rect_bbox(
+            out.push(base.transform_rect_bbox(
                 Rect::new(strip.x0, y0, strip.x1, y1) + kurbo::Vec2::new(f.offset.x as f64, f.offset.y as f64),
-            );
-            out = Some(out.map_or(piece, |o| o.union(piece)));
+            ));
         }
-        out
+        (!out.is_empty()).then_some(out)
     }
 
     /// The box Blitz lays out for `id`, before the adjustments. A node that
@@ -293,9 +300,9 @@ impl Geometry {
         let (t, fixed) = self.transform(doc, id)?;
         let l = doc.physical_unrounded_layout(id);
         // pyro: a box in columns is the union of its pieces in them.
-        let rect = self.columns_box(doc, id).unwrap_or_else(|| {
-            t.transform_rect_bbox(Rect::new(0.0, 0.0, l.size.width as f64, l.size.height as f64))
-        });
+        let rect = self
+            .columns_box(doc, id)
+            .unwrap_or_else(|| t.transform_rect_bbox(Rect::new(0.0, 0.0, l.size.width as f64, l.size.height as f64)));
         let client_width = (l.size.width - l.border.left - l.border.right - l.scrollbar_size.width).max(0.0) as f64;
         let client_height = (l.size.height - l.border.top - l.border.bottom - l.scrollbar_size.height).max(0.0) as f64;
         // Scrollable overflow is kept in device px.
@@ -769,6 +776,8 @@ impl Geometry {
         let translation_only = a == 1.0 && b == 0.0 && c == 0.0 && d == 1.0;
         if translation_only || is_cell(doc, id) || is_table_part(doc, id) {
             let e = self.element_box(doc, id)?;
+            // pyro: a box split by column breaks has a quad per piece.
+            let pieces = self.columns_pieces(doc, id).filter(|p| p.len() > 1);
             return Some(BoxQuads {
                 border: quad(Affine::IDENTITY, e.rect()),
                 transformed: false,
@@ -777,7 +786,7 @@ impl Geometry {
                 margin,
                 width: e.width,
                 height: e.height,
-                fragments: Vec::new(),
+                fragments: pieces.map_or_else(Vec::new, |p| p.iter().map(|&r| quad(Affine::IDENTITY, r)).collect()),
                 fixed: e.fixed,
             });
         }
@@ -810,7 +819,8 @@ pub struct BoxQuads {
     /// Untransformed border box size.
     pub width: f64,
     pub height: f64,
-    /// One border-box quad per line of an inline box over several lines.
+    /// One border-box quad per line of an inline box over several lines, or per piece of a box
+    /// split by column breaks.
     pub fragments: Vec<[f64; 8]>,
     pub fixed: bool,
 }

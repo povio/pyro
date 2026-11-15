@@ -1612,15 +1612,15 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
 +        std::mem::take(&mut self.style_changes)
 +    }
 +
-+    /// pyro: whether any node of the document (attached or not) is
-+    /// styled `position: sticky`, from the set the style traversal keeps
-+    /// (O(sticky nodes), not a scan of the document).
 +    /// pyro: whether a multi-column container has been laid out in this document (see
 +    /// `layout::multicol`).
 +    pub fn has_multicol(&self) -> bool {
 +        self.has_multicol
 +    }
 +
++    /// pyro: whether any node of the document (attached or not) is
++    /// styled `position: sticky`, from the set the style traversal keeps
++    /// (O(sticky nodes), not a scan of the document).
 +    pub fn has_sticky(&self) -> bool {
 +        self.sticky_node_ids().next().is_some()
 +    }
@@ -7282,7 +7282,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
                      #[cfg(feature = "writing-mode")]
                      let (intrinsic_sizes, default_object_size) =
                          if node.writing_mode().is_vertical() {
-@@ -495,117 +868,148 @@
+@@ -495,119 +868,150 @@
  
                      let mut style = node.layout_style();
                      style.set_percent_basis(orthogonal_percent_basis);
@@ -7410,11 +7410,10 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
              }
 -            NodeData::Document(_) => compute_block_layout(self, node_id, inputs, None),
 +            NodeData::Document(_) => ChildLayout::FlowRoot,
- 
--            _ => taffy::LayoutOutput::HIDDEN,
++
 +            _ => ChildLayout::Done(taffy::LayoutOutput::HIDDEN),
-         }
-     }
++        }
++    }
 +
 +    /// A table root's layout (see [`Self::dispatch_child_layout`]).
 +    #[inline(never)]
@@ -7436,7 +7435,8 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 +            inputs.available_space =
 +                inputs.available_space.maybe_min(max_available_space);
 +        }
-+
+ 
+-            _ => taffy::LayoutOutput::HIDDEN,
 +        let SpecialElementData::TableRoot(context) = &self.nodes[dom_node_id(node_id)]
 +            .data
 +            .downcast_element()
@@ -7482,7 +7482,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 +                    static_position,
 +                });
 +            }
-+        }
+         }
 +
 +        // HACK: Cap scrollable overflow at node size to prevent scrolling
 +        let overflow = output.scrollable_overflow_rect;
@@ -7497,9 +7497,9 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 +        );
 +
 +        output
-+    }
-+}
-+
+     }
+ }
+ 
 +/// pyro: what [`LayoutPassState::dispatch_child_layout`] runs for a box.
 +enum ChildLayout {
 +    /// A leaf box, laid out.
@@ -7514,9 +7514,11 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 +    /// pyro: a multi-column container, whose content is a block or (`inline_root`) an inline
 +    /// formatting context.
 +    Multicol { inline_root: bool },
- }
- 
++}
++
  impl TraversePartialTree for LayoutPassState<'_> {
+     type ChildIter<'a>
+         = RefCellChildIter<'a>
 @@ -667,7 +1071,11 @@
      }
  
@@ -7576,7 +7578,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  impl taffy::CacheTree for LayoutPassState<'_> {
      #[inline]
      fn cache_get(
-@@ -782,16 +1202,42 @@
+@@ -782,16 +1202,48 @@
          self.child_layout_style(self.node_from_id(child_node_id))
      }
  
@@ -7590,6 +7592,12 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 +            local_name!("input") => !matches!(el.attr(local_name!("type")), Some("hidden")),
 +            _ => false,
 +        }
++    }
++
++    fn block_child_establishes_formatting_context(&self, child_node_id: NodeId) -> bool {
++        // pyro: a multi-column container is a block formatting context root (Multi-column
++        // Layout 1 §2), which its parent keeps clear of floats.
++        multicol::is_multicol_node(self.node_from_id(child_node_id))
 +    }
 +
      #[inline(always)]
@@ -7623,7 +7631,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  }
  
-@@ -852,7 +1298,19 @@
+@@ -852,7 +1304,19 @@
      }
  
      fn set_final_layout(&mut self, node_id: NodeId, layout: &Layout) {
@@ -7644,7 +7652,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      fn is_out_of_flow(&self, node_id: NodeId) -> bool {
-@@ -868,6 +1326,30 @@
+@@ -868,6 +1332,30 @@
      fn get_hoisted_child_id(&self, node_id: NodeId, index: usize) -> NodeId {
          taffy_node_id(self.node_from_id(node_id).hoisted_children.borrow()[index])
      }
@@ -7675,7 +7683,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  }
  
  pub(crate) struct TaffyDebugTree<'doc>(pub(crate) &'doc BaseDocument);
-@@ -972,3 +1454,13 @@
+@@ -972,3 +1460,13 @@
          })
      }
  }
@@ -7693,7 +7701,7 @@ diff --git a/packages/blitz-dom/src/layout/multicol.rs b/packages/blitz-dom/src/
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/layout/multicol.rs
-@@ -0,0 +1,1052 @@
+@@ -0,0 +1,1093 @@
 +//! pyro: CSS Multi-column Layout (<https://drafts.csswg.org/css-multicol/>).
 +//!
 +//! A multi-column container lays its content out once, in a strip one column wide (its flow
@@ -7806,8 +7814,10 @@ new file mode 100644
 +
 +impl ColumnFragments {
 +    /// The column that shows strip position `y` (the first one before the strip, the last after).
++    /// A position in a margin truncated at a break (after one column's end, before the next
++    /// one's start) is in the column after the break, where what follows it is shown.
 +    pub fn fragment_at(&self, y: f32) -> Option<&ColumnFragment> {
-+        self.fragments.iter().find(|f| f.shows(y)).or_else(|| self.fragments.last())
++        self.fragments.iter().find(|f| f.shows(y) || f.start > y).or_else(|| self.fragments.last())
 +    }
 +
 +    /// The move (CSS px) of the column that shows strip position `y` (none past the columns).
@@ -8102,13 +8112,14 @@ new file mode 100644
 +        inline_root: bool,
 +    ) -> LayoutOutput {
 +        let dom_id = dom_node_id(node_id);
-+        let (multicol, padding, border, margin, size, min_size, max_size) = {
++        let (multicol, padding, border, margin, size, min_size, max_size, clamps_block_size) = {
 +            let node = &self.nodes[dom_id];
 +            let Some(style) = node.primary_styles() else {
 +                return LayoutOutput::HIDDEN;
 +            };
 +            let multicol = Multicol::of(&style);
 +            let ls = node.layout_style();
++            let clamps_block_size = !ls.min_size().height.is_auto() || !ls.max_size().height.is_auto();
 +            let parent_width = inputs.parent_size.width;
 +            let padding = ls.padding().resolve_or_zero(parent_width, resolve_calc_value);
 +            let border = ls.border().resolve_or_zero(parent_width, resolve_calc_value);
@@ -8128,7 +8139,7 @@ new file mode 100644
 +            } else {
 +                (Size::NONE, Size::NONE, Size::NONE)
 +            };
-+            (multicol, padding, border, margin, size, min_size, max_size)
++            (multicol, padding, border, margin, size, min_size, max_size, clamps_block_size)
 +        };
 +        let pb = padding + border;
 +        let pb_sum = pb.sum_axes();
@@ -8190,8 +8201,11 @@ new file mode 100644
 +            self.cache_clear(node_id);
 +        }
 +        let content_top = pb.top;
-+        let content_end = (strip.size.height - pb.bottom).max(content_top);
-+        let breaks = self.doc.multicol_breaks(dom_id, content_top, content_end);
++        // Taffy's block algorithm clamps the strip by the container's `min-height` and
++        // `max-height` whatever the sizing mode: under either, the content's end is taken from
++        // the laid-out content instead (empty space a `min-height` adds is no content to balance).
++        let strip_end = (inline_root || !clamps_block_size).then(|| (strip.size.height - pb.bottom).max(content_top));
++        let breaks = self.doc.multicol_breaks(dom_id, content_top, strip_end);
 +        // The strip's parts: runs of columns, and the spanners between them (strip ranges).
 +        let spanners = match spanning {
 +            Some(_) => self.doc.column_spanner_ranges(dom_id),
@@ -8488,10 +8502,13 @@ new file mode 100644
 +    }
 +
 +    /// Where the strip of the multi-column container `container` may break, from its laid-out
-+    /// content: `start..end` its content.
-+    fn multicol_breaks(&self, container: crate::NodeId, start: f32, end: f32) -> Breaks {
++    /// content: `start..end` its content (`start` its content box's top; `end` the strip's
++    /// content end, or `None` to take it from the content: its last in-flow child's bottom
++    /// margin edge, its floats' margin edges).
++    fn multicol_breaks(&self, container: crate::NodeId, start: f32, end: Option<f32>) -> Breaks {
 +        let mut found = Found::default();
-+        self.collect_breaks(container, 0.0, &mut found);
++        self.collect_breaks(container, 0.0, &mut found, Some(start));
++        let end = end.unwrap_or(found.flow_end).max(start);
 +        // Margins only: a float reaching into the space between two blocks (the second one
 +        // cleared it) is content there.
 +        let floats = merge(found.floats);
@@ -8506,20 +8523,27 @@ new file mode 100644
 +    }
 +
 +    /// Adds what `parent`'s content keeps from breaks, and the margins between its blocks, to
-+    /// `found`: `parent`'s border box starts at strip position `top`.
-+    fn collect_breaks(&self, parent: crate::NodeId, top: f32, found: &mut Found) {
++    /// `found`: `parent`'s border box starts at strip position `top`. `container_content_top`:
++    /// `parent` is the container, its content box's top at that (its own layout is written by its
++    /// parent after its columns are made: what it holds now is a previous layout's or none).
++    fn collect_breaks(&self, parent: crate::NodeId, top: f32, found: &mut Found, container_content_top: Option<f32>) {
 +        let node = &self.nodes[parent];
 +        if node.flags.is_inline_root() {
 +            let Some(text) = node.element_data().and_then(|e| e.inline_layout_data.as_deref()) else {
 +                return;
 +            };
-+            let layout = node.unrounded_layout();
-+            let origin = top + layout.padding.top + layout.border.top + text.block_offset;
++            let content_top = container_content_top.unwrap_or_else(|| {
++                let layout = node.unrounded_layout();
++                layout.padding.top + layout.border.top
++            });
++            let origin = top + content_top + text.block_offset;
 +            let scale = text.layout.scale();
++            // Lines with text or an atomic inline (a line of boxes alone has an empty text
++            // range); parley's empty line after a trailing `<br>` has neither.
 +            let lines: Vec<(f32, f32)> = text
 +                .layout
 +                .lines()
-+                .filter(|line| !line.text_range().is_empty())
++                .filter(|line| !line.text_range().is_empty() || line.items().next().is_some())
 +                .map(|line| {
 +                    let m = line.metrics();
 +                    (origin + m.block_min_coord / scale, origin + m.block_max_coord / scale)
@@ -8558,6 +8582,10 @@ new file mode 100644
 +            let child_top = top + layout.location.y;
 +            let child_bottom = child_top + layout.size.height;
 +            found.bottom = found.bottom.max(child_bottom);
++            if container_content_top.is_some() {
++                // The content's end: margin edges (the strip is a formatting context root).
++                found.flow_end = found.flow_end.max(child_bottom + layout.margin.bottom.max(0.0));
++            }
 +            if style.clone_float() == Float::None {
 +                if let Some((bottom, margin)) = previous.filter(|&(b, _)| child_top >= b) {
 +                    // The collapsed margin, no more (clearance is no margin).
@@ -8575,7 +8603,7 @@ new file mode 100644
 +                if style.get_box().break_inside != BreakWithin::Auto {
 +                    found.strict.push((child_top, child_bottom));
 +                }
-+                crate::util::ensure_stack(|| self.collect_breaks(child_id, child_top, found));
++                crate::util::ensure_stack(|| self.collect_breaks(child_id, child_top, found, None));
 +            } else {
 +                found.strict.push((child_top, child_bottom));
 +                found.loose.push((child_top, child_bottom));
@@ -8594,6 +8622,8 @@ new file mode 100644
 +    floats: Vec<(f32, f32)>,
 +    /// The furthest bottom of a box or line.
 +    bottom: f32,
++    /// The furthest bottom margin edge of the container's children.
++    flow_end: f32,
 +}
 +
 +/// Whether a break may go through `node`'s box (a block container that is no scroll container,
@@ -8716,6 +8746,25 @@ new file mode 100644
 +        assert_eq!(columns.columns_to_strip(Point { x: 170.0, y: 120.0 }), Point { x: 50.0, y: 220.0 });
 +        let rect = columns.map_rect(kurbo::Rect::new(0.0, 0.0, 100.0, 200.0), 1.0);
 +        assert_eq!(rect, kurbo::Rect::new(0.0, 0.0, 220.0, 100.0));
++    }
++
++    #[test]
++    fn a_position_in_a_truncated_margin_is_in_the_column_after_the_break() {
++        // The first column ends at 100 where a margin starts, the second starts past it at 120;
++        // a third follows.
++        let columns = ColumnFragments {
++            fragments: vec![
++                column(f32::NEG_INFINITY, 100.0, 0.0, 0.0, (0.0, 0.0)),
++                column(120.0, 220.0, 120.0, 0.0, (120.0, -120.0)),
++                column(220.0, f32::INFINITY, 240.0, 0.0, (240.0, -220.0)),
++            ],
++        };
++        // An empty box at the margin's start is in the second column, where what follows it is
++        // shown (not in the last).
++        assert_eq!(columns.strip_to_columns(Point { x: 10.0, y: 100.0 }), Point { x: 130.0, y: -20.0 });
++        assert_eq!(columns.shift_at(110.0), (120.0, -120.0));
++        assert_eq!(columns.shift_at(99.0), (0.0, 0.0));
++        assert_eq!(columns.shift_at(230.0), (240.0, -220.0));
 +    }
 +
 +    #[test]

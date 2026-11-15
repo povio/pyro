@@ -1073,18 +1073,31 @@ Tests: `generated_content` in pyro-render; `first_letter` and `counters` unit te
   container's content box (`LayoutPassState::column_spanners`, read by `adjusted_child_inputs`) and is a row of its
   own: the content before it is balanced into a row of columns above it, the content after it into a row below.
 - The container is its own block formatting context (its children's margins stay inside; its own do not collapse
-  with them), and a paint layer root (`paint_tree.rs` `is_paint_layer_root`): its positioned descendants paint in its
-  columns. A z-indexed descendant hoisted past it is placed through its columns (`hoisted_child_position`).
+  with them), and its parent keeps it clear of floats as it does a `flow-root` (Taffy's
+  `block_child_establishes_formatting_context`, answered in `layout/mod.rs`). A `min-height` or `max-height` of the
+  container clamps the strip Taffy lays out, so under either the content's end is taken from the laid-out content
+  (its children's margin edges) instead. It is a paint layer root (`paint_tree.rs` `is_paint_layer_root`): its
+  positioned descendants paint in its columns. A z-indexed descendant hoisted past it is placed through its columns
+  (`hoisted_child_position`). Known deviation: its `z-index: auto` positioned descendants and its non-positioned
+  stacking contexts paint at the container's place in in-flow order, not at the enclosing stacking context's
+  positioned step, so a later in-flow sibling's background covers them where they reach past it, and an earlier
+  positioned sibling covers them; an out-of-flow box whose containing block is the container is moved through its
+  columns too (Chromium does not fragment those).
 - Mapped through the columns: the scrollable overflow and hit bound (`resolve.rs`: the content's extent, cut at the
   breaks and moved to the columns, added to the padding box), hit testing (`Node::hit_inner`: the point the column
   under it shows), `absolute_position` and `physical_unrounded_geometry` (a box is placed in the column whose range
-  holds its own origin). `BaseDocument::has_multicol` tells pyro-render's geometry queries that columns exist.
+  holds its own origin; an origin in a margin truncated at a break, in the column after the break).
+  `BaseDocument::has_multicol` tells pyro-render's geometry queries that columns exist (it is never cleared).
+  pyro-render's `Geometry::columns_pieces` cuts a box at the breaks: `getBoundingClientRect` reports the union of the
+  pieces, `getClientRects` one rect per piece, and pyro-dom hit-tests each piece.
 - A container laid out to measure it (a `ComputeSize` run) writes its strip's layouts at that width, so it clears its
-  own layout cache: its final layout runs again and puts them back.
+  own layout cache: its final layout runs again and puts them back. This relies on the container's final layout
+  running after a measure in the same pass; an ancestor whose own final layout hits its cache after a measure missed
+  would leave the strip at the measured width (no page doing so is known).
 - Not supported: spanners deeper in the content (laid out in a column), forced breaks
   (`break-before: column`; Stylo has no `column` value), fragmenting monolithic boxes such as tables between rows,
-  and vertical writing modes (laid out as one column). A box split by a break keeps one box in queries, at its first
-  fragment.
+  and vertical writing modes (laid out as one column). In blitz-dom's own geometry a box split by a break is placed
+  at the column of its origin.
 
 Tests: `layout::multicol` unit tests here (column count and width, balancing, breaks, the mapping);
 `crates/pyro-render/tests/multicol.rs` (pixels) and `crates/pyro-layout/tests/multicol.rs` (geometry and hit

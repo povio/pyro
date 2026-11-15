@@ -1214,6 +1214,12 @@ impl taffy::LayoutBlockContainer for LayoutPassState<'_> {
         }
     }
 
+    fn block_child_establishes_formatting_context(&self, child_node_id: NodeId) -> bool {
+        // pyro: a multi-column container is a block formatting context root (Multi-column
+        // Layout 1 §2), which its parent keeps clear of floats.
+        multicol::is_multicol_node(self.node_from_id(child_node_id))
+    }
+
     #[inline(always)]
     fn compute_block_child_layout(
         &mut self,
