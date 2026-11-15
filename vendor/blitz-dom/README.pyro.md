@@ -945,11 +945,6 @@ generalizes `with_root_size`. Tests: `an_svg_view_fragment_shows_the_view` and
 `an_svg_background_without_a_size_is_laid_out_at_the_background_size` in pyro-render's
 `background_images_and_edges.rs`.
 
-`SvgImageData::sized` keeps the trees it parsed, the last eight by source and size, in a cache the image's clones
-share (`sized_cache`; every element showing an image has a clone): each paint parsed every such background and
-inline `<svg>` again, once per element. A source set on a clone later is not answered from the old one's trees
-(the entry keeps its source, compared by pointer). Test: `a_size_is_parsed_once_for_every_clone` in `src/node/svg.rs`.
-
 ## Links to the document itself are visited
 
 `src/node/element.rs` (`ElementData::flush_link_visited`), `src/mutator.rs` (`create_element`, `set_attribute_impl`,
