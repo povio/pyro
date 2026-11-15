@@ -142,11 +142,6 @@ struct Boxes {
 enum Pass {
     /// Writes ids on the elements whose boxes are needed.
     Boxes,
-    /// The same, for boxes the first pass's document did not have (in a `<mask>` that nothing
-    /// in this `<svg>` references, which usvg leaves out of its tree): the elements that are
-    /// not rendered themselves (`<mask>`, `<clipPath>`, ...) are groups, and no element has a
-    /// clip path, mask or filter (whose reference to such a group would leave it out).
-    Probe,
     Final,
 }
 
@@ -200,20 +195,6 @@ pub(crate) fn svg_source(root: &Node) -> String {
     let first = writer.finish();
     if let Ok(svg) = crate::util::parse_svg_image(first.as_bytes()) {
         writer.boxes = collect_boxes(&svg.tree, &writer.box_ids);
-    }
-    if writer.box_ids.values().any(|id| !writer.boxes.contains_key(id)) {
-        writer.out.clear();
-        writer.defs.clear();
-        writer.next_id = 0;
-        writer.box_ids.clear();
-        writer.pass = Pass::Probe;
-        writer.write_node(root, 0);
-        let probe = writer.finish();
-        if let Ok(svg) = crate::util::parse_svg_image(probe.as_bytes()) {
-            for (id, boxes) in collect_boxes(&svg.tree, &writer.box_ids) {
-                writer.boxes.entry(id).or_insert(boxes);
-            }
-        }
     }
     writer.out.clear();
     writer.defs.clear();
@@ -714,15 +695,7 @@ impl Writer<'_> {
                 }
             }
         }
-        if is_svg && !is_root && self.pass == Pass::Probe {
-            // The probe is for boxes, which no clip path, mask or filter changes: none is
-            // written (the elements they reference are groups in it, see below, and usvg leaves
-            // out an element whose reference is not of its kind).
-            for name in ["clip-path", "mask", "filter"] {
-                rewrites.retain(|r| r.name != name);
-                rewrites.push(Rewrite { name, value: None, in_style: true });
-            }
-        } else if is_svg && !is_root {
+        if is_svg && !is_root {
             self.invalid_reference_rewrites(data, &mut rewrites);
             // A transform attribute that is no transform list (`rotate(90,)`) is ignored, as
             // in Chromium; usvg reads some of them.
@@ -748,17 +721,6 @@ impl Writer<'_> {
             let id = self.new_id("compose");
             let _ = write!(self.out, "<g id=\"__pyro_compose_pluslighter_{}\">", &id["__pyro_compose_".len()..]);
         }
-        // The probe writes the elements that are not rendered themselves as groups, so that usvg
-        // has the boxes of their content too (a `<mask>` nothing in this `<svg>` references is
-        // not in its tree; a CSS reference from a box draws it).
-        let tag = match tag {
-            "mask" | "clipPath" | "pattern" | "marker" | "symbol" | "defs"
-                if self.pass == Pass::Probe && is_svg && !is_root =>
-            {
-                "g"
-            }
-            tag => tag,
-        };
         self.out.push('<');
         self.out.push_str(tag);
         if is_root && !data.attrs().iter().any(|attr| is_xlink_ns_decl(&attr.name)) {
@@ -900,7 +862,7 @@ impl Writer<'_> {
     /// pass, an id for it to be found by.
     fn boxes(&mut self, node: &Node, data: &ElementData, temp_id: &mut Option<String>) -> Boxes {
         match self.pass {
-            Pass::Boxes | Pass::Probe => {
+            Pass::Boxes => {
                 self.needs_boxes = true;
                 let id = match (data.attr(local_name!("id")), temp_id.as_ref()) {
                     (_, Some(id)) => id.clone(),
@@ -1114,7 +1076,7 @@ impl Writer<'_> {
         // could leave the element out of usvg's tree, and so without the box
         // this pass is for.
         let from_boxes = !matches!(geometry_box, ShapeGeometryBox::ViewBox);
-        let (Some(reference), false) = (reference, from_boxes && self.pass != Pass::Final) else {
+        let (Some(reference), false) = (reference, from_boxes && self.pass == Pass::Boxes) else {
             return;
         };
         let element = match &shape {
@@ -1311,7 +1273,7 @@ impl Writer<'_> {
         // The boxes, from the first pass; nothing is masked in it (a mask could leave the element
         // out of usvg's tree, and so without the box this pass is for).
         let boxes = self.boxes(node, data, temp_id);
-        if self.pass != Pass::Final {
+        if self.pass == Pass::Boxes {
             return true;
         }
         let mut layers = Vec::with_capacity(sources.len());

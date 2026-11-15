@@ -221,16 +221,3 @@ fn the_roots_perspective_flattens_a_childs_depth() {
     assert_eq!(px(&img, 75, 75), GREEN);
     assert_eq!(px(&img, 50, 50), WHITE);
 }
-
-#[test]
-fn a_shape_in_an_unreferenced_mask_gets_its_box() {
-    // The `<mask>` is referenced from a box only; its rect's `circle()` clip needs the rect's
-    // box, which usvg's tree of the `<svg>` alone did not have (WPT mask-image-3h).
-    let img = render(
-        r##"<svg height="0" style="position: absolute"><mask id="m" x="0" y="0" width="1" height="1">
-            <rect width="50" height="50" fill="white" clip-path="circle(50% at 50% 50%)"/></mask></svg>
-        <div style="width: 100px; height: 100px; background: blue; mask-image: url(#m)"></div>"##,
-    );
-    assert_eq!(px(&img, 25, 25), BLUE);
-    assert_eq!(px(&img, 2, 2), WHITE);
-}

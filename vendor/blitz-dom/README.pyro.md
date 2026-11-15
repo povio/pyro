@@ -153,11 +153,7 @@ attributes and the `<style>` sheets inside the SVG, but never saw the page's she
   `svg-empty-element-with-filter-001`), where usvg keeps the group its filter makes and a flood would show. An empty
   `<g>`'s filter still renders.
 - Fill and stroke boxes are the elements' bounding boxes from usvg: when an element needs one, the subtree is
-  written twice, the first time with ids on those elements, and parsed (cached) for them. When that first
-  document leaves some out (an element in a `<mask>` nothing in the `<svg>` references, which a box's
-  `mask-image: url(#m)` uses: usvg's tree has no such mask), it is written once more as a probe: `<mask>`,
-  `<clipPath>`, `<pattern>`, `<marker>`, `<symbol>` and `<defs>` as groups, and no clip path, mask or filter on any
-  element (WPT `mask-image-3h`).
+  written twice, the first time with ids on those elements, and parsed (cached) for them.
 - `filter` is written as the attribute, not in the `style` attribute: usvg's `style` tokenizer ends a value at its
   first `)`, which cut `drop-shadow(rgb(0, 128, 0) 50px 0px 0px)` short and left the element unfiltered. Drop shadows
   are written with their colour resolved to `rgba()` (usvg knows neither `currentcolor` nor `color-mix()`).
