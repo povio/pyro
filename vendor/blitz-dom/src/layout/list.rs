@@ -101,10 +101,10 @@ fn node_list_item_child(
     let list_style_position = styles.clone_list_style_position();
     // pyro: an outside item's loaded `list-style-image` is its marker; while it loads, when it
     // fails and inside the item (not supported), the `list-style-type` marker is.
-    let image = match list_style_position {
-        ListStylePosition::Outside => node.element_data().and_then(image_marker),
-        ListStylePosition::Inside => None,
-    };
+    // pyro: inside the item too (a box at the start of its first line, `inline::build`), and
+    // at the resolution of an `image-set()` option.
+    let resolution = crate::util::image_resolution(&styles.get_list().list_style_image);
+    let image = node.element_data().and_then(|element| image_marker(element, resolution));
     let mut marker = match image {
         Some(image) => image,
         None => marker_for_style(list_style_type, index)?,
@@ -167,14 +167,14 @@ fn node_list_item_child(
 }
 
 /// pyro: the marker an item's `list-style-image` makes once it has loaded: its natural size.
-fn image_marker(element: &crate::node::ElementData) -> Option<Marker> {
+fn image_marker(element: &crate::node::ElementData, resolution: f32) -> Option<Marker> {
     use crate::node::{ImageData, Status};
     let image = element.list_style_images.first()?.as_ref()?;
     if !matches!(image.status, Status::Ok) {
         return None;
     }
     let (width, height) = match &image.image {
-        ImageData::Raster(raster) => (raster.width as f32, raster.height as f32),
+        ImageData::Raster(raster) => (raster.width as f32 / resolution, raster.height as f32 / resolution),
         #[cfg(feature = "svg")]
         ImageData::Svg(svg) => (svg.tree.size().width(), svg.tree.size().height()),
         _ => return None,

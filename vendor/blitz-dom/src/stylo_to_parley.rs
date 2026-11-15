@@ -313,6 +313,10 @@ pub(crate) fn font_variant_east_asian(
 pub(crate) fn font_features(font_styles: &stylo::Font) -> Vec<parley::FontFeature> {
     let mut features = Vec::new();
 
+    // pyro: `font-kerning` and `font-variant-alternates` were not applied.
+    self::font_kerning(font_styles.font_kerning, &mut features);
+    self::font_variant_alternates(font_styles, &mut features);
+
     self::font_variant_ligatures(font_styles.font_variant_ligatures, &mut features);
     self::font_variant_caps(font_styles.font_variant_caps, &mut features);
     self::font_variant_numeric(font_styles.font_variant_numeric, &mut features);
@@ -321,10 +325,133 @@ pub(crate) fn font_features(font_styles: &stylo::Font) -> Vec<parley::FontFeatur
 
     self::font_feature_settings(&font_styles.font_feature_settings, &mut features);
 
+    // pyro: the last setting of a tag wins (`font-feature-settings` over `font-variant-*`);
+    // `dedup_by_key` kept the first.
     features.sort_by_key(|feature| feature.tag);
+    features.reverse();
     features.dedup_by_key(|feature| feature.tag);
+    features.reverse();
 
     features
+}
+
+/// pyro: `font-kerning`: `none` turns the `kern` feature off, `normal` on (`auto` leaves it to
+/// the shaper, which kerns).
+pub(crate) fn font_kerning(
+    input: style::values::computed::font::FontKerning,
+    out: &mut Vec<parley::FontFeature>,
+) {
+    use style::values::computed::font::FontKerning;
+    match input {
+        FontKerning::Auto => {}
+        FontKerning::None => out.push(feature(b"kern", 0)),
+        FontKerning::Normal => out.push(feature(b"kern", 1)),
+    }
+}
+
+thread_local! {
+    /// pyro: the document's `@font-feature-values` rules, in cascade order, for the layout
+    /// running on this thread (`set_font_feature_values`): `font-variant-alternates` names
+    /// its values through them.
+    static FONT_FEATURE_VALUES: std::cell::RefCell<Vec<style::servo_arc::Arc<style::stylesheets::FontFeatureValuesRule>>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// pyro: gives the conversions on this thread the document's `@font-feature-values` rules.
+pub(crate) fn set_font_feature_values(
+    rules: Vec<style::servo_arc::Arc<style::stylesheets::FontFeatureValuesRule>>,
+) {
+    FONT_FEATURE_VALUES.with(|slot| *slot.borrow_mut() = rules);
+}
+
+/// pyro: `font-variant-alternates` as OpenType features (CSS Fonts 4 §6.8): `historical-forms`
+/// is `hist`; the functions name values of the `@font-feature-values` rules for a family of the
+/// element's `font-family` (`stylistic(x)` is `salt <n>`, `styleset(x)` `ssNN`,
+/// `character-variant(x)` `cvNN <n>`, `swash(x)` `swsh <n>` and `cswh <n>`, `ornaments(x)`
+/// `ornm <n>`, `annotation(x)` `nalt <n>`). A name no rule defines sets nothing.
+pub(crate) fn font_variant_alternates(font_styles: &stylo::Font, out: &mut Vec<parley::FontFeature>) {
+    use style::values::specified::font::VariantAlternates as V;
+    let alternates = &font_styles.font_variant_alternates;
+    if alternates.is_empty() {
+        return;
+    }
+    let families: Vec<String> = font_styles
+        .font_family
+        .families
+        .list
+        .iter()
+        .filter_map(|family| match family {
+            stylo::SingleFontFamily::FamilyName(name) => Some(name.name.to_string().to_ascii_lowercase()),
+            stylo::SingleFontFamily::Generic(_) => None,
+        })
+        .collect();
+    FONT_FEATURE_VALUES.with(|rules| {
+        let rules = rules.borrow();
+        let rules: Vec<_> = rules
+            .iter()
+            .filter(|rule| {
+                rule.family_names
+                    .iter()
+                    .any(|family| families.iter().any(|f| family.name.to_string().eq_ignore_ascii_case(f)))
+            })
+            .collect();
+        // The last rule that defines a name wins.
+        macro_rules! lookup {
+            ($block:ident, $name:expr) => {
+                rules
+                    .iter()
+                    .rev()
+                    .find_map(|rule| rule.$block.iter().rev().find(|d| d.name == $name.0).map(|d| &d.value))
+            };
+        }
+        let numbered = |prefix: &[u8; 2], number: u32, value: u16| {
+            (1..=99).contains(&number).then(|| {
+                let tag = [prefix[0], prefix[1], b'0' + (number / 10) as u8, b'0' + (number % 10) as u8];
+                feature(&tag, value)
+            })
+        };
+        let small = |value: u32| value.min(u16::MAX as u32) as u16;
+        for alternate in alternates.iter() {
+            match alternate {
+                V::HistoricalForms => out.push(feature(b"hist", 1)),
+                V::Stylistic(name) => {
+                    if let Some(value) = lookup!(stylistic, name) {
+                        out.push(feature(b"salt", small(value.0)));
+                    }
+                }
+                V::Swash(name) => {
+                    if let Some(value) = lookup!(swash, name) {
+                        out.push(feature(b"swsh", small(value.0)));
+                        out.push(feature(b"cswh", small(value.0)));
+                    }
+                }
+                V::Ornaments(name) => {
+                    if let Some(value) = lookup!(ornaments, name) {
+                        out.push(feature(b"ornm", small(value.0)));
+                    }
+                }
+                V::Annotation(name) => {
+                    if let Some(value) = lookup!(annotation, name) {
+                        out.push(feature(b"nalt", small(value.0)));
+                    }
+                }
+                V::Styleset(names) => {
+                    for name in names.iter() {
+                        if let Some(values) = lookup!(styleset, name) {
+                            out.extend(values.0.iter().filter_map(|n| numbered(b"ss", *n, 1)));
+                        }
+                    }
+                }
+                V::CharacterVariant(names) => {
+                    for name in names.iter() {
+                        if let Some(value) = lookup!(character_variant, name) {
+                            out.extend(numbered(b"cv", value.0, small(value.1.unwrap_or(1))));
+                        }
+                    }
+                }
+            }
+        }
+    });
 }
 
 pub(crate) fn base_direction(

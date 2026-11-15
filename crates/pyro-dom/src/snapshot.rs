@@ -393,6 +393,9 @@ impl Dom {
                         None
                     };
                     let input_type = (html && local == "input").then(|| self.input_type_idx(n));
+                    // The source an `<img>` selected from `srcset` or `<picture>` is its `src`
+                    // to the renderer, which reads no other.
+                    let image_source = (html && local == "img").then(|| self.image_source(id)).flatten();
                     let mut attrs: Vec<RAttr<'_>> = Vec::with_capacity(e.attrs.len() + 1);
                     for a in &e.attrs {
                         let name: &str = &a.name.local;
@@ -408,6 +411,7 @@ impl Dom {
                                 ("option", "selected") => html,
                                 ("link", "href") => href.is_some(),
                                 ("iframe" | "frame", "src" | "srcdoc") => html,
+                                ("img", "src") => image_source.is_some(),
                                 _ => false,
                             };
                             if skip {
@@ -423,6 +427,9 @@ impl Dom {
                     let plain = |local: &str| Cow::Owned(QualName::new(None, ns!(), local.into()));
                     if let Some(href) = href {
                         attrs.push(RAttr { name: plain("href"), value: Cow::Owned(href), valueless: false });
+                    }
+                    if let Some(source) = image_source {
+                        attrs.push(RAttr { name: plain("src"), value: Cow::Borrowed(source), valueless: false });
                     }
                     if let Some(ty) = input_type {
                         if matches!(ty, InputType::Checkbox | InputType::Radio) {

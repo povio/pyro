@@ -508,6 +508,8 @@ impl DocumentMutator<'_> {
         if (tag, attr) == tag_and_attr!("input", "checked") {
             set_input_checked_state(element, value.to_string());
         } else if (tag, attr) == tag_and_attr!("img", "src")
+            // pyro: an `<embed>`'s image.
+            || (tag, attr) == tag_and_attr!("embed", "src")
             // pyro: an image button fetches its `src` like `<img>`;
             // `type` becoming "image" starts the load (HTML "image button
             // state": the type changing to Image Button updates the image data).
@@ -1547,6 +1549,9 @@ impl<'doc> DocumentMutator<'doc> {
                         .push(SpecialOp::ProcessButtonInput(node_id));
                     self.form_nodes.insert(node_id);
                 }
+                // pyro: an `<embed>` shows the image its `src` names, as an `<img>` does (nested
+                // documents and plugins in it are not done).
+                "embed" => self.eager_op_queue.push(SpecialOp::LoadImage(node_id)),
                 "iframe" => self.eager_op_queue.push(SpecialOp::LoadIframe(node_id)),
                 // pyro: an `<object>` loads the image its `data` names (`load_image`), and is a
                 // form-associated element like those below.

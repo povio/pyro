@@ -194,6 +194,16 @@ may be negative, as Blink takes it (the clip edge moves inwards; WPT `css-overfl
 `crates/pyro-render/tests/overflow_clip.rs`.
 - `values/specified/text.rs` (`WordBreak::Manual`): `word-break: manual` (CSS Text 4) is parsed for the servo engine.
   blitz-dom lays it out as `normal` without dictionary breaks in Southeast Asian scripts (its README.pyro.md).
+`values/specified/image.rs` (`Color::has_modern_syntax`): a colour with a missing component
+(`rgb(none 255 0)`) is modern syntax, so a gradient with one interpolates in Oklab by default, as in
+Chromium (WPT `gradient-eval-004`, `gradient-analogous-missing-components-*`). Stylo's legacy flag says
+how the colour serializes. Test: `a_colour_with_a_missing_component_makes_the_gradient_oklab` in
+`crates/pyro-render/tests/gradient_stops_image_set.rs`.
+
+`properties/longhands.toml`, `values/specified/basic_shape.rs` (`ClipPath::parse_object_view_box`): the
+`object-view-box` longhand (CSS Images 5; `none | inset() | rect() | xywh()`), kept as a `clip-path` value of
+`none` or one rectangle, animated discretely. blitz-dom reads it (`util::object_view_box`). Tests:
+`crates/pyro-render/tests/object_view_box_embed.rs`.
 
 ## Updating or dropping the patch
 

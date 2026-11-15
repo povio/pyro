@@ -753,7 +753,18 @@ impl BaseDocument {
     }
 
     /// Ensure that the layout_children field is populated for all nodes
+    /// pyro: the `@font-feature-values` rules in effect, for the style conversions of the
+    /// layout about to run on this thread (`font-variant-alternates`).
+    fn publish_font_feature_values(&self) {
+        let mut rules = Vec::new();
+        for (data, _origin) in self.stylist.iter_extra_data_origins() {
+            rules.extend(data.font_feature_values.iter().map(|(rule, _layer)| rule.clone()));
+        }
+        crate::stylo_to_parley::set_font_feature_values(rules);
+    }
+
     pub fn resolve_layout_children(&mut self) {
+        self.publish_font_feature_values();
         // pyro: the boxes that left a container's list this pass and that no container
         // collected again are out of the layout tree, with what their subtrees built
         // (`BaseDocument::leave_layout_tree`).

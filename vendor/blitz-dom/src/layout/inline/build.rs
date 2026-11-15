@@ -428,8 +428,23 @@ fn build_inline_layout_with(
                 builder.pop_style_span();
             }
             Marker::String(str) => builder.push_text(str),
-            // (Image markers are outside only: `layout::list`.)
-            Marker::Image { .. } => {}
+            // pyro: an image marker inside the item: room for it at the start of the first
+            // line, as a run of no size of its own that is as tall as the image above the
+            // baseline and as wide as it plus Blink's 7px after a marker (blitz-paint draws
+            // the image there, `draw_inside_marker_image`).
+            Marker::Image { width, height } => {
+                let mut marker_style = parley_style.clone();
+                marker_style.font_size = 0.01;
+                marker_style.line_height = parley::LineHeight::Absolute(*height);
+                marker_style.letter_spacing = *width + 7.0;
+                marker_style.vertical_align = parley::VerticalAlign {
+                    alignment: parley::AlignmentBaseline::Baseline,
+                    shift: parley::BaselineShift::Length(*height / 2.0),
+                };
+                builder.push_style_span(marker_style);
+                builder.push_text("\u{a0}");
+                builder.pop_style_span();
+            }
         }
     };
     // The marker is a separate box, so words in the content don't continue from it.

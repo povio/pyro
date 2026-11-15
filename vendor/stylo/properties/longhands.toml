@@ -1440,6 +1440,17 @@ boxed = true
 spec = "https://drafts.csswg.org/css-images-3/#the-object-position"
 affects = "layout"
 
+# pyro: `object-view-box: none | <basic-shape-rect>` (CSS Images 5): the part of a replaced
+# element's content that is its view, as a `clip-path` value of `none` or one rectangle.
+[object-view-box]
+type = "basic_shape::ClipPath"
+initial = "generics::basic_shape::ClipPath::None"
+struct = "position"
+parse_method = "parse_object_view_box"
+animation_type = "discrete"
+spec = "https://drafts.csswg.org/css-images-5/#the-object-view-box"
+affects = "layout"
+
 [offset-anchor]
 type = "PositionOrAuto"
 initial = "computed::PositionOrAuto::auto()"
@@ -3913,9 +3924,9 @@ affects = "layout"
 type = "TextOrientation"
 initial = "computed::TextOrientation::Mixed"
 
+# pyro: for Servo too (blitz-dom and blitz-paint show an image turned back under `none`).
 [image-orientation]
 struct = "inherited_box"
-engine = "gecko"
 spec = "https://drafts.csswg.org/css-images/#propdef-image-orientation"
 animation_type = "discrete"
 affects = "layout"

@@ -276,6 +276,9 @@ pub struct Dom {
     pub(crate) nonces: crate::nonce::NonceState,
     /// Natural sizes of loaded `<img>` elements, set by the embedder.
     natural_sizes: rustc_hash::FxHashMap<NodeId, (f64, f64)>,
+    /// The source an `<img>` selected from its `srcset` or its `<picture>`'s `<source>`s (the URL
+    /// as written), set by the image loader: what a render snapshot gives as the image's `src`.
+    image_sources: rustc_hash::FxHashMap<NodeId, String>,
     /// Named access on the Window, per document (see `window_names`).
     pub(crate) window_names: std::cell::RefCell<rustc_hash::FxHashMap<u32, crate::window_names::WindowNames>>,
     /// Attr nodes of an element's attributes, by element slot (see `attr_node`).
@@ -345,6 +348,7 @@ impl Dom {
             details: Default::default(),
             nonces: Default::default(),
             natural_sizes: Default::default(),
+            image_sources: Default::default(),
             window_names: Default::default(),
             attr_nodes: Default::default(),
         }
@@ -445,6 +449,26 @@ impl Dom {
         let changed = match size {
             Some(s) => self.natural_sizes.insert(el, s) != Some(s),
             None => self.natural_sizes.remove(&el).is_some(),
+        };
+        if changed {
+            self.bump();
+            self.note(Change::Attr(i, 0, false));
+        }
+    }
+    /// The source the image loader selected for an `<img>` from `srcset` or `<picture>`.
+    pub fn image_source(&self, el: NodeId) -> Option<&str> {
+        self.image_sources.get(&el).map(String::as_str)
+    }
+    /// Records or clears it; a change is journaled like an attribute change of the image.
+    pub fn set_image_source(&mut self, el: NodeId, source: Option<&str>) {
+        let Ok(i) = self.check(el) else { return };
+        let changed = match source {
+            Some(s) if self.image_sources.get(&el).is_some_and(|old| old == s) => false,
+            Some(s) => {
+                self.image_sources.insert(el, s.to_owned());
+                true
+            }
+            None => self.image_sources.remove(&el).is_some(),
         };
         if changed {
             self.bump();

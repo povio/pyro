@@ -37,6 +37,25 @@ pub use crate::values::generics::basic_shape::FillRule;
 /// A specified `clip-path` value.
 pub type ClipPath = generic::GenericClipPath<BasicShape, SpecifiedUrl>;
 
+impl ClipPath {
+    /// pyro: `object-view-box`: `none`, or `inset()`, `rect()` or `xywh()`.
+    pub fn parse_object_view_box(
+        context: &ParserContext,
+        input: &mut Parser,
+    ) -> Result<Self, ParseError> {
+        if input.try_parse(|i| i.expect_ident_matching("none")).is_ok() {
+            return Ok(Self::None);
+        }
+        let shape = BasicShape::parse(
+            context,
+            input,
+            AllowedBasicShapes::INSET | AllowedBasicShapes::XYWH | AllowedBasicShapes::RECT,
+            ShapeType::Filled,
+        )?;
+        Ok(Self::Shape(Box::new(shape), generic::ShapeGeometryBox::ElementDependent))
+    }
+}
+
 /// A specified `shape-outside` value.
 pub type ShapeOutside = generic::GenericShapeOutside<BasicShape, Image>;
 

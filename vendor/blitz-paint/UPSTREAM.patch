@@ -1115,83 +1115,857 @@ diff --git a/packages/blitz-paint/src/filters.rs b/packages/blitz-paint/src/filt
 diff --git a/packages/blitz-paint/src/gradient.rs b/packages/blitz-paint/src/gradient.rs
 --- a/packages/blitz-paint/src/gradient.rs
 +++ b/packages/blitz-paint/src/gradient.rs
-@@ -2,7 +2,8 @@
+@@ -1,8 +1,10 @@
+-use crate::color::{Color, ToColorColor};
++use crate::color::Color;
  use color::DynamicColor;
  use kurbo::{self, Affine, Point, Rect, Vec2};
  use peniko::{self, ColorStop, Gradient, LinearGradientPosition, SweepGradientPosition};
 -use style::color::AbsoluteColor;
-+use style::color::mix::HueInterpolationMethod;
++use style::color::mix::{ColorInterpolationMethod, ColorMixItem};
++use style::values::generics::color::ColorMixFlags;
 +use style::color::{AbsoluteColor, ColorSpace as StyloColorSpace};
  use style::{
      OwnedSlice,
      values::{
-@@ -52,6 +53,66 @@
+@@ -52,16 +54,20 @@
      scale: f64,
      current_color: &AbsoluteColor,
  ) -> (peniko::Gradient, Option<Affine>) {
-+    let (mut peniko_gradient, transform) =
-+        to_peniko_gradient_srgb(gradient, origin_rect, bounding_box, scale, current_color);
-+    // pyro: the gradient's colour interpolation method (`in hsl`, `in oklch longer hue`; Stylo
-+    // makes Oklab the default when a stop uses a modern colour syntax). Stops were interpolated in
-+    // sRGB whatever it said.
-+    let method = match gradient {
-+        GenericGradient::Linear {
-+            color_interpolation_method,
-+            ..
-+        }
-+        | GenericGradient::Radial {
-+            color_interpolation_method,
-+            ..
-+        }
-+        | GenericGradient::Conic {
-+            color_interpolation_method,
-+            ..
-+        } => color_interpolation_method,
-+    };
-+    peniko_gradient.interpolation_cs = interpolation_space(method.space);
-+    peniko_gradient.hue_direction = match method.hue {
-+        HueInterpolationMethod::Longer => color::HueDirection::Longer,
-+        HueInterpolationMethod::Increasing => color::HueDirection::Increasing,
-+        HueInterpolationMethod::Decreasing => color::HueDirection::Decreasing,
-+        HueInterpolationMethod::Shorter | HueInterpolationMethod::Specified => {
-+            color::HueDirection::Shorter
-+        }
-+    };
-+    (peniko_gradient, transform)
-+}
-+
-+/// pyro: the colour space of `color`'s crate for a CSS one.
-+fn interpolation_space(space: StyloColorSpace) -> color::ColorSpaceTag {
-+    use color::ColorSpaceTag as Tag;
-+    match space {
-+        StyloColorSpace::Srgb => Tag::Srgb,
-+        StyloColorSpace::Hsl => Tag::Hsl,
-+        StyloColorSpace::Hwb => Tag::Hwb,
-+        StyloColorSpace::Lab => Tag::Lab,
-+        StyloColorSpace::Lch => Tag::Lch,
-+        StyloColorSpace::Oklab => Tag::Oklab,
-+        StyloColorSpace::Oklch => Tag::Oklch,
-+        StyloColorSpace::SrgbLinear => Tag::LinearSrgb,
-+        // `color` has no linear Display P3: the gamma-encoded one is the nearest.
-+        StyloColorSpace::DisplayP3 | StyloColorSpace::DisplayP3Linear => Tag::DisplayP3,
-+        StyloColorSpace::A98Rgb => Tag::A98Rgb,
-+        StyloColorSpace::ProphotoRgb => Tag::ProphotoRgb,
-+        StyloColorSpace::Rec2020 => Tag::Rec2020,
-+        StyloColorSpace::XyzD50 => Tag::XyzD50,
-+        StyloColorSpace::XyzD65 => Tag::XyzD65,
-+    }
-+}
-+
-+fn to_peniko_gradient_srgb(
-+    gradient: &StyloGradient,
-+    origin_rect: Rect,
-+    bounding_box: Rect,
-+    scale: f64,
-+    current_color: &AbsoluteColor,
-+) -> (peniko::Gradient, Option<Affine>) {
++    // pyro: the colour interpolation method (`in hsl`, `in oklch longer hue`; Stylo makes Oklab
++    // the default when a stop uses a modern colour syntax) is applied by `Ramp`, which hands
++    // the renderer sRGB samples.
      match gradient {
          // https://developer.mozilla.org/en-US/docs/Web/CSS/gradient/linear-gradient
          GenericGradient::Linear {
+             direction,
+             items,
+             flags,
+-            // compat_mode,
++            color_interpolation_method,
+             ..
+         } => linear_gradient(
+             (direction, items, *flags),
++            *color_interpolation_method,
+             origin_rect,
+             bounding_box,
+             scale,
+@@ -72,21 +78,53 @@
+             position,
+             items,
+             flags,
+-            // compat_mode,
++            color_interpolation_method,
+             ..
+-        } => radial_gradient((shape, position, items, *flags), origin_rect, current_color),
++        } => radial_gradient(
++            (shape, position, items, *flags),
++            *color_interpolation_method,
++            origin_rect,
++            scale,
++            current_color,
++        ),
+         GenericGradient::Conic {
+             angle,
+             position,
+             items,
+             flags,
++            color_interpolation_method,
+             ..
+-        } => conic_gradient((angle, position, items, *flags), origin_rect, current_color),
++        } => conic_gradient(
++            (angle, position, items, *flags),
++            *color_interpolation_method,
++            origin_rect,
++            current_color,
++        ),
+     }
+ }
+ 
++/// A stop's position along a gradient line of `length` device px, in units of the line.
++fn length_position(position: &LengthPercentage, length: f64, scale: f64) -> f64 {
++    let css_length = (length / scale) as f32;
++    if css_length > 0.0 && css_length.is_finite() {
++        // Infinite positions (`calc(infinity * 1%)`) stay at their end of the line.
++        let px = position.resolve(CSSPixelLength::new(css_length)).px();
++        (px.clamp(f32::MIN, f32::MAX) as f64 / css_length as f64).clamp(-1e30, 1e30)
++    } else if css_length > 0.0 {
++        // A line without an end: only an infinite position is not at its start.
++        let px = position.resolve(CSSPixelLength::new(f32::MAX)).px();
++        if px >= f32::MAX { 1.0 } else { 0.0 }
++    } else {
++        // No line to measure along: everything is past its end.
++        position
++            .to_percentage_of(CSSPixelLength::new(0.0))
++            .map_or(0.0, |percentage| percentage.to_percentage().unwrap_or(0.0) as f64)
++    }
++}
++
+ fn linear_gradient(
+     gradient: LinearGradient,
++    method: ColorInterpolationMethod,
+     rect: Rect,
+     bounding_box: Rect,
+     scale: f64,
+@@ -120,39 +158,60 @@
+             }
+         }
+         LineDirection::Corner(horizontal, vertical) => {
+-            let (start_x, end_x) = match horizontal {
+-                HorizontalPositionKeyword::Right => (rect.x0, rect.x1),
+-                HorizontalPositionKeyword::Left => (rect.x1, rect.x0),
++            // pyro: "to <corner>" (CSS Images 3 §3.1.1): the line through the centre whose
++            // perpendicular at the midpoint joins the two neighbouring corners, long enough
++            // that the 0% and 100% lines pass through the corners. It was the diagonal itself,
++            // which only a square's is.
++            let (w, h) = (rect.width(), rect.height());
++            let sign_x = match horizontal {
++                HorizontalPositionKeyword::Right => 1.0,
++                HorizontalPositionKeyword::Left => -1.0,
+             };
+-            let (start_y, end_y) = match vertical {
+-                VerticalPositionKeyword::Top => (rect.y1, rect.y0),
+-                VerticalPositionKeyword::Bottom => (rect.y0, rect.y1),
++            let sign_y = match vertical {
++                VerticalPositionKeyword::Top => -1.0,
++                VerticalPositionKeyword::Bottom => 1.0,
+             };
+-            (Point::new(start_x, start_y), Point::new(end_x, end_y))
++            let norm = w.hypot(h);
++            if norm > 0.0 {
++                // Unit direction, perpendicular to the other diagonal.
++                let dir = Vec2::new(sign_x * h / norm, sign_y * w / norm);
++                let half = (w / 2.0) * dir.x.abs() + (h / 2.0) * dir.y.abs();
++                let mid = rect.center();
++                (mid - dir * half, mid + dir * half)
++            } else {
++                (rect.center(), rect.center())
++            }
+         }
+     };
+ 
+-    let gradient_length = CSSPixelLength::new((start.distance(end) / scale) as f32);
++    let length = start.distance(end);
+     let repeating = flags.contains(GradientFlags::REPEATING);
++    let ramp = Ramp::new(items, method, current_color, |position| {
++        length_position(position, length, scale)
++    });
+ 
+     let mut gradient = peniko::Gradient::new_linear(start, end).with_extend(if repeating {
+         peniko::Extend::Repeat
+     } else {
+         peniko::Extend::Pad
+     });
+-
+-    let (first_offset, last_offset) = resolve_length_color_stops(
+-        current_color,
+-        items,
+-        gradient_length,
+-        &mut gradient,
+-        repeating,
+-    );
+-    if repeating && gradient.stops.len() > 1 {
+-        gradient.kind = peniko::GradientKind::Linear(LinearGradientPosition {
+-            start: start + (end - start) * first_offset as f64,
+-            end: end + (start - end) * (1.0 - last_offset) as f64,
+-        });
++    let mut samples = Vec::new();
++    if repeating {
++        let (first, last) = (ramp.first_offset(), ramp.last_offset());
++        // A period of no length paints the last stop's colour (as Chromium does).
++        if last - first > 0.0 && (last - first) * length >= 1e-3 {
++            ramp.sample(first, last, |t| (t - first) / (last - first), &mut samples);
++            push_samples(&mut gradient, &samples);
++            gradient.kind = peniko::GradientKind::Linear(LinearGradientPosition {
++                start: start + (end - start) * first,
++                end: start + (end - start) * last,
++            });
++        } else {
++            push_solid(&mut gradient, ramp.last_color());
++        }
++    } else {
++        ramp.sample(0.0, 1.0, |t| t, &mut samples);
++        push_samples(&mut gradient, &samples);
+     }
+ 
+     (gradient, None)
+@@ -160,7 +219,9 @@
+ 
+ fn radial_gradient(
+     gradient: RadialGradient,
++    method: ColorInterpolationMethod,
+     rect: Rect,
++    scale: f64,
+     current_color: &AbsoluteColor,
+ ) -> (peniko::Gradient, Option<Affine>) {
+     let (shape, position, items, flags) = gradient;
+@@ -234,61 +295,108 @@
+         },
+     };
+ 
+-    let gradient_transform = {
+-        // If the gradient has no valid scale, we don't need to calculate the color stops
+-        if let Some(gradient_scale) = gradient_scale {
+-            let (first_offset, last_offset) = resolve_length_color_stops(
+-                current_color,
+-                items,
+-                CSSPixelLength::new(gradient_scale.x as f32),
+-                &mut gradient,
+-                repeating,
+-            );
+-            let scale = if repeating && gradient.stops.len() >= 2 {
+-                (last_offset - first_offset) as f64
+-            } else {
+-                1.0
+-            };
+-            Some(
+-                Affine::scale_non_uniform(gradient_scale.x * scale, gradient_scale.y * scale)
+-                    .then_translate(get_translation(position, rect)),
+-            )
++    // If the gradient has no valid scale, we don't need to calculate the color stops
++    let Some(gradient_scale) = gradient_scale else {
++        return (gradient, None);
++    };
++    let ramp = Ramp::new(items, method, current_color, |position| {
++        length_position(position, gradient_scale.x, scale)
++    });
++    let translation = get_translation(position, rect);
++    // pyro: an ending shape without a width or a height (CSS Images 3 §3.2.3 has it paint as a
++    // shape too small to see), and a gradient whose stops are all before its centre, are the
++    // last stop's colour; so is a repeating one without a period.
++    let (first, last) = (ramp.first_offset(), ramp.last_offset());
++    let degenerate = !(gradient_scale.x > 0.0 && gradient_scale.y > 0.0)
++        || if repeating {
++            !((last - first) * gradient_scale.x.min(gradient_scale.y) >= 1e-3)
+         } else {
+-            None
+-        }
++            !(last > 0.0)
++        };
++    if degenerate {
++        push_solid(&mut gradient, ramp.last_color());
++        return (gradient, Some(Affine::translate(translation)));
++    }
++    // A centre or a radius far beyond what the renderer's numbers hold (`at 0% calc(infinity *
++    // 1px)`): the box is a point at that scale, of the one colour at its distance.
++    const FAR: f64 = 1e9;
++    if translation.x.abs() > FAR
++        || translation.y.abs() > FAR
++        || gradient_scale.x > FAR
++        || gradient_scale.y > FAR
++    {
++        let center = rect.center();
++        let t = ((center.x - translation.x) / gradient_scale.x)
++            .hypot((center.y - translation.y) / gradient_scale.y);
++        let t = if t.is_finite() { t } else { 0.0 };
++        push_solid(&mut gradient, Some(ramp.color_at(t)));
++        return (gradient, None);
++    }
++    let mut samples = Vec::new();
++    // The renderer's unit radius is where the last sample is: the last stop, or one period.
++    let reach = if repeating {
++        sample_period_from_zero(&ramp, &mut samples);
++        last - first
++    } else {
++        // A hard stop at the last position ends there: the renderer needs room after it for
++        // the colour that follows.
++        let count = ramp.stops.len();
++        let reach = if count > 1 && ramp.stops[count - 2].offset == last { last * 1.01 } else { last };
++        let reach = reach.min(1e12);
++        ramp.sample(0.0, reach, |t| t / reach, &mut samples);
++        reach
+     };
+-
+-    (gradient, gradient_transform)
++    push_samples(&mut gradient, &samples);
++    let transform = Affine::scale_non_uniform(gradient_scale.x * reach, gradient_scale.y * reach)
++        .then_translate(translation);
++    (gradient, Some(transform))
+ }
+ 
+ fn conic_gradient(
+     gradient: ConicGradient,
++    method: ColorInterpolationMethod,
+     rect: Rect,
+     current_color: &AbsoluteColor,
+ ) -> (peniko::Gradient, Option<Affine>) {
+     let (angle, position, items, flags) = gradient;
++    const TURN: f32 = std::f32::consts::PI * 2.0;
+ 
+     let repeating = flags.contains(GradientFlags::REPEATING);
+-    let mut gradient = peniko::Gradient::new_sweep((0.0, 0.0), 0.0, std::f32::consts::PI * 2.0)
+-        .with_extend(if repeating {
+-            peniko::Extend::Repeat
+-        } else {
+-            peniko::Extend::Pad
+-        });
+-
+-    let (first_offset, last_offset) = resolve_angle_color_stops(
+-        current_color,
+-        items,
+-        CSSPixelLength::new(1.0),
+-        &mut gradient,
+-        repeating,
+-    );
+-    if repeating && gradient.stops.len() >= 2 {
++    let mut gradient = peniko::Gradient::new_sweep((0.0, 0.0), 0.0, TURN);
++    let ramp = Ramp::new(items, method, current_color, |position| match position {
++        AngleOrPercentage::Angle(angle) => angle.radians64() / (std::f64::consts::PI * 2.0),
++        AngleOrPercentage::Percentage(percentage) => {
++            percentage.to_percentage().unwrap_or(0.0) as f64
++        }
++    });
++    let mut samples = Vec::new();
++    let period = ramp.last_offset() - ramp.first_offset();
++    if !repeating {
++        ramp.sample(0.0, 1.0, |t| t, &mut samples);
++        push_samples(&mut gradient, &samples);
++    } else if period >= 1e-5 && period < 1.0 {
++        sample_period_from_zero(&ramp, &mut samples);
++        push_samples(&mut gradient, &samples);
++        gradient = gradient.with_extend(peniko::Extend::Repeat);
+         gradient.kind = peniko::GradientKind::Sweep(SweepGradientPosition {
+             center: Point::new(0.0, 0.0),
+-            start_angle: std::f32::consts::PI * 2.0 * first_offset,
+-            end_angle: std::f32::consts::PI * 2.0 * last_offset,
++            start_angle: 0.0,
++            end_angle: TURN * period as f32,
+         });
++    } else if period >= 1.0 {
++        // The turn is within one period: the part of it from 0, cut at the turn's end.
++        let first = ramp.first_offset();
++        let into = (-first).rem_euclid(period);
++        let room = period - into;
++        if room >= 1.0 {
++            ramp.sample(first + into, first + into + 1.0, |t| t - first - into, &mut samples);
++        } else {
++            ramp.sample(first + into, first + period, |t| t - first - into, &mut samples);
++            ramp.sample(first, first + 1.0 - room, |t| t - first + room, &mut samples);
++        }
++        push_samples(&mut gradient, &samples);
++    } else {
++        push_solid(&mut gradient, ramp.last_color());
+     }
+ 
+     let gradient_transform = Some(
+@@ -299,201 +407,347 @@
+     (gradient, gradient_transform)
+ }
+ 
+-#[inline]
+-fn resolve_length_color_stops(
+-    current_color: &AbsoluteColor,
+-    items: &[GradientItem<LengthPercentage>],
+-    gradient_length: CSSPixelLength,
+-    gradient: &mut Gradient,
+-    repeating: bool,
+-) -> (f32, f32) {
+-    resolve_color_stops(
+-        current_color,
+-        items,
+-        gradient_length,
+-        gradient,
+-        repeating,
+-        |gradient_length: CSSPixelLength, position: &LengthPercentage| -> Option<f32> {
+-            position
+-                .to_percentage_of(gradient_length)
+-                .map(|percentage| percentage.to_percentage().unwrap_or(0.0))
+-        },
+-    )
++/// pyro: a gradient's colour stops after the fix-up of CSS Images 3 §3.4.3, evaluated here
++/// rather than by the renderer: positions in units of the gradient line (0 its start, 1 its
++/// end; turns for a conic gradient), in order, with the colours as specified. The renderer gets
++/// sRGB samples of it (`sample`), which it interpolates premultiplied: the stops the stylesheet
++/// gave where that is all the interpolation there is (sRGB, no hints), and as many more as the
++/// curve needs in another colour space (`in oklch longer hue`) or under a transition hint.
++///
++/// Before, the stops went to the renderer as they were, with the colour space as a setting: a
++/// stop before 0 or past 1 was not cut where the gradient box ends, the padding stops the old
++/// code added were interpolated with the neighbour (`longer hue` between the last stop and its
++/// own copy went once round the hue circle), and stops in decreasing order were not fixed up.
++struct Ramp {
++    stops: Vec<RampStop>,
++    method: ColorInterpolationMethod,
+ }
+ 
+-#[inline]
+-fn resolve_color_stops<T>(
+-    current_color: &AbsoluteColor,
+-    items: &[GradientItem<T>],
+-    gradient_length: CSSPixelLength,
+-    gradient: &mut Gradient,
+-    repeating: bool,
+-    item_resolver: impl Fn(CSSPixelLength, &T) -> Option<f32>,
+-) -> (f32, f32) {
+-    let mut hint: Option<f32> = None;
++struct RampStop {
++    offset: f64,
++    color: AbsoluteColor,
++    /// A transition hint between the previous stop and this one: where the midpoint colour is,
++    /// as a fraction of the way from that stop to this one.
++    hint: Option<f64>,
++}
+ 
+-    for (idx, item) in items.iter().enumerate() {
+-        let (color, offset) = match item {
+-            GenericGradientItem::SimpleColorStop(color) => {
+-                let step = 1.0 / (items.len() as f32 - 1.0);
+-                (
+-                    color.resolve_to_absolute(current_color).as_dynamic_color(),
+-                    step * idx as f32,
+-                )
+-            }
+-            GenericGradientItem::ComplexColorStop { color, position } => {
+-                let offset = item_resolver(gradient_length, position);
+-                if let Some(offset) = offset {
+-                    (
+-                        color.resolve_to_absolute(current_color).as_dynamic_color(),
+-                        offset,
+-                    )
+-                } else {
+-                    continue;
++/// Premultiplied sRGB.
++type Sample = [f32; 4];
++
++impl Ramp {
++    fn new<T>(
++        items: &[GradientItem<T>],
++        method: ColorInterpolationMethod,
++        current_color: &AbsoluteColor,
++        position_of: impl Fn(&T) -> f64,
++    ) -> Self {
++        // Colour stops with their positions, and the hint before each.
++        let mut stops: Vec<(Option<f64>, AbsoluteColor, Option<f64>)> = Vec::new();
++        let mut hint = None;
++        for item in items {
++            match item {
++                GenericGradientItem::SimpleColorStop(color) => {
++                    stops.push((None, color.resolve_to_absolute(current_color), hint.take()));
+                 }
++                GenericGradientItem::ComplexColorStop { color, position } => {
++                    let position = position_of(position);
++                    let position = if position.is_finite() { position } else { 0.0 };
++                    stops.push((
++                        Some(position),
++                        color.resolve_to_absolute(current_color),
++                        hint.take(),
++                    ));
++                }
++                GenericGradientItem::InterpolationHint(position) => {
++                    let position = position_of(position);
++                    hint = position.is_finite().then_some(position);
++                }
+             }
+-            GenericGradientItem::InterpolationHint(position) => {
+-                hint = item_resolver(gradient_length, position);
+-                continue;
++        }
++        let count = stops.len();
++        if count == 0 {
++            return Self { stops: Vec::new(), method };
++        }
++        // 1. The first stop is at 0 and the last at 1 unless they say where they are.
++        stops[0].0.get_or_insert(0.0);
++        stops[count - 1].0.get_or_insert(1.0);
++        // 2. A stop or hint before one that precedes it moves up to it.
++        let mut furthest = f64::NEG_INFINITY;
++        for (position, _, hint) in &mut stops {
++            if let Some(hint) = hint {
++                *hint = hint.max(furthest);
++                furthest = *hint;
+             }
+-        };
+-
+-        if idx == 0 && !repeating && offset != 0.0 {
+-            gradient
+-                .stops
+-                .push(peniko::ColorStop { color, offset: 0.0 });
++            if let Some(position) = position {
++                *position = position.max(furthest);
++                furthest = *position;
++            }
++        }
++        // 3. A run of stops without positions is spaced evenly between its neighbours.
++        let mut i = 1;
++        while i < count {
++            if stops[i].0.is_some() {
++                i += 1;
++                continue;
++            }
++            let run_end = (i..count).find(|&j| stops[j].0.is_some()).unwrap_or(count - 1);
++            let from = stops[i - 1].0.unwrap_or(0.0);
++            let to = stops[run_end].0.unwrap_or(from);
++            let steps = (run_end - (i - 1)) as f64;
++            for j in i..run_end {
++                stops[j].0 = Some(from + (to - from) * (j - (i - 1)) as f64 / steps);
++            }
++            i = run_end + 1;
+         }
++        let mut ramp = Vec::with_capacity(count);
++        for (idx, (position, color, hint)) in stops.iter().enumerate() {
++            let offset = position.unwrap_or(0.0);
++            let previous = if idx == 0 { offset } else { ramp_offset(&ramp, idx - 1) };
++            let hint = hint.and_then(|hint| {
++                let span = offset - previous;
++                (span > 0.0).then(|| ((hint - previous) / span).clamp(0.0, 1.0))
++            });
++            // The midpoint is where the hint puts it without one.
++            let hint = hint.filter(|fraction| (*fraction - 0.5).abs() > 1e-9);
++            ramp.push(RampStop { offset, color: *color, hint });
++        }
++        Self { stops: ramp, method }
++    }
+ 
+-        match hint {
+-            None => gradient.stops.push(peniko::ColorStop { color, offset }),
+-            Some(hint) => {
+-                let &last_stop = gradient.stops.last().unwrap();
++    fn first_offset(&self) -> f64 {
++        self.stops.first().map_or(0.0, |stop| stop.offset)
++    }
+ 
+-                if hint <= last_stop.offset {
+-                    // Upstream code has a bug here, so we're going to do something different
+-                    match gradient.stops.len() {
+-                        0 => (),
+-                        1 => {
+-                            gradient.stops.pop();
+-                        }
+-                        _ => {
+-                            let prev_stop = gradient.stops[gradient.stops.len() - 2];
+-                            if prev_stop.offset == hint {
+-                                gradient.stops.pop();
+-                            }
+-                        }
+-                    }
+-                    gradient.stops.push(peniko::ColorStop {
+-                        color,
+-                        offset: hint,
+-                    });
+-                } else if hint >= offset {
+-                    gradient.stops.push(peniko::ColorStop {
+-                        color: last_stop.color,
+-                        offset: hint,
+-                    });
+-                    gradient.stops.push(peniko::ColorStop {
+-                        color,
+-                        offset: last_stop.offset,
+-                    });
+-                } else if hint == (last_stop.offset + offset) / 2.0 {
+-                    gradient.stops.push(peniko::ColorStop { color, offset });
+-                } else {
+-                    let mid_point = (hint - last_stop.offset) / (offset - last_stop.offset);
+-                    let mut interpolate_stop = |cur_offset: f32| {
+-                        let relative_offset =
+-                            (cur_offset - last_stop.offset) / (offset - last_stop.offset);
+-                        let multiplier = relative_offset.powf(0.5f32.log(mid_point));
+-                        let [last_r, last_g, last_b, last_a] = last_stop.color.components;
+-                        let [r, g, b, a] = color.components;
++    fn last_offset(&self) -> f64 {
++        self.stops.last().map_or(0.0, |stop| stop.offset)
++    }
+ 
+-                        let color = Color::new([
+-                            (last_r + multiplier * (r - last_r)),
+-                            (last_g + multiplier * (g - last_g)),
+-                            (last_b + multiplier * (b - last_b)),
+-                            (last_a + multiplier * (a - last_a)),
+-                        ]);
+-                        gradient.stops.push(peniko::ColorStop {
+-                            color: DynamicColor::from_alpha_color(color),
+-                            offset: cur_offset,
+-                        });
+-                    };
+-                    if mid_point > 0.5 {
+-                        for i in 0..7 {
+-                            interpolate_stop(
+-                                last_stop.offset
+-                                    + (hint - last_stop.offset) * (7.0 + i as f32) / 13.0,
+-                            );
+-                        }
+-                        interpolate_stop(hint + (offset - hint) / 3.0);
+-                        interpolate_stop(hint + (offset - hint) * 2.0 / 3.0);
+-                    } else {
+-                        interpolate_stop(last_stop.offset + (hint - last_stop.offset) / 3.0);
+-                        interpolate_stop(last_stop.offset + (hint - last_stop.offset) * 2.0 / 3.0);
+-                        for i in 0..7 {
+-                            interpolate_stop(hint + (offset - hint) * (i as f32) / 13.0);
+-                        }
+-                    }
+-                    gradient.stops.push(peniko::ColorStop { color, offset });
+-                }
++    fn last_color(&self) -> Option<Sample> {
++        self.stops.last().map(|stop| srgb_sample(&stop.color))
++    }
++
++    /// The colour at `t` inside segment `segment` (between stops `segment` and `segment + 1`;
++    /// -1 is before the first stop, the last index after the last one).
++    fn color_in(&self, segment: isize, t: f64) -> Sample {
++        let last = self.stops.len() as isize - 1;
++        if segment < 0 {
++            return srgb_sample(&self.stops[0].color);
++        }
++        if segment >= last {
++            return srgb_sample(&self.stops[last as usize].color);
++        }
++        let from = &self.stops[segment as usize];
++        let to = &self.stops[segment as usize + 1];
++        let span = to.offset - from.offset;
++        let mut fraction = if span > 0.0 { ((t - from.offset) / span).clamp(0.0, 1.0) } else { 1.0 };
++        if let Some(hint) = to.hint {
++            // CSS Images 4 §3.5.3: the hint's position H gets the midpoint colour.
++            fraction = if hint <= 0.0 {
++                1.0
++            } else if hint >= 1.0 {
++                0.0
++            } else {
++                fraction.powf(0.5f64.ln() / hint.ln())
++            };
++        }
++        // A missing component is the other stop's across the whole segment, its ends too
++        // (`color(srgb none 0.5 0.5)` after a red stop is red there): those go through the mix.
++        let missing = has_missing(&from.color) || has_missing(&to.color);
++        if fraction <= 0.0 && !missing {
++            return srgb_sample(&from.color);
++        }
++        if fraction >= 1.0 && !missing {
++            return srgb_sample(&to.color);
++        }
++        let fraction = fraction.clamp(0.0, 1.0) as f32;
++        let mixed = style::color::mix::mix_many(
++            self.method,
++            [
++                ColorMixItem::new(from.color, 1.0 - fraction),
++                ColorMixItem::new(to.color, fraction),
++            ],
++            ColorMixFlags::empty(),
++        );
++        // `mix_many` rounds the alpha to thousandths: take the exact one (a missing alpha is
++        // the other side's, which the mix has).
++        let alpha = from.color.alpha + (to.color.alpha - from.color.alpha) * fraction;
++        let mut sample = srgb_sample(&mixed);
++        let old_alpha = sample[3];
++        let missing = style::color::ColorFlags::ALPHA_IS_NONE;
++        if old_alpha > 0.0 && !from.color.flags.contains(missing) && !to.color.flags.contains(missing) {
++            let alpha = alpha.clamp(0.0, 1.0);
++            for channel in &mut sample[..3] {
++                *channel = *channel / old_alpha * alpha;
+             }
++            sample[3] = alpha;
+         }
++        sample
+     }
+ 
+-    // Post-process the stops for repeating gradients
+-    if repeating && gradient.stops.len() > 1 {
+-        let first_offset = gradient.stops.first().unwrap().offset;
+-        let last_offset = gradient.stops.last().unwrap().offset;
+-        if first_offset != 0.0 || last_offset != 1.0 {
+-            let scale_inv = 1e-7_f32.max(1.0 / (last_offset - first_offset));
+-            for stop in &mut *gradient.stops {
+-                stop.offset = (stop.offset - first_offset) * scale_inv;
++    /// The colour at `t` (past a hard stop at `t`).
++    fn color_at(&self, t: f64) -> Sample {
++        if self.stops.is_empty() {
++            return [0.0; 4];
++        }
++        let segment = self.stops.iter().filter(|stop| stop.offset <= t).count() as isize - 1;
++        self.color_in(segment, t)
++    }
++
++    /// Whether the renderer's premultiplied sRGB interpolation between the ends of `segment` is
++    /// not the gradient's.
++    fn curved(&self, segment: isize) -> bool {
++        if segment < 0 || segment >= self.stops.len() as isize - 1 {
++            return false;
++        }
++        let to = &self.stops[segment as usize + 1];
++        let from = &self.stops[segment as usize];
++        to.hint.is_some()
++            || self.method.space != StyloColorSpace::Srgb
++            || has_missing(&from.color)
++            || has_missing(&to.color)
++    }
++
++    /// Samples of `[from, to]` (`from < to`), appended to `out` with `at(t)` as their offsets.
++    fn sample(&self, from: f64, to: f64, at: impl Fn(f64) -> f64, out: &mut Vec<(f64, Sample)>) {
++        if self.stops.is_empty() {
++            return;
++        }
++        let mut breaks = vec![from];
++        for stop in &self.stops {
++            if stop.offset > from && stop.offset < to && breaks.last() != Some(&stop.offset) {
++                breaks.push(stop.offset);
+             }
+         }
+-        (first_offset, last_offset)
+-    } else {
+-        // Ensure that the gradient ends at offset 1.0
+-        if gradient.stops.len() > 1 {
+-            let last_stop = &gradient.stops.last().unwrap();
+-            if last_stop.offset < 1.0 {
+-                let last_stop = ColorStop {
+-                    offset: 1.0,
+-                    ..(**last_stop)
+-                };
+-                gradient.stops.push(last_stop);
++        breaks.push(to);
++        // How finely a curved segment may be cut: 2^depth pieces.
++        let depth = if breaks.len() > 9 { 6 } else { 9 };
++        for pair in breaks.windows(2) {
++            let (p, q) = (pair[0], pair[1]);
++            let middle = p + (q - p) / 2.0;
++            let segment = self.stops.iter().filter(|stop| stop.offset <= middle).count() as isize - 1;
++            let start = self.color_in(segment, p);
++            let end = self.color_in(segment, q);
++            out.push((at(p), start));
++            if self.curved(segment) && start != end {
++                self.subdivide(segment, (p, start), (q, end), depth, 3, &at, out);
++            } else if self.curved(segment) {
++                // Equal ends are not a constant colour: a full turn of hue ends where it began.
++                self.subdivide(segment, (p, start), (q, end), depth, 4, &at, out);
+             }
++            out.push((at(q), end));
+         }
+-        (0.0, 1.0)
+     }
++
++    /// The samples strictly between two of a curved segment: its halves, until the renderer's
++    /// line between two samples is within a quarter level of the curve's middle (`forced`
++    /// levels are cut regardless: a curve can cross its chord at the middle).
++    #[allow(clippy::too_many_arguments)]
++    fn subdivide(
++        &self,
++        segment: isize,
++        (p, start): (f64, Sample),
++        (q, end): (f64, Sample),
++        depth: u32,
++        forced: u32,
++        at: &impl Fn(f64) -> f64,
++        out: &mut Vec<(f64, Sample)>,
++    ) {
++        if depth == 0 {
++            return;
++        }
++        let middle = p + (q - p) / 2.0;
++        if !(middle > p && middle < q) {
++            return;
++        }
++        let color = self.color_in(segment, middle);
++        let off = (0..4)
++            .map(|i| (color[i] - (start[i] + end[i]) / 2.0).abs())
++            .fold(0.0f32, f32::max);
++        if forced == 0 && off <= 0.25 / 255.0 {
++            return;
++        }
++        let forced = forced.saturating_sub(1);
++        self.subdivide(segment, (p, start), (middle, color), depth - 1, forced, at, out);
++        out.push((at(middle), color));
++        self.subdivide(segment, (middle, color), (q, end), depth - 1, forced, at, out);
++    }
+ }
+ 
+-#[inline]
+-fn resolve_angle_color_stops(
+-    current_color: &AbsoluteColor,
+-    items: &[GradientItem<AngleOrPercentage>],
+-    gradient_length: CSSPixelLength,
+-    gradient: &mut Gradient,
+-    repeating: bool,
+-) -> (f32, f32) {
+-    resolve_color_stops(
+-        current_color,
+-        items,
+-        gradient_length,
+-        gradient,
+-        repeating,
+-        |_gradient_length: CSSPixelLength, position: &AngleOrPercentage| -> Option<f32> {
+-            match position {
+-                AngleOrPercentage::Angle(angle) => {
+-                    Some(angle.radians() / (std::f64::consts::PI * 2.0) as f32)
++/// Whether a component of `color` is `none`.
++fn has_missing(color: &AbsoluteColor) -> bool {
++    use style::color::ColorFlags as F;
++    color.flags.intersects(F::C0_IS_NONE | F::C1_IS_NONE | F::C2_IS_NONE | F::ALPHA_IS_NONE)
++}
++
++fn ramp_offset(ramp: &[RampStop], idx: usize) -> f64 {
++    ramp[idx].offset
++}
++
++/// `color` in premultiplied sRGB, clipped to the gamut.
++fn srgb_sample(color: &AbsoluteColor) -> Sample {
++    let srgb = color.to_color_space(StyloColorSpace::Srgb);
++    let [r, g, b, a] = *srgb.raw_components();
++    let fix = |c: f32| if c.is_finite() { c.clamp(0.0, 1.0) } else { 0.0 };
++    let a = fix(a);
++    [fix(r) * a, fix(g) * a, fix(b) * a, a]
++}
++
++/// The renderer's stops for samples (offsets in 0..=1, in order).
++fn push_samples(gradient: &mut Gradient, samples: &[(f64, Sample)]) {
++    let mut last: Option<(f32, Sample)> = None;
++    let mut run = 0;
++    for &(offset, sample) in samples {
++        let offset = (offset as f32).clamp(0.0, 1.0);
++        // At one offset the first and the last sample count (a hard stop): drop those between.
++        if let Some((last_offset, last_sample)) = last {
++            if last_offset == offset && last_sample == sample {
++                continue;
++            }
++            if last_offset == offset {
++                run += 1;
++                if run > 1 {
++                    gradient.stops.pop();
+                 }
+-                AngleOrPercentage::Percentage(percentage) => {
+-                    Some(percentage.to_percentage().unwrap_or(0.0))
+-                }
++            } else {
++                run = 0;
+             }
+-        },
+-    )
++        }
++        last = Some((offset, sample));
++        let [r, g, b, a] = sample;
++        let color = if a > 0.0 { [r / a, g / a, b / a, a] } else { [0.0, 0.0, 0.0, 0.0] };
++        gradient.stops.push(ColorStop {
++            offset,
++            color: DynamicColor::from_alpha_color(Color::new(color)),
++        });
++    }
++    // The renderer needs two stops.
++    if gradient.stops.len() == 1 {
++        let stop = gradient.stops[0];
++        gradient.stops.push(ColorStop { offset: 1.0, ..stop });
++    }
+ }
+ 
++/// A gradient of one colour.
++fn push_solid(gradient: &mut Gradient, sample: Option<Sample>) {
++    if let Some(sample) = sample {
++        push_samples(gradient, &[(0.0, sample), (1.0, sample)]);
++    }
++}
++
++/// One period of a repeating ramp as it lies from 0 (the centre of a radial gradient, the start
++/// angle of a conic one): the part of the period that 0 falls in, then the period's start.
++fn sample_period_from_zero(ramp: &Ramp, out: &mut Vec<(f64, Sample)>) {
++    let first = ramp.first_offset();
++    let period = ramp.last_offset() - first;
++    let into = (-first).rem_euclid(period);
++    if into > 0.0 && into < period {
++        ramp.sample(first + into, first + period, |t| (t - first - into) / period, out);
++        ramp.sample(first, first + into, |t| (t - first + period - into) / period, out);
++    } else {
++        ramp.sample(first, first + period, |t| (t - first) / period, out);
++    }
++}
++
+ #[inline]
+ fn resolve_gradient_length(value: &LengthPercentage, basis: f64) -> f64 {
+     // Percentage resolution can overflow even though computed lengths are finite.
 diff --git a/packages/blitz-paint/src/highlight.rs b/packages/blitz-paint/src/highlight.rs
 new file mode 100644
 --- /dev/null
@@ -3801,10 +4575,14 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
  fn convert_rect(rect: &parley::BoundingBox) -> kurbo::Rect {
      peniko::kurbo::Rect::new(rect.x0, rect.y0, rect.x1, rect.y1)
  }
-@@ -967,8 +2055,493 @@
-         }
-     }
- 
+@@ -963,12 +2051,497 @@
+                     None,
+                     &stroke_rect.to_rounded_rect(radius - stroke_width / 2.0),
+                 );
++            }
++        }
++    }
++
 +    /// pyro: paints the boxes of the inline (non-atomic) elements in this inline root's lines, as
 +    /// Chromium does. An element has one fragment per line it has content on: from the start of
 +    /// its first content there to the end of its last (its own start and end edges without their
@@ -4224,7 +5002,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +            let mut whole = box_cx(transform, size, border, padding);
 +            if let Some(style) = &fragment.style {
 +                whole.style = style.clone();
-+            }
+             }
 +            whole
 +        });
 +        let piece = Rect::from_origin_size(Point::ZERO, size);
@@ -4237,7 +5015,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                scene.pop_layer();
 +            }
 +            None => cx.draw_outset_box_shadow(scene),
-+        }
+         }
 +        if self.context.backgrounds {
 +            // pyro: a `background-clip: text` layer shows through the box's own glyphs.
 +            let text_clip = cx.style.get_background().background_clip.0.iter().any(|clip| {
@@ -4284,8 +5062,8 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +        cx.draw_border(scene);
 +        // Over the box, as a block's outline is (see `render_element`).
 +        cx.draw_outline(scene);
-+    }
-+
+     }
+ 
      fn draw_inline_layout(&self, scene: &mut impl PaintScene, pos: Point) {
          if self.node.flags.is_inline_root() {
 +            // pyro: inline elements with a clip path or a mask (clip_path.rs).
@@ -4307,13 +5085,22 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              // Text keeps its unrounded position; only box edges are snapped to whole pixels.
              let subpixel_offset = text_layout.content_box_subpixel_offset;
              let pos = Point {
-@@ -984,23 +2562,78 @@
+@@ -984,42 +2562,310 @@
              };
              let transform =
                  self.transform * Affine::translate((pos.x * self.scale, pos.y * self.scale));
 +            // pyro: each line's top at the whole CSS pixel Chromium paints it at.
 +            let (text_shift, tops) = self.text_placement(text_layout.block_offset as f64);
-+
+ 
+-            // Render inline element backgrounds (e.g. `<span style="background: ...">`)
+-            // behind the text and selection highlight.
+-            crate::text::draw_inline_backgrounds(
+-                scene,
+-                text_layout.layout.lines(),
+-                self.context.dom,
+-                transform,
+-                self.node.id,
+-            );
 +            // Render the boxes of inline elements (e.g. `<span style="background: ...">`)
 +            // behind the text and selection highlight. pyro: line by line, each line's boxes
 +            // and then its text, as CSS 2.1 Appendix E paints line boxes (a box on a line
@@ -4365,19 +5152,8 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +            for fragment in &fragments {
 +                self.paint_inline_box_fragment(scene, fragment, transform, tops);
 +            }
- 
--            // Render inline element backgrounds (e.g. `<span style="background: ...">`)
--            // behind the text and selection highlight.
--            crate::text::draw_inline_backgrounds(
--                scene,
--                text_layout.layout.lines(),
--                self.context.dom,
--                transform,
--                self.node.id,
--            );
--
-             // Render text selection highlight (if any) using cached selection ranges
--            if let Some(&(sel_start, sel_end)) = self.context.selection_ranges.get(&self.node.id) {
++
++            // Render text selection highlight (if any) using cached selection ranges
 +            // pyro: highlighted as Chromium paints selected text (`highlight`), but in lines cut
 +            // by an ellipsis; a recording paint (the PDF's) draws no selection.
 +            let highlight = selection
@@ -4387,21 +5163,20 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                        && self.context.draw_text_context.borrow().runs.is_none()
 +                });
 +            if let (Some((sel_start, sel_end)), None) = (selection, highlight) {
-                 crate::text::draw_text_selection(
-                     scene,
-                     &text_layout.layout,
--                    transform,
++                crate::text::draw_text_selection(
++                    scene,
++                    &text_layout.layout,
 +                    |line| match (tops, text_layout.layout.get(line)) {
 +                        (Some(tops), Some(line)) => transform * Affine::translate((0.0, tops.shift(line.metrics()))),
 +                        _ => transform,
 +                    },
-                     sel_start,
-                     sel_end,
-                 );
-@@ -1008,18 +2641,231 @@
- 
-             // Render text
-             let mut draw_text_context = self.context.draw_text_context.borrow_mut();
++                    sel_start,
++                    sel_end,
++                );
++            }
++
++            // Render text
++            let mut draw_text_context = self.context.draw_text_context.borrow_mut();
 +            draw_text_context.text_shift = text_shift;
 +            draw_text_context.line_tops = tops;
 +            draw_text_context.first_line = text_layout.first_line;
@@ -4498,7 +5273,10 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +        };
 +        (((start * 64.0).floor() / 64.0 - painted_x) * self.scale, Some(tops))
 +    }
-+
+ 
+-            // Render text selection highlight (if any) using cached selection ranges
+-            if let Some(&(sel_start, sel_end)) = self.context.selection_ranges.get(&self.node.id) {
+-                crate::text::draw_text_selection(
 +    /// Paint an inline layout of a vertical writing mode. The layout's lines are logical: x is the
 +    /// inline axis and y the block axis, running from the content box's top and its block-start edge.
 +    /// Each line is drawn rotated a quarter turn clockwise (`vertical-*`'s sideways glyphs have their
@@ -4570,14 +5348,21 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +            for (index, line) in text_layout.layout.lines().enumerate() {
 +                let vertical = vertical(&line);
 +                crate::text::draw_inline_backgrounds(
-+                    scene,
+                     scene,
+-                    &text_layout.layout,
+-                    transform,
+-                    sel_start,
+-                    sel_end,
 +                    std::iter::once(line),
 +                    self.context.dom,
 +                    line_transform(index),
 +                    self.node.id,
 +                    vertical,
-+                );
-+            }
+                 );
+             }
+-
+-            // Render text
+-            let mut draw_text_context = self.context.draw_text_context.borrow_mut();
 +        }
 +        if let Some(&(sel_start, sel_end)) = self.context.selection_ranges.get(&self.node.id) {
 +            crate::text::draw_text_selection(
@@ -4716,7 +5501,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              if self.node.is_focussed() {
                  // Render selection/caret
                  for (rect, _line_idx) in input_data.editor.selection_geometry().iter() {
-@@ -1078,18 +2988,73 @@
+@@ -1078,23 +2988,117 @@
  
              // Render text
              let mut draw_text_context = self.context.draw_text_context.borrow_mut();
@@ -4802,7 +5587,51 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          }
      }
  
-@@ -1103,7 +3068,7 @@
++    /// pyro: an inside marker that is an image (`list-style-image`): at the start of the
++    /// item's first line, its bottom on the baseline (the inline layout left room for it).
++    fn draw_inside_marker_image(&self, scene: &mut impl PaintScene, pos: Point, width: f32, height: f32) {
++        let Some(image) = self.element.list_style_images.first().and_then(Option::as_ref) else { return };
++        let Some(text_layout) = self.element.inline_layout_data.as_ref() else { return };
++        let Some(line) = text_layout.layout.lines().next() else { return };
++        let metrics = line.metrics();
++        let layout_scale = text_layout.layout.scale();
++        let rtl = text_layout.layout.is_rtl();
++        let line_x = if rtl { metrics.inline_max_coord / layout_scale - width } else { metrics.inline_min_coord / layout_scale };
++        let x = pos.x + f64::from(line_x);
++        let y = pos.y + f64::from(text_layout.block_offset + metrics.baseline / layout_scale - height);
++        let origin = Affine::translate(((x * self.scale).round(), (y * self.scale).round()));
++        match &image.image {
++            blitz_dom::node::ImageData::Raster(raster) if raster.width > 0 && raster.height > 0 => {
++                let quality = to_image_quality(self.style.clone_image_rendering());
++                let size = Affine::scale_non_uniform(
++                    f64::from(width) * self.scale / f64::from(raster.width),
++                    f64::from(height) * self.scale / f64::from(raster.height),
++                );
++                scene.draw_image(to_peniko_image(raster, quality).as_ref(), self.transform * origin * size);
++            }
++            #[cfg(feature = "svg")]
++            blitz_dom::node::ImageData::Svg(svg) => {
++                anyrender_svg::render_svg_tree(scene, &svg.tree, self.transform * origin * Affine::scale(self.scale));
++            }
++            _ => {}
++        }
++    }
++
+     fn draw_marker(&self, scene: &mut impl PaintScene, pos: Point) {
+         if let Some(ListItemLayout {
++            marker: Marker::Image { width, height },
++            position: ListItemLayoutPosition::Inside,
++            ..
++        }) = self.list_item
++        {
++            self.draw_inside_marker_image(scene, pos, *width, *height);
++            return;
++        }
++        if let Some(ListItemLayout {
+             marker,
+             position: ListItemLayoutPosition::Outside(layout),
+             content_box_subpixel_offset,
+@@ -1103,7 +3107,7 @@
              // Right align and pad the bullet when rendering outside
              let x_padding = match marker {
                  Marker::Char(_) => 8.0,
@@ -4811,7 +5640,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              };
              // Outside markers are placed outside the list item's border box
              // (`pos` is the origin of its content box)
-@@ -1114,14 +3079,33 @@
+@@ -1114,14 +3118,33 @@
                  + item_layout.border.left);
  
              // Align the marker with the baseline of the first line of text in the list item
@@ -4848,7 +5677,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
                      / layout.scale()
                      + text_layout.block_offset
              } else {
-@@ -1129,7 +3113,7 @@
+@@ -1129,7 +3152,7 @@
              };
  
              let pos = Point {
@@ -4857,7 +5686,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
                  y: pos.y + (content_box_subpixel_offset.y + y_offset) as f64,
              };
  
-@@ -1145,79 +3129,406 @@
+@@ -1145,13 +3168,145 @@
                  TextPaintOptions {
                      scale: self.scale,
                      brush_override: None,
@@ -4872,7 +5701,6 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          }
      }
  
--    fn draw_children(
 +    /// pyro: an outside `disc`, `circle` or `square` marker, as Chromium paints one: a shape
 +    /// sized from the item's font (Blink's `ListMarker::RelativeSymbolMarkerRect`), not a glyph
 +    /// of a bullet font. With `a` the font's ascent in whole pixels and `o = a * 2 / 3` in
@@ -4882,15 +5710,12 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +    /// edge. The first line is the item's own or that of the first box in it that has one; the
 +    /// font is the item's, which the marker's layout is a line of (blitz-dom).
 +    fn draw_marker_symbol(
-         &self,
-         scene: &mut impl PaintScene,
--        parent_style_transform: Affine,
--        clip_rect: Rect,
++        &self,
++        scene: &mut impl PaintScene,
 +        pos: Point,
 +        symbol: char,
 +        marker_layout: &parley::Layout<blitz_dom::node::TextBrush>,
-     ) {
--        // Negative z_index hoisted nodes
++    ) {
 +        let font_ascent = |line: &parley::Line<'_, blitz_dom::node::TextBrush>| {
 +            line.items().find_map(|item| match item {
 +                parley::PositionedLayoutItem::GlyphRun(run) => Some(run.run().font_metrics().ascent),
@@ -4919,19 +5744,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +            _ => scene.fill(Fill::NonZero, self.transform, &paint, None, &rect),
 +        }
 +    }
- 
--        if let Some(hoisted) = &self.node.stacking_context {
--            for hoisted_child in hoisted.neg_z_hoisted_children() {
--                let position = hoisted_child.position(self.node.tree(), self.node.id);
--                let pos = kurbo::Vec2 {
--                    x: position.x as f64 * self.scale,
--                    y: position.y as f64 * self.scale,
--                };
--                self.render_node(
--                    scene,
--                    hoisted_child.node_id,
--                    parent_style_transform.pre_translate(pos),
--                    clip_rect,
++
 +    /// pyro: the baseline an outside marker sits on, in CSS px from the top of the list item's
 +    /// content box: that of the item's first line, the first line of the first box in it that has
 +    /// one, or, when there is none, that of the marker's own line (a line of the item's font).
@@ -5005,28 +5818,41 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                let size = Affine::scale_non_uniform(
 +                    f64::from(width) * self.scale / f64::from(raster.width),
 +                    f64::from(height) * self.scale / f64::from(raster.height),
-                 );
++                );
 +                scene.draw_image(to_peniko_image(raster, quality).as_ref(), self.transform * origin * size);
-             }
++            }
 +            #[cfg(feature = "svg")]
 +            blitz_dom::node::ImageData::Svg(svg) => {
 +                anyrender_svg::render_svg_tree(scene, &svg.tree, self.transform * origin * Affine::scale(self.scale));
 +            }
 +            _ => {}
-         }
++        }
 +    }
- 
-+    fn draw_children(
-+        &self,
-+        scene: &mut impl PaintScene,
-+        parent_style_transform: Affine,
-+        clip_rect: Rect,
-+    ) {
-+        // Negative z_index hoisted nodes
++
+     fn draw_children(
+         &self,
+         scene: &mut impl PaintScene,
+@@ -1159,65 +3314,260 @@
+         clip_rect: Rect,
+     ) {
+         // Negative z_index hoisted nodes
 +        self.draw_neg_z_children(scene, parent_style_transform, clip_rect);
 +        self.draw_children_above(scene, parent_style_transform, clip_rect);
 +    }
-+
+ 
+-        if let Some(hoisted) = &self.node.stacking_context {
+-            for hoisted_child in hoisted.neg_z_hoisted_children() {
+-                let position = hoisted_child.position(self.node.tree(), self.node.id);
+-                let pos = kurbo::Vec2 {
+-                    x: position.x as f64 * self.scale,
+-                    y: position.y as f64 * self.scale,
+-                };
+-                self.render_node(
+-                    scene,
+-                    hoisted_child.node_id,
+-                    parent_style_transform.pre_translate(pos),
+-                    clip_rect,
+-                );
 +    /// pyro: [`Self::draw_children`] without the stacking contexts of negative z-index.
 +    fn draw_children_above(
 +        &self,
@@ -5034,33 +5860,14 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +        parent_style_transform: Affine,
 +        clip_rect: Rect,
 +    ) {
-         // Regular children
-         if let Some(children) = &*self.node.paint_children.borrow() {
-             for child_id in children {
--                // Fixed-position children of the root element are positioned against
--                // the viewport and do not scroll with it, so cancel out the viewport
--                // scroll (applied in `paint_scene`). A fixed box contained by a
--                // transformed ancestor scrolls with it like any out-of-flow box.
--                let child = &self.context.dom.as_ref().tree()[*child_id];
--                let child_transform = if child.taffy_position() == taffy::Position::Fixed
--                    && Some(self.node.id) == self.context.root_element_id
--                {
--                    let scroll = self.context.dom.as_ref().viewport_scroll();
--                    parent_style_transform.pre_translate(kurbo::Vec2 {
--                        x: scroll.x * self.scale,
--                        y: scroll.y * self.scale,
--                    })
--                } else if let Some(offset) = child.lifted_paint_offset(self.node.id) {
--                    parent_style_transform.pre_translate(kurbo::Vec2 {
--                        x: offset.x as f64 * self.scale,
--                        y: offset.y as f64 * self.scale,
--                    })
--                } else {
--                    parent_style_transform
++        // Regular children
++        if let Some(children) = &*self.node.paint_children.borrow() {
++            for child_id in children {
 +                self.draw_paint_child(scene, *child_id, parent_style_transform, clip_rect);
-+            }
-+        }
-+
+             }
+         }
+ 
+-        // Regular children
 +        self.draw_pos_z_children(scene, parent_style_transform, clip_rect);
 +    }
 +
@@ -5139,7 +5946,26 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +            clip_rect,
 +            FlowPhase::Background,
 +        );
-+        if let Some(children) = &*self.node.paint_children.borrow() {
+         if let Some(children) = &*self.node.paint_children.borrow() {
+-            for child_id in children {
+-                // Fixed-position children of the root element are positioned against
+-                // the viewport and do not scroll with it, so cancel out the viewport
+-                // scroll (applied in `paint_scene`). A fixed box contained by a
+-                // transformed ancestor scrolls with it like any out-of-flow box.
+-                let child = &self.context.dom.as_ref().tree()[*child_id];
+-                let child_transform = if child.taffy_position() == taffy::Position::Fixed
+-                    && Some(self.node.id) == self.context.root_element_id
+-                {
+-                    let scroll = self.context.dom.as_ref().viewport_scroll();
+-                    parent_style_transform.pre_translate(kurbo::Vec2 {
+-                        x: scroll.x * self.scale,
+-                        y: scroll.y * self.scale,
+-                    })
+-                } else if let Some(offset) = child.lifted_paint_offset(self.node.id) {
+-                    parent_style_transform.pre_translate(kurbo::Vec2 {
+-                        x: offset.x as f64 * self.scale,
+-                        y: offset.y as f64 * self.scale,
+-                    })
 +            let tree = self.context.dom.as_ref().tree();
 +            for &child_id in children {
 +                if self.paint_level(&tree[child_id]) == 1 {
@@ -5252,7 +6078,8 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                let frame = create_css_rect(&styles, node.final_layout(), self.scale);
 +                let clip = if node.element_data().is_some_and(|el| el.text_input_data().is_some()) {
 +                    frame.text_input_clip_path()
-+                } else {
+                 } else {
+-                    parent_style_transform
 +                    box_shadow::overflow_clip_path(&frame, &styles, self.scale)
                  };
 -                self.render_node(scene, *child_id, child_transform, clip_rect);
@@ -5312,7 +6139,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              }
          }
      }
-@@ -1232,6 +3543,11 @@
+@@ -1232,6 +3582,11 @@
  
          let width = self.frame.content_box.width() as f32;
          let height = self.frame.content_box.height() as f32;
@@ -5324,7 +6151,51 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          let svg_size = svg.tree.size();
  
          let x = self.frame.content_box.origin().x;
-@@ -1272,20 +3588,121 @@
+@@ -1253,9 +3608,20 @@
+ 
+         // Apply object-fit algorithm
+         let container_size = taffy::Size { width, height };
+-        let object_size = taffy::Size {
+-            width: svg_size.width(),
+-            height: svg_size.height(),
++        // pyro: `object-view-box` (see `draw_image`): the view box is fitted and positioned,
++        // the SVG around it drawn at the view box's scale.
++        // (An SVG without a natural size has no view box: there is nothing to take a part of.)
++        let view = self
++            .svg
++            .is_some_and(|natural| natural.intrinsic_width().is_some() && natural.intrinsic_height().is_some())
++            .then(|| blitz_dom::util::object_view_box(&self.style, svg_size.width(), svg_size.height()))
++            .flatten();
++        let object_size = match view {
++            Some((_, _, width, height)) => taffy::Size { width, height },
++            None => taffy::Size {
++                width: svg_size.width(),
++                height: svg_size.height(),
++            },
+         };
+         let paint_size = compute_object_fit(container_size, Some(object_size), object_fit);
+ 
+@@ -1266,26 +3632,141 @@
+         let y_offset = object_position.vertical.resolve(
+             CSSPixelLength::new(container_size.height - paint_size.height) / self.scale as f32,
+         ) * self.scale as f32;
++        let (x_offset, y_offset, paint_size) = match view {
++            Some((left, top, width, height)) => {
++                let (x_scale, y_scale) = (paint_size.width / width, paint_size.height / height);
++                (
++                    CSSPixelLength::new(x_offset.px() - left * x_scale),
++                    CSSPixelLength::new(y_offset.px() - top * y_scale),
++                    taffy::Size {
++                        width: svg_size.width() * x_scale,
++                        height: svg_size.height() * y_scale,
++                    },
++                )
++            }
++            None => (x_offset, y_offset, paint_size),
++        };
+         let x = x + x_offset.px() as f64;
+         let y = y + y_offset.px() as f64;
+ 
          let viewport = svg_viewport_affine(svg, paint_size.width, paint_size.height);
          let transform = (self.transform * viewport).then_translate(Vec2 { x, y });
  
@@ -5447,7 +6318,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
      fn with_replaced_content_clip<S: PaintScene>(
          &self,
          scene: &mut S,
-@@ -1293,15 +3710,27 @@
+@@ -1293,15 +3774,27 @@
          paint_size: taffy::Size<f32>,
          x_offset: f32,
          y_offset: f32,
@@ -5476,7 +6347,62 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              BlendMode::default(),
              1.0,
              self.transform,
-@@ -1358,6 +3787,7 @@
+@@ -1329,9 +3822,22 @@
+                 width: width as f32,
+                 height: height as f32,
+             };
+-            let object_size = taffy::Size {
+-                width: image.width as f32,
+-                height: image.height as f32,
++            // pyro: `object-view-box`: the view box is what is fitted and positioned; the image
++            // around it is drawn at the view box's scale, where the content box has room.
++            // pyro: `image-orientation: none`: the pixels were turned by the EXIF orientation
++            // when decoded and are drawn turned back (`unturn`, from the image as stored to the
++            // decoded pixels' space).
++            let unoriented = blitz_dom::util::image_unoriented(&self.style) && image.orientation != 1;
++            let (shown_width, shown_height) = image.shown_size(unoriented);
++            let (shown_width, shown_height) = (shown_width as f32, shown_height as f32);
++            let unturn = unoriented.then(|| Affine::new(image.unturn()));
++            let view = blitz_dom::util::object_view_box(&self.style, shown_width, shown_height);
++            let object_size = match view {
++                Some((_, _, width, height)) => taffy::Size { width, height },
++                None => taffy::Size {
++                    width: shown_width,
++                    height: shown_height,
++                },
+             };
+             let paint_size = compute_object_fit(container_size, Some(object_size), object_fit);
+ 
+@@ -1347,10 +3853,28 @@
+ 
+             let x_scale = paint_size.width as f64 / object_size.width as f64;
+             let y_scale = paint_size.height as f64 / object_size.height as f64;
++            // The whole image's place (its part outside the view box too).
++            let (view_x, view_y) = view.map_or((0.0, 0.0), |(left, top, _, _)| (left as f64, top as f64));
++            let (x, y) = (x - view_x * x_scale, y - view_y * y_scale);
++            let (x_offset, y_offset, paint_size) = match view {
++                Some(_) => (
++                    CSSPixelLength::new(x_offset.px() - (view_x * x_scale) as f32),
++                    CSSPixelLength::new(y_offset.px() - (view_y * y_scale) as f32),
++                    taffy::Size {
++                        width: (shown_width as f64 * x_scale) as f32,
++                        height: (shown_height as f64 * y_scale) as f32,
++                    },
++                ),
++                None => (x_offset, y_offset, paint_size),
++            };
+             let transform = self
+                 .transform
+                 .pre_translate(Vec2 { x, y })
+                 .pre_scale_non_uniform(x_scale, y_scale);
++            let transform = match unturn {
++                Some(unturn) => transform * unturn,
++                None => transform,
++            };
+ 
+             self.with_replaced_content_clip(
+                 scene,
+@@ -1358,6 +3882,7 @@
                  paint_size,
                  x_offset.px(),
                  y_offset.px(),
@@ -5484,7 +6410,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
                  |scene| {
                      scene.draw_image(to_peniko_image(image, quality).as_ref(), transform);
                  },
-@@ -1466,3 +3896,58 @@
+@@ -1466,3 +3991,58 @@
  
      CssBox::new(border_box, border, padding, outline_width, border_radii)
  }
@@ -5603,7 +6529,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
          }
      }
  }
-@@ -82,6 +95,8 @@
+@@ -82,8 +95,13 @@
      pub size: &'a BackgroundSize,
      pub clip: BoxModelBox,
      pub text_clip: bool,
@@ -5611,8 +6537,20 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
 +    pub border_area: bool,
      pub origin: BoxModelBox,
      pub attachment: StyloBackgroundAttachment,
++    /// pyro: image pixels per CSS px (the `<resolution>` of an `image-set()` option; 1
++    /// otherwise): a raster image's natural size is its pixel size divided by it.
++    pub resolution: f32,
  }
-@@ -101,6 +116,8 @@
+ 
+ impl<'a> ImageLayerStyles<'a> {
+@@ -95,12 +113,15 @@
+         Self {
+             stylo_image: &bg_styles.background_image.0[idx],
+             image_data: image_data.get(idx).and_then(Option::as_ref),
++            resolution: 1.0,
+             position_x: get_cyclic(&bg_styles.background_position_x.0, idx),
+             position_y: get_cyclic(&bg_styles.background_position_y.0, idx),
+             repeat: get_cyclic(&bg_styles.background_repeat.0, idx),
              size: get_cyclic(&bg_styles.background_size.0, idx),
              clip: (*get_cyclic(&bg_styles.background_clip.0, idx)).into(),
              text_clip: *get_cyclic(&bg_styles.background_clip.0, idx) == StyloBackgroundClip::Text,
@@ -5621,7 +6559,14 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
              origin: (*get_cyclic(&bg_styles.background_origin.0, idx)).into(),
              attachment: *get_cyclic(&bg_styles.background_attachment.0, idx),
          }
-@@ -120,6 +137,7 @@
+@@ -114,12 +135,14 @@
+         Self {
+             stylo_image: &svg_styles.mask_image.0[idx],
+             image_data: image_data.get(idx).and_then(Option::as_ref),
++            resolution: 1.0,
+             position_x: get_cyclic(&svg_styles.mask_position_x.0, idx),
+             position_y: get_cyclic(&svg_styles.mask_position_y.0, idx),
+             repeat: get_cyclic(&svg_styles.mask_repeat.0, idx),
              size: get_cyclic(&svg_styles.mask_size.0, idx),
              clip: (*get_cyclic(&svg_styles.mask_clip.0, idx)).into(),
              text_clip: false,
@@ -5629,7 +6574,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
              origin: (*get_cyclic(&svg_styles.mask_origin.0, idx)).into(),
              // There is no `mask-attachment` property
              attachment: StyloBackgroundAttachment::Scroll,
-@@ -129,54 +147,325 @@
+@@ -129,54 +152,325 @@
  
  impl ElementCx<'_, '_> {
      pub(super) fn draw_background(&self, scene: &mut impl PaintScene) {
@@ -5825,7 +6770,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
          }
          if text_run {
              self.end_text_clip_group(scene);
-+        }
+         }
 +        self.context.layer_manager.maybe_pop_layer(scene, blend_group);
 +    }
 +
@@ -5929,7 +6874,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
 +        let scrolls = |overflow: Overflow| !matches!(overflow, Overflow::Visible | Overflow::Clip);
 +        if !(scrolls(box_style.overflow_x) || scrolls(box_style.overflow_y)) {
 +            return None;
-         }
++        }
 +        let scale = self.scale;
 +        let padding_box = self.frame.padding_box;
 +        // The scrollable overflow, relative to the padding box's top left (CSS px), with the
@@ -5965,7 +6910,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
      }
  
      /// Starts an isolated group for `background-clip: text` layers; layers drawn
-@@ -217,6 +506,7 @@
+@@ -217,6 +511,7 @@
              BoxModelBox::BorderBox => self.frame.border_box_path(),
              BoxModelBox::PaddingBox => self.frame.padding_box_path(),
              BoxModelBox::ContentBox => self.frame.content_box_path(),
@@ -5973,7 +6918,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
          }
      }
  
-@@ -226,20 +516,36 @@
+@@ -226,20 +521,36 @@
              BoxModelBox::BorderBox => self.frame.border_box,
              BoxModelBox::PaddingBox => self.frame.padding_box,
              BoxModelBox::ContentBox => self.frame.content_box,
@@ -6013,9 +6958,40 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
              }
              GenericImage::LightDark(_) => {
                  #[cfg(feature = "tracing")]
-@@ -261,6 +567,36 @@
+@@ -253,14 +564,61 @@
                  #[cfg(feature = "tracing")]
-                 warn!("Implement image layer drawing for Image::ImageSet")
+                 warn!("Implement image layer drawing for Image::CrossFade")
+             }
+-            GenericImage::Image(_) => {
+-                #[cfg(feature = "tracing")]
+-                warn!("Implement image layer drawing for Image::Image")
++            // pyro: `image(<color>)`: an image of that colour without a natural size, sized,
++            // positioned and tiled as a gradient is.
++            GenericImage::Image(color) => {
++                let color = color.resolve_to_absolute(current_color).as_dynamic_color();
++                self.draw_generated_layer(scene, layer, area, |_, _| {
++                    let mut solid = peniko::Gradient::new_linear((0.0, 0.0), (1.0, 0.0));
++                    for offset in [0.0, 1.0] {
++                        solid.stops.push(peniko::ColorStop { color, offset });
++                    }
++                    (solid, None)
++                })
+             }
+-            GenericImage::ImageSet(_) => {
+-                #[cfg(feature = "tracing")]
+-                warn!("Implement image layer drawing for Image::ImageSet")
++            // pyro: `image-set()`: the option Stylo selected for the device's resolution (none
++            // when every option was dropped: an unsupported `type()`, a resolution of 0).
++            GenericImage::ImageSet(set) => {
++                if let Some(item) = set.items.get(set.selected_index) {
++                    let resolution = item.resolution.dppx();
++                    let inner = ImageLayerStyles {
++                        stylo_image: &item.image,
++                        resolution: if resolution > 0.0 { layer.resolution * resolution } else { layer.resolution },
++                        ..*layer
++                    };
++                    self.draw_image_layer_in(scene, &inner, area, current_color);
++                }
              }
 +            // pyro: `filter()`: the image it filters, drawn in a layer with the filters over the
 +            // painting area (so a `drop-shadow()` stays inside it).
@@ -6050,7 +7026,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
          }
      }
  
-@@ -308,11 +644,49 @@
+@@ -308,11 +666,49 @@
                  ]
              })
              .collect();
@@ -6101,7 +7077,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
  
          let cell_rect = |cell_id: NodeId| -> Option<Rect> {
              let layout = self.context.dom.get_node(cell_id)?.final_layout();
-@@ -344,13 +718,29 @@
+@@ -344,13 +740,29 @@
          let after = gutter - before;
  
          for cell in &table.cells {
@@ -6132,7 +7108,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
                  continue;
              }
              let Some(mut rect) = cell_rect(cell.node_id) else {
-@@ -367,25 +757,104 @@
+@@ -367,25 +779,104 @@
              }
  
              let shape = rect.scale_from_origin(self.scale);
@@ -6248,7 +7224,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
      /// Whether the layer is positioned against the viewport
      /// (`background-attachment: fixed`) rather than the element's origin box.
      /// `fixed` behaves as `scroll` on elements affected by a CSS transform
-@@ -410,23 +879,43 @@
+@@ -410,23 +901,43 @@
  
      /// Whether this element or any of its ancestors has a CSS transform
      ///
@@ -6297,7 +7273,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
          let Some(bg_image) = layer.image_data else {
              return;
          };
-@@ -439,14 +928,10 @@
+@@ -439,14 +950,10 @@
              return;
          }
  
@@ -6315,7 +7291,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
  
          // Size the SVG per the CSS default sizing algorithm
          // (https://drafts.csswg.org/css-images/#default-sizing). An SVG image
-@@ -461,7 +946,7 @@
+@@ -461,7 +968,7 @@
          }
          .filter(|r| r.is_finite() && *r > 0.0);
  
@@ -6324,7 +7300,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
              layer,
              frame_w,
              frame_h,
-@@ -476,29 +961,77 @@
+@@ -476,29 +983,77 @@
              return;
          }
  
@@ -6416,7 +7392,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
          let Some(bg_image) = layer.image_data else {
              return;
          };
-@@ -509,11 +1042,7 @@
+@@ -509,95 +1064,163 @@
          let image_rendering = self.style.clone_image_rendering();
          let quality = to_image_quality(image_rendering);
  
@@ -6427,9 +7403,24 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
 -        };
 +        let (origin_rect, base_transform, area) = self.positioning_area(layer, area);
  
-         let image_width = image_data.width as f64;
-         let image_height = image_data.height as f64;
-@@ -527,76 +1056,125 @@
+-        let image_width = image_data.width as f64;
+-        let image_height = image_data.height as f64;
++        // pyro: `image-orientation: none`: the image as stored, not as its EXIF orientation
++        // turned the decoded pixels.
++        let unoriented = blitz_dom::util::image_unoriented(&self.style) && image_data.orientation != 1;
++        let (image_width, image_height) = image_data.shown_size(unoriented);
++        let (image_width, image_height) = (image_width as f64, image_height as f64);
+ 
+         let (bg_pos, bg_size) = compute_layer_position_and_size(
+             layer,
+             origin_rect.width() / self.scale,
+             origin_rect.height() / self.scale,
+-            BackgroundSizeComputeMode::Size(image_width as f32, image_height as f32),
++            BackgroundSizeComputeMode::Size(
++                image_width as f32 / layer.resolution,
++                image_height as f32 / layer.resolution,
++            ),
+         );
  
          let bg_pos = (bg_pos.to_vec2() * self.scale).to_point();
          let bg_size = bg_size * self.scale;
@@ -6498,6 +7489,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
 +        brush.sampler.y_extend = extend(*repeat_y);
 +        let scale =
 +            Affine::scale_non_uniform(bg_size.width / image_width, bg_size.height / image_height);
++        let scale = if unoriented { scale * Affine::new(image_data.unturn()) } else { scale };
 +        // Tiles that touch are one fill with the image repeating in it.
 +        let contiguous = |t: &AxisTiles, extend: peniko::Extend| {
 +            t.count == 1 || (t.stride == t.len && extend == peniko::Extend::Repeat)
@@ -6589,21 +7581,38 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
 -                self.box_rect(layer.clip),
 -            )
 -        };
++        let scale = self.scale;
++        self.draw_generated_layer(scene, layer, area, |tile_rect, bounding_box| {
++            to_peniko_gradient(gradient, tile_rect, bounding_box, scale, current_color)
++        })
++    }
+ 
++    /// pyro: a layer whose image has no natural size and is made for its tile: a gradient
++    /// (`make` gets the tile and the border box's bounds), or `image(<color>)` as a gradient of
++    /// one colour.
++    fn draw_generated_layer(
++        &self,
++        scene: &mut impl PaintScene,
++        layer: &ImageLayerStyles,
++        area: Rect,
++        make: impl FnOnce(Rect, Rect) -> (peniko::Gradient, Option<Affine>),
++    ) {
 +        // The tiles cover the painting area (`area`: the clip box, or the canvas), in the
 +        // positioning area's space.
 +        let (origin_rect, base_transform, clip_rect) = self.positioning_area(layer, area);
- 
++
          let (bg_pos, bg_size) = compute_layer_position_and_size(
              layer,
-@@ -629,23 +1207,50 @@
+             origin_rect.width() / self.scale,
+@@ -628,25 +1251,51 @@
+             bg_pos.y,
              bg_size.height,
          );
- 
++
 +        let tile_rect = Rect::new(0.0, 0.0, x.rect_len, y.rect_len);
 +        let bounding_box = self.frame.border_box.bounding_box();
 +
-+        let (gradient, gradient_transform) =
-+            to_peniko_gradient(gradient, tile_rect, bounding_box, self.scale, current_color);
++        let (gradient, gradient_transform) = make(tile_rect, bounding_box);
 +        // pyro: a gradient of one colour is that colour (`linear-gradient(white, white)`): the
 +        // ramp came out a level short of it in places. Repeating in both axes, its tiles cover
 +        // the painting area: one fill, however small they are (`background-size: 0.2px`).
@@ -6629,12 +7638,21 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
 +            );
 +            return;
 +        }
-+
+ 
          // FIXME: https://wpt.live/css/css-backgrounds/background-size/background-size-near-zero-gradient.html
          if x.count as u64 * y.count as u64 > 500 {
              return;
          }
--
++        let brush = match &solid {
++            Some(color) => anyrender::Paint::Solid(*color),
++            None => anyrender::Paint::Gradient(&gradient),
++        };
++        let gradient_transform = if solid.is_some() {
++            None
++        } else {
++            gradient_transform
++        };
+ 
 -        let tile_rect = Rect::new(0.0, 0.0, x.rect_len, y.rect_len);
 -        let bounding_box = self.frame.border_box.bounding_box();
 -        let current_color = self.style.clone_color();
@@ -6647,19 +7665,11 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
 -            &current_color,
 -        );
 -        let brush = anyrender::Paint::Gradient(&gradient);
-+        let brush = match &solid {
-+            Some(color) => anyrender::Paint::Solid(*color),
-+            None => anyrender::Paint::Gradient(&gradient),
-+        };
-+        let gradient_transform = if solid.is_some() {
-+            None
-+        } else {
-+            gradient_transform
-+        };
- 
+-
          let transform = base_transform.then_translate(Vec2 {
              x: x.translate,
-@@ -681,35 +1286,84 @@
+             y: y.translate,
+@@ -681,35 +1330,84 @@
  
      let bg_size = compute_layer_size(layer, container_w as f32, container_h as f32, size_mode);
  
@@ -6688,17 +7698,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
 -    let bg_size = if matches!(repeat_x, Round) && matches!(repeat_y, Round) {
 -        let count = (container_w / bg_size.width).round();
 -        let width = container_w / count;
-+/// Which axes of a `background-size` are `auto` (x, y).
-+fn size_is_auto(size: &BackgroundSize) -> (bool, bool) {
-+    use style::values::generics::length::GenericLengthPercentageOrAuto as Lpa;
-+    match size {
-+        BackgroundSize::ExplicitSize { width, height } => {
-+            (matches!(width, Lpa::Auto), matches!(height, Lpa::Auto))
-+        }
-+        BackgroundSize::Cover | BackgroundSize::Contain => (false, false),
-+    }
-+}
- 
+-
 -        let count = (container_h / bg_size.height).round();
 -        let height = container_h / count;
 -
@@ -6713,6 +7713,19 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
 -        Size::new(bg_size.width, height)
 -    } else {
 -        bg_size
+-    };
++/// Which axes of a `background-size` are `auto` (x, y).
++fn size_is_auto(size: &BackgroundSize) -> (bool, bool) {
++    use style::values::generics::length::GenericLengthPercentageOrAuto as Lpa;
++    match size {
++        BackgroundSize::ExplicitSize { width, height } => {
++            (matches!(width, Lpa::Auto), matches!(height, Lpa::Auto))
++        }
++        BackgroundSize::Cover | BackgroundSize::Contain => (false, false),
++    }
++}
+ 
+-    (bg_pos, bg_size)
 +/// pyro: the round step of CSS Backgrounds 3 §3.9 on a layer sized `size` in a positioning area
 +/// `container_w` x `container_h`: a `round` axis is scaled to fit a whole number of copies (at
 +/// least one), and when only one axis rounds and `background-size` is `auto` in the other (`auto`
@@ -6733,9 +7746,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
 +        } else {
 +            len
 +        }
-     };
--
--    (bg_pos, bg_size)
++    };
 +    match (round_x, round_y) {
 +        (true, true) => Size::new(
 +            round(container_w, size.width),
@@ -6764,7 +7775,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
  }
  
  #[inline]
-@@ -875,48 +1529,64 @@
+@@ -875,48 +1573,64 @@
      stride: f64,
  }
  
@@ -6858,7 +7869,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
          },
      }
  }
-@@ -958,11 +1628,24 @@
+@@ -958,11 +1672,24 @@
          }
          Space => {
              let (count, stride) = compute_space_count_and_stride(origin_len, tile_len);
@@ -6888,7 +7899,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
              }
          }
          NoRepeat => AxisTiling {
-@@ -986,6 +1669,16 @@
+@@ -986,6 +1713,16 @@
      (count, stride)
  }
  
@@ -6905,7 +7916,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
  /// Whether drawing the layer is guaranteed to paint nothing, making its clip
  /// layer unnecessary
  fn layer_paints_nothing(layer: &ImageLayerStyles) -> bool {
-@@ -1009,3 +1702,55 @@
+@@ -1009,3 +1746,55 @@
          -extend_length
      }
  }
@@ -12857,7 +13868,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
  }
  
  /// An element on the current ancestor path (inline root -> run node), caching the
-@@ -151,8 +407,65 @@
+@@ -151,8 +407,81 @@
      fill_color: Color,
      /// The decoration this node introduces as a decorating box, if any.
      decoration: Option<ResolvedDecoration>,
@@ -12916,6 +13927,22 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 +}
 +
 +/// pyro: the colour a node's text is filled with.
++/// pyro: whether the element's `font-synthesis-weight` lets a bold face be faked, and its
++/// `font-synthesis-style` a slanted one (`oblique-only`: for `font-style: oblique`).
++fn synthesis_allowed(doc: &BaseDocument, node_id: NodeId) -> (bool, bool) {
++    use style::values::computed::font::{FontStyle, FontSynthesis, FontSynthesisStyle};
++    let Some(styles) = doc.get_node(node_id).and_then(|node| node.primary_styles()) else {
++        return (true, true);
++    };
++    let font = styles.get_font();
++    let slant = match font.font_synthesis_style {
++        FontSynthesisStyle::Auto => true,
++        FontSynthesisStyle::None => false,
++        FontSynthesisStyle::ObliqueOnly => font.font_style != FontStyle::ITALIC,
++    };
++    (font.font_synthesis_weight != FontSynthesis::None, slant)
++}
++
 +pub(crate) fn text_fill_color(doc: &BaseDocument, node_id: NodeId) -> Color {
 +    resolve_decoration_entry(doc, node_id).fill_color
 +}
@@ -12923,7 +13950,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
  /// Resolve the cached style values for a single node into a [`DecorationStackEntry`].
  fn resolve_decoration_entry(doc: &BaseDocument, node_id: NodeId) -> DecorationStackEntry {
      let Some(styles) = doc.get_node(node_id).and_then(|node| node.primary_styles()) else {
-@@ -160,56 +473,56 @@
+@@ -160,56 +489,56 @@
              node_id,
              fill_color: Color::BLACK,
              decoration: None,
@@ -13014,7 +14041,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
  /// The run-dependent geometry used to position and size a decoration, captured from a
  /// single glyph run. Firefox draws a decoration once for the whole decorating box using
  /// the box's own font, so we prefer the values from a run whose innermost node *is* the
-@@ -219,14 +532,17 @@
+@@ -219,14 +548,17 @@
      /// The baseline the decoration is positioned from (the run's own, `vertical-align`
      /// shifted, baseline).
      baseline: f32,
@@ -13036,7 +14063,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
  }
  
  /// A decoration accumulated across the runs of a single line for one decorating box.
-@@ -237,15 +553,59 @@
+@@ -237,15 +569,59 @@
  struct LineDecoration {
      node_id: NodeId,
      deco: ResolvedDecoration,
@@ -13096,7 +14123,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
  /// Reusable scratch storage for drawing text across all inline formatting contexts in a
  /// document. The vectors are cleared between uses without releasing their allocations.
  #[derive(Default)]
-@@ -253,38 +613,355 @@
+@@ -253,38 +629,355 @@
      stack: Vec<DecorationStackEntry>,
      path_scratch: Vec<NodeId>,
      deco_boxes: Vec<LineDecoration>,
@@ -13473,7 +14500,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
  /// across renderers.
  ///
  /// `double_dir` points away from the text (`+1` = down, `-1` = up) and is used to place the
-@@ -296,24 +973,21 @@
+@@ -296,24 +989,21 @@
      scale: f64,
      x0: f64,
      width: f64,
@@ -13504,7 +14531,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
      let butt_stroke = Stroke::new(size).with_caps(Cap::Butt);
  
      match deco_style {
-@@ -399,26 +1073,82 @@
+@@ -399,26 +1089,82 @@
  pub(crate) struct TextPaintOptions {
      pub scale: f64,
      pub brush_override: Option<Color>,
@@ -13595,7 +14622,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
          // Prefer the decorating box's own font; fall back to the first run it covers.
          let geom = match (&acc.own, &acc.first) {
              (Some(own), _) => own.clone(),
-@@ -426,9 +1156,14 @@
+@@ -426,9 +1172,14 @@
                  let mut geom = first.clone();
                  // A descendant run's baseline may be shifted by `vertical-align`, but the
                  // decoration is positioned from the decorating box's own baseline. For the
@@ -13613,7 +14640,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
                  }
                  geom
              }
-@@ -442,160 +1177,473 @@
+@@ -442,160 +1193,473 @@
          let brush = anyrender::Paint::from(brush_override.unwrap_or(deco.color));
  
          // `text-decoration-inset` shortens (or, when negative, extends) the line from the
@@ -13628,6 +14655,17 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 -                    start.resolve(line_length).px() as f64 * scale,
 -                    end.resolve(line_length).px() as f64 * scale,
 -                )
+-            }
+-            GenericTextDecorationInset::Auto => (0.0, 0.0),
+-        };
+-
+-        if deco.line.contains(TextDecorationLine::UNDERLINE) {
+-            let size = decoration_size(
+-                &deco.thickness,
+-                geom.underline_size,
+-                geom.css_font_size,
+-                scale,
+-            );
 +        // left and right ends (pyro: resolved per box in `stroke_text`, see `line_insets`).
 +        let (inset_start, inset_end) = (acc.inset_left, acc.inset_right);
 +        // pyro: the shadow this phase draws over each part of the line: the runs' shadows, in
@@ -13651,9 +14689,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 +                    shadow_pieces.push((start, end, shadow));
 +                }
 +                start = end;
-             }
--            GenericTextDecorationInset::Auto => (0.0, 0.0),
--        };
++            }
 +            if shadow_pieces.is_empty() {
 +                continue;
 +            }
@@ -13796,14 +14832,6 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 +        // still goes away from the text: toward the line-over side for the underline.
 +        let outward = if geom.central.is_some() && deco.underline_over_in_vertical { -1.0 } else { 1.0 };
  
--        if deco.line.contains(TextDecorationLine::UNDERLINE) {
--            let size = decoration_size(
--                &deco.thickness,
--                geom.underline_size,
--                geom.css_font_size,
--                scale,
--            );
--
 -            // `text-underline-offset` moves the underline away from the text. `auto` keeps
 -            // the font's suggested position; otherwise it resolves against the font size
 -            // (percentages relative to 1em).
@@ -14208,7 +15236,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
      stack.clear();
      path_scratch.clear();
      deco_boxes.clear();
-@@ -608,152 +1656,721 @@
+@@ -608,152 +1672,725 @@
      // for each run, only resolve styles for the nodes newly descended into (popping
      // as we ascend). `path_scratch` is a reusable buffer for the run's node path.
      for line in lines {
@@ -14602,8 +15630,12 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 +            let font_size = run.font_size();
 +            let metrics = run.font_metrics();
 +            let synthesis = run.synthesis();
++            // pyro: `font-synthesis-weight` and `font-synthesis-style` of the run's element
++            // decide whether a missing bold or slanted face is faked.
++            let (fake_bold, fake_slant) = synthesis_allowed(doc, glyph_run.style().brush.id);
 +            let glyph_xform = synthesis
 +                .skew()
++                .filter(|_| fake_slant)
 +                .map(|angle| Affine::skew(angle.to_radians().tan() as f64, 0.0));
 +            let (transform, glyph_xform) = match vertical {
 +                Some(vertical) => {
@@ -14629,7 +15661,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 +                font_embolden(font_size as f64, fill_color, transform)
 +            } else {
 +                kurbo::Vec2::default()
-+            } + if synthesis.embolden() {
++            } + if synthesis.embolden() && fake_bold {
 +                synthetic_bold(font_size as f64, scale, fill_color, transform)
 +            } else {
 +                kurbo::Vec2::default()
@@ -15042,7 +16074,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
      selection_start: usize,
      selection_end: usize,
  ) {
-@@ -761,12 +2378,54 @@
+@@ -761,12 +2398,54 @@
      let focus = Cursor::from_byte_index(layout, selection_end, Affinity::Downstream);
      let selection = Selection::new(anchor, focus);
  
@@ -15099,7 +16131,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
  /// Approximates macOS font smoothing (stem dilation). CoreGraphics dilates each side by an amount
  /// in device pixels that grows with the device ppem up to 0.3px (fitted to Safari's ink at 9-72px
  /// and 1x-3x scale), and keeps dilating at large sizes, so there is no ppem cutoff. glifo applies
-@@ -804,3 +2463,232 @@
+@@ -804,3 +2483,232 @@
      }
      prev.1
  }

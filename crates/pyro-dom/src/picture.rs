@@ -83,6 +83,12 @@ impl Dom {
     /// matches `viewport` and whose `type`, when given, is an image type.
     /// `None` when `img` is not a picture's child or no source applies.
     pub fn picture_source(&self, img: NodeId, viewport: &Viewport) -> Option<String> {
+        self.picture_candidate(img, viewport).map(|c| c.url)
+    }
+
+    /// [`Dom::picture_source`] with the candidate's pixel density (the image's natural size is
+    /// its pixel size divided by it).
+    pub fn picture_candidate(&self, img: NodeId, viewport: &Viewport) -> Option<Candidate> {
         let i = self.check(img).ok()?;
         let parent = self.n(i).parent;
         let html =
@@ -108,7 +114,7 @@ impl Dom {
                             source_size(e.attr_local(&markup5ever::local_name!("sizes")), viewport),
                         );
                         if let Some(c) = pick_candidate(&candidates, viewport.device_scale_factor) {
-                            return Some(c.url.clone());
+                            return Some(c.clone());
                         }
                     }
                 }
@@ -120,7 +126,7 @@ impl Dom {
 
     /// The candidate the `<img>`'s own `srcset` selects; its `src` counts as
     /// a 1x candidate when the set has no 1x one and no width descriptors.
-    fn own_srcset_source(&self, img: u32, viewport: &Viewport) -> Option<String> {
+    fn own_srcset_source(&self, img: u32, viewport: &Viewport) -> Option<Candidate> {
         let e = self.n(img).element()?;
         let srcset = e.attr_local(&markup5ever::local_name!("srcset"))?;
         let mut candidates =
@@ -131,7 +137,7 @@ impl Dom {
                 candidates.push(Candidate { url: src.to_owned(), density: 1.0 });
             }
         }
-        pick_candidate(&candidates, viewport.device_scale_factor).map(|c| c.url.clone())
+        pick_candidate(&candidates, viewport.device_scale_factor).cloned()
     }
 }
 

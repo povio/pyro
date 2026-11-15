@@ -1794,3 +1794,38 @@ Covered by WPT `css/css-sizing/aspect-ratio/replaced-element-029`, `-030` and `g
 
 Covered by `crates/pyro-render/tests/size_containment.rs`; WPT `css/css-sizing/contain-intrinsic-size`: 23 more
 reftests pass.
+## `image-set()`, images as `content`, font features and descriptors (WPT css-images and css-fonts, round 3 lane F)
+
+- `src/util.rs` (`unfiltered_image`, `image_resolution`): an `image-set()` layer loads and draws the option
+  Stylo selected (backgrounds, masks, border images, list markers, `content`), at that option's resolution.
+- `src/layout/damage.rs` (`flush_content_image`), `src/layout/replaced.rs` (`is_content_image`),
+  `src/node/element.rs` (`ElementData::content_image`): an element whose own `content` is one image is laid out
+  as an `<img>` of it once the image has loaded (CSS Content 3 §2). A generated `img` box (`content: url()` of
+  `::before`/`::after`) carries the resolution too (`Piece::Image`), and `layout/mod.rs` divides the raster's
+  pixel size by it.
+- `src/layout/mod.rs`: the `natural=W,H` token (pyro-dom's density-corrected natural size: a `srcset`
+  candidate's `0.5x`) sizes a loaded raster `<img>` too; it was only used until Blitz had the image.
+- `src/layout/list.rs`, `src/layout/inline/build.rs`, `src/layout/construct.rs`: an image marker inside the
+  item (`list-style-position: inside`) has room at the start of the first line: a run of no size of its own, as
+  tall as the image above the baseline and as wide as it plus Blink's 7px (blitz-paint draws the image). An
+  item with nothing but that marker has the line.
+- `src/stylo_to_parley.rs` (`font_kerning`, `font_variant_alternates`, `set_font_feature_values`),
+  `src/resolve.rs` (`publish_font_feature_values`): `font-kerning: none | normal` is the `kern` feature;
+  `font-variant-alternates` maps to `hist`, `salt`, `ssNN`, `cvNN`, `swsh`/`cswh`, `ornm` and `nalt` through the
+  `@font-feature-values` rules for a family of the element's `font-family` (a thread-local the layout sets: the
+  style conversions have no document). In `font_features` the last setting of a tag wins
+  (`font-feature-settings` over `font-variant-*`); `dedup_by_key` kept the first.
+- `src/net.rs` (`FontFaceOverrides::width`), `src/document.rs`: the `font-stretch` descriptor of `@font-face`
+  reaches font matching (the faces of a family that differ in it only were all `normal`).
+- `src/document.rs` (`init_stylo_prefs`): `light-dark()` of images and the `font-synthesis-*` longhands parse.
+
+Covered by `crates/pyro-render/tests/gradient_stops_image_set.rs` and the WPT pages named in the commit.
+
+- `src/util.rs` (`object_view_box`), `src/layout/mod.rs`: `object-view-box` (a rectangle of the content's natural
+  size, `inset()`, `rect()` or `xywh()`): the view box is the content's natural size; one without an area is
+  ignored.
+- `src/net.rs`: a decoded raster image is turned as its EXIF orientation says (`image-orientation: from-image`,
+  the initial value), in JPEG, WebP and PNG (`eXIf`); pyro-dom's header parser exchanges the sides to match.
+- `src/mutator.rs`: an `<embed>` loads the image its `src` names, as an `<img>` does.
+
+Covered by `crates/pyro-render/tests/object_view_box_embed.rs`.

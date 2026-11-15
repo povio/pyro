@@ -952,8 +952,11 @@ impl LayoutPassState<'_> {
                     // A `<video>` with known metadata is sized by its video
                     // track, whatever its poster's size.
                     let is_video = element_data.name.local == local_name!("video");
+                    // The token is the density-corrected natural size (a `srcset` candidate's `2x`),
+                    // which a loaded raster image's pixel size is not.
+                    let raster = matches!(&element_data.special_data, SpecialElementData::Image(d) if matches!(&**d, ImageData::Raster(_)));
                     let (intrinsic_sizes, default_object_size) = match pyro_natural_size(element_data) {
-                        Some((width, height)) if is_video || (!loaded && is_image) => (
+                        Some((width, height)) if is_video || (is_image && (!loaded || raster)) => (
                             IntrinsicSizes {
                                 width: Some(width),
                                 height: Some(height),
@@ -962,6 +965,49 @@ impl LayoutPassState<'_> {
                             DEFAULT_OBJECT_SIZE,
                         ),
                         _ => (intrinsic_sizes, default_object_size),
+                    };
+
+                    // pyro: an image of generated content or of the element's `content` at the
+                    // resolution of its `image-set()` option.
+                    let intrinsic_sizes = match &element_data.content_image {
+                        Some((_, density)) if raster && *density > 0.0 && *density != 1.0 => IntrinsicSizes {
+                            width: intrinsic_sizes.width.map(|w| w / density),
+                            height: intrinsic_sizes.height.map(|h| h / density),
+                            ratio: intrinsic_sizes.ratio,
+                        },
+                        _ => intrinsic_sizes,
+                    };
+
+                    // pyro: `image-orientation: none`: a raster image whose EXIF orientation turned
+                    // it a quarter has its sides as stored.
+                    let quarter_turned = matches!(&element_data.special_data,
+                        SpecialElementData::Image(image) if matches!(&**image,
+                            ImageData::Raster(raster) if (5..=8).contains(&raster.orientation)));
+                    let intrinsic_sizes = if quarter_turned
+                        && node.primary_styles().is_some_and(|style| crate::util::image_unoriented(&style))
+                    {
+                        IntrinsicSizes {
+                            width: intrinsic_sizes.height,
+                            height: intrinsic_sizes.width,
+                            ratio: intrinsic_sizes.ratio.map(|ratio| 1.0 / ratio),
+                        }
+                    } else {
+                        intrinsic_sizes
+                    };
+
+                    // pyro: `object-view-box`: the view box is the content's natural size.
+                    let intrinsic_sizes = match (intrinsic_sizes.width, intrinsic_sizes.height, node.primary_styles()) {
+                        (Some(width), Some(height), Some(style)) => {
+                            match crate::util::object_view_box(&style, width, height) {
+                                Some((_, _, view_width, view_height)) => IntrinsicSizes {
+                                    width: Some(view_width),
+                                    height: Some(view_height),
+                                    ratio: Some(view_width / view_height),
+                                },
+                                None => intrinsic_sizes,
+                            }
+                        }
+                        _ => intrinsic_sizes,
                     };
 
                     #[cfg(feature = "writing-mode")]

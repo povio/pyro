@@ -218,7 +218,7 @@ diff -ruN a/properties/helpers.mako.rs b/properties/helpers.mako.rs
                              if !context.builder.effective_zoom_for_inheritance.is_one() {
 diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 --- a/properties/longhands.toml	2026-11-11 19:55:57
-+++ b/properties/longhands.toml	2026-11-15 21:50:40
++++ b/properties/longhands.toml	2026-11-15 23:37:46
 @@ -473,7 +473,6 @@
  type = "BreakBetween"
  initial = "computed::BreakBetween::Auto"
@@ -240,19 +240,20 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  initial = "computed::BreakWithin::Auto"
  struct = "box"
 -engine = "gecko"
- spec = "https://drafts.csswg.org/css-break/#propdef-break-inside"
- animation_type = "discrete"
- affects = "layout"
- 
+-spec = "https://drafts.csswg.org/css-break/#propdef-break-inside"
++spec = "https://drafts.csswg.org/css-break/#propdef-break-inside"
++animation_type = "discrete"
++affects = "layout"
++
 +[orphans]
 +type = "PositiveInteger"
 +initial = "From::from(2)"
 +struct = "inherited_text"
 +spec = "https://drafts.csswg.org/css-break/#propdef-orphans"
-+animation_type = "discrete"
+ animation_type = "discrete"
 +servo_restyle_damage = "repaint"
-+affects = "layout"
-+
+ affects = "layout"
+ 
 +[widows]
 +type = "PositiveInteger"
 +initial = "From::from(2)"
@@ -341,7 +342,25 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  struct = "list"
  animation_type = "discrete"
  spec = "https://drafts.csswg.org/css-lists/#propdef-list-style-image"
-@@ -2117,7 +2130,6 @@
+@@ -1427,6 +1440,17 @@
+ spec = "https://drafts.csswg.org/css-images-3/#the-object-position"
+ affects = "layout"
+ 
++# pyro: `object-view-box: none | <basic-shape-rect>` (CSS Images 5): the part of a replaced
++# element's content that is its view, as a `clip-path` value of `none` or one rectangle.
++[object-view-box]
++type = "basic_shape::ClipPath"
++initial = "generics::basic_shape::ClipPath::None"
++struct = "position"
++parse_method = "parse_object_view_box"
++animation_type = "discrete"
++spec = "https://drafts.csswg.org/css-images-5/#the-object-view-box"
++affects = "layout"
++
+ [offset-anchor]
+ type = "PositionOrAuto"
+ initial = "computed::PositionOrAuto::auto()"
+@@ -2117,7 +2141,6 @@
  type = "TransformBox"
  initial = "computed::TransformBox::ViewBox"
  struct = "box"
@@ -349,7 +368,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/css-transforms/#transform-box"
  animation_type = "discrete"
  affects = "overflow"
-@@ -2635,7 +2647,6 @@
+@@ -2635,7 +2658,6 @@
  type = "TextDecorationSkipInk"
  initial = "computed::TextDecorationSkipInk::Auto"
  struct = "inherited_text"
@@ -357,7 +376,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  animation_type = "discrete"
  spec = "https://drafts.csswg.org/css-text-decor-4/#text-decoration-skip-ink-property"
  affects = "overflow"
-@@ -2665,6 +2676,7 @@
+@@ -2665,6 +2687,7 @@
  servo_pref = "layout.css.text-emphasis.enabled"
  animation_type = "discrete"
  spec = "https://drafts.csswg.org/css-text-decor/#propdef-text-emphasis-style"
@@ -365,7 +384,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  affects = "overflow"
  
  [text-underline-offset]
-@@ -3383,9 +3395,9 @@
+@@ -3383,9 +3406,9 @@
  type = "MarginTrim"
  initial = "computed::MarginTrim::empty()"
  struct = "margin"
@@ -376,7 +395,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/css-box-4/#propdef-margin-trim"
  affects = "layout"
  
-@@ -3694,6 +3706,7 @@
+@@ -3694,6 +3717,7 @@
  [box-decoration-break]
  struct = "border"
  spec = "https://drafts.csswg.org/css-break/#propdef-box-decoration-break"
@@ -384,7 +403,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  animation_type = "discrete"
  affects = "layout"
  type = "BoxDecorationBreak"
-@@ -3770,7 +3783,6 @@
+@@ -3770,7 +3794,6 @@
  
  [column-fill]
  struct = "column"
@@ -392,10 +411,24 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/css-multicol/#propdef-column-fill"
  animation_type = "discrete"
  affects = "layout"
-@@ -4290,6 +4302,19 @@
- type = "BoxOrient"
- initial = "computed::BoxOrient::Horizontal"
+@@ -3901,9 +3924,9 @@
+ type = "TextOrientation"
+ initial = "computed::TextOrientation::Mixed"
  
++# pyro: for Servo too (blitz-dom and blitz-paint show an image turned back under `none`).
+ [image-orientation]
+ struct = "inherited_box"
+-engine = "gecko"
+ spec = "https://drafts.csswg.org/css-images/#propdef-image-orientation"
+ animation_type = "discrete"
+ affects = "layout"
+@@ -4287,6 +4310,19 @@
+ affects = "layout"
+ gecko_ffi_name = "mBoxOrient"
+ aliases = ["-webkit-box-orient"]
++type = "BoxOrient"
++initial = "computed::BoxOrient::Horizontal"
++
 +# pyro: `-webkit-box-orient` for the servo engine (the gecko one is `-moz-box-orient`'s alias):
 +# with `display: -webkit-box` and `-webkit-line-clamp` it makes the legacy line clamp apply
 +# (`StyleAdjuster::adjust_for_webkit_box`).
@@ -406,12 +439,9 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +animation_type = "discrete"
 +affects = "layout"
 +servo_restyle_damage = "rebuild_box"
-+type = "BoxOrient"
-+initial = "computed::BoxOrient::Horizontal"
-+
- [-moz-box-pack]
- struct = "xul"
- engine = "gecko"
+ type = "BoxOrient"
+ initial = "computed::BoxOrient::Horizontal"
+ 
 diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
 --- a/properties/shorthands.rs	2026-11-11 19:55:57
 +++ b/properties/shorthands.rs	2026-11-14 13:56:06
@@ -1328,6 +1358,35 @@ diff -ruN a/values/specified/background.rs b/values/specified/background.rs
 -    #[cfg(feature = "gecko")]
      Local,
  }
+diff -ruN a/values/specified/basic_shape.rs b/values/specified/basic_shape.rs
+--- a/values/specified/basic_shape.rs	2026-11-11 19:55:57
++++ b/values/specified/basic_shape.rs	2026-11-15 23:27:24
+@@ -37,6 +37,25 @@
+ /// A specified `clip-path` value.
+ pub type ClipPath = generic::GenericClipPath<BasicShape, SpecifiedUrl>;
+ 
++impl ClipPath {
++    /// pyro: `object-view-box`: `none`, or `inset()`, `rect()` or `xywh()`.
++    pub fn parse_object_view_box(
++        context: &ParserContext,
++        input: &mut Parser,
++    ) -> Result<Self, ParseError> {
++        if input.try_parse(|i| i.expect_ident_matching("none")).is_ok() {
++            return Ok(Self::None);
++        }
++        let shape = BasicShape::parse(
++            context,
++            input,
++            AllowedBasicShapes::INSET | AllowedBasicShapes::XYWH | AllowedBasicShapes::RECT,
++            ShapeType::Filled,
++        )?;
++        Ok(Self::Shape(Box::new(shape), generic::ShapeGeometryBox::ElementDependent))
++    }
++}
++
+ /// A specified `shape-outside` value.
+ pub type ShapeOutside = generic::GenericShapeOutside<BasicShape, Image>;
+ 
 diff -ruN a/values/specified/box.rs b/values/specified/box.rs
 --- a/values/specified/box.rs	2026-11-11 19:55:57
 +++ b/values/specified/box.rs	2026-11-15 21:32:07
@@ -1572,7 +1631,7 @@ diff -ruN a/values/specified/effects.rs b/values/specified/effects.rs
              let f = input.expect_function()?;
 diff -ruN a/values/specified/image.rs b/values/specified/image.rs
 --- a/values/specified/image.rs	2026-11-11 19:55:57
-+++ b/values/specified/image.rs	2026-11-15 10:11:12
++++ b/values/specified/image.rs	2026-11-15 19:35:19
 @@ -38,7 +38,8 @@
  
  /// Specified values for an image according to CSS-IMAGES.
@@ -1583,7 +1642,24 @@ diff -ruN a/values/specified/image.rs b/values/specified/image.rs
  
  impl ToTyped for Image {
      fn to_typed(&self, dest: &mut ThinVec<TypedValue>) -> Result<(), ()> {
-@@ -196,6 +197,8 @@
+@@ -91,7 +92,15 @@
+ impl Color {
+     fn has_modern_syntax(&self) -> bool {
+         match self {
+-            Self::Absolute(absolute) => !absolute.color.is_legacy_syntax(),
++            // pyro: a missing component (`rgb(none 255 0)`) is modern syntax too, as in
++            // Chromium: Stylo's legacy flag is about the function, which serializes that way.
++            Self::Absolute(absolute) => {
++                use crate::color::ColorFlags as F;
++                !absolute.color.is_legacy_syntax()
++                    || absolute.color.flags.intersects(
++                        F::C0_IS_NONE | F::C1_IS_NONE | F::C2_IS_NONE | F::ALPHA_IS_NONE,
++                    )
++            },
+             Self::ColorMix(mix) => {
+                 if mix.flags.contains(ColorMixFlags::RESULT_IN_MODERN_SYNTAX) {
+                     true
+@@ -196,6 +205,8 @@
          const FORBID_NONE = 1 << 0;
          const FORBID_IMAGE_SET = 1 << 1;
          const FORBID_NON_URL = 1 << 2;
@@ -1592,7 +1668,7 @@ diff -ruN a/values/specified/image.rs b/values/specified/image.rs
      }
  }
  
-@@ -245,6 +248,10 @@
+@@ -245,6 +256,10 @@
              "paint" => Self::PaintWorklet(Box::new(<PaintWorklet>::parse_args(context, input)?)),
              "cross-fade" if cross_fade_enabled() => Self::CrossFade(Box::new(CrossFade::parse_args(context, input, cors_mode, flags)?)),
              "image" => Self::Image(Box::new(Color::parse(context, input)?)),
@@ -1603,7 +1679,7 @@ diff -ruN a/values/specified/image.rs b/values/specified/image.rs
              "light-dark" if crate::pref!("layout.css.light-dark.images.enabled", gecko = true) => {
                  Self::LightDark(Box::new(GenericLightDark::parse_args_with(input, |input| {
                      // `none` in `light-dark()` has a special meaning.
-@@ -261,6 +268,41 @@
+@@ -261,6 +276,41 @@
  }
  
  impl Image {
@@ -1645,7 +1721,7 @@ diff -ruN a/values/specified/image.rs b/values/specified/image.rs
      /// Creates an already specified image value from an already resolved URL
      /// for insertion in the cascade.
      #[cfg(feature = "servo")]
-@@ -280,6 +322,11 @@
+@@ -280,6 +330,11 @@
  
      /// Provides an alternate method for parsing that associates the URL with
      /// anonymous CORS headers.
@@ -1657,7 +1733,7 @@ diff -ruN a/values/specified/image.rs b/values/specified/image.rs
      pub fn parse_with_cors_anonymous(
          context: &ParserContext,
          input: &mut Parser,
-@@ -288,7 +335,7 @@
+@@ -288,7 +343,7 @@
              context,
              input,
              CorsMode::Anonymous,
@@ -1666,12 +1742,10 @@ diff -ruN a/values/specified/image.rs b/values/specified/image.rs
          )
      }
  
-@@ -298,8 +345,38 @@
-         input: &mut Parser,
-     ) -> Result<Image, ParseError> {
+@@ -300,6 +355,36 @@
          Self::parse_with_cors_mode(context, input, CorsMode::None, ParseImageFlags::FORBID_NONE)
-+    }
-+
+     }
+ 
 +    /// pyro: [`Self::parse_forbid_none`] without `filter()` images (`content`), which blitz-dom
 +    /// does not generate. Registered custom properties of `<image>` syntax keep `filter()`, as
 +    /// `background-image` does.
@@ -1685,8 +1759,8 @@ diff -ruN a/values/specified/image.rs b/values/specified/image.rs
 +            CorsMode::None,
 +            ParseImageFlags::FORBID_NONE | ParseImageFlags::FORBID_FILTER,
 +        )
-     }
- 
++    }
++
 +    /// pyro: without `filter()` images (`list-style-image`, also through `list-style`), as
 +    /// Chromium and Gecko parse them (neither has `filter()`): blitz-dom draws a marker image
 +    /// as it is, so a `filter()` marker would draw its image unfiltered.

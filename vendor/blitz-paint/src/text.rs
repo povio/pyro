@@ -462,6 +462,22 @@ fn draw_shadow<S: PaintScene>(
 }
 
 /// pyro: the colour a node's text is filled with.
+/// pyro: whether the element's `font-synthesis-weight` lets a bold face be faked, and its
+/// `font-synthesis-style` a slanted one (`oblique-only`: for `font-style: oblique`).
+fn synthesis_allowed(doc: &BaseDocument, node_id: NodeId) -> (bool, bool) {
+    use style::values::computed::font::{FontStyle, FontSynthesis, FontSynthesisStyle};
+    let Some(styles) = doc.get_node(node_id).and_then(|node| node.primary_styles()) else {
+        return (true, true);
+    };
+    let font = styles.get_font();
+    let slant = match font.font_synthesis_style {
+        FontSynthesisStyle::Auto => true,
+        FontSynthesisStyle::None => false,
+        FontSynthesisStyle::ObliqueOnly => font.font_style != FontStyle::ITALIC,
+    };
+    (font.font_synthesis_weight != FontSynthesis::None, slant)
+}
+
 pub(crate) fn text_fill_color(doc: &BaseDocument, node_id: NodeId) -> Color {
     resolve_decoration_entry(doc, node_id).fill_color
 }
@@ -1974,8 +1990,12 @@ pub(crate) fn stroke_text<'a, S: PaintScene>(
             let font_size = run.font_size();
             let metrics = run.font_metrics();
             let synthesis = run.synthesis();
+            // pyro: `font-synthesis-weight` and `font-synthesis-style` of the run's element
+            // decide whether a missing bold or slanted face is faked.
+            let (fake_bold, fake_slant) = synthesis_allowed(doc, glyph_run.style().brush.id);
             let glyph_xform = synthesis
                 .skew()
+                .filter(|_| fake_slant)
                 .map(|angle| Affine::skew(angle.to_radians().tan() as f64, 0.0));
             let (transform, glyph_xform) = match vertical {
                 Some(vertical) => {
@@ -2001,7 +2021,7 @@ pub(crate) fn stroke_text<'a, S: PaintScene>(
                 font_embolden(font_size as f64, fill_color, transform)
             } else {
                 kurbo::Vec2::default()
-            } + if synthesis.embolden() {
+            } + if synthesis.embolden() && fake_bold {
                 synthetic_bold(font_size as f64, scale, fill_color, transform)
             } else {
                 kurbo::Vec2::default()

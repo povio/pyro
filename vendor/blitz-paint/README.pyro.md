@@ -768,3 +768,37 @@ Covered by `crates/pyro-render/tests/sticky_paint.rs`; WPT `css/css-position/sti
   collapsible white space hanging at its line's end (`LineMetrics::collapsed_advance`), not by all that hangs:
   preserved spaces and ideographic spaces that hang keep their background (WPT `trailing-ideographic-space-*`;
   `crates/pyro-render/tests/hanging_spaces.rs`).
+## Gradient colour stops, `image-set()`, `image(<color>)` (WPT css-images, round 3 lane F)
+
+- `src/gradient.rs` (`Ramp`): a gradient's colour stops are fixed up (CSS Images 3 §3.4.3: a stop before its
+  predecessor moves up to it, stops without positions are spaced evenly) and interpolated here, and the renderer
+  gets sRGB samples it interpolates premultiplied. In sRGB without hints those are the stops themselves, cut at
+  the ends of the gradient box; in another colour space (`in oklch`, `in hsl longer hue`, the Oklab default of a
+  modern colour) or under a transition hint each segment is cut in halves until the renderer's line is within a
+  quarter level of the curve (`subdivide`). The colours are mixed by Stylo's `mix_many` (premultiplied, missing
+  and powerless components, hue fix-up). Before, the stops went to the renderer as written with the colour space
+  as a setting: stops outside the box were not cut where it ends (`linear-gradient(green -50%, blue -50%)` drew
+  green), the padding stops the old code added were interpolated with their neighbour (`longer hue` after the
+  last stop went once round the hue circle), and a gradient 131,070,000px long was sampled in `f32`.
+  A repeating gradient without a period is its last stop's colour, as is a radial one whose ending shape has no
+  area or whose stops are all before the centre; a radial one ending in a hard stop keeps room after it for the
+  colour that follows; a radial centre or radius beyond 1e9 px is one colour over the box; a repeating radial or
+  conic gradient is sampled as one period from 0 (`sample_period_from_zero`: the first stop's position was
+  ignored). `to <corner>` uses the corner-to-corner rule of §3.1.1 (the line's 50% joins the two other corners;
+  it was the diagonal, which is right for a square only).
+- `src/render/background.rs` (`draw_image_layer_in`, `draw_generated_layer`): `image-set()` paints the option
+  Stylo selected, a raster one at its `<resolution>` (`ImageLayerStyles::resolution`); `image(<color>)` is an
+  image of one colour without a natural size, sized, positioned and tiled as a gradient is.
+- `src/render.rs` (`draw_inside_marker_image`): a `list-style-image` marker inside the item, at the start of
+  its first line with its bottom on the baseline.
+- `src/text.rs` (`synthesis_allowed`): `font-synthesis-weight: none` and `font-synthesis-style: none`
+  (`oblique-only` for italic) stop the faked bold and slant of a run.
+
+Covered by `crates/pyro-render/tests/gradient_stops_image_set.rs`.
+
+- `src/gradient.rs` (`has_missing`): a stop with a missing component (`color(srgb none 0.5 0.5)`) takes it from
+  its neighbour across the whole segment, the segment's ends included, in sRGB too (WPT
+  `gradient-none-interpolation`).
+- `src/render.rs` (`draw_image`, `draw_svg`): `object-view-box`: the view box is what `object-fit` and
+  `object-position` fit and place; the content around it is drawn at the view box's scale where the content box
+  has room. Covered by `crates/pyro-render/tests/object_view_box_embed.rs`.

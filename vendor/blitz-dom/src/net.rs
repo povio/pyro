@@ -53,6 +53,9 @@ pub struct FontFaceOverrides {
     /// parses this as a range; we record the lower bound, which equals the
     /// upper bound in the common single-value case.
     pub weight: Option<f32>,
+    /// pyro: `font-stretch` (`font-width`) descriptor in percent (a range's lower bound): faces
+    /// of a family that differ in it only were all `normal` to font matching.
+    pub width: Option<f32>,
     /// `font-style` descriptor mapped to fontique's `FontStyle`.
     pub style: Option<parley::fontique::FontStyle>,
     /// `unicode-range` descriptor: the code points the face is used for.
@@ -68,7 +71,8 @@ pub struct FontFaceOverrides {
 
 #[derive(Clone, Debug)]
 pub enum Resource {
-    Image(ImageType, u32, u32, Arc<Vec<u8>>),
+    /// pyro: the last field is the EXIF orientation (1 to 8) the pixels were turned by.
+    Image(ImageType, u32, u32, Arc<Vec<u8>>, u8),
     #[cfg(feature = "svg")]
     Svg(ImageType, crate::node::SvgImageData),
     /// The sheet, and its text when it has `@page` rules (see `BaseDocument::linked_page_css`).
@@ -451,6 +455,11 @@ pub(crate) fn fetch_font_face_rules<'a>(
                         .font_weight
                         .as_ref()
                         .and_then(|range| range.0.compute().map(|w| w.value())),
+                    width: descriptor
+                        .font_width
+                        .as_ref()
+                        .and_then(|range| range.compute())
+                        .map(|range| range.0.0.to_float().min(range.1.0.to_float())),
                     style: descriptor.font_style.as_ref().map(stylo_to_fontique_style),
                     unicode_range: descriptor.unicode_range.as_deref().map(unicode_range),
                     precedence: RULE_ORDER.fetch_add(1, Ao::Relaxed),
@@ -634,7 +643,7 @@ impl NetHandler for ResourceHandler<ImageHandler> {
 /// of the process (a template's logo decoded once, not once per document):
 /// (encoded bytes, width, height, RGBA8 pixels). Bounded at 64 images and
 /// 64 MB of pixels.
-type DecodedImage = (Bytes, u32, u32, Arc<Vec<u8>>);
+type DecodedImage = (Bytes, u32, u32, Arc<Vec<u8>>, u8);
 static DECODED: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<u64, Vec<DecodedImage>>>> =
     std::sync::LazyLock::new(Default::default);
 
@@ -648,13 +657,13 @@ fn decoded_key(bytes: &[u8]) -> u64 {
 impl ImageHandler {
     fn parse(&self, url: &str, bytes: Bytes) -> Result<Resource, String> {
         let key = decoded_key(&bytes);
-        if let Some((_, w, h, data)) = DECODED
+        if let Some((_, w, h, data, orientation)) = DECODED
             .lock()
             .unwrap()
             .get(&key)
             .and_then(|v| v.iter().find(|e| e.0[..] == bytes[..]).cloned())
         {
-            return Ok(Resource::Image(self.kind, w, h, data));
+            return Ok(Resource::Image(self.kind, w, h, data, orientation));
         }
         // pyro: `ImageReader::decode`, keeping the image's ICC profile.
         let decoded = image::ImageReader::new(Cursor::new(&bytes))
@@ -664,10 +673,18 @@ impl ImageHandler {
             .and_then(|mut decoder| {
                 image::Limits::default().reserve(image::ImageDecoder::total_bytes(&decoder))?;
                 let icc = image::ImageDecoder::icc_profile(&mut decoder).ok().flatten();
-                image::DynamicImage::from_decoder(decoder).map(|image| (image, icc))
+                // pyro: the image as its EXIF orientation says to show it (`image-orientation:
+                // from-image`, the initial value): a photo taken sideways was drawn sideways.
+                let orientation = image::ImageDecoder::orientation(&mut decoder).ok();
+                image::DynamicImage::from_decoder(decoder).map(|mut image| {
+                    if let Some(orientation) = orientation {
+                        image.apply_orientation(orientation);
+                    }
+                    (image, icc, orientation.map_or(1, |o| o.to_exif()))
+                })
             });
         let image_err = match decoded {
-            Ok((image, icc)) => {
+            Ok((image, icc, orientation)) => {
                 let width = image.width();
                 let height = image.height();
                 let mut rgba = image.into_rgba8().into_raw();
@@ -693,10 +710,11 @@ impl ImageHandler {
                             width,
                             height,
                             raw_rgba8_data.clone(),
+                            orientation,
                         ));
                     }
                 }
-                return Ok(Resource::Image(self.kind, width, height, raw_rgba8_data));
+                return Ok(Resource::Image(self.kind, width, height, raw_rgba8_data, orientation));
             }
             Err(e) => e.to_string(),
         };

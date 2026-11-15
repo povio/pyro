@@ -88,6 +88,8 @@ pub(crate) fn init_stylo_prefs() {
     INIT.call_once(|| {
         style_config::set_pref!("layout.css.flexbox-balance.enabled", true);
         style_config::set_pref!("layout.css.text-box.enabled", true);
+        // pyro: `light-dark()` of images (the computed value is the image of the used scheme).
+        style_config::set_pref!("layout.css.light-dark.images.enabled", true);
         style_config::set_pref!("layout.css.background-clip.text.enabled", true);
         // pyro: `background-clip: border-area` (blitz-paint clips it to the border's area).
         style_config::set_pref!("layout.css.background-clip.border-area.enabled", true);
@@ -118,6 +120,8 @@ pub(crate) fn init_stylo_prefs() {
         // pyro: `::first-line` parses and is cascaded (`layout::first_line`).
         style_config::set_pref!("layout.css.first-line.enabled", true);
         style_config::set_pref!("layout.css.font-size-adjust.enabled", true);
+        // pyro: `font-synthesis-style`, `-small-caps` and `-position` (and the shorthand).
+        style_config::set_pref!("layout.css.font-synthesis.enabled", true);
         style_config::set_pref!("layout.css.forced-color-adjust.enabled", true);
         style_config::set_pref!("layout.css.masking.enabled", true);
         style_config::set_pref!("layout.css.math-properties.enabled", true);
@@ -1850,9 +1854,11 @@ impl BaseDocument {
                 self.stylist
                     .force_stylesheet_origins_dirty(style::stylesheets::OriginSet::all());
             }
-            Resource::Image(_kind, width, height, image_data) => {
+            Resource::Image(_kind, width, height, image_data, orientation) => {
                 // Create the ImageData and cache it
-                let image = ImageData::Raster(RasterImageData::new(width, height, image_data));
+                let mut raster = RasterImageData::new(width, height, image_data);
+                raster.orientation = orientation;
+                let image = ImageData::Raster(raster);
 
                 let Some(url) = res.resolved_url.as_ref() else {
                     return;
@@ -1891,6 +1897,7 @@ impl BaseDocument {
                 let info_override = parley::fontique::FontInfoOverride {
                     family_name: overrides.family_name.as_deref(),
                     weight: weight_override,
+                    width: overrides.width.map(parley::fontique::FontWidth::from_percentage),
                     style: overrides.style,
                     unicode_range: overrides.unicode_range.as_ref(),
                     precedence: Some(overrides.precedence),

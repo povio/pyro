@@ -2511,6 +2511,13 @@ fn needs_style_image_flush(node: &Node, style: &ComputedValues) -> bool {
                 &el.border_images,
             )
             || out_of_sync(std::slice::from_ref(&style.get_list().list_style_image), &el.list_style_images)
+            // pyro: an element whose `content` is one image shows it (`flush_content_image`).
+            || {
+                use style::values::computed::{Content, ContentItem};
+                let wants = matches!(&style.get_counters().content,
+                    Content::Items(items) if matches!(&items.items[..], [ContentItem::Image(_)]));
+                (wants || el.content_image.is_some()) && !node.is_anonymous()
+            }
             // pyro: the SVG documents its `clip-path`, `filter` and `mask` reference.
             || {
                 #[cfg(feature = "svg")]

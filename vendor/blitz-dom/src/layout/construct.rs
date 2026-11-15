@@ -645,7 +645,7 @@ fn collect_layout_children_with_wrap(
         .and_then(|element| element.list_item_data.as_deref())
         .is_some_and(|item| match item.position {
             crate::node::ListItemLayoutPosition::Inside => {
-                matches!(item.marker, crate::node::Marker::String(_))
+                matches!(item.marker, crate::node::Marker::String(_) | crate::node::Marker::Image { .. })
                     || doc.nodes[container_node_id].is_anonymous()
             }
             crate::node::ListItemLayoutPosition::Outside(_) => true,
@@ -986,8 +986,10 @@ fn sync_generated_children(
                 let child = &doc.nodes[child];
                 match piece {
                     Piece::Text(text) => child.text_data().is_some_and(|data| data.content == *text),
-                    Piece::Image(url) => child.element_data().is_some_and(|element| {
-                        element.name.local == local_name!("img") && element.attr(local_name!("src")) == Some(url.as_str())
+                    Piece::Image(url, density) => child.element_data().is_some_and(|element| {
+                        element.name.local == local_name!("img")
+                            && element.attr(local_name!("src")) == Some(url.as_str())
+                            && element.content_image.as_ref().is_some_and(|(_, d)| d.to_bits() == *density)
                     }),
                 }
             })
@@ -1013,7 +1015,7 @@ fn sync_generated_children(
     for piece in pieces {
         let child = match piece {
             Piece::Text(text) => doc.create_text_node(text),
-            Piece::Image(url) => {
+            Piece::Image(url, density) => {
                 let src = crate::node::Attribute {
                     name: QualName::new(None, ns!(), local_name!("src")),
                     value: url.clone(),
@@ -1035,6 +1037,9 @@ fn sync_generated_children(
                 doc.nodes[child].update_layout_styles();
                 if in_document {
                     doc.nodes[child].flags.insert(NodeFlags::IS_IN_DOCUMENT);
+                }
+                if let Some(element) = doc.nodes[child].element_data_mut() {
+                    element.content_image = Some((url.clone(), f32::from_bits(*density)));
                 }
                 doc.load_generated_image(child, url);
                 child

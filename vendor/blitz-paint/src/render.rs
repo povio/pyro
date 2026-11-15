@@ -3058,7 +3058,46 @@ impl ElementCx<'_, '_> {
         }
     }
 
+    /// pyro: an inside marker that is an image (`list-style-image`): at the start of the
+    /// item's first line, its bottom on the baseline (the inline layout left room for it).
+    fn draw_inside_marker_image(&self, scene: &mut impl PaintScene, pos: Point, width: f32, height: f32) {
+        let Some(image) = self.element.list_style_images.first().and_then(Option::as_ref) else { return };
+        let Some(text_layout) = self.element.inline_layout_data.as_ref() else { return };
+        let Some(line) = text_layout.layout.lines().next() else { return };
+        let metrics = line.metrics();
+        let layout_scale = text_layout.layout.scale();
+        let rtl = text_layout.layout.is_rtl();
+        let line_x = if rtl { metrics.inline_max_coord / layout_scale - width } else { metrics.inline_min_coord / layout_scale };
+        let x = pos.x + f64::from(line_x);
+        let y = pos.y + f64::from(text_layout.block_offset + metrics.baseline / layout_scale - height);
+        let origin = Affine::translate(((x * self.scale).round(), (y * self.scale).round()));
+        match &image.image {
+            blitz_dom::node::ImageData::Raster(raster) if raster.width > 0 && raster.height > 0 => {
+                let quality = to_image_quality(self.style.clone_image_rendering());
+                let size = Affine::scale_non_uniform(
+                    f64::from(width) * self.scale / f64::from(raster.width),
+                    f64::from(height) * self.scale / f64::from(raster.height),
+                );
+                scene.draw_image(to_peniko_image(raster, quality).as_ref(), self.transform * origin * size);
+            }
+            #[cfg(feature = "svg")]
+            blitz_dom::node::ImageData::Svg(svg) => {
+                anyrender_svg::render_svg_tree(scene, &svg.tree, self.transform * origin * Affine::scale(self.scale));
+            }
+            _ => {}
+        }
+    }
+
     fn draw_marker(&self, scene: &mut impl PaintScene, pos: Point) {
+        if let Some(ListItemLayout {
+            marker: Marker::Image { width, height },
+            position: ListItemLayoutPosition::Inside,
+            ..
+        }) = self.list_item
+        {
+            self.draw_inside_marker_image(scene, pos, *width, *height);
+            return;
+        }
         if let Some(ListItemLayout {
             marker,
             position: ListItemLayoutPosition::Outside(layout),
@@ -3569,9 +3608,20 @@ impl ElementCx<'_, '_> {
 
         // Apply object-fit algorithm
         let container_size = taffy::Size { width, height };
-        let object_size = taffy::Size {
-            width: svg_size.width(),
-            height: svg_size.height(),
+        // pyro: `object-view-box` (see `draw_image`): the view box is fitted and positioned,
+        // the SVG around it drawn at the view box's scale.
+        // (An SVG without a natural size has no view box: there is nothing to take a part of.)
+        let view = self
+            .svg
+            .is_some_and(|natural| natural.intrinsic_width().is_some() && natural.intrinsic_height().is_some())
+            .then(|| blitz_dom::util::object_view_box(&self.style, svg_size.width(), svg_size.height()))
+            .flatten();
+        let object_size = match view {
+            Some((_, _, width, height)) => taffy::Size { width, height },
+            None => taffy::Size {
+                width: svg_size.width(),
+                height: svg_size.height(),
+            },
         };
         let paint_size = compute_object_fit(container_size, Some(object_size), object_fit);
 
@@ -3582,6 +3632,20 @@ impl ElementCx<'_, '_> {
         let y_offset = object_position.vertical.resolve(
             CSSPixelLength::new(container_size.height - paint_size.height) / self.scale as f32,
         ) * self.scale as f32;
+        let (x_offset, y_offset, paint_size) = match view {
+            Some((left, top, width, height)) => {
+                let (x_scale, y_scale) = (paint_size.width / width, paint_size.height / height);
+                (
+                    CSSPixelLength::new(x_offset.px() - left * x_scale),
+                    CSSPixelLength::new(y_offset.px() - top * y_scale),
+                    taffy::Size {
+                        width: svg_size.width() * x_scale,
+                        height: svg_size.height() * y_scale,
+                    },
+                )
+            }
+            None => (x_offset, y_offset, paint_size),
+        };
         let x = x + x_offset.px() as f64;
         let y = y + y_offset.px() as f64;
 
@@ -3758,9 +3822,22 @@ impl ElementCx<'_, '_> {
                 width: width as f32,
                 height: height as f32,
             };
-            let object_size = taffy::Size {
-                width: image.width as f32,
-                height: image.height as f32,
+            // pyro: `object-view-box`: the view box is what is fitted and positioned; the image
+            // around it is drawn at the view box's scale, where the content box has room.
+            // pyro: `image-orientation: none`: the pixels were turned by the EXIF orientation
+            // when decoded and are drawn turned back (`unturn`, from the image as stored to the
+            // decoded pixels' space).
+            let unoriented = blitz_dom::util::image_unoriented(&self.style) && image.orientation != 1;
+            let (shown_width, shown_height) = image.shown_size(unoriented);
+            let (shown_width, shown_height) = (shown_width as f32, shown_height as f32);
+            let unturn = unoriented.then(|| Affine::new(image.unturn()));
+            let view = blitz_dom::util::object_view_box(&self.style, shown_width, shown_height);
+            let object_size = match view {
+                Some((_, _, width, height)) => taffy::Size { width, height },
+                None => taffy::Size {
+                    width: shown_width,
+                    height: shown_height,
+                },
             };
             let paint_size = compute_object_fit(container_size, Some(object_size), object_fit);
 
@@ -3776,10 +3853,28 @@ impl ElementCx<'_, '_> {
 
             let x_scale = paint_size.width as f64 / object_size.width as f64;
             let y_scale = paint_size.height as f64 / object_size.height as f64;
+            // The whole image's place (its part outside the view box too).
+            let (view_x, view_y) = view.map_or((0.0, 0.0), |(left, top, _, _)| (left as f64, top as f64));
+            let (x, y) = (x - view_x * x_scale, y - view_y * y_scale);
+            let (x_offset, y_offset, paint_size) = match view {
+                Some(_) => (
+                    CSSPixelLength::new(x_offset.px() - (view_x * x_scale) as f32),
+                    CSSPixelLength::new(y_offset.px() - (view_y * y_scale) as f32),
+                    taffy::Size {
+                        width: (shown_width as f64 * x_scale) as f32,
+                        height: (shown_height as f64 * y_scale) as f32,
+                    },
+                ),
+                None => (x_offset, y_offset, paint_size),
+            };
             let transform = self
                 .transform
                 .pre_translate(Vec2 { x, y })
                 .pre_scale_non_uniform(x_scale, y_scale);
+            let transform = match unturn {
+                Some(unturn) => transform * unturn,
+                None => transform,
+            };
 
             self.with_replaced_content_clip(
                 scene,

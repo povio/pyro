@@ -89,6 +89,10 @@ pub struct ElementData {
     pub reference_images: ThinVec<Option<ImageResourceData>>,
     /// pyro: the `list-style-image` image of a list item (a list of one), its marker once loaded.
     pub list_style_images: ThinVec<Option<ImageResourceData>>,
+    /// pyro: the image this box shows in place of content and its pixels per CSS px: the URL
+    /// of a generated `img` box (`content: url()` of `::before`/`::after`), or of an element
+    /// whose own `content` is one image (it is laid out as an `<img>` of it).
+    pub content_image: Option<(String, f32)>,
 
     /// Parley text layout (elements with inline inner display mode only)
     pub inline_layout_data: Option<Box<TextLayout>>,
@@ -392,6 +396,7 @@ impl Clone for ElementData {
             mask_images: self.mask_images.clone(),
             border_images: self.border_images.clone(),
             list_style_images: self.list_style_images.clone(),
+            content_image: self.content_image.clone(),
             reference_images: self.reference_images.clone(),
             inline_layout_data: self.inline_layout_data.clone(),
             list_item_data: self.list_item_data.clone(),
@@ -519,6 +524,7 @@ impl ElementData {
             mask_images: ThinVec::new(),
             border_images: ThinVec::new(),
             list_style_images: ThinVec::new(),
+            content_image: None,
             reference_images: ThinVec::new(),
 
             stylo_element_data: Default::default(),
@@ -1003,6 +1009,9 @@ pub struct RasterImageData {
     pub height: u32,
     /// The raw image data in RGBA8 format
     pub data: Blob<u8>,
+    /// pyro: the EXIF orientation (1 to 8; 1 is none) the pixels were turned by when decoded
+    /// (`image-orientation: from-image`). `image-orientation: none` shows them turned back.
+    pub orientation: u8,
 }
 impl RasterImageData {
     pub fn new(width: u32, height: u32, data: Arc<Vec<u8>>) -> Self {
@@ -1010,6 +1019,35 @@ impl RasterImageData {
             width,
             height,
             data: Blob::new(data),
+            orientation: 1,
+        }
+    }
+
+    /// pyro: for `image-orientation: none`: the affine coefficients (as kurbo's `Affine::new`)
+    /// that take the decoded pixels' space to the image's as stored, which is `width` x
+    /// `height` of `shown_size(true)`.
+    pub fn unturn(&self) -> [f64; 6] {
+        let (w, h) = self.shown_size(true);
+        let (w, h) = (w as f64, h as f64);
+        match self.orientation {
+            2 => [-1.0, 0.0, 0.0, 1.0, w, 0.0],
+            3 => [-1.0, 0.0, 0.0, -1.0, w, h],
+            4 => [1.0, 0.0, 0.0, -1.0, 0.0, h],
+            5 => [0.0, 1.0, 1.0, 0.0, 0.0, 0.0],
+            6 => [0.0, -1.0, 1.0, 0.0, 0.0, h],
+            7 => [0.0, -1.0, -1.0, 0.0, w, h],
+            8 => [0.0, 1.0, -1.0, 0.0, w, 0.0],
+            _ => [1.0, 0.0, 0.0, 1.0, 0.0, 0.0],
+        }
+    }
+
+    /// pyro: the image's size as `image-orientation: none` shows it (`unoriented`), else as
+    /// decoded.
+    pub fn shown_size(&self, unoriented: bool) -> (u32, u32) {
+        if unoriented && (5..=8).contains(&self.orientation) {
+            (self.height, self.width)
+        } else {
+            (self.width, self.height)
         }
     }
 }

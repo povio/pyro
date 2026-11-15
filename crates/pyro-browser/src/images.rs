@@ -51,6 +51,8 @@ struct Image {
     url: String,
     /// The `src` attribute value this load is for.
     src: String,
+    /// The pixel density of the selected `srcset` candidate (1 without one).
+    density: f64,
     generation: u64,
     pending: bool,
     blocks_load: bool,
@@ -107,7 +109,11 @@ impl Browser {
         // A `<picture>` parent's matching `<source>` provides the image
         // instead of `src` (a `<source>` or the `<img>` moving in or out of
         // the picture is a relevant mutation: the DOM queues this event).
-        let picture_source = bindings.dom.borrow().picture_source(node, &bindings.viewport());
+        let candidate = bindings.dom.borrow().picture_candidate(node, &bindings.viewport());
+        let density = candidate.as_ref().map_or(1.0, |c| c.density);
+        let picture_source = candidate.map(|c| c.url);
+        // The renderer draws the selected source (its snapshot's `src`).
+        bindings.dom.borrow_mut().set_image_source(node, picture_source.as_deref());
         let source = {
             let dom = bindings.dom.borrow();
             match picture_source.as_deref().or(dom.get_attribute(node, "src").ok().flatten()) {
@@ -164,6 +170,7 @@ impl Browser {
                     _node: Some(hold),
                     url: url.clone(),
                     src: raw_src.clone().unwrap_or_default(),
+                    density,
                     generation,
                     pending: true,
                     blocks_load: !loaded,
@@ -248,6 +255,7 @@ impl Browser {
         }
         image.pending = false;
         let src = image.src.clone();
+        let density = image.density;
         // Nothing needs the element pinned once its request completed.
         let hold = image._node.take();
         drop(state);
@@ -271,7 +279,10 @@ impl Browser {
             r.mime.starts_with("image/").then_some(None)
         });
         let decodable = decodable && outcome.is_some();
-        bindings.dom.borrow_mut().set_natural_size(node, outcome.flatten());
+        // The density-corrected natural size (HTML): a `2x` candidate of 200 px is 100 px wide.
+        let natural =
+            outcome.flatten().map(|(w, h)| if density > 0.0 && density != 1.0 { (w / density, h / density) } else { (w, h) });
+        bindings.dom.borrow_mut().set_natural_size(node, natural);
         bindings.image_loaded(node, &src, decodable);
         // Canvas drawing decodes the pixels from the bytes, when the
         // document may draw images (it has a canvas or used canvas APIs).

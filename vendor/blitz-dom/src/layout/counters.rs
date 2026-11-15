@@ -72,7 +72,9 @@ impl PartialEq for CounterInputs {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Piece {
     Text(String),
-    Image(String),
+    /// An image's URL and its pixels per CSS px (an `image-set()` option's resolution, as the
+    /// bits of an `f32`: pieces are compared).
+    Image(String, u32),
 }
 
 /// The generated content of an element's `::after` (0) and `::before` (1), the pseudo-element
@@ -231,8 +233,9 @@ impl Walk {
                     push(&mut pieces, "");
                 }
                 ContentItem::Image(image) => {
-                    if let Image::Url(ComputedUrl::Valid(url)) = image {
-                        pieces.push(Piece::Image(url.as_str().to_string()));
+                    // pyro: an `image-set()` is the option it selected.
+                    if let Image::Url(ComputedUrl::Valid(url)) = crate::util::unfiltered_image(image) {
+                        pieces.push(Piece::Image(url.as_str().to_string(), crate::util::image_resolution(image).to_bits()));
                     }
                 }
             }

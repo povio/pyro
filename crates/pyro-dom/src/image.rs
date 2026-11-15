@@ -6,7 +6,74 @@
 /// supported image or the header is truncated or invalid.
 pub fn dimensions(bytes: &[u8]) -> Option<(u32, u32)> {
     let dims = png(bytes).or_else(|| gif(bytes)).or_else(|| jpeg(bytes)).or_else(|| webp(bytes))?;
+    // An EXIF orientation that turns the image a quarter (5 to 8) shows it with its sides
+    // exchanged (`image-orientation: from-image`, the initial value).
+    let dims = if matches!(exif_orientation(bytes), Some(5..=8)) { (dims.1, dims.0) } else { dims };
     (dims.0 > 0 && dims.1 > 0).then_some(dims)
+}
+
+/// The EXIF Orientation tag (0x0112) of a JPEG (APP1 `Exif`) or a PNG (`eXIf` chunk).
+fn exif_orientation(b: &[u8]) -> Option<u32> {
+    let tiff = if b.starts_with(&[0xff, 0xd8]) {
+        let mut i = 2;
+        loop {
+            if *b.get(i)? != 0xff {
+                return None;
+            }
+            let marker = *b.get(i + 1)?;
+            if marker == 0xff {
+                i += 1;
+                continue;
+            }
+            if marker == 0xd8 || marker == 0x01 || (0xd0..=0xd7).contains(&marker) {
+                i += 2;
+                continue;
+            }
+            let len = be16(b, i + 2)? as usize;
+            if marker == 0xda || len < 2 {
+                return None;
+            }
+            let segment = b.get(i + 4..i + 2 + len)?;
+            if marker == 0xe1 && segment.starts_with(b"Exif\0\0") {
+                break &segment[6..];
+            }
+            i += 2 + len;
+        }
+    } else if b.starts_with(b"\x89PNG\r\n\x1a\n") {
+        let mut i = 8;
+        loop {
+            let len = be32(b, i)? as usize;
+            let kind = b.get(i + 4..i + 8)?;
+            if kind == b"eXIf" {
+                break b.get(i + 8..i + 8 + len)?;
+            }
+            if kind == b"IDAT" || kind == b"IEND" {
+                return None;
+            }
+            i = i.checked_add(len)?.checked_add(12)?;
+        }
+    } else {
+        return None;
+    };
+    let little = match tiff.get(0..2)? {
+        b"II" => true,
+        b"MM" => false,
+        _ => return None,
+    };
+    let u16_at = |at: usize| -> Option<u32> {
+        let s: [u8; 2] = tiff.get(at..at + 2)?.try_into().ok()?;
+        Some(if little { u16::from_le_bytes(s) } else { u16::from_be_bytes(s) } as u32)
+    };
+    let u32_at = |at: usize| -> Option<u32> {
+        let s: [u8; 4] = tiff.get(at..at + 4)?.try_into().ok()?;
+        Some(if little { u32::from_le_bytes(s) } else { u32::from_be_bytes(s) })
+    };
+    let ifd = u32_at(4)? as usize;
+    let entries = u16_at(ifd)? as usize;
+    (0..entries).find_map(|n| {
+        let entry = ifd + 2 + n * 12;
+        (u16_at(entry)? == 0x0112).then(|| u16_at(entry + 8)).flatten()
+    })
 }
 
 fn be32(b: &[u8], at: usize) -> Option<u32> {

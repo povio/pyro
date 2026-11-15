@@ -32,7 +32,19 @@ pub(crate) fn is_image_input(element: &ElementData) -> bool {
 /// ([`is_replaced_element`]), an image button ([`is_image_input`]) or an
 /// `<object>` showing an image ([`is_image_object`]).
 pub(crate) fn is_replaced(element: &ElementData) -> bool {
-    is_replaced_element(&element.name.local) || is_image_input(element) || is_image_object(element)
+    is_replaced_element(&element.name.local)
+        || is_image_input(element)
+        || is_image_object(element)
+        || is_content_image(element)
+}
+
+/// pyro: whether `element` shows the one image of its own `content` property
+/// (`BaseDocument::flush_content_image`) in place of its children: replaced content laid out
+/// and painted like `<img>`, once the image has loaded.
+pub(crate) fn is_content_image(element: &ElementData) -> bool {
+    element.content_image.is_some()
+        && matches!(&element.special_data, crate::node::SpecialElementData::Image(image)
+            if !matches!(**image, crate::node::ImageData::None))
 }
 
 /// pyro: whether `element` is an `<object>` that shows the image its `data`

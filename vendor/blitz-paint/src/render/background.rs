@@ -99,6 +99,9 @@ pub(super) struct ImageLayerStyles<'a> {
     pub border_area: bool,
     pub origin: BoxModelBox,
     pub attachment: StyloBackgroundAttachment,
+    /// pyro: image pixels per CSS px (the `<resolution>` of an `image-set()` option; 1
+    /// otherwise): a raster image's natural size is its pixel size divided by it.
+    pub resolution: f32,
 }
 
 impl<'a> ImageLayerStyles<'a> {
@@ -110,6 +113,7 @@ impl<'a> ImageLayerStyles<'a> {
         Self {
             stylo_image: &bg_styles.background_image.0[idx],
             image_data: image_data.get(idx).and_then(Option::as_ref),
+            resolution: 1.0,
             position_x: get_cyclic(&bg_styles.background_position_x.0, idx),
             position_y: get_cyclic(&bg_styles.background_position_y.0, idx),
             repeat: get_cyclic(&bg_styles.background_repeat.0, idx),
@@ -131,6 +135,7 @@ impl<'a> ImageLayerStyles<'a> {
         Self {
             stylo_image: &svg_styles.mask_image.0[idx],
             image_data: image_data.get(idx).and_then(Option::as_ref),
+            resolution: 1.0,
             position_x: get_cyclic(&svg_styles.mask_position_x.0, idx),
             position_y: get_cyclic(&svg_styles.mask_position_y.0, idx),
             repeat: get_cyclic(&svg_styles.mask_repeat.0, idx),
@@ -559,13 +564,30 @@ impl ElementCx<'_, '_> {
                 #[cfg(feature = "tracing")]
                 warn!("Implement image layer drawing for Image::CrossFade")
             }
-            GenericImage::Image(_) => {
-                #[cfg(feature = "tracing")]
-                warn!("Implement image layer drawing for Image::Image")
+            // pyro: `image(<color>)`: an image of that colour without a natural size, sized,
+            // positioned and tiled as a gradient is.
+            GenericImage::Image(color) => {
+                let color = color.resolve_to_absolute(current_color).as_dynamic_color();
+                self.draw_generated_layer(scene, layer, area, |_, _| {
+                    let mut solid = peniko::Gradient::new_linear((0.0, 0.0), (1.0, 0.0));
+                    for offset in [0.0, 1.0] {
+                        solid.stops.push(peniko::ColorStop { color, offset });
+                    }
+                    (solid, None)
+                })
             }
-            GenericImage::ImageSet(_) => {
-                #[cfg(feature = "tracing")]
-                warn!("Implement image layer drawing for Image::ImageSet")
+            // pyro: `image-set()`: the option Stylo selected for the device's resolution (none
+            // when every option was dropped: an unsupported `type()`, a resolution of 0).
+            GenericImage::ImageSet(set) => {
+                if let Some(item) = set.items.get(set.selected_index) {
+                    let resolution = item.resolution.dppx();
+                    let inner = ImageLayerStyles {
+                        stylo_image: &item.image,
+                        resolution: if resolution > 0.0 { layer.resolution * resolution } else { layer.resolution },
+                        ..*layer
+                    };
+                    self.draw_image_layer_in(scene, &inner, area, current_color);
+                }
             }
             // pyro: `filter()`: the image it filters, drawn in a layer with the filters over the
             // painting area (so a `drop-shadow()` stays inside it).
@@ -1044,14 +1066,20 @@ impl ElementCx<'_, '_> {
 
         let (origin_rect, base_transform, area) = self.positioning_area(layer, area);
 
-        let image_width = image_data.width as f64;
-        let image_height = image_data.height as f64;
+        // pyro: `image-orientation: none`: the image as stored, not as its EXIF orientation
+        // turned the decoded pixels.
+        let unoriented = blitz_dom::util::image_unoriented(&self.style) && image_data.orientation != 1;
+        let (image_width, image_height) = image_data.shown_size(unoriented);
+        let (image_width, image_height) = (image_width as f64, image_height as f64);
 
         let (bg_pos, bg_size) = compute_layer_position_and_size(
             layer,
             origin_rect.width() / self.scale,
             origin_rect.height() / self.scale,
-            BackgroundSizeComputeMode::Size(image_width as f32, image_height as f32),
+            BackgroundSizeComputeMode::Size(
+                image_width as f32 / layer.resolution,
+                image_height as f32 / layer.resolution,
+            ),
         );
 
         let bg_pos = (bg_pos.to_vec2() * self.scale).to_point();
@@ -1103,6 +1131,7 @@ impl ElementCx<'_, '_> {
         brush.sampler.y_extend = extend(*repeat_y);
         let scale =
             Affine::scale_non_uniform(bg_size.width / image_width, bg_size.height / image_height);
+        let scale = if unoriented { scale * Affine::new(image_data.unturn()) } else { scale };
         // Tiles that touch are one fill with the image repeating in it.
         let contiguous = |t: &AxisTiles, extend: peniko::Extend| {
             t.count == 1 || (t.stride == t.len && extend == peniko::Extend::Repeat)
@@ -1172,6 +1201,22 @@ impl ElementCx<'_, '_> {
         area: Rect,
         current_color: &style::color::AbsoluteColor,
     ) {
+        let scale = self.scale;
+        self.draw_generated_layer(scene, layer, area, |tile_rect, bounding_box| {
+            to_peniko_gradient(gradient, tile_rect, bounding_box, scale, current_color)
+        })
+    }
+
+    /// pyro: a layer whose image has no natural size and is made for its tile: a gradient
+    /// (`make` gets the tile and the border box's bounds), or `image(<color>)` as a gradient of
+    /// one colour.
+    fn draw_generated_layer(
+        &self,
+        scene: &mut impl PaintScene,
+        layer: &ImageLayerStyles,
+        area: Rect,
+        make: impl FnOnce(Rect, Rect) -> (peniko::Gradient, Option<Affine>),
+    ) {
         // The tiles cover the painting area (`area`: the clip box, or the canvas), in the
         // positioning area's space.
         let (origin_rect, base_transform, clip_rect) = self.positioning_area(layer, area);
@@ -1210,8 +1255,7 @@ impl ElementCx<'_, '_> {
         let tile_rect = Rect::new(0.0, 0.0, x.rect_len, y.rect_len);
         let bounding_box = self.frame.border_box.bounding_box();
 
-        let (gradient, gradient_transform) =
-            to_peniko_gradient(gradient, tile_rect, bounding_box, self.scale, current_color);
+        let (gradient, gradient_transform) = make(tile_rect, bounding_box);
         // pyro: a gradient of one colour is that colour (`linear-gradient(white, white)`): the
         // ramp came out a level short of it in places. Repeating in both axes, its tiles cover
         // the painting area: one fill, however small they are (`background-size: 0.2px`).
