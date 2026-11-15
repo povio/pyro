@@ -630,6 +630,25 @@ RUST_BACKTRACE=1 CRASHTEST_STDERR=/tmp/stderr.log bun bench/wpt/run.mjs --kind c
   --bin pyro=target/release-fast/pyro --jobs 1 --match 'documentElement-remove' --out /tmp/crash.json
 ```
 
+### What it found
+
+The first local runs (an M1 Max under load, `--jobs 3`, both passes of a bootstrap run agreeing on all but one
+transition page): 1,967 of 2,031 passed. 12 pages failed for a defect in pyro, 11 of them fixed with the kind
+(1,978 pass):
+
+| pages | what happened | fix |
+|---:|---|---|
+| 5 | panic, `root_element()` on a document whose element the page removed (`documentElement.remove()`), in the capture and in the document's size | pyro-render reads `try_root_element()`: such a document is an empty canvas the size of the viewport |
+| 2 | panic in `resolve_deferred_tasks`: a root element that is inline content (a `<br>` appended to the document) made the document node an inline root | blitz-dom: only a box is an inline root |
+| 2 | no screenshot, `the page's tree has a repeated key`: every `<slot>` of one name (and every slot of a `slotAssignment: "manual"` root) rendered the host's children | pyro-dom's render tree gives them to the slot DOM's "find a slot" names |
+| 1 | crash, stack overflow in usvg: a `<pattern>` cycle through `href` (`svg/crashtests/chrome-bug-565674533.html`) | `svg_refs.rs` breaks pattern cycles as it does clip path, mask and filter cycles |
+| 1 | panic, `Duration::from_secs_f64` on an animation of `duration: 95903184853313357582278077554606` | timer delays from a page saturate (`delay_from_ms`) |
+| 1 | **open**: `custom-elements/many-slots-crash.html` hangs (no answer for 30 s). A custom element whose shadow tree holds another of itself recurses; Chrome ends it with a stack overflow `RangeError`. pyro's page thread was sampled in `Dom::collect_garbage` (`component_root`) under `PageDom::sweep_released_nodes`, from the mutation-observer microtask inside `custom::run_reactions`: each level sweeps the nodes released so far | |
+
+The other 52 time out without a crash: 51 wait in `test-wait` for something pyro does not do (20 of them view
+transitions; scroll timelines, typed OM, editing commands), and one navigates without end. They are failing entries
+of the baseline, skipped by a pull request's run.
+
 ### CI
 
 One job, `crashtest`, on the self-hosted `lp-m1` (as every macOS job): it restores the browser and the WPT checkout

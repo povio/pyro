@@ -40,6 +40,7 @@ mod line_paint_order;
 mod mirror;
 mod mix_blend_mode;
 mod multicol;
+mod no_root_element;
 mod object_image;
 mod opacity_group;
 mod out_of_flow_boundary;

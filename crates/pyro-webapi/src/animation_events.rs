@@ -273,7 +273,7 @@ struct Planned {
 }
 
 fn after(ms: f64) -> Duration {
-    Duration::from_secs_f64(ms.max(0.0) / 1000.0)
+    crate::util::delay_from_ms(ms)
 }
 
 /// Checkpoint from `PageDom::after_task`: a changed document is looked at

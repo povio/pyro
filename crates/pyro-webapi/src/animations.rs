@@ -12,7 +12,6 @@
 //! (`report`, which animation_frame.rs samples into the cascade). Nothing
 //! runs per frame: a playing animation has one timer, at its end.
 use std::rc::Rc;
-use std::time::Duration;
 
 use pyro_js::{Args, ClassDef, JsClass, JsError, JsResult, Object, Persistent, Scope, Value};
 
@@ -116,7 +115,7 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
         let page = page_of(s)?;
         let callback = Persistent::new(s, callback);
         let realm = s.realm().downgrade();
-        let delay = if ms.is_finite() && ms > 0.0 { Duration::from_secs_f64(ms / 1000.0) } else { Duration::ZERO };
+        let delay = crate::util::delay_from_ms(ms);
         let task: Box<dyn FnOnce()> = Box::new(move || {
             let Some(realm) = realm.upgrade() else { return };
             let Ok(s) = realm.scope() else { return };

@@ -153,7 +153,9 @@ pub(crate) fn candidates(
             cur = doc.get_node(id).and_then(|n| n.parent);
         }
     }
-    d.visit(doc.root_element().id);
+    if let Some(root) = doc.try_root_element() {
+        d.visit(root.id);
+    }
     let mut out = d.out;
     out.sort_by_key(|v| v.order);
     out

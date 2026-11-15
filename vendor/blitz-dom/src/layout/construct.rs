@@ -778,7 +778,13 @@ fn collect_layout_children_with_wrap(
             }
 
             // TODO: fix display:contents
-            if classification.all_inline {
+            // pyro: only a box holds an inline layout. The document node has none: a root
+            // element that is inline content (a `<br>` appended to a document whose element was
+            // removed) is its layout child, as every other root element (the queued inline layout
+            // had no element to go to: WPT css/css-text/white-space/
+            // pre-line-br-with-whitespace-child-crash.html).
+            let holds_inline_layout = doc.nodes[container_node_id].element_data().is_some();
+            if classification.all_inline && holds_inline_layout {
                 // pyro: an inline root built again for a change to its box alone (a
                 // cell's padding or collapsed border, its parent's children) keeps the inline
                 // layout its content built: its text, the styles the text is shaped with, its

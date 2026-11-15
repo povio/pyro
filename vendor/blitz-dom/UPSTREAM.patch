@@ -3626,10 +3626,11 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
                  // Contents-transparent: a display:contents child may be
                  // holding the out-of-flow elements (otherwise the contents
                  // node itself would be pushed as a layout box).
-@@ -610,17 +779,32 @@
+@@ -609,18 +778,39 @@
+             }
  
              // TODO: fix display:contents
-             if classification.all_inline {
+-            if classification.all_inline {
 -                let existing_layout = doc.nodes[container_node_id]
 -                    .element_data_mut()
 -                    .and_then(|el| el.inline_layout_data.take());
@@ -3641,6 +3642,13 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
 -                    node_id: container_node_id,
 -                    data: ConstructionTaskData::InlineLayout(layout),
 -                });
++            // pyro: only a box holds an inline layout. The document node has none: a root
++            // element that is inline content (a `<br>` appended to a document whose element was
++            // removed) is its layout child, as every other root element (the queued inline layout
++            // had no element to go to: WPT css/css-text/white-space/
++            // pre-line-br-with-whitespace-child-crash.html).
++            let holds_inline_layout = doc.nodes[container_node_id].element_data().is_some();
++            if classification.all_inline && holds_inline_layout {
 +                // pyro: an inline root built again for a change to its box alone (a
 +                // cell's padding or collapsed border, its parent's children) keeps the inline
 +                // layout its content built: its text, the styles the text is shaped with, its
@@ -3670,7 +3678,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
                  doc.nodes[container_node_id]
                      .flags
                      .insert(NodeFlags::IS_INLINE_ROOT);
-@@ -629,6 +813,14 @@
+@@ -629,6 +819,14 @@
                  return;
              }
  
@@ -3685,7 +3693,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
              // If the children are either all inline or all block then simply return the regular children
              // as the layout children
              if classification.all_block & !classification.has_contents {
-@@ -651,29 +843,202 @@
+@@ -651,29 +849,202 @@
      }
  }
  
@@ -3905,7 +3913,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
      let (before_style, after_style, before_node_id, after_node_id) = {
          let node = &doc.nodes[node_id];
  
-@@ -689,8 +1054,23 @@
+@@ -689,8 +1060,23 @@
              .as_ref()
              .and_then(|d| d.styles.pseudos.as_array()[0].clone());
  
@@ -3929,7 +3937,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
  
      // Sync pseudo element
      // TODO: Make incremental
-@@ -719,11 +1099,11 @@
+@@ -719,11 +1105,11 @@
                      .insert(NodeFlags::IS_IN_DOCUMENT);
              }
  
@@ -3946,7 +3954,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
  
              doc.nodes[new_node_id].record_out_of_flow(pe_style);
              let mut element_data = StyloElementData::default();
-@@ -733,6 +1113,11 @@
+@@ -733,6 +1119,11 @@
              *doc.nodes[new_node_id]
                  .stylo_element_data_mut()
                  .ensure_init_mut() = element_data;
@@ -3958,7 +3966,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
  
              let node = &mut doc.nodes[node_id];
              node.set_pe_by_index(idx, Some(new_node_id));
-@@ -750,53 +1135,77 @@
+@@ -750,53 +1141,77 @@
              // the style-pointer comparison below, as the pseudo-element's style may
              // already have been updated by `sync_pseudo_element_styles` during the
              // style traversal without the text having been updated.
@@ -4074,7 +4082,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
  /// Handles the cases where there are text nodes or inline nodes that need to be wrapped in an anonymous block node
  fn collect_complex_layout_children(
      doc: &mut BaseDocument,
-@@ -805,9 +1214,41 @@
+@@ -805,9 +1220,41 @@
      hide_whitespace: bool,
      needs_wrap: fn(NodeKind, DisplayOutside) -> bool,
  ) {
@@ -4118,7 +4126,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
  
          // Get Display style. Default to inline because nodes without styles are probably text nodes
          let contains_block = doc.nodes[child_id].is_or_contains_block();
-@@ -827,9 +1268,19 @@
+@@ -827,9 +1274,19 @@
          // Taffy knows how to deal with `Display::None` children.
          //
          // Also hide all-whitespace flexbox children as these should be ignored
@@ -4139,7 +4147,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
          // Recurse into `Display::Contents` nodes, wrapping hoisted text and
          // inline children as if they were direct children of this container
          else if display_inside == DisplayInside::Contents {
-@@ -844,6 +1295,40 @@
+@@ -844,6 +1301,40 @@
          else if needs_wrap(child_node_kind, display_outside) {
              out.push_wrapped(container_node_id, child_id, doc);
          }
@@ -4180,7 +4188,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
          // Else push the child directly (and close any open "anonymous block container")
          else {
              out.push(child_id, doc);
-@@ -854,13 +1339,44 @@
+@@ -854,13 +1345,44 @@
      out.maybe_push_anon_block(doc);
  }
  
@@ -4226,7 +4234,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
      let alignment = node
          .primary_styles()
          .map(|s| stylo_to_parley::text_align(s.clone_text_align()))
-@@ -875,6 +1391,8 @@
+@@ -875,6 +1397,8 @@
      } else {
          node.attr(local_name!("value")).unwrap_or("").to_string()
      };
@@ -4235,7 +4243,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
      let is_focussed = node.is_focussed();
      let element = &mut node.data.downcast_element_mut().unwrap();
      if !matches!(element.special_data, SpecialElementData::TextInput(_)) {
-@@ -894,6 +1412,8 @@
+@@ -894,6 +1418,8 @@
          unreachable!();
      };
  
@@ -4244,7 +4252,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
      let editor = &mut text_input_data.editor;
      editor.set_scale(doc.viewport.scale_f64() as f32);
      editor.set_width(None);
-@@ -923,6 +1443,65 @@
+@@ -923,6 +1449,65 @@
      editor.refresh_layout(&mut doc.font_ctx.lock().unwrap(), &mut doc.layout_ctx);
  }
  
@@ -4310,7 +4318,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
  fn create_checkbox_input(doc: &mut BaseDocument, input_element_id: NodeId) {
      let node = &mut doc.nodes[input_element_id];
  
-@@ -944,6 +1523,25 @@
+@@ -944,6 +1529,25 @@
  ) {
      flush_inline_pseudos_recursive(doc, inline_context_root_node_id);
  
@@ -4336,7 +4344,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
      iter_children_and_pseudos!(doc.nodes[inline_context_root_node_id], |child_id| {
          find_inline_layout_embedded_boxes_recursive(
              &mut doc.nodes,
-@@ -953,10 +1551,31 @@
+@@ -953,10 +1557,31 @@
          );
      });
  
@@ -4369,7 +4377,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
                  .display_style()
                  .unwrap_or(Display::inline());
              let do_recurse = match (display.outside(), display.inside()) {
-@@ -965,7 +1584,7 @@
+@@ -965,7 +1590,7 @@
                  (_, _) => false,
              };
              if do_recurse {
@@ -4378,7 +4386,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
              }
          });
      }
-@@ -992,6 +1611,11 @@
+@@ -992,6 +1617,11 @@
  
                  let display = node.display_style().unwrap_or(Display::inline());
  
@@ -4390,7 +4398,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
                  match (display.outside(), display.inside()) {
                      (DisplayOutside::None, DisplayInside::None) => {
                          node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
-@@ -999,43 +1623,76 @@
+@@ -999,43 +1629,76 @@
                      (DisplayOutside::None, DisplayInside::Contents) => {
                          node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
                          iter_children!(nodes[node_id], |child_id| {
@@ -27790,13 +27798,21 @@ diff --git a/packages/blitz-dom/src/svg_refs.rs b/packages/blitz-dom/src/svg_ref
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/svg_refs.rs
-@@ -0,0 +1,272 @@
+@@ -0,0 +1,393 @@
 +//! pyro: SVG sources whose clip path, mask or filter references form a cycle longer than usvg
 +//! breaks. usvg sets a reference that closes a cycle of one or two elements to `none`
 +//! (`fix_recursive_links`), but follows a longer one without end and overflows the stack
 +//! (WPT css/css-masking/clip-path-svg-content/clip-path-recursion-001.svg: clip0, clip, clip2),
 +//! which ended the browser. The source is rewritten first as usvg would treat it: every
 +//! reference that closes a cycle becomes `none`.
++//!
++//! pyro: patterns too. usvg sets a `fill` or `stroke` inside a pattern that refers back to the
++//! pattern, directly or through one other element, to `none` (`fix_recursive_patterns`), but not
++//! one that comes back through a pattern's `href` (a pattern without children draws the children
++//! of the pattern its `href` names): WPT svg/crashtests/chrome-bug-565674533.html, where `p2`'s
++//! line is stroked with `p1` and `p1` takes its content from `p2`, overflowed the stack. Here a
++//! paint that closes a cycle among patterns loses its reference (its fallback colour stays, or it
++//! becomes `none`), and an `href` that closes one stops naming an element.
 +//!
 +//! pyro: a `filter` that references no element is `none` as well: Chromium draws the element
 +//! unfiltered (Filter Effects: the filter chain is ignored), where usvg leaves the element out (WPT
@@ -27814,46 +27830,52 @@ new file mode 100644
 +/// `none`; borrowed when there is none (or it is not XML usvg would read).
 +pub(crate) fn break_reference_cycles(source: &[u8]) -> Cow<'_, [u8]> {
 +    let Ok(text) = std::str::from_utf8(source) else { return Cow::Borrowed(source) };
-+    if !text.contains("url(") || !["clip-path", "mask", "filter"].iter().any(|p| text.contains(p)) {
++    if !text.contains("url(") || !["clip-path", "mask", "filter", "pattern"].iter().any(|p| text.contains(p)) {
 +        return Cow::Borrowed(source);
 +    }
 +    let options = roxmltree::ParsingOptions { allow_dtd: true, ..Default::default() };
 +    let Ok(doc) = roxmltree::Document::parse_with_options(text, options) else {
 +        return Cow::Borrowed(source);
 +    };
-+    let mut cuts = Vec::new();
++    // (source range, what replaces it)
++    let mut cuts: Vec<(Range<usize>, &'static str)> = Vec::new();
 +    for (tag, property) in [("clipPath", "clip-path"), ("mask", "mask"), ("filter", "filter")] {
-+        cuts.extend(cycle_closing_references(&doc, tag, property));
++        cuts.extend(cycle_closing_references(&doc, tag, |element| content_references(element, property)));
 +    }
-+    cuts.extend(missing_filter_references(&doc));
++    cuts.extend(cycle_closing_references(&doc, "pattern", pattern_references));
++    cuts.extend(missing_filter_references(&doc).into_iter().map(|range| (range, "none")));
 +    if cuts.is_empty() {
 +        return Cow::Borrowed(source);
 +    }
-+    cuts.sort_by_key(|range| range.start);
++    cuts.sort_by_key(|(range, _)| range.start);
 +    cuts.dedup();
 +    let mut out = String::with_capacity(text.len());
 +    let mut at = 0;
-+    for cut in cuts {
++    for (cut, with) in cuts {
 +        if cut.start < at {
 +            continue;
 +        }
 +        out.push_str(&text[at..cut.start]);
-+        out.push_str("none");
++        out.push_str(with);
 +        at = cut.end;
 +    }
 +    out.push_str(&text[at..]);
 +    Cow::Owned(out.into_bytes())
 +}
 +
-+/// The source ranges of the `property` references (attribute values, or values in a `style`
-+/// attribute) that close a cycle among the `tag` elements: a depth-first search from each,
-+/// whose back edges they are. Without them the references form no cycle.
-+fn cycle_closing_references(
-+    doc: &roxmltree::Document<'_>,
++/// A reference to an element by id: the id, the source range to replace when the reference
++/// closes a cycle, and what replaces it.
++type Reference<'a> = (&'a str, Range<usize>, &'static str);
++
++/// The references (`references_of` an element: those its content makes) that close a cycle among
++/// the `tag` elements, as source ranges and their replacements: a depth-first search from each
++/// element, whose back edges they are. Without them the references form no cycle.
++fn cycle_closing_references<'a, 'input>(
++    doc: &'a roxmltree::Document<'input>,
 +    tag: &str,
-+    property: &str,
-+) -> Vec<Range<usize>> {
-+    let elements: Vec<roxmltree::Node<'_, '_>> = doc
++    references_of: impl Fn(roxmltree::Node<'a, 'input>) -> Vec<Reference<'a>>,
++) -> Vec<(Range<usize>, &'static str)> {
++    let elements: Vec<roxmltree::Node<'a, 'input>> = doc
 +        .descendants()
 +        .filter(|n| {
 +            // As usvg reads them: in the SVG namespace or none (blitz serializes an inline
@@ -27868,15 +27890,14 @@ new file mode 100644
 +    }
 +    let index: HashMap<&str, usize> =
 +        elements.iter().enumerate().filter_map(|(i, n)| Some((n.attribute("id")?, i))).collect();
-+    // The references each element's content (itself included) makes: (target, source range).
-+    let edges: Vec<Vec<(usize, Range<usize>)>> = elements
++    // The references each element's content (itself included) makes: (target, source range,
++    // replacement).
++    let edges: Vec<Vec<(usize, Range<usize>, &'static str)>> = elements
 +        .iter()
 +        .map(|element| {
-+            element
-+                .descendants()
-+                .filter(|n| n.is_element())
-+                .flat_map(|n| references(n, property))
-+                .filter_map(|(id, range)| Some((*index.get(id)?, range)))
++            references_of(*element)
++                .into_iter()
++                .filter_map(|(id, range, with)| Some((*index.get(id)?, range, with)))
 +                .collect()
 +        })
 +        .collect();
@@ -27891,7 +27912,7 @@ new file mode 100644
 +        let mut stack = vec![(start, 0)];
 +        state[start] = 1;
 +        while let Some((node, next)) = stack.pop() {
-+            let Some((target, range)) = edges[node].get(next) else {
++            let Some((target, range, with)) = edges[node].get(next) else {
 +                state[node] = 2;
 +                continue;
 +            };
@@ -27901,12 +27922,86 @@ new file mode 100644
 +                    state[*target] = 1;
 +                    stack.push((*target, 0));
 +                }
-+                1 => cuts.push(range.clone()),
++                1 => cuts.push((range.clone(), *with)),
 +                _ => {}
 +            }
 +        }
 +    }
 +    cuts
++}
++
++/// The `property` references the content of `element` (itself included) makes, each replaced by
++/// `none` when it closes a cycle.
++fn content_references<'a>(element: roxmltree::Node<'a, '_>, property: &str) -> Vec<Reference<'a>> {
++    element
++        .descendants()
++        .filter(|n| n.is_element())
++        .flat_map(|n| references(n, property))
++        .map(|(id, range)| (id, range, "none"))
++        .collect()
++}
++
++/// pyro: the references a `<pattern>` makes to patterns its drawing needs: the `fill` and `stroke`
++/// paints of its content (itself included: they inherit), and its own `href` (`xlink:href`), whose
++/// pattern's children it draws when it has none. A paint that closes a cycle loses its `url()`
++/// and keeps its fallback (`none` without one); an `href` becomes `none`, which names no element.
++fn pattern_references<'a>(pattern: roxmltree::Node<'a, '_>) -> Vec<Reference<'a>> {
++    let mut found = Vec::new();
++    for node in pattern.descendants().filter(|n| n.is_element()) {
++        for property in ["fill", "stroke"] {
++            for (id, range, fallback) in paint_references(node, property) {
++                found.push((id, range, if fallback { "" } else { "none" }));
++            }
++        }
++    }
++    for attr in pattern.attributes() {
++        if attr.name() == "href" && matches!(attr.namespace(), None | Some("http://www.w3.org/1999/xlink")) {
++            if let Some(id) = attr.value().trim().strip_prefix('#').filter(|id| !id.is_empty()) {
++                found.push((id, attr.range_value(), "none"));
++            }
++        }
++    }
++    found
++}
++
++/// The `url(#id)` paint `node` has for `property` (`fill` or `stroke`), as an attribute or a
++/// declaration of its `style` attribute: the id, and the source range of the value when the
++/// paint is the reference alone (`false`), or of its `url()` when a fallback follows (`true`).
++fn paint_references<'a>(node: roxmltree::Node<'a, '_>, property: &str) -> Vec<(&'a str, Range<usize>, bool)> {
++    // `value` at `start` in the source.
++    fn paint(value: &str, start: usize) -> Option<(&str, Range<usize>, bool)> {
++        let lead = value.len() - value.trim_start().len();
++        let rest = &value[lead..];
++        let close = rest.find(')')?;
++        let id = url_id(&rest[..=close])?;
++        match rest[close + 1..].trim().is_empty() {
++            true => Some((id, start..start + value.len(), false)),
++            false => Some((id, start + lead..start + lead + close + 1, true)),
++        }
++    }
++    let mut found = Vec::new();
++    for attr in node.attributes() {
++        if attr.namespace().is_some() {
++            continue;
++        }
++        let range = attr.range_value();
++        let raw = &node.document().input_text()[range.clone()];
++        if attr.name() == property {
++            found.extend(paint(raw, range.start));
++        } else if attr.name() == "style" {
++            let mut offset = range.start;
++            for declaration in raw.split_inclusive(';') {
++                let body = declaration.trim_end_matches(';');
++                if let Some((name, value)) = body.split_once(':') {
++                    if name.trim() == property {
++                        found.extend(paint(value, offset + name.len() + 1));
++                    }
++                }
++                offset += declaration.len();
++            }
++        }
++    }
++    found
 +}
 +
 +/// pyro: the source ranges of the `filter` values that are one reference, to an id no element has
@@ -28053,6 +28148,40 @@ new file mode 100644
 +        let out = String::from_utf8(super::default_zero_divisors(svg).unwrap()).unwrap();
 +        assert!(out.contains(r#"divisor="9""#), "{out}");
 +        assert!(super::default_zero_divisors(br#"<svg><feConvolveMatrix divisor="2"/></svg>"#).is_none());
++    }
++
++    /// pyro: WPT svg/crashtests/chrome-bug-565674533.html: `p2`'s line is stroked with `p1`, and
++    /// `p1`, which has no children, draws `p2`'s through its `href`. usvg followed that without
++    /// end (a stack overflow that ended the browser).
++    #[test]
++    fn a_pattern_cycle_through_href_loses_the_reference_that_closes_it() {
++        let svg = r##"<svg xmlns="http://www.w3.org/2000/svg">
++<pattern id="p2" width="1" height="1"><line id="l" y2="1" x2="1" stroke="url(#p1) green"/></pattern>
++<pattern id="p1" width="2" height="1" href="#p2"/>
++<polygon points="0,0 100,0 100,100 0,100" fill="url(#p1) lime"/></svg>"##;
++        let out = broken(svg);
++        assert!(out.contains(r#"<pattern id="p1" width="2" height="1" href="none"/>"#), "{out}");
++        assert!(out.contains(r#"stroke="url(#p1) green""#), "the paint that does not close the cycle stays: {out}");
++        assert!(out.ends_with(r#"fill="url(#p1) lime"/></svg>"#), "{out}");
++        usvg::Tree::from_str(&out, &usvg::Options::default()).unwrap();
++
++        // Through `xlink:href`, with the paint in a `style` attribute and no fallback, from the
++        // other end: the paint closes the cycle.
++        let svg = r##"<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
++<pattern id="a" width="1" height="1" xlink:href="#b"/>
++<pattern id="b" width="1" height="1"><rect width="1" height="1" style="fill: url(#c)"/></pattern>
++<pattern id="c" width="1" height="1"><rect width="1" height="1" fill="url(#a) red"/></pattern>
++<rect width="10" height="10" fill="url(#a)"/></svg>"##;
++        let out = broken(svg);
++        assert!(out.contains(r#"<rect width="1" height="1" fill=" red"/>"#), "the fallback colour stays: {out}");
++        assert!(out.contains(r##"xlink:href="#b""##) && out.contains("fill: url(#c)"), "{out}");
++        usvg::Tree::from_str(&out, &usvg::Options::default()).unwrap();
++
++        // Patterns that only use each other are kept.
++        let svg = r##"<svg xmlns="http://www.w3.org/2000/svg"><pattern id="a" width="1" height="1"><rect width="1" height="1" fill="red"/></pattern>
++<pattern id="b" width="1" height="1" href="#a"/><pattern id="c" width="1" height="1"><rect fill="url(#b)" stroke="url(#a)"/></pattern>
++<rect width="10" height="10" fill="url(#c)"/></svg>"##;
++        assert!(matches!(break_reference_cycles(svg.as_bytes()), std::borrow::Cow::Borrowed(_)));
 +    }
 +
 +    #[test]

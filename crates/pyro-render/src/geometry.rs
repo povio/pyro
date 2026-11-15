@@ -183,7 +183,7 @@ impl Geometry {
     /// (`Node::layout_child_of`), and Taffy the containing block of each
     /// hoisted box (`Node::oof_containing_block`).
     pub(crate) fn in_layout_tree(&self, doc: &BaseDocument, id: NodeId) -> bool {
-        if doc.root_element().id == id {
+        if doc.try_root_element().is_some_and(|root| root.id == id) {
             return true;
         }
         let Some(node) = doc.get_node(id) else { return false };
@@ -1241,7 +1241,7 @@ fn utf16_offsets(source: &str, laid: &str) -> Vec<u32> {
 /// layout child of its layout parent (by scanning the parent's lists;
 /// [`Geometry::in_layout_tree`] reads the list owner Blitz records instead).
 fn in_layout_tree(doc: &BaseDocument, id: NodeId) -> bool {
-    if doc.root_element().id == id {
+    if doc.try_root_element().is_some_and(|root| root.id == id) {
         return true;
     }
     let Some(parent) = doc.get_node(id).and_then(|n| n.layout_parent.get()) else { return false };

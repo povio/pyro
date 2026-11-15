@@ -1064,6 +1064,15 @@ elements of one kind, through the references their content makes, as attributes 
 `none`, as usvg treats a short cycle. Sources without a cycle are passed on as they are. Covered by
 `crates/pyro-render/tests/svg_reference_cycles.rs`.
 
+Patterns have a cycle usvg does not break either (found by the WPT crashtests, `bench/wpt/README.md`): usvg sets a
+`fill` or `stroke` inside a pattern that refers back to the pattern, directly or through one other element, to
+`none` (`fix_recursive_patterns`), but not one that comes back through a pattern's `href`, whose children a pattern
+without children draws (WPT svg/crashtests/chrome-bug-565674533.html: `p2`'s line is stroked with `p1`, and `p1`
+takes its content from `p2`; a stack overflow that ended the browser). `pattern_references` gives the same search
+the paints of a pattern's content and its `href` (`xlink:href`): a paint that closes a cycle loses its `url()` and
+keeps its fallback colour (`none` without one), an `href` that closes one is set to `none`, which names no element.
+Unit-tested in `src/svg_refs.rs` (`a_pattern_cycle_through_href_loses_the_reference_that_closes_it`).
+
 Two more rewrites there make usvg read a filter as Chromium does (both unit-tested in `src/svg_refs.rs`, and in
 `crates/pyro-render/tests/svg_filter_primitives.rs`):
 
@@ -1628,3 +1637,12 @@ Covered by `crates/pyro-render/tests/floats.rs`.
   `mask-mode-to-mask-type-svg`).
 
 Covered by `crates/pyro-render/tests/svg_external_references.rs` and `svg_css_effects.rs`.
+## A document whose root element is inline content
+
+`src/layout/construct.rs` (`collect_layout_children_with_wrap`): only a box holds an inline layout. The document
+node is the container of the root element, and when that element is inline content (a `<br>` appended to a document
+whose element was removed) the document node was made an inline root: the inline layout queued for it had no element
+to go to and `resolve_deferred_tasks` panicked (WPT css/css-text/white-space/
+pre-line-br-with-whitespace-child-crash.html, css/css-contain/contain-style-remove-element-crash.html). Such a root
+element is now the document's layout child, as every other root element. Covered by
+`crates/pyro-render/tests/no_root_element.rs`.

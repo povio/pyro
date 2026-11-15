@@ -100,7 +100,7 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
     let timer = s.function("timer", |s, _this, a| {
         let page = crate::target::page_of(s)?;
         let ms = a.get(0).to_number()?;
-        let delay = std::time::Duration::from_secs_f64(if ms.is_finite() && ms > 0.0 { ms / 1000.0 } else { 0.0 });
+        let delay = crate::util::delay_from_ms(ms);
         let callback = Persistent::new(s, a.get(1));
         let realm = s.realm().downgrade();
         let Some(hooks) = page.hooks() else { return Ok(s.number(-1.0)) };

@@ -251,3 +251,37 @@ fn a_document_with_a_shadow_root_falls_back_to_a_full_render() {
     let fresh = dom.borrow().render_tree(d, &OPTS).unwrap();
     assert!(fresh.nodes.iter().any(|n| matches!(&n.kind, RenderNodeKind::Text(t) if t == "shadow")));
 }
+
+/// WPT shadow-dom/crashtests/imperative-slot-api-crash.html: two slots of one name (here the
+/// default) in one shadow tree. Only the first is assigned the host's children ("find a slot");
+/// rendered under both, they were two nodes of one key and the page could not be painted. A
+/// `slotAssignment: "manual"` root assigns by `assign()` alone, which holds no state yet: its
+/// slots render their fallback content.
+#[test]
+fn a_host_child_renders_under_one_slot() {
+    fn texts(tree: &RenderTree) -> Vec<&str> {
+        tree.nodes.iter().filter_map(|n| if let RenderNodeKind::Text(t) = &n.kind { Some(t.as_str()) } else { None }).collect()
+    }
+    fn keys_are_unique(tree: &RenderTree) -> bool {
+        let mut keys: Vec<u64> = tree.nodes.iter().map(|n| n.key).collect();
+        keys.sort_unstable();
+        keys.windows(2).all(|w| w[0] != w[1])
+    }
+    for (flags, expected) in [
+        (0, vec!["[", "light", "|", "second", "|", "named", "]"]),
+        (shadow_flags::MANUAL_SLOTS, vec!["[", "first", "|", "second", "|", "fallback", "]"]),
+    ] {
+        let (dom, d) = doc("<body><div id=host><span>light</span><i slot=n>named</i></div></body>");
+        let host = find(&dom.borrow(), d, "#host");
+        {
+            let mut dom = dom.borrow_mut();
+            let sr = dom.attach_shadow_with(host, ShadowRootMode::Open, flags).unwrap();
+            let shadow = "[<slot>first</slot>|<slot>second</slot>|<slot name=n>fallback</slot><slot name=n></slot>]";
+            let frag = parse_fragment(&mut dom, host, shadow).unwrap();
+            dom.append_child(sr, frag).unwrap();
+        }
+        let tree = dom.borrow().render_tree(d, &OPTS).unwrap();
+        assert_eq!(texts(&tree), expected, "flags {flags}");
+        assert!(keys_are_unique(&tree), "flags {flags}");
+    }
+}

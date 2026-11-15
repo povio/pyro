@@ -842,7 +842,8 @@ impl Renderer {
     pub fn mirrored_layout(&self, page: u64) -> Vec<String> {
         let Some(m) = self.mirrors.get(&page) else { return Vec::new() };
         let mut out = Vec::new();
-        let mut stack = vec![(m.doc.root_element().id, 0usize)];
+        // (A page can remove its document element: nothing is laid out then.)
+        let mut stack: Vec<_> = m.doc.try_root_element().map(|root| (root.id, 0usize)).into_iter().collect();
         while let Some((id, depth)) = stack.pop() {
             let node = m.doc.get_node(id).expect("node");
             let line = match node.element_data() {
@@ -865,7 +866,7 @@ impl Renderer {
     /// The markup of `page`'s persistent document (tests, diagnostics).
     #[doc(hidden)]
     pub fn mirrored_html(&self, page: u64) -> Option<String> {
-        self.mirrors.get(&page).map(|m| m.doc.root_element().outer_html())
+        self.mirrors.get(&page).map(|m| m.doc.try_root_element().map(|root| root.outer_html()).unwrap_or_default())
     }
 
     fn config(&self, snap: &Snapshot, provider: Arc<dyn blitz_traits::net::NetProvider>) -> DocumentConfig {
@@ -1052,19 +1053,26 @@ impl Renderer {
         if !scrolled {
             doc.set_viewport_scroll(blitz_dom::Point { x: 0.0, y: 0.0 });
         }
-        let root = {
-            let root = doc.root_element();
-            // The layout size is in CSS px, the scrollable overflow in device
-            // px (Blitz scales it): back to CSS px before they are compared.
-            let (size, overflow) =
-                (root.final_layout().size, root.scrollable_overflow().scale_from_origin(1.0 / doc.viewport().scale_f64()));
-            let clipped = root.primary_styles().is_some_and(|s| {
-                matches!(
-                    s.clone_overflow_y(),
-                    style::values::computed::Overflow::Hidden | style::values::computed::Overflow::Clip
-                )
-            });
-            (size.width as f64, if clipped { size.height as f64 } else { (size.height as f64).max(overflow.y1) })
+        // A document without a document element (a page can remove it) lays out nothing: the
+        // capture is the empty canvas. (`root_element()` panicked: WPT
+        // dom/nodes/crashtests/documentElement-remove-descendant-query.html.)
+        let root = match doc.try_root_element() {
+            Some(root) => {
+                // The layout size is in CSS px, the scrollable overflow in device
+                // px (Blitz scales it): back to CSS px before they are compared.
+                let (size, overflow) = (
+                    root.final_layout().size,
+                    root.scrollable_overflow().scale_from_origin(1.0 / doc.viewport().scale_f64()),
+                );
+                let clipped = root.primary_styles().is_some_and(|s| {
+                    matches!(
+                        s.clone_overflow_y(),
+                        style::values::computed::Overflow::Hidden | style::values::computed::Overflow::Clip
+                    )
+                });
+                (size.width as f64, if clipped { size.height as f64 } else { (size.height as f64).max(overflow.y1) })
+            }
+            None => (0.0, 0.0),
         };
         // Where the image starts in the document (CSS px) and its size in device px.
         let (origin, scale, w, h) = match area {
@@ -1447,7 +1455,7 @@ impl Renderer {
         let mut boxes = Vec::new();
         let mut sticky = Vec::new();
         // Tree order (paint order among equals for hit testing).
-        let mut stack = vec![doc.root_element().id];
+        let mut stack: Vec<_> = doc.try_root_element().map(|root| root.id).into_iter().collect();
         while let Some(id) = stack.pop() {
             let Some(node) = doc.get_node(id) else { continue };
             stack.extend(node.children.iter().rev().copied());
@@ -1551,10 +1559,11 @@ impl Renderer {
     pub fn document_size(&self, page: u64) -> Option<(f64, f64)> {
         let m = self.mirrors.get(&page)?;
         let doc = &m.doc;
-        let root = doc.root_element();
+        let (vw, vh) = (m.viewport.0 as f64, m.viewport.1 as f64);
+        // Without a document element the document is as large as the viewport.
+        let Some(root) = doc.try_root_element() else { return Some((vw, vh)) };
         let (size, overflow) =
             (root.final_layout().size, root.scrollable_overflow().scale_from_origin(1.0 / doc.viewport().scale_f64()));
-        let (vw, vh) = (m.viewport.0 as f64, m.viewport.1 as f64);
         Some(((size.width as f64).max(overflow.x1).max(vw), (size.height as f64).max(overflow.y1).max(vh)))
     }
 
@@ -1992,7 +2001,7 @@ fn shrink_to_fit(width: f64, limit: f64) -> f64 {
 
 /// The width of what the document lays out, overflow included (CSS px).
 fn document_width(doc: &blitz_dom::BaseDocument) -> f64 {
-    let root = doc.root_element();
+    let Some(root) = doc.try_root_element() else { return 0.0 };
     let overflow = root.scrollable_overflow().scale_from_origin(1.0 / doc.viewport().scale_f64());
     (root.final_layout().size.width as f64).max(overflow.x1)
 }
@@ -2557,7 +2566,7 @@ fn canvas_color(doc: &blitz_dom::BaseDocument) -> Option<[u8; 4]> {
         let c = c.as_color_color().to_rgba8();
         (c.a > 0).then_some([c.r, c.g, c.b, c.a])
     };
-    let root = doc.root_element();
+    let root = doc.try_root_element()?;
     color(root.id).or_else(|| {
         let body = root
             .children

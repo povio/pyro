@@ -274,3 +274,36 @@ pub fn to_scroll_offset(v: Value<'_>) -> JsResult<i32> {
     }
     Ok((n + 0.5).floor().clamp(i32::MIN as f64, i32::MAX as f64) as i32)
 }
+
+/// A delay of `ms` milliseconds a page asked for, as a timer takes it: zero for NaN and for
+/// negative values, and at most a century, for the values a `Duration` cannot hold or an
+/// `Instant` cannot be moved by (`Duration::from_secs_f64` panics on them: an animation of
+/// `duration: 95903184853313357582278077554606`, WPT
+/// web-animations/crashtests/effectively-infinite-timing-parameters.html).
+pub(crate) fn delay_from_ms(ms: f64) -> std::time::Duration {
+    const CENTURY_S: f64 = 100.0 * 365.25 * 86_400.0;
+    if ms.is_nan() || ms <= 0.0 {
+        return std::time::Duration::ZERO;
+    }
+    std::time::Duration::from_secs_f64((ms / 1000.0).min(CENTURY_S))
+}
+
+#[cfg(test)]
+mod delay_tests {
+    use super::delay_from_ms;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn a_delay_is_finite_whatever_the_page_asked_for() {
+        assert_eq!(delay_from_ms(1500.0), Duration::from_millis(1500));
+        for none in [0.0, -1.0, f64::NAN, f64::NEG_INFINITY] {
+            assert_eq!(delay_from_ms(none), Duration::ZERO);
+        }
+        // WPT effectively-infinite-timing-parameters: these panicked in Duration::from_secs_f64.
+        for huge in [95903184853313357582278077554606.0, f64::MAX, f64::INFINITY] {
+            let delay = delay_from_ms(huge);
+            assert_eq!(delay, Duration::from_secs(3_155_760_000));
+            assert!(Instant::now().checked_add(delay).is_some());
+        }
+    }
+}
