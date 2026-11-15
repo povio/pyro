@@ -378,6 +378,44 @@ fn a_cluster_of_a_base_and_a_mark_keeps_both_characters() {
 }
 
 #[test]
+fn text_of_an_inline_root_with_faded_inline_elements_is_written_once_in_order() {
+    // A screenshot paints an inline element's opacity or backdrop filter in passes over its
+    // inline root: outside the elements' areas, then in each element's areas. In a PDF each pass
+    // drew (and recorded) the root's glyph runs again, and the writer writes every glyph run
+    // drawn: the paragraph's text was written once per pass, the elements' text after the rest.
+    for effect in ["opacity:.6", "backdrop-filter:invert(1)"] {
+        for page_box in [true, false] {
+            let out = print_inter(
+                &format!(
+                    r#"<p>AB <span style="{effect}">(EUR)</span> x-y <span style="{effect}">MONITOR<br>OPEN</span> DUN</p>
+                    <p class="tnum">1,234.56</p>"#
+                ),
+                page_box,
+            );
+            let what = format!("{effect}, page box: {page_box}");
+            assert_eq!(out.stats.glyphs_without_text, 0, "{what}: {:?}", out.stats);
+            assert_eq!(shown_text(&out.bytes).concat(), "AB (EUR) x-y MONITOROPEN DUN1,234.56", "{what}");
+        }
+    }
+}
+
+#[test]
+fn text_after_an_inline_root_with_effects_out_of_view_keeps_its_source() {
+    // An inline element's clip path paints its inline root in passes. The pass outside the
+    // elements' areas is left out when what it paints is out of view: the runs it recorded were
+    // not drawn, which stopped every later run from finding its source text (the tabular figures
+    // below then had none).
+    for page_box in [true, false] {
+        let out = print_inter(
+            r#"<p style="text-indent:-3000px">AB <span style="clip-path:inset(0)">(EUR)</span></p><p class="tnum">1,234.56</p>"#,
+            page_box,
+        );
+        assert_eq!(out.stats.glyphs_without_text, 0, "page box: {page_box}: {:?}", out.stats);
+        assert!(shown_text(&out.bytes).concat().ends_with("1,234.56"), "page box: {page_box}");
+    }
+}
+
+#[test]
 fn blurred_outset_shadows_are_drawn() {
     let html = r#"<!doctype html><body style="margin:40px">
         <div style="width:200px;height:100px;background:#fff;border-radius:12px;box-shadow:0 8px 24px rgba(0,0,0,.5)"></div>"#;

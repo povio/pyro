@@ -380,8 +380,12 @@ Upstream dropped every transform whose matrix is not 2D: the element painted unt
   `restore_out_of_flow_stacking_owners`: one without a `z-index` moved into a stacking context its containing block
   lies outside of joins that context's `paint_children` at its positioned level in tree order (and
   `StackingContext::positioned_level`, for `hoisted_content_bbox`), where it was painted after the context's
-  content (WPT `mix-blend-mode-root-element-group`). `src/node/node.rs` (`hit`): an out-of-flow child placed so
-  is hit where it is painted (`lifted_paint_offset`). Covered by `crates/pyro-render/tests/opacity_group.rs`.
+  content (WPT `mix-blend-mode-root-element-group`). The search first compares with the last box of the same level
+  (in tree order already, the usual case: no search, no allocation). `paint_tree_snapshot` (the debug check that
+  the incremental tree equals a fresh build) compares `positioned_level` too. Paint order is covered by
+  `crates/pyro-render/tests/opacity_group.rs`. `src/node/node.rs` (`hit`): an out-of-flow child placed so is hit
+  where it is painted (`lifted_paint_offset`), under a window scroll too: covered by
+  `a_fixed_box_moved_into_a_stacking_context_is_hit_where_it_is_painted` in `crates/pyro-render/src/lib.rs`.
 
 Covered by `crates/pyro-render/tests/transform_3d.rs` (paint, a scrolled perspective, the card flip, a
 composed 3D rendering context, grouping properties, a filtered inline's positioned boxes, layout boxes), `crates/pyro-layout/tests/transform_3d.rs` (`getBoundingClientRect`, `elementFromPoint`) and the unit

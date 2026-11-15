@@ -292,10 +292,13 @@ impl BaseDocument {
             .map(|(id, node)| PaintTreeEntry {
                 id,
                 paint_children: node.paint_children.borrow().as_ref().map(|c| c.to_vec()),
-                stacking_context: node
-                    .stacking_context
-                    .as_ref()
-                    .map(|sc| (hoisted(&sc.children), sc.negative_z_count)),
+                // pyro: with the boxes moved into its positioned level (in any order: they only
+                // widen its hoisted content's bounds).
+                stacking_context: node.stacking_context.as_ref().map(|sc| {
+                    let mut moved = hoisted(&sc.positioned_level);
+                    moved.sort_unstable_by_key(|&(id, z)| (id.as_u64(), z));
+                    (hoisted(&sc.children), sc.negative_z_count, moved)
+                }),
                 contribution: hoisted(&node.sc_contribution_cache.borrow()),
             })
             .collect()
@@ -815,6 +818,12 @@ impl BaseDocument {
     fn tree_order_place<T>(&self, items: &[T], item: impl Fn(&T) -> ((i32, i32), NodeId)) -> usize {
         let Some((last, rest)) = items.split_last() else { return 0 };
         let (level, id) = item(last);
+        // The usual case first, without a search: it comes after every other of its level.
+        match rest.iter().rposition(|other| item(other).0 == level) {
+            None => return rest.len(),
+            Some(index) if self.precedes_in_tree_order(item(&rest[index]).1, id) => return rest.len(),
+            Some(_) => {}
+        }
         let same: Vec<usize> = (0..rest.len()).filter(|&index| item(&rest[index]).0 == level).collect();
         let before = same.partition_point(|&index| self.precedes_in_tree_order(item(&rest[index]).1, id));
         same.get(before).copied().unwrap_or(rest.len())
@@ -919,7 +928,7 @@ impl Node {
 struct PaintTreeEntry {
     id: NodeId,
     paint_children: Option<Vec<NodeId>>,
-    stacking_context: Option<(Vec<(NodeId, i32)>, u32)>,
+    stacking_context: Option<(Vec<(NodeId, i32)>, u32, Vec<(NodeId, i32)>)>,
     contribution: Vec<(NodeId, i32)>,
 }
 
