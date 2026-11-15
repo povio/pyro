@@ -1722,3 +1722,12 @@ Covered by `crates/pyro-render/tests/inline_leftovers.rs`.
   out of a column.
 
 Covered by `crates/pyro-render/tests/text_box_trim.rs`.
+## Sticky offsets (WPT reftests, round 3 lane S)
+
+- `src/node/element.rs`, `src/node/node.rs`: `LayoutData::sticky_offset` with `Node::sticky_offset` and
+  `Node::set_sticky_offset`: how far a `position: sticky` box is from where it is laid out (CSS px). The layout
+  places a sticky box as if static; the embedder knows the scroll positions, computes the offset (pyro-dom
+  `Layout::sticky_offsets`) and sets it through pyro-render's mirror (`Snapshot::sticky_offsets`). blitz-paint
+  moves the box by it (its README.pyro.md).
+
+Covered by `crates/pyro-render/tests/sticky_paint.rs`.

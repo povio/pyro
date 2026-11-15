@@ -734,3 +734,18 @@ Covered by `crates/pyro-render/tests/inline_leftovers.rs`.
   text and decorations in vertical lines too, the offset turned with the line.
 
 Covered by `crates/pyro-render/tests/text_box_trim.rs`.
+## Sticky boxes painted where they are held (WPT reftests, round 3 lane S)
+
+- `src/render.rs` (`node_transform`): a box is painted at its layout position plus its `Node::sticky_offset`, so a
+  `position: sticky` box and its descendants are where their scroll container holds them (they were painted at
+  their static position whatever the scroll positions, while geometry and hit testing already followed them).
+  The offset is snapped to device pixels from the box's unrounded position, so a box laid out at 10.5 and held
+  9.5 further is painted at 20 (WPT `position-sticky-fractional-offset`).
+- `src/render.rs` (`table_part_transform`), `src/render/background.rs` (`draw_table_row_backgrounds`,
+  `draw_table_part_background`): the offsets of a sticky row group and row move their cells and the backgrounds
+  painted behind them, as rows and row groups are no boxes of their own.
+
+Not done: a sticky (or relatively positioned) row or row group is not painted as a positioned layer, so boxes
+painted after the table's backgrounds can cover its background (WPT `position-sticky-table-tr-top` and the like).
+
+Covered by `crates/pyro-render/tests/sticky_paint.rs`; WPT `css/css-position/sticky`: 33 more reftests pass.

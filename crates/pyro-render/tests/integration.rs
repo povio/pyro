@@ -53,6 +53,7 @@ mod profiling_timers;
 mod render;
 mod sampled_animations;
 mod selection_highlight;
+mod sticky_paint;
 mod style_element_text;
 mod style_sheet_charset;
 mod svg_content;

@@ -2801,6 +2801,38 @@ fn css_zoom_scales_used_lengths_like_chromium() {
 }
 
 #[test]
+fn sticky_boxes_follow_their_containing_block_chain_to_a_scroll_container() {
+    // WPT css/css-position/sticky: `overflow: clip` makes no scroll container
+    // (position-sticky-overflow-clip-container), a sticky box in an absolutely
+    // positioned box is not held by a scroll container that does not contain
+    // that box (position-sticky-escape-scroller-003), and `offsetTop` is where
+    // the box is held (ref-rectangle.js places its indicators by it).
+    let html = "<!doctype html><style>body{margin:0}</style>\
+         <div id=a style=\"height:300px;overflow:auto\"><div style=\"overflow:clip;height:600px\">\
+         <div id=s1 style=\"position:sticky;top:0;height:50px\"></div></div></div>\
+         <div id=b style=\"width:200px;height:100px;overflow:hidden\"><div style=\"height:100px\"></div>\
+         <div style=\"position:absolute;height:400px\"><div id=s2 style=\"position:sticky;top:0;width:200px;height:100px\"></div></div>\
+         <div style=\"height:1000px\"></div></div>\
+         <div id=c style=\"position:relative;height:100px;overflow:hidden\"><div style=\"height:40px\"></div>\
+         <div id=s3 style=\"position:sticky;top:0;height:20px\"></div><div style=\"height:500px\"></div></div>";
+    let mut p = page(html);
+    p.layout.set_viewport(Viewport::new(800, 600));
+    let rect = |p: &Page, id: &str| p.layout.bounding_client_rect(&p.dom, p.id(id));
+    let near = |a: f64, b: f64, what: &str| assert!((a - b).abs() < 0.5, "{what}: {a} vs {b}");
+    let (a, b, c) = (p.id("a"), p.id("b"), p.id("c"));
+    p.layout.set_scroll_top(&p.dom, a, 50);
+    near(rect(&p, "s1").y, 0.0, "held by the scroll container past the overflow: clip box");
+    let before = p.layout.sticky_offsets(&p.dom).len();
+    p.layout.set_scroll_top(&p.dom, b, 200);
+    assert_eq!(p.layout.sticky_offsets(&p.dom).len(), before, "a scroller that does not contain the box holds nothing");
+    p.layout.set_scroll_top(&p.dom, c, 100);
+    near(rect(&p, "s3").y, 400.0, "held at the scrollport's top");
+    near(p.layout.offset_top(&p.dom, p.id("s3")), 100.0, "offsetTop is where the box is held");
+    let offsets = p.layout.sticky_offsets(&p.dom);
+    assert!(offsets.iter().any(|&(_, o)| o == (0.0, 60.0)), "the offset painting moves the box by: {offsets:?}");
+}
+
+#[test]
 fn sticky_boxes_stay_in_their_scrollport_like_chromium() {
     // TOS finance tables (TP-4230 master charges header, TS-88 pinned Profit /
     // rightSticky columns, sticky totals footer): `position: sticky` was laid

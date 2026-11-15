@@ -39,6 +39,10 @@ pub struct RenderSnapshot {
     /// Scrolled elements by render key, with their offset (CSS px), in
     /// every form.
     pub element_scroll: Vec<(u64, (f64, f64))>,
+    /// The `position: sticky` elements that their scroll containers hold
+    /// away from their laid-out place, by render key, with that offset (CSS
+    /// px), in every form.
+    pub sticky_offsets: Vec<(u64, (f64, f64))>,
     /// Render keys (`pyro_dom::snapshot::render_key`) of the element under the
     /// pointer and the focused element, in every form.
     pub hovered: Option<u64>,
@@ -152,6 +156,7 @@ fn snapshot_of(
             scroll_x: layout.scroll_x() as f64,
             scroll_y: layout.scroll_y() as f64,
             element_scroll: layout.scrolled_elements(),
+            sticky_offsets: layout.sticky_offsets(dom),
             hovered: dom.hovered(document).map(pyro_dom::snapshot::render_key),
             focused: dom.focused(document).ok().flatten().map(pyro_dom::snapshot::render_key),
             canvases: Vec::new(),

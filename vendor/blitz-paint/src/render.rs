@@ -523,9 +523,25 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
 
     fn node_transform(&self, node: &Node, parent: Affine) -> Affine {
         let location = node.final_layout().location;
+        // pyro: a `position: sticky` box is painted where its scroll container holds it
+        // (`Node::sticky_offset`), with its descendants.
+        // The offset is snapped to device pixels: the box keeps the pixel alignment it was laid
+        // out with (WPT `position-sticky-fractional-offset`).
+        let sticky = node.sticky_offset();
+        let sticky = if sticky == blitz_dom::Point::ZERO {
+            Vec2::ZERO
+        } else {
+            // From the box's unrounded place, so that a box laid out at 10.5 (painted at 11) and
+            // held 9.5 further is painted at 20.
+            let unrounded = node.unrounded_layout().location;
+            let snap = |offset: f64, unrounded: f32, rounded: f32| {
+                ((unrounded as f64 + offset) * self.scale).round() - rounded as f64 * self.scale
+            };
+            Vec2::new(snap(sticky.x, unrounded.x, location.x), snap(sticky.y, unrounded.y, location.y))
+        };
         parent
             * self.table_part_transform(node)
-            * Affine::translate(Vec2::new(location.x as f64, location.y as f64) * self.scale)
+            * Affine::translate(Vec2::new(location.x as f64, location.y as f64) * self.scale + sticky)
             * node.transform().as_deref().copied().unwrap_or_default()
     }
 
@@ -559,8 +575,17 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             })
         };
         let parts = [row.group, Some(row.node_id)];
+        // pyro: the sticky offsets of the cell's row group and row move their cells.
+        let mut sticky = Vec2::ZERO;
+        for id in parts.iter().flatten() {
+            if let Some(part) = self.dom.get_node(*id) {
+                let offset = part.sticky_offset();
+                sticky += Vec2::new(offset.x, offset.y);
+            }
+        }
+        let sticky = Affine::translate(Vec2::new((sticky.x * self.scale).round(), (sticky.y * self.scale).round()));
         if !parts.iter().flatten().any(|&id| transformed(id)) {
-            return Affine::IDENTITY;
+            return sticky;
         }
         let grid = ctx.computed_grid_info.borrow();
         let Some(grid) = grid.as_ref() else { return Affine::IDENTITY };
@@ -595,7 +620,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             let origin = Vec2::new(first.start as f64, (y0 + top) as f64) * self.scale;
             out *= Affine::translate(origin) * t * Affine::translate(-origin);
         }
-        out
+        sticky * out
     }
 
     fn scrolled_transform(&self, node: &Node, transform: Affine) -> Affine {

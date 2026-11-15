@@ -545,6 +545,21 @@ impl Node {
         &mut self.layout_data_mut().scroll_offset
     }
 
+    /// pyro: the offset of a `position: sticky` box from its laid-out place
+    /// (`LayoutData::sticky_offset`).
+    #[inline]
+    pub fn sticky_offset(&self) -> crate::Point<f64> {
+        self.layout_data().sticky_offset
+    }
+
+    /// pyro: sets [`Self::sticky_offset`].
+    #[inline]
+    pub fn set_sticky_offset(&mut self, offset: crate::Point<f64>) {
+        if self.layout_data().sticky_offset != offset {
+            self.layout_data_mut().sticky_offset = offset;
+        }
+    }
+
     #[inline]
     pub fn scrollable_overflow(&self) -> &KurboRect {
         &self.layout_data().scrollable_overflow

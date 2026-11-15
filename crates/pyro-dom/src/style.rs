@@ -651,6 +651,9 @@ pub struct ComputedStyle {
     pub overflow_x_clips: bool,
     pub overflow_y_scrolls: bool,
     pub overflow_y_clips: bool,
+    /// A scroll container: `overflow` is `hidden`, `scroll` or `auto` in an
+    /// axis (`clip` clips without one).
+    pub scroll_container: bool,
     pub overscroll_x_contains: bool,
     pub overscroll_y_contains: bool,
     pub width: Length,
@@ -1868,6 +1871,8 @@ fn derive_computed(
         overflow_x_clips: ox != Overflow::Visible,
         overflow_y_scrolls: oy == Overflow::Scroll,
         overflow_y_clips: oy != Overflow::Visible,
+        scroll_container: matches!(ox, Overflow::Hidden | Overflow::Scroll)
+            || matches!(oy, Overflow::Hidden | Overflow::Scroll),
         overscroll_x_contains: overscroll(b.overscroll_behavior_x, "overscroll-behavior-x"),
         overscroll_y_contains: overscroll(b.overscroll_behavior_y, "overscroll-behavior-y"),
         width: size(&position.width, "width"),

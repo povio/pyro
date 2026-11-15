@@ -105,6 +105,8 @@ pub(crate) struct Mirror {
     top: Vec<u64>,
     /// Nodes given a scroll offset by [`Mirror::set_element_scroll`].
     scrolled: Vec<NodeId>,
+    /// The nodes given a sticky offset ([`Mirror::set_sticky_offsets`]).
+    stuck: Vec<NodeId>,
     /// Canvas and video elements given a bitmap by [`Mirror::set_canvases`],
     /// with it and, for a video, the poster image it replaced.
     canvases: Vec<CanvasEntry>,
@@ -228,6 +230,7 @@ impl Mirror {
             keys,
             top,
             scrolled: Vec::new(),
+            stuck: Vec::new(),
             canvases: Vec::new(),
         };
         mirror.debug_check_keys();
@@ -262,6 +265,30 @@ impl Mirror {
             if let Some(node) = self.doc.get_node_mut(id) {
                 set(node, blitz_dom::Point { x, y });
                 self.scrolled.push(id);
+            }
+        }
+    }
+
+    /// Gives the `position: sticky` elements in `offsets` (by key) their
+    /// offset from where they are laid out, and takes it from those given one
+    /// last time and absent now. Painting moves them by it.
+    pub(crate) fn set_sticky_offsets(&mut self, offsets: &[(u64, (f64, f64))]) {
+        if offsets.is_empty() && self.stuck.is_empty() {
+            return;
+        }
+        let now: Vec<(NodeId, (f64, f64))> =
+            offsets.iter().filter_map(|&(key, o)| Some((self.node(key)?, o))).collect();
+        for id in std::mem::take(&mut self.stuck) {
+            if !now.iter().any(|(n, _)| *n == id) {
+                if let Some(node) = self.doc.get_node_mut(id) {
+                    node.set_sticky_offset(blitz_dom::Point { x: 0.0, y: 0.0 });
+                }
+            }
+        }
+        for (id, (x, y)) in now {
+            if let Some(node) = self.doc.get_node_mut(id) {
+                node.set_sticky_offset(blitz_dom::Point { x, y });
+                self.stuck.push(id);
             }
         }
     }

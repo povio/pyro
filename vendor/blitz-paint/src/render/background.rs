@@ -757,9 +757,22 @@ impl ElementCx<'_, '_> {
             }
 
             let shape = rect.scale_from_origin(self.scale);
+            // pyro: a `position: sticky` row group or row is painted where its scroll container
+            // holds it (`Node::sticky_offset`), as its cells are.
+            let mut sticky = Vec2::ZERO;
+            if let Some(row) = table.rows.get(cell.row as usize) {
+                for id in [row.group, Some(row.node_id)].into_iter().flatten() {
+                    if let Some(part) = self.context.dom.get_node(id) {
+                        let offset = part.sticky_offset();
+                        sticky += Vec2::new(offset.x, offset.y);
+                    }
+                }
+            }
+            let transform = self.transform
+                * Affine::translate(Vec2::new((sticky.x * self.scale).round(), (sticky.y * self.scale).round()));
             if !images {
                 for color in colors {
-                    scene.fill(Fill::NonZero, self.transform, *color, None, &shape);
+                    scene.fill(Fill::NonZero, transform, *color, None, &shape);
                 }
                 continue;
             }
@@ -777,11 +790,11 @@ impl ElementCx<'_, '_> {
                 match (image, part_rects.as_ref()) {
                     (true, Some(rects)) => {
                         let part = rects.rect(table, node_id, kind, cell);
-                        self.draw_table_part_background(scene, node_id, part, &shape);
+                        self.draw_table_part_background(scene, node_id, part, &shape, transform);
                     }
                     _ => {
                         if let Some(color) = color {
-                            scene.fill(Fill::NonZero, self.transform, color, None, &shape);
+                            scene.fill(Fill::NonZero, transform, color, None, &shape);
                         }
                     }
                 }
@@ -808,16 +821,23 @@ impl ElementCx<'_, '_> {
 
     /// pyro: the background of a table part (`part`, the box its images are positioned against,
     /// CSS px in the table's space) painted in `clip` (device px, the table's space): one cell.
-    fn draw_table_part_background(&self, scene: &mut impl PaintScene, node_id: NodeId, part: Rect, clip: &Rect) {
+    fn draw_table_part_background(
+        &self,
+        scene: &mut impl PaintScene,
+        node_id: NodeId,
+        part: Rect,
+        clip: &Rect,
+        base: Affine,
+    ) {
         let Some(node) = self.context.dom.get_node(node_id) else { return };
         if node.element_data().is_none() || node.primary_styles().is_none() {
             return;
         }
         let mut layout = taffy::Layout::new();
         layout.size = taffy::Size { width: part.width() as f32, height: part.height() as f32 };
-        let transform = self.transform * Affine::translate(Vec2::new(part.x0, part.y0) * self.scale);
+        let transform = base * Affine::translate(Vec2::new(part.x0, part.y0) * self.scale);
         let part_cx = self.context.element_cx(node, layout, transform, None);
-        scene.push_clip_layer(Fill::NonZero, self.transform, clip);
+        scene.push_clip_layer(Fill::NonZero, base, clip);
         part_cx.draw_background(scene);
         scene.pop_layer();
     }

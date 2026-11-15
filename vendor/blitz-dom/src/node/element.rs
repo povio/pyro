@@ -170,6 +170,10 @@ pub struct LayoutData {
     pub unrounded_layout: Layout,
     pub final_layout: Layout,
     pub scroll_offset: crate::Point<f64>,
+    /// pyro: how far a `position: sticky` box is moved from where it is laid out (CSS px), with
+    /// its descendants: the layout places it as if static, its embedder knows the scroll
+    /// positions and sets this (`Node::set_sticky_offset`). Painting applies it.
+    pub sticky_offset: crate::Point<f64>,
     pub scrollable_overflow: KurboRect,
     /// pyro: a bound of what hit testing finds in this box's subtree
     /// (device px, its own coordinates, like `scrollable_overflow`): the
@@ -210,6 +214,7 @@ impl LayoutData {
             unrounded_layout: Layout::new(),
             final_layout: Layout::new(),
             scroll_offset: crate::Point::ZERO,
+            sticky_offset: crate::Point::ZERO,
             scrollable_overflow: KurboRect::ZERO,
             hit_overflow: KurboRect::ZERO,
             hit_stale: true,

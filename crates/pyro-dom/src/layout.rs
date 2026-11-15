@@ -990,13 +990,16 @@ impl Layout {
     /// border box (document coordinates for the body/none).
     fn box_offset(&self, dom: &Dom, el: NodeId) -> (f64, f64) {
         let Some(b) = self.layout_box(dom, el) else { return (0.0, 0.0) };
-        let parent = self
-            .offset_parent(dom, el)
-            .filter(|&p| !self.is_root_container(dom, p))
-            .and_then(|p| self.layout_box(dom, p));
-        match parent {
-            Some(p) => (b.rect.x - p.rect.x, b.rect.y - p.rect.y),
-            None => (b.rect.x, b.rect.y),
+        let parent = self.offset_parent(dom, el).filter(|&p| !self.is_root_container(dom, p));
+        // A sticky box is where scrolling holds it (and its descendants with it).
+        let sticky = self.sticky_map(dom);
+        let (kx, ky) = self.sticky_shift_in(dom, &sticky, el);
+        match parent.and_then(|p| Some((p, self.layout_box(dom, p)?))) {
+            Some((parent, p)) => {
+                let (px, py) = self.sticky_shift_in(dom, &sticky, parent);
+                (b.rect.x + kx - p.rect.x - px, b.rect.y + ky - p.rect.y - py)
+            }
+            None => (b.rect.x + kx, b.rect.y + ky),
         }
     }
 
@@ -1555,14 +1558,35 @@ impl Layout {
     ) -> (f64, f64) {
         let Some(b) = box_of(el) else { return (0.0, 0.0) };
         // Scrollport in document coordinates of the scrolled content.
+        //
+        // The scroll container is the nearest one on the box's containing
+        // block chain: an ancestor that is not the containing block of an
+        // out-of-flow box on the way up does not hold it (a `position:
+        // absolute` box's needs a positioned one, a `position: fixed` box's
+        // one that contains fixed boxes), and `overflow: clip` makes none.
         let mut port = None;
         let mut a = dom.parent_element(el).ok().flatten();
+        // The out-of-flow position of the box whose containing block is looked for.
+        let mut escaping = None;
         while let Some(p) = a {
             if self.is_root_container(dom, p) {
                 break;
             }
-            let axes = self.style.overflow_clip_axes(dom, p);
-            if axes.x || axes.y {
+            let Some(c) = self.style.computed(dom, p) else {
+                a = dom.parent_element(p).ok().flatten();
+                continue;
+            };
+            let holds = match escaping {
+                None => true,
+                Some(Position::Fixed) => c.contains_fixed,
+                Some(_) => c.contains_absolute,
+            };
+            if !holds {
+                a = dom.parent_element(p).ok().flatten();
+                continue;
+            }
+            escaping = matches!(c.position, Position::Absolute | Position::Fixed).then_some(c.position);
+            if c.scroll_container {
                 if let Some(pb) = box_of(p) {
                     port = Some(Rect {
                         x: pb.rect.x + pb.border[LEFT] + pb.padding[LEFT] + self.scroll_left(p) as f64,
@@ -1575,7 +1599,8 @@ impl Layout {
             }
             a = dom.parent_element(p).ok().flatten();
         }
-        let (wx, wy) = if b.fixed { (0.0, 0.0) } else { (self.window_scroll.0 as f64, self.window_scroll.1 as f64) };
+        let fixed = b.fixed || escaping == Some(Position::Fixed);
+        let (wx, wy) = if fixed { (0.0, 0.0) } else { (self.window_scroll.0 as f64, self.window_scroll.1 as f64) };
         let port =
             port.unwrap_or(Rect { x: wx, y: wy, width: self.inner_width() as f64, height: self.inner_height() as f64 });
         let limit = sticky.limit.map(|(x, y, width, height)| Rect { x, y, width, height });
@@ -2439,6 +2464,25 @@ impl Layout {
             .filter(|(_, &o)| o != (0, 0))
             .map(|(&el, &(x, y))| (crate::snapshot::render_key(el), (x as f64, y as f64)))
             .collect()
+    }
+
+    /// The `position: sticky` elements that scrolling holds away from where
+    /// they are laid out, by render key, each with its own offset (CSS px;
+    /// its sticky ancestors' are theirs): what painting moves them by.
+    pub fn sticky_offsets(&self, dom: &Dom) -> Vec<(u64, (f64, f64))> {
+        let sticky = self.sticky_map(dom);
+        if sticky.is_empty() {
+            return Vec::new();
+        }
+        let mut out: Vec<(u64, (f64, f64))> = sticky
+            .iter()
+            .filter_map(|(&el, s)| {
+                let offset = self.sticky_offset(dom, el, s, &|n| self.layout_box(dom, n));
+                (offset != (0.0, 0.0)).then(|| (crate::snapshot::render_key(el), offset))
+            })
+            .collect();
+        out.sort_by_key(|&(key, _)| key);
+        out
     }
 
     pub fn has_scroll_offsets(&self) -> bool {
