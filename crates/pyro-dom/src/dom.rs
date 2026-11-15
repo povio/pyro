@@ -1025,12 +1025,17 @@ impl Dom {
     }
 
     /// The language of `doc` from the protocol: an HTTP `Content-Language`
-    /// header naming one language (a list names none, as the pragma's
-    /// `content` does). `:lang()` falls back to it when no element and no
+    /// header's first language, as Chromium takes it (`FrameLoader::
+    /// DidBeginDocument` keeps what comes before the first comma, trimmed).
+    /// `:lang()` falls back to it when no element and no
     /// `<meta http-equiv="content-language">` gives one.
     pub fn set_content_language(&mut self, doc: NodeId, header: Option<&str>) -> DomResult<()> {
         let i = self.check(doc)?;
-        let lang = header.map(str::trim).filter(|v| !v.is_empty() && !v.contains(',')).map(Into::into);
+        let lang = header
+            .and_then(|h| h.split(',').next())
+            .map(|v| v.trim_matches(|c: char| c.is_ascii_whitespace()))
+            .filter(|v| !v.is_empty())
+            .map(Into::into);
         if let NodeKind::Document(d) = &mut self.n_mut(i).kind {
             d.content_language = lang;
         }

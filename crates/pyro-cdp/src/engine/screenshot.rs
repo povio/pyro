@@ -734,7 +734,8 @@ impl EngineHost {
                 "captured": true, "snapshotMs": ms(started.elapsed()),
                 "snapshot": { "html": s.html, "baseUrl": frame.base_url, "sheets": s.sheets,
                     "width": s.width, "height": s.height, "deviceScaleFactor": s.device_scale_factor,
-                    "dark": s.dark, "scrollX": s.scroll_x, "scrollY": s.scroll_y }
+                    "dark": s.dark, "scrollX": s.scroll_x, "scrollY": s.scroll_y,
+                    "xmlDocument": s.xml_document, "contentLanguage": s.content_language }
             });
             return Ok(std::rc::Rc::new(std::cell::RefCell::new(Some(Ok(value)))));
         }

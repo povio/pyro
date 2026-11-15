@@ -271,11 +271,13 @@ fn http_refresh_header_navigates() {
     server.join().unwrap();
 }
 
-#[test]
-fn content_language_header_is_the_documents_fallback_language() {
+/// Serves one document with the response header `content_language` on a new port; its URL and
+/// the server thread.
+fn serve_with_content_language(content_language: &str, body: &str) -> (String, std::thread::JoinHandle<()>) {
     use std::io::{BufRead, BufReader, Write};
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let origin = format!("http://{}", listener.local_addr().unwrap());
+    let url = format!("http://{}/", listener.local_addr().unwrap());
+    let (header, body) = (content_language.to_owned(), body.to_owned());
     let server = std::thread::spawn(move || {
         let (mut stream, _) = listener.accept().unwrap();
         let mut reader = BufReader::new(stream.try_clone().unwrap());
@@ -285,25 +287,47 @@ fn content_language_header_is_the_documents_fallback_language() {
                 break;
             }
         }
-        let body = "<div id=a></div><div id=b lang=de></div>";
         let _ = write!(
             stream,
-            "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Language: fr\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Language: {header}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
             body.len()
         );
     });
+    (url, server)
+}
+
+#[test]
+fn content_language_header_is_the_documents_fallback_language() {
     let mut thread = crate::browser_thread().unwrap();
     thread.enable_network(Default::default()).unwrap();
     let page = thread.browser.create_page().unwrap();
-    let url = format!("{origin}/");
-    thread.browser.navigate(page, NavigateOpts::address_bar(url.clone())).unwrap();
-    thread.run_until(Some(Instant::now() + Duration::from_secs(5)), |b| {
-        b.page(page).unwrap().main_frame.url == url && b.page(page).unwrap().main_frame.loaded
-    });
-    // The header is the language of every element without one of its own.
+    let mut open = |header: &str, head: &str| {
+        let body = format!(
+            "<head>{head}<style>#w {{ width: 50px }} #w:lang(fr) {{ width: 100px }}</style></head>\
+             <body><div id=a></div><div id=b lang=de></div><div id=w></div></body>"
+        );
+        let (url, server) = serve_with_content_language(header, &body);
+        thread.browser.navigate(page, NavigateOpts::address_bar(url.clone())).unwrap();
+        thread.run_until(Some(Instant::now() + Duration::from_secs(5)), |b| {
+            b.page(page).unwrap().main_frame.url == url && b.page(page).unwrap().main_frame.loaded
+        });
+        server.join().unwrap();
+        let french =
+            eval(&thread, page, "[...document.querySelectorAll(':lang(fr)')].map(e => e.id || e.localName).join()");
+        // Layout sees it too (the renderer's `:lang()`).
+        (french, eval(&thread, page, "document.getElementById('w').offsetWidth"))
+    };
+    let every = || ("html,head,style,body,a,w".to_owned(), "100".to_owned());
     assert_eq!(
-        eval(&thread, page, "[...document.querySelectorAll(':lang(fr)')].map(e => e.id || e.localName).join()"),
-        "html,head,body,a"
+        [
+            // The header is the language of every element without one of its own.
+            open("fr", ""),
+            // Of a list, the first language counts, as in Chromium.
+            open(" fr , en", ""),
+            // A `<meta http-equiv=content-language>` pragma wins over the header, in script and
+            // layout alike.
+            open("fr", "<meta http-equiv=content-language content=de>"),
+        ],
+        [every(), every(), (String::new(), "50".to_owned())]
     );
-    server.join().unwrap();
 }
