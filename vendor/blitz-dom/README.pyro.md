@@ -1166,6 +1166,36 @@ Tests: `an_image_marker_ends_7px_before_the_item_on_its_first_baseline`,
 - `src/stylo_to_kurbo.rs`, `src/lib.rs`: `resolve_2d_transform_for_size` (blitz-paint transforms a row's cells by
   the row's transform); `TableCell` and `TableContext` are exported.
 
+- Lane P2 (tables, second pass; tests in `table_parts` in pyro-render, each fails without its change):
+  - `src/layout/table_fixup.rs` (`mark_space_between_inline_table_parts`), `src/layout/construct.rs`
+    (`find_inline_layout_embedded_boxes`), `src/layout/inline/build.rs` (the text arm), `src/node/node.rs`
+    (`NodeFlags::IS_SPACE_BETWEEN_TABLE_PARTS`, `ENCLOSES_TABLE_PARTS`): white space between two table parts of an
+    inline box (laid out there as atomic inlines) generates no box, as if they were one anonymous inline table (CSS
+    2.1 §17.2.1). The construction of the inline formatting context notes an inline box with table parts among its
+    children and, once it has visited them (its children are taken while it does), flags the white-space text
+    nodes between two parts (comments and `display: none` passed over); the inline build skips them.
+  - `src/layout/table.rs` (`TableCell::baseline`, `is_baseline_aligned`, `cell_has_content`,
+    `set_cell_baseline_offset`, `shift_cell_content`), `src/layout/mod.rs` (`compute_child_layout_in_current_wm`),
+    `src/node/element.rs` (`LayoutData::table_baseline_offset`), `NodeFlags::HAS_TABLE_BASELINE_OFFSET`: cells with
+    `vertical-align: baseline` (or any value but `top`, `middle`, `bottom`; `align-content: normal`), spanning one row,
+    with content, in a horizontal table, are aligned on their row's baseline (Taffy's `table_baseline` works out the
+    offsets). A cell's offset is stored on it before its final layout; a change clears its layout cache. Its layout
+    then moves its in-flow and floated children, its lines (`TextLayout::block_offset`), its out-of-flow candidates'
+    static positions, its overflow and its baselines down by the offset, inside the layout cache, so a cached layout
+    keeps them there. A table with such cells keeps no `TableGridState`.
+  - `src/layout/table.rs`: a fixed table's cells may be narrower than their horizontal padding
+    (`table_cells_narrower_than_padding`); a first-row cell's percentage width in a fixed collapsed table gets the
+    halves of the collapsed borders beside it, as a length width does; a `<col>`'s width holds the halves of the
+    collapsed borders (a cell's own width gets them added, then the larger wins); a column group without columns
+    stands for its `span` columns (`push_columns`; its width, background and borders are theirs); a cell's length
+    `max-width` caps the width it gives its column; in the automatic layout a cell spanning columns gives none of
+    them its width (it is a minimum of the columns and the gaps it spans); `TableContext::gutter_border_color`,
+    `CollapsedEdge::outranks` (for paint).
+  - `src/node/stylo_data.rs` (`cell_layout_style`): a table in the collapsing border model has its layout style
+    without padding (CSS 2.1 §17.6.2), so its container sizes it, and paint positions its background, without it.
+  - `src/layout/mod.rs` (`lay_out_table_captions`): the out-of-flow boxes of a caption whose containing block is
+    further up are passed on with the table's.
+
 Tests: `table_structure` in pyro-render (each fails without its change); `mirror` covers the incremental paths.
 
 ## Ruby annotations and emphasis marks

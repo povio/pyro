@@ -108,6 +108,18 @@ bitflags! {
         /// pyro: an anonymous block whose first child is a split inline standing for its tail:
         /// the inline content after its last block-level box, with its end.
         const STARTS_WITH_SPLIT_TAIL = 1 << 13;
+        /// pyro: a white-space text node between two table parts of an inline box (cells, rows,
+        /// ... laid out there as atomic inlines), which generates no box (CSS 2.1 § 17.2.1, as if
+        /// its parts were in one anonymous inline table). Set and cleared by the construction of
+        /// its inline formatting context (`table_fixup::mark_space_between_inline_table_parts`).
+        const IS_SPACE_BETWEEN_TABLE_PARTS = 1 << 22;
+        /// pyro: during the construction of an inline formatting context, an inline box one of whose
+        /// children is a table part (`IS_SPACE_BETWEEN_TABLE_PARTS`); cleared as the box is done.
+        const ENCLOSES_TABLE_PARTS = 1 << 24;
+        /// pyro: a table cell whose content is laid out lower in its box, by its
+        /// `LayoutData::table_baseline_offset` (a cell aligned on its row's baseline; set by its
+        /// table's layout, `layout::table::shift_cell_content`).
+        const HAS_TABLE_BASELINE_OFFSET = 1 << 23;
     }
 }
 

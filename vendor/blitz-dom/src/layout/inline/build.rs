@@ -932,6 +932,10 @@ fn build_inline_layout_with(
             NodeData::Text(data) => {
                 // node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
                 // dbg!(&data.content);
+                // pyro: white space between two table parts generates no box (`table_fixup`).
+                if node.flags.contains(crate::node::NodeFlags::IS_SPACE_BETWEEN_TABLE_PARTS) {
+                    return;
+                }
 
                 let start = builder.text().len();
                 // pyro: the first letter in a span of the `::first-letter` style.

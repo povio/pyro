@@ -287,6 +287,47 @@ pub(crate) fn wrap_misparented_table_parts(
     *children = out;
 }
 
+/// White space between two table parts of an inline box generates no box, as if the parts were in
+/// one anonymous inline table (CSS 2.1 §17.2.1 removes white space between two internal table
+/// boxes; an inline box lays out its table parts as atomic inlines). Called once the construction of
+/// an inline formatting context has visited the children of `inline` (an inline box with table
+/// parts among them, `NodeFlags::ENCLOSES_TABLE_PARTS`), which cleared their flags: flags the
+/// white-space text children between two of its table parts
+/// (`NodeFlags::IS_SPACE_BETWEEN_TABLE_PARTS`). Boxes that generate nothing (comments,
+/// `display: none`) are passed over; anything else between two parts keeps the white space.
+pub(crate) fn mark_space_between_inline_table_parts(nodes: &mut crate::NodeTree, inline: NodeId) {
+    let mut spaces: Vec<NodeId> = Vec::new();
+    let mut between: Vec<NodeId> = Vec::new();
+    // Whether the last box-generating child was a table part.
+    let mut after_part = false;
+    for &id in nodes[inline].children.iter() {
+        let node = &nodes[id];
+        if node.is_text_node() {
+            if after_part && node.is_whitespace_node() {
+                between.push(id);
+            } else {
+                after_part = false;
+                between.clear();
+            }
+        } else if node.data.kind() == NodeKind::Comment
+            || node.display_style().is_some_and(|display| {
+                display.outside() == DisplayOutside::None && display.inside() == DisplayInside::None
+            })
+        {
+            continue;
+        } else if is_table_part(node) {
+            spaces.append(&mut between);
+            after_part = true;
+        } else {
+            after_part = false;
+            between.clear();
+        }
+    }
+    for id in spaces {
+        nodes[id].flags.insert(NodeFlags::IS_SPACE_BETWEEN_TABLE_PARTS);
+    }
+}
+
 /// The pseudo-element an anonymous box is styled as, by the `display` it was given: a table, row
 /// or cell of the fixup, else an anonymous block.
 pub(crate) fn anonymous_box_pseudo(style: &ComputedValues) -> PseudoElement {

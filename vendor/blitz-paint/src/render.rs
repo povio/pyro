@@ -1395,6 +1395,18 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         // Also! we can cache the bezpaths themselves, saving us a bunch of work
         let element = node.element_data().unwrap();
 
+        // pyro: a table with cells in the collapsing border model has the borders its grid was laid
+        // out with (half of its outer collapsed borders) and no padding: its background is positioned
+        // in them.
+        let mut layout = layout;
+        if let blitz_dom::node::SpecialElementData::TableRoot(table) = &element.special_data
+            && table.border_collapse == style::computed_values::border_collapse::T::Collapse
+            && !table.cells.is_empty()
+        {
+            layout.border = table.style.border.map(|side| side.into_raw().value());
+            layout.padding = taffy::Rect::ZERO;
+        }
+
         // pyro: a table with captions is its wrapper box; it paints its own box (background,
         // borders, shadows, outline) around its grid alone (`TableContext::grid_box`).
         let frame = match &element.special_data {

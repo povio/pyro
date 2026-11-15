@@ -39,6 +39,7 @@ mod alignment;
 mod explicit_grid;
 mod implicit_grid;
 mod placement;
+mod table_baseline;
 mod table_reuse;
 mod track_sizing;
 mod types;
@@ -535,6 +536,11 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
     drop(grid_auto_columns);
     drop(style);
 
+    // pyro: a fixed table's cells are as wide as their columns.
+    if table_rows && tree.table_cells_narrower_than_padding(node) {
+        items.iter_mut().for_each(|item| item.width_unfloored = true);
+    }
+
     // Determine if the grid has any baseline aligned items
     let has_baseline_aligned_item = items.iter().any(|item| item.participates_in_baseline_alignment());
 
@@ -586,6 +592,12 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
     }
 
     // Run track sizing algorithm for Block axis
+    // pyro: a table's cells aligned on their row's baseline (`table_baseline`).
+    let table_baselines = table_rows && table_baseline::mark_table_baseline_cells(tree, node, &mut items);
+    if table_baselines {
+        table_baseline::resolve_table_cell_baselines(tree, node, &mut items, &rows, &columns, inner_node_size);
+    }
+
     // (A table laid out again sizes the rows of the items that changed from their items.)
     let mut rows_sized = table_rows.then(GridTrackVec::new);
     track_sizing_algorithm(
@@ -774,6 +786,10 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
     }
 
     if rerun_row_sizing {
+        // pyro: the cells' baselines at the columns' new widths (`table_baseline`).
+        if table_baselines && rerun_column_sizing {
+            table_baseline::resolve_table_cell_baselines(tree, node, &mut items, &rows, &columns, inner_node_size);
+        }
         // Re-run track sizing algorithm for Block axis
         track_sizing_algorithm(
             tree,
@@ -939,21 +955,36 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
                 continue;
             }
             Some(Some(moved)) => moved,
-            None => align_and_position_item(
-                tree,
-                item.node,
-                index as u32,
-                grid_area,
-                Size { width: grid_area.right - grid_area.left, height: grid_area.bottom - grid_area.top },
-                container_alignment_styles,
-                item.baseline_shim,
-                direction,
-                #[cfg(feature = "content_size")]
-                padding_box_inset,
-                #[cfg(feature = "content_size")]
-                &overflow_container,
-                &mut item.oof_candidates,
-            ),
+            None => {
+                // pyro: a baseline-aligned table cell fills its row, its content moved down inside it.
+                let baseline_shim = if table_baselines {
+                    let offset = if item.table_baseline { item.baseline_shim } else { 0.0 };
+                    tree.set_table_cell_baseline_offset(node, item.node, offset);
+                    if item.table_baseline {
+                        0.0
+                    } else {
+                        item.baseline_shim
+                    }
+                } else {
+                    item.baseline_shim
+                };
+                align_and_position_item(
+                    tree,
+                    item.node,
+                    index as u32,
+                    grid_area,
+                    Size { width: grid_area.right - grid_area.left, height: grid_area.bottom - grid_area.top },
+                    container_alignment_styles,
+                    baseline_shim,
+                    item.width_unfloored,
+                    direction,
+                    #[cfg(feature = "content_size")]
+                    padding_box_inset,
+                    #[cfg(feature = "content_size")]
+                    &overflow_container,
+                    &mut item.oof_candidates,
+                )
+            }
         };
         #[cfg_attr(not(feature = "content_size"), allow(unused_variables))]
         let overflow_contribution = placed.contribution;

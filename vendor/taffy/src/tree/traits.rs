@@ -372,6 +372,37 @@ pub trait LayoutGridContainer: LayoutPartialTree {
 
     /// pyro: keeps a table's grid layout for the next [`take_table_grid_state`](Self::take_table_grid_state).
     fn store_table_grid_state(&mut self, _node_id: NodeId, _state: crate::util::sys::Box<crate::compute::grid::TableGridState>) {}
+
+    /// pyro: whether a table's cells are as wide as their columns even where those are narrower than the
+    /// cells' horizontal padding and borders (the fixed table layout algorithm, as in Chromium): the grid does
+    /// not floor their widths at them. The default is false.
+    fn table_cells_narrower_than_padding(&self, _node_id: NodeId) -> bool {
+        false
+    }
+
+    /// pyro: whether some in-flow child of a table's grid (`grid_rows_are_table_rows`) is a cell aligned on
+    /// its row's baseline (see [`Self::table_cell_is_baseline_aligned`]). The default is false.
+    fn table_has_baseline_cells(&self, _node_id: NodeId) -> bool {
+        false
+    }
+
+    /// pyro: whether the in-flow child `child_node_id` of a table's grid is a cell aligned on its row's
+    /// baseline (`vertical-align: baseline`, CSS 2.1 §17.5.3): its content moves down by its row's baseline
+    /// less its own, inside its box, which still fills the row (see `table_baseline`). Asked only when
+    /// [`Self::table_has_baseline_cells`] answers true.
+    fn table_cell_is_baseline_aligned(&self, _node_id: NodeId, _child_node_id: NodeId) -> bool {
+        false
+    }
+
+    /// pyro: how far down a cell's content is laid out in its box (`offset`, its row's baseline less its own),
+    /// set before the cell's final layout in a table with baseline-aligned cells (0 for the other cells).
+    fn set_table_cell_baseline_offset(&mut self, _node_id: NodeId, _child_node_id: NodeId, _offset: f32) {}
+
+    /// pyro: the offset [`Self::set_table_cell_baseline_offset`] last set for the cell: a layout of the cell
+    /// that runs before its next final layout has its content (and its baselines) that much lower.
+    fn table_cell_baseline_offset(&self, _node_id: NodeId, _child_node_id: NodeId) -> f32 {
+        0.0
+    }
     /// Whether the tree places `node_id`'s in-flow children itself (pyro: a table places its cells
     /// in rows and columns as it builds them). `Some(extent)`: the number of tracks the placed items reach from
     /// the grid's first explicit line, in each axis (`width`: columns, `height`: rows). The grid then reads each

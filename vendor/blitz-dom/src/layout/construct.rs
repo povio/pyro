@@ -1637,16 +1637,28 @@ pub(crate) fn find_inline_layout_embedded_boxes(
                                     layout_children,
                                 ));
                             });
+                            // pyro: white space between its table parts goes (`table_fixup`).
+                            if nodes[node_id].flags.contains(NodeFlags::ENCLOSES_TABLE_PARTS) {
+                                nodes[node_id].flags.remove(NodeFlags::ENCLOSES_TABLE_PARTS);
+                                super::table_fixup::mark_space_between_inline_table_parts(nodes, node_id);
+                            }
                         }
                     }
                     // Inline box
                     (_, _) => {
                         layout_children.push(node_id);
+                        // pyro: a table part in an inline box (`table_fixup`).
+                        if display.outside() == DisplayOutside::InternalTable {
+                            if let Some(parent) = nodes[node_id].parent {
+                                nodes[parent].flags.insert(NodeFlags::ENCLOSES_TABLE_PARTS);
+                            }
+                        }
                     }
                 };
             }
             NodeData::Comment { .. } | NodeData::Text(_) => {
                 node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
+                node.flags.remove(NodeFlags::IS_SPACE_BETWEEN_TABLE_PARTS);
             }
             NodeData::Document(_) => unreachable!(),
         }

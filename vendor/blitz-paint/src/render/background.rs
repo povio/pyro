@@ -633,16 +633,30 @@ impl ElementCx<'_, '_> {
         let has_color =
             |colors: &[[Option<Color>; 2]]| colors.iter().flatten().any(Option::is_some);
         let any_image = |images: &[[bool; 2]]| images.iter().flatten().any(|image| *image);
+        // pyro: the rows' outer box shadows, each painted before its row's background (as
+        // Chromium paints a row's shadow, then its background, row after row).
+        let row_shadows: Vec<bool> = table
+            .rows
+            .iter()
+            .map(|row| {
+                self.context.dom.get_node(row.node_id).and_then(|node| node.primary_styles()).is_some_and(|style| {
+                    style.get_effects().box_shadow.0.iter().any(|shadow| !shadow.inset)
+                })
+            })
+            .collect();
+        let any_shadow = row_shadows.iter().any(|shadow| *shadow);
         if !has_color(&column_colors)
             && !has_color(&row_colors)
             && !any_image(&column_images)
             && !any_image(&row_images)
+            && !any_shadow
         {
             return;
         }
-        let part_rects = (any_image(&column_images) || any_image(&row_images))
+        let part_rects = (any_image(&column_images) || any_image(&row_images) || any_shadow)
             .then(|| self.table_part_rects(table))
             .flatten();
+        let mut shadowed_row = None;
 
         let cell_rect = |cell_id: NodeId| -> Option<Rect> {
             let layout = self.context.dom.get_node(cell_id)?.final_layout();
@@ -677,6 +691,14 @@ impl ElementCx<'_, '_> {
             // A collapsed row (`visibility: collapse`) paints nothing.
             if table.rows.get(cell.row as usize).is_some_and(|row| row.collapsed) {
                 continue;
+            }
+            // pyro: a row's shadow at its first cell (a row's cells follow one another).
+            if any_shadow && row_shadows.get(cell.row as usize) == Some(&true) && shadowed_row != Some(cell.row) {
+                shadowed_row = Some(cell.row);
+                if let (Some(rects), Some(row)) = (part_rects.as_ref(), table.rows.get(cell.row as usize)) {
+                    let part = rects.rect(table, row.node_id, PartKind::Row, cell);
+                    self.draw_table_part_shadow(scene, row.node_id, part);
+                }
             }
             let no_colors = [None, None];
             let no_images = [false, false];
@@ -768,6 +790,19 @@ impl ElementCx<'_, '_> {
         scene.push_clip_layer(Fill::NonZero, self.transform, clip);
         part_cx.draw_background(scene);
         scene.pop_layer();
+    }
+
+    /// pyro: the outer box shadow of a table part (a row) whose box is `part` (CSS px, the table's
+    /// space).
+    fn draw_table_part_shadow(&self, scene: &mut impl PaintScene, node_id: NodeId, part: Rect) {
+        let Some(node) = self.context.dom.get_node(node_id) else { return };
+        if node.element_data().is_none() || node.primary_styles().is_none() {
+            return;
+        }
+        let mut layout = taffy::Layout::new();
+        layout.size = taffy::Size { width: part.width() as f32, height: part.height() as f32 };
+        let transform = self.transform * Affine::translate(Vec2::new(part.x0, part.y0) * self.scale);
+        self.context.element_cx(node, layout, transform, None).draw_outset_box_shadow(scene);
     }
 
     /// Whether the layer is positioned against the viewport

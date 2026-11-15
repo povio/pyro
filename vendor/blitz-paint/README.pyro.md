@@ -338,6 +338,16 @@ from the root of an upstream checkout at that commit) is the whole diff.
   - `src/render/background.rs` (`draw_table_row_backgrounds`): background images of column groups, columns, row
     groups and rows are painted in each cell, positioned against the part's own box (`TablePartRects`), in that
     order with their colours; a collapsed row (`visibility: collapse`) paints nothing.
+  - Lane P2 (tables, second pass): `src/render/background.rs` (`draw_table_part_shadow`): a row's outer box shadow
+    is painted around the row's box (`TablePartRects`) at its first cell, before its background, row after row
+    (as Chromium paints a row's shadow, then its background). `src/render/border.rs`: borders laid out as one
+    uniform grid of gutters take the colour conflict resolution gave them (`TableContext::gutter_border_color`), not
+    the first cell's top border's (which may be `none`, or lose to another); in `draw_collapsed_edges` the square
+    where rules cross is painted in the colour of the edge that wins there (by width, then style:
+    `CollapsedEdge::outranks`; among equals the first of the row line's rule on the left, the column line's above,
+    the row line's on the right and the column line's below), when its rules are not all one colour (its top half
+    was the row line's rule on the right, its bottom half the column line's below). Covered by
+    `crates/pyro-render/tests/table_parts.rs`.
 
 - Text decorations, emphasis marks and ruby (WPT reftest lane G):
   - `src/text.rs` (`flush_line_decorations`, `decoration_thickness`, `whole_css_px`, `StrutGeometry`): decoration
