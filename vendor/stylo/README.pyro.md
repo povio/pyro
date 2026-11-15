@@ -98,6 +98,10 @@ crate (`diff -ruN`).
   `view-box` and `no-clip`, and `mask-origin` the three SVG boxes, for servo too (upstream: gecko only, so the
   declaration was dropped); `background-clip` and `background-origin` still reject them. The `mask` shorthand
   serializes them as Gecko's does. blitz-paint clips and positions mask layers with them.
+- `device/servo.rs` (`Device::system_color`): the deprecated system colours `ThreeDHighlight` and
+  `ThreeDLightShadow` are `ButtonBorder`, as CSS Color 4 §6.2 maps them (upstream: `ButtonFace`; WPT
+  `css-color/deprecated-sameas-018`/`-019`). Test: `deprecated_three_d_colours_are_button_border` in
+  `crates/pyro-render/tests/background_images_and_edges.rs`.
 
 ## Moving from 0.22 to 0.23
 

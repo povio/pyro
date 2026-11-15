@@ -1363,13 +1363,10 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          // Render debug overlay
          if self.dom.devtools().highlight_hover {
              if let Some(node_id) = self.dom.as_ref().get_hover_node_id() {
-@@ -285,7 +305,150 @@
-                     self.initial_y,
-                 );
-             }
-+        }
-+    }
-+
+@@ -288,6 +308,149 @@
+         }
+     }
+ 
 +    /// pyro: the canvas, in scene space: the viewport, or the root element's box where that is
 +    /// larger.
 +    fn canvas_rect(&self) -> Rect {
@@ -1472,7 +1469,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +            || style.get_inherited_box().visibility != StyloVisibility::Visible
 +        {
 +            return;
-         }
++        }
 +        let effects = style.get_effects();
 +        let opacity = effects.opacity;
 +        let color = style
@@ -1511,9 +1508,11 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                }
 +            },
 +        );
-     }
- 
++    }
++
      fn node_transform(&self, node: &Node, parent: Affine) -> Affine {
+         let location = node.final_layout().location;
+         parent
 @@ -317,8 +480,10 @@
                  || element.and_then(|e| e.sub_doc_data()).is_some()
                  || element.and_then(|e| e.text_input_data()).is_some()
@@ -2191,14 +2190,10 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
  fn convert_rect(rect: &parley::BoundingBox) -> kurbo::Rect {
      peniko::kurbo::Rect::new(rect.x0, rect.y0, rect.x1, rect.y1)
  }
-@@ -963,12 +1434,267 @@
-                     None,
-                     &stroke_rect.to_rounded_rect(radius - stroke_width / 2.0),
-                 );
-+            }
-+        }
-+    }
-+
+@@ -967,8 +1438,263 @@
+         }
+     }
+ 
 +    /// pyro: paints the boxes of the inline (non-atomic) elements in this inline root's lines, as
 +    /// Chromium does. An element has one fragment per line it has content on: from the start of
 +    /// its first content there to the end of its last (its own start and end edges without their
@@ -2356,8 +2351,8 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                        }
 +                    }
 +                }
-             }
-         }
++            }
++        }
 +        if fragments.is_empty() {
 +            return;
 +        }
@@ -2448,8 +2443,8 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +            // Over the box, as a block's outline is (see `render_element`).
 +            cx.draw_outline(scene);
 +        }
-     }
- 
++    }
++
      fn draw_inline_layout(&self, scene: &mut impl PaintScene, pos: Point) {
          if self.node.flags.is_inline_root() {
 +            // pyro: inline elements with a clip path or a mask (clip_path.rs).
@@ -2994,10 +2989,34 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          let svg_size = svg.tree.size();
  
          let x = self.frame.content_box.origin().x;
-@@ -1466,3 +2571,29 @@
+@@ -1299,9 +2404,21 @@
+             || y_offset < 0.0
+             || x_offset + paint_size.width > container_size.width
+             || y_offset + paint_size.height > container_size.height;
++        // pyro: replaced content is cut to the content edge's curve (CSS Backgrounds 3 §5.3),
++        // which lies inside the padding box's clip once a border or padding is set: a corner
++        // whose radii both exceed the border and padding there is still rounded.
++        let inset = |i: kurbo::Insets| i.x0 != 0.0 || i.y0 != 0.0 || i.x1 != 0.0 || i.y1 != 0.0;
++        let (r, b, p) = (self.frame.border_radii, self.frame.border_width, self.frame.padding_width);
++        let i = kurbo::Insets::new(b.x0 + p.x0, b.y0 + p.y0, b.x1 + p.x1, b.y1 + p.y1);
++        let rounded = |r: kurbo::Vec2, x: f64, y: f64| r.x > x && r.y > y;
++        let rounded_content = inset(i)
++            && (rounded(r.top_left, i.x0, i.y0)
++                || rounded(r.top_right, i.x1, i.y0)
++                || rounded(r.bottom_right, i.x1, i.y1)
++                || rounded(r.bottom_left, i.x0, i.y1));
+         self.context.layer_manager.maybe_with_layer(
+             scene,
+-            overflows,
++            overflows || rounded_content,
+             BlendMode::default(),
+             1.0,
+             self.transform,
+@@ -1465,4 +2582,30 @@
+     };
  
      CssBox::new(border_box, border, padding, outline_width, border_radii)
- }
++}
 +
 +/// pyro: what [`BlitzDomPainter::paint_element`] needs of `render_element`'s state.
 +#[derive(Clone, Copy)]
@@ -3008,7 +3027,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +    is_text_input: bool,
 +    content_position: Point,
 +    child_clip_rect: Rect,
-+}
+ }
 +
 +/// pyro: an element's opacity and filter layer ([`BlitzDomPainter::paint_effect_group`]).
 +struct EffectLayer {
@@ -3110,7 +3129,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
              origin: (*get_cyclic(&svg_styles.mask_origin.0, idx)).into(),
              // There is no `mask-attachment` property
              attachment: StyloBackgroundAttachment::Scroll,
-@@ -129,37 +147,141 @@
+@@ -129,37 +147,151 @@
  
  impl ElementCx<'_, '_> {
      pub(super) fn draw_background(&self, scene: &mut impl PaintScene) {
@@ -3179,6 +3198,9 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
 +        let last_attachment = *get_cyclic(&bg_styles.background_attachment.0, layer_count - 1);
          let background_clip: BoxModelBox = last_clip.into();
 -        let background_clip_path = self.box_path(background_clip);
++        // pyro: Chromium's bleed avoidance for a rounded box whose border hides its edge, worked
++        // out when a layer cut to the border box paints.
++        let shrunk_border_box = std::cell::OnceCell::new();
 +        let clip_path = |clip: BoxModelBox,
 +                         border_area: bool,
 +                         attachment: StyloBackgroundAttachment| {
@@ -3186,14 +3208,15 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
 +                (Some(canvas), _) => canvas.to_path(0.1),
 +                (None, Some(local)) => local.box_path(clip),
 +                (None, None) if border_area => self.border_area_path(),
-+                (None, None) => self.box_path(clip),
++                (None, None) => match clip {
++                    BoxModelBox::BorderBox => shrunk_border_box
++                        .get_or_init(|| self.bleed_avoiding_border_box(style))
++                        .clone()
++                        .unwrap_or_else(|| self.box_path(clip)),
++                    _ => self.box_path(clip),
++                },
 +            }
 +        };
-+        let background_clip_path = clip_path(
-+            background_clip,
-+            last_clip == StyloBackgroundClip::BorderArea,
-+            last_attachment,
-+        );
  
          // Draw background color (if any)
 -        let mut text_run = last_clip == StyloBackgroundClip::Text;
@@ -3208,6 +3231,12 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
 +            .resolve_to_absolute(&current_color)
 +            .as_srgb_color();
 +        if bg_color != Color::TRANSPARENT {
++            // pyro: the colour's clip only when there is a colour.
++            let background_clip_path = clip_path(
++                background_clip,
++                last_clip == StyloBackgroundClip::BorderArea,
++                last_attachment,
++            );
 +            let local_color = local_cx(last_attachment).is_some();
 +            if local_color {
 +                scene.push_clip_layer(
@@ -3260,7 +3289,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
              self.context.layer_manager.maybe_with_layer(
                  scene,
                  true,
-@@ -170,15 +292,62 @@
+@@ -170,15 +302,153 @@
                  None,
                  None,
                  |scene| {
@@ -3274,7 +3303,98 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
          }
          if text_run {
              self.end_text_clip_group(scene);
++        }
++    }
++
++    /// pyro: the border box that `background-clip: border-box` layers are cut to under a rounded
++    /// border that hides the background's edge, as Chromium paints it
++    /// (`BoxDecorationData::ComputeBleedAvoidance`, `kBackgroundBleedShrinkBackground`): every
++    /// side's colour opaque and its style neither dotted, dashed nor hidden, some border drawn,
++    /// no border image. The box is inset by half of each side's width (a sixth with a `double`
++    /// side) and its radii shrink with it, so the border covers the background's antialiased
++    /// edge: drawn to the outer edge, the background showed through the border's own
++    /// antialiasing there, a dark seam around a light border. `None` when the background is cut
++    /// to the border box as it is (also under a side narrower than two device pixels).
++    fn bleed_avoiding_border_box(&self, style: &ComputedValues) -> Option<BezPath> {
++        use style::values::specified::BorderStyle;
++        if !self.frame.has_border_radius() {
++            return None;
++        }
++        let border = style.get_border();
++        if !matches!(border.border_image_source, GenericImage::None) {
++            return None;
++        }
++        let current_color = style.clone_color();
++        let widths = self.frame.border_width;
++        let sides = [
++            (
++                &border.border_top_color,
++                border.border_top_style,
++                widths.y0,
++            ),
++            (
++                &border.border_right_color,
++                border.border_right_style,
++                widths.x1,
++            ),
++            (
++                &border.border_bottom_color,
++                border.border_bottom_style,
++                widths.y1,
++            ),
++            (
++                &border.border_left_color,
++                border.border_left_style,
++                widths.x0,
++            ),
++        ];
++        if !sides.iter().any(|(_, _, width)| *width > 0.0) {
++            return None;
++        }
++        let mut double = false;
++        for (color, side_style, width) in sides {
++            let opaque = color.resolve_to_absolute(&current_color).alpha >= 1.0;
++            if !opaque
++                || matches!(
++                    side_style,
++                    BorderStyle::Hidden | BorderStyle::Dotted | BorderStyle::Dashed
++                )
++            {
++                return None;
++            }
++            // A side under two device pixels keeps the background to the outer edge: the
++            // background's edge, half a pixel in, and the border's two antialiased edges share
++            // its pixels, and what is under the box showed through where their coverages met
++            // (WPT `filter-effects/blur-clip-border-radius`, a 1px border).
++            if width > 0.0 && width < 2.0 {
++                return None;
++            }
++            // A double border under 3px is drawn solid (Blink's `BorderEdge::EffectiveStyle`).
++            double |= side_style == BorderStyle::Double && width >= 3.0 * self.scale;
          }
++        let fraction = if double { 1.0 / 6.0 } else { 0.5 };
++        let insets = kurbo::Insets::new(
++            widths.x0 * fraction,
++            widths.y0 * fraction,
++            widths.x1 * fraction,
++            widths.y1 * fraction,
++        );
++        let radii = self.frame.border_radii;
++        let shrink = |r: Vec2, dx: f64, dy: f64| Vec2::new((r.x - dx).max(0.0), (r.y - dy).max(0.0));
++        let radii = NonUniformRoundedRectRadii {
++            top_left: shrink(radii.top_left, insets.x0, insets.y0),
++            top_right: shrink(radii.top_right, insets.x1, insets.y0),
++            bottom_right: shrink(radii.bottom_right, insets.x1, insets.y1),
++            bottom_left: shrink(radii.bottom_left, insets.x0, insets.y1),
++        };
++        let shrunk = CssBox::new(
++            self.frame.border_box - insets,
++            kurbo::Insets::ZERO,
++            kurbo::Insets::ZERO,
++            0.0,
++            radii,
++        );
++        Some(shrunk.border_box_path())
      }
  
 +    /// pyro: this element's boxes as a `background-attachment: local` layer sees them on a scroll
@@ -3324,7 +3444,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
      /// Starts an isolated group for `background-clip: text` layers; layers drawn
      /// until [`end_text_clip_group`](Self::end_text_clip_group) are clipped to text.
      fn begin_text_clip_group(&self, scene: &mut impl PaintScene) {
-@@ -217,6 +386,7 @@
+@@ -217,6 +487,7 @@
              BoxModelBox::BorderBox => self.frame.border_box_path(),
              BoxModelBox::PaddingBox => self.frame.padding_box_path(),
              BoxModelBox::ContentBox => self.frame.content_box_path(),
@@ -3332,7 +3452,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
          }
      }
  
-@@ -226,20 +396,36 @@
+@@ -226,20 +497,36 @@
              BoxModelBox::BorderBox => self.frame.border_box,
              BoxModelBox::PaddingBox => self.frame.padding_box,
              BoxModelBox::ContentBox => self.frame.content_box,
@@ -3372,7 +3492,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
              }
              GenericImage::LightDark(_) => {
                  #[cfg(feature = "tracing")]
-@@ -373,19 +559,6 @@
+@@ -373,19 +660,6 @@
          }
      }
  
@@ -3392,7 +3512,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
      /// Whether the layer is positioned against the viewport
      /// (`background-attachment: fixed`) rather than the element's origin box.
      /// `fixed` behaves as `scroll` on elements affected by a CSS transform
-@@ -410,23 +583,43 @@
+@@ -410,23 +684,43 @@
  
      /// Whether this element or any of its ancestors has a CSS transform
      ///
@@ -3441,7 +3561,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
          let Some(bg_image) = layer.image_data else {
              return;
          };
-@@ -439,14 +632,10 @@
+@@ -439,14 +733,10 @@
              return;
          }
  
@@ -3459,7 +3579,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
  
          // Size the SVG per the CSS default sizing algorithm
          // (https://drafts.csswg.org/css-images/#default-sizing). An SVG image
-@@ -461,7 +650,7 @@
+@@ -461,7 +751,7 @@
          }
          .filter(|r| r.is_finite() && *r > 0.0);
  
@@ -3468,7 +3588,18 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
              layer,
              frame_w,
              frame_h,
-@@ -482,23 +671,50 @@
+@@ -476,29 +766,77 @@
+             return;
+         }
+ 
++        // pyro: an image without a `viewBox` or a size lays its content out in the size it is
++        // drawn at (`SvgImageData::for_url`); it was stretched from usvg's 100x100.
++        let sized = svg.sized(bg_size.width as f32, bg_size.height as f32);
++        let svg = sized.as_ref().unwrap_or(svg);
++
+         let viewport = super::svg_viewport_affine(
+             svg,
+             (bg_size.width * self.scale) as f32,
              (bg_size.height * self.scale) as f32,
          );
  
@@ -3511,6 +3642,15 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
 +        if x.count as u64 * y.count as u64 > 2_000 {
 +            return;
 +        }
++        // pyro: an image ends at its viewport: content past it (a stroke on the root's edges) is
++        // cut off, tile by tile, when there is any (it was drawn over the neighbouring tiles and
++        // the area around them).
++        let size = svg.tree.size();
++        let ink = svg.tree.root().abs_layer_bounding_box();
++        let overflows = ink.left() < -0.01
++            || ink.top() < -0.01
++            || ink.right() > size.width() + 0.01
++            || ink.bottom() > size.height() + 0.01;
 +        for hc in 0..y.count {
 +            for wc in 0..x.count {
 +                let origin = Vec2::new(
@@ -3518,7 +3658,14 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
 +                    y.start + hc as f64 * y.stride,
 +                );
 +                let transform = base_transform * kurbo::Affine::translate(origin) * viewport;
-+                anyrender_svg::render_svg_tree(scene, &svg.tree, transform);
++                if overflows {
++                    let tile = Rect::from_origin_size(origin.to_point(), bg_size);
++                    scene.push_clip_layer(Fill::NonZero, base_transform, &tile);
++                    anyrender_svg::render_svg_tree(scene, &svg.tree, transform);
++                    scene.pop_layer();
++                } else {
++                    anyrender_svg::render_svg_tree(scene, &svg.tree, transform);
++                }
 +            }
 +        }
      }
@@ -3533,7 +3680,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
          let Some(bg_image) = layer.image_data else {
              return;
          };
-@@ -509,11 +725,7 @@
+@@ -509,11 +847,7 @@
          let image_rendering = self.style.clone_image_rendering();
          let quality = to_image_quality(image_rendering);
  
@@ -3546,7 +3693,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
  
          let image_width = image_data.width as f64;
          let image_height = image_data.height as f64;
-@@ -527,76 +739,125 @@
+@@ -527,76 +861,125 @@
  
          let bg_pos = (bg_pos.to_vec2() * self.scale).to_point();
          let bg_size = bg_size * self.scale;
@@ -3712,7 +3859,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
  
          let (bg_pos, bg_size) = compute_layer_position_and_size(
              layer,
-@@ -629,23 +890,50 @@
+@@ -629,23 +1012,50 @@
              bg_size.height,
          );
  
@@ -3776,7 +3923,112 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
  
          let transform = base_transform.then_translate(Vec2 {
              x: x.translate,
-@@ -875,48 +1163,64 @@
+@@ -681,35 +1091,84 @@
+ 
+     let bg_size = compute_layer_size(layer, container_w as f32, container_h as f32, size_mode);
+ 
++    let BackgroundRepeat(repeat_x, repeat_y) = layer.repeat;
++    let bg_size = round_layer_size(
++        bg_size,
++        container_w,
++        container_h,
++        matches!(repeat_x, Round),
++        matches!(repeat_y, Round),
++        size_is_auto(layer.size),
++    );
++
++    // pyro: the image is positioned at its final size, after `round` scaled it (CSS Backgrounds
++    // 3 §3.9: sizing, the round step, then positioning; it was positioned at its unrounded size).
+     let bg_pos = compute_layer_position(
+         layer,
+         (container_w - bg_size.width) as f32,
+         (container_h - bg_size.height) as f32,
+     );
+ 
+-    let BackgroundRepeat(repeat_x, repeat_y) = layer.repeat;
++    (bg_pos, bg_size)
++}
+ 
+-    let bg_size = if matches!(repeat_x, Round) && matches!(repeat_y, Round) {
+-        let count = (container_w / bg_size.width).round();
+-        let width = container_w / count;
++/// Which axes of a `background-size` are `auto` (x, y).
++fn size_is_auto(size: &BackgroundSize) -> (bool, bool) {
++    use style::values::generics::length::GenericLengthPercentageOrAuto as Lpa;
++    match size {
++        BackgroundSize::ExplicitSize { width, height } => {
++            (matches!(width, Lpa::Auto), matches!(height, Lpa::Auto))
++        }
++        BackgroundSize::Cover | BackgroundSize::Contain => (false, false),
++    }
++}
+ 
+-        let count = (container_h / bg_size.height).round();
+-        let height = container_h / count;
+-
+-        Size::new(width, height)
+-    } else if matches!(repeat_x, Round) {
+-        let count = (container_w / bg_size.width).round();
+-        let width = container_w / count;
+-        Size::new(width, bg_size.height)
+-    } else if matches!(repeat_y, Round) {
+-        let count = (container_h / bg_size.height).round();
+-        let height = container_h / count;
+-        Size::new(bg_size.width, height)
+-    } else {
+-        bg_size
++/// pyro: the round step of CSS Backgrounds 3 §3.9 on a layer sized `size` in a positioning area
++/// `container_w` x `container_h`: a `round` axis is scaled to fit a whole number of copies (at
++/// least one), and when only one axis rounds and `background-size` is `auto` in the other (`auto`
++/// in `auto_axes`), the other is scaled with it, so the image keeps the aspect ratio it had.
++/// Upstream left the other axis alone, and divided by zero copies for an image more than twice
++/// the area's size.
++fn round_layer_size(
++    size: Size,
++    container_w: f64,
++    container_h: f64,
++    round_x: bool,
++    round_y: bool,
++    auto_axes: (bool, bool),
++) -> Size {
++    let round = |container: f64, len: f64| {
++        if len > 0.0 && container > 0.0 {
++            container / (container / len).round().max(1.0)
++        } else {
++            len
++        }
+     };
+-
+-    (bg_pos, bg_size)
++    match (round_x, round_y) {
++        (true, true) => Size::new(
++            round(container_w, size.width),
++            round(container_h, size.height),
++        ),
++        (true, false) => {
++            let width = round(container_w, size.width);
++            let height = if auto_axes.1 && size.width > 0.0 {
++                size.height * width / size.width
++            } else {
++                size.height
++            };
++            Size::new(width, height)
++        }
++        (false, true) => {
++            let height = round(container_h, size.height);
++            let width = if auto_axes.0 && size.height > 0.0 {
++                size.width * height / size.height
++            } else {
++                size.width
++            };
++            Size::new(width, height)
++        }
++        (false, false) => size,
++    }
+ }
+ 
+ #[inline]
+@@ -875,48 +1334,64 @@
      stride: f64,
  }
  
@@ -3870,7 +4122,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
          },
      }
  }
-@@ -958,11 +1262,24 @@
+@@ -958,11 +1433,24 @@
          }
          Space => {
              let (count, stride) = compute_space_count_and_stride(origin_len, tile_len);
@@ -3900,7 +4152,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
              }
          }
          NoRepeat => AxisTiling {
-@@ -986,6 +1303,16 @@
+@@ -986,6 +1474,16 @@
      (count, stride)
  }
  
@@ -4127,8 +4379,6 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
          }
 -        let t = if seg_len > 0.0 {
 -            ((target - seg_start) / seg_len).clamp(0.0, 1.0)
--        } else {
--            0.0
 +        if (width == 2.0 && (mod_4 == 0.0 || mod_4 == 1.0))
 +            || (width == 3.0 && (mod_6 == 1.0 || mod_6 == 2.0))
 +        {
@@ -4197,7 +4447,8 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
 +        if depth < 20 && off.x.abs().max(off.y.abs()) > tolerance {
 +            halve(points, (t0, p0), (half_t, half), tolerance, depth + 1, chords);
 +            halve(points, (half_t, half), (t1, p1), tolerance, depth + 1, chords);
-+        } else {
+         } else {
+-            0.0
 +            let distance = chords.last().map_or(0.0, |&(_, distance)| distance);
 +            chords.push((t1, distance + (p1 - p0).hypot()));
 +        }
@@ -4389,7 +4640,18 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
                      let stroke_is_exact = is_exact(radii.top_left)
                          && is_exact(radii.top_right)
                          && is_exact(radii.bottom_right)
-@@ -234,6 +570,7 @@
+@@ -227,6 +563,10 @@
+             }
+         }
+ 
++        if self.draw_square_solid_sides_overdrawn(scene) {
++            return;
++        }
++
+         // (colour, path) pairs to be filled. Several entries may share a colour;
+         // they are grouped before filling so that adjacent same-coloured regions
+         // are drawn together, avoiding anti-aliasing seams between them.
+@@ -234,6 +574,7 @@
          // At most 8 entries: 4 edges, each of which can contribute 2 (the outer
          // and inner halves of a `groove`/`ridge`).
          let mut borders: SmallVec<[(Color, BezPath); 8]> = SmallVec::new();
@@ -4397,7 +4659,7 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
  
          for &edge in &[Edge::Top, Edge::Right, Edge::Bottom, Edge::Left] {
              let (color, edge_style) = match edge {
-@@ -244,7 +581,11 @@
+@@ -244,7 +585,11 @@
              };
              let color = color.resolve_to_absolute(&current_color).as_srgb_color();
  
@@ -4410,7 +4672,7 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
                  continue;
              }
  
-@@ -253,10 +594,9 @@
+@@ -253,10 +598,9 @@
                  // guard against drawing them anyway.
                  BorderStyle::None | BorderStyle::Hidden => {}
  
@@ -4424,7 +4686,7 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
  
                  // A double border is two solid lines separated by a gap, splitting
                  // the border width into three equal parts (outer line / gap / inner
-@@ -315,6 +655,20 @@
+@@ -315,6 +659,20 @@
              }
          }
  
@@ -4445,10 +4707,13 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
          if borders.is_empty() {
              return;
          }
-@@ -341,6 +695,48 @@
-         }
-     }
- 
+@@ -338,7 +696,140 @@
+             }
+             scene.fill(Fill::NonZero, self.transform, color, None, &path);
+             start = next;
++        }
++    }
++
 +    /// pyro: the area this element's border paints, which `background-clip: border-area` (CSS
 +    /// Backgrounds 4) clips to: each side with a style and a width, all of it whatever its
 +    /// colour; a `double` side its two lines; a dotted or dashed side its marks when the corners
@@ -4491,10 +4756,99 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
 +        path
 +    }
 +
++    /// pyro: a border with square corners whose sides are all solid and opaque, in more than one
++    /// colour, painted as Blink's `BoxBorderPainter` paints it, by overdraw: the sides go in its
++    /// order (top, bottom, right, left), and a side reaches into a corner in full when the side
++    /// beside it is painted later (which covers that corner) or has its colour, and stops at the
++    /// corner's diagonal only against a side of another colour painted before it. The later
++    /// side's antialiased diagonal then lies over the earlier side's colour: as two trapezoids,
++    /// both diagonals were antialiased over the background, which showed through between them
++    /// (WPT `CSS2/border-seams-001`: a red background along the seams of nearly white sides).
++    /// Returns false, painting nothing, for any other border.
++    fn draw_square_solid_sides_overdrawn(&self, scene: &mut impl PaintScene) -> bool {
++        if self.frame.has_border_radius() {
++            return false;
++        }
++        let border = self.style.get_border();
++        let current_color = self.style.clone_color();
++        // Top, right, bottom, left.
++        let sides = [
++            (Edge::Top, &border.border_top_color, border.border_top_style),
++            (Edge::Right, &border.border_right_color, border.border_right_style),
++            (Edge::Bottom, &border.border_bottom_color, border.border_bottom_style),
++            (Edge::Left, &border.border_left_color, border.border_left_style),
++        ];
++        let mut colors = [None; 4];
++        for (i, (edge, color, style)) in sides.iter().enumerate() {
++            if self.edge_width(*edge) <= 0.0 || style.none_or_hidden() {
++                continue;
++            }
++            let color = color.resolve_to_absolute(&current_color).as_srgb_color();
++            if *style != BorderStyle::Solid || color.components[3] < 1.0 {
++                return false;
++            }
++            colors[i] = Some(color);
++        }
++        let present: SmallVec<[Color; 4]> = colors.iter().flatten().copied().collect();
++        if present.len() < 2 || present.iter().all(|c| *c == present[0]) {
++            return false;
+         }
++        let bb = self.frame.border_box;
++        let w = self.frame.border_width;
++        // Blink's side order for sides of one opacity and style (`kSidePriority`).
++        const ORDER: [usize; 4] = [0, 2, 1, 3];
++        let mut painted = [false; 4];
++        for &i in &ORDER {
++            let Some(color) = colors[i] else { continue };
++            // A corner shared with side `j` is cut on its diagonal only when `j` is painted
++            // already in another colour.
++            let miter = |j: usize| painted[j] && colors[j].is_some_and(|c| c != color);
++            let (before, after) = ((i + 3) % 4, (i + 1) % 4);
++            let (mb, ma) = (miter(before), miter(after));
++            let points = match i {
++                // Top: left corner (side 3) to right corner (side 1).
++                0 => [
++                    Point::new(bb.x0, bb.y0),
++                    Point::new(bb.x1, bb.y0),
++                    Point::new(if ma { bb.x1 - w.x1 } else { bb.x1 }, bb.y0 + w.y0),
++                    Point::new(if mb { bb.x0 + w.x0 } else { bb.x0 }, bb.y0 + w.y0),
++                ],
++                // Right: top corner (side 0) to bottom corner (side 2).
++                1 => [
++                    Point::new(bb.x1, bb.y0),
++                    Point::new(bb.x1, bb.y1),
++                    Point::new(bb.x1 - w.x1, if ma { bb.y1 - w.y1 } else { bb.y1 }),
++                    Point::new(bb.x1 - w.x1, if mb { bb.y0 + w.y0 } else { bb.y0 }),
++                ],
++                // Bottom: right corner (side 1) to left corner (side 3).
++                2 => [
++                    Point::new(bb.x1, bb.y1),
++                    Point::new(bb.x0, bb.y1),
++                    Point::new(if ma { bb.x0 + w.x0 } else { bb.x0 }, bb.y1 - w.y1),
++                    Point::new(if mb { bb.x1 - w.x1 } else { bb.x1 }, bb.y1 - w.y1),
++                ],
++                // Left: bottom corner (side 2) to top corner (side 0).
++                _ => [
++                    Point::new(bb.x0, bb.y1),
++                    Point::new(bb.x0, bb.y0),
++                    Point::new(bb.x0 + w.x0, if ma { bb.y0 + w.y0 } else { bb.y0 }),
++                    Point::new(bb.x0 + w.x0, if mb { bb.y1 - w.y1 } else { bb.y1 }),
++                ],
++            };
++            let mut path = BezPath::new();
++            path.move_to(points[0]);
++            for p in &points[1..] {
++                path.line_to(*p);
++            }
++            path.close_path();
++            scene.fill(Fill::NonZero, self.transform, color, None, &path);
++            painted[i] = true;
++        }
++        true
+     }
+ 
      /// The border width (in device pixels) of a single edge.
-     fn edge_width(&self, edge: Edge) -> f64 {
-         match edge {
-@@ -351,163 +747,152 @@
+@@ -351,163 +842,152 @@
          }
      }
  
@@ -4719,7 +5073,12 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
 -                    Edge::Left => Point::new(bb.x0 + radius, bb.y0 + along),
 -                    Edge::Right => Point::new(bb.x1 - radius, bb.y0 + along),
 -                }
--            };
++            let (origin, along, across, length) = match edge {
++                Edge::Top => (Point::new(bb.x0, bb.y0), Vec2::new(1.0, 0.0), Vec2::new(0.0, 1.0), bb.width()),
++                Edge::Bottom => (Point::new(bb.x0, bb.y1), Vec2::new(1.0, 0.0), Vec2::new(0.0, -1.0), bb.width()),
++                Edge::Left => (Point::new(bb.x0, bb.y0), Vec2::new(0.0, 1.0), Vec2::new(1.0, 0.0), bb.height()),
++                Edge::Right => (Point::new(bb.x1, bb.y0), Vec2::new(0.0, 1.0), Vec2::new(-1.0, 0.0), bb.height()),
+             };
 -
 -            let span = length - thickness;
 -            if span <= 0.0 {
@@ -4735,12 +5094,6 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
 -                    let center = dot_center(radius + i as f64 * spacing);
 -                    path.extend(Circle::new(center, radius).path_elements(0.1));
 -                }
-+            let (origin, along, across, length) = match edge {
-+                Edge::Top => (Point::new(bb.x0, bb.y0), Vec2::new(1.0, 0.0), Vec2::new(0.0, 1.0), bb.width()),
-+                Edge::Bottom => (Point::new(bb.x0, bb.y1), Vec2::new(1.0, 0.0), Vec2::new(0.0, -1.0), bb.width()),
-+                Edge::Left => (Point::new(bb.x0, bb.y0), Vec2::new(0.0, 1.0), Vec2::new(1.0, 0.0), bb.height()),
-+                Edge::Right => (Point::new(bb.x1, bb.y0), Vec2::new(0.0, 1.0), Vec2::new(-1.0, 0.0), bb.height()),
-+            };
 +            let side = ((along, across), (length, thickness(edge)));
 +            // A neighbour of another style or colour meets this side in a
 +            // mitre; one alike is drawn over, and a missing one leaves the
@@ -4793,7 +5146,7 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
      }
  
      pub(crate) fn draw_table_borders(&self, scene: &mut impl PaintScene) {
-@@ -522,6 +907,10 @@
+@@ -522,6 +1002,10 @@
          let Some(grid_info) = &mut *table.computed_grid_info.borrow_mut() else {
              return;
          };
@@ -4804,7 +5157,7 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
          let Some(border_style) = table.border_style.as_deref() else {
              return;
          };
-@@ -589,8 +978,109 @@
+@@ -589,8 +1073,109 @@
          }
      }
  
@@ -4916,7 +5269,7 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
      /// ✅ solid - Defines a solid border
      /// ❌ double - Defines a double border
      /// ❌ groove - Defines a 3D grooved border. The effect depends on the border-color value
-@@ -600,33 +1090,64 @@
+@@ -600,33 +1185,64 @@
      /// ✅ none - Defines no border
      /// ✅ hidden - Defines a hidden border
      pub(crate) fn draw_outline(&self, scene: &mut impl PaintScene) {
