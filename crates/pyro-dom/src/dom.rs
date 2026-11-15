@@ -850,6 +850,7 @@ impl Dom {
             head: NIL,
             body: NIL,
             viewport_meta: None,
+            content_language: None,
         };
         let idx = self.alloc(NodeKind::Document(Box::new(data)), NIL);
         // A document owns itself, and is connected.
@@ -1021,6 +1022,35 @@ impl Dom {
         self.bump();
         self.bump_style_text();
         Ok(())
+    }
+
+    /// The language of `doc` from the protocol: an HTTP `Content-Language`
+    /// header naming one language (a list names none, as the pragma's
+    /// `content` does). `:lang()` falls back to it when no element and no
+    /// `<meta http-equiv="content-language">` gives one.
+    pub fn set_content_language(&mut self, doc: NodeId, header: Option<&str>) -> DomResult<()> {
+        let i = self.check(doc)?;
+        let lang = header.map(str::trim).filter(|v| !v.is_empty() && !v.contains(',')).map(Into::into);
+        if let NodeKind::Document(d) = &mut self.n_mut(i).kind {
+            d.content_language = lang;
+        }
+        self.bump();
+        Ok(())
+    }
+
+    /// [`Dom::set_content_language`]'s language of `doc`.
+    pub fn content_language(&self, doc: NodeId) -> Option<&str> {
+        let i = self.check(doc).ok()?;
+        match &self.n(i).kind {
+            NodeKind::Document(d) => d.content_language.as_deref(),
+            _ => None,
+        }
+    }
+
+    /// Whether `doc` is an XML document (XHTML, SVG, other XML), whose
+    /// selectors match names case-sensitively.
+    pub fn is_xml_document(&self, doc: NodeId) -> bool {
+        self.check(doc).is_ok_and(|i| matches!(&self.n(i).kind, NodeKind::Document(d) if d.kind == DocumentKind::Xml))
     }
 
     pub fn set_quirks_mode(&mut self, doc: NodeId, q: QuirksMode) -> DomResult<()> {

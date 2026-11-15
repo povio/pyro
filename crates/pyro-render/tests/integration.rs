@@ -8,6 +8,7 @@ mod br_flex_item;
 mod clip_path_mask;
 mod container_queries;
 mod containing_block_chain;
+mod document_facts;
 mod dotted_dashed_lines;
 mod filter_color;
 mod filter_drop_shadow;

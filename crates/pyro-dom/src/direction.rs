@@ -177,7 +177,8 @@ impl Dom {
     }
 
     /// The language of element `idx`: the nearest inclusive ancestor's
-    /// `xml:lang` or `lang` attribute (the host's for a shadow tree).
+    /// `xml:lang` or `lang` attribute (the host's for a shadow tree), else
+    /// the document's HTTP `Content-Language` (`Dom::set_content_language`).
     pub(crate) fn language_idx(&self, idx: u32) -> Option<String> {
         let mut cur = Some(idx);
         while let Some(i) = cur {
@@ -193,7 +194,11 @@ impl Dom {
             }
             cur = self.dir_parent(i);
         }
-        None
+        let doc = self.n(idx).owner_doc;
+        match &self.n(doc).kind {
+            NodeKind::Document(d) if self.n(idx).is_connected() => d.content_language.as_deref().map(str::to_owned),
+            _ => None,
+        }
     }
 
     /// `:lang(range)` for element `idx` (RFC 4647 extended filtering, with

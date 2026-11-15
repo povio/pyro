@@ -91,6 +91,9 @@ pub(crate) struct Mirror {
     pub(crate) bridge: crate::net::Bridge,
     pub(crate) scope: String,
     pub(crate) base_url: String,
+    /// The document facts it was built with ([`crate::Snapshot::xml_document`],
+    /// [`crate::Snapshot::content_language`]).
+    pub(crate) facts: (bool, Option<String>),
     pub(crate) viewport: (u32, u32, u64, bool, bool),
     sheets: HashMap<String, String>,
     tree: Arc<Tree>,
@@ -177,6 +180,7 @@ impl Mirror {
         viewport: (u32, u32, u64, bool, bool),
     ) -> Result<Mirror, Rebuild> {
         let base_url = config.base_url.clone().unwrap_or_default();
+        let facts = (config.xml_document, config.content_language.clone());
         let mut doc = BaseDocument::new(config);
         // Diagnostics: incremental restyle, full relayout every render (tells
         // a blitz-dom relayout difference from a mirroring one).
@@ -216,6 +220,7 @@ impl Mirror {
             bridge,
             scope,
             base_url,
+            facts,
             viewport,
             sheets,
             tree,

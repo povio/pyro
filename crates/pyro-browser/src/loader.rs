@@ -140,6 +140,9 @@ pub struct Resource {
     pub header_csp: bool,
     /// The `Refresh` response header (HTML declarative refresh), if any.
     pub refresh: Option<String>,
+    /// A document's `Content-Language` response header, if any (its
+    /// language when no element or pragma gives one).
+    pub content_language: Option<String>,
     /// The response's `Referrer-Policy` header (a document's default policy).
     pub referrer_policy: Option<pyro_net::ReferrerPolicy>,
     /// A navigation's fetch as the network saw it (Navigation Timing of the
@@ -413,6 +416,7 @@ impl ResourceLoader for NetLoader {
                 content_disposition: None,
                 header_csp: false,
                 refresh: None,
+                content_language: None,
                 referrer_policy: None,
                 body: hit.file.body.to_vec(),
                 timing: report.filter(|_| document).map(Box::new),
@@ -476,6 +480,7 @@ impl ResourceLoader for NetLoader {
                     content_disposition: None,
                     header_csp: false,
                     refresh: None,
+                    content_language: None,
                     referrer_policy: None,
                     timing: None,
                     partial: (!whole).then_some(pyro_webapi::Partial { total }),
@@ -519,6 +524,9 @@ impl ResourceLoader for NetLoader {
                         // Only a document honours it; other kinds skip the lookup.
                         refresh: document
                             .then(|| h.headers.get(http::header::REFRESH)?.to_str().ok().map(str::to_owned))
+                            .flatten(),
+                        content_language: document
+                            .then(|| h.headers.get(http::header::CONTENT_LANGUAGE)?.to_str().ok().map(str::to_owned))
                             .flatten(),
                         referrer_policy: pyro_net::ReferrerPolicy::from_header(
                             h.headers.get_all("referrer-policy").iter().filter_map(|v| v.to_str().ok()),
@@ -670,6 +678,7 @@ impl ResourceLoader for StaticLoader {
                         content_disposition: None,
                         header_csp: false,
                         refresh: None,
+                        content_language: None,
                         referrer_policy: None,
                         timing: None,
                         partial,
@@ -1157,6 +1166,7 @@ impl Browser {
             content_disposition: None,
             header_csp: false,
             refresh: None,
+            content_language: None,
             referrer_policy: None,
             timing: None,
             partial: None,
@@ -1255,6 +1265,9 @@ impl Browser {
         }
         if let Some(refresh) = resource.refresh.as_deref() {
             self.refresh_header(page, refresh);
+        }
+        if resource.content_language.is_some() {
+            let _ = dom.borrow_mut().set_content_language(doc, resource.content_language.as_deref());
         }
         let mut parser = if resource.mime == "text/plain" {
             DocumentParser::new_plaintext(dom.clone(), doc)

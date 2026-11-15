@@ -270,3 +270,40 @@ fn http_refresh_header_navigates() {
     assert_eq!(eval(&thread, page, "document.body.textContent"), "after");
     server.join().unwrap();
 }
+
+#[test]
+fn content_language_header_is_the_documents_fallback_language() {
+    use std::io::{BufRead, BufReader, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let origin = format!("http://{}", listener.local_addr().unwrap());
+    let server = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut reader = BufReader::new(stream.try_clone().unwrap());
+        loop {
+            let mut line = String::new();
+            if reader.read_line(&mut line).unwrap_or(0) == 0 || line == "\r\n" {
+                break;
+            }
+        }
+        let body = "<div id=a></div><div id=b lang=de></div>";
+        let _ = write!(
+            stream,
+            "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Language: fr\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        );
+    });
+    let mut thread = crate::browser_thread().unwrap();
+    thread.enable_network(Default::default()).unwrap();
+    let page = thread.browser.create_page().unwrap();
+    let url = format!("{origin}/");
+    thread.browser.navigate(page, NavigateOpts::address_bar(url.clone())).unwrap();
+    thread.run_until(Some(Instant::now() + Duration::from_secs(5)), |b| {
+        b.page(page).unwrap().main_frame.url == url && b.page(page).unwrap().main_frame.loaded
+    });
+    // The header is the language of every element without one of its own.
+    assert_eq!(
+        eval(&thread, page, "[...document.querySelectorAll(':lang(fr)')].map(e => e.id || e.localName).join()"),
+        "html,head,body,a"
+    );
+    server.join().unwrap();
+}

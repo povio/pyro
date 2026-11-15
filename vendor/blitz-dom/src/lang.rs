@@ -1,6 +1,7 @@
 //! pyro: the language of an element, for `:lang()` (HTML, "The lang and xml:lang attributes"):
 //! the nearest inclusive ancestor's `xml:lang`, or `lang` on an HTML, SVG or MathML element, else
-//! the document's default language, which a `<meta http-equiv="content-language">` sets. A range
+//! the document's default language, which a `<meta http-equiv="content-language">` sets (else the
+//! HTTP `Content-Language` of the document's response). A range
 //! matches by RFC 4647 extended filtering, ASCII case-insensitively, as in Chromium.
 
 use markup5ever::{LocalName, local_name, ns};
@@ -41,10 +42,16 @@ pub(crate) fn language(node: &Node) -> Option<&str> {
     }
 }
 
+/// The default language of `document`: the pragma-set one, else the protocol's (HTTP
+/// `Content-Language`, [`crate::DocumentConfig::content_language`]).
+fn default_language(document: &Node) -> Option<&str> {
+    pragma_language(document).or_else(|| document.tree().content_language.as_deref())
+}
+
 /// The pragma-set default language of `document`: the `content` of the last
 /// `<meta http-equiv="content-language">` of its `<head>`, up to the first space,
 /// unless it lists several (a comma).
-fn default_language(document: &Node) -> Option<&str> {
+fn pragma_language(document: &Node) -> Option<&str> {
     fn child<'a>(node: &'a Node, name: &LocalName) -> Option<&'a Node> {
         node.children
             .iter()

@@ -479,7 +479,8 @@ impl<'a> TDocument for BlitzNode<'a> {
     }
 
     fn is_html_document(&self) -> bool {
-        true
+        // pyro: XHTML and other XML documents are not HTML documents.
+        !self.tree().xml_document
     }
 
     fn quirks_mode(&self) -> QuirksMode {
@@ -659,7 +660,10 @@ impl selectors::Element for BlitzNode<'_> {
     }
 
     fn is_html_element_in_html_document(&self) -> bool {
-        true // self.has_namespace(ns!(html))
+        // pyro: in an XML document, type and attribute selectors match case-sensitively (an
+        // XHTML `DIV` selector does not match `div`). HTML documents keep upstream's answer for
+        // every element.
+        !self.tree().xml_document // && self.has_namespace(ns!(html))
     }
 
     fn has_local_name(&self, local_name: &LocalName) -> bool {
