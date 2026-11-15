@@ -175,6 +175,11 @@ impl DocumentMutator<'_> {
             .map(|a| a.value.clone());
         let mut data = ElementData::new(name, attrs);
         data.flush_style_attribute(self.doc.guard(), &self.doc.url.url_extra_data());
+        // pyro: a link to the document itself is visited.
+        if data.is_link() {
+            let (base, document) = self.doc.link_urls();
+            data.flush_link_visited(&base, &document);
+        }
 
         let id = self.doc.create_node(NodeData::Element(Box::new(data)));
         let node = self.doc.get_node_mut(id).unwrap();
@@ -373,6 +378,9 @@ impl DocumentMutator<'_> {
     }
 
     fn set_attribute_impl(&mut self, node_id: NodeId, name: QualName, value: &str) {
+        // pyro: what a link's visited state is decided against (`flush_link_visited`), for an
+        // `href` change only.
+        let link_urls = (name.local == local_name!("href")).then(|| self.doc.link_urls());
         let node_is_in_document = self.doc.nodes[node_id].flags.is_in_document();
         if node_is_in_document {
             self.doc.snapshot_node(node_id, &name.local);
@@ -436,6 +444,9 @@ impl DocumentMutator<'_> {
 
         if name.local == local_name!("href") {
             element.flush_link_state();
+            if let Some((base, document)) = &link_urls {
+                element.flush_link_visited(base, document);
+            }
         }
 
         if name.local == local_name!("open") {
@@ -535,6 +546,9 @@ impl DocumentMutator<'_> {
     }
 
     fn clear_attribute_impl(&mut self, node_id: NodeId, name: QualName) {
+        // pyro: what a link's visited state is decided against (`flush_link_visited`), for an
+        // `href` change only.
+        let link_urls = (name.local == local_name!("href")).then(|| self.doc.link_urls());
         let node_is_in_document = self.doc.nodes[node_id].flags.is_in_document();
         if node_is_in_document {
             self.doc.snapshot_node(node_id, &name.local);
@@ -605,6 +619,9 @@ impl DocumentMutator<'_> {
 
         if name.local == local_name!("href") {
             element.flush_link_state();
+            if let Some((base, document)) = &link_urls {
+                element.flush_link_visited(base, document);
+            }
         }
 
         if name.local == local_name!("open") {
