@@ -449,7 +449,7 @@ impl LayoutPassState<'_> {
 
         // Short circuit if inline context contains no text or inline boxes
         if !has_styles_preventing_being_collapsed_through
-            && inline_layout.text.is_empty()
+            && inline_layout.has_no_text()
             && inline_layout.layout.inline_boxes().len() == 0
         {
             // Put layout back
@@ -460,13 +460,18 @@ impl LayoutPassState<'_> {
                 .inline_layout_data = Some(inline_layout);
             // pyro: its own (or known) size still applies: a
             // `width: 200px` div holding only an empty `<i>` is 200px wide.
-            return LayoutOutput::from_outer_size(
-                Size {
-                    width: node_size.width.unwrap_or(0.0),
-                    height: node_size.height.unwrap_or(0.0),
-                }
-                .maybe_max(container_pb.sum_axes().map(Some)),
-            );
+            let size = Size {
+                width: node_size.width.unwrap_or(0.0),
+                height: node_size.height.unwrap_or(0.0),
+            }
+            .maybe_max(container_pb.sum_axes().map(Some));
+            // pyro: with no line it is empty, and margins collapse through it when it has no
+            // height (an empty piece of a split inline between two blocks, a div holding only an
+            // empty span), as through an empty block.
+            return LayoutOutput {
+                margins_can_collapse_through: size.height == 0.0 && node_min_size.height.unwrap_or(0.0) <= 0.0,
+                ..LayoutOutput::from_outer_size(size)
+            };
         }
 
         // Compute available space
@@ -1095,7 +1100,7 @@ impl LayoutPassState<'_> {
         // but a line box containing no text, inline boxes or other in-flow content is a
         // zero-height line box in CSS (CSS2 §9.4.2).
         let has_inline_content =
-            !inline_layout.text.is_empty() || inline_layout.layout.inline_boxes().len() > 0;
+            !inline_layout.has_no_text() || inline_layout.layout.inline_boxes().len() > 0;
 
         let mut height = if has_inline_content {
             inline_layout.layout.height()
@@ -1296,11 +1301,19 @@ impl LayoutPassState<'_> {
                                 },
                             )
                         } else {
-                            let y = if line_has_in_flow_content {
-                                line_bottom
+                            // pyro: in-flow content logically before it on the line (bidi
+                            // reordering can put later content visually before it).
+                            let preceded = if inline_layout.layout.is_rtl() || line_is_reordered(&line) {
+                                let at = inline_layout
+                                    .layout
+                                    .inline_boxes()
+                                    .find(|candidate| candidate.id == ibox.id)
+                                    .map_or(0, |candidate| candidate.index);
+                                first_in_flow_index(&line, &inline_layout.layout).is_some_and(|first| first < at)
                             } else {
-                                line_top
+                                line_has_in_flow_content
                             };
+                            let y = if preceded { line_bottom } else { line_top };
                             (
                                 taffy::Line {
                                     start: container_pb.left,
@@ -1349,6 +1362,13 @@ impl LayoutPassState<'_> {
                         let mut output =
                             self.compute_child_layout(taffy::NodeId::from(ibox.id), box_inputs);
                         let size = output.size;
+                        // pyro: relatively positioned inline boxes around it move it too.
+                        let span_offset = match self.nodes[NodeId::from_u64(ibox.id)].parent {
+                            Some(parent) if inline_layout.relative_spans => {
+                                crate::layout::inline::inline_span_offset(&self.nodes, parent, node_id, container_content_size)
+                            }
+                            _ => taffy::Point::ZERO,
+                        };
                         let node = &mut self.nodes[NodeId::from_u64(ibox.id)];
 
                         let is_relative = position == taffy::Position::Relative;
@@ -1367,10 +1387,10 @@ impl LayoutPassState<'_> {
 
                         let overflow = output.scrollable_overflow_rect;
                         let location = taffy::Point {
-                            x: (ibox.x / scale) + margin.left + container_pb.left + inset_offset.x,
+                            x: (ibox.x / scale) + margin.left + container_pb.left + inset_offset.x + span_offset.x,
                             // Parley positions the margin box; offset to the border box even
                             // when a negative top margin makes it extend above the margin box.
-                            y: (ibox.y / scale) + margin.top + line_box_top + inset_offset.y,
+                            y: (ibox.y / scale) + margin.top + line_box_top + inset_offset.y + span_offset.y,
                         };
                         node.update_unrounded_layout(|layout| {
                             layout.size = size;
@@ -1484,4 +1504,30 @@ impl LayoutPassState<'_> {
 #[inline(always)]
 fn f32_max(a: f32, b: f32) -> f32 {
     a.max(b)
+}
+
+/// pyro: whether bidi reordering may have changed the order of `line`'s items (it has right-to-left
+/// runs or boxes, or the layout is right-to-left).
+fn line_is_reordered(line: &parley::Line<'_, crate::node::TextBrush>) -> bool {
+    line.items().any(|item| match item {
+        parley::layout::PositionedLayoutItem::GlyphRun(run) => run.run().is_rtl(),
+        _ => false,
+    })
+}
+
+/// pyro: the text index of the logically first in-flow content on `line` (a glyph run with an
+/// advance, or an atomic inline box).
+fn first_in_flow_index(line: &parley::Line<'_, crate::node::TextBrush>, layout: &parley::Layout<crate::node::TextBrush>) -> Option<usize> {
+    line.items()
+        .filter_map(|item| match item {
+            parley::layout::PositionedLayoutItem::GlyphRun(run) if run.advance() > 0.0 => {
+                Some(run.run().text_range().start)
+            }
+            parley::layout::PositionedLayoutItem::InlineBox(ibox) if ibox.kind == parley::InlineBoxKind::InFlow => layout
+                .inline_boxes()
+                .find(|candidate| candidate.id == ibox.id)
+                .map(|candidate| candidate.index),
+            _ => None,
+        })
+        .min()
 }

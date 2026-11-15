@@ -128,8 +128,8 @@ collapses into it; space kept before an end edge is inside the span, so the edge
 (`deferred_edges`, `edge_moves`, `TreeBuilder::finish_tree`); white space before an edge does not hang.
 `TreeBuilder::scale` gives the builder's scale to the caller. blitz-dom pushes the edges
 (see its README). An edge is an inline box to the build cache and to line resume, which both leave out paragraphs with
-inline boxes: a paragraph with an edge is built and broken anew each time. Not done:
-edges in right-to-left runs are placed in logical order. Covered by
+inline boxes: a paragraph with an edge is built and broken anew each time. On a reordered line
+the edges are put on their sides (`place_span_edges`, below). Covered by
 `crates/pyro-render/tests/inline_box_decorations.rs`.
 
 `style/mod.rs` (`TextStyle::annotation_space`, `AnnotationSpace`), `resolve/mod.rs`, `layout/style_metrics.rs`: room a
@@ -138,6 +138,30 @@ blitz-dom measures it). A span box's line-height-expanded extents grow to the co
 are smaller (CSS Ruby 1, 4.4), so the line box holds the annotations. It is part of the resolved style, and so of the
 build cache's key. Zero by default: nothing else changes. Covered by
 `emphasis_marks_and_annotations_take_room_in_the_line` in `crates/pyro-render/tests/text_emphasis_ruby.rs`.
+
+`resolve/tree.rs` (`push_bidi_control`, `push_empty_box_strut`, `deferred_controls`, `resolve_unspaced_style_id`),
+`builder.rs`: blitz-dom pushes the bidi formatting characters an inline element's `unicode-bidi` stands for (U+202A to
+U+202E, U+2066 to U+2069) and the strut of an empty inline box (U+2061) as text of the current span, in its style
+without letter or word spacing. They are no content to white space processing: white space collapses across them,
+white space pending before a control goes before it when kept, and white space pending at the end of the text is
+dropped (`finish`). `inline_box.rs` (`InlineBox::rtl`): a span edge says whether its span is right-to-left.
+
+`analysis.rs`, `shape/mod.rs` (`inline_box_levels`): atomic and out-of-flow inline boxes take part in bidi resolution
+as U+FFFC (`AnalysisOptions::objects`, parley_engine) and get the level they resolve to there (each had the level of
+the text before it); a span's start edge takes the level of what follows it and its end edge that of what precedes
+it.
+
+`layout/line_break.rs` (`reset_trailing_whitespace_level`): UAX #9 rule L1 on each line: its trailing white space
+and zero-width formatting characters get the paragraph's level (a text item is split at their start), so a
+right-to-left line's trailing space is not reordered into the line. `place_span_edges`: on a reordered line, and on a
+line with a right-to-left span's edges, each span edge goes beside its span's content there, on the side CSS 2.1
+§ 8.6 gives it (a right-to-left span's start edge on its right); reordering had moved each edge with the level it
+resolved to.
+
+`layout/spacing.rs`, `layout/data.rs`: letter spacing adds no gap after an atom with no advance that is not white
+space (a bidi formatting character, a zero-width joiner), as in browsers.
+
+All covered by `crates/pyro-render/tests/unicode_bidi.rs` (and `block_in_inline.rs` for the strut).
 
 ## Updating or dropping the patch
 

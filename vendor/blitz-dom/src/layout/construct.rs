@@ -137,8 +137,17 @@ impl LayoutChildren {
             Vec::new(),
         ))));
 
-        // Set style data
-        let parent_style = doc.nodes[container_node_id].primary_styles().unwrap();
+        // Set style data. pyro: the anonymous blocks of an inline box split around block-level
+        // content are boxes of the block container around it (CSS 2.1 § 9.2.1.1), so they
+        // inherit from it: its strut, alignment and direction; the split inline is a span in them.
+        let mut style_node_id = container_node_id;
+        while doc.nodes[style_node_id].is_split_inline() {
+            match doc.nodes[style_node_id].parent {
+                Some(parent) if doc.nodes[parent].primary_styles().is_some() => style_node_id = parent,
+                _ => break,
+            }
+        }
+        let parent_style = doc.nodes[style_node_id].primary_styles().unwrap();
         let read_guard = doc.guard.read();
         let guards = StylesheetGuards::same(&read_guard);
         let style = doc.stylist.style_for_anonymous::<&Node>(
@@ -330,8 +339,17 @@ fn classify_flow_children(
     // inline or block box in that formatting context.
     let pseudo_ids = node.before().into_iter().chain(node.after());
     let child_ids = node.children.iter().copied().chain(pseudo_ids);
-    for child_id in child_ids {
+    let child_count = node.children.len();
+    for (index, child_id) in child_ids.enumerate() {
         let child = &doc.nodes[child_id];
+
+        // pyro: a split inline's head or tail is inline content.
+        if index < child_count && node.split_ref_at(index, child_count).is_some() {
+            classification.all_out_of_flow = false;
+            classification.all_block = false;
+            classification.has_inline_level = true;
+            continue;
+        }
 
         // Comment nodes generate no boxes and must not affect the
         // inline-vs-block classification: an unstyled comment would
@@ -708,6 +726,18 @@ fn collect_layout_children_with_wrap(
             let mut classification = FlowClassification::default();
             classify_flow_children(doc, container_node_id, &mut classification);
 
+            // pyro: an inline box with block-level content is split around it (CSS 2.1 § 9.2.1.1).
+            let split_inline = doc.nodes[container_node_id]
+                .display_style()
+                .is_some_and(|display| display.is_inline_flow())
+                && !classification.all_inline
+                && doc.nodes[container_node_id]
+                    .parent
+                    .is_some_and(|parent| lays_out_as_block(&doc.nodes[parent]));
+            if split_inline {
+                doc.nodes[container_node_id].flags.insert(NodeFlags::IS_SPLIT_INLINE);
+            }
+
             // Inline box whose in-flow content is block-level only: it is laid out as block
             // boxes, so paint must not draw its own box over them.
             if doc.nodes[container_node_id]
@@ -768,6 +798,14 @@ fn collect_layout_children_with_wrap(
                 return;
             }
 
+            // pyro: a split inline holds what is between its first and its last block-level child;
+            // its head and tail are inline content of its container's anonymous blocks.
+            if split_inline {
+                let middle = split_inline_middle(doc, container_node_id);
+                collect_complex_layout_children_in(doc, container_node_id, out, false, block_item_needs_wrap, Some(middle));
+                return;
+            }
+
             // If the children are either all inline or all block then simply return the regular children
             // as the layout children
             if classification.all_block & !classification.has_contents {
@@ -788,6 +826,111 @@ fn collect_layout_children_with_wrap(
             );
         }
     }
+}
+
+/// pyro: the children of a split inline (with its `::before` and `::after`, comments left out) in
+/// order, and whether each is in its middle: from its first block-level child (a block, or an
+/// inline box that holds one) to its last, with the out-of-flow boxes and collapsible white space
+/// right after the last, and right before the first when only white space is before them (a float
+/// there floats beside the blocks, and paints as theirs do, as when the split inline was one box;
+/// after inline content it stays on that content's line).
+fn split_inline_sequence(nodes: &crate::NodeTree, node_id: NodeId) -> Vec<(NodeId, bool)> {
+    let node = &nodes[node_id];
+    let mut sequence: Vec<(NodeId, bool)> = node
+        .before()
+        .into_iter()
+        .chain(node.children.iter().copied())
+        .chain(node.after())
+        .filter(|&id| nodes[id].data.kind() != NodeKind::Comment)
+        .map(|id| (id, nodes[id].is_or_contains_block()))
+        .collect();
+    let out_of_flow = |id: NodeId| {
+        nodes[id].primary_styles().is_some_and(|style| {
+            style.clone_position().is_absolutely_positioned() || style.clone_float().is_floating()
+        })
+    };
+    let whitespace = |id: NodeId| nodes[id].is_collapsible_whitespace_node();
+    if let (Some(first), Some(last)) =
+        (sequence.iter().position(|&(_, block)| block), sequence.iter().rposition(|&(_, block)| block))
+    {
+        // The out-of-flow boxes (and the white space among them) right before the first block
+        // when nothing else is before them (a float after text stays on the text's line), and
+        // right after the last.
+        let mut start = first;
+        for index in (0..first).rev() {
+            let id = sequence[index].0;
+            if out_of_flow(id) {
+                start = index;
+            } else if !whitespace(id) {
+                start = first;
+                break;
+            }
+        }
+        let mut end = last;
+        for index in last + 1..sequence.len() {
+            let id = sequence[index].0;
+            if out_of_flow(id) {
+                end = index;
+            } else if !whitespace(id) {
+                break;
+            }
+        }
+        for entry in &mut sequence[start..=end] {
+            entry.1 = true;
+        }
+    }
+    sequence
+}
+
+/// pyro: whether `node_id` is an inline box that holds block-level content, which construction
+/// splits (CSS 2.1 § 9.2.1.1) when its container lays out as a block container.
+pub(crate) fn is_split_inline(nodes: &crate::NodeTree, node_id: NodeId) -> bool {
+    let node = &nodes[node_id];
+    node.display_style().is_some_and(|display| display.is_inline_flow())
+        && node.is_or_contains_block()
+        && node.parent.is_some_and(|parent| lays_out_as_block(&nodes[parent]))
+}
+
+/// pyro: whether `node` lays its children out as a block container (a flow, flow-root or table
+/// cell box), where an inline box with block-level content is split around it. Elsewhere (a table
+/// part outside a table, laid out as a flex row) it stays one box laying them out as a block.
+/// Both the container and the split inline's own construction ask it of the split inline's parent
+/// in the tree, so that they agree when the container is an anonymous box around it.
+fn lays_out_as_block(node: &Node) -> bool {
+    match node.display_style() {
+        Some(display) => matches!(display.inside(), DisplayInside::Flow | DisplayInside::FlowRoot | DisplayInside::TableCell),
+        None => node.is_anonymous(),
+    }
+}
+
+/// pyro: the indices (into `split_inline_sequence`) of the first and last block-level children
+/// of a split inline: what its own box holds.
+fn split_inline_middle(doc: &BaseDocument, node_id: NodeId) -> std::ops::RangeInclusive<usize> {
+    let sequence = split_inline_sequence(&doc.nodes, node_id);
+    let first = sequence.iter().position(|&(_, block)| block).unwrap_or(0);
+    let last = sequence.iter().rposition(|&(_, block)| block).unwrap_or(0);
+    first..=last
+}
+
+/// pyro: the head (`tail: false`) or the tail of the split inline `node_id`: its children before
+/// its first block-level child or after its last, in order, with that child when it is a split
+/// inline itself, whose head (tail) is part of this one's: after the children for a head, before
+/// them for a tail.
+pub(crate) fn split_inline_part(nodes: &crate::NodeTree, node_id: NodeId, tail: bool) -> (Vec<NodeId>, Option<NodeId>) {
+    let sequence = split_inline_sequence(nodes, node_id);
+    let at = if tail {
+        sequence.iter().rposition(|&(_, middle)| middle)
+    } else {
+        sequence.iter().position(|&(_, middle)| middle)
+    };
+    // A split inline right at the middle's edge has its head (tail) in this one's.
+    let nested = at.map(|at| sequence[at].0).filter(|&id| is_split_inline(nodes, id));
+    let part = match (at, tail) {
+        (Some(at), false) => &sequence[..at],
+        (Some(at), true) => &sequence[at + 1..],
+        (None, _) => &sequence[..],
+    };
+    (part.iter().map(|&(id, _)| id).collect(), nested)
 }
 
 /// pyro: what a pseudo-element's `content` generates, with counters and quotes evaluated
@@ -1056,7 +1199,35 @@ fn collect_complex_layout_children(
     hide_whitespace: bool,
     needs_wrap: fn(NodeKind, DisplayOutside) -> bool,
 ) {
+    collect_complex_layout_children_in(doc, container_node_id, out, hide_whitespace, needs_wrap, None);
+}
+
+/// pyro: `collect_complex_layout_children` over the children (and pseudo-elements, comments left
+/// out) whose index is in `middle`, the middle of a split inline: a split inline child at its start
+/// has its head in the container's head (`split_inline_part`), and one at its end its tail in the
+/// container's tail, so they do not stand for them here.
+fn collect_complex_layout_children_in(
+    doc: &mut BaseDocument,
+    container_node_id: NodeId,
+    out: &mut LayoutChildren,
+    hide_whitespace: bool,
+    needs_wrap: fn(NodeKind, DisplayOutside) -> bool,
+    middle: Option<std::ops::RangeInclusive<usize>>,
+) {
+    let mut index = 0usize;
     doc.iter_children_and_pseudos_mut(container_node_id, |child_id, doc| {
+        let mut at_middle_start = false;
+        let mut at_middle_end = false;
+        if doc.nodes[child_id].data.kind() != NodeKind::Comment {
+            index += 1;
+            if let Some(middle) = &middle {
+                if !middle.contains(&(index - 1)) {
+                    return;
+                }
+                at_middle_start = index - 1 == *middle.start();
+                at_middle_end = index - 1 == *middle.end();
+            }
+        }
         // Get node kind (text, element, comment, etc). A `<br>` is a piece of text.
         let child_node_kind = if doc.nodes[child_id].is_line_break() {
             NodeKind::Text
@@ -1117,6 +1288,31 @@ fn collect_complex_layout_children(
                 .is_some_and(|s| s.clone_float() != Float::None)
         {
             out.push_wrapped(container_node_id, child_id, doc);
+        }
+        // pyro: an inline box with block-level content is split around it (CSS 2.1 § 9.2.1.1):
+        // its head (the inline content before its first block-level box) ends the open run of
+        // inline content, in an anonymous block it is the last child of, and its tail starts the
+        // next one; its own box holds what is between (`NodeFlags::IS_SPLIT_INLINE`).
+        else if contains_block
+            && child_display.is_inline_flow()
+            && doc.nodes[child_id].parent.is_some_and(|parent| lays_out_as_block(&doc.nodes[parent]))
+        {
+            if !at_middle_start {
+                out.push_wrapped(container_node_id, child_id, doc);
+                if let Some(head) = out.anonymous_block_id {
+                    doc.nodes[head].flags.insert(NodeFlags::ENDS_WITH_SPLIT_HEAD);
+                }
+            }
+            // Its own construction builds its box (it may have been an inline of a line before).
+            doc.nodes[child_id].insert_damage(CONSTRUCT_BOX);
+            doc.nodes[child_id].mark_damaged();
+            out.push(child_id, doc);
+            if !at_middle_end {
+                out.push_wrapped(container_node_id, child_id, doc);
+                if let Some(tail) = out.anonymous_block_id {
+                    doc.nodes[tail].flags.insert(NodeFlags::STARTS_WITH_SPLIT_TAIL);
+                }
+            }
         }
         // Else push the child directly (and close any open "anonymous block container")
         else {
@@ -1312,6 +1508,25 @@ pub(crate) fn find_inline_layout_embedded_boxes(
 ) {
     flush_inline_pseudos_recursive(doc, inline_context_root_node_id);
 
+    // pyro: an anonymous block standing for a split inline's head or tail holds only that part
+    // of it (the split inline itself is a box of its container).
+    let root = &doc.nodes[inline_context_root_node_id];
+    if root.flags.intersects(NodeFlags::ENDS_WITH_SPLIT_HEAD | NodeFlags::STARTS_WITH_SPLIT_TAIL) {
+        let children = root.children.clone();
+        for (index, child_id) in children.iter().copied().enumerate() {
+            match doc.nodes[inline_context_root_node_id].split_ref_at(index, children.len()) {
+                Some(tail) => find_split_part_boxes(&mut doc.nodes, inline_context_root_node_id, child_id, tail, layout_children),
+                None => find_inline_layout_embedded_boxes_recursive(
+                    &mut doc.nodes,
+                    inline_context_root_node_id,
+                    child_id,
+                    layout_children,
+                ),
+            }
+        }
+        return;
+    }
+
     iter_children_and_pseudos!(doc.nodes[inline_context_root_node_id], |child_id| {
         find_inline_layout_embedded_boxes_recursive(
             &mut doc.nodes,
@@ -1320,6 +1535,25 @@ pub(crate) fn find_inline_layout_embedded_boxes(
             layout_children,
         );
     });
+
+    fn find_split_part_boxes(
+        nodes: &mut crate::NodeTree,
+        root_id: NodeId,
+        split_id: NodeId,
+        tail: bool,
+        layout_children: &mut ThinVec<NodeId>,
+    ) {
+        let (part, nested) = split_inline_part(nodes, split_id, tail);
+        if let (true, Some(nested)) = (tail, nested) {
+            crate::util::ensure_stack(|| find_split_part_boxes(nodes, root_id, nested, true, layout_children));
+        }
+        for child_id in part {
+            crate::util::ensure_stack(|| find_inline_layout_embedded_boxes_recursive(nodes, root_id, child_id, layout_children));
+        }
+        if let (false, Some(nested)) = (tail, nested) {
+            crate::util::ensure_stack(|| find_split_part_boxes(nodes, root_id, nested, false, layout_children));
+        }
+    }
 
     fn flush_inline_pseudos_recursive(doc: &mut BaseDocument, node_id: NodeId) {
         doc.iter_children_mut(node_id, |child_id, doc| {

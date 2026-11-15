@@ -475,6 +475,8 @@ impl LayoutPassState<'_> {
             && inputs.parent_size.width.is_none()
             && matches!(node.layout_style().size().width.expand(), taffy::style::ExpandedDimension::Percent(_));
 
+        // pyro: the root `<svg>` of an SVG document keeps usvg's size (see the `Svg` arm below).
+        let is_root_element = node.is_root_element();
         match &mut node.data {
             NodeData::Text(data) => {
                 // With the new "inline context" architecture all text nodes should be wrapped in an "inline layout context"
@@ -742,27 +744,31 @@ impl LayoutPassState<'_> {
                             }
                             #[cfg(feature = "svg")]
                             ImageData::Svg(svg) => {
+                                // pyro: an SVG's natural width and height are its root's
+                                // absolute `width` and `height`, and its ratio theirs or else its
+                                // `viewBox`'s; what it does not declare it does not have, and the
+                                // default object size (300x150) stands in, as in browsers (usvg's
+                                // resolved size of an SVG without them stood in before). Not for
+                                // the root `<svg>` of an SVG document, which fills the viewport in
+                                // browsers: it keeps usvg's size until that is done.
                                 let mut width = svg.intrinsic_width();
                                 let mut height = svg.intrinsic_height();
-                                // An SVG with no declared dimensions and no viewBox has no
-                                // intrinsic dimensions per CSS, but usvg still resolves a
-                                // concrete size; use it in place of the default object size.
-                                if width.is_none()
-                                    && height.is_none()
-                                    && svg.viewbox_aspect_ratio().is_none()
-                                {
-                                    let size = svg.tree.size();
-                                    width = Some(size.width());
-                                    height = Some(size.height());
-                                }
-                                (
-                                    IntrinsicSizes {
-                                        width,
-                                        height,
-                                        ratio: Some(svg.aspect_ratio()),
-                                    },
-                                    DEFAULT_OBJECT_SIZE,
-                                )
+                                let ratio = if is_root_element {
+                                    if width.is_none() && height.is_none() && svg.viewbox_aspect_ratio().is_none() {
+                                        let size = svg.tree.size();
+                                        width = Some(size.width());
+                                        height = Some(size.height());
+                                    }
+                                    Some(svg.aspect_ratio())
+                                } else {
+                                    match (width, height) {
+                                        (Some(width), Some(height)) if width > 0.0 && height > 0.0 => {
+                                            Some(width / height)
+                                        }
+                                        _ => svg.viewbox_aspect_ratio(),
+                                    }
+                                };
+                                (IntrinsicSizes { width, height, ratio }, DEFAULT_OBJECT_SIZE)
                             }
                             // pyro: a `<video>` whose poster did not load
                             // keeps the default object size.
