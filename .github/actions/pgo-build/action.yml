@@ -69,7 +69,7 @@ runs:
       shell: bash
       env:
         CARGO_ARGS: ${{ inputs.cargo-args }}
-        # Its callers run on lp-m1 (8 GB of memory); about 3 GB per JavaScriptCore compile job.
+        # 3 CPUs and 7 GB of memory; about 3 GB per JavaScriptCore compile job.
         JOBS: '2'
         PYRO_PGO_LTO: '1'
       run: |

@@ -48,7 +48,7 @@ npm view @povio/pyro dist-tags
 | Linux x64, glibc 2.39+ (Ubuntu 24.04, Debian 13, Fedora 40 or newer) | `native/linux-x64`, patched JavaScriptCore, ICU bundled in `lib/` | Yes |
 | Linux arm64, glibc 2.39+ | `native/linux-arm64`, patched JavaScriptCore, ICU bundled in `lib/` | Yes |
 
-Linux builds ship since v0.0.27 (on npm since 0.0.28). Release Linux binaries have no source-line debug information. The Intel macOS binary is checked in CI but not executed there.
+Linux builds ship since v0.0.27 (on npm since 0.0.28). Release Linux binaries have no source-line debug information. The Intel macOS binary is cross-compiled on Apple silicon and runs in CI in the npm smoke test, on GitHub's `macos-15-intel` runner.
 
 On any other OS, or to use a browser you built yourself, use [`Pyro.connect()`](/reference/sdk) against a remote `pyro serve`, or set [`PYRO_BIN`](/reference/env). The package has no `os` restriction, so it installs everywhere.
 
