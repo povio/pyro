@@ -126,3 +126,19 @@ fn a_url_filter_names_an_svg_filter_of_colour_primitives() {
     let g = pixel(&img, 1.0, 75, 75)[1];
     assert!(g > 200, "linearRGB: {g}");
 }
+
+/// An inline element's backdrop filter filters the backdrop in its fragments' border boxes, under
+/// its own content (WPT `backdrop-filter-inline-positioning`). It was not painted.
+#[test]
+fn an_inline_elements_backdrop_filter_is_painted() {
+    for scale in [1.0, 2.0] {
+        let img = render(
+            "<div style='background:#ffa500;height:200px'><span style='backdrop-filter:invert(1);padding:30px;color:#0f0;font:20px/20px monospace'>X</span></div>",
+            scale,
+        );
+        // The span's border box: x 0..72, y 0 - 30 .. 20 + 30 (about), the page orange elsewhere.
+        assert_eq!(pixel(&img, scale, 5, 10), [0, 90, 255], "the orange backdrop inverted, scale {scale}");
+        assert_eq!(pixel(&img, scale, 200, 10), [255, 165, 0], "beside it, scale {scale}");
+        assert_eq!(pixel(&img, scale, 5, 150), [255, 165, 0], "below it, scale {scale}");
+    }
+}

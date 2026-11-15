@@ -273,6 +273,7 @@ pub fn animation_frame(frame: &pyro_dom::animation::AnimationFrame) -> pyro_rend
                 b::ElementEffects {
                     transitions: el.transitions.iter().map(effect).collect(),
                     animations: el.animations.iter().map(effect).collect(),
+                    current: el.current.iter().map(effect).collect(),
                 },
             )
         })
