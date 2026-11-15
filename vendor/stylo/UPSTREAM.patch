@@ -1653,6 +1653,31 @@ diff -ruN a/values/specified/image.rs b/values/specified/image.rs
      /// Provides an alternate method for parsing, but only for urls.
      pub fn parse_only_url(
          context: &ParserContext,
+diff -ruN a/values/specified/text.rs b/values/specified/text.rs
+--- a/values/specified/text.rs	2026-11-11 19:55:57
++++ b/values/specified/text.rs	2026-11-15 22:41:50
+@@ -824,6 +824,10 @@
+         self.remove(Self::RIGHT); // Right is the default
+         true
+     }
++}
++
++fn word_break_manual_enabled(_: &ParserContext) -> bool {
++    cfg!(feature = "servo")
+ }
+ 
+ fn word_break_break_word_enabled(_: &ParserContext) -> bool {
+@@ -858,6 +862,10 @@
+     /// `anywhere`, and `word-break` behave like `normal`.
+     #[parse(condition = "word_break_break_word_enabled")]
+     BreakWord,
++    /// pyro: `manual` (CSS Text 4): as `normal`, without the breaks inside words that
++    /// dictionaries find in Southeast Asian scripts.
++    #[parse(condition = "word_break_manual_enabled")]
++    Manual,
+ }
+ 
+ /// Values for the `text-justify` CSS property.
 diff -ruN a/values/specified/transform.rs b/values/specified/transform.rs
 --- a/values/specified/transform.rs	2026-11-11 19:55:57
 +++ b/values/specified/transform.rs	2026-11-14 18:55:29

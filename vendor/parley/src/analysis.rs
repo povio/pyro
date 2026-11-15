@@ -33,6 +33,7 @@ pub(crate) fn analyze_text<B: Brush>(
             word_break: style.word_break,
             line_break: style.line_break,
             language: style.locale,
+            no_dictionary: !style.dictionary_breaks,
         };
         if line_break != LineBreakConfig::default() {
             match lcx.line_break.last_mut() {

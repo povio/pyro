@@ -225,6 +225,12 @@ where they cut by the whole hanging advance before: a span around a hanging U+30
 line's end had no width and no background (WPT `trailing-ideographic-space-*`). Covered by
 `crates/pyro-render/tests/hanging_spaces.rs`.
 
+`BreakerState::set_wrap_limit` (`layout/line_break.rs`): lines wrap where their content passes the limit while
+they keep their max advance (alignment, hanging white space). blitz-dom sets it for `text-wrap-style: balance`.
+
+`TextStyle::dictionary_breaks` (`style/mod.rs`, `StyleProperty::DictionaryBreaks`, `resolve/mod.rs`, `analysis.rs`):
+`false` asks parley_engine for no dictionary breaks in the style's text (CSS `word-break: manual`).
+
 ## Updating or dropping the patch
 
 Copy the published crate from `~/.cargo/registry/src/*/parley-<version>` and re-apply

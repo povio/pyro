@@ -141,6 +141,9 @@ impl AnalysisDataSources {
         opt.word_option = Some(key.word_option);
         opt.strictness = Some(key.strictness);
         opt.content_locale = key.ja_zh.then_some(&JA);
+        if key.no_dictionary {
+            return LineSegmenter::new_for_non_complex_scripts(opt);
+        }
         line_segmenter_impl(opt)
     }
 
@@ -189,6 +192,8 @@ struct SegmenterKey {
     /// [`LineBreak::Normal`] and [`LineBreak::Loose`], so we only track whether one of them
     /// applies.
     ja_zh: bool,
+    /// pyro: see [`LineBreakConfig::no_dictionary`].
+    no_dictionary: bool,
 }
 
 impl SegmenterKey {
@@ -196,6 +201,7 @@ impl SegmenterKey {
         word_option: LineBreakWordOption::Normal,
         strictness: LineBreakStrictness::Strict,
         ja_zh: false,
+        no_dictionary: false,
     };
 
     fn new(config: &LineBreakConfig) -> Self {
@@ -204,7 +210,12 @@ impl SegmenterKey {
             LineBreak::Normal => LineBreakStrictness::Normal,
             LineBreak::Loose => LineBreakStrictness::Loose,
             // We add opportunities per grapheme ourselves.
-            LineBreak::Anywhere => return Self::DEFAULT,
+            LineBreak::Anywhere => {
+                return Self {
+                    no_dictionary: config.no_dictionary,
+                    ..Self::DEFAULT
+                };
+            }
         };
         let word_option = match config.word_break {
             WordBreak::Normal => LineBreakWordOption::Normal,
@@ -221,6 +232,7 @@ impl SegmenterKey {
             word_option,
             strictness,
             ja_zh,
+            no_dictionary: config.no_dictionary,
         }
     }
 }

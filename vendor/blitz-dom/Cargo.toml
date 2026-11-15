@@ -51,7 +51,7 @@ thin-vec = { version = "0.2" }
 taffy = { default-features = false, features = ["std", "flexbox", "flexbox_balance", "grid", "block_layout", "content_size", "calc", "detailed_layout_info"], version = "0.15" }
 anyrender = { optional = true, version = "0.14.0" }
 accesskit = { version = "0.25", optional = true }
-parley = { version = "0.12", default-features = false, features = ["std"] }
+parley = { version = "0.12", default-features = false, features = ["std", "complex-scripts"] }
 skrifa = { version = "0.44", default-features = false, features = ["std"] }
 linebender_resource_handle = { version = "0.1" }
 color = { version = "0.3" }

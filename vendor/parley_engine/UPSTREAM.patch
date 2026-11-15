@@ -854,14 +854,14 @@
  }
  
  impl Analysis {
-@@ -60,7 +65,17 @@
+@@ -60,9 +65,19 @@
      pub(crate) fn clear(&mut self) {
          self.info.clear();
          self.levels.clear();
 +        self.object_levels.clear();
          self.paragraph_level = BidiLevel::new(0);
-+    }
-+
+     }
+ 
 +    /// pyro: the bidi level of each object of [`AnalysisOptions::objects`](crate::AnalysisOptions),
 +    /// resolved as a U+FFFC OBJECT REPLACEMENT CHARACTER at its index.
 +    ///
@@ -869,10 +869,61 @@
 +    #[inline(always)]
 +    pub fn object_levels(&self) -> &[BidiLevel] {
 +        &self.object_levels
++    }
++
+     /// The per-character info in source order.
+     #[inline(always)]
+     pub fn char_info(&self) -> &[CharInfo] {
+@@ -126,6 +141,9 @@
+         opt.word_option = Some(key.word_option);
+         opt.strictness = Some(key.strictness);
+         opt.content_locale = key.ja_zh.then_some(&JA);
++        if key.no_dictionary {
++            return LineSegmenter::new_for_non_complex_scripts(opt);
++        }
+         line_segmenter_impl(opt)
      }
  
-     /// The per-character info in source order.
-@@ -809,17 +824,53 @@
+@@ -174,6 +192,8 @@
+     /// [`LineBreak::Normal`] and [`LineBreak::Loose`], so we only track whether one of them
+     /// applies.
+     ja_zh: bool,
++    /// pyro: see [`LineBreakConfig::no_dictionary`].
++    no_dictionary: bool,
+ }
+ 
+ impl SegmenterKey {
+@@ -181,6 +201,7 @@
+         word_option: LineBreakWordOption::Normal,
+         strictness: LineBreakStrictness::Strict,
+         ja_zh: false,
++        no_dictionary: false,
+     };
+ 
+     fn new(config: &LineBreakConfig) -> Self {
+@@ -189,7 +210,12 @@
+             LineBreak::Normal => LineBreakStrictness::Normal,
+             LineBreak::Loose => LineBreakStrictness::Loose,
+             // We add opportunities per grapheme ourselves.
+-            LineBreak::Anywhere => return Self::DEFAULT,
++            LineBreak::Anywhere => {
++                return Self {
++                    no_dictionary: config.no_dictionary,
++                    ..Self::DEFAULT
++                };
++            }
+         };
+         let word_option = match config.word_break {
+             WordBreak::Normal => LineBreakWordOption::Normal,
+@@ -206,6 +232,7 @@
+             word_option,
+             strictness,
+             ja_zh,
++            no_dictionary: config.no_dictionary,
+         }
+     }
+ }
+@@ -809,17 +836,53 @@
      }
  
      if needs_bidi_resolution || options.base_direction == BaseDirection::Rtl {
@@ -939,7 +990,17 @@
  
 --- a/src/analyzer.rs
 +++ b/src/analyzer.rs
-@@ -90,6 +90,12 @@
+@@ -51,6 +51,9 @@
+     /// breaks before small kana and some punctuation under [`LineBreak::Normal`] and
+     /// [`LineBreak::Loose`].
+     pub language: Option<Language>,
++    /// pyro: no breaks inside words found by dictionary (Thai, Lao, Khmer, Burmese): CSS
++    /// `word-break: manual`.
++    pub no_dictionary: bool,
+ }
+ 
+ /// Options controlling [`Analyzer::analyze`].
+@@ -90,6 +93,12 @@
      ///
      /// See [`LineBreakOverrideFn`] for more details.
      pub line_break_override: Option<&'a LineBreakOverrideFn>,

@@ -103,6 +103,51 @@ struct PendingFloat {
     clear: Clear,
 }
 
+/// pyro: the advance at which the lines of a `text-wrap-style: balance` block wrap: the least
+/// one that breaks `layout` into as many lines as `max_advance` does. `None` when there is
+/// nothing to balance (one line) or too much (more than Blink's six lines).
+fn balanced_wrap_limit(
+    layout: &mut parley::Layout<crate::node::TextBrush>,
+    max_advance: f32,
+    scale: f32,
+    max_lines: usize,
+) -> Option<f32> {
+    const MAX_LINES: usize = 6;
+    if !max_advance.is_finite() || max_advance <= 0.0 {
+        return None;
+    }
+    // Lines that overflow or end at an emergency break (`overflow-wrap`) are no balance.
+    let breaks = |layout: &parley::Layout<crate::node::TextBrush>, width: f32| {
+        let mut emergency = 0;
+        let mut overflows = 0;
+        for line in layout.lines() {
+            let metrics = line.metrics();
+            emergency += usize::from(line.break_reason() == parley::layout::BreakReason::Emergency);
+            overflows +=
+                usize::from(metrics.indent + metrics.advance - metrics.hanging_advance > width + 0.01 * scale);
+        }
+        (layout.len(), emergency, overflows)
+    };
+    layout.break_all_lines(Some(max_advance));
+    let (lines, emergency, overflows) = breaks(layout, max_advance);
+    if !(2..=MAX_LINES.min(max_lines)).contains(&lines) {
+        return None;
+    }
+    let (mut low, mut high) = (0.0f32, max_advance);
+    // To a quarter of a CSS pixel.
+    while high - low > 0.25 * scale {
+        let middle = (low + high) / 2.0;
+        layout.break_all_lines(Some(middle));
+        let now = breaks(layout, middle);
+        if now.0 <= lines && now.1 <= emergency && now.2 <= overflows {
+            high = middle;
+        } else {
+            low = middle;
+        }
+    }
+    (high < max_advance).then_some(high)
+}
+
 /// Tolerance (in CSS px) for content fitting into a slot
 #[cfg(feature = "floats")]
 const FIT_TOLERANCE: f32 = 0.001;
@@ -960,6 +1005,27 @@ impl LayoutPassState<'_> {
                     }
                     _ => taffy::Point::ZERO,
                 };
+                // pyro: `text-wrap-style: balance` (CSS Text 4 § 6.2): the lines wrap at the least
+                // advance that keeps their count, found by bisection as in Blink, for up to its
+                // six lines. Not beside floats (their lines differ in width).
+                let balance_limit = (wraps
+                    && !floats_involved
+                    && self.nodes[node_id].primary_styles().is_some_and(|s| {
+                        s.slow_clone_text_wrap_style() == style::values::computed::TextWrapStyle::Balance
+                            // A block-size clamp (`max-height` with `line-clamp`) is not applied
+                            // yet: the lines it would cut stay as they are.
+                            && matches!(s.slow_clone_max_height(), style::values::computed::MaxSize::None)
+                    }))
+                .then(|| {
+                    // Lines that `line-clamp` would cut off are left as they are.
+                    let clamp = self.nodes[node_id]
+                        .primary_styles()
+                        .and_then(|s| s.slow_clone_line_clamp().max_lines.lines_value().map(|lines| lines.0))
+                        .filter(|&lines| lines > 0)
+                        .map_or(usize::MAX, |lines| lines as usize);
+                    balanced_wrap_limit(&mut inline_layout.layout, max_advance, scale, clamp)
+                })
+                .flatten();
                 let mut breaker = inline_layout.layout.break_lines();
                 let mut line_slot = block_ctx.find_content_slot(0.0, 0.0, Clear::None, None);
                 let mut has_active_floats = line_slot.segment_id.is_some();
@@ -971,6 +1037,9 @@ impl LayoutPassState<'_> {
                 let mut placed_through: Option<usize> = None;
                 let state = breaker.state_mut();
                 state.set_layout_max_advance(max_advance);
+                if let Some(limit) = balance_limit {
+                    state.set_wrap_limit(limit);
+                }
                 set_line_slot(state, &line_slot, scale, slack);
                 // Without floats every line after the first gets the same geometry, so breaking
                 // can continue after the lines kept from the last build, when the text changed
@@ -984,7 +1053,11 @@ impl LayoutPassState<'_> {
                 });
                 // Lines after the first get x 0 and `max_advance` (see `YieldData::LineBreak`
                 // below).
-                let kept = if !floats_involved && !is_justified { breaker.resume(0.0, max_advance) } else { 0 };
+                let kept = if !floats_involved && !is_justified && balance_limit.is_none() {
+                    breaker.resume(0.0, max_advance)
+                } else {
+                    0
+                };
                 if kept > 0 {
                     // The kept lines were counted by the break they come from; the last of them
                     // ends where the breaker resumes (no floats: nothing was skipped).

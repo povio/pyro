@@ -51,6 +51,9 @@ pub struct LineBreakConfig {
     /// breaks before small kana and some punctuation under [`LineBreak::Normal`] and
     /// [`LineBreak::Loose`].
     pub language: Option<Language>,
+    /// pyro: no breaks inside words found by dictionary (Thai, Lao, Khmer, Burmese): CSS
+    /// `word-break: manual`.
+    pub no_dictionary: bool,
 }
 
 /// Options controlling [`Analyzer::analyze`].

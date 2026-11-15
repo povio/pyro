@@ -187,6 +187,8 @@ only. `-webkit-box` is never a computed value. Tests: `crates/pyro-render/tests/
 may be negative, as Blink takes it (the clip edge moves inwards; WPT `css-overflow/overflow-clip-margin-016`,
 `-017`), where the specification and upstream have a non-negative length. Test:
 `crates/pyro-render/tests/overflow_clip.rs`.
+- `values/specified/text.rs` (`WordBreak::Manual`): `word-break: manual` (CSS Text 4) is parsed for the servo engine.
+  blitz-dom lays it out as `normal` without dictionary breaks in Southeast Asian scripts (its README.pyro.md).
 
 ## Updating or dropping the patch
 

@@ -94,6 +94,8 @@ pub(crate) fn init_stylo_prefs() {
         style_config::set_pref!("layout.css.webkit-text-fill-color.enabled", true);
         style_config::set_pref!("layout.css.columns.enabled", true);
         style_config::set_pref!("layout.css.hyphens.enabled", true);
+        // pyro: `text-wrap-style: balance` (blitz-dom balances the lines of such a block).
+        style_config::set_pref!("layout.css.text-wrap-style.balance.enabled", true);
         style_config::set_pref!("layout.css.basic-shape-shape.enabled", true);
         style_config::set_pref!("layout.css.tree-counting-functions.enabled", true);
         style_config::set_pref!("layout.css.progress-function.enabled", true);

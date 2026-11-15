@@ -334,6 +334,8 @@ pub enum StyleProperty<'a, B: Brush> {
     TabSize(TabSize),
     /// pyro: what a soft hyphen does at the end of a line.
     SoftHyphen(SoftHyphen),
+    /// pyro: whether lines may break inside words where dictionaries find boundaries.
+    DictionaryBreaks(bool),
 }
 
 /// Unresolved styles.
@@ -395,6 +397,9 @@ pub struct TextStyle<'family, 'settings, B: Brush> {
     pub tab_size: TabSize,
     /// pyro: what the soft hyphens of this style do at the end of a line.
     pub soft_hyphen: SoftHyphen,
+    /// pyro: whether lines may break inside words where dictionaries find boundaries (Thai, Lao,
+    /// Khmer, Burmese). `false` for CSS `word-break: manual`.
+    pub dictionary_breaks: bool,
     /// pyro: room the span's text needs beyond its content area, over and under it, for what is
     /// drawn there (ruby annotations, emphasis marks). The line box holds the span's content area
     /// grown by it, where its line height leaves too little (CSS Ruby 1, 4.4).
@@ -478,6 +483,7 @@ impl<B: Brush> Default for TextStyle<'static, 'static, B> {
             white_space_collapse: WhiteSpaceCollapse::default(),
             tab_size: TabSize::default(),
             soft_hyphen: SoftHyphen::default(),
+            dictionary_breaks: true,
             annotation_space: AnnotationSpace::default(),
             text_box_trim: TextBoxTrim::default(),
         }

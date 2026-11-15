@@ -105,3 +105,9 @@ tab's advance to the tab stop it reaches (parley's README.pyro.md, "Tab stops").
 U+002D, kept with the run's cached metrics), `ShapedText::glyph_of` (any other character of a run's font) and
 `ShapedText::set_cluster_glyph`; `shape/data.rs`: `CharacterFlags::is_soft_hyphen`. parley's line breaker shows a
 hyphen where a line ends at a soft hyphen (parley's README.pyro.md, "Soft hyphens").
+
+## Dictionary line breaks
+
+`analyzer.rs` (`LineBreakConfig::no_dictionary`), `analysis.rs` (`SegmenterKey::no_dictionary`): a range of text
+that asks for no dictionary breaks (CSS `word-break: manual`) is segmented by `LineSegmenter::
+new_for_non_complex_scripts` although the `complex-scripts` feature is on.

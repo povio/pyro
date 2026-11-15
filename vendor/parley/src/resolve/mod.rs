@@ -171,6 +171,7 @@ impl ResolveContext {
             StyleProperty::WhiteSpaceCollapse(value) => WhiteSpaceCollapse(*value),
             StyleProperty::TabSize(value) => TabSize(scale_tab_size(*value, scale)),
             StyleProperty::SoftHyphen(value) => SoftHyphen(*value),
+            StyleProperty::DictionaryBreaks(value) => DictionaryBreaks(*value),
         }
     }
 
@@ -214,6 +215,7 @@ impl ResolveContext {
             white_space_collapse: raw_style.white_space_collapse,
             tab_size: scale_tab_size(raw_style.tab_size, scale),
             soft_hyphen: raw_style.soft_hyphen,
+            dictionary_breaks: raw_style.dictionary_breaks,
             annotation_space: raw_style.annotation_space.scale(scale),
             text_box_trim: raw_style.text_box_trim,
         }
@@ -410,6 +412,8 @@ pub(crate) enum ResolvedProperty<B: Brush> {
     TabSize(crate::style::TabSize),
     /// pyro: what a soft hyphen does at the end of a line.
     SoftHyphen(crate::style::SoftHyphen),
+    /// pyro: whether lines may break where dictionaries find word boundaries.
+    DictionaryBreaks(bool),
 }
 
 /// pyro: `tab_size` with a length in layout units.
@@ -470,6 +474,8 @@ pub(crate) struct ResolvedStyle<B: Brush> {
     pub(crate) tab_size: crate::style::TabSize,
     /// pyro: what a soft hyphen does at the end of a line.
     pub(crate) soft_hyphen: crate::style::SoftHyphen,
+    /// pyro: whether lines may break where dictionaries find word boundaries.
+    pub(crate) dictionary_breaks: bool,
     /// pyro: room beyond the content area ([`TextStyle::annotation_space`]), scaled.
     pub(crate) annotation_space: AnnotationSpace,
     /// pyro: the edges the content area is trimmed to ([`TextStyle::text_box_trim`]).
@@ -509,6 +515,7 @@ impl<B: Brush> ResolvedStyle<B> {
             WhiteSpaceCollapse(value) => self.white_space_collapse = value,
             TabSize(value) => self.tab_size = value,
             SoftHyphen(value) => self.soft_hyphen = value,
+            DictionaryBreaks(value) => self.dictionary_breaks = value,
         }
     }
 
@@ -543,6 +550,7 @@ impl<B: Brush> ResolvedStyle<B> {
             WhiteSpaceCollapse(value) => self.white_space_collapse == *value,
             TabSize(value) => self.tab_size == *value,
             SoftHyphen(value) => self.soft_hyphen == *value,
+            DictionaryBreaks(value) => self.dictionary_breaks == *value,
         }
     }
 

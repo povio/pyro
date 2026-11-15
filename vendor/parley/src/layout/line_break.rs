@@ -652,6 +652,9 @@ pub struct BreakerState {
     line_max_advance: f32,
     /// The max height available to the current line.
     line_max_height: f32,
+    /// pyro: lines wrap where their content passes this advance, when it is less than the
+    /// line's max advance; the line keeps its max advance for alignment (`text-wrap: balance`).
+    wrap_limit: f32,
 
     /// The state of the current line
     line: LineState,
@@ -683,6 +686,7 @@ impl Default for BreakerState {
             layout_max_advance: 0.0,
             line_max_advance: 0.0,
             line_max_height: f32::MAX,
+            wrap_limit: f32::INFINITY,
             line: LineState::default(),
             contributed: Vec::new(),
             subtrees: SubtreeHistory::default(),
@@ -885,6 +889,13 @@ impl BreakerState {
     #[inline(always)]
     pub fn set_line_max_advance(&mut self, advance: f32) {
         self.line_max_advance = advance;
+    }
+
+    /// pyro: makes lines wrap where their content passes `advance` (less than the line's max
+    /// advance), while they keep their max advance for alignment. Infinite by default.
+    #[inline(always)]
+    pub fn set_wrap_limit(&mut self, advance: f32) {
+        self.wrap_limit = advance;
     }
 
     /// Get the max-height of the current line
@@ -1323,6 +1334,8 @@ impl<'a, B: Brush> BreakLines<'a, B> {
         let line_indent = self.resolve_indent();
 
         let max_advance = max_advance - line_indent;
+        // pyro: what fits is also bounded by the wrap limit (`BreakerState::set_wrap_limit`).
+        let fit_advance = max_advance.min(self.state.wrap_limit - line_indent);
 
         // Iterate over remaining runs in the Layout
         let item_count = self.layout.data.items.len();
@@ -1376,7 +1389,7 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                         InlineBoxKind::SpanEnd => {
                             let (index, width) = (item.index, inline_box.width);
                             let next_x = self.state.line.x + width;
-                            if next_x > max_advance + FIT_TOLERANCE
+                            if next_x > fit_advance + FIT_TOLERANCE
                                 && let Some(prev) = self.state.prev_boundary.take()
                             {
                                 self.state.reset_to(prev);
@@ -1397,14 +1410,14 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                     // Compute the x position of the content being currently processed
                     let next_x = self.state.line.x + width_contribution;
 
-                    let box_will_be_appended = next_x <= max_advance || self.state.line.x == 0.0;
+                    let box_will_be_appended = next_x <= fit_advance || self.state.line.x == 0.0;
                     if height_contribution > self.state.line_max_height && box_will_be_appended {
                         return self.max_height_break_data(height_contribution);
                     }
 
                     // If the box fits on the current line (or we are at the start of the current line)
                     // then simply move on to the next item
-                    if next_x <= max_advance || self.state.line.text_wrap_mode != TextWrapMode::Wrap
+                    if next_x <= fit_advance || self.state.line.text_wrap_mode != TextWrapMode::Wrap
                     {
                         self.append_layout_inline_box(item.index, next_x);
 
@@ -1496,7 +1509,7 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                             // the line can end earlier, nor after one that `hyphens: none` has.
                             let hyphen_fits = self.state.prev_boundary.is_none()
                                 || self.state.line.shy.is_none_or(|(_, _, hyphen)| {
-                                    self.state.line.x + hyphen <= max_advance + FIT_TOLERANCE
+                                    self.state.line.x + hyphen <= fit_advance + FIT_TOLERANCE
                                 });
                             if self.state.line.x != 0.0
                                 && !self.state.line.after_span_start
@@ -1553,7 +1566,7 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                         // If the content fits (the x position does NOT exceed max_advance)
                         //
                         // We simply append the atom to the current line
-                        if next_x <= max_advance + FIT_TOLERANCE {
+                        if next_x <= fit_advance + FIT_TOLERANCE {
                             if max_height_exceeded {
                                 return self.max_height_break_data(line_height);
                             }
@@ -1581,7 +1594,7 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                                 spacing,
                                 item.bidi_level.is_rtl(),
                             );
-                            if all_hang || next_x - hanging <= max_advance + FIT_TOLERANCE {
+                            if all_hang || next_x - hanging <= fit_advance + FIT_TOLERANCE {
                                 if max_height_exceeded {
                                     return self.max_height_break_data(line_height);
                                 }

@@ -1767,3 +1767,17 @@ Covered by WPT `css/css-sizing/aspect-ratio/replaced-element-029`, `-030` and `g
   hyphens"): `hyphens: none` lets no line end at a soft hyphen, `hyphenate-character` names what a line ending at one
   shows (the empty string nothing, one character that character, `auto` and longer strings the font's hyphen).
   `hyphens: auto` breaks only at soft hyphens, as `manual`. Covered by `crates/pyro-render/tests/soft_hyphens.rs`.
+
+- `src/layout/inline/layout.rs` (`balanced_wrap_limit`), `src/document.rs` (the `text-wrap-style: balance` pref):
+  `text-wrap-style: balance`. A block of two to six lines (Blink's limit; fewer when `line-clamp` cuts it) with no
+  float beside it and no `max-height` (a block-size clamp, which nothing applies yet, would cut it) wraps at the least advance that keeps its line count, found by bisection over trial breaks; a
+  trial with more emergency breaks (`overflow-wrap`) or more overflowing lines than the unbalanced break is no
+  balance. The lines keep the container's width for alignment (parley's `BreakerState::set_wrap_limit`).
+  Covered by `crates/pyro-render/tests/text_wrap_balance.rs`.
+
+
+- `Cargo.toml` (parley's `complex-scripts` feature), `src/stylo_to_parley.rs`: lines break inside Thai, Lao, Khmer and
+  Burmese text where ICU4X's dictionaries find word boundaries (`LineSegmenter::new_dictionary`; +3.8 MB of data in
+  the binary); they broke only at spaces. `word-break: manual` (stylo parses it for this engine) turns that off for
+  its text (parley's `TextStyle::dictionary_breaks`, parley_engine's `LineBreakConfig::no_dictionary`). WPT css-text
+  `line-breaking-024..027`, `word-break-normal-{th,km,lo,my}-*`, `word-break-manual-001`.

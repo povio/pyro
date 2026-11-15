@@ -514,8 +514,9 @@ pub(crate) fn style(
         stylo::WordBreak::Normal => parley::WordBreak::Normal,
         stylo::WordBreak::BreakAll => parley::WordBreak::BreakAll,
         stylo::WordBreak::KeepAll => parley::WordBreak::KeepAll,
-        stylo::WordBreak::BreakWord => parley::WordBreak::Normal,
+        stylo::WordBreak::BreakWord | stylo::WordBreak::Manual => parley::WordBreak::Normal,
     };
+    let dictionary_breaks = itext_styles.word_break != stylo::WordBreak::Manual;
     let line_break = match itext_styles.line_break {
         stylo::LineBreak::Loose => parley::LineBreak::Loose,
         stylo::LineBreak::Normal => parley::LineBreak::Normal,
@@ -549,6 +550,7 @@ pub(crate) fn style(
         letter_spacing,
         text_wrap_mode,
         white_space_collapse: white_space_collapse(itext_styles.white_space_collapse),
+        dictionary_breaks,
         soft_hyphen: match (itext_styles.hyphens, &itext_styles.hyphenate_character) {
             (style::computed_values::hyphens::T::None, _) => parley::SoftHyphen::NoBreak,
             (_, style::values::computed::HyphenateCharacter::Auto) => parley::SoftHyphen::Auto,
