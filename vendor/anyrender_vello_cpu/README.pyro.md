@@ -7,7 +7,7 @@ workspace `Cargo.toml`. License: MIT OR Apache-2.0, as upstream. `.cargo_vcs_inf
 
 ## The change
 
-`UPSTREAM.patch` is the whole diff: nine changes.
+`UPSTREAM.patch` is the whole diff: eight changes.
 
 ## A raster thread count per renderer
 
@@ -170,36 +170,36 @@ is off (`serve --text-antialiasing off`): WPT's runner starts Chrome with font a
 (`NoFontAntialiasing`), and the reftests are judged so. A filter layer's glyphs (`draw_filtered_layer` replays them
 through `draw_glyphs`) follow the same setting. Covered by pyro-render's `text_aliasing.rs`.
 
-## Work that shows in no pixel
+## Box shadows under an opaque fill
 
 `src/occlusion.rs`, called from `replay` (the painter's `occlusion` field, on by default; tests turn it off to
-compare). Both leave every pixel as it was:
+compare). It leaves every pixel as it was.
 
-- **Box shadows under an opaque fill.** vello_cpu's blurred rounded rectangle evaluates its blur (three `powf`) at
-  every pixel of its rectangle, and its depth buffer skips only 128-pixel buckets that one opaque fill spans over a
-  whole 4-pixel row. On a 4K card grid the cards' shadows were most of the frame's instructions, and blitz-paint's
-  bleed avoidance (a background shrunk half a border inside a rounded border, #359) cost 5% more, the rows along
-  each card's top and bottom edges no longer culled. Box shadows followed directly by a fill of an opaque colour
-  whose outline is convex (its control polygon turns one way, once) are drawn through a clip path (vello_cpu's
-  non-isolated `push_clip_path`, which cuts each fill's strips to it) with a hole inside that fill: the band
-  between its straight sides and the one between its top and bottom (a cross clear of rounded corners; a side's
-  points are matched to 1e-4 px, as arcs end where a sine puts them), or a rectangle inscribed in it when it has
-  no straight sides, on whole pixels a pixel and a half inside. A pixel the
-  clip touches at all is then one the fill covers whole and replaces. Elsewhere the clip covers whole pixels, where
-  vello_cpu copies the shadow's own coverage (and `(a * 255 + 255) >> 8` is `a` for two strips). Not inside a clip
-  path (the blend case above), which would show the shadow through the fill's edge pixels; holes under 1024 px²
-  are not worth the clip.
-- **Clip layers in a row.** blitz-paint draws each tile of an SVG background whose content overflows its viewport
-  in a clip layer of its own (#359), and each layer costs a buffer per row and a composite. A run of three or more
-  sibling clip layers whose clips are rectangles of whole device pixels, none overlapping, is drawn in fewer: a
-  layer takes, in order, the tiles whose content (`content_bounds`, grown by a pixel) reaches none of its other
-  tiles' rectangles and whose rectangle none of their content reaches (every other tile across and down for a
-  stroke on the tile's edge). Each pixel is then composited by the one layer whose rectangle holds it, from the
-  one tile's content that reaches it, as before; the layers' order no longer matters, their rectangles sharing no
-  pixel. Not in scenes with a blend mode or a backdrop filter.
+vello_cpu's blurred rounded rectangle evaluates its blur (three `powf`) at every pixel of its rectangle, and its
+depth buffer skips only 128-pixel buckets that one opaque fill spans over a whole 4-pixel row. On a 4K card grid
+the cards' shadows were most of the frame's instructions, and blitz-paint's bleed avoidance (a background shrunk
+half a border inside a rounded border, #359) cost 5% more, the rows along each card's top and bottom edges no
+longer culled.
 
-Covered by the unit tests in `src/occlusion.rs` (each renders a scene both ways, on one thread and on three, and
-compares every pixel).
+- Box shadows followed directly by a fill of an opaque colour whose outline is convex (its control polygon turns
+  one way, once) are drawn through a clip path (vello_cpu's non-isolated `push_clip_path`, which cuts each fill's
+  strips to it) with a hole inside that fill.
+- The hole is the band between the outline's straight left and right sides and the one between its top and bottom
+  (a cross clear of rounded corners), or a rectangle inscribed in it when it has no straight sides, on whole pixels
+  a pixel and a half inside. A side's points are matched to 1e-4 px, as arcs end where a sine puts them.
+- An outline left open (blitz-paint's `CssBox` paths are) is judged as vello fills it, closed: its closing edge is
+  a side, and counts in the inside checks.
+- A pixel the clip touches at all is then one the fill covers whole and replaces. Elsewhere the clip covers whole
+  pixels, where vello_cpu copies the shadow's own coverage (`(a * 255 + 255) >> 8` is `a` for two strips).
+- Not inside a clip path (the blend case above), which would show the shadow through the fill's edge pixels.
+- Holes under 640 px² are not worth the clip: on pages of small rounded boxes with a shadow at a device scale of
+  2, a 448 px² hole cost more than it saved and a 720 px² one saved more. The largest hole a fill could get is
+  known before its outline's shape is checked, and a box whose control points span less is left at once; an
+  outline of more than 64 elements is not looked at.
+
+Covered by the unit tests in `src/occlusion.rs`: each renders a scene both ways, on one thread and on three, and
+compares every pixel. They need the `multithreading` feature, which pyro-render turns on, and are ignored without
+it.
 
 Regenerate the patch from a pristine copy of the published crate:
 `git diff --no-index --no-prefix a b` with the published crate in `a` and this directory, without this file

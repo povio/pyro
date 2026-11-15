@@ -2749,10 +2749,10 @@ index 5bc2e2c..8a96824 100644
  pub use image_renderer::VelloCpuImageRenderer;
 diff --git b/src/occlusion.rs b/src/occlusion.rs
 new file mode 100644
-index 0000000..1ffd728
+index 0000000..4b14273
 --- /dev/null
 +++ b/src/occlusion.rs
-@@ -0,0 +1,814 @@
+@@ -0,0 +1,884 @@
 +//! pyro: work that shows in no pixel, left out of a frame without changing any.
 +//!
 +//! **Box shadows under an opaque fill.** An element paints its outset box shadows, then its
@@ -2766,23 +2766,18 @@ index 0000000..1ffd728
 +//! ([`shadow_clip`]). The hole stays more than a pixel inside the shape, so every pixel the clip
 +//! touches at all is one the fill covers whole, and replaces; elsewhere the clip covers whole
 +//! pixels, where vello_cpu copies the shadow's own coverage (and `(a * 255 + 255) >> 8` is `a`).
-+//!
-+//! **Clip layers in a row.** Each overflowing tile of an SVG background is drawn in a clip layer of
-+//! its own (blitz-paint), and every layer costs vello_cpu a buffer per row it touches and a
-+//! composite. A run of sibling clip layers whose clips are rectangles of whole device pixels, none
-+//! overlapping another, is drawn in fewer layers: a layer takes the tiles whose content reaches no
-+//! other of its tiles' rectangles ([`clip_layer_groups`]). Each pixel is then composited by the one
-+//! layer whose rectangle holds it, from the one tile's content that reaches it, as before.
 +
 +use anyrender::Paint;
 +use anyrender::recording::{FillCommand, RenderCommand};
 +use kurbo::{Affine, BezPath, PathEl, Point, Rect, Shape};
 +
-+use crate::filters::PixelRect;
-+use crate::scene::{content_bounds, matching_pop, pixel_rect};
++/// A hole smaller than this (device px²) is not worth the clip. Measured on pages of rounded
++/// boxes with a small shadow at a device scale of 2 (the clip's own strips against the shading it
++/// leaves out): a 448 px² hole cost more than it saved, a 720 px² one saved more.
++const MIN_HOLE_AREA: f64 = 640.0;
 +
-+/// A hole smaller than this (device px²) is not worth the clip.
-+const MIN_HOLE_AREA: f64 = 1024.0;
++/// The longest outline looked at (path elements): a rounded box has about a dozen.
++const MAX_ELEMENTS: usize = 64;
 +
 +/// The index after the box shadows that start at `start`.
 +pub(crate) fn shadow_run_end(commands: &[RenderCommand], start: usize) -> usize {
@@ -2899,35 +2894,68 @@ index 0000000..1ffd728
 +    if b != 0.0 || c != 0.0 || a <= 0.0 || d <= 0.0 {
 +        return None;
 +    }
-+    let mut path = fill.shape.clone();
-+    path.apply_affine(t);
-+
-+    // One closed outline: its control polygon, and its straight segments.
-+    let mut polygon: Vec<Point> = Vec::new();
-+    let mut lines: Vec<(Point, Point)> = Vec::new();
++    let elements = fill.shape.elements();
++    if elements.len() > MAX_ELEMENTS {
++        return None;
++    }
++    // A hole lies a pixel and a half inside the bounds of the control points: none worth the clip
++    // in a small box, which is left before its outline is looked at.
++    let (mut lo, mut hi) = (
++        Point::new(f64::INFINITY, f64::INFINITY),
++        Point::new(f64::NEG_INFINITY, f64::NEG_INFINITY),
++    );
++    for el in elements {
++        let (p, q, r) = match *el {
++            PathEl::MoveTo(p) | PathEl::LineTo(p) => (p, p, p),
++            PathEl::QuadTo(p, q) => (p, q, q),
++            PathEl::CurveTo(p, q, r) => (p, q, r),
++            PathEl::ClosePath => continue,
++        };
++        for p in [p, q, r] {
++            (lo.x, lo.y, hi.x, hi.y) = (lo.x.min(p.x), lo.y.min(p.y), hi.x.max(p.x), hi.y.max(p.y));
++        }
++    }
++    let size = t.as_coeffs();
++    if ((hi.x - lo.x) * size[0] - 3.0).max(0.0) * ((hi.y - lo.y) * size[3] - 3.0).max(0.0)
++        < MIN_HOLE_AREA
++    {
++        return None;
++    }
++    // One outline: its control polygon, its points on the curve, and its straight segments.
++    let mut polygon: Vec<Point> = Vec::with_capacity(elements.len() * 3);
++    let mut knots: Vec<Point> = Vec::with_capacity(elements.len() + 1);
++    let mut lines: Vec<(Point, Point)> = Vec::with_capacity(elements.len() + 1);
 +    let (mut start, mut last, mut closed) = (None, None, false);
-+    for el in path.elements() {
++    for el in elements {
 +        match *el {
 +            PathEl::MoveTo(p) => {
 +                if start.is_some() {
 +                    return None;
 +                }
++                let p = t * p;
 +                (start, last) = (Some(p), Some(p));
 +                polygon.push(p);
++                knots.push(p);
 +            }
 +            PathEl::LineTo(p) if !closed => {
++                let p = t * p;
 +                lines.push((last?, p));
 +                polygon.push(p);
++                knots.push(p);
 +                last = Some(p);
 +            }
 +            PathEl::QuadTo(p1, p) if !closed => {
 +                last?;
-+                polygon.extend([p1, p]);
++                let p = t * p;
++                polygon.extend([t * p1, p]);
++                knots.push(p);
 +                last = Some(p);
 +            }
 +            PathEl::CurveTo(p1, p2, p) if !closed => {
 +                last?;
-+                polygon.extend([p1, p2, p]);
++                let p = t * p;
++                polygon.extend([t * p1, t * p2, p]);
++                knots.push(p);
 +                last = Some(p);
 +            }
 +            PathEl::ClosePath if !closed => {
@@ -2941,8 +2969,13 @@ index 0000000..1ffd728
 +            _ => return None,
 +        }
 +    }
-+    if !convex(&polygon) {
-+        return None;
++    // vello fills an open outline as if it were closed (blitz-paint's `CssBox` outlines are left
++    // open): its closing edge is a side too, and counts in the checks below.
++    if !closed
++        && let (Some(s), Some(l)) = (start, last)
++        && s != l
++    {
++        lines.push((l, s));
 +    }
 +    let (x0, x1) = polygon
 +        .iter()
@@ -2954,9 +2987,6 @@ index 0000000..1ffd728
 +        .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), p| {
 +            (lo.min(p.y), hi.max(p.y))
 +        });
-+    if !(x1 - x0 > 4.0 && y1 - y0 > 4.0) {
-+        return None;
-+    }
 +    // The extent of the straight segments along each side of the bounding box. A side's points are
 +    // matched to a ten-thousandth of a pixel: arcs end, and put their control points, where a sine
 +    // and a cosine put them, so at fractional coordinates a rounded box's straight sides missed
@@ -2980,14 +3010,69 @@ index 0000000..1ffd728
 +    let tall = top
 +        .zip(bottom)
 +        .map(|(t, b)| Rect::new(t.0.max(b.0), y0, t.1.min(b.1), y1));
-+    // Whole pixels at least a pixel and a half inside, so that a pixel that touches the hole lies
-+    // inside the outline (checked at the corners of the hole grown by a pixel).
-+    let hole = |r: Rect| {
++    // No straight sides to speak of (a circle, an ellipse, a pill's round ends), or a cross not
++    // inside: the rectangle inscribed in the ellipse the bounding box holds, its corners on it.
++    let (cx, cy) = ((x0 + x1) / 2.0, (y0 + y1) / 2.0);
++    let (hw, hh) = (
++        (x1 - x0) / 2.0 / std::f64::consts::SQRT_2,
++        (y1 - y0) / 2.0 / std::f64::consts::SQRT_2,
++    );
++    let inscribed = Rect::new(cx - hw, cy - hh, cx + hw, cy + hh);
++    // Whole pixels at least a pixel and a half inside.
++    let shrink = |r: Rect| {
 +        let r = r.inflate(-1.5, -1.5);
 +        let r = Rect::new(r.x0.ceil(), r.y0.ceil(), r.x1.floor(), r.y1.floor());
-+        if !(r.width() > 0.0 && r.height() > 0.0) {
-+            return None;
-+        }
++        (r.width() > 0.0 && r.height() > 0.0).then_some(r)
++    };
++    let (wide, tall, inscribed) = (
++        wide.and_then(shrink),
++        tall.and_then(shrink),
++        shrink(inscribed),
++    );
++    // The largest hole these can make: none worth the clip is left before the outline's shape
++    // is checked.
++    let area = |r: Option<Rect>| r.map_or(0.0, |r| r.width() * r.height());
++    let cross = area(wide) + area(tall)
++        - wide
++            .zip(tall)
++            .map_or(0.0, |(w, t)| area(Some(w.intersect(t))));
++    if cross.max(area(inscribed)) < MIN_HOLE_AREA || !convex(&polygon) {
++        return None;
++    }
++    // A point strictly inside the polygon of the points on the curve is inside the outline: that
++    // polygon is convex (they are in order on the convex control polygon), and each segment lies
++    // on the outer side of its chord, in the hull of its control points. A cheap test, which
++    // holds for a rounded box's cross; the winding number (costly for curves) decides the rest.
++    let orientation = knots
++        .iter()
++        .zip(knots.iter().cycle().skip(1))
++        .map(|(p, q)| p.to_vec2().cross(q.to_vec2()))
++        .sum::<f64>()
++        .signum();
++    let inside_chords = |p: Point| {
++        orientation != 0.0
++            && knots
++                .iter()
++                .zip(knots.iter().cycle().skip(1))
++                .filter(|(a, b)| a != b)
++                .all(|(a, b)| (*b - *a).cross(p - *a) * orientation > 0.0)
++    };
++    // The outline in device pixels, closed, for the winding number: made when it is needed.
++    let path = std::cell::OnceCell::new();
++    let winding = |p: Point| {
++        path.get_or_init(|| {
++            let mut path = fill.shape.clone();
++            path.apply_affine(t);
++            if !closed {
++                path.close_path();
++            }
++            path
++        })
++        .winding(p)
++    };
++    // A pixel that touches the hole lies inside the outline: checked at the corners of the hole
++    // grown by a pixel.
++    let hole = |r: Rect| {
 +        let grown = r.inflate(1.0, 1.0);
 +        let corners = [
 +            (grown.x0, grown.y0),
@@ -2997,42 +3082,48 @@ index 0000000..1ffd728
 +        ];
 +        corners
 +            .iter()
-+            .all(|&p| path.winding(Point::from(p)) != 0)
++            .all(|&p| {
++                let p = Point::from(p);
++                let inside = inside_chords(p);
++                if cfg!(test) {
++                    assert!(!inside || winding(p) != 0, "{p:?}");
++                }
++                inside || winding(p) != 0
++            })
 +            .then_some(r)
 +    };
 +    let (wide, tall) = (wide.and_then(hole), tall.and_then(hole));
 +    if wide.is_none() && tall.is_none() {
-+        // No straight sides to speak of (a circle, an ellipse, a pill's round ends): the
-+        // rectangle inscribed in the ellipse the bounding box holds, its corners on that ellipse.
-+        let (cx, cy) = ((x0 + x1) / 2.0, (y0 + y1) / 2.0);
-+        let (hw, hh) = (
-+            (x1 - x0) / 2.0 / std::f64::consts::SQRT_2,
-+            (y1 - y0) / 2.0 / std::f64::consts::SQRT_2,
-+        );
-+        return hole(Rect::new(cx - hw, cy - hh, cx + hw, cy + hh)).map(|r| (Some(r), None));
++        return inscribed.and_then(hole).map(|r| (Some(r), None));
 +    }
 +    Some((wide, tall))
 +}
 +
-+/// Whether the closed polygon `points` turns one way only, once around.
++/// Whether the closed polygon `points` turns one way only, once around: every turn has the same
++/// sign (or none), no edge doubles back, and the edges' horizontal direction changes twice.
 +fn convex(points: &[Point]) -> bool {
-+    let mut pts: Vec<Point> = Vec::with_capacity(points.len());
-+    for &p in points {
-+        if pts.last() != Some(&p) {
-+            pts.push(p);
-+        }
++    let mut n = points.len();
++    while n > 1 && points[n - 1] == points[0] {
++        n -= 1;
 +    }
-+    while pts.len() > 1 && pts.first() == pts.last() {
-+        pts.pop();
-+    }
-+    let n = pts.len();
-+    if n < 3 {
++    let pts = &points[..n];
++    // Consecutive edges, repeated points skipped.
++    let edges = || {
++        let mut prev = pts[n - 1];
++        pts.iter().filter_map(move |&p| {
++            let e = p - prev;
++            prev = p;
++            (e.x != 0.0 || e.y != 0.0).then_some(e)
++        })
++    };
++    let Some(first) = (n >= 3).then(|| edges().next()).flatten() else {
 +        return false;
-+    }
-+    let (mut sign, mut turn) = (0.0f64, 0.0f64);
-+    for i in 0..n {
-+        let (p, q, r) = (pts[i], pts[(i + 1) % n], pts[(i + 2) % n]);
-+        let (u, v) = (q - p, r - q);
++    };
++    let (mut sign, mut flips, mut count) = (0.0f64, 0, 0);
++    let mut u = edges().last().unwrap_or(first);
++    let mut dx = 0.0f64;
++    for v in edges() {
++        count += 1;
 +        let cross = u.cross(v);
 +        if cross.abs() > 1e-9 * u.hypot() * v.hypot() {
 +            if sign == 0.0 {
@@ -3040,121 +3131,24 @@ index 0000000..1ffd728
 +            } else if cross.signum() != sign {
 +                return false;
 +            }
++        } else if u.dot(v) < 0.0 {
++            return false;
 +        }
-+        turn += cross.atan2(u.dot(v));
-+    }
-+    (turn.abs() - std::f64::consts::TAU).abs() < 1e-6
-+}
-+
-+/// Clip layers drawn together: their rectangles' union (device px) and, in order, the commands
-+/// each one clipped (the range between its push and its pop).
-+pub(crate) struct ClipLayerGroup {
-+    pub(crate) clip: BezPath,
-+    pub(crate) members: Vec<(usize, usize)>,
-+}
-+
-+/// The sibling clip layers that start at `start` (under `transform`) drawn in fewer layers, and
-+/// the index after the last of them; `None` when they are not worth it or not safe to: fewer than
-+/// three, a clip that is not a rectangle of whole device pixels, two rectangles that overlap, or no
-+/// two layers that can share one. Layers join a group in order, a layer the first group none of
-+/// whose members' content reaches its rectangle, and whose content reaches none of theirs (content
-+/// bounds as `content_bounds` makes them, grown by a pixel).
-+pub(crate) fn clip_layer_groups(
-+    commands: &[RenderCommand],
-+    start: usize,
-+    transform: Affine,
-+) -> Option<(Vec<ClipLayerGroup>, usize)> {
-+    const MAX_LAYERS: usize = 512;
-+    struct Member {
-+        push: usize,
-+        pop: usize,
-+        rect: PixelRect,
-+        reach: PixelRect,
-+    }
-+    let mut members: Vec<Member> = Vec::new();
-+    let mut i = start;
-+    while let Some(RenderCommand::PushClipLayer(clip)) = commands.get(i) {
-+        if members.len() == MAX_LAYERS {
-+            break;
-+        }
-+        let pop = matching_pop(commands, i);
-+        if pop >= commands.len() {
-+            break;
-+        }
-+        let Some(rect) = pixel_rect(&clip.clip, transform * clip.transform) else {
-+            break;
-+        };
-+        let reach = content_bounds(&commands[i + 1..pop], transform).map_or(
-+            PixelRect {
-+                x0: 0,
-+                y0: 0,
-+                x1: 0,
-+                y1: 0,
-+            },
-+            |b| PixelRect::around(b.inflate(1.0, 1.0)),
-+        );
-+        members.push(Member {
-+            push: i,
-+            pop,
-+            rect,
-+            reach,
-+        });
-+        i = pop + 1;
-+    }
-+    if members.len() < 3 {
-+        return None;
-+    }
-+    let disjoint =
-+        |a: PixelRect, b: PixelRect| a.is_empty() || b.is_empty() || a.intersect(b).is_empty();
-+    for (k, a) in members.iter().enumerate() {
-+        if members[k + 1..].iter().any(|b| !disjoint(a.rect, b.rect)) {
-+            return None;
-+        }
-+    }
-+    let mut groups: Vec<Vec<usize>> = Vec::new();
-+    for (k, m) in members.iter().enumerate() {
-+        let fits = |group: &Vec<usize>| {
-+            group.iter().all(|&n| {
-+                let other = &members[n];
-+                disjoint(m.reach, other.rect) && disjoint(other.reach, m.rect)
-+            })
-+        };
-+        match groups.iter_mut().find(|group| fits(group)) {
-+            Some(group) => group.push(k),
-+            None => groups.push(vec![k]),
-+        }
-+    }
-+    if groups.len() == members.len() {
-+        return None;
-+    }
-+    let groups = groups
-+        .into_iter()
-+        .map(|group| {
-+            let mut clip = BezPath::new();
-+            for &k in &group {
-+                let r = members[k].rect;
-+                let (x0, y0, x1, y1) = (
-+                    f64::from(r.x0),
-+                    f64::from(r.y0),
-+                    f64::from(r.x1),
-+                    f64::from(r.y1),
-+                );
-+                clip.move_to((x0, y0));
-+                clip.line_to((x1, y0));
-+                clip.line_to((x1, y1));
-+                clip.line_to((x0, y1));
-+                clip.close_path();
++        if v.x != 0.0 {
++            if dx != 0.0 && v.x.signum() != dx {
++                flips += 1;
 +            }
-+            ClipLayerGroup {
-+                clip,
-+                members: group
-+                    .iter()
-+                    .map(|&k| (members[k].push, members[k].pop))
-+                    .collect(),
-+            }
-+        })
-+        .collect();
-+    Some((groups, i))
++            dx = v.x.signum();
++        }
++        u = v;
++    }
++    // The flip from the last horizontal direction back to the first.
++    if let Some(e) = edges().find(|e| e.x != 0.0)
++        && e.x.signum() != dx
++    {
++        flips += 1;
++    }
++    count >= 3 && sign != 0.0 && flips == 2
 +}
 +
 +#[cfg(test)]
@@ -3185,13 +3179,11 @@ index 0000000..1ffd728
 +        painter.finish().data_as_u8_slice().to_vec()
 +    }
 +
++    /// On the calling thread and on three workers. The tests that call it need the
++    /// `multithreading` feature (pyro-render turns it on; `--features multithreading` alone), and
++    /// are ignored without it rather than run on one thread only.
 +    fn assert_same_pixels(scene: &Scene, width: u16, height: u16) {
-+        let threads: &[u16] = if cfg!(feature = "multithreading") {
-+            &[0, 3]
-+        } else {
-+            &[0]
-+        };
-+        for &threads in threads {
++        for threads in [0, 3] {
 +            let plain = render(scene, width, height, false, threads);
 +            let culled = render(scene, width, height, true, threads);
 +            let differing = plain
@@ -3208,8 +3200,10 @@ index 0000000..1ffd728
 +
 +    /// Cards as blitz-paint paints them at a device scale of 2: two outset shadows, a background
 +    /// shrunk by half the border (bleed avoidance) or not, the border; rounded, square and pill
-+    /// shaped, at fractional positions; one with a translucent background, one with a circle.
-+    fn cards(scale: f64, offset: (f64, f64)) -> Scene {
++    /// shaped, at fractional positions; one with a translucent background, one with a circle. The
++    /// backgrounds are `CssBox` outlines, left open as blitz-paint leaves them, or closed rounded
++    /// rectangles.
++    fn cards(scale: f64, offset: (f64, f64), open: bool) -> Scene {
 +        let mut scene = Scene::new();
 +        let page = Affine::translate(offset) * Affine::scale(scale);
 +        scene.fill(
@@ -3242,8 +3236,12 @@ index 0000000..1ffd728
 +                6.0,
 +            );
 +            let inset = if shrink { 0.5 } else { 0.0 };
-+            let background =
-+                RoundedRect::from_rect(rect.inflate(-inset, -inset), (radius - inset).max(0.0));
++            let (inner, inner_radius) = (rect.inflate(-inset, -inset), (radius - inset).max(0.0));
++            let background = if open {
++                css_box_outline(inner, inner_radius)
++            } else {
++                RoundedRect::from_rect(inner, inner_radius).to_path(0.1)
++            };
 +            scene.fill(
 +                Fill::NonZero,
 +                page,
@@ -3299,38 +3297,64 @@ index 0000000..1ffd728
 +    }
 +
 +    #[test]
++    #[cfg_attr(
++        not(feature = "multithreading"),
++        ignore = "renders on three workers too: needs the multithreading feature"
++    )]
 +    fn shadows_under_an_opaque_background_keep_their_pixels() {
-+        for (scale, offset) in [
-+            (1.0, (0.0, 0.0)),
-+            (2.0, (0.0, 0.0)),
-+            (2.0, (0.25, 0.5)),
-+            (1.5, (3.0, 1.0)),
-+        ] {
-+            let scene = cards(scale, offset);
-+            // Each opaque card and the avatar get a hole; the translucent card none.
-+            let holes: Vec<bool> = shadow_clips(&scene).iter().map(Option::is_some).collect();
-+            assert_eq!(
-+                holes,
-+                [true, true, true, false, true, true],
-+                "scale {scale}, offset {offset:?}"
-+            );
-+            assert_same_pixels(&scene, 900, 400);
++        for open in [true, false] {
++            for (scale, offset) in [
++                (1.0, (0.0, 0.0)),
++                (2.0, (0.0, 0.0)),
++                (2.0, (0.25, 0.5)),
++                (1.5, (3.0, 1.0)),
++            ] {
++                let scene = cards(scale, offset, open);
++                // Each opaque card and the avatar get a hole; the translucent card none.
++                let holes: Vec<bool> = shadow_clips(&scene).iter().map(Option::is_some).collect();
++                let expected = [true, true, true, false, true, true];
++                assert_eq!(
++                    holes, expected,
++                    "scale {scale}, offset {offset:?}, open {open}"
++                );
++                assert_same_pixels(&scene, 900, 400);
++            }
 +        }
 +    }
 +
-+    /// A rounded box's outline as blitz-paint's `CssBox` draws it: a `kurbo::Arc` per corner,
-+    /// joined by lines, so that its straight sides are a rounding off its corners' extreme
-+    /// control points.
++    /// A box's outline as blitz-paint's `CssBox::border_box_path` draws it: a `kurbo::Arc` per
++    /// rounded corner (a point per square one), joined by lines, so that its straight sides are a
++    /// rounding off its corners' extreme control points, and not closed: the left side is the
++    /// closing edge vello fills it with.
 +    fn css_box_outline(rect: Rect, radius: f64) -> BezPath {
 +        use std::f64::consts::{FRAC_PI_2, PI};
 +        let mut path = BezPath::new();
 +        let corners = [
-+            ((rect.x0 + radius, rect.y0 + radius), -FRAC_PI_2),
-+            ((rect.x1 - radius, rect.y0 + radius), 0.0),
-+            ((rect.x1 - radius, rect.y1 - radius), FRAC_PI_2),
-+            ((rect.x0 + radius, rect.y1 - radius), PI),
++            (
++                (rect.x0, rect.y0),
++                (rect.x0 + radius, rect.y0 + radius),
++                -FRAC_PI_2,
++            ),
++            (
++                (rect.x1, rect.y0),
++                (rect.x1 - radius, rect.y0 + radius),
++                0.0,
++            ),
++            (
++                (rect.x1, rect.y1),
++                (rect.x1 - radius, rect.y1 - radius),
++                FRAC_PI_2,
++            ),
++            ((rect.x0, rect.y1), (rect.x0 + radius, rect.y1 - radius), PI),
 +        ];
-+        for (center, offset) in corners {
++        for (point, center, offset) in corners {
++            if radius == 0.0 {
++                match path.elements().is_empty() {
++                    true => path.move_to(point),
++                    false => path.line_to(point),
++                }
++                continue;
++            }
 +            let arc = kurbo::Arc::new(
 +                center,
 +                (radius, radius),
@@ -3345,7 +3369,6 @@ index 0000000..1ffd728
 +            }
 +            path.extend(elements);
 +        }
-+        path.close_path();
 +        path
 +    }
 +
@@ -3353,6 +3376,10 @@ index 0000000..1ffd728
 +    /// bleed avoidance), also at fractional and large coordinates: the hole is the cross between
 +    /// its straight sides, reaching to 3 px from them, not the rectangle inscribed in its ellipse.
 +    #[test]
++    #[cfg_attr(
++        not(feature = "multithreading"),
++        ignore = "renders on three workers too: needs the multithreading feature"
++    )]
 +    fn a_rounded_box_drawn_from_arcs_leaves_a_cross() {
 +        for (k, rect) in [
 +            Rect::new(32.0, 32.0, 476.0, 404.0),
@@ -3506,65 +3533,108 @@ index 0000000..1ffd728
 +        }
 +    }
 +
-+    /// Translucent tiles whose strokes overflow their clip rectangles, as blitz-paint draws an
-+    /// SVG background tile by tile.
-+    fn tiles(origin: (f64, f64), stroke: f64) -> Scene {
++    /// An outline left open is filled as if closed: its closing edge is a side. A square
++    /// `CssBox` background (the left side its closing edge) gets the whole box less a pixel and a
++    /// half as its hole; an open path whose closing edge is the long side of a triangle gets none
++    /// past that edge.
++    #[test]
++    #[cfg_attr(
++        not(feature = "multithreading"),
++        ignore = "renders on three workers too: needs the multithreading feature"
++    )]
++    fn an_open_outline_is_judged_closed() {
++        let rect = Rect::new(20.0, 20.0, 200.0, 170.0);
 +        let mut scene = Scene::new();
++        scene.draw_box_shadow(Affine::IDENTITY, rect, Color::BLACK, 0.0, 4.0);
 +        scene.fill(
 +            Fill::NonZero,
 +            Affine::IDENTITY,
-+            Color::from_rgb8(250, 250, 250),
++            Color::WHITE,
 +            None,
-+            &Rect::new(0.0, 0.0, 320.0, 160.0),
++            &css_box_outline(rect, 0.0),
 +        );
-+        for row in 0..4 {
-+            for col in 0..6 {
-+                let tile = Rect::from_origin_size(
-+                    (
-+                        origin.0 + f64::from(col) * 40.0,
-+                        origin.1 + f64::from(row) * 30.0,
-+                    ),
-+                    (40.0, 30.0),
-+                );
-+                scene.push_clip_layer(Fill::NonZero, Affine::IDENTITY, &tile);
-+                scene.fill(
-+                    Fill::NonZero,
-+                    Affine::IDENTITY,
-+                    Color::from_rgba8(224, 231, 255, 200),
-+                    None,
-+                    &tile,
-+                );
-+                scene.stroke(
-+                    &Stroke::new(stroke),
-+                    Affine::IDENTITY,
-+                    Color::from_rgba8(99, 102, 241, 170),
-+                    None,
-+                    &tile,
-+                );
-+                scene.pop_layer();
++        let clip = shadow_clip(&scene.commands[..1], &scene.commands[1], Affine::IDENTITY).unwrap();
++        for (point, inside_hole) in [
++            ((22.5, 95.0), true),
++            ((21.5, 95.0), false),
++            ((197.5, 95.0), true),
++            ((198.5, 95.0), false),
++            ((110.0, 22.5), true),
++            ((110.0, 167.5), true),
++            ((110.0, 168.5), false),
++        ] {
++            let shaded = clip.winding(Point::from(point)) % 2 != 0;
++            assert_eq!(shaded, !inside_hole, "at {point:?}");
++        }
++        assert_same_pixels(&scene, 240, 200);
++
++        let mut triangle = BezPath::new();
++        triangle.move_to((200.0, 170.0));
++        triangle.line_to((20.0, 170.0));
++        triangle.line_to((20.0, 20.0));
++        let mut scene = Scene::new();
++        scene.draw_box_shadow(Affine::IDENTITY, rect, Color::BLACK, 0.0, 4.0);
++        scene.fill(
++            Fill::NonZero,
++            Affine::IDENTITY,
++            Color::WHITE,
++            None,
++            &triangle,
++        );
++        if let Some(clip) = shadow_clip(&scene.commands[..1], &scene.commands[1], Affine::IDENTITY)
++        {
++            // Above the hypotenuse (y = 20 + (x - 20) * 150 / 180) the triangle paints nothing.
++            for point in [(172.0, 44.0), (110.0, 60.0), (60.0, 40.0)] {
++                assert_ne!(clip.winding(Point::from(point)) % 2, 0, "{point:?} is cut");
 +            }
 +        }
-+        scene
++        assert_same_pixels(&scene, 240, 200);
 +    }
 +
 +    #[test]
-+    fn tiles_clipped_on_whole_pixels_share_layers_and_keep_their_pixels() {
-+        let scene = tiles((8.0, 6.0), 6.0);
-+        let (groups, end) = clip_layer_groups(&scene.commands, 1, Affine::IDENTITY).unwrap();
-+        assert_eq!(end, scene.commands.len());
-+        assert_eq!(groups.len(), 4, "every other tile across and down");
-+        assert_eq!(groups.iter().map(|g| g.members.len()).sum::<usize>(), 24);
-+        assert_same_pixels(&scene, 320, 160);
-+        // Content that reaches past the next tile shares with fewer, or none.
-+        let wide = tiles((8.0, 6.0), 30.0);
-+        if let Some((groups, _)) = clip_layer_groups(&wide.commands, 1, Affine::IDENTITY) {
-+            assert!(groups.len() > 4);
-+        }
-+        assert_same_pixels(&wide, 320, 160);
-+        // Edges between pixels: each tile keeps its own layer.
-+        let between = tiles((8.5, 6.25), 6.0);
-+        assert!(clip_layer_groups(&between.commands, 1, Affine::IDENTITY).is_none());
-+        assert_same_pixels(&between, 320, 160);
++    fn convex_polygons() {
++        let poly = |pts: &[(f64, f64)]| pts.iter().map(|&p| Point::from(p)).collect::<Vec<_>>();
++        // A square, its first point repeated at the end, a collinear point on a side.
++        assert!(convex(&poly(&[
++            (0., 0.),
++            (10., 0.),
++            (10., 10.),
++            (0., 10.),
++            (0., 0.)
++        ])));
++        assert!(convex(&poly(&[
++            (0., 0.),
++            (5., 0.),
++            (10., 0.),
++            (10., 10.),
++            (0., 10.)
++        ])));
++        // Anticlockwise, and with repeated points.
++        assert!(convex(&poly(&[
++            (0., 0.),
++            (0., 10.),
++            (0., 10.),
++            (10., 10.),
++            (10., 0.)
++        ])));
++        // A pentagram turns one way, twice around.
++        let star: Vec<(f64, f64)> = (0..5)
++            .map(|k| {
++                let a = f64::from(k * 2) * std::f64::consts::TAU / 5.0;
++                (a.cos() * 10.0, a.sin() * 10.0)
++            })
++            .collect();
++        assert!(!convex(&poly(&star)));
++        // A notch, an edge that doubles back, too few points.
++        assert!(!convex(&poly(&[
++            (0., 0.),
++            (10., 0.),
++            (5., 5.),
++            (10., 10.),
++            (0., 10.)
++        ])));
++        assert!(!convex(&poly(&[(0., 0.), (10., 0.), (5., 0.), (5., 10.)])));
++        assert!(!convex(&poly(&[(0., 0.), (10., 0.), (0., 0.)])));
 +    }
 +}
 diff --git b/src/primitives.rs b/src/primitives.rs
@@ -4214,7 +4284,7 @@ index 0000000..71bbce1
 +    }
 +}
 diff --git a/src/scene.rs b/src/scene.rs
-index 1b09a33..48a6768 100644
+index 1b09a33..06edbda 100644
 --- a/src/scene.rs
 +++ b/src/scene.rs
 @@ -1,11 +1,14 @@
@@ -4417,7 +4487,7 @@ index 1b09a33..48a6768 100644
      }
      fn draw_box_shadow(
          &mut self,
-@@ -216,6 +291,761 @@ impl PaintScene for VelloCpuScenePainter {
+@@ -216,6 +291,739 @@ impl PaintScene for VelloCpuScenePainter {
          self.render_ctx
              .fill_blurred_rounded_rect(&rect, radius as f32, std_dev as f32, false);
      }
@@ -4586,28 +4656,6 @@ index 1b09a33..48a6768 100644
 +                    i = end;
 +                    continue;
 +                }
-+            }
-+            // Sibling clip layers drawn in fewer layers (see `crate::occlusion`). Not where clips
-+            // become clip paths (a blend inside) or a backdrop filter reads the layers open.
-+            if self.occlusion
-+                && !self.blending
-+                && !self.backdrop_filters
-+                && matches!(commands[i], RenderCommand::PushClipLayer(_))
-+                && let Some((groups, end)) =
-+                    crate::occlusion::clip_layer_groups(commands, i, transform)
-+            {
-+                for group in groups {
-+                    self.render_ctx.set_transform(Affine::IDENTITY);
-+                    self.render_ctx.set_fill_rule(Fill::NonZero);
-+                    self.render_ctx.push_clip_layer(&group.clip);
-+                    self.clip_paths.push(Pushed::Layer);
-+                    for (push, pop) in group.members {
-+                        self.replay(&commands[push + 1..pop], transform);
-+                    }
-+                    self.pop_layer();
-+                }
-+                i = end;
-+                continue;
 +            }
 +            match &commands[i] {
 +                RenderCommand::PushLayer(_) => {
@@ -5005,7 +5053,7 @@ index 1b09a33..48a6768 100644
 +
 +/// pyro: the device pixels `commands` (under `transform`) can paint, conservatively: a layer's by
 +/// its clip, a glyph run's by its glyph origins with ems around them; `None` when they paint none.
-+pub(crate) fn content_bounds(commands: &[RenderCommand], transform: Affine) -> Option<Rect> {
++fn content_bounds(commands: &[RenderCommand], transform: Affine) -> Option<Rect> {
 +    let mut bounds: Option<Rect> = None;
 +    let mut i = 0;
 +    while i < commands.len() {
@@ -5100,7 +5148,7 @@ index 1b09a33..48a6768 100644
 +}
 +
 +/// The index of the `PopLayer` that closes the layer pushed at `push` (the end when none does).
-+pub(crate) fn matching_pop(commands: &[RenderCommand], push: usize) -> usize {
++fn matching_pop(commands: &[RenderCommand], push: usize) -> usize {
 +    let mut depth = 0usize;
 +    for (i, command) in commands.iter().enumerate().skip(push) {
 +        match command {
@@ -5179,7 +5227,7 @@ index 1b09a33..48a6768 100644
  }
  
  #[cfg(test)]
-@@ -292,4 +1122,197 @@ mod clip_rule_tests {
+@@ -292,4 +1100,197 @@ mod clip_rule_tests {
          assert_pixels(false, true);
          assert_pixels(true, true);
      }

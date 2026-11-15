@@ -457,28 +457,6 @@ impl VelloCpuScenePainter {
                     continue;
                 }
             }
-            // Sibling clip layers drawn in fewer layers (see `crate::occlusion`). Not where clips
-            // become clip paths (a blend inside) or a backdrop filter reads the layers open.
-            if self.occlusion
-                && !self.blending
-                && !self.backdrop_filters
-                && matches!(commands[i], RenderCommand::PushClipLayer(_))
-                && let Some((groups, end)) =
-                    crate::occlusion::clip_layer_groups(commands, i, transform)
-            {
-                for group in groups {
-                    self.render_ctx.set_transform(Affine::IDENTITY);
-                    self.render_ctx.set_fill_rule(Fill::NonZero);
-                    self.render_ctx.push_clip_layer(&group.clip);
-                    self.clip_paths.push(Pushed::Layer);
-                    for (push, pop) in group.members {
-                        self.replay(&commands[push + 1..pop], transform);
-                    }
-                    self.pop_layer();
-                }
-                i = end;
-                continue;
-            }
             match &commands[i] {
                 RenderCommand::PushLayer(_) => {
                     open.push((i, self.backdrop_filters && crate::backdrop::is_root(commands, i)))
@@ -875,7 +853,7 @@ fn contains(rect: PixelRect, bounds: Rect, frame: PixelRect) -> bool {
 
 /// pyro: the device pixels `commands` (under `transform`) can paint, conservatively: a layer's by
 /// its clip, a glyph run's by its glyph origins with ems around them; `None` when they paint none.
-pub(crate) fn content_bounds(commands: &[RenderCommand], transform: Affine) -> Option<Rect> {
+fn content_bounds(commands: &[RenderCommand], transform: Affine) -> Option<Rect> {
     let mut bounds: Option<Rect> = None;
     let mut i = 0;
     while i < commands.len() {
@@ -970,7 +948,7 @@ fn blends_inside(commands: &[RenderCommand], push: usize) -> bool {
 }
 
 /// The index of the `PopLayer` that closes the layer pushed at `push` (the end when none does).
-pub(crate) fn matching_pop(commands: &[RenderCommand], push: usize) -> usize {
+fn matching_pop(commands: &[RenderCommand], push: usize) -> usize {
     let mut depth = 0usize;
     for (i, command) in commands.iter().enumerate().skip(push) {
         match command {
