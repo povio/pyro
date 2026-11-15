@@ -584,7 +584,13 @@ fn build_inline_layout_with(
     }
     // pyro: the "…" (or the string of `text-overflow: "<string>"`) that `text-overflow` ends an
     // overflowing line with, in the root's own style (its first available font, as in Chromium).
-    let ellipsis = root_node_style.as_deref().and_then(|style| line_end_ellipsis(style, false));
+    // (An anonymous block holds lines of its parent: `overflow` and `text-overflow` are the
+    // parent's, which the anonymous box's own style does not inherit. A pseudo-element's box
+    // is anonymous too and has its own.)
+    let ellipsis = root_node_style.as_deref().and_then(|style| line_end_ellipsis(style, false)).or_else(|| {
+        let parent = root_node.parent.filter(|_| root_node.is_anonymous())?;
+        line_end_ellipsis(&*nodes[parent].primary_styles()?, false)
+    });
     let rtl_lines = text_layout.layout.is_rtl();
     text_layout.ellipsis = ellipsis.as_deref().map(|text| {
         let mut builder = layout_ctx.tree_builder(font_ctx, scale, true, &parley_style);

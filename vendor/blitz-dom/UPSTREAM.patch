@@ -7319,7 +7319,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
          );
      }
      if let Some(after_id) = root_node.after() {
-@@ -112,18 +527,250 @@
+@@ -112,18 +527,256 @@
              nodes,
              after_id,
              &text_transform,
@@ -7329,9 +7329,11 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
 +            annotations,
 +            bidi,
 +            &mut bidi_scan,
-+        );
-+    }
-+
+         );
+     }
+ 
+-    text_layout.text = builder.build_into(&mut text_layout.layout);
+-    return;
 +    for end in piece_ends.into_iter().rev().flatten() {
 +        close_span(&mut builder, end, bidi, &mut bidi_scan);
 +    }
@@ -7376,11 +7378,17 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
 +            strut_build,
 +            &space,
 +            bidi,
-         );
-     }
++        );
++    }
 +    // pyro: the "…" (or the string of `text-overflow: "<string>"`) that `text-overflow` ends an
 +    // overflowing line with, in the root's own style (its first available font, as in Chromium).
-+    let ellipsis = root_node_style.as_deref().and_then(|style| line_end_ellipsis(style, false));
++    // (An anonymous block holds lines of its parent: `overflow` and `text-overflow` are the
++    // parent's, which the anonymous box's own style does not inherit. A pseudo-element's box
++    // is anonymous too and has its own.)
++    let ellipsis = root_node_style.as_deref().and_then(|style| line_end_ellipsis(style, false)).or_else(|| {
++        let parent = root_node.parent.filter(|_| root_node.is_anonymous())?;
++        line_end_ellipsis(&*nodes[parent].primary_styles()?, false)
++    });
 +    let rtl_lines = text_layout.layout.is_rtl();
 +    text_layout.ellipsis = ellipsis.as_deref().map(|text| {
 +        let mut builder = layout_ctx.tree_builder(font_ctx, scale, true, &parley_style);
@@ -7437,8 +7445,6 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
 +    text_layout.span_block_edges = bidi_scan.block_edges;
 +    return true;
  
--    text_layout.text = builder.build_into(&mut text_layout.layout);
--    return;
 +    /// pyro: lays out on one line what an annotation draws: a ruby annotation's content in its
 +    /// style, or the emphasis mark of an element in its font at half its size (as an `<rt>` has it).
 +    fn build_annotation(
@@ -7509,7 +7515,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
 +        layout.break_all_lines(None);
 +        Some(TextAnnotation { node_id, kind, under, layout: Box::new(layout) })
 +    }
- 
++
 +    /// pyro: the head (`tail: false`) or the tail of the split inline `node_id`, in its span:
 +    /// a head has its start, a tail its end (`construct::split_inline_part`).
 +    #[allow(clippy::too_many_arguments)]
@@ -7572,7 +7578,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
      ) {
          let node = &nodes[node_id];
  
-@@ -143,6 +790,26 @@
+@@ -143,6 +796,26 @@
                      }
                  }
  
@@ -7599,7 +7605,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
                  let display = node.display_style().unwrap_or(Display::inline());
                  let position = style
                      .map(|s| s.clone_position())
-@@ -180,22 +847,32 @@
+@@ -180,22 +853,32 @@
                          );
                          for child_id in node.children.iter().copied() {
                              // node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
@@ -7635,7 +7641,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
                              }
                              builder.push_inline_box(InlineBox {
                                  id: node_id.as_u64(),
-@@ -210,66 +887,165 @@
+@@ -210,66 +893,165 @@
                                      .primary_styles()
                                      .map(|s| stylo_to_parley::vertical_align(&s))
                                      .unwrap_or_default(),
@@ -7819,7 +7825,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
                          }
                          builder.push_inline_box(InlineBox {
                              id: node_id.as_u64(),
-@@ -284,6 +1060,7 @@
+@@ -284,6 +1066,7 @@
                                  .primary_styles()
                                  .map(|s| stylo_to_parley::vertical_align(&s))
                                  .unwrap_or_default(),
@@ -7827,7 +7833,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
                          });
                      }
                  };
-@@ -291,10 +1068,38 @@
+@@ -291,10 +1074,38 @@
              NodeData::Text(data) => {
                  // node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
                  // dbg!(&data.content);
@@ -7869,7 +7875,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
              }
              NodeData::Comment { .. } => {
                  // node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
-@@ -303,3 +1108,157 @@
+@@ -303,3 +1114,157 @@
          }
      }
  }

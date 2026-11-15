@@ -63,7 +63,8 @@ against the upstream commit above); they are covered by pyro-render's rendering 
   `create_text_editor`, `TextInputData::ellipsis`) gets the ellipsis of its own `text-overflow` too, whatever its
   `overflow` (it always clips); blitz-paint draws it while the control is neither focused nor scrolled. A
   `<textarea>`'s lines that do not wrap are its scrollable overflow (`layout/mod.rs`, the textarea leaf), so
-  script can scroll to them (pyro-dom `scroll_extent` lets a textarea scroll).
+  script can scroll to them (pyro-dom `scroll_extent` lets a textarea scroll). An anonymous block (lines beside a
+  block-level sibling) takes the ellipsis of its parent's style, which its own does not inherit.
 - `layout/line_clamp.rs`, `layout/mod.rs` (`compute_child_layout_in_current_wm`), `layout/inline/layout.rs`,
   `node/text.rs` (`TextLayout::clamp`, `line_box_top`, `counted_lines`, `LineClamp`), `node/node.rs`
   (`NodeFlags::CLAMPS_LINES`): the legacy line clamp (`-webkit-line-clamp` on a vertical `-webkit-box`; Stylo's

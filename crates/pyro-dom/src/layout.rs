@@ -963,6 +963,15 @@ impl Layout {
         if !(if axis == Axis::Width { clips.x } else { clips.y }) && !text_control && !textarea {
             return Some(0.0);
         }
+        // `overflow: clip` clips without making a scroll container: the axis does not scroll.
+        let clip_only = self.style.stylo_style(dom, el).is_some_and(|s| {
+            use style::values::computed::Overflow;
+            let b = s.get_box();
+            (if axis == Axis::Width { b.overflow_x } else { b.overflow_y }) == Overflow::Clip
+        });
+        if clip_only && !text_control && !textarea {
+            return Some(0.0);
+        }
         // Chromium's maximum offset is its pixel-snapped scroll size less its
         // pixel-snapped client size (`PaintLayerScrollableArea::MaximumScrollOffset`),
         // the sizes script reads: content ending a layout unit short of a

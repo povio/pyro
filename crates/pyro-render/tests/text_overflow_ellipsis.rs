@@ -185,3 +185,12 @@ fn a_text_control_that_is_not_focused_ends_its_overflowing_lines_with_the_ellips
     };
     assert_ne!(input("").data, input("text-overflow:ellipsis").data, "a single-line input too");
 }
+
+#[test]
+fn lines_in_an_anonymous_block_end_with_their_parents_ellipsis() {
+    // The text sits in an anonymous block beside the block child: `overflow` and
+    // `text-overflow` are the parent's.
+    let img = render(&format!("<div class=t>{LONG}<div style='height:0'></div></div>"));
+    let plain = render(&format!("<div class=t>{LONG}</div>"));
+    assert_eq!(img.data, plain.data, "cut as the block's own line is");
+}
