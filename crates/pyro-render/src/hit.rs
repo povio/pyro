@@ -193,13 +193,8 @@ impl Descent<'_> {
         let fixed = fixed
             || node.primary_styles().is_some_and(|s| s.clone_position() == style::computed_values::position::T::Fixed);
         let projective = projective || node.plane_3d().is_some_and(geometry::is_projective_plane);
-        let location = self.doc.physical_unrounded_layout(id).location;
-        let scale = self.scale;
-        let own = node.transform().as_deref().copied().map_or(Affine::IDENTITY, |t| {
-            let [a, b, c, d, e, f] = t.as_coeffs();
-            Affine::new([a, b, c, d, e / scale, f / scale])
-        });
-        let t = base * Affine::translate((location.x as f64, location.y as f64)) * own;
+        // Composed as `Geometry::transform` composes it (the placement first), to the bit.
+        let t = base * geometry::placement(self.doc, node, self.scale);
         debug_assert_eq!(Some((t, fixed)), self.g.transform(self.doc, id), "memoized transform of {id:?}");
         self.transforms.insert(id, (t, fixed, projective));
         Some((t, fixed, projective))
