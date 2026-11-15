@@ -1,8 +1,8 @@
 name: TEMPORARY release jobs on lp-m1
 
-# Removed before merge: runs publish-npm.yml's new lp-m1 steps that a pull request cannot otherwise exercise (the
-# cross-compiled Intel build and its checks under Rosetta 2, the jsc-source export, both macOS smoke legs). The smoke
-# legs install the published v0.0.37 npm tarball; the x64 leg then repeats the smoke with the cross-built browser.
+# Removed before merge: runs publish-npm.yml's new steps that a pull request cannot otherwise exercise: the Intel
+# browser cross-compiled on lp-m1 (NASM built from source, its checks), and the smoke legs (lp-m1 arm64, GitHub's
+# Intel runner) on the published v0.0.37 npm tarball, the Intel leg again with the cross-built browser in the package.
 
 on:
   pull_request:
@@ -13,18 +13,6 @@ permissions:
   contents: read
 
 jobs:
-  tools:
-    runs-on: lp-m1
-    timeout-minutes: 5
-    steps:
-      - run: |
-          echo "$(sysctl -n machdep.cpu.brand_string), $(sysctl -n hw.ncpu) CPUs, macOS $(sw_vers -productVersion)"
-          for t in gh git python3 shasum codesign lipo otool strip tar unzip curl brew rustup nasm ninja; do
-            printf '%-9s %s\n' "$t" "$(command -v "$t" || echo MISSING)"
-          done
-          arch -x86_64 /usr/bin/true && echo "Rosetta 2: yes" || echo "Rosetta 2: NO"
-          df -h "$HOME" | tail -1
-
   # publish-npm.yml `build`, x64 leg (the release-manifests stamping left out).
   build:
     runs-on: lp-m1
@@ -47,16 +35,22 @@ jobs:
         run: |
           rustup toolchain install stable --profile minimal --no-self-update
           rustup target add --toolchain stable "$RUST_TARGET"
-      - name: Check Rosetta 2
+      - name: NASM
         if: matrix.arch == 'x64'
+        env:
+          NASM_VERSION: '3.02'
+          NASM_SHA256: 87336eba53b4acfe917424ab5d500d2b0054d9f5148d35c2273ccf2cfb712f0d
         run: |
-          arch -x86_64 /usr/bin/true || {
-            echo "::error::Rosetta 2 is not installed on this runner: sudo softwareupdate --install-rosetta --agree-to-license"
-            exit 1
-          }
-      - name: Install NASM
-        if: matrix.arch == 'x64'
-        run: command -v nasm >/dev/null || brew install nasm
+          cd "$RUNNER_TEMP"
+          curl -fsSLO --retry 3 "https://www.nasm.us/pub/nasm/releasebuilds/$NASM_VERSION/nasm-$NASM_VERSION.tar.xz"
+          echo "$NASM_SHA256  nasm-$NASM_VERSION.tar.xz" > nasm.sha256
+          shasum -a 256 -c nasm.sha256
+          tar -xJf "nasm-$NASM_VERSION.tar.xz"
+          cd "nasm-$NASM_VERSION"
+          ./configure --quiet
+          make -j"$(sysctl -n hw.ncpu)" nasm
+          ./nasm -v
+          echo "$PWD" >> "$GITHUB_PATH"
       - name: Build browser with rendering, and the comparison worker
         env:
           RUST_TARGET: ${{ matrix.target }}
@@ -72,9 +66,13 @@ jobs:
           codesign --verify --strict "$binary"
           codesign -d --entitlements - "$binary" 2>/dev/null | grep -q com.apple.security.cs.allow-jit
           otool -L "$binary"
-          "$binary" version
-          "$binary" version | grep -q 'fork: false'
-          "$binary" eval -e 'console.log("npm-smoke-ok")' | grep -Fx npm-smoke-ok
+          if [ "$ARCH" = x64 ] && grep -l -e 'not using any assembly' -e 'NASM does not seem to be installed' \
+              target/"$RUST_TARGET"/release/build/*/output; then
+            echo "::error::a dependency built without its x86-64 assembly (NASM)"
+            exit 1
+          fi
+          # Probe only: the assembly is in the binary (libjpeg-turbo's AVX2 colour conversion).
+          nm "$binary" | grep -c 'jsimd_.*avx2' || true
           mkdir -p "native/darwin-$ARCH"
           cp "$binary" "native/darwin-$ARCH/pyro"
           comparator="target/$RUST_TARGET/release/pyro-snapshot-compare"
@@ -87,21 +85,10 @@ jobs:
           if-no-files-found: error
           retention-days: 3
 
-  # publish-npm.yml `jsc-source`.
-  jsc-source:
-    runs-on: lp-m1
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v6
-      - name: Export the patched sparse WebKit tree
-        run: |
-          scripts/release/jsc-source.sh 0.0.0-probe "$GITHUB_SHA" jsc-source
-          ls -la jsc-source
-
   # publish-npm.yml `smoke`, both macOS legs.
   smoke:
     needs: build
-    name: smoke (${{ matrix.runner }}, ${{ matrix.arch }})
+    name: smoke (${{ matrix.runner }})
     strategy:
       fail-fast: false
       matrix:
@@ -109,44 +96,20 @@ jobs:
           - runner: lp-m1
             arch: arm64
             fork: true
-          - runner: lp-m1
+          - runner: macos-15-intel
             arch: x64
             fork: false
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6
-      - name: Check Rosetta 2
-        if: runner.os == 'macOS' && matrix.arch == 'x64'
-        run: |
-          arch -x86_64 /usr/bin/true || {
-            echo "::error::Rosetta 2 is not installed on this runner: sudo softwareupdate --install-rosetta --agree-to-license"
-            exit 1
-          }
       - uses: actions/setup-node@v6
         with:
           node-version: '22'
-          architecture: ${{ matrix.arch }}
           package-manager-cache: false
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: '1.4.0'
-      - name: x64 Bun
-        if: runner.os == 'macOS' && matrix.arch == 'x64'
-        env:
-          BUN_VERSION: '1.4.0'
-        run: |
-          asset=bun-darwin-x64-baseline
-          dir="$RUNNER_TEMP/bun-x64"
-          mkdir -p "$dir"
-          cd "$dir"
-          base="https://github.com/oven-sh/bun/releases/download/bun-v$BUN_VERSION"
-          curl -fsSLO --retry 3 "$base/$asset.zip"
-          curl -fsSLO --retry 3 "$base/SHASUMS256.txt"
-          grep " $asset.zip\$" SHASUMS256.txt > "$asset.sha256"
-          shasum -a 256 -c "$asset.sha256"
-          unzip -q "$asset.zip"
-          echo "$dir/$asset" >> "$GITHUB_PATH"
       - name: The published v0.0.37 npm tarball
         env:
           GH_TOKEN: ${{ github.token }}
@@ -156,7 +119,6 @@ jobs:
           ARCH: ${{ matrix.arch }}
           FORK: ${{ matrix.fork }}
         run: |
-          # The leg tests the browser of its architecture only if Node and Bun run as that architecture.
           node_arch="$(node -p process.arch)"
           bun_arch="$(bun -e 'console.log(process.arch)')"
           if [[ "$node_arch" != "$ARCH" || "$bun_arch" != "$ARCH" ]]; then
@@ -167,7 +129,9 @@ jobs:
           cd "$RUNNER_TEMP/npm-smoke"
           npm init -y
           npm install --ignore-scripts "$GITHUB_WORKSPACE"/npm-package/*.tgz
+          version="$(node -p 'require("./node_modules/@povio/pyro/package.json").version')"
           ./node_modules/.bin/pyro version
+          ./node_modules/.bin/pyro version | grep -Fx "pyro $version"
           ./node_modules/.bin/pyro version | grep -q "fork: $FORK"
           node "$GITHUB_WORKSPACE/scripts/npm/smoke.mjs"
           bun "$GITHUB_WORKSPACE/scripts/npm/smoke.mjs"
@@ -185,5 +149,6 @@ jobs:
           chmod +x "$target"
           ./node_modules/.bin/pyro version
           ./node_modules/.bin/pyro version | grep -q 'fork: false'
+          "$target" eval -e 'console.log("npm-smoke-ok")' | grep -Fx npm-smoke-ok
           node "$GITHUB_WORKSPACE/scripts/npm/smoke.mjs"
           bun "$GITHUB_WORKSPACE/scripts/npm/smoke.mjs"
