@@ -85,7 +85,10 @@ fn a_blurred_text_shadow_spreads_by_half_its_radius() {
         let (hard_ink, hard_var) = moments("text-shadow:0 0 0 #000");
         let (blur_ink, blur_var) = moments("text-shadow:0 0 16px #000");
         assert!(hard_ink > 1000.0, "scale {scale}: no hard shadow");
-        assert!((blur_ink / hard_ink - 1.0).abs() < 0.03, "scale {scale}: ink {blur_ink} vs {hard_ink}");
+        // Within 4%: the blur's faint tail is many pixels a level or two of alpha deep, and their ink
+        // is each rounded to a whole level (to nearest, as Skia composites; vello_cpu rounded up, which
+        // dropped some of it: 3.1% more ink at scale 2 since).
+        assert!((blur_ink / hard_ink - 1.0).abs() < 0.04, "scale {scale}: ink {blur_ink} vs {hard_ink}");
         let sigma = 8.0 * scale;
         let spread = (blur_var - hard_var).max(0.0).sqrt() / sigma;
         assert!((0.85..1.05).contains(&spread), "scale {scale}: deviation {spread} of the one asked for");
