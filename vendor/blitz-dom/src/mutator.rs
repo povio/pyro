@@ -516,7 +516,11 @@ impl DocumentMutator<'_> {
                 && crate::layout::replaced::is_image_input(element))
         {
             self.load_image(node_id);
-        } else if (tag, attr) == tag_and_attr!("video", "poster") {
+        } else if (tag, attr) == tag_and_attr!("video", "poster")
+            // pyro: an `<object>`'s image (`load_image`).
+            || (tag, attr) == tag_and_attr!("object", "data")
+            || (tag, attr) == tag_and_attr!("object", "type")
+        {
             self.load_image(node_id);
         } else if (tag, attr) == tag_and_attr!("canvas", "src") {
             self.load_custom_paint_src(node_id);
@@ -659,6 +663,9 @@ impl DocumentMutator<'_> {
         } else if (tag, attr) == tag_and_attr!("iframe", "srcdoc") && node_is_in_document {
             // Fall back to loading from the `src` attribute (if any)
             self.load_iframe(node_id);
+        } else if (tag, attr) == tag_and_attr!("object", "data") || (tag, attr) == tag_and_attr!("object", "type") {
+            // pyro: an `<object>` without its image shows its fallback again (`load_image`).
+            self.load_image(node_id);
         }
     }
 
@@ -1539,10 +1546,18 @@ impl<'doc> DocumentMutator<'doc> {
                     self.form_nodes.insert(node_id);
                 }
                 "iframe" => self.eager_op_queue.push(SpecialOp::LoadIframe(node_id)),
+                // pyro: an `<object>` loads the image its `data` names (`load_image`), and is a
+                // form-associated element like those below.
+                "object" => {
+                    self.eager_op_queue.push(SpecialOp::LoadImage(node_id));
+                    self.eager_op_queue
+                        .push(SpecialOp::ProcessButtonInput(node_id));
+                    self.form_nodes.insert(node_id);
+                }
                 "canvas" => self
                     .eager_op_queue
                     .push(SpecialOp::LoadCustomPaintSource(node_id)),
-                "button" | "fieldset" | "input" | "select" | "textarea" | "object" | "output" => {
+                "button" | "fieldset" | "input" | "select" | "textarea" | "output" => {
                     self.eager_op_queue
                         .push(SpecialOp::ProcessButtonInput(node_id));
                     self.form_nodes.insert(node_id);
@@ -1746,11 +1761,38 @@ impl<'doc> DocumentMutator<'doc> {
         let is_video = node
             .element_data()
             .is_some_and(|e| e.name.local == local_name!("video"));
+        // pyro: an `<object>` shows the image its `data` names, when its `type` (or the URL's
+        // extension) says an image (`replaced::object_loads_image`); otherwise, and until the image
+        // has loaded, its children (the fallback) render.
+        let object = node.element_data().filter(|e| e.name.local == local_name!("object"));
         let attr = if is_video {
             local_name!("poster")
+        } else if object.is_some() {
+            local_name!("data")
         } else {
             local_name!("src")
         };
+        if object.is_some_and(|e| {
+            !crate::layout::replaced::object_loads_image(e)
+                || e.attr(local_name!("data")).is_none_or(|data| data.trim().is_empty())
+        }) {
+            let node = &mut self.doc.nodes[target_id];
+            let had_image = match node.element_data_mut() {
+                Some(element) if matches!(element.special_data, SpecialElementData::Image(_)) => {
+                    element.special_data = SpecialElementData::None;
+                    true
+                }
+                _ => false,
+            };
+            if had_image {
+                node.clear_layout_cache();
+                // The fallback builds its boxes again.
+                self.doc.iter_subtree_mut(target_id, |id: NodeId, doc: &mut BaseDocument| {
+                    doc.nodes[id].insert_damage(ALL_DAMAGE);
+                });
+            }
+            return;
+        }
         if is_video && node.attr(attr.clone()).is_none_or(|v| v.trim().is_empty()) {
             let node = &mut self.doc.nodes[target_id];
             if let Some(element) = node.element_data_mut() {
@@ -1773,6 +1815,10 @@ impl<'doc> DocumentMutator<'doc> {
                 if let Some(cached_image) = self.doc.image_cache.get(src_string) {
                     #[cfg(feature = "tracing")]
                     tracing::info!("Loading image {src_string} from cache");
+                    // pyro: an `<object>` shows only some images (`replaced::object_shows_image`).
+                    if object.is_some() && !crate::layout::replaced::object_shows_image(cached_image) {
+                        return;
+                    }
                     let node = &mut self.doc.nodes[target_id];
                     node.element_data_mut().unwrap().special_data =
                         SpecialElementData::Image(Box::new(cached_image.clone()));

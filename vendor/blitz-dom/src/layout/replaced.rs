@@ -29,9 +29,61 @@ pub(crate) fn is_image_input(element: &ElementData) -> bool {
 }
 
 /// Whether `element` is laid out as a replaced element: a replaced tag
-/// ([`is_replaced_element`]) or an image button ([`is_image_input`]).
+/// ([`is_replaced_element`]), an image button ([`is_image_input`]) or an
+/// `<object>` showing an image ([`is_image_object`]).
 pub(crate) fn is_replaced(element: &ElementData) -> bool {
-    is_replaced_element(&element.name.local) || is_image_input(element)
+    is_replaced_element(&element.name.local) || is_image_input(element) || is_image_object(element)
+}
+
+/// pyro: whether `element` is an `<object>` that shows the image its `data`
+/// names (`BaseDocument::load_image`): replaced content laid out and painted
+/// like `<img>`, its children (the fallback) not rendered. Until the image
+/// has loaded, or when it fails or the object holds no image, the children
+/// render instead (HTML "the object element": its fallback content).
+pub(crate) fn is_image_object(element: &ElementData) -> bool {
+    element.name.local == local_name!("object")
+        && matches!(&element.special_data, crate::node::SpecialElementData::Image(image)
+            if !matches!(**image, crate::node::ImageData::None))
+}
+
+/// pyro: whether an `<object>` loads its `data` as an image: its `type` says
+/// an image, or without a `type` its URL's file extension names an image
+/// format. Other objects (`text/html`, plugins) keep their fallback content:
+/// nested documents in objects are not done.
+pub(crate) fn object_loads_image(element: &ElementData) -> bool {
+    match element.attr(local_name!("type")).map(str::trim) {
+        Some(mime) if !mime.is_empty() => mime.get(..6).is_some_and(|m| m.eq_ignore_ascii_case("image/")),
+        _ => element.attr(local_name!("data")).is_some_and(|data| {
+            let path = data.split(['?', '#']).next().unwrap_or_default();
+            let extension = path.rsplit_once('.').map_or("", |(_, ext)| ext);
+            ["svg", "svgz", "png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "avif"]
+                .iter()
+                .any(|known| extension.eq_ignore_ascii_case(known))
+        }),
+    }
+}
+
+/// pyro: whether an `<object>` shows a loaded `image`: a raster image, or an SVG
+/// with a natural width or height or a ratio. An SVG with none of them keeps the
+/// object's fallback, as before objects loaded images: Chromium would draw it at
+/// the default object size, which makes WPT CSS2 `replaced-intrinsic-002` (a
+/// pass only because its fallback text lay under the reference's green square;
+/// every browser fails it) fail.
+pub(crate) fn object_shows_image(image: &crate::node::ImageData) -> bool {
+    match image {
+        crate::node::ImageData::Raster(_) => true,
+        #[cfg(feature = "svg")]
+        crate::node::ImageData::Svg(svg) => {
+            svg.intrinsic_width().is_some() || svg.intrinsic_height().is_some() || svg.viewbox_aspect_ratio().is_some()
+        }
+        crate::node::ImageData::None => false,
+    }
+}
+
+/// pyro: whether `element` is laid out as an atomic inline box when inline-level:
+/// an inline box tag ([`is_inline_box_element`]) or an `<object>` showing an image.
+pub(crate) fn is_inline_box(element: &ElementData) -> bool {
+    is_inline_box_element(&element.name.local) || is_image_object(element)
 }
 
 /// The intrinsic dimensions of a replaced element per CSS Images 3
@@ -205,11 +257,22 @@ pub fn compute_replaced_layout(
                 // A ratio-only replaced element stretches to fit the width it is laid out
                 // in: the available width if definite, else (under a max-content constraint)
                 // its containing block, per CSS2 §10.3.2.
+                // pyro: less its borders and padding (and margins: the available width is
+                // without them, Taffy's parents subtract them), as a stretch-fit size is (CSS
+                // Sizing 4 §5.1; Chromium): the content box was the whole width, and the box
+                // overflowed it by its padding (WPT CSS2 `replaced-intrinsic-003`).
+                let margins = || {
+                    style
+                        .margin()
+                        .resolve_or_zero(parent_size.width, &resolve_calc_value)
+                        .horizontal_axis_sum()
+                };
                 let stretch_fit_width = match available_space.width {
                     AvailableSpace::Definite(width) => Some(width),
-                    AvailableSpace::MaxContent => parent_size.width,
+                    AvailableSpace::MaxContent => parent_size.width.map(|width| width - margins()),
                     AvailableSpace::MinContent => None,
-                };
+                }
+                .map(|width| (width - pb_sum.width).max(0.0));
                 if let Some(width) = stretch_fit_width {
                     Size {
                         width,

@@ -1902,6 +1902,12 @@ impl BaseDocument {
                     if element.custom_widget_data().is_some() {
                         continue;
                     }
+                    // pyro: an `<object>` shows only some images (`replaced::object_shows_image`).
+                    if element.name.local == local_name!("object")
+                        && !crate::layout::replaced::object_shows_image(&image)
+                    {
+                        continue;
+                    }
                     element.special_data = SpecialElementData::Image(Box::new(image.clone()));
 
                     // Clear layout cache

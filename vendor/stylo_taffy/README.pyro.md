@@ -12,3 +12,10 @@ entry) once a Blitz release carries these commits and changes.
   (blitz-dom's README.pyro.md, "block-in-inline"); its margins, borders, padding and sizes belong to
   its inline head and tail, so as a box it has none: `size`, `min_size` and `max_size` are `auto`,
   `margin`, `padding` and `border` zero.
+- `src/wrapper.rs` (`replaced_overflow`): the `overflow` of a replaced element (`StyleFlags::IS_REPLACED`) is
+  `clip` for Taffy whenever it is not `visible`: on replaced elements the used value of every other value is
+  `clip` (CSS Overflow 3), so a replaced box is no scroll container. Its automatic minimum size as a flex or grid
+  item stays its content size and it starts no formatting context, as in Chromium; only paint clips it (blitz-paint
+  `draw_svg`). The UA sheet's `svg:not(:root) { overflow: hidden }` (blitz-dom) let SVG icons in a flex row
+  shrink without it. Covered by `an_svg_flex_item_does_not_shrink_below_its_size` in
+  `crates/pyro-render/tests/svg_viewport_clip.rs`.

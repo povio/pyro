@@ -1025,6 +1025,38 @@ generalizes `with_root_size`. Tests: `an_svg_view_fragment_shows_the_view` and
 `an_svg_background_without_a_size_is_laid_out_at_the_background_size` in pyro-render's
 `background_images_and_edges.rs`.
 
+## An inline `<svg>` clips at its viewport
+
+`assets/default.css`: Chromium's `svg:not(:root) { overflow: hidden }` (written `svg|svg:not(:root)`, with an
+`svg` namespace prefix: the sheet's default namespace is XHTML's), so an inline `<svg>`'s content stops at its box;
+blitz-paint's `draw_svg` makes the cut, at the content box. `src/stylo.rs` (`build_presentational_hints`): an SVG
+element's `overflow` attribute is the property's presentation attribute (`overflow="visible"` overrides the UA
+rule); `parse_svg_presentation_attr` returns every longhand a shorthand sets. In layout the `overflow` of a replaced
+element is `clip` (stylo_taffy's README). WPT CSS2 `*-replaced-*` pages with `svg:svg`; covered by
+`crates/pyro-render/tests/svg_viewport_clip.rs`.
+
+## `<object>` images
+
+`src/mutator.rs` (`load_image`, `set_attribute_impl`, `clear_attribute`, element creation), `src/layout/replaced.rs`
+(`is_image_object`, `object_loads_image`, `is_inline_box`), `src/layout/construct.rs`
+(`collect_layout_children_with_wrap`, `find_inline_layout_embedded_boxes_recursive`), `src/layout/inline/build.rs`,
+`src/layout/first_letter.rs`, `src/node/node.rs` (`is_non_atomic_inline`): an `<object>` whose `data` is an image
+(its `type` is `image/*`, or without a `type` the URL's extension names an image format) loads it as `<img>` loads
+its `src`. Once it has loaded, the object is replaced content: laid out by `compute_replaced_layout` from the image's
+natural size and ratio, an atomic inline box when inline-level, painted by blitz-paint's `draw_image` or `draw_svg`,
+and its children (the fallback) build no boxes. Until then, when the load fails, and for other objects (`text/html`:
+nested documents are not done), the children render as before. Removing `data` or changing `type` away from an image
+shows the fallback again. An SVG with no natural width, height or ratio keeps the fallback too
+(`object_shows_image`, `src/document.rs` `apply_loaded_image`): Chromium draws one at the default object size, which
+fails WPT `replaced-intrinsic-002`, a pass so far only because its fallback text lies under the reference's green
+square (every browser fails it). WPT CSS2 `replaced-intrinsic-003`..`005`, `margin-border-padding-003`; covered by
+`crates/pyro-render/tests/object_image.rs`.
+
+`src/layout/replaced.rs` (`compute_replaced_layout`): a replaced element with only a ratio (an SVG with a `viewBox`
+and no size) and an auto width is as wide as the available width less its borders and padding, a stretch-fit size;
+its content box took the whole width, so the box overflowed by its padding (`replaced-intrinsic-003`, test
+`a_ratio_only_image_fills_the_width_less_its_padding`).
+
 ## Links to the document itself are visited
 
 `src/node/element.rs` (`ElementData::flush_link_visited`), `src/mutator.rs` (`create_element`, `set_attribute_impl`,
