@@ -101,6 +101,12 @@ struct Descent<'a> {
     /// Table rows' and row groups' bounds (document CSS px), from the
     /// tables entered so far.
     rows: FxHashMap<NodeId, Rect>,
+    /// pyro: a multi-column container has been laid out in the document.
+    multicol: bool,
+    /// pyro: the boxes in a multi-column container's strip (blitz-dom `layout::multicol`): each
+    /// is shown in the column where it lies ([`Geometry::transform`]), and none is culled (a
+    /// box split by a column break has its parts in different columns).
+    columns: FxHashSet<NodeId>,
     path: Vec<Path>,
     out: Vec<HitVisit>,
     order: u32,
@@ -132,6 +138,8 @@ pub(crate) fn candidates(
         unions: FxHashMap::default(),
         inline_growth: FxHashMap::default(),
         rows: FxHashMap::default(),
+        multicol: doc.has_multicol(),
+        columns: FxHashSet::default(),
         path: Vec::new(),
         out: Vec::new(),
         order: 0,
@@ -157,6 +165,15 @@ impl Descent<'_> {
             return Some(*t);
         }
         let node = self.doc.get_node(id)?;
+        if let Some(p) = node.containing_block().filter(|_| self.multicol) {
+            self.transform(p)?;
+            if self.columns.contains(&p) || self.doc.get_node(p)?.column_fragments().is_some() {
+                self.columns.insert(id);
+                let t = self.g.transform(self.doc, id)?;
+                self.transforms.insert(id, t);
+                return Some(t);
+            }
+        }
         let (base, fixed) = match node.containing_block() {
             Some(p) => {
                 let (t, fixed) = self.transform(p)?;
@@ -259,7 +276,12 @@ impl Descent<'_> {
             let Some((t, fixed)) = self.transform(id) else { return };
             let l = self.doc.physical_unrounded_layout(id);
             let (w, h) = (l.size.width as f64, l.size.height as f64);
-            let mut own = t.transform_rect_bbox(Rect::new(0.0, 0.0, w, h));
+            // pyro: a box in columns is the union of its pieces in them (`Geometry::columns_box`).
+            let mut own = match self.columns.contains(&id) {
+                true => self.g.columns_box(self.doc, id),
+                false => None,
+            }
+            .unwrap_or_else(|| t.transform_rect_bbox(Rect::new(0.0, 0.0, w, h)));
             if is_cell {
                 if let Some((gx, top, bottom)) = geometry::cell_gutters(self.doc, id) {
                     own = Rect::new(own.x0 - gx, own.y0 - top, own.x1 + gx, own.y1 + bottom);
@@ -269,7 +291,12 @@ impl Descent<'_> {
             let p = self.point(fixed, shift);
             // A zero box is never hit (pyro-dom skips it); its children may be.
             let candidate = (w > 0.0 || h > 0.0) && self.contains(&own, p);
-            (candidate, self.bound(id).map(|(r, _)| r))
+            // pyro: nor is a multi-column container's subtree: its hit bound (its strip's overflow
+            // cut at the breaks, `resolve.rs`) missed content the scan of every box reached
+            // (`hit_adversarial`'s interleaved-mutations page 26).
+            let in_columns = self.columns.contains(&id) || (self.multicol && node.column_fragments().is_some());
+            let cull = if in_columns { None } else { self.bound(id).map(|(r, _)| r) };
+            (candidate, cull)
         } else if is_table_part {
             match self.rows.get(&id).copied() {
                 // Both fixed states: the row's box takes its table's.
@@ -390,10 +417,17 @@ impl Descent<'_> {
         let Some(root) = self.doc.get_node(root_id) else { return };
         let Some(text) = root.element_data().and_then(|e| e.inline_layout_data.as_ref()) else { return };
         let doc = self.doc;
-        let origin = t * geometry::line_box_origin(doc, root_id, text);
+        let line_origin = geometry::line_box_origin(doc, root_id, text);
+        let origin = t * line_origin;
         let scale = text.layout.scale() as f64;
+        // pyro: lines in a multi-column container's columns.
+        let columns = if self.multicol { geometry::line_column_shift(doc, root_id) } else { None };
         for line in text.layout.lines() {
-            let origin = origin * geometry::line_slot(doc, root_id, &line.metrics(), scale);
+            let mut origin = origin * geometry::line_slot(doc, root_id, &line.metrics(), scale);
+            if let Some(shift) = &columns {
+                let top = line_origin * kurbo::Point::new(0.0, line.metrics().block_min_coord as f64 / scale);
+                origin = shift(top.y) * origin;
+            }
             for item in line.items() {
                 let (start, r) = geometry::inline_item_rect(&line, &item, scale, text.layout.is_rtl());
                 // An element's fragment grows to its border box in the block axis.
@@ -432,6 +466,11 @@ impl Descent<'_> {
         let Some(SpecialElementData::TableRoot(ctx)) = node.element_data().map(|e| &e.special_data) else { return };
         let ctx = std::sync::Arc::clone(ctx);
         let Some((t, _)) = self.transform(id) else { return };
+        // pyro: a table in a multi-column container's strip may be cut across columns, its rows
+        // shown in other columns than its origin's: they keep no bound (nothing is culled).
+        if self.columns.contains(&id) {
+            return;
+        }
         let doc = self.doc;
         let scale = self.scale;
         let mut extents: Vec<Rect> =

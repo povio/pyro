@@ -56,6 +56,11 @@ struct HitTestGeometry {
     scroll_offsets: FxHashMap<NodeId, (f64, f64)>,
     has_element_scroll: bool,
     has_sticky: bool,
+    /// The engine may split boxes into fragments (columns): a box is hit only in one of its
+    /// fragments ([`GeometrySource::element_fragments`]), not anywhere in their union.
+    has_fragments: bool,
+    /// Boxes' fragments as the engine reports them (`None`: whole), by element.
+    fragments: FxHashMap<NodeId, Option<Rc<[Rect]>>>,
 }
 
 use crate::media::Viewport;
@@ -1882,6 +1887,7 @@ impl Layout {
         let mut geometry = HitTestGeometry {
             has_element_scroll: self.element_scroll.values().any(|&(x, y)| x != 0 || y != 0),
             has_sticky: self.external.as_ref().is_some_and(|source| source.has_sticky()),
+            has_fragments: self.external.as_ref().is_some_and(|source| source.has_fragmented_boxes()),
             ..Default::default()
         };
         let mut order: Vec<(u32, NodeId)> = result
@@ -1952,7 +1958,9 @@ impl Layout {
         let has_element_scroll = self.element_scroll.values().any(|&(x, y)| x != 0 || y != 0);
         let sticky = self.sticky_map(dom);
         let has_sticky = !sticky.is_empty();
-        let geometry = RefCell::new(HitTestGeometry { has_element_scroll, has_sticky, ..Default::default() });
+        let has_fragments = source.has_fragmented_boxes();
+        let geometry =
+            RefCell::new(HitTestGeometry { has_element_scroll, has_sticky, has_fragments, ..Default::default() });
         let probe =
             HitProbe { x, y, ignore_x, window_scroll: (self.window_scroll.0 as f64, self.window_scroll.1 as f64) };
         // How far this document moves an element's box from where the
@@ -2004,6 +2012,7 @@ impl Layout {
         let mut geometry = HitTestGeometry {
             has_element_scroll: self.element_scroll.values().any(|&(x, y)| x != 0 || y != 0),
             has_sticky: self.external.as_ref().is_some_and(|source| source.has_sticky()),
+            has_fragments: self.external.as_ref().is_some_and(|source| source.has_fragmented_boxes()),
             ..Default::default()
         };
         let mut all: Vec<NodeId> = result.boxes.keys().copied().collect();
@@ -2050,6 +2059,28 @@ impl Layout {
             let r = self.hit_test_client_rect(dom, result, el, geometry);
             if !inside(&r) || !self.is_visible(dom, el) || !self.style.is_hit_testable(dom, el) {
                 continue;
+            }
+            // A box split into fragments (columns) is hit in one of them: its rect is their union.
+            if geometry.has_fragments {
+                let fragments = geometry
+                    .fragments
+                    .entry(el)
+                    .or_insert_with(|| {
+                        let source = self.external.as_ref()?;
+                        let pieces = source.element_fragments(crate::snapshot::render_key(el))?;
+                        // Moved as the union is (scroll and sticky offsets, the window scroll).
+                        let (dx, dy) = (r.x - b.rect.x, r.y - b.rect.y);
+                        Some(
+                            pieces
+                                .iter()
+                                .map(|&[x, y, w, h]| Rect { x: x + dx, y: y + dy, width: w, height: h })
+                                .collect(),
+                        )
+                    })
+                    .clone();
+                if fragments.is_some_and(|f| !f.iter().any(|f| inside(f))) {
+                    continue;
+                }
             }
             if self.is_table_row_box(dom, el) {
                 continue;

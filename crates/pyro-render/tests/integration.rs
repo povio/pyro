@@ -33,6 +33,7 @@ mod line_height_normal;
 mod line_paint_order;
 mod mirror;
 mod mix_blend_mode;
+mod multicol;
 mod opacity_group;
 mod out_of_flow_boundary;
 mod pdf_fidelity;

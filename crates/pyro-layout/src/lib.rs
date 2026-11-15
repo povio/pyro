@@ -729,6 +729,16 @@ impl GeometrySource for BlitzGeometry {
         })
     }
 
+    fn element_fragments(&self, key: u64) -> Option<Vec<[f64; 4]>> {
+        RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.element_fragments(self.page, key))
+    }
+
+    fn has_fragmented_boxes(&self) -> bool {
+        RENDERER.with(|r| {
+            r.try_borrow().ok().is_some_and(|r| r.as_ref().is_some_and(|r| r.has_fragmented_boxes(self.page)))
+        })
+    }
+
     fn geometry(&self) -> Option<ExternalGeometry> {
         let t = profile::on().then(Instant::now);
         let g = self.geometry_inner();

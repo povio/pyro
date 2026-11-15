@@ -178,6 +178,10 @@ pub struct LayoutData {
     pub collapsed_border: Option<[f32; 4]>,
     /// pyro: a table cell's index in its table's `TableContext::cells` (`u32::MAX`: none).
     pub table_cell_index: u32,
+    /// pyro: a multi-column container's columns, from its last layout (`layout::multicol`). Read
+    /// through `Node::column_fragments`, which ignores them once the box's style makes it no
+    /// multi-column container.
+    pub columns: Option<Box<crate::layout::multicol::ColumnFragments>>,
     /// The writing mode this node's layout algorithm ran in (the root takes it from `<body>`),
     /// recorded by the layout pass for CSSOM geometry lookups.
     #[cfg(feature = "writing-mode")]
@@ -197,6 +201,7 @@ impl LayoutData {
             rounded_from: None,
             collapsed_border: None,
             table_cell_index: u32::MAX,
+            columns: None,
             #[cfg(feature = "writing-mode")]
             writing_mode: stylo_taffy::WritingMode::empty(),
         }
