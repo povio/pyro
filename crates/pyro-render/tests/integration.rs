@@ -35,6 +35,7 @@ mod pdf_variable_fonts;
 mod profiling_timers;
 mod render;
 mod sampled_animations;
+mod style_element_text;
 mod style_sheet_charset;
 mod svg_content;
 mod svg_filters;

@@ -884,6 +884,13 @@ case-sensitive-004). `lang_attr` gives Stylo the element's own attribute for inv
 revalidation selector, so style sharing stays correct. The HTTP `Content-Language` header is not seen (the
 document's response headers do not reach the renderer). Covered by `crates/pyro-render/tests/lang_pseudo_class.rs`.
 
+## `<style>` text is the sheet as it is
+
+`src/document.rs` (`process_style_element`): upstream decoded HTML character references in a `<style>` element's
+text before parsing it as CSS. The parser already decoded those the markup has (XML text, an SVG `<style>` in HTML);
+an HTML `<style>` is raw text and an XML CDATA section is literal, so a `&#x46;` left there is four characters in
+every browser (WPT css/CSS2/generated-content/content-177). Covered by `crates/pyro-render/tests/style_element_text.rs`.
+
 ## Tagged images in sRGB
 
 `src/icc.rs` (new), `src/net.rs` (`ImageHandler::parse`), `Cargo.toml` (`moxcms` 0.8, the image crate's own colour
