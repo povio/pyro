@@ -77,6 +77,34 @@ out-of-flow boxes keep their margins. The container's own margins are not trimme
 reported as zero in the children's `Layout::margin`. Covered by `crates/pyro-render/tests/margin_trim.rs` and
 WPT `css/css-box/margin-trim` (42 of 42 reftests).
 
+`compute/block.rs`, `compute/grid/alignment.rs`, `style/mod.rs`, `style/block.rs`: `aspect-ratio` as
+css-sizing-4 §5 has it, in block layout (`RatioSizes`, `resolve_sizes_with_aspect_ratio`). Upstream applied
+the ratio to `size`, `min-size` and `max-size` each on its own, so a limit in one axis overrode a size given in
+the other (`width: 100px; aspect-ratio: 2/1; min-height: 100px` was 200px wide), and a box was never taller or
+wider than its ratio made it.
+
+- The axis the ratio gives follows the other one after that one's own minimum and maximum. Limits are
+  transferred through the ratio only when both sizes are `auto` (block axis to inline axis: the minimum no
+  larger than `max-width`, the maximum no smaller than `min-width`).
+- The automatic minimum size. A block container whose height follows its ratio (`height_follows_ratio`:
+  the height is then not handed down as known; `compute_inner` derives it from the used width, so a float's
+  or an inline-block's shrink-to-fit width counts) is as tall as its content when that is taller, up to
+  `max-height`, unless `min-height` is set or it is a scroll container. A flex or grid container gets the same
+  from its block parent, which measures its content height (`BlockItem::content_min_height_ratio`); not a
+  wrapping column flex container, whose lines break at the ratio's height
+  (`BlockItemStyle::breaks_lines_in_block_axis`, default false). A box whose width follows its ratio is as
+  wide as its min-content width, up to `max-width` (`BlockItem::min_width_is_content`, measured in
+  `SizingMode::ContentSize`).
+- `CoreStyle::aspect_ratio_of_content_box` (default false): `aspect-ratio: auto <ratio>` on a non-replaced
+  box is the ratio of its content box whatever `box-sizing` says (`aspect_ratio_inset`).
+- Grid items (`align_and_position_item`): with a ratio, an explicit `stretch` in an axis with an `auto` size
+  fills the grid area whatever the ratio gives that axis; the other axis, when `auto` and not stretched,
+  follows through the ratio.
+
+Not done: the flex algorithm's own rules for items with a ratio (content size suggestion, flex base size),
+absolutely positioned boxes, tables. Covered by `crates/pyro-render/tests/aspect_ratio.rs`; WPT
+`css/css-sizing`: 50 more reftests pass.
+
 ## Incremental rounding
 
 These hooks went unused for a while. blitz-dom's `writing-mode` feature (#199) replaced `round_layout` with

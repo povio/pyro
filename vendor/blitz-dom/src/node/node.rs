@@ -2018,6 +2018,10 @@ impl Node {
         if let Some(el) = self.data.downcast_element() {
             if crate::layout::replaced::is_replaced(el) {
                 flags |= stylo_taffy::StyleFlags::IS_REPLACED;
+                // pyro
+                if styles.get_position().aspect_ratio.auto && crate::layout::replaced::has_natural_ratio(el) {
+                    flags |= stylo_taffy::StyleFlags::HAS_NATURAL_RATIO;
+                }
             }
             if el.name.local == local_name!("button") {
                 flags |= stylo_taffy::StyleFlags::IS_BUTTON;

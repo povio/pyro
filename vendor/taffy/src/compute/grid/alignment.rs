@@ -215,6 +215,40 @@ pub(super) fn align_and_position_item(
         height: (grid_area_size.height.maybe_sub(margin.top).maybe_sub(margin.bottom) - baseline_shim).max(0.0),
     };
 
+    // pyro: an item with a preferred aspect ratio and an explicit `stretch` alignment. In an axis
+    // with an `auto` size, `stretch` fills the grid area whatever the ratio would give that axis
+    // (both axes stretched: the ratio is not kept); the other axis, if `auto` and not stretched,
+    // follows the stretched one through the ratio instead of filling its own (css-grid-1 §6.2,
+    // css-sizing-4 §5; WPT `grid-aspect-ratio-018`, `-029`, `-032` to `-037`).
+    let inherent_size = match aspect_ratio {
+        Some(ratio) if !is_replaced && !position.is_out_of_flow() => {
+            let stretches = Size {
+                width: justify_self.keyword == AlignItemsKeyword::Stretch
+                    && size_style.width.is_auto()
+                    && margin.left.is_some()
+                    && margin.right.is_some(),
+                height: align_self.keyword == AlignItemsKeyword::Stretch
+                    && size_style.height.is_auto()
+                    && margin.top.is_some()
+                    && margin.bottom.is_some(),
+            };
+            let area = grid_area_minus_item_margins_size;
+            match (stretches.width, stretches.height) {
+                (true, true) => area.map(Some),
+                (true, false) => Size {
+                    width: Some(area.width),
+                    height: if size_style.height.is_auto() { Some(area.width / ratio) } else { inherent_size.height },
+                },
+                (false, true) => Size {
+                    width: if size_style.width.is_auto() { Some(area.height * ratio) } else { inherent_size.width },
+                    height: Some(area.height),
+                },
+                (false, false) => inherent_size,
+            }
+        }
+        _ => inherent_size,
+    };
+
     // A size that is a sizing keyword (min-content, max-content, fit-content,
     // fit-content(...), stretch) either resolves to an exact size or is resolved
     // by measuring the item under the corresponding available space constraint

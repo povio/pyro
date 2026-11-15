@@ -42,6 +42,14 @@ pub trait BlockItemStyle: CoreStyle {
         false
     }
 
+    /// pyro: whether the item is a flex container whose lines break in the block axis (a
+    /// wrapping column container). Its content height depends on its own height, so it is not
+    /// measured for the automatic minimum height of a box with a preferred aspect ratio.
+    #[inline(always)]
+    fn breaks_lines_in_block_axis(&self) -> bool {
+        false
+    }
+
     /// How an out-of-flow (absolutely positioned) child is aligned in the block axis of its
     /// static-position rectangle (`align-self`). `None` corresponds to `normal`/`auto`.
     #[inline(always)]

@@ -80,6 +80,26 @@ pub(crate) fn object_shows_image(image: &crate::node::ImageData) -> bool {
     }
 }
 
+/// pyro: whether a replaced element has a natural aspect ratio: a loaded raster image, an SVG
+/// image with a natural width and height or a `viewBox`, a canvas. `aspect-ratio: auto <ratio>`
+/// then means that ratio (css-sizing-4 §5.1); without one it means `<ratio>`.
+pub(crate) fn has_natural_ratio(element: &ElementData) -> bool {
+    use crate::node::{ImageData, SpecialElementData};
+    match &element.special_data {
+        SpecialElementData::Image(image) => match &**image {
+            ImageData::Raster(image) => image.width > 0 && image.height > 0,
+            #[cfg(feature = "svg")]
+            ImageData::Svg(svg) => {
+                matches!((svg.intrinsic_width(), svg.intrinsic_height()), (Some(w), Some(h)) if w > 0.0 && h > 0.0)
+                    || svg.viewbox_aspect_ratio().is_some()
+            }
+            ImageData::None => false,
+        },
+        SpecialElementData::Canvas(_) => true,
+        _ => false,
+    }
+}
+
 /// pyro: whether `element` is laid out as an atomic inline box when inline-level:
 /// an inline box tag ([`is_inline_box_element`]) or an `<object>` showing an image.
 pub(crate) fn is_inline_box(element: &ElementData) -> bool {

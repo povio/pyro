@@ -181,6 +181,12 @@ pub trait CoreStyle {
     fn aspect_ratio(&self) -> Option<f32> {
         Style::<Self::CustomIdent>::DEFAULT.aspect_ratio
     }
+    /// pyro: whether the preferred aspect ratio is that of the content box whatever `box-sizing`
+    /// says: `aspect-ratio: auto <ratio>` on a non-replaced box (css-sizing-4 §5.1).
+    #[inline(always)]
+    fn aspect_ratio_of_content_box(&self) -> bool {
+        false
+    }
 
     // Spacing Properties
     /// How large should the margin be on each side?
@@ -1126,6 +1132,10 @@ impl<T: CoreStyle> CoreStyle for &'_ T {
     #[inline(always)]
     fn aspect_ratio(&self) -> Option<f32> {
         (*self).aspect_ratio()
+    }
+    #[inline(always)]
+    fn aspect_ratio_of_content_box(&self) -> bool {
+        (*self).aspect_ratio_of_content_box()
     }
     #[inline(always)]
     fn margin(&self) -> Rect<LengthPercentageAuto> {

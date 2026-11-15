@@ -1741,3 +1741,14 @@ Covered by `crates/pyro-render/tests/text_box_trim.rs`.
   moves the box by it (its README.pyro.md).
 
 Covered by `crates/pyro-render/tests/sticky_paint.rs`.
+
+## `aspect-ratio: auto <ratio>` on replaced elements (round 3 lane S)
+
+- `src/layout/replaced.rs` (`has_natural_ratio`), `src/node/node.rs` (`layout_style`): a replaced element with a
+  natural aspect ratio (a loaded raster image, an SVG image with a natural size or a `viewBox`, a canvas) and
+  `aspect-ratio: auto <ratio>` is flagged `StyleFlags::HAS_NATURAL_RATIO`, and stylo_taffy then reports no
+  preferred ratio: the natural one applies, as css-sizing-4 §5.1 has it (the `<ratio>` applied before, so a
+  1x1 image with `width: 100px; aspect-ratio: auto 10/1` was 10px tall). Without a natural ratio (an image not
+  loaded yet) the `<ratio>` still applies.
+
+Covered by WPT `css/css-sizing/aspect-ratio/replaced-element-029`, `-030` and `grid-aspect-ratio-005`, `-006`.

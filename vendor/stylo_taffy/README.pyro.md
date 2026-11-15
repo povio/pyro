@@ -14,3 +14,8 @@ entry) once a Blitz release carries these commits and changes.
   `margin`, `padding` and `border` zero.
 - `src/wrapper.rs`: `BlockContainerStyle::margin_trim` answers from the computed `margin-trim`
   (`block-start`, `block-end`), for Taffy's block layout (vendor/taffy/README.pyro.md).
+- `src/wrapper.rs`: for Taffy's aspect-ratio rules (vendor/taffy/README.pyro.md):
+  `aspect_ratio_of_content_box` (`auto <ratio>` on a non-replaced box), `breaks_lines_in_block_axis` (a wrapping
+  column flex container), and `StyleFlags::HAS_NATURAL_RATIO`, set by blitz-dom on a replaced element with a
+  natural aspect ratio: `aspect_ratio()` then answers `None` for `auto <ratio>`, so the natural ratio applies
+  (css-sizing-4 §5.1).

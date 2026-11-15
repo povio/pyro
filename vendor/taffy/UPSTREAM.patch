@@ -1,9 +1,167 @@
 diff --git a/src/compute/block.rs b/src/compute/block.rs
-index 3cd3e713..af8ac249 100644
+index 3cd3e713..14aaddcf 100644
 --- a/src/compute/block.rs
 +++ b/src/compute/block.rs
-@@ -499,16 +499,11 @@ pub fn compute_block_layout(
+@@ -366,6 +366,14 @@ struct BlockItem {
+ 
+     /// The base size of this item
+     size: Size<Option<f32>>,
++    /// pyro: the item's width is its height's through its preferred aspect ratio, with an
++    /// automatic minimum: its min-content width, no larger than its `max-width` (css-sizing-4 §5.1).
++    min_width_is_content: bool,
++    /// pyro: for an item that is no block container (a flex or grid container) and whose height is
++    /// its width's through its preferred aspect ratio, with an automatic minimum: the ratio and
++    /// what its box is smaller by than the border box. The item is as tall as its content when
++    /// that is taller (no taller than its `max-height`); a block container sees to it itself.
++    content_min_height_ratio: Option<(f32, Size<f32>)>,
+     /// The minimum allowable size of this item
+     min_size: Size<Option<f32>>,
+     /// The maximum allowable size of this item
+@@ -415,6 +423,85 @@ struct BlockItem {
+     oof_candidates: OofCandidates,
+ }
+ 
++/// pyro: the sizes of a box with a preferred aspect ratio (css-sizing-4 §5), as outer sizes.
++struct RatioSizes {
++    /// `width`/`height`; the axis the ratio gives (from the other one, clamped by its own minimum
++    /// and maximum first) is filled in.
++    size: Size<Option<f32>>,
++    /// `min-width`/`min-height`, and `max-width`/`max-height`. With both sizes `auto` the block
++    /// axis' limits are transferred to the inline axis through the ratio: the minimum no larger
++    /// than the inline maximum, the maximum no smaller than the inline minimum. Nothing is
++    /// transferred into an axis whose size is given.
++    min_size: Size<Option<f32>>,
++    max_size: Size<Option<f32>>,
++    /// The width is the height's through the ratio.
++    width_from_ratio: bool,
++    /// The height is the width's through the ratio (the used width's, when both are `auto`).
++    height_from_ratio: bool,
++}
++
++/// pyro: see [`RatioSizes`]. `size`, `min_size` and `max_size` are the resolved style values, in
++/// the box `box-sizing` names; `box_sizing_adjustment` makes them outer sizes; `ratio_inset` is what
++/// the ratio's box is smaller by than that box (see [`aspect_ratio_inset`]).
++fn resolve_sizes_with_aspect_ratio(
++    mut size: Size<Option<f32>>,
++    mut min_size: Size<Option<f32>>,
++    mut max_size: Size<Option<f32>>,
++    aspect_ratio: Option<f32>,
++    ratio_inset: Size<f32>,
++    box_sizing_adjustment: Size<f32>,
++) -> RatioSizes {
++    let mut width_from_ratio = false;
++    let mut height_from_ratio = false;
++    if let Some(ratio) = aspect_ratio {
++        let to_height = |width: f32| (width - ratio_inset.width).max(0.0) / ratio + ratio_inset.height;
++        let to_width = |height: f32| (height - ratio_inset.height).max(0.0) * ratio + ratio_inset.width;
++        match (size.width, size.height) {
++            (Some(width), None) => {
++                size.height = Some(to_height(width.maybe_clamp(min_size.width, max_size.width)));
++                height_from_ratio = true;
++            }
++            (None, Some(height)) => {
++                size.width = Some(to_width(height.maybe_clamp(min_size.height, max_size.height)));
++                width_from_ratio = true;
++            }
++            (None, None) => {
++                let transferred_min = min_size.height.map(to_width).map(|min| min.maybe_min(max_size.width));
++                let transferred_max = max_size.height.map(to_width).map(|max| max.maybe_max(min_size.width));
++                min_size.width = match (min_size.width, transferred_min) {
++                    (Some(own), Some(transferred)) => Some(own.max(transferred)),
++                    (own, transferred) => own.or(transferred),
++                };
++                max_size.width = match (max_size.width, transferred_max) {
++                    (Some(own), Some(transferred)) => Some(own.min(transferred)),
++                    (own, transferred) => own.or(transferred),
++                };
++                height_from_ratio = true;
++            }
++            (Some(_), Some(_)) => {}
++        }
++    }
++    RatioSizes {
++        size: size.maybe_add(box_sizing_adjustment),
++        min_size: min_size.maybe_add(box_sizing_adjustment),
++        max_size: max_size.maybe_add(box_sizing_adjustment),
++        width_from_ratio,
++        height_from_ratio,
++    }
++}
++
++/// pyro: what the box of a preferred aspect ratio is smaller by than the box `box-sizing` names:
++/// nothing, but for `aspect-ratio: auto <ratio>` on a non-replaced box, whose ratio is its content
++/// box's whatever `box-sizing` says (css-sizing-4 §5.1).
++#[inline]
++fn aspect_ratio_inset(style: &impl CoreStyle, padding_border_size: Size<f32>) -> Size<f32> {
++    if style.aspect_ratio_of_content_box() && style.box_sizing() == BoxSizing::BorderBox {
++        padding_border_size
++    } else {
++        Size::ZERO
++    }
++}
++
+ /// Computes the layout of [`LayoutPartialTree`] according to the block layout algorithm
+ pub fn compute_block_layout(
+     tree: &mut impl LayoutBlockContainer,
+@@ -443,23 +530,18 @@ pub fn compute_block_layout(
+     let box_sizing_adjustment =
+         if style.box_sizing() == BoxSizing::ContentBox { padding_border_size } else { Size::ZERO };
+ 
+-    let min_size = style
+-        .min_size()
+-        .maybe_resolve(parent_size, |val, basis| tree.calc(val, basis))
+-        .maybe_apply_aspect_ratio(aspect_ratio)
+-        .maybe_add(box_sizing_adjustment);
+-    let max_size = style
+-        .max_size()
+-        .maybe_resolve(parent_size, |val, basis| tree.calc(val, basis))
+-        .maybe_apply_aspect_ratio(aspect_ratio)
+-        .maybe_add(box_sizing_adjustment);
+-    let clamped_style_size = if inputs.sizing_mode == SizingMode::InherentSize {
+-        style
+-            .size()
+-            .maybe_resolve(parent_size, |val, basis| tree.calc(val, basis))
+-            .maybe_apply_aspect_ratio(aspect_ratio)
+-            .maybe_add(box_sizing_adjustment)
+-            .maybe_clamp(min_size, max_size)
++    // pyro: css-sizing-4 §5 ([`RatioSizes`])
++    let sizes = resolve_sizes_with_aspect_ratio(
++        style.size().maybe_resolve(parent_size, |val, basis| tree.calc(val, basis)),
++        style.min_size().maybe_resolve(parent_size, |val, basis| tree.calc(val, basis)),
++        style.max_size().maybe_resolve(parent_size, |val, basis| tree.calc(val, basis)),
++        aspect_ratio,
++        aspect_ratio_inset(&style, padding_border_size),
++        box_sizing_adjustment,
++    );
++    let (min_size, max_size) = (sizes.min_size, sizes.max_size);
++    let mut clamped_style_size = if inputs.sizing_mode == SizingMode::InherentSize {
++        sizes.size.maybe_clamp(min_size, max_size)
+     } else {
+         Size::NONE
+     };
+@@ -472,6 +554,17 @@ pub fn compute_block_layout(
+         _ => None,
+     });
+ 
++    // pyro: a height that is the width's through the aspect ratio is not known here: the box's
++    // layout derives it from its used width, and its content can make it taller (the automatic
++    // minimum size, css-sizing-4 §5.1).
++    let height_follows_ratio = sizes.height_from_ratio
++        && inputs.sizing_mode == SizingMode::InherentSize
++        && known_dimensions.height.is_none()
++        && min_max_definite_size.height.is_none();
++    if height_follows_ratio {
++        clamped_style_size.height = None;
++    }
++
+     let styled_based_known_dimensions =
+         known_dimensions.or(min_max_definite_size).or(clamped_style_size).maybe_max(padding_border_size);
+ 
+@@ -497,18 +590,15 @@ pub fn compute_block_layout(
+             tree,
+             node_id,
              LayoutInput { known_dimensions: styled_based_known_dimensions, ..inputs },
++            height_follows_ratio,
              inherited_bfc,
          ),
 -        _ => {
@@ -20,11 +178,12 @@ index 3cd3e713..af8ac249 100644
 +            tree,
 +            node_id,
 +            LayoutInput { known_dimensions: styled_based_known_dimensions, ..inputs },
++            height_follows_ratio,
 +        ),
      };
  
      // Layout containment suppresses the box's baseline for baseline-alignment purposes
-@@ -519,6 +514,17 @@ pub fn compute_block_layout(
+@@ -519,11 +609,29 @@ pub fn compute_block_layout(
      output
  }
  
@@ -33,16 +192,28 @@ index 3cd3e713..af8ac249 100644
 +// `compute_block_layout` for the boxes that join their parent's (that frame is on the stack once
 +// per tree level of a recursive layout).
 +#[inline(never)]
-+fn compute_inner_in_new_bfc(tree: &mut impl LayoutBlockContainer, node_id: NodeId, inputs: LayoutInput) -> LayoutOutput {
++fn compute_inner_in_new_bfc(
++    tree: &mut impl LayoutBlockContainer,
++    node_id: NodeId,
++    inputs: LayoutInput,
++    height_follows_ratio: bool,
++) -> LayoutOutput {
 +    let mut root_bfc = BlockFormattingContext::new();
 +    let mut root_ctx = root_bfc.root_block_context();
-+    compute_inner(tree, node_id, inputs, &mut root_ctx)
++    compute_inner(tree, node_id, inputs, height_follows_ratio, &mut root_ctx)
 +}
 +
  /// Computes the layout of [`LayoutBlockContainer`] according to the block layout algorithm
  fn compute_inner(
      tree: &mut impl LayoutBlockContainer,
-@@ -537,7 +543,9 @@ fn compute_inner(
+     node_id: NodeId,
+     inputs: LayoutInput,
++    // pyro: the height is the used width's through the preferred aspect ratio (css-sizing-4 §5).
++    height_follows_ratio: bool,
+     #[allow(unused_mut)] mut block_ctx: &mut BlockContext<'_>,
+ ) -> LayoutOutput {
+     let LayoutInput {
+@@ -537,7 +645,9 @@ fn compute_inner(
      let aspect_ratio = style.aspect_ratio();
      let padding = raw_padding.resolve_or_zero(parent_size.width, |val, basis| tree.calc(val, basis));
      let border = raw_border.resolve_or_zero(parent_size.width, |val, basis| tree.calc(val, basis));
@@ -53,7 +224,77 @@ index 3cd3e713..af8ac249 100644
  
      // Scrollbar gutters are reserved when the `overflow` property is set to `Overflow::Scroll`.
      // However, the axis are switched (transposed) because a node that scrolls vertically needs
-@@ -633,6 +641,8 @@ fn compute_inner(
+@@ -562,21 +672,31 @@ fn compute_inner(
+ 
+     let box_sizing_adjustment =
+         if style.box_sizing() == BoxSizing::ContentBox { padding_border_size } else { Size::ZERO };
+-    let size = style
+-        .size()
+-        .maybe_resolve(parent_size, |val, basis| tree.calc(val, basis))
+-        .maybe_apply_aspect_ratio(aspect_ratio)
+-        .maybe_add(box_sizing_adjustment);
+-    let min_size = style
+-        .min_size()
+-        .maybe_resolve(parent_size, |val, basis| tree.calc(val, basis))
+-        .maybe_apply_aspect_ratio(aspect_ratio)
+-        .maybe_add(box_sizing_adjustment);
+-    let max_size = style
+-        .max_size()
+-        .maybe_resolve(parent_size, |val, basis| tree.calc(val, basis))
+-        .maybe_apply_aspect_ratio(aspect_ratio)
+-        .maybe_add(box_sizing_adjustment);
++    // pyro: css-sizing-4 §5 ([`RatioSizes`])
++    let ratio_inset = aspect_ratio_inset(&style, padding_border_size);
++    let sizes = resolve_sizes_with_aspect_ratio(
++        style.size().maybe_resolve(parent_size, |val, basis| tree.calc(val, basis)),
++        style.min_size().maybe_resolve(parent_size, |val, basis| tree.calc(val, basis)),
++        style.max_size().maybe_resolve(parent_size, |val, basis| tree.calc(val, basis)),
++        aspect_ratio,
++        ratio_inset,
++        box_sizing_adjustment,
++    );
++    let (size, min_size, max_size) = (sizes.size, sizes.min_size, sizes.max_size);
++    // pyro: the height the aspect ratio gives a border box of a width, between `min-height` and
++    // `max-height`, when the height follows the ratio.
++    let ratio_height = |outer_width: f32| -> Option<f32> {
++        let ratio = aspect_ratio.filter(|_| height_follows_ratio)?;
++        let ratio_box_inset = box_sizing_adjustment + ratio_inset;
++        let height = (outer_width - ratio_box_inset.width).max(0.0) / ratio + ratio_box_inset.height;
++        Some(height.maybe_clamp(min_size.height, max_size.height))
++    };
++    // pyro: the automatic minimum size in the block axis of a box whose height follows its ratio is
++    // its content height (css-sizing-4 §5.1), unless it is a scroll container.
++    let min_height_is_content = height_follows_ratio
++        && style.min_size().height.is_auto()
++        && !style.overflow().y.is_scroll_container()
++        && !style.overflow().x.is_scroll_container();
+ 
+     // css-sizing-4: a definite size in one axis transfers through `aspect-ratio`
+     // to make the other definite. Deriving it from `known_dimensions` self-gates
+@@ -585,13 +705,20 @@ fn compute_inner(
+     // while probing intrinsic sizes, so measure passes stay content-based. Only a
+     // newly-filled axis is adopted (and clamped); an incoming known size is left
+     // as the parent resolved it (re-clamping would undo padding/border overrides).
+-    let known_dimensions = {
++    let known_dimensions = if height_follows_ratio {
++        // pyro: the height is settled once the content is laid out
++        known_dimensions
++    } else {
+         let derived = known_dimensions.maybe_apply_aspect_ratio(aspect_ratio).maybe_clamp(min_size, max_size);
+         Size { width: known_dimensions.width.or(derived.width), height: known_dimensions.height.or(derived.height) }
+     };
+     let percentage_basis_dimensions = Size {
+         width: known_dimensions.width,
+-        height: known_dimensions.height.filter(|_| inputs.known_dimensions_are_definite.height),
++        height: known_dimensions
++            .height
++            .filter(|_| inputs.known_dimensions_are_definite.height)
++            // pyro: percentages resolve against the height the ratio gives
++            .or_else(|| known_dimensions.width.and_then(ratio_height)),
+     };
+     let container_content_box_size = percentage_basis_dimensions.maybe_sub(content_box_inset.sum_axes());
+ 
+@@ -633,6 +760,8 @@ fn compute_inner(
      let text_align = style.text_align();
      let align_content = style.align_content();
      let justify_items = style.justify_items();
@@ -62,11 +303,13 @@ index 3cd3e713..af8ac249 100644
      drop(style);
  
      // 1. Generate items
-@@ -662,7 +672,10 @@ fn compute_inner(
+@@ -662,7 +791,12 @@ fn compute_inner(
      // must not be influenced by the item's specified height).
      let container_percentage_resolution_height = percentage_basis_dimensions
          .height
 -        .or(if inputs.sizing_mode == SizingMode::InherentSize { size.height.maybe_max(min_size.height) } else { None });
++        // pyro
++        .or_else(|| ratio_height(container_outer_width))
 +        .or(if inputs.sizing_mode == SizingMode::InherentSize { size.height.maybe_max(min_size.height) } else { None })
 +        // pyro: a box that is no containing block (an inline box laid out around its blocks)
 +        // hands its own containing block's height on.
@@ -74,7 +317,7 @@ index 3cd3e713..af8ac249 100644
  
      // 3. Perform final item layout and return content height
      //
-@@ -683,6 +696,7 @@ fn compute_inner(
+@@ -683,6 +817,7 @@ fn compute_inner(
          first_child_top_margin_set,
          last_child_bottom_margin_set,
          mut first_baseline,
@@ -82,7 +325,7 @@ index 3cd3e713..af8ac249 100644
      ) = perform_final_layout_on_in_flow_children(
          tree,
          run_mode,
-@@ -699,6 +713,7 @@ fn compute_inner(
+@@ -699,6 +834,7 @@ fn compute_inner(
          direction,
          own_margins_collapse_with_children,
          children_margins_adjoin_own_edges,
@@ -90,7 +333,24 @@ index 3cd3e713..af8ac249 100644
          #[cfg(feature = "content_size")]
          is_scroll_container,
          block_ctx,
-@@ -741,6 +756,7 @@ fn compute_inner(
+@@ -714,7 +850,15 @@ fn compute_inner(
+ 
+     let container_outer_height = known_dimensions
+         .height
+-        .unwrap_or(intrinsic_outer_height.maybe_clamp(min_size.height, max_size.height))
++        .unwrap_or_else(|| match ratio_height(container_outer_width) {
++            // pyro: the ratio's height, or the content's when that is taller and `min-height` is
++            // `auto` (never past `max-height`).
++            Some(height) if min_height_is_content => {
++                height.max(intrinsic_outer_height.maybe_min(max_size.height))
++            }
++            Some(height) => height,
++            None => intrinsic_outer_height.maybe_clamp(min_size.height, max_size.height),
++        })
+         .maybe_max(Some(padding_border_size.height));
+     let final_outer_size = Size { width: container_outer_width, height: container_outer_height };
+ 
+@@ -741,6 +885,7 @@ fn compute_inner(
          let free_space = container_inner_height - inflow_content_height;
          let group_offset = compute_block_align_content_offset(align_content, free_space);
          first_baseline = first_baseline.map(|baseline| baseline + group_offset);
@@ -98,7 +358,7 @@ index 3cd3e713..af8ac249 100644
          for item in items.iter_mut() {
              if let Some(layout) = item.final_layout.as_mut() {
                  layout.location.y += group_offset;
-@@ -803,7 +819,7 @@ fn compute_inner(
+@@ -803,7 +948,7 @@ fn compute_inner(
          size: final_outer_size,
          #[cfg(feature = "content_size")]
          scrollable_overflow_rect: crate::tree::ScrollableOverflow::ZERO,
@@ -107,7 +367,7 @@ index 3cd3e713..af8ac249 100644
          top_margin: if own_margins_collapse_with_children.start {
              first_child_top_margin_set
          } else {
-@@ -837,6 +853,24 @@ fn compute_inner(
+@@ -837,6 +982,24 @@ fn compute_inner(
          }
      }
  
@@ -132,7 +392,7 @@ index 3cd3e713..af8ac249 100644
      // 4. Collect out-of-flow candidates in document order (direct out-of-flow children plus
      // candidates bubbled from in-flow children's subtrees). These are laid out by the
      // out-of-flow positioning pass (`compute_oof_layout`), which runs after this algorithm.
-@@ -859,7 +893,7 @@ fn compute_inner(
+@@ -859,7 +1022,7 @@ fn compute_inner(
                  item.justify_self.unwrap_or(justify_items).resolve_self_relative(item.direction, direction, true);
              let align_self =
                  item.align_self.unwrap_or(AlignItems::NORMAL).resolve_self_relative(item.direction, direction, false);
@@ -141,7 +401,7 @@ index 3cd3e713..af8ac249 100644
                  node: item.node_id,
                  order: item.order,
                  position: item.position,
-@@ -931,7 +965,9 @@ fn compute_inner(
+@@ -931,7 +1094,9 @@ fn compute_inner(
  }
  
  /// Create a `Vec` of `BlockItem` structs where each item in the `Vec` represents a child of the current node
@@ -152,8 +412,25 @@ index 3cd3e713..af8ac249 100644
  fn generate_item_list(
      tree: &impl LayoutBlockContainer,
      node: NodeId,
-@@ -964,8 +1000,11 @@ fn generate_item_list(
+@@ -962,10 +1127,28 @@ fn generate_item_list(
+             #[cfg(not(feature = "float_layout"))]
+             let is_not_floated = true;
  
++            // pyro: css-sizing-4 §5 ([`RatioSizes`])
++            let sizes = resolve_sizes_with_aspect_ratio(
++                child_style.size().maybe_resolve(node_inner_size, |val, basis| tree.calc(val, basis)),
++                child_style.min_size().maybe_resolve(node_inner_size, |val, basis| tree.calc(val, basis)),
++                child_style.max_size().maybe_resolve(node_inner_size, |val, basis| tree.calc(val, basis)),
++                aspect_ratio,
++                aspect_ratio_inset(&child_style, pb_sum),
++                box_sizing_adjustment,
++            );
++            let min_width_is_content = sizes.width_from_ratio
++                && child_style.min_size().width.is_auto()
++                && !child_style.is_compressible_replaced()
++                && !overflow.x.is_scroll_container()
++                && !overflow.y.is_scroll_container();
++
              let is_block = child_style.is_block();
              let is_table = child_style.is_table();
 -            let is_compressible_replaced = child_style.is_compressible_replaced();
@@ -166,7 +443,7 @@ index 3cd3e713..af8ac249 100644
                  let calc = |val, basis| tree.calc(val, basis);
                  let width = child_style.size().width.maybe_resolve(Some(0.0), calc);
                  let max_width = child_style.max_size().width.maybe_resolve(Some(0.0), calc);
-@@ -982,7 +1021,9 @@ fn generate_item_list(
+@@ -982,7 +1165,9 @@ fn generate_item_list(
                  && is_not_floated
                  && !is_scroll_container
                  && !contain.establishes_independent_formatting_context()
@@ -177,7 +454,7 @@ index 3cd3e713..af8ac249 100644
  
              BlockItem {
                  node_id: child_node_id,
-@@ -990,7 +1031,9 @@ fn generate_item_list(
+@@ -990,27 +1175,35 @@ fn generate_item_list(
                  is_table,
                  is_compressible_replaced,
                  min_content_width_cap,
@@ -188,7 +465,48 @@ index 3cd3e713..af8ac249 100644
                  #[cfg(feature = "float_layout")]
                  float,
                  #[cfg(feature = "float_layout")]
-@@ -1091,7 +1134,8 @@ fn resolve_relative_offset(
+                 clear: child_style.clear(),
+                 size_style: child_style.size(),
+-                size: child_style
+-                    .size()
+-                    .maybe_resolve(node_inner_size, |val, basis| tree.calc(val, basis))
+-                    .maybe_apply_aspect_ratio(aspect_ratio)
+-                    .maybe_add(box_sizing_adjustment),
+-                min_size: child_style
+-                    .min_size()
+-                    .maybe_resolve(node_inner_size, |val, basis| tree.calc(val, basis))
+-                    .maybe_apply_aspect_ratio(aspect_ratio)
+-                    .maybe_add(box_sizing_adjustment),
+-                max_size: child_style
+-                    .max_size()
+-                    .maybe_resolve(node_inner_size, |val, basis| tree.calc(val, basis))
+-                    .maybe_apply_aspect_ratio(aspect_ratio)
+-                    .maybe_add(box_sizing_adjustment),
++                // pyro: a height the aspect ratio gives is the item's own layout's to settle
++                // (its content can make it taller): it is not handed down as known.
++                size: if sizes.height_from_ratio && is_block && !is_table {
++                    Size { width: sizes.size.width, height: None }
++                } else {
++                    sizes.size
++                },
++                min_size: sizes.min_size,
++                max_size: sizes.max_size,
++                min_width_is_content,
++                content_min_height_ratio: aspect_ratio.filter(|_| {
++                    sizes.height_from_ratio
++                        && !is_block
++                        && !is_table
++                        && !child_style.is_compressible_replaced()
++                        && !child_style.breaks_lines_in_block_axis()
++                        && child_style.min_size().height.is_auto()
++                        && !overflow.x.is_scroll_container()
++                        && !overflow.y.is_scroll_container()
++                })
++                .map(|ratio| (ratio, box_sizing_adjustment + aspect_ratio_inset(&child_style, pb_sum))),
+                 overflow,
+                 contain,
+                 scrollbar_width: child_style.scrollbar_width(),
+@@ -1091,7 +1284,8 @@ fn resolve_relative_offset(
  }
  
  /// Compute the content-based width in the case that the width of the container is not known
@@ -198,7 +516,95 @@ index 3cd3e713..af8ac249 100644
  fn determine_content_based_container_width(
      tree: &mut impl LayoutPartialTree,
      items: &[BlockItem],
-@@ -1243,9 +1287,10 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
+@@ -1103,7 +1297,11 @@ fn determine_content_based_container_width(
+     #[cfg(feature = "float_layout")]
+     let mut float_contribution = FloatIntrinsicWidthCalculator::new(available_width);
+     for item in items.iter().filter(|item| !item.position.is_out_of_flow()) {
+-        let known_dimensions = item.size.maybe_clamp(item.min_size, item.max_size);
++        let mut known_dimensions = item.size.maybe_clamp(item.min_size, item.max_size);
++        // pyro
++        if let (true, Some(width)) = (item.min_width_is_content, known_dimensions.width) {
++            known_dimensions.width = Some(width.max(ratio_min_content_width(tree, item, Size::NONE)));
++        }
+ 
+         let item_x_margin_sum = item
+             .margin
+@@ -1156,6 +1354,26 @@ fn determine_content_based_container_width(
+     max_child_width
+ }
+ 
++/// pyro: the automatic minimum width of an item whose width is its height's through its aspect
++/// ratio (`BlockItem::min_width_is_content`): its min-content width, no larger than its `max-width`.
++fn ratio_min_content_width(
++    tree: &mut impl LayoutPartialTree,
++    item: &BlockItem,
++    parent_size: Size<Option<f32>>,
++) -> f32 {
++    let width = tree.measure_child_size(
++        item.node_id,
++        Size::NONE,
++        parent_size,
++        Size { width: AvailableSpace::MinContent, height: AvailableSpace::MaxContent },
++        // The content's width: the item's own `width` and `height` (and so its ratio) aside
++        SizingMode::ContentSize,
++        crate::AbsoluteAxis::Horizontal,
++        if item.is_in_same_bfc { Line::TRUE } else { Line::FALSE },
++    );
++    width.maybe_min(item.max_size.width)
++}
++
+ /// Resolve the known dimensions an in-flow block-level item is laid out with
+ #[allow(clippy::too_many_arguments)]
+ fn block_item_known_dimensions(
+@@ -1211,17 +1429,44 @@ fn block_item_known_dimensions(
+             children_margins_adjoin_own_edges,
+         );
+ 
+-        item.size
++        // pyro
++        let ratio_min_width =
++            if item.min_width_is_content { Some(ratio_min_content_width(tree, item, parent_size)) } else { None };
++
++        let mut known_dimensions = item
++            .size
+             .map_width(|width| {
+                 Some(
+                     width
+                         .or(keyword_width)
+                         .unwrap_or(stretch_width)
+-                        .maybe_clamp(item.min_size.width, item.max_size.width),
++                        .maybe_clamp(item.min_size.width, item.max_size.width)
++                        .maybe_max(ratio_min_width),
+                 )
+             })
+             .map_height(|height| height.or(keyword_height))
+-            .maybe_clamp(item.min_size, item.max_size)
++            .maybe_clamp(item.min_size, item.max_size);
++
++        // pyro: `BlockItem::content_min_height_ratio`
++        if let (Some((ratio, inset)), Some(width), true) =
++            (item.content_min_height_ratio, known_dimensions.width, keyword_height.is_none())
++        {
++            let height = known_dimensions.height.unwrap_or_else(|| {
++                ((width - inset.width).max(0.0) / ratio + inset.height)
++                    .maybe_clamp(item.min_size.height, item.max_size.height)
++            });
++            let content_height = tree.measure_child_size(
++                item.node_id,
++                Size { width: Some(width), height: None },
++                parent_size,
++                Size { width: AvailableSpace::Definite(width), height: AvailableSpace::MaxContent },
++                SizingMode::ContentSize,
++                crate::AbsoluteAxis::Vertical,
++                if item.is_in_same_bfc { Line::TRUE } else { Line::FALSE },
++            );
++            known_dimensions.height = Some(height.max(content_height.maybe_min(item.max_size.height)));
++        }
++        known_dimensions
+     }
+ }
+ 
+@@ -1243,9 +1488,10 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
      direction: Direction,
      own_margins_collapse_with_children: Line<bool>,
      children_margins_adjoin_own_edges: Line<bool>,
@@ -210,7 +616,7 @@ index 3cd3e713..af8ac249 100644
      // Resolve container_inner_width for sizing child nodes using initial content_box_inset
      let container_inner_width = (container_outer_width - resolved_content_box_inset.horizontal_axis_sum()).max(0.0);
      #[cfg(feature = "content_size")]
-@@ -1294,10 +1339,21 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
+@@ -1294,10 +1540,21 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
      let mut active_collapsible_margin_set = CollapsibleMarginSet::ZERO;
      let mut is_collapsing_with_first_margin_set = true;
      let mut first_baseline: Option<f32> = None;
@@ -232,7 +638,7 @@ index 3cd3e713..af8ac249 100644
  
      #[cfg(feature = "float_layout")]
      let mut has_active_floats = block_ctx.has_active_floats(committed_y_offset);
-@@ -1312,9 +1368,18 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
+@@ -1312,9 +1569,18 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
              };
              item.static_position = Point { x, y: y_offset_for_absolute }
          } else {
@@ -252,7 +658,7 @@ index 3cd3e713..af8ac249 100644
              let item_non_auto_margin = item_margin.map(|m| m.unwrap_or(0.0));
              let item_non_auto_x_margin_sum = item_non_auto_margin.horizontal_axis_sum();
  
-@@ -1518,14 +1583,26 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
+@@ -1518,14 +1784,26 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
                          // for the item's border box, which must not overlap any float
                          // The item's height isn't known until it is laid out, so only its styled
                          // (minimum) height is checked against floats below its top edge
@@ -280,7 +686,7 @@ index 3cd3e713..af8ac249 100644
                          let slot = loop {
                              let slot = block_ctx.find_bfc_slot(
                                  min_y,
-@@ -1536,15 +1613,41 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
+@@ -1536,15 +1814,41 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
                                  slot_segment,
                              );
                              let Some(segment_id) = slot.segment_id else { break slot };
@@ -330,7 +736,7 @@ index 3cd3e713..af8ac249 100644
                          };
  
                          // If the item had to move down to avoid floats then it "separates from the
-@@ -1621,6 +1724,18 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
+@@ -1621,6 +1925,18 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
              item.oof_candidates = item_layout.oof_candidates.take();
              let final_size = item_layout.size;
  
@@ -349,7 +755,7 @@ index 3cd3e713..af8ac249 100644
              let top_margin_set = item_layout.top_margin.collapse_with_margin(item_margin.top.unwrap_or(0.0));
              let bottom_margin_set = item_layout.bottom_margin.collapse_with_margin(item_margin.bottom.unwrap_or(0.0));
  
-@@ -1826,6 +1941,18 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
+@@ -1826,6 +2142,18 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
                      child_first_baseline(item_layout.baselines.first, item_layout.size.height, item.overflow.y);
                  first_baseline = child_baseline.map(|baseline| location.y - inset_offset.y + baseline);
              }
@@ -368,7 +774,7 @@ index 3cd3e713..af8ac249 100644
  
              // Used auto margins include float-avoidance offsets, unlike the alignment margins above.
              #[cfg(feature = "float_layout")]
-@@ -1908,6 +2035,7 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
+@@ -1908,6 +2236,7 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
                  y_offset_for_absolute = committed_y_offset + item_layout.size.height + y_margin_offset;
              } else {
                  committed_y_offset = location.y - inset_offset.y + item_layout.size.height;
@@ -376,7 +782,7 @@ index 3cd3e713..af8ac249 100644
                  // A self-collapsing item with clearance is not collapsed through (its margins do not collapse
                  // with margins of preceding siblings), but its top and bottom margins still collapse with each
                  // other and with the margins of following siblings.
-@@ -1931,6 +2059,38 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
+@@ -1931,6 +2260,38 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
          }
      }
  
@@ -415,7 +821,7 @@ index 3cd3e713..af8ac249 100644
      // The margins of a self-collapsing element with clearance do not collapse with the bottom
      // margin of the parent block: they extend the parent's content height instead of escaping it
      let last_child_bottom_margin_set =
-@@ -1947,5 +2107,5 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
+@@ -1947,5 +2308,5 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
  
      committed_y_offset += resolved_content_box_inset.bottom + bottom_y_margin_offset;
      let content_height = f32_max(0.0, committed_y_offset);
@@ -652,7 +1058,7 @@ index 82d0bd0a..c4d3e793 100644
                  let mut stretch_insets = FloatInsets::ZERO;
                  fit_insets[lead] =
 diff --git a/src/compute/grid/alignment.rs b/src/compute/grid/alignment.rs
-index b84e8751..c65e1a8a 100644
+index b84e8751..72a138c7 100644
 --- a/src/compute/grid/alignment.rs
 +++ b/src/compute/grid/alignment.rs
 @@ -96,11 +96,13 @@ pub(super) fn align_and_position_item(
@@ -688,7 +1094,48 @@ index b84e8751..c65e1a8a 100644
      let max_size = style
          .max_size()
          .maybe_resolve(containing_block_size, |val, basis| tree.calc(val, basis))
-@@ -375,7 +380,7 @@ pub(super) fn align_and_position_item(
+@@ -210,6 +215,40 @@ pub(super) fn align_and_position_item(
+         height: (grid_area_size.height.maybe_sub(margin.top).maybe_sub(margin.bottom) - baseline_shim).max(0.0),
+     };
+ 
++    // pyro: an item with a preferred aspect ratio and an explicit `stretch` alignment. In an axis
++    // with an `auto` size, `stretch` fills the grid area whatever the ratio would give that axis
++    // (both axes stretched: the ratio is not kept); the other axis, if `auto` and not stretched,
++    // follows the stretched one through the ratio instead of filling its own (css-grid-1 §6.2,
++    // css-sizing-4 §5; WPT `grid-aspect-ratio-018`, `-029`, `-032` to `-037`).
++    let inherent_size = match aspect_ratio {
++        Some(ratio) if !is_replaced && !position.is_out_of_flow() => {
++            let stretches = Size {
++                width: justify_self.keyword == AlignItemsKeyword::Stretch
++                    && size_style.width.is_auto()
++                    && margin.left.is_some()
++                    && margin.right.is_some(),
++                height: align_self.keyword == AlignItemsKeyword::Stretch
++                    && size_style.height.is_auto()
++                    && margin.top.is_some()
++                    && margin.bottom.is_some(),
++            };
++            let area = grid_area_minus_item_margins_size;
++            match (stretches.width, stretches.height) {
++                (true, true) => area.map(Some),
++                (true, false) => Size {
++                    width: Some(area.width),
++                    height: if size_style.height.is_auto() { Some(area.width / ratio) } else { inherent_size.height },
++                },
++                (false, true) => Size {
++                    width: if size_style.width.is_auto() { Some(area.height * ratio) } else { inherent_size.width },
++                    height: Some(area.height),
++                },
++                (false, false) => inherent_size,
++            }
++        }
++        _ => inherent_size,
++    };
++
+     // A size that is a sizing keyword (min-content, max-content, fit-content,
+     // fit-content(...), stretch) either resolves to an exact size or is resolved
+     // by measuring the item under the corresponding available space constraint
+@@ -375,7 +414,7 @@ pub(super) fn align_and_position_item(
      // Resolve final size
      let Size { width, height } = size.unwrap_or(layout_output.size).maybe_clamp(min_size, max_size);
  
@@ -697,7 +1144,7 @@ index b84e8751..c65e1a8a 100644
          Line { start: grid_area.left, end: grid_area.right },
          alignment_styles.horizontal,
          width,
-@@ -385,7 +390,7 @@ pub(super) fn align_and_position_item(
+@@ -385,7 +424,7 @@ pub(super) fn align_and_position_item(
          0.0,
          direction,
      );
@@ -706,7 +1153,7 @@ index b84e8751..c65e1a8a 100644
          Line { start: grid_area.top, end: grid_area.bottom },
          alignment_styles.vertical,
          height,
-@@ -398,7 +403,8 @@ pub(super) fn align_and_position_item(
+@@ -398,7 +437,8 @@ pub(super) fn align_and_position_item(
      // A relative offset moves the item, but does not affect the container's baseline (which is computed from the
      // returned y position, without the offset)
      let x = x + relative_offset(position, inset_horizontal, direction);
@@ -716,7 +1163,7 @@ index b84e8751..c65e1a8a 100644
  
      let scrollbar_size = Size {
          width: if overflow.y == Overflow::Scroll { scrollbar_width } else { 0.0 },
-@@ -415,40 +421,102 @@ pub(super) fn align_and_position_item(
+@@ -415,40 +455,102 @@ pub(super) fn align_and_position_item(
          bubbled_candidates.append(&mut item_candidates);
      }
  
@@ -746,7 +1193,7 @@ index b84e8751..c65e1a8a 100644
 +        margin: resolved_margin,
 +    };
 +    tree.set_unrounded_layout(node, &layout);
- 
++
 +    let mut positioned = PositionedItem {
 +        contribution: Rect::ZERO,
 +        y_position: y_without_relative_offset,
@@ -768,7 +1215,7 @@ index b84e8751..c65e1a8a 100644
 +    positioned.contribution = positioned.compute_contribution();
 +    positioned
 +}
-+
+ 
 +/// pyro: an item as `align_and_position_item` positioned it, with what positioning it again in
 +/// an area of the same size elsewhere takes (`TableGridState`): only its block position changes.
 +#[derive(Debug, Clone, Copy)]
@@ -786,13 +1233,13 @@ index b84e8751..c65e1a8a 100644
 +    pub y_offset: f32,
 +    pub y_relative: f32,
 +    /// The container's padding box offset its overflow contribution is measured from
-+    #[cfg(feature = "content_size")]
-+    padding_box_inset: Point<f32>,
-+    #[cfg(feature = "content_size")]
-+    overflow: Point<Overflow>,
      #[cfg(feature = "content_size")]
 -    let contribution = {
 -        let contribution_location = Point { x: x - padding_box_inset.left, y: y - padding_box_inset.top };
++    padding_box_inset: Point<f32>,
++    #[cfg(feature = "content_size")]
++    overflow: Point<Overflow>,
++    #[cfg(feature = "content_size")]
 +    contain: crate::style::Contain,
 +    #[cfg(feature = "content_size")]
 +    overflow_container: ScrollableOverflowContainer,
@@ -847,7 +1294,7 @@ index b84e8751..c65e1a8a 100644
  }
  
  /// Align and size a grid item along a single axis
-@@ -462,7 +530,7 @@ pub(super) fn align_item_within_area(
+@@ -462,7 +564,7 @@ pub(super) fn align_item_within_area(
      margin: Line<Option<f32>>,
      baseline_shim: f32,
      direction: Direction,
@@ -856,7 +1303,7 @@ index b84e8751..c65e1a8a 100644
      // Calculate grid area dimension in the axis
      let non_auto_margin = Line { start: margin.start.unwrap_or(0.0) + baseline_shim, end: margin.end.unwrap_or(0.0) };
      let grid_area_size = f32_max(grid_area.end - grid_area.start, 0.0);
-@@ -524,7 +592,7 @@ pub(super) fn align_item_within_area(
+@@ -524,7 +626,7 @@ pub(super) fn align_item_within_area(
          alignment_based_offset
      };
  
@@ -2741,7 +3188,7 @@ index c18fa644..50154417 100644
  #[doc(inline)]
  pub use crate::style::Style;
 diff --git a/src/style/block.rs b/src/style/block.rs
-index fb1c7a3b..d31a6e45 100644
+index fb1c7a3b..7d0a4996 100644
 --- a/src/style/block.rs
 +++ b/src/style/block.rs
 @@ -1,4 +1,5 @@
@@ -2765,6 +3212,49 @@ index fb1c7a3b..d31a6e45 100644
  }
  
  /// The set of styles required for a Block layout item (child of a Block container)
+@@ -33,6 +42,14 @@ pub trait BlockItemStyle: CoreStyle {
+         false
+     }
+ 
++    /// pyro: whether the item is a flex container whose lines break in the block axis (a
++    /// wrapping column container). Its content height depends on its own height, so it is not
++    /// measured for the automatic minimum height of a box with a preferred aspect ratio.
++    #[inline(always)]
++    fn breaks_lines_in_block_axis(&self) -> bool {
++        false
++    }
++
+     /// How an out-of-flow (absolutely positioned) child is aligned in the block axis of its
+     /// static-position rectangle (`align-self`). `None` corresponds to `normal`/`auto`.
+     #[inline(always)]
+diff --git a/src/style/mod.rs b/src/style/mod.rs
+index a9e57f33..98591220 100644
+--- a/src/style/mod.rs
++++ b/src/style/mod.rs
+@@ -181,6 +181,12 @@ pub trait CoreStyle {
+     fn aspect_ratio(&self) -> Option<f32> {
+         Style::<Self::CustomIdent>::DEFAULT.aspect_ratio
+     }
++    /// pyro: whether the preferred aspect ratio is that of the content box whatever `box-sizing`
++    /// says: `aspect-ratio: auto <ratio>` on a non-replaced box (css-sizing-4 §5.1).
++    #[inline(always)]
++    fn aspect_ratio_of_content_box(&self) -> bool {
++        false
++    }
+ 
+     // Spacing Properties
+     /// How large should the margin be on each side?
+@@ -1128,6 +1134,10 @@ impl<T: CoreStyle> CoreStyle for &'_ T {
+         (*self).aspect_ratio()
+     }
+     #[inline(always)]
++    fn aspect_ratio_of_content_box(&self) -> bool {
++        (*self).aspect_ratio_of_content_box()
++    }
++    #[inline(always)]
+     fn margin(&self) -> Rect<LengthPercentageAuto> {
+         (*self).margin()
+     }
 diff --git a/src/tree/layout.rs b/src/tree/layout.rs
 index e250d742..3122372d 100644
 --- a/src/tree/layout.rs

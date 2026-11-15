@@ -38,6 +38,9 @@ bitflags! {
         /// § 9.2.1.1), laid out as a block box that wraps its pieces: its margins, borders,
         /// padding and sizes belong to its inline pieces, so as a box it has none.
         const IS_SPLIT_INLINE = 1 << 5;
+        /// pyro: the node is a replaced element with a natural aspect ratio (a loaded image, a
+        /// canvas): `aspect-ratio: auto <ratio>` then means the natural one (css-sizing-4 §5.1).
+        const HAS_NATURAL_RATIO = 1 << 6;
     }
 }
 
@@ -289,8 +292,19 @@ impl<T: Deref<Target = ComputedValues>> taffy::CoreStyle for TaffyStyloStyle<T> 
 
     #[inline]
     fn aspect_ratio(&self) -> Option<f32> {
-        let ratio = convert::aspect_ratio(self.style.get_position().aspect_ratio);
+        let aspect_ratio = self.style.get_position().aspect_ratio;
+        // pyro: `auto <ratio>` on a replaced element with a natural aspect ratio is `auto`: the
+        // natural ratio, which its measure function applies.
+        if aspect_ratio.auto && self.flags.contains(StyleFlags::HAS_NATURAL_RATIO) {
+            return None;
+        }
+        let ratio = convert::aspect_ratio(aspect_ratio);
         self.layout_wm().logical_aspect_ratio(ratio)
+    }
+
+    #[inline]
+    fn aspect_ratio_of_content_box(&self) -> bool {
+        self.style.get_position().aspect_ratio.auto && !self.flags.contains(StyleFlags::IS_REPLACED)
     }
 
     #[inline]
@@ -514,6 +528,17 @@ impl<T: Deref<Target = ComputedValues>> taffy::BlockItemStyle for TaffyStyloStyl
     #[inline]
     fn is_table(&self) -> bool {
         convert::is_table(self.effective_display())
+    }
+
+    #[inline]
+    fn breaks_lines_in_block_axis(&self) -> bool {
+        let position = self.style.get_position();
+        self.effective_display().inside() == stylo::DisplayInside::Flex
+            && matches!(
+                convert::flex_direction(position.flex_direction),
+                taffy::FlexDirection::Column | taffy::FlexDirection::ColumnReverse
+            )
+            && convert::flex_wrap(position.flex_wrap) != taffy::FlexWrap::NoWrap
     }
 
     #[inline]
