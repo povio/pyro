@@ -579,11 +579,16 @@ impl VelloCpuScenePainter {
         let region = plan.source_region(out);
         // pyro: an SVG filter's graph sees nothing outside its filter region (the clip).
         let region = if plan.bounded() { region.intersect(bounds) } else { region };
+        // pyro: a reduced drop shadow's pixels are drawn moved by its offset, so the region is
+        // aligned to whole reduced pixels where they land: the same blur of the same content, as
+        // a drop shadow or as `blur()`, then comes out on the same grid of the frame, not on
+        // grids `factor / 2` apart (up to two levels apart everywhere: WPT drop-shadow-scale).
+        let (sx, sy) = plan.grid_shift();
         let region = PixelRect {
-            x0: region.x0.div_euclid(factor) * factor,
-            y0: region.y0.div_euclid(factor) * factor,
-            x1: -(-region.x1).div_euclid(factor) * factor,
-            y1: -(-region.y1).div_euclid(factor) * factor,
+            x0: (region.x0 + sx).div_euclid(factor) * factor - sx,
+            y0: (region.y0 + sy).div_euclid(factor) * factor - sy,
+            x1: -(-(region.x1 + sx)).div_euclid(factor) * factor - sx,
+            y1: -(-(region.y1 + sy)).div_euclid(factor) * factor - sy,
         };
         let (Ok(width), Ok(height)) = (
             u16::try_from(region.width() / factor),

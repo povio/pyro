@@ -126,3 +126,22 @@ fn the_rotate_property_draws_as_the_rotate_function() {
         assert_eq!(difference(&test, &reference), (0, 0), "{individual}");
     }
 }
+
+/// A large `drop-shadow()` (rendered at a reduced size) is the same blur as `blur()` of the same
+/// box where it lands: its reduced pixels were laid on a grid half a reduced pixel off the frame's
+/// when its offset was not a multiple of the reduction (drop-shadow-scale: 59,716 pixels a level
+/// or two apart).
+#[test]
+fn a_reduced_drop_shadow_is_the_reduced_blur_where_it_lands() {
+    const BOX: &str =
+        "position:absolute;width:20px;height:20px;overflow:hidden;transform:scale(10);transform-origin:bottom left;will-change:transform";
+    let test = render(&format!(
+        "<div style='{BOX};left:20px;top:200px;background:green;filter:drop-shadow(30px 10px 4px blue)'></div>"
+    ));
+    let reference = render(&format!(
+        "<div style='{BOX};left:320px;top:300px;background:blue;filter:blur(4px)'></div>
+         <div style='{BOX};left:20px;top:200px;background:linear-gradient(green,green)'></div>"
+    ));
+    let (count, max) = difference(&test, &reference);
+    assert!(count <= 1000 && max <= 2, "{count} pixels differ, by up to {max}");
+}

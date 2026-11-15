@@ -285,6 +285,16 @@ impl FilterPlan {
         }
     }
 
+    /// pyro: the whole device pixels a reduced drop shadow's image is drawn moved by (its offset,
+    /// rounded), `(0, 0)` for anything else: the content is rendered for it on the grid of reduced
+    /// pixels that lands on the frame's grid of them once moved.
+    pub(crate) fn grid_shift(&self) -> (i32, i32) {
+        match self.steps[..] {
+            [Step::DropShadow { dx, dy, .. }] if self.factor() > 1 => (dx.round() as i32, dy.round() as i32),
+            _ => (0, 0),
+        }
+    }
+
     /// Whether the layer's content is drawn as it is, after the filter's images: the layer over its
     /// drop shadow.
     pub(crate) fn draws_content(&self) -> bool {

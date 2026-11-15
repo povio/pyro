@@ -57,7 +57,12 @@ and the bilinear scaling back up spread, and lets the frame's raster scale the r
 the full-resolution blur, at a cost that does not grow with the deviation (a 4K title card's 60 px shadow:
 0.5 ms). A blur of glyph runs in one solid colour (a text shadow's) blurs the alpha alone, as the blur mask filter
 Chromium draws text shadows with does; other content is blurred in all four channels, as Chromium's blur filter does
-(a box blurred beside an invisible command in another colour came out a level off the box blurred alone). Covered by the
+(a box blurred beside an invisible command in another colour came out a level off the box blurred alone). The content
+is rendered at the reduced size on whole reduced pixels of the frame, and a drop shadow's on the whole reduced pixels
+its offset (rounded) moves them to (`FilterPlan::grid_shift`): the same blur of the same box, as a drop shadow or as
+`blur()`, then lands on the same grid, where an offset that was no multiple of the reduction put the shadow's grid
+half a reduced pixel off and every pixel of it a level or two off the blur (WPT drop-shadow-scale; pyro-render's
+`compositing_rounding.rs`). Covered by the
 unit tests in `src/filters.rs` and by pyro-render's `filter_drop_shadow.rs` and `text_shadow.rs`.
 
 The colour functions (`grayscale()`, `sepia()`, `saturate()`, `hue-rotate()`, `invert()`, `opacity()`,
