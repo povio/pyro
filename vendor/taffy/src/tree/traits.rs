@@ -468,6 +468,40 @@ pub trait LayoutBlockContainer: LayoutPartialTree {
         false
     }
 
+    /// pyro: whether percentage heights of the container's children resolve against the height
+    /// of the container's own containing block: the container is no containing block itself (an
+    /// inline box split around block-level content, laid out as a block box; CSS 2.1 § 10.1:
+    /// the containing block is the nearest block container ancestor box).
+    fn block_container_passes_percentage_height(&self, node_id: NodeId) -> bool {
+        let _ = node_id;
+        false
+    }
+
+    /// pyro: the direction of the containing block of the container's children when that is not
+    /// the container (see [`Self::block_container_passes_percentage_height`]): it decides which
+    /// margin an over-constrained child drops (CSS 2.1 § 10.3.3), not the container's own.
+    fn block_container_direction(&self, node_id: NodeId) -> Option<crate::Direction> {
+        let _ = node_id;
+        None
+    }
+
+    /// pyro: what the last layout of an in-flow block-level child recorded with
+    /// [`Self::set_block_flow_overlap`], where the container paints the child's parts with its
+    /// own (`overlap`: boxes in it overlap; `overflows`: its content is taller than its box).
+    fn block_child_flow_overlap(&self, child_node_id: NodeId) -> (bool, bool) {
+        let _ = child_node_id;
+        (false, false)
+    }
+
+    /// pyro: records, at the container's final layout, whether in-flow block-level boxes in it
+    /// overlap in the block axis (`overlap`: a child starts above the end of one before it, or
+    /// follows one whose content overflows it, or a child recorded an overlap), and whether its
+    /// own in-flow content is taller than its box (`overflows`). A painter that draws box by box
+    /// needs to know (CSS 2.1 Appendix E: block backgrounds first, then inline content).
+    fn set_block_flow_overlap(&mut self, node_id: NodeId, overlap: bool, overflows: bool) {
+        let _ = (node_id, overlap, overflows);
+    }
+
     /// Compute the specified node's size or full layout given the specified constraints
     #[cfg(feature = "block_layout")]
     fn compute_block_child_layout(

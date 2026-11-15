@@ -702,3 +702,19 @@ Covered by `crates/pyro-render/tests/floats.rs`.
   the element's box shadow where its content is (WPT `mask-image-3f`, `-3g`).
 
 Covered by `crates/pyro-render/tests/svg_viewport_clip.rs`, `svg_external_references.rs` and `svg_css_effects.rs`.
+Covered by `crates/pyro-render/tests/svg_viewport_clip.rs` and `svg_external_references.rs`.
+## `visibility` on descendants; in-flow blocks that overlap (WPT reftests, lane P5)
+
+- `src/render.rs` (`render_element`, `paint_element`, `ElementPaint::hidden`), `src/text.rs`
+  (`DecorationStackEntry::hidden`, `node_is_hidden`): an element whose `visibility` is not `visible` paints nothing
+  of its own (box, text, marker, image, outline) but its descendants that are `visible` again still paint (CSS 2.1
+  § 11.2); the element and everything in it was skipped. A glyph run is hidden by the `visibility` of the inline box
+  it is in, with its decorations and shadows, and so is that box's fragment (WPT `visibility-005`,
+  `position-relative-032`).
+- `src/render.rs` (`paint_element`): a box whose in-flow block children overlap (`NodeFlags::FLOW_BOXES_OVERLAP`,
+  set by layout) paints them in the phases of CSS 2.1 Appendix E, as one with floats does: the block backgrounds
+  first, then the inline content, so an inline-block or a line of an earlier block is not covered by the background
+  of a later one (WPT `inline-block-zorder-001`/`-002`, `inline-table-zorder-001`/`-002`, `position-absolute-007`,
+  `margin-collapse-004`).
+
+Covered by `crates/pyro-render/tests/inline_leftovers.rs`.

@@ -4,7 +4,7 @@
 //! However, in Blitz, we do a style pass then a layout pass.
 //! This is slower, yes, but happens fast enough that it's not a huge issue.
 
-use crate::node::{ComputedStyleRef, ImageData, NodeData, SpecialElementData};
+use crate::node::{ComputedStyleRef, ImageData, NodeData, NodeFlags, SpecialElementData};
 use crate::{document::BaseDocument, dom_node_id, node::Node, taffy_node_id};
 use markup5ever::local_name;
 use std::cell::Ref;
@@ -1005,7 +1005,7 @@ impl LayoutPassState<'_> {
             .map(|pos| AxisStaticPosition::from_edge(pos, AxisStaticEdge::Start));
             let in_flow_count = context.cells.len();
             for (idx, (child_id, position)) in context.oof_children.iter().enumerate() {
-                output.oof_candidates.push(OofCandidate {
+                output.oof_candidates.push(OofCandidate { containing_block: None,
                     node: taffy_node_id(*child_id),
                     order: (in_flow_count + idx) as u32,
                     position: *position,
@@ -1379,6 +1379,44 @@ impl taffy::LayoutBlockContainer for LayoutPassState<'_> {
         // pyro: a multi-column container is a block formatting context root (Multi-column
         // Layout 1 §2), which its parent keeps clear of floats.
         multicol::is_multicol_node(self.node_from_id(child_node_id))
+    }
+
+    fn block_container_passes_percentage_height(&self, node_id: NodeId) -> bool {
+        let node = self.node_from_id(node_id);
+        node.is_split_inline() || node.is_inline_with_only_block_children()
+    }
+
+    fn block_container_direction(&self, node_id: NodeId) -> Option<taffy::Direction> {
+        use taffy::CoreStyle as _;
+        let mut node = self.node_from_id(node_id);
+        if !(node.is_split_inline() || node.is_inline_with_only_block_children()) {
+            return None;
+        }
+        // The nearest box that is a block container.
+        while node.is_split_inline() || node.is_inline_with_only_block_children() {
+            node = &self.nodes[node.parent?];
+        }
+        node.primary_styles()?;
+        Some(self.child_layout_style(node).direction())
+    }
+
+    fn block_child_flow_overlap(&self, child_node_id: NodeId) -> (bool, bool) {
+        // pyro: a child that paints whole (a layer root, a float, a flex container) keeps its
+        // content's order to itself.
+        let child = self.node_from_id(child_node_id);
+        let flags = child.flags;
+        if !flags.intersects(NodeFlags::FLOW_BOXES_OVERLAP | NodeFlags::FLOW_CONTENT_OVERFLOWS)
+            || !child.paints_in_ancestor_phases()
+        {
+            return (false, false);
+        }
+        (flags.contains(NodeFlags::FLOW_BOXES_OVERLAP), flags.contains(NodeFlags::FLOW_CONTENT_OVERFLOWS))
+    }
+
+    fn set_block_flow_overlap(&mut self, node_id: NodeId, overlap: bool, overflows: bool) {
+        let flags = &mut self.node_from_id_mut(node_id).flags;
+        flags.set(NodeFlags::FLOW_BOXES_OVERLAP, overlap);
+        flags.set(NodeFlags::FLOW_CONTENT_OVERFLOWS, overflows);
     }
 
     #[inline(always)]

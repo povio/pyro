@@ -13,6 +13,7 @@ use style::properties::generated::longhands::text_decoration_style::computed_val
 use style::values::computed::{
     Length, LengthPercentage, TextDecorationLength, TextDecorationLine, TextUnderlinePosition,
 };
+use style::properties::generated::longhands::visibility::computed_value::T as Visibility;
 use style::values::computed::TextDecorationSkipInk;
 use style::values::generics::text::{GenericTextDecorationInset, GenericTextDecorationLength};
 
@@ -390,6 +391,8 @@ struct DecorationStackEntry {
     decoration: Option<ResolvedDecoration>,
     /// pyro: this node's (inherited) `text-shadow`, for runs whose innermost node is this one.
     shadows: Vec<TextShadow>,
+    /// pyro: `visibility` hides this node's own text (runs whose innermost node is this one).
+    hidden: bool,
 }
 
 /// pyro: one `text-shadow`, resolved: its colour (`currentColor` is the text's `color`) and its
@@ -453,6 +456,7 @@ fn resolve_decoration_entry(doc: &BaseDocument, node_id: NodeId) -> DecorationSt
             fill_color: Color::BLACK,
             decoration: None,
             shadows: Vec::new(),
+            hidden: node_is_hidden(doc, node_id),
         };
     };
     decoration_entry_of(node_id, &styles)
@@ -484,7 +488,21 @@ fn decoration_entry_of(node_id: NodeId, styles: &style::properties::ComputedValu
         fill_color,
         decoration: own_decoration(styles),
         shadows,
+        hidden: styles.get_inherited_box().visibility != Visibility::Visible,
     }
+}
+
+/// pyro: whether `visibility` hides what `node_id` paints itself (its text, its box): its own
+/// value, or for a box without a style (an anonymous block) the nearest styled ancestor's.
+pub(crate) fn node_is_hidden(doc: &BaseDocument, node_id: NodeId) -> bool {
+    let mut current = Some(node_id);
+    while let Some(node) = current.and_then(|id| doc.get_node(id)) {
+        if let Some(styles) = node.primary_styles() {
+            return styles.get_inherited_box().visibility != Visibility::Visible;
+        }
+        current = node.parent;
+    }
+    false
 }
 
 /// The run-dependent geometry used to position and size a decoration, captured from a
@@ -1760,6 +1778,11 @@ pub(crate) fn stroke_text<'a, S: PaintScene>(
                     }
                 }
             };
+            // pyro: `visibility` hides a run with its decorations and shadows; it keeps its place.
+            if stack.last().is_some_and(|entry| entry.hidden) {
+                run_paints.push(RunPaint { fill_color, shadows: 0..0, kept: 0..0, kept_extent, drawn: false });
+                continue;
+            }
             let first_shadow = run_shadows.len();
             run_shadows.extend_from_slice(shadows);
             run_paints.push(RunPaint {

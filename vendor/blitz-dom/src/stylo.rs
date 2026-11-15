@@ -1138,10 +1138,16 @@ impl<'a> TElement for BlitzNode<'a> {
     }
 
     fn get_attr(&self, attr: &style::LocalName, ns: &style::Namespace) -> Option<String> {
-        // TODO: case-insensitive matching for HTML-ns attrs
+        // pyro: `attr(Title)` names the `title` attribute of an HTML element in an HTML document
+        // (css-values-5 § attr(): the name is lowercased there); XML documents keep its case.
+        let lowered = (!self.tree().xml_document
+            && self.element_data().is_some_and(|element| element.name.ns == ns!(html))
+            && attr.0.bytes().any(|b| b.is_ascii_uppercase()))
+        .then(|| markup5ever::LocalName::from(attr.0.to_ascii_lowercase()));
+        let name = lowered.as_ref().unwrap_or(&attr.0);
         self.attrs()?
             .iter()
-            .find(|a| a.name.local == attr.0 && a.name.ns == ns.0)
+            .find(|a| a.name.local == *name && a.name.ns == ns.0)
             .map(|a| a.value.clone())
     }
 

@@ -261,7 +261,9 @@ impl<B: Brush> TreeStyleBuilder<B> {
         // or tab is retained, as only collapsible whitespace collapses.
         // pyro: bidi formatting characters are no content.
         let is_at_start = !self.has_content && !self.last_item_is_inline_box;
-        if is_at_start || ends_with_segment_break(&self.text) {
+        // pyro: an inline box after the segment break is content of the new line: the white space
+        // after it is kept (`<br>` then inline-blocks with spaces between them).
+        if is_at_start || (ends_with_segment_break(&self.text) && !self.last_item_is_inline_box) {
             self.deferred_edges.clear();
             self.commit_deferred_controls();
             return;

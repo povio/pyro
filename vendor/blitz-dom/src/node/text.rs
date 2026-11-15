@@ -83,6 +83,9 @@ pub struct TextLayout {
     /// pyro: some inline box (not atomic) laid out here is relatively positioned: what it holds
     /// is painted moved (`BaseDocument::inline_span_relative_offset`). Set by each build.
     pub relative_spans: bool,
+    /// pyro: some inline box's margin or padding at an edge is a percentage: each layout gives
+    /// those edges their width (`span_edge_widths_in`).
+    pub percent_span_edges: bool,
 }
 
 /// pyro: where an inline layout's first letter is: the bytes of a text node's content that an

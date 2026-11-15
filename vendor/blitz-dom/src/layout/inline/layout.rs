@@ -24,6 +24,7 @@ use taffy::{
 use stylo_taffy::StyleFlags;
 
 use crate::layout::LayoutPassState;
+use crate::node::NodeFlags;
 use crate::layout::resolve_calc_value;
 use crate::stylo_to_parley;
 
@@ -350,6 +351,32 @@ impl LayoutPassState<'_> {
         StyleFlags::empty()
     }
 
+    /// pyro: the inline box (not atomic) between the out-of-flow box `box_id` and its inline root
+    /// `root_id` that is its containing block: the nearest positioned one (for `position:
+    /// fixed`, one that contains fixed boxes), with no other box between them that is.
+    fn inline_containing_block_of(&self, root_id: NodeId, box_id: NodeId, position: taffy::Position) -> Option<NodeId> {
+        let root = &self.nodes[root_id];
+        let root_parent = root.is_anonymous().then_some(root.parent).flatten();
+        let mut current = self.nodes[box_id].parent;
+        while let Some(id) = current {
+            if id == root_id || Some(id) == root_parent {
+                return None;
+            }
+            let ancestor = &self.nodes[id];
+            if let Some(style) = ancestor.primary_styles() {
+                let display = style.clone_display();
+                if display.outside() == DisplayOutside::Inline && display.inside() == DisplayInside::Flow {
+                    let claims = stylo_taffy::convert::inline_containing_block_claims(&style);
+                    if claims.for_position(position) {
+                        return Some(id);
+                    }
+                }
+            }
+            current = ancestor.parent;
+        }
+        None
+    }
+
     fn compute_inline_layout_inner(
         &mut self,
         node_id: NodeId,
@@ -533,9 +560,25 @@ impl LayoutPassState<'_> {
         };
 
         // Update inline boxes
+        let percent_span_edges = inline_layout.percent_span_edges;
         for ibox in inline_layout.layout.inline_boxes_mut() {
-            // pyro: a span's edge has its width from the build.
+            // pyro: a span's edge has its width from the build, unless its margin or padding
+            // is a percentage: of the containing block's width (CSS 2.1 § 8.3, 8.4), zero for
+            // the intrinsic sizes.
             if ibox.kind.is_span_edge() {
+                if percent_span_edges
+                    && let Some(style) = self.nodes[NodeId::from_u64(ibox.id)].primary_styles()
+                {
+                    // (The root's own width when it is known: not while it is measured.)
+                    let basis = known_dimensions
+                        .width
+                        .map_or(0.0, |width| (width - content_box_inset.horizontal_axis_sum()).max(0.0));
+                    let (start, end, percent) = crate::layout::inline::span_edge_widths_in(&style, basis);
+                    if percent {
+                        let width = if ibox.kind == parley::InlineBoxKind::SpanStart { start } else { end };
+                        ibox.width = width.unwrap_or(0.0) * scale;
+                    }
+                }
                 continue;
             }
             let style = self.child_layout_style(&self.nodes[NodeId::from_u64(ibox.id)]);
@@ -639,6 +682,23 @@ impl LayoutPassState<'_> {
             // pyro: not on the lines of an anonymous block after its block's first line.
             .filter(|indent| indent.hanging || crate::layout::first_line::starts_a_block(self.doc, node_id))
             .unwrap_or_else(GenericTextIndent::zero);
+        // pyro: the first line of an anonymous block is the first formatted line of its parent
+        // element only when the block is the parent's first box (CSS Text 3 § 8.1: "the first
+        // line of an anonymous block box is only affected if it is the first child of its
+        // parent element"): the text after a block child is not indented again.
+        let text_indent = {
+            let node = &self.nodes[node_id];
+            let later_anonymous_block = node.is_anonymous()
+                && !text_indent.each_line
+                && node.parent.is_some_and(|parent| {
+                    self.nodes[parent]
+                        .layout_children
+                        .borrow()
+                        .as_ref()
+                        .is_some_and(|children| children.first().is_some_and(|&first| first != node_id))
+                });
+            if later_anonymous_block { GenericTextIndent::zero() } else { text_indent }
+        };
         let indent_options = IndentOptions {
             each_line: text_indent.each_line,
             hanging: text_indent.hanging,
@@ -1273,8 +1333,11 @@ impl LayoutPassState<'_> {
                     line_has_in_flow_content |= run.advance() > 0.0;
                 }
                 if let parley::layout::PositionedLayoutItem::InlineBox(ibox) = item {
-                    // pyro: a span's edge is part of the span, which has no box of its own.
+                    // pyro: a span's edge is part of the span, which has no box of its own. It is
+                    // content of its line (CSS 2.1 § 9.4.2: a line with a margin, border or
+                    // padding is no empty line): a block-level box after it would start below.
                     if ibox.kind.is_span_edge() {
+                        line_has_in_flow_content = true;
                         continue;
                     }
                     let order = ibox_order;
@@ -1350,10 +1413,18 @@ impl LayoutPassState<'_> {
                         //   box, or below it if in-flow content precedes it on the line (its
                         //   hypothetical box would start a new line after that content).
                         let line_metrics = line.metrics();
-                        let line_top = (line_metrics.block_min_coord / scale) + line_box_top;
-                        let line_bottom = (line_metrics.block_max_coord / scale) + line_box_top;
+                        // pyro: relatively positioned inline boxes around it move its static
+                        // position, as they move what else they hold.
+                        let span_offset = match self.nodes[NodeId::from_u64(ibox.id)].parent {
+                            Some(parent) if inline_layout.relative_spans => {
+                                crate::layout::inline::inline_span_offset(&self.nodes, parent, node_id, container_content_size)
+                            }
+                            _ => taffy::Point::ZERO,
+                        };
+                        let line_top = (line_metrics.block_min_coord / scale) + line_box_top + span_offset.y;
+                        let line_bottom = (line_metrics.block_max_coord / scale) + line_box_top + span_offset.y;
                         let (inline_area, block_area) = if is_inline_level {
-                            let x = (ibox.x / scale) + container_pb.left;
+                            let x = (ibox.x / scale) + container_pb.left + span_offset.x;
                             (
                                 taffy::Line { start: x, end: x },
                                 taffy::Line {
@@ -1377,14 +1448,14 @@ impl LayoutPassState<'_> {
                             let y = if preceded { line_bottom } else { line_top };
                             (
                                 taffy::Line {
-                                    start: container_pb.left,
-                                    end: final_size.width - container_pb.right,
+                                    start: container_pb.left + span_offset.x,
+                                    end: final_size.width - container_pb.right + span_offset.x,
                                 },
                                 taffy::Line { start: y, end: y },
                             )
                         };
 
-                        oof_candidates.push(OofCandidate {
+                        oof_candidates.push(OofCandidate { containing_block: None,
                             node: taffy::NodeId::from(ibox.id),
                             order,
                             position,
@@ -1479,6 +1550,34 @@ impl LayoutPassState<'_> {
         // println!("known_dimensions: w: {:?} h: {:?}", inputs.known_dimensions.width, inputs.known_dimensions.height);
         // println!("\n");
 
+        // pyro: an out-of-flow box whose containing block is an inline box (a positioned span)
+        // is laid out against the padding box the span's fragments bound (CSS 2.1 § 10.1 4.1),
+        // moved by the span's relative offset.
+        if inputs.run_mode == RunMode::PerformLayout && !oof_candidates.is_empty() {
+            let content_size = final_size - content_box_inset.sum_axes();
+            for candidate in oof_candidates.as_mut_slice() {
+                if candidate.containing_block.is_some() {
+                    continue;
+                }
+                let Some(span) = self.inline_containing_block_of(node_id, crate::dom_node_id(candidate.node), candidate.position)
+                else {
+                    continue;
+                };
+                let Some((x, y, width, height)) = span_padding_box(&self.nodes, &inline_layout, span, scale) else {
+                    continue;
+                };
+                let offset = if inline_layout.relative_spans {
+                    crate::layout::inline::inline_span_offset(&self.nodes, span, node_id, content_size)
+                } else {
+                    taffy::Point::ZERO
+                };
+                candidate.containing_block = Some((
+                    Size { width, height },
+                    Point { x: x + container_pb.left + offset.x, y: y + line_box_top + offset.y },
+                ));
+            }
+        }
+
         let line_baseline =
             |line: parley::Line<'_, _>| (line.metrics().baseline / scale) + line_box_top;
         let exports_baseline = has_inline_content && !suppresses_baseline;
@@ -1493,6 +1592,11 @@ impl LayoutPassState<'_> {
 
         if inputs.run_mode == RunMode::PerformLayout {
             inline_layout.span_cb_flags = span_cb_flags;
+            // pyro: lines taller than the box reach into what follows it (`FLOW_CONTENT_OVERFLOWS`).
+            let overflows = measured_size.height > final_size.height - content_box_inset.vertical_axis_sum() + 0.01;
+            let flags = &mut self.nodes[node_id].flags;
+            flags.remove(NodeFlags::FLOW_BOXES_OVERLAP);
+            flags.set(NodeFlags::FLOW_CONTENT_OVERFLOWS, overflows);
         }
 
         // Put layout back
@@ -1584,11 +1688,127 @@ fn first_in_flow_index(line: &parley::Line<'_, crate::node::TextBrush>, layout: 
             parley::layout::PositionedLayoutItem::GlyphRun(run) if run.advance() > 0.0 => {
                 Some(run.run().text_range().start)
             }
-            parley::layout::PositionedLayoutItem::InlineBox(ibox) if ibox.kind == parley::InlineBoxKind::InFlow => layout
-                .inline_boxes()
-                .find(|candidate| candidate.id == ibox.id)
-                .map(|candidate| candidate.index),
+            parley::layout::PositionedLayoutItem::InlineBox(ibox)
+                if ibox.kind == parley::InlineBoxKind::InFlow || ibox.kind.is_span_edge() =>
+            {
+                layout
+                    .inline_boxes()
+                    .find(|candidate| candidate.id == ibox.id && candidate.kind == ibox.kind)
+                    .map(|candidate| candidate.index)
+            }
             _ => None,
         })
         .min()
+}
+
+/// pyro: the padding box of the inline box (not atomic) `span` in the lines of `text_layout`, as
+/// the containing block of the out-of-flow boxes in it (CSS 2.1 § 10.1 4.1): from the top and
+/// left padding edges of its first fragment to the bottom and right padding edges of its last
+/// (right and left where it is right-to-left), `(x, y, width, height)` in CSS px from the lines'
+/// origin. A fragment is what the span holds on a line: text, atomic boxes, its own edges
+/// without their margin and border, and the places of out-of-flow boxes; its block extent is the
+/// span's content area and block-axis padding, or nothing on a line without content (a span
+/// holding only the out-of-flow box is at the line's top). `None` when it is on no line.
+fn span_padding_box(
+    nodes: &crate::NodeTree,
+    text_layout: &crate::node::TextLayout,
+    span: NodeId,
+    scale: f32,
+) -> Option<(f32, f32, f32, f32)> {
+    use parley::InlineBoxKind;
+    use parley::layout::PositionedLayoutItem;
+    use style::values::computed::{Length, LengthPercentage, Margin};
+    use style::values::generics::length::GenericMargin;
+
+    let layout = &text_layout.layout;
+    let styles = layout.styles();
+    // The style the span made, when the content of style `index` is in the span.
+    let span_style = |mut index: u16| -> Option<u16> {
+        let mut found = None;
+        loop {
+            let style = styles.get(usize::from(index))?;
+            if style.brush.id == span {
+                found = Some(index);
+            } else if found.is_some() {
+                break;
+            }
+            if index == 0 {
+                break;
+            }
+            index = layout.style_parent(index);
+        }
+        found
+    };
+    let style = nodes[span].primary_styles()?;
+    let length = |v: &LengthPercentage| v.resolve(Length::new(0.0)).px() * scale;
+    let margin = |v: &Margin| match v {
+        GenericMargin::LengthPercentage(v) => length(v),
+        _ => 0.0,
+    };
+    let (b, p, m) = (style.get_border(), style.get_padding(), style.get_margin());
+    let border = |width: &style::values::computed::BorderSideWidth, style: style::values::computed::BorderStyle| {
+        if style.none_or_hidden() { 0.0 } else { width.0.to_f32_px() * scale }
+    };
+    let outer_left = margin(&m.margin_left) + border(&b.border_left_width, b.border_left_style);
+    let outer_right = margin(&m.margin_right) + border(&b.border_right_width, b.border_right_style);
+    let (padding_top, padding_bottom) = (length(&p.padding_top.0), length(&p.padding_bottom.0));
+    let rtl = style.clone_direction() == style::computed_values::direction::T::Rtl;
+    drop(style);
+
+    // (x0, x1, top, bottom) of the first and the last fragment.
+    let mut first: Option<(f32, f32, f32, f32)> = None;
+    let mut last = None;
+    for line in layout.lines() {
+        let mut fragment: Option<(f32, f32, u16)> = None;
+        let mut line_has_content = false;
+        for item in line.items() {
+            let (style_index, x0, x1) = match &item {
+                PositionedLayoutItem::GlyphRun(run) => {
+                    line_has_content |= run.advance() > 0.0;
+                    (run.style_index(), run.offset(), run.offset() + run.advance())
+                }
+                PositionedLayoutItem::InlineBox(ibox) => match ibox.kind {
+                    InlineBoxKind::InFlow => {
+                        line_has_content = true;
+                        (ibox.style_index, ibox.x, ibox.x + ibox.width)
+                    }
+                    InlineBoxKind::SpanStart | InlineBoxKind::SpanEnd => {
+                        line_has_content = true;
+                        let (mut x0, mut x1) = (ibox.x, ibox.x + ibox.width);
+                        if ibox.id == span.as_u64() {
+                            if (ibox.kind == InlineBoxKind::SpanStart) != rtl {
+                                x0 += outer_left;
+                            } else {
+                                x1 -= outer_right;
+                            }
+                        }
+                        (ibox.style_index, x0, x1)
+                    }
+                    _ => (ibox.style_index, ibox.x, ibox.x),
+                },
+            };
+            let Some(own) = span_style(style_index) else {
+                continue;
+            };
+            fragment = Some(match fragment {
+                Some((left, right, own)) => (left.min(x0), right.max(x1), own),
+                None => (x0, x1, own),
+            });
+        }
+        if let Some((x0, x1, own)) = fragment {
+            let (top, bottom) = if line_has_content {
+                let (top, bottom) = line.span_content_area(own);
+                (top - padding_top, bottom + padding_bottom)
+            } else {
+                let top = line.metrics().block_min_coord;
+                (top, top)
+            };
+            first.get_or_insert((x0, x1, top, bottom));
+            last = Some((x0, x1, top, bottom));
+        }
+    }
+    let (first, last) = (first?, last?);
+    let (left, right) = if rtl { (last.0, first.1) } else { (first.0, last.1) };
+    let (top, bottom) = (first.2, last.3);
+    Some((left / scale, top / scale, (right - left).max(0.0) / scale, (bottom - top).max(0.0) / scale))
 }

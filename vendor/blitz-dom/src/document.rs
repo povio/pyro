@@ -1346,6 +1346,38 @@ impl BaseDocument {
                 }
             }
         }
+        // pyro: so have the boxes of a split inline's head or tail it laid out, which are not its
+        // children but the split inline's (`find_inline_layout_embedded_boxes`).
+        let anon = &self.nodes[anon_id];
+        if anon
+            .flags
+            .intersects(crate::node::NodeFlags::ENDS_WITH_SPLIT_HEAD | crate::node::NodeFlags::STARTS_WITH_SPLIT_TAIL)
+        {
+            let len = anon.children.len();
+            let mut pending: Vec<NodeId> = anon
+                .children
+                .iter()
+                .copied()
+                .enumerate()
+                .filter(|&(index, _)| anon.split_ref_at(index, len).is_some())
+                .map(|(_, id)| id)
+                .collect();
+            while let Some(id) = pending.pop() {
+                let Some(node) = self.nodes.get(id) else { continue };
+                for child_id in node.before().into_iter().chain(node.children.iter().copied()).chain(node.after()) {
+                    let Some(child) = self.nodes.get(child_id) else { continue };
+                    if child.layout_parent.get() == Some(anon_id) {
+                        child.layout_parent.set(None);
+                    }
+                    if child.layout_child_of.get() == Some(anon_id) {
+                        child.layout_child_of.set(None);
+                    }
+                    if child.is_element() {
+                        pending.push(child_id);
+                    }
+                }
+            }
+        }
 
         self.remove_node_from_tree(anon_id);
     }

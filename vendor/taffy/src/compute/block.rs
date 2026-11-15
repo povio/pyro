@@ -543,7 +543,9 @@ fn compute_inner(
     let aspect_ratio = style.aspect_ratio();
     let padding = raw_padding.resolve_or_zero(parent_size.width, |val, basis| tree.calc(val, basis));
     let border = raw_border.resolve_or_zero(parent_size.width, |val, basis| tree.calc(val, basis));
-    let direction = style.direction();
+    // pyro: a box that is no containing block lays its children out in its containing block's
+    // direction (`block_container_direction`).
+    let direction = tree.block_container_direction(node_id).unwrap_or_else(|| style.direction());
 
     // Scrollbar gutters are reserved when the `overflow` property is set to `Overflow::Scroll`.
     // However, the axis are switched (transposed) because a node that scrolls vertically needs
@@ -668,7 +670,10 @@ fn compute_inner(
     // must not be influenced by the item's specified height).
     let container_percentage_resolution_height = percentage_basis_dimensions
         .height
-        .or(if inputs.sizing_mode == SizingMode::InherentSize { size.height.maybe_max(min_size.height) } else { None });
+        .or(if inputs.sizing_mode == SizingMode::InherentSize { size.height.maybe_max(min_size.height) } else { None })
+        // pyro: a box that is no containing block (an inline box laid out around its blocks)
+        // hands its own containing block's height on.
+        .or(if tree.block_container_passes_percentage_height(node_id) { parent_size.height } else { None });
 
     // 3. Perform final item layout and return content height
     //
@@ -845,6 +850,24 @@ fn compute_inner(
         }
     }
 
+    // pyro: whether in-flow boxes overlap in the block axis (`set_block_flow_overlap`).
+    {
+        let mut overlap = false;
+        let mut reach = f32::NEG_INFINITY;
+        let mut after_overflow = false;
+        for item in items.iter() {
+            let Some(layout) = item.final_layout.as_ref() else { continue };
+            if layout.size.height > 0.0 && (after_overflow || layout.location.y + 0.01 < reach) {
+                overlap = true;
+            }
+            reach = reach.max(layout.location.y + layout.size.height);
+            let (child_overlap, child_overflows) = tree.block_child_flow_overlap(item.node_id);
+            overlap |= child_overlap;
+            after_overflow |= child_overflows;
+        }
+        tree.set_block_flow_overlap(node_id, overlap, intrinsic_outer_height > container_outer_height + 0.01);
+    }
+
     // 4. Collect out-of-flow candidates in document order (direct out-of-flow children plus
     // candidates bubbled from in-flow children's subtrees). These are laid out by the
     // out-of-flow positioning pass (`compute_oof_layout`), which runs after this algorithm.
@@ -867,7 +890,7 @@ fn compute_inner(
                 item.justify_self.unwrap_or(justify_items).resolve_self_relative(item.direction, direction, true);
             let align_self =
                 item.align_self.unwrap_or(AlignItems::NORMAL).resolve_self_relative(item.direction, direction, false);
-            candidates.push(OofCandidate {
+            candidates.push(OofCandidate { containing_block: None,
                 node: item.node_id,
                 order: item.order,
                 position: item.position,
@@ -1886,11 +1909,13 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
             }
             // pyro: a block container's last baseline is the last baseline of its last in-flow
             // child that has one (an inline-block's, CSS 2.1 § 10.8.1, is its last line box's).
-            let child_last_baseline = child_first_baseline(
-                item_layout.baselines.last.or(item_layout.baselines.first),
-                item_layout.size.height,
-                item.overflow.y,
-            );
+            // A child that is a scroll container gives its bottom margin edge, whatever lines it
+            // holds (as an inline-block that is one does; WPT `baseline-block-with-overflow-001`).
+            let child_last_baseline = if item.overflow.y.is_scroll_container() {
+                Some(item_layout.size.height + resolved_margin.bottom)
+            } else {
+                item_layout.baselines.last.or(item_layout.baselines.first)
+            };
             if let Some(baseline) = child_last_baseline {
                 last_baseline = Some(location.y - inset_offset.y + baseline);
             }

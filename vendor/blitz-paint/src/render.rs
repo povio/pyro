@@ -782,12 +782,10 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             return;
         }
 
-        // Hide elements with a visibility style other than visible
-        // pyro: but for the region of an SVG filter (below), which paints whatever the element does.
+        // pyro: `visibility` other than `visible` hides what the element paints itself (its box,
+        // its own text and content); its descendants that are `visible` again still paint (CSS 2.1
+        // § 11.2), and so does the region of an SVG filter.
         let hidden = styles.get_inherited_box().visibility != StyloVisibility::Visible;
-        if hidden && !styles.get_effects().filter.0.iter().any(|f| matches!(f, crate::filters::StyloFilter::Url(_))) {
-            return;
-        }
 
         // pyro: a 3D transform hides the element and its content: its back face shows with
         // `backface-visibility: hidden`, or it lies behind the viewer (`Node::set_transform`).
@@ -876,9 +874,6 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         );
         #[cfg(not(feature = "svg"))]
         let filter_steps: Option<Vec<()>> = None;
-        if hidden && filter_steps.is_none() {
-            return;
-        }
         let filter = match filter_steps {
             Some(_) => None,
             None => {
@@ -1128,7 +1123,8 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         let has_effect_layer = has_opacity || filter.is_some() || backdrop_filter.is_some() || filter_steps.is_some();
         let element = ElementPaint {
             node,
-            paints_own_box,
+            paints_own_box: paints_own_box && !hidden,
+            hidden,
             should_clip,
             is_text_input,
             content_position,
@@ -1152,9 +1148,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
 
                 if has_effect_layer {
                     let mut group = Scene::new();
-                    if !hidden {
-                        self.paint_element(&mut cx, &mut group, &element);
-                    }
+                    self.paint_element(&mut cx, &mut group, &element);
                     self.paint_effect_group(
                         scene,
                         group,
@@ -1204,6 +1198,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         let ElementPaint {
             node,
             paints_own_box,
+            hidden,
             should_clip,
             is_text_input,
             content_position,
@@ -1238,7 +1233,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             }
             cx.draw_inset_box_shadow(scene);
         }
-        if cx.context.backgrounds {
+        if cx.context.backgrounds && !hidden {
             cx.draw_table_row_backgrounds(scene);
         }
         // pyro: a collapsed table whose cells hold half of the borders around them draws the
@@ -1246,13 +1241,15 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         // borders after the cells' backgrounds); one with uniform gutters draws them here.
         let borders_after_cells = matches!(&cx.element.special_data,
             blitz_dom::node::SpecialElementData::TableRoot(table) if table.collapsed_edges.is_some());
-        if !borders_after_cells {
+        if !borders_after_cells && !hidden {
             cx.draw_table_borders(scene);
         }
         if paints_own_box {
             cx.draw_border(scene);
         }
-        cx.stroke_devtools(scene);
+        if !hidden {
+            cx.stroke_devtools(scene);
+        }
 
         let clip = if is_text_input {
             &cx.frame.text_input_clip_path()
@@ -1278,14 +1275,16 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
                 };
 
                 cx.transform = self.scrolled_transform(node, cx.transform);
-                cx.draw_image(scene);
-                #[cfg(feature = "svg")]
-                cx.draw_svg(scene);
-                #[cfg(feature = "custom-widget")]
-                cx.draw_custom_widget(scene);
-                cx.draw_sub_document(scene);
-                cx.draw_input(scene);
-                cx.draw_text_input_text(scene, content_position);
+                if !hidden {
+                    cx.draw_image(scene);
+                    #[cfg(feature = "svg")]
+                    cx.draw_svg(scene);
+                    #[cfg(feature = "custom-widget")]
+                    cx.draw_custom_widget(scene);
+                    cx.draw_sub_document(scene);
+                    cx.draw_input(scene);
+                    cx.draw_text_input_text(scene, content_position);
+                }
                 // pyro: a multi-column container paints its column rules over the border, under
                 // the content, clipped and scrolled with it, and its content once per column
                 // (`render/multicol.rs`).
@@ -1294,10 +1293,11 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
                 }
                 if !cx.draw_columns(scene, content_position, child_clip_rect) {
                     // pyro: floats among the paint children: in the phases of CSS 2.1 Appendix E.
-                    if node
-                        .flags
-                        .contains(blitz_dom::node::NodeFlags::HAS_FLOAT_PAINT_CHILDREN)
-                    {
+                    // pyro: and so are in-flow boxes that overlap (`FLOW_BOXES_OVERLAP`).
+                    if node.flags.intersects(
+                        blitz_dom::node::NodeFlags::HAS_FLOAT_PAINT_CHILDREN
+                            | blitz_dom::node::NodeFlags::FLOW_BOXES_OVERLAP,
+                    ) {
                         cx.draw_children_in_phases(
                             scene,
                             cx.transform,
@@ -1307,12 +1307,17 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
                         return;
                     }
                     cx.draw_inline_layout(scene, content_position);
-                    cx.draw_marker(scene, content_position);
+                    if !hidden {
+                        cx.draw_marker(scene, content_position);
+                    }
                     cx.draw_children(scene, cx.transform, child_clip_rect);
                 }
             },
         );
         cx.transform = unscrolled_transform;
+        if hidden {
+            return;
+        }
         if borders_after_cells {
             cx.draw_table_borders(scene);
         }
@@ -2019,6 +2024,9 @@ impl ElementCx<'_, '_> {
                 let Some(style) = node.primary_styles() else {
                     return false;
                 };
+                if style.get_inherited_box().visibility != StyloVisibility::Visible {
+                    return false;
+                }
                 let background = style.get_background();
                 let border = style.get_border();
                 background.background_color.resolve_to_absolute(&style.clone_color()).as_srgb_color()
@@ -3671,6 +3679,8 @@ fn create_css_rect(style: &ComputedValues, layout: &Layout, scale: f64) -> CssBo
 struct ElementPaint<'n> {
     node: &'n Node,
     paints_own_box: bool,
+    /// pyro: `visibility` hides what the element paints itself; its descendants still paint.
+    hidden: bool,
     should_clip: bool,
     is_text_input: bool,
     content_position: Point,

@@ -1,5 +1,5 @@
 diff --git a/src/compute/block.rs b/src/compute/block.rs
-index 3cd3e713..bdfddcb5 100644
+index 3cd3e713..7043cdf6 100644
 --- a/src/compute/block.rs
 +++ b/src/compute/block.rs
 @@ -499,16 +499,11 @@ pub fn compute_block_layout(
@@ -42,7 +42,30 @@ index 3cd3e713..bdfddcb5 100644
  /// Computes the layout of [`LayoutBlockContainer`] according to the block layout algorithm
  fn compute_inner(
      tree: &mut impl LayoutBlockContainer,
-@@ -683,6 +689,7 @@ fn compute_inner(
+@@ -537,7 +543,9 @@ fn compute_inner(
+     let aspect_ratio = style.aspect_ratio();
+     let padding = raw_padding.resolve_or_zero(parent_size.width, |val, basis| tree.calc(val, basis));
+     let border = raw_border.resolve_or_zero(parent_size.width, |val, basis| tree.calc(val, basis));
+-    let direction = style.direction();
++    // pyro: a box that is no containing block lays its children out in its containing block's
++    // direction (`block_container_direction`).
++    let direction = tree.block_container_direction(node_id).unwrap_or_else(|| style.direction());
+ 
+     // Scrollbar gutters are reserved when the `overflow` property is set to `Overflow::Scroll`.
+     // However, the axis are switched (transposed) because a node that scrolls vertically needs
+@@ -662,7 +670,10 @@ fn compute_inner(
+     // must not be influenced by the item's specified height).
+     let container_percentage_resolution_height = percentage_basis_dimensions
+         .height
+-        .or(if inputs.sizing_mode == SizingMode::InherentSize { size.height.maybe_max(min_size.height) } else { None });
++        .or(if inputs.sizing_mode == SizingMode::InherentSize { size.height.maybe_max(min_size.height) } else { None })
++        // pyro: a box that is no containing block (an inline box laid out around its blocks)
++        // hands its own containing block's height on.
++        .or(if tree.block_container_passes_percentage_height(node_id) { parent_size.height } else { None });
+ 
+     // 3. Perform final item layout and return content height
+     //
+@@ -683,6 +694,7 @@ fn compute_inner(
          first_child_top_margin_set,
          last_child_bottom_margin_set,
          mut first_baseline,
@@ -50,7 +73,7 @@ index 3cd3e713..bdfddcb5 100644
      ) = perform_final_layout_on_in_flow_children(
          tree,
          run_mode,
-@@ -741,6 +748,7 @@ fn compute_inner(
+@@ -741,6 +753,7 @@ fn compute_inner(
          let free_space = container_inner_height - inflow_content_height;
          let group_offset = compute_block_align_content_offset(align_content, free_space);
          first_baseline = first_baseline.map(|baseline| baseline + group_offset);
@@ -58,7 +81,7 @@ index 3cd3e713..bdfddcb5 100644
          for item in items.iter_mut() {
              if let Some(layout) = item.final_layout.as_mut() {
                  layout.location.y += group_offset;
-@@ -803,7 +811,7 @@ fn compute_inner(
+@@ -803,7 +816,7 @@ fn compute_inner(
          size: final_outer_size,
          #[cfg(feature = "content_size")]
          scrollable_overflow_rect: crate::tree::ScrollableOverflow::ZERO,
@@ -67,7 +90,41 @@ index 3cd3e713..bdfddcb5 100644
          top_margin: if own_margins_collapse_with_children.start {
              first_child_top_margin_set
          } else {
-@@ -931,7 +939,9 @@ fn compute_inner(
+@@ -837,6 +850,24 @@ fn compute_inner(
+         }
+     }
+ 
++    // pyro: whether in-flow boxes overlap in the block axis (`set_block_flow_overlap`).
++    {
++        let mut overlap = false;
++        let mut reach = f32::NEG_INFINITY;
++        let mut after_overflow = false;
++        for item in items.iter() {
++            let Some(layout) = item.final_layout.as_ref() else { continue };
++            if layout.size.height > 0.0 && (after_overflow || layout.location.y + 0.01 < reach) {
++                overlap = true;
++            }
++            reach = reach.max(layout.location.y + layout.size.height);
++            let (child_overlap, child_overflows) = tree.block_child_flow_overlap(item.node_id);
++            overlap |= child_overlap;
++            after_overflow |= child_overflows;
++        }
++        tree.set_block_flow_overlap(node_id, overlap, intrinsic_outer_height > container_outer_height + 0.01);
++    }
++
+     // 4. Collect out-of-flow candidates in document order (direct out-of-flow children plus
+     // candidates bubbled from in-flow children's subtrees). These are laid out by the
+     // out-of-flow positioning pass (`compute_oof_layout`), which runs after this algorithm.
+@@ -859,7 +890,7 @@ fn compute_inner(
+                 item.justify_self.unwrap_or(justify_items).resolve_self_relative(item.direction, direction, true);
+             let align_self =
+                 item.align_self.unwrap_or(AlignItems::NORMAL).resolve_self_relative(item.direction, direction, false);
+-            candidates.push(OofCandidate {
++            candidates.push(OofCandidate { containing_block: None,
+                 node: item.node_id,
+                 order: item.order,
+                 position: item.position,
+@@ -931,7 +962,9 @@ fn compute_inner(
  }
  
  /// Create a `Vec` of `BlockItem` structs where each item in the `Vec` represents a child of the current node
@@ -78,7 +135,7 @@ index 3cd3e713..bdfddcb5 100644
  fn generate_item_list(
      tree: &impl LayoutBlockContainer,
      node: NodeId,
-@@ -964,8 +974,11 @@ fn generate_item_list(
+@@ -964,8 +997,11 @@ fn generate_item_list(
  
              let is_block = child_style.is_block();
              let is_table = child_style.is_table();
@@ -92,7 +149,7 @@ index 3cd3e713..bdfddcb5 100644
                  let calc = |val, basis| tree.calc(val, basis);
                  let width = child_style.size().width.maybe_resolve(Some(0.0), calc);
                  let max_width = child_style.max_size().width.maybe_resolve(Some(0.0), calc);
-@@ -982,7 +995,9 @@ fn generate_item_list(
+@@ -982,7 +1018,9 @@ fn generate_item_list(
                  && is_not_floated
                  && !is_scroll_container
                  && !contain.establishes_independent_formatting_context()
@@ -103,7 +160,7 @@ index 3cd3e713..bdfddcb5 100644
  
              BlockItem {
                  node_id: child_node_id,
-@@ -990,7 +1005,9 @@ fn generate_item_list(
+@@ -990,7 +1028,9 @@ fn generate_item_list(
                  is_table,
                  is_compressible_replaced,
                  min_content_width_cap,
@@ -114,7 +171,7 @@ index 3cd3e713..bdfddcb5 100644
                  #[cfg(feature = "float_layout")]
                  float,
                  #[cfg(feature = "float_layout")]
-@@ -1091,7 +1108,8 @@ fn resolve_relative_offset(
+@@ -1091,7 +1131,8 @@ fn resolve_relative_offset(
  }
  
  /// Compute the content-based width in the case that the width of the container is not known
@@ -124,7 +181,7 @@ index 3cd3e713..bdfddcb5 100644
  fn determine_content_based_container_width(
      tree: &mut impl LayoutPartialTree,
      items: &[BlockItem],
-@@ -1245,7 +1263,7 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
+@@ -1245,7 +1286,7 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
      children_margins_adjoin_own_edges: Line<bool>,
      #[cfg(feature = "content_size")] is_scroll_container: bool,
      block_ctx: &mut BlockContext<'_>,
@@ -133,7 +190,7 @@ index 3cd3e713..bdfddcb5 100644
      // Resolve container_inner_width for sizing child nodes using initial content_box_inset
      let container_inner_width = (container_outer_width - resolved_content_box_inset.horizontal_axis_sum()).max(0.0);
      #[cfg(feature = "content_size")]
-@@ -1294,6 +1312,8 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
+@@ -1294,6 +1335,8 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
      let mut active_collapsible_margin_set = CollapsibleMarginSet::ZERO;
      let mut is_collapsing_with_first_margin_set = true;
      let mut first_baseline: Option<f32> = None;
@@ -142,7 +199,7 @@ index 3cd3e713..bdfddcb5 100644
      // Whether the active margin set contains the margins of a self-collapsing element with
      // clearance. Such margins collapse with the margins of following siblings but the resulting
      // margin does not collapse with the bottom margin of the parent block.
-@@ -1518,14 +1538,26 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
+@@ -1518,14 +1561,26 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
                          // for the item's border box, which must not overlap any float
                          // The item's height isn't known until it is laid out, so only its styled
                          // (minimum) height is checked against floats below its top edge
@@ -170,7 +227,7 @@ index 3cd3e713..bdfddcb5 100644
                          let slot = loop {
                              let slot = block_ctx.find_bfc_slot(
                                  min_y,
-@@ -1536,15 +1568,41 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
+@@ -1536,15 +1591,41 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
                                  slot_segment,
                              );
                              let Some(segment_id) = slot.segment_id else { break slot };
@@ -196,8 +253,7 @@ index 3cd3e713..bdfddcb5 100644
 +                            if width.max(item.padding_border_sum.width) > slot.border_width + FIT_TOLERANCE {
 +                                slot_segment = Some(segment_id);
 +                                continue;
-                             }
--                            slot_segment = Some(segment_id);
++                            }
 +                            // pyro: the item must not overlap the floats beside any of its height,
 +                            // which it has once laid out in the slot: taller than the slot stays as
 +                            // wide, it is placed again beside the floats of its height (WPT
@@ -215,29 +271,32 @@ index 3cd3e713..bdfddcb5 100644
 +                                    height_retries += 1;
 +                                    continue;
 +                                }
-+                            }
+                             }
+-                            slot_segment = Some(segment_id);
 +                            break slot;
                          };
  
                          // If the item had to move down to avoid floats then it "separates from the
-@@ -1826,6 +1884,16 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
+@@ -1826,6 +1907,18 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
                      child_first_baseline(item_layout.baselines.first, item_layout.size.height, item.overflow.y);
                  first_baseline = child_baseline.map(|baseline| location.y - inset_offset.y + baseline);
              }
 +            // pyro: a block container's last baseline is the last baseline of its last in-flow
 +            // child that has one (an inline-block's, CSS 2.1 § 10.8.1, is its last line box's).
-+            let child_last_baseline = child_first_baseline(
-+                item_layout.baselines.last.or(item_layout.baselines.first),
-+                item_layout.size.height,
-+                item.overflow.y,
-+            );
++            // A child that is a scroll container gives its bottom margin edge, whatever lines it
++            // holds (as an inline-block that is one does; WPT `baseline-block-with-overflow-001`).
++            let child_last_baseline = if item.overflow.y.is_scroll_container() {
++                Some(item_layout.size.height + resolved_margin.bottom)
++            } else {
++                item_layout.baselines.last.or(item_layout.baselines.first)
++            };
 +            if let Some(baseline) = child_last_baseline {
 +                last_baseline = Some(location.y - inset_offset.y + baseline);
 +            }
  
              // Used auto margins include float-avoidance offsets, unlike the alignment margins above.
              #[cfg(feature = "float_layout")]
-@@ -1947,5 +2015,5 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
+@@ -1947,5 +2040,5 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
  
      committed_y_offset += resolved_content_box_inset.bottom + bottom_y_margin_offset;
      let content_height = f32_max(0.0, committed_y_offset);
@@ -257,7 +316,7 @@ index ec094c9e..2758e69f 100644
      /// Whether the parent clips unreachable overflow and includes end padding.
      pub parent_is_scroll_container: bool,
 diff --git a/src/compute/flexbox.rs b/src/compute/flexbox.rs
-index a8dbbcf2..59b394ea 100644
+index a8dbbcf2..df553b4b 100644
 --- a/src/compute/flexbox.rs
 +++ b/src/compute/flexbox.rs
 @@ -1542,8 +1542,41 @@ fn determine_container_main_size(
@@ -318,6 +377,15 @@ index a8dbbcf2..59b394ea 100644
                              // If the clamping values are such that max <= min, then we can avoid the expensive step of computing the content size
                              // as we know that the clamping values will override it anyway
                              (min, Some(pref), max) if max <= min || max <= pref => pref.min(max).max(min) + margin_sum,
+@@ -3032,7 +3073,7 @@ fn collect_oof_candidates(
+         let main = AxisStaticPosition { area: main_area, align: AxisStaticAlign::from_keyword(main_edge) };
+ 
+         let static_position = if constants.is_row { Point { x: main, y: cross } } else { Point { x: cross, y: main } };
+-        candidates.push(OofCandidate { node: child, order: order as u32, position, static_position });
++        candidates.push(OofCandidate { containing_block: None, node: child, order: order as u32, position, static_position });
+     }
+ }
+ 
 diff --git a/src/compute/float.rs b/src/compute/float.rs
 index 82d0bd0a..c4d3e793 100644
 --- a/src/compute/float.rs
@@ -679,7 +747,7 @@ index b84e8751..c65e1a8a 100644
  
  /// The offset applied to an item in a single axis by its `inset` if it is `position: relative`
 diff --git a/src/compute/grid/mod.rs b/src/compute/grid/mod.rs
-index f0109c6e..c4bf409a 100644
+index f0109c6e..0e9531ca 100644
 --- a/src/compute/grid/mod.rs
 +++ b/src/compute/grid/mod.rs
 @@ -39,12 +39,16 @@ mod alignment;
@@ -1257,6 +1325,15 @@ index f0109c6e..c4bf409a 100644
      // Position hidden and absolutely positioned children, merging in the candidates bubbled out
      // of in-flow children's subtrees (`items` is sorted by `source_order`, i.e. child index)
      let mut order = items.len() as u32;
+@@ -841,7 +1097,7 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+             };
+             drop(child_style);
+ 
+-            oof_candidates.push(OofCandidate {
++            oof_candidates.push(OofCandidate { containing_block: None,
+                 node: child,
+                 order,
+                 position,
 @@ -980,9 +1236,82 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
      );
      output.oof_candidates = oof_candidates;
@@ -2393,7 +2470,7 @@ index 6ad11edc..6c56b0c4 100644
          })
      }
 diff --git a/src/compute/mod.rs b/src/compute/mod.rs
-index bb954acf..e8ef5b58 100644
+index bb954acf..fa316485 100644
 --- a/src/compute/mod.rs
 +++ b/src/compute/mod.rs
 @@ -80,13 +80,24 @@ pub fn compute_root_layout(
@@ -2422,6 +2499,15 @@ index bb954acf..e8ef5b58 100644
      let oof_root_area = match (position.is_out_of_flow(), icb_size.width, icb_size.height) {
          (true, Some(width), Some(height)) => Some(Size { width, height }),
          _ => None,
+@@ -100,7 +111,7 @@ pub fn compute_root_layout(
+     let (layout, candidates) = if let Some(area_size) = oof_root_area {
+         // The static position of the root places its margin box at the origin of the ICB
+         let (start, end) = if direction.is_rtl() { (area_size.width, area_size.width) } else { (0.0, 0.0) };
+-        let candidate = OofCandidate {
++        let candidate = OofCandidate { containing_block: None,
+             node: root,
+             order: 0,
+             position,
 @@ -181,6 +192,15 @@ pub fn compute_root_layout(
          debug_assert!(unclaimed.is_empty(), "the root positioning pass must claim all remaining candidates");
          if !root_is_cached {
@@ -2466,6 +2552,62 @@ index bb954acf..e8ef5b58 100644
      };
  }
  
+diff --git a/src/compute/oof.rs b/src/compute/oof.rs
+index 2c6179a4..50a4978c 100644
+--- a/src/compute/oof.rs
++++ b/src/compute/oof.rs
+@@ -828,7 +828,8 @@ pub(crate) fn perform_oof_layout(
+     // to the work list (Blink-style re-sweep).
+     let mut worklist: Vec<OofCandidate> = Vec::new();
+     for candidate in candidates {
+-        if claims.for_position(candidate.position) {
++        // pyro: a candidate with a containing block of its own is laid out here.
++        if candidate.containing_block.is_some() || claims.for_position(candidate.position) {
+             worklist.push(*candidate);
+         } else {
+             unclaimed.push(*candidate);
+@@ -851,17 +852,21 @@ pub(crate) fn perform_oof_layout(
+             overflow,
+             #[cfg(feature = "content_size")]
+             contain,
+-        } = layout_oof_box(
+-            tree,
+-            candidate,
+-            area_size,
+-            area_offset,
+-            direction,
+-            container_overflow,
+-            #[cfg(feature = "grid")]
+-            Some(node_id),
+-            |_, _| {},
+-        );
++        } = {
++            // pyro: against its own containing block (an inline box's), not a grid area.
++            let (box_area_size, box_area_offset) = candidate.containing_block.unwrap_or((area_size, area_offset));
++            layout_oof_box(
++                tree,
++                candidate,
++                box_area_size,
++                box_area_offset,
++                direction,
++                container_overflow,
++                #[cfg(feature = "grid")]
++                candidate.containing_block.is_none().then_some(node_id),
++                |_, _| {},
++            )
++        };
+         let location = layout.location;
+         let final_size = layout.size;
+ 
+@@ -871,7 +876,7 @@ pub(crate) fn perform_oof_layout(
+         if !surfaced.is_empty() {
+             surfaced.translate(location);
+             for surfaced_candidate in surfaced.iter() {
+-                if claims.for_position(surfaced_candidate.position) {
++                if surfaced_candidate.containing_block.is_some() || claims.for_position(surfaced_candidate.position) {
+                     worklist.push(*surfaced_candidate);
+                 } else {
+                     unclaimed.push(*surfaced_candidate);
 diff --git a/src/lib.rs b/src/lib.rs
 index c18fa644..50154417 100644
 --- a/src/lib.rs
@@ -2479,8 +2621,35 @@ index c18fa644..50154417 100644
  };
  #[doc(inline)]
  pub use crate::style::Style;
+diff --git a/src/tree/layout.rs b/src/tree/layout.rs
+index e250d742..3122372d 100644
+--- a/src/tree/layout.rs
++++ b/src/tree/layout.rs
+@@ -456,6 +456,11 @@ pub struct OofCandidate {
+     pub position: Position,
+     /// The static position of the box in each axis
+     pub static_position: Point<AxisStaticPosition>,
++    /// pyro: the box's containing block when it is no layout node's: the padding box an inline
++    /// box's fragments bound (CSS 2.1 § 10.1 4.1), its size and its offset in the border box the
++    /// static position is relative to. The first positioning pass that meets the candidate lays
++    /// it out against this area (the inline box's inline formatting context root).
++    pub containing_block: Option<(Size<f32>, Point<f32>)>,
+ }
+ 
+ /// A list of [`OofCandidate`]s.
+@@ -541,6 +546,10 @@ impl OofCandidates {
+             candidate.static_position.x.area.end += offset.x;
+             candidate.static_position.y.area.start += offset.y;
+             candidate.static_position.y.area.end += offset.y;
++            if let Some((_, origin)) = candidate.containing_block.as_mut() {
++                origin.x += offset.x;
++                origin.y += offset.y;
++            }
+         }
+     }
+ }
 diff --git a/src/tree/traits.rs b/src/tree/traits.rs
-index 7d4adf22..5d4fadbc 100644
+index 7d4adf22..a48edec9 100644
 --- a/src/tree/traits.rs
 +++ b/src/tree/traits.rs
 @@ -290,6 +290,16 @@ pub trait RoundTree: TraverseTree {
@@ -2577,7 +2746,7 @@ index 7d4adf22..5d4fadbc 100644
      /// Set the node's detailed grid information
      ///
      /// Implementing this method is optional. Doing so allows you to access details about the the grid such as
-@@ -373,6 +453,21 @@ pub trait LayoutBlockContainer: LayoutPartialTree {
+@@ -373,6 +453,55 @@ pub trait LayoutBlockContainer: LayoutPartialTree {
      /// Interpreted in the container's axes (see [`LayoutPartialTree::get_core_container_style`]).
      fn get_block_child_style(&self, child_node_id: NodeId) -> Self::BlockItemStyle<'_>;
  
@@ -2594,6 +2763,40 @@ index 7d4adf22..5d4fadbc 100644
 +    fn block_child_establishes_formatting_context(&self, child_node_id: NodeId) -> bool {
 +        let _ = child_node_id;
 +        false
++    }
++
++    /// pyro: whether percentage heights of the container's children resolve against the height
++    /// of the container's own containing block: the container is no containing block itself (an
++    /// inline box split around block-level content, laid out as a block box; CSS 2.1 § 10.1:
++    /// the containing block is the nearest block container ancestor box).
++    fn block_container_passes_percentage_height(&self, node_id: NodeId) -> bool {
++        let _ = node_id;
++        false
++    }
++
++    /// pyro: the direction of the containing block of the container's children when that is not
++    /// the container (see [`Self::block_container_passes_percentage_height`]): it decides which
++    /// margin an over-constrained child drops (CSS 2.1 § 10.3.3), not the container's own.
++    fn block_container_direction(&self, node_id: NodeId) -> Option<crate::Direction> {
++        let _ = node_id;
++        None
++    }
++
++    /// pyro: what the last layout of an in-flow block-level child recorded with
++    /// [`Self::set_block_flow_overlap`], where the container paints the child's parts with its
++    /// own (`overlap`: boxes in it overlap; `overflows`: its content is taller than its box).
++    fn block_child_flow_overlap(&self, child_node_id: NodeId) -> (bool, bool) {
++        let _ = child_node_id;
++        (false, false)
++    }
++
++    /// pyro: records, at the container's final layout, whether in-flow block-level boxes in it
++    /// overlap in the block axis (`overlap`: a child starts above the end of one before it, or
++    /// follows one whose content overflows it, or a child recorded an overlap), and whether its
++    /// own in-flow content is taller than its box (`overflows`). A painter that draws box by box
++    /// needs to know (CSS 2.1 Appendix E: block backgrounds first, then inline content).
++    fn set_block_flow_overlap(&mut self, node_id: NodeId, overlap: bool, overflows: bool) {
++        let _ = (node_id, overlap, overflows);
 +    }
 +
      /// Compute the specified node's size or full layout given the specified constraints

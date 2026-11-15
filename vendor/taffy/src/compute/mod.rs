@@ -111,7 +111,7 @@ pub fn compute_root_layout_in(
     let (layout, candidates) = if let Some(area_size) = oof_root_area {
         // The static position of the root places its margin box at the origin of the ICB
         let (start, end) = if direction.is_rtl() { (area_size.width, area_size.width) } else { (0.0, 0.0) };
-        let candidate = OofCandidate {
+        let candidate = OofCandidate { containing_block: None,
             node: root,
             order: 0,
             position,

@@ -1656,3 +1656,43 @@ to go to and `resolve_deferred_tasks` panicked (WPT css/css-text/white-space/
 pre-line-br-with-whitespace-child-crash.html, css/css-contain/contain-style-remove-element-crash.html). Such a root
 element is now the document's layout child, as every other root element. Covered by
 `crates/pyro-render/tests/no_root_element.rs`.
+## Inline layout leftovers (WPT reftests, lane P5)
+
+- `src/layout/inline/layout.rs` (`inline_containing_block_of`, `span_padding_box`): an out-of-flow box whose
+  containing block is a positioned inline box is laid out against the padding box that box's fragments bound (CSS
+  2.1 § 10.1 4.1: top and left of its first fragment, bottom and right of its last; the other way round for a
+  right-to-left box), moved by the box's relative offset, where the inline root's own padding box was used. The
+  root sets it on the candidate (`OofCandidate::containing_block`, taffy) and lays the box out in its own pass. A
+  box's static position moves with the relatively positioned inline boxes around it. On a line without content a
+  span is at the line's top (a span holding only the out-of-flow box). WPT `abspos-inline-007`/`-008`,
+  `toogle-abspos-on-relpos-inline-child`, `slice-inline-fragmentation-001..003`.
+- `src/layout/inline/build.rs` (`span_edge_widths`, `span_edge_widths_in`): a side of an inline box is an edge when
+  it has a margin, a border or a padding, also when they add up to nothing (a border and a negative margin as wide:
+  it paints, its line is no empty line, a block-level out-of-flow box after it starts below; WPT `margin-right-114`,
+  `static-inside-inline-002`), and when one is a percentage: each layout gives such an edge its width against the
+  root's content width (zero while the root is measured; `TextLayout::percent_span_edges`; WPT `c547-indent-001`).
+  A right-to-left span with one edge has the other too, empty: parley places a span's edges around the span's
+  content on the line, which must be items of its own there (text is shaped across a span's boundary otherwise;
+  WPT `bidi-box-model-011`, `-014`, `-015`, `-029`, `-030`, `-032`).
+- `src/layout/inline/layout.rs`: `text-indent` does not indent an anonymous block that is not its parent's first
+  box (CSS Text 3 § 8.1; WPT `text-indent-014`).
+- `src/layout/mod.rs` (`block_container_passes_percentage_height`, `block_container_direction`): an inline box
+  laid out as a block around its blocks is no containing block: percentage heights in it resolve against its
+  containing block's height (WPT `block-in-inline-percents-001`, `percent-height-1`), and that block's direction
+  decides which margin an over-constrained child drops (WPT `block-in-inline-margins-001b`, `-002b`).
+- `src/node/node.rs` (`has_block_level_pseudo_element`): a block-level `::before` or `::after` makes its inline box
+  one that contains a block (read from the pseudo-element's style: its box is made after the container asks), so
+  the box is split around it (WPT `block-in-inline-insert-013`, `-014`, `-016a`, `-016b`). `src/document.rs`
+  (`deallocate_anonymous_block`): the boxes of a split inline's head or tail keep no pointer to the freed anonymous
+  block that laid them out (they are the split inline's children, not the block's).
+- `src/layout/construct.rs`: an absolutely positioned box that would be inline-level joins the anonymous block of
+  the inline content it follows, as a float does: its static position is on that line (WPT
+  `remove-block-between-inline-and-abspos`).
+- `src/layout/mod.rs`, `src/node/node.rs` (`NodeFlags::FLOW_BOXES_OVERLAP`, `FLOW_CONTENT_OVERFLOWS`): layout
+  records where in-flow block boxes overlap in the block axis (a negative margin, or a box after one whose content
+  is taller than it), for the box that paints them (taffy's `set_block_flow_overlap`; blitz-paint paints such
+  children in phases).
+- `src/stylo.rs` (`get_attr`): `attr(Title)` names the `title` attribute of an HTML element in an HTML document
+  (WPT `content-attr-case-001`).
+
+Covered by `crates/pyro-render/tests/inline_leftovers.rs`.

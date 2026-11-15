@@ -29,6 +29,7 @@ mod incremental_construction;
 mod incremental_flex_overflow;
 mod inline_box_decorations;
 mod inline_fragments;
+mod inline_leftovers;
 mod inline_relative_position;
 mod inline_svg_viewport;
 mod input_percentage_min_content;
