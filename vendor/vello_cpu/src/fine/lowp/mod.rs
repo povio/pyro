@@ -778,7 +778,10 @@ mod tests {
                 alpha_fill::alpha_composite_solid(simd, &mut masked, layer, iter::repeat([255; 8]));
             }
         });
-        (plain[..4].try_into().unwrap(), masked[..4].try_into().unwrap())
+        (
+            plain[..4].try_into().unwrap(),
+            masked[..4].try_into().unwrap(),
+        )
     }
 
     /// pyro: translucent colours over translucent colours come out as Skia's 8-bit pipeline (and
@@ -791,19 +794,25 @@ mod tests {
         // rgba(255, 255, 0, .5) and rgba(r, g, b, .5) over it, premultiplied by 128.
         let yellow = [128, 128, 0, 128];
         for (top, want) in [
-            ([64, 0, 64, 128], [191, 127, 127, 255]),  // purple: #BF7F7F
-            ([128, 83, 0, 128], [255, 210, 63, 255]),  // orange: #FFD23F
-            ([0, 0, 128, 128], [127, 127, 191, 255]),  // blue: #7F7FBF
+            ([64, 0, 64, 128], [191, 127, 127, 255]), // purple: #BF7F7F
+            ([128, 83, 0, 128], [255, 210, 63, 255]), // orange: #FFD23F
+            ([0, 0, 128, 128], [127, 127, 191, 255]), // blue: #7F7FBF
             ([128, 0, 128, 128], [255, 127, 191, 255]), // fuchsia: #FF7FBF
         ] {
             let (plain, masked) = composite(white, &[yellow, top]);
             assert_eq!(plain, want, "{top:?} over yellow over white");
-            assert_eq!(masked, want, "{top:?} over yellow over white, through a full mask");
+            assert_eq!(
+                masked, want,
+                "{top:?} over yellow over white, through a full mask"
+            );
         }
         // rgba(255, 165, 0, .5) over rgba(0, 0, 255, .5) over white (box-shadow-041's inset shadow
         // and its reference's nested box): (191, 146, 127) both ways.
         let (plain, masked) = composite(white, &[[0, 0, 128, 128], [128, 83, 0, 128]]);
-        assert_eq!((plain, masked), ([191, 146, 127, 255], [191, 146, 127, 255]));
+        assert_eq!(
+            (plain, masked),
+            ([191, 146, 127, 255], [191, 146, 127, 255])
+        );
     }
 
     /// pyro: white seen through layers of `opacity: .99` red fades to nothing, as in Chromium

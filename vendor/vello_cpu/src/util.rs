@@ -55,8 +55,8 @@ where
     S: Simd,
     V: SimdWiden<S>,
     V::Widened: SimdCombine<S>,
-    <V::Widened as SimdCombine<S>>::Combined: Div255Ext
-        + core::ops::Mul<Output = <V::Widened as SimdCombine<S>>::Combined>,
+    <V::Widened as SimdCombine<S>>::Combined:
+        Div255Ext + core::ops::Mul<Output = <V::Widened as SimdCombine<S>>::Combined>,
 {
     let a = widen(a);
     let b = widen(b);

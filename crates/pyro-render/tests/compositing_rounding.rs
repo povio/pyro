@@ -114,9 +114,8 @@ fn a_translucent_box_over_its_filtered_backdrop_rounds_as_chromium() {
 fn the_rotate_property_draws_as_the_rotate_function() {
     const BOX: &str = "position:fixed;width:100px;height:100px;top:200px;left:200px;transform-origin:0 0;\
                        border-style:solid;border-width:10px 0;border-color:lime";
-    let reference = render(&format!(
-        "<div style='{BOX};transform:translate(50px,50px) rotate(45deg) scale(2,2)'></div>"
-    ));
+    let reference =
+        render(&format!("<div style='{BOX};transform:translate(50px,50px) rotate(45deg) scale(2,2)'></div>"));
     for individual in [
         "translate:50px 50px;rotate:45deg;scale:2 2",
         "rotate:45deg;scale:2 2;translate:50px 50px",
