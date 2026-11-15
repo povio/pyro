@@ -32,6 +32,13 @@ unchanged. See "Incremental rounding" below for how blitz-dom uses them.
 replaced elements. blitz-dom answers true for form controls (`input`, `select`, `textarea`, `button`),
 which Chromium does not stretch in block layout.
 
+`compute/block.rs` and `tree/traits.rs`: `LayoutBlockContainer::block_child_establishes_formatting_context`
+(default false) lets a tree make a block-level child that is a block container by its style a block
+formatting context root all the same, so that its parent keeps it clear of floats as it does a `flow-root`
+(`is_in_same_bfc`). blitz-dom answers true for multi-column containers (CSS Multi-column Layout 1 §2), which
+Chromium places beside a float, narrowed. Covered by `a_block_multicol_container_avoids_floats` in
+`crates/pyro-render/tests/multicol.rs`.
+
 `compute/flexbox.rs`, `determine_container_main_size`: a column container's automatic block size is the
 sum of its items' hypothetical main sizes (flex base size clamped by the resolved minimum and the max
 size), as Chromium has it. An item's `height` counted on its own before: `flex: 1 1 0px; height: 10px`

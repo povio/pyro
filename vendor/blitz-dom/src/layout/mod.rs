@@ -29,6 +29,7 @@ pub(crate) mod damage;
 pub(crate) mod first_letter;
 pub(crate) mod inline;
 pub(crate) mod list;
+pub mod multicol;
 pub(crate) mod paint_tree;
 pub(crate) mod replaced;
 pub mod table;
@@ -112,6 +113,9 @@ pub(crate) struct LayoutPassState<'doc> {
     /// This rounding pass's nodes reached and subtrees skipped (see `layout::writing_mode`).
     #[cfg(feature = "writing-mode")]
     pub(crate) round_counts: (u64, u64),
+    /// pyro: the multi-column container whose strip is being laid out and its content box width,
+    /// while it has column spanners (`layout::multicol`).
+    pub(crate) column_spanners: Option<(crate::NodeId, f32)>,
 }
 
 impl<'doc> LayoutPassState<'doc> {
@@ -151,6 +155,7 @@ impl<'doc> LayoutPassState<'doc> {
             orthogonal_percent_basis: None,
             #[cfg(feature = "writing-mode")]
             round_counts: (0, 0),
+            column_spanners: None,
         }
     }
 }
@@ -228,6 +233,10 @@ impl LayoutPassState<'_> {
     #[inline(never)]
     fn adjusted_child_inputs(&self, node_id: NodeId, inputs: taffy::tree::LayoutInput) -> taffy::tree::LayoutInput {
         let mut inputs = inputs;
+        // pyro: a column spanner is as wide as its multi-column container (`layout::multicol`).
+        if self.column_spanners.is_some() {
+            inputs = self.column_spanner_inputs(dom_node_id(node_id), inputs);
+        }
         // stylo_taffy cannot represent intrinsic keywords in min_size(), so
         // min-width:max-content reaches Taffy as auto. Its flex minimum-size
         // query consequently requests min-content. Preserve the authored
@@ -368,6 +377,7 @@ impl LayoutPassState<'_> {
             ChildLayout::Flex => self.flexbox_layout(node_id, inputs),
             ChildLayout::Grid => self.grid_layout(node_id, inputs),
             ChildLayout::Table => self.compute_table_root_layout(node_id, inputs),
+            ChildLayout::Multicol { inline_root } => self.compute_multicol_layout(node_id, inputs, inline_root),
         }
     }
 
@@ -878,11 +888,18 @@ impl LayoutPassState<'_> {
                 }
 
                 if node.flags.is_inline_root() {
-                    return ChildLayout::Inline;
+                    return match multicol::is_multicol_node(node) {
+                        true => ChildLayout::Multicol { inline_root: true },
+                        false => ChildLayout::Inline,
+                    };
                 }
 
                 // The default CSS file will set
                 match node.taffy_display() {
+                    // pyro: a multi-column container (`layout::multicol`).
+                    Display::Block | Display::FlowRoot if multicol::is_multicol_node(node) => {
+                        ChildLayout::Multicol { inline_root: false }
+                    }
                     Display::Block => ChildLayout::Block,
                     Display::FlowRoot => ChildLayout::FlowRoot,
                     Display::Flex => {
@@ -1139,6 +1156,9 @@ enum ChildLayout {
     Flex,
     Grid,
     Table,
+    /// pyro: a multi-column container, whose content is a block or (`inline_root`) an inline
+    /// formatting context.
+    Multicol { inline_root: bool },
 }
 
 impl TraversePartialTree for LayoutPassState<'_> {
@@ -1341,6 +1361,12 @@ impl taffy::LayoutBlockContainer for LayoutPassState<'_> {
             local_name!("input") => !matches!(el.attr(local_name!("type")), Some("hidden")),
             _ => false,
         }
+    }
+
+    fn block_child_establishes_formatting_context(&self, child_node_id: NodeId) -> bool {
+        // pyro: a multi-column container is a block formatting context root (Multi-column
+        // Layout 1 §2), which its parent keeps clear of floats.
+        multicol::is_multicol_node(self.node_from_id(child_node_id))
     }
 
     #[inline(always)]

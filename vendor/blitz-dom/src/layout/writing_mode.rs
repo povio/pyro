@@ -675,6 +675,10 @@ impl BaseDocument {
             pos.y += node.unrounded_layout().location.y - node.scroll_offset().y as f32;
             has_vertical |= node.layout_data().writing_mode.is_vertical();
             current = node.containing_block();
+            // pyro: out of a multi-column container's strip into its columns (`layout::multicol`).
+            if let Some(containing) = current {
+                pos = self.nodes[containing].strip_to_columns(pos);
+            }
         }
         if !has_vertical {
             return (pos, *self.nodes[node_id].unrounded_layout());

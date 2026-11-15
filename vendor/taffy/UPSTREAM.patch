@@ -1,5 +1,5 @@
 diff --git a/src/compute/block.rs b/src/compute/block.rs
-index 3cd3e713..6db4bc62 100644
+index 3cd3e713..fd8d08f5 100644
 --- a/src/compute/block.rs
 +++ b/src/compute/block.rs
 @@ -499,16 +499,11 @@ pub fn compute_block_layout(
@@ -92,7 +92,18 @@ index 3cd3e713..6db4bc62 100644
                  let calc = |val, basis| tree.calc(val, basis);
                  let width = child_style.size().width.maybe_resolve(Some(0.0), calc);
                  let max_width = child_style.max_size().width.maybe_resolve(Some(0.0), calc);
-@@ -1091,7 +1104,8 @@ fn resolve_relative_offset(
+@@ -982,7 +995,9 @@ fn generate_item_list(
+                 && is_not_floated
+                 && !is_scroll_container
+                 && !contain.establishes_independent_formatting_context()
+-                && child_style.align_content().keyword == AlignContentKeyword::Normal;
++                && child_style.align_content().keyword == AlignContentKeyword::Normal
++                // pyro
++                && !tree.block_child_establishes_formatting_context(child_node_id);
+ 
+             BlockItem {
+                 node_id: child_node_id,
+@@ -1091,7 +1106,8 @@ fn resolve_relative_offset(
  }
  
  /// Compute the content-based width in the case that the width of the container is not known
@@ -102,7 +113,7 @@ index 3cd3e713..6db4bc62 100644
  fn determine_content_based_container_width(
      tree: &mut impl LayoutPartialTree,
      items: &[BlockItem],
-@@ -1245,7 +1259,7 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
+@@ -1245,7 +1261,7 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
      children_margins_adjoin_own_edges: Line<bool>,
      #[cfg(feature = "content_size")] is_scroll_container: bool,
      block_ctx: &mut BlockContext<'_>,
@@ -111,7 +122,7 @@ index 3cd3e713..6db4bc62 100644
      // Resolve container_inner_width for sizing child nodes using initial content_box_inset
      let container_inner_width = (container_outer_width - resolved_content_box_inset.horizontal_axis_sum()).max(0.0);
      #[cfg(feature = "content_size")]
-@@ -1294,6 +1308,8 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
+@@ -1294,6 +1310,8 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
      let mut active_collapsible_margin_set = CollapsibleMarginSet::ZERO;
      let mut is_collapsing_with_first_margin_set = true;
      let mut first_baseline: Option<f32> = None;
@@ -120,7 +131,7 @@ index 3cd3e713..6db4bc62 100644
      // Whether the active margin set contains the margins of a self-collapsing element with
      // clearance. Such margins collapse with the margins of following siblings but the resulting
      // margin does not collapse with the bottom margin of the parent block.
-@@ -1826,6 +1842,16 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
+@@ -1826,6 +1844,16 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
                      child_first_baseline(item_layout.baselines.first, item_layout.size.height, item.overflow.y);
                  first_baseline = child_baseline.map(|baseline| location.y - inset_offset.y + baseline);
              }
@@ -137,7 +148,7 @@ index 3cd3e713..6db4bc62 100644
  
              // Used auto margins include float-avoidance offsets, unlike the alignment margins above.
              #[cfg(feature = "float_layout")]
-@@ -1947,5 +1973,5 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
+@@ -1947,5 +1975,5 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
  
      committed_y_offset += resolved_content_box_inset.bottom + bottom_y_margin_offset;
      let content_height = f32_max(0.0, committed_y_offset);
@@ -1995,7 +2006,7 @@ index c18fa644..50154417 100644
  #[doc(inline)]
  pub use crate::style::Style;
 diff --git a/src/tree/traits.rs b/src/tree/traits.rs
-index 7d4adf22..c19abd0c 100644
+index 7d4adf22..85c8efb5 100644
 --- a/src/tree/traits.rs
 +++ b/src/tree/traits.rs
 @@ -290,6 +290,16 @@ pub trait RoundTree: TraverseTree {
@@ -2058,13 +2069,21 @@ index 7d4adf22..c19abd0c 100644
      /// Set the node's detailed grid information
      ///
      /// Implementing this method is optional. Doing so allows you to access details about the the grid such as
-@@ -373,6 +419,13 @@ pub trait LayoutBlockContainer: LayoutPartialTree {
+@@ -373,6 +419,21 @@ pub trait LayoutBlockContainer: LayoutPartialTree {
      /// Interpreted in the container's axes (see [`LayoutPartialTree::get_core_container_style`]).
      fn get_block_child_style(&self, child_node_id: NodeId) -> Self::BlockItemStyle<'_>;
  
 +    /// Whether a block-level child's `auto` width fits its content rather than stretching
 +    /// (form controls in browsers), as for tables and replaced elements.
 +    fn block_child_width_fits_content(&self, child_node_id: NodeId) -> bool {
++        let _ = child_node_id;
++        false
++    }
++
++    /// pyro: whether a block-level child that is a block container by its style establishes a
++    /// formatting context of its own all the same (a multi-column container in browsers), so
++    /// that this container keeps it clear of floats, as a `flow-root`.
++    fn block_child_establishes_formatting_context(&self, child_node_id: NodeId) -> bool {
 +        let _ = child_node_id;
 +        false
 +    }
