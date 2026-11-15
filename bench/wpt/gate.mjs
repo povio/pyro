@@ -325,7 +325,7 @@ function update(files) {
     for (const u of Object.keys(tests)) if (!L.planned.has(u) && !L.skipped.has(u)) { lost += passCount(tests[u]); delete tests[u]; changed++; }
   }
   // A run that changes nothing writes the file as it was, so CI can tell that nothing changed.
-  const head = { wpt: { repo: WPT_REPO, revision: baseline.wpt.revision }, dirs: baseline.dirs ?? L.runs[0].dirs };
+  const head = { wpt: { repo: WPT_REPO, revision: baseline.wpt.revision }, dirs: L.restricted ? baseline.dirs ?? L.runs[0].dirs : L.runs[0].dirs };
   const outFile = path.resolve(opt('--out', BASELINE_FILE));
   writeBaseline(outFile, head, tests);
   const total = Object.values(tests).reduce((a, e) => a + passCount(e), 0);

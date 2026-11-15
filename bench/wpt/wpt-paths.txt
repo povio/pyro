@@ -1,5 +1,5 @@
 # What bench/wpt/fetch-wpt.sh checks out of WPT (git sparse-checkout patterns, relative to the WPT root).
-# Test directories (run.mjs's default --dirs):
+# Test directories (lib.mjs DEFAULT_DIRS, the first ten):
 dom/
 html/dom/
 encoding/
@@ -10,7 +10,8 @@ css/selectors/
 uievents/
 shadow-dom/
 webstorage/
-# Reftest directories (lib.mjs REFTEST_DIRS, run.mjs --kind reftest):
+# Paint directories (lib.mjs PAINT_DIRS). Both kinds run every directory above and below: run.mjs runs their testharness
+# pages, run.mjs --kind reftest their reftests.
 css/css-backgrounds/
 css/css-text-decor/
 css/filter-effects/
@@ -33,6 +34,7 @@ loading/resources/
 css/support/
 css/reference/
 css/css-images/support/
+css/css-transitions/support/
 css/css-images/image-orientation/
 web-animations/testcommon.js
 web-animations/resources/

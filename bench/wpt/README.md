@@ -1,9 +1,10 @@
 # WPT coverage gate
 
-`.github/workflows/wpt.yml` runs our WPT subset (the directories in `lib.mjs` `DEFAULT_DIRS`, ~2,800 pages) on every
+`.github/workflows/wpt.yml` runs our WPT subset (the directories in `lib.mjs` `DEFAULT_DIRS`, 3,541 pages) on every
 pull request and fails when coverage goes down. `baseline.json` records, per page, which subtests pass, whether the
-page completed, and how long it took. The same gate runs over WPT's reftests in the paint directories (9,341 pages,
+page completed, and how long it took. The same gate runs over WPT's reftests in the same directories (9,842 pages,
 `reftest-baseline.json`): see [Reftests](#reftests), which also compares pyro's results with Chrome's.
+[What runs](#what-runs) lists the testharness pages by directory.
 
 ## How a run works
 
@@ -48,6 +49,61 @@ reruns use the normal timeouts. The summary lists the pages whose runs disagreed
 candidates.
 
 With no baseline anywhere (the first runs), a run only reports; its artifact is the first baseline.
+
+## What runs
+
+Both kinds run the same 18 directories: the ten testharness directories and the eight paint directories
+(`lib.mjs` `PAINT_DIRS`). `discover()` takes every page that loads `/resources/testharness.js` with a script
+element: `.any.js` and `.window.js` files (their window variant) and markup files (`.html`, `.htm`, `.xhtml`,
+`.xht`, `.xml`, `.svg`). At the pinned revision that is 3,541 pages:
+
+| directory | pages | testdriver | wptserve name | Python handler | no window global |
+|---|---:|---:|---:|---:|---:|
+| dom | 643 | 86 | 6 | 6 | 1 |
+| html/dom | 246 | 2 | 9 | 5 | 1 |
+| encoding | 1,258 | 0 | 1 | 4 | 0 |
+| url | 48 | 0 | 0 | 1 | 0 |
+| fetch/api/basic | 9 | 0 | 8 | 21 | 0 |
+| xhr | 146 | 1 | 10 | 198 | 0 |
+| css/selectors | 394 | 78 | 3 | 0 | 0 |
+| uievents | 17 | 52 | 0 | 0 | 0 |
+| shadow-dom | 185 | 129 | 0 | 0 | 0 |
+| webstorage | 51 | 0 | 3 | 0 | 0 |
+| css/css-backgrounds | 128 | 0 | 4 | 0 | 0 |
+| css/css-text-decor | 48 | 0 | 0 | 0 | 0 |
+| css/filter-effects | 37 | 0 | 0 | 0 | 0 |
+| css/compositing | 15 | 0 | 0 | 0 | 0 |
+| css/css-masking | 63 | 0 | 2 | 0 | 0 |
+| css/css-color | 69 | 0 | 0 | 0 | 0 |
+| css/css-transforms | 105 | 3 | 0 | 0 | 0 |
+| css/CSS2 | 79 | 0 | 0 | 0 | 0 |
+| **all** | **3,541** | 351 | 46 | 235 | 2 |
+
+Left out, counted by reason in the run's `excluded`: pages that load testdriver, names that need wptserve
+(`.sub.`, `.https.`, `.h2.`, `.www.`), pages that name a Python handler (`.py`) outside an HTML comment, and
+`.any.js` files with no window global. Worker variants never run. A `.py` in a comment does not count (html/canvas's
+generated pages name their generator there). Generated pages that name no handler themselves but need wptserve are
+kept out by path: `referrer-policy/`, `content-security-policy/` and anything loading
+`/common/security-features/`, `html/syntax/speculative-parsing/` and `html/semantics/**/moving-between-documents/`
+(`SERVER_PAGES` in `lib.mjs`; none of these directories runs today).
+
+The 728 pages added to the first 2,813 (2026-11-15):
+
+- 541 testharness pages of the eight paint directories (parsing, computed values, interpolation, hit tests, CSS2
+  geometry). They run as wptrunner runs every page, in an 800x600 viewport; the ten older directories keep the
+  1280x720 their baseline was recorded with.
+- 187 `.xml`, `.svg` and `.xht` pages that discovery used to drop without a count: css/selectors/old-tests 166
+  (9 more load testdriver), dom 18, css/filter-effects 3.
+
+In a local run of the 728 (not a baseline: CI records that), 727 completed, none crashed or hung the browser, 25,751
+of 39,889 subtests passed and three runs agreed on every page. `dom/nodes/Element-firstElementChild-entity.svg`
+times out (its internal DTD subset declares an entity).
+
+The browser has Ahem for every page (`PYRO_FONTS`, as the reftests), as wptrunner installs it. `serve.mjs` answers
+`/resources/WebIDLParser.js` with `resources/webidl2/lib/webidl2.js`, as wptserve routes it: before that every
+idlharness page failed its one subtest (the eight older idlharness pages pass 2,309 subtests with it). A subtest name
+that holds this server's origin (interpolation pages name the `url()` values they resolved) is recorded with
+wptserve's origin, `http://web-platform.test:8000`, since the port differs from run to run.
 
 ## flaky.json
 
@@ -235,9 +291,10 @@ gh run download <run-id> -n wpt-reftest-baseline -D bench/wpt     # writes bench
 `lib.mjs` `discoverReftests()` classifies files as WPT's manifest does (`tools/manifest/sourcefile.py`): a markup file
 (`.html`, `.htm`, `.xht`, `.xhtml`, `.xml`, `.svg`) with a `match` or `mismatch` link is a reftest, unless it is a
 manual, visual, crash or print test, a testharness page, or under a `resources`, `support` or `tools` directory. The
-directories are `REFTEST_DIRS`: the paint directories and all of CSS2 (it costs about 50 s of the run). At the pinned
-revision they hold 9,341 reftests. wpt.fyi lists 9,352 in them: the same 9,341, and the 11 left out below for wptserve
-or testdriver.
+directories are `REFTEST_DIRS`: the paint directories with all of CSS2 (it costs about 50 s of the run), and the five
+testharness directories that hold reftests (501: selector invalidation, `dir=auto` and bidi, shadow trees). At the
+pinned revision they hold 9,842 reftests. wpt.fyi lists 9,855 in them: the same 9,842, and the 13 left out below for
+wptserve or testdriver.
 
 | directory | reftests | reference files | no reference | crash tests | manual | print | wptserve | testdriver |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
@@ -249,13 +306,21 @@ or testdriver.
 | css/css-color | 308 | 148 | 0 | 3 | 0 | 0 | 0 | 0 |
 | css/css-transforms | 797 | 311 | 4 | 28 | 1 | 0 | 0 | 0 |
 | css/CSS2 | 6,241 | 2,099 | 2,314 | 32 | 4 | 43 | 1 | 0 |
-| **all** | **9,341** | 3,750 | 2,450 | 121 | 70 | 43 | 10 | 1 |
+| css/selectors | 341 | 157 | 1 | 20 | 2 | 0 | 0 | 1 |
+| html/dom | 127 | 111 | 2 | 3 | 1 | 0 | 0 | 0 |
+| shadow-dom | 25 | 21 | 0 | 43 | 0 | 0 | 0 | 1 |
+| dom | 4 | 3 | 65 | 44 | 0 | 0 | 0 | 0 |
+| encoding | 4 | 4 | 34 | 2 | 0 | 0 | 0 | 0 |
+| **all** | **9,842** | 4,046 | 2,552 | 233 | 73 | 43 | 10 | 3 |
+
+In a local run of the 501 added on 2026-11-15 (not a baseline), every page completed and 376 passed (css/selectors
+294, html/dom 59, shadow-dom 16, dom 3, encoding 4); Chrome passes 481.
 
 Left out, counted by reason in the run's `excluded`: reference files (named or linked as one, no links of their own),
 markup with no reference (CSS2's visual tests, support pages), crash tests, manual tests (by name, or by CSS flags
 such as `interact`), print reftests, pages whose page or references need what `serve.mjs` lacks (`.sub` substitutions,
-`pipe=`, Python handlers), and testdriver. Testharness pages in these directories (parsing, computed values) are not
-reftests and are not run here. A reference that has references of its own (155 tests) is compared one level deep, as
+`pipe=`, Python handlers), and testdriver. Testharness pages in these directories are not reftests: the testharness run takes
+them ([What runs](#what-runs)). A reference that has references of its own (155 tests) is compared one level deep, as
 wptrunner does at this revision (`ReftestTest.from_manifest`); it is a test of its own as well, so the chain is covered
 link by link. `about:blank` references are supported.
 
@@ -298,6 +363,12 @@ browser, built on `lp-m1`) and the WPT checkout (`wpt-paths.txt` now lists the r
 files; 171 MB). Manual runs take `suites` (`reftest` leaves the testharness shards and the client job out),
 `reftest-runner` (`macos-15`: two shards on GitHub's hosted runners, billed as macOS minutes) and `reftest-args` (for
 example `--dirs css/CSS2 --no-rerun` to time a directory).
+
+The 2026-11-15 additions need no more shards (est., from CI's means of about 85 ms per reftest and 270-320 ms per
+testharness page): 501 reftests are about 43 s of page time, 5 to 10 s of the one shard at 8 jobs; 728 testharness
+pages are about 200-235 s of page time, 12 to 15 s on each of the four shards at 4 jobs (locally they took 35 s of page
+time, plus one 15 s timeout that pull requests skip). The first run after pages are added runs each new page that
+passes once more, so it costs about twice that.
 
 Measured on the pull request that added the job (all 9,341 reftests; a run without a baseline runs every page twice):
 

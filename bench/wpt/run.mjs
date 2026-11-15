@@ -22,7 +22,7 @@ import path from 'node:path';
 import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import { DEFAULT_DIRS, REFTEST_DIRS, discover, discoverReftests, plan, shard, readJson } from './lib.mjs';
-import { REFTEST_CONTEXT, reftestEnv, runReftest } from './reftest.mjs';
+import { REFTEST_CONTEXT, ahemEnv, reftestEnv, runReftest } from './reftest.mjs';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const require = createRequire(path.join(HERE, '..', 'package.json'));
 const { chromium } = require('playwright-core');
@@ -111,7 +111,7 @@ async function startBrowser() {
   child = spawn(BIN, ['serve', '--host', '127.0.0.1', '--port', String(port), '--log-level', 'error', '--load-resources', 'stylesheet', '--load-resources', 'iframe', '--cdp-max-connections', '64'],
     // PYRO_PARENT_PID: the browser exits with this runner however it ends. It runs in a process group of its own, so a
     // runner killed with its CI job (a cancelled or superseded run) left it serving on the self-hosted machine.
-    { stdio: 'ignore', detached: true, env: { ...process.env, LIGHTPANDA_DISABLE_TELEMETRY: 'true', PYRO_PARENT_PID: String(process.pid), ...(KIND === 'reftest' ? reftestEnv(WPT) : {}) } });
+    { stdio: 'ignore', detached: true, env: { ...process.env, LIGHTPANDA_DISABLE_TELEMETRY: 'true', PYRO_PARENT_PID: String(process.pid), ...(KIND === 'reftest' ? reftestEnv(WPT) : ahemEnv(WPT)) } });
   for (let i = 0; i < 1000; i++) {
     try { const r = await fetch(`http://127.0.0.1:${port}/json/version`); if (r.ok) { endpoint = `http://127.0.0.1:${port}`; return; } } catch {}
     await new Promise((r) => setTimeout(r, 10));
@@ -141,7 +141,9 @@ function waitForReport(ms) {
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-async function openPage(slot) {
+// Playwright's default viewport, which the testharness pages without one of their own (lib.mjs discover()) run in.
+const DEFAULT_VIEWPORT = { width: 1280, height: 720 };
+async function openPage(slot, t) {
   // A connection to a browser that was replaced since (another slot's page crashed or hung it) is dead: drop it.
   if (slot.browser && slot.gen !== generation) await resetSlot(slot);
   if (slot.ctx && !REUSE) {
@@ -153,16 +155,21 @@ async function openPage(slot) {
   }
   if (!slot.browser) { slot.gen = generation; slot.browser = await chromium.connectOverCDP(endpoint, { timeout: 15000 }); }
   if (!slot.page) {
-    slot.ctx = await slot.browser.newContext(KIND === 'reftest' ? REFTEST_CONTEXT : undefined);
+    slot.ctx = await slot.browser.newContext(KIND === 'reftest' ? REFTEST_CONTEXT : t.viewport ? { viewport: t.viewport, deviceScaleFactor: 1 } : undefined);
     slot.page = await slot.ctx.newPage();
     slot.page.on('dialog', (d) => d.dismiss().catch(() => {}));
+  }
+  // A context kept from the page before (--reuse-context) may have that page's viewport.
+  if (KIND !== 'reftest' && REUSE) {
+    const want = t.viewport ?? DEFAULT_VIEWPORT, now = slot.page.viewportSize();
+    if (now?.width !== want.width || now?.height !== want.height) await slot.page.setViewportSize(want);
   }
   return slot.page;
 }
 
 // `gen`: the browser (`generation`) the page runs in.
 async function runOne(slot, t, gen) {
-  const page = await openPage(slot);
+  const page = await openPage(slot, t);
   if (KIND === 'reftest') return runReftest(page, t, BASE, t.limit);
   const t0 = Date.now();
   await page.goto(`${BASE}/${t.url}`, { waitUntil: 'commit', timeout: t.limit });
@@ -206,16 +213,20 @@ async function resetSlot(slot) {
 
 // The shim reports `name|status|message` per subtest. A name may itself contain '|' (selectors such as [a|b], URL
 // tests): the status is the first testharness status that follows a '|' and ends at a '|' or the end of the line.
+// A subtest name that holds a URL the page resolved (interpolation pages name their url() values) holds this
+// server's origin, whose port differs from run to run: named by wptserve's origin instead, so the name is the same
+// in every run (the baseline keys passes by name).
+const stableName = (s) => s.replaceAll(BASE, 'http://web-platform.test:8000');
 const LINE = /^(.*?)\|(Pass|Fail|Timeout|Not Run|Optional Feature Unsupported)(?:\|(.*))?$/s;
 function parse(log) {
   const subs = [];
   for (const line of (log ?? '').split('\n')) {
     if (!line) continue;
     const m = line.match(LINE);
-    if (m) { subs.push({ name: m[1], status: m[2], msg: (m[3] ?? '').slice(0, 200) }); continue; }
+    if (m) { subs.push({ name: stableName(m[1]), status: m[2], msg: (m[3] ?? '').slice(0, 200) }); continue; }
     const parts = line.split('|');
     if (parts.length < 2) continue;
-    subs.push({ name: parts[0], status: parts[1], msg: parts.slice(2).join('|').slice(0, 200) });
+    subs.push({ name: stableName(parts[0]), status: parts[1], msg: parts.slice(2).join('|').slice(0, 200) });
   }
   return subs;
 }

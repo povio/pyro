@@ -3,7 +3,20 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
-export const DEFAULT_DIRS = ['dom', 'html/dom', 'encoding', 'url', 'fetch/api/basic', 'xhr', 'css/selectors', 'uievents', 'shadow-dom', 'webstorage'];
+// The testharness directories, and the reftest directories (their testharness pages: parsing, computed values,
+// interpolation, CSS2 geometry). No directory is run by one kind only: REFTEST_DIRS lists the same ones, reftests first.
+export const PAINT_DIRS = [
+  'css/css-backgrounds', 'css/css-text-decor', 'css/filter-effects', 'css/compositing', 'css/css-masking',
+  'css/css-color', 'css/css-transforms', 'css/CSS2',
+];
+export const DEFAULT_DIRS = [
+  'dom', 'html/dom', 'encoding', 'url', 'fetch/api/basic', 'xhr', 'css/selectors', 'uievents', 'shadow-dom', 'webstorage',
+  ...PAINT_DIRS,
+];
+// Testharness pages in these directories run as wptrunner runs every page: in an 800x600 viewport (run.mjs; the
+// browser has Ahem for every page). The older directories keep the viewport their baseline was recorded with
+// (Playwright's 1280x720).
+const WPTRUNNER_VIEWPORT = { width: 800, height: 600 };
 
 // ---------- discovery ----------
 function walk(dir, out = []) {
@@ -15,6 +28,21 @@ function walk(dir, out = []) {
   return out;
 }
 
+const stripComments = (src) => src.replace(/<!--[\s\S]*?-->/g, '');
+// Pages whose own source names no Python handler outside a comment, but which need wptserve all the same: kept out
+// by path (and, for the generated security pages, by the helper they load). None is in a directory we run today;
+// the patterns keep them out when their directories are added.
+//   referrer-policy/, content-security-policy/: generated pages (the generator comment names a .py file) that load
+//     /common/security-features/, whose resources are wptserve handlers
+//   html/syntax/speculative-parsing/, html/semantics/**/moving-between-documents/: generated pages whose resources
+//     are wptserve handlers (stash, delays)
+const SERVER_PAGES = [
+  /^(referrer-policy|content-security-policy)\//,
+  /^html\/syntax\/speculative-parsing\//,
+  /^html\/semantics\/.*\/moving-between-documents\//,
+];
+const SERVER_HELPERS = /\/common\/security-features\//;
+
 // Every testharness page under `dirs` that our static server can run, one entry per variant.
 // `excluded` counts what was left out and why (identical for every binary).
 export function discover(wpt, dirs, { sampleEncoding = 1 } = {}) {
@@ -23,21 +51,25 @@ export function discover(wpt, dirs, { sampleEncoding = 1 } = {}) {
   const exclude = (why) => { excluded[why] = (excluded[why] ?? 0) + 1; };
   for (const d of dirs) {
     for (const f of walk(path.join(wpt, d))) {
-      const rel = path.relative(wpt, f);
+      const rel = path.relative(wpt, f).split(path.sep).join('/');
       const base = path.basename(f);
-      let src, url, variants = [''], long = false;
+      // `code`: the source the wptserve check reads (markup without its comments).
+      let src, code, url, variants = [''], long = false;
       if (/\.(any|window)\.js$/.test(base)) {
-        src = fs.readFileSync(f, 'utf8');
+        src = code = fs.readFileSync(f, 'utf8');
         const g = src.match(/^\/\/\s*META:\s*global=(.*)$/m);
         if (base.endsWith('.any.js') && g && !g[1].split(',').map((s) => s.trim()).some((x) => x === 'window' || x === 'default')) { exclude('no window global'); continue; }
         url = rel.replace(/\.js$/, '.html');
         const v = [...src.matchAll(/^\/\/\s*META:\s*variant=(.*)$/gm)].map((m) => m[1].trim());
         if (v.length) variants = v;
         long = /META:\s*timeout=long/.test(src);
-      } else if (/\.(html|htm|xhtml)$/.test(base)) {
+      } else if (MARKUP.test(base)) {
         if (/-ref\.|-manual\.|^ref-/.test(base) || /\.(any|window|worker)\.html$/.test(base)) continue;
         src = fs.readFileSync(f, 'utf8');
-        if (!src.includes('/resources/testharness.js')) continue;
+        // A testharness page loads the harness with a script element (XML and SVG pages: src or xlink:href, with
+        // or without a prefix); a page that only names it in a comment or a string is not one.
+        code = stripComments(src);
+        if (!tagsOf(code, 'script').some((a) => /(^|\/)resources\/testharness\.js$/.test(a.src ?? a['xlink:href'] ?? a.href ?? ''))) continue;
         url = rel;
         const v = [...src.matchAll(/<meta\s+name=["']?variant["']?\s+content=["']([^"']*)["']/gi)].map((m) => m[1]);
         if (v.length) variants = v;
@@ -45,8 +77,9 @@ export function discover(wpt, dirs, { sampleEncoding = 1 } = {}) {
       } else continue;
       if (/\.sub\.|\.https\.|\.h2\.|\.www\./.test(base)) { exclude('needs wptserve substitution/https/h2'); continue; }
       if (/testdriver\.js|testdriver-vendor/.test(src)) { exclude('needs testdriver'); continue; }
-      if (/\.py\b/.test(src)) { exclude('needs wptserve python handler'); continue; }
-      for (const v of variants) tests.push({ dir: d, url: url + v, long });
+      if (/\.py\b/.test(code) || SERVER_PAGES.some((re) => re.test(rel)) || SERVER_HELPERS.test(code)) { exclude('needs wptserve python handler'); continue; }
+      const viewport = PAINT_DIRS.includes(d) ? { viewport: WPTRUNNER_VIEWPORT } : {};
+      for (const v of variants) tests.push({ dir: d, url: url + v, long, ...viewport });
     }
   }
   // sampleEncoding N: keep every Nth encoding/ page (identical selection for every browser)
@@ -55,12 +88,10 @@ export function discover(wpt, dirs, { sampleEncoding = 1 } = {}) {
 }
 
 // ---------- reftest discovery ----------
-// The directories the reftest gate runs (reftest.mjs; README "Reftests"): the paint directories, and all of CSS2,
-// whose ~6,200 reftests (layout as much as paint) cost about 50 s of the run on the CI runner.
-export const REFTEST_DIRS = [
-  'css/css-backgrounds', 'css/css-text-decor', 'css/filter-effects', 'css/compositing', 'css/css-masking',
-  'css/css-color', 'css/css-transforms', 'css/CSS2',
-];
+// The directories the reftest gate runs (reftest.mjs; README "Reftests"): the paint directories, with all of CSS2,
+// whose ~6,200 reftests (layout as much as paint) cost about 50 s of the run on the CI runner, and the reftests of
+// the testharness directories that have any (selector invalidation, dir=auto and bidi, shadow trees).
+export const REFTEST_DIRS = [...PAINT_DIRS, 'css/selectors', 'html/dom', 'shadow-dom', 'dom', 'encoding'];
 
 // Markup files as WPT's manifest reads them (tools/manifest/sourcefile.py): the tags it looks for, by regular
 // expression rather than a parser. A tag may carry a namespace prefix (SVG tests use <h:link>); comments are dropped.

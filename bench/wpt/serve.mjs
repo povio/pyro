@@ -38,6 +38,10 @@ const HANDLERS = {
   },
 };
 
+// Paths wptserve routes to another file (tools/serve/serve.py): the idlharness pages load the WebIDL parser by this
+// name.
+const ALIASES = { 'resources/WebIDLParser.js': 'resources/webidl2/lib/webidl2.js' };
+
 function wrapper(jsRel, src) {
   const metas = [...src.matchAll(/^\/\/\s*META:\s*(\w+)=(.*)$/gm)].map((m) => [m[1], m[2].trim()]);
   let out = '<!doctype html><meta charset=utf-8>\n';
@@ -65,7 +69,7 @@ const server = http.createServer((req, res) => {
       return;
     }
   }
-  let file = path.join(ROOT, rel);
+  let file = path.join(ROOT, ALIASES[rel] ?? rel);
   if (!file.startsWith(ROOT)) { res.writeHead(403); res.end(); return; }
   try { if (fs.statSync(file).isDirectory()) file = path.join(file, 'index.html'); } catch {}
   fs.readFile(file, (err, buf) => {
