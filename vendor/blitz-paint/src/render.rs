@@ -116,6 +116,24 @@ impl<'a> PhysicalTracks<'a> {
     }
 }
 
+/// pyro: which part of a box of the normal flow is painted (CSS 2.1 Appendix E). A box that
+/// paints floats (`NodeFlags::HAS_FLOAT_PAINT_CHILDREN`: its own, or lifted out of the boxes that
+/// paint in its phases, `Node::paints_in_ancestor_phases`) paints those boxes twice: their
+/// backgrounds and borders first (step 4), then the floats (step 5), then their inline content
+/// (step 7). Every other box paints `All` of itself, at once.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum FlowPhase {
+    /// The whole box and its descendants.
+    All,
+    /// Its background, borders and shadows, then its block-level descendants' (atomic ones whole).
+    Background,
+    /// Its inline content (lines, atomic inlines, list marker), then its block-level descendants'.
+    Foreground,
+    /// Its outline, then its block-level descendants': Chromium paints the outlines of a normal
+    /// flow after its foreground, under the positioned boxes (WPT `z-index-020`).
+    Outline,
+}
+
 /// A short-lived struct which holds a bunch of parameters for rendering a scene so
 /// that we don't have to pass them down as parameters
 pub struct BlitzDomPainter<'dom, 'a> {
@@ -162,6 +180,10 @@ pub struct BlitzDomPainter<'dom, 'a> {
     pub composite_3d: bool,
     /// pyro: how many local-raster layers (`composite_3d`) the element painted is in.
     pub(crate) local_raster_depth: std::cell::Cell<u32>,
+    /// pyro: the paint phase the element painted is painted in (`FlowPhase`).
+    pub(crate) flow_phase: std::cell::Cell<FlowPhase>,
+    /// pyro: a box painted in the foreground phase had an outline, left for the outline phase.
+    pub(crate) deferred_outlines: std::cell::Cell<bool>,
     /// pyro (lane H2): 3D rendering contexts being recorded (`render/three_d.rs`).
     pub(crate) three_d: three_d::State,
 
@@ -219,6 +241,8 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             fractional_text_x: false,
             composite_3d: false,
             local_raster_depth: std::cell::Cell::new(0),
+            flow_phase: std::cell::Cell::new(FlowPhase::All),
+            deferred_outlines: std::cell::Cell::new(false),
             three_d: Default::default(),
             custom_widget_scenes,
         }
@@ -457,6 +481,44 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         );
     }
 
+    /// pyro: the effects of the inline boxes a float sits in: the product of their opacities and
+    /// the style of the nearest one with a filter. An inline box's opacity and filter apply to all
+    /// of its content (CSS Color 4 `opacity`, Filter Effects 1), a float in it too, which its block
+    /// lays out and paints apart from the inline's fragments: the float is painted in a group of
+    /// its own with them (with a filter of its own, the inline's is left out). WPT
+    /// `inline-opacity-float-child`, `filtered-inline-applies-to-float`. The walk stops at the
+    /// first ancestor that is no plain inline box (a split inline paints its own group).
+    fn enclosing_inline_effects(
+        &self,
+        node: &Node,
+        styles: &ComputedValues,
+    ) -> (f32, Option<style::servo_arc::Arc<ComputedValues>>) {
+        if styles.clone_float() == style::computed_values::float::T::None {
+            return (1.0, None);
+        }
+        let own_filter = !styles.get_effects().filter.0.is_empty();
+        let tree = self.dom.as_ref().tree();
+        let mut opacity = 1.0;
+        let mut filtered = None;
+        let mut parent = node.parent;
+        while let Some(id) = parent {
+            let ancestor = &tree[id];
+            if ancestor.is_split_inline() || ancestor.is_inline_with_only_block_children() {
+                break;
+            }
+            let Some(style) = ancestor.primary_styles() else { break };
+            if !style.clone_display().is_inline_flow() {
+                break;
+            }
+            opacity *= style.clone_opacity();
+            if !own_filter && filtered.is_none() && !style.get_effects().filter.0.is_empty() {
+                filtered = Some((*style).clone());
+            }
+            parent = ancestor.parent;
+        }
+        (opacity, filtered)
+    }
+
     fn node_transform(&self, node: &Node, parent: Affine) -> Affine {
         let location = node.final_layout().location;
         parent
@@ -689,6 +751,9 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         clip_rect: Rect,
     ) {
         let node = &self.dom.as_ref().tree()[node_id];
+        // pyro: the phase this element is painted in, set by its painter for it alone
+        // (`ElementCx::draw_flow_children`); its own descendants are painted whole unless it says.
+        let phase = self.flow_phase.replace(FlowPhase::All);
 
         // Early return if the element is hidden
         if matches!(node.taffy_display(), taffy::Display::None) {
@@ -732,11 +797,18 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         }
 
         let effects = styles.get_effects();
-        let opacity = effects.opacity;
+        // pyro: a float in inline boxes with an opacity or a filter paints with their effects
+        // (`enclosing_inline_effects`).
+        let (inline_opacity, inline_filter_style) = self.enclosing_inline_effects(node, &styles);
+        let opacity = effects.opacity * inline_opacity;
         if opacity == 0.0 {
             return;
         }
         let has_opacity = opacity < 1.0;
+        let filter_list = match &inline_filter_style {
+            Some(style) => &style.get_effects().filter.0,
+            None => &effects.filter.0,
+        };
 
         // pyro (lane H2): a plane of a 3D rendering context, or a plane drawn through a
         // perspective, is recorded and drawn sorted by depth (`render/three_d.rs`).
@@ -793,7 +865,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         // nothing (empty or hidden).
         #[cfg(feature = "svg")]
         let filter_steps = crate::filters::filter_steps(
-            &effects.filter.0,
+            filter_list,
             self.scale,
             &current_color,
             self.dom,
@@ -806,7 +878,9 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         }
         let filter = match filter_steps {
             Some(_) => None,
-            None => convert_filters(&effects.filter.0, self.scale, &current_color, self.dom).map(Arc::new),
+            None => {
+                convert_filters(filter_list, self.scale, &current_color, self.dom).map(Arc::new)
+            }
         };
         // pyro: what a filter moves or spreads into the clip rectangle is in it (a drop shadow's
         // offset, a blur): `layers::filter_reach`. A graph's output lies in its filter region,
@@ -906,6 +980,35 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         } else {
             source_rect
         };
+
+        // pyro: a box of the normal flow painted in one of its painter's phases (`FlowPhase`). It
+        // makes no layer of its own: no effect, no clip (`Node::paints_in_ancestor_phases`).
+        if phase != FlowPhase::All {
+            match phase {
+                FlowPhase::Background => {
+                    if !node.is_inline_with_only_block_children() && !node.is_split_inline() {
+                        cx.draw_outset_box_shadow(scene);
+                        if cx.context.backgrounds && self.canvas_background != Some(node_id) {
+                            cx.draw_background(scene);
+                        }
+                        cx.draw_inset_box_shadow(scene);
+                        cx.draw_border(scene);
+                    }
+                    cx.stroke_devtools(scene);
+                }
+                FlowPhase::Foreground => {
+                    cx.draw_inline_layout(scene, content_position);
+                    cx.draw_marker(scene, content_position);
+                    if cx.outline_line().is_some() {
+                        self.deferred_outlines.set(true);
+                    }
+                }
+                FlowPhase::Outline => cx.draw_outline(scene),
+                FlowPhase::All => {}
+            }
+            cx.draw_flow_children(scene, cx.transform, child_clip_rect, phase);
+            return;
+        }
 
         // Compute clip-path (if any) and wrap all rendering in a clip layer
         let element_clip = cx.element_clip();
@@ -1187,6 +1290,19 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
                     cx.draw_column_rules(scene);
                 }
                 if !cx.draw_columns(scene, content_position, child_clip_rect) {
+                    // pyro: floats among the paint children: in the phases of CSS 2.1 Appendix E.
+                    if node
+                        .flags
+                        .contains(blitz_dom::node::NodeFlags::HAS_FLOAT_PAINT_CHILDREN)
+                    {
+                        cx.draw_children_in_phases(
+                            scene,
+                            cx.transform,
+                            child_clip_rect,
+                            content_position,
+                        );
+                        return;
+                    }
                     cx.draw_inline_layout(scene, content_position);
                     cx.draw_marker(scene, content_position);
                     cx.draw_children(scene, cx.transform, child_clip_rect);
@@ -1941,8 +2057,11 @@ impl ElementCx<'_, '_> {
         for (line_index, line) in layout.lines().enumerate() {
             let first = fragments.len();
             let metrics = line.metrics();
-            // White space hanging at the line's end is in no box.
-            let content_end = metrics.offset + metrics.advance - metrics.hanging_advance;
+            // White space hanging at the line's end is in no box. pyro: the line starts at its
+            // `inline_min_coord`, past the floats before it (its items are placed from there): without
+            // it every box on a line beside a float was cut to nothing (WPT `clear-inline-001`).
+            let content_end =
+                metrics.inline_min_coord + metrics.offset + metrics.advance - metrics.hanging_advance;
             for item in line.items() {
                 let (style_index, x0, x1, edge) = match &item {
                     PositionedLayoutItem::GlyphRun(run) => {
@@ -2930,7 +3049,168 @@ impl ElementCx<'_, '_> {
         clip_rect: Rect,
     ) {
         // Negative z_index hoisted nodes
+        self.draw_neg_z_children(scene, parent_style_transform, clip_rect);
 
+        // Regular children
+        if let Some(children) = &*self.node.paint_children.borrow() {
+            for child_id in children {
+                self.draw_paint_child(scene, *child_id, parent_style_transform, clip_rect);
+            }
+        }
+
+        self.draw_pos_z_children(scene, parent_style_transform, clip_rect);
+    }
+
+    /// Paints `child_id`, one of this node's `paint_children`.
+    fn draw_paint_child(
+        &self,
+        scene: &mut impl PaintScene,
+        child_id: NodeId,
+        parent_style_transform: Affine,
+        clip_rect: Rect,
+    ) {
+        // Fixed-position children of the root element are positioned against
+        // the viewport and do not scroll with it, so cancel out the viewport
+        // scroll (applied in `paint_scene`). A fixed box contained by a
+        // transformed ancestor scrolls with it like any out-of-flow box.
+        // pyro: so does one lifted here from a containing block that is no
+        // layer root (a `backdrop-filter` box): it is placed by its offset.
+        let child = &self.context.dom.as_ref().tree()[child_id];
+        let lifted = child.lifted_paint_offset(self.node.id);
+        let child_transform = if child.taffy_position() == taffy::Position::Fixed
+            && Some(self.node.id) == self.context.root_element_id
+            && lifted.is_none()
+        {
+            let scroll = self.context.dom.as_ref().viewport_scroll();
+            parent_style_transform.pre_translate(kurbo::Vec2 {
+                x: scroll.x * self.scale,
+                y: scroll.y * self.scale,
+            })
+        } else if let Some(offset) = lifted {
+            parent_style_transform.pre_translate(kurbo::Vec2 {
+                x: offset.x as f64 * self.scale,
+                y: offset.y as f64 * self.scale,
+            })
+        } else {
+            parent_style_transform
+        };
+        self.render_node(scene, child_id, child_transform, clip_rect);
+    }
+
+    /// pyro: the paint level of `child`, one of this node's `paint_children` (as
+    /// blitz-dom's paint tree sorts them): 0 in-flow, 1 a float, 2 a positioned box or a
+    /// stacking context (a positioned float too).
+    fn paint_level(&self, child: &Node) -> u8 {
+        let Some(style) = child.primary_styles() else {
+            return 0;
+        };
+        if style.clone_position() != style::computed_values::position::T::Static
+            || child.is_stacking_context_root(false)
+            || self.context.dom.is_in_top_layer(child.id)
+        {
+            2
+        } else if style.clone_float() != style::computed_values::float::T::None {
+            1
+        } else {
+            0
+        }
+    }
+
+    /// pyro: paints the children of a node with floats among its `paint_children`
+    /// (`NodeFlags::HAS_FLOAT_PAINT_CHILDREN`) and its own inline content in the phases of CSS 2.1
+    /// Appendix E: the stacking contexts with negative `z-index` (step 3), the backgrounds of the
+    /// block-level boxes of its normal flow (step 4), the floats (step 5), the inline content of
+    /// itself and of those boxes (step 7), then the positioned boxes and stacking contexts (steps
+    /// 8 and 9). Its own box is painted already.
+    fn draw_children_in_phases(
+        &self,
+        scene: &mut impl PaintScene,
+        parent_style_transform: Affine,
+        clip_rect: Rect,
+        content_position: Point,
+    ) {
+        self.draw_neg_z_children(scene, parent_style_transform, clip_rect);
+        self.draw_flow_children(
+            scene,
+            parent_style_transform,
+            clip_rect,
+            FlowPhase::Background,
+        );
+        if let Some(children) = &*self.node.paint_children.borrow() {
+            let tree = self.context.dom.as_ref().tree();
+            for &child_id in children {
+                if self.paint_level(&tree[child_id]) == 1 {
+                    self.draw_paint_child(scene, child_id, parent_style_transform, clip_rect);
+                }
+            }
+        }
+        self.draw_inline_layout(scene, content_position);
+        self.draw_marker(scene, content_position);
+        let outer_outlines = self.context.deferred_outlines.replace(false);
+        self.draw_flow_children(
+            scene,
+            parent_style_transform,
+            clip_rect,
+            FlowPhase::Foreground,
+        );
+        if self.context.deferred_outlines.get() {
+            self.draw_flow_children(scene, parent_style_transform, clip_rect, FlowPhase::Outline);
+        }
+        self.context.deferred_outlines.set(outer_outlines);
+        if let Some(children) = &*self.node.paint_children.borrow() {
+            let tree = self.context.dom.as_ref().tree();
+            for &child_id in children {
+                if self.paint_level(&tree[child_id]) == 2 {
+                    self.draw_paint_child(scene, child_id, parent_style_transform, clip_rect);
+                }
+            }
+        }
+        self.draw_pos_z_children(scene, parent_style_transform, clip_rect);
+    }
+
+    /// pyro: one phase (`FlowPhase::Background` or `Foreground`) of the in-flow `paint_children`
+    /// of a node painted in phases: a block box of the normal flow
+    /// (`Node::paints_in_ancestor_phases`) in that phase, any other block-level box whole with
+    /// the backgrounds, an inline-level one (an inline block, an image) whole with the inline
+    /// content.
+    fn draw_flow_children(
+        &self,
+        scene: &mut impl PaintScene,
+        parent_style_transform: Affine,
+        clip_rect: Rect,
+        phase: FlowPhase,
+    ) {
+        let Some(children) = &*self.node.paint_children.borrow() else {
+            return;
+        };
+        let tree = self.context.dom.as_ref().tree();
+        for &child_id in children {
+            let child = &tree[child_id];
+            if self.paint_level(child) != 0 {
+                continue;
+            }
+            let child_phase = if child.paints_in_ancestor_phases() {
+                phase
+            } else if phase == FlowPhase::Outline {
+                // (A box painted whole paints its outline with it.)
+                continue;
+            } else if child.is_inline_level() == (phase == FlowPhase::Foreground) {
+                FlowPhase::All
+            } else {
+                continue;
+            };
+            self.context.flow_phase.set(child_phase);
+            self.draw_paint_child(scene, child_id, parent_style_transform, clip_rect);
+            self.context.flow_phase.set(FlowPhase::All);
+        }
+    }
+
+    fn draw_neg_z_children(
+        &self,
+        scene: &mut impl PaintScene,
+        parent_style_transform: Affine,
+        clip_rect: Rect,
+    ) {
         if let Some(hoisted) = &self.node.stacking_context {
             for hoisted_child in hoisted.neg_z_hoisted_children() {
                 let position = hoisted_child.position(self.node.tree(), self.node.id);
@@ -2946,39 +3226,14 @@ impl ElementCx<'_, '_> {
                 );
             }
         }
+    }
 
-        // Regular children
-        if let Some(children) = &*self.node.paint_children.borrow() {
-            for child_id in children {
-                // Fixed-position children of the root element are positioned against
-                // the viewport and do not scroll with it, so cancel out the viewport
-                // scroll (applied in `paint_scene`). A fixed box contained by a
-                // transformed ancestor scrolls with it like any out-of-flow box.
-                // pyro: so does one lifted here from a containing block that is no
-                // layer root (a `backdrop-filter` box): it is placed by its offset.
-                let child = &self.context.dom.as_ref().tree()[*child_id];
-                let lifted = child.lifted_paint_offset(self.node.id);
-                let child_transform = if child.taffy_position() == taffy::Position::Fixed
-                    && Some(self.node.id) == self.context.root_element_id
-                    && lifted.is_none()
-                {
-                    let scroll = self.context.dom.as_ref().viewport_scroll();
-                    parent_style_transform.pre_translate(kurbo::Vec2 {
-                        x: scroll.x * self.scale,
-                        y: scroll.y * self.scale,
-                    })
-                } else if let Some(offset) = lifted {
-                    parent_style_transform.pre_translate(kurbo::Vec2 {
-                        x: offset.x as f64 * self.scale,
-                        y: offset.y as f64 * self.scale,
-                    })
-                } else {
-                    parent_style_transform
-                };
-                self.render_node(scene, *child_id, child_transform, clip_rect);
-            }
-        }
-
+    fn draw_pos_z_children(
+        &self,
+        scene: &mut impl PaintScene,
+        parent_style_transform: Affine,
+        clip_rect: Rect,
+    ) {
         // Positive z_index hoisted nodes
         if let Some(hoisted) = &self.node.stacking_context {
             for hoisted_child in hoisted.pos_z_hoisted_children() {

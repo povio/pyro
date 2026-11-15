@@ -163,6 +163,10 @@ space (a bidi formatting character, a zero-width joiner), as in browsers.
 
 All covered by `crates/pyro-render/tests/unicode_bidi.rs` (and `block_in_inline.rs` for the strut).
 
+`layout/line_break.rs` (`BreakerState::item_index`): the index of the layout item to be laid out next, so that
+blitz-dom can tell a float it left for below a line from one past the point where that line wrapped (met again on
+the next line; WPT `floats-line-wrap-shifted-001`). Covered by `crates/pyro-render/tests/floats.rs`.
+
 ## Updating or dropping the patch
 
 Copy the published crate from `~/.cargo/registry/src/*/parley-<version>` and re-apply

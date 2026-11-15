@@ -877,6 +877,13 @@ impl BreakerState {
     pub fn set_line_y(&mut self, y: f64) {
         self.line_y = y;
     }
+
+    /// pyro: the index of the layout item to be laid out next: after a line break, the first item
+    /// of the next line (an item a line wrapped before is laid out again on the next line).
+    #[inline(always)]
+    pub fn item_index(&self) -> usize {
+        self.item_idx
+    }
 }
 
 /// Line breaking support for a paragraph.

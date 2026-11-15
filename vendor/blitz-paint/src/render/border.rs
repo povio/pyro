@@ -1191,7 +1191,7 @@ impl ElementCx<'_, '_> {
     ///
     /// Blink has the width and the offset in whole pixels, and the offset no
     /// further in than to the middle of the box.
-    fn outline_line(&self) -> Option<(BorderStyle, Color, f64, f64)> {
+    pub(super) fn outline_line(&self) -> Option<(BorderStyle, Color, f64, f64)> {
         let outline = self.style.get_outline();
         let style = match outline.outline_style {
             OutlineStyle::Auto => return None,
