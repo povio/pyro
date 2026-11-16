@@ -533,7 +533,7 @@ index fdb826c..2a2c2a9 100644
 +    }
  }
 diff --git a/src/layout/data.rs b/src/layout/data.rs
-index e6ab383..4c278f0 100644
+index e6ab383..556c9e4 100644
 --- a/src/layout/data.rs
 +++ b/src/layout/data.rs
 @@ -4,6 +4,7 @@
@@ -756,13 +756,17 @@ index e6ab383..4c278f0 100644
      }
  }
  
-@@ -429,6 +551,39 @@ struct ContentWidthsMeasurer {
+@@ -429,6 +551,43 @@ struct ContentWidthsMeasurer {
      /// Indents for lines following a soft/hard wrap.
      soft_indent: f32,
      hard_indent: f32,
 +
 +    /// pyro: the layout's tab stops.
 +    tabs: Option<TabStops>,
++
++    /// pyro: the indent the current line started with: only its content (not a negative indent)
++    /// keeps a soft wrap opportunity from being taken while its running width is negative.
++    line_indent: f32,
 +
 +    /// pyro: the last item measured is a span's start edge ([`InlineBoxKind::SpanStart`]): the
 +    /// soft wrap opportunity before the content that follows was taken before the edge.
@@ -796,17 +800,42 @@ index e6ab383..4c278f0 100644
  }
  
  impl ContentWidthsMeasurer {
-@@ -445,7 +600,9 @@ impl ContentWidthsMeasurer {
+@@ -445,7 +604,10 @@ impl ContentWidthsMeasurer {
              text_wrap_mode: TextWrapMode::Wrap,
              soft_indent: indent_options.indent_following_soft_wrap_break(indent_amount),
              hard_indent: indent_options.indent_following_forced_line_break(indent_amount),
 +            tabs: None,
++            line_indent: first_line_indent,
              line_has_content: false,
 +            after_span_start: false,
          }
      }
  
-@@ -522,6 +679,27 @@ impl ContentWidthsMeasurer {
+@@ -457,13 +619,14 @@ impl ContentWidthsMeasurer {
+     /// indent is "hanging" (see [`IndentOptions::hanging`]).
+     #[inline(always)]
+     fn soft_break(&mut self, line_has_content: bool) {
+-        if !line_has_content || self.running_min_width < 0.0 {
++        if !line_has_content || self.running_min_width - self.line_indent.min(0.0) < 0.0 {
+             return;
+         }
+         self.min_width = self
+             .min_width
+             .max(self.running_min_width - self.running_hanging_whitespace);
+         self.running_min_width = self.soft_indent;
++        self.line_indent = self.soft_indent;
+     }
+ 
+     /// Ends the current line at a forced break.
+@@ -485,6 +648,7 @@ impl ContentWidthsMeasurer {
+         self.line_has_content = false;
+         self.running_min_width = self.hard_indent;
+         self.running_max_width = self.hard_indent;
++        self.line_indent = self.hard_indent;
+     }
+ 
+     #[inline(always)]
+@@ -522,6 +686,27 @@ impl ContentWidthsMeasurer {
                  }
                  LayoutItemKind::InlineBox => {
                      let inline_box = &layout_data.inline_boxes[item.index].inline_box;
@@ -818,7 +847,7 @@ index e6ab383..4c278f0 100644
 +                                && self.text_wrap_mode == TextWrapMode::Wrap
 +                                && wraps_before(layout_data, items.as_slice())
 +                                && self.line_has_content
-+                                && self.running_min_width >= 0.0
++                                && self.running_min_width - self.line_indent.min(0.0) >= 0.0
 +                            {
 +                                self.soft_break(true);
 +                                self.line_has_content = false;
@@ -834,7 +863,7 @@ index e6ab383..4c278f0 100644
                      if inline_box.kind == InlineBoxKind::InFlow {
                          let next = items.as_slice().iter().find(|next| {
                              next.kind == LayoutItemKind::TextRun
-@@ -596,7 +774,11 @@ impl ContentWidthsMeasurer {
+@@ -596,7 +781,11 @@ impl ContentWidthsMeasurer {
                  skip_atom = false;
                  let prev_text_wrap_mode = self.text_wrap_mode;
                  self.text_wrap_mode = style.text_wrap_mode;
@@ -846,7 +875,7 @@ index e6ab383..4c278f0 100644
                      && (cluster.is_soft_wrap_opportunity_before()
                          || style.overflow_wrap == OverflowWrap::Anywhere)
                  {
-@@ -611,7 +793,15 @@ impl ContentWidthsMeasurer {
+@@ -611,7 +800,15 @@ impl ContentWidthsMeasurer {
                      continue;
                  }
                  if SPACED {
@@ -863,7 +892,7 @@ index e6ab383..4c278f0 100644
                  }
              } else if skip_atom {
                  // The next line starts after the whole newline atom.
-@@ -620,6 +810,15 @@ impl ContentWidthsMeasurer {
+@@ -620,6 +817,15 @@ impl ContentWidthsMeasurer {
              }
  
              let mut advance = cluster.advance;
@@ -879,7 +908,7 @@ index e6ab383..4c278f0 100644
              if SPACED {
                  let owns_gap = if is_rtl {
                      is_atom_start
-@@ -630,9 +829,10 @@ impl ContentWidthsMeasurer {
+@@ -630,9 +836,10 @@ impl ContentWidthsMeasurer {
                  };
                  if owns_gap {
                      advance += gap;
@@ -891,7 +920,18 @@ index e6ab383..4c278f0 100644
              self.running_max_width += advance;
  
              // A cluster hangs if all of its characters hang. Its first character is checked via the
-@@ -663,7 +863,9 @@ impl ContentWidthsMeasurer {
+@@ -657,13 +864,19 @@ impl ContentWidthsMeasurer {
+                 self.running_hanging_whitespace = 0.0;
+             }
+         }
+-        self.line_has_content = empty_at != clusters.len();
++        // pyro: zero-advance clusters at the start of a line (an empty text item before an atomic
++        // inline) place nothing on it: the wrap opportunity before a box after them and the
++        // text indent is not taken (WPT `css/CSS2/text/text-indent-intrinsic-001`).
++        self.line_has_content = empty_at != clusters.len()
++            && (empty_at == usize::MAX || clusters[empty_at..].iter().any(|cluster| cluster.advance != 0.));
+     }
+ 
      fn measure_inline_box(&mut self, inline_box: &InlineBox, followed_by_inline_content: bool) {
          // Inline boxes have soft wrap opportunities on both sides.
          let wraps = self.text_wrap_mode == TextWrapMode::Wrap;

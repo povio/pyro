@@ -1710,6 +1710,24 @@ impl Node {
                 }
             }
 
+            // pyro: `<br clear>` maps to `clear` (HTML § 15.3.10, "Phrasing content"):
+            // `left`, `right`, `all` and `both`, ASCII case-insensitively.
+            if *name == local_name!("clear") && *tag == local_name!("br") && elem.name.ns == ns!(html) {
+                use style::values::specified::box_::Clear;
+                let clear = if value.eq_ignore_ascii_case("left") {
+                    Some(Clear::Left)
+                } else if value.eq_ignore_ascii_case("right") {
+                    Some(Clear::Right)
+                } else if value.eq_ignore_ascii_case("all") || value.eq_ignore_ascii_case("both") {
+                    Some(Clear::Both)
+                } else {
+                    None
+                };
+                if let Some(clear) = clear {
+                    push_style(PropertyDeclaration::Clear(clear));
+                }
+            }
+
             if *name == local_name!("align") {
                 use style::values::specified::TextAlign;
                 let keyword = match value {

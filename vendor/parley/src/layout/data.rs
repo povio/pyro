@@ -555,6 +555,10 @@ struct ContentWidthsMeasurer {
     /// pyro: the layout's tab stops.
     tabs: Option<TabStops>,
 
+    /// pyro: the indent the current line started with: only its content (not a negative indent)
+    /// keeps a soft wrap opportunity from being taken while its running width is negative.
+    line_indent: f32,
+
     /// pyro: the last item measured is a span's start edge ([`InlineBoxKind::SpanStart`]): the
     /// soft wrap opportunity before the content that follows was taken before the edge.
     after_span_start: bool,
@@ -601,6 +605,7 @@ impl ContentWidthsMeasurer {
             soft_indent: indent_options.indent_following_soft_wrap_break(indent_amount),
             hard_indent: indent_options.indent_following_forced_line_break(indent_amount),
             tabs: None,
+            line_indent: first_line_indent,
             line_has_content: false,
             after_span_start: false,
         }
@@ -614,13 +619,14 @@ impl ContentWidthsMeasurer {
     /// indent is "hanging" (see [`IndentOptions::hanging`]).
     #[inline(always)]
     fn soft_break(&mut self, line_has_content: bool) {
-        if !line_has_content || self.running_min_width < 0.0 {
+        if !line_has_content || self.running_min_width - self.line_indent.min(0.0) < 0.0 {
             return;
         }
         self.min_width = self
             .min_width
             .max(self.running_min_width - self.running_hanging_whitespace);
         self.running_min_width = self.soft_indent;
+        self.line_indent = self.soft_indent;
     }
 
     /// Ends the current line at a forced break.
@@ -642,6 +648,7 @@ impl ContentWidthsMeasurer {
         self.line_has_content = false;
         self.running_min_width = self.hard_indent;
         self.running_max_width = self.hard_indent;
+        self.line_indent = self.hard_indent;
     }
 
     #[inline(always)]
@@ -687,7 +694,7 @@ impl ContentWidthsMeasurer {
                                 && self.text_wrap_mode == TextWrapMode::Wrap
                                 && wraps_before(layout_data, items.as_slice())
                                 && self.line_has_content
-                                && self.running_min_width >= 0.0
+                                && self.running_min_width - self.line_indent.min(0.0) >= 0.0
                             {
                                 self.soft_break(true);
                                 self.line_has_content = false;
@@ -857,7 +864,11 @@ impl ContentWidthsMeasurer {
                 self.running_hanging_whitespace = 0.0;
             }
         }
-        self.line_has_content = empty_at != clusters.len();
+        // pyro: zero-advance clusters at the start of a line (an empty text item before an atomic
+        // inline) place nothing on it: the wrap opportunity before a box after them and the
+        // text indent is not taken (WPT `css/CSS2/text/text-indent-intrinsic-001`).
+        self.line_has_content = empty_at != clusters.len()
+            && (empty_at == usize::MAX || clusters[empty_at..].iter().any(|cluster| cluster.advance != 0.));
     }
 
     fn measure_inline_box(&mut self, inline_box: &InlineBox, followed_by_inline_content: bool) {

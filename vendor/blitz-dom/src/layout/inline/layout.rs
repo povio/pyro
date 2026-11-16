@@ -784,9 +784,18 @@ impl LayoutPassState<'_> {
                 continue;
             }
             let style = self.child_layout_style(&self.nodes[NodeId::from_u64(ibox.id)]);
-            let margin = style
-                .margin()
-                .resolve_or_zero(inputs.parent_size, resolve_calc_value);
+            // pyro: an atomic inline's percentage margins are of its containing block, this
+            // root's content box (zero while the root is measured, CSS Sizing 3 § 5.2.1), not of
+            // the root's own parent (WPT `css/CSS2/normal-flow/intrinsic-size-with-negative-margins`).
+            let margin_basis = Size {
+                width: Some(
+                    known_dimensions
+                        .width
+                        .map_or(0.0, |width| (width - content_box_inset.horizontal_axis_sum()).max(0.0)),
+                ),
+                height: inputs.parent_size.height,
+            };
+            let margin = style.margin().resolve_or_zero(margin_basis, resolve_calc_value);
 
             #[cfg(feature = "floats")]
             let is_floated = style.float().is_floated();

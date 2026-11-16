@@ -314,3 +314,8 @@ Covered by `white_space_changes_wrap_as_in_chromium` in `crates/pyro-render/test
 blitz-dom puts an inline-level absolutely positioned box on the start side of its place in that direction (Blink's
 `InlineItem::Direction()`): Latin text in a right-to-left paragraph runs left to right, and so does the box after it
 (WPT `static-position/htb-rtl-*`, `vlr-rtl-*`, `vrl-rtl-*`).
+- `src/layout/data.rs` (`ContentWidthsMeasurer`): zero-advance clusters at the start of a line (an empty text item
+  before an atomic inline) are no content, so the wrap opportunity before the box after them is not taken and the
+  first line's text indent adds to the box (WPT `css/CSS2/text/text-indent-intrinsic-001`); a line kept from wrapping
+  while its running width is negative counts its content only, not a negative text indent (`line_indent`; WPT
+  `text-indent-intrinsic-003/004`). Covered by `crates/pyro-render/tests/css2_intrinsic_and_hints.rs`.

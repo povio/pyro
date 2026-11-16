@@ -2277,3 +2277,12 @@ container (flow or flow-root, in flow, not a table cell's child) hands its own p
 children (`BaseDocument::quirks_skips_for_percent_height`, used by `block_container_passes_percentage_height` and by
 inline layout for its atomic inlines), Chromium's `UseParentPercentageResolutionBlockSizeForChildren`. Covered by
 `crates/pyro-render/tests/intrinsic_percentages.rs`.
+
+Round 3 lane C2T (CSS2), covered by `crates/pyro-render/tests/css2_intrinsic_and_hints.rs`:
+- `src/stylo.rs`: the `<br clear>` presentational hint (`left`, `right`, `all`/`both` → `clear`), WPT
+  `css/CSS2/floats-clear/floats-clear-multicol-*`.
+- `src/layout/inline/layout.rs`: an atomic inline's percentage margins resolve against the line root's content
+  width (zero while it is measured), not the root's parent (WPT `intrinsic-size-with-negative-margins`).
+- `src/layout/table.rs`: `rowspan="0"` spans the rest of the row group, and a rowspan never reaches past its group in
+  the column cursor (`ColumnCursor::end_group`); a table without rows has no border spacing (its caption alone is the
+  table, as Chromium), and an incremental update that removes the last row builds the table again.

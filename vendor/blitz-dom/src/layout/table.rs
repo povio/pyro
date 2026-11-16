@@ -1313,6 +1313,11 @@ impl ColumnCursor {
         self.col
     }
 
+    /// pyro: a row group starts or ends: no rowspan reaches past its group.
+    fn end_group(&mut self) {
+        self.rowspans.iter_mut().for_each(|remaining| *remaining = 0);
+    }
+
     fn place(&mut self, colspan: u16, rowspan: u16) {
         let end = self.col + colspan;
         if self.rowspans.len() < end as usize {
@@ -1767,8 +1772,9 @@ pub(crate) fn build_table_context(doc: &mut BaseDocument, table_root_node_id: No
         BorderCollapse::Separate => {
             // In the separated borders model, `border-spacing` also applies between
             // the table border and the outermost cells, in addition to between cells.
-            let spacing_x = border_spacing.width.px();
-            let spacing_y = border_spacing.height.px();
+            // pyro: none in a table without rows (a caption alone), as Chromium.
+            let (spacing_x, spacing_y) =
+                if rows.is_empty() { (0.0, 0.0) } else { (border_spacing.width.px(), border_spacing.height.px()) };
             let padding = style.padding.resolve_or_zero(None, resolve_calc_value);
             style.padding = taffy::Rect {
                 left: style_helpers::length(padding.left + spacing_x),
@@ -2474,6 +2480,13 @@ fn update_rows(doc: &mut BaseDocument, table: NodeId, ctx: &mut TableContext) ->
         collected.push((rows, cells));
     }
 
+    // pyro: a table left without rows has no border spacing (`build_table_context`): built again.
+    let removed: usize = changes.iter().map(|change| change.old.len()).sum();
+    let added: usize = collected.iter().map(|(rows, _)| rows.len()).sum();
+    if ctx.rows.len() + added == removed {
+        return None;
+    }
+
     // The columns the cells reach, and the columns with cells of their own, stay the same.
     let mut columns = 0u16;
     let mut r = 0;
@@ -3086,6 +3099,9 @@ fn collect_table_cells(
         | DisplayInside::Contents => {
             drop_part_box(doc, node_id);
             let first_row = rows.len();
+            if display.inside() != DisplayInside::Contents {
+                cursor.end_group();
+            }
             // pyro: what is not a row in anonymous rows (`table_fixup`); else its own children,
             // put back below.
             let fixed = super::table_fixup::fixup_children(doc, node_id, Level::RowGroup, wm.is_vertical(), anonymous);
@@ -3116,6 +3132,7 @@ fn collect_table_cells(
                 doc.nodes[node_id].children = own;
             }
             if display.inside() != DisplayInside::Contents {
+                cursor.end_group();
                 for row in &mut rows[first_row..] {
                     row.group.get_or_insert(node_id);
                 }
@@ -3189,7 +3206,9 @@ fn collect_table_cells(
             let rowspan: u16 = node
                 .attr(local_name!("rowspan"))
                 .and_then(|val| val.parse::<u16>().ok())
-                .map(|v| v.clamp(1, 65534))
+                // pyro: `rowspan="0"` spans the rest of the row group (HTML § 4.9.11; cut at
+                // the group's end below), WPT `css-tables/zero-rowspan-001/002`.
+                .map(|v| if v == 0 { 65534 } else { v.clamp(1, 65534) })
                 .unwrap_or(1);
             let baseline =
                 !wm.is_vertical() && rowspan == 1 && is_baseline_aligned(&node.primary_styles().unwrap());
