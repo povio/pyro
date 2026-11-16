@@ -2406,6 +2406,11 @@ impl<'dom> DomTraversal<BlitzNode<'dom>> for RecalcStyle<'_> {
                 if !style.slow_clone_text_box_trim().is_empty() {
                     self.text_box_trim_styles.store(true, std::sync::atomic::Ordering::Relaxed);
                 }
+                // pyro: list items number their markers with the `list-item` counter
+                // (`layout::counters`).
+                if style.get_box().display.is_list_item() {
+                    self.generated_counters.store(true, std::sync::atomic::Ordering::Relaxed);
+                }
             }
 
             if data.styles.get_primary().is_some_and(|style| {

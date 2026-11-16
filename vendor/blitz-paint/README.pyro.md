@@ -958,9 +958,9 @@ Tables (round 3 lane C2T), covered by `crates/pyro-render/tests/table_paint_orde
   `draw_table_part_outlines`: the outlines of rows and row groups, which paint no box, after the table's content.
 - `src/gradient.rs` (`linear_gradient`): an angled linear gradient's line goes through the centre of its tile, not
   of the element's border box (a tile larger than the box or moved off it showed the wrong part of the gradient).
-- `src/render.rs` (`marker_line_x`): an outside marker moves with its line past floats only when the line holds
-  something in flow (text with an advance, an in-flow inline box); a list item holding only a float keeps its marker
-  before its border box, as Blink (WPT css-display `display-flow-root-list-item-001`).
+- `src/render.rs` (`marker_line_x`): an outside marker moves with its line past floats outside the item only; a
+  line that holds one of the item's own floats keeps the marker before the item's border box, as Blink (WPT
+  css-display `display-flow-root-list-item-001`, css-lists `outside-marker-with-float-in-content`).
 
 - `src/render.rs` (`inline_box_fragments` with `turned`, `InlineBoxFragment::turned`, `draw_turned_lines`): the boxes of
   inline elements on a vertical writing mode's lines are painted as on horizontal ones (background, images, border,

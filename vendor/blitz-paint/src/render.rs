@@ -4472,21 +4472,13 @@ fn last_positioned_table_cell(dom: &BaseDocument, table: &blitz_dom::TableContex
 }
 
 /// pyro: where an outside marker's line starts: floats beside the item move the line and its
-/// marker (WPT CSS2 `list-style-applies-to-017`), but the item's own floats on a line with nothing
-/// in flow (a list item holding only a float) come after the marker: it stays before the item's
-/// border box (WPT css-display `display-flow-root-list-item-001`).
+/// marker (WPT CSS2 `list-style-applies-to-017`), but the item's own floats on the line (in its
+/// content, also with text after them) come after the marker: it stays before the item's border
+/// box (WPT css-display `display-flow-root-list-item-001`, css-lists
+/// `outside-marker-with-float-in-content`).
 fn marker_line_x(line: &parley::Line<'_, blitz_dom::node::TextBrush>) -> f32 {
-    let (mut in_flow, mut own_float) = (false, false);
-    for item in line.items() {
-        match item {
-            // (The strut of an item without in-flow content is a zero-width word joiner.)
-            parley::PositionedLayoutItem::GlyphRun(run) => in_flow |= run.advance() > 0.0,
-            parley::PositionedLayoutItem::InlineBox(ibox) => match ibox.kind {
-                parley::InlineBoxKind::InFlow => in_flow = true,
-                parley::InlineBoxKind::CustomOutOfFlow => own_float = true,
-                _ => {}
-            },
-        }
-    }
-    if in_flow || !own_float { line.metrics().inline_min_coord } else { 0.0 }
+    let own_float = line.items().any(|item| {
+        matches!(item, parley::PositionedLayoutItem::InlineBox(ibox) if ibox.kind == parley::InlineBoxKind::CustomOutOfFlow)
+    });
+    if own_float { 0.0 } else { line.metrics().inline_min_coord }
 }

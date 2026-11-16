@@ -33,7 +33,21 @@ pub(super) fn collect_list_item_children(
         children.reverse();
     }
     for child in children.into_iter() {
-        if let Some(layout) = node_list_item_child(doc, child, *index) {
+        // pyro: the item's number is its `list-item` counter value (`layout::counters`: `value`,
+        // `start`, `reversed` and the counter properties); its position in its list without one.
+        let number = {
+            let node = &doc.nodes[node_id];
+            let numbers = &doc.list_item_numbers;
+            let pseudo = if node.before() == Some(child) {
+                numbers.1.get(&(node_id, true))
+            } else if node.after() == Some(child) {
+                numbers.1.get(&(node_id, false))
+            } else {
+                numbers.0.get(&child)
+            };
+            pseudo.copied().unwrap_or(*index as i32 + 1)
+        };
+        if let Some(layout) = node_list_item_child(doc, child, number) {
             let node = &mut doc.nodes[child];
             let element_data = node.element_data_mut().unwrap();
             let inside = matches!(layout.position, ListItemLayoutPosition::Inside);
@@ -99,7 +113,7 @@ fn marker_changed(node: &mut crate::Node) {
 fn node_list_item_child(
     doc: &mut BaseDocument,
     child_id: NodeId,
-    index: usize,
+    number: i32,
 ) -> Option<ListItemLayout> {
     let node = &doc.nodes[child_id];
 
@@ -137,15 +151,15 @@ fn node_list_item_child(
     // pyro: the item's `::marker` style, on a node of its own (the marker text's brush), and
     // the marker's `content`: `none` leaves no marker, strings replace it (CSS Lists 3 § 3.2).
     let (marker_style, rule_style) = item_marker_style(doc, child_id, &styles);
-    let content = rule_style.as_ref().and_then(|style| marker_content(style, index));
+    let content = rule_style.as_ref().and_then(|style| marker_content(style, number));
     let from_content = content.is_some();
     let style_node = marker_style_node(doc, child_id, marker_style.clone());
     let mut marker = match (content, image) {
         (Some(text), _) => Marker::String(text),
         (None, Some(image)) => image,
-        (None, None) => match custom_counter_marker(doc, list_style_type, index) {
+        (None, None) => match custom_counter_marker(doc, list_style_type, number) {
             Some(marker) => marker,
-            None => marker_for_style(list_style_type, index)?,
+            None => marker_for_style(list_style_type, number)?,
         },
     };
     // pyro: a `::marker` rule's `text-transform` transforms the marker's string; the item's
@@ -335,7 +349,7 @@ fn marker_pseudo_style(
 /// for `normal` (the marker of `list-style`), empty for `none`, else its strings, the item's
 /// number for `counter(list-item)` and the quotes of the style's `quotes`. Other counters and
 /// images are not supported: with one, the marker stays that of `list-style`.
-fn marker_content(style: &style::servo_arc::Arc<style::properties::ComputedValues>, index: usize) -> Option<String> {
+fn marker_content(style: &style::servo_arc::Arc<style::properties::ComputedValues>, number: i32) -> Option<String> {
     use style::values::generics::counters::{Content, ContentItem};
     match &style.get_counters().content {
         Content::Normal => None,
@@ -347,7 +361,7 @@ fn marker_content(style: &style::servo_arc::Arc<style::properties::ComputedValue
                 match item {
                     ContentItem::String(string) => text.push_str(string),
                     ContentItem::Counter(name, counter_style) if &*name.0 == "list-item" => {
-                        text.push_str(&super::counters::format(index as i32 + 1, counter_style));
+                        text.push_str(&super::counters::format(number, counter_style));
                     }
                     ContentItem::OpenQuote => {
                         if let Some((open, _)) = super::counters::quote(style, depth, None) {
@@ -416,7 +430,7 @@ fn marker_style_node(
 /// rule's `prefix` and `suffix` (the extended style's when it gives none). It is text in the
 /// item's font, also for an extended `disc` (CSS Counter Styles 3: only the predefined bullets
 /// may be drawn otherwise). Other systems are not supported (`None`: the marker of the name).
-fn custom_counter_marker(doc: &BaseDocument, list_style_type: &ListStyleType, index: usize) -> Option<Marker> {
+fn custom_counter_marker(doc: &BaseDocument, list_style_type: &ListStyleType, number: i32) -> Option<Marker> {
     use style::counter_style::{Symbol, System};
     let CounterStyle::Name(name) = &list_style_type.0 else {
         return None;
@@ -449,13 +463,26 @@ fn custom_counter_marker(doc: &BaseDocument, list_style_type: &ListStyleType, in
         .as_ref()
         .map(symbol)
         .unwrap_or_else(|| if bullet { " ".into() } else { ". ".into() });
-    let text = super::counters::format(index as i32 + 1, &CounterStyle::Name(base.clone()));
+    let text = super::counters::format(number, &CounterStyle::Name(base.clone()));
     Some(Marker::String(format!("{prefix}{text}{suffix}")))
 }
 
 // Determine the marker to render for a given list style type
-fn marker_for_style(list_style_type: &ListStyleType, index: usize) -> Option<Marker> {
+fn marker_for_style(list_style_type: &ListStyleType, number: i32) -> Option<Marker> {
+    // pyro: numbers below 1 are out of the alphabetic and roman styles' ranges (their fallback,
+    // `decimal`, formats them); `index` is the 0-based position of the others.
+    let index = (number - 1).max(0) as usize;
+    let positive = number >= 1;
     Some(match &list_style_type.0 {
+        CounterStyle::Name(name)
+            if !positive
+                && matches!(
+                    &*name.0,
+                    "lower-alpha" | "upper-alpha" | "lower-latin" | "upper-latin" | "lower-roman" | "upper-roman"
+                ) =>
+        {
+            Marker::String(format!("{number}. "))
+        }
         CounterStyle::None => return None,
         CounterStyle::Name(name) => match &*name.0 {
             "lower-alpha" => {
@@ -468,8 +495,11 @@ fn marker_for_style(list_style_type: &ListStyleType, index: usize) -> Option<Mar
                 build_alpha_marker(index, &mut marker);
                 Marker::String(format!("{}. ", marker.to_ascii_uppercase()))
             }
-            "decimal" => Marker::String(format!("{}. ", index + 1)),
-            "decimal-leading-zero" => Marker::String(format!("{:02}. ", index + 1)),
+            "decimal" => Marker::String(format!("{number}. ")),
+            "decimal-leading-zero" => Marker::String(format!(
+                "{}. ",
+                super::counters::format(number, &list_style_type.0)
+            )),
             "lower-roman" => Marker::String(format!("{}. ", roman(index + 1).to_ascii_lowercase())),
             "upper-roman" => Marker::String(format!("{}. ", roman(index + 1))),
             "lower-latin" => {
@@ -491,7 +521,7 @@ fn marker_for_style(list_style_type: &ListStyleType, index: usize) -> Option<Mar
             // `counter()` formats them, with their `. ` suffix; an unknown name is `decimal`.
             _ => Marker::String(format!(
                 "{}. ",
-                super::counters::format(index as i32 + 1, &list_style_type.0)
+                super::counters::format(number, &list_style_type.0)
             )),
         },
         CounterStyle::String(atom_string) => Marker::String(atom_string.as_ref().to_string()),
@@ -503,7 +533,7 @@ fn marker_for_style(list_style_type: &ListStyleType, index: usize) -> Option<Mar
                 Marker::Char('•')
             } else {
                 // Cycle through symbols based on index: 1st, 2nd, 1st, 2nd, etc.
-                let idx = if len > 1 { index % len } else { 0 };
+                let idx = if len > 1 { (number - 1).rem_euclid(len as i32) as usize } else { 0 };
                 // Symbol is String or Ident variant, extract the string value
                 let sym = &syms[idx];
                 let marker_str = match sym {
@@ -588,24 +618,24 @@ mod tests {
 
     #[test]
     fn test_marker_for_disc() {
-        let result = marker_for_style(&ListStyleType::disc(), 0);
+        let result = marker_for_style(&ListStyleType::disc(), 1);
         assert_eq!(result, Some(Marker::Char('•')));
     }
 
     #[test]
     fn test_marker_for_decimal() {
-        let result_1 = marker_for_style(&list_style("decimal"), 0);
-        let result_2 = marker_for_style(&list_style("decimal"), 1);
+        let result_1 = marker_for_style(&list_style("decimal"), 1);
+        let result_2 = marker_for_style(&list_style("decimal"), 2);
         assert_eq!(result_1, Some(Marker::String("1. ".to_string())));
         assert_eq!(result_2, Some(Marker::String("2. ".to_string())));
     }
 
     #[test]
     fn test_marker_for_lower_alpha() {
-        let result_1 = marker_for_style(&list_style("lower-alpha"), 0);
-        let result_2 = marker_for_style(&list_style("lower-alpha"), 1);
-        let result_extended_1 = marker_for_style(&list_style("lower-alpha"), 26);
-        let result_extended_2 = marker_for_style(&list_style("lower-alpha"), 27);
+        let result_1 = marker_for_style(&list_style("lower-alpha"), 1);
+        let result_2 = marker_for_style(&list_style("lower-alpha"), 2);
+        let result_extended_1 = marker_for_style(&list_style("lower-alpha"), 27);
+        let result_extended_2 = marker_for_style(&list_style("lower-alpha"), 28);
         assert_eq!(result_1, Some(Marker::String("a. ".to_string())));
         assert_eq!(result_2, Some(Marker::String("b. ".to_string())));
         assert_eq!(result_extended_1, Some(Marker::String("aa. ".to_string())));
@@ -614,10 +644,10 @@ mod tests {
 
     #[test]
     fn test_marker_for_upper_alpha() {
-        let result_1 = marker_for_style(&list_style("upper-alpha"), 0);
-        let result_2 = marker_for_style(&list_style("upper-alpha"), 1);
-        let result_extended_1 = marker_for_style(&list_style("upper-alpha"), 26);
-        let result_extended_2 = marker_for_style(&list_style("upper-alpha"), 27);
+        let result_1 = marker_for_style(&list_style("upper-alpha"), 1);
+        let result_2 = marker_for_style(&list_style("upper-alpha"), 2);
+        let result_extended_1 = marker_for_style(&list_style("upper-alpha"), 27);
+        let result_extended_2 = marker_for_style(&list_style("upper-alpha"), 28);
         assert_eq!(result_1, Some(Marker::String("A. ".to_string())));
         assert_eq!(result_2, Some(Marker::String("B. ".to_string())));
         assert_eq!(result_extended_1, Some(Marker::String("AA. ".to_string())));

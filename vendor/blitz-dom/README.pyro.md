@@ -2369,3 +2369,14 @@ both edges, as in Blink; WPT css-overflow `input-scrollable-region-001`).
   `min-*` and `max-*`. Measured in definite space, an `auto`/`fit-content` basis gives the space between the
   calculations of its min-content and max-content widths (Blink's fit-content of the result). A size it measured
   and its parent hands back is not calculated again (`calc_size_results`, per pass). Horizontal writing modes only.
+## List item numbers from the `list-item` counter (WPT round 3, lane IT)
+
+A marker's number is its item's `list-item` counter value, computed by the counter walk (`layout::counters`, which
+now runs for every document with list items: `generated_counters` is set by a `display: list-item` style) and kept
+in `BaseDocument::list_item_numbers` (elements; `::before`/`::after` list items by their originating element);
+`list::collect_list_item_children` reads it (its running index is only the fallback). The walk applies HTML's
+presentational hints itself: `ol start` (reset to start − 1), `ol reversed` (a reversed `list-item` counter: list
+items increment it by −1; without `start` its initial value is CSS Lists 3 § 4.4.2's, `reversed_initial`) and
+`li value` (`counter-set`), each unless an author rule declares the property; `counter-reset: reversed(name)` works
+for any counter. A changed number damages the item and its parent; `start`, `reversed` and `value` changes dirty
+the counters. Covered by `crates/pyro-render/tests/list_numbering.rs`.

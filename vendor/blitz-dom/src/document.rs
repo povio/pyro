@@ -607,6 +607,10 @@ pub struct BaseDocument {
     /// pyro: a style change or a child list change since the last evaluation can have changed
     /// counters or quotes (`layout::counters`).
     pub(crate) counters_dirty: bool,
+    /// pyro: the number of each list item's marker, its `list-item` counter value
+    /// (`layout::counters`): elements, and `::before` (true) / `::after` list items by their
+    /// originating element.
+    pub(crate) list_item_numbers: (HashMap<NodeId, i32>, HashMap<(NodeId, bool), i32>),
 
     /// pyro: the top layer (modal dialogs, showing popovers) as
     /// the embedder marks it, by rank (bottom first): elements whose
@@ -826,6 +830,7 @@ impl BaseDocument {
             text_box_trim_styles: false,
             generated_text: HashMap::new(),
             counters_dirty: true,
+            list_item_numbers: Default::default(),
             top_layer: Default::default(),
             pending_critical_resources: HashSet::new(),
             controls_to_form: HashMap::new(),

@@ -62,6 +62,7 @@ mod line_break_resume;
 mod line_clamp;
 mod hoisted_clip_layers;
 mod line_height_normal;
+mod list_numbering;
 mod line_paint_order;
 mod margin_trim;
 mod marker_pseudo;
