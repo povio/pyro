@@ -153,6 +153,10 @@ pub struct ElementData {
     /// pyro: the node holding this list item's `::marker` style, the brush of its marker's text
     /// (`layout::list`). Not in the tree; its parent is the item.
     pub marker_style: Option<NodeId>,
+    /// pyro: the element's scroll pseudo-element boxes (its `::scroll-marker-group`,
+    /// `::scroll-button()`s and `::scroll-marker`), or what pseudo-element box this node is
+    /// (`layout::scroll_markers`).
+    pub scroll: Option<Box<crate::layout::scroll_markers::ScrollPseudos>>,
 
     /// Detailed layout information from the most recent layout (currently
     /// grid track sizing information for grid containers only). Used by
@@ -431,6 +435,7 @@ impl Clone for ElementData {
             first_letter: None,
             first_line: None,
             marker_style: None,
+            scroll: None,
             detailed_layout_info: taffy::DetailedLayoutInfo::None,
             display_constructed_as: StyloDisplay::Block,
             layout_data: None,
@@ -557,6 +562,7 @@ impl ElementData {
             first_letter: None,
             first_line: None,
             marker_style: None,
+            scroll: None,
             detailed_layout_info: taffy::DetailedLayoutInfo::None,
             display_constructed_as: StyloDisplay::Block,
             layout_data: None,

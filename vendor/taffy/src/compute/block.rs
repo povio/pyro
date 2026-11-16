@@ -833,7 +833,7 @@ fn compute_inner(
         // pyro: a box that is no containing block (an inline box laid out around its blocks)
         // hands its own containing block's height on.
         .or(if tree.block_container_passes_percentage_height(node_id) { parent_size.height } else { None })
-        // pyro: a multi-column container's strip
+        // pyro: a multi-column container's strip (the column height).
         .or_else(|| tree.block_container_percentage_height(node_id));
 
     // 3. Perform final item layout and return content height

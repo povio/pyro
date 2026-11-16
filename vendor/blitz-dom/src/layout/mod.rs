@@ -35,6 +35,7 @@ pub(crate) mod list;
 pub mod multicol;
 pub(crate) mod paint_tree;
 pub(crate) mod replaced;
+pub(crate) mod scroll_markers;
 pub mod table;
 pub(crate) mod table_fixup;
 pub(crate) mod text_box;
@@ -120,11 +121,11 @@ pub(crate) struct LayoutPassState<'doc> {
     /// pyro: the multi-column container whose strip is being laid out and its content box width,
     /// while it has column spanners (`layout::multicol`).
     pub(crate) column_spanners: Option<(crate::NodeId, f32)>,
+    /// pyro: the multi-column container whose strip is being laid out and the border-box height
+    /// its content's percentage heights resolve against (its column height, `layout::multicol`).
+    pub(crate) multicol_percent_height: Option<(crate::NodeId, f32)>,
     /// pyro: the inline roots this pass marked `FINAL_LAYOUT_STALE` (`mark_final_layout_stale`).
     pub(crate) stale_lines: Vec<crate::NodeId>,
-    /// pyro: the multi-column container whose strip is being laid out and its definite height
-    /// (border box), which percentage heights in it resolve against (`layout::multicol`).
-    pub(crate) multicol_percent_height: Option<(crate::NodeId, f32)>,
 }
 
 impl<'doc> LayoutPassState<'doc> {
@@ -165,8 +166,8 @@ impl<'doc> LayoutPassState<'doc> {
             #[cfg(feature = "writing-mode")]
             round_counts: (0, 0),
             column_spanners: None,
-            stale_lines: Vec::new(),
             multicol_percent_height: None,
+            stale_lines: Vec::new(),
         }
     }
 }

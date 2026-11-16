@@ -148,6 +148,9 @@ impl BaseDocument {
             if self.resolve_sampled_animations() {
                 self.resolve_stylist(current_time_for_animations);
             }
+            // pyro: the scroll marker and scroll button boxes (`layout::scroll_markers`), before
+            // counters (markers read them) and damage propagation.
+            self.resolve_scroll_markers();
             // pyro: counters and quotes in generated content, before damage propagates.
             self.resolve_generated_content();
             timer.record_time("style");
@@ -199,8 +202,15 @@ impl BaseDocument {
             self.resolve_layout();
             timer.record_time("layout");
             phase_profile::mark(4, &mut phase_t);
-            if !self.refresh_container_query_sizes() || pass == 31 {
+            let container_sizes_changed = self.refresh_container_query_sizes();
+            // pyro: the active scroll markers and the scroll buttons' states follow the layout
+            // and the scroll positions (`layout::scroll_markers`): a change styles them again.
+            let scroll_states_changed = !container_sizes_changed && self.update_target_current();
+            if (!container_sizes_changed && !scroll_states_changed) || pass == 31 {
                 break;
+            }
+            if !container_sizes_changed {
+                continue;
             }
             self.nodes[root_node_id]
                 .set_restyle_hint(style::invalidation::element::restyle_hints::RestyleHint::restyle_subtree());

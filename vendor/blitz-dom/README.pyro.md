@@ -2134,6 +2134,49 @@ Covered by `crates/pyro-render/tests/text_spacing.rs`.
   positioned row or row group is laid out by the table against the part's box moved by its relative offset; a
   relatively positioned caption moves.
 Covered by `crates/pyro-render/tests/static_position.rs` and `table_part_positioning.rs`.
+## Scroll markers and scroll buttons (WPT round 3, lane SM)
+
+CSS Overflow 5's `::scroll-marker-group`, `::scroll-marker`, `::scroll-button()` and `:target-current`, as
+Chromium generates and lays them out (`src/layout/scroll_markers.rs`; the stylo side is in its README):
+
+- The boxes are nodes outside the DOM (as `::before`), on `ElementData::scroll` (`ScrollPseudos`): a scroll
+  container's group, an element's buttons and marker, and what pseudo-element a box node is with its originating
+  element. `BaseDocument::resolve_scroll_markers` (after a style traversal or a tree change, before counters, on
+  pages that use the feature) walks the document: a scroll container whose `scroll-marker-group` names a side has a
+  group; the elements whose nearest scroll container through their containing blocks has a group, and whose
+  `::scroll-marker` has `content`, have markers, its children in tree order; an element whose `::scroll-button()`
+  has `content` has a button per direction. Styles come from `Stylist::compute_pseudo_node_style` on the box node:
+  `implemented_pseudo_element`, `match_pseudo_element` (a button matches the arguments of its direction, physical
+  ones through the element's writing mode), `pseudo_element_originating_element` and `get_attr` answer for the
+  box node (`src/stylo.rs`). A button node is a `button` element (UA rules, `IS_BUTTON` layout).
+- Box construction (`src/layout/construct.rs`, `src/layout/inline/build.rs`): children are iterated with the
+  boxes generated beside them (`with_box_siblings`): a group before or after its scroll container's box, the
+  buttons after it (before an `after` group; Chromium's order, WPT `scroll-buttons-layout-parent`); the root
+  element's are its first and last boxes. Classification, anonymous blocks, `display: contents` hoisting and inline
+  formatting contexts take them as children. A marker's or button's box holds what its `content` generates
+  (`flush_pseudo_elements`); counters see the markers in their group and the buttons, in the scope of their
+  originating element (`src/layout/counters.rs`). The damage walks visit the boxes an element owns
+  (`src/layout/damage.rs`); a dropped element drops them, and its marker leaves its group (`src/document.rs`).
+- `::column::scroll-marker`: a multi-column scroll container with a group has a `::column` node (for selector
+  matching only) and a marker per column of its last layout; `update_target_current` builds them again when the
+  count changes.
+- After layout (`src/resolve.rs`), `update_target_current` picks each group's active marker (CSS Overflow 5
+  § 3.1.8's example algorithm as Chromium selects: the nearest scroll container the targets share, then by block
+  and inline axis, targets past the reachable range spread over the first and last eighth of a scrollport; a scroll
+  container's current scroll target, `set_scroll_targets`, decides first) and sets `:target-current` on its marker,
+  on the links of `scroll-target-group: auto` elements, and `:enabled`/`:disabled` on buttons (whether the element
+  can scroll that way); a change runs another style and layout pass.
+- `src/layout/paint_tree.rs` (`restore_out_of_flow_stacking_owners`): a group's or button's box belongs to the
+  stacking contexts of its originating element's parent (`scroll_markers::box_parent`), not of the element (an
+  absolutely positioned group of a fixed scroll container was painted at the container, WPT
+  `scroll-marker-group-019`).
+- `assets/default.css`: buttons (`button`, `input` of type `button`, `submit`, `reset`) size their border box, as
+  Chromium's (`<button style="width:100px">` was 114px wide; a styled `::scroll-button()` too).
+- `src/layout/multicol.rs`, `src/layout/mod.rs` (`multicol_percent_height`): a multi-column container's content
+  resolves percentage heights against its column height (the strip was laid out with none: `height: 80%` items were
+  auto; WPT `targeted-column-scroll-marker-selection-001`).
+
+Covered by `crates/pyro-render/tests/scroll_markers.rs`.
 
 ## A table's `max-width` does not narrow it below its columns (WPT round 3, lane G)
 

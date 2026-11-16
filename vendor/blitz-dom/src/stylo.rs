@@ -221,6 +221,11 @@ impl crate::document::BaseDocument {
             if traverser.text_box_trim_styles.into_inner() {
                 self.text_box_trim_styles = true;
             }
+            if traverser.scroll_marker_groups.into_inner() {
+                self.scroll_marker_groups = true;
+            }
+            // pyro: a restyle may change which scroll pseudo-elements generate boxes.
+            self.scroll_markers_dirty = true;
             if traverser.generated_counters.into_inner() && !self.generated_counters {
                 self.generated_counters = true;
                 self.counters_dirty = true;
@@ -651,6 +656,15 @@ impl selectors::Element for BlitzNode<'_> {
         matches!(self.data, NodeData::AnonymousBlock(_))
     }
 
+    // pyro: a scroll pseudo-element's box originates from the element it names, not from its
+    // parent in the tree (a marker's is its group, `layout::scroll_markers`).
+    fn pseudo_element_originating_element(&self) -> Option<Self> {
+        match self.scroll_pseudo() {
+            Some((_, origin)) => Some(self.with(origin)),
+            None => selectors::Element::parent_element(self),
+        }
+    }
+
     // These methods are implemented naively since we only threaded real nodes and not fake nodes
     // we should try and use `find` instead of this foward/backward stuff since its ugly and slow
     fn prev_sibling_element(&self) -> Option<Self> {
@@ -766,6 +780,10 @@ impl selectors::Element for BlitzNode<'_> {
             NonTSPseudoClass::ReadOnly => self.element_state().contains(ElementState::READONLY),
             NonTSPseudoClass::ServoNonZeroBorder => false,
             NonTSPseudoClass::Target => false,
+            // pyro: the active scroll marker of its group (`layout::scroll_markers`).
+            NonTSPseudoClass::TargetCurrent => {
+                self.element_state().contains(style::selector_parser::TARGET_CURRENT)
+            }
             // pyro: links to the document itself (`ElementData::flush_link_visited`), but not
             // inside `:has()`, where Chromium takes every link as unvisited (WPT
             // `css/selectors/has-visited.html`, `invalidation/link-pseudo-in-has.html`).
@@ -802,6 +820,18 @@ impl selectors::Element for BlitzNode<'_> {
         pe: &PseudoElement,
         _context: &mut MatchingContext<Self::Impl>,
     ) -> bool {
+        // pyro: the box of a scroll pseudo-element; a button matches the arguments that select
+        // its direction (`layout::scroll_markers`).
+        if let Some((pseudo, origin)) = self.scroll_pseudo() {
+            if pseudo == PseudoElement::ScrollButtonAll {
+                let direction = self.scroll_pseudos().map_or(0, |pseudos| pseudos.direction);
+                let Some(wm) = self.tree()[origin].primary_styles().map(|style| style.writing_mode) else {
+                    return false;
+                };
+                return crate::layout::scroll_markers::scroll_button_matches(pe, direction, wm);
+            }
+            return *pe == pseudo;
+        }
         let pseudo = match self.try_stylo_element_data().and_then(|s| s.get()) {
             Some(el) => el
                 .styles
@@ -928,6 +958,10 @@ impl<'a> TElement for BlitzNode<'a> {
     fn implemented_pseudo_element(&self) -> Option<PseudoElement> {
         if !matches!(self.data, NodeData::AnonymousBlock(_)) {
             return None;
+        }
+        // pyro: the box of a scroll pseudo-element (`layout::scroll_markers`).
+        if let Some((pseudo, _)) = self.scroll_pseudo() {
+            return Some(pseudo);
         }
         let parent = &self.tree()[self.parent?];
         if parent.before() == Some(self.id) {
@@ -1222,6 +1256,10 @@ impl<'a> TElement for BlitzNode<'a> {
         let name = lowered.as_ref().unwrap_or(&attr.0);
         // pyro: for a pseudo-element's box (the marker style of a `::before` or `::after` list
         // item is cascaded on it), the attribute of its originating element.
+        // pyro: and of a scroll pseudo-element's box, of its originating element.
+        if let Some((_, origin)) = self.scroll_pseudo() {
+            return self.with(origin).get_attr(attr, ns);
+        }
         if matches!(self.data, NodeData::AnonymousBlock(_))
             && let Some(parent) = self.parent.map(|id| &self.tree()[id])
             && (parent.before() == Some(self.id) || parent.after() == Some(self.id))
@@ -2005,6 +2043,7 @@ pub struct RecalcStyle<'a> {
     first_letter_changed: Mutex<Vec<NodeId>>,
     /// pyro: restyled list items with a `::marker` style node (`layout::list::item_restyled`).
     marker_items_restyled: Mutex<Vec<NodeId>>,
+    scroll_marker_groups: std::sync::atomic::AtomicBool,
     /// pyro: an element styled in this traversal kept a `::first-line` style, and the elements
     /// whose `::first-line` style it changed (`layout::first_line::style_changed`).
     first_line_styles: std::sync::atomic::AtomicBool,
@@ -2032,6 +2071,7 @@ impl<'a> RecalcStyle<'a> {
             first_letter_styles: std::sync::atomic::AtomicBool::new(false),
             first_letter_changed: Mutex::new(Vec::new()),
             marker_items_restyled: Mutex::new(Vec::new()),
+            scroll_marker_groups: std::sync::atomic::AtomicBool::new(false),
             first_line_styles: std::sync::atomic::AtomicBool::new(false),
             first_line_changed: Mutex::new(Vec::new()),
             generated_counters: std::sync::atomic::AtomicBool::new(false),
@@ -2349,6 +2389,14 @@ impl<'dom> DomTraversal<BlitzNode<'dom>> for RecalcStyle<'_> {
 
             if el.element_data().is_some_and(|element| element.marker_style.is_some()) {
                 self.marker_items_restyled.lock().unwrap().push(el.id);
+            }
+
+            // pyro: a scroll marker group or a scroll target group (`layout::scroll_markers`).
+            if data.styles.get_primary().is_some_and(|style| {
+                style.get_box().slow_clone_scroll_marker_group().generates_group()
+                    || style.get_box().slow_clone_scroll_target_group() != style::values::computed::ScrollTargetGroup::None
+            }) {
+                self.scroll_marker_groups.store(true, std::sync::atomic::Ordering::Relaxed);
             }
 
             // One empty check for an element without eager pseudo styles.

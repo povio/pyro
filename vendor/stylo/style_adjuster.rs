@@ -851,6 +851,90 @@ impl<'a, 'b: 'a> StyleAdjuster<'a, 'b> {
     /// for web-compat reasons.
     /// We intentionally don't check 'list-style-image' below since we want it to use
     /// the same font as its fallback ('list-style-type') in case it fails to load.
+        /// pyro: pyro's UA sheet rounds a button's corners (1px) as Chromium's native look does. A
+    /// button whose border or background an author styles loses that look (its appearance
+    /// devolves): its corners are square unless an author rounds them (WPT
+    /// css-overflow/scroll-markers/scroll-buttons-001: `::scroll-button()`s are buttons).
+    #[cfg(feature = "servo")]
+    fn adjust_for_author_styled_button<E>(&mut self, element: Option<E>, specified: &LonghandIdSet)
+    where
+        E: TElement,
+    {
+        use crate::properties::LonghandId;
+        use crate::values::computed::BorderCornerRadius;
+        use crate::Zero;
+        if !specified.contains_any(LonghandIdSet::border_background_properties()) {
+            return;
+        }
+        let rounded_by_author = [
+            LonghandId::BorderTopLeftRadius,
+            LonghandId::BorderTopRightRadius,
+            LonghandId::BorderBottomRightRadius,
+            LonghandId::BorderBottomLeftRadius,
+        ]
+        .iter()
+        .any(|id| specified.contains(*id));
+        if rounded_by_author {
+            return;
+        }
+        let is_button = self.style.pseudo.is_some_and(|p| p.is_scroll_button())
+            || element.is_some_and(|e| {
+                e.is_html_element()
+                    && match &**e.local_name() {
+                        "button" => true,
+                        "input" => TElement::get_attr(&e, &crate::LocalName::from("type"), &crate::Namespace::default())
+                            .is_some_and(|t| {
+                                t.eq_ignore_ascii_case("button")
+                                    || t.eq_ignore_ascii_case("submit")
+                                    || t.eq_ignore_ascii_case("reset")
+                            }),
+                        _ => false,
+                    }
+            });
+        if !is_button {
+            return;
+        }
+        let border = self.style.mutate_border();
+        border.set_border_top_left_radius(BorderCornerRadius::zero());
+        border.set_border_top_right_radius(BorderCornerRadius::zero());
+        border.set_border_bottom_right_radius(BorderCornerRadius::zero());
+        border.set_border_bottom_left_radius(BorderCornerRadius::zero());
+    }
+
+    /// pyro: `content-visibility: auto` turns on layout, style and paint containment (CSS
+    /// Contain 2 § 4.1). Every element is taken as relevant to the user: no size containment, its
+    /// contents laid out and painted. `hidden` is not supported (no containment, contents shown,
+    /// as before servo parsed the property).
+    #[cfg(feature = "servo")]
+    fn adjust_for_content_visibility(&mut self) {
+        use crate::values::specified::box_::{Contain, ContentVisibility};
+        let box_style = self.style.get_box();
+        if box_style.slow_clone_content_visibility() != ContentVisibility::Auto {
+            return;
+        }
+        let contain = box_style.slow_clone_contain() | Contain::LAYOUT | Contain::STYLE | Contain::PAINT;
+        self.style.mutate_box().set_contain(contain);
+    }
+
+    /// pyro: a `::scroll-marker-group` contains its layout always, and its size unless it is
+    /// absolutely positioned, whatever its `contain` says (CSS Overflow 5 recommends the UA rule
+    /// `::scroll-marker-group { contain: size !important }`; Chromium contains its layout too and
+    /// lets an absolutely positioned group size to its markers: WPT css-overflow/scroll-markers
+    /// scroll-marker-007..009, scroll-marker-group-016).
+    #[cfg(feature = "servo")]
+    fn adjust_for_scroll_marker_group(&mut self) {
+        use crate::selector_parser::PseudoElement;
+        use crate::values::specified::box_::Contain;
+        if !self.style.pseudo.is_some_and(|p| *p == PseudoElement::ScrollMarkerGroup) {
+            return;
+        }
+        let mut contain = self.style.get_box().slow_clone_contain() | Contain::LAYOUT;
+        if !self.style.get_box().slow_clone_position().is_absolutely_positioned() {
+            contain |= Contain::SIZE;
+        }
+        self.style.mutate_box().set_contain(contain);
+    }
+
     #[cfg(feature = "gecko")]
     fn adjust_for_marker_pseudo(&mut self, author_or_user_specified_properties: &LonghandIdSet) {
         use crate::values::computed::counters::Content;
@@ -1122,6 +1206,12 @@ impl<'a, 'b: 'a> StyleAdjuster<'a, 'b> {
         self.adjust_for_appearance(element);
         #[cfg(feature = "gecko")]
         self.adjust_for_marker_pseudo(author_or_user_specified_properties);
+        #[cfg(feature = "servo")]
+        {
+            self.adjust_for_content_visibility();
+            self.adjust_for_scroll_marker_group();
+            self.adjust_for_author_styled_button(element, author_or_user_specified_properties);
+        }
         if !try_tactic.is_empty() {
             self.adjust_for_try_tactic(try_tactic);
         }

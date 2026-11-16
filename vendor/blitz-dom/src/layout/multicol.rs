@@ -467,6 +467,14 @@ impl LayoutPassState<'_> {
         let gap = multicol.gap(Some(content_width));
         let (count, column_width) = column_boxes(multicol.count, multicol.width, content_width, gap);
 
+        // pyro: the content's percentage heights resolve against the column height, the
+        // container's content box height when it is definite (its border box here).
+        let percent_height = inputs
+            .known_dimensions
+            .height
+            .or(size.height.maybe_clamp(min_size.height, max_size.height))
+            .map(|height| height.max(pb_sum.height));
+
         // The strip: the content laid out one column wide, as tall as it is.
         let strip_inputs = LayoutInput {
             run_mode: RunMode::PerformLayout,
@@ -477,28 +485,26 @@ impl LayoutPassState<'_> {
             parent_size: inputs.parent_size,
             available_space: Size {
                 width: AvailableSpace::Definite(column_width + pb_sum.width),
-                height: AvailableSpace::MaxContent,
+                // (An inline formatting context's atomic inlines resolve percentage heights
+                // against its definite available height.)
+                height: match (inline_root, percent_height) {
+                    (true, Some(height)) => AvailableSpace::Definite(height),
+                    _ => AvailableSpace::MaxContent,
+                },
             },
             vertical_margins_are_collapsible: Line::FALSE,
         };
         // Column spanners (`column-span: all` children) are laid out as wide as the container.
         let spanning = (!inline_root).then(|| (dom_id, content_width)).filter(|_| self.doc.has_column_spanners(dom_id));
         let outer_spanners = std::mem::replace(&mut self.column_spanners, spanning);
-        // pyro: percentage heights in the strip resolve against the container's definite height
-        // (WPT `position-sticky-child-multicolumn`).
-        let percent_height = inputs
-            .known_dimensions
-            .height
-            .or(size.height.maybe_clamp(min_size.height, max_size.height))
-            .map(|height| (dom_id, height));
-        let outer_percent_height = std::mem::replace(&mut self.multicol_percent_height, percent_height);
+        let outer_percent_height = std::mem::replace(&mut self.multicol_percent_height, percent_height.map(|height| (dom_id, height)));
         let strip = if inline_root {
             self.compute_inline_layout(dom_id, strip_inputs, None)
         } else {
             compute_block_layout(self, node_id, strip_inputs, None)
         };
-        self.column_spanners = outer_spanners;
         self.multicol_percent_height = outer_percent_height;
+        self.column_spanners = outer_spanners;
         if inputs.run_mode == RunMode::ComputeSize {
             // The strip wrote its boxes' layouts at this width: a cached final layout of the
             // container at another width would leave them there.

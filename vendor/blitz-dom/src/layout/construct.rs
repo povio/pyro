@@ -26,6 +26,7 @@ use crate::{
     traversal::{iter_children, iter_children_and_pseudos},
 };
 
+use super::scroll_markers;
 use super::{
     counters::Piece, damage::ALL_DAMAGE, list::collect_list_item_children,
     replaced::is_inline_box, table::build_table_context,
@@ -190,10 +191,12 @@ fn push_children_and_pseudos(layout_children: &mut ThinVec<NodeId>, node: &Node)
     if let Some(before) = node.before() {
         layout_children.push(before);
     }
-    layout_children.extend(node.children.iter().copied().filter(|child_id| {
+    // pyro: with the scroll pseudo-element boxes around each child (`scroll_markers`).
+    let children = node.children.iter().copied().filter(|child_id| {
         let child_node = node.with(*child_id);
         child_node.data.kind() != NodeKind::Comment
-    }));
+    });
+    layout_children.extend(scroll_markers::with_box_siblings(node.tree(), node.id, children));
     if let Some(after) = node.after() {
         layout_children.push(after);
     }
@@ -274,14 +277,16 @@ fn push_hoisted_children_and_pseudos(
     }
     // Take children array from node to avoid borrow checker issues.
     let children = std::mem::take(&mut doc.nodes[container_node_id].children);
-    for child_id in children.iter().copied() {
+    // pyro: with the scroll pseudo-element boxes around each child (`scroll_markers`).
+    let boxes: Vec<NodeId> = scroll_markers::with_box_siblings(&doc.nodes, container_node_id, children.iter().copied()).collect();
+    doc.nodes[container_node_id].children = children;
+    for child_id in boxes {
         let child = &doc.nodes[child_id];
         if child.data.kind() == NodeKind::Comment || child.is_collapsible_whitespace_node() {
             continue;
         }
         push_hoisted_child(doc, child_id, out, wrap);
     }
-    doc.nodes[container_node_id].children = children;
     if let Some(after) = doc.nodes[container_node_id].after() {
         push_hoisted_child(doc, after, out, wrap);
     }
@@ -291,10 +296,12 @@ fn push_non_whitespace_children_and_pseudos(layout_children: &mut ThinVec<NodeId
     if let Some(before) = node.before() {
         layout_children.push(before);
     }
-    layout_children.extend(node.children.iter().copied().filter(|child_id| {
+    // pyro: with the scroll pseudo-element boxes around each child (`scroll_markers`).
+    let children = node.children.iter().copied().filter(|child_id| {
         let child_node = node.with(*child_id);
         !child_node.is_whitespace_node() && child_node.data.kind() != NodeKind::Comment
-    }));
+    });
+    layout_children.extend(scroll_markers::with_box_siblings(node.tree(), node.id, children));
     if let Some(after) = node.after() {
         layout_children.push(after);
     }
@@ -340,7 +347,14 @@ fn classify_flow_children(
     let pseudo_ids = node.before().into_iter().chain(node.after());
     let child_ids = node.children.iter().copied().chain(pseudo_ids);
     let child_count = node.children.len();
-    for (index, child_id) in child_ids.enumerate() {
+    // pyro: the scroll pseudo-element boxes around the children vote like children
+    // (`scroll_markers`); they are no split inline (`usize::MAX`).
+    let indexed: Vec<(usize, NodeId)> = if scroll_markers::any_box_siblings(&doc.nodes, container_node_id) {
+        scroll_markers::indexed_with_box_siblings(&doc.nodes, container_node_id, child_ids)
+    } else {
+        child_ids.enumerate().collect()
+    };
+    for (index, child_id) in indexed {
         let child = &doc.nodes[child_id];
 
         // pyro: a split inline's head or tail is inline content.
@@ -1057,6 +1071,23 @@ fn sync_generated_children(
 }
 
 pub(crate) fn flush_pseudo_elements(doc: &mut BaseDocument, node_id: NodeId) {
+    // pyro: the box of a scroll marker or a scroll button holds what its `content` generates
+    // (with counters, `layout::counters`); it has no `::before` or `::after` of its own.
+    if let Some((pseudo, origin)) = doc.nodes[node_id].scroll_pseudo() {
+        use style::selector_parser::PseudoElement;
+        if pseudo == PseudoElement::ScrollMarker || pseudo.is_scroll_button() {
+            if let Some(style) = doc.nodes[node_id].primary_styles().map(|style| style::servo_arc::Arc::clone(&*style)) {
+                let pieces = match doc.generated_text.get(&node_id).and_then(|texts| texts[1].as_ref()) {
+                    Some(pieces) => Some(pieces.clone()),
+                    None => super::counters::plain_content(&style, origin),
+                };
+                if sync_generated_children(doc, node_id, &style, pieces.as_deref().unwrap_or(&[])) {
+                    doc.nodes[node_id].insert_damage(ALL_DAMAGE);
+                }
+            }
+        }
+        return;
+    }
     let (before_style, after_style, before_node_id, after_node_id) = {
         let node = &doc.nodes[node_id];
 
@@ -1247,6 +1278,20 @@ fn collect_complex_layout_children_in(
     needs_wrap: fn(NodeKind, DisplayOutside) -> bool,
     middle: Option<std::ops::RangeInclusive<usize>>,
 ) {
+    // pyro: with the scroll pseudo-element boxes around the children (`scroll_markers`), placed
+    // as children are; the root element's own come first and last.
+    let siblings = scroll_markers::any_box_siblings(&doc.nodes, container_node_id);
+    let own: Vec<NodeId> = if siblings && doc.nodes[container_node_id].is_root_element() {
+        scroll_markers::with_box_siblings(&doc.nodes, container_node_id, []).collect()
+    } else {
+        Vec::new()
+    };
+    let own_first = own.first().copied().filter(|&id| {
+        doc.nodes[container_node_id].scroll_pseudos().is_some_and(|pseudos| pseudos.group_before && pseudos.group == Some(id))
+    });
+    if let Some(first) = own_first {
+        place_complex_child(doc, out, container_node_id, first, hide_whitespace, needs_wrap, false, false);
+    }
     let mut index = 0usize;
     doc.iter_children_and_pseudos_mut(container_node_id, |child_id, doc| {
         let mut at_middle_start = false;
@@ -1261,6 +1306,37 @@ fn collect_complex_layout_children_in(
                 at_middle_end = index - 1 == *middle.end();
             }
         }
+        if siblings && scroll_markers::has_box_siblings(&doc.nodes[child_id]) {
+            let boxes: Vec<NodeId> = scroll_markers::with_box_siblings(&doc.nodes, child_id, [child_id]).collect();
+            for id in boxes {
+                let (start, end) = if id == child_id { (at_middle_start, at_middle_end) } else { (false, false) };
+                place_complex_child(doc, out, container_node_id, id, hide_whitespace, needs_wrap, start, end);
+            }
+        } else {
+            place_complex_child(doc, out, container_node_id, child_id, hide_whitespace, needs_wrap, at_middle_start, at_middle_end);
+        }
+    });
+    for id in own.into_iter().filter(|&id| Some(id) != own_first) {
+        place_complex_child(doc, out, container_node_id, id, hide_whitespace, needs_wrap, false, false);
+    }
+
+    // If anonymous block node only contains whitespace then delete it, else push it
+    out.maybe_push_anon_block(doc);
+}
+
+/// pyro: places one child (or a scroll pseudo-element box beside one) of a container whose
+/// children need anonymous blocks (`collect_complex_layout_children_in`).
+#[allow(clippy::too_many_arguments)]
+fn place_complex_child(
+    doc: &mut BaseDocument,
+    out: &mut LayoutChildren,
+    container_node_id: NodeId,
+    child_id: NodeId,
+    hide_whitespace: bool,
+    needs_wrap: fn(NodeKind, DisplayOutside) -> bool,
+    at_middle_start: bool,
+    at_middle_end: bool,
+) {
         // Get node kind (text, element, comment, etc). A `<br>` is a piece of text.
         let child_node_kind = if doc.nodes[child_id].is_line_break() {
             NodeKind::Text
@@ -1362,10 +1438,6 @@ fn collect_complex_layout_children_in(
         else {
             out.push(child_id, doc);
         }
-    });
-
-    // If anonymous block node only contains whitespace then delete it, else push it
-    out.maybe_push_anon_block(doc);
 }
 
 /// pyro: whether a single-line input's text is laid out at `line-height:
@@ -1616,6 +1688,16 @@ pub(crate) fn find_inline_layout_embedded_boxes(
 
     fn flush_inline_pseudos_recursive(doc: &mut BaseDocument, node_id: NodeId) {
         doc.iter_children_mut(node_id, |child_id, doc| {
+            // pyro: and the scroll pseudo-element boxes beside it (`scroll_markers`).
+            if let Some((before, after)) = scroll_markers::siblings_of(&doc.nodes[child_id]) {
+                for id in before.into_iter().chain(after) {
+                    flush_pseudo_elements(doc, id);
+                    let display = doc.nodes[id].display_style().unwrap_or(Display::inline());
+                    if display.outside() == DisplayOutside::Inline && display.inside() == DisplayInside::Flow {
+                        crate::util::ensure_stack(|| flush_inline_pseudos_recursive(doc, id));
+                    }
+                }
+            }
             flush_pseudo_elements(doc, child_id);
             // pyro: the child's display decides (it read its parent's, so the pseudo-elements
             // of an inline inside an inline were never made).
@@ -1633,7 +1715,24 @@ pub(crate) fn find_inline_layout_embedded_boxes(
         });
     }
 
+    /// pyro: with the scroll pseudo-element boxes beside the node (`scroll_markers`).
     fn find_inline_layout_embedded_boxes_recursive(
+        nodes: &mut crate::NodeTree,
+        parent_id: NodeId,
+        node_id: NodeId,
+        layout_children: &mut ThinVec<NodeId>,
+    ) {
+        match scroll_markers::siblings_of(&nodes[node_id]) {
+            None => find_inline_layout_embedded_boxes_of(nodes, parent_id, node_id, layout_children),
+            Some((before, after)) => {
+                for id in before.into_iter().chain(std::iter::once(node_id)).chain(after) {
+                    find_inline_layout_embedded_boxes_of(nodes, parent_id, id, layout_children);
+                }
+            }
+        }
+    }
+
+    fn find_inline_layout_embedded_boxes_of(
         nodes: &mut crate::NodeTree,
         parent_id: NodeId,
         node_id: NodeId,

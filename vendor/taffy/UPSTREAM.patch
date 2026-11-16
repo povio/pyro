@@ -1,5 +1,5 @@
 diff --git a/src/compute/block.rs b/src/compute/block.rs
-index 3cd3e713..2c76b683 100644
+index 3cd3e713..901a4544 100644
 --- a/src/compute/block.rs
 +++ b/src/compute/block.rs
 @@ -6,8 +6,8 @@ use crate::style::{
@@ -377,7 +377,7 @@ index 3cd3e713..2c76b683 100644
 +        // pyro: a box that is no containing block (an inline box laid out around its blocks)
 +        // hands its own containing block's height on.
 +        .or(if tree.block_container_passes_percentage_height(node_id) { parent_size.height } else { None })
-+        // pyro: a multi-column container's strip
++        // pyro: a multi-column container's strip (the column height).
 +        .or_else(|| tree.block_container_percentage_height(node_id));
  
      // 3. Perform final item layout and return content height
@@ -6388,7 +6388,7 @@ index e250d742..dd2b4b52 100644
      }
  }
 diff --git a/src/tree/traits.rs b/src/tree/traits.rs
-index 7d4adf22..bc4d5d28 100644
+index 7d4adf22..406c9ec9 100644
 --- a/src/tree/traits.rs
 +++ b/src/tree/traits.rs
 @@ -239,6 +239,16 @@ pub trait LayoutContainingBlock: LayoutPartialTree {
@@ -6525,7 +6525,7 @@ index 7d4adf22..bc4d5d28 100644
  }
  
  #[cfg(feature = "block_layout")]
-@@ -373,6 +479,64 @@ pub trait LayoutBlockContainer: LayoutPartialTree {
+@@ -373,6 +479,63 @@ pub trait LayoutBlockContainer: LayoutPartialTree {
      /// Interpreted in the container's axes (see [`LayoutPartialTree::get_core_container_style`]).
      fn get_block_child_style(&self, child_node_id: NodeId) -> Self::BlockItemStyle<'_>;
  
@@ -6553,10 +6553,9 @@ index 7d4adf22..bc4d5d28 100644
 +        false
 +    }
 +
-+    /// pyro: the height (as a border box) percentage heights of the container's children resolve
-+    /// against when the container's own is not known as it is laid out: a multi-column
-+    /// container's content laid out as one strip, as tall as it is, whose children resolve
-+    /// against the container's definite height.
++    /// pyro: the border-box height the container's children resolve percentage heights against
++    /// when its own height is not known: a multi-column container's strip, laid out as tall as its
++    /// content, whose children's percentages resolve against the column height.
 +    fn block_container_percentage_height(&self, node_id: NodeId) -> Option<f32> {
 +        let _ = node_id;
 +        None

@@ -620,6 +620,8 @@ class Longhand(Property):
                 "BackfaceVisibility",
                 "Isolation",
                 "ScrollBehavior",
+                "ScrollMarkerGroup",
+                "ScrollTargetGroup",
                 "TopLayer",
                 "FloatEdge",
                 "ImageLayerAttachment",

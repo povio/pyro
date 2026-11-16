@@ -394,6 +394,7 @@ impl BlitzGeometry {
             canvases: Vec::new(),
             element_scroll: None,
             sticky_offsets: None,
+            scroll_targets: None,
             animations: None,
             xml_document: dom.is_xml_document(style.document()),
             content_language: dom.content_language(style.document()).map(str::to_owned),
