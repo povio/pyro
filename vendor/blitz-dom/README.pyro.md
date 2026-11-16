@@ -1873,3 +1873,12 @@ Covered by `crates/pyro-render/tests/font_size_adjust.rs`.
 - `src/net.rs` (`FontFaceOverrides::slant_range`, `stylo_to_fontique_style`): a `font-style` descriptor range
   that has 0deg in it (`oblique 0deg 15deg`, `oblique -15deg 15deg`) is an upright face whose `slnt` axis may
   go that far (vendored fontique clamps to it); `normal` forbids the axis.
+
+## Phantom line boxes (WPT round 3, lane I)
+
+- `src/layout/inline/layout.rs`: a line holding an inline box's inline-axis margin, border or padding (a span
+  edge, also of zero width, as `span_edge_widths` makes them) is no phantom line box (CSS Inline 3 § 2.1,
+  csswg-drafts#9344): margins do not collapse through its block, whatever its height. Block-axis sides alone
+  leave the line phantom.
+
+Covered by `crates/pyro-render/tests/phantom_line_boxes.rs`.

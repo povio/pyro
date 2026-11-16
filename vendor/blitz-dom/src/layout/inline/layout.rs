@@ -1326,6 +1326,11 @@ impl LayoutPassState<'_> {
                 !matches!(inline_box.kind, parley::InlineBoxKind::OutOfFlow | parley::InlineBoxKind::CustomOutOfFlow)
             });
 
+        // pyro: a line with an inline box's inline-axis margin, border or padding (a span edge,
+        // also of zero width) is no phantom line box (CSS Inline 3 § 2.1): margins do not
+        // collapse through its block, whatever its height.
+        let has_span_edges = inline_layout.layout.inline_boxes().any(|inline_box| inline_box.kind.is_span_edge());
+
         let mut height = if has_inline_content {
             inline_layout.layout.height()
         } else {
@@ -1798,6 +1803,7 @@ impl LayoutPassState<'_> {
             top_margin: CollapsibleMarginSet::ZERO,
             bottom_margin: CollapsibleMarginSet::ZERO,
             margins_can_collapse_through: !has_styles_preventing_being_collapsed_through
+                && !has_span_edges
                 && final_size.height == 0.0
                 && measured_size.height == 0.0,
             oof_candidates,

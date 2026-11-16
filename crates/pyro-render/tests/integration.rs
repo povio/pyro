@@ -37,6 +37,7 @@ mod inline_relative_position;
 mod inline_svg_viewport;
 mod marker_pseudo;
 mod text_box_trim;
+mod phantom_line_boxes;
 mod input_percentage_min_content;
 mod input_placeholder;
 mod lang_pseudo_class;
