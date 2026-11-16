@@ -486,7 +486,12 @@ Also covered:
   popup closes, as in Chrome), file choosers
   (`page.on('filechooser')`, `setFiles`), workers (`page.on('worker')`,
   `worker.evaluate`)
-- `keyboard.down/up`, click modifiers
+- the keyboard on Playwright's US layout: `press`, `type`, `down`, `up` and
+  `locator.press` take key names, `KeyboardEvent.code` names (`KeyD`,
+  `Digit1`, `Minus`, `Numpad1`...) and chords (`Alt+KeyD`, `Shift+KeyA` is
+  `A`, `Control+Shift+KeyZ`); `type` presses the keys of the layout and
+  inserts other characters; an unknown key fails at once with Playwright's
+  `Unknown key: "…"`; modifiers held with `down()` apply to presses and clicks
 - `page.frames()` and child frames (`goto`, `waitForURL`, `waitForFunction`,
   locators, handles; their `<iframe>` gets a `data-pyro-frame` attribute once
   listed)

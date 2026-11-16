@@ -3250,8 +3250,9 @@ fn act(page: &Rc<PageDom>, id: NodeId, action: Action, value: &str, opts: Pointe
         }
         Action::Click => click(page, id, opts),
         Action::Press => {
-            let Some(keys) = key_chord(value) else {
-                return Attempt::Retry(format!("unknown key {value:?}"));
+            // Checked when the step was read (`ActParams::step`).
+            let Ok(keys) = super::keyboard::chord(value, opts.modifiers) else {
+                return Attempt::Retry(format!("Unknown key: {value:?}"));
             };
             if input::key_target(page) != Some(id) {
                 input::script_focus(page, id);
@@ -3277,13 +3278,16 @@ fn act(page: &Rc<PageDom>, id: NodeId, action: Action, value: &str, opts: Pointe
             if input::key_target(page) != Some(id) {
                 input::script_focus(page, id);
             }
+            // As Playwright's `keyboard.type`: a key press for each character
+            // a key of its layout types, the rest inserted as text.
             for c in value.chars() {
-                let name = c.to_string();
-                let Some(keys) = key_chord(&name) else {
-                    return Attempt::Retry(format!("cannot type {c:?}"));
-                };
-                for (kind, k) in keys {
-                    input::dispatch_key(page, kind, &k);
+                match super::keyboard::type_char(c, opts.modifiers) {
+                    Some(keys) => {
+                        for (kind, k) in keys {
+                            input::dispatch_key(page, kind, &k);
+                        }
+                    }
+                    None => input::insert_text(page, c.encode_utf8(&mut [0; 4])),
                 }
             }
             Attempt::Done(json!({}))
@@ -3352,91 +3356,6 @@ fn check_pointer_target(page: &Rc<PageDom>, id: NodeId, opts: PointerOpts) -> No
     }
     let associated = labels(&page.dom.borrow(), page.document(), id);
     associated.into_iter().find(|label| visible_box(page, *label).is_some()).unwrap_or(id)
-}
-
-/// `key`, `code` and Windows key code of a key name (`Enter`, `ArrowDown`,
-/// `F5`, `a`, ...).
-fn key_def(name: &str) -> Option<(String, String, u32)> {
-    let named = |code: &str, kc: u32| Some((name.to_owned(), code.to_owned(), kc));
-    match name {
-        "Enter" => named("Enter", 13),
-        "Tab" => named("Tab", 9),
-        "Escape" => named("Escape", 27),
-        "Backspace" => named("Backspace", 8),
-        "Delete" => named("Delete", 46),
-        "Space" | " " => Some((" ".into(), "Space".into(), 32)),
-        "ArrowLeft" => named("ArrowLeft", 37),
-        "ArrowUp" => named("ArrowUp", 38),
-        "ArrowRight" => named("ArrowRight", 39),
-        "ArrowDown" => named("ArrowDown", 40),
-        "Home" => named("Home", 36),
-        "End" => named("End", 35),
-        "PageUp" => named("PageUp", 33),
-        "PageDown" => named("PageDown", 34),
-        "Shift" => named("ShiftLeft", 16),
-        "Control" => named("ControlLeft", 17),
-        "Alt" => named("AltLeft", 18),
-        "Meta" => named("MetaLeft", 91),
-        _ => {
-            if let Some(n) = name.strip_prefix('F').and_then(|n| n.parse::<u32>().ok()).filter(|n| (1..=12).contains(n))
-            {
-                return named(name, 111 + n);
-            }
-            let mut chars = name.chars();
-            let (Some(c), None) = (chars.next(), chars.next()) else { return None };
-            let upper = c.to_ascii_uppercase();
-            let (code, kc) = if c.is_ascii_alphabetic() {
-                (format!("Key{upper}"), upper as u32)
-            } else if c.is_ascii_digit() {
-                (format!("Digit{c}"), c as u32)
-            } else {
-                (String::new(), 0)
-            };
-            Some((name.to_owned(), code, kc))
-        }
-    }
-}
-
-/// The key events of a press: modifiers down, the key down and up,
-/// modifiers up. `ControlOrMeta` is Meta on macOS.
-fn key_chord(chord: &str) -> Option<Vec<(input::KeyKind, input::KeyInput)>> {
-    let parts: Vec<&str> = if chord == "+" { vec!["+"] } else { chord.split('+').collect() };
-    let (key, mods) = parts.split_last()?;
-    let mut modifiers = input::Modifiers::default();
-    let mut held = Vec::new();
-    for m in mods {
-        let m = match *m {
-            "ControlOrMeta" if cfg!(target_os = "macos") => "Meta",
-            "ControlOrMeta" => "Control",
-            m => m,
-        };
-        match m {
-            "Shift" => modifiers.shift = true,
-            "Control" => modifiers.ctrl = true,
-            "Alt" => modifiers.alt = true,
-            "Meta" => modifiers.meta = true,
-            _ => return None,
-        }
-        let (k, code, key_code) = key_def(m)?;
-        held.push(input::KeyInput { key: k, code, modifiers, key_code, ..Default::default() });
-    }
-    let (mut k, code, key_code) = key_def(key)?;
-    if modifiers.shift && k.chars().count() == 1 {
-        k = k.to_uppercase();
-    }
-    let text = match k.as_str() {
-        _ if modifiers.ctrl || modifiers.meta || modifiers.alt => String::new(),
-        "Enter" => "\r".into(),
-        _ if k.chars().count() == 1 => k.clone(),
-        _ => String::new(),
-    };
-    let main = input::KeyInput { key: k, code, text, modifiers, key_code, ..Default::default() };
-    let mut events: Vec<_> = held.iter().map(|k| (input::KeyKind::RawKeyDown, k.clone())).collect();
-    let down = if main.text.is_empty() { input::KeyKind::RawKeyDown } else { input::KeyKind::KeyDown };
-    events.push((down, main.clone()));
-    events.push((input::KeyKind::KeyUp, main));
-    events.extend(held.into_iter().rev().map(|k| (input::KeyKind::KeyUp, k)));
-    Some(events)
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -4433,6 +4352,12 @@ impl ActParams {
                 ));
             }
         };
+        if action == Action::Press {
+            // At once, as Playwright: a key name no retry can make known.
+            if let Some(key) = super::keyboard::unknown_key(&self.value) {
+                return Err(CdpError::invalid_params(format!("Unknown key: \"{key}\"")));
+            }
+        }
         if action == Action::Drag {
             match &self.to {
                 Some(to) => to.validate()?,
@@ -5969,4 +5894,24 @@ impl EngineHost {
 /// A page's target id (its main frame id).
 fn id_of(browser: &Browser, pid: PageId) -> Option<String> {
     browser.page(pid).map(|p| p.main_frame.id.0.clone())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_unknown_key_fails_the_step_when_it_is_read() {
+        let step = |value: &str| {
+            serde_json::from_value::<ActParams>(
+                json!({ "locator": { "css": "body" }, "action": "press", "value": value }),
+            )
+            .unwrap()
+            .step(false)
+        };
+        assert!(step("Alt+KeyD").is_ok());
+        assert!(step("Control+Shift++").is_ok());
+        let error = step("Shift+NoSuchKey").err().unwrap();
+        assert_eq!(error.message, "Unknown key: \"NoSuchKey\"");
+    }
 }
