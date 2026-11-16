@@ -74,19 +74,15 @@ input[type="hidden" i] {
     display: none !important;
 }
 
-/* pyro: Chromium's sizes: 13x13 border boxes, radios with a
-   0 bottom and 5px left margin. */
+/* pyro: Chromium's sizes: 13x13 border boxes (their natural size, see
+   layout/mod.rs), radios with a 0 bottom and 5px left margin. */
 input[type="checkbox"] {
     box-sizing: border-box;
-    width: 13px;
-    height: 13px;
     margin: 3px 3px 3px 4px;
 }
 
 input[type="radio"] {
     box-sizing: border-box;
-    width: 13px;
-    height: 13px;
     border-radius: 13px;
     border: none;
     margin: 3px 3px 0 5px;

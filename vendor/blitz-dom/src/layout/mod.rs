@@ -985,27 +985,15 @@ impl LayoutPassState<'_> {
                         Some("hidden") => {
                             return ChildLayout::Done(taffy::LayoutOutput::HIDDEN);
                         }
-                        Some("checkbox") => {
+                        // pyro: a checkbox or radio is 13x13 by nature (Blink's theme size), not by
+                        // the UA sheet's `width`/`height`: a flex parent stretches it and a percentage
+                        // sizes it (WPT css-flexbox `stretch-flex-item-checkbox-input`)
+                        Some("checkbox" | "radio") => {
                             return ChildLayout::Done(compute_leaf_layout(
                                 inputs,
                                 &node.layout_style(),
                                 resolve_calc_value,
-                                |_known_size, _available_space| {
-                                    let size = node.layout_style().size();
-                                    let width = size.width.resolve_or_zero(
-                                        inputs.parent_size.width,
-                                        resolve_calc_value,
-                                    );
-                                    let height = size.height.resolve_or_zero(
-                                        inputs.parent_size.height,
-                                        resolve_calc_value,
-                                    );
-                                    let min_size = width.min(height);
-                                    taffy::Size {
-                                        width: min_size,
-                                        height: min_size,
-                                    }
-                                },
+                                |_known_size, _available_space| taffy::Size { width: 13.0, height: 13.0 },
                             ));
                         }
                         None | Some("text" | "password" | "email" | "tel" | "url" | "search" | "time") => {
@@ -1279,6 +1267,31 @@ impl LayoutPassState<'_> {
                         resolve_calc_value,
                         &replaced_context,
                     ));
+                }
+
+                // pyro: a fixed-layout table with a percentage width asks to be as wide as possible:
+                // its max-content width is Blink's `kTableMaxWidth` (flex items holding such tables
+                // share the line evenly; WPT css-flexbox
+                // `fixed-table-layout-with-percentage-width-in-flex-item`). Empty tables too, which
+                // are laid out as blocks.
+                if inputs.run_mode == RunMode::ComputeSize
+                    && inputs.axis == taffy::RequestedAxis::Horizontal
+                    && inputs.known_dimensions.width.is_none()
+                    && inputs.available_space.width == AvailableSpace::MaxContent
+                    && node.primary_styles().is_some_and(|style| {
+                        style.clone_display().inside() == style::values::specified::box_::DisplayInside::Table
+                            && style.get_table().table_layout
+                                == style::computed_values::table_layout::T::Fixed
+                            && matches!(
+                                &style.get_position().width,
+                                style::values::computed::Size::LengthPercentage(lp) if lp.0.has_percentage()
+                            )
+                    })
+                {
+                    return ChildLayout::Done(taffy::LayoutOutput::from_outer_size(taffy::Size {
+                        width: 1_000_000.0,
+                        height: 0.0,
+                    }));
                 }
 
                 if node.flags.is_table_root() {

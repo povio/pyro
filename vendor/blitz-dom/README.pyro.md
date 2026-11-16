@@ -2390,3 +2390,8 @@ the counters. Covered by `crates/pyro-render/tests/list_numbering.rs`.
   new entries build the inline `<svg>`s again.
 - `src/layout/table.rs`: a table cell `width` that stays a `calc()` (a length and a percentage) is `auto` in table
   layout, as in Blink (WPT css-values `calc-width-table-auto-1`, `-fixed-1`).
+
+Checkboxes and radios are 13x13 by nature (the leaf measure in `layout/mod.rs`), not by `width`/`height` in the UA
+sheet, so a flex parent stretches them and percentages size them (WPT css-flexbox `stretch-flex-item-*-input`). A
+fixed-layout table with a percentage width (empty ones, laid out as blocks, too) reports Blink's `kTableMaxWidth`
+(1,000,000 px) as its max-content width (WPT css-flexbox `fixed-table-layout-with-percentage-width-in-flex-item`).

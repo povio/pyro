@@ -111,3 +111,28 @@ fn overflowing_space_between_falls_back_to_flex_start() {
     );
     check(&img, &[(10, 25, GREEN), (90, 25, GREEN)]);
 }
+
+/// A checkbox is 13x13 by nature, not by `width`/`height` in the UA sheet: a row flex container
+/// stretches it to its 50px height (WPT css-flexbox `stretch-flex-item-checkbox-input`).
+#[test]
+fn a_checkbox_flex_item_stretches() {
+    let img = render(
+        "<div style='display:flex;width:50px;height:50px;background:green'><input type=checkbox style='width:100%;margin:0'></div>",
+    );
+    // The stretched checkbox covers the green container down to its bottom (a 13px one left it green)
+    assert_ne!(pixel(&img, 25, 40), GREEN);
+    check(&img, &[(60, 25, WHITE)]);
+}
+
+/// A fixed-layout table with a percentage width asks to be as wide as possible (Blink's
+/// `kTableMaxWidth`): two flex items holding such tables share a 300px line evenly.
+#[test]
+fn fixed_percentage_tables_share_a_flex_line_evenly() {
+    let img = render(
+        "<div style='display:flex;width:300px;background:red'>\
+           <div><div style='display:table;table-layout:fixed;width:100%;height:30px;background:green'></div></div>\
+           <div><div style='display:table;table-layout:fixed;width:100%;height:30px;background:blue'></div></div>\
+         </div>",
+    );
+    check(&img, &[(5, 15, GREEN), (145, 15, GREEN), (155, 15, [0, 0, 255]), (295, 15, [0, 0, 255])]);
+}
