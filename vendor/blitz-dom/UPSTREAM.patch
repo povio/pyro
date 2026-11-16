@@ -30943,7 +30943,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  impl<'dom> DomTraversal<BlitzNode<'dom>> for RecalcStyle<'_> {
      fn process_preorder<F: FnMut(BlitzNode<'dom>)>(
          &self,
-@@ -1546,14 +2212,200 @@
+@@ -1546,14 +2212,205 @@
          node: BlitzNode<'dom>,
          note_child: F,
      ) {
@@ -31015,7 +31015,8 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
 +                    _ => false,
 +                }
 +                // pyro: as does `visibility: collapse` coming or going on a row or row group
-+                // (`TableRow::collapsed`: the row's track is taken away).
++                // (`TableRow::collapsed`: the row's track is taken away), or on a flex item (it
++                // leaves its line, which keeps its cross size: Taffy's `measure_collapsed_item_struts`).
 +                || match (&old_primary, new_primary) {
 +                    (Some(old), Some(new)) if replaced => {
 +                        use style::computed_values::visibility::T as Visibility;
@@ -31023,13 +31024,17 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
 +                        let (was, is) = (old.get_inherited_box().visibility, new.get_inherited_box().visibility);
 +                        was != is
 +                            && (was == Visibility::Collapse || is == Visibility::Collapse)
-+                            && matches!(
++                            && (matches!(
 +                                new.get_display().inside(),
 +                                DisplayInside::TableRow
 +                                    | DisplayInside::TableRowGroup
 +                                    | DisplayInside::TableHeaderGroup
 +                                    | DisplayInside::TableFooterGroup
-+                            )
++                            ) || el.layout_parent.get().or(el.parent).is_some_and(|parent| {
++                                el.tree()[parent]
++                                    .primary_styles()
++                                    .is_some_and(|style| style.get_display().inside() == DisplayInside::Flex)
++                            }))
 +                    }
 +                    _ => false,
 +                };
@@ -31144,7 +31149,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
              }
  
              if !data.damage.is_empty() {
-@@ -1597,6 +2449,12 @@
+@@ -1597,6 +2454,12 @@
      }
  }
  
@@ -31157,7 +31162,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  /// Flush updated pseudo-element (`::before`/`::after`) styles from the owning
  /// element's freshly-computed stylo data to the pseudo-element's anonymous node.
  ///
-@@ -1669,12 +2527,41 @@
+@@ -1669,12 +2532,41 @@
                      .push(pe_node_id);
              }
          }
@@ -31199,7 +31204,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  /// Whether a node's `background-image`/`mask-image` layers need flushing to
  /// dedicated storage on the node: the URLs referenced by the new style differ
  /// from the image data currently stored on the node.
-@@ -1689,11 +2576,12 @@
+@@ -1689,11 +2581,12 @@
              // (a style list of `none` layers and empty storage are in sync).
              return style_images
                  .iter()
@@ -31214,7 +31219,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
                  (Image::Url(ComputedUrl::Valid(url)), Some(data)) => **url != *data.url,
                  (Image::Url(ComputedUrl::Valid(_)), None) => true,
                  (_, Some(_)) => true,
-@@ -1707,6 +2595,26 @@
+@@ -1707,6 +2600,26 @@
              &style.get_background().background_image.0,
              &el.background_images,
          ) || out_of_sync(&style.get_svg().mask_image.0, &el.mask_images)
@@ -31241,7 +31246,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
      })
  }
  
-@@ -1737,3 +2645,734 @@
+@@ -1737,3 +2650,734 @@
  
      // let val = CSSInlineStyleDeclaration();
  }

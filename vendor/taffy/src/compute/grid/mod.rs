@@ -467,6 +467,11 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
             items.push(item);
         }
 
+        // pyro: a subgrid's items are clamped to its explicit grid in its subgridded axes before auto-placement.
+        if let Some(context) = &own_subgrid {
+            subgrid::clamp_placements(&mut placements, context);
+        }
+
         // 4. Implicit Grid: Estimate Track Counts
         // 5. Grid Item Placement
         // Match items (children) to a definite grid position (row start/end and column start/end position).
@@ -594,6 +599,14 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
     drop(grid_template_columns);
     drop(grid_auto_rows);
     drop(grid_auto_columns);
+    // pyro: a preferred aspect ratio (between content boxes for `box-sizing: content-box`), and whether the
+    // automatic minimum height applies (`min-height: auto`, no scroll container): for an `auto` height
+    let aspect_ratio = style.aspect_ratio().map(|ratio| {
+        let adjustment = if style.box_sizing() == BoxSizing::ContentBox { padding_border_size } else { Size::ZERO };
+        let overflow = style.overflow();
+        let content_minimum = style.min_size().height.is_auto() && !overflow.x.is_scroll_container() && !overflow.y.is_scroll_container();
+        (ratio, adjustment, content_minimum)
+    });
     drop(style);
 
     // pyro: subgrid children (css-grid-2 §9): their contexts, and their items to size this grid's tracks
@@ -722,15 +735,30 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
 
     // 6. Compute container size
     let resolved_style_size = known_dimensions.or(preferred_size);
+    let width = resolved_style_size
+        .get(AbstractAxis::Inline)
+        .unwrap_or_else(|| initial_column_sum + content_box_inset.horizontal_axis_sum())
+        .maybe_clamp(min_size.width, max_size.width)
+        .max(padding_border_size.width);
+    // pyro: an `auto` height with a preferred aspect ratio is the width's through it (css-sizing-4 §5.1), at
+    // least the rows' (its automatic minimum size) unless `min-height` is set or it is a scroll container
+    let rows_height = initial_row_sum + content_box_inset.vertical_axis_sum();
+    let auto_height = match aspect_ratio {
+        Some((ratio, adjustment, content_minimum)) => {
+            let height = (width - adjustment.width).max(0.0) / ratio + adjustment.height;
+            if content_minimum {
+                height.max(rows_height)
+            } else {
+                height
+            }
+        }
+        None => rows_height,
+    };
     let mut container_border_box = Size {
-        width: resolved_style_size
-            .get(AbstractAxis::Inline)
-            .unwrap_or_else(|| initial_column_sum + content_box_inset.horizontal_axis_sum())
-            .maybe_clamp(min_size.width, max_size.width)
-            .max(padding_border_size.width),
+        width,
         height: resolved_style_size
             .get(AbstractAxis::Block)
-            .unwrap_or_else(|| initial_row_sum + content_box_inset.vertical_axis_sum())
+            .unwrap_or(auto_height)
             .maybe_clamp(min_size.height, max_size.height)
             .max(padding_border_size.height),
     };

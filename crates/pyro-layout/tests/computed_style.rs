@@ -335,3 +335,18 @@ fn a_subgrids_template_resolves_to_its_lines() {
     let el = p.find("#s");
     assert_eq!(p.layout.computed_style_value(&p.dom.borrow(), el, "grid-template-columns"), "subgrid [a] [] [] []");
 }
+
+/// pyro (lane G): a grid container's `grid-template-columns`/`-rows` resolve to its used tracks, each
+/// listed (css-grid-1 §7.2.6): `repeat(auto-fill, …)` in an absolutely positioned 100px square grid
+/// is four 25px columns and five 20px rows (WPT `grid-auto-repeat-positioned-container-001`).
+#[test]
+fn a_grid_containers_template_resolves_to_its_used_tracks() {
+    let p = Page::new(
+        r#"<!doctype html><div style="position:relative;width:100px;height:100px">
+        <div id=g style="display:grid;position:absolute;inset:0;grid:repeat(auto-fill, 20px) / repeat(auto-fill, 25px)"></div></div>"#,
+    );
+    let el = p.find("#g");
+    let dom = p.dom.borrow();
+    assert_eq!(p.layout.computed_style_value(&dom, el, "grid-template-columns"), "25px 25px 25px 25px");
+    assert_eq!(p.layout.computed_style_value(&dom, el, "grid-template-rows"), "20px 20px 20px 20px 20px");
+}

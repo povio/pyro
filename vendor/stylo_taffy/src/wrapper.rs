@@ -729,6 +729,11 @@ impl<T: Deref<Target = ComputedValues>> taffy::FlexboxItemStyle for TaffyStyloSt
     }
 
     #[inline]
+    fn is_collapsed(&self) -> bool {
+        self.style.get_inherited_box().visibility == style::computed_values::visibility::T::Collapse
+    }
+
+    #[inline]
     fn min_size_keyword(&self) -> taffy::Size<taffy::Dimension> {
         <Self as taffy::BlockItemStyle>::min_size_keyword(self)
     }

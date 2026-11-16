@@ -77,3 +77,42 @@ fn the_natural_ratio_is_the_content_boxes() {
     );
     check(&img, &[(35, 35, GREEN), (65, 35, BLUE), (75, 35, WHITE), (35, 65, BLUE), (35, 75, WHITE)]);
 }
+
+/// In a column container sized to its content (a float), a stretched item with `aspect-ratio: 1/1`
+/// and `min-height: 100px` is measured at its fit-content width, not the available width: the
+/// container and the item are a 100px square, not a 300px one (§9.2 E; WPT
+/// `css/css-flexbox/flex-item-transferred-sizes-padding-border-sizing`).
+#[test]
+fn a_stretched_ratio_item_in_a_content_sized_column_is_fit_content_wide() {
+    let img = render(
+        "<div style='display:flex;flex-direction:column;float:left'>\
+           <div style='background:green;min-height:100px;aspect-ratio:1/1'></div>\
+         </div>",
+    );
+    check(&img, &[(95, 95, GREEN), (105, 50, WHITE), (50, 105, WHITE)]);
+}
+
+/// The same for a canvas's natural ratio in an `inline-flex` column: it stays at its natural 100px
+/// (WPT `css/css-flexbox/inline-flex-column-image-load`).
+#[test]
+fn a_stretched_canvas_in_a_content_sized_column_keeps_its_natural_size() {
+    let img = render(
+        "<div style='display:inline-flex;flex-direction:column;vertical-align:top'>\
+           <canvas width=100 height=100 style='background:green'></canvas>\
+         </div>",
+    );
+    check(&img, &[(95, 95, GREEN), (105, 50, WHITE), (50, 105, WHITE)]);
+}
+
+/// A canvas with a natural 16px square size and `height: 30px` in a flex container of no width: its
+/// automatic minimum width is the 30px its height gives it through its ratio (Blink's min-content
+/// width with a definite height), not its natural 16px (WPT `flexbox-min-width-auto-002a`).
+#[test]
+fn a_definite_heights_ratio_width_is_the_automatic_minimum() {
+    let img = render(
+        "<div style='display:flex;width:0'>\
+           <canvas width=16 height=16 style='width:100px;height:30px;background:green'></canvas>\
+         </div>",
+    );
+    check(&img, &[(28, 15, GREEN), (32, 15, WHITE)]);
+}

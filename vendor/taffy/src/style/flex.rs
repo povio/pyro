@@ -79,6 +79,12 @@ pub trait FlexboxItemStyle: CoreStyle {
     fn is_table(&self) -> bool {
         false
     }
+    /// pyro: `visibility: collapse`: a collapsed flex item (css-flexbox-1 §4.4), not rendered and of no main
+    /// size, whose line keeps the cross size it has with the item in
+    #[inline(always)]
+    fn is_collapsed(&self) -> bool {
+        false
+    }
     /// pyro: `min-width`/`min-height` when they are sizing keywords (`min_size()` says `auto` for them);
     /// `auto` in an axis without one
     #[inline(always)]

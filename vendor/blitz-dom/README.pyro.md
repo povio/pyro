@@ -2183,3 +2183,9 @@ Lines broken beside floats are not compared (nor are the floats' places): a meas
 instructions of 41 relayouts (minimum of 2-4 runs, JSC tiering spreads runs of one binary by up to 2%): a 400-row
 table whose 2,000 cells all hold the Danex cell +1.0%, 1,500 right-aligned column `inline-flex` flex items +1.2%, a
 1,200-row table with one changing cell +0.7%. Covered by `crates/pyro-render/tests/text_align_after_measure.rs`.
+## `visibility: collapse` on flex items relayouts (WPT round 3, lane G)
+
+`src/stylo.rs`: `visibility: collapse` coming or going on a flex item (its layout parent a flex container) gives the
+item `BOX_DAMAGE`, as on a table row or row group: a collapsed flex item leaves its line, which keeps its cross size
+(vendor/taffy's README.pyro.md, "`visibility: collapse` on flex items"), so the restyle changes layout, not only paint
+(`crates/pyro-render/tests/mirror.rs`, `review_moved_longhands_match_fresh_builds`).

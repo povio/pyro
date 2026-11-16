@@ -1125,7 +1125,7 @@ index ec094c9e..2758e69f 100644
      /// Whether the parent clips unreachable overflow and includes end padding.
      pub parent_is_scroll_container: bool,
 diff --git a/src/compute/flexbox.rs b/src/compute/flexbox.rs
-index a8dbbcf2..75ca1113 100644
+index a8dbbcf2..f4f72c16 100644
 --- a/src/compute/flexbox.rs
 +++ b/src/compute/flexbox.rs
 @@ -3,6 +3,7 @@ use crate::compute::common::alignment::{
@@ -1136,7 +1136,7 @@ index a8dbbcf2..75ca1113 100644
  use crate::style::{
      AlignContent, AlignContentKeyword, AlignItems, AlignItemsKeyword, AlignSelf, AvailableSpace, Contain,
      JustifyContent, LengthPercentageAuto, Overflow, Position,
-@@ -46,6 +47,14 @@ struct FlexItem {
+@@ -46,6 +47,20 @@ struct FlexItem {
      max_size: Size<Option<f32>>,
      /// The aspect ratio of this item
      aspect_ratio: Option<f32>,
@@ -1148,10 +1148,16 @@ index a8dbbcf2..75ca1113 100644
 +    /// resolved by measuring the item (`resolve_size_keyword`)
 +    min_size_keyword: Size<Dimension>,
 +    max_size_keyword: Size<Dimension>,
++    /// pyro: `visibility: collapse`, a collapsed flex item (css-flexbox-1 §4.4)
++    collapse: bool,
++    /// pyro: a collapsed item's strut, the cross size of its line in the layout round with every item in
++    /// (`measure_collapsed_item_struts`); while it is set, the item is collected into a line with no main
++    /// size and then left out of it (`exclude_collapsed_items`)
++    strut: Option<f32>,
      /// The cross-alignment of this item
      align_self: AlignSelf,
  
-@@ -102,6 +111,8 @@ struct FlexItem {
+@@ -102,6 +117,8 @@ struct FlexItem {
  
      /// The position of the bottom edge of this item
      baseline: f32,
@@ -1160,7 +1166,7 @@ index a8dbbcf2..75ca1113 100644
  
      /// A temporary value for the main offset
      ///
-@@ -152,6 +163,14 @@ impl FlexItem {
+@@ -152,6 +169,14 @@ impl FlexItem {
              && !self.margin_is_auto.cross_start(dir)
              && !self.margin_is_auto.cross_end(dir)
      }
@@ -1175,7 +1181,213 @@ index a8dbbcf2..75ca1113 100644
  }
  
  /// A line of [`FlexItem`] used for intermediate computation
-@@ -856,6 +875,11 @@ fn generate_anonymous_flex_items(
+@@ -165,6 +190,7 @@ struct FlexLine<'a> {
+ }
+ 
+ /// Values that can be cached during the flexbox algorithm
++#[derive(Clone)]
+ struct AlgoConstants {
+     /// The direction of the current segment being laid out
+     dir: FlexDirection,
+@@ -400,6 +426,27 @@ fn compute_preliminary(tree: &mut impl LayoutFlexboxContainer, node: NodeId, inp
+         debug_log!("item.resolved_minimum_main_size", dbg:item.resolved_minimum_main_size);
+     }
+ 
++    // pyro: 10. Collapse visibility:collapse items, done before the lines are collected: a first round with
++    // every item in gives each collapsed item its strut, the cross size of its line; this round collects them
++    // into lines with no main size and leaves them out from there on (`exclude_collapsed_items`).
++    let collapsed_items: Vec<NodeId> = flex_items.iter().filter(|item| item.collapse).map(|item| item.node).collect();
++    if !collapsed_items.is_empty() {
++        // Struts only make cross sizes
++        if !(run_mode == RunMode::ComputeSize && constants.dir.main_axis_is_requested_axis(inputs.axis)) {
++            measure_collapsed_item_struts(tree, node, &constants, known_dimensions, available_space, &mut flex_items);
++        }
++        for item in flex_items.iter_mut() {
++            item.frozen = false;
++            item.violation = 0.0;
++            item.baseline = 0.0;
++            item.last_baseline_descent = 0.0;
++            if item.collapse {
++                item.strut = Some(item.strut.unwrap_or(0.0));
++                item.hypothetical_outer_size.set_main(constants.dir, 0.0);
++            }
++        }
++    }
++
+     // 4. Determine the main size of the flex container
+     // This has already been done as part of compute_constants. The inner size is exposed as constants.node_inner_size.
+ 
+@@ -416,32 +463,13 @@ fn compute_preliminary(tree: &mut impl LayoutFlexboxContainer, node: NodeId, inp
+     #[cfg(not(feature = "flexbox_balance"))]
+     let mut flex_lines = collect_flex_lines(&constants, available_space, &mut flex_items);
+ 
++    // pyro: collapsed items leave their lines, each line keeping the largest of their struts
++    let line_struts = if collapsed_items.is_empty() { Vec::new() } else { exclude_collapsed_items(&mut flex_lines) };
++
+     // If container size is undefined, determine the container's main size
+     // and then re-resolve gaps based on newly determined size
+     debug_log!("determine_container_main_size");
+-    if let Some(inner_main_size) = constants.node_inner_size.main(constants.dir) {
+-        let outer_main_size = inner_main_size + constants.content_box_inset.main_axis_sum(constants.dir);
+-        constants.inner_container_size.set_main(constants.dir, inner_main_size);
+-        constants.container_size.set_main(constants.dir, outer_main_size);
+-    } else {
+-        // Sets constants.container_size and constants.outer_container_size
+-        determine_container_main_size(tree, available_space, &mut flex_lines, &mut constants);
+-        constants.node_inner_size.set_main(constants.dir, Some(constants.inner_container_size.main(constants.dir)));
+-        constants.node_outer_size.set_main(constants.dir, Some(constants.container_size.main(constants.dir)));
+-
+-        debug_log!("constants.node_outer_size", dbg:constants.node_outer_size);
+-        debug_log!("constants.node_inner_size", dbg:constants.node_inner_size);
+-
+-        // Re-resolve percentage gaps
+-        let style = tree.get_flexbox_container_style(node);
+-        let inner_container_size = constants.inner_container_size.main(constants.dir);
+-        let new_gap = style
+-            .gap()
+-            .main(constants.dir)
+-            .maybe_resolve(inner_container_size, |val, basis| tree.calc(val, basis))
+-            .unwrap_or(0.0);
+-        constants.gap.set_main(constants.dir, new_gap);
+-    }
++    size_container_main_axis(tree, node, available_space, &mut flex_lines, &mut constants);
+ 
+     // If only the container's main size has been requested then we are done, as nothing below changes it. This
+     // avoids measuring the cross size of every item.
+@@ -472,6 +500,10 @@ fn compute_preliminary(tree: &mut impl LayoutFlexboxContainer, node: NodeId, inp
+     // 8. Calculate the cross size of each flex line.
+     debug_log!("calculate_cross_size");
+     calculate_cross_size(&mut flex_lines, known_dimensions, &constants);
++    // pyro: a line is at least as tall as the struts of the collapsed items in it (step 10)
++    for (line, strut) in flex_lines.iter_mut().zip(line_struts.iter()) {
++        line.cross_size = line.cross_size.max(*strut);
++    }
+ 
+     // 9. Handle 'align-content: stretch'.
+     debug_log!("handle_align_content_stretch");
+@@ -490,7 +522,7 @@ fn compute_preliminary(tree: &mut impl LayoutFlexboxContainer, node: NodeId, inp
+     //
+     //     Skip this step in the second layout round.
+ 
+-    // TODO implement once (if ever) we support visibility:collapse
++    // pyro: done before step 5 (`measure_collapsed_item_struts`, `exclude_collapsed_items`) and after step 8.
+ 
+     // 11. Determine the used cross size of each flex item.
+     debug_log!("determine_used_cross_size");
+@@ -539,7 +571,10 @@ fn compute_preliminary(tree: &mut impl LayoutFlexboxContainer, node: NodeId, inp
+     let len = tree.child_count(node);
+     for order in 0..len {
+         let child = tree.get_child_id(node, order);
+-        if tree.get_flexbox_child_style(child).box_generation_mode() == BoxGenerationMode::None {
++        // pyro: a collapsed item is not rendered either
++        if tree.get_flexbox_child_style(child).box_generation_mode() == BoxGenerationMode::None
++            || collapsed_items.contains(&child)
++        {
+             tree.set_unrounded_layout(child, &Layout::with_order(order as u32));
+             tree.perform_child_layout(
+                 child,
+@@ -601,6 +636,100 @@ fn compute_preliminary(tree: &mut impl LayoutFlexboxContainer, node: NodeId, inp
+     output
+ }
+ 
++/// 4. Determine the main size of the flex container: its known main size, or else the one its lines make
++/// (and percentage gaps resolved again against it)
++fn size_container_main_axis(
++    tree: &mut impl LayoutFlexboxContainer,
++    node: NodeId,
++    available_space: Size<AvailableSpace>,
++    flex_lines: &mut [FlexLine],
++    constants: &mut AlgoConstants,
++) {
++    if let Some(inner_main_size) = constants.node_inner_size.main(constants.dir) {
++        let outer_main_size = inner_main_size + constants.content_box_inset.main_axis_sum(constants.dir);
++        constants.inner_container_size.set_main(constants.dir, inner_main_size);
++        constants.container_size.set_main(constants.dir, outer_main_size);
++    } else {
++        // Sets constants.container_size and constants.outer_container_size
++        determine_container_main_size(tree, available_space, flex_lines, constants);
++        constants.node_inner_size.set_main(constants.dir, Some(constants.inner_container_size.main(constants.dir)));
++        constants.node_outer_size.set_main(constants.dir, Some(constants.container_size.main(constants.dir)));
++
++        debug_log!("constants.node_outer_size", dbg:constants.node_outer_size);
++        debug_log!("constants.node_inner_size", dbg:constants.node_inner_size);
++
++        // pyro: a column's percentage gaps stay as they resolved against its indefinite height (to
++        // zero), as in Blink: resolved again against the height its content gave it, they pushed the
++        // items past it (WPT `gap-percentage-wrap`)
++        if !constants.is_row {
++            return;
++        }
++
++        // Re-resolve percentage gaps
++        let style = tree.get_flexbox_container_style(node);
++        let inner_container_size = constants.inner_container_size.main(constants.dir);
++        let new_gap = style
++            .gap()
++            .main(constants.dir)
++            .maybe_resolve(inner_container_size, |val, basis| tree.calc(val, basis))
++            .unwrap_or(0.0);
++        constants.gap.set_main(constants.dir, new_gap);
++    }
++}
++
++/// pyro: `visibility: collapse` (css-flexbox-1 §4.4, §9.4 step 10): flex layout with every item in, through
++/// the cross sizes of the lines (steps 5 to 9), gives each collapsed item its strut, the cross size of its line
++fn measure_collapsed_item_struts(
++    tree: &mut impl LayoutFlexboxContainer,
++    node: NodeId,
++    constants: &AlgoConstants,
++    known_dimensions: Size<Option<f32>>,
++    available_space: Size<AvailableSpace>,
++    flex_items: &mut Vec<FlexItem>,
++) {
++    let mut constants = constants.clone();
++    #[cfg(feature = "flexbox_balance")]
++    let mut flex_lines = if constants.is_balance {
++        collect_balanced_flex_lines(&constants, available_space, flex_items)
++    } else {
++        collect_flex_lines(&constants, available_space, flex_items)
++    };
++    #[cfg(not(feature = "flexbox_balance"))]
++    let mut flex_lines = collect_flex_lines(&constants, available_space, flex_items);
++    size_container_main_axis(tree, node, available_space, &mut flex_lines, &mut constants);
++    for line in &mut flex_lines {
++        resolve_flexible_lengths(line, &constants);
++    }
++    for line in &mut flex_lines {
++        determine_hypothetical_cross_size(tree, line, &constants, known_dimensions, available_space);
++    }
++    calculate_children_base_lines(tree, known_dimensions, available_space, &mut flex_lines, &constants);
++    calculate_cross_size(&mut flex_lines, known_dimensions, &constants);
++    handle_align_content_stretch(&mut flex_lines, known_dimensions, &constants);
++    for line in flex_lines {
++        for item in line.items.iter_mut().filter(|item| item.collapse) {
++            item.strut = Some(line.cross_size);
++        }
++    }
++}
++
++/// pyro: takes the collapsed items (those with a strut) out of their lines, where the rest of the algorithm
++/// leaves them alone (each moves to its line's end, out of the line's slice); returns each line's largest strut
++fn exclude_collapsed_items(flex_lines: &mut [FlexLine]) -> Vec<f32> {
++    flex_lines
++        .iter_mut()
++        .map(|line| {
++            // A stable sort: the other items keep their order
++            line.items.sort_by_key(|item| item.strut.is_some());
++            let kept = line.items.iter().take_while(|item| item.strut.is_none()).count();
++            let strut = line.items[kept..].iter().filter_map(|item| item.strut).fold(0.0, f32::max);
++            let items = core::mem::take(&mut line.items);
++            line.items = items.split_at_mut(kept).0;
++            strut
++        })
++        .collect()
++}
++
+ /// Compute the layout of a flex container with no children. Equivalent to running the remainder of
+ /// [`compute_preliminary`] with zero flex items, without generating items or lines.
+ fn compute_empty_container_layout(
+@@ -856,6 +985,11 @@ fn generate_anonymous_flex_items(
          .filter(|(_, _, style)| style.box_generation_mode() != BoxGenerationMode::None)
          .map(|(index, child, child_style)| {
              let aspect_ratio = child_style.aspect_ratio();
@@ -1187,7 +1399,7 @@ index a8dbbcf2..75ca1113 100644
              let padding = child_style
                  .padding()
                  .resolve_or_zero(constants.node_inner_size.width, |val, basis| tree.calc(val, basis));
-@@ -867,24 +891,42 @@ fn generate_anonymous_flex_items(
+@@ -867,24 +1001,44 @@ fn generate_anonymous_flex_items(
              } else {
                  Size::ZERO
              };
@@ -1240,10 +1452,12 @@ index a8dbbcf2..75ca1113 100644
 +                is_table: child_style.is_table(),
 +                min_size_keyword: child_style.min_size_keyword(),
 +                max_size_keyword: child_style.max_size_keyword(),
++                collapse: child_style.is_collapsed(),
++                strut: None,
  
                  relative_inset: if child_style.position() == Position::Relative {
                      let inset = child_style.inset().zip_size(constants.node_inner_size, |p, s| {
-@@ -921,6 +963,7 @@ fn generate_anonymous_flex_items(
+@@ -921,6 +1075,7 @@ fn generate_anonymous_flex_items(
                  content_flex_fraction: 0.0,
  
                  baseline: 0.0,
@@ -1251,7 +1465,7 @@ index a8dbbcf2..75ca1113 100644
  
                  offset_main: 0.0,
                  offset_cross: 0.0,
-@@ -1011,12 +1054,28 @@ fn determine_flex_base_size(
+@@ -1011,12 +1166,28 @@ fn determine_flex_base_size(
      let dir = constants.dir;
  
      for child in flex_items.iter_mut() {
@@ -1282,7 +1496,27 @@ index a8dbbcf2..75ca1113 100644
          // Available space for child sizing (excluding the child's margins)
          // Min/max sizes transferred through the aspect ratio are taken into account here
          // https://github.com/w3c/csswg-drafts/issues/10997
-@@ -1169,6 +1228,14 @@ fn determine_flex_base_size(
+@@ -1059,11 +1230,18 @@ fn determine_flex_base_size(
+                 && !child.margin_is_auto.cross_end(constants.dir)
+                 && ckd.cross(dir).is_none()
+             {
+-                ckd.set_cross(dir, cross_axis_available_space.into_option());
+                 // The cross size of a stretched item is definite if the container has a definite
+                 // cross size (https://www.w3.org/TR/css-flexbox-1/#definite-sizes)
+                 child_cross_size_is_definite =
+                     !constants.is_wrap && constants.has_definite_cross_size && cross_axis_parent_size.is_some();
++                // pyro: otherwise an item whose main size follows its cross size through a ratio is
++                // measured at its fit-content cross size (§9.2 E: the available space is only its limit);
++                // as wide as the available space, it made a column container sized to its content as wide
++                // as that space, and the item as tall (WPT `flex-item-transferred-sizes-padding-*`,
++                // `inline-flex-column-image-load`)
++                if child_cross_size_is_definite || (child.aspect_ratio.is_none() && child.natural_ratio.is_none()) {
++                    ckd.set_cross(dir, cross_axis_available_space.into_option());
++                }
+             }
+             ckd
+         };
+@@ -1169,6 +1347,14 @@ fn determine_flex_base_size(
                      child.flex_basis_is_definite = true;
                      break 'flex_basis if dir.is_row() { cross * ratio } else { cross / ratio };
                  }
@@ -1297,7 +1531,7 @@ index a8dbbcf2..75ca1113 100644
              }
  
              // E. Otherwise, size the item into the available space using its used flex basis
-@@ -1221,6 +1288,25 @@ fn determine_flex_base_size(
+@@ -1221,6 +1407,25 @@ fn determine_flex_base_size(
  
          let padding_border_axes_sums = (child.padding + child.border).sum_axes().map(Some);
  
@@ -1323,18 +1557,19 @@ index a8dbbcf2..75ca1113 100644
          // Note that it is important that the `parent_size` parameter in the main axis is not set for this
          // function call as it used for resolving percentages, and percentage size in an axis should not contribute
          // to a min-content contribution in that same axis. However the `parent_size` and `available_space` *should*
-@@ -1246,6 +1332,20 @@ fn determine_flex_base_size(
+@@ -1246,6 +1451,21 @@ fn determine_flex_base_size(
                  )
              };
  
-+            // pyro: the min-content size of a replaced element with a definite (stretched) cross size is
-+            // that size through its natural ratio, as in Blink (WPT `relayout-intrinsic-block-size`).
++            // pyro: the min-content size of a replaced element with a definite (preferred or stretched) cross
++            // size is that size through its natural ratio, as in Blink, smaller or larger than its natural size
++            // (WPT `relayout-intrinsic-block-size`, `flexbox-min-width-auto-002a`).
 +            let min_content_main_size = match (child_cross_size_is_definite, child.natural_ratio) {
 +                (true, Some(ratio)) => match child_known_dimensions.cross(dir) {
 +                    Some(cross) => {
 +                        let cross = (cross - padding_border_axes_sums.cross(dir).unwrap_or(0.0)).max(0.0);
 +                        let through = if dir.is_row() { cross * ratio } else { cross / ratio };
-+                        min_content_main_size.min(through + padding_border_axes_sums.main(dir).unwrap_or(0.0))
++                        through + padding_border_axes_sums.main(dir).unwrap_or(0.0)
 +                    }
 +                    None => min_content_main_size,
 +                },
@@ -1344,7 +1579,7 @@ index a8dbbcf2..75ca1113 100644
              // 4.5. Automatic Minimum Size of Flex Items
              // https://www.w3.org/TR/css-flexbox-1/#min-size-auto
              let clamped_min_content_size =
-@@ -1253,6 +1353,26 @@ fn determine_flex_base_size(
+@@ -1253,6 +1473,26 @@ fn determine_flex_base_size(
              clamped_min_content_size.maybe_max(padding_border_axes_sums.main(dir))
          });
  
@@ -1371,7 +1606,7 @@ index a8dbbcf2..75ca1113 100644
          // Sizes transferred through the aspect ratio clamp the hypothetical main size,
          // but do not participate in resolving flexible lengths or clamping the final size.
          // https://github.com/w3c/csswg-drafts/issues/10997
-@@ -1269,6 +1389,55 @@ fn determine_flex_base_size(
+@@ -1269,6 +1509,55 @@ fn determine_flex_base_size(
      }
  }
  
@@ -1427,7 +1662,39 @@ index a8dbbcf2..75ca1113 100644
  /// Collect flex items into flex lines.
  ///
  /// # [9.3. Main Size Determination](https://www.w3.org/TR/css-flexbox-1/#main-sizing)
-@@ -1542,8 +1711,41 @@ fn determine_container_main_size(
+@@ -1334,7 +1623,9 @@ fn collect_flex_lines<'a>(
+                 let mut lines = new_vec_with_capacity(flex_items.len());
+                 let mut items = &mut flex_items[..];
+                 while !items.is_empty() {
+-                    let (line_items, rest) = items.split_at_mut(1);
++                    // pyro: a collapsed item has no main size: it stays on the line before it
++                    let len = 1 + items[1..].iter().take_while(|item| item.strut.is_some()).count();
++                    let (line_items, rest) = items.split_at_mut(len);
+                     lines.push(FlexLine { items: line_items, cross_size: 0.0, offset_cross: 0.0 });
+                     items = rest;
+                 }
+@@ -1349,13 +1640,19 @@ fn collect_flex_lines<'a>(
+                     // Find index of the first item in the next line
+                     // (or the last item if all remaining items are in the current line)
+                     let mut line_length = 0.0;
++                    let mut sized_items = 0;
+                     let index = flex_items
+                         .iter()
+                         .enumerate()
+                         .find(|&(idx, child)| {
++                            // pyro: a collapsed item has no main size and no gaps around it
++                            if child.strut.is_some() {
++                                return line_length > main_axis_available_space && idx != 0;
++                            }
+                             // Gaps only occur between items (not before the first one or after the last one)
+                             // So first item in the line does not contribute a gap to the line length
+-                            let gap_contribution = if idx == 0 { 0.0 } else { main_axis_gap };
++                            let gap_contribution = if sized_items == 0 { 0.0 } else { main_axis_gap };
++                            sized_items += 1;
+                             line_length += child.hypothetical_outer_size.main(constants.dir) + gap_contribution;
+                             line_length > main_axis_available_space && idx != 0
+                         })
+@@ -1542,8 +1839,41 @@ fn determine_container_main_size(
  
                  if lines.len() > 1 {
                      f32_max(size, main_axis_available_space)
@@ -1470,7 +1737,7 @@ index a8dbbcf2..75ca1113 100644
                  }
              }
              AvailableSpace::MinContent if constants.is_wrap => {
-@@ -1607,6 +1809,14 @@ fn determine_container_main_size(
+@@ -1607,6 +1937,14 @@ fn determine_container_main_size(
                              style_max.maybe_min(flex_basis_max).or(flex_basis_max).unwrap_or(f32::INFINITY);
  
                          let content_contribution = match (min_main_size, style_preferred, max_main_size) {
@@ -1485,7 +1752,7 @@ index a8dbbcf2..75ca1113 100644
                              // If the clamping values are such that max <= min, then we can avoid the expensive step of computing the content size
                              // as we know that the clamping values will override it anyway
                              (min, Some(pref), max) if max <= min || max <= pref => pref.min(max).max(min) + margin_sum,
-@@ -2117,15 +2327,20 @@ fn calculate_children_base_lines(
+@@ -2117,15 +2455,20 @@ fn calculate_children_base_lines(
  
      for line in flex_lines {
          // If a flex line has one or zero items participating in baseline alignment then baseline alignment is a no-op so we skip
@@ -1508,7 +1775,7 @@ index a8dbbcf2..75ca1113 100644
                  continue;
              }
  
-@@ -2169,6 +2384,16 @@ fn calculate_children_base_lines(
+@@ -2169,6 +2512,16 @@ fn calculate_children_base_lines(
              );
  
              let height = measured_size_and_baselines.size.height;
@@ -1525,7 +1792,7 @@ index a8dbbcf2..75ca1113 100644
              let baseline = child_first_baseline(measured_size_and_baselines.baselines.first, height, child.overflow.y)
                  .unwrap_or(height);
  
-@@ -2212,12 +2437,21 @@ fn calculate_cross_size(flex_lines: &mut [FlexLine], node_size: Size<Option<f32>
+@@ -2212,12 +2565,21 @@ fn calculate_cross_size(flex_lines: &mut [FlexLine], node_size: Size<Option<f32>
          //       previous two steps and zero.
          for line in flex_lines.iter_mut() {
              let max_baseline: f32 = line.items.iter().map(|child| child.baseline).fold(0.0, |acc, x| acc.max(x));
@@ -1547,7 +1814,7 @@ index a8dbbcf2..75ca1113 100644
                      } else {
                          child.hypothetical_outer_size.cross(constants.dir)
                      }
-@@ -2309,11 +2543,16 @@ fn determine_used_cross_size(
+@@ -2309,11 +2671,16 @@ fn determine_used_cross_size(
                          .max_size()
                          .maybe_resolve(constants.node_inner_size, |val, basis| tree.calc(val, basis))
                          .maybe_add(box_sizing_adjustment);
@@ -1568,7 +1835,7 @@ index a8dbbcf2..75ca1113 100644
                  } else {
                      child.hypothetical_inner_size.cross(constants.dir)
                  },
-@@ -2420,6 +2659,12 @@ fn resolve_cross_axis_auto_margins(flex_lines: &mut [FlexLine], constants: &Algo
+@@ -2420,6 +2787,12 @@ fn resolve_cross_axis_auto_margins(flex_lines: &mut [FlexLine], constants: &Algo
              .filter(|child| child.participates_in_baseline_alignment(constants.dir))
              .map(|child| child.outer_target_size.cross(constants.dir) - child.baseline)
              .fold(0.0, |acc, x| acc.max(x));
@@ -1581,7 +1848,7 @@ index a8dbbcf2..75ca1113 100644
  
          for child in line.items.iter_mut() {
              let free_space = line_cross_size - child.outer_target_size.cross(constants.dir);
-@@ -2451,6 +2696,7 @@ fn resolve_cross_axis_auto_margins(flex_lines: &mut [FlexLine], constants: &Algo
+@@ -2451,6 +2824,7 @@ fn resolve_cross_axis_auto_margins(flex_lines: &mut [FlexLine], constants: &Algo
                      free_space,
                      max_baseline,
                      max_baseline_to_bottom_distance,
@@ -1589,7 +1856,7 @@ index a8dbbcf2..75ca1113 100644
                      constants,
                  );
              }
-@@ -2470,6 +2716,7 @@ fn align_flex_items_along_cross_axis(
+@@ -2470,6 +2844,7 @@ fn align_flex_items_along_cross_axis(
      free_space: f32,
      max_baseline: f32,
      max_baseline_to_bottom_distance: f32,
@@ -1597,7 +1864,7 @@ index a8dbbcf2..75ca1113 100644
      constants: &AlgoConstants,
  ) -> f32 {
      let cross_axis_should_reverse = constants.is_column && matches!(constants.layout_direction, Direction::Rtl);
-@@ -2535,6 +2782,17 @@ fn align_flex_items_along_cross_axis(
+@@ -2535,6 +2910,17 @@ fn align_flex_items_along_cross_axis(
                  }
              }
          }
@@ -1615,7 +1882,7 @@ index a8dbbcf2..75ca1113 100644
          AlignItemsKeyword::Stretch => {
              if constants.is_wrap_reverse ^ cross_axis_should_reverse {
                  free_space
-@@ -2994,14 +3252,20 @@ fn collect_oof_candidates(
+@@ -2994,14 +3380,20 @@ fn collect_oof_candidates(
          let cross_edge_for = |keyword: AlignItemsKeyword| {
              let start_position = match keyword {
                  AlignItemsKeyword::Start | AlignItemsKeyword::Baseline => !cross_is_rtl,
@@ -1638,7 +1905,7 @@ index a8dbbcf2..75ca1113 100644
                      if start_position {
                          AxisStaticEdge::Start
                      } else {
-@@ -3032,7 +3296,7 @@ fn collect_oof_candidates(
+@@ -3032,7 +3424,7 @@ fn collect_oof_candidates(
          let main = AxisStaticPosition { area: main_area, align: AxisStaticAlign::from_keyword(main_edge) };
  
          let static_position = if constants.is_row { Point { x: main, y: cross } } else { Point { x: cross, y: main } };
@@ -2235,7 +2502,7 @@ index b84e8751..39818a3f 100644
  
  /// The offset applied to an item in a single axis by its `inset` if it is `position: relative`
 diff --git a/src/compute/grid/mod.rs b/src/compute/grid/mod.rs
-index f0109c6e..f4e8390e 100644
+index f0109c6e..2e8d3dc7 100644
 --- a/src/compute/grid/mod.rs
 +++ b/src/compute/grid/mod.rs
 @@ -39,12 +39,18 @@ mod alignment;
@@ -2343,7 +2610,7 @@ index f0109c6e..f4e8390e 100644
  
      // Build the per-line names of the explicit grid from the name resolver's collected pairs
      let mut detailed_column_line_names = name_resolver.detailed_line_names(AbsoluteAxis::Horizontal);
-@@ -336,105 +365,298 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -336,105 +365,311 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
      // Absolutely positioned children do not take part in grid placement and do not create implicit tracks,
      // so they are excluded here. Each child's style is read and its named lines resolved exactly once; the
      // results drive both the grid size estimate and item placement below.
@@ -2472,6 +2739,11 @@ index f0109c6e..f4e8390e 100644
 -    // This is necessary as part of placement. Doing it early here is a perf optimisation to reduce allocations.
 -    let (est_col_counts, est_row_counts) =
 -        compute_grid_size_estimate(explicit_col_count, explicit_row_count, &placements);
++        // pyro: a subgrid's items are clamped to its explicit grid in its subgridded axes before auto-placement.
++        if let Some(context) = &own_subgrid {
++            subgrid::clamp_placements(&mut placements, context);
++        }
++
 +        // 4. Implicit Grid: Estimate Track Counts
 +        // 5. Grid Item Placement
 +        // Match items (children) to a definite grid position (row start/end and column start/end position).
@@ -2631,6 +2903,14 @@ index f0109c6e..f4e8390e 100644
      drop(grid_template_columns);
      drop(grid_auto_rows);
      drop(grid_auto_columns);
++    // pyro: a preferred aspect ratio (between content boxes for `box-sizing: content-box`), and whether the
++    // automatic minimum height applies (`min-height: auto`, no scroll container): for an `auto` height
++    let aspect_ratio = style.aspect_ratio().map(|ratio| {
++        let adjustment = if style.box_sizing() == BoxSizing::ContentBox { padding_border_size } else { Size::ZERO };
++        let overflow = style.overflow();
++        let content_minimum = style.min_size().height.is_auto() && !overflow.x.is_scroll_container() && !overflow.y.is_scroll_container();
++        (ratio, adjustment, content_minimum)
++    });
      drop(style);
  
 -    // 6. Track Sizing
@@ -2722,7 +3002,7 @@ index f0109c6e..f4e8390e 100644
      let initial_column_sum = columns.iter().map(|track| track.base_size).sum::<f32>();
      inner_node_size.width = inner_node_size.width.or_else(|| initial_column_sum.into());
  
-@@ -448,9 +670,28 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -448,9 +683,28 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
          return LayoutOutput::from_outer_size(Size { width, height: 0.0 });
      }
  
@@ -2752,7 +3032,7 @@ index f0109c6e..f4e8390e 100644
      track_sizing_algorithm(
          tree,
          AbstractAxis::Block,
-@@ -465,7 +706,13 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -465,7 +719,13 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
          &mut items,
          |track: &GridTrack, _, _| Some(track.base_size),
          false, // TODO: Support baseline alignment in the vertical axis
@@ -2766,7 +3046,40 @@ index f0109c6e..f4e8390e 100644
      let initial_row_sum = rows.iter().map(|track| track.base_size).sum::<f32>();
  
      debug_log!("initial_column_sum", dbg:initial_column_sum);
-@@ -487,6 +734,12 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -475,18 +735,39 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+ 
+     // 6. Compute container size
+     let resolved_style_size = known_dimensions.or(preferred_size);
++    let width = resolved_style_size
++        .get(AbstractAxis::Inline)
++        .unwrap_or_else(|| initial_column_sum + content_box_inset.horizontal_axis_sum())
++        .maybe_clamp(min_size.width, max_size.width)
++        .max(padding_border_size.width);
++    // pyro: an `auto` height with a preferred aspect ratio is the width's through it (css-sizing-4 §5.1), at
++    // least the rows' (its automatic minimum size) unless `min-height` is set or it is a scroll container
++    let rows_height = initial_row_sum + content_box_inset.vertical_axis_sum();
++    let auto_height = match aspect_ratio {
++        Some((ratio, adjustment, content_minimum)) => {
++            let height = (width - adjustment.width).max(0.0) / ratio + adjustment.height;
++            if content_minimum {
++                height.max(rows_height)
++            } else {
++                height
++            }
++        }
++        None => rows_height,
++    };
+     let mut container_border_box = Size {
+-        width: resolved_style_size
+-            .get(AbstractAxis::Inline)
+-            .unwrap_or_else(|| initial_column_sum + content_box_inset.horizontal_axis_sum())
+-            .maybe_clamp(min_size.width, max_size.width)
+-            .max(padding_border_size.width),
++        width,
+         height: resolved_style_size
+             .get(AbstractAxis::Block)
+-            .unwrap_or_else(|| initial_row_sum + content_box_inset.vertical_axis_sum())
++            .unwrap_or(auto_height)
              .maybe_clamp(min_size.height, max_size.height)
              .max(padding_border_size.height),
      };
@@ -2779,7 +3092,7 @@ index f0109c6e..f4e8390e 100644
      let mut container_content_box = Size {
          width: f32_max(0.0, container_border_box.width - content_box_inset.horizontal_axis_sum()),
          height: f32_max(0.0, container_border_box.height - content_box_inset.vertical_axis_sum()),
-@@ -516,7 +769,20 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -516,7 +797,20 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
      if !rerun_column_sizing {
          // Note: every item must be visited (no short-circuiting) as the closure updates each item's caches
          intrinsic_column_contribution_changed =
@@ -2801,7 +3114,7 @@ index f0109c6e..f4e8390e 100644
                  let grid_area_size = item.grid_area_size(
                      AbstractAxis::Inline,
                      &columns,
-@@ -567,6 +833,7 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -567,6 +861,7 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
          });
      }
  
@@ -2809,7 +3122,7 @@ index f0109c6e..f4e8390e 100644
      if rerun_column_sizing {
          // Re-run track sizing algorithm for Inline axis
          track_sizing_algorithm(
-@@ -583,14 +850,26 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -583,14 +878,26 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
              &mut items,
              |track: &GridTrack, _, _| Some(track.base_size),
              has_baseline_aligned_item,
@@ -2837,7 +3150,7 @@ index f0109c6e..f4e8390e 100644
                      let grid_area_size = item.grid_area_size(
                          AbstractAxis::Block,
                          &rows,
-@@ -617,6 +896,10 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -617,6 +924,10 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
      }
  
      if rerun_row_sizing {
@@ -2848,7 +3161,7 @@ index f0109c6e..f4e8390e 100644
          // Re-run track sizing algorithm for Block axis
          track_sizing_algorithm(
              tree,
-@@ -632,7 +915,13 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -632,7 +943,13 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
              &mut items,
              |track: &GridTrack, _, _| Some(track.base_size),
              false, // TODO: Support baseline alignment in the vertical axis
@@ -2862,7 +3175,7 @@ index f0109c6e..f4e8390e 100644
      }
  
      if (intrinsic_column_contribution_changed && !has_percentage_column)
-@@ -661,6 +950,14 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -661,6 +978,14 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
                  f32_max(0.0, container_border_box.height - content_box_inset.vertical_axis_sum());
          }
      }
@@ -2877,7 +3190,7 @@ index f0109c6e..f4e8390e 100644
  
      // If only the container's size has been requested
      if run_mode == RunMode::ComputeSize {
-@@ -693,6 +990,24 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -693,6 +1018,24 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
          false,
      );
  
@@ -2902,7 +3215,7 @@ index f0109c6e..f4e8390e 100644
      // 9. Size, Align, and Position Grid Items
  
      #[cfg_attr(not(feature = "content_size"), allow(unused_mut))]
-@@ -721,6 +1036,13 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -721,6 +1064,13 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
      };
  
      // Position in-flow children (stored in items vector)
@@ -2916,7 +3229,7 @@ index f0109c6e..f4e8390e 100644
      for (index, item) in items.iter_mut().enumerate() {
          // Tracks are stored in logical order. In RTL the physical offsets are assigned
          // right-to-left, so an item's physical left edge is derived from its logical end
-@@ -739,25 +1061,81 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -739,25 +1089,81 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
                  columns[item.column_indexes.end as usize].offset
              },
          };
@@ -3016,7 +3329,7 @@ index f0109c6e..f4e8390e 100644
  
          #[cfg(feature = "content_size")]
          {
-@@ -765,6 +1143,24 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -765,6 +1171,24 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
          }
      }
  
@@ -3041,7 +3354,7 @@ index f0109c6e..f4e8390e 100644
      // Position hidden and absolutely positioned children, merging in the candidates bubbled out
      // of in-flow children's subtrees (`items` is sorted by `source_order`, i.e. child index)
      let mut order = items.len() as u32;
-@@ -841,7 +1237,7 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -841,7 +1265,7 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
              };
              drop(child_style);
  
@@ -3050,7 +3363,7 @@ index f0109c6e..f4e8390e 100644
                  node: child,
                  order,
                  position,
-@@ -869,19 +1265,17 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -869,19 +1293,17 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
      // resolve the grid areas of out-of-flow boxes whose containing block is this grid
      let areas =
          name_resolver.populate_detailed_line_resolvers(&mut detailed_row_line_names, &mut detailed_column_line_names);
@@ -3078,7 +3391,7 @@ index f0109c6e..f4e8390e 100644
              items: items.iter().map(DetailedGridItemsInfo::from_grid_item).collect(),
              areas,
          },
-@@ -980,9 +1374,82 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -980,9 +1402,82 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
      );
      output.oof_candidates = oof_candidates;
      output.oof_positioning_area = oof_positioning_area;
@@ -3161,7 +3474,7 @@ index f0109c6e..f4e8390e 100644
  /// Resolve the static-position rectangle (the grid area determined by the grid-placement
  /// properties) for an out-of-flow child of a positioned grid container.
  ///
-@@ -1298,6 +1765,10 @@ pub struct DetailedGridTracksInfo<S: CheapCloneStr = DefaultCheapStr> {
+@@ -1298,6 +1793,10 @@ pub struct DetailedGridTracksInfo<S: CheapCloneStr = DefaultCheapStr> {
      /// [`DetailedGridTracksInfo::iter_line_names`] for indices relative to the full grid
      /// (including implicit tracks). Empty if the grid has no named lines.
      pub line_names: GridLineNames<S>,
@@ -3172,7 +3485,7 @@ index f0109c6e..f4e8390e 100644
  }
  
  impl<S: CheapCloneStr> DetailedGridTracksInfo<S> {
-@@ -1337,6 +1808,7 @@ impl<S: CheapCloneStr> DetailedGridTracksInfo<S> {
+@@ -1337,6 +1836,7 @@ impl<S: CheapCloneStr> DetailedGridTracksInfo<S> {
              collapsed_tracks,
              empty_axis_line,
              line_names,
@@ -3180,7 +3493,7 @@ index f0109c6e..f4e8390e 100644
          }
      }
  
-@@ -1380,6 +1852,16 @@ impl<S: CheapCloneStr> DetailedGridTracksInfo<S> {
+@@ -1380,6 +1880,16 @@ impl<S: CheapCloneStr> DetailedGridTracksInfo<S> {
              out.write_char(']')
          }
  
@@ -3197,7 +3510,7 @@ index f0109c6e..f4e8390e 100644
          if self.positions.is_empty() {
              return out.write_str("none");
          }
-@@ -1454,3 +1936,131 @@ impl DetailedGridItemsInfo {
+@@ -1454,3 +1964,131 @@ impl DetailedGridItemsInfo {
          }
      }
  }
@@ -3331,10 +3644,10 @@ index f0109c6e..f4e8390e 100644
 +}
 diff --git a/src/compute/grid/subgrid.rs b/src/compute/grid/subgrid.rs
 new file mode 100644
-index 00000000..2712b456
+index 00000000..34cc58b5
 --- /dev/null
 +++ b/src/compute/grid/subgrid.rs
-@@ -0,0 +1,948 @@
+@@ -0,0 +1,973 @@
 +//! pyro: subgrids (css-grid-2 §9).
 +//!
 +//! A grid item whose `grid-template-columns` or `grid-template-rows` is `subgrid`, and which is no
@@ -3544,6 +3857,30 @@ index 00000000..2712b456
 +    Line { start: OriginZeroLine(start), end: OriginZeroLine(end) }
 +}
 +
++/// The definite lines of a subgrid's items in its subgridded axes, clamped to its explicit grid before they are
++/// auto-placed in the other axis (css-grid-2 §9: an item's grid area is clamped): an item whose lines lie past the
++/// subgrid takes cells in it, which the next items there find occupied, instead of cells of implicit tracks that
++/// the clamp after placement then laid over each other (WPT `css/css-grid/subgrid/repeat-auto-fill-001`)
++pub(super) fn clamp_placements<S>(placements: &mut [ItemPlacement], context: &SubgridContext<S>) {
++    fn clamp(line: &mut Line<crate::style::OriginZeroGridPlacement>, count: u16) {
++        if line.is_definite() {
++            let lines = clamp_to_subgrid(line.resolve_definite_grid_lines(), count);
++            *line = Line {
++                start: crate::style::GenericGridPlacement::Line(lines.start),
++                end: crate::style::GenericGridPlacement::Line(lines.end),
++            };
++        }
++    }
++    for placement in placements {
++        if let Some(columns) = &context.columns {
++            clamp(&mut placement.horizontal, columns.track_count);
++        }
++        if let Some(rows) = &context.rows {
++            clamp(&mut placement.vertical, rows.track_count);
++        }
++    }
++}
++
 +/// Clamp the items of a subgrid to its explicit grid in its subgridded axes
 +pub(super) fn clamp_items<S>(items: &mut [GridItem], context: &SubgridContext<S>) {
 +    for item in items {
@@ -3659,6 +3996,7 @@ index 00000000..2712b456
 +        items.push(item);
 +        placements.push(placement);
 +    }
++    clamp_placements(&mut placements, context);
 +    let (column_counts, row_counts) = compute_grid_size_estimate(explicit.width, explicit.height, &placements);
 +    let mut occupancy = CellOccupancyMatrix::with_track_counts(column_counts, row_counts);
 +    place_grid_items(&mut occupancy, &mut items, &placements, flow);
@@ -5722,10 +6060,10 @@ index fb1c7a3b..0f65ced9 100644
      /// static-position rectangle (`align-self`). `None` corresponds to `normal`/`auto`.
      #[inline(always)]
 diff --git a/src/style/flex.rs b/src/style/flex.rs
-index bc9488b3..ef389854 100644
+index bc9488b3..05b0f23e 100644
 --- a/src/style/flex.rs
 +++ b/src/style/flex.rs
-@@ -73,6 +73,23 @@ pub trait FlexboxItemStyle: CoreStyle {
+@@ -73,6 +73,29 @@ pub trait FlexboxItemStyle: CoreStyle {
      fn align_self(&self) -> Option<AlignSelf> {
          Style::<Self::CustomIdent>::DEFAULT.align_self
      }
@@ -5733,6 +6071,12 @@ index bc9488b3..ef389854 100644
 +    /// size in the main axis, as in Blink (WPT `css/css-flexbox/table-as-item-*`)
 +    #[inline(always)]
 +    fn is_table(&self) -> bool {
++        false
++    }
++    /// pyro: `visibility: collapse`: a collapsed flex item (css-flexbox-1 §4.4), not rendered and of no main
++    /// size, whose line keeps the cross size it has with the item in
++    #[inline(always)]
++    fn is_collapsed(&self) -> bool {
 +        false
 +    }
 +    /// pyro: `min-width`/`min-height` when they are sizing keywords (`min_size()` says `auto` for them);

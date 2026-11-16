@@ -31,7 +31,28 @@ diff --git a/packages/stylo_taffy/src/convert.rs b/packages/stylo_taffy/src/conv
  #[inline]
  pub fn max_size(val: &stylo::MaxSize) -> taffy::LengthPercentageAuto {
      match val {
-@@ -592,9 +615,9 @@
+@@ -473,6 +496,10 @@
+         stylo::AlignFlags::FLEX_START => taffy::AlignContent::FLEX_START,
+         stylo::AlignFlags::STRETCH => taffy::AlignContent::STRETCH,
+         stylo::AlignFlags::FLEX_END => taffy::AlignContent::FLEX_END,
++        // pyro: `flow-start`/`flow-end` are `flex-start`/`flex-end` in a flex container and `start`/`end`
++        // elsewhere, as Taffy's `FLEX_START`/`FLEX_END` are outside flex layout
++        stylo::AlignFlags::FLOW_START => taffy::AlignContent::FLEX_START,
++        stylo::AlignFlags::FLOW_END => taffy::AlignContent::FLEX_END,
+         stylo::AlignFlags::CENTER => taffy::AlignContent::CENTER,
+         stylo::AlignFlags::SPACE_BETWEEN => taffy::AlignContent::SPACE_BETWEEN,
+         stylo::AlignFlags::SPACE_AROUND => taffy::AlignContent::SPACE_AROUND,
+@@ -582,6 +609,9 @@
+         stylo::AlignFlags::STRETCH => taffy::AlignItems::STRETCH,
+         stylo::AlignFlags::FLEX_START => taffy::AlignItems::FLEX_START,
+         stylo::AlignFlags::FLEX_END => taffy::AlignItems::FLEX_END,
++        // pyro: as `flex-start`/`flex-end` (see `content_alignment`)
++        stylo::AlignFlags::FLOW_START => taffy::AlignItems::FLEX_START,
++        stylo::AlignFlags::FLOW_END => taffy::AlignItems::FLEX_END,
+         stylo::AlignFlags::SELF_START => taffy::AlignItems::SELF_START,
+         stylo::AlignFlags::SELF_END => taffy::AlignItems::SELF_END,
+         stylo::AlignFlags::START => taffy::AlignItems::START,
+@@ -592,9 +622,9 @@
          stylo::AlignFlags::RIGHT => taffy::AlignItems::END,
          stylo::AlignFlags::CENTER => taffy::AlignItems::CENTER,
          stylo::AlignFlags::BASELINE => taffy::AlignItems::BASELINE,
@@ -296,13 +317,18 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
          self.layout_wm().logical_clear(clear)
      }
  }
-@@ -595,6 +723,21 @@
+@@ -595,6 +723,26 @@
          self.style.get_position().flex_shrink.0
      }
  
 +    #[inline]
 +    fn is_table(&self) -> bool {
 +        convert::is_table(self.effective_display())
++    }
++
++    #[inline]
++    fn is_collapsed(&self) -> bool {
++        self.style.get_inherited_box().visibility == style::computed_values::visibility::T::Collapse
 +    }
 +
 +    #[inline]
@@ -318,7 +344,7 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
      #[inline]
      fn align_self(&self) -> Option<taffy::AlignSelf> {
          self.self_alignment(
-@@ -874,6 +1017,48 @@
+@@ -874,6 +1022,48 @@
          convert::grid_auto_flow(self.style.get_position().grid_auto_flow)
      }
  
@@ -367,7 +393,7 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
      #[inline]
      fn gap(&self) -> taffy::Size<taffy::LengthPercentage> {
          let position_styles = self.style.get_position();
-@@ -927,6 +1112,56 @@
+@@ -927,6 +1117,56 @@
          self.grid_row_placement()
      }
  

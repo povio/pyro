@@ -496,6 +496,10 @@ pub fn content_alignment(
         stylo::AlignFlags::FLEX_START => taffy::AlignContent::FLEX_START,
         stylo::AlignFlags::STRETCH => taffy::AlignContent::STRETCH,
         stylo::AlignFlags::FLEX_END => taffy::AlignContent::FLEX_END,
+        // pyro: `flow-start`/`flow-end` are `flex-start`/`flex-end` in a flex container and `start`/`end`
+        // elsewhere, as Taffy's `FLEX_START`/`FLEX_END` are outside flex layout
+        stylo::AlignFlags::FLOW_START => taffy::AlignContent::FLEX_START,
+        stylo::AlignFlags::FLOW_END => taffy::AlignContent::FLEX_END,
         stylo::AlignFlags::CENTER => taffy::AlignContent::CENTER,
         stylo::AlignFlags::SPACE_BETWEEN => taffy::AlignContent::SPACE_BETWEEN,
         stylo::AlignFlags::SPACE_AROUND => taffy::AlignContent::SPACE_AROUND,
@@ -605,6 +609,9 @@ pub fn item_alignment(input: stylo::AlignFlags, is_horiz_rtl: bool) -> Option<ta
         stylo::AlignFlags::STRETCH => taffy::AlignItems::STRETCH,
         stylo::AlignFlags::FLEX_START => taffy::AlignItems::FLEX_START,
         stylo::AlignFlags::FLEX_END => taffy::AlignItems::FLEX_END,
+        // pyro: as `flex-start`/`flex-end` (see `content_alignment`)
+        stylo::AlignFlags::FLOW_START => taffy::AlignItems::FLEX_START,
+        stylo::AlignFlags::FLOW_END => taffy::AlignItems::FLEX_END,
         stylo::AlignFlags::SELF_START => taffy::AlignItems::SELF_START,
         stylo::AlignFlags::SELF_END => taffy::AlignItems::SELF_END,
         stylo::AlignFlags::START => taffy::AlignItems::START,

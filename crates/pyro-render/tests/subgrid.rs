@@ -134,3 +134,19 @@ fn an_orthogonal_subgrids_rows_are_its_parents_columns() {
     );
     check(&img, &[(15, 10, GREEN), (29, 10, GREEN), (31, 10, BLUE), (79, 10, BLUE), (81, 10, WHITE)]);
 }
+
+/// An item whose line lies past a subgrid is clamped into it before it is auto-placed in a row: in
+/// the subgrid's last column, which the green item already takes in the first row, the blue one
+/// (`grid-column: 5` of two tracks) goes to the second row instead of over the green one.
+#[test]
+fn items_clamped_into_a_subgrid_take_their_own_cells() {
+    let img = render(
+        "<div style='display:inline-grid;grid-auto-columns:20px;vertical-align:top'>\
+           <div style='display:grid;grid-template-columns:subgrid;grid-column:1 / span 2;grid-auto-rows:10px'>\
+             <div style='grid-column:2;background:green'></div>\
+             <div style='grid-column:5;background:blue'></div>\
+           </div>\
+         </div>",
+    );
+    check(&img, &[(30, 5, GREEN), (30, 15, BLUE), (10, 15, WHITE)]);
+}

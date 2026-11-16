@@ -207,6 +207,30 @@ pub(super) fn clamp_to_subgrid(line: Line<OriginZeroLine>, count: u16) -> Line<O
     Line { start: OriginZeroLine(start), end: OriginZeroLine(end) }
 }
 
+/// The definite lines of a subgrid's items in its subgridded axes, clamped to its explicit grid before they are
+/// auto-placed in the other axis (css-grid-2 §9: an item's grid area is clamped): an item whose lines lie past the
+/// subgrid takes cells in it, which the next items there find occupied, instead of cells of implicit tracks that
+/// the clamp after placement then laid over each other (WPT `css/css-grid/subgrid/repeat-auto-fill-001`)
+pub(super) fn clamp_placements<S>(placements: &mut [ItemPlacement], context: &SubgridContext<S>) {
+    fn clamp(line: &mut Line<crate::style::OriginZeroGridPlacement>, count: u16) {
+        if line.is_definite() {
+            let lines = clamp_to_subgrid(line.resolve_definite_grid_lines(), count);
+            *line = Line {
+                start: crate::style::GenericGridPlacement::Line(lines.start),
+                end: crate::style::GenericGridPlacement::Line(lines.end),
+            };
+        }
+    }
+    for placement in placements {
+        if let Some(columns) = &context.columns {
+            clamp(&mut placement.horizontal, columns.track_count);
+        }
+        if let Some(rows) = &context.rows {
+            clamp(&mut placement.vertical, rows.track_count);
+        }
+    }
+}
+
 /// Clamp the items of a subgrid to its explicit grid in its subgridded axes
 pub(super) fn clamp_items<S>(items: &mut [GridItem], context: &SubgridContext<S>) {
     for item in items {
@@ -322,6 +346,7 @@ pub(super) fn place_subgrid_items<Tree: LayoutGridContainer>(
         items.push(item);
         placements.push(placement);
     }
+    clamp_placements(&mut placements, context);
     let (column_counts, row_counts) = compute_grid_size_estimate(explicit.width, explicit.height, &placements);
     let mut occupancy = CellOccupancyMatrix::with_track_counts(column_counts, row_counts);
     place_grid_items(&mut occupancy, &mut items, &placements, flow);

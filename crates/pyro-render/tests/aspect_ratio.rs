@@ -161,3 +161,16 @@ fn grid_items_stretch_explicitly() {
     // Without an explicit stretch the item is as wide as its area and the ratio gives its height.
     check(&grid("100px / 100px", "aspect-ratio:2/1"), (100, 50));
 }
+
+/// A grid container's `auto` height follows the ratio from its used width: `min-height: 60px`
+/// through the ratio makes `repeat(auto-fill, 50px)` two columns, and the 100px width a 100px
+/// height, not the 60px minimum (Taffy `compute/grid/mod.rs`; WPT
+/// `css/css-grid/grid-definition/grid-auto-repeat-aspect-ratio-001`).
+#[test]
+fn a_grid_containers_auto_height_follows_the_ratio() {
+    check(
+        "<div style='display:inline-grid;background:green;aspect-ratio:1/1;min-height:60px;\
+           grid-template-columns:repeat(auto-fill,50px);vertical-align:top'></div>",
+        (100, 100),
+    );
+}

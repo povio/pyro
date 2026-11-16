@@ -3090,15 +3090,17 @@ impl Layout {
             return v;
         }
         let declared = self.style.computed_value(dom, el, name);
-        // pyro: a subgrid's template resolves to `subgrid` with each of its lines' names, which only its
-        // layout knows (how many tracks it spans; css-grid-2 §7.2.6.2)
+        // pyro: a grid container's template resolves to its used tracks, each listed (css-grid-1 §7.2.6), and a
+        // subgrid's to `subgrid` with each of its lines' names (css-grid-2 §7.2.6.2): only its layout knows
+        // them (`repeat(auto-fill, …)` counts, implicit tracks, how many tracks a subgrid spans)
         if matches!(name, "grid-template-columns" | "grid-template-rows")
-            && declared.as_deref().is_some_and(|value| value.starts_with("subgrid"))
+            && (declared.as_deref().is_some_and(|value| value.starts_with("subgrid"))
+                || self.style.computed_display(dom, el).is_some_and(|display| display.ends_with("grid")))
         {
             if let Some(value) = self
                 .synced_geometry_source(dom)
                 .and_then(|source| source.resolved_style_value(crate::snapshot::render_key(el), name))
-                .filter(|value| value.starts_with("subgrid"))
+                .filter(|value| !value.is_empty())
             {
                 return value;
             }

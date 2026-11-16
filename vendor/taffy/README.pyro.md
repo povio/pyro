@@ -372,7 +372,7 @@ grid container in flow with neither layout nor paint containment, in its parent'
 - stretches the subgrid in its subgridded axes, whatever its alignment, size, minimum and maximum size and aspect ratio.
 
 The subgrid's own layout places its items as the grid placed them for sizing (`place_subgrid_items`): the spanned
-track count is its explicit grid in a subgridded axis, with no implicit tracks (items are clamped to it), its line
+track count is its explicit grid in a subgridded axis, with no implicit tracks (items' definite lines are clamped to it before auto-placement, `clamp_placements`, and the rest after it), its line
 names are its `<line-name-list>` (`subgrid_line_names`, `repeat(auto-fill)` repeated to fit) plus the inherited ones,
 and a subgrid child's automatic span is the number of tracks its own list names. Its tracks there are fixed at the
 given sizes, `justify-content`/`align-content` do not apply, and after alignment they are placed at the given spans.
@@ -400,11 +400,19 @@ to its measure function, which a min-content measurement does not transfer throu
   the ratio, so also its flex base size and its transferred size suggestion (the automatic minimum is the smaller of
   it and the content size suggestion; css-flexbox-1 §4.5): an image with `height: 100px; max-width: 150px` and a
   natural 200x200 size is 100px wide, not 150px (WPT `flex-aspect-ratio-img-row-012`, `flex-minimum-width-flex-items-011`);
-- a definite cross size (a stretched one) gives the flex base size (§9.2 B) and bounds the content size suggestion, as
-  Blink measures a replaced element's min-content size with a definite block size (`relayout-intrinsic-block-size`).
+- a definite cross size (a stretched one) gives the flex base size (§9.2 B), and a definite cross size (preferred or
+  stretched) gives the content size suggestion through the ratio, smaller or larger than the natural size, as Blink
+  measures a replaced element's min-content size with a definite block size (`relayout-intrinsic-block-size`,
+  `flexbox-min-width-auto-002a`, `-002c`).
 
 The property's ratio and every other use of `aspect_ratio` are unchanged. Covered by
 `crates/pyro-render/tests/flex_natural_ratio.rs`.
+
+A stretched item with either ratio and no definite cross size (its container's cross size is not definite, e.g. a
+column container sized to its content) is measured for its flex base size at its fit-content cross size, the available
+space only its limit (§9.2 E): it was given the available space as its cross size, so a float or `inline-flex` column
+around an image or an `aspect-ratio` box was as wide as its containing block and the item as tall
+(WPT `flex-item-transferred-sizes-padding-*`, `inline-flex-column-image-load`).
 
 ## Static positions and positioned table parts (WPT css-position, round 3 lane P)
 
@@ -452,3 +460,28 @@ baseline (synthesized at the bottom border edge without one, or for a scroll con
 group's largest makes room in the line's cross size, and each item sits that much above the end less its own.
 stylo_taffy mapped `last baseline` to `end` before. In columns, wrap-reverse lines, grids and for absolutely positioned
 boxes it still behaves as its fallback, `end`. Covered by `crates/pyro-render/tests/flex_last_baseline.rs`.
+
+## `visibility: collapse` on flex items (WPT round 3, lane G)
+
+`compute/flexbox.rs` (`measure_collapsed_item_struts`, `exclude_collapsed_items`), `style/flex.rs`
+(`FlexboxItemStyle::is_collapsed`, default false): step 10 of the flex layout algorithm (css-flexbox-1 §4.4, §9.4),
+a TODO before. A container with collapsed items first runs steps 5 to 9 with every item in, each collapsed item's strut
+the cross size of its line then. The layout then collects the collapsed items into lines with no main size and no gaps
+around them, takes them out of their lines (each moves to its line's end, out of the line's slice), keeps each line at
+least as tall as its struts after step 8, and lays the collapsed items out hidden as `display: none` children. Covered by
+`crates/pyro-render/tests/flex_collapse.rs`.
+
+## Percentage gaps of a column with an indefinite height (WPT round 3, lane G)
+
+`compute/flexbox.rs` (`size_container_main_axis`): a column container's percentage gaps are not resolved again against
+the height its content gives it; they stay as they resolved against its indefinite height, zero, as in Blink. Resolved
+again, they pushed the items past the container's end (WPT `css/css-flexbox/gap-percentage-wrap`). A row's are still
+resolved again against its main size, which a row's later layout knows anyway. Covered by
+`crates/pyro-render/tests/flex_gaps.rs`.
+
+## An `auto` grid height through a preferred aspect ratio (WPT round 3, lane G)
+
+`compute/grid/mod.rs`: a grid container with `aspect-ratio` and an `auto` height (none known or preferred) is as tall as
+its used width makes it through the ratio (between content boxes for `box-sizing: content-box`), and at least as tall as
+its rows unless `min-height` is set or it is a scroll container (the automatic minimum size, css-sizing-4 §5.1). It was
+as tall as its rows (WPT `css/css-grid/grid-definition/grid-auto-repeat-aspect-ratio-001`).

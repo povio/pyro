@@ -50,3 +50,7 @@ entry) once a Blitz release carries these commits and changes.
 - `src/wrapper.rs`: `GridItemStyle::subgrid_axis`/`subgrid_reversed` for orthogonal subgrids: the parent's inline axis is
   the child's block axis when one of them is vertical, and whether the tracks run opposite ways is found from both
   writing modes (inline: `direction` or `is_inline_tb`; block: top to bottom, or `vertical-lr`/`-rl`).
+- `src/wrapper.rs`: `FlexboxItemStyle::is_collapsed` (`visibility: collapse`) for collapsed flex items
+  (vendor/taffy/README.pyro.md, "`visibility: collapse` on flex items").
+- `src/convert.rs` (`content_alignment`, `item_alignment`): `flow-start`/`flow-end` (vendor/stylo/README.pyro.md) are
+  Taffy's `FLEX_START`/`FLEX_END`, which are `start`/`end` outside flex layout.
