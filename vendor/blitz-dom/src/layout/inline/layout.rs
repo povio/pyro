@@ -1166,6 +1166,21 @@ impl LayoutPassState<'_> {
                     .inline_boxes()
                     .any(|ibox| ibox.kind == parley::InlineBoxKind::CustomOutOfFlow);
             if floats_involved || inline_layout.last_break != Some(break_key) {
+                // pyro: a measuring run breaks the lines of the last final layout again: note where
+                // they are first, to tell whether it leaves them elsewhere (see the end of this run).
+                if inputs.run_mode != RunMode::PerformLayout
+                    && !self.nodes[node_id].flags.contains(NodeFlags::FINAL_LAYOUT_STALE)
+                    && inline_layout.final_lines.is_some_and(|laid_out| {
+                        laid_out.geometry.is_none()
+                            && laid_out.last_break.is_some()
+                            && laid_out.last_break == inline_layout.last_break
+                    })
+                {
+                    let geometry = inline_layout.line_geometry();
+                    if let Some(laid_out) = inline_layout.final_lines.as_mut() {
+                        laid_out.geometry = Some(geometry);
+                    }
+                }
                 let wraps = self.nodes[node_id].primary_styles().is_none_or(|s| {
                     s.clone_text_wrap_mode() == stylo_to_parley::stylo::TextWrapMode::Wrap
                 });
@@ -2011,6 +2026,40 @@ impl LayoutPassState<'_> {
             .then(|| last_line_index.and_then(|i| inline_layout.layout.get(i)))
             .flatten()
             .map(line_baseline);
+
+        // pyro: the lines and where they start are what paint draws and the inline boxes are
+        // placed on. A measuring run that broke them with other inputs than the last final layout
+        // (the available width of a stretched column flex item, a table cell measured at another
+        // width) and left them elsewhere, or moved them (a cell's `vertical-align` in another
+        // height), leaves them unlike that layout, which a cached final layout of this root, or
+        // of a box it is laid out in, stands for: those lay out again. Lines broken beside floats
+        // are not compared (nor are the floats' places): a measuring run leaves them stale.
+        let (block_offset_bits, line_box_top_bits) = (inline_layout.block_offset.to_bits(), line_box_top.to_bits());
+        if inputs.run_mode == RunMode::PerformLayout {
+            inline_layout.final_lines = Some(crate::node::LaidOutLines {
+                last_break: inline_layout.last_break,
+                block_offset: block_offset_bits,
+                line_box_top: line_box_top_bits,
+                inline_box_sizes: inline_layout.inline_box_sizes(),
+                geometry: None,
+            });
+        } else if let Some(laid_out) = inline_layout.final_lines
+            && !self.nodes[node_id].flags.contains(NodeFlags::FINAL_LAYOUT_STALE)
+        {
+            let stale = match (laid_out.last_break, inline_layout.last_break) {
+                (Some(final_break), Some(last_break)) => {
+                    laid_out.block_offset != block_offset_bits
+                        || laid_out.line_box_top != line_box_top_bits
+                        || (final_break != last_break
+                            && (laid_out.inline_box_sizes != inline_layout.inline_box_sizes()
+                                || laid_out.geometry != Some(inline_layout.line_geometry())))
+                }
+                _ => true,
+            };
+            if stale {
+                self.mark_final_layout_stale(node_id);
+            }
+        }
 
         if inputs.run_mode == RunMode::PerformLayout {
             inline_layout.span_cb_flags = span_cb_flags;

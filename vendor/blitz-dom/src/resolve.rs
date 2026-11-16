@@ -1192,6 +1192,13 @@ impl BaseDocument {
             }
         };
         taffy::compute_root_layout_in(&mut state, root_element_id, available_space, initial_containing_block);
+        // pyro: inline roots that a measuring run left unlike their final layout after this pass
+        // last laid them out are laid out again, with the boxes they are in (once: what a second
+        // run leaves so the next pass lays out; `LayoutPassState::mark_final_layout_stale`).
+        if state.mark_stale_lines_up() {
+            taffy::compute_root_layout_in(&mut state, root_element_id, available_space, initial_containing_block);
+            state.mark_stale_lines_up();
+        }
         #[cfg(feature = "writing-mode")]
         state.physicalise_and_round_layout(root_element_id);
         #[cfg(not(feature = "writing-mode"))]

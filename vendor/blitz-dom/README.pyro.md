@@ -2180,3 +2180,35 @@ them (WPT `table-as-item-stretch-cross-size*`, `table-as-item-flex-cross-size`).
 width that is not definite) inside a flex or grid container either, not only inside a cell, as Blink's
 `TableNode::AllowColumnPercentages`: a table with a 100% column measured there was `f32::MAX / 4` wide (WPT
 `table-with-infinite-max-intrinsic-width`, `item-with-table-with-infinite-max-intrinsic-width`).
+
+## A measuring run that leaves an inline root's lines unlike its final layout (Danex triage)
+
+`src/layout/inline/layout.rs`, `src/layout/mod.rs` (`LayoutPassState::mark_final_layout_stale`, `cache_get`,
+`cache_store`), `src/node/text.rs` (`TextLayout::final_lines`, `LaidOutLines`, `line_geometry`,
+`inline_box_sizes`), `src/node/node.rs` (`NodeFlags::FINAL_LAYOUT_STALE`): an inline root has one parley layout, and
+every run that is not a horizontal measurement breaks and aligns its lines again, a vertical measurement too. Taffy
+measures a stretched column flex item at the available cross size and then lays it out at its container's, and a
+table cell or flex item is measured before it is laid out. A later final layout of the item then came from the cache
+and left the lines of the measurement: Danex's triage actions (a column `inline-flex` in a `text-align: right` cell)
+were right-aligned to the cell's width inside a 51 px item, 93 px past the table.
+
+Each final layout now notes where it left the lines (`LaidOutLines`: break key, `block_offset`, line box top, a hash
+of the inline boxes' sizes). A measuring run that leaves them elsewhere marks the root `FINAL_LAYOUT_STALE`, and
+with it the boxes around it that are being laid out (`IN_LAYOUT`, set while `compute_child_layout_internal` runs;
+up the layout parents to one that is not): a table measures a cell for its columns after an earlier step laid the
+cell's `inline-flex` out, and the cell's later final layout would get that `inline-flex` from the cache. `cache_get`
+refuses a marked box a cached final layout, and the final layout that runs again (`cache_store`) clears the mark.
+Boxes not being laid out are not marked: marking all layout parents made the ancestors of an absolutely positioned
+box laid out alone run again in the next pass, which was then no longer free of layout for a paint-only restyle
+(`mirror.rs` `paint_only_restyles_run_no_layout_and_match_fresh_builds`). Roots still marked when the root layout
+returns mark the boxes they are in, and `resolve_layout` runs the root layout once more, which reaches only them
+(`mark_stale_lines_up`). "Elsewhere": another `block_offset`
+or line box top (a cell's `vertical-align` measured in another height), other inline box sizes, or lines broken with
+other inputs whose geometry differs: their text, alignment offsets, starts, advances and block extents
+(`line_geometry`; the line's end only in right-to-left and justified text). That hash is taken lazily, of the final
+layout's lines when a measuring run is about to break them again, and Fx-mixed: hashing every final layout with
+SipHash cost 1.5% of a relayout. Start-aligned text broken again at another width into the same lines marks nothing.
+Lines broken beside floats are not compared (nor are the floats' places): a measuring run marks them. Cost, in
+instructions of 41 relayouts (minimum of 2-4 runs, JSC tiering spreads runs of one binary by up to 2%): a 400-row
+table whose 2,000 cells all hold the Danex cell +1.0%, 1,500 right-aligned column `inline-flex` flex items +1.2%, a
+1,200-row table with one changing cell +0.7%. Covered by `crates/pyro-render/tests/text_align_after_measure.rs`.

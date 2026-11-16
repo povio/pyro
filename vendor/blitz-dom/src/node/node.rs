@@ -156,6 +156,13 @@ bitflags! {
         /// pyro: a slot of a shadow tree whose children are the nodes assigned to it, light
         /// children of its host (`crate::shadow`).
         const IS_ASSIGNED_SLOT = 1 << 20;
+        /// pyro: what the box's cached final layout (`RunMode::PerformLayout`) stands for is no
+        /// longer laid out so: a measuring run left its lines elsewhere (an inline root), or those
+        /// of an inline root in it. Its next final layout runs again instead of standing on the
+        /// cache (`LayoutPassState::mark_final_layout_stale`), and clears the mark.
+        const FINAL_LAYOUT_STALE = 1 << 21;
+        /// pyro: the box's layout algorithm is running (`LayoutPassState::compute_child_layout_internal`).
+        const IN_LAYOUT = 1 << 27;
     }
 }
 

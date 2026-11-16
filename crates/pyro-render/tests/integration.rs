@@ -102,6 +102,7 @@ mod table_parts;
 mod table_structure;
 mod tagged_images;
 mod text_aliasing;
+mod text_align_after_measure;
 mod text_box_trim;
 mod text_decoration_lines;
 mod text_emphasis_ruby;

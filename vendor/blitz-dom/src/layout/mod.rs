@@ -123,6 +123,8 @@ pub(crate) struct LayoutPassState<'doc> {
     /// pyro: the multi-column container whose strip is being laid out and the border-box height
     /// its content's percentage heights resolve against (its column height, `layout::multicol`).
     pub(crate) multicol_percent_height: Option<(crate::NodeId, f32)>,
+    /// pyro: the inline roots this pass marked `FINAL_LAYOUT_STALE` (`mark_final_layout_stale`).
+    pub(crate) stale_lines: Vec<crate::NodeId>,
 }
 
 impl<'doc> LayoutPassState<'doc> {
@@ -164,6 +166,7 @@ impl<'doc> LayoutPassState<'doc> {
             round_counts: (0, 0),
             column_spanners: None,
             multicol_percent_height: None,
+            stale_lines: Vec::new(),
         }
     }
 }
@@ -203,7 +206,11 @@ impl LayoutPassState<'_> {
         // pyro: every algorithm lays out its children through here (Taffy's
         // `compute_child_layout` and Blitz's block contexts alike), once per tree level, so a tree
         // of any depth lays out on a stack grown on demand instead of overflowing the thread's.
-        crate::util::ensure_stack(|| {
+        // While it runs the box is `IN_LAYOUT` (see `mark_final_layout_stale`).
+        let id = dom_node_id(node_id);
+        let was_in_layout = self.nodes[id].flags.contains(NodeFlags::IN_LAYOUT);
+        self.nodes[id].flags.insert(NodeFlags::IN_LAYOUT);
+        let output = crate::util::ensure_stack(|| {
             #[cfg(feature = "writing-mode")]
             {
                 self.compute_child_layout_in_own_wm(node_id, inputs, block_ctx)
@@ -212,7 +219,9 @@ impl LayoutPassState<'_> {
             {
                 self.compute_child_layout_in_current_wm(node_id, inputs, block_ctx)
             }
-        })
+        });
+        self.nodes[id].flags.set(NodeFlags::IN_LAYOUT, was_in_layout);
+        output
     }
 
     /// Lay out `node_id` in the writing mode of the currently running algorithm (its parent's)
@@ -1631,6 +1640,62 @@ impl LayoutPassState<'_> {
         use taffy::CacheTree as _;
         self.cache_clear(node_id);
     }
+
+    /// pyro: a measuring run (`RunMode::ComputeSize`) left the lines of the inline root `node_id`
+    /// elsewhere than its last final layout did (`TextLayout::final_lines`): its lines, their
+    /// alignment or the places of its inline boxes are not those of that layout any more, and a
+    /// cached final layout would leave them so. The root is marked `FINAL_LAYOUT_STALE`: its next
+    /// final layout runs again (`cache_get`), and clears the mark (`cache_store`). So are the
+    /// boxes around it that are being laid out (`IN_LAYOUT`, up to one that is not): this pass may
+    /// ask one of them for a final layout it has cached, which would not lay the root out again (a
+    /// table measures a cell for its columns after an earlier step laid the cell's `inline-flex`
+    /// out). Boxes not being laid out are left alone: a box laid out alone (an absolutely
+    /// positioned box of the root) would make them run again in the next pass. A column flex item
+    /// measured at the available width and then stretched to its container's, in a table cell or a
+    /// flex item that is measured before it is laid out, had its text aligned to the available
+    /// width. A root still marked at the end of the pass is laid out again with the boxes it is in
+    /// (`mark_stale_lines_up`, `BaseDocument::resolve_layout`).
+    #[inline(never)]
+    pub(crate) fn mark_final_layout_stale(&mut self, node_id: crate::NodeId) {
+        let node = &mut self.nodes[node_id];
+        if node.flags.contains(NodeFlags::FINAL_LAYOUT_STALE) {
+            return;
+        }
+        node.flags.insert(NodeFlags::FINAL_LAYOUT_STALE);
+        self.stale_lines.push(node_id);
+        let mut id = self.nodes[node_id].layout_parent.get();
+        while let Some(current) = id {
+            let node = &mut self.nodes[current];
+            if !node.flags.contains(NodeFlags::IN_LAYOUT) || node.flags.contains(NodeFlags::FINAL_LAYOUT_STALE) {
+                break;
+            }
+            node.flags.insert(NodeFlags::FINAL_LAYOUT_STALE);
+            id = node.layout_parent.get();
+        }
+    }
+
+    /// pyro: marks the boxes that the inline roots this pass left `FINAL_LAYOUT_STALE` (see
+    /// `mark_final_layout_stale`) are laid out in, up to one marked already, so that a layout
+    /// from the root reaches those roots again; whether there were any.
+    pub(crate) fn mark_stale_lines_up(&mut self) -> bool {
+        let mut any = false;
+        for root in std::mem::take(&mut self.stale_lines) {
+            if !self.nodes[root].flags.contains(NodeFlags::FINAL_LAYOUT_STALE) {
+                continue;
+            }
+            any = true;
+            let mut id = self.nodes[root].layout_parent.get();
+            while let Some(current) = id {
+                let node = &mut self.nodes[current];
+                if node.flags.contains(NodeFlags::FINAL_LAYOUT_STALE) {
+                    break;
+                }
+                node.flags.insert(NodeFlags::FINAL_LAYOUT_STALE);
+                id = node.layout_parent.get();
+            }
+        }
+        any
+    }
 }
 
 impl taffy::CacheTree for LayoutPassState<'_> {
@@ -1640,10 +1705,12 @@ impl taffy::CacheTree for LayoutPassState<'_> {
         node_id: NodeId,
         inputs: &taffy::LayoutInput,
     ) -> Option<taffy::LayoutOutput> {
-        self.node_from_id_mut(node_id)
-            .try_layout_data_mut()?
-            .cache
-            .get(inputs)
+        let node = self.node_from_id_mut(node_id);
+        // pyro: see `mark_final_layout_stale`.
+        if inputs.run_mode == RunMode::PerformLayout && node.flags.contains(NodeFlags::FINAL_LAYOUT_STALE) {
+            return None;
+        }
+        node.try_layout_data_mut()?.cache.get(inputs)
     }
 
     #[inline]
@@ -1653,9 +1720,11 @@ impl taffy::CacheTree for LayoutPassState<'_> {
         inputs: &taffy::LayoutInput,
         layout_output: taffy::LayoutOutput,
     ) {
-        self.node_from_id_mut(node_id)
-            .cache_mut()
-            .store(inputs, layout_output);
+        let node = self.node_from_id_mut(node_id);
+        if inputs.run_mode == RunMode::PerformLayout {
+            node.flags.remove(NodeFlags::FINAL_LAYOUT_STALE);
+        }
+        node.cache_mut().store(inputs, layout_output);
     }
 
     #[inline]
