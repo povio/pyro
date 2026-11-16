@@ -253,3 +253,23 @@ fn a_fragment_paints_its_radii_and_snaps_to_css_pixels() {
         assert_eq!(pixel(&img, (red[0] + red[2]) / 2, red[3] - 1), RED, "scale {scale}: bottom side");
     }
 }
+
+/// In a vertical writing mode a span's block-axis border and padding are its left and right sides: they are painted
+/// (only its background colour was) and, reaching past its line, over the block after it (Appendix E: inline content
+/// over block backgrounds).
+#[test]
+fn a_vertical_spans_block_sides_are_painted_over_the_next_block() {
+    for mode in ["vertical-rl", "vertical-lr"] {
+        let body = format!(
+            "<div style='writing-mode:{mode};height:200px;margin-left:40px'><div style='width:40px'><span style='padding-block:10px;\
+             border-block:10px solid blue;background:red;color:red'>00</span></div><div style='width:40px;background:green'></div></div>"
+        );
+        let img = render(&body, 1.0);
+        let blue = bounds(&img, 0, 200, |p| p == BLUE).expect("blue borders");
+        let red = bounds(&img, 0, 200, |p| p == RED).expect("red padding");
+        assert!(blue[0] + 10 <= red[0] && red[2] + 10 <= blue[2], "{mode}: a border each side of the box: {blue:?} {red:?}");
+        // The first column is at the right in vertical-rl, the left in vertical-lr; the box reaches into the second.
+        let (column0, column1) = if mode == "vertical-rl" { (80, 120) } else { (40, 80) };
+        assert!(blue[0] < column0 || blue[2] > column1, "{mode}: over the green block: {blue:?}");
+    }
+}

@@ -2115,6 +2115,7 @@ impl ElementCx<'_, '_> {
         text_layout: &blitz_dom::node::TextLayout,
         transform: Affine,
         tops: Option<crate::text::LineTops>,
+        turned: Option<&dyn Fn(usize) -> Affine>,
     ) -> Vec<InlineBoxFragment> {
         let layout = &text_layout.layout;
         let mut painted_fragments = Vec::new();
@@ -2414,6 +2415,58 @@ impl ElementCx<'_, '_> {
                 top: length(&padding.padding_top.0),
                 bottom: length(&padding.padding_bottom.0),
             };
+            // pyro: a vertical writing mode's lines are laid out turned (`draw_vertical_inline_layout`):
+            // a line's left (inline start) is the box's top, its over side (where y is least) its
+            // right, in `vertical-rl` and `vertical-lr` alike. The fragment is the box's physical
+            // piece: its top and bottom sides are the open ones, its right and left reach over and
+            // under the line.
+            if let Some(turned) = turned {
+                drop(style);
+                let border = taffy::Rect {
+                    top: side(!left, whole_border.top),
+                    bottom: side(!right, whole_border.bottom),
+                    ..whole_border
+                };
+                let padding = taffy::Rect {
+                    top: side(!left, whole_padding.top),
+                    bottom: side(!right, whole_padding.bottom),
+                    ..whole_padding
+                };
+                let rect = Rect::new(
+                    fragment.x0 as f64,
+                    (fragment.top - (border.right + padding.right) * scale) as f64,
+                    fragment.x1 as f64,
+                    (fragment.bottom + (border.left + padding.left) * scale) as f64,
+                );
+                let line_transform = turned(fragment.line);
+                let [a, b, c, d, tx, ty] = self.transform.as_coeffs();
+                let (transform, size) = if a == 1.0 && b == 0.0 && c == 0.0 && d == 1.0 {
+                    // To whole CSS pixels, as horizontal fragments.
+                    let bounds = (self.transform.inverse() * line_transform).transform_rect_bbox(rect);
+                    let snap = |v: f64| (v / self.scale).round() * self.scale;
+                    let (x0, y0) = (snap(tx + bounds.x0), snap(ty + bounds.y0));
+                    let (x1, y1) = (snap(tx + bounds.x1), snap(ty + bounds.y1));
+                    (Affine::translate((x0, y0)), Size::new(x1 - x0, y1 - y0))
+                } else {
+                    let bounds = (self.transform.inverse() * line_transform).transform_rect_bbox(rect);
+                    (self.transform * Affine::translate((bounds.x0, bounds.y0)), bounds.size())
+                };
+                painted_fragments.push(InlineBoxFragment {
+                    node: fragment.node,
+                    line: fragment.line,
+                    transform,
+                    size,
+                    border,
+                    padding,
+                    whole: None,
+                    left,
+                    right,
+                    reaches_above: false,
+                    style: fragment.style.clone(),
+                    turned: true,
+                });
+                continue;
+            }
             let border = taffy::Rect {
                 left: side(!left, whole_border.left),
                 right: side(!right, whole_border.right),
@@ -2470,6 +2523,7 @@ impl ElementCx<'_, '_> {
                 right,
                 reaches_above: (rect.y0 as f32) < fragment.line_top,
                 style: fragment.style.clone(),
+                turned: false,
             });
         }
         painted_fragments
@@ -2506,13 +2560,25 @@ impl ElementCx<'_, '_> {
         if let Some(style) = &fragment.style {
             cx.style = style.clone();
         }
-        if !left {
-            cx.frame.border_radii.top_left = Vec2::ZERO;
-            cx.frame.border_radii.bottom_left = Vec2::ZERO;
-        }
-        if !right {
-            cx.frame.border_radii.top_right = Vec2::ZERO;
-            cx.frame.border_radii.bottom_right = Vec2::ZERO;
+        // pyro: a turned (vertical) fragment's open sides are its top and bottom.
+        if fragment.turned {
+            if !left {
+                cx.frame.border_radii.top_left = Vec2::ZERO;
+                cx.frame.border_radii.top_right = Vec2::ZERO;
+            }
+            if !right {
+                cx.frame.border_radii.bottom_left = Vec2::ZERO;
+                cx.frame.border_radii.bottom_right = Vec2::ZERO;
+            }
+        } else {
+            if !left {
+                cx.frame.border_radii.top_left = Vec2::ZERO;
+                cx.frame.border_radii.bottom_left = Vec2::ZERO;
+            }
+            if !right {
+                cx.frame.border_radii.top_right = Vec2::ZERO;
+                cx.frame.border_radii.bottom_right = Vec2::ZERO;
+            }
         }
         // The whole box, for a sliced box's shadows and background images, and the fragment's
         // piece of it: its border box, and for the outer shadows the space past its closed
@@ -2526,7 +2592,11 @@ impl ElementCx<'_, '_> {
         });
         let piece = Rect::from_origin_size(Point::ZERO, size);
         let far = 1e6;
-        let outside = Rect::new(if left { -far } else { 0.0 }, -far, if right { far } else { size.width }, far);
+        let outside = if fragment.turned {
+            Rect::new(-far, if left { -far } else { 0.0 }, far, if right { far } else { size.height })
+        } else {
+            Rect::new(if left { -far } else { 0.0 }, -far, if right { far } else { size.width }, far)
+        };
         match &whole {
             Some(whole) => {
                 scene.push_clip_layer(Fill::NonZero, transform, &outside);
@@ -2618,7 +2688,7 @@ impl ElementCx<'_, '_> {
             // paints over the text of the line above where it reaches into it), when a box after
             // the first line reaches above its line and no selection, ellipsis or annotation
             // interleaves.
-            let fragments = self.inline_box_fragments(text_layout, transform, tops);
+            let fragments = self.inline_box_fragments(text_layout, transform, tops, None);
             let selection = self.context.selection_ranges.get(&self.node.id).copied();
             let by_line = selection.is_none()
                 && text_layout.ellipsis.is_none()
@@ -2852,7 +2922,13 @@ impl ElementCx<'_, '_> {
             )
         };
 
-        if self.context.backgrounds {
+        // pyro: the boxes of inline elements, as on horizontal lines (`inline_box_fragments`), but
+        // for `sideways-lr`, whose lines turn the other way (it keeps their background colours).
+        if !wm.contains(WritingMode::WRITING_MODE_SIDEWAYS_LR) {
+            for fragment in self.inline_box_fragments(text_layout, Affine::IDENTITY, None, Some(&line_transform)) {
+                self.paint_inline_box_fragment(scene, &fragment, line_transform(fragment.line), None);
+            }
+        } else if self.context.backgrounds {
             for (index, line) in text_layout.layout.lines().enumerate() {
                 let vertical = vertical(&line);
                 crate::text::draw_inline_backgrounds(
@@ -4318,6 +4394,9 @@ struct InlineBoxFragment {
     reaches_above: bool,
     /// pyro: its element's style on the first line, in place of its own (`::first-line`).
     style: Option<style::servo_arc::Arc<ComputedValues>>,
+    /// pyro: a fragment of a vertical writing mode's turned line: `left` and `right` are its top
+    /// and bottom sides.
+    turned: bool,
 }
 
 /// pyro: the last cell (in tree order, which is the order positioned boxes paint in) of a collapsed

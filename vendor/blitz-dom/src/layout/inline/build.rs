@@ -280,7 +280,8 @@ fn in_vertical_multicol(nodes: &crate::NodeTree, root_id: NodeId) -> bool {
     false
 }
 
-/// pyro: whether an inline box with `style` has a border or padding over or under it.
+/// pyro: whether an inline box with `style` has a border or padding over or under it (left or
+/// right of it in a vertical writing mode).
 fn has_block_edges(style: &style::properties::ComputedValues) -> bool {
     use style::values::computed::Length;
     let (b, p) = (style.get_border(), style.get_padding());
@@ -290,6 +291,12 @@ fn has_block_edges(style: &style::properties::ComputedValues) -> bool {
     let padding = |v: &style::values::computed::NonNegativeLengthPercentage| {
         v.0.resolve(Length::new(0.0)).px() != 0.0 || v.0.has_percentage()
     };
+    if style.writing_mode.is_vertical() {
+        return border(&b.border_left_width, b.border_left_style)
+            || border(&b.border_right_width, b.border_right_style)
+            || padding(&p.padding_left)
+            || padding(&p.padding_right);
+    }
     border(&b.border_top_width, b.border_top_style)
         || border(&b.border_bottom_width, b.border_bottom_style)
         || padding(&p.padding_top)

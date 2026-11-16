@@ -956,3 +956,11 @@ Tables (round 3 lane C2T), covered by `crates/pyro-render/tests/table_paint_orde
 - `src/render.rs` (`marker_line_x`): an outside marker moves with its line past floats only when the line holds
   something in flow (text with an advance, an in-flow inline box); a list item holding only a float keeps its marker
   before its border box, as Blink (WPT css-display `display-flow-root-list-item-001`).
+
+- `src/render.rs` (`inline_box_fragments` with `turned`, `InlineBoxFragment::turned`, `draw_turned_lines`): the boxes of
+  inline elements on a vertical writing mode's lines are painted as on horizontal ones (background, images, border,
+  radii, shadows, outline), each fragment its turned line's logical box mapped to the page: its top and bottom are the
+  inline sides (open between lines), its right and left the over and under sides, with the element's physical border
+  and padding there. Only `sideways-lr` lines (turned the other way) keep the background colours alone. WPT css-inline
+  `text-box-trim-inline-box-004/005` and `-text-decoration-002` (vertical variants). Covered by
+  `a_vertical_spans_block_sides_are_painted_over_the_next_block` in `crates/pyro-render/tests/inline_box_decorations.rs`.

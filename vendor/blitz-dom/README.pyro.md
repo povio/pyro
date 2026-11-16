@@ -2302,3 +2302,6 @@ Round 3 lane C2T (CSS2), covered by `crates/pyro-render/tests/css2_intrinsic_and
   (`LayoutStyles::derive`): a `<fieldset>` is laid out with `stylo_taffy::convert::fieldset_display` (an inline one is
   an inline-block, a table-type one a block) and has no table-part or cell layout style (a `table-cell` fieldset kept
   its `height` in none). Covered by `crates/pyro-render/tests/display_contents_boxes.rs`.
+- `src/layout/inline/build.rs` (`has_block_edges`): in a vertical writing mode an inline box's block-axis border and
+  padding are its left and right ones: a root with such boxes is painted in Appendix E phases
+  (`FLOW_CONTENT_OVERFLOWS`), so the boxes reaching past its lines paint over the block backgrounds after it.

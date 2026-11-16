@@ -8229,7 +8229,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
  };
  use style::{
      computed_values::position::T as PositionProperty,
-@@ -15,12 +15,354 @@
+@@ -15,12 +15,361 @@
  use crate::{
      NodeData,
      layout::list::BULLET_FONT_FAMILY,
@@ -8500,7 +8500,8 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
 +    false
 +}
 +
-+/// pyro: whether an inline box with `style` has a border or padding over or under it.
++/// pyro: whether an inline box with `style` has a border or padding over or under it (left or
++/// right of it in a vertical writing mode).
 +fn has_block_edges(style: &style::properties::ComputedValues) -> bool {
 +    use style::values::computed::Length;
 +    let (b, p) = (style.get_border(), style.get_padding());
@@ -8510,6 +8511,12 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
 +    let padding = |v: &style::values::computed::NonNegativeLengthPercentage| {
 +        v.0.resolve(Length::new(0.0)).px() != 0.0 || v.0.has_percentage()
 +    };
++    if style.writing_mode.is_vertical() {
++        return border(&b.border_left_width, b.border_left_style)
++            || border(&b.border_right_width, b.border_right_style)
++            || padding(&p.padding_left)
++            || padding(&p.padding_right);
++    }
 +    border(&b.border_top_width, b.border_top_style)
 +        || border(&b.border_bottom_width, b.border_bottom_style)
 +        || padding(&p.padding_top)
@@ -8586,7 +8593,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
  pub(crate) fn build_inline_layout_into(
      nodes: &crate::NodeTree,
      layout_ctx: &mut LayoutContext<TextBrush>,
-@@ -29,6 +371,49 @@
+@@ -29,6 +378,49 @@
      scale: f32,
      inline_context_root_node_id: NodeId,
  ) {
@@ -8636,7 +8643,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
      // Get the inline context's root node's text styles
      let root_node = &nodes[inline_context_root_node_id];
      let root_node_style = root_node.primary_styles().or_else(|| {
-@@ -37,7 +422,7 @@
+@@ -37,7 +429,7 @@
              .and_then(|parent_id| nodes[parent_id].primary_styles())
      });
  
@@ -8645,7 +8652,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
          .as_ref()
          .map(|s| stylo_to_parley::style(inline_context_root_node_id, s))
          .unwrap_or_else(|| parley::TextStyle {
-@@ -45,6 +430,13 @@
+@@ -45,6 +437,13 @@
              ..Default::default()
          });
  
@@ -8659,7 +8666,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
      // Create a parley tree builder
      let mut builder = layout_ctx.tree_builder(font_ctx, scale, true, &parley_style);
      if let Some(style) = root_node_style.as_deref() {
-@@ -59,15 +451,42 @@
+@@ -59,15 +458,42 @@
          .map(|s| CaseTransform::from_style(s))
          .unwrap_or(CaseTransform::NONE);
  
@@ -8702,7 +8709,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
          match marker {
              // Bullet glyphs live in the bundled bullet font. The position-outside
              // path already asks for it; without the same span here a marker like
-@@ -80,50 +499,440 @@
+@@ -80,50 +506,440 @@
                  builder.push_text(&format!("{char} "));
                  builder.pop_style_span();
              }
@@ -8884,7 +8891,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
 +    {
 +        return false;
 +    }
-+
+ 
 +    // The first build keeps the lines of the layout's last break over the text that did not
 +    // change, for `BreakLines::resume`. The strut build follows a build of the same content.
 +    text_layout.text = if strut_build {
@@ -9097,7 +9104,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
 +        }
 +        close_span(builder, end, bidi, bidi_scan);
 +    }
- 
++
 +    #[allow(clippy::too_many_arguments)]
 +    /// pyro: builds `node_id`'s inline content, with the scroll pseudo-element boxes generated
 +    /// beside it (`scroll_markers`) before and after it, unless `container` (whose box list holds
@@ -9149,7 +9156,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
      ) {
          let node = &nodes[node_id];
  
-@@ -143,6 +952,26 @@
+@@ -143,6 +959,26 @@
                      }
                  }
  
@@ -9176,7 +9183,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
                  let display = node.display_style().unwrap_or(Display::inline());
                  let position = style
                      .map(|s| s.clone_position())
-@@ -161,41 +990,44 @@
+@@ -161,41 +997,44 @@
                          // node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
                      }
                      (DisplayOutside::None, DisplayInside::Contents) => {
@@ -9243,7 +9250,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
                              }
                              builder.push_inline_box(InlineBox {
                                  id: node_id.as_u64(),
-@@ -210,66 +1042,165 @@
+@@ -210,66 +1049,165 @@
                                      .primary_styles()
                                      .map(|s| stylo_to_parley::vertical_align(&s))
                                      .unwrap_or_default(),
@@ -9430,7 +9437,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
                          }
                          builder.push_inline_box(InlineBox {
                              id: node_id.as_u64(),
-@@ -284,6 +1215,7 @@
+@@ -284,6 +1222,7 @@
                                  .primary_styles()
                                  .map(|s| stylo_to_parley::vertical_align(&s))
                                  .unwrap_or_default(),
@@ -9438,7 +9445,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
                          });
                      }
                  };
-@@ -291,10 +1223,75 @@
+@@ -291,10 +1230,75 @@
              NodeData::Text(data) => {
                  // node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
                  // dbg!(&data.content);
@@ -9517,7 +9524,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
              }
              NodeData::Comment { .. } => {
                  // node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
-@@ -303,3 +1300,250 @@
+@@ -303,3 +1307,250 @@
          }
      }
  }

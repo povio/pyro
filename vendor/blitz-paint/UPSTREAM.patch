@@ -6564,14 +6564,10 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
  fn convert_rect(rect: &parley::BoundingBox) -> kurbo::Rect {
      peniko::kurbo::Rect::new(rect.x0, rect.y0, rect.x1, rect.y1)
  }
-@@ -963,12 +2095,500 @@
-                     None,
-                     &stroke_rect.to_rounded_rect(radius - stroke_width / 2.0),
-                 );
-+            }
-+        }
-+    }
-+
+@@ -967,8 +2099,566 @@
+         }
+     }
+ 
 +    /// pyro: paints the boxes of the inline (non-atomic) elements in this inline root's lines, as
 +    /// Chromium does. An element has one fragment per line it has content on: from the start of
 +    /// its first content there to the end of its last (its own start and end edges without their
@@ -6588,6 +6584,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +        text_layout: &blitz_dom::node::TextLayout,
 +        transform: Affine,
 +        tops: Option<crate::text::LineTops>,
++        turned: Option<&dyn Fn(usize) -> Affine>,
 +    ) -> Vec<InlineBoxFragment> {
 +        let layout = &text_layout.layout;
 +        let mut painted_fragments = Vec::new();
@@ -6780,8 +6777,8 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                        }
 +                    }
 +                }
-             }
-         }
++            }
++        }
 +        if fragments.is_empty() {
 +            return painted_fragments;
 +        }
@@ -6887,6 +6884,58 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                top: length(&padding.padding_top.0),
 +                bottom: length(&padding.padding_bottom.0),
 +            };
++            // pyro: a vertical writing mode's lines are laid out turned (`draw_vertical_inline_layout`):
++            // a line's left (inline start) is the box's top, its over side (where y is least) its
++            // right, in `vertical-rl` and `vertical-lr` alike. The fragment is the box's physical
++            // piece: its top and bottom sides are the open ones, its right and left reach over and
++            // under the line.
++            if let Some(turned) = turned {
++                drop(style);
++                let border = taffy::Rect {
++                    top: side(!left, whole_border.top),
++                    bottom: side(!right, whole_border.bottom),
++                    ..whole_border
++                };
++                let padding = taffy::Rect {
++                    top: side(!left, whole_padding.top),
++                    bottom: side(!right, whole_padding.bottom),
++                    ..whole_padding
++                };
++                let rect = Rect::new(
++                    fragment.x0 as f64,
++                    (fragment.top - (border.right + padding.right) * scale) as f64,
++                    fragment.x1 as f64,
++                    (fragment.bottom + (border.left + padding.left) * scale) as f64,
++                );
++                let line_transform = turned(fragment.line);
++                let [a, b, c, d, tx, ty] = self.transform.as_coeffs();
++                let (transform, size) = if a == 1.0 && b == 0.0 && c == 0.0 && d == 1.0 {
++                    // To whole CSS pixels, as horizontal fragments.
++                    let bounds = (self.transform.inverse() * line_transform).transform_rect_bbox(rect);
++                    let snap = |v: f64| (v / self.scale).round() * self.scale;
++                    let (x0, y0) = (snap(tx + bounds.x0), snap(ty + bounds.y0));
++                    let (x1, y1) = (snap(tx + bounds.x1), snap(ty + bounds.y1));
++                    (Affine::translate((x0, y0)), Size::new(x1 - x0, y1 - y0))
++                } else {
++                    let bounds = (self.transform.inverse() * line_transform).transform_rect_bbox(rect);
++                    (self.transform * Affine::translate((bounds.x0, bounds.y0)), bounds.size())
++                };
++                painted_fragments.push(InlineBoxFragment {
++                    node: fragment.node,
++                    line: fragment.line,
++                    transform,
++                    size,
++                    border,
++                    padding,
++                    whole: None,
++                    left,
++                    right,
++                    reaches_above: false,
++                    style: fragment.style.clone(),
++                    turned: true,
++                });
++                continue;
++            }
 +            let border = taffy::Rect {
 +                left: side(!left, whole_border.left),
 +                right: side(!right, whole_border.right),
@@ -6943,11 +6992,12 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                right,
 +                reaches_above: (rect.y0 as f32) < fragment.line_top,
 +                style: fragment.style.clone(),
++                turned: false,
 +            });
 +        }
 +        painted_fragments
-     }
- 
++    }
++
 +    /// pyro: paints a fragment of `inline_box_fragments`: outer shadow, background, inner shadow,
 +    /// border and outline. `transform` and `tops` are the root's text's (for a `background-clip:
 +    /// text` mask).
@@ -6979,13 +7029,25 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +        if let Some(style) = &fragment.style {
 +            cx.style = style.clone();
 +        }
-+        if !left {
-+            cx.frame.border_radii.top_left = Vec2::ZERO;
-+            cx.frame.border_radii.bottom_left = Vec2::ZERO;
-+        }
-+        if !right {
-+            cx.frame.border_radii.top_right = Vec2::ZERO;
-+            cx.frame.border_radii.bottom_right = Vec2::ZERO;
++        // pyro: a turned (vertical) fragment's open sides are its top and bottom.
++        if fragment.turned {
++            if !left {
++                cx.frame.border_radii.top_left = Vec2::ZERO;
++                cx.frame.border_radii.top_right = Vec2::ZERO;
++            }
++            if !right {
++                cx.frame.border_radii.bottom_left = Vec2::ZERO;
++                cx.frame.border_radii.bottom_right = Vec2::ZERO;
++            }
++        } else {
++            if !left {
++                cx.frame.border_radii.top_left = Vec2::ZERO;
++                cx.frame.border_radii.bottom_left = Vec2::ZERO;
++            }
++            if !right {
++                cx.frame.border_radii.top_right = Vec2::ZERO;
++                cx.frame.border_radii.bottom_right = Vec2::ZERO;
++            }
 +        }
 +        // The whole box, for a sliced box's shadows and background images, and the fragment's
 +        // piece of it: its border box, and for the outer shadows the space past its closed
@@ -6999,7 +7061,11 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +        });
 +        let piece = Rect::from_origin_size(Point::ZERO, size);
 +        let far = 1e6;
-+        let outside = Rect::new(if left { -far } else { 0.0 }, -far, if right { far } else { size.width }, far);
++        let outside = if fragment.turned {
++            Rect::new(-far, if left { -far } else { 0.0 }, far, if right { far } else { size.height })
++        } else {
++            Rect::new(if left { -far } else { 0.0 }, -far, if right { far } else { size.width }, far)
++        };
 +        match &whole {
 +            Some(whole) => {
 +                scene.push_clip_layer(Fill::NonZero, transform, &outside);
@@ -7065,7 +7131,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              let text_layout = self.element
                  .inline_layout_data
                  .as_ref()
-@@ -976,6 +2596,11 @@
+@@ -976,6 +2666,11 @@
                      panic!("Tried to render node marked as inline root that does not have an inline layout: {:?}", self.node);
                  });
  
@@ -7077,7 +7143,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              // Text keeps its unrounded position; only box edges are snapped to whole pixels.
              let subpixel_offset = text_layout.content_box_subpixel_offset;
              let pos = Point {
-@@ -984,23 +2609,78 @@
+@@ -984,23 +2679,78 @@
              };
              let transform =
                  self.transform * Affine::translate((pos.x * self.scale, pos.y * self.scale));
@@ -7099,7 +7165,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +            // paints over the text of the line above where it reaches into it), when a box after
 +            // the first line reaches above its line and no selection, ellipsis or annotation
 +            // interleaves.
-+            let fragments = self.inline_box_fragments(text_layout, transform, tops);
++            let fragments = self.inline_box_fragments(text_layout, transform, tops, None);
 +            let selection = self.context.selection_ranges.get(&self.node.id).copied();
 +            let by_line = selection.is_none()
 +                && text_layout.ellipsis.is_none()
@@ -7167,7 +7233,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
                      sel_start,
                      sel_end,
                  );
-@@ -1008,18 +2688,231 @@
+@@ -1008,18 +2758,237 @@
  
              // Render text
              let mut draw_text_context = self.context.draw_text_context.borrow_mut();
@@ -7335,7 +7401,13 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +            )
 +        };
 +
-+        if self.context.backgrounds {
++        // pyro: the boxes of inline elements, as on horizontal lines (`inline_box_fragments`), but
++        // for `sideways-lr`, whose lines turn the other way (it keeps their background colours).
++        if !wm.contains(WritingMode::WRITING_MODE_SIDEWAYS_LR) {
++            for fragment in self.inline_box_fragments(text_layout, Affine::IDENTITY, None, Some(&line_transform)) {
++                self.paint_inline_box_fragment(scene, &fragment, line_transform(fragment.line), None);
++            }
++        } else if self.context.backgrounds {
 +            for (index, line) in text_layout.layout.lines().enumerate() {
 +                let vertical = vertical(&line);
 +                crate::text::draw_inline_backgrounds(
@@ -7401,7 +7473,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          }
      }
  
-@@ -1030,9 +2923,15 @@
+@@ -1030,9 +2999,15 @@
              // within the content box of it's node.
              let y_offset = self.node.text_input_v_centering_offset(self.scale);
              let subpixel_offset = input_data.content_box_subpixel_offset;
@@ -7419,7 +7491,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              };
  
              // Apply the scroll offset (stored in CSS pixels, scaled here to device pixels) so
-@@ -1047,7 +2946,65 @@
+@@ -1047,7 +3022,65 @@
  
              let transform = self.transform
                  * Affine::translate((pos.x * self.scale - scroll_x, pos.y * self.scale - scroll_y));
@@ -7485,7 +7557,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              if self.node.is_focussed() {
                  // Render selection/caret
                  for (rect, _line_idx) in input_data.editor.selection_geometry().iter() {
-@@ -1074,54 +3031,174 @@
+@@ -1074,54 +3107,174 @@
                          &convert_rect(&cursor),
                      );
                  };
@@ -7683,7 +7755,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
                      / layout.scale()
                      + text_layout.block_offset
              } else {
-@@ -1129,7 +3206,7 @@
+@@ -1129,7 +3282,7 @@
              };
  
              let pos = Point {
@@ -7692,7 +7764,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
                  y: pos.y + (content_box_subpixel_offset.y + y_offset) as f64,
              };
  
-@@ -1145,13 +3222,154 @@
+@@ -1145,13 +3298,154 @@
                  TextPaintOptions {
                      scale: self.scale,
                      brush_override: None,
@@ -7847,7 +7919,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
      fn draw_children(
          &self,
          scene: &mut impl PaintScene,
-@@ -1159,69 +3377,403 @@
+@@ -1159,69 +3453,403 @@
          clip_rect: Rect,
      ) {
          // Negative z_index hoisted nodes
@@ -8300,7 +8372,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
      #[cfg(feature = "svg")]
      fn draw_svg(&self, scene: &mut impl PaintScene) {
          use style::properties::generated::longhands::object_fit::computed_value::T as ObjectFit;
-@@ -1232,6 +3784,11 @@
+@@ -1232,6 +3860,11 @@
  
          let width = self.frame.content_box.width() as f32;
          let height = self.frame.content_box.height() as f32;
@@ -8312,7 +8384,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          let svg_size = svg.tree.size();
  
          let x = self.frame.content_box.origin().x;
-@@ -1253,9 +3810,20 @@
+@@ -1253,9 +3886,20 @@
  
          // Apply object-fit algorithm
          let container_size = taffy::Size { width, height };
@@ -8336,7 +8408,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          };
          let paint_size = compute_object_fit(container_size, Some(object_size), object_fit);
  
-@@ -1266,26 +3834,164 @@
+@@ -1266,26 +3910,164 @@
          let y_offset = object_position.vertical.resolve(
              CSSPixelLength::new(container_size.height - paint_size.height) / self.scale as f32,
          ) * self.scale as f32;
@@ -8502,7 +8574,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
      fn with_replaced_content_clip<S: PaintScene>(
          &self,
          scene: &mut S,
-@@ -1293,15 +3999,27 @@
+@@ -1293,15 +4075,27 @@
          paint_size: taffy::Size<f32>,
          x_offset: f32,
          y_offset: f32,
@@ -8531,7 +8603,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              BlendMode::default(),
              1.0,
              self.transform,
-@@ -1329,9 +4047,22 @@
+@@ -1329,9 +4123,22 @@
                  width: width as f32,
                  height: height as f32,
              };
@@ -8557,7 +8629,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              };
              let paint_size = compute_object_fit(container_size, Some(object_size), object_fit);
  
-@@ -1347,10 +4078,28 @@
+@@ -1347,10 +4154,28 @@
  
              let x_scale = paint_size.width as f64 / object_size.width as f64;
              let y_scale = paint_size.height as f64 / object_size.height as f64;
@@ -8586,7 +8658,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
  
              self.with_replaced_content_clip(
                  scene,
-@@ -1358,8 +4107,23 @@
+@@ -1358,8 +4183,23 @@
                  paint_size,
                  x_offset.px(),
                  y_offset.px(),
@@ -8611,7 +8683,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
                  },
              );
          }
-@@ -1427,6 +4191,14 @@
+@@ -1427,6 +4267,14 @@
      }
  }
  
@@ -8626,7 +8698,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
  fn insets_from_taffy_rect(input: taffy::Rect<f64>) -> Insets {
      Insets {
          x0: input.left,
-@@ -1457,12 +4229,134 @@
+@@ -1457,12 +4305,137 @@
          }
      };
      let s_border = style.get_border();
@@ -8724,6 +8796,9 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +    reaches_above: bool,
 +    /// pyro: its element's style on the first line, in place of its own (`::first-line`).
 +    style: Option<style::servo_arc::Arc<ComputedValues>>,
++    /// pyro: a fragment of a vertical writing mode's turned line: `left` and `right` are its top
++    /// and bottom sides.
++    turned: bool,
 +}
 +
 +/// pyro: the last cell (in tree order, which is the order positioned boxes paint in) of a collapsed
