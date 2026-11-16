@@ -643,7 +643,21 @@ impl Layout {
     /// The `position: sticky` elements' inputs, read again when the DOM,
     /// styles, focus/hover or viewport changed; empty while the engine lays
     /// out no sticky element (one flag check: no read).
+    ///
+    /// pyro: whether any element is sticky is known from styles alone (the
+    /// engine's style traversal keeps the set, `GeometrySource::has_sticky`):
+    /// a document without one is restyled, not laid out, for the question.
+    /// Every render snapshot asks it (each screenshot and screencast frame),
+    /// and a layout of the whole document for it after each DOM change cost
+    /// a capture about half a millisecond.
     fn sticky_map(&self, dom: &Dom) -> Rc<FxHashMap<NodeId, ExternalSticky>> {
+        let styled_without_sticky = self.external.as_ref().filter(|s| s.active()).is_some_and(|source| {
+            // (`None`: no styles to tell by now; the sync below decides.)
+            self.style.engine_styled(dom).is_some() && !source.has_sticky()
+        });
+        if styled_without_sticky {
+            return Rc::default();
+        }
         let Some(source) = self.synced_geometry_source(dom).filter(|s| s.has_sticky()) else { return Rc::default() };
         let key = self.syncs.get();
         if let Some((k, m)) = self.sticky.borrow().as_ref() {

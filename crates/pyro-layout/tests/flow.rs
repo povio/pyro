@@ -2833,6 +2833,28 @@ fn sticky_boxes_follow_their_containing_block_chain_to_a_scroll_container() {
 }
 
 #[test]
+fn sticky_offsets_lay_out_only_a_document_with_a_sticky_box() {
+    // Every render snapshot asks for the sticky offsets (each screenshot and screencast frame). A
+    // document without a sticky box answers from a restyle after a DOM change, without a layout
+    // (Taffy runs no pass for it); a box a change makes sticky is found by that restyle.
+    let html = "<!doctype html><style>body{margin:0}.s{position:sticky;top:0}</style>\
+         <div id=sc style=\"height:100px;overflow:auto\"><div style=\"height:40px\"></div>\
+         <div id=t style=\"height:20px\"></div><div style=\"height:500px\"></div></div>";
+    let mut p = page(html);
+    let (sc, t) = (p.id("sc"), p.id("t"));
+    p.layout.set_scroll_top(&p.dom, sc, 100);
+    assert!(p.layout.sticky_offsets(&p.dom).is_empty());
+    p.dom.set_attribute(t, "style", "height:30px").unwrap();
+    let passes = pyro_render::blitz_passes().1;
+    assert!(p.layout.sticky_offsets(&p.dom).is_empty());
+    assert_eq!(pyro_render::blitz_passes().1, passes, "no layout for a document without a sticky box");
+    assert!((p.layout.bounding_client_rect(&p.dom, t).height - 30.0).abs() < 0.5, "a layout query lays it out");
+    p.dom.set_attribute(t, "class", "s").unwrap();
+    let offsets = p.layout.sticky_offsets(&p.dom);
+    assert!(offsets.iter().any(|&(_, o)| o == (0.0, 60.0)), "held at the scrollport's top: {offsets:?}");
+}
+
+#[test]
 fn sticky_boxes_stay_in_their_scrollport_like_chromium() {
     // TOS finance tables (TP-4230 master charges header, TS-88 pinned Profit /
     // rightSticky columns, sticky totals footer): `position: sticky` was laid
