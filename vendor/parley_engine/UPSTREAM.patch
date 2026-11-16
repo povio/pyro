@@ -967,7 +967,7 @@
                  )
              },
          );
- 
++
 +        // Use the entire run text including newlines.
 +        let run_text = &text[range.byte_range.clone()];
 +        let pre_context = context_before(&text[..range.byte_range.start]);
@@ -1023,7 +1023,7 @@
 +            }
 +            _ => (features, features),
 +        };
-+
+ 
 +        let glyph_key = cache::GlyphKey {
 +            font_blob_id: font.font.data.id(),
 +            font_index: font.font.index,
@@ -1090,18 +1090,25 @@
          buffer.reserve(run_text.len());
          #[expect(clippy::cast_possible_truncation, reason = "Deferred")]
          for (i, ch) in run_text.chars().enumerate() {
-@@ -340,7 +573,9 @@
+@@ -340,6 +573,17 @@
              // with `char_indices`, push each char individually via `.chars` with a cluster index
              // that matches its `infos` counterpart. This allows us to lookup `infos` via cluster
              // index in `data.rs`.
--            buffer.add(ch, i as u32);
 +            // pyro: a tab is shaped as a space, as in browsers: it draws nothing, and its advance
 +            // is the line breaker's to set (the tab stop it reaches).
-+            buffer.add(if ch == '\t' { ' ' } else { ch }, i as u32);
++            // pyro: a control character other than a tab or a line break is visible, as in
++            // browsers (CSS Text 3 § 4.1.1): it is shaped as a code point no font maps, so it
++            // draws the font's missing-glyph box even where the font maps it to an empty glyph
++            // (TrueType fonts map U+0008 and U+001D to `.null`).
++            let ch = match ch {
++                '\t' => ' ',
++                '\u{0}'..='\u{8}' | '\u{b}' | '\u{c}' | '\u{e}'..='\u{1f}' | '\u{7f}'..='\u{84}' | '\u{86}'..='\u{9f}' => '\u{FFFF}',
++                ch => ch,
++            };
+             buffer.add(ch, i as u32);
          }
  
-         buffer.set_pre_context(&text[..range.byte_range.start]);
-@@ -356,11 +591,11 @@
+@@ -356,11 +600,11 @@
              buffer,
              HarfShapeOptions::new()
                  .plan(Some(shaper_plan))
@@ -1116,7 +1123,7 @@
              text,
              range,
              segment,
-@@ -370,15 +605,24 @@
+@@ -370,15 +614,24 @@
              font,
              &glyph_buffer,
              harf_shaper.coords(),
@@ -1143,7 +1150,7 @@
  
      // The segment's characters with their analysis data and style indices.
      let mut chars = segment_text
-@@ -417,18 +661,109 @@
+@@ -417,18 +670,109 @@
          } else {
              if let Some((run_font, run_range)) = run.take() {
                  // The font changed: shape the previous run.

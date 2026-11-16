@@ -2,8 +2,10 @@
 //! but not the `unicode-bidi: bidi-override` of the block (WPT `pre-wrap-align-*-003`); a segment
 //! break next to a zero-width space is removed with the white space around it
 //! (`seg-break-transformation-018/019`); atomic inlines in `nowrap` spans wrap between the spans in
-//! a block that wraps (`line-breaking-030/031/032`). Measured on empty inline-blocks (`b`) in a
-//! monospace font.
+//! a block that wraps (`line-breaking-030/031/032`); an inline-level absolutely positioned box
+//! alone on its line sits after the text indent (`text-indent-with-absolute-pos-child`); a box
+//! after nothing but span start edges overflows rather than leave an empty line
+//! (`text-indent-overflow`). Measured on empty inline-blocks (`b`) in a monospace font.
 use std::{cell::RefCell, rc::Rc, sync::Arc};
 
 use pyro_dom::{
@@ -95,4 +97,26 @@ fn atomic_inlines_in_nowrap_spans_wrap_between_the_spans() {
     assert!(got[1][1] > got[0][1], "{got:?}");
     assert!(got[3][1] > got[2][1], "{got:?}");
     assert!((got[5][1] - got[4][1]).abs() < 0.5, "no wrap inside one nowrap span: {got:?}");
+}
+
+#[test]
+fn an_inline_level_abspos_alone_on_its_line_is_after_the_text_indent() {
+    let got = boxes(
+        "<div style='width:100px;text-indent:20px'><i id=a style='position:absolute'></i></div>\
+         <div style='width:100px;text-indent:20px'><i id=b style='position:absolute'></i>foo</div>\
+         <div style='width:100px;text-indent:-20px'><i id=c style='position:absolute'></i> </div>",
+        &["a", "b", "c"],
+    );
+    // The first container holds no line: the second starts where it does.
+    assert_eq!(got.iter().map(|b| [b[0], b[1]]).collect::<Vec<_>>(), [[20.0, 0.0], [20.0, 0.0], [-20.0, 40.0]]);
+}
+
+#[test]
+fn a_box_after_nothing_but_a_start_margin_stays_on_the_line() {
+    let got = boxes(
+        "<div style='width:200px'><span style='margin-left:200px'><b id=a style='width:50px'></b></span></div>\
+         <div style='width:200px'><span style='margin-left:180px'><b id=b style='width:50px'></b></span></div>",
+        &["a", "b"],
+    );
+    assert_eq!(got.iter().map(|b| [b[0], b[1]]).collect::<Vec<_>>(), [[200.0, 16.0], [180.0, 56.0]]);
 }

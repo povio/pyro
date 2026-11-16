@@ -38,7 +38,9 @@ impl WhiteSpaceCollapse {
     /// Whether `c` is whitespace that this mode collapses.
     pub(crate) fn is_collapsible(self, c: char) -> bool {
         match self {
-            Self::Collapse => c.is_ascii_whitespace(),
+            // pyro: CSS white space is spaces, tabs and segment breaks: a form feed (an ASCII
+            // white space) is a control character, rendered visible (WPT `control-chars-00C`).
+            Self::Collapse => matches!(c, ' ' | '\t' | '\n' | '\r'),
             Self::Preserve | Self::BreakSpaces => false,
             Self::PreserveBreaks => matches!(c, ' ' | '\t'),
         }

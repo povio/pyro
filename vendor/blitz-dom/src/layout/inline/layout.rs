@@ -921,7 +921,8 @@ impl LayoutPassState<'_> {
             let later_anonymous_block = node.is_anonymous()
                 && !text_indent.each_line
                 && node.parent.is_some_and(|parent| {
-                    self.nodes[parent]
+                    !crate::layout::first_line::is_flex_or_grid_container(&self.nodes[parent])
+                        && self.nodes[parent]
                         .layout_children
                         .borrow()
                         .as_ref()
@@ -1926,8 +1927,12 @@ impl LayoutPassState<'_> {
                         // in the container's: Latin text in a right-to-left paragraph runs left
                         // to right, and so does the box after it (Blink's `InlineItem::Direction()`;
                         // WPT `static-position/htb-rtl-*`). A block-level box takes the container's.
+                        // On a line with no in-flow content the box resolves to no text's level:
+                        // it takes the container's direction (WPT css-text
+                        // `text-indent-with-absolute-pos-child`, right to left).
                         let static_direction = if is_inline_level
                             && ibox.is_rtl != inline_layout.layout.is_rtl()
+                            && first_in_flow_index(&line, &inline_layout.layout).is_some()
                         {
                             match container_direction {
                                 Direction::Ltr => Direction::Rtl,

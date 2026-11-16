@@ -1682,8 +1682,10 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                         if self.state.line.text_wrap_mode == TextWrapMode::Wrap {
                             self.state.mark_line_break_opportunity();
                         }
-                    } else if self.state.line.x == 0.0 {
-                        // pyro: at the start of the line this box will never fit, so
+                    } else if self.state.line.x == 0.0 || !self.state.line.has_inline_content {
+                        // pyro: at the start of the line (after nothing but span edges: a 200px
+                        // start margin in a 200px block, WPT css-text `text-indent-overflow-ref`)
+                        // this box will never fit, so
                         // consume it, accept the overflow and mark the soft wrap opportunity after
                         // it: content that follows breaks there, and a box ending the paragraph
                         // ends its last line (Chromium) rather than leaving an empty line behind.

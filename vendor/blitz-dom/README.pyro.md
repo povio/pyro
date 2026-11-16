@@ -2347,3 +2347,9 @@ style node holding a copy of the letter, `display: block`), but laid out as any 
 of the first line (`compute_inline_layout` takes the initial-letter path only with `initial-letter`). Outside markers
 whose text is a `::marker` `content` string keep the marker's font (not the bundled bullet font). Covered by
 `a_floated_first_letter_is_a_float` in `crates/pyro-render/tests/initial_letter.rs`.
+- `src/layout/construct.rs` (`indents_inline_level_abspos`), `src/layout/inline/layout.rs` (static position): a
+  container with only out-of-flow children, a text indent and an inline-level absolutely positioned child is laid
+  out inline, so the box's static position is after the indent; on a line without in-flow content the box takes the
+  container's direction (WPT css-text `text-indent-with-absolute-pos-child`).
+- `src/layout/first_line.rs` (`starts_a_block`), `src/layout/inline/layout.rs` (text indent): an anonymous flex or
+  grid item's first line is a first formatted line and takes the text indent (WPT `anonymous-flex-item-001`).

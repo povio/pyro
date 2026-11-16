@@ -350,3 +350,8 @@ blitz-dom puts an inline-level absolutely positioned box on the start side of it
   break next to U+200B ZERO WIDTH SPACE is removed (CSS Text 4 § 4.1.3), across inline box boundaries and
   out-of-flow boxes (WPT `seg-break-transformation-018/019`). Both covered by
   `crates/pyro-render/tests/text_breaks_bidi_paragraphs.rs`.
+- `src/layout/line_break.rs` (inline boxes): a box after nothing but span start edges (`!has_inline_content`) is
+  at the line's start: it overflows instead of wrapping to leave an empty line (WPT css-text
+  `text-indent-overflow-ref`, a 200px start margin in a 200px block).
+- `src/layout/whitespace.rs` (`is_collapsible`): collapsible white space is spaces, tabs and segment breaks; a form
+  feed is a control character (WPT `control-chars-00C`).

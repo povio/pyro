@@ -318,6 +318,26 @@ fn push_non_whitespace_children_and_pseudos(layout_children: &mut ThinVec<NodeId
     }
 }
 
+/// pyro: whether a flow container with only out-of-flow children has a text indent and an
+/// absolutely positioned child that would be inline-level: its static position is on the
+/// container's (empty) first line, after the indent (WPT css-text
+/// `text-indent-with-absolute-pos-child`), so the children are laid out inline, not hoisted.
+fn indents_inline_level_abspos(doc: &BaseDocument, container_node_id: NodeId) -> bool {
+    let node = &doc.nodes[container_node_id];
+    let indented = node.primary_styles().is_some_and(|style| {
+        let indent = style.slow_clone_text_indent().length;
+        indent.resolve(style::values::computed::CSSPixelLength::new(100.0)).px() != 0.0
+            || indent.resolve(style::values::computed::CSSPixelLength::new(0.0)).px() != 0.0
+    });
+    indented
+        && node.children.iter().any(|&child| {
+            doc.nodes[child].primary_styles().is_some_and(|style| {
+                style.clone_position().is_absolutely_positioned()
+                    && style.get_box().original_display.outside() == DisplayOutside::Inline
+            })
+        })
+}
+
 /// Result of classifying the in-flow children of a flow container as
 /// all-block, all-inline and/or all-out-of-flow.
 struct FlowClassification {
@@ -813,7 +833,10 @@ fn collect_layout_children_with_wrap(
                     .insert(NodeFlags::IS_INLINE_WITH_ONLY_BLOCK_CHILDREN);
             }
 
-            if classification.all_out_of_flow && !inside_marker {
+            if classification.all_out_of_flow
+                && !inside_marker
+                && !indents_inline_level_abspos(doc, container_node_id)
+            {
                 // Contents-transparent: a display:contents child may be
                 // holding the out-of-flow elements (otherwise the contents
                 // node itself would be pushed as a layout box).

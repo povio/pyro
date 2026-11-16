@@ -178,3 +178,6 @@ parley which characters justification passes over and which scripts it does not 
 
 `src/shape/shaped_text.rs`: a font's metrics at a multiple of its size, for the lines parley scales with CSS
 `text-fit`.
+- `src/shape/shaper.rs`: control characters other than tabs and line breaks are shaped as U+FFFF, so they draw the
+  font's missing-glyph box even where the font maps them to an empty `.null` glyph (U+0008, U+001D; WPT css-text
+  `control-chars-*`).

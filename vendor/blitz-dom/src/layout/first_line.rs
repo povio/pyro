@@ -141,11 +141,23 @@ pub(crate) fn starts_a_block(doc: &BaseDocument, root: NodeId) -> bool {
             return true;
         }
         let Some(parent) = node.layout_parent.get() else { return true };
+        // pyro: an anonymous flex or grid item is a block container of its own: its first line
+        // is a first formatted line (WPT css-text `text-indent/anonymous-flex-item-001`).
+        if is_flex_or_grid_container(&doc.nodes[parent]) {
+            return true;
+        }
         if !first_letter::is_first_in_flow_child(doc, parent, current) {
             return false;
         }
         current = parent;
     }
+}
+
+/// pyro: whether `node` lays out its children as flex or grid items.
+pub(crate) fn is_flex_or_grid_container(node: &crate::Node) -> bool {
+    node.display_style().is_some_and(|display| {
+        matches!(display.inside(), style::values::specified::box_::DisplayInside::Flex | style::values::specified::box_::DisplayInside::Grid)
+    })
 }
 
 /// Drops an element's first-line node.
