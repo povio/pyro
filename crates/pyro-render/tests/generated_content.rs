@@ -196,6 +196,17 @@ fn quotes_nest_by_depth() {
 }
 
 #[test]
+fn auto_quotes_follow_the_parent_language() {
+    // CLDR quotes, the language of the `<q>`'s parent (WPT `quotes-030`), a region falling back
+    // to its language, an unknown language to English's.
+    matches(
+        "<div lang=fr-CH><q>a <q lang=ja>b <q lang=zz>c</q></q></q></div>",
+        "<div>\u{AB}a \u{2039}b \u{300E}c\u{300F}\u{203A}\u{BB}</div>",
+        "<div>\u{201C}a \u{2018}b \u{2018}c\u{2019}\u{2019}\u{201D}</div>",
+    );
+}
+
+#[test]
 fn inlines_in_inlines_have_their_pseudo_elements() {
     matches(
         "<style>.x::before{content:'X'} .y::after{content:'Y'}</style><p>a <span>b <b class=x>c</b></span> <span><span><i class=y>h</i></span></span></p>",

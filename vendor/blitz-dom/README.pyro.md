@@ -1216,7 +1216,10 @@ and a `content-box` local background reached the scrollport's edge at the end (W
   item increments `list-item`) and evaluates the `content` of each `::before`/`::after` that generates a box:
   `counter()` and `counters()` in the predefined counter styles (numeric, alphabetic, additive, cyclic; an
   unknown name or a value out of a style's range is decimal) and `open-quote`/`close-quote` at the document's
-  quote depth (`quotes: auto` is English's). A counter is visible to its element, its descendants and its
+  quote depth. `quotes: auto` takes the quotes of the language of the originating element's parent from
+  `src/layout/quotes_table.rs` (CLDR 48 delimiters of the ICU locales, generated; a tag not found loses its
+  last subtag, as Chromium's `LayoutLocale::GetQuotesData`; English's when none matches), and a `lang`
+  change runs the walk again. A counter is visible to its element, its descendants and its
   following siblings; one a sibling made is replaced; an element with no box (`display: none`, `display:
   contents`) changes none. The walk runs once a traversal kept a `::before`/`::after` whose content reads a
   counter or a quote (sticky), and only after a restyle changed what counters read of an element (its and its

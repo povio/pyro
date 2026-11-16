@@ -350,14 +350,14 @@ fn marker_content(style: &style::servo_arc::Arc<style::properties::ComputedValue
                         text.push_str(&super::counters::format(index as i32 + 1, counter_style));
                     }
                     ContentItem::OpenQuote => {
-                        if let Some((open, _)) = super::counters::quote(style, depth) {
+                        if let Some((open, _)) = super::counters::quote(style, depth, None) {
                             text.push_str(&open);
                         }
                         depth += 1;
                     }
                     ContentItem::CloseQuote => {
                         depth = depth.saturating_sub(1);
-                        if let Some((_, close)) = super::counters::quote(style, depth) {
+                        if let Some((_, close)) = super::counters::quote(style, depth, None) {
                             text.push_str(&close);
                         }
                     }

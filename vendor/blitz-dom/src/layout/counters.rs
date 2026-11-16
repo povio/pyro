@@ -133,6 +133,9 @@ struct Walk {
     made: Vec<(NodeId, Atom)>,
     quote_depth: usize,
     texts: HashMap<NodeId, GeneratedText>,
+    /// pyro: the language `quotes: auto` takes its quotes from: the language of the parent of
+    /// the originating element (WPT `quotes-030`: a `<q lang>` quotes as its parent does).
+    quote_lang: Option<String>,
 }
 
 impl Walk {
@@ -238,7 +241,7 @@ impl Walk {
                     push(&mut pieces, &text);
                 }
                 ContentItem::OpenQuote => {
-                    let open = quote(style, self.quote_depth).map(|(open, _)| open).unwrap_or_default();
+                    let open = quote(style, self.quote_depth, self.quote_lang.as_deref()).map(|(open, _)| open).unwrap_or_default();
                     push(&mut pieces, &open);
                     self.quote_depth += 1;
                 }
@@ -246,7 +249,7 @@ impl Walk {
                     let mut close = String::new();
                     if self.quote_depth > 0 {
                         self.quote_depth -= 1;
-                        close = quote(style, self.quote_depth).map(|(_, close)| close).unwrap_or_default();
+                        close = quote(style, self.quote_depth, self.quote_lang.as_deref()).map(|(_, close)| close).unwrap_or_default();
                     }
                     push(&mut pieces, &close);
                 }
@@ -271,18 +274,37 @@ impl Walk {
 }
 
 /// The quotes at `depth` (the last pair beyond the list's end; none for `quotes: none`). `auto`
-/// is English's (Chromium's default).
-pub(super) fn quote(style: &ComputedValues, depth: usize) -> Option<(String, String)> {
+/// is those of language `lang` as Chromium finds them (`LayoutLocale::GetQuotesData`): the
+/// CLDR quotes of the tag, else of the tag without its last subtag, and so on; English's when
+/// none is known.
+pub(super) fn quote(style: &ComputedValues, depth: usize, lang: Option<&str>) -> Option<(String, String)> {
     match &style.get_list().quotes {
         Quotes::QuoteList(list) => {
             let pairs = &list.0;
             let pair = pairs.get(depth).or(pairs.last())?;
             Some((pair.opening.to_string(), pair.closing.to_string()))
         }
-        Quotes::Auto => Some(match depth {
-            0 => ("\u{201C}".into(), "\u{201D}".into()),
-            _ => ("\u{2018}".into(), "\u{2019}".into()),
-        }),
+        Quotes::Auto => {
+            let [open1, close1, open2, close2] = auto_quotes(lang.unwrap_or(""));
+            Some(match depth {
+                0 => (open1.into(), close1.into()),
+                _ => (open2.into(), close2.into()),
+            })
+        }
+    }
+}
+
+/// pyro: the `quotes: auto` of language tag `lang`: open, close, nested open, nested close.
+fn auto_quotes(lang: &str) -> [char; 4] {
+    let mut tag = lang.trim().to_ascii_lowercase().replace('_', "-");
+    loop {
+        if let Ok(index) = super::quotes_table::QUOTES.binary_search_by(|(key, _)| (*key).cmp(tag.as_str())) {
+            return super::quotes_table::QUOTES[index].1;
+        }
+        match tag.rfind('-') {
+            Some(end) => tag.truncate(end),
+            None => return ['\u{201C}', '\u{201D}', '\u{2018}', '\u{2019}'],
+        }
     }
 }
 
@@ -404,6 +426,7 @@ fn walk_element(doc: &BaseDocument, node_id: NodeId, parent: NodeId, walk: &mut 
     }
     if let Some(before) = pseudos[1].as_deref().filter(|style| generates(style)) {
         walk.apply(before, scope, pseudo_scope(), before.clone_display().is_list_item(), false);
+        walk.quote_lang = parent_language(doc, node_id);
         texts[1] = walk.content(before, scope);
         walk.leave(pseudo_scope());
     }
@@ -414,6 +437,7 @@ fn walk_element(doc: &BaseDocument, node_id: NodeId, parent: NodeId, walk: &mut 
     }
     if let Some(after) = pseudos[0].as_deref().filter(|style| generates(style)) {
         walk.apply(after, scope, pseudo_scope(), after.clone_display().is_list_item(), false);
+        walk.quote_lang = parent_language(doc, node_id);
         texts[0] = walk.content(after, scope);
         walk.leave(pseudo_scope());
     }
@@ -450,11 +474,18 @@ fn walk_generated_box(doc: &BaseDocument, scope: NodeId, node: NodeId, walk: &mu
         return;
     }
     walk.apply(&style, scope, pseudo_scope(), style.clone_display().is_list_item(), false);
+    walk.quote_lang = parent_language(doc, scope);
     let content = walk.content(&style, scope);
     walk.leave(pseudo_scope());
     if content.is_some() {
         walk.texts.insert(node, [None, content]);
     }
+}
+
+/// pyro: the language of the parent of element `node`, for its pseudo-elements' quotes.
+fn parent_language(doc: &BaseDocument, node: NodeId) -> Option<String> {
+    let parent = doc.nodes.get(node)?.parent?;
+    crate::lang::language(&doc.nodes[parent]).map(str::to_string)
 }
 
 /// `value` in a counter style (CSS Counter Styles 3: the predefined styles; an unknown name is

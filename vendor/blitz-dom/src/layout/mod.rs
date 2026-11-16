@@ -25,6 +25,7 @@ use taffy::{
 
 pub(crate) mod construct;
 pub(crate) mod counters;
+mod quotes_table;
 pub(crate) mod damage;
 pub(crate) mod first_letter;
 pub(crate) mod first_line;
