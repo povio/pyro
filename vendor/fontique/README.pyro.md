@@ -75,3 +75,9 @@ for italic, a backslant). A `@font-face` rule's `font-style` descriptor says how
 without the axis (WPT `variations/font-slant-1`, `-2c`, `-3`, `slnt-variable`, `slnt-backslant-variable`).
 Without a descriptor the font's own axis is used as before. Test:
 `slant_synthesis_follows_the_axis_direction_and_the_allowed_range`.
+
+## Empty `@font-face` family names (WPT css-fonts, round 3 lane F)
+
+`src/collection/mod.rs` (`register_scanned_font`): a face registered under an override family name `""` is kept
+(CSS Fonts 4: a quoted family name may be empty, `font-family: ""`); a font file without a name of its own is still
+left out (WPT `font-palette-empty-font-family`).

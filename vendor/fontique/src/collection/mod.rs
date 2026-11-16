@@ -844,7 +844,9 @@ impl CommonData {
                 &scratch_family_name
             };
 
-        if family_name.is_empty() {
+        // pyro: an `@font-face` rule may name its family `""` (CSS Fonts 4: a quoted family
+        // name can be empty); a font file without a name is left out.
+        if family_name.is_empty() && info_override.and_then(|o| o.family_name).is_none() {
             return;
         }
 

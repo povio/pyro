@@ -22,6 +22,7 @@ mod filter_image_function;
 mod first_line;
 mod floats;
 mod font_optical_sizing;
+mod font_palette;
 mod font_unicode_range;
 mod fractional_scroll_overflow;
 mod generated_content;

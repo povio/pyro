@@ -57,6 +57,9 @@ pub(crate) fn enable_features() {
         // pyro: `font-variant-caps: all-small-caps | petite-caps | all-petite-caps | unicase |
         // titling-caps` (blitz-dom maps each to its OpenType features).
         style_config::set_pref!("layout.css.font-variant-caps.all-values.enabled", true);
+        // pyro: `font-palette` and `@font-palette-values` (blitz-paint draws COLR glyphs in the
+        // palette they select).
+        style_config::set_pref!("layout.css.font-palette.enabled", true);
         style_config::set_pref!("layout.css.forced-color-adjust.enabled", true);
         style_config::set_pref!("layout.css.masking.enabled", true);
         style_config::set_pref!("layout.css.math-properties.enabled", true);

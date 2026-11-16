@@ -2007,7 +2007,9 @@ pub(crate) fn stroke_text<'a, S: PaintScene>(
         // a transform.
         let draw_run = |scene: &mut S, glyph_run: &parley::GlyphRun<'_, TextBrush>, paint: &RunPaint, shadow: Option<&TextShadow>, runs: &mut Option<Vec<crate::TextRun>>| {
             let run = glyph_run.run();
-            let font = run.font();
+            // pyro: a colour font is drawn in the palette of the run's element (`font-palette`).
+            let palette_font = crate::palette::palette_font(doc, glyph_run.style().brush.id, run.font());
+            let font = palette_font.as_ref().unwrap_or(run.font());
             let font_size = run.font_size();
             let metrics = run.font_metrics();
             let synthesis = run.synthesis();

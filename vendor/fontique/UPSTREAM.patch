@@ -69,7 +69,7 @@ index ecf0b24..5d1a9b8 100644
          result.map(|gid| gid.to_u32())
      }
 diff --git a/src/collection/mod.rs b/src/collection/mod.rs
-index 4fc5f60..e920226 100644
+index 4fc5f60..0099ea4 100644
 --- a/src/collection/mod.rs
 +++ b/src/collection/mod.rs
 @@ -700,29 +700,90 @@ struct CommonData {
@@ -183,6 +183,17 @@ index 4fc5f60..e920226 100644
      }
  
      fn register_fonts(
+@@ -783,7 +844,9 @@ impl CommonData {
+                 &scratch_family_name
+             };
+ 
+-        if family_name.is_empty() {
++        // pyro: an `@font-face` rule may name its family `""` (CSS Fonts 4: a quoted family
++        // name can be empty); a font file without a name is left out.
++        if family_name.is_empty() && info_override.and_then(|o| o.family_name).is_none() {
+             return;
+         }
+ 
 diff --git a/src/collection/query.rs b/src/collection/query.rs
 index edfcc08..98a8963 100644
 --- a/src/collection/query.rs

@@ -1948,3 +1948,11 @@ Covered by `crates/pyro-render/tests/marker_pseudo.rs`.
 (`LayoutGridContainer::subgrid_context`/`set_subgrid_context`): the context a grid gives a subgrid child (vendor/taffy's
 README.pyro.md, "Subgrids") is kept on the child; a new one drops the child's cached layouts, and one is read only while
 the child's layout parent is a grid.
+## `font-palette` (WPT css-fonts, round 3 lane F)
+
+- `src/document.rs` (`init_stylo_prefs`): `layout.css.font-palette.enabled` (the `font-palette` property and the
+  `@font-palette-values` rule). `BaseDocument::font_palette_values_rules` gives blitz-paint the rules in cascade
+  order, `BaseDocument::font_face_families` the `@font-face` family a font file was registered under (recorded in
+  `load_resource`).
+- `src/util.rs` (`intern_font_blob`): a font file is one blob per `@font-face` family name it is loaded under, so a
+  run's font tells which family drew it (two rules loading one file under two names: WPT `font-palette-31`).

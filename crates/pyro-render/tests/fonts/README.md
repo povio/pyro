@@ -17,3 +17,9 @@ the same characters, without U+0301, and the font's variation tables: the axes `
 says: "The Ahem font belongs to the public domain. In jurisdictions that do not recognize public domain ownership of
 these files, the following Creative Commons Zero declaration applies" (http://dev.w3.org/CSS/fonts/ahem/COPYING).
 Its ascent and descent (0.8 and 0.2 em) differ from Inter's, so it stands in for a fallback font of another height.
+
+`COLR-palettes-test-font.ttf`: the COLR test font of web-platform-tests (`css/css-fonts/resources/`), Ahem's boxes
+drawn in colour, with 16 CPAL palettes of 8 entries (palette 2 is marked light, palette 3 dark). Its name table says,
+as Ahem's: "The Ahem font belongs to the public domain. In jurisdictions that do not recognize public domain
+ownership of these files, the following Creative Commons Zero declaration applies"
+(http://dev.w3.org/CSS/fonts/ahem/COPYING).

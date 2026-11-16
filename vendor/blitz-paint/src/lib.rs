@@ -12,6 +12,7 @@ mod gradient;
 mod highlight;
 mod kurbo_css;
 mod layers;
+mod palette;
 mod render;
 mod sizing;
 mod text;

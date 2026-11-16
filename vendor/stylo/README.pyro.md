@@ -217,6 +217,20 @@ chain. blitz-dom answers `implemented_pseudo_element` for the boxes (its README)
 `initial-letter` takes `drop` or `raise` before or after its size (CSS Inline 3 § 7.2, as Blink); the keyword is
 kept for serialization (`1.23 drop`) and `sink` stays 0 then. pyro turns the property on with its pref
 (`layout.css.initial-letter.enabled`); blitz-dom lays initial letters out (its README).
+## `font-palette`, `palette-mix()`, `@font-palette-values` (WPT css-fonts, round 3 lane F)
+
+- `properties/longhands.toml`: `font-palette` is parsed and computed for servo too, behind
+  `layout.css.font-palette.enabled` (upstream: gecko only). blitz-paint draws COLR glyphs in the palette it selects.
+- `values/specified/font.rs`: `FontPalette` is an enum: a name (`normal`, `light`, `dark`, `<dashed-ident>`) or
+  `palette-mix(<color-interpolation-method>, <palette> <percentage>?, <palette> <percentage>?)` (CSS Fonts 5,
+  nested mixes too; `FontPaletteMix::weights` normalizes the percentages). Its computed and resolved values are
+  the specified one, written out (deriving them recurses without end). `color/mix.rs`: `ColorInterpolationMethod`
+  and `HueInterpolationMethod` derive serde, as servo's font style struct needs.
+- `values/specified/number.rs` (`Integer::resolve_with_font_size`), `stylesheets/font_palette_values_rule.rs`:
+  an `<integer>` of `base-palette` or `override-colors` whose calc() has font-relative lengths
+  (`calc(2 + sign(100em - 1px))`) resolves at the initial font size, 16px (CSS Values 4 §6.1.1: a descriptor has
+  no element); upstream dropped the declaration. `FontPaletteOverrideColor`'s fields are public, with
+  `resolved_index` there and on `FontPaletteBase`.
 
 ## Updating or dropping the patch
 

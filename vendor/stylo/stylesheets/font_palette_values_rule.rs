@@ -35,8 +35,10 @@ use style_traits::{CssStringWriter, CssWriter, ParseError, StyleParseErrorKind, 
 #[allow(missing_docs)]
 #[derive(Clone, Debug, MallocSizeOf, PartialEq, ToShmem)]
 pub struct FontPaletteOverrideColor {
-    index: NonNegativeInteger,
-    color: SpecifiedColor,
+    /// The palette entry the colour replaces.
+    pub index: NonNegativeInteger,
+    /// The colour, an absolute one (as specified).
+    pub color: SpecifiedColor,
 }
 
 impl Parse for FontPaletteOverrideColor {
@@ -45,7 +47,9 @@ impl Parse for FontPaletteOverrideColor {
         input: &mut Parser,
     ) -> Result<FontPaletteOverrideColor, ParseError> {
         let index = NonNegativeInteger::parse(context, input)?;
-        if index.0.resolve().is_none() {
+        // pyro: font-relative lengths in a calc() are taken at the initial font size
+        // (`FontPaletteOverrideColor::resolved_index`).
+        if index.0.resolve_with_font_size(DESCRIPTOR_FONT_SIZE).is_none() {
             return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError));
         }
 
@@ -61,6 +65,27 @@ impl Parse for FontPaletteOverrideColor {
             return Ok(FontPaletteOverrideColor { index, color });
         }
         Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError))
+    }
+}
+
+/// pyro: the font size (px) the font-relative lengths of an `<integer>` of the rule are taken
+/// at: the initial one, `medium` (CSS Values 4 §6.1.1, a descriptor has no element).
+const DESCRIPTOR_FONT_SIZE: f32 = 16.0;
+
+impl FontPaletteOverrideColor {
+    /// pyro: the palette entry the colour replaces (a calc() resolved).
+    pub fn resolved_index(&self) -> Option<i32> {
+        self.index.0.resolve_with_font_size(DESCRIPTOR_FONT_SIZE)
+    }
+}
+
+impl FontPaletteBase {
+    /// pyro: the index of a `base-palette: <integer>` (a calc() resolved).
+    pub fn resolved_index(&self) -> Option<i32> {
+        match self {
+            Self::Index(index) => index.0.resolve_with_font_size(DESCRIPTOR_FONT_SIZE),
+            _ => None,
+        }
     }
 }
 
@@ -95,7 +120,7 @@ impl Parse for FontPaletteBase {
     #[inline]
     fn parse(context: &ParserContext, input: &mut Parser) -> Result<Self, ParseError> {
         if let Ok(v) = input.try_parse(|input| NonNegativeInteger::parse(context, input)) {
-            if v.0.resolve().is_none() {
+            if v.0.resolve_with_font_size(DESCRIPTOR_FONT_SIZE).is_none() {
                 return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError));
             }
             return Ok(FontPaletteBase::Index(v));

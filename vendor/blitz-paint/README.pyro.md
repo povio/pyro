@@ -829,3 +829,14 @@ Covered by `crates/pyro-render/tests/gradient_stops_image_set.rs`.
 
 Covered by `crates/pyro-render/tests/selection_highlight.rs`.
 
+## `font-palette` (WPT css-fonts, round 3 lane F)
+
+- `src/palette.rs`, `src/text.rs` (`draw_run`): a COLR glyph run is drawn in the palette of its element's
+  `font-palette`. The glyph painter under vello_cpu (glifo) reads palette 0 of the font's CPAL table only, so a
+  run whose palette differs is drawn from a copy of its font whose palette 0 holds the selected colours (records
+  patched in place; copies cached per font and colours, 32 at most). `light` and `dark` are the first palettes the
+  CPAL table marks so (else palette 0); a `<dashed-ident>` is the last `@font-palette-values` rule of that name
+  whose `font-family` names the run's font (the `@font-face` family it was loaded under, or an installed font's
+  own name): its `base-palette` (an index the font does not have is palette 0) with its `override-colors`;
+  `palette-mix()` mixes two palettes entry by entry in its colour space (`mix_many`). Covered by
+  `crates/pyro-render/tests/font_palette.rs`.

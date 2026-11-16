@@ -1642,48 +1642,165 @@ pub enum FontSynthesisStyle {
 #[derive(
     Clone,
     Debug,
-    Eq,
+    Deserialize,
     MallocSizeOf,
     PartialEq,
+    Serialize,
     SpecifiedValueInfo,
-    ToComputedValue,
-    ToResolvedValue,
     ToShmem,
     ToTyped,
 )]
-#[repr(C)]
 #[typed(todo_derive_fields)]
 /// Allows authors to choose a palette from those supported by a color font
 /// (and potentially @font-palette-values overrides).
-pub struct FontPalette(Atom);
+pub enum FontPalette {
+    /// `normal`, `light`, `dark` or a `<dashed-ident>`.
+    Named(Atom),
+    /// pyro: `palette-mix()` (CSS Fonts 5): two palettes mixed entry by entry.
+    Mix(Box<FontPaletteMix>),
+}
+
+/// pyro: `palette-mix(<color-interpolation-method>, [<palette> && <percentage>?]#{2})`.
+#[derive(
+    Clone,
+    Debug,
+    Deserialize,
+    MallocSizeOf,
+    PartialEq,
+    Serialize,
+    ToShmem,
+)]
+pub struct FontPaletteMix {
+    /// The colour space the entries are mixed in.
+    pub interpolation: crate::color::mix::ColorInterpolationMethod,
+    /// The first palette and its percentage (0 to 100), if given.
+    pub left: (FontPalette, Option<f32>),
+    /// The second palette and its percentage, if given.
+    pub right: (FontPalette, Option<f32>),
+}
+
+impl SpecifiedValueInfo for FontPaletteMix {}
+
+// pyro: the computed and resolved values are the specified one (written out: deriving them
+// recurses through `palette-mix()` without end).
+impl ToComputedValue for FontPalette {
+    type ComputedValue = Self;
+
+    #[inline]
+    fn to_computed_value(&self, _: &Context) -> Self {
+        self.clone()
+    }
+
+    #[inline]
+    fn from_computed_value(computed: &Self) -> Self {
+        computed.clone()
+    }
+}
+
+impl crate::values::resolved::ToResolvedValue for FontPalette {
+    type ResolvedValue = Self;
+
+    #[inline]
+    fn to_resolved_value(self, _: &crate::values::resolved::Context) -> Self {
+        self
+    }
+
+    #[inline]
+    fn from_resolved_value(resolved: Self) -> Self {
+        resolved
+    }
+}
+
+impl FontPaletteMix {
+    /// The weights of the two palettes (CSS Color 5 §2.1, percentage normalization), or `None`
+    /// when they add up to zero (an invalid mix).
+    pub fn weights(&self) -> Option<(f32, f32)> {
+        let (p1, p2) = match (self.left.1, self.right.1) {
+            (None, None) => (50.0, 50.0),
+            (Some(p1), None) => (p1, 100.0 - p1),
+            (None, Some(p2)) => (100.0 - p2, p2),
+            (Some(p1), Some(p2)) => (p1, p2),
+        };
+        let sum = p1 + p2;
+        if sum <= 0.0 {
+            return None;
+        }
+        Some((p1 / sum, p2 / sum))
+    }
+}
 
 #[allow(missing_docs)]
 impl FontPalette {
     pub fn normal() -> Self {
-        Self(atom!("normal"))
+        Self::Named(atom!("normal"))
     }
     pub fn light() -> Self {
-        Self(atom!("light"))
+        Self::Named(atom!("light"))
     }
     pub fn dark() -> Self {
-        Self(atom!("dark"))
+        Self::Named(atom!("dark"))
     }
-}
+    /// The keyword or `<dashed-ident>` (as it was written for an identifier); `None` for a mix.
+    pub fn name(&self) -> Option<&Atom> {
+        match self {
+            Self::Named(name) => Some(name),
+            Self::Mix(_) => None,
+        }
+    }
 
-impl Parse for FontPalette {
-    /// normal | light | dark | dashed-ident
-    fn parse(_context: &ParserContext, input: &mut Parser) -> Result<FontPalette, ParseError> {
+    fn parse_one(context: &ParserContext, input: &mut Parser) -> Result<FontPalette, ParseError> {
+        if input
+            .try_parse(|input| input.expect_function_matching("palette-mix"))
+            .is_ok()
+        {
+            return input.parse_nested_block(|input| {
+                let interpolation = crate::color::mix::ColorInterpolationMethod::parse(context, input)?;
+                input.expect_comma()?;
+                let mut item = |input: &mut Parser<'_>| -> Result<(FontPalette, Option<f32>), ParseError> {
+                    let percentage = |input: &mut Parser<'_>| {
+                        input.try_parse(|input| -> Result<f32, ParseError> {
+                            let p = crate::values::specified::Percentage::parse(context, input)?;
+                            p.resolve()
+                                .map(|p| p * 100.0)
+                                .ok_or(ParseError::custom(StyleParseErrorKind::UnspecifiedError))
+                        })
+                    };
+                    let first = percentage(input).ok();
+                    let palette = Self::parse_one(context, input)?;
+                    let percentage = first.or_else(|| percentage(input).ok());
+                    if percentage.is_some_and(|p| !(0.0..=100.0).contains(&p)) {
+                        return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError));
+                    }
+                    Ok((palette, percentage))
+                };
+                let left = item(input)?;
+                input.expect_comma()?;
+                let right = item(input)?;
+                let mix = FontPaletteMix { interpolation, left, right };
+                if mix.left.1.is_some() && mix.right.1.is_some() && mix.weights().is_none() {
+                    return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError));
+                }
+                Ok(Self::Mix(Box::new(mix)))
+            });
+        }
         let ident = input.expect_ident()?;
         match_ignore_ascii_case! { &ident,
             "normal" => Ok(Self::normal()),
             "light" => Ok(Self::light()),
             "dark" => Ok(Self::dark()),
             _ => if ident.starts_with("--") {
-                Ok(Self(Atom::from(ident.as_ref())))
+                Ok(Self::Named(Atom::from(ident.as_ref())))
             } else {
                 Err(ParseError::custom(SelectorParseErrorKind::UnexpectedIdent))
             },
         }
+    }
+}
+
+impl Parse for FontPalette {
+    /// normal | light | dark | dashed-ident | palette-mix()
+    fn parse(context: &ParserContext, input: &mut Parser) -> Result<FontPalette, ParseError> {
+        Self::parse_one(context, input)
     }
 }
 
@@ -1692,7 +1809,22 @@ impl ToCss for FontPalette {
     where
         W: Write,
     {
-        serialize_atom_identifier(&self.0, dest)
+        match self {
+            Self::Named(name) => serialize_atom_identifier(name, dest),
+            Self::Mix(mix) => {
+                dest.write_str("palette-mix(")?;
+                mix.interpolation.to_css(dest)?;
+                for (palette, percentage) in [&mix.left, &mix.right] {
+                    dest.write_str(", ")?;
+                    palette.to_css(dest)?;
+                    if let Some(percentage) = percentage {
+                        dest.write_char(' ')?;
+                        crate::values::serialize_percentage(*percentage / 100.0, dest)?;
+                    }
+                }
+                dest.write_char(')')
+            },
+        }
     }
 }
 

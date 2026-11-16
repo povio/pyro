@@ -1,3 +1,31 @@
+diff -ruN a/color/mix.rs b/color/mix.rs
+--- a/color/mix.rs	2026-11-11 19:55:57
++++ b/color/mix.rs	2026-11-16 08:08:26
+@@ -20,10 +20,12 @@
+     Clone,
+     Copy,
+     Debug,
++    Deserialize,
+     Eq,
+     MallocSizeOf,
+     Parse,
+     PartialEq,
++    Serialize,
+     ToAnimatedValue,
+     ToComputedValue,
+     ToCss,
+@@ -49,9 +51,11 @@
+     Clone,
+     Copy,
+     Debug,
++    Deserialize,
+     Eq,
+     MallocSizeOf,
+     PartialEq,
++    Serialize,
+     ToShmem,
+     ToAnimatedValue,
+     ToComputedValue,
 diff -ruN a/device/servo.rs b/device/servo.rs
 --- a/device/servo.rs	2026-11-14 22:08:19
 +++ b/device/servo.rs	2026-11-14 22:08:19
@@ -218,7 +246,7 @@ diff -ruN a/properties/helpers.mako.rs b/properties/helpers.mako.rs
                              if !context.builder.effective_zoom_for_inheritance.is_one() {
 diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 --- a/properties/longhands.toml	2026-11-11 19:55:57
-+++ b/properties/longhands.toml	2026-11-15 23:37:46
++++ b/properties/longhands.toml	2026-11-16 07:56:48
 @@ -473,7 +473,6 @@
  type = "BreakBetween"
  initial = "computed::BreakBetween::Auto"
@@ -235,7 +263,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/css-break/#propdef-break-before"
  animation_type = "discrete"
  affects = "layout"
-@@ -491,11 +489,28 @@
+@@ -491,9 +489,26 @@
  type = "BreakWithin"
  initial = "computed::BreakWithin::Auto"
  struct = "box"
@@ -250,22 +278,20 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +initial = "From::from(2)"
 +struct = "inherited_text"
 +spec = "https://drafts.csswg.org/css-break/#propdef-orphans"
- animation_type = "discrete"
++animation_type = "discrete"
 +servo_restyle_damage = "repaint"
- affects = "layout"
- 
++affects = "layout"
++
 +[widows]
 +type = "PositiveInteger"
 +initial = "From::from(2)"
 +struct = "inherited_text"
 +spec = "https://drafts.csswg.org/css-break/#propdef-widows"
-+animation_type = "discrete"
+ animation_type = "discrete"
 +servo_restyle_damage = "repaint"
-+affects = "layout"
-+
+ affects = "layout"
+ 
  [caption-side]
- type = "table::CaptionSide"
- initial = "computed::table::CaptionSide::Top"
 @@ -591,7 +606,6 @@
  type = "Color"
  initial = "computed_value::T::currentcolor()"
@@ -334,6 +360,15 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  
  [container-name]
  type = "ContainerName"
+@@ -890,7 +902,7 @@
+ type = "FontPalette"
+ initial = "computed::FontPalette::normal()"
+ struct = "font"
+-engine = "gecko"
++servo_pref = "layout.css.font-palette.enabled"
+ animation_type = "discrete"
+ spec = "https://drafts.csswg.org/css-fonts/#font-palette-prop"
+ affects = "layout"
 @@ -1281,6 +1293,7 @@
  [list-style-image]
  type = "Image"
@@ -422,13 +457,10 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/css-images/#propdef-image-orientation"
  animation_type = "discrete"
  affects = "layout"
-@@ -4287,6 +4310,19 @@
- affects = "layout"
- gecko_ffi_name = "mBoxOrient"
- aliases = ["-webkit-box-orient"]
-+type = "BoxOrient"
-+initial = "computed::BoxOrient::Horizontal"
-+
+@@ -4290,6 +4313,19 @@
+ type = "BoxOrient"
+ initial = "computed::BoxOrient::Horizontal"
+ 
 +# pyro: `-webkit-box-orient` for the servo engine (the gecko one is `-moz-box-orient`'s alias):
 +# with `display: -webkit-box` and `-webkit-line-clamp` it makes the legacy line clamp apply
 +# (`StyleAdjuster::adjust_for_webkit_box`).
@@ -439,9 +471,12 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +animation_type = "discrete"
 +affects = "layout"
 +servo_restyle_damage = "rebuild_box"
- type = "BoxOrient"
- initial = "computed::BoxOrient::Horizontal"
- 
++type = "BoxOrient"
++initial = "computed::BoxOrient::Horizontal"
++
+ [-moz-box-pack]
+ struct = "xul"
+ engine = "gecko"
 diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
 --- a/properties/shorthands.rs	2026-11-11 19:55:57
 +++ b/properties/shorthands.rs	2026-11-14 13:56:06
@@ -826,6 +861,70 @@ diff -ruN a/style_resolver.rs b/style_resolver.rs
          // NB: We handle animation rules for ::before and ::after when
          // traversing them.
          stylist.push_applicable_declarations(
+diff -ruN a/stylesheets/font_palette_values_rule.rs b/stylesheets/font_palette_values_rule.rs
+--- a/stylesheets/font_palette_values_rule.rs	2026-11-11 19:55:57
++++ b/stylesheets/font_palette_values_rule.rs	2026-11-16 08:07:01
+@@ -35,8 +35,10 @@
+ #[allow(missing_docs)]
+ #[derive(Clone, Debug, MallocSizeOf, PartialEq, ToShmem)]
+ pub struct FontPaletteOverrideColor {
+-    index: NonNegativeInteger,
+-    color: SpecifiedColor,
++    /// The palette entry the colour replaces.
++    pub index: NonNegativeInteger,
++    /// The colour, an absolute one (as specified).
++    pub color: SpecifiedColor,
+ }
+ 
+ impl Parse for FontPaletteOverrideColor {
+@@ -45,7 +47,9 @@
+         input: &mut Parser,
+     ) -> Result<FontPaletteOverrideColor, ParseError> {
+         let index = NonNegativeInteger::parse(context, input)?;
+-        if index.0.resolve().is_none() {
++        // pyro: font-relative lengths in a calc() are taken at the initial font size
++        // (`FontPaletteOverrideColor::resolved_index`).
++        if index.0.resolve_with_font_size(DESCRIPTOR_FONT_SIZE).is_none() {
+             return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError));
+         }
+ 
+@@ -64,6 +68,27 @@
+     }
+ }
+ 
++/// pyro: the font size (px) the font-relative lengths of an `<integer>` of the rule are taken
++/// at: the initial one, `medium` (CSS Values 4 §6.1.1, a descriptor has no element).
++const DESCRIPTOR_FONT_SIZE: f32 = 16.0;
++
++impl FontPaletteOverrideColor {
++    /// pyro: the palette entry the colour replaces (a calc() resolved).
++    pub fn resolved_index(&self) -> Option<i32> {
++        self.index.0.resolve_with_font_size(DESCRIPTOR_FONT_SIZE)
++    }
++}
++
++impl FontPaletteBase {
++    /// pyro: the index of a `base-palette: <integer>` (a calc() resolved).
++    pub fn resolved_index(&self) -> Option<i32> {
++        match self {
++            Self::Index(index) => index.0.resolve_with_font_size(DESCRIPTOR_FONT_SIZE),
++            _ => None,
++        }
++    }
++}
++
+ impl ToCss for FontPaletteOverrideColor {
+     fn to_css<W>(&self, dest: &mut CssWriter<W>) -> fmt::Result
+     where
+@@ -95,7 +120,7 @@
+     #[inline]
+     fn parse(context: &ParserContext, input: &mut Parser) -> Result<Self, ParseError> {
+         if let Ok(v) = input.try_parse(|input| NonNegativeInteger::parse(context, input)) {
+-            if v.0.resolve().is_none() {
++            if v.0.resolve_with_font_size(DESCRIPTOR_FONT_SIZE).is_none() {
+                 return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError));
+             }
+             return Ok(FontPaletteBase::Index(v));
 diff -ruN a/stylesheets/rule_parser.rs b/stylesheets/rule_parser.rs
 --- a/stylesheets/rule_parser.rs	2026-11-11 19:55:57
 +++ b/stylesheets/rule_parser.rs	2026-11-11 19:55:57
@@ -1704,6 +1803,218 @@ diff -ruN a/values/specified/effects.rs b/values/specified/effects.rs
          }
          let function = {
              let f = input.expect_function()?;
+diff -ruN a/values/specified/font.rs b/values/specified/font.rs
+--- a/values/specified/font.rs	2026-11-11 19:55:57
++++ b/values/specified/font.rs	2026-11-16 08:11:29
+@@ -1642,44 +1642,154 @@
+ #[derive(
+     Clone,
+     Debug,
+-    Eq,
++    Deserialize,
+     MallocSizeOf,
+     PartialEq,
++    Serialize,
+     SpecifiedValueInfo,
+-    ToComputedValue,
+-    ToResolvedValue,
+     ToShmem,
+     ToTyped,
+ )]
+-#[repr(C)]
+ #[typed(todo_derive_fields)]
+ /// Allows authors to choose a palette from those supported by a color font
+ /// (and potentially @font-palette-values overrides).
+-pub struct FontPalette(Atom);
++pub enum FontPalette {
++    /// `normal`, `light`, `dark` or a `<dashed-ident>`.
++    Named(Atom),
++    /// pyro: `palette-mix()` (CSS Fonts 5): two palettes mixed entry by entry.
++    Mix(Box<FontPaletteMix>),
++}
+ 
+-#[allow(missing_docs)]
+-impl FontPalette {
+-    pub fn normal() -> Self {
+-        Self(atom!("normal"))
+-    }
+-    pub fn light() -> Self {
+-        Self(atom!("light"))
++/// pyro: `palette-mix(<color-interpolation-method>, [<palette> && <percentage>?]#{2})`.
++#[derive(
++    Clone,
++    Debug,
++    Deserialize,
++    MallocSizeOf,
++    PartialEq,
++    Serialize,
++    ToShmem,
++)]
++pub struct FontPaletteMix {
++    /// The colour space the entries are mixed in.
++    pub interpolation: crate::color::mix::ColorInterpolationMethod,
++    /// The first palette and its percentage (0 to 100), if given.
++    pub left: (FontPalette, Option<f32>),
++    /// The second palette and its percentage, if given.
++    pub right: (FontPalette, Option<f32>),
++}
++
++impl SpecifiedValueInfo for FontPaletteMix {}
++
++// pyro: the computed and resolved values are the specified one (written out: deriving them
++// recurses through `palette-mix()` without end).
++impl ToComputedValue for FontPalette {
++    type ComputedValue = Self;
++
++    #[inline]
++    fn to_computed_value(&self, _: &Context) -> Self {
++        self.clone()
+     }
+-    pub fn dark() -> Self {
+-        Self(atom!("dark"))
++
++    #[inline]
++    fn from_computed_value(computed: &Self) -> Self {
++        computed.clone()
+     }
+ }
+ 
+-impl Parse for FontPalette {
+-    /// normal | light | dark | dashed-ident
+-    fn parse(_context: &ParserContext, input: &mut Parser) -> Result<FontPalette, ParseError> {
++impl crate::values::resolved::ToResolvedValue for FontPalette {
++    type ResolvedValue = Self;
++
++    #[inline]
++    fn to_resolved_value(self, _: &crate::values::resolved::Context) -> Self {
++        self
++    }
++
++    #[inline]
++    fn from_resolved_value(resolved: Self) -> Self {
++        resolved
++    }
++}
++
++impl FontPaletteMix {
++    /// The weights of the two palettes (CSS Color 5 §2.1, percentage normalization), or `None`
++    /// when they add up to zero (an invalid mix).
++    pub fn weights(&self) -> Option<(f32, f32)> {
++        let (p1, p2) = match (self.left.1, self.right.1) {
++            (None, None) => (50.0, 50.0),
++            (Some(p1), None) => (p1, 100.0 - p1),
++            (None, Some(p2)) => (100.0 - p2, p2),
++            (Some(p1), Some(p2)) => (p1, p2),
++        };
++        let sum = p1 + p2;
++        if sum <= 0.0 {
++            return None;
++        }
++        Some((p1 / sum, p2 / sum))
++    }
++}
++
++#[allow(missing_docs)]
++impl FontPalette {
++    pub fn normal() -> Self {
++        Self::Named(atom!("normal"))
++    }
++    pub fn light() -> Self {
++        Self::Named(atom!("light"))
++    }
++    pub fn dark() -> Self {
++        Self::Named(atom!("dark"))
++    }
++    /// The keyword or `<dashed-ident>` (as it was written for an identifier); `None` for a mix.
++    pub fn name(&self) -> Option<&Atom> {
++        match self {
++            Self::Named(name) => Some(name),
++            Self::Mix(_) => None,
++        }
++    }
++
++    fn parse_one(context: &ParserContext, input: &mut Parser) -> Result<FontPalette, ParseError> {
++        if input
++            .try_parse(|input| input.expect_function_matching("palette-mix"))
++            .is_ok()
++        {
++            return input.parse_nested_block(|input| {
++                let interpolation = crate::color::mix::ColorInterpolationMethod::parse(context, input)?;
++                input.expect_comma()?;
++                let mut item = |input: &mut Parser<'_>| -> Result<(FontPalette, Option<f32>), ParseError> {
++                    let percentage = |input: &mut Parser<'_>| {
++                        input.try_parse(|input| -> Result<f32, ParseError> {
++                            let p = crate::values::specified::Percentage::parse(context, input)?;
++                            p.resolve()
++                                .map(|p| p * 100.0)
++                                .ok_or(ParseError::custom(StyleParseErrorKind::UnspecifiedError))
++                        })
++                    };
++                    let first = percentage(input).ok();
++                    let palette = Self::parse_one(context, input)?;
++                    let percentage = first.or_else(|| percentage(input).ok());
++                    if percentage.is_some_and(|p| !(0.0..=100.0).contains(&p)) {
++                        return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError));
++                    }
++                    Ok((palette, percentage))
++                };
++                let left = item(input)?;
++                input.expect_comma()?;
++                let right = item(input)?;
++                let mix = FontPaletteMix { interpolation, left, right };
++                if mix.left.1.is_some() && mix.right.1.is_some() && mix.weights().is_none() {
++                    return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError));
++                }
++                Ok(Self::Mix(Box::new(mix)))
++            });
++        }
+         let ident = input.expect_ident()?;
+         match_ignore_ascii_case! { &ident,
+             "normal" => Ok(Self::normal()),
+             "light" => Ok(Self::light()),
+             "dark" => Ok(Self::dark()),
+             _ => if ident.starts_with("--") {
+-                Ok(Self(Atom::from(ident.as_ref())))
++                Ok(Self::Named(Atom::from(ident.as_ref())))
+             } else {
+                 Err(ParseError::custom(SelectorParseErrorKind::UnexpectedIdent))
+             },
+@@ -1687,12 +1797,34 @@
+     }
+ }
+ 
++impl Parse for FontPalette {
++    /// normal | light | dark | dashed-ident | palette-mix()
++    fn parse(context: &ParserContext, input: &mut Parser) -> Result<FontPalette, ParseError> {
++        Self::parse_one(context, input)
++    }
++}
++
+ impl ToCss for FontPalette {
+     fn to_css<W>(&self, dest: &mut CssWriter<W>) -> fmt::Result
+     where
+         W: Write,
+     {
+-        serialize_atom_identifier(&self.0, dest)
++        match self {
++            Self::Named(name) => serialize_atom_identifier(name, dest),
++            Self::Mix(mix) => {
++                dest.write_str("palette-mix(")?;
++                mix.interpolation.to_css(dest)?;
++                for (palette, percentage) in [&mix.left, &mix.right] {
++                    dest.write_str(", ")?;
++                    palette.to_css(dest)?;
++                    if let Some(percentage) = percentage {
++                        dest.write_char(' ')?;
++                        crate::values::serialize_percentage(*percentage / 100.0, dest)?;
++                    }
++                }
++                dest.write_char(')')
++            },
++        }
+     }
+ }
+ 
 diff -ruN a/values/specified/image.rs b/values/specified/image.rs
 --- a/values/specified/image.rs	2026-11-11 19:55:57
 +++ b/values/specified/image.rs	2026-11-15 19:35:19
@@ -1854,6 +2165,57 @@ diff -ruN a/values/specified/image.rs b/values/specified/image.rs
      /// Provides an alternate method for parsing, but only for urls.
      pub fn parse_only_url(
          context: &ParserContext,
+diff -ruN a/values/specified/number.rs b/values/specified/number.rs
+--- a/values/specified/number.rs	2026-11-11 19:55:57
++++ b/values/specified/number.rs	2026-11-16 08:07:01
+@@ -487,6 +487,47 @@
+         })
+     }
+ 
++    /// pyro: `resolve()`, with the font-relative lengths of a calc expression taken against a
++    /// font size of `font_size` px (`ex` and `ch` as half of it, `cap` 0.7 of it, `lh` 1.2 times
++    /// it). For an `<integer>` of a descriptor, which has no element: CSS Values 4 §6.1.1
++    /// resolves its font-relative units against the initial font.
++    pub fn resolve_with_font_size(&self, font_size: CSSFloat) -> Option<CSSInteger> {
++        use crate::values::specified::length::{LengthUnit, NoCalcLength};
++        if let Some(value) = self.resolve() {
++            return Some(value);
++        }
++        let Unpacked::Boxed(calc) = self.0.unpack() else {
++            return None;
++        };
++        let leaf = calc
++            .node
++            .resolve_map(|leaf| match leaf {
++                Leaf::Length(length) => {
++                    let factor = match length.length_unit() {
++                        unit if unit.is_absolute() => {
++                            return Ok(Leaf::Length(NoCalcLength::from_px(
++                                length.to_px_if_absolute().ok_or(())?,
++                            )));
++                        },
++                        LengthUnit::Em | LengthUnit::Rem | LengthUnit::Ic | LengthUnit::Ric => 1.0,
++                        LengthUnit::Ex | LengthUnit::Rex | LengthUnit::Ch | LengthUnit::Rch => 0.5,
++                        LengthUnit::Cap | LengthUnit::Rcap => 0.7,
++                        LengthUnit::Lh | LengthUnit::Rlh => 1.2,
++                        _ => return Err(()),
++                    };
++                    Ok(Leaf::Length(NoCalcLength::from_px(
++                        length.unitless_value() * factor * font_size,
++                    )))
++                },
++                other => Ok(other.clone()),
++            })
++            .ok()?;
++        match leaf {
++            Leaf::Number(number) => Some((number.value() + 0.5).floor() as CSSInteger),
++            _ => None,
++        }
++    }
++
+     /// Makes sure this number matches the clamping, or errors otherwise.
+     pub fn ensure_clamping_mode(&mut self, clamping_mode: AllowedNumericType) -> Result<(), ()> {
+         match self.0.unpack_mut() {
 diff -ruN a/values/specified/text.rs b/values/specified/text.rs
 --- a/values/specified/text.rs	2026-11-11 19:55:57
 +++ b/values/specified/text.rs	2026-11-16 08:28:42

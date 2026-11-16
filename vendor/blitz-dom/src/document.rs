@@ -129,6 +129,9 @@ pub(crate) fn init_stylo_prefs() {
         // pyro: `font-variant-caps: all-small-caps | petite-caps | all-petite-caps | unicase |
         // titling-caps` (blitz-dom maps each to its OpenType features).
         style_config::set_pref!("layout.css.font-variant-caps.all-values.enabled", true);
+        // pyro: `font-palette` and `@font-palette-values` (blitz-paint draws COLR glyphs in the
+        // palette they select).
+        style_config::set_pref!("layout.css.font-palette.enabled", true);
         style_config::set_pref!("layout.css.forced-color-adjust.enabled", true);
         style_config::set_pref!("layout.css.masking.enabled", true);
         style_config::set_pref!("layout.css.math-properties.enabled", true);
@@ -410,6 +413,10 @@ pub struct BaseDocument {
     pub(crate) thread_font_contexts: ThreadLocal<RefCell<Box<FontContext>>>,
     /// A Parley layout context
     pub(crate) layout_ctx: parley::LayoutContext<TextBrush>,
+    /// pyro: the `font-family` names `@font-face` rules registered each font file under, by blob
+    /// id: `@font-palette-values` rules name the fonts they apply to by family
+    /// (`BaseDocument::font_face_families`).
+    pub(crate) font_face_families: HashMap<u64, Vec<String>>,
 
     /// The real (non-anonymous) node which is currently hovered (if any).
     /// This is never a layout-generated (anonymous) node, so it remains valid
@@ -731,6 +738,7 @@ impl BaseDocument {
             linked_page_css: BTreeMap::new(),
             stylesheet_generation: 0,
             font_ctx,
+            font_face_families: HashMap::new(),
             #[cfg(feature = "parallel-construct")]
             thread_font_contexts: ThreadLocal::new(),
             layout_ctx: {
@@ -924,6 +932,22 @@ impl BaseDocument {
 
     pub fn get_node(&self, node_id: NodeId) -> Option<&Node> {
         self.nodes.get(node_id)
+    }
+
+    /// pyro: the `font-family` names that `@font-face` rules registered font file `blob_id` (a
+    /// blob id) under.
+    pub fn font_face_families(&self, blob_id: u64) -> &[String] {
+        self.font_face_families.get(&blob_id).map_or(&[], Vec::as_slice)
+    }
+
+    /// pyro: the `@font-palette-values` rules in effect, in cascade order: of two rules for the
+    /// same palette name and font family, the later one wins.
+    pub fn font_palette_values_rules(
+        &self,
+    ) -> impl Iterator<Item = &style::servo_arc::Arc<style::stylesheets::FontPaletteValuesRule>> + '_ {
+        self.stylist
+            .iter_extra_data_origins_rev()
+            .flat_map(|(data, _)| data.font_palette_values.iter().map(|(rule, _)| rule))
     }
 
     pub fn get_node_mut(&mut self, node_id: NodeId) -> Option<&mut Node> {
@@ -1904,7 +1928,7 @@ impl BaseDocument {
                 self.apply_iframe_html(node_id, res.request_id, res.resolved_url, &html);
             }
             Resource::Font(bytes, overrides) => {
-                let font = crate::util::intern_font_blob(bytes);
+                let font = crate::util::intern_font_blob(bytes, overrides.family_name.as_deref());
 
                 // Build a `FontInfoOverride` from the `@font-face` descriptors
                 // captured during stylesheet parsing. Without this, parley
@@ -1930,6 +1954,12 @@ impl BaseDocument {
                 global_font_ctx
                     .collection
                     .register_fonts(font.clone(), Some(info_override));
+                if let Some(family) = &overrides.family_name {
+                    let families = self.font_face_families.entry(font.id()).or_default();
+                    if !families.contains(family) {
+                        families.push(family.clone());
+                    }
+                }
 
                 #[cfg(feature = "parallel-construct")]
                 {
