@@ -95,6 +95,20 @@ pub enum TextSpacingTrim {
     TrimAll,
 }
 
+/// pyro: where justification adds space (CSS `text-justify`).
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum TextJustify {
+    /// Between words, and between the characters of CJK text (as Blink).
+    #[default]
+    Auto,
+    /// Nowhere.
+    None,
+    /// Between words.
+    InterWord,
+    /// Between all typographic character units (`distribute`).
+    InterCharacter,
+}
+
 /// pyro: where `text-autospace` adds 1/8 ic between ideographs and other characters
 /// (CSS Text 4 `text-autospace`). The default adds none.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -390,6 +404,8 @@ pub enum StyleProperty<'a, B: Brush> {
     TextSpacingTrim(TextSpacingTrim),
     /// pyro: where space is added between ideographs and other characters.
     TextAutospace(TextAutospace),
+    /// pyro: where justification adds space.
+    TextJustify(TextJustify),
 }
 
 /// Unresolved styles.
@@ -469,6 +485,8 @@ pub struct TextStyle<'family, 'settings, B: Brush> {
     /// pyro: where this style's text spaces ideographs from letters and numerals (CSS
     /// `text-autospace`).
     pub text_autospace: TextAutospace,
+    /// pyro: where justification adds space in this style's text (CSS `text-justify`).
+    pub text_justify: TextJustify,
     /// pyro: room the span's text needs beyond its content area, over and under it, for what is
     /// drawn there (ruby annotations, emphasis marks). The line box holds the span's content area
     /// grown by it, where its line height leaves too little (CSS Ruby 1, 4.4).
@@ -558,6 +576,7 @@ impl<B: Brush> Default for TextStyle<'static, 'static, B> {
             language_override: None,
             text_spacing_trim: TextSpacingTrim::default(),
             text_autospace: TextAutospace::default(),
+            text_justify: TextJustify::default(),
             annotation_space: AnnotationSpace::default(),
             text_box_trim: TextBoxTrim::default(),
         }

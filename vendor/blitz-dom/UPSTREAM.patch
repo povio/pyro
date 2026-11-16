@@ -31442,7 +31442,7 @@ diff --git a/packages/blitz-dom/src/stylo_to_parley.rs b/packages/blitz-dom/src/
          locale: parley::Language::parse(&font_styles._x_lang.0).ok(),
          line_height,
          vertical_align,
-@@ -549,9 +785,35 @@
+@@ -549,9 +785,41 @@
          letter_spacing,
          text_wrap_mode,
          white_space_collapse: white_space_collapse(itext_styles.white_space_collapse),
@@ -31475,10 +31475,16 @@ diff --git a/packages/blitz-dom/src/stylo_to_parley.rs b/packages/blitz-dom/src/
          line_break,
 +        text_spacing_trim: text_spacing_trim(style, &font_features),
 +        text_autospace: text_autospace(style),
++        text_justify: match itext_styles.text_justify {
++            style::values::computed::TextJustify::Auto => parley::TextJustify::Auto,
++            style::values::computed::TextJustify::None => parley::TextJustify::None,
++            style::values::computed::TextJustify::InterWord => parley::TextJustify::InterWord,
++            style::values::computed::TextJustify::InterCharacter => parley::TextJustify::InterCharacter,
++        },
  
          // Contains NodeId
          brush: TextBrush::from_id(span_id),
-@@ -569,6 +831,10 @@
+@@ -569,6 +837,10 @@
          strikethrough_offset: Default::default(),
          strikethrough_size: Default::default(),
          strikethrough_brush: Default::default(),

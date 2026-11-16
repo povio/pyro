@@ -177,6 +177,7 @@ impl ResolveContext {
             StyleProperty::LanguageOverride(value) => LanguageOverride(*value),
             StyleProperty::TextSpacingTrim(value) => TextSpacingTrim(*value),
             StyleProperty::TextAutospace(value) => TextAutospace(*value),
+            StyleProperty::TextJustify(value) => TextJustify(*value),
         }
     }
 
@@ -226,6 +227,7 @@ impl ResolveContext {
             language_override: raw_style.language_override,
             text_spacing_trim: raw_style.text_spacing_trim,
             text_autospace: raw_style.text_autospace,
+            text_justify: raw_style.text_justify,
             annotation_space: raw_style.annotation_space.scale(scale),
             text_box_trim: raw_style.text_box_trim,
         }
@@ -434,6 +436,8 @@ pub(crate) enum ResolvedProperty<B: Brush> {
     TextSpacingTrim(crate::style::TextSpacingTrim),
     /// pyro: where space is added between ideographs and other characters.
     TextAutospace(crate::style::TextAutospace),
+    /// pyro: where justification adds space.
+    TextJustify(crate::style::TextJustify),
 }
 
 /// pyro: `tab_size` with a length in layout units.
@@ -507,6 +511,8 @@ pub(crate) struct ResolvedStyle<B: Brush> {
     pub(crate) text_spacing_trim: crate::style::TextSpacingTrim,
     /// pyro: where space is added between ideographs and other characters.
     pub(crate) text_autospace: crate::style::TextAutospace,
+    /// pyro: where justification adds space.
+    pub(crate) text_justify: crate::style::TextJustify,
     /// pyro: room beyond the content area ([`TextStyle::annotation_space`]), scaled.
     pub(crate) annotation_space: AnnotationSpace,
     /// pyro: the edges the content area is trimmed to ([`TextStyle::text_box_trim`]).
@@ -552,6 +558,7 @@ impl<B: Brush> ResolvedStyle<B> {
             LanguageOverride(value) => self.language_override = value,
             TextSpacingTrim(value) => self.text_spacing_trim = value,
             TextAutospace(value) => self.text_autospace = value,
+            TextJustify(value) => self.text_justify = value,
         }
     }
 
@@ -592,6 +599,7 @@ impl<B: Brush> ResolvedStyle<B> {
             LanguageOverride(value) => self.language_override == *value,
             TextSpacingTrim(value) => self.text_spacing_trim == *value,
             TextAutospace(value) => self.text_autospace == *value,
+            TextJustify(value) => self.text_justify == *value,
         }
     }
 

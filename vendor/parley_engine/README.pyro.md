@@ -168,3 +168,8 @@ punctuation and white space). Not under `line-break: anywhere` or `word-break: k
 `shape/east_asian_spacing.rs` (`east_asian_spacing`, `is_mark`): UTR #59's East_Asian_Spacing classes (Wide ranges
 from its data file; Conditional: Po but not `" ' * / · † ‡ …` and not wide, fullwidth or halfwidth; Narrow: letters,
 marks and numerals that are not), for parley's `text-autospace`.
+
+`shape/data.rs` (`CharacterFlags::{is_no_justify, expands_before, expands_after}`), `shape/shaped_text.rs`
+(`ShapedText::set_character_justification`): a character's justification opportunities (CSS `text-justify`), which
+parley sets and its line breaker and spacing read; `shape/east_asian_spacing.rs` (`is_format`, `is_cursive`) tells
+parley which characters justification passes over and which scripts it does not space apart.

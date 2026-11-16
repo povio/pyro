@@ -814,6 +814,12 @@ pub(crate) fn style(
         line_break,
         text_spacing_trim: text_spacing_trim(style, &font_features),
         text_autospace: text_autospace(style),
+        text_justify: match itext_styles.text_justify {
+            style::values::computed::TextJustify::Auto => parley::TextJustify::Auto,
+            style::values::computed::TextJustify::None => parley::TextJustify::None,
+            style::values::computed::TextJustify::InterWord => parley::TextJustify::InterWord,
+            style::values::computed::TextJustify::InterCharacter => parley::TextJustify::InterCharacter,
+        },
 
         // Contains NodeId
         brush: TextBrush::from_id(span_id),

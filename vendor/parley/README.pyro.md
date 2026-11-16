@@ -283,3 +283,18 @@ builds itself.
 Not done: trimming in `ContentWidthsMeasurer` (min/max-content widths count the shaped widths), vertical
 `vhal`/`vchw` (pyro shapes vertical text horizontally, so `halt` serves), `text-spacing` (the shorthand Chromium does
 not ship either). Covered by `crates/pyro-render/tests/text_spacing.rs`.
+
+## `text-justify` (WPT round 3, lane TS)
+
+- `style/mod.rs` (`TextJustify`, `StyleProperty::TextJustify`), `resolve/mod.rs`: CSS `text-justify` per style.
+- `shape/justify.rs`: each character's justification opportunities, as Blink's `ShapeResultSpacing` finds them:
+  `auto` before and after each CJK character (once between two of them, none twice after a space), `inter-character`
+  (`distribute`) between all characters, `none` none at all (a word separator under it is none either);
+  parley_engine's `CharacterFlags::{is_no_justify, expands_before, expands_after}`.
+- `layout/line_break.rs` (`append_atom_to_line`, `hanging_whitespace`, `LineState::content_start`),
+  `layout/spacing.rs` (`Justification::content_start_cluster`, `EffectiveSpacing::gaps`): a line counts them with its
+  word separators and leaves out the one before its first character and those after its last atom (justification
+  stops at that atom's start, as for word separators); justification adds its space there. Invisible formatting
+  characters (bidi controls) are passed over; cursive scripts (Arabic) get no `inter-character` space between letters. Upstream justified only at word separators, so CJK lines (no spaces) stayed
+  start-aligned. Covered by `justified_cjk_text_spreads_between_characters` in
+  `crates/pyro-render/tests/text_spacing.rs`.

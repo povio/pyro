@@ -14,7 +14,7 @@ pub(crate) mod shaper;
 
 pub use cluster::{Char, CharCluster, Coverage, SourceRange, Whitespace};
 pub use data::{Character, CharacterFlags, ShapedCluster};
-pub use east_asian_spacing::{EastAsianSpacing, east_asian_spacing, is_mark};
+pub use east_asian_spacing::{EastAsianSpacing, east_asian_spacing, is_cursive, is_format, is_mark};
 pub use han_kerning::SpacingTrim;
 
 pub(crate) use data::ShapedClusterFlags;

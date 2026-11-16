@@ -135,6 +135,9 @@ pub(crate) struct Justification {
     /// after the line's last tab that goes to a tab stop (CSS Text 4 § 6.1: justifying text whose
     /// white space is preserved must leave the tab stops where they are).
     pub(crate) justification_start_cluster: u32,
+    /// pyro: the first shaped cluster of the line's content: no space is added before it
+    /// (`text-justify` opportunities before a character, `ExpansionBefore` in Blink).
+    pub(crate) content_start_cluster: u32,
 }
 
 impl Justification {
@@ -143,6 +146,7 @@ impl Justification {
         amount_per_opportunity: 0.,
         justification_end_cluster: u32::MAX,
         justification_start_cluster: 0,
+        content_start_cluster: 0,
     };
 }
 
@@ -187,11 +191,28 @@ impl EffectiveSpacing {
         }
         let mut gaps = self.spacing.gaps(whitespace);
 
-        if is_word_separator(whitespace)
-            && atom.shaped_clusters_range().end <= self.justification.justification_end_cluster
-            && atom.shaped_clusters_range().start >= self.justification.justification_start_cluster
-        {
-            gaps.after += self.justification.amount_per_opportunity;
+        let amount = self.justification.amount_per_opportunity;
+        let range = atom.shaped_clusters_range();
+        if amount != 0. && range.start >= self.justification.justification_start_cluster {
+            let first = atom.characters()[0].flags;
+            // Justification stops at the start of the line's last atom (and of the white space
+            // hanging at its end).
+            if range.end <= self.justification.justification_end_cluster {
+                if is_word_separator(whitespace) && !first.is_no_justify() {
+                    gaps.after += amount;
+                }
+                // pyro: `text-justify` opportunities after characters.
+                if atom.characters().last().is_some_and(|last| last.flags.expands_after()) {
+                    gaps.after += amount;
+                }
+            }
+            // pyro: and before them, but before the line's first.
+            if first.expands_before()
+                && range.start > self.justification.content_start_cluster
+                && range.start <= self.justification.justification_end_cluster
+            {
+                gaps.before += amount;
+            }
         }
 
         gaps

@@ -274,6 +274,12 @@ impl CharacterFlags {
     const TRIM_CLOSE: u16 = 1 << 7;
     /// pyro: the character was shaped half-width (its font's `halt`).
     const TRIMMED: u16 = 1 << 8;
+    /// pyro: no justification opportunity at the character (CSS `text-justify: none`).
+    const NO_JUSTIFY: u16 = 1 << 9;
+    /// pyro: a justification opportunity before the character (CJK text, `inter-character`).
+    const EXPAND_BEFORE: u16 = 1 << 10;
+    /// pyro: a justification opportunity after the character.
+    const EXPAND_AFTER: u16 = 1 << 11;
 
     #[inline(always)]
     pub fn new(source_char: char, is_word_boundary: bool, is_soft_wrap_opportunity: bool) -> Self {
@@ -341,6 +347,36 @@ impl CharacterFlags {
     #[inline(always)]
     pub fn is_trimmed(self) -> bool {
         self.0 & Self::TRIMMED != 0
+    }
+
+    /// pyro: these flags with the character's justification opportunities (CSS `text-justify`):
+    /// `none` takes the word separator's away, `before` and `after` add one on each side.
+    #[inline(always)]
+    pub(crate) fn with_justification(self, none: bool, before: bool, after: bool) -> Self {
+        Self(
+            self.0 & !(Self::NO_JUSTIFY | Self::EXPAND_BEFORE | Self::EXPAND_AFTER)
+                | if none { Self::NO_JUSTIFY } else { 0 }
+                | if before { Self::EXPAND_BEFORE } else { 0 }
+                | if after { Self::EXPAND_AFTER } else { 0 },
+        )
+    }
+
+    /// pyro: whether a word separator here is no justification opportunity (`text-justify: none`).
+    #[inline(always)]
+    pub fn is_no_justify(self) -> bool {
+        self.0 & Self::NO_JUSTIFY != 0
+    }
+
+    /// pyro: whether justification may add space before the character.
+    #[inline(always)]
+    pub fn expands_before(self) -> bool {
+        self.0 & Self::EXPAND_BEFORE != 0
+    }
+
+    /// pyro: whether justification may add space after the character.
+    #[inline(always)]
+    pub fn expands_after(self) -> bool {
+        self.0 & Self::EXPAND_AFTER != 0
     }
 
     /// Whether there is a soft wrap opportunity before this character ([UAX #14][line-breaking]).

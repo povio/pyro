@@ -5,6 +5,7 @@
 //! and `icu` for text analysis.
 
 mod autospace;
+mod justify;
 
 use alloc::vec::Vec;
 use parley_engine::shape::{CharCluster, Coverage};
@@ -263,6 +264,8 @@ pub(crate) fn shape_text<'a, B: Brush>(
 
     // pyro: CSS `text-autospace`.
     autospace::apply(layout, text, styles, inline_boxes);
+    // pyro: CSS `text-justify`.
+    justify::apply(layout, text, styles);
 }
 
 /// pyro: how the shaper trims a style's fullwidth punctuation (CSS `text-spacing-trim`): the

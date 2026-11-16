@@ -140,3 +140,30 @@ pub fn is_mark(ch: char) -> bool {
     )
 }
 
+
+/// pyro: whether `ch` is an invisible formatting character (General_Category Cf: bidi controls,
+/// joiners, U+2061): justification passes over them (Blink, crbug.com/331680200).
+pub fn is_format(ch: char) -> bool {
+    parley_engine_properties(ch) == icu_properties::props::GeneralCategory::Format
+}
+
+/// pyro: whether `ch` is of a cursive script, whose letters `text-justify: inter-character` does
+/// not space apart (CSS Text 3 § 7.4, as Blink).
+pub fn is_cursive(ch: char) -> bool {
+    use icu_properties::props::Script;
+    matches!(
+        parley_data::Properties::get(ch).script(),
+        Script::Arabic
+            | Script::Syriac
+            | Script::Mongolian
+            | Script::Nko
+            | Script::Mandaic
+            | Script::Adlam
+            | Script::HanifiRohingya
+            | Script::Sogdian
+            | Script::OldUyghur
+            | Script::Manichaean
+            | Script::PsalterPahlavi
+            | Script::Chorasmian
+    )
+}

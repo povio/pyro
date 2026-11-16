@@ -2042,3 +2042,6 @@ Covered by `crates/pyro-render/tests/text_spacing.rs`.
   with `system: extends <style>` is the item's number in that style with the rule's `prefix` and `suffix` (the
   extended style's when absent), as text in the item's font (WPT `marker-text-matches-*`). Other systems are not
   supported.
+
+`src/stylo_to_parley.rs`: CSS `text-justify` becomes parley's `TextStyle::text_justify` (`distribute` parses as
+`inter-character`).

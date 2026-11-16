@@ -154,3 +154,27 @@ fn the_space_after_the_last_ideograph_of_a_line_goes() {
     let got = widths("<div style='width:84px;text-autospace:normal'><span id=s>国国国国X国</span></div>", &["s"]);
     assert_near(&got, &[80.0]);
 }
+
+#[test]
+fn justified_cjk_text_spreads_between_characters() {
+    // Four ideographs (80px) in 100px: three opportunities share 20px (`text-justify: auto`).
+    let x = |style: &str| {
+        boxes(
+            &format!(
+                "<div style='width:100px;text-align:justify;text-align-last:justify;{style}'>\
+                 <span id=a>国</span><span id=b>国</span><span id=c>国</span><span id=d>国</span></div>"
+            ),
+            &["a", "b", "c", "d"],
+        )
+        .iter()
+        .map(|b| b.x)
+        .collect::<Vec<_>>()
+    };
+    let third = 20.0 / 3.0;
+    assert_near(&x(""), &[0.0, 20.0 + third, 40.0 + 2.0 * third, 80.0]);
+    assert_near(&x("text-justify:inter-character"), &[0.0, 20.0 + third, 40.0 + 2.0 * third, 80.0]);
+    // `none` justifies nothing: the line stays at the start.
+    assert_near(&x("text-justify:none"), &[0.0, 20.0, 40.0, 60.0]);
+    // `inter-word` only between words: none here.
+    assert_near(&x("text-justify:inter-word"), &[0.0, 20.0, 40.0, 60.0]);
+}

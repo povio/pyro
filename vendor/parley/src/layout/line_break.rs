@@ -117,6 +117,8 @@ struct LineState {
     /// pyro: text or an atomic inline was appended to the line: what comes next does not start
     /// it (CSS `text-spacing-trim` at a line's start).
     has_inline_content: bool,
+    /// pyro: the first shaped cluster of the line's content (`Justification::content_start_cluster`).
+    content_start: u32,
     /// pyro: the line's first atom is fullwidth opening punctuation set half-width at the line's
     /// start, or set back full-width there: its shaped cluster, and how far its glyph moves and
     /// its advance changes. The shaped text takes it when the line is committed.
@@ -139,6 +141,7 @@ impl LineState {
         self.shy = None;
         self.no_break_after = false;
         self.has_inline_content = false;
+        self.content_start = 0;
         self.start_trim = None;
         self.end_trim = None;
     }
@@ -730,7 +733,16 @@ impl BreakerState {
         self.line.clusters.end = atom.shaped_clusters_range().end;
         self.cluster_idx = atom.shaped_clusters_range().end;
         self.line.x = next_x;
-        self.line.num_word_separators += u32::from(is_word_separator);
+        // pyro: the atom's justification opportunities (`text-justify`): a word separator's, and
+        // those before and after its characters (none before the line's content).
+        let first = atom.characters()[0].flags;
+        let line_start = !self.line.has_inline_content;
+        self.line.num_word_separators += u32::from(is_word_separator && !first.is_no_justify())
+            + u32::from(first.expands_before() && !line_start)
+            + u32::from(atom.characters().last().is_some_and(|last| last.flags.expands_after()));
+        if line_start {
+            self.line.content_start = atom.shaped_clusters_range().start;
+        }
         self.line.shy = None;
         self.line.no_break_after = false;
         // pyro: an invisible formatting character (a bidi control, an empty inline box's strut)
@@ -2300,11 +2312,30 @@ fn commit_line<B: Brush>(
         BreakReason::Regular | BreakReason::Emergency => f32::INFINITY,
         BreakReason::Explicit | BreakReason::None => state.x - max_advance,
     };
-    let (hanging_advance, justification_end_cluster, hanging_opportunities, collapsed_advance) = hanging_whitespace(
+    let (hanging_advance, mut justification_end_cluster, mut hanging_opportunities, collapsed_advance) = hanging_whitespace(
         layout,
         &lines.line_items[start_item_idx..end_item_idx],
         overflow,
     );
+    // pyro: no `text-justify` space after the line's last atom, also where the hanging white space
+    // logic stopped before it (a run at another bidi level ends the line).
+    if justification_end_cluster == u32::MAX
+        && let Some(item) = lines.line_items[start_item_idx..end_item_idx].last()
+        && item.kind == LayoutItemKind::TextRun
+        && !item.shaped_cluster_range.is_empty()
+        && let Some(atom) = layout
+            .data
+            .shaped_text
+            .run_slice(item.index as u32)
+            .narrow(item.shaped_cluster_range.clone())
+            .atoms_end()
+            .rev()
+            .next()
+        && atom.characters().last().is_some_and(|last| last.flags.expands_after())
+    {
+        hanging_opportunities += 1;
+        justification_end_cluster = atom.shaped_clusters_range().start;
+    }
     // The word separators counted as the line was built include the line's hanging whitespace, and
     // hanging whitespace is not stretched by justification.
     // pyro: saturating, as the separators before a tab stop are not counted while those of
@@ -2339,6 +2370,7 @@ fn commit_line<B: Brush>(
         justification: Justification {
             justification_end_cluster,
             justification_start_cluster: state.justify_from,
+            content_start_cluster: state.content_start,
             ..Justification::NONE
         },
         metrics: LineMetrics {
@@ -2492,9 +2524,14 @@ fn hanging_whitespace<B: Brush>(
                     // Justification can't stretch within an atom, so it stops at the start of the
                     // last atom that hangs in its entirety or only partially.
                     justification_end_cluster = atom.shaped_clusters_range().start;
-                    if is_word_separator(whitespace) {
+                    if is_word_separator(whitespace) && !atom.characters()[0].flags.is_no_justify() {
                         hanging_opportunities += 1;
                     }
+                    // pyro: and the `text-justify` opportunities after it (justification does
+                    // not reach past its start), and before it where it hangs entirely.
+                    hanging_opportunities += u32::from(
+                        atom.characters().last().is_some_and(|last| last.flags.expands_after()),
+                    ) + u32::from(all_hang && atom.characters()[0].flags.expands_before());
                     if !all_hang {
                         break 'items;
                     }

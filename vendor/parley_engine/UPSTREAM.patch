@@ -266,10 +266,12 @@
              descent: -metrics.descent,
              leading: metrics.leading,
              underline_offset,
-@@ -132,6 +212,113 @@
+@@ -130,6 +210,113 @@
+             cap_height: metrics.cap_height,
+         }
      }
- }
- 
++}
++
 +/// pyro: WebKit's and Chromium's (macOS) extra ascent for Times,
 +/// Helvetica and Courier, "to closely match the vertical metrics of their
 +/// Microsoft counterparts": 15% of the rounded ascent plus descent, rounded
@@ -375,11 +377,9 @@
 +    /// Range into [`ShapedText::normalized_coords`].
 +    normalized_coords_range: Range<usize>,
 +    metrics: RunMetrics,
-+}
-+
+ }
+ 
  /// The result of shaping.
- ///
- /// After [analyzing][crate::Analysis] your text, [shape the text][crate::Shaper::shape_text],
 @@ -152,6 +339,9 @@
      glyphs: Vec<Glyph>,
      fonts: Vec<FontInstance>,
@@ -398,13 +398,10 @@
      }
  
      /// Get a [`ShapedSlice`] of the run at `run_index`.
-@@ -215,6 +406,104 @@
+@@ -218,6 +409,113 @@
          }
-         for shaped_cluster in self.shaped_clusters.iter_mut() {
-             shaped_cluster.style_index = remap[shaped_cluster.style_index as usize];
-+        }
-+    }
-+
+     }
+ 
 +    /// pyro: sets the advance of the shaped cluster at `index` (a tab, once the line breaker knows
 +    /// the tab stop it reaches). A cluster whose glyphs are stored takes the difference on its
 +    /// last glyph; an inline glyph's advance is its cluster's.
@@ -443,6 +440,15 @@
 +        glyph.x += dx;
 +        glyph.advance += d_advance;
 +        Some((x, advance))
++    }
++
++    /// pyro: sets the justification opportunities of the character at `index` (see
++    /// [`CharacterFlags::with_justification`](super::CharacterFlags)).
++    #[inline]
++    pub fn set_character_justification(&mut self, index: usize, none: bool, before: bool, after: bool) {
++        if let Some(character) = self.characters.get_mut(index) {
++            character.flags = character.flags.with_justification(none, before, after);
++        }
 +    }
 +
 +    /// pyro: gives the one glyph of the shaped cluster at `index` back the x offset and the
@@ -500,10 +506,13 @@
 +            let glyph = self.glyphs.get_mut(cluster.glyph_offset as usize)?;
 +            glyph.advance = advance;
 +            Some((core::mem::replace(&mut glyph.id, id), before_advance))
-         }
-     }
- 
-@@ -273,7 +562,9 @@
++        }
++    }
++
+     /// The character data of the text, in logical order.
+     ///
+     /// [`ShapedRun::characters_range`] indexes into this. The nth [`Character`] corresponds exactly
+@@ -273,7 +571,9 @@
          font: &FontInstance,
          glyph_buffer: &harfrust::GlyphBuffer,
          normalized_coords: &[harfrust::NormalizedCoord],
@@ -514,7 +523,7 @@
          debug_assert_eq!(
              range.char_range.len(),
              text[range.byte_range.clone()].chars().count(),
-@@ -302,18 +593,36 @@
+@@ -302,18 +602,36 @@
                  index
              });
  
@@ -561,7 +570,7 @@
  
          // `HarfRust` returns glyphs in visual order, so we need to process them as such while
          // maintaining logical ordering of clusters.
-@@ -324,20 +633,22 @@
+@@ -324,20 +642,22 @@
  
          // Push all characters.
          let characters_start = self.characters.len();
@@ -590,7 +599,7 @@
                  grapheme_start: info.is_grapheme_start(),
              });
          }
-@@ -395,7 +706,9 @@
+@@ -395,7 +715,9 @@
              bidi_level: segment.bidi_level,
              advance: run_advance,
              font_metrics,
@@ -600,7 +609,7 @@
      }
  }
  
-@@ -423,6 +736,9 @@
+@@ -423,6 +745,9 @@
      pub bidi_level: BidiLevel,
      /// Total advance of the run.
      pub advance: f32,
@@ -610,7 +619,7 @@
      /// The font metrics of this run.
      pub font_metrics: FontMetrics,
  }
-@@ -534,7 +850,15 @@
+@@ -534,7 +859,15 @@
              y: -(glyph_pos.y_offset as f32) * scale_factor,
              advance: (glyph_pos.x_advance as f32) * scale_factor,
          };
@@ -627,7 +636,7 @@
              // Defer this potential zero-offset, single glyph cluster
              cluster.inline_glyph = Some(glyph);
          } else {
-@@ -647,9 +971,16 @@
+@@ -647,9 +980,16 @@
              char_end: text.chars().count().try_into().unwrap(),
              options: ShapeOptions {
                  font_size: 32.0,
@@ -644,7 +653,7 @@
              },
          }];
          shaper.shape_text(
-@@ -805,18 +1136,32 @@
+@@ -805,18 +1145,32 @@
                  char_end: 1,
                  options: ShapeOptions {
                      font_size: 32.0,
@@ -1610,7 +1619,7 @@
  impl core::fmt::Debug for AnalysisOptions<'_> {
 --- a/src/shape/data.rs
 +++ b/src/shape/data.rs
-@@ -253,19 +253,27 @@
+@@ -253,19 +253,33 @@
  
  /// Properties of a [`Character`].
  #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -1622,13 +1631,13 @@
      ///
      /// (Note the UTF-8 length of any character is between 1 and 4 inclusive.)
 -    const LEN_UTF8_MASK: u8 = 0b11;
--    /// Whether the source character is an emoji.
--    const EMOJI: u8 = 1 << 2;
 +    const LEN_UTF8_MASK: u16 = 0b11;
-+    /// Whether the source character is an emoji.
-+    const EMOJI: u16 = 1 << 2;
-     /// Whether there is a word boundary before the character.
+     /// Whether the source character is an emoji.
+-    const EMOJI: u8 = 1 << 2;
+-    /// Whether there is a word boundary before the character.
 -    const WORD_BOUNDARY: u8 = 1 << 3;
++    const EMOJI: u16 = 1 << 2;
++    /// Whether there is a word boundary before the character.
 +    const WORD_BOUNDARY: u16 = 1 << 3;
      /// Whether there is a soft wrap opportunity before the character.
 -    const SOFT_WRAP_OPPORTUNITY: u8 = 1 << 4;
@@ -1641,10 +1650,16 @@
 +    const TRIM_CLOSE: u16 = 1 << 7;
 +    /// pyro: the character was shaped half-width (its font's `halt`).
 +    const TRIMMED: u16 = 1 << 8;
++    /// pyro: no justification opportunity at the character (CSS `text-justify: none`).
++    const NO_JUSTIFY: u16 = 1 << 9;
++    /// pyro: a justification opportunity before the character (CJK text, `inter-character`).
++    const EXPAND_BEFORE: u16 = 1 << 10;
++    /// pyro: a justification opportunity after the character.
++    const EXPAND_AFTER: u16 = 1 << 11;
  
      #[inline(always)]
      pub fn new(source_char: char, is_word_boundary: bool, is_soft_wrap_opportunity: bool) -> Self {
-@@ -275,7 +283,7 @@
+@@ -275,7 +289,7 @@
              clippy::cast_possible_truncation,
              reason = "`len_utf8` is between 1 and 4 inclusive"
          )]
@@ -1653,7 +1668,7 @@
          Self(
              (len_utf8 - 1)
                  | if is_emoji { Self::EMOJI } else { 0 }
-@@ -288,10 +296,53 @@
+@@ -288,10 +302,83 @@
                      Self::SOFT_WRAP_OPPORTUNITY
                  } else {
                      0
@@ -1704,6 +1719,36 @@
 +        self.0 & Self::TRIMMED != 0
 +    }
 +
++    /// pyro: these flags with the character's justification opportunities (CSS `text-justify`):
++    /// `none` takes the word separator's away, `before` and `after` add one on each side.
++    #[inline(always)]
++    pub(crate) fn with_justification(self, none: bool, before: bool, after: bool) -> Self {
++        Self(
++            self.0 & !(Self::NO_JUSTIFY | Self::EXPAND_BEFORE | Self::EXPAND_AFTER)
++                | if none { Self::NO_JUSTIFY } else { 0 }
++                | if before { Self::EXPAND_BEFORE } else { 0 }
++                | if after { Self::EXPAND_AFTER } else { 0 },
++        )
++    }
++
++    /// pyro: whether a word separator here is no justification opportunity (`text-justify: none`).
++    #[inline(always)]
++    pub fn is_no_justify(self) -> bool {
++        self.0 & Self::NO_JUSTIFY != 0
++    }
++
++    /// pyro: whether justification may add space before the character.
++    #[inline(always)]
++    pub fn expands_before(self) -> bool {
++        self.0 & Self::EXPAND_BEFORE != 0
++    }
++
++    /// pyro: whether justification may add space after the character.
++    #[inline(always)]
++    pub fn expands_after(self) -> bool {
++        self.0 & Self::EXPAND_AFTER != 0
++    }
++
      /// Whether there is a soft wrap opportunity before this character ([UAX #14][line-breaking]).
      ///
      /// Note mandatory breaks (like `\n`) are encoded as [`Whitespace`].
@@ -1744,7 +1789,7 @@
  }
 --- /dev/null
 +++ b/src/shape/east_asian_spacing.rs
-@@ -0,0 +1,142 @@
+@@ -0,0 +1,169 @@
 +// Copyright 2026 the Parley Authors
 +// SPDX-License-Identifier: Apache-2.0 OR MIT
 +
@@ -1887,6 +1932,33 @@
 +    )
 +}
 +
++
++/// pyro: whether `ch` is an invisible formatting character (General_Category Cf: bidi controls,
++/// joiners, U+2061): justification passes over them (Blink, crbug.com/331680200).
++pub fn is_format(ch: char) -> bool {
++    parley_engine_properties(ch) == icu_properties::props::GeneralCategory::Format
++}
++
++/// pyro: whether `ch` is of a cursive script, whose letters `text-justify: inter-character` does
++/// not space apart (CSS Text 3 § 7.4, as Blink).
++pub fn is_cursive(ch: char) -> bool {
++    use icu_properties::props::Script;
++    matches!(
++        parley_data::Properties::get(ch).script(),
++        Script::Arabic
++            | Script::Syriac
++            | Script::Mongolian
++            | Script::Nko
++            | Script::Mandaic
++            | Script::Adlam
++            | Script::HanifiRohingya
++            | Script::Sogdian
++            | Script::OldUyghur
++            | Script::Manichaean
++            | Script::PsalterPahlavi
++            | Script::Chorasmian
++    )
++}
 --- /dev/null
 +++ b/src/shape/han_kerning.rs
 @@ -0,0 +1,235 @@
@@ -2138,7 +2210,7 @@
  
  pub use cluster::{Char, CharCluster, Coverage, SourceRange, Whitespace};
  pub use data::{Character, CharacterFlags, ShapedCluster};
-+pub use east_asian_spacing::{EastAsianSpacing, east_asian_spacing, is_mark};
++pub use east_asian_spacing::{EastAsianSpacing, east_asian_spacing, is_cursive, is_format, is_mark};
 +pub use han_kerning::SpacingTrim;
  
  pub(crate) use data::ShapedClusterFlags;

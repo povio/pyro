@@ -449,6 +449,15 @@ impl ShapedText {
         Some((x, advance))
     }
 
+    /// pyro: sets the justification opportunities of the character at `index` (see
+    /// [`CharacterFlags::with_justification`](super::CharacterFlags)).
+    #[inline]
+    pub fn set_character_justification(&mut self, index: usize, none: bool, before: bool, after: bool) {
+        if let Some(character) = self.characters.get_mut(index) {
+            character.flags = character.flags.with_justification(none, before, after);
+        }
+    }
+
     /// pyro: gives the one glyph of the shaped cluster at `index` back the x offset and the
     /// cluster back the advance [`Self::shift_cluster`] returned.
     pub fn unshift_cluster(&mut self, index: u32, x: f32, advance: f32) {
