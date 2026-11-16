@@ -49,6 +49,12 @@ struct FlexItem {
     aspect_ratio: Option<f32>,
     /// pyro: a replaced element's natural ratio (its `aspect-ratio` is `auto`), between content boxes
     natural_ratio: Option<f32>,
+    /// pyro: the item is a replaced element
+    is_replaced: bool,
+    /// pyro: what the box `aspect_ratio` is between is smaller than the border box by: padding and
+    /// border for a `content-box` box or `aspect-ratio: auto <ratio>` on a non-replaced box (a
+    /// content-box ratio), else nothing (css-sizing-4 §5.1)
+    ratio_inset: Size<f32>,
     /// pyro: the item is a table, never smaller than its min-content size in the main axis
     is_table: bool,
     /// pyro: the sizing keywords of its min and max sizes (`min_size`/`max_size` have none: `auto` there),
@@ -1001,11 +1007,25 @@ fn generate_anonymous_flex_items(
             } else {
                 Size::ZERO
             };
-            let mut size = child_style
-                .size()
-                .maybe_resolve(percent_resolution_size, |val, basis| tree.calc(val, basis))
-                .maybe_apply_aspect_ratio(aspect_ratio)
-                .maybe_add(box_sizing_adjustment);
+            // pyro: a preferred cross size gives the main size through the ratio, but a preferred
+            // main size gives no cross size: the cross size follows the used (flexed) main size,
+            // determined with it (css-flexbox-1 §9.4; WPT css-sizing `flex-aspect-ratio-011/013`).
+            let style_size =
+                child_style.size().maybe_resolve(percent_resolution_size, |val, basis| tree.calc(val, basis));
+            // (sizes here are border boxes: a `content-box` box's ratio is its content box's too)
+            let ratio_inset = if child_style.aspect_ratio_of_content_box() || child_style.box_sizing() == BoxSizing::ContentBox {
+                (padding + border).sum_axes()
+            } else {
+                Size::ZERO
+            };
+            let mut size = style_size.maybe_add(box_sizing_adjustment);
+            if let (Some(ratio), None, Some(cross)) =
+                (aspect_ratio, size.main(constants.dir), size.cross(constants.dir))
+            {
+                let inner_cross = (cross - ratio_inset.cross(constants.dir)).max(0.0);
+                let inner_main = if constants.dir.is_row() { inner_cross * ratio } else { inner_cross / ratio };
+                size.set_main(constants.dir, Some(inner_main + ratio_inset.main(constants.dir)));
+            }
             let min_size = child_style
                 .min_size()
                 .maybe_resolve(percent_resolution_size, |val, basis| tree.calc(val, basis))
@@ -1034,6 +1054,8 @@ fn generate_anonymous_flex_items(
                 max_size,
                 aspect_ratio,
                 natural_ratio,
+                is_replaced: child_style.is_replaced(),
+                ratio_inset,
                 is_table: child_style.is_table(),
                 min_size_keyword: child_style.min_size_keyword(),
                 max_size_keyword: child_style.max_size_keyword(),
@@ -1345,7 +1367,9 @@ fn determine_flex_base_size(
             if child_cross_size_is_definite {
                 if let (Some(ratio), Some(cross)) = (child.aspect_ratio, child_known_dimensions.cross(dir)) {
                     child.flex_basis_is_definite = true;
-                    break 'flex_basis if dir.is_row() { cross * ratio } else { cross / ratio };
+                    let inset = child.ratio_inset;
+                    let cross = (cross - inset.cross(dir)).max(0.0);
+                    break 'flex_basis inset.main(dir) + if dir.is_row() { cross * ratio } else { cross / ratio };
                 }
                 // pyro: a natural ratio is between content boxes
                 if let (Some(ratio), Some(cross)) = (child.natural_ratio, child_known_dimensions.cross(dir)) {
@@ -1436,6 +1460,24 @@ fn determine_flex_base_size(
             child.min_size.or(child.overflow.map(Overflow::maybe_into_automatic_min_size).into()).main(dir);
 
         child.resolved_minimum_main_size = style_min_main_size.unwrap_or_else(|| {
+            // pyro: a non-replaced item of a preferred aspect ratio is at least as large as its
+            // content (its automatic minimum size, css-sizing-4 §5.1): its min-content size is the
+            // larger of the size its definite cross size gives through the ratio and its
+            // content's min-content size measured without the ratio (WPT css-sizing
+            // `flex-aspect-ratio-002/004/045/049..054`).
+            let content_ratio_item = child.aspect_ratio.is_some() && !child.is_replaced;
+            let content_min_content_main_size = match child_known_dimensions.cross(dir) {
+                Some(cross) if content_ratio_item => Some(tree.measure_child_size(
+                    child.node,
+                    child_known_dimensions.with_cross(dir, None),
+                    child_parent_size,
+                    Size::MIN_CONTENT.with_cross(dir, AvailableSpace::Definite(cross)),
+                    SizingMode::ContentSize,
+                    dir.main_axis(),
+                    Line::FALSE,
+                )),
+                _ => None,
+            };
             let min_content_main_size = {
                 let child_available_space = Size::MIN_CONTENT.with_cross(dir, cross_axis_available_space);
 
@@ -1449,12 +1491,15 @@ fn determine_flex_base_size(
                     dir.main_axis(),
                     Line::FALSE,
                 )
+                .maybe_max(content_min_content_main_size)
             };
 
             // pyro: the min-content size of a replaced element with a definite (preferred or stretched) cross
             // size is that size through its natural ratio, as in Blink, smaller or larger than its natural size
             // (WPT `relayout-intrinsic-block-size`, `flexbox-min-width-auto-002a`).
-            let min_content_main_size = match (child_cross_size_is_definite, child.natural_ratio) {
+            // (also through an `aspect-ratio` the property gives it: WPT css-sizing `flex-aspect-ratio-055`)
+            let replaced_ratio = child.natural_ratio.or(child.aspect_ratio.filter(|_| child.is_replaced));
+            let min_content_main_size = match (child_cross_size_is_definite, replaced_ratio) {
                 (true, Some(ratio)) => match child_known_dimensions.cross(dir) {
                     Some(cross) => {
                         let cross = (cross - padding_border_axes_sums.cross(dir).unwrap_or(0.0)).max(0.0);
@@ -1468,8 +1513,17 @@ fn determine_flex_base_size(
 
             // 4.5. Automatic Minimum Size of Flex Items
             // https://www.w3.org/TR/css-flexbox-1/#min-size-auto
-            let clamped_min_content_size =
-                min_content_main_size.maybe_min(child.size.main(dir)).maybe_min(transferred_max_size.main(dir));
+            // pyro: the specified size suggestion is the preferred main size, not one the ratio
+            // transferred from the cross size (only a replaced item has a transferred size
+            // suggestion); the min and max cross sizes bound it through the ratio.
+            let specified_main_size = match content_ratio_item && child.size_style.main(dir).is_auto() {
+                true => None,
+                false => child.size.main(dir),
+            };
+            let clamped_min_content_size = min_content_main_size
+                .maybe_min(specified_main_size)
+                .maybe_min(transferred_max_size.main(dir))
+                .maybe_max(if content_ratio_item { transferred_min_size.main(dir) } else { None });
             clamped_min_content_size.maybe_max(padding_border_axes_sums.main(dir))
         });
 

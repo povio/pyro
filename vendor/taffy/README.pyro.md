@@ -512,3 +512,14 @@ around a `height: 100%` canvas is as wide as the canvas at that height. When the
 content (no known width: floats, inline-blocks), the item list is generated again with that width, so the children's
 percentage sizes, min/max sizes and padding resolve against it, as at a given width. Covered by
 `crates/pyro-render/tests/intrinsic_percentages.rs`.
+
+**Flex items with a preferred aspect ratio (lane S2).** A preferred cross size gives the main size through the ratio
+at item generation, but a preferred main size gives no cross size: the cross size follows the flexed main size.
+A non-replaced ratio item's content size suggestion is the larger of its measure with the definite cross size (the
+ratio's) and its content's min-content size measured without it (the cross size as available space); the specified
+size suggestion is the preferred main size only (no transferred one for non-replaced items), and min cross sizes
+bound it through the ratio. A replaced item's `aspect-ratio` converts a definite cross size like a natural ratio.
+`FlexItem::ratio_inset` makes transfers between the boxes the ratio is between (content box for `content-box` or
+`auto <ratio>`). Block layout follows the ratio in content-size measures too (`height_follows_ratio` without the
+sizing-mode condition: a max-content flex base size of `min-width: 100px; aspect-ratio: 1` is 100px tall), and
+derives a known axis through the ratio's box. Covered by `crates/pyro-render/tests/aspect_ratio.rs`.

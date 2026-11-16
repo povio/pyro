@@ -174,3 +174,34 @@ fn a_grid_containers_auto_height_follows_the_ratio() {
         (100, 100),
     );
 }
+
+/// A non-replaced flex item of a preferred aspect ratio: its automatic minimum size is the larger
+/// of its content and its definite cross size through the ratio; a preferred main size gives no
+/// cross size (the flexed one does); a max-content flex base size follows the ratio from its
+/// min cross size; `auto <ratio>` is between content boxes (WPT css-sizing `flex-aspect-ratio-*`).
+#[test]
+fn flex_items_with_a_ratio() {
+    check(
+        "<div style='display:flex'><div style='background:green;height:100px;aspect-ratio:1/2;flex-basis:0'>\
+         <div style='width:100px'></div></div></div>",
+        (100, 100),
+    );
+    check(
+        "<div style='display:flex;width:0;height:100px'><div style='background:green;aspect-ratio:1'></div></div>",
+        (100, 100),
+    );
+    check(
+        "<div style='display:flex;width:100px'><div style='background:green;width:50px;aspect-ratio:1;min-width:0;flex:1'></div></div>",
+        (100, 100),
+    );
+    check(
+        "<div style='display:flex;flex-flow:column;align-items:start'>\
+         <div style='aspect-ratio:1;flex:0 0 auto;min-height:0;min-width:100px;background:green'></div></div>",
+        (100, 100),
+    );
+    check(
+        "<div style='display:flex;width:1px'><div style='background:green;padding-top:15px;padding-left:10px;\
+         box-sizing:border-box;height:25px;aspect-ratio:auto 19/1'></div></div>",
+        (200, 25),
+    );
+}

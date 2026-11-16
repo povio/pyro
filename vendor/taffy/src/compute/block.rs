@@ -591,8 +591,10 @@ pub fn compute_block_layout(
     // pyro: a height that is the width's through the aspect ratio is not known here: the box's
     // layout derives it from its used width, and its content can make it taller (the automatic
     // minimum size, css-sizing-4 §5.1).
+    // A content-size measure (a flex item's flex base size) follows the ratio too: the
+    // max-content height of a box of `min-width: 100px; aspect-ratio: 1` is 100px (WPT
+    // css-sizing `flex-aspect-ratio-034..037`).
     let height_follows_ratio = sizes.height_from_ratio
-        && inputs.sizing_mode == SizingMode::InherentSize
         && known_dimensions.height.is_none()
         && min_max_definite_size.height.is_none();
     if height_follows_ratio {
@@ -743,7 +745,15 @@ fn compute_inner(
         // pyro: the height is settled once the content is laid out
         known_dimensions
     } else {
-        let derived = known_dimensions.maybe_apply_aspect_ratio(aspect_ratio).maybe_clamp(min_size, max_size);
+        // pyro: through the box the ratio is between (`ratio_inset` + `box_sizing_adjustment`
+        // from the border box; WPT css-sizing `flex-aspect-ratio-025` `auto 19/1`)
+        let inset = box_sizing_adjustment + ratio_inset;
+        let derived = known_dimensions
+            .maybe_sub(inset)
+            .map(|size| size.map(|size| size.max(0.0)))
+            .maybe_apply_aspect_ratio(aspect_ratio)
+            .maybe_add(inset)
+            .maybe_clamp(min_size, max_size);
         Size { width: known_dimensions.width.or(derived.width), height: known_dimensions.height.or(derived.height) }
     };
     let percentage_basis_dimensions = Size {
