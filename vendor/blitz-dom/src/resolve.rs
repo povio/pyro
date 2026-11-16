@@ -764,9 +764,25 @@ impl BaseDocument {
         if node.parent != Some(root.id) {
             return false;
         }
+        // pyro: only the root's first `body` child (CSS Overflow 3 § 3.3; a `frameset` before it
+        // does not count, WPT css/CSS2/visufx/overflow-propagation-001c), and only while it
+        // generates a box (WPT css-overflow/overflow-body-propagation-014..016: a second `body`
+        // keeps its `overflow`).
+        let first = root
+            .children
+            .iter()
+            .copied()
+            .find(|&id| self.nodes[id].data.is_element_with_tag_name(&crate::local_name!("body")));
+        if first != Some(node_id) {
+            return false;
+        }
         let (Some(body), Some(html)) = (node.primary_styles(), root.primary_styles()) else {
             return false;
         };
+        let display = body.clone_display();
+        if display.is_none() || display.is_contents() {
+            return false;
+        }
         html.clone_overflow_x() == Overflow::Visible
             && html.clone_overflow_y() == Overflow::Visible
             && body.clone_contain() == Contain::empty()

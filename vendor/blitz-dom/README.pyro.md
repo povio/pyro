@@ -1979,6 +1979,10 @@ root whose first child's top margin no longer collapsed with its own (8px lower 
 `css/css-grid/layout-algorithm/grid-as-flex-item-should-not-shrink-to-fit-*`). A body whose flag changes is laid out
 again with the root. Paint and scrolling already treated such a body's `overflow` as the viewport's. Covered by
 `crates/pyro-render/tests/viewport_overflow.rs`.
+Only the root's first `body` child (a `frameset` before it does not count) gives the viewport its `overflow`, and
+only while it generates a box (`body_overflow_goes_to_viewport`, lane SM: a second `body` keeps its own; WPT
+`css/css-overflow/overflow-body-propagation-014..016`).
+
 ## `::marker` text-transform and tabular digits (WPT round 3, lane I)
 
 - `src/layout/list.rs`, `src/layout/text_transform.rs` (`TextTransformer::transform_alone`): a `::marker` rule's
