@@ -58,6 +58,8 @@ jobs:
           dir="$(scripts/jsc/cache-key.sh)"
           echo "dir=$dir" >> "$GITHUB_OUTPUT"
       - uses: actions/cache/restore@v4
+        env:
+          PATH: /usr/bin:/bin:/usr/sbin:/sbin
         id: cache
         with:
           path: ~/Library/Caches/pyro/jsc/${{ steps.key.outputs.dir }}
@@ -72,6 +74,8 @@ jobs:
           command -v ninja >/dev/null || brew install ninja
           scripts/jsc/build.sh
       - uses: actions/cache/save@v4
+        env:
+          PATH: /usr/bin:/bin:/usr/sbin:/sbin
         if: steps.cache.outputs.cache-hit != 'true'
         with:
           path: ~/Library/Caches/pyro/jsc/${{ steps.key.outputs.dir }}
