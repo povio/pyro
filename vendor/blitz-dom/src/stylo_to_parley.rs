@@ -74,6 +74,13 @@ pub(crate) fn fallback_font_family(
     (!names_generic).then_some(parley::GenericFamily::Serif)
 }
 
+/// pyro: whether `family` names a hidden system font: macOS's own UI fonts go by names that start
+/// with a dot (`.AppleSystemUIFont`, `.SF NS Mono`), which pages cannot reach (as in Safari and
+/// Chrome; they have the `system-ui` and `ui-*` generics).
+pub(crate) fn is_hidden_family(family: &stylo::SingleFontFamily) -> bool {
+    matches!(family, stylo::SingleFontFamily::FamilyName(name) if name.name.starts_with('.'))
+}
+
 pub(crate) fn query_font_family(input: &stylo::SingleFontFamily) -> parley::QueryFamily<'_> {
     match input {
         stylo::SingleFontFamily::FamilyName(name) => {
@@ -651,6 +658,7 @@ pub(crate) fn style(
         .families
         .list
         .iter()
+        .filter(|family| !is_hidden_family(family))
         .map(|family| match family {
             stylo::SingleFontFamily::FamilyName(name) => {
                 'ret: {

@@ -2008,3 +2008,6 @@ Covered by `crates/pyro-render/tests/svg_image_natural_size.rs`.
 `src/node/node.rs` (`Node::layout_style`): a replaced element with a natural aspect ratio gives it to its layout style
 (stylo_taffy's `natural_ratio`), for Taffy's flex algorithm (vendor/taffy/README.pyro.md, "Natural aspect ratios of
 flex items").
+`src/stylo_to_parley.rs` (`is_hidden_family`), `src/font_metrics.rs`: a family name that starts with a dot (macOS's
+hidden UI fonts, `.AppleSystemUIFont`, `.SF NS Mono`) matches no font, as in Safari and Chrome (WPT
+`standard-font-family`).

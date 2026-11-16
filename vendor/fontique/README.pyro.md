@@ -109,3 +109,7 @@ whose range has no bold in it is faked bold, as on a face without the axis (WPT 
 A face whose `font-style` range is all oblique (`oblique 45deg 67.5deg`) has its `slnt` axis held to the angle of the
 range nearest the request (0deg for normal, 14deg for italic) whatever is asked (WPT
 `matching/fixed-stretch-style-over-weight`).
+
+`src/font.rs` (`synthesis`): a face a `@font-face` rule declares italic, of a variable font with an `ital` axis, is
+used at `ital` 1; an oblique request slanted by a `slnt` axis sets `ital` 0 where the font has both (WPT
+`variations/ital-variable`). `Synthesis` holds four variation settings (`wdth`, `wght`, `slnt`, `ital`).

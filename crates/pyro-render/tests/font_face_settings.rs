@@ -124,3 +124,17 @@ fn weight_ranges_hold_a_variable_font() {
     assert_eq!(b[3], b[2], "a request below a reversed range takes its nearest weight");
     assert_eq!(b[4], b[5], "a request within the range is unchanged");
 }
+
+/// macOS's own UI fonts go by names that start with a dot (`.AppleSystemUIFont`, `.SF NS Mono`):
+/// pages cannot reach them, as in Safari and Chrome (WPT css/css-fonts/standard-font-family).
+#[test]
+fn hidden_system_font_names_fall_back() {
+    let b = bands(
+        "",
+        "MONITOR 1,234",
+        &["font-family: serif", "font-family: '.AppleSystemUIFont'", "font-family: '.SF NS Mono', serif"],
+    );
+    // Drawn in the serif fallback (the same ink; the system UI font has other glyphs).
+    assert!(ink(&b[0]) > 500);
+    assert_eq!([ink(&b[1]), ink(&b[2])], [ink(&b[0]); 2]);
+}

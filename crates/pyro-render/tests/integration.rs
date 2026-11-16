@@ -6,6 +6,7 @@ mod aspect_ratio;
 mod backdrop_filter;
 mod background_images_and_edges;
 mod block_in_inline;
+mod border_image_orientation;
 mod borders_backgrounds;
 mod br_flex_item;
 mod clip_path_mask;

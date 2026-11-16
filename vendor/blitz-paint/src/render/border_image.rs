@@ -132,11 +132,20 @@ impl ElementCx<'_, '_> {
             ),
             source => (source, None),
         };
+        // pyro: `image-orientation: none`: the pixels were turned by the EXIF orientation when
+        // decoded; the border image slices the image as stored.
+        let unturned;
         let source = match source_image {
             GenericImage::None => return false,
             GenericImage::Gradient(gradient) => Source::Gradient(gradient),
             GenericImage::Url(_) => match self.element.border_images.first() {
                 Some(Some(data)) => match &data.image {
+                    ImageData::Raster(raster)
+                        if raster.orientation != 1 && blitz_dom::util::image_unoriented(&self.style) =>
+                    {
+                        unturned = unturned_raster(raster);
+                        Source::Raster(&unturned)
+                    }
                     ImageData::Raster(raster) => Source::Raster(raster),
                     #[cfg(feature = "svg")]
                     ImageData::Svg(svg) if !svg.intrinsic_dimensions.degenerate_view_box => {
@@ -665,4 +674,30 @@ impl PiecePainter<'_, '_, '_, '_> {
         };
         Some((brush, (cw as f64, ch as f64)))
     }
+}
+
+/// pyro: `raster`'s pixels as stored, before its EXIF orientation turned them (`image-orientation:
+/// none`).
+fn unturned_raster(raster: &RasterImageData) -> RasterImageData {
+    let (w, h) = (raster.width as usize, raster.height as usize);
+    let (sw, sh) = raster.shown_size(true);
+    let (sw, sh) = (sw as usize, sh as usize);
+    let to_decoded = Affine::new(raster.unturn()).inverse();
+    let data: &[u8] = raster.data.data();
+    let mut pixels = vec![0u8; sw * sh * 4];
+    for sy in 0..sh {
+        for sx in 0..sw {
+            let p = to_decoded * kurbo::Point::new(sx as f64 + 0.5, sy as f64 + 0.5);
+            let (dx, dy) = (p.x.floor(), p.y.floor());
+            if dx < 0.0 || dy < 0.0 || dx as usize >= w || dy as usize >= h {
+                continue;
+            }
+            let from = (dy as usize * w + dx as usize) * 4;
+            let to = (sy * sw + sx) * 4;
+            if let Some(px) = data.get(from..from + 4) {
+                pixels[to..to + 4].copy_from_slice(px);
+            }
+        }
+    }
+    RasterImageData::new(sw as u32, sh as u32, std::sync::Arc::new(pixels))
 }

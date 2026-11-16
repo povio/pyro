@@ -160,6 +160,15 @@ impl FontInfo {
             };
             synth.vars[len] = (Tag::new(b"slnt"), -wanted.clamp(min, max));
             len += 1;
+        } else if style == FontStyle::Italic
+            && self.style == FontStyle::Italic
+            && self.has_italic_axis()
+            && self.slant_range.is_none()
+        {
+            // pyro: a face a `@font-face` rule declares italic, of a variable font with an `ital`
+            // axis, is used at `ital` 1 (its default instance is the upright one).
+            synth.vars[len] = (Tag::new(b"ital"), 1.0);
+            len += 1;
         } else if self.style != style {
             match style {
                 FontStyle::Normal => {}
@@ -186,6 +195,12 @@ impl FontInfo {
                         if let Some(slnt) = self.slant_axis_value(degrees) {
                             synth.vars[len] = (Tag::new(b"slnt"), slnt);
                             len += 1;
+                            // pyro: an oblique face of a font with both axes is the upright
+                            // design slanted: `ital` 0, whatever the font's default instance.
+                            if self.has_italic_axis() {
+                                synth.vars[len] = (Tag::new(b"ital"), 0.0);
+                                len += 1;
+                            }
                         } else if self.has_italic_axis() && degrees > 0. && self.slant_range.is_none() {
                             synth.vars[len] = (Tag::new(b"ital"), 1.0);
                             len += 1;
@@ -494,7 +509,8 @@ pub struct AxisInfo {
 /// [`QueryFont::synthesis`]: crate::QueryFont::synthesis
 #[derive(Copy, Clone, Default, PartialEq)]
 pub struct Synthesis {
-    vars: [(Tag, f32); 3],
+    // pyro: four, for `wdth`, `wght`, `slnt` and `ital` together.
+    vars: [(Tag, f32); 4],
     len: u8,
     embolden: bool,
     skew: i8,

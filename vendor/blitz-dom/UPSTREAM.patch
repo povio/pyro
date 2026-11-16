@@ -2968,7 +2968,15 @@ new file mode 100644
 diff --git a/packages/blitz-dom/src/font_metrics.rs b/packages/blitz-dom/src/font_metrics.rs
 --- a/packages/blitz-dom/src/font_metrics.rs
 +++ b/packages/blitz-dom/src/font_metrics.rs
-@@ -54,6 +54,118 @@
+@@ -25,6 +25,7 @@
+     query.set_families(
+         families
+             .iter()
++            .filter(|family| !stylo_to_parley::is_hidden_family(family))
+             .map(stylo_to_parley::query_font_family)
+             .chain(fallback.map(parley::fontique::QueryFamily::Generic)),
+     );
+@@ -54,6 +55,118 @@
          font_styles: &FontStyles,
          font_size: CSSPixelLength,
          _flags: QueryFontMetricsFlags,
@@ -3087,7 +3095,7 @@ diff --git a/packages/blitz-dom/src/font_metrics.rs b/packages/blitz-dom/src/fon
      ) -> FontMetrics {
          use parley::fontique::{Query, QueryFont, QueryStatus};
          use skrifa::instance::{LocationRef, Size};
-@@ -70,6 +182,9 @@
+@@ -70,6 +183,9 @@
          // query.set_fallbacks(fontique::FallbackKey::new(fb_script, fb_language.as_ref()));
  
          let variations = stylo_to_parley::font_variations(font_styles, font_size.px());
@@ -3097,7 +3105,7 @@ diff --git a/packages/blitz-dom/src/font_metrics.rs b/packages/blitz-dom/src/fon
          // let features = self.rcx.features(style.font_features).unwrap_or(&[]);
  
          // fn name_of(font_ref: &skrifa::FontRef) -> String {
-@@ -87,6 +202,10 @@
+@@ -87,6 +203,10 @@
              query.matches_with(|q_font: &QueryFont| {
                  use skrifa::MetadataProvider;
  
@@ -3108,7 +3116,7 @@ diff --git a/packages/blitz-dom/src/font_metrics.rs b/packages/blitz-dom/src/fon
                  let Ok(font_ref) = skrifa::FontRef::from_index(q_font.blob.as_ref(), q_font.index)
                  else {
                      return QueryStatus::Continue;
-@@ -111,8 +230,11 @@
+@@ -111,8 +231,11 @@
              ch: char,
              font_size: f32,
              variations: &[FontVariation],
@@ -3120,7 +3128,7 @@ diff --git a/packages/blitz-dom/src/font_metrics.rs b/packages/blitz-dom/src/fon
              let font_ref = skrifa::FontRef::from_index(font.blob.as_ref(), font.index).ok()?;
              let location = font_ref.axes().location(
                  variations
-@@ -134,10 +256,14 @@
+@@ -134,10 +257,14 @@
          fn metrics_of(
              query: &mut Query,
              ch: char,
@@ -3136,7 +3144,7 @@ diff --git a/packages/blitz-dom/src/font_metrics.rs b/packages/blitz-dom/src/fon
              let font_ref = skrifa::FontRef::from_index(font.blob.as_ref(), font.index).ok()?;
              let location = font_ref.axes().location(
                  variations
-@@ -145,14 +271,15 @@
+@@ -145,14 +272,15 @@
                      .map(|v| (skrifa::Tag::from_be_bytes(v.tag.to_bytes()), v.value)),
              );
              let location_ref = LocationRef::from(&location);
@@ -3157,7 +3165,7 @@ diff --git a/packages/blitz-dom/src/font_metrics.rs b/packages/blitz-dom/src/fon
                  .unwrap_or((0.0, None, None));
  
          FontMetrics {
-@@ -165,15 +292,4 @@
+@@ -165,15 +293,4 @@
              script_script_percent_scale_down: None,
          }
      }
@@ -30972,7 +30980,21 @@ diff --git a/packages/blitz-dom/src/stylo_to_kurbo.rs b/packages/blitz-dom/src/s
 diff --git a/packages/blitz-dom/src/stylo_to_parley.rs b/packages/blitz-dom/src/stylo_to_parley.rs
 --- a/packages/blitz-dom/src/stylo_to_parley.rs
 +++ b/packages/blitz-dom/src/stylo_to_parley.rs
-@@ -123,8 +123,7 @@
+@@ -74,6 +74,13 @@
+     (!names_generic).then_some(parley::GenericFamily::Serif)
+ }
+ 
++/// pyro: whether `family` names a hidden system font: macOS's own UI fonts go by names that start
++/// with a dot (`.AppleSystemUIFont`, `.SF NS Mono`), which pages cannot reach (as in Safari and
++/// Chrome; they have the `system-ui` and `ui-*` generics).
++pub(crate) fn is_hidden_family(family: &stylo::SingleFontFamily) -> bool {
++    matches!(family, stylo::SingleFontFamily::FamilyName(name) if name.name.starts_with('.'))
++}
++
+ pub(crate) fn query_font_family(input: &stylo::SingleFontFamily) -> parley::QueryFamily<'_> {
+     match input {
+         stylo::SingleFontFamily::FamilyName(name) => {
+@@ -123,8 +130,7 @@
  ) -> Vec<parley::FontVariation> {
      const OPSZ: parley::Tag = parley::Tag::new(b"opsz");
      let settings = &font_styles.font_variation_settings.0;
@@ -30982,7 +31004,7 @@ diff --git a/packages/blitz-dom/src/stylo_to_parley.rs b/packages/blitz-dom/src/
      let mut variations = Vec::with_capacity(settings.len() + usize::from(auto_opsz));
      if auto_opsz {
          variations.push(parley::FontVariation {
-@@ -139,7 +138,26 @@
+@@ -139,7 +145,26 @@
      variations
  }
  
@@ -31009,7 +31031,7 @@ diff --git a/packages/blitz-dom/src/stylo_to_parley.rs b/packages/blitz-dom/src/
  fn feature(tag: &[u8; 4], value: u16) -> parley::FontFeature {
      parley::FontFeature {
          tag: parley::Tag::from_bytes(*tag),
-@@ -313,6 +331,10 @@
+@@ -313,6 +338,10 @@
  pub(crate) fn font_features(font_styles: &stylo::Font) -> Vec<parley::FontFeature> {
      let mut features = Vec::new();
  
@@ -31020,7 +31042,7 @@ diff --git a/packages/blitz-dom/src/stylo_to_parley.rs b/packages/blitz-dom/src/
      self::font_variant_ligatures(font_styles.font_variant_ligatures, &mut features);
      self::font_variant_caps(font_styles.font_variant_caps, &mut features);
      self::font_variant_numeric(font_styles.font_variant_numeric, &mut features);
-@@ -321,12 +343,159 @@
+@@ -321,12 +350,159 @@
  
      self::font_feature_settings(&font_styles.font_feature_settings, &mut features);
  
@@ -31180,7 +31202,7 @@ diff --git a/packages/blitz-dom/src/stylo_to_parley.rs b/packages/blitz-dom/src/
  pub(crate) fn base_direction(
      direction: stylo::Direction,
      unicode_bidi: stylo::UnicodeBidi,
-@@ -446,11 +615,16 @@
+@@ -446,11 +622,16 @@
  
      // Convert font size and line height
      let font_size = font_styles.font_size.used_size.0.px();
@@ -31197,7 +31219,15 @@ diff --git a/packages/blitz-dom/src/stylo_to_parley.rs b/packages/blitz-dom/src/
      let vertical_align = self::vertical_align(style);
  
      let letter_spacing = itext_styles
-@@ -514,8 +688,9 @@
+@@ -477,6 +658,7 @@
+         .families
+         .list
+         .iter()
++        .filter(|family| !is_hidden_family(family))
+         .map(|family| match family {
+             stylo::SingleFontFamily::FamilyName(name) => {
+                 'ret: {
+@@ -514,8 +696,9 @@
          stylo::WordBreak::Normal => parley::WordBreak::Normal,
          stylo::WordBreak::BreakAll => parley::WordBreak::BreakAll,
          stylo::WordBreak::KeepAll => parley::WordBreak::KeepAll,
@@ -31208,7 +31238,7 @@ diff --git a/packages/blitz-dom/src/stylo_to_parley.rs b/packages/blitz-dom/src/
      let line_break = match itext_styles.line_break {
          stylo::LineBreak::Loose => parley::LineBreak::Loose,
          stylo::LineBreak::Normal => parley::LineBreak::Normal,
-@@ -549,6 +724,30 @@
+@@ -549,6 +732,30 @@
          letter_spacing,
          text_wrap_mode,
          white_space_collapse: white_space_collapse(itext_styles.white_space_collapse),
@@ -31239,7 +31269,7 @@ diff --git a/packages/blitz-dom/src/stylo_to_parley.rs b/packages/blitz-dom/src/
          overflow_wrap,
          word_break,
          line_break,
-@@ -569,6 +768,10 @@
+@@ -569,6 +776,10 @@
          strikethrough_offset: Default::default(),
          strikethrough_size: Default::default(),
          strikethrough_brush: Default::default(),

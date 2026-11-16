@@ -843,3 +843,6 @@ Covered by `crates/pyro-render/tests/selection_highlight.rs`.
 
 - `src/text.rs`: decoration thickness and offset percentages are of the element's font size where a face's
   `size-adjust` scales the run (WPT `size-adjust-text-decoration.tentative`).
+- `src/render/border_image.rs` (`unturned_raster`): under `image-orientation: none` a border image is sliced from
+  its pixels as stored, before the EXIF orientation turned them (WPT `image-orientation-border-image`). Covered by
+  `crates/pyro-render/tests/border_image_orientation.rs`.

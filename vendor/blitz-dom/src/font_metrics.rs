@@ -25,6 +25,7 @@ fn query_for_font_styles<'a>(
     query.set_families(
         families
             .iter()
+            .filter(|family| !stylo_to_parley::is_hidden_family(family))
             .map(stylo_to_parley::query_font_family)
             .chain(fallback.map(parley::fontique::QueryFamily::Generic)),
     );
