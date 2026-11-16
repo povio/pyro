@@ -146,7 +146,21 @@ impl FontInfo {
             // font's, which left 600 on a regular face thin). See README.pyro.md.
             synth.embolden = true;
         }
-        if self.style != style {
+        // pyro: a face whose `font-style` range is all oblique (`oblique 45deg 67.5deg`) is used
+        // at the angle of its range nearest the one asked for (0deg for normal, 14deg for italic).
+        let oblique_range = match (self.style, self.slant_range) {
+            (FontStyle::Oblique(_), Some((a, b))) if a != b && self.has_slant_axis() => Some((a.min(b), a.max(b))),
+            _ => None,
+        };
+        if let Some((min, max)) = oblique_range {
+            let wanted = match style {
+                FontStyle::Normal => 0.0,
+                FontStyle::Italic => 14.0,
+                FontStyle::Oblique(angle) => angle.unwrap_or(14.0),
+            };
+            synth.vars[len] = (Tag::new(b"slnt"), -wanted.clamp(min, max));
+            len += 1;
+        } else if self.style != style {
             match style {
                 FontStyle::Normal => {}
                 // pyro: the `slnt` axis counts counter-clockwise, CSS angles clockwise: `oblique

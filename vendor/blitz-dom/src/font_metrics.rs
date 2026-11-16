@@ -56,7 +56,25 @@ impl FontMetricsProvider for BlitzFontMetricsProvider {
         _flags: QueryFontMetricsFlags,
     ) -> FontMetrics {
         // The first available font: the first of the list that has U+0020.
-        self.metrics_for(font_styles, font_size, ' ')
+        let metrics = self.metrics_for(font_styles, font_size, ' ');
+        // pyro: under `font-size-adjust` the font is used at the adjusted size: `ex`, `ch`, `ic`
+        // and `cap` measure it there (`em` stays the computed size).
+        if font_styles.font_size_adjust == style::values::computed::font::FontSizeAdjust::None {
+            return metrics;
+        }
+        let scale = self.font_size_adjust_scale(font_styles, font_size);
+        if scale == 1.0 {
+            return metrics;
+        }
+        let scaled = |length: CSSPixelLength| CSSPixelLength::new(length.px() * scale);
+        FontMetrics {
+            ascent: scaled(metrics.ascent),
+            x_height: metrics.x_height.map(scaled),
+            cap_height: metrics.cap_height.map(scaled),
+            zero_advance_measure: metrics.zero_advance_measure.map(scaled),
+            ic_width: metrics.ic_width.map(scaled),
+            ..metrics
+        }
     }
 
     fn base_size_for_generic(
@@ -118,6 +136,31 @@ impl BlitzFontMetricsProvider {
     /// pyro: the metrics of the first font of `font_styles`' list that draws `text_char` (in its
     /// `unicode-range` and character map): `' '` is CSS's first available font, a letter the
     /// font a run of Latin text is drawn in (`font-size-adjust` scales by that one).
+    /// pyro: `font-size-adjust` (CSS Fonts 5 §3.6): the factor of the font size that gives the
+    /// font that draws `x` the named metric's ratio (`ex-height`, `cap-height`, `ch-width`,
+    /// `ic-width`, `ic-height`); a font without the metric is taken to have the spec's fallback
+    /// (0.5em for `ex` and `ch`, 1em for `ic`, the ascent for `cap`). 1 for none.
+    pub(crate) fn font_size_adjust_scale(&self, font_styles: &FontStyles, font_size: CSSPixelLength) -> f32 {
+        use style::values::computed::font::FontSizeAdjust;
+        let size = font_size.px();
+        if font_styles.font_size_adjust == FontSizeAdjust::None || !(size > 0.0) {
+            return 1.0;
+        }
+        // The font that draws the text: the property keeps the metric of each font used (a
+        // fallback one too); a run is taken to be drawn in the font that has `x`.
+        let metrics = self.metrics_for(font_styles, font_size, 'x');
+        let (wanted, metric) = match font_styles.font_size_adjust {
+            FontSizeAdjust::None => return 1.0,
+            FontSizeAdjust::ExHeight(v) => (v.0, metrics.x_height.map_or(size * 0.5, |m| m.px())),
+            FontSizeAdjust::CapHeight(v) => (v.0, metrics.cap_height.unwrap_or(metrics.ascent).px()),
+            FontSizeAdjust::ChWidth(v) => (v.0, metrics.zero_advance_measure.map_or(size * 0.5, |m| m.px())),
+            FontSizeAdjust::IcWidth(v) | FontSizeAdjust::IcHeight(v) => (v.0, metrics.ic_width.map_or(size, |m| m.px())),
+        };
+        let ratio = metric / size;
+        // (A ratio of 0 is left as it is.)
+        if ratio > 0.0 && ratio.is_finite() && wanted.is_finite() { wanted / ratio } else { 1.0 }
+    }
+
     pub(crate) fn metrics_for(
         &self,
         font_styles: &FontStyles,

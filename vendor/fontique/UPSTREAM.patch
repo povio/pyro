@@ -303,7 +303,7 @@ index edfcc08..98a8963 100644
              if let Entry::Ok(font) = status {
                  Some(font)
 diff --git a/src/font.rs b/src/font.rs
-index 33d6669..b6c726d 100644
+index 33d6669..65d2ea0 100644
 --- a/src/font.rs
 +++ b/src/font.rs
 @@ -7,7 +7,7 @@ use crate::CharmapIndex;
@@ -356,7 +356,7 @@ index 33d6669..b6c726d 100644
              synth.vars[len] = (Tag::new(b"wdth"), width.percentage());
              len += 1;
          }
-@@ -108,19 +133,33 @@ impl FontInfo {
+@@ -108,19 +133,47 @@ impl FontInfo {
                  synth.vars[len] = (Tag::new(b"wght"), weight.value());
                  len += 1;
              }
@@ -374,7 +374,22 @@ index 33d6669..b6c726d 100644
 +            // font's, which left 600 on a regular face thin). See README.pyro.md.
              synth.embolden = true;
          }
-         if self.style != style {
+-        if self.style != style {
++        // pyro: a face whose `font-style` range is all oblique (`oblique 45deg 67.5deg`) is used
++        // at the angle of its range nearest the one asked for (0deg for normal, 14deg for italic).
++        let oblique_range = match (self.style, self.slant_range) {
++            (FontStyle::Oblique(_), Some((a, b))) if a != b && self.has_slant_axis() => Some((a.min(b), a.max(b))),
++            _ => None,
++        };
++        if let Some((min, max)) = oblique_range {
++            let wanted = match style {
++                FontStyle::Normal => 0.0,
++                FontStyle::Italic => 14.0,
++                FontStyle::Oblique(angle) => angle.unwrap_or(14.0),
++            };
++            synth.vars[len] = (Tag::new(b"slnt"), -wanted.clamp(min, max));
++            len += 1;
++        } else if self.style != style {
              match style {
                  FontStyle::Normal => {}
 +                // pyro: the `slnt` axis counts counter-clockwise, CSS angles clockwise: `oblique
@@ -394,7 +409,7 @@ index 33d6669..b6c726d 100644
                              len += 1;
                          } else {
                              synth.skew = 14;
-@@ -130,10 +169,10 @@ impl FontInfo {
+@@ -130,10 +183,10 @@ impl FontInfo {
                  FontStyle::Oblique(angle) => {
                      if self.style == FontStyle::Normal {
                          let degrees = angle.unwrap_or(14.0);
@@ -408,7 +423,7 @@ index 33d6669..b6c726d 100644
                              synth.vars[len] = (Tag::new(b"ital"), 1.0);
                              len += 1;
                          } else {
-@@ -144,6 +183,8 @@ impl FontInfo {
+@@ -144,6 +197,8 @@ impl FontInfo {
              }
          }
          synth.len = len as u8;
@@ -417,7 +432,7 @@ index 33d6669..b6c726d 100644
          synth
      }
  
-@@ -210,6 +251,19 @@ impl FontInfo {
+@@ -210,6 +265,19 @@ impl FontInfo {
      pub fn charmap_index(&self) -> CharmapIndex {
          self.charmap_index
      }
@@ -437,7 +452,7 @@ index 33d6669..b6c726d 100644
  }
  
  impl FontInfo {
-@@ -255,6 +309,13 @@ impl FontInfo {
+@@ -255,6 +323,13 @@ impl FontInfo {
              axes,
              attr_axes,
              charmap_index,
@@ -451,7 +466,7 @@ index 33d6669..b6c726d 100644
          })
      }
  
-@@ -276,6 +337,55 @@ impl FontInfo {
+@@ -276,6 +351,55 @@ impl FontInfo {
          }
      }
  
@@ -507,7 +522,7 @@ index 33d6669..b6c726d 100644
      pub(crate) fn apply_override(&mut self, info_override: &FontInfoOverride<'_>) {
          if let Some(width) = info_override.width {
              self.width = width;
-@@ -295,9 +405,35 @@ impl FontInfo {
+@@ -295,9 +419,35 @@ impl FontInfo {
                  }
              }
          }
@@ -543,7 +558,7 @@ index 33d6669..b6c726d 100644
  const WEIGHT_AXIS: u8 = 0x01;
  const WIDTH_AXIS: u8 = 0x02;
  const SLANT_AXIS: u8 = 0x04;
-@@ -348,9 +484,102 @@ pub struct Synthesis {
+@@ -348,9 +498,102 @@ pub struct Synthesis {
      len: u8,
      embolden: bool,
      skew: i8,
@@ -646,7 +661,7 @@ index 33d6669..b6c726d 100644
      /// Returns `true` if any synthesis suggestions are available.
      pub fn any(&self) -> bool {
          self.len != 0 || self.embolden || self.skew != 0
-@@ -486,6 +715,33 @@ pub struct FontInfoOverride<'a> {
+@@ -486,6 +729,33 @@ pub struct FontInfoOverride<'a> {
      /// Default values for the font's variation axes. Axes not included within
      /// the font will be ignored.
      pub axes: Option<&'a [(Tag, f32)]>,
@@ -680,7 +695,7 @@ index 33d6669..b6c726d 100644
  }
  
  #[cfg(test)]
-@@ -541,22 +797,44 @@ mod tests {
+@@ -541,22 +811,44 @@ mod tests {
      }
  
      #[test]

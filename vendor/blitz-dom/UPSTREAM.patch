@@ -2968,13 +2968,31 @@ new file mode 100644
 diff --git a/packages/blitz-dom/src/font_metrics.rs b/packages/blitz-dom/src/font_metrics.rs
 --- a/packages/blitz-dom/src/font_metrics.rs
 +++ b/packages/blitz-dom/src/font_metrics.rs
-@@ -54,6 +54,75 @@
+@@ -54,6 +54,118 @@
          font_styles: &FontStyles,
          font_size: CSSPixelLength,
          _flags: QueryFontMetricsFlags,
 +    ) -> FontMetrics {
 +        // The first available font: the first of the list that has U+0020.
-+        self.metrics_for(font_styles, font_size, ' ')
++        let metrics = self.metrics_for(font_styles, font_size, ' ');
++        // pyro: under `font-size-adjust` the font is used at the adjusted size: `ex`, `ch`, `ic`
++        // and `cap` measure it there (`em` stays the computed size).
++        if font_styles.font_size_adjust == style::values::computed::font::FontSizeAdjust::None {
++            return metrics;
++        }
++        let scale = self.font_size_adjust_scale(font_styles, font_size);
++        if scale == 1.0 {
++            return metrics;
++        }
++        let scaled = |length: CSSPixelLength| CSSPixelLength::new(length.px() * scale);
++        FontMetrics {
++            ascent: scaled(metrics.ascent),
++            x_height: metrics.x_height.map(scaled),
++            cap_height: metrics.cap_height.map(scaled),
++            zero_advance_measure: metrics.zero_advance_measure.map(scaled),
++            ic_width: metrics.ic_width.map(scaled),
++            ..metrics
++        }
 +    }
 +
 +    fn base_size_for_generic(
@@ -3036,6 +3054,31 @@ diff --git a/packages/blitz-dom/src/font_metrics.rs b/packages/blitz-dom/src/fon
 +    /// pyro: the metrics of the first font of `font_styles`' list that draws `text_char` (in its
 +    /// `unicode-range` and character map): `' '` is CSS's first available font, a letter the
 +    /// font a run of Latin text is drawn in (`font-size-adjust` scales by that one).
++    /// pyro: `font-size-adjust` (CSS Fonts 5 §3.6): the factor of the font size that gives the
++    /// font that draws `x` the named metric's ratio (`ex-height`, `cap-height`, `ch-width`,
++    /// `ic-width`, `ic-height`); a font without the metric is taken to have the spec's fallback
++    /// (0.5em for `ex` and `ch`, 1em for `ic`, the ascent for `cap`). 1 for none.
++    pub(crate) fn font_size_adjust_scale(&self, font_styles: &FontStyles, font_size: CSSPixelLength) -> f32 {
++        use style::values::computed::font::FontSizeAdjust;
++        let size = font_size.px();
++        if font_styles.font_size_adjust == FontSizeAdjust::None || !(size > 0.0) {
++            return 1.0;
++        }
++        // The font that draws the text: the property keeps the metric of each font used (a
++        // fallback one too); a run is taken to be drawn in the font that has `x`.
++        let metrics = self.metrics_for(font_styles, font_size, 'x');
++        let (wanted, metric) = match font_styles.font_size_adjust {
++            FontSizeAdjust::None => return 1.0,
++            FontSizeAdjust::ExHeight(v) => (v.0, metrics.x_height.map_or(size * 0.5, |m| m.px())),
++            FontSizeAdjust::CapHeight(v) => (v.0, metrics.cap_height.unwrap_or(metrics.ascent).px()),
++            FontSizeAdjust::ChWidth(v) => (v.0, metrics.zero_advance_measure.map_or(size * 0.5, |m| m.px())),
++            FontSizeAdjust::IcWidth(v) | FontSizeAdjust::IcHeight(v) => (v.0, metrics.ic_width.map_or(size, |m| m.px())),
++        };
++        let ratio = metric / size;
++        // (A ratio of 0 is left as it is.)
++        if ratio > 0.0 && ratio.is_finite() && wanted.is_finite() { wanted / ratio } else { 1.0 }
++    }
++
 +    pub(crate) fn metrics_for(
 +        &self,
 +        font_styles: &FontStyles,
@@ -3044,7 +3087,7 @@ diff --git a/packages/blitz-dom/src/font_metrics.rs b/packages/blitz-dom/src/fon
      ) -> FontMetrics {
          use parley::fontique::{Query, QueryFont, QueryStatus};
          use skrifa::instance::{LocationRef, Size};
-@@ -70,6 +139,9 @@
+@@ -70,6 +182,9 @@
          // query.set_fallbacks(fontique::FallbackKey::new(fb_script, fb_language.as_ref()));
  
          let variations = stylo_to_parley::font_variations(font_styles, font_size.px());
@@ -3054,7 +3097,7 @@ diff --git a/packages/blitz-dom/src/font_metrics.rs b/packages/blitz-dom/src/fon
          // let features = self.rcx.features(style.font_features).unwrap_or(&[]);
  
          // fn name_of(font_ref: &skrifa::FontRef) -> String {
-@@ -87,6 +159,10 @@
+@@ -87,6 +202,10 @@
              query.matches_with(|q_font: &QueryFont| {
                  use skrifa::MetadataProvider;
  
@@ -3065,7 +3108,7 @@ diff --git a/packages/blitz-dom/src/font_metrics.rs b/packages/blitz-dom/src/fon
                  let Ok(font_ref) = skrifa::FontRef::from_index(q_font.blob.as_ref(), q_font.index)
                  else {
                      return QueryStatus::Continue;
-@@ -111,8 +187,11 @@
+@@ -111,8 +230,11 @@
              ch: char,
              font_size: f32,
              variations: &[FontVariation],
@@ -3077,7 +3120,7 @@ diff --git a/packages/blitz-dom/src/font_metrics.rs b/packages/blitz-dom/src/fon
              let font_ref = skrifa::FontRef::from_index(font.blob.as_ref(), font.index).ok()?;
              let location = font_ref.axes().location(
                  variations
-@@ -134,10 +213,14 @@
+@@ -134,10 +256,14 @@
          fn metrics_of(
              query: &mut Query,
              ch: char,
@@ -3093,7 +3136,7 @@ diff --git a/packages/blitz-dom/src/font_metrics.rs b/packages/blitz-dom/src/fon
              let font_ref = skrifa::FontRef::from_index(font.blob.as_ref(), font.index).ok()?;
              let location = font_ref.axes().location(
                  variations
-@@ -145,14 +228,15 @@
+@@ -145,14 +271,15 @@
                      .map(|v| (skrifa::Tag::from_be_bytes(v.tag.to_bytes()), v.value)),
              );
              let location_ref = LocationRef::from(&location);
@@ -3114,7 +3157,7 @@ diff --git a/packages/blitz-dom/src/font_metrics.rs b/packages/blitz-dom/src/fon
                  .unwrap_or((0.0, None, None));
  
          FontMetrics {
-@@ -165,15 +249,4 @@
+@@ -165,15 +292,4 @@
              script_script_percent_scale_down: None,
          }
      }
@@ -26625,7 +26668,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
          }
          *self.nodes[node_id].hoisted_children.borrow_mut() = hoisted_children;
          for pseudo in [self.nodes[node_id].before(), self.nodes[node_id].after()] {
-@@ -231,28 +482,375 @@
+@@ -231,28 +482,362 @@
              if self.nodes[pseudo].is_out_of_flow() {
                  continue;
              }
@@ -26775,7 +26818,8 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 +            }
 +        }
 +    }
-+
+ 
+-        full.transform_rect_bbox(overflow)
 +    /// pyro: whether a resolve ran since the hit bounds were last
 +    /// brought up to date (`ensure_hit_overflow`).
 +    pub fn hit_overflow_is_stale(&self) -> bool {
@@ -26871,8 +26915,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 +        let hit = self.overflow_contribution(node_id, hit, layout.size, scale);
 +        node.hit_bound_in_parent((location.x, location.y), scale, hit)
 +    }
- 
--        full.transform_rect_bbox(overflow)
++
 +    /// pyro: what a box adds to its parent's scrollable overflow
 +    /// (its own coordinates): its border box, plus its own scrollable overflow
 +    /// on the axes it does not clip. A scroll container keeps its content's
@@ -26976,20 +27019,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 +                continue;
 +            }
 +            let size = font.font_size.used_size.0;
-+            // The font that draws the text: the property keeps the metric of each font used
-+            // (a fallback one too); a run is taken to be drawn in the font that has `x`.
-+            let metrics = provider.metrics_for(font, size, 'x');
-+            let (wanted, metric) = match font.font_size_adjust {
-+                FontSizeAdjust::None => continue,
-+                FontSizeAdjust::ExHeight(v) => (v.0, metrics.x_height),
-+                FontSizeAdjust::CapHeight(v) => (v.0, metrics.cap_height.or(Some(metrics.ascent))),
-+                FontSizeAdjust::ChWidth(v) => (v.0, metrics.zero_advance_measure),
-+                FontSizeAdjust::IcWidth(v) | FontSizeAdjust::IcHeight(v) => (v.0, metrics.ic_width),
-+            };
-+            let ratio = metric.map_or(0.0, |metric| metric.px() / size.px());
-+            // (A font without the metric, or a size of 0, is left as it is.)
-+            let scale = if ratio > 0.0 && ratio.is_finite() && wanted.is_finite() { wanted / ratio } else { 1.0 };
-+            scales.insert(key, scale);
++            scales.insert(key, provider.font_size_adjust_scale(font, size));
 +        }
 +        crate::stylo_to_parley::set_font_size_adjustments(scales);
 +    }
@@ -27009,7 +27039,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
  
          fn resolve_layout_children_recursive(doc: &mut BaseDocument, node_id: NodeId) {
              // Anonymous blocks and pseudo-elements can be removed from the slab
-@@ -264,6 +862,43 @@
+@@ -264,6 +849,43 @@
              let mut damage = doc.nodes[node_id].damage().unwrap_or(ALL_DAMAGE);
              let _flags = doc.nodes[node_id].flags;
  
@@ -27053,7 +27083,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
              if damage.intersects(CONSTRUCT_FC | CONSTRUCT_BOX) {
                  //} || flags.contains(NodeFlags::IS_INLINE_ROOT) {
  
-@@ -277,20 +912,35 @@
+@@ -277,20 +899,35 @@
                  }
  
                  let mut collected = LayoutChildren::default();
@@ -27096,7 +27126,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
                      }
                  }
  
-@@ -300,16 +950,33 @@
+@@ -300,16 +937,33 @@
                  damage.remove(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
                  // damage.insert(RestyleDamage::RELAYOUT | RestyleDamage::REPAINT);
              } else {
@@ -27134,7 +27164,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
                          doc.nodes[child_id].layout_parent.set(Some(node_id));
                      }
  
-@@ -324,6 +991,26 @@
+@@ -324,6 +978,26 @@
          }
      }
  
@@ -27161,7 +27191,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
      /// Every layout child must point back at its container via
      /// `layout_parent`, which `propagate_damage_flags` relies on to reach
      /// anonymous boxes.
-@@ -358,6 +1045,25 @@
+@@ -358,6 +1032,25 @@
          deferred_construction_nodes.sort_unstable_by_key(|task| task.node_id);
          deferred_construction_nodes.dedup_by_key(|task| task.node_id);
  
@@ -27187,7 +27217,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
          #[cfg(feature = "parallel-construct")]
          let iter = deferred_construction_nodes.into_par_iter();
          #[cfg(not(feature = "parallel-construct"))]
-@@ -367,9 +1073,9 @@
+@@ -367,9 +1060,9 @@
              .map(|task: ConstructionTask| match task.data {
                  ConstructionTaskData::InlineLayout(mut layout) => {
                      #[cfg(feature = "parallel-construct")]
@@ -27200,7 +27230,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
                      #[cfg(feature = "parallel-construct")]
                      let layout_ctx_mut = &mut layout_ctx;
  
-@@ -386,7 +1092,13 @@
+@@ -386,7 +1079,13 @@
                      #[cfg(not(feature = "parallel-construct"))]
                      let font_ctx_mut = &mut *self.font_ctx.lock().unwrap();
  
@@ -27215,7 +27245,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
                      build_inline_layout_into(
                          &self.nodes,
                          layout_ctx_mut,
-@@ -395,18 +1107,13 @@
+@@ -395,18 +1094,13 @@
                          self.viewport.scale(),
                          task.node_id,
                      );
@@ -27235,7 +27265,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
                      ConstructionTaskResult {
                          node_id: task.node_id,
                          data: ConstructionTaskResultData::InlineLayout(layout),
-@@ -419,10 +1126,7 @@
+@@ -419,10 +1113,7 @@
              match result.data {
                  ConstructionTaskResultData::InlineLayout(layout) => {
                      self.nodes[result.node_id].clear_layout_cache();
@@ -27247,7 +27277,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
                  }
              }
          }
-@@ -437,10 +1141,28 @@
+@@ -437,10 +1128,28 @@
      pub fn resolve_layout(&mut self) {
          let size = self.stylist.device().au_viewport_size();
  
@@ -27277,7 +27307,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
  
          let root_element_id = crate::taffy_node_id(self.root_element().id);
  
-@@ -448,15 +1170,15 @@
+@@ -448,15 +1157,15 @@
  
          let mut state = LayoutPassState::new(self);
          #[cfg(feature = "writing-mode")]
@@ -27297,7 +27327,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
          #[cfg(feature = "writing-mode")]
          state.physicalise_and_round_layout(root_element_id);
          #[cfg(not(feature = "writing-mode"))]
-@@ -466,3 +1188,643 @@
+@@ -466,3 +1175,643 @@
          // taffy::print_tree(self, root_node_id)
      }
  }

@@ -821,20 +821,7 @@ impl BaseDocument {
                 continue;
             }
             let size = font.font_size.used_size.0;
-            // The font that draws the text: the property keeps the metric of each font used
-            // (a fallback one too); a run is taken to be drawn in the font that has `x`.
-            let metrics = provider.metrics_for(font, size, 'x');
-            let (wanted, metric) = match font.font_size_adjust {
-                FontSizeAdjust::None => continue,
-                FontSizeAdjust::ExHeight(v) => (v.0, metrics.x_height),
-                FontSizeAdjust::CapHeight(v) => (v.0, metrics.cap_height.or(Some(metrics.ascent))),
-                FontSizeAdjust::ChWidth(v) => (v.0, metrics.zero_advance_measure),
-                FontSizeAdjust::IcWidth(v) | FontSizeAdjust::IcHeight(v) => (v.0, metrics.ic_width),
-            };
-            let ratio = metric.map_or(0.0, |metric| metric.px() / size.px());
-            // (A font without the metric, or a size of 0, is left as it is.)
-            let scale = if ratio > 0.0 && ratio.is_finite() && wanted.is_finite() { wanted / ratio } else { 1.0 };
-            scales.insert(key, scale);
+            scales.insert(key, provider.font_size_adjust_scale(font, size));
         }
         crate::stylo_to_parley::set_font_size_adjustments(scales);
     }

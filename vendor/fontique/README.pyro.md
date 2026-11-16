@@ -105,3 +105,7 @@ nearest the one asked for (CSS Fonts 4 §5.2; a reversed range is the same range
 attribute (the lower bound). A variable font's `wght`/`wdth` axis is held to the range, and a bold request on a face
 whose range has no bold in it is faked bold, as on a face without the axis (WPT `matching/range-descriptor-reversed`,
 `variations/font-descriptor-range-reversed*`, `variations/font-weight-3`).
+
+A face whose `font-style` range is all oblique (`oblique 45deg 67.5deg`) has its `slnt` axis held to the angle of the
+range nearest the request (0deg for normal, 14deg for italic) whatever is asked (WPT
+`matching/fixed-stretch-style-over-weight`).

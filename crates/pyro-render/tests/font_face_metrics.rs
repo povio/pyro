@@ -102,3 +102,20 @@ fn metric_overrides_set_the_normal_line_height() {
     assert_eq!(e[2].0, 40, "{e:?}");
     assert_eq!(e[3].0, 20, "{e:?}");
 }
+
+/// `ex`, `ch` and `ic` under `font-size-adjust` measure the font at the adjusted size (`em` stays
+/// the computed one), and a font without the named metric takes the spec's fallback (WPT
+/// css/css-fonts/font-size-adjust-units-001, -order-001, -011).
+#[test]
+fn font_relative_units_use_the_adjusted_size() {
+    // Ahem's x-height is 0.8 em: `font-size-adjust: 0.4` draws 40px Ahem at 20px, where `1ch` is
+    // 20px and `1ex` 16px. Ahem has no U+6C34: `ic-width 1` takes its ic as 1em, a size of 40px.
+    let e = extents(
+        &[""],
+        "<div style='font: 40px F0; font-size-adjust: 0.4; width: 3ch; height: 2ex; background: #00f'></div>\
+         <div style='font: 40px F0; font-size-adjust: ic-width 1; width: 1ch; height: 1em; background: #f00'></div>",
+        &[BLUE, RED],
+    );
+    assert_eq!(e[0], (32, 60), "{e:?}");
+    assert_eq!(e[1], (40, 40), "{e:?}");
+}

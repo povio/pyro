@@ -1986,3 +1986,11 @@ Covered by `crates/pyro-render/tests/font_face_settings.rs`.
 - `src/net.rs` (`FontFaceOverrides::weight_range`, `width_range`): the `font-weight` and `font-stretch`
   descriptors' ranges go to fontique (its README, "Font matching with `@font-face` ranges"); `weight` is the
   lower end of a reversed range too.
+
+## `font-size-adjust` and font-relative units (WPT css-fonts, round 3 lane F)
+
+`src/font_metrics.rs` (`font_size_adjust_scale`, `query_font_metrics`), `src/resolve.rs`
+(`publish_font_size_adjustments`): under `font-size-adjust`, `ex`, `ch`, `ic` and `cap` measure the first available
+font at the adjusted size (`em` stays the computed size); a font without the named metric takes the spec's
+fallback (0.5em for `ex-height` and `ch-width`, 1em for `ic-*`, the ascent for `cap-height`): it was left
+unscaled. WPT `font-size-adjust-units-001`, `-order-001`, `-011`.
