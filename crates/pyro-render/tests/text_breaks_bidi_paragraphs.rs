@@ -5,7 +5,8 @@
 //! a block that wraps (`line-breaking-030/031/032`); an inline-level absolutely positioned box
 //! alone on its line sits after the text indent (`text-indent-with-absolute-pos-child`); a box
 //! after nothing but span start edges overflows rather than leave an empty line
-//! (`text-indent-overflow`). Measured on empty inline-blocks (`b`) in a monospace font.
+//! (`text-indent-overflow`); a table that shrinks to fit is no wider than its `max-width`
+//! (`overflow-wrap-min-content-size-001`). Measured on empty inline-blocks (`b`) in a monospace font.
 use std::{cell::RefCell, rc::Rc, sync::Arc};
 
 use pyro_dom::{
@@ -119,4 +120,17 @@ fn a_box_after_nothing_but_a_start_margin_stays_on_the_line() {
         &["a", "b"],
     );
     assert_eq!(got.iter().map(|b| [b[0], b[1]]).collect::<Vec<_>>(), [[200.0, 16.0], [180.0, 56.0]]);
+}
+
+#[test]
+fn a_shrinking_table_is_no_wider_than_its_max_width() {
+    // `max-width: 0` leaves the columns their min-content widths, one character wide where
+    // `overflow-wrap: anywhere` breaks between all of them.
+    let got = boxes(
+        "<table id=a style='overflow-wrap:anywhere;max-width:0;border-collapse:collapse'><tr><td id=b style='padding:0'>XXXX</table>\
+         <table id=c style='max-width:0;border-collapse:collapse'><tr><td id=d style='padding:0'>XX XX</table>",
+        &["a", "b", "c", "d"],
+    );
+    assert!((got[0][2] - got[1][2]).abs() < 0.5 && got[1][3] > 3.0 * 40.0, "{got:?}");
+    assert!((got[2][2] - got[3][2]).abs() < 0.5 && got[3][3] > 40.0, "{got:?}");
 }

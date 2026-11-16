@@ -1477,13 +1477,13 @@
      }
  
      /// Whether this character is a variation selector.
-@@ -807,22 +841,127 @@
-             properties.is_emoji_modifier_base(),
+@@ -808,21 +842,159 @@
          ));
      }
-+
-+    quotation_mark_breaks(text, options, &mut analysis.info);
  
++    quotation_mark_breaks(text, options, &mut analysis.info);
++    keep_all_hyphen_breaks(text, options, &mut analysis.info);
++
      if needs_bidi_resolution || options.base_direction == BaseDirection::Rtl {
 -        analyzer.bidi.resolve(
 -            text.chars().map(|ch| {
@@ -1543,7 +1543,39 @@
 +            }
 +            start = end;
 +        }
++    }
++}
++
++/// pyro: `word-break: keep-all` keeps letters together, not what a hyphen-minus separates: the
++/// line may break after one before a letter, as under `normal` (UAX #14: HY ÷ AL; ICU4X's
++/// keep-all data drops it; WPT css-text `word-break-keep-all-u002d`).
++fn keep_all_hyphen_breaks(text: &str, options: &AnalysisOptions<'_>, info: &mut [CharInfo]) {
++    if !text.contains('-') || !options.line_break.iter().any(|(_, config)| config.word_break == WordBreak::KeepAll) {
++        return;
      }
++    let config_at = |byte: usize| {
++        options
++            .line_break
++            .iter()
++            .find(|(range, _)| range.contains(&byte))
++            .map(|(_, config)| *config)
++            .unwrap_or_default()
++    };
++    let chars: Vec<(usize, char)> = text.char_indices().collect();
++    for index in 1..chars.len().saturating_sub(1) {
++        let (byte, ch) = chars[index];
++        if ch != '-' {
++            continue;
++        }
++        let config = config_at(byte);
++        if config.word_break != WordBreak::KeepAll || config.line_break == LineBreak::Anywhere {
++            continue;
++        }
++        let (before, after) = (chars[index - 1].1, chars[index + 1].1);
++        if before.is_alphanumeric() && after.is_alphabetic() {
++            info[index + 1].set_soft_wrap_opportunity(true);
++        }
++    }
  }
  
 +/// pyro: soft wrap opportunities around curly quotation marks as Chromium's ICU finds them,

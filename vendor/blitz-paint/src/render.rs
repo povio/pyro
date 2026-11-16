@@ -2242,8 +2242,16 @@ impl ElementCx<'_, '_> {
             // ideographic spaces that hang are: `LineMetrics::collapsed_advance`). pyro: the line starts at its
             // `inline_min_coord`, past the floats before it (its items are placed from there): without
             // it every box on a line beside a float was cut to nothing (WPT `clear-inline-001`).
-            let content_end =
-                metrics.inline_min_coord + metrics.offset + metrics.advance - metrics.collapsed_advance;
+            // pyro: from where its items end, which counts justification (a justified line's
+            // `advance` does not: WPT css-text `text-justify-and-trailing-spaces-001`).
+            let items_end = line
+                .items()
+                .map(|item| match &item {
+                    PositionedLayoutItem::GlyphRun(run) => run.offset() + run.advance(),
+                    PositionedLayoutItem::InlineBox(ibox) => ibox.x + ibox.width,
+                })
+                .fold(metrics.inline_min_coord + metrics.offset + metrics.advance, f32::max);
+            let content_end = items_end - metrics.collapsed_advance;
             for item in line.items() {
                 let (style_index, x0, x1, edge) = match &item {
                     PositionedLayoutItem::GlyphRun(run) => {

@@ -95,6 +95,10 @@ impl TableTreeWrapper<'_, '_> {
             })
         };
         let min_width = border_box(style.min_size.width.maybe_resolve(parent, resolve_calc_value));
+        // pyro: a table that shrinks to fit its columns is no wider than its `max-width` (nor
+        // narrower than its columns' min-content widths: WPT css-text
+        // `overflow-wrap-min-content-size-001`, `max-width: 0`).
+        let max_width = border_box(style.max_size.width.maybe_resolve(parent, resolve_calc_value));
         // The table's width when it doesn't depend on its columns; else the
         // most it may take (it shrinks to fit its columns' max-content).
         let (width, shrink) = match inputs.known_dimensions.width {
@@ -200,7 +204,12 @@ impl TableTreeWrapper<'_, '_> {
             return Some(style);
         }
         let min_inner = min_width.map_or(0.0, |w| w - spacing);
-        let inner = if shrink { inner.min(sum_max.max(min_inner)) } else { inner };
+        let inner = if shrink {
+            let max_inner = max_width.map_or(f32::INFINITY, |w| w - spacing);
+            inner.min(sum_max.max(min_inner)).min(max_inner.max(sum_min).max(min_inner))
+        } else {
+            inner
+        };
         let widths: Vec<f32> = if inner >= sum_max {
             max.iter().map(|m| m * inner / sum_max).collect()
         } else if sum_max > sum_min {

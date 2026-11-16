@@ -984,3 +984,5 @@ each set's colours with the top highlight's `text-shadow`. A highlight's `color`
 that colour; each property comes from the nearest element whose highlight style declares it (`cascade-highlight-005`).
 The target text defaults to `Mark` on `MarkText` unless a style declares either colour; custom highlights draw nothing
 of their own then. Covered by `highlights_paint_under_the_selection` in `crates/pyro-render/tests/selection_highlight.rs`.
+- `src/render.rs` (`inline_box_fragments`): a line's content ends where its items end, so a justified line's inline
+  boxes take the justification (the line's `advance` does not; WPT css-text `text-justify-and-trailing-spaces-*`).

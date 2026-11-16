@@ -2356,3 +2356,6 @@ whose text is a `::marker` `content` string keep the marker's font (not the bund
   container's direction (WPT css-text `text-indent-with-absolute-pos-child`).
 - `src/layout/first_line.rs` (`starts_a_block`), `src/layout/inline/layout.rs` (text indent): an anonymous flex or
   grid item's first line is a first formatted line and takes the text indent (WPT `anonymous-flex-item-001`).
+- `src/layout/table.rs` (hinted column widths): a table that shrinks to fit its columns is no wider than its
+  `max-width`, nor narrower than its columns' min-content widths (WPT css-text `overflow-wrap-min-content-size-001`,
+  `word-break-min-content-001`). Covered by `a_shrinking_table_is_no_wider_than_its_max_width`.
