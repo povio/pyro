@@ -713,8 +713,7 @@ affects = "layout"
 type = "ContentVisibility"
 initial = "computed::ContentVisibility::Visible"
 struct = "box"
-servo_restyle_damage = "rebuild_box"
-animation_type = "discrete"
+engine = "gecko"
 spec = "https://drafts.csswg.org/css-contain/#content-visibility"
 affects = "layout"
 
@@ -1880,26 +1879,6 @@ struct = "box"
 engine = "gecko"
 spec = "https://drafts.csswg.org/css-scroll-snap-1/#scroll-snap-stop"
 animation_type = "discrete"
-affects = "paint"
-
-[scroll-marker-group]
-type = "ScrollMarkerGroup"
-initial = "computed::ScrollMarkerGroup::NONE"
-struct = "box"
-engine = "servo"
-animation_type = "discrete"
-servo_restyle_damage = "rebuild_box"
-spec = "https://drafts.csswg.org/css-overflow-5/#scroll-marker-group-property"
-affects = "layout"
-
-[scroll-target-group]
-type = "ScrollTargetGroup"
-initial = "computed::ScrollTargetGroup::None"
-struct = "box"
-engine = "servo"
-animation_type = "discrete"
-servo_restyle_damage = "repaint"
-spec = "https://drafts.csswg.org/css-overflow-5/#scroll-target-group"
 affects = "paint"
 
 [scroll-snap-type]

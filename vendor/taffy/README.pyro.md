@@ -336,12 +336,6 @@ which pyro passes) expects the margins to collapse. Covered by `crates/pyro-rend
 
 Covered by `crates/pyro-render/tests/inline_leftovers.rs`.
 
-## Percentage heights in a multi-column container's strip (WPT round 3, lane SM)
-
-`src/tree/traits.rs` (`LayoutBlockContainer::block_container_percentage_height`), `src/compute/block.rs`: a
-container whose own height is not known can name the border-box height its children resolve percentage heights
-against. blitz-dom names its multi-column container's column height while it lays out the strip.
-
 ## Initial letters (WPT round 3, lane I)
 
 - `src/compute/float.rs` (`FloatContext::place_initial_letter`, `initial_letter_clearance`), `src/compute/block.rs`

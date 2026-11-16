@@ -72,7 +72,6 @@ mod phantom_line_boxes;
 mod profiling_timers;
 mod render;
 mod sampled_animations;
-mod scroll_markers;
 mod selection_highlight;
 mod shadow_scoping;
 mod size_containment;

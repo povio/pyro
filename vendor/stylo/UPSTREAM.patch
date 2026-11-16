@@ -201,7 +201,7 @@ diff -ruN a/properties/counted_unknown_properties.py b/properties/counted_unknow
      "-webkit-app-region",
 diff -ruN a/properties/data.py b/properties/data.py
 --- a/properties/data.py	2026-11-11 19:55:57
-+++ b/properties/data.py	2026-11-16 16:33:29
++++ b/properties/data.py	2026-11-16 16:15:58
 @@ -342,9 +342,19 @@
          allow_quirks=False,
          ignored_when_colors_disabled=False,
@@ -223,16 +223,7 @@ diff -ruN a/properties/data.py b/properties/data.py
          Property.__init__(
              self,
              name=name,
-@@ -610,6 +620,8 @@
-                 "BackfaceVisibility",
-                 "Isolation",
-                 "ScrollBehavior",
-+                "ScrollMarkerGroup",
-+                "ScrollTargetGroup",
-                 "TopLayer",
-                 "FloatEdge",
-                 "ImageLayerAttachment",
-@@ -686,6 +698,7 @@
+@@ -686,6 +696,7 @@
                  "TextAlign",
                  "TextAlignLast",
                  "TextAutospace",
@@ -263,7 +254,7 @@ diff -ruN a/properties/helpers.mako.rs b/properties/helpers.mako.rs
                              if !context.builder.effective_zoom_for_inheritance.is_one() {
 diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 --- a/properties/longhands.toml	2026-11-11 19:55:57
-+++ b/properties/longhands.toml	2026-11-16 16:33:29
++++ b/properties/longhands.toml	2026-11-16 16:15:59
 @@ -473,7 +473,6 @@
  type = "BreakBetween"
  initial = "computed::BreakBetween::Auto"
@@ -376,17 +367,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  
  [container-name]
  type = "ContainerName"
-@@ -701,7 +713,8 @@
- type = "ContentVisibility"
- initial = "computed::ContentVisibility::Visible"
- struct = "box"
--engine = "gecko"
-+servo_restyle_damage = "rebuild_box"
-+animation_type = "discrete"
- spec = "https://drafts.csswg.org/css-contain/#content-visibility"
- affects = "layout"
- 
-@@ -890,7 +903,7 @@
+@@ -890,7 +902,7 @@
  type = "FontPalette"
  initial = "computed::FontPalette::normal()"
  struct = "font"
@@ -395,7 +376,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  animation_type = "discrete"
  spec = "https://drafts.csswg.org/css-fonts/#font-palette-prop"
  affects = "layout"
-@@ -1281,6 +1294,7 @@
+@@ -1281,6 +1293,7 @@
  [list-style-image]
  type = "Image"
  initial = "computed::Image::None"
@@ -403,10 +384,12 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  struct = "list"
  animation_type = "discrete"
  spec = "https://drafts.csswg.org/css-lists/#propdef-list-style-image"
-@@ -1427,6 +1441,17 @@
+@@ -1425,6 +1438,17 @@
+ struct = "position"
+ boxed = true
  spec = "https://drafts.csswg.org/css-images-3/#the-object-position"
- affects = "layout"
- 
++affects = "layout"
++
 +# pyro: `object-view-box: none | <basic-shape-rect>` (CSS Images 5): the part of a replaced
 +# element's content that is its view, as a `clip-path` value of `none` or one rectangle.
 +[object-view-box]
@@ -416,39 +399,10 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +parse_method = "parse_object_view_box"
 +animation_type = "discrete"
 +spec = "https://drafts.csswg.org/css-images-5/#the-object-view-box"
-+affects = "layout"
-+
- [offset-anchor]
- type = "PositionOrAuto"
- initial = "computed::PositionOrAuto::auto()"
-@@ -1857,6 +1882,26 @@
- animation_type = "discrete"
- affects = "paint"
+ affects = "layout"
  
-+[scroll-marker-group]
-+type = "ScrollMarkerGroup"
-+initial = "computed::ScrollMarkerGroup::NONE"
-+struct = "box"
-+engine = "servo"
-+animation_type = "discrete"
-+servo_restyle_damage = "rebuild_box"
-+spec = "https://drafts.csswg.org/css-overflow-5/#scroll-marker-group-property"
-+affects = "layout"
-+
-+[scroll-target-group]
-+type = "ScrollTargetGroup"
-+initial = "computed::ScrollTargetGroup::None"
-+struct = "box"
-+engine = "servo"
-+animation_type = "discrete"
-+servo_restyle_damage = "repaint"
-+spec = "https://drafts.csswg.org/css-overflow-5/#scroll-target-group"
-+affects = "paint"
-+
- [scroll-snap-type]
- type = "ScrollSnapType"
- initial = "computed::ScrollSnapType::none()"
-@@ -2117,7 +2162,6 @@
+ [offset-anchor]
+@@ -2117,7 +2141,6 @@
  type = "TransformBox"
  initial = "computed::TransformBox::ViewBox"
  struct = "box"
@@ -456,7 +410,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/css-transforms/#transform-box"
  animation_type = "discrete"
  affects = "overflow"
-@@ -2599,6 +2643,17 @@
+@@ -2599,6 +2622,17 @@
  spec = "https://drafts.csswg.org/css-text-4/#text-autospace-property"
  affects = "layout"
  
@@ -474,7 +428,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  [text-autospace-size]
  type = "Number"
  initial = "0.125"
-@@ -2635,7 +2690,6 @@
+@@ -2635,7 +2669,6 @@
  type = "TextDecorationSkipInk"
  initial = "computed::TextDecorationSkipInk::Auto"
  struct = "inherited_text"
@@ -482,7 +436,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  animation_type = "discrete"
  spec = "https://drafts.csswg.org/css-text-decor-4/#text-decoration-skip-ink-property"
  affects = "overflow"
-@@ -2665,6 +2719,7 @@
+@@ -2665,6 +2698,7 @@
  servo_pref = "layout.css.text-emphasis.enabled"
  animation_type = "discrete"
  spec = "https://drafts.csswg.org/css-text-decor/#propdef-text-emphasis-style"
@@ -490,7 +444,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  affects = "overflow"
  
  [text-underline-offset]
-@@ -3173,6 +3228,15 @@
+@@ -3173,6 +3207,15 @@
  logical = true
  affects = "paint"
  
@@ -506,7 +460,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  [corner-top-left-shape]
  type = "CornerShape"
  initial = "computed::CornerShape::round()"
-@@ -3383,9 +3447,9 @@
+@@ -3383,9 +3426,9 @@
  type = "MarginTrim"
  initial = "computed::MarginTrim::empty()"
  struct = "margin"
@@ -517,7 +471,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/css-box-4/#propdef-margin-trim"
  affects = "layout"
  
-@@ -3694,6 +3758,7 @@
+@@ -3694,6 +3737,7 @@
  [box-decoration-break]
  struct = "border"
  spec = "https://drafts.csswg.org/css-break/#propdef-box-decoration-break"
@@ -525,7 +479,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  animation_type = "discrete"
  affects = "layout"
  type = "BoxDecorationBreak"
-@@ -3770,7 +3835,6 @@
+@@ -3770,7 +3814,6 @@
  
  [column-fill]
  struct = "column"
@@ -533,7 +487,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/css-multicol/#propdef-column-fill"
  animation_type = "discrete"
  affects = "layout"
-@@ -3901,9 +3965,9 @@
+@@ -3901,9 +3944,9 @@
  type = "TextOrientation"
  initial = "computed::TextOrientation::Mixed"
  
@@ -544,7 +498,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/css-images/#propdef-image-orientation"
  animation_type = "discrete"
  affects = "layout"
-@@ -4290,6 +4354,19 @@
+@@ -4290,6 +4333,19 @@
  type = "BoxOrient"
  initial = "computed::BoxOrient::Horizontal"
  
@@ -780,49 +734,8 @@ diff -ruN a/servo/restyle_damage.rs b/servo/restyle_damage.rs
  fn compute_damage(old: &ComputedValues, new: &ComputedValues) -> ServoRestyleDamage {
 diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
 --- a/servo/selector_parser.rs	2026-11-11 19:55:57
-+++ b/servo/selector_parser.rs	2026-11-16 17:04:01
-@@ -50,6 +50,21 @@
-     Backdrop,
-     DetailsContent,
-     Marker,
-+    // pyro: CSS Overflow 5's scroll markers and scroll buttons, and Multi-column 2's `::column`
-+    // (whose only use is `::column::scroll-marker`). Every `::scroll-button()` rule is filed under
-+    // `ScrollButtonAll` (`rule_map_key`); a button's node matches the argument (`scroll_button_matches`).
-+    ScrollMarkerGroup,
-+    ScrollMarker,
-+    Column,
-+    ScrollButtonAll,
-+    ScrollButtonBlockStart,
-+    ScrollButtonInlineStart,
-+    ScrollButtonInlineEnd,
-+    ScrollButtonBlockEnd,
-+    ScrollButtonUp,
-+    ScrollButtonDown,
-+    ScrollButtonLeft,
-+    ScrollButtonRight,
- 
-     // Implemented pseudos. These pseudo elements are representing the
-     // elements within an UA shadow DOM, and matching the elements with
-@@ -93,6 +108,18 @@
-             Backdrop => "::backdrop",
-             DetailsContent => "::details-content",
-             Marker => "::marker",
-+            ScrollMarkerGroup => "::scroll-marker-group",
-+            ScrollMarker => "::scroll-marker",
-+            Column => "::column",
-+            ScrollButtonAll => "::scroll-button(*)",
-+            ScrollButtonBlockStart => "::scroll-button(block-start)",
-+            ScrollButtonInlineStart => "::scroll-button(inline-start)",
-+            ScrollButtonInlineEnd => "::scroll-button(inline-end)",
-+            ScrollButtonBlockEnd => "::scroll-button(block-end)",
-+            ScrollButtonUp => "::scroll-button(up)",
-+            ScrollButtonDown => "::scroll-button(down)",
-+            ScrollButtonLeft => "::scroll-button(left)",
-+            ScrollButtonRight => "::scroll-button(right)",
-             ColorSwatch => "::color-swatch",
-             FileSelectorButton => "::file-selector-button",
-             Placeholder => "::placeholder",
-@@ -116,6 +143,42 @@
++++ b/servo/selector_parser.rs	2026-11-16 14:03:14
+@@ -116,6 +116,32 @@
      fn parses_as_element_backed(&self) -> bool {
          matches!(self, Self::DetailsContent)
      }
@@ -830,21 +743,11 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
 +    // pyro: `::before::marker` and `::after::marker` (CSS Pseudo-Elements 4 § 4.1): the marker
 +    // of a `::before` or `::after` box that is a list item.
 +    fn valid_after_before_or_after(&self) -> bool {
-+        matches!(self, Self::Marker | Self::ScrollMarker)
++        matches!(self, Self::Marker)
 +    }
 +
-+    // pyro: `::column` lets `::scroll-marker` follow it as `::before` and `::after` let
-+    // `::marker` (`::column::scroll-marker`, Multi-column 2 § 4.8).
 +    fn is_before_or_after(&self) -> bool {
-+        matches!(self, Self::Before | Self::After | Self::Column)
-+    }
-+
-+    // pyro: `::scroll-marker:target-current`, `::scroll-button(*):disabled`, and the user action
-+    // states, match the pseudo-element's own state (its box node's, `blitz-dom`). `::column`
-+    // accepts them too, or the parser would reject them after its `::scroll-marker` as well
-+    // (`::column::scroll-marker:target-current`: the state the first pseudo-element sets stays).
-+    fn accepts_state_pseudo_classes(&self) -> bool {
-+        self.is_scroll_marker() || self.is_scroll_button() || *self == Self::Column
++        matches!(self, Self::Before | Self::After)
 +    }
 +
 +    // pyro: `::slotted()` can be followed by a tree-abiding pseudo-element (CSS Scoping 1 § 3.2.2),
@@ -865,116 +768,7 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
  }
  
  /// The number of eager pseudo-elements. Keep this in sync with cascade_type.
-@@ -137,7 +200,8 @@
- 
-     /// An array of `None`, one per pseudo-element.
-     pub fn pseudo_none_array<T>() -> [Option<T>; PSEUDO_COUNT] {
--        Default::default()
-+        // pyro: more than 32 pseudo-elements, past `Default` for arrays.
-+        std::array::from_fn(|_| None)
-     }
- 
-     /// Creates a pseudo-element from an eager index.
-@@ -166,6 +230,41 @@
-     #[inline]
-     pub fn is_marker(&self) -> bool {
-         *self == PseudoElement::Marker
-+    }
-+
-+    /// pyro: whether this pseudo-element is `::scroll-marker`.
-+    #[inline]
-+    pub fn is_scroll_marker(&self) -> bool {
-+        *self == PseudoElement::ScrollMarker
-+    }
-+
-+    /// pyro: whether this pseudo-element is a `::scroll-button()`, whatever its argument.
-+    #[inline]
-+    pub fn is_scroll_button(&self) -> bool {
-+        matches!(
-+            *self,
-+            PseudoElement::ScrollButtonAll
-+                | PseudoElement::ScrollButtonBlockStart
-+                | PseudoElement::ScrollButtonInlineStart
-+                | PseudoElement::ScrollButtonInlineEnd
-+                | PseudoElement::ScrollButtonBlockEnd
-+                | PseudoElement::ScrollButtonUp
-+                | PseudoElement::ScrollButtonDown
-+                | PseudoElement::ScrollButtonLeft
-+                | PseudoElement::ScrollButtonRight
-+        )
-+    }
-+
-+    /// pyro: the key a rule for this pseudo-element is filed under in the stylist's maps: every
-+    /// `::scroll-button()` rule under `::scroll-button(*)`, as which a button's box is styled (its
-+    /// node then matches each rule's argument against its direction).
-+    #[inline]
-+    pub fn rule_map_key(&self) -> PseudoElement {
-+        if self.is_scroll_button() {
-+            PseudoElement::ScrollButtonAll
-+        } else {
-+            *self
-+        }
-     }
- 
-     /// Whether this pseudo-element is the ::selection pseudo.
-@@ -261,7 +360,19 @@
-             | PseudoElement::SliderTrack
-             | PseudoElement::MozProgressBar
-             | PseudoElement::ServoTextControlInnerContainer
--            | PseudoElement::ServoTextControlInnerEditor => PseudoElementCascadeType::Lazy,
-+            | PseudoElement::ServoTextControlInnerEditor
-+            | PseudoElement::ScrollMarkerGroup
-+            | PseudoElement::ScrollMarker
-+            | PseudoElement::Column
-+            | PseudoElement::ScrollButtonAll
-+            | PseudoElement::ScrollButtonBlockStart
-+            | PseudoElement::ScrollButtonInlineStart
-+            | PseudoElement::ScrollButtonInlineEnd
-+            | PseudoElement::ScrollButtonBlockEnd
-+            | PseudoElement::ScrollButtonUp
-+            | PseudoElement::ScrollButtonDown
-+            | PseudoElement::ScrollButtonLeft
-+            | PseudoElement::ScrollButtonRight => PseudoElementCascadeType::Lazy,
-             PseudoElement::ServoAnonymousBox
-             | PseudoElement::ServoAnonymousTable
-             | PseudoElement::ServoAnonymousTableCell
-@@ -317,9 +428,12 @@
-     }
- 
-     /// Whether this pseudo-element takes an argument.
-+    ///
-+    /// pyro: a `::scroll-button()` does; its rules share one map (`rule_map_key`), so a bucket
-+    /// does not decide whether one matches.
-     #[inline]
-     pub fn has_argument(&self) -> bool {
--        false
-+        self.is_scroll_button()
-     }
- 
-     /// Whether this pseudo-element is the ::target-text pseudo.
-@@ -341,7 +455,10 @@
-     #[inline]
-     pub fn is_element_backed(&self) -> bool {
-         use selectors::parser::PseudoElement;
-+        // pyro: a `::scroll-button()` is styled as the `button` element its box is (CSS Overflow
-+        // 5 § 3.2): the UA rules for `button` apply to it (`RuleCollector`).
-         self.parses_as_element_backed()
-+            || self.is_scroll_button()
-             || matches!(
-                 self,
-                 Self::Placeholder
-@@ -357,6 +474,10 @@
-     }
- }
- 
-+/// pyro: the element state `:target-current` matches. Servo has no state of its own for it; this
-+/// Gecko devtools bit is never set by Servo.
-+pub const TARGET_CURRENT: ElementState = ElementState::STYLEEDITOR_TRANSITIONING;
-+
- /// The type used for storing `:lang` arguments.
- pub type Lang = Box<str>;
- 
-@@ -376,6 +497,9 @@
+@@ -376,6 +402,9 @@
      /// The :state` pseudo-class.
      CustomState(CustomState),
      Default,
@@ -984,55 +778,19 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
      Defined,
      Disabled,
      Enabled,
-@@ -405,6 +529,8 @@
-     Required,
-     ServoNonZeroBorder,
-     Target,
-+    /// pyro: `:target-current` (CSS Overflow 5): the active scroll marker of its group.
-+    TargetCurrent,
-     UserInvalid,
-     UserValid,
-     Valid,
-@@ -417,11 +543,20 @@
-         matches!(*self, NonTSPseudoClass::Active | NonTSPseudoClass::Hover)
-     }
- 
-+    // pyro: also the states a pseudo-element that accepts state pseudo-classes can have
-+    // (`::scroll-marker:target-current`, `::scroll-button():disabled`), which the selector
-+    // parser lets follow it only when they are user action states.
-     #[inline]
-     fn is_user_action_state(&self) -> bool {
-         matches!(
-             *self,
--            NonTSPseudoClass::Active | NonTSPseudoClass::Hover | NonTSPseudoClass::Focus
-+            NonTSPseudoClass::Active
-+                | NonTSPseudoClass::Hover
-+                | NonTSPseudoClass::Focus
-+                | NonTSPseudoClass::FocusVisible
-+                | NonTSPseudoClass::TargetCurrent
-+                | NonTSPseudoClass::Enabled
-+                | NonTSPseudoClass::Disabled
-         )
-     }
- 
-@@ -441,6 +576,11 @@
+@@ -439,6 +468,11 @@
+         if let Lang(ref lang) = *self {
+             dest.write_str(":lang(")?;
              serialize_identifier(lang, dest)?;
-             return dest.write_char(')');
-         }
++            return dest.write_char(')');
++        }
 +        if let Dir(ref dir) = *self {
 +            dest.write_str(":dir(")?;
 +            serialize_identifier(dir, dest)?;
-+            return dest.write_char(')');
-+        }
+             return dest.write_char(')');
+         }
  
-         dest.write_str(match *self {
-             Self::Active => ":active",
-@@ -481,11 +621,12 @@
-             Self::Required => ":required",
-             Self::ServoNonZeroBorder => ":-servo-nonzero-border",
-             Self::Target => ":target",
-+            Self::TargetCurrent => ":target-current",
-             Self::UserInvalid => ":user-invalid",
+@@ -485,7 +519,7 @@
              Self::UserValid => ":user-valid",
              Self::Valid => ":valid",
              Self::Visited => ":visited",
@@ -1041,12 +799,7 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
          })
      }
  }
-@@ -527,11 +668,12 @@
-             Self::ReadWrite => ElementState::READWRITE,
-             Self::Required => ElementState::REQUIRED,
-             Self::Target => ElementState::URLTARGET,
-+            Self::TargetCurrent => TARGET_CURRENT,
-             Self::UserInvalid => ElementState::USER_INVALID,
+@@ -531,7 +565,7 @@
              Self::UserValid => ElementState::USER_VALID,
              Self::Valid => ElementState::VALID,
              Self::Visited => ElementState::VISITED,
@@ -1055,71 +808,19 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
                  ElementState::empty()
              },
          }
-@@ -646,6 +788,7 @@
-             "read-write" => NonTSPseudoClass::ReadWrite,
-             "required" => NonTSPseudoClass::Required,
-             "target" => NonTSPseudoClass::Target,
-+            "target-current" => NonTSPseudoClass::TargetCurrent,
-             "user-invalid" => NonTSPseudoClass::UserInvalid,
-             "user-valid" => NonTSPseudoClass::UserValid,
-             "valid" => NonTSPseudoClass::Valid,
-@@ -697,6 +840,9 @@
+@@ -696,6 +730,9 @@
+             "state" => {
                  let result = AtomIdent::from(parser.expect_ident()?.as_ref());
                  NonTSPseudoClass::CustomState(CustomState(result))
-             },
++            },
 +            "dir" if !after_part => {
 +                NonTSPseudoClass::Dir(parser.expect_ident()?.to_ascii_lowercase().into())
-+            },
+             },
              _ => return Err(ParseError::custom(SelectorParseErrorKind::UnexpectedIdent)),
          };
- 
-@@ -714,6 +860,9 @@
-             "first-letter" => FirstLetter,
-             "first-line" if crate::pref!("layout.css.first-line.enabled") => FirstLine,
-             "marker" => Marker,
-+            "scroll-marker-group" => ScrollMarkerGroup,
-+            "scroll-marker" => ScrollMarker,
-+            "column" => Column,
-             "details-content" => DetailsContent,
-             "color-swatch" => ColorSwatch,
-             "placeholder" => Placeholder,
-@@ -774,6 +923,33 @@
-         };
- 
-         Ok(pseudo_element)
-+    }
-+
-+    // pyro: `::scroll-button(<direction> | *)` (CSS Overflow 5 § 3.2).
-+    fn parse_functional_pseudo_element(
-+        &self,
-+        name: &str,
-+        arguments: &mut CssParser<'i>,
-+    ) -> Result<PseudoElement, ParseError> {
-+        use self::PseudoElement::*;
-+        if !name.eq_ignore_ascii_case("scroll-button") {
-+            return Err(ParseError::custom(SelectorParseErrorKind::UnexpectedIdent));
-+        }
-+        if arguments.try_parse(|input| input.expect_delim('*')).is_ok() {
-+            return Ok(ScrollButtonAll);
-+        }
-+        let ident = arguments.expect_ident()?;
-+        Ok(match_ignore_ascii_case! { &ident,
-+            "block-start" => ScrollButtonBlockStart,
-+            "inline-start" => ScrollButtonInlineStart,
-+            "inline-end" => ScrollButtonInlineEnd,
-+            "block-end" => ScrollButtonBlockEnd,
-+            "up" => ScrollButtonUp,
-+            "down" => ScrollButtonDown,
-+            "left" => ScrollButtonLeft,
-+            "right" => ScrollButtonRight,
-+            _ => return Err(ParseError::custom(SelectorParseErrorKind::UnexpectedIdent)),
-+        })
-     }
- 
-     fn default_namespace(&self) -> Option<Namespace> {
 diff -ruN a/style_adjuster.rs b/style_adjuster.rs
 --- a/style_adjuster.rs	2026-11-11 19:55:57
-+++ b/style_adjuster.rs	2026-11-16 16:00:21
++++ b/style_adjuster.rs	2026-11-15 20:15:35
 @@ -184,6 +184,36 @@
          self.style
              .mutate_box()
@@ -1157,98 +858,7 @@ diff -ruN a/style_adjuster.rs b/style_adjuster.rs
      }
  
      /// CSS 2.1 section 9.7:
-@@ -821,6 +851,90 @@
-     /// for web-compat reasons.
-     /// We intentionally don't check 'list-style-image' below since we want it to use
-     /// the same font as its fallback ('list-style-type') in case it fails to load.
-+        /// pyro: pyro's UA sheet rounds a button's corners (1px) as Chromium's native look does. A
-+    /// button whose border or background an author styles loses that look (its appearance
-+    /// devolves): its corners are square unless an author rounds them (WPT
-+    /// css-overflow/scroll-markers/scroll-buttons-001: `::scroll-button()`s are buttons).
-+    #[cfg(feature = "servo")]
-+    fn adjust_for_author_styled_button<E>(&mut self, element: Option<E>, specified: &LonghandIdSet)
-+    where
-+        E: TElement,
-+    {
-+        use crate::properties::LonghandId;
-+        use crate::values::computed::BorderCornerRadius;
-+        use crate::Zero;
-+        if !specified.contains_any(LonghandIdSet::border_background_properties()) {
-+            return;
-+        }
-+        let rounded_by_author = [
-+            LonghandId::BorderTopLeftRadius,
-+            LonghandId::BorderTopRightRadius,
-+            LonghandId::BorderBottomRightRadius,
-+            LonghandId::BorderBottomLeftRadius,
-+        ]
-+        .iter()
-+        .any(|id| specified.contains(*id));
-+        if rounded_by_author {
-+            return;
-+        }
-+        let is_button = self.style.pseudo.is_some_and(|p| p.is_scroll_button())
-+            || element.is_some_and(|e| {
-+                e.is_html_element()
-+                    && match &**e.local_name() {
-+                        "button" => true,
-+                        "input" => TElement::get_attr(&e, &crate::LocalName::from("type"), &crate::Namespace::default())
-+                            .is_some_and(|t| {
-+                                t.eq_ignore_ascii_case("button")
-+                                    || t.eq_ignore_ascii_case("submit")
-+                                    || t.eq_ignore_ascii_case("reset")
-+                            }),
-+                        _ => false,
-+                    }
-+            });
-+        if !is_button {
-+            return;
-+        }
-+        let border = self.style.mutate_border();
-+        border.set_border_top_left_radius(BorderCornerRadius::zero());
-+        border.set_border_top_right_radius(BorderCornerRadius::zero());
-+        border.set_border_bottom_right_radius(BorderCornerRadius::zero());
-+        border.set_border_bottom_left_radius(BorderCornerRadius::zero());
-+    }
-+
-+    /// pyro: `content-visibility: auto` turns on layout, style and paint containment (CSS
-+    /// Contain 2 § 4.1). Every element is taken as relevant to the user: no size containment, its
-+    /// contents laid out and painted. `hidden` is not supported (no containment, contents shown,
-+    /// as before servo parsed the property).
-+    #[cfg(feature = "servo")]
-+    fn adjust_for_content_visibility(&mut self) {
-+        use crate::values::specified::box_::{Contain, ContentVisibility};
-+        let box_style = self.style.get_box();
-+        if box_style.slow_clone_content_visibility() != ContentVisibility::Auto {
-+            return;
-+        }
-+        let contain = box_style.slow_clone_contain() | Contain::LAYOUT | Contain::STYLE | Contain::PAINT;
-+        self.style.mutate_box().set_contain(contain);
-+    }
-+
-+    /// pyro: a `::scroll-marker-group` contains its layout always, and its size unless it is
-+    /// absolutely positioned, whatever its `contain` says (CSS Overflow 5 recommends the UA rule
-+    /// `::scroll-marker-group { contain: size !important }`; Chromium contains its layout too and
-+    /// lets an absolutely positioned group size to its markers: WPT css-overflow/scroll-markers
-+    /// scroll-marker-007..009, scroll-marker-group-016).
-+    #[cfg(feature = "servo")]
-+    fn adjust_for_scroll_marker_group(&mut self) {
-+        use crate::selector_parser::PseudoElement;
-+        use crate::values::specified::box_::Contain;
-+        if !self.style.pseudo.is_some_and(|p| *p == PseudoElement::ScrollMarkerGroup) {
-+            return;
-+        }
-+        let mut contain = self.style.get_box().slow_clone_contain() | Contain::LAYOUT;
-+        if !self.style.get_box().slow_clone_position().is_absolutely_positioned() {
-+            contain |= Contain::SIZE;
-+        }
-+        self.style.mutate_box().set_contain(contain);
-+    }
-+
-     #[cfg(feature = "gecko")]
-     fn adjust_for_marker_pseudo(&mut self, author_or_user_specified_properties: &LonghandIdSet) {
-         use crate::values::computed::counters::Content;
-@@ -1064,6 +1178,8 @@
+@@ -1064,6 +1094,8 @@
          //     "Should always have an element around for non-pseudo styles"
          // );
  
@@ -1257,19 +867,6 @@ diff -ruN a/style_adjuster.rs b/style_adjuster.rs
          self.adjust_for_links(element);
          self.adjust_for_prohibited_display_contents(element);
          #[cfg(feature = "gecko")]
-@@ -1090,6 +1206,12 @@
-         self.adjust_for_appearance(element);
-         #[cfg(feature = "gecko")]
-         self.adjust_for_marker_pseudo(author_or_user_specified_properties);
-+        #[cfg(feature = "servo")]
-+        {
-+            self.adjust_for_content_visibility();
-+            self.adjust_for_scroll_marker_group();
-+            self.adjust_for_author_styled_button(element, author_or_user_specified_properties);
-+        }
-         if !try_tactic.is_empty() {
-             self.adjust_for_try_tactic(try_tactic);
-         }
 diff -ruN a/style_resolver.rs b/style_resolver.rs
 --- a/style_resolver.rs	2026-11-11 19:55:57
 +++ b/style_resolver.rs	2026-11-11 20:10:18
@@ -1404,7 +1001,7 @@ diff -ruN a/stylesheets/rule_parser.rs b/stylesheets/rule_parser.rs
              "-webkit-keyframes" => Self::Keyframes(Some(VendorPrefix::WebKit)),
 diff -ruN a/stylist.rs b/stylist.rs
 --- a/stylist.rs	2026-11-11 19:55:57
-+++ b/stylist.rs	2026-11-16 12:33:03
++++ b/stylist.rs	2026-11-11 20:10:18
 @@ -31,8 +31,8 @@
  use crate::parser::ParserContext;
  use crate::properties::StyleBuilder;
@@ -1430,12 +1027,10 @@ diff -ruN a/stylist.rs b/stylist.rs
      /// Returns the number of selectors.
      pub fn num_selectors(&self) -> usize {
          self.cascade_data
-@@ -1217,6 +1224,62 @@
-         }
- 
+@@ -1219,6 +1226,62 @@
          doc_author_rules_apply && f(&self.cascade_data.author)
-+    }
-+
+     }
+ 
 +    /// pyro: whether a rule that can make `pseudo` (`::before` or `::after`, eagerly
 +    /// cascaded for `element`) generate a box matches `element`, so that the full match and
 +    /// cascade of the pseudo-element can give a style that is kept. When this is `false`, every
@@ -1490,80 +1085,15 @@ diff -ruN a/stylist.rs b/stylist.rs
 +            }
 +        }
 +        false
-     }
- 
-     /// Execute callback for all applicable style rule data.
-@@ -1365,6 +1428,64 @@
-         Some(self.compute_pseudo_element_style_with_inputs(
-             cascade_inputs,
-             pseudo,
-+            guards,
-+            Some(originating_element_style),
-+            Some(element),
-+        ))
 +    }
 +
-+    /// pyro: the style of a node that is a pseudo-element's box (`element.implemented_pseudo_element()`,
-+    /// which reaches its originating element through `pseudo_element_originating_element()`), whose
-+    /// rules are matched against the node itself in normal mode: state pseudo-classes after the
-+    /// pseudo-element (`::scroll-marker:target-current`, `::scroll-button(*):disabled`) match the
-+    /// node's own state, which lazy matching on the originating element cannot see. `None` when
-+    /// `is_probe` and no rule applies.
-+    pub fn compute_pseudo_node_style<E>(
-+        &self,
-+        guards: &StylesheetGuards,
-+        element: E,
-+        originating_element_style: &ComputedValues,
-+        is_probe: bool,
-+    ) -> Option<Arc<ComputedValues>>
-+    where
-+        E: TElement,
-+    {
-+        let pseudo = element.implemented_pseudo_element()?;
-+        let mut selector_caches = SelectorCaches::default();
-+        let animation_declarations = AnimationDeclarations::default();
-+        let mut declarations = ApplicableDeclarationList::new();
-+        let mut matching_context = MatchingContext::<'_, E::Impl>::new(
-+            MatchingMode::Normal,
-+            None,
-+            &mut selector_caches,
-+            self.quirks_mode,
-+            NeedsSelectorFlags::No,
-+            MatchingForInvalidation::No,
-+        );
-+        matching_context.extra_data.originating_element_style = Some(originating_element_style);
-+        self.push_applicable_declarations(
-+            element,
-+            None,
-+            None,
-+            None,
-+            &animation_declarations,
-+            RuleInclusion::All,
-+            &mut declarations,
-+            &mut matching_context,
-+        );
-+        if declarations.is_empty() && is_probe {
-+            return None;
-+        }
-+        let rules = self.rule_tree.compute_rule_node(&mut declarations, guards);
-+        let inputs = CascadeInputs {
-+            rules: Some(rules),
-+            visited_rules: None,
-+            flags: matching_context.extra_data.cascade_input_flags,
-+            included_cascade_flags: RuleCascadeFlags::empty(),
-+        };
-+        Some(self.compute_pseudo_element_style_with_inputs(
-+            inputs,
-+            &pseudo,
-             guards,
-             Some(originating_element_style),
-             Some(element),
-@@ -2864,8 +2985,84 @@
-         self.element_map.clear();
-         self.pseudos_map.clear();
+     /// Execute callback for all applicable style rule data.
+     pub fn for_each_cascade_data_with_scope<'a, E, F>(&'a self, element: E, mut f: F)
+     where
+@@ -2866,6 +2929,82 @@
      }
-+}
-+
+ }
+ 
 +/// pyro: the `::before` and `::after` rules (one pseudo-element level, in
 +/// `normal_rules`) whose declarations can make the pseudo-element generate a box: they declare
 +/// `content`, `display` or `animation-name`, looked up on the block's longhand set, so `all`,
@@ -1578,8 +1108,8 @@ diff -ruN a/stylist.rs b/stylist.rs
 +/// pseudo-element generate a box (see `BoxGeneratingPseudoRules`).
 +pub fn declarations_may_generate_pseudo_box(block: &PropertyDeclarationBlock) -> bool {
 +    BoxGeneratingPseudoRules::declarations_may_generate_box(block)
- }
- 
++}
++
 +#[derive(Clone, Debug, Default, MallocSizeOf)]
 +struct BoxGeneratingPseudoRules {
 +    before: SelectorMap<Rule>,
@@ -1643,18 +1173,18 @@ diff -ruN a/stylist.rs b/stylist.rs
  /// The id of a given layer, a sequentially-increasing identifier.
  #[derive(Clone, Copy, Debug, Eq, MallocSizeOf, PartialEq, PartialOrd, Ord)]
  pub struct LayerId(u16);
-@@ -3360,6 +3557,10 @@
-     /// The data coming from normal style rules that apply to elements at this
+@@ -3361,6 +3500,10 @@
      /// cascade level.
      normal_rules: ElementAndPseudoRules,
-+
+ 
 +    /// pyro: the rules of `normal_rules` that can make a `::before` or `::after`
 +    /// generate a box.
 +    box_generating_pseudo_rules: BoxGeneratingPseudoRules,
- 
++
      /// The `:host` pseudo rules that are the rightmost selector (without
      /// accounting for pseudo-elements), or `:scope` rules that may match
-@@ -3526,6 +3727,7 @@
+     /// the featureless host.
+@@ -3526,6 +3669,7 @@
      pub fn new() -> Self {
          Self {
              normal_rules: ElementAndPseudoRules::default(),
@@ -1662,19 +1192,17 @@ diff -ruN a/stylist.rs b/stylist.rs
              featureless_host_rules: None,
              slotted_rules: None,
              part_rules: None,
-@@ -3730,8 +3932,27 @@
-     #[inline]
-     pub fn normal_rules(&self, pseudo_elements: &[PseudoElement]) -> Option<&SelectorMap<Rule>> {
+@@ -3732,6 +3876,25 @@
          self.normal_rules.rules(pseudo_elements)
-+    }
-+
+     }
+ 
 +    /// pyro: the rules of `normal_rules(&[pseudo])` that can make `pseudo` (`::before`
 +    /// or `::after`) generate a box. `None` for other pseudo-elements.
 +    #[inline]
 +    pub fn box_generating_pseudo_rules(&self, pseudo: &PseudoElement) -> Option<&SelectorMap<Rule>> {
 +        self.box_generating_pseudo_rules.map(pseudo)
-     }
- 
++    }
++
 +    /// pyro: whether any rule here is for `pseudo`, in any of the maps the rule
 +    /// collector reads for it.
 +    fn has_rules_for_pseudo(&self, pseudo: &PseudoElement) -> bool {
@@ -1690,7 +1218,7 @@ diff -ruN a/stylist.rs b/stylist.rs
      /// Returns the featureless pseudo rule map for a given pseudo-element.
      #[inline]
      pub fn featureless_host_rules(
-@@ -3850,6 +4071,7 @@
+@@ -3850,6 +4013,7 @@
  
      fn shrink_maps_if_needed(&mut self) {
          self.normal_rules.shrink_if_needed();
@@ -1698,7 +1226,7 @@ diff -ruN a/stylist.rs b/stylist.rs
          if let Some(ref mut host_rules) = self.featureless_host_rules {
              host_rules.shrink_if_needed();
          }
-@@ -3955,10 +4177,20 @@
+@@ -3955,7 +4119,9 @@
          quirks_mode: QuirksMode,
          mut collected_scope_dependencies: Option<&mut Vec<Dependency>>,
      ) -> Result<(), AllocErr> {
@@ -1709,18 +1237,7 @@ diff -ruN a/stylist.rs b/stylist.rs
          for selector in selectors.slice() {
              self.num_selectors += 1;
  
-+            // pyro: rules are filed under each pseudo-element's `rule_map_key` (every
-+            // `::scroll-button()` rule under `::scroll-button(*)`).
-+            #[cfg(feature = "servo")]
-+            let pseudo_element_keys: SmallVec<[PseudoElement; 3]> =
-+                selector.pseudo_elements().iter().map(|p| p.rule_map_key()).collect();
-+            #[cfg(feature = "servo")]
-+            let pseudo_elements: SmallVec<[&PseudoElement; 3]> = pseudo_element_keys.iter().collect();
-+            #[cfg(not(feature = "servo"))]
-             let pseudo_elements = selector.pseudo_elements();
-             let inner_pseudo_element = pseudo_elements.first();
-             if let Some(pseudo) = inner_pseudo_element {
-@@ -4102,6 +4334,15 @@
+@@ -4102,6 +4268,15 @@
                  // :scope may match featureless shadow host if the scope
                  // root is the shadow root.
                  // See https://github.com/w3c/csswg-drafts/issues/9025
@@ -1736,7 +1253,7 @@ diff -ruN a/stylist.rs b/stylist.rs
                  let rules = if matches_featureless_host_only {
                      self.featureless_host_rules.get_or_insert_with(Box::default)
                  } else if rule.selector.is_slotted() {
-@@ -4817,6 +5058,7 @@
+@@ -4817,6 +4992,7 @@
      /// Clears the cascade data, but not the invalidation data.
      fn clear_cascade_data(&mut self) {
          self.normal_rules.clear();
@@ -1786,18 +1303,7 @@ diff -ruN a/values/computed/basic_shape.rs b/values/computed/basic_shape.rs
      generic::GenericBasicShape<Angle, LengthPercentage, Position, LengthPercentage, InsetRect>;
 diff -ruN a/values/computed/box.rs b/values/computed/box.rs
 --- a/values/computed/box.rs	2026-11-11 19:55:57
-+++ b/values/computed/box.rs	2026-11-16 12:25:08
-@@ -22,8 +22,8 @@
-     BoxDirection, BoxOrient, BoxPack, BreakBetween, BreakWithin, Clear, Contain, ContainerName,
-     ContainerType, ContentVisibility, DirectionProperty, Display, DominantBaseline, Float,
-     ImageOrientation, Isolation, MarginTrim, Orient, Overflow, OverflowAnchor, OverscrollBehavior,
--    PositionProperty, ScrollBehavior, ScrollSnapAlign, ScrollSnapAxis, ScrollSnapStop,
--    ScrollSnapStrictness, ScrollSnapType, ScrollbarGutter, TextOrientation, TopLayer, TouchAction,
-+    PositionProperty, ScrollBehavior, ScrollMarkerGroup, ScrollSnapAlign, ScrollSnapAxis, ScrollSnapStop,
-+    ScrollSnapStrictness, ScrollSnapType, ScrollTargetGroup, ScrollbarGutter, TextOrientation, TopLayer, TouchAction,
-     Visibility, WillChange, WritingModeProperty,
- };
- 
++++ b/values/computed/box.rs	2026-11-15 21:31:51
 @@ -31,7 +31,7 @@
  pub type BaselineShift = GenericBaselineShift<LengthPercentage>;
  
@@ -1868,16 +1374,7 @@ diff -ruN a/values/computed/image.rs b/values/computed/image.rs
      }
 diff -ruN a/values/computed/mod.rs b/values/computed/mod.rs
 --- a/values/computed/mod.rs	2026-11-11 19:55:57
-+++ b/values/computed/mod.rs	2026-11-16 16:33:29
-@@ -69,7 +69,7 @@
-     ContainIntrinsicSize, ContainerName, ContainerType, ContentVisibility, DirectionProperty,
-     Display, DominantBaseline, Float, ImageOrientation, Isolation, LineClamp, MarginTrim, Orient,
-     Overflow, OverflowAnchor, OverflowClipMargin, OverscrollBehavior, Perspective,
--    PositionProperty, Resize, ScrollBehavior, ScrollSnapAlign, ScrollSnapAxis, ScrollSnapStop,
-+    PositionProperty, Resize, ScrollBehavior, ScrollMarkerGroup, ScrollTargetGroup, ScrollSnapAlign, ScrollSnapAxis, ScrollSnapStop,
-     ScrollSnapStrictness, ScrollSnapType, ScrollbarGutter, ScrollbarInset, TextOrientation,
-     TopLayer, TouchAction, Visibility, WillChange, WritingModeProperty, Zoom,
- };
++++ b/values/computed/mod.rs	2026-11-16 16:15:58
 @@ -129,7 +129,7 @@
  pub use self::text::{InitialLetter, LetterSpacing, LineBreak, TextIndent};
  pub use self::text::{OverflowWrap, RubyPosition, TextOverflow, WordBreak, WordSpacing};
@@ -2295,7 +1792,7 @@ diff -ruN a/values/specified/basic_shape.rs b/values/specified/basic_shape.rs
  pub type BasicShape =
 diff -ruN a/values/specified/box.rs b/values/specified/box.rs
 --- a/values/specified/box.rs	2026-11-11 19:55:57
-+++ b/values/specified/box.rs	2026-11-16 12:25:07
++++ b/values/specified/box.rs	2026-11-15 21:32:07
 @@ -15,7 +15,7 @@
      GenericLineClamp, GenericOverflowClipMargin, GenericPerspective, GenericScrollbarInset,
      MaxLines, OverflowClipMarginBox,
@@ -2473,98 +1970,6 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
          }
      }
  }
-@@ -2628,4 +2643,91 @@
- pub enum DirectionProperty {
-     Ltr,
-     Rtl,
-+}
-+
-+/// pyro: the `scroll-marker-group` property (CSS Overflow 5): whether a scroll container
-+/// generates a `::scroll-marker-group` box, and on which side of its own box it goes.
-+/// `none | [ [ before | after ] || [ links | tabs ] ]`.
-+/// https://drafts.csswg.org/css-overflow-5/#scroll-marker-group-property
-+#[derive(
-+    Clone,
-+    Copy,
-+    Debug,
-+    Eq,
-+    Hash,
-+    MallocSizeOf,
-+    PartialEq,
-+    Parse,
-+    SpecifiedValueInfo,
-+    ToComputedValue,
-+    ToCss,
-+    ToResolvedValue,
-+    ToShmem,
-+    ToTyped,
-+)]
-+#[css(bitflags(
-+    single = "none",
-+    mixed = "before,after,links,tabs",
-+    validate_mixed = "Self::validate_mixed_flags",
-+))]
-+#[repr(C)]
-+pub struct ScrollMarkerGroup(u8);
-+bitflags! {
-+    impl ScrollMarkerGroup: u8 {
-+        /// No group.
-+        const NONE = 0;
-+        /// The group box goes before the scroll container's box.
-+        const BEFORE = 1 << 0;
-+        /// The group box goes after the scroll container's box.
-+        const AFTER = 1 << 1;
-+        /// The markers are links (the focus model).
-+        const LINKS = 1 << 2;
-+        /// The markers are tabs (the focus model).
-+        const TABS = 1 << 3;
-+    }
- }
-+
-+impl ScrollMarkerGroup {
-+    fn validate_mixed_flags(&self) -> bool {
-+        !self.contains(Self::BEFORE | Self::AFTER) && !self.contains(Self::LINKS | Self::TABS)
-+    }
-+
-+    /// Whether the scroll container generates a group box (a side given).
-+    pub fn generates_group(self) -> bool {
-+        self.intersects(Self::BEFORE | Self::AFTER)
-+    }
-+
-+    /// Whether the group box goes before the scroll container's box.
-+    pub fn is_before(self) -> bool {
-+        self.contains(Self::BEFORE)
-+    }
-+}
-+
-+/// pyro: the `scroll-target-group` property (CSS Overflow 5): `none | auto`. With `auto`, the
-+/// element's links to elements of the document are scroll markers.
-+/// https://drafts.csswg.org/css-overflow-5/#scroll-target-group
-+#[allow(missing_docs)]
-+#[derive(
-+    Clone,
-+    Copy,
-+    Debug,
-+    Deserialize,
-+    Eq,
-+    FromPrimitive,
-+    Hash,
-+    MallocSizeOf,
-+    Parse,
-+    PartialEq,
-+    Serialize,
-+    SpecifiedValueInfo,
-+    ToComputedValue,
-+    ToCss,
-+    ToResolvedValue,
-+    ToShmem,
-+    ToTyped,
-+)]
-+#[repr(u8)]
-+pub enum ScrollTargetGroup {
-+    None,
-+    Auto,
-+}
 diff -ruN a/values/specified/counters.rs b/values/specified/counters.rs
 --- a/values/specified/counters.rs	2026-11-11 19:55:57
 +++ b/values/specified/counters.rs	2026-11-15 09:17:37
@@ -3016,16 +2421,7 @@ diff -ruN a/values/specified/length.rs b/values/specified/length.rs
      }
 diff -ruN a/values/specified/mod.rs b/values/specified/mod.rs
 --- a/values/specified/mod.rs	2026-11-11 19:55:57
-+++ b/values/specified/mod.rs	2026-11-16 16:33:29
-@@ -48,7 +48,7 @@
-     ContainIntrinsicSize, ContainerName, ContainerType, ContentVisibility, DirectionProperty,
-     Display, DominantBaseline, Float, ImageOrientation, Isolation, LineClamp, MarginTrim, Orient,
-     Overflow, OverflowAnchor, OverflowClipMargin, OverscrollBehavior, Perspective,
--    PositionProperty, Resize, ScrollBehavior, ScrollSnapAlign, ScrollSnapAxis, ScrollSnapStop,
-+    PositionProperty, Resize, ScrollBehavior, ScrollMarkerGroup, ScrollTargetGroup, ScrollSnapAlign, ScrollSnapAxis, ScrollSnapStop,
-     ScrollSnapStrictness, ScrollSnapType, ScrollbarGutter, ScrollbarInset, TextOrientation,
-     TopLayer, TouchAction, Visibility, WillChange, WillChangeBits, WritingModeProperty, Zoom,
- };
++++ b/values/specified/mod.rs	2026-11-16 16:15:58
 @@ -121,7 +121,7 @@
  pub use self::text::{InitialLetter, LetterSpacing, LineBreak, TextAlign, TextIndent};
  pub use self::text::{OverflowWrap, TextEmphasisPosition, TextEmphasisStyle, WordBreak};

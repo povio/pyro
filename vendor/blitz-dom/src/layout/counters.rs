@@ -396,12 +396,6 @@ fn walk_element(doc: &BaseDocument, node_id: NodeId, parent: NodeId, walk: &mut 
         _ => [None, None],
     };
     let mut texts: GeneratedText = [None, None];
-    // pyro: the markers of its `::scroll-marker-group` (`scroll_markers`), as its first or last
-    // children.
-    let group = node.scroll_pseudos().and_then(|pseudos| pseudos.group.map(|group| (group, pseudos.group_before)));
-    if let Some((group, true)) = group {
-        walk_scroll_markers(doc, scope, group, walk);
-    }
     if let Some(before) = pseudos[1].as_deref().filter(|style| generates(style)) {
         walk.apply(before, scope, pseudo_scope(), before.clone_display().is_list_item(), false);
         texts[1] = walk.content(before, scope);
@@ -417,43 +411,9 @@ fn walk_element(doc: &BaseDocument, node_id: NodeId, parent: NodeId, walk: &mut 
         texts[0] = walk.content(after, scope);
         walk.leave(pseudo_scope());
     }
-    if let Some((group, false)) = group {
-        walk_scroll_markers(doc, scope, group, walk);
-    }
-    // pyro: its `::scroll-button()`s, in the scope of the element.
-    if let Some(buttons) = node.scroll_pseudos().map(|pseudos| pseudos.buttons) {
-        for button in buttons.into_iter().flatten() {
-            walk_generated_box(doc, scope, button, walk);
-        }
-    }
     walk.leave(node_id);
     if texts.iter().any(Option::is_some) {
         walk.texts.insert(node_id, texts);
-    }
-}
-
-/// pyro: the counter properties and content of the markers in a `::scroll-marker-group` `group`,
-/// in order, as pseudo-elements in `scope` (their originating element's). Their texts are keyed by
-/// the marker.
-fn walk_scroll_markers(doc: &BaseDocument, scope: NodeId, group: NodeId, walk: &mut Walk) {
-    let Some(group_node) = doc.nodes.get(group) else { return };
-    for &marker in group_node.children.iter() {
-        walk_generated_box(doc, scope, marker, walk);
-    }
-}
-
-/// pyro: the counter properties and content of a scroll marker's or button's box `node`, a
-/// pseudo-element in `scope` (its originating element's), as a `::before` (its text keyed by `node`).
-fn walk_generated_box(doc: &BaseDocument, scope: NodeId, node: NodeId, walk: &mut Walk) {
-    let Some(style) = doc.nodes.get(node).and_then(|node| node.primary_styles()) else { return };
-    if !generates(&style) {
-        return;
-    }
-    walk.apply(&style, scope, pseudo_scope(), style.clone_display().is_list_item(), false);
-    let content = walk.content(&style, scope);
-    walk.leave(pseudo_scope());
-    if content.is_some() {
-        walk.texts.insert(node, [None, content]);
     }
 }
 

@@ -34,7 +34,6 @@ pub(crate) mod list;
 pub mod multicol;
 pub(crate) mod paint_tree;
 pub(crate) mod replaced;
-pub(crate) mod scroll_markers;
 pub mod table;
 pub(crate) mod table_fixup;
 pub(crate) mod text_box;
@@ -120,9 +119,6 @@ pub(crate) struct LayoutPassState<'doc> {
     /// pyro: the multi-column container whose strip is being laid out and its content box width,
     /// while it has column spanners (`layout::multicol`).
     pub(crate) column_spanners: Option<(crate::NodeId, f32)>,
-    /// pyro: the multi-column container whose strip is being laid out and the border-box height
-    /// its content's percentage heights resolve against (its column height, `layout::multicol`).
-    pub(crate) multicol_percent_height: Option<(crate::NodeId, f32)>,
     /// pyro: the inline roots this pass marked `FINAL_LAYOUT_STALE` (`mark_final_layout_stale`).
     pub(crate) stale_lines: Vec<crate::NodeId>,
 }
@@ -165,7 +161,6 @@ impl<'doc> LayoutPassState<'doc> {
             #[cfg(feature = "writing-mode")]
             round_counts: (0, 0),
             column_spanners: None,
-            multicol_percent_height: None,
             stale_lines: Vec::new(),
         }
     }
@@ -1838,12 +1833,6 @@ impl taffy::LayoutBlockContainer for LayoutPassState<'_> {
     fn block_container_passes_percentage_height(&self, node_id: NodeId) -> bool {
         let node = self.node_from_id(node_id);
         node.is_split_inline() || node.is_inline_with_only_block_children()
-    }
-
-    fn block_container_percentage_height(&self, node_id: NodeId) -> Option<f32> {
-        self.multicol_percent_height
-            .filter(|&(id, _)| id == crate::dom_node_id(node_id))
-            .map(|(_, height)| height)
     }
 
     fn block_container_direction(&self, node_id: NodeId) -> Option<taffy::Direction> {

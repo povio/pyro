@@ -328,7 +328,7 @@ impl Geometry {
         let (t, _) = self.transform(doc, container.id)?;
         let scroll = container.scroll_offset();
         let base = t * Affine::translate((-scroll.x, -scroll.y));
-        let mut out: Vec<(Rect, f64)> = Vec::new();
+        let mut out: Vec<Rect> = Vec::new();
         for f in &columns.fragments {
             let (y0, y1) = (strip.y0.max(f.start as f64), strip.y1.min(f.end as f64));
             let shows =
@@ -336,20 +336,11 @@ impl Geometry {
             if !shows {
                 continue;
             }
-            out.push((
-                base.transform_rect_bbox(
-                    Rect::new(strip.x0, y0, strip.x1, y1) + kurbo::Vec2::new(f.offset.x as f64, f.offset.y as f64),
-                ),
-                y1 - y0,
+            out.push(base.transform_rect_bbox(
+                Rect::new(strip.x0, y0, strip.x1, y1) + kurbo::Vec2::new(f.offset.x as f64, f.offset.y as f64),
             ));
         }
-        // pyro: a sliver under a pixel where a box meets a column break (its unrounded strip
-        // position against the rounded break) is no fragment of it: a monolithic box a column
-        // holds stays one box (WPT css-overflow/scroll-markers/targeted-column-scroll-marker-*).
-        if out.iter().any(|&(_, height)| height >= 1.0) {
-            out.retain(|&(_, height)| height >= 1.0);
-        }
-        (!out.is_empty()).then(|| out.into_iter().map(|(rect, _)| rect).collect())
+        (!out.is_empty()).then_some(out)
     }
 
     /// The box Blitz lays out for `id`, before the adjustments. A node that

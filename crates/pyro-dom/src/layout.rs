@@ -232,10 +232,6 @@ pub struct Layout {
     /// origin is at its end (right-to-left, `row-reverse`, `column-reverse`, ...), as CSSOM View
     /// and Blitz's scroll offsets have them.
     element_scroll: FxHashMap<NodeId, (i32, i32)>,
-    /// CSS Overflow 5 § 2.1: each scroll container's current scroll target, the element a script
-    /// scroll into view last revealed in it, until it scrolls otherwise (the viewport's under
-    /// `None`). Scroll marker selection reads it (`scroll_targets`).
-    scroll_targets: FxHashMap<Option<NodeId>, NodeId>,
     /// CSS Scroll Anchoring: the layout each vertically scrolled element
     /// was last settled in, to select its anchor in when the layout next
     /// changes.
@@ -514,7 +510,6 @@ impl Layout {
             window_scroll: (0, 0),
             scroll_generation: 0,
             element_scroll: FxHashMap::default(),
-            scroll_targets: FxHashMap::default(),
             scroll_anchors: FxHashMap::default(),
             external,
             external_synced: std::cell::Cell::new(None),
@@ -2315,8 +2310,6 @@ impl Layout {
     /// origin whatever the document's size, so `scrollTo(0, 0)` (a router's
     /// scroll restoration on every navigation) lays nothing out.
     pub fn window_scroll_to(&mut self, dom: &Dom, left: Option<i32>, top: Option<i32>) -> bool {
-        // A scroll without a target (CSS Overflow 5 § 2.1).
-        self.scroll_targets.remove(&None);
         let (max_x, max_y) = if left.is_some_and(|l| l > 0) || top.is_some_and(|t| t > 0) {
             let (w, h) = self.document_scroll_size(dom);
             (scroll_limit(w, self.inner_width()), scroll_limit(h, self.inner_height()))
@@ -2389,8 +2382,6 @@ impl Layout {
         if self.owned(dom, el).is_none() {
             return false;
         }
-        // A scroll without a target (CSS Overflow 5 § 2.1).
-        self.scroll_targets.remove(&Some(el));
         let current = self.element_scroll.get(&el).copied().unwrap_or((0, 0));
         let mut x = current.0;
         let mut y = current.1;
@@ -2909,55 +2900,10 @@ impl Layout {
         block: ScrollAlign,
         inline: ScrollAlign,
     ) -> Vec<ScrollTarget> {
-        let moved = if block == ScrollAlign::Start && inline == ScrollAlign::Nearest {
-            self.scroll_into_view_targets(dom, el)
-        } else {
-            self.scroll_into_view_offset_targets(dom, el, inline.offset_fn(), block.offset_fn(), true)
-        };
-        self.set_scroll_target(dom, el);
-        moved
-    }
-
-    /// CSS Overflow 5 § 2.1: `el` is the current scroll target of each scroll container it was
-    /// scrolled into view in (and of the viewport).
-    fn set_scroll_target(&mut self, dom: &Dom, el: NodeId) {
-        if !self.is_visible(dom, el) {
-            return;
+        if block == ScrollAlign::Start && inline == ScrollAlign::Nearest {
+            return self.scroll_into_view_targets(dom, el);
         }
-        use style::values::specified::box_::Overflow as O;
-        let scroller = |o: O| matches!(o, O::Hidden | O::Scroll | O::Auto);
-        let mut cur = dom.parent_element(el).ok().flatten();
-        while let Some(node) = cur {
-            if self.is_root_container(dom, node) {
-                break;
-            }
-            let scrolls = self.style.stylo_style(dom, node).is_some_and(|s| {
-                let b = s.get_box();
-                scroller(b.overflow_x) || scroller(b.overflow_y)
-            });
-            if scrolls {
-                self.scroll_targets.insert(Some(node), el);
-            }
-            cur = dom.parent_element(node).ok().flatten();
-        }
-        self.scroll_targets.insert(None, el);
-    }
-
-    /// The current scroll targets (CSS Overflow 5 § 2.1) by render key: each scroll container's
-    /// (the viewport's under `u64::MAX`) and its target's. Elements no longer in the document drop.
-    pub fn scroll_targets(&self, dom: &Dom) -> Vec<(u64, u64)> {
-        let mut out: Vec<(u64, u64)> = self
-            .scroll_targets
-            .iter()
-            .filter(|&(scroller, &target)| {
-                dom.check(target).is_ok() && scroller.is_none_or(|scroller| dom.check(scroller).is_ok())
-            })
-            .map(|(scroller, &target)| {
-                (scroller.map_or(u64::MAX, crate::snapshot::render_key), crate::snapshot::render_key(target))
-            })
-            .collect();
-        out.sort_unstable();
-        out
+        self.scroll_into_view_offset_targets(dom, el, inline.offset_fn(), block.offset_fn(), true)
     }
 
     /// Script-facing `Element.scrollIntoViewIfNeeded(centerIfNeeded)`.
@@ -2971,9 +2917,7 @@ impl Layout {
     ) -> Vec<ScrollTarget> {
         let offset: fn(f64, f64, f64, i64) -> Option<i32> =
             if center_if_needed { center_if_needed_offset } else { nearest_scroll_offset };
-        let moved = self.scroll_into_view_offset_targets(dom, el, offset, offset, true);
-        self.set_scroll_target(dom, el);
-        moved
+        self.scroll_into_view_offset_targets(dom, el, offset, offset, true)
     }
 
     /// `offset_x` aligns the horizontal axis, `offset_y` the vertical one.

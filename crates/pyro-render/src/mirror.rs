@@ -269,20 +269,6 @@ impl Mirror {
         }
     }
 
-    /// Gives the document the current scroll targets in `targets` (by key; `u64::MAX`: the
-    /// viewport's, which is the root element's), for scroll marker selection.
-    pub(crate) fn set_scroll_targets(&mut self, targets: &[(u64, u64)]) {
-        let root = self.doc.try_root_element().map(|root| root.id);
-        let targets: Vec<(NodeId, NodeId)> = targets
-            .iter()
-            .filter_map(|&(scroller, target)| {
-                let scroller = if scroller == u64::MAX { root? } else { self.node(scroller)? };
-                Some((scroller, self.node(target)?))
-            })
-            .collect();
-        self.doc.set_scroll_targets(targets);
-    }
-
     /// Gives the `position: sticky` elements in `offsets` (by key) their
     /// offset from where they are laid out, and takes it from those given one
     /// last time and absent now. Painting moves them by it.

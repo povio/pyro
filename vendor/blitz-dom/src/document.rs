@@ -568,19 +568,6 @@ pub struct BaseDocument {
     /// pyro: the list items with a `::marker` style node the last style traversal restyled
     /// (`layout::list::item_restyled`).
     pub(crate) marker_items_restyled: Vec<NodeId>,
-    /// pyro: the scroll pseudo-element boxes may be out of date: a style traversal ran or the
-    /// tree changed since `resolve_scroll_markers` (`layout::scroll_markers`).
-    pub(crate) scroll_markers_dirty: bool,
-    /// pyro: an element styled with a `scroll-marker-group` that names a side, or with
-    /// `scroll-target-group: auto` (sticky).
-    pub(crate) scroll_marker_groups: bool,
-    /// pyro: the elements with scroll pseudo-element boxes (`ElementData::scroll`).
-    pub(crate) scroll_pseudo_owners: std::collections::HashSet<NodeId>,
-    /// pyro: each element with `scroll-target-group: auto` and the links in its group.
-    pub(crate) scroll_target_groups: Vec<(NodeId, Vec<NodeId>)>,
-    /// pyro: each scroll container's current scroll target (CSS Overflow 5 § 2.1; the viewport's
-    /// under the root element), as the embedder tracks them (`set_scroll_targets`).
-    pub(crate) scroll_targets: std::collections::HashMap<NodeId, NodeId>,
     /// pyro: a style traversal kept a `::first-line` style for some element (sticky): inline
     /// roots look for the style of their first line (`layout::first_line`).
     pub(crate) first_line_styles: bool,
@@ -808,11 +795,6 @@ impl BaseDocument {
             first_letter_styles: false,
             first_letter_changed: Vec::new(),
             marker_items_restyled: Vec::new(),
-            scroll_markers_dirty: true,
-            scroll_marker_groups: false,
-            scroll_pseudo_owners: Default::default(),
-            scroll_target_groups: Vec::new(),
-            scroll_targets: Default::default(),
             first_line_styles: false,
             first_line_changed: Vec::new(),
             dom_selection: None,
@@ -1378,25 +1360,6 @@ impl BaseDocument {
             // pyro: its `::marker` style.
             if let Some(marker_style) = node.element_data().and_then(|element| element.marker_style) {
                 self.remove_node_from_tree(marker_style);
-            }
-            // pyro: its scroll pseudo-element boxes (its group with the markers in it, its
-            // buttons), and its marker, which leaves its group.
-            if let Some(pseudos) = node.element_data().and_then(|element| element.scroll.as_deref()).cloned() {
-                for owned in pseudos.group.into_iter().chain(pseudos.buttons.iter().flatten().copied()).chain(pseudos.column) {
-                    self.drop_scroll_pseudo_node(owned);
-                }
-                if let Some(marker) = pseudos.marker
-                    && self.nodes.get(marker).is_some_and(|marker| marker.scroll_pseudo().is_some_and(|(_, origin)| origin == node_id))
-                {
-                    let group = self.nodes[marker].parent;
-                    self.drop_scroll_pseudo_node(marker);
-                    if let Some(group) = group.and_then(|group| self.nodes.get_mut(group)) {
-                        group.children.retain(|&id| id != marker);
-                        group.insert_damage(crate::layout::damage::ALL_DAMAGE);
-                        group.mark_damaged();
-                    }
-                }
-                self.scroll_markers_dirty = true;
             }
             // pyro: and its `::first-line` style.
             if let Some(first_line) = node.element_data().and_then(|element| element.first_line) {

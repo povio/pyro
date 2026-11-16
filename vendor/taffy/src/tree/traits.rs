@@ -503,14 +503,6 @@ pub trait LayoutBlockContainer: LayoutPartialTree {
         false
     }
 
-    /// pyro: the border-box height the container's children resolve percentage heights against
-    /// when its own height is not known: a multi-column container's strip, laid out as tall as its
-    /// content, whose children's percentages resolve against the column height.
-    fn block_container_percentage_height(&self, node_id: NodeId) -> Option<f32> {
-        let _ = node_id;
-        None
-    }
-
     /// pyro: the direction of the containing block of the container's children when that is not
     /// the container (see [`Self::block_container_passes_percentage_height`]): it decides which
     /// margin an over-constrained child drops (CSS 2.1 § 10.3.3), not the container's own.

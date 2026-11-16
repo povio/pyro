@@ -963,10 +963,8 @@ impl DocumentMutator<'_> {
         changed: Range<usize>,
         removed_element: bool,
     ) {
-        // pyro: an element that came or went can change counters and quotes (`layout::counters`),
-        // and the scroll markers of the groups around it (`layout::scroll_markers`).
+        // pyro: an element that came or went can change counters and quotes (`layout::counters`).
         self.doc.counters_dirty = true;
-        self.doc.scroll_markers_dirty = true;
         let parent = &self.doc.nodes[parent_id];
         let flags = parent.selector_flags().get();
         let mut hint = RestyleHint::empty();
