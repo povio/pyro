@@ -1,11 +1,12 @@
 // Minimal static server for a WPT checkout: plain files plus generated .any.html / .window.html wrappers
-// (the part of wptserve testharness tests need when they use no pipes, substitutions or Python handlers other than
-// those in HANDLERS).
+// (the part of wptserve testharness tests need when they use no substitutions, and no Python handlers other than
+// those in HANDLERS). Static files take wptserve's `?pipe=` functions but sub (pipes.mjs).
 // Usage: bun serve.mjs <wpt-dir> [port]       (WPT_SERVE_LOG=FILE appends "status /path" per request)
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { pipeline, send } from './pipes.mjs';
 
 const ROOT = path.resolve(process.argv[2]);
 const PORT = Number(process.argv[3] ?? 9415);
@@ -83,8 +84,11 @@ const server = http.createServer((req, res) => {
         if (i > 0) headers[line.slice(0, i).trim().toLowerCase()] = line.slice(i + 1).trim();
       }
     } catch {}
-    res.writeHead(200, headers);
-    res.end(buf);
+    let r;
+    try { r = pipeline(u, { status: 200, headers, body: buf }); } catch (e) {
+      res.writeHead(500, { 'content-type': 'text/plain' }); res.end(`pipe: ${e.message}`); return;
+    }
+    send(res, r);
   });
 });
 // A port already in use is fatal (the runner would otherwise talk to whatever holds it).

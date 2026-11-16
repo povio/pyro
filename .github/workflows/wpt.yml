@@ -252,6 +252,8 @@ jobs:
           key: ${{ needs.prepare.outputs.browser-key }}
           fail-on-cache-miss: true
       - run: tar -xzf browser.tgz
+      - name: Server tests
+        run: bun test bench/wpt/pipes.test.mjs
       - name: Run shard ${{ strategy.job-index }} of ${{ strategy.job-total }}
         env:
           SHARD: ${{ strategy.job-index }}/${{ strategy.job-total }}
