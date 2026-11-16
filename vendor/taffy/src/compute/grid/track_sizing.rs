@@ -603,8 +603,11 @@ fn resolve_intrinsic_track_sizes<Tree: LayoutPartialTree>(
     // they only need to be moved to the end of the list. And the order in which items within a batch are processed
     // does not affect the result, so the remaining items only need to be sorted if any of them span more than one track.
     // pyro: only the items of the tracks being sized again (all of them span one track).
-    let only_item = |item: &GridItem| only_tracks.is_none_or(|only| only[item.placement_indexes(axis).start as usize + 1]);
-    let count = if only_tracks.is_some() { items.iter().filter(|item| only_item(item)).count() } else { items.len() };
+    // pyro: nor the items that take no part in this axis (`GridItem::excluded`: subgrids).
+    let only_item = |item: &GridItem| {
+        !item.excluded.get(axis) && only_tracks.is_none_or(|only| only[item.placement_indexes(axis).start as usize + 1])
+    };
+    let count = items.iter().filter(|item| only_item(item)).count();
     let mut partitioned_items: FrontBackVecBuilder<&mut GridItem> = FrontBackVecBuilder::with_capacity(count);
     let mut needs_sort = false;
     for item in items.iter_mut().filter(|item| only_item(item)) {
@@ -1394,7 +1397,7 @@ fn expand_flexible_tracks<Tree: LayoutPartialTree>(
                 // that the item crosses and a space to fill of the item’s max-content contribution.
                 items
                     .iter_mut()
-                    .filter(|item| item.crosses_flexible_track(axis))
+                    .filter(|item| item.crosses_flexible_track(axis) && !item.excluded.get(axis))
                     .map(|item| {
                         let max_content_contribution = item_sizer.max_content_contribution(item, axis_tracks);
                         let tracks = &axis_tracks[item.track_range_excluding_lines(axis)];

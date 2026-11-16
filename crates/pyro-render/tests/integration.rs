@@ -64,6 +64,7 @@ mod selection_highlight;
 mod size_containment;
 mod sizing_keywords;
 mod sticky_paint;
+mod subgrid;
 mod soft_hyphens;
 mod style_element_text;
 mod style_sheet_charset;

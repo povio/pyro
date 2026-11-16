@@ -1648,6 +1648,30 @@ impl taffy::LayoutGridContainer for LayoutPassState<'_> {
             element.detailed_layout_info = DetailedLayoutInfo::Grid(Box::new(detailed_grid_info));
         }
     }
+
+    /// pyro: the context of a subgrid (`LayoutData::subgrid`), while its layout parent is a grid (one
+    /// left from when it was another grid's item is not read).
+    fn subgrid_context(&self, node_id: NodeId) -> Option<taffy::SubgridContext<Atom>> {
+        let node = self.node_from_id(node_id);
+        let parent = node.layout_parent.get()?;
+        let parent_is_grid = self.nodes[parent]
+            .primary_styles()
+            .is_some_and(|style| style.clone_display().inside() == style::values::specified::box_::DisplayInside::Grid);
+        if !parent_is_grid {
+            return None;
+        }
+        node.layout_data().subgrid.as_deref().cloned()
+    }
+
+    /// pyro: a subgrid's layout depends on its context as on its inputs: a new one drops its cached layouts.
+    fn set_subgrid_context(&mut self, node_id: NodeId, context: Option<taffy::SubgridContext<Atom>>) {
+        let node = self.node_from_id_mut(node_id);
+        if node.layout_data().subgrid.as_deref() == context.as_ref() {
+            return;
+        }
+        node.layout_data_mut().subgrid = context.map(Box::new);
+        node.clear_layout_cache();
+    }
 }
 
 impl RoundTree for LayoutPassState<'_> {

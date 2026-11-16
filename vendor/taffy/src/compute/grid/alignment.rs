@@ -5,9 +5,10 @@ use crate::compute::common::alignment::{
 };
 use crate::geometry::{InBothAbsAxis, Line, Point, Rect, Size};
 use crate::style::{
-    AlignContent, AlignItems, AlignItemsKeyword, AlignSelf, AvailableSpace, CoreStyle, GridItemStyle, Overflow,
-    Position,
+    AlignContent, AlignItems, AlignItemsKeyword, AlignSelf, AvailableSpace, CoreStyle, Dimension, GridItemStyle,
+    LengthPercentageAuto, Overflow, Position,
 };
+use crate::style_helpers::TaffyAuto;
 use crate::tree::{Layout, LayoutPartialTreeExt, NodeId, OofCandidates, SizingMode};
 use crate::util::sys::f32_max;
 use crate::util::{MaybeMath, MaybeResolve, ResolveOrZero};
@@ -98,6 +99,8 @@ pub(super) fn align_and_position_item(
     baseline_shim: f32,
     // pyro: a fixed table's cell, as wide as its columns (`GridItem::width_unfloored`)
     width_unfloored: bool,
+    // pyro: the axes in which the item is a subgrid (`GridItem::subgrid`): it fills its area there
+    subgrid: Size<bool>,
     direction: Direction,
     #[cfg(feature = "content_size")] padding_box_inset: Rect<f32>,
     #[cfg(feature = "content_size")] overflow_container: &ScrollableOverflowContainer,
@@ -111,7 +114,10 @@ pub(super) fn align_and_position_item(
     #[cfg(feature = "content_size")]
     let contain = style.contain();
     let scrollbar_width = style.scrollbar_width();
-    let aspect_ratio = style.aspect_ratio();
+    // pyro: a subgrid is stretched in its subgridded axes, whatever its alignment, size, minimum and
+    // maximum size and aspect ratio say (css-grid-2 §9); an `auto` margin is zero there.
+    let is_subgrid = subgrid.width || subgrid.height;
+    let aspect_ratio = if is_subgrid { None } else { style.aspect_ratio() };
     let is_replaced = style.is_replaced();
     // Fall back to the container's justify-items/align-items if unset (`None`), and then resolve
     // writing-mode-relative self-start/self-end keywords against the item's own direction.
@@ -149,13 +155,22 @@ pub(super) fn align_and_position_item(
     let box_sizing_adjustment =
         if style.box_sizing() == BoxSizing::ContentBox { padding_border_size } else { Size::ZERO };
 
-    let size_style = style.size();
+    let mut size_style = style.size();
+    let mut min_size_style = style.min_size();
+    let mut max_size_style = style.max_size();
+    if subgrid.width {
+        (size_style.width, min_size_style.width, max_size_style.width) =
+            (Dimension::AUTO, LengthPercentageAuto::AUTO, LengthPercentageAuto::AUTO);
+    }
+    if subgrid.height {
+        (size_style.height, min_size_style.height, max_size_style.height) =
+            (Dimension::AUTO, LengthPercentageAuto::AUTO, LengthPercentageAuto::AUTO);
+    }
     let inherent_size = size_style
         .maybe_resolve(containing_block_size, |val, basis| tree.calc(val, basis))
         .maybe_apply_aspect_ratio(aspect_ratio)
         .maybe_add(box_sizing_adjustment);
-    let mut min_size = style
-        .min_size()
+    let mut min_size = min_size_style
         .maybe_resolve(containing_block_size, |val, basis| tree.calc(val, basis))
         .maybe_add(box_sizing_adjustment)
         .or(padding_border_size.map(Some))
@@ -164,8 +179,7 @@ pub(super) fn align_and_position_item(
     if width_unfloored {
         min_size.width = None;
     }
-    let max_size = style
-        .max_size()
+    let max_size = max_size_style
         .maybe_resolve(containing_block_size, |val, basis| tree.calc(val, basis))
         .maybe_apply_aspect_ratio(aspect_ratio)
         .maybe_add(box_sizing_adjustment);
@@ -175,6 +189,8 @@ pub(super) fn align_and_position_item(
     // and the then height is calculated from the width according the aspect ratio
     // Replaced elements are not stretched: they are sized as for `start`.
     // See: https://www.w3.org/TR/css-grid-1/#grid-item-sizing
+    let justify_self = if subgrid.width { AlignSelf::STRETCH } else { justify_self };
+    let align_self = if subgrid.height { AlignSelf::STRETCH } else { align_self };
     let alignment_styles = InBothAbsAxis {
         horizontal: match justify_self.keyword {
             AlignItemsKeyword::Normal => {
@@ -204,9 +220,15 @@ pub(super) fn align_and_position_item(
 
     // Note: This is not a bug. It is part of the CSS spec that both horizontal and vertical margins
     // resolve against the WIDTH of the grid area.
-    let margin = style
+    let mut margin = style
         .margin()
         .map(|margin| margin.resolve_to_option(containing_block_size.width, |val, basis| tree.calc(val, basis)));
+    if subgrid.width {
+        (margin.left, margin.right) = (margin.left.or(Some(0.0)), margin.right.or(Some(0.0)));
+    }
+    if subgrid.height {
+        (margin.top, margin.bottom) = (margin.top.or(Some(0.0)), margin.bottom.or(Some(0.0)));
+    }
 
     drop(style);
 

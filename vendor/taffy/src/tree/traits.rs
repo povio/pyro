@@ -431,6 +431,22 @@ pub trait LayoutGridContainer: LayoutPartialTree {
     fn set_detailed_grid_info(&mut self, _node_id: NodeId, _detailed_grid_info: DetailedGridInfo<Self::CustomIdent>) {
         debug_log!("LayoutGridContainer::set_detailed_grid_info called");
     }
+
+    /// pyro: what the parent grid of `node_id` last gave it as a subgrid ([`Self::set_subgrid_context`]).
+    /// The default keeps nothing, and a grid whose template is `subgrid` then lays out as with `none`.
+    fn subgrid_context(&self, _node_id: NodeId) -> Option<crate::compute::grid::SubgridContext<Self::CustomIdent>> {
+        None
+    }
+
+    /// pyro: keep what a grid gives its child `node_id`, a subgrid (css-grid-2 §9): the tracks it spans, the
+    /// names of their lines and, once the grid sized them, their sizes. The child's layout depends on it as on
+    /// its inputs: a tree that keeps it must drop the child's cached layouts when it changes.
+    fn set_subgrid_context(
+        &mut self,
+        _node_id: NodeId,
+        _context: Option<crate::compute::grid::SubgridContext<Self::CustomIdent>>,
+    ) {
+    }
 }
 
 #[cfg(feature = "block_layout")]

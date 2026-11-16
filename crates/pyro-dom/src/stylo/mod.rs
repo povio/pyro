@@ -38,6 +38,8 @@ pub(crate) fn enable_features() {
         style_config::set_pref!("layout.css.progress-function.enabled", true);
         style_config::set_pref!("layout.css.font-variations.enabled", true);
         style_config::set_pref!("layout.css.text-indent-keywords.enabled", true);
+        // pyro: `grid-template-rows/columns: subgrid` (Taffy lays subgrids out, css-grid-2 §9).
+        style_config::set_pref!("layout.css.grid-template-subgrid-value.enabled", true);
         style_config::set_pref!("layout.css.word-break.break-word.enabled", true);
         // pyro-render builds Blitz with its `writing-mode` feature.
         style_config::set_pref!("layout.css.writing-mode.enabled", true);

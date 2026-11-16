@@ -211,6 +211,9 @@ pub struct LayoutData {
     /// through `Node::column_fragments`, which ignores them once the box's style makes it no
     /// multi-column container.
     pub columns: Option<Box<crate::layout::multicol::ColumnFragments>>,
+    /// pyro: what this node's parent grid last gave it as a subgrid (css-grid-2 §9; Taffy's
+    /// `LayoutGridContainer::set_subgrid_context`): its tracks there, their line names and sizes.
+    pub subgrid: Option<Box<taffy::SubgridContext<style::Atom>>>,
     /// The writing mode this node's layout algorithm ran in (the root takes it from `<body>`),
     /// recorded by the layout pass for CSSOM geometry lookups.
     #[cfg(feature = "writing-mode")]
@@ -233,6 +236,7 @@ impl LayoutData {
             table_cell_index: u32::MAX,
             table_baseline_offset: 0.0,
             columns: None,
+            subgrid: None,
             #[cfg(feature = "writing-mode")]
             writing_mode: stylo_taffy::WritingMode::empty(),
         }

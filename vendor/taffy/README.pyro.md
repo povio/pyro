@@ -345,3 +345,39 @@ Covered by `crates/pyro-render/tests/inline_leftovers.rs`.
   segment ranges of the last placed floats in step (`shift_last_placed_floats`).
 
 Covered by `crates/pyro-render/tests/initial_letter.rs`.
+
+## Subgrids (WPT round 3, lane G)
+
+`compute/grid/subgrid.rs` (new), `compute/grid/mod.rs`, `compute/grid/alignment.rs`, `compute/grid/track_sizing.rs`,
+`compute/grid/types/grid_item.rs`, `compute/grid/types/named.rs`, `style/grid.rs`, `tree/traits.rs`: css-grid-2 §9.
+A grid item is a subgrid in an axis when `GridItemStyle::is_subgrid` says so (its template there is `subgrid`, it is a
+grid container in flow with neither layout nor paint containment, in its parent's orientation). The grid then:
+
+- gives it a `SubgridContext` through the tree (`LayoutGridContainer::set_subgrid_context`; the default keeps nothing,
+  and a `subgrid` template lays out as `none`): per subgridded axis the spanned track count, the names the grid's lines
+  (and its named areas the subgrid overlaps) give the subgrid's lines, the subgrid's gap (its own, or the grid's for
+  `normal`), whether its direction is the other one, and once sized the subgrid's tracks: the spanned tracks less the
+  subgrid's margin, border and padding at its edges and half its gap's difference to the grid's gutter between them, as
+  sizes and as spans from its content box (a track can end before it starts when the gap is wider; the next track still
+  starts on the grid's line);
+- sizes its tracks with the subgrid's items in the subgrid's place ("virtual" items, `GridItem::is_virtual`, through
+  nested subgrids too), each with that margin, border and padding at the subgrid's edges and that half gap difference
+  elsewhere as an extra margin (`GridItem::extra_margin`). The subgrid itself takes no part in sizing in its subgridded
+  axes (`GridItem::excluded`); a virtual item takes none in the axes its subgrid has tracks of its own. Where no item of
+  the subgrid lies at an edge, the items at the edge-most occupied track are also given stretched to it with the edge's
+  margin, border and padding; an empty subgrid gives an item of no size spanning its tracks with them at both edges (as
+  Blink, WPT `subgrid-no-items-on-edges-001`). The virtual items are dropped before the items are positioned;
+- stretches the subgrid in its subgridded axes, whatever its alignment, size, minimum and maximum size and aspect ratio.
+
+The subgrid's own layout places its items as the grid placed them for sizing (`place_subgrid_items`): the spanned
+track count is its explicit grid in a subgridded axis, with no implicit tracks (items are clamped to it), its line
+names are its `<line-name-list>` (`subgrid_line_names`, `repeat(auto-fill)` repeated to fit) plus the inherited ones,
+and a subgrid child's automatic span is the number of tracks its own list names. Its tracks there are fixed at the
+given sizes, `justify-content`/`align-content` do not apply, and after alignment they are placed at the given spans.
+A subgrid in its rows only records its own columns (`SubgridContext::own_columns`) and its parent, before sizing rows,
+lays it out at its width if needed (`resolve_standalone_widths`): its items' heights depend on its columns. The resolved
+value of a subgridded axis is `subgrid` with each line's own names (`DetailedGridTracksInfo::subgrid`).
+
+Not done: orthogonal subgrids (laid out as `none`), baseline alignment across a subgrid, the subgrid's own rows for a
+subgrid in its columns only (its items' column contributions see an indefinite height). Covered by
+`crates/pyro-render/tests/subgrid.rs`; WPT `css/css-grid/subgrid`: 36 → 63 of 102 reftests.

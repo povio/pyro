@@ -30,3 +30,7 @@ entry) once a Blitz release carries these commits and changes.
 - `src/wrapper.rs`: `StyleFlags::OVERFLOW_TO_VIEWPORT`, set by blitz-dom on the `<body>` whose `overflow` the viewport
   takes (CSS Overflow 3 §3.3): `overflow()` answers `visible` in both axes, so `body { overflow: hidden }` makes no
   scroll container (no block formatting context; its children's margins collapse through it).
+- `src/wrapper.rs`: subgrids for Taffy (vendor/taffy/README.pyro.md, "Subgrids"): `GridContainerStyle::subgrid_line_names`
+  (the `<line-name-list>` of `grid-template-*: subgrid`, `repeat(<integer>)` expanded, `repeat(auto-fill)` marked),
+  `gap_is_normal`, and `GridItemStyle::is_subgrid` (a grid container in flow, in its parent's orientation, with no
+  layout or paint containment and no size container type, whose template in the axis is `subgrid`).

@@ -1940,3 +1940,11 @@ again with the root. Paint and scrolling already treated such a body's `overflow
 
 Covered by `crates/pyro-render/tests/marker_pseudo.rs`.
 
+
+## Subgrids (WPT round 3, lane G)
+
+`src/document.rs`: Stylo's `layout.css.grid-template-subgrid-value.enabled` is on (and in pyro-dom's styles), so
+`grid-template-*: subgrid` parses. `src/node/element.rs` (`LayoutData::subgrid`), `src/layout/mod.rs`
+(`LayoutGridContainer::subgrid_context`/`set_subgrid_context`): the context a grid gives a subgrid child (vendor/taffy's
+README.pyro.md, "Subgrids") is kept on the child; a new one drops the child's cached layouts, and one is read only while
+the child's layout parent is a grid.

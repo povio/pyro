@@ -968,6 +968,48 @@ impl<T: Deref<Target = ComputedValues>> taffy::GridContainerStyle for TaffyStylo
         convert::grid_auto_flow(self.style.get_position().grid_auto_flow)
     }
 
+    /// pyro: `subgrid <line-name-list>` (css-grid-2 §7.2), `repeat(<integer>, ...)` expanded and one
+    /// repetition of `repeat(auto-fill, ...)` marked.
+    fn subgrid_line_names(&self, axis: taffy::AbsoluteAxis) -> Option<taffy::SubgridLineNames<Atom>> {
+        let source = match axis {
+            taffy::AbsoluteAxis::Horizontal => self.template_columns_source(),
+            taffy::AbsoluteAxis::Vertical => self.template_rows_source(),
+        };
+        let stylo::GenericGridTemplateComponent::Subgrid(list) = source else {
+            return None;
+        };
+        let mut names = taffy::SubgridLineNames::default();
+        let set = |idents: &OwnedSlice<CustomIdent>| idents.iter().map(|ident| ident.0.clone()).collect::<Vec<_>>();
+        for value in list.line_names.iter() {
+            match value {
+                style::values::generics::grid::LineNameListValue::LineNames(idents) => names.names.push(set(idents)),
+                style::values::generics::grid::LineNameListValue::Repeat(repeat) => match repeat.count {
+                    style::values::generics::grid::RepeatCount::Number(count) => {
+                        // (Taffy clamps a grid to 10,000 tracks)
+                        for _ in 0..count.clamp(0, 10_000) {
+                            names.names.extend(repeat.line_names.iter().map(set));
+                        }
+                    }
+                    _ => {
+                        let start = names.names.len();
+                        names.names.extend(repeat.line_names.iter().map(set));
+                        names.auto_fill = Some(start..names.names.len());
+                    }
+                },
+            }
+        }
+        Some(names)
+    }
+
+    /// pyro: a subgrid's `normal` gap is its parent's.
+    fn gap_is_normal(&self) -> taffy::Size<bool> {
+        let position = self.style.get_position();
+        taffy::Size {
+            width: matches!(position.column_gap, stylo::Gap::Normal),
+            height: matches!(position.row_gap, stylo::Gap::Normal),
+        }
+    }
+
     #[inline]
     fn gap(&self) -> taffy::Size<taffy::LengthPercentage> {
         let position_styles = self.style.get_position();
@@ -1019,6 +1061,36 @@ impl<T: Deref<Target = ComputedValues>> taffy::GridItemStyle for TaffyStyloStyle
     #[inline]
     fn grid_row(&self) -> taffy::Line<taffy::GridPlacement<Atom>> {
         self.grid_row_placement()
+    }
+
+    /// pyro: a grid container in flow whose template in the parent's `axis` is `subgrid`, with neither
+    /// layout nor paint containment (each makes it an independent formatting context, css-grid-2 §7.2),
+    /// in the parent's orientation (orthogonal subgrids are not laid out as such).
+    fn is_subgrid(&self, axis: taffy::AbsoluteAxis) -> bool {
+        use style::values::computed::Contain;
+        if self.effective_display().inside() != stylo::DisplayInside::Grid {
+            return false;
+        }
+        if self.style.writing_mode.is_vertical() != self.layout_wm().is_vertical() {
+            return false;
+        }
+        if matches!(self.style.clone_position(), stylo::Position::Absolute | stylo::Position::Fixed) {
+            return false;
+        }
+        if self.style.get_box().contain.intersects(Contain::LAYOUT | Contain::PAINT) {
+            return false;
+        }
+        // A size container has layout containment too (css-contain-3 §2)
+        if self.style.get_box().container_type.intersects(
+            style::values::specified::box_::ContainerType::SIZE | style::values::specified::box_::ContainerType::INLINE_SIZE,
+        ) {
+            return false;
+        }
+        let source = match axis {
+            taffy::AbsoluteAxis::Horizontal => self.template_columns_source(),
+            taffy::AbsoluteAxis::Vertical => self.template_rows_source(),
+        };
+        matches!(source, stylo::GenericGridTemplateComponent::Subgrid(_))
     }
 
     #[inline]

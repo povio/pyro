@@ -105,6 +105,8 @@ pub(crate) fn init_stylo_prefs() {
         style_config::set_pref!("layout.css.progress-function.enabled", true);
         style_config::set_pref!("layout.css.font-variations.enabled", true);
         style_config::set_pref!("layout.css.text-indent-keywords.enabled", true);
+        // pyro: `grid-template-rows/columns: subgrid` (Taffy lays subgrids out, css-grid-2 §9).
+        style_config::set_pref!("layout.css.grid-template-subgrid-value.enabled", true);
         style_config::set_pref!("layout.css.word-break.break-word.enabled", true);
         #[cfg(feature = "writing-mode")]
         {
