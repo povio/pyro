@@ -1994,3 +1994,13 @@ Covered by `crates/pyro-render/tests/font_face_settings.rs`.
 font at the adjusted size (`em` stays the computed size); a font without the named metric takes the spec's
 fallback (0.5em for `ex-height` and `ch-width`, 1em for `ic-*`, the ascent for `cap-height`): it was left
 unscaled. WPT `font-size-adjust-units-001`, `-order-001`, `-011`.
+
+## SVG images: a declared width or height is the natural one; zero sizes (WPT round 3, lane G)
+
+`src/node/svg.rs`: an SVG image's natural width and height are its root's absolute `width` and `height` as declared
+(`absolute_length_px`: px, in, cm, mm, pt, pc; em/ex and percentages as before). usvg's resolved size stood in, and
+without a `height` usvg took the content's bounds: `width="20px"` with a circle sized in percentages was 46px wide (WPT
+`grid-item-no-aspect-ratio-stretch-2/3`). A root `width` or `height` of zero is a natural size of zero, not an invalid
+image (usvg refuses it: `InvalidSize`): the image keeps its declared dimensions and `viewBox` ratio, and its content is
+parsed as of an SVG without a size, drawn in the box it is given, as in browsers (`grid-item-aspect-ratio-stretch-3`).
+Covered by `crates/pyro-render/tests/svg_image_natural_size.rs`.
