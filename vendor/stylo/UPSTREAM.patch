@@ -263,7 +263,7 @@ diff -ruN a/properties/helpers.mako.rs b/properties/helpers.mako.rs
                              if !context.builder.effective_zoom_for_inheritance.is_one() {
 diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 --- a/properties/longhands.toml	2026-11-11 19:55:57
-+++ b/properties/longhands.toml	2026-11-16 18:58:01
++++ b/properties/longhands.toml	2026-11-16 17:29:52
 @@ -473,7 +473,6 @@
  type = "BreakBetween"
  initial = "computed::BreakBetween::Auto"
@@ -280,15 +280,15 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/css-break/#propdef-break-before"
  animation_type = "discrete"
  affects = "layout"
-@@ -491,9 +489,26 @@
+@@ -491,11 +489,28 @@
  type = "BreakWithin"
  initial = "computed::BreakWithin::Auto"
  struct = "box"
 -engine = "gecko"
  spec = "https://drafts.csswg.org/css-break/#propdef-break-inside"
-+animation_type = "discrete"
-+affects = "layout"
-+
+ animation_type = "discrete"
+ affects = "layout"
+ 
 +[orphans]
 +type = "PositiveInteger"
 +initial = "From::from(2)"
@@ -303,11 +303,13 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +initial = "From::from(2)"
 +struct = "inherited_text"
 +spec = "https://drafts.csswg.org/css-break/#propdef-widows"
- animation_type = "discrete"
++animation_type = "discrete"
 +servo_restyle_damage = "repaint"
- affects = "layout"
- 
++affects = "layout"
++
  [caption-side]
+ type = "table::CaptionSide"
+ initial = "computed::table::CaptionSide::Top"
 @@ -591,7 +606,6 @@
  type = "Color"
  initial = "computed_value::T::currentcolor()"
@@ -403,10 +405,12 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  struct = "list"
  animation_type = "discrete"
  spec = "https://drafts.csswg.org/css-lists/#propdef-list-style-image"
-@@ -1427,6 +1441,17 @@
+@@ -1425,6 +1439,17 @@
+ struct = "position"
+ boxed = true
  spec = "https://drafts.csswg.org/css-images-3/#the-object-position"
- affects = "layout"
- 
++affects = "layout"
++
 +# pyro: `object-view-box: none | <basic-shape-rect>` (CSS Images 5): the part of a replaced
 +# element's content that is its view, as a `clip-path` value of `none` or one rectangle.
 +[object-view-box]
@@ -416,15 +420,16 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +parse_method = "parse_object_view_box"
 +animation_type = "discrete"
 +spec = "https://drafts.csswg.org/css-images-5/#the-object-view-box"
-+affects = "layout"
-+
- [offset-anchor]
- type = "PositionOrAuto"
- initial = "computed::PositionOrAuto::auto()"
-@@ -1857,6 +1882,26 @@
- animation_type = "discrete"
- affects = "paint"
+ affects = "layout"
  
+ [offset-anchor]
+@@ -1854,7 +1879,27 @@
+ struct = "box"
+ engine = "gecko"
+ spec = "https://drafts.csswg.org/css-scroll-snap-1/#scroll-snap-stop"
++animation_type = "discrete"
++affects = "paint"
++
 +[scroll-marker-group]
 +type = "ScrollMarkerGroup"
 +initial = "computed::ScrollMarkerGroup::NONE"
@@ -440,14 +445,12 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +initial = "computed::ScrollTargetGroup::None"
 +struct = "box"
 +engine = "servo"
-+animation_type = "discrete"
+ animation_type = "discrete"
 +servo_restyle_damage = "repaint"
 +spec = "https://drafts.csswg.org/css-overflow-5/#scroll-target-group"
-+affects = "paint"
-+
+ affects = "paint"
+ 
  [scroll-snap-type]
- type = "ScrollSnapType"
- initial = "computed::ScrollSnapType::none()"
 @@ -2117,7 +2162,6 @@
  type = "TransformBox"
  initial = "computed::TransformBox::ViewBox"
@@ -456,10 +459,12 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/css-transforms/#transform-box"
  animation_type = "discrete"
  affects = "overflow"
-@@ -2599,6 +2643,17 @@
+@@ -2597,6 +2641,28 @@
+ gecko_pref = "layout.css.text-autospace.enabled"
+ has_effect_on_gecko_scrollbars = false
  spec = "https://drafts.csswg.org/css-text-4/#text-autospace-property"
- affects = "layout"
- 
++affects = "layout"
++
 +# pyro: CSS Text 4 `text-spacing-trim` (fullwidth punctuation trimming), for Servo: blitz-dom
 +# passes it to parley's shaping and line breaking.
 +[text-spacing-trim]
@@ -471,10 +476,19 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +spec = "https://drafts.csswg.org/css-text-4/#text-spacing-trim-property"
 +affects = "layout"
 +
++# pyro: CSS Text 5 `text-fit` (scale a block's text to fill its lines), for Servo: blitz-dom
++# passes it to parley's line breaking. Inherited, as in Blink.
++[text-fit]
++type = "TextFit"
++initial = "computed::TextFit::none()"
++struct = "inherited_text"
++engine = "servo"
++animation_type = "discrete"
++spec = "https://drafts.csswg.org/css-text-5/#text-fit-property"
+ affects = "layout"
+ 
  [text-autospace-size]
- type = "Number"
- initial = "0.125"
-@@ -2635,7 +2690,6 @@
+@@ -2635,7 +2701,6 @@
  type = "TextDecorationSkipInk"
  initial = "computed::TextDecorationSkipInk::Auto"
  struct = "inherited_text"
@@ -482,7 +496,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  animation_type = "discrete"
  spec = "https://drafts.csswg.org/css-text-decor-4/#text-decoration-skip-ink-property"
  affects = "overflow"
-@@ -2665,6 +2719,7 @@
+@@ -2665,6 +2730,7 @@
  servo_pref = "layout.css.text-emphasis.enabled"
  animation_type = "discrete"
  spec = "https://drafts.csswg.org/css-text-decor/#propdef-text-emphasis-style"
@@ -490,7 +504,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  affects = "overflow"
  
  [text-underline-offset]
-@@ -3173,6 +3228,15 @@
+@@ -3173,6 +3239,15 @@
  logical = true
  affects = "paint"
  
@@ -506,7 +520,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  [corner-top-left-shape]
  type = "CornerShape"
  initial = "computed::CornerShape::round()"
-@@ -3383,9 +3447,9 @@
+@@ -3383,9 +3458,9 @@
  type = "MarginTrim"
  initial = "computed::MarginTrim::empty()"
  struct = "margin"
@@ -517,7 +531,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/css-box-4/#propdef-margin-trim"
  affects = "layout"
  
-@@ -3694,6 +3758,7 @@
+@@ -3694,6 +3769,7 @@
  [box-decoration-break]
  struct = "border"
  spec = "https://drafts.csswg.org/css-break/#propdef-box-decoration-break"
@@ -525,7 +539,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  animation_type = "discrete"
  affects = "layout"
  type = "BoxDecorationBreak"
-@@ -3770,7 +3835,6 @@
+@@ -3770,7 +3846,6 @@
  
  [column-fill]
  struct = "column"
@@ -533,7 +547,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/css-multicol/#propdef-column-fill"
  animation_type = "discrete"
  affects = "layout"
-@@ -3901,9 +3965,9 @@
+@@ -3901,9 +3976,9 @@
  type = "TextOrientation"
  initial = "computed::TextOrientation::Mixed"
  
@@ -544,7 +558,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/css-images/#propdef-image-orientation"
  animation_type = "discrete"
  affects = "layout"
-@@ -4290,6 +4354,19 @@
+@@ -4290,6 +4365,19 @@
  type = "BoxOrient"
  initial = "computed::BoxOrient::Horizontal"
  
@@ -1884,7 +1898,7 @@ diff -ruN a/values/computed/image.rs b/values/computed/image.rs
      }
 diff -ruN a/values/computed/mod.rs b/values/computed/mod.rs
 --- a/values/computed/mod.rs	2026-11-11 19:55:57
-+++ b/values/computed/mod.rs	2026-11-16 18:58:01
++++ b/values/computed/mod.rs	2026-11-16 17:29:45
 @@ -69,7 +69,7 @@
      ContainIntrinsicSize, ContainerName, ContainerType, ContentVisibility, DirectionProperty,
      Display, DominantBaseline, Float, ImageOrientation, Isolation, LineClamp, MarginTrim, Orient,
@@ -1899,13 +1913,13 @@ diff -ruN a/values/computed/mod.rs b/values/computed/mod.rs
  pub use self::text::{OverflowWrap, RubyPosition, TextOverflow, WordBreak, WordSpacing};
  pub use self::text::{TextAlign, TextAlignLast, TextEmphasisPosition, TextEmphasisStyle};
 -pub use self::text::{TextAutospace, TextUnderlinePosition};
-+pub use self::text::{TextAutospace, TextSpacingTrim, TextUnderlinePosition};
++pub use self::text::{TextAutospace, TextFit, TextSpacingTrim, TextUnderlinePosition};
  pub use self::text::{TextBoxEdge, TextBoxTrim};
  pub use self::text::{
      TextDecorationInset, TextDecorationLength, TextDecorationSkipInk, TextJustify,
 diff -ruN a/values/computed/text.rs b/values/computed/text.rs
 --- a/values/computed/text.rs	2026-11-11 19:55:57
-+++ b/values/computed/text.rs	2026-11-16 16:33:29
++++ b/values/computed/text.rs	2026-11-16 17:29:45
 @@ -26,7 +26,7 @@
  
  pub use crate::values::specified::text::{
@@ -1915,6 +1929,25 @@ diff -ruN a/values/computed/text.rs b/values/computed/text.rs
      TextDecorationLine, TextDecorationSkipInk, TextDecorationStyle, TextEmphasisPosition,
      TextJustify, TextOverflow, TextRendering, TextSecurity, TextSizeAdjust, TextTransform,
      TextUnderlinePosition, TextWrapMode, TextWrapStyle, UnicodeBidi, WhiteSpaceCollapse, WordBreak,
+@@ -99,6 +99,18 @@
+ /// The computed value of `text-indent`.
+ pub type TextIndent = GenericTextIndent<LengthPercentage>;
+ 
++/// pyro: a computed value for the `text-fit` property.
++pub type TextFit = crate::values::generics::text::GenericTextFit<crate::values::computed::Percentage>;
++
++impl TextFit {
++    /// `none`.
++    #[inline]
++    pub fn none() -> Self {
++        use crate::values::generics::text::{TextFitKind, TextFitTarget};
++        Self { kind: TextFitKind::None, target: TextFitTarget::Consistent, limit: None }
++    }
++}
++
+ /// A computed value for the `hyphenate-character` property.
+ pub type HyphenateLimitChars = GenericHyphenateLimitChars<CSSInteger>;
+ 
 diff -ruN a/values/generics/basic_shape.rs b/values/generics/basic_shape.rs
 --- a/values/generics/basic_shape.rs	2026-11-11 19:55:57
 +++ b/values/generics/basic_shape.rs	2026-11-16 16:33:29
@@ -2120,8 +2153,112 @@ diff -ruN a/values/generics/mod.rs b/values/generics/mod.rs
  pub struct GreaterThanOrEqualToOne<T>(pub T);
 diff -ruN a/values/generics/text.rs b/values/generics/text.rs
 --- a/values/generics/text.rs	2026-11-11 19:55:57
-+++ b/values/generics/text.rs	2026-11-16 11:59:59
-@@ -103,6 +103,34 @@
++++ b/values/generics/text.rs	2026-11-16 17:29:45
+@@ -84,6 +84,103 @@
+     }
+ }
+ 
++/// pyro: how `text-fit` (CSS Text 5) scales a block's text: not at all, up or down.
++#[derive(
++    Clone,
++    Copy,
++    Debug,
++    Eq,
++    Hash,
++    MallocSizeOf,
++    Parse,
++    PartialEq,
++    SpecifiedValueInfo,
++    ToComputedValue,
++    ToCss,
++    ToResolvedValue,
++    ToShmem,
++    ToTyped,
++)]
++#[repr(u8)]
++pub enum TextFitKind {
++    /// `none`
++    None,
++    /// `grow`
++    Grow,
++    /// `shrink`
++    Shrink,
++}
++
++/// pyro: which lines `text-fit` scales: all by one factor, or each line on its own (the last
++/// one too with `per-line-all`).
++#[derive(
++    Clone,
++    Copy,
++    Debug,
++    Eq,
++    Hash,
++    MallocSizeOf,
++    Parse,
++    PartialEq,
++    SpecifiedValueInfo,
++    ToComputedValue,
++    ToCss,
++    ToResolvedValue,
++    ToShmem,
++    ToTyped,
++)]
++#[repr(u8)]
++pub enum TextFitTarget {
++    /// `consistent`
++    Consistent,
++    /// `per-line`
++    PerLine,
++    /// `per-line-all`
++    PerLineAll,
++}
++
++/// pyro: a generic value for the `text-fit` property:
++/// `[none | grow | shrink] [consistent | per-line | per-line-all]? <percentage>?`.
++#[derive(
++    Clone,
++    Debug,
++    MallocSizeOf,
++    PartialEq,
++    SpecifiedValueInfo,
++    ToComputedValue,
++    ToResolvedValue,
++    ToShmem,
++    ToTyped,
++)]
++#[repr(C)]
++#[typed(todo_derive_fields)]
++pub struct GenericTextFit<Percentage> {
++    /// Whether text grows, shrinks or neither.
++    pub kind: TextFitKind,
++    /// Which lines are scaled.
++    pub target: TextFitTarget,
++    /// The limit on the scale factor (`100%` is 1).
++    pub limit: Option<Percentage>,
++}
++
++impl<Percentage: ToCss> ToCss for GenericTextFit<Percentage> {
++    fn to_css<W>(&self, dest: &mut CssWriter<W>) -> fmt::Result
++    where
++        W: Write,
++    {
++        self.kind.to_css(dest)?;
++        if self.target != TextFitTarget::Consistent {
++            dest.write_char(' ')?;
++            self.target.to_css(dest)?;
++        }
++        if let Some(limit) = &self.limit {
++            dest.write_char(' ')?;
++            limit.to_css(dest)?;
++        }
++        Ok(())
++    }
++}
++
+ /// A generic value for the `initial-letter` property.
+ #[derive(
+     Clone,
+@@ -103,8 +200,36 @@
      pub size: Number,
      /// The sink, >=1, if specified, 0 otherwise.
      pub sink: Integer,
@@ -2129,8 +2266,8 @@ diff -ruN a/values/generics/text.rs b/values/generics/text.rs
 +    /// as written: `sink` is 0 then.
 +    #[css(skip)]
 +    pub keyword: InitialLetterKeyword,
-+}
-+
+ }
+ 
 +/// pyro: the keyword of `initial-letter` that stands for its sink: `drop` (the size rounded
 +/// down) or `raise` (1).
 +#[derive(
@@ -2153,10 +2290,12 @@ diff -ruN a/values/generics/text.rs b/values/generics/text.rs
 +    Drop,
 +    /// `raise`
 +    Raise,
- }
- 
++}
++
  pub use self::GenericInitialLetter as InitialLetter;
-@@ -113,6 +141,7 @@
+ impl<N: Zero, I: Zero> InitialLetter<N, I> {
+     /// Returns `normal`.
+@@ -113,6 +238,7 @@
          InitialLetter {
              size: N::zero(),
              sink: I::zero(),
@@ -2164,7 +2303,7 @@ diff -ruN a/values/generics/text.rs b/values/generics/text.rs
          }
      }
  }
-@@ -126,6 +155,11 @@
+@@ -126,6 +252,11 @@
              return dest.write_str("normal");
          }
          self.size.to_css(dest)?;
@@ -3109,7 +3248,7 @@ diff -ruN a/values/specified/length.rs b/values/specified/length.rs
      }
 diff -ruN a/values/specified/mod.rs b/values/specified/mod.rs
 --- a/values/specified/mod.rs	2026-11-11 19:55:57
-+++ b/values/specified/mod.rs	2026-11-16 18:58:01
++++ b/values/specified/mod.rs	2026-11-16 17:29:45
 @@ -48,7 +48,7 @@
      ContainIntrinsicSize, ContainerName, ContainerType, ContentVisibility, DirectionProperty,
      Display, DominantBaseline, Float, ImageOrientation, Isolation, LineClamp, MarginTrim, Orient,
@@ -3124,7 +3263,7 @@ diff -ruN a/values/specified/mod.rs b/values/specified/mod.rs
  pub use self::text::{OverflowWrap, TextEmphasisPosition, TextEmphasisStyle, WordBreak};
  pub use self::text::{TextAlignKeyword, TextDecorationLine, TextOverflow, WordSpacing};
 -pub use self::text::{TextAlignLast, TextAutospace, TextUnderlinePosition};
-+pub use self::text::{TextAlignLast, TextAutospace, TextSpacingTrim, TextUnderlinePosition};
++pub use self::text::{TextAlignLast, TextAutospace, TextFit, TextSpacingTrim, TextUnderlinePosition};
  pub use self::text::{TextBoxEdge, TextBoxTrim};
  pub use self::text::{
      TextDecorationInset, TextDecorationLength, TextDecorationSkipInk, TextJustify, TextTransform,
@@ -3181,8 +3320,32 @@ diff -ruN a/values/specified/number.rs b/values/specified/number.rs
          match self.0.unpack_mut() {
 diff -ruN a/values/specified/text.rs b/values/specified/text.rs
 --- a/values/specified/text.rs	2026-11-11 19:55:57
-+++ b/values/specified/text.rs	2026-11-16 16:33:29
-@@ -152,11 +152,26 @@
++++ b/values/specified/text.rs	2026-11-16 17:35:53
+@@ -25,6 +25,23 @@
+ use style_traits::{CssWriter, ParseError, StyleParseErrorKind, ToCss};
+ use style_traits::{KeywordsCollectFn, SpecifiedValueInfo};
+ 
++/// pyro: a specified value for the `text-fit` property.
++pub type TextFit = crate::values::generics::text::GenericTextFit<crate::values::specified::Percentage>;
++
++impl Parse for TextFit {
++    fn parse(context: &ParserContext, input: &mut Parser) -> Result<Self, ParseError> {
++        use crate::values::generics::text::{TextFitKind, TextFitTarget};
++        let kind = TextFitKind::parse(input)?;
++        let target = input
++            .try_parse(TextFitTarget::parse)
++            .unwrap_or(TextFitTarget::Consistent);
++        let limit = input
++            .try_parse(|i| crate::values::specified::Percentage::parse_non_negative(context, i))
++            .ok();
++        Ok(Self { kind, target, limit })
++    }
++}
++
+ /// A specified type for the `initial-letter` property.
+ pub type InitialLetter = GenericInitialLetter<Number, Integer>;
+ 
+@@ -152,11 +169,26 @@
          {
              return Ok(Self::normal());
          }
@@ -3210,7 +3373,7 @@ diff -ruN a/values/specified/text.rs b/values/specified/text.rs
      }
  }
  
-@@ -824,6 +839,10 @@
+@@ -824,6 +856,10 @@
          self.remove(Self::RIGHT); // Right is the default
          true
      }
@@ -3221,7 +3384,7 @@ diff -ruN a/values/specified/text.rs b/values/specified/text.rs
  }
  
  fn word_break_break_word_enabled(_: &ParserContext) -> bool {
-@@ -858,6 +877,10 @@
+@@ -858,6 +894,10 @@
      /// `anywhere`, and `word-break` behave like `normal`.
      #[parse(condition = "word_break_break_word_enabled")]
      BreakWord,
@@ -3232,10 +3395,12 @@ diff -ruN a/values/specified/text.rs b/values/specified/text.rs
  }
  
  /// Values for the `text-justify` CSS property.
-@@ -1333,6 +1356,38 @@
+@@ -1331,6 +1371,38 @@
+         const REPLACE = 1 << 6;
+         */
      }
- }
- 
++}
++
 +/// pyro: the `text-spacing-trim` property: which fullwidth punctuation is set half-width.
 +///
 +/// https://drafts.csswg.org/css-text-4/#text-spacing-trim-property
@@ -3266,11 +3431,9 @@ diff -ruN a/values/specified/text.rs b/values/specified/text.rs
 +    TrimBoth,
 +    TrimAll,
 +    Auto,
-+}
-+
+ }
+ 
  /* Bug 1980111: Uncomment the following to support 'replace' value.
- impl TextAutospace {
-     fn validate_mixed_flags(&self) -> bool {
 diff -ruN a/values/specified/transform.rs b/values/specified/transform.rs
 --- a/values/specified/transform.rs	2026-11-11 19:55:57
 +++ b/values/specified/transform.rs	2026-11-14 18:55:29

@@ -252,7 +252,8 @@ pub(crate) fn shape_text<'a, B: Brush>(
             // we probably shouldn't itemize on them; we should just ensure we don't ligate if
             // they're non-zero).
             run_style,
-            Spacing::new(run_style.word_spacing, run_style.letter_spacing),
+            Spacing::new(run_style.word_spacing, run_style.letter_spacing)
+                .with_scales(run_style.spacing_scales),
             char_style_indices,
         );
     }

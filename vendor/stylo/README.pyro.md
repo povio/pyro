@@ -303,6 +303,12 @@ blitz-dom generates and lays out the boxes (its README).
 `values/specified/box.rs` (`DisplayInside::is_valid_for_list_item`): `flow-root` with `list-item` parses in servo too
 (upstream only with the gecko feature), as in Blink: `display: flow-root list-item` is a list item that establishes a
 block formatting context (WPT css-display `display-flow-root-list-item-001`).
+## `text-fit` (WPT round 3, lane TS)
+
+`properties/longhands.toml`, `values/generics/text.rs` (`GenericTextFit`, `TextFitKind`, `TextFitTarget`),
+`values/specified/text.rs`, `values/computed/text.rs`: CSS Text 5 `text-fit`
+(`[none | grow | shrink] [consistent | per-line | per-line-all]? <percentage>?`, inherited as in Blink) for servo.
+blitz-dom passes it to parley, which scales the lines (their READMEs).
 
 ## Updating or dropping the patch
 

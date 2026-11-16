@@ -2191,6 +2191,7 @@ pub(crate) fn draw_text_annotations<S: PaintScene>(
 ) {
     // Glyphs snap to quarter pixels as the text's do (`stroke_text`).
     let snap = !recording && vertical.is_none();
+    let fit = f64::from(line.text_fit_scale());
     let mut advances = Vec::new();
     let mut ruby_bases: Vec<Option<RubyBase>> = vec![None; annotations.len()];
     // Emphasis marks to draw: the annotation, the character's extent and content area.
@@ -2268,7 +2269,7 @@ pub(crate) fn draw_text_annotations<S: PaintScene>(
             continue;
         }
         let content = outside(&drawn, annotation.under, ruby_base.extent, ruby_base.content);
-        let edge = draw_annotation(scene, annotation, ruby_base.extent, content, brush_override, doc, transform, scale, snap);
+        let edge = draw_annotation(scene, annotation, ruby_base.extent, content, brush_override, doc, transform, scale, snap, fit);
         drawn.push(Drawn { under: annotation.under, extent: ruby_base.extent, edge });
     }
     let ruby_drawn = drawn.len();
@@ -2276,7 +2277,7 @@ pub(crate) fn draw_text_annotations<S: PaintScene>(
         let annotation = &annotations[index];
         let color = brush_override.unwrap_or_else(|| emphasis_color(doc, annotation.node_id));
         let content = outside(&drawn[..ruby_drawn], annotation.under, extent, content);
-        draw_annotation(scene, annotation, extent, content, Some(color), doc, transform, scale, snap);
+        draw_annotation(scene, annotation, extent, content, Some(color), doc, transform, scale, snap, fit);
     }
 }
 
@@ -2332,19 +2333,23 @@ fn draw_annotation<S: PaintScene>(
     transform: Affine,
     scale: f64,
     snap: bool,
+    fit: f64,
 ) -> f64 {
     let Some(line) = annotation.layout.lines().next() else {
         return if annotation.under { content.1 } else { content.0 };
     };
+    // pyro: on a line `text-fit` scales, the annotation scales with the text it is over.
     let metrics = line.metrics();
-    let baseline = f64::from(metrics.baseline);
+    let baseline = f64::from(metrics.baseline) * fit;
+    let (content_min, content_max) =
+        (f64::from(metrics.content_block_min_coord) * fit, f64::from(metrics.content_block_max_coord) * fit);
     let y = if annotation.under {
-        content.1 + baseline - f64::from(metrics.content_block_min_coord)
+        content.1 + baseline - content_min
     } else {
-        content.0 - (f64::from(metrics.content_block_max_coord) - baseline)
+        content.0 - (content_max - baseline)
     };
-    let x = (base.0 + base.1) / 2.0 - f64::from(annotation.layout.width()) / 2.0;
-    let transform = transform * Affine::translate((x, y - baseline));
+    let x = (base.0 + base.1) / 2.0 - f64::from(annotation.layout.width()) * fit / 2.0;
+    let transform = transform * Affine::translate((x, y - baseline)) * Affine::scale(fit);
     for item in line.items() {
         let PositionedLayoutItem::GlyphRun(glyph_run) = item else {
             continue;
@@ -2354,9 +2359,9 @@ fn draw_annotation<S: PaintScene>(
     }
     // The outer edge of its content area.
     if annotation.under {
-        y + f64::from(metrics.content_block_max_coord) - baseline
+        y + content_max - baseline
     } else {
-        y - (baseline - f64::from(metrics.content_block_min_coord))
+        y - (baseline - content_min)
     }
 }
 

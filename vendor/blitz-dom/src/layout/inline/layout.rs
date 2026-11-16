@@ -1175,6 +1175,10 @@ impl LayoutPassState<'_> {
                 for ibox in inline_layout.layout.inline_boxes() {
                     (ibox.id, ibox.width.to_bits(), ibox.height.to_bits(), ibox.baseline.map(f32::to_bits)).hash(&mut h);
                 }
+                // pyro: and `text-fit`.
+                if let Some(fit) = self.nodes[node_id].primary_styles().and_then(|s| stylo_to_parley::text_fit(&s)) {
+                    (fit.kind as u8, fit.target as u8, fit.limit.map(f32::to_bits)).hash(&mut h);
+                }
                 h.finish()
             };
             let floats_involved = block_ctx.find_content_slot(0.0, 0.0, Clear::None, None).segment_id.is_some()
@@ -1234,6 +1238,19 @@ impl LayoutPassState<'_> {
                     balanced_wrap_limit(&mut inline_layout.layout, max_advance, scale, clamp)
                 })
                 .flatten();
+                // pyro: CSS `text-fit` (CSS Text 5), not beside floats or with an initial letter,
+                // as in Blink. `consistent` scales every line by what the widest (narrowest) line
+                // needs, measured on the lines broken without it.
+                let text_fit = self.nodes[node_id]
+                    .primary_styles()
+                    .and_then(|s| stylo_to_parley::text_fit(&s))
+                    .filter(|_| !floats_involved && initial_letter.is_none());
+                inline_layout.layout.set_text_fit(text_fit.unwrap_or_default(), None);
+                if let Some(fit) = text_fit.filter(|fit| fit.target == parley::TextFitTarget::Consistent) {
+                    inline_layout.layout.break_all_lines(Some(max_advance));
+                    let scale = inline_layout.layout.text_fit_block_scale();
+                    inline_layout.layout.set_text_fit(fit, scale);
+                }
                 let mut breaker = inline_layout.layout.break_lines();
                 let mut line_slot = block_ctx.find_content_slot(0.0, 0.0, Clear::None, None);
                 let mut has_active_floats = line_slot.segment_id.is_some();

@@ -2654,6 +2654,17 @@ animation_type = "discrete"
 spec = "https://drafts.csswg.org/css-text-4/#text-spacing-trim-property"
 affects = "layout"
 
+# pyro: CSS Text 5 `text-fit` (scale a block's text to fill its lines), for Servo: blitz-dom
+# passes it to parley's line breaking. Inherited, as in Blink.
+[text-fit]
+type = "TextFit"
+initial = "computed::TextFit::none()"
+struct = "inherited_text"
+engine = "servo"
+animation_type = "discrete"
+spec = "https://drafts.csswg.org/css-text-5/#text-fit-property"
+affects = "layout"
+
 [text-autospace-size]
 type = "Number"
 initial = "0.125"

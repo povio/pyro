@@ -2310,3 +2310,10 @@ Round 3 lane C2T (CSS2), covered by `crates/pyro-render/tests/css2_intrinsic_and
   container's trim reaches the first or last line of the block in the inline after or before it (WPT css-inline
   `text-box-trim-block-in-inline-*`). Covered by `a_trim_reaches_the_first_line_of_a_block_in_an_inline`.
 
+## `text-fit` (WPT round 3, lane TS)
+
+`src/stylo_to_parley.rs` (`text_fit`, `TextStyle::spacing_scales`), `src/layout/inline/layout.rs`: a block
+container's `text-fit` goes to its parley layout before the final break (not beside floats or with an initial letter,
+where Blink turns it off too, and part of the break key); `consistent` breaks once without it to measure the block's
+factor (`Layout::text_fit_block_scale`), then again with it. Which letter and word spacing are percentages goes to
+parley, which scales those on fitted lines. parley does the scaling (its README).

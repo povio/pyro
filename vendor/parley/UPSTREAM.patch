@@ -532,8 +532,28 @@ index fdb826c..2a2c2a9 100644
 +        matches!(self, Self::InFlow | Self::SpanStart | Self::SpanEnd)
 +    }
  }
+diff --git a/src/layout/cluster.rs b/src/layout/cluster.rs
+index 25f0b3b..056dbc8 100644
+--- a/src/layout/cluster.rs
++++ b/src/layout/cluster.rs
+@@ -187,7 +187,14 @@ impl<'a, B: Brush> Cluster<'a, B> {
+     /// clusters it overlaps.
+     pub fn advance(&self) -> f32 {
+         let spacing = self.run.line_spacing();
+-        spacing.grapheme_advance(&self.atom, self.grapheme, self.is_rtl())
++        let advance = spacing.grapheme_advance(&self.atom, self.grapheme, self.is_rtl());
++        // pyro: with `text-fit`, the glyphs at the line's scale (the spacing already is).
++        let scale = self.run.text_fit_scale();
++        if scale == 1.0 {
++            return advance;
++        }
++        let glyphs = self.grapheme.advance();
++        glyphs * scale + (advance - glyphs)
+     }
+ 
+     /// Returns `true` if this is a right-to-left cluster.
 diff --git a/src/layout/data.rs b/src/layout/data.rs
-index e6ab383..556c9e4 100644
+index e6ab383..2d7246a 100644
 --- a/src/layout/data.rs
 +++ b/src/layout/data.rs
 @@ -4,6 +4,7 @@
@@ -561,7 +581,51 @@ index e6ab383..556c9e4 100644
          }
          LineHeight::FontSizeRelative(_) | LineHeight::Absolute(_) => None,
      }
-@@ -220,6 +221,11 @@ pub(crate) struct LayoutData<B: Brush> {
+@@ -99,6 +100,17 @@ pub(crate) struct LineData {
+     /// Empty for lines with only baseline-relative content because the root aligned subtree
+     /// for each line trivially has an offset of 0
+     pub(crate) aligned_subtree_offsets: Range<u32>,
++    /// pyro: the line's `text-fit` scale, if it has one ([`crate::TextFit`]).
++    pub(crate) text_fit: Option<LineTextFit>,
++}
++
++/// pyro: the `text-fit` scale of a line and its span box metrics at that scale.
++#[derive(Clone, Debug, PartialEq)]
++pub(crate) struct LineTextFit {
++    /// The factor the line's text is scaled by.
++    pub(crate) scale: f32,
++    /// The line's entries in [`LayoutData::line_style_metrics`], one per style.
++    pub(crate) style_metrics: Range<u32>,
+ }
+ 
+ /// Position of an [independent aligned subtree] rooted at a span with
+@@ -115,6 +127,12 @@ pub(crate) struct AlignedSubtreeOffset {
+ }
+ 
+ impl LineData {
++    /// pyro: the factor `text-fit` scales the line's text by (1 for none).
++    #[inline]
++    pub(crate) fn text_fit_scale(&self) -> f32 {
++        self.text_fit.as_ref().map_or(1.0, |fit| fit.scale)
++    }
++
+     /// Offset from the line's baseline to the baseline of the aligned subtree rooted at style
+     /// `root` (positive upwards). `offsets` is [`LayoutData::aligned_subtree_offsets`].
+     pub(crate) fn aligned_subtree_offset(
+@@ -203,6 +221,12 @@ pub(crate) struct LayoutData<B: Brush> {
+     // Output of style resolution (input to line breaking)
+     pub(crate) styles: Vec<Style<B>>,
+     pub(crate) style_metrics: Vec<StyleMetrics>,
++    /// pyro: the span box metrics of the lines `text-fit` scales ([`LineTextFit::style_metrics`]).
++    pub(crate) line_style_metrics: Vec<StyleMetrics>,
++    /// pyro: CSS `text-fit` ([`crate::Layout::set_text_fit`]).
++    pub(crate) text_fit: crate::style::TextFit,
++    /// pyro: the scale of every line with `text-fit: ... consistent`, once measured.
++    pub(crate) text_fit_scale: Option<f32>,
+     pub(crate) inline_boxes: Vec<LayoutInlineBox>,
+ 
+     // Output of shaping (input to line breaking)
+@@ -220,6 +244,11 @@ pub(crate) struct LayoutData<B: Brush> {
      ///
      /// Each line owns a contiguous slice ([`LineData::aligned_subtree_offsets`]).
      pub(crate) aligned_subtree_offsets: Vec<AlignedSubtreeOffset>,
@@ -573,7 +637,7 @@ index e6ab383..556c9e4 100644
      /// The width constraint that was used to line break the layout
      pub(crate) layout_max_advance: f32,
      /// The computed width of the layout excluding hanging whitespace
-@@ -236,6 +242,23 @@ pub(crate) struct LayoutData<B: Brush> {
+@@ -236,6 +265,23 @@ pub(crate) struct LayoutData<B: Brush> {
      pub(crate) indent_amount: f32,
      /// Options controlling text-indent behavior (each-line, hanging).
      pub(crate) indent_options: IndentOptions,
@@ -597,7 +661,17 @@ index e6ab383..556c9e4 100644
  }
  
  impl<B: Brush> Default for LayoutData<B> {
-@@ -257,15 +280,28 @@ impl<B: Brush> Default for LayoutData<B> {
+@@ -250,6 +296,9 @@ impl<B: Brush> Default for LayoutData<B> {
+             height: 0.,
+             styles: Vec::new(),
+             style_metrics: Vec::new(),
++            line_style_metrics: Vec::new(),
++            text_fit: crate::style::TextFit::default(),
++            text_fit_scale: None,
+             inline_boxes: Vec::new(),
+             shaped_text: ShapedText::new(),
+             runs: Vec::new(),
+@@ -257,15 +306,59 @@ impl<B: Brush> Default for LayoutData<B> {
              lines: Vec::new(),
              line_items: Vec::new(),
              aligned_subtree_offsets: Vec::new(),
@@ -617,6 +691,37 @@ index e6ab383..556c9e4 100644
  }
  
  impl<B: Brush> LayoutData<B> {
++    /// pyro: the advance of what keeps its size on a line `text-fit` scales (Blink's static
++    /// parts): its inline boxes and span edges, and letter and word spacing given as lengths
++    /// (Blink reshapes text with such spacing at the scaled font size). The rest of the line's
++    /// advance is text, which scales.
++    pub(crate) fn line_fixed_advance(&self, items: &[LineItemData]) -> f32 {
++        use crate::layout::spacing::{EffectiveSpacing, Justification};
++        let mut fixed = 0.0;
++        for item in items {
++            match item.kind {
++                LayoutItemKind::InlineBox => {
++                    let inline_box = &self.inline_boxes[item.index].inline_box;
++                    if inline_box.kind.takes_inline_space() {
++                        fixed += inline_box.width;
++                    }
++                }
++                LayoutItemKind::TextRun => {
++                    let spacing = self.runs[item.index].spacing.fixed();
++                    if !spacing.is_zero() {
++                        let slice = self
++                            .shaped_text
++                            .run_slice(item.index as u32)
++                            .narrow(item.shaped_cluster_range.clone());
++                        fixed += EffectiveSpacing::new(spacing, Justification::NONE).slice_advance(slice)
++                            - EffectiveSpacing::ZERO.slice_advance(slice);
++                    }
++                }
++            }
++        }
++        fixed
++    }
++
 +    /// pyro: the layout units of a CSS pixel when metrics are quantized (the scale), else 0:
 +    /// what [`LineHeight::resolve`] and [`BoxMetrics::from_font`] round font metrics to.
 +    pub(crate) fn quantum(&self) -> f32 {
@@ -626,7 +731,7 @@ index e6ab383..556c9e4 100644
      pub(crate) fn clear(&mut self) {
          self.scale = 1.;
          self.quantize = true;
-@@ -277,6 +313,11 @@ impl<B: Brush> LayoutData<B> {
+@@ -277,8 +370,16 @@ impl<B: Brush> LayoutData<B> {
          self.layout_max_advance = 0.0;
          self.indent_amount = 0.0;
          self.indent_options = IndentOptions::default();
@@ -637,8 +742,13 @@ index e6ab383..556c9e4 100644
 +        self.autospace.clear();
          self.styles.clear();
          self.style_metrics.clear();
++        self.line_style_metrics.clear();
++        self.text_fit = crate::style::TextFit::default();
++        self.text_fit_scale = None;
          self.inline_boxes.clear();
-@@ -286,9 +327,36 @@ impl<B: Brush> LayoutData<B> {
+         self.shaped_text.clear();
+         self.runs.clear();
+@@ -286,9 +387,36 @@ impl<B: Brush> LayoutData<B> {
          self.lines.clear();
          self.line_items.clear();
          self.aligned_subtree_offsets.clear();
@@ -675,7 +785,7 @@ index e6ab383..556c9e4 100644
      /// Push an inline box to the list of items
      pub(crate) fn push_inline_box(&mut self, index: usize, bidi_level: BidiLevel) {
          self.items.push(LayoutItem {
-@@ -319,7 +387,7 @@ impl<B: Brush> LayoutData<B> {
+@@ -319,7 +447,7 @@ impl<B: Brush> LayoutData<B> {
          let line_height = self.styles[style_index as usize].line_height.resolve(
              shaped_run.font_size,
              &shaped_run.font_metrics,
@@ -684,7 +794,7 @@ index e6ab383..556c9e4 100644
          );
  
          // The run's box metrics, if it's uniform across all the styles within the run. A run's box
-@@ -337,7 +405,7 @@ impl<B: Brush> LayoutData<B> {
+@@ -337,7 +465,7 @@ impl<B: Brush> LayoutData<B> {
                  run_box_metrics(
                      &self.styles[usize::from(first_style)],
                      shaped_run,
@@ -693,7 +803,7 @@ index e6ab383..556c9e4 100644
                  )
              } else {
                  None
-@@ -397,7 +465,61 @@ impl<B: Brush> LayoutData<B> {
+@@ -397,7 +525,61 @@ impl<B: Brush> LayoutData<B> {
      /// - min-content width: any conditionally-hanging suffix hangs in full, so all hanging
      ///   whitespace hangs in full.
      pub(crate) fn calculate_content_widths(&self) -> ContentWidths {
@@ -756,7 +866,7 @@ index e6ab383..556c9e4 100644
      }
  }
  
-@@ -429,6 +551,43 @@ struct ContentWidthsMeasurer {
+@@ -429,6 +611,43 @@ struct ContentWidthsMeasurer {
      /// Indents for lines following a soft/hard wrap.
      soft_indent: f32,
      hard_indent: f32,
@@ -800,7 +910,7 @@ index e6ab383..556c9e4 100644
  }
  
  impl ContentWidthsMeasurer {
-@@ -445,7 +604,10 @@ impl ContentWidthsMeasurer {
+@@ -445,7 +664,10 @@ impl ContentWidthsMeasurer {
              text_wrap_mode: TextWrapMode::Wrap,
              soft_indent: indent_options.indent_following_soft_wrap_break(indent_amount),
              hard_indent: indent_options.indent_following_forced_line_break(indent_amount),
@@ -811,7 +921,7 @@ index e6ab383..556c9e4 100644
          }
      }
  
-@@ -457,13 +619,14 @@ impl ContentWidthsMeasurer {
+@@ -457,13 +679,14 @@ impl ContentWidthsMeasurer {
      /// indent is "hanging" (see [`IndentOptions::hanging`]).
      #[inline(always)]
      fn soft_break(&mut self, line_has_content: bool) {
@@ -827,7 +937,7 @@ index e6ab383..556c9e4 100644
      }
  
      /// Ends the current line at a forced break.
-@@ -485,6 +648,7 @@ impl ContentWidthsMeasurer {
+@@ -485,6 +708,7 @@ impl ContentWidthsMeasurer {
          self.line_has_content = false;
          self.running_min_width = self.hard_indent;
          self.running_max_width = self.hard_indent;
@@ -835,7 +945,7 @@ index e6ab383..556c9e4 100644
      }
  
      #[inline(always)]
-@@ -522,6 +686,27 @@ impl ContentWidthsMeasurer {
+@@ -522,6 +746,27 @@ impl ContentWidthsMeasurer {
                  }
                  LayoutItemKind::InlineBox => {
                      let inline_box = &layout_data.inline_boxes[item.index].inline_box;
@@ -863,7 +973,7 @@ index e6ab383..556c9e4 100644
                      if inline_box.kind == InlineBoxKind::InFlow {
                          let next = items.as_slice().iter().find(|next| {
                              next.kind == LayoutItemKind::TextRun
-@@ -596,7 +781,11 @@ impl ContentWidthsMeasurer {
+@@ -596,7 +841,11 @@ impl ContentWidthsMeasurer {
                  skip_atom = false;
                  let prev_text_wrap_mode = self.text_wrap_mode;
                  self.text_wrap_mode = style.text_wrap_mode;
@@ -875,7 +985,7 @@ index e6ab383..556c9e4 100644
                      && (cluster.is_soft_wrap_opportunity_before()
                          || style.overflow_wrap == OverflowWrap::Anywhere)
                  {
-@@ -611,7 +800,15 @@ impl ContentWidthsMeasurer {
+@@ -611,7 +860,15 @@ impl ContentWidthsMeasurer {
                      continue;
                  }
                  if SPACED {
@@ -892,7 +1002,7 @@ index e6ab383..556c9e4 100644
                  }
              } else if skip_atom {
                  // The next line starts after the whole newline atom.
-@@ -620,6 +817,15 @@ impl ContentWidthsMeasurer {
+@@ -620,6 +877,15 @@ impl ContentWidthsMeasurer {
              }
  
              let mut advance = cluster.advance;
@@ -908,7 +1018,7 @@ index e6ab383..556c9e4 100644
              if SPACED {
                  let owns_gap = if is_rtl {
                      is_atom_start
-@@ -630,9 +836,10 @@ impl ContentWidthsMeasurer {
+@@ -630,9 +896,10 @@ impl ContentWidthsMeasurer {
                  };
                  if owns_gap {
                      advance += gap;
@@ -920,7 +1030,7 @@ index e6ab383..556c9e4 100644
              self.running_max_width += advance;
  
              // A cluster hangs if all of its characters hang. Its first character is checked via the
-@@ -657,13 +864,19 @@ impl ContentWidthsMeasurer {
+@@ -657,13 +924,19 @@ impl ContentWidthsMeasurer {
                  self.running_hanging_whitespace = 0.0;
              }
          }
@@ -943,7 +1053,7 @@ index e6ab383..556c9e4 100644
          }
          // Inline boxes don't hang.
 diff --git a/src/layout/layout.rs b/src/layout/layout.rs
-index 4b0cf9a..97b12da 100644
+index 4b0cf9a..2a1eca2 100644
 --- a/src/layout/layout.rs
 +++ b/src/layout/layout.rs
 @@ -66,6 +66,15 @@ impl<B: Brush> Layout<B> {
@@ -962,7 +1072,7 @@ index 4b0cf9a..97b12da 100644
      /// The inherent metrics of the root span (in CSS terms, that is the metrics of the
      /// [root inline box](https://www.w3.org/TR/css-inline-3/#root-inline-box)).
      ///
-@@ -201,6 +210,18 @@ impl<B: Brush> Layout<B> {
+@@ -201,6 +210,67 @@ impl<B: Brush> Layout<B> {
          self.data.indent_options = options;
      }
  
@@ -978,14 +1088,94 @@ index 4b0cf9a..97b12da 100644
 +        self.data.tab_min_advance = min_advance.max(0.0);
 +    }
 +
++    /// pyro: makes the layout's lines scale their text to fill them (CSS `text-fit`); `scale` is
++    /// the factor of every line for [`TextFitTarget::Consistent`](crate::TextFitTarget), which
++    /// [`Self::text_fit_block_scale`] measures on the lines broken without it.
++    ///
++    /// Like the indent, this must be set before the lines are broken.
++    pub fn set_text_fit(&mut self, fit: crate::TextFit, scale: Option<f32>) {
++        self.data.text_fit = fit;
++        self.data.text_fit_scale = scale.filter(|scale| scale.is_finite() && *scale > 0.0);
++    }
++
++    /// pyro: the factor `text-fit: grow consistent` or `shrink consistent` scales every line of
++    /// this layout by, measured on its lines as broken without one (Blink's
++    /// `MeasurePerBlockScale`): the smallest that makes a line fill its width, of the lines with
++    /// text that do not already (within two pixels). `None` when it would not grow (shrink) the
++    /// text.
++    pub fn text_fit_block_scale(&self) -> Option<f32> {
++        use crate::{TextFitKind, TextFitTarget};
++        let fit = self.data.text_fit;
++        if fit.kind == TextFitKind::None || fit.target != TextFitTarget::Consistent {
++            return None;
++        }
++        let epsilon = 2.0 * self.data.scale;
++        let mut minimum = f32::INFINITY;
++        for line in &self.data.lines {
++            let items = self.data.line_items.get(line.item_range.clone()).unwrap_or_default();
++            let fixed = self.data.line_fixed_advance(items);
++            let content = line.metrics.advance - line.metrics.hanging_advance;
++            let remaining = line.max_advance - content;
++            if !remaining.is_finite() || remaining.abs() < epsilon {
++                continue;
++            }
++            let flexible = content - fixed;
++            if flexible <= 0.0 || remaining + flexible <= 0.0 {
++                continue;
++            }
++            minimum = minimum.min((remaining + flexible) / flexible);
++        }
++        if !minimum.is_finite() {
++            return None;
++        }
++        let scale = fit.restrict(minimum);
++        let applies = match fit.kind {
++            TextFitKind::Grow => scale > 1.0,
++            TextFitKind::Shrink => scale < 1.0,
++            TextFitKind::None => false,
++        };
++        applies.then_some(scale)
++    }
++
      /// Returns line breaker to compute lines for the layout.
      pub fn break_lines(&mut self) -> BreakLines<'_, B> {
          BreakLines::new(self)
 diff --git a/src/layout/line.rs b/src/layout/line.rs
-index 1569071..7112177 100644
+index 1569071..4c48d6b 100644
 --- a/src/layout/line.rs
 +++ b/src/layout/line.rs
-@@ -82,6 +82,39 @@ impl<'a, B: Brush> Line<'a, B> {
+@@ -71,10 +71,29 @@ impl<'a, B: Brush> Line<'a, B> {
+         })
+     }
+ 
++    /// pyro: the span box metrics of the layout's styles on this line: the layout's, or those at
++    /// the line's `text-fit` scale.
++    fn style_metrics(&self) -> &'a [crate::layout::style_metrics::StyleMetrics] {
++        match &self.data.text_fit {
++            Some(fit) => self
++                .layout
++                .data
++                .line_style_metrics
++                .get(fit.style_metrics.start as usize..fit.style_metrics.end as usize)
++                .unwrap_or(&self.layout.data.style_metrics),
++            None => &self.layout.data.style_metrics,
++        }
++    }
++
++    /// pyro: the factor CSS `text-fit` scales the line's text by (1 for none).
++    pub fn text_fit_scale(&self) -> f32 {
++        self.data.text_fit_scale()
++    }
++
+     /// Block-axis coordinate of the baseline of the span box generated by `style_index`, taking
+     /// its (and its ancestors') `vertical-align` into account.
+     pub(crate) fn style_baseline(&self, style_index: u16) -> f32 {
+-        match self.layout.data.style_metrics.get(usize::from(style_index)) {
++        match self.style_metrics().get(usize::from(style_index)) {
+             Some(metrics) => self
+                 .data
+                 .style_baseline(&self.layout.data.aligned_subtree_offsets, metrics),
+@@ -82,6 +101,39 @@ impl<'a, B: Brush> Line<'a, B> {
          }
      }
  
@@ -994,7 +1184,7 @@ index 1569071..7112177 100644
 +    /// first available font around the span's baseline (rounded as the layout rounds them).
 +    pub fn span_content_area(&self, style_index: u16) -> (f32, f32) {
 +        let baseline = self.style_baseline(style_index);
-+        match self.layout.data.style_metrics.get(usize::from(style_index)) {
++        match self.style_metrics().get(usize::from(style_index)) {
 +            Some(metrics) => (baseline - metrics.ascent, baseline + metrics.descent),
 +            None => (baseline, baseline),
 +        }
@@ -1005,7 +1195,7 @@ index 1569071..7112177 100644
 +    /// `text-box-edge` metric ([`crate::TextStyle::text_box_trim`]).
 +    pub fn span_box_area(&self, style_index: u16) -> (f32, f32) {
 +        let baseline = self.style_baseline(style_index);
-+        match self.layout.data.style_metrics.get(usize::from(style_index)) {
++        match self.style_metrics().get(usize::from(style_index)) {
 +            Some(metrics) => (baseline - metrics.content_over, baseline + metrics.content_under),
 +            None => (baseline, baseline),
 +        }
@@ -1015,7 +1205,7 @@ index 1569071..7112177 100644
 +    /// `style_index` generates on this line ([`crate::TextEdge`]; `over` picks the side).
 +    pub fn span_text_edge(&self, style_index: u16, edge: crate::TextEdge, over: bool) -> f32 {
 +        let baseline = self.style_baseline(style_index);
-+        match self.layout.data.style_metrics.get(usize::from(style_index)) {
++        match self.style_metrics().get(usize::from(style_index)) {
 +            Some(metrics) if over => baseline - metrics.text_edge(edge, true),
 +            Some(metrics) => baseline + metrics.text_edge(edge, false),
 +            None => baseline,
@@ -1025,7 +1215,18 @@ index 1569071..7112177 100644
      /// Block-axis coordinate of the top edge of the layout's inline box `index`.
      pub(crate) fn inline_box_top(&self, index: usize) -> f32 {
          let layout_box = &self.layout.data.inline_boxes[index];
-@@ -188,6 +221,12 @@ pub struct LineMetrics {
+@@ -91,9 +143,7 @@ impl<'a, B: Brush> Line<'a, B> {
+             BaselineShift::Bottom => self.data.metrics.block_max_coord - inline_box.height,
+             _ => {
+                 let aligned_subtree_root = self
+-                    .layout
+-                    .data
+-                    .style_metrics
++                    .style_metrics()
+                     .get(usize::from(layout_box.parent_style_index))
+                     .map_or(0, |m| m.aligned_subtree_root);
+                 let ascent = inline_box.baseline.unwrap_or(inline_box.height);
+@@ -188,6 +238,12 @@ pub struct LineMetrics {
      // into two fields.
      pub hanging_advance: f32,
  
@@ -1038,7 +1239,7 @@ index 1569071..7112177 100644
      /// The minimum inline-axis coordinate of the line.
      ///
      /// For horizontal text, this would be the left of the line.
-@@ -213,6 +252,12 @@ pub struct LineMetrics {
+@@ -213,6 +269,12 @@ pub struct LineMetrics {
      /// For horizontal text, this is the bottom of the line box.
      pub block_max_coord: f32,
  
@@ -1051,7 +1252,7 @@ index 1569071..7112177 100644
      /// The minimum block-axis coordinate of the line's content.
      ///
      /// This covers, roughly, the line's glyphs and inline boxes. This does not take into account
-@@ -277,6 +322,12 @@ pub struct PositionedInlineBox {
+@@ -277,6 +339,12 @@ pub struct PositionedInlineBox {
      pub baseline: Option<f32>,
      pub id: u64,
      pub kind: InlineBoxKind,
@@ -1064,7 +1265,7 @@ index 1569071..7112177 100644
  }
  
  /// Sequence of fully positioned glyphs with the same style.
-@@ -299,6 +350,28 @@ impl<'a, B: Brush> GlyphRun<'a, B> {
+@@ -299,6 +367,28 @@ impl<'a, B: Brush> GlyphRun<'a, B> {
          &self.run
      }
  
@@ -1093,7 +1294,34 @@ index 1569071..7112177 100644
      /// Returns the associated style.
      ///
      /// See also [`Self::style_index`].
-@@ -433,23 +506,34 @@ impl<'a, B: Brush> Iterator for GlyphRunIter<'a, B> {
+@@ -356,6 +446,8 @@ impl<'a, B: Brush> GlyphRun<'a, B> {
+ struct AtomIter<'a> {
+     atoms: Atoms<'a>,
+     spacing: EffectiveSpacing,
++    /// pyro: the run's `text-fit` scale.
++    scale: f32,
+     is_rtl: bool,
+     /// The next atom in visual order, if it has been peeked but not yet consumed.
+     peeked: Option<Atom<'a>>,
+@@ -372,6 +464,7 @@ impl<'a> AtomIter<'a> {
+                 slice.atoms_start()
+             },
+             spacing: run.line_spacing(),
++            scale: run.text_fit_scale(),
+             is_rtl,
+             peeked: None,
+         }
+@@ -404,7 +497,8 @@ impl<'a> AtomIter<'a> {
+             .iter()
+             .map(|cluster| usize::from(cluster.glyph_len()))
+             .sum();
+-        let mut advance = atom.advance();
++        // pyro: the glyphs at the run's `text-fit` scale; the spacing already is.
++        let mut advance = atom.advance() * self.scale;
+         if glyph_count != 0 && !self.spacing.is_zero() {
+             advance += self.spacing.gaps(atom).total();
+         }
+@@ -433,23 +527,34 @@ impl<'a, B: Brush> Iterator for GlyphRunIter<'a, B> {
                      let x = self.offset
                          + self.line.data.metrics.inline_min_coord
                          + self.line.data.metrics.offset;
@@ -1135,7 +1363,7 @@ index 1569071..7112177 100644
                  }
                  LineItem::Run(run) => {
 diff --git a/src/layout/line_break.rs b/src/layout/line_break.rs
-index 3c3798c..3c62d1c 100644
+index 3c3798c..19f2ab4 100644
 --- a/src/layout/line_break.rs
 +++ b/src/layout/line_break.rs
 @@ -10,7 +10,8 @@ use alloc::vec::Vec;
@@ -1395,7 +1623,7 @@ index 3c3798c..3c62d1c 100644
  }
  
  /// Line breaking support for a paragraph.
-@@ -838,28 +986,118 @@ pub struct BreakLines<'a, B: Brush> {
+@@ -838,28 +986,123 @@ pub struct BreakLines<'a, B: Brush> {
      state: BreakerState,
      prev_state: Option<BreakerState>,
      done: bool,
@@ -1418,6 +1646,8 @@ index 3c3798c..3c62d1c 100644
          layout.data.height = 0.;
 +        // pyro: line edges are decided again from the shaped clusters.
 +        layout.data.restore_edge_clusters();
++        // pyro: and `text-fit` scales again.
++        layout.data.line_style_metrics.clear();
          let mut lines = LineLayout::default();
          lines.swap(&mut layout.data);
 -        lines.lines.clear();
@@ -1469,9 +1699,12 @@ index 3c3798c..3c62d1c 100644
 +        let kept = self.lines.lines.len();
 +        let data = &self.layout.data;
 +        let starts = &self.lines.line_starts;
++        // pyro: `text-fit` lines are not kept: their scales and span metrics are per break.
 +        let same_inputs = kept > 0
 +            && starts.len() == kept + 1
 +            && !self.line_open
++            && data.text_fit.kind == crate::TextFitKind::None
++            && self.lines.lines.iter().all(|line| line.text_fit.is_none())
 +            && inputs.layout_max_advance.to_bits() == self.state.layout_max_advance.to_bits()
 +            && inputs.indent_amount.to_bits() == data.indent_amount.to_bits()
 +            && inputs.indent_options == data.indent_options
@@ -1517,7 +1750,7 @@ index 3c3798c..3c62d1c 100644
      /// Reset the per-line running state in preparation for building a new line.
      ///
      /// The line starts out containing the root span box (the "strut", CSS 2 §10.8).
-@@ -877,6 +1115,31 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+@@ -877,6 +1120,31 @@ impl<'a, B: Brush> BreakLines<'a, B> {
          state.update_max_height_exceeded();
      }
  
@@ -1549,7 +1782,167 @@ index 3c3798c..3c62d1c 100644
      /// Add the layout's inline box `index` to the current line. Out-of-flow boxes contribute
      /// nothing to the line's metrics.
      fn append_layout_inline_box(&mut self, index: usize, next_x: f32) {
-@@ -906,6 +1169,76 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+@@ -899,6 +1167,159 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+         }
+     }
+ 
++    /// pyro: CSS `text-fit` (Blink's `LineFitter`): the factor the line just committed scales its
++    /// text by, its advance and span boxes at that scale. With
++    /// [`TextFitTarget::Consistent`](crate::TextFitTarget) every line takes the block's factor
++    /// once measured; otherwise a line that is not within two pixels of its width grows (shrinks)
++    /// so that its text fills what its boxes leave, bar the last line of `per-line`.
++    fn fit_line(&mut self, reason: BreakReason) {
++        use crate::{TextFitKind, TextFitTarget};
++        let data = &self.layout.data;
++        let fit = data.text_fit;
++        if fit.kind == TextFitKind::None {
++            return;
++        }
++        let line_index = self.lines.lines.len() - 1;
++        let line = &self.lines.lines[line_index];
++        let fixed = data.line_fixed_advance(&self.lines.line_items[line.item_range.clone()]);
++        let scale = match data.text_fit_scale {
++            Some(scale) => scale,
++            None => {
++                if fit.target == TextFitTarget::Consistent {
++                    return;
++                }
++                let content = line.metrics.advance - line.metrics.hanging_advance;
++                let diff = line.max_advance - content;
++                if !diff.is_finite() || diff.abs() < 2.0 * data.scale {
++                    return;
++                }
++                let applies = match fit.kind {
++                    TextFitKind::Grow => diff > 0.0,
++                    TextFitKind::Shrink => diff < 0.0,
++                    TextFitKind::None => false,
++                };
++                if !applies
++                    || fit.target == TextFitTarget::PerLine
++                        && matches!(reason, BreakReason::Explicit | BreakReason::None)
++                {
++                    return;
++                }
++                let flexible = content - fixed;
++                if flexible <= 0.0 {
++                    return;
++                }
++                fit.restrict((line.max_advance - fixed) / flexible)
++            }
++        };
++        if !scale.is_finite() || scale <= 0.0 || scale == 1.0 {
++            return;
++        }
++        let quantum = data.quantum();
++        let data = &mut self.layout.data;
++        let start = data.line_style_metrics.len() as u32;
++        crate::layout::style_metrics::scale_style_metrics(
++            &data.styles,
++            &data.style_metrics,
++            scale,
++            quantum,
++            &mut data.line_style_metrics,
++        );
++        let style_metrics = start..data.line_style_metrics.len() as u32;
++        let line = &mut self.lines.lines[line_index];
++        let text = line.metrics.advance - fixed;
++        line.metrics.advance = fixed + text * scale;
++        line.metrics.hanging_advance *= scale;
++        line.metrics.collapsed_advance *= scale;
++        line.text_fit = Some(crate::layout::data::LineTextFit {
++            scale,
++            style_metrics: style_metrics.clone(),
++        });
++        self.rescale_box_metrics(line_index, style_metrics, scale);
++    }
++
++    /// pyro: the vertical metrics of line `line_index` again, from its span boxes at `scale`
++    /// (`style_metrics`, into [`LayoutData::line_style_metrics`]): those the line was built with
++    /// are for unscaled text.
++    fn rescale_box_metrics(&mut self, line_index: usize, style_metrics: Range<u32>, scale: f32) {
++        let data = &mut self.layout.data;
++        let quantum = data.quantum();
++        let quantize = data.quantize;
++        let table = &data.line_style_metrics[style_metrics.start as usize..style_metrics.end as usize];
++        let state = &mut self.state;
++        let has_content = state.line.box_metrics.has_content;
++        state.line.box_metrics.reset();
++        state.contributed.clear();
++        state.subtrees.clear();
++        state
++            .line
++            .box_metrics
++            .add_style(0, table, &mut state.contributed, &mut state.subtrees);
++        let line = &self.lines.lines[line_index];
++        let mut placements = Vec::new();
++        for item in &self.lines.line_items[line.item_range.clone()] {
++            match item.kind {
++                LayoutItemKind::TextRun => {
++                    let shaped_run = &data.shaped_text.runs()[item.index];
++                    let clusters = data.shaped_text.shaped_clusters();
++                    let mut last = None;
++                    for cluster in item.shaped_cluster_range.clone() {
++                        let style = clusters[cluster as usize].style_index;
++                        if last == Some(style) {
++                            continue;
++                        }
++                        last = Some(style);
++                        state.line.box_metrics.add_style(
++                            style,
++                            table,
++                            &mut state.contributed,
++                            &mut state.subtrees,
++                        );
++                        // The run's own box, for `line-height: normal` with a fallback font.
++                        let line_height = data.styles[usize::from(style)].line_height;
++                        if let crate::style::LineHeight::MetricsRelative(_) = line_height {
++                            let font = shaped_run.font_metrics.scaled(scale);
++                            let height = line_height.resolve(shaped_run.font_size * scale, &font, quantum);
++                            let run_box = BoxMetrics::from_font(&font, height, quantum);
++                            let (offset, root) = table
++                                .get(usize::from(style))
++                                .map_or((0., 0), |m| (m.baseline_offset, m.aligned_subtree_root));
++                            state.line.box_metrics.add_box(root, offset, run_box, &mut state.subtrees);
++                        }
++                    }
++                }
++                LayoutItemKind::InlineBox => {
++                    let layout_box = &data.inline_boxes[item.index];
++                    let inline_box = &layout_box.inline_box;
++                    if inline_box.kind != InlineBoxKind::InFlow {
++                        continue;
++                    }
++                    let placement =
++                        inline_box_placement(inline_box, layout_box.parent_style_index, table, quantize);
++                    placements.push((item.index, placement.baseline_offset));
++                    if inline_box.vertical_align.is_line_relative() {
++                        state.line.box_metrics.add_line_relative_inline_box(
++                            inline_box.vertical_align,
++                            inline_box.height,
++                            quantize,
++                        );
++                    } else {
++                        state.line.box_metrics.add_inline_box(
++                            placement.aligned_subtree_root,
++                            placement.baseline_offset,
++                            placement.ascent,
++                            placement.descent,
++                            &mut state.subtrees,
++                        );
++                    }
++                }
++            }
++        }
++        state.line.box_metrics.has_content = has_content;
++        for (index, offset) in placements {
++            data.inline_boxes[index].baseline_offset = offset;
++        }
++    }
++
+     /// Reset state when a line has been committed
+     fn start_new_line(
+         &mut self,
+@@ -906,6 +1327,76 @@ impl<'a, B: Brush> BreakLines<'a, B> {
          max_advance: f32,
          line_indent: f32,
      ) -> Option<YieldData> {
@@ -1626,7 +2019,16 @@ index 3c3798c..3c62d1c 100644
          commit_line(
              self.layout,
              &mut self.lines,
-@@ -929,6 +1262,7 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+@@ -914,6 +1405,8 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+             reason,
+             line_indent,
+         );
++        // pyro: CSS `text-fit` scales the line's text to fill it.
++        self.fit_line(reason);
+ 
+         // A line containing only empty inline boxes (and no text) is an invisible line box with
+         // zero height; the strut only applies once the line has content. The trailing empty line
+@@ -929,6 +1422,7 @@ impl<'a, B: Brush> BreakLines<'a, B> {
  
          self.state.items = self.lines.line_items.len();
          self.state.lines = self.lines.lines.len();
@@ -1634,7 +2036,7 @@ index 3c3798c..3c62d1c 100644
          self.state.prev_boundary = None;
          self.state.emergency_boundary = None;
  
-@@ -952,6 +1286,7 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+@@ -952,6 +1446,7 @@ impl<'a, B: Brush> BreakLines<'a, B> {
              metrics: self.lines.lines.last().unwrap().metrics,
              line_y_start,
              line_y_end: self.state.line_y,
@@ -1642,7 +2044,7 @@ index 3c3798c..3c62d1c 100644
          }
      }
  
-@@ -987,6 +1322,7 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+@@ -987,6 +1482,7 @@ impl<'a, B: Brush> BreakLines<'a, B> {
      // than blink, for reasons which haven't been fully understood.
      #[doc(hidden)]
      pub fn set_prior_line_width(&mut self, advance: f32) {
@@ -1650,7 +2052,7 @@ index 3c3798c..3c62d1c 100644
          if let Some(line) = self.lines.lines.last_mut() {
              line.metrics.inline_max_coord = line.metrics.inline_min_coord + advance;
          }
-@@ -994,6 +1330,7 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+@@ -994,6 +1490,7 @@ impl<'a, B: Brush> BreakLines<'a, B> {
  
      /// Reverts the to an externally saved state.
      pub fn revert_to(&mut self, state: BreakerState) {
@@ -1658,7 +2060,7 @@ index 3c3798c..3c62d1c 100644
          self.state = state;
          self.lines.truncate(self.state.lines);
          self.lines.line_items.truncate(self.state.items);
-@@ -1026,6 +1363,18 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+@@ -1026,6 +1523,18 @@ impl<'a, B: Brush> BreakLines<'a, B> {
      /// Computes the next line in the paragraph. Returns the advance and size
      /// (width and height for horizontal layouts) of the line.
      pub fn break_next(&mut self) -> Option<YieldData> {
@@ -1677,7 +2079,7 @@ index 3c3798c..3c62d1c 100644
          assert!(
              self.state.layout_max_advance == f32::INFINITY
                  || self.state.line_max_advance - self.state.layout_max_advance < 1.0
-@@ -1035,6 +1384,14 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+@@ -1035,6 +1544,14 @@ impl<'a, B: Brush> BreakLines<'a, B> {
          if self.done {
              return None;
          }
@@ -1692,7 +2094,7 @@ index 3c3798c..3c62d1c 100644
          match &mut self.prev_state {
              Some(prev_state) => prev_state.clone_from(&self.state),
              None => self.prev_state = Some(self.state.clone()),
-@@ -1052,6 +1409,8 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+@@ -1052,6 +1569,8 @@ impl<'a, B: Brush> BreakLines<'a, B> {
          let line_indent = self.resolve_indent();
  
          let max_advance = max_advance - line_indent;
@@ -1701,7 +2103,7 @@ index 3c3798c..3c62d1c 100644
  
          // Iterate over remaining runs in the Layout
          let item_count = self.layout.data.items.len();
-@@ -1060,6 +1419,8 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+@@ -1060,6 +1579,8 @@ impl<'a, B: Brush> BreakLines<'a, B> {
  
              match item.kind {
                  LayoutItemKind::InlineBox => {
@@ -1710,7 +2112,7 @@ index 3c3798c..3c62d1c 100644
                      let inline_box = &self.layout.data.inline_boxes[item.index].inline_box;
  
                      // In-flow boxes are aligned relative to their containing style's span box
-@@ -1082,19 +1443,56 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+@@ -1082,19 +1603,56 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                                  advance: self.state.line.x,
                              }));
                          }
@@ -1769,7 +2171,7 @@ index 3c3798c..3c62d1c 100644
                      {
                          self.append_layout_inline_box(item.index, next_x);
  
-@@ -1103,15 +1501,28 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+@@ -1103,15 +1661,28 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                          if self.state.line.text_wrap_mode == TextWrapMode::Wrap {
                              self.state.mark_line_break_opportunity();
                          }
@@ -1806,7 +2208,7 @@ index 3c3798c..3c62d1c 100644
                      }
                  }
                  LayoutItemKind::TextRun => {
-@@ -1126,6 +1537,9 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+@@ -1126,6 +1697,9 @@ impl<'a, B: Brush> BreakLines<'a, B> {
  
                      // Iterate over the remaining atoms in the Run
                      for atom in slice.atoms_from(self.state.cluster_idx) {
@@ -1816,7 +2218,7 @@ index 3c3798c..3c62d1c 100644
                          // Retrieve metadata about the atom
                          let first_character = &atom.characters()[0];
                          let whitespace = first_character.whitespace;
-@@ -1161,10 +1575,24 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+@@ -1161,10 +1735,24 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                                  max_advance,
                                  line_indent,
                              );
@@ -1843,7 +2245,7 @@ index 3c3798c..3c62d1c 100644
                                  self.state.mark_line_break_opportunity();
                                  // break_opportunity = true;
                              }
-@@ -1174,21 +1602,84 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+@@ -1174,21 +1762,84 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                          && text_wrap_mode == TextWrapMode::Wrap
                          // If we're at the start of the line, this particular atom will never fit, so it's not a valid emergency break opportunity.
                          && self.state.line.x != 0.0
@@ -1931,7 +2333,7 @@ index 3c3798c..3c62d1c 100644
                              if max_height_exceeded {
                                  return self.max_height_break_data(line_height);
                              }
-@@ -1216,7 +1707,7 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+@@ -1216,7 +1867,7 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                                  spacing,
                                  item.bidi_level.is_rtl(),
                              );
@@ -1940,7 +2342,7 @@ index 3c3798c..3c62d1c 100644
                                  if max_height_exceeded {
                                      return self.max_height_break_data(line_height);
                                  }
-@@ -1228,6 +1719,24 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+@@ -1228,6 +1879,24 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                                      is_separator,
                                  );
                              }
@@ -1965,7 +2367,7 @@ index 3c3798c..3c62d1c 100644
                              // Case: we have previously encountered a REGULAR line-breaking opportunity in the current line
                              //
                              // We "take" the line-breaking opportunity by starting a new line and resetting our
-@@ -1283,6 +1792,8 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+@@ -1283,6 +1952,8 @@ impl<'a, B: Brush> BreakLines<'a, B> {
          if self.state.line.items.end == 0 {
              self.state.line.items.end = 1;
          }
@@ -1974,7 +2376,7 @@ index 3c3798c..3c62d1c 100644
          self.done = true;
          self.start_new_line(BreakReason::None, max_advance, line_indent)
      }
-@@ -1300,6 +1811,8 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+@@ -1300,6 +1971,8 @@ impl<'a, B: Brush> BreakLines<'a, B> {
      /// ligature or a multi-character grapheme), the whole atom is placed on the line before
      /// breaking.
      pub fn break_next_with_length(&mut self, max_chars: u32) -> Option<()> {
@@ -1983,7 +2385,7 @@ index 3c3798c..3c62d1c 100644
          if self.done {
              return None;
          }
-@@ -1318,7 +1831,13 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+@@ -1318,7 +1991,13 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                      let inline_box = &self.layout.data.inline_boxes[item.index].inline_box;
  
                      if inline_box.kind != InlineBoxKind::InFlow {
@@ -1998,7 +2400,7 @@ index 3c3798c..3c62d1c 100644
                          continue;
                      }
  
-@@ -1617,6 +2136,9 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+@@ -1617,6 +2296,9 @@ impl<'a, B: Brush> BreakLines<'a, B> {
          } else {
              line.metrics.baseline + line_box_extents.under
          };
@@ -2008,7 +2410,7 @@ index 3c3798c..3c62d1c 100644
          line.metrics.content_block_min_coord = line.metrics.baseline - content_box_extents.over;
          line.metrics.content_block_max_coord = line.metrics.baseline + content_box_extents.under;
  
-@@ -1628,6 +2150,10 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+@@ -1628,6 +2310,10 @@ impl<'a, B: Brush> BreakLines<'a, B> {
  
  impl<B: Brush> Drop for BreakLines<'_, B> {
      fn drop(&mut self) {
@@ -2019,7 +2421,7 @@ index 3c3798c..3c62d1c 100644
          // Compute the overall width and height of the entire layout
          // The "width" excludes hanging whitespace. The "full_width" includes it.
          let mut layout_width = 0_f32;
-@@ -1773,6 +2299,12 @@ fn commit_line<B: Brush>(
+@@ -1773,6 +2459,12 @@ fn commit_line<B: Brush>(
              }
          }
      }
@@ -2032,7 +2434,7 @@ index 3c3798c..3c62d1c 100644
      // let end_run_idx = lines.line_items.last().map(|item| item.index).unwrap_or(0);
      let end_item_idx = lines.line_items.len();
  
-@@ -1789,19 +2321,53 @@ fn commit_line<B: Brush>(
+@@ -1789,19 +2481,53 @@ fn commit_line<B: Brush>(
          BreakReason::Regular | BreakReason::Emergency => f32::INFINITY,
          BreakReason::Explicit | BreakReason::None => state.x - max_advance,
      };
@@ -2088,7 +2490,7 @@ index 3c3798c..3c62d1c 100644
      }
  
      lines.lines.push(LineData {
-@@ -1812,12 +2378,15 @@ fn commit_line<B: Brush>(
+@@ -1812,15 +2538,19 @@ fn commit_line<B: Brush>(
          num_justification_opportunities,
          justification: Justification {
              justification_end_cluster,
@@ -2104,7 +2506,11 @@ index 3c3798c..3c62d1c 100644
              ..Default::default()
          },
          aligned_subtree_offsets: 0..0,
-@@ -1866,8 +2435,11 @@ fn hanging_whitespace<B: Brush>(
++        text_fit: None,
+     });
+ 
+     // Reset state for the new line
+@@ -1866,8 +2596,11 @@ fn hanging_whitespace<B: Brush>(
      layout: &Layout<B>,
      line_items: &[LineItemData],
      overflow: f32,
@@ -2117,7 +2523,7 @@ index 3c3798c..3c62d1c 100644
      // Atoms with shaped clusters before this index may be stretched by justification.
      let mut justification_end_cluster = u32::MAX;
      let mut hanging_opportunities = 0;
-@@ -1888,8 +2460,8 @@ fn hanging_whitespace<B: Brush>(
+@@ -1888,8 +2621,8 @@ fn hanging_whitespace<B: Brush>(
              LayoutItemKind::InlineBox => {
                  let item = &layout.data.inline_boxes[line_item.index].inline_box;
  
@@ -2128,7 +2534,7 @@ index 3c3798c..3c62d1c 100644
                      break;
                  }
              }
-@@ -1943,12 +2515,32 @@ fn hanging_whitespace<B: Brush>(
+@@ -1943,12 +2676,32 @@ fn hanging_whitespace<B: Brush>(
                          }
                      }
                      hanging_whitespace_advance += hanging;
@@ -2162,7 +2568,7 @@ index 3c3798c..3c62d1c 100644
                      if !all_hang {
                          break 'items;
                      }
-@@ -1965,9 +2557,251 @@ fn hanging_whitespace<B: Brush>(
+@@ -1965,9 +2718,251 @@ fn hanging_whitespace<B: Brush>(
          hanging_whitespace_advance,
          justification_end_cluster,
          hanging_opportunities,
@@ -2671,11 +3077,173 @@ index 0000000..75dffe5
 +        .extend_from_slice(&old.line_starts[..=kept]);
 +    kept
 +}
+diff --git a/src/layout/run.rs b/src/layout/run.rs
+index 852bc48..e314b9b 100644
+--- a/src/layout/run.rs
++++ b/src/layout/run.rs
+@@ -96,7 +96,22 @@ impl<'a, B: Brush> Run<'a, B> {
+ 
+     /// Returns the font size for the run.
+     pub fn font_size(&self) -> f32 {
+-        self.shaped.font_size
++        self.shaped.font_size * self.text_fit_scale()
++    }
++
++    /// pyro: the factor CSS `text-fit` scales this run's text by on its line (1 for none): its
++    /// font size, metrics, advances and glyphs are at that scale.
++    #[inline]
++    pub fn text_fit_scale(&self) -> f32 {
++        match self.line_data {
++            Some(_) => self
++                .layout
++                .data
++                .lines
++                .get(self.line_index as usize)
++                .map_or(1.0, |line| line.text_fit_scale()),
++            None => 1.0,
++        }
+     }
+ 
+     /// Returns the font attributes for the run.
+@@ -121,8 +136,15 @@ impl<'a, B: Brush> Run<'a, B> {
+     }
+ 
+     /// Returns metrics for the run.
+-    pub fn font_metrics(&self) -> &FontMetrics {
+-        &self.shaped.font_metrics
++    ///
++    /// pyro: at the run's `text-fit` scale ([`Self::text_fit_scale`]).
++    pub fn font_metrics(&self) -> FontMetrics {
++        let scale = self.text_fit_scale();
++        if scale == 1.0 {
++            self.shaped.font_metrics
++        } else {
++            self.shaped.font_metrics.scaled(scale)
++        }
+     }
+ 
+     #[inline]
+@@ -132,7 +154,7 @@ impl<'a, B: Brush> Run<'a, B> {
+         } else {
+             Justification::NONE
+         };
+-        EffectiveSpacing::new(self.data.spacing, justification)
++        EffectiveSpacing::new(self.data.spacing.fit(self.text_fit_scale()), justification)
+     }
+ 
+     /// Returns the advance for the run.
+@@ -142,7 +164,14 @@ impl<'a, B: Brush> Run<'a, B> {
+     /// justification.
+     pub fn advance(&self) -> f32 {
+         let spacing = self.line_spacing();
+-        spacing.slice_advance(self.line_slice())
++        let advance = spacing.slice_advance(self.line_slice());
++        // pyro: with `text-fit`, the glyphs at the line's scale (the spacing already is).
++        let scale = self.text_fit_scale();
++        if scale == 1.0 {
++            return advance;
++        }
++        let glyphs = EffectiveSpacing::ZERO.slice_advance(self.line_slice());
++        glyphs * scale + (advance - glyphs)
+     }
+ 
+     /// Returns the original text range for the run.
+@@ -255,6 +284,7 @@ impl<'a, B: Brush> Run<'a, B> {
+             self.full_slice().narrow(shaped_clusters),
+             self.is_rtl(),
+             self.line_spacing(),
++            self.text_fit_scale(),
+         )
+     }
+ }
+@@ -281,10 +311,12 @@ pub(crate) struct Glyphs<'a> {
+     atom_glyph: usize,
+     /// The number of glyphs of the current atom. The last one gets `gaps.after`.
+     atom_glyph_count: usize,
++    /// pyro: the `text-fit` scale of the glyphs ([`Run::text_fit_scale`]).
++    scale: f32,
+ }
+ 
+ impl<'a> Glyphs<'a> {
+-    fn new(slice: ShapedSlice<'a>, is_rtl: bool, spacing: EffectiveSpacing) -> Self {
++    fn new(slice: ShapedSlice<'a>, is_rtl: bool, spacing: EffectiveSpacing, scale: f32) -> Self {
+         let clusters = slice.shaped_clusters_range();
+         Self {
+             slice,
+@@ -305,6 +337,7 @@ impl<'a> Glyphs<'a> {
+             gaps: Gaps::ZERO,
+             atom_glyph: 0,
+             atom_glyph_count: 0,
++            scale,
+         }
+     }
+ }
+@@ -316,6 +349,12 @@ impl Iterator for Glyphs<'_> {
+     fn next(&mut self) -> Option<Glyph> {
+         loop {
+             if let Some(mut glyph) = self.glyphs.next() {
++                // pyro: the glyph at the `text-fit` scale; the spacing is already at it.
++                if self.scale != 1.0 {
++                    glyph.x *= self.scale;
++                    glyph.y *= self.scale;
++                    glyph.advance *= self.scale;
++                }
+                 if self.spacing.is_some() {
+                     if self.atom_glyph == 0 {
+                         glyph.x += self.gaps.before;
 diff --git a/src/layout/spacing.rs b/src/layout/spacing.rs
-index 4eccc6c..bab503d 100644
+index 4eccc6c..9dc98a3 100644
 --- a/src/layout/spacing.rs
 +++ b/src/layout/spacing.rs
-@@ -101,7 +101,8 @@ impl Spacing {
+@@ -83,12 +83,46 @@ pub(crate) struct Spacing {
+     ///
+     /// [css-letter-spacing]: https://www.w3.org/TR/css-text-4/#letter-spacing-property
+     pub(crate) letter: f32,
++    /// pyro: which of the two are fractions of the font size (CSS `text-fit` scales those).
++    pub(crate) scales: crate::style::SpacingScales,
+ }
+ 
+ impl Spacing {
+     #[inline(always)]
+     pub(crate) const fn new(word: f32, letter: f32) -> Self {
+-        Self { word, letter }
++        Self { word, letter, scales: crate::style::SpacingScales { letter: false, word: false } }
++    }
++
++    /// pyro: the spacing with `scales` saying which parts scale with the font size.
++    #[inline(always)]
++    pub(crate) const fn with_scales(mut self, scales: crate::style::SpacingScales) -> Self {
++        self.scales = scales;
++        self
++    }
++
++    /// pyro: the spacing on a line `text-fit` scales by `scale`: its parts that are fractions of
++    /// the font size scale with the text.
++    #[inline(always)]
++    pub(crate) fn fit(mut self, scale: f32) -> Self {
++        if scale != 1.0 {
++            if self.scales.word {
++                self.word *= scale;
++            }
++            if self.scales.letter {
++                self.letter *= scale;
++            }
++        }
++        self
++    }
++
++    /// pyro: only the parts that keep their size when `text-fit` scales the text (lengths).
++    #[inline(always)]
++    pub(crate) fn fixed(self) -> Self {
++        Self {
++            word: if self.scales.word { 0. } else { self.word },
++            letter: if self.scales.letter { 0. } else { self.letter },
++            scales: self.scales,
++        }
+     }
+ 
+     #[inline(always)]
+@@ -101,7 +135,8 @@ impl Spacing {
      /// This is [`EffectiveSpacing::gaps`] under [`Justification::NONE`].
      #[inline(always)]
      pub(crate) fn gaps(self, whitespace: Whitespace) -> Gaps {
@@ -2685,7 +3253,7 @@ index 4eccc6c..bab503d 100644
              return Gaps::ZERO;
          }
  
-@@ -129,6 +130,14 @@ pub(crate) struct Justification {
+@@ -129,6 +164,14 @@ pub(crate) struct Justification {
      /// part of the last atom that doesn't fully hang (e.g., an NBSP doesn't hang, but if it closes
      /// the line, it shouldn't get justified).
      pub(crate) justification_end_cluster: u32,
@@ -2700,7 +3268,7 @@ index 4eccc6c..bab503d 100644
  }
  
  impl Justification {
-@@ -136,6 +145,8 @@ impl Justification {
+@@ -136,6 +179,8 @@ impl Justification {
      pub(crate) const NONE: Self = Self {
          amount_per_opportunity: 0.,
          justification_end_cluster: u32::MAX,
@@ -2709,7 +3277,17 @@ index 4eccc6c..bab503d 100644
      };
  }
  
-@@ -173,12 +184,35 @@ impl EffectiveSpacing {
+@@ -153,6 +198,9 @@ pub(crate) struct EffectiveSpacing {
+ }
+ 
+ impl EffectiveSpacing {
++    /// pyro: no spacing (the bare shaped advances).
++    pub(crate) const ZERO: Self = Self::new(Spacing::new(0., 0.), Justification::NONE);
++
+     /// The combined [`Spacing`] and [`Justification`] effective for a run.
+     ///
+     /// To measure text for purposes like line breaking, pass [`Justification::NONE`].
+@@ -173,12 +221,35 @@ impl EffectiveSpacing {
      #[inline(always)]
      pub(crate) fn gaps(self, atom: &Atom<'_>) -> Gaps {
          let whitespace = atom.characters()[0].whitespace;
@@ -2750,7 +3328,7 @@ index 4eccc6c..bab503d 100644
  
          gaps
 diff --git a/src/layout/style_metrics.rs b/src/layout/style_metrics.rs
-index 7b7b147..5a4c4e4 100644
+index 7b7b147..ed4c330 100644
 --- a/src/layout/style_metrics.rs
 +++ b/src/layout/style_metrics.rs
 @@ -56,7 +56,7 @@ use fontique::{Query, QueryFamily};
@@ -2780,7 +3358,19 @@ index 7b7b147..5a4c4e4 100644
      /// Distance from the baseline to the top of the line-height expanded span box.
      pub(crate) over: f32,
      /// Distance from the baseline to the bottom of the line-height expanded span box.
-@@ -101,34 +112,87 @@ pub(crate) struct StyleMetrics {
+@@ -94,6 +105,11 @@ pub(crate) struct StyleMetrics {
+     pub(crate) parent: u16,
+     /// The style's font size, against which `sub`/`super` of children are resolved.
+     pub(crate) font_size: f32,
++    /// pyro: the metrics of the first available font, unrounded, which a line that `text-fit`
++    /// scales scales ([`scale_style_metrics`]).
++    pub(crate) font: Option<FontMetrics>,
++    /// pyro: the space over and under the content area that annotations (emphasis marks) take.
++    pub(crate) annotation: [f32; 2],
+ }
+ 
+ /// Resolve the [`StyleMetrics`] of every style in `styles`, in table order.
+@@ -101,34 +117,89 @@ pub(crate) struct StyleMetrics {
  /// Relies on the style table being ordered parent-first (`style.parent <= index`), which both
  /// style builders guarantee. `shaped_text` is the already shaped text of the layout, whose run
  /// metrics are reused where a style's first available font was also used for shaping.
@@ -2842,6 +3432,7 @@ index 7b7b147..5a4c4e4 100644
 -        let mut metrics = StyleMetrics::from_font(&font_metrics, line_height, quantize);
 +        let mut metrics = StyleMetrics::from_font(&font_metrics, line_height, quantum);
          metrics.font_size = style.font_size;
++        metrics.font = Some(font_metrics);
 +        // pyro: the ideographic boxes: the font's `BASE` table, else derived from the em box as
 +        // Blink derives them (the em box sits on the descent; the face box is 5% of the em in).
 +        {
@@ -2865,6 +3456,7 @@ index 7b7b147..5a4c4e4 100644
 +        // takes room beyond its content area; the span box grows to hold it where its line height
 +        // leaves too little (CSS Ruby 1, 4.4).
 +        let space = style.annotation_space;
++        metrics.annotation = [space.over, space.under];
 +        if space.over > 0. {
 +            metrics.over = metrics.over.max(metrics.ascent + space.over);
 +        }
@@ -2874,7 +3466,74 @@ index 7b7b147..5a4c4e4 100644
  
          if index == 0 {
              // The root span box (the strut).
-@@ -220,18 +284,23 @@ pub(crate) struct BoxMetrics {
+@@ -173,6 +244,66 @@ pub(crate) fn resolve_style_metrics<B: Brush>(
+     }
+ }
+ 
++/// pyro: appends to `out` the span box metrics `base` (the layout's) have at `scale` times their
++/// font sizes, for a line CSS `text-fit` scales: Blink scales the text metrics of such a line's
++/// boxes, and their line heights unless those are lengths; the space emphasis marks take scales
++/// with the text. (Ruby turns `text-fit` off in Blink.)
++pub(crate) fn scale_style_metrics<B: Brush>(
++    styles: &[crate::layout::Style<B>],
++    base: &[StyleMetrics],
++    scale: f32,
++    quantum: f32,
++    out: &mut Vec<StyleMetrics>,
++) {
++    let quantize = quantum > 0.;
++    let start = out.len();
++    for (index, (style, base)) in styles.iter().zip(base).enumerate() {
++        let font = base
++            .font
++            .unwrap_or_else(|| FontMetrics::fallback(base.font_size))
++            .scaled(scale);
++        let font_size = base.font_size * scale;
++        let line_height = style.line_height.resolve(font_size, &font, quantum);
++        let mut metrics = StyleMetrics::from_font(&font, line_height, quantum);
++        metrics.font = Some(font);
++        metrics.font_size = font_size;
++        metrics.ideographic = base.ideographic.map(|value| value * scale);
++        // A side `text-box-trim` trims stays trimmed (to its scaled edge).
++        if base.content_over != base.ascent {
++            metrics.content_over = base.content_over * scale;
++        }
++        if base.content_under != base.descent {
++            metrics.content_under = base.content_under * scale;
++        }
++        let [over, under] = base.annotation;
++        metrics.annotation = [over * scale, under * scale];
++        if over > 0. {
++            metrics.over = metrics.over.max(metrics.ascent + over * scale);
++        }
++        if under > 0. {
++            metrics.under = metrics.under.max(metrics.descent + under * scale);
++        }
++        metrics.parent = base.parent;
++        if index > 0 {
++            let align = style.vertical_align;
++            if align.is_line_relative() {
++                metrics.aligned_subtree_root = index as u16;
++            } else {
++                let parent = &out[start + usize::from(base.parent).min(index - 1)];
++                let shift = shift_from_parent(align, metrics.over, metrics.under, parent);
++                metrics.exact_baseline_offset = parent.exact_baseline_offset + shift;
++                metrics.baseline_offset = if quantize {
++                    metrics.exact_baseline_offset.round()
++                } else {
++                    metrics.exact_baseline_offset
++                };
++                metrics.aligned_subtree_root = parent.aligned_subtree_root;
++            }
++        }
++        out.push(metrics);
++    }
++}
++
+ /// The metrics of a shaped run using `font` at `font_size`, if any: the shaper has then already
+ /// computed the metrics this style needs. Only used at the font's default variation location,
+ /// which covers the common non-variable-font case without re-resolving axes.
+@@ -220,18 +351,23 @@ pub(crate) struct BoxMetrics {
  impl BoxMetrics {
      /// The box of `font` expanded to `line_height`.
      ///
@@ -2904,7 +3563,7 @@ index 7b7b147..5a4c4e4 100644
          } else {
              ascent + half_leading
          };
-@@ -248,8 +317,9 @@ impl StyleMetrics {
+@@ -248,8 +384,9 @@ impl StyleMetrics {
      /// The font-derived metrics of a span box: its [`BoxMetrics`] and x-height. The remaining
      /// fields describe the box's place in the style tree and are filled in by
      /// [`resolve_style_metrics`].
@@ -2916,7 +3575,7 @@ index 7b7b147..5a4c4e4 100644
          // Fonts without an `OS/2.sxHeight` get the same estimate Gecko and Blink use
          // (`DEFAULT_XHEIGHT_FACTOR`); css-inline-3 §A.2 suggests measuring the `x` glyph or
          // `0.5em` instead, but this keeps us in line with browsers.
-@@ -258,6 +328,10 @@ impl StyleMetrics {
+@@ -258,6 +395,10 @@ impl StyleMetrics {
              ascent: box_metrics.ascent,
              descent: box_metrics.descent,
              x_height: if quantize { x_height.round() } else { x_height },
@@ -2927,10 +3586,16 @@ index 7b7b147..5a4c4e4 100644
              over: box_metrics.over,
              under: box_metrics.under,
              baseline_offset: 0.,
-@@ -269,6 +343,28 @@ impl StyleMetrics {
-     }
- }
- 
+@@ -265,6 +406,30 @@ impl StyleMetrics {
+             aligned_subtree_root: 0,
+             parent: 0,
+             font_size: 0.,
++            font: None,
++            annotation: [0.; 2],
++        }
++    }
++}
++
 +impl StyleMetrics {
 +    /// pyro: the distance from the baseline to a font metric edge (CSS Inline 3 `<text-edge>`):
 +    /// upwards for an over edge, downwards for an under edge.
@@ -2949,13 +3614,9 @@ index 7b7b147..5a4c4e4 100644
 +            // Not edges of that side: the text edge.
 +            (Cap | Ex, false) => self.descent,
 +            (Alphabetic, true) => self.ascent,
-+        }
-+    }
-+}
-+
- /// The baseline shift (positive upwards) of a box extending `over` above and `under` below its
- /// baseline, relative to the baseline of its `parent` span box, for a parent-relative
- /// `vertical-align` value: the `alignment-baseline` offset plus the `baseline-shift`.
+         }
+     }
+ }
 diff --git a/src/lib.rs b/src/lib.rs
 index e967f50..9b099dd 100644
 --- a/src/lib.rs
@@ -2987,7 +3648,7 @@ index e967f50..9b099dd 100644
  
  pub use builder::{RangedBuilder, StyleRunBuilder, TreeBuilder};
 diff --git a/src/resolve/mod.rs b/src/resolve/mod.rs
-index f465832..1b00840 100644
+index f465832..a8e29d4 100644
 --- a/src/resolve/mod.rs
 +++ b/src/resolve/mod.rs
 @@ -15,7 +15,7 @@ use super::style::{
@@ -2999,7 +3660,7 @@ index f465832..1b00840 100644
  use crate::util::nearly_eq;
  use crate::{LineBreak, LineHeight, OverflowWrap, VerticalAlign, layout};
  use crate::{TextWrapMode, WhiteSpaceCollapse, WordBreak};
-@@ -169,6 +169,15 @@ impl ResolveContext {
+@@ -169,6 +169,16 @@ impl ResolveContext {
              StyleProperty::OverflowWrap(value) => OverflowWrap(*value),
              StyleProperty::TextWrapMode(value) => TextWrapMode(*value),
              StyleProperty::WhiteSpaceCollapse(value) => WhiteSpaceCollapse(*value),
@@ -3012,10 +3673,11 @@ index f465832..1b00840 100644
 +            StyleProperty::TextSpacingTrim(value) => TextSpacingTrim(*value),
 +            StyleProperty::TextAutospace(value) => TextAutospace(*value),
 +            StyleProperty::TextJustify(value) => TextJustify(*value),
++            StyleProperty::SpacingScales(value) => SpacingScales(*value),
          }
      }
  
-@@ -210,6 +219,17 @@ impl ResolveContext {
+@@ -210,6 +220,18 @@ impl ResolveContext {
              overflow_wrap: raw_style.overflow_wrap,
              text_wrap_mode: raw_style.text_wrap_mode,
              white_space_collapse: raw_style.white_space_collapse,
@@ -3028,12 +3690,13 @@ index f465832..1b00840 100644
 +            text_spacing_trim: raw_style.text_spacing_trim,
 +            text_autospace: raw_style.text_autospace,
 +            text_justify: raw_style.text_justify,
++            spacing_scales: raw_style.spacing_scales,
 +            annotation_space: raw_style.annotation_space.scale(scale),
 +            text_box_trim: raw_style.text_box_trim,
          }
      }
  
-@@ -400,6 +420,32 @@ pub(crate) enum ResolvedProperty<B: Brush> {
+@@ -400,6 +422,34 @@ pub(crate) enum ResolvedProperty<B: Brush> {
      TextWrapMode(TextWrapMode),
      /// Whitespace collapsing and hanging behavior.
      WhiteSpaceCollapse(WhiteSpaceCollapse),
@@ -3055,6 +3718,8 @@ index f465832..1b00840 100644
 +    TextAutospace(crate::style::TextAutospace),
 +    /// pyro: where justification adds space.
 +    TextJustify(crate::style::TextJustify),
++    /// pyro: which of the letter and word spacing scale with the font size.
++    SpacingScales(crate::style::SpacingScales),
 +}
 +
 +/// pyro: `tab_size` with a length in layout units.
@@ -3066,7 +3731,7 @@ index f465832..1b00840 100644
  }
  
  /// Flattened group of style properties.
-@@ -448,6 +494,29 @@ pub(crate) struct ResolvedStyle<B: Brush> {
+@@ -448,6 +498,31 @@ pub(crate) struct ResolvedStyle<B: Brush> {
      pub(crate) text_wrap_mode: TextWrapMode,
      /// Whitespace collapsing and hanging behavior.
      pub(crate) white_space_collapse: WhiteSpaceCollapse,
@@ -3089,6 +3754,8 @@ index f465832..1b00840 100644
 +    pub(crate) text_autospace: crate::style::TextAutospace,
 +    /// pyro: where justification adds space.
 +    pub(crate) text_justify: crate::style::TextJustify,
++    /// pyro: which of the letter and word spacing scale with the font size.
++    pub(crate) spacing_scales: crate::style::SpacingScales,
 +    /// pyro: room beyond the content area ([`TextStyle::annotation_space`]), scaled.
 +    pub(crate) annotation_space: AnnotationSpace,
 +    /// pyro: the edges the content area is trimmed to ([`TextStyle::text_box_trim`]).
@@ -3096,7 +3763,7 @@ index f465832..1b00840 100644
  }
  
  impl<B: Brush> ResolvedStyle<B> {
-@@ -481,6 +550,15 @@ impl<B: Brush> ResolvedStyle<B> {
+@@ -481,6 +556,16 @@ impl<B: Brush> ResolvedStyle<B> {
              OverflowWrap(value) => self.overflow_wrap = value,
              TextWrapMode(value) => self.text_wrap_mode = value,
              WhiteSpaceCollapse(value) => self.white_space_collapse = value,
@@ -3109,10 +3776,11 @@ index f465832..1b00840 100644
 +            TextSpacingTrim(value) => self.text_spacing_trim = value,
 +            TextAutospace(value) => self.text_autospace = value,
 +            TextJustify(value) => self.text_justify = value,
++            SpacingScales(value) => self.spacing_scales = value,
          }
      }
  
-@@ -513,6 +591,15 @@ impl<B: Brush> ResolvedStyle<B> {
+@@ -513,6 +598,16 @@ impl<B: Brush> ResolvedStyle<B> {
              OverflowWrap(value) => self.overflow_wrap == *value,
              TextWrapMode(value) => self.text_wrap_mode == *value,
              WhiteSpaceCollapse(value) => self.white_space_collapse == *value,
@@ -3125,10 +3793,11 @@ index f465832..1b00840 100644
 +            TextSpacingTrim(value) => self.text_spacing_trim == *value,
 +            TextAutospace(value) => self.text_autospace == *value,
 +            TextJustify(value) => self.text_justify == *value,
++            SpacingScales(value) => self.spacing_scales == *value,
          }
      }
  
-@@ -527,6 +614,9 @@ impl<B: Brush> ResolvedStyle<B> {
+@@ -527,6 +622,9 @@ impl<B: Brush> ResolvedStyle<B> {
              overflow_wrap: self.overflow_wrap,
              text_wrap_mode: self.text_wrap_mode,
              white_space_collapse: self.white_space_collapse,
@@ -3681,7 +4350,7 @@ index 0000000..246bca1
 +    }
 +}
 diff --git a/src/shape/mod.rs b/src/shape/mod.rs
-index 060a32d..c2596bd 100644
+index 060a32d..19543bb 100644
 --- a/src/shape/mod.rs
 +++ b/src/shape/mod.rs
 @@ -4,6 +4,9 @@
@@ -3853,7 +4522,15 @@ index 060a32d..c2596bd 100644
                  inline_box_iter.next();
              } else {
                  break;
-@@ -234,19 +258,112 @@ pub(crate) fn shape_text<'a, B: Brush>(
+@@ -228,25 +252,119 @@ pub(crate) fn shape_text<'a, B: Brush>(
+             // we probably shouldn't itemize on them; we should just ensure we don't ligate if
+             // they're non-zero).
+             run_style,
+-            Spacing::new(run_style.word_spacing, run_style.letter_spacing),
++            Spacing::new(run_style.word_spacing, run_style.letter_spacing)
++                .with_scales(run_style.spacing_scales),
+             char_style_indices,
+         );
      }
  
      // Process any remaining inline boxes whose index is greater than the length of the text
@@ -3977,7 +4654,7 @@ index 060a32d..c2596bd 100644
  }
  
  /// The font to use if a font query doesn't return any font candidates at all.
-@@ -259,6 +376,15 @@ enum LastResortFont {
+@@ -259,6 +377,15 @@ enum LastResortFont {
  
  struct FontSelector<'a, 'b, B: Brush> {
      query: &'b mut Query<'a>,
@@ -3993,7 +4670,7 @@ index 060a32d..c2596bd 100644
      fonts_id: Option<usize>,
      rcx: &'a ResolveContext,
      styles: &'a [ResolvedStyle<B>],
-@@ -284,11 +410,14 @@ impl<'a, 'b, B: Brush> FontSelector<'a, 'b, B> {
+@@ -284,11 +411,14 @@ impl<'a, 'b, B: Brush> FontSelector<'a, 'b, B> {
          rcx: &'a ResolveContext,
          styles: &'a [ResolvedStyle<B>],
          analysis_data_sources: &'a AnalysisDataSources,
@@ -4008,7 +4685,7 @@ index 060a32d..c2596bd 100644
              fonts_id: None,
              rcx,
              styles,
-@@ -360,12 +489,36 @@ impl<'a, 'b, B: Brush> parley_engine::FontSelector for FontSelector<'a, 'b, B> {
+@@ -360,12 +490,36 @@ impl<'a, 'b, B: Brush> parley_engine::FontSelector for FontSelector<'a, 'b, B> {
          // not *too* expensive, once the new borrow checker (Polonius) is stable, we could remove
          // this check and do the last-resort scan after the failed query:
          // <https://blog.rust-lang.org/2026/08/04/enabling-polonius-alpha-on-nightly/>.
@@ -4047,7 +4724,7 @@ index 060a32d..c2596bd 100644
                      fontique::QueryStatus::Stop
                  } else {
                      fontique::QueryStatus::Continue
-@@ -373,6 +526,12 @@ impl<'a, 'b, B: Brush> parley_engine::FontSelector for FontSelector<'a, 'b, B> {
+@@ -373,6 +527,12 @@ impl<'a, 'b, B: Brush> parley_engine::FontSelector for FontSelector<'a, 'b, B> {
              });
              yields_font
          });
@@ -4061,10 +4738,10 @@ index 060a32d..c2596bd 100644
              if matches!(self.last_resort_font, LastResortFont::Unresolved) {
                  if let Some(font) = any_font(self.query) {
 diff --git a/src/style/mod.rs b/src/style/mod.rs
-index d9977df..59fd85b 100644
+index d9977df..847dfe1 100644
 --- a/src/style/mod.rs
 +++ b/src/style/mod.rs
-@@ -43,6 +43,94 @@ pub enum WhiteSpaceCollapse {
+@@ -43,6 +43,155 @@ pub enum WhiteSpaceCollapse {
      BreakSpaces,
  }
  
@@ -4120,6 +4797,67 @@ index d9977df..59fd85b 100644
 +    TrimAll,
 +}
 +
++/// pyro: how a layout's text is scaled to fill its lines (CSS Text 5 `text-fit`), as Blink does
++/// it by default: after the lines are broken, a line's text is drawn scaled (glyphs, advances,
++/// and the span boxes whose line height follows the font size); inline boxes and span edges keep
++/// their size.
++#[derive(Debug, Default, Clone, Copy, PartialEq)]
++pub struct TextFit {
++    /// Whether lines grow, shrink or neither.
++    pub kind: TextFitKind,
++    /// Which lines are scaled, and by what.
++    pub target: TextFitTarget,
++    /// The limit on the scale factor (`1.0` for `100%`): the most a line grows by, or the least
++    /// it shrinks to.
++    pub limit: Option<f32>,
++}
++
++/// pyro: whether `text-fit` grows lines, shrinks them, or neither.
++#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
++pub enum TextFitKind {
++    /// Lines keep their size.
++    #[default]
++    None,
++    /// Lines narrower than their box grow to fill it.
++    Grow,
++    /// Lines wider than their box shrink to fit it.
++    Shrink,
++}
++
++/// pyro: which lines `text-fit` scales.
++#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
++pub enum TextFitTarget {
++    /// All lines by one factor, the one that makes the widest (or narrowest) fit
++    /// ([`crate::Layout::text_fit_block_scale`]).
++    #[default]
++    Consistent,
++    /// Each line by its own factor, except a block's last line and lines before a forced break.
++    PerLine,
++    /// Each line by its own factor.
++    PerLineAll,
++}
++
++impl TextFit {
++    /// `scale` within the limit (Blink's `RestrictScale`).
++    pub(crate) fn restrict(&self, scale: f32) -> f32 {
++        match self.limit {
++            None => scale,
++            Some(limit) if self.kind == TextFitKind::Grow => scale.min(limit.max(1.0)),
++            Some(limit) => scale.max(limit.min(1.0)),
++        }
++    }
++}
++
++/// pyro: which of a style's letter and word spacing are fractions of its font size (CSS
++/// percentages): `text-fit` scales those with the text and leaves lengths as they are.
++#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
++pub struct SpacingScales {
++    /// `letter-spacing` is a percentage.
++    pub letter: bool,
++    /// `word-spacing` is a percentage.
++    pub word: bool,
++}
++
 +/// pyro: where justification adds space (CSS `text-justify`).
 +#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 +pub enum TextJustify {
@@ -4159,7 +4897,7 @@ index d9977df..59fd85b 100644
  /// The height that this text takes up. The default is `MetricsRelative(1.0)`, which is the given
  /// font's preferred line height.
  #[derive(Debug, Clone, Copy, PartialEq)]
-@@ -89,15 +177,32 @@ impl LineHeight {
+@@ -89,15 +238,32 @@ impl LineHeight {
  
      /// The line height in layout units for text set in a font with `metrics` at `font_size`.
      ///
@@ -4198,7 +4936,7 @@ index d9977df..59fd85b 100644
              }
              Self::MetricsRelative(value) => {
                  (metrics.ascent + metrics.descent + metrics.leading) * value
-@@ -106,6 +211,11 @@ impl LineHeight {
+@@ -106,6 +272,11 @@ impl LineHeight {
      }
  }
  
@@ -4210,7 +4948,7 @@ index d9977df..59fd85b 100644
  /// Which reference of a span (or [`InlineBox`]) is aligned with the same reference of its
  /// *parent* span (the enclosing style span, or the root style for top-level content). Mirrors the
  /// CSS `alignment-baseline` property.
-@@ -277,6 +387,25 @@ pub enum StyleProperty<'a, B: Brush> {
+@@ -277,6 +448,27 @@ pub enum StyleProperty<'a, B: Brush> {
      TextWrapMode(TextWrapMode),
      /// Whitespace collapsing and hanging behavior.
      WhiteSpaceCollapse(WhiteSpaceCollapse),
@@ -4233,10 +4971,12 @@ index d9977df..59fd85b 100644
 +    TextAutospace(TextAutospace),
 +    /// pyro: where justification adds space.
 +    TextJustify(TextJustify),
++    /// pyro: which of the letter and word spacing scale with the font size.
++    SpacingScales(SpacingScales),
  }
  
  /// Unresolved styles.
-@@ -334,6 +463,80 @@ pub struct TextStyle<'family, 'settings, B: Brush> {
+@@ -334,6 +526,83 @@ pub struct TextStyle<'family, 'settings, B: Brush> {
      pub text_wrap_mode: TextWrapMode,
      /// Whitespace collapsing and hanging behavior.
      pub white_space_collapse: WhiteSpaceCollapse,
@@ -4264,6 +5004,9 @@ index d9977df..59fd85b 100644
 +    pub text_autospace: TextAutospace,
 +    /// pyro: where justification adds space in this style's text (CSS `text-justify`).
 +    pub text_justify: TextJustify,
++    /// pyro: which of this style's letter and word spacing scale with its font size (CSS
++    /// percentages), which `text-fit` scales.
++    pub spacing_scales: SpacingScales,
 +    /// pyro: room the span's text needs beyond its content area, over and under it, for what is
 +    /// drawn there (ruby annotations, emphasis marks). The line box holds the span's content area
 +    /// grown by it, where its line height leaves too little (CSS Ruby 1, 4.4).
@@ -4317,7 +5060,7 @@ index d9977df..59fd85b 100644
  }
  
  impl<B: Brush> Default for TextStyle<'static, 'static, B> {
-@@ -365,6 +568,17 @@ impl<B: Brush> Default for TextStyle<'static, 'static, B> {
+@@ -365,6 +634,18 @@ impl<B: Brush> Default for TextStyle<'static, 'static, B> {
              overflow_wrap: OverflowWrap::default(),
              text_wrap_mode: TextWrapMode::default(),
              white_space_collapse: WhiteSpaceCollapse::default(),
@@ -4330,6 +5073,7 @@ index d9977df..59fd85b 100644
 +            text_spacing_trim: TextSpacingTrim::default(),
 +            text_autospace: TextAutospace::default(),
 +            text_justify: TextJustify::default(),
++            spacing_scales: SpacingScales::default(),
 +            annotation_space: AnnotationSpace::default(),
 +            text_box_trim: TextBoxTrim::default(),
          }

@@ -83,12 +83,46 @@ pub(crate) struct Spacing {
     ///
     /// [css-letter-spacing]: https://www.w3.org/TR/css-text-4/#letter-spacing-property
     pub(crate) letter: f32,
+    /// pyro: which of the two are fractions of the font size (CSS `text-fit` scales those).
+    pub(crate) scales: crate::style::SpacingScales,
 }
 
 impl Spacing {
     #[inline(always)]
     pub(crate) const fn new(word: f32, letter: f32) -> Self {
-        Self { word, letter }
+        Self { word, letter, scales: crate::style::SpacingScales { letter: false, word: false } }
+    }
+
+    /// pyro: the spacing with `scales` saying which parts scale with the font size.
+    #[inline(always)]
+    pub(crate) const fn with_scales(mut self, scales: crate::style::SpacingScales) -> Self {
+        self.scales = scales;
+        self
+    }
+
+    /// pyro: the spacing on a line `text-fit` scales by `scale`: its parts that are fractions of
+    /// the font size scale with the text.
+    #[inline(always)]
+    pub(crate) fn fit(mut self, scale: f32) -> Self {
+        if scale != 1.0 {
+            if self.scales.word {
+                self.word *= scale;
+            }
+            if self.scales.letter {
+                self.letter *= scale;
+            }
+        }
+        self
+    }
+
+    /// pyro: only the parts that keep their size when `text-fit` scales the text (lengths).
+    #[inline(always)]
+    pub(crate) fn fixed(self) -> Self {
+        Self {
+            word: if self.scales.word { 0. } else { self.word },
+            letter: if self.scales.letter { 0. } else { self.letter },
+            scales: self.scales,
+        }
     }
 
     #[inline(always)]
@@ -164,6 +198,9 @@ pub(crate) struct EffectiveSpacing {
 }
 
 impl EffectiveSpacing {
+    /// pyro: no spacing (the bare shaped advances).
+    pub(crate) const ZERO: Self = Self::new(Spacing::new(0., 0.), Justification::NONE);
+
     /// The combined [`Spacing`] and [`Justification`] effective for a run.
     ///
     /// To measure text for purposes like line breaking, pass [`Justification::NONE`].

@@ -616,6 +616,23 @@ pub(crate) fn vertical_align(style: &stylo::ComputedValues) -> parley::VerticalA
 /// pyro: CSS Text 4 `text-spacing-trim`. Font features that set the widths of fullwidth
 /// punctuation themselves (`halt`, `palt`, `font-variant-east-asian: proportional-width`, ...)
 /// leave it all to the font, as in Blink.
+/// pyro: CSS `text-fit` of a block container, `None` for `none`.
+pub(crate) fn text_fit(style: &style::properties::ComputedValues) -> Option<parley::TextFit> {
+    use style::values::generics::text::{TextFitKind, TextFitTarget};
+    let fit = &style.get_inherited_text().text_fit;
+    let kind = match fit.kind {
+        TextFitKind::None => return None,
+        TextFitKind::Grow => parley::TextFitKind::Grow,
+        TextFitKind::Shrink => parley::TextFitKind::Shrink,
+    };
+    let target = match fit.target {
+        TextFitTarget::Consistent => parley::TextFitTarget::Consistent,
+        TextFitTarget::PerLine => parley::TextFitTarget::PerLine,
+        TextFitTarget::PerLineAll => parley::TextFitTarget::PerLineAll,
+    };
+    Some(parley::TextFit { kind, target, limit: fit.limit.map(|limit| limit.0) })
+}
+
 fn text_spacing_trim(
     style: &stylo::ComputedValues,
     features: &[parley::FontFeature],
@@ -783,6 +800,11 @@ pub(crate) fn style(
         vertical_align,
         word_spacing,
         letter_spacing,
+        // pyro: percentages scale with the text on lines `text-fit` scales.
+        spacing_scales: parley::SpacingScales {
+            letter: itext_styles.letter_spacing.0.has_percentage(),
+            word: itext_styles.word_spacing.has_percentage(),
+        },
         text_wrap_mode,
         white_space_collapse: white_space_collapse(itext_styles.white_space_collapse),
         dictionary_breaks,

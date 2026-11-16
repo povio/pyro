@@ -99,6 +99,18 @@ pub type TextAlign = specified::TextAlignKeyword;
 /// The computed value of `text-indent`.
 pub type TextIndent = GenericTextIndent<LengthPercentage>;
 
+/// pyro: a computed value for the `text-fit` property.
+pub type TextFit = crate::values::generics::text::GenericTextFit<crate::values::computed::Percentage>;
+
+impl TextFit {
+    /// `none`.
+    #[inline]
+    pub fn none() -> Self {
+        use crate::values::generics::text::{TextFitKind, TextFitTarget};
+        Self { kind: TextFitKind::None, target: TextFitTarget::Consistent, limit: None }
+    }
+}
+
 /// A computed value for the `hyphenate-character` property.
 pub type HyphenateLimitChars = GenericHyphenateLimitChars<CSSInteger>;
 

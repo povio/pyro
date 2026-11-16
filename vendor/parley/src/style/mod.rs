@@ -95,6 +95,67 @@ pub enum TextSpacingTrim {
     TrimAll,
 }
 
+/// pyro: how a layout's text is scaled to fill its lines (CSS Text 5 `text-fit`), as Blink does
+/// it by default: after the lines are broken, a line's text is drawn scaled (glyphs, advances,
+/// and the span boxes whose line height follows the font size); inline boxes and span edges keep
+/// their size.
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
+pub struct TextFit {
+    /// Whether lines grow, shrink or neither.
+    pub kind: TextFitKind,
+    /// Which lines are scaled, and by what.
+    pub target: TextFitTarget,
+    /// The limit on the scale factor (`1.0` for `100%`): the most a line grows by, or the least
+    /// it shrinks to.
+    pub limit: Option<f32>,
+}
+
+/// pyro: whether `text-fit` grows lines, shrinks them, or neither.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum TextFitKind {
+    /// Lines keep their size.
+    #[default]
+    None,
+    /// Lines narrower than their box grow to fill it.
+    Grow,
+    /// Lines wider than their box shrink to fit it.
+    Shrink,
+}
+
+/// pyro: which lines `text-fit` scales.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum TextFitTarget {
+    /// All lines by one factor, the one that makes the widest (or narrowest) fit
+    /// ([`crate::Layout::text_fit_block_scale`]).
+    #[default]
+    Consistent,
+    /// Each line by its own factor, except a block's last line and lines before a forced break.
+    PerLine,
+    /// Each line by its own factor.
+    PerLineAll,
+}
+
+impl TextFit {
+    /// `scale` within the limit (Blink's `RestrictScale`).
+    pub(crate) fn restrict(&self, scale: f32) -> f32 {
+        match self.limit {
+            None => scale,
+            Some(limit) if self.kind == TextFitKind::Grow => scale.min(limit.max(1.0)),
+            Some(limit) => scale.max(limit.min(1.0)),
+        }
+    }
+}
+
+/// pyro: which of a style's letter and word spacing are fractions of its font size (CSS
+/// percentages): `text-fit` scales those with the text and leaves lengths as they are.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct SpacingScales {
+    /// `letter-spacing` is a percentage.
+    pub letter: bool,
+    /// `word-spacing` is a percentage.
+    pub word: bool,
+}
+
 /// pyro: where justification adds space (CSS `text-justify`).
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum TextJustify {
@@ -406,6 +467,8 @@ pub enum StyleProperty<'a, B: Brush> {
     TextAutospace(TextAutospace),
     /// pyro: where justification adds space.
     TextJustify(TextJustify),
+    /// pyro: which of the letter and word spacing scale with the font size.
+    SpacingScales(SpacingScales),
 }
 
 /// Unresolved styles.
@@ -487,6 +550,9 @@ pub struct TextStyle<'family, 'settings, B: Brush> {
     pub text_autospace: TextAutospace,
     /// pyro: where justification adds space in this style's text (CSS `text-justify`).
     pub text_justify: TextJustify,
+    /// pyro: which of this style's letter and word spacing scale with its font size (CSS
+    /// percentages), which `text-fit` scales.
+    pub spacing_scales: SpacingScales,
     /// pyro: room the span's text needs beyond its content area, over and under it, for what is
     /// drawn there (ruby annotations, emphasis marks). The line box holds the span's content area
     /// grown by it, where its line height leaves too little (CSS Ruby 1, 4.4).
@@ -577,6 +643,7 @@ impl<B: Brush> Default for TextStyle<'static, 'static, B> {
             text_spacing_trim: TextSpacingTrim::default(),
             text_autospace: TextAutospace::default(),
             text_justify: TextJustify::default(),
+            spacing_scales: SpacingScales::default(),
             annotation_space: AnnotationSpace::default(),
             text_box_trim: TextBoxTrim::default(),
         }

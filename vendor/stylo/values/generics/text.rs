@@ -84,6 +84,103 @@ impl<Integer: ToCss + PartialEq> ToCss for GenericHyphenateLimitChars<Integer> {
     }
 }
 
+/// pyro: how `text-fit` (CSS Text 5) scales a block's text: not at all, up or down.
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    MallocSizeOf,
+    Parse,
+    PartialEq,
+    SpecifiedValueInfo,
+    ToComputedValue,
+    ToCss,
+    ToResolvedValue,
+    ToShmem,
+    ToTyped,
+)]
+#[repr(u8)]
+pub enum TextFitKind {
+    /// `none`
+    None,
+    /// `grow`
+    Grow,
+    /// `shrink`
+    Shrink,
+}
+
+/// pyro: which lines `text-fit` scales: all by one factor, or each line on its own (the last
+/// one too with `per-line-all`).
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    MallocSizeOf,
+    Parse,
+    PartialEq,
+    SpecifiedValueInfo,
+    ToComputedValue,
+    ToCss,
+    ToResolvedValue,
+    ToShmem,
+    ToTyped,
+)]
+#[repr(u8)]
+pub enum TextFitTarget {
+    /// `consistent`
+    Consistent,
+    /// `per-line`
+    PerLine,
+    /// `per-line-all`
+    PerLineAll,
+}
+
+/// pyro: a generic value for the `text-fit` property:
+/// `[none | grow | shrink] [consistent | per-line | per-line-all]? <percentage>?`.
+#[derive(
+    Clone,
+    Debug,
+    MallocSizeOf,
+    PartialEq,
+    SpecifiedValueInfo,
+    ToComputedValue,
+    ToResolvedValue,
+    ToShmem,
+    ToTyped,
+)]
+#[repr(C)]
+#[typed(todo_derive_fields)]
+pub struct GenericTextFit<Percentage> {
+    /// Whether text grows, shrinks or neither.
+    pub kind: TextFitKind,
+    /// Which lines are scaled.
+    pub target: TextFitTarget,
+    /// The limit on the scale factor (`100%` is 1).
+    pub limit: Option<Percentage>,
+}
+
+impl<Percentage: ToCss> ToCss for GenericTextFit<Percentage> {
+    fn to_css<W>(&self, dest: &mut CssWriter<W>) -> fmt::Result
+    where
+        W: Write,
+    {
+        self.kind.to_css(dest)?;
+        if self.target != TextFitTarget::Consistent {
+            dest.write_char(' ')?;
+            self.target.to_css(dest)?;
+        }
+        if let Some(limit) = &self.limit {
+            dest.write_char(' ')?;
+            limit.to_css(dest)?;
+        }
+        Ok(())
+    }
+}
+
 /// A generic value for the `initial-letter` property.
 #[derive(
     Clone,

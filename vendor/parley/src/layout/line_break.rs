@@ -1005,6 +1005,8 @@ impl<'a, B: Brush> BreakLines<'a, B> {
         layout.data.height = 0.;
         // pyro: line edges are decided again from the shaped clusters.
         layout.data.restore_edge_clusters();
+        // pyro: and `text-fit` scales again.
+        layout.data.line_style_metrics.clear();
         let mut lines = LineLayout::default();
         lines.swap(&mut layout.data);
         lines.clear();
@@ -1053,9 +1055,12 @@ impl<'a, B: Brush> BreakLines<'a, B> {
         let kept = self.lines.lines.len();
         let data = &self.layout.data;
         let starts = &self.lines.line_starts;
+        // pyro: `text-fit` lines are not kept: their scales and span metrics are per break.
         let same_inputs = kept > 0
             && starts.len() == kept + 1
             && !self.line_open
+            && data.text_fit.kind == crate::TextFitKind::None
+            && self.lines.lines.iter().all(|line| line.text_fit.is_none())
             && inputs.layout_max_advance.to_bits() == self.state.layout_max_advance.to_bits()
             && inputs.indent_amount.to_bits() == data.indent_amount.to_bits()
             && inputs.indent_options == data.indent_options
@@ -1162,6 +1167,159 @@ impl<'a, B: Brush> BreakLines<'a, B> {
         }
     }
 
+    /// pyro: CSS `text-fit` (Blink's `LineFitter`): the factor the line just committed scales its
+    /// text by, its advance and span boxes at that scale. With
+    /// [`TextFitTarget::Consistent`](crate::TextFitTarget) every line takes the block's factor
+    /// once measured; otherwise a line that is not within two pixels of its width grows (shrinks)
+    /// so that its text fills what its boxes leave, bar the last line of `per-line`.
+    fn fit_line(&mut self, reason: BreakReason) {
+        use crate::{TextFitKind, TextFitTarget};
+        let data = &self.layout.data;
+        let fit = data.text_fit;
+        if fit.kind == TextFitKind::None {
+            return;
+        }
+        let line_index = self.lines.lines.len() - 1;
+        let line = &self.lines.lines[line_index];
+        let fixed = data.line_fixed_advance(&self.lines.line_items[line.item_range.clone()]);
+        let scale = match data.text_fit_scale {
+            Some(scale) => scale,
+            None => {
+                if fit.target == TextFitTarget::Consistent {
+                    return;
+                }
+                let content = line.metrics.advance - line.metrics.hanging_advance;
+                let diff = line.max_advance - content;
+                if !diff.is_finite() || diff.abs() < 2.0 * data.scale {
+                    return;
+                }
+                let applies = match fit.kind {
+                    TextFitKind::Grow => diff > 0.0,
+                    TextFitKind::Shrink => diff < 0.0,
+                    TextFitKind::None => false,
+                };
+                if !applies
+                    || fit.target == TextFitTarget::PerLine
+                        && matches!(reason, BreakReason::Explicit | BreakReason::None)
+                {
+                    return;
+                }
+                let flexible = content - fixed;
+                if flexible <= 0.0 {
+                    return;
+                }
+                fit.restrict((line.max_advance - fixed) / flexible)
+            }
+        };
+        if !scale.is_finite() || scale <= 0.0 || scale == 1.0 {
+            return;
+        }
+        let quantum = data.quantum();
+        let data = &mut self.layout.data;
+        let start = data.line_style_metrics.len() as u32;
+        crate::layout::style_metrics::scale_style_metrics(
+            &data.styles,
+            &data.style_metrics,
+            scale,
+            quantum,
+            &mut data.line_style_metrics,
+        );
+        let style_metrics = start..data.line_style_metrics.len() as u32;
+        let line = &mut self.lines.lines[line_index];
+        let text = line.metrics.advance - fixed;
+        line.metrics.advance = fixed + text * scale;
+        line.metrics.hanging_advance *= scale;
+        line.metrics.collapsed_advance *= scale;
+        line.text_fit = Some(crate::layout::data::LineTextFit {
+            scale,
+            style_metrics: style_metrics.clone(),
+        });
+        self.rescale_box_metrics(line_index, style_metrics, scale);
+    }
+
+    /// pyro: the vertical metrics of line `line_index` again, from its span boxes at `scale`
+    /// (`style_metrics`, into [`LayoutData::line_style_metrics`]): those the line was built with
+    /// are for unscaled text.
+    fn rescale_box_metrics(&mut self, line_index: usize, style_metrics: Range<u32>, scale: f32) {
+        let data = &mut self.layout.data;
+        let quantum = data.quantum();
+        let quantize = data.quantize;
+        let table = &data.line_style_metrics[style_metrics.start as usize..style_metrics.end as usize];
+        let state = &mut self.state;
+        let has_content = state.line.box_metrics.has_content;
+        state.line.box_metrics.reset();
+        state.contributed.clear();
+        state.subtrees.clear();
+        state
+            .line
+            .box_metrics
+            .add_style(0, table, &mut state.contributed, &mut state.subtrees);
+        let line = &self.lines.lines[line_index];
+        let mut placements = Vec::new();
+        for item in &self.lines.line_items[line.item_range.clone()] {
+            match item.kind {
+                LayoutItemKind::TextRun => {
+                    let shaped_run = &data.shaped_text.runs()[item.index];
+                    let clusters = data.shaped_text.shaped_clusters();
+                    let mut last = None;
+                    for cluster in item.shaped_cluster_range.clone() {
+                        let style = clusters[cluster as usize].style_index;
+                        if last == Some(style) {
+                            continue;
+                        }
+                        last = Some(style);
+                        state.line.box_metrics.add_style(
+                            style,
+                            table,
+                            &mut state.contributed,
+                            &mut state.subtrees,
+                        );
+                        // The run's own box, for `line-height: normal` with a fallback font.
+                        let line_height = data.styles[usize::from(style)].line_height;
+                        if let crate::style::LineHeight::MetricsRelative(_) = line_height {
+                            let font = shaped_run.font_metrics.scaled(scale);
+                            let height = line_height.resolve(shaped_run.font_size * scale, &font, quantum);
+                            let run_box = BoxMetrics::from_font(&font, height, quantum);
+                            let (offset, root) = table
+                                .get(usize::from(style))
+                                .map_or((0., 0), |m| (m.baseline_offset, m.aligned_subtree_root));
+                            state.line.box_metrics.add_box(root, offset, run_box, &mut state.subtrees);
+                        }
+                    }
+                }
+                LayoutItemKind::InlineBox => {
+                    let layout_box = &data.inline_boxes[item.index];
+                    let inline_box = &layout_box.inline_box;
+                    if inline_box.kind != InlineBoxKind::InFlow {
+                        continue;
+                    }
+                    let placement =
+                        inline_box_placement(inline_box, layout_box.parent_style_index, table, quantize);
+                    placements.push((item.index, placement.baseline_offset));
+                    if inline_box.vertical_align.is_line_relative() {
+                        state.line.box_metrics.add_line_relative_inline_box(
+                            inline_box.vertical_align,
+                            inline_box.height,
+                            quantize,
+                        );
+                    } else {
+                        state.line.box_metrics.add_inline_box(
+                            placement.aligned_subtree_root,
+                            placement.baseline_offset,
+                            placement.ascent,
+                            placement.descent,
+                            &mut state.subtrees,
+                        );
+                    }
+                }
+            }
+        }
+        state.line.box_metrics.has_content = has_content;
+        for (index, offset) in placements {
+            data.inline_boxes[index].baseline_offset = offset;
+        }
+    }
+
     /// Reset state when a line has been committed
     fn start_new_line(
         &mut self,
@@ -1247,6 +1405,8 @@ impl<'a, B: Brush> BreakLines<'a, B> {
             reason,
             line_indent,
         );
+        // pyro: CSS `text-fit` scales the line's text to fill it.
+        self.fit_line(reason);
 
         // A line containing only empty inline boxes (and no text) is an invisible line box with
         // zero height; the strut only applies once the line has content. The trailing empty line
@@ -2390,6 +2550,7 @@ fn commit_line<B: Brush>(
             ..Default::default()
         },
         aligned_subtree_offsets: 0..0,
+        text_fit: None,
     });
 
     // Reset state for the new line

@@ -187,7 +187,14 @@ impl<'a, B: Brush> Cluster<'a, B> {
     /// clusters it overlaps.
     pub fn advance(&self) -> f32 {
         let spacing = self.run.line_spacing();
-        spacing.grapheme_advance(&self.atom, self.grapheme, self.is_rtl())
+        let advance = spacing.grapheme_advance(&self.atom, self.grapheme, self.is_rtl());
+        // pyro: with `text-fit`, the glyphs at the line's scale (the spacing already is).
+        let scale = self.run.text_fit_scale();
+        if scale == 1.0 {
+            return advance;
+        }
+        let glyphs = self.grapheme.advance();
+        glyphs * scale + (advance - glyphs)
     }
 
     /// Returns `true` if this is a right-to-left cluster.

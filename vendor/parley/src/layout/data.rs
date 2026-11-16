@@ -100,6 +100,17 @@ pub(crate) struct LineData {
     /// Empty for lines with only baseline-relative content because the root aligned subtree
     /// for each line trivially has an offset of 0
     pub(crate) aligned_subtree_offsets: Range<u32>,
+    /// pyro: the line's `text-fit` scale, if it has one ([`crate::TextFit`]).
+    pub(crate) text_fit: Option<LineTextFit>,
+}
+
+/// pyro: the `text-fit` scale of a line and its span box metrics at that scale.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct LineTextFit {
+    /// The factor the line's text is scaled by.
+    pub(crate) scale: f32,
+    /// The line's entries in [`LayoutData::line_style_metrics`], one per style.
+    pub(crate) style_metrics: Range<u32>,
 }
 
 /// Position of an [independent aligned subtree] rooted at a span with
@@ -116,6 +127,12 @@ pub(crate) struct AlignedSubtreeOffset {
 }
 
 impl LineData {
+    /// pyro: the factor `text-fit` scales the line's text by (1 for none).
+    #[inline]
+    pub(crate) fn text_fit_scale(&self) -> f32 {
+        self.text_fit.as_ref().map_or(1.0, |fit| fit.scale)
+    }
+
     /// Offset from the line's baseline to the baseline of the aligned subtree rooted at style
     /// `root` (positive upwards). `offsets` is [`LayoutData::aligned_subtree_offsets`].
     pub(crate) fn aligned_subtree_offset(
@@ -204,6 +221,12 @@ pub(crate) struct LayoutData<B: Brush> {
     // Output of style resolution (input to line breaking)
     pub(crate) styles: Vec<Style<B>>,
     pub(crate) style_metrics: Vec<StyleMetrics>,
+    /// pyro: the span box metrics of the lines `text-fit` scales ([`LineTextFit::style_metrics`]).
+    pub(crate) line_style_metrics: Vec<StyleMetrics>,
+    /// pyro: CSS `text-fit` ([`crate::Layout::set_text_fit`]).
+    pub(crate) text_fit: crate::style::TextFit,
+    /// pyro: the scale of every line with `text-fit: ... consistent`, once measured.
+    pub(crate) text_fit_scale: Option<f32>,
     pub(crate) inline_boxes: Vec<LayoutInlineBox>,
 
     // Output of shaping (input to line breaking)
@@ -273,6 +296,9 @@ impl<B: Brush> Default for LayoutData<B> {
             height: 0.,
             styles: Vec::new(),
             style_metrics: Vec::new(),
+            line_style_metrics: Vec::new(),
+            text_fit: crate::style::TextFit::default(),
+            text_fit_scale: None,
             inline_boxes: Vec::new(),
             shaped_text: ShapedText::new(),
             runs: Vec::new(),
@@ -296,6 +322,37 @@ impl<B: Brush> Default for LayoutData<B> {
 }
 
 impl<B: Brush> LayoutData<B> {
+    /// pyro: the advance of what keeps its size on a line `text-fit` scales (Blink's static
+    /// parts): its inline boxes and span edges, and letter and word spacing given as lengths
+    /// (Blink reshapes text with such spacing at the scaled font size). The rest of the line's
+    /// advance is text, which scales.
+    pub(crate) fn line_fixed_advance(&self, items: &[LineItemData]) -> f32 {
+        use crate::layout::spacing::{EffectiveSpacing, Justification};
+        let mut fixed = 0.0;
+        for item in items {
+            match item.kind {
+                LayoutItemKind::InlineBox => {
+                    let inline_box = &self.inline_boxes[item.index].inline_box;
+                    if inline_box.kind.takes_inline_space() {
+                        fixed += inline_box.width;
+                    }
+                }
+                LayoutItemKind::TextRun => {
+                    let spacing = self.runs[item.index].spacing.fixed();
+                    if !spacing.is_zero() {
+                        let slice = self
+                            .shaped_text
+                            .run_slice(item.index as u32)
+                            .narrow(item.shaped_cluster_range.clone());
+                        fixed += EffectiveSpacing::new(spacing, Justification::NONE).slice_advance(slice)
+                            - EffectiveSpacing::ZERO.slice_advance(slice);
+                    }
+                }
+            }
+        }
+        fixed
+    }
+
     /// pyro: the layout units of a CSS pixel when metrics are quantized (the scale), else 0:
     /// what [`LineHeight::resolve`] and [`BoxMetrics::from_font`] round font metrics to.
     pub(crate) fn quantum(&self) -> f32 {
@@ -320,6 +377,9 @@ impl<B: Brush> LayoutData<B> {
         self.autospace.clear();
         self.styles.clear();
         self.style_metrics.clear();
+        self.line_style_metrics.clear();
+        self.text_fit = crate::style::TextFit::default();
+        self.text_fit_scale = None;
         self.inline_boxes.clear();
         self.shaped_text.clear();
         self.runs.clear();

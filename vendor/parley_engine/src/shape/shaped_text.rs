@@ -51,6 +51,23 @@ pub struct FontMetrics {
     pub x_height: Option<f32>,
 }
 
+impl FontMetrics {
+    /// pyro: the metrics at `scale` times the font size (CSS `text-fit`).
+    pub fn scaled(&self, scale: f32) -> Self {
+        Self {
+            ascent: self.ascent * scale,
+            descent: self.descent * scale,
+            leading: self.leading * scale,
+            underline_offset: self.underline_offset * scale,
+            underline_size: self.underline_size * scale,
+            strikethrough_offset: self.strikethrough_offset * scale,
+            strikethrough_size: self.strikethrough_size * scale,
+            cap_height: self.cap_height.map(|v| v * scale),
+            x_height: self.x_height.map(|v| v * scale),
+        }
+    }
+}
+
 /// pyro: the ideographic baselines of a font's `BASE` table (horizontal axis), scaled to a font
 /// size, as coordinates above the alphabetic baseline: `ideo`, `idtp`, `icfb` and `icft`.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]

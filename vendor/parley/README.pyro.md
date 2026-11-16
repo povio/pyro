@@ -308,6 +308,29 @@ around both (`<span nowrap>国</span>国` and `<span nowrap>国</span><span nowr
 block that wraps; `国<span>国</span>` in a `nowrap` block does not). The breaker used the previous atom's mode alone.
 Covered by `white_space_changes_wrap_as_in_chromium` in `crates/pyro-render/tests/text_spacing.rs`; WPT
 `white-space-wrap-after-nowrap-001`.
+## `text-fit` (WPT round 3, lane TS)
+
+- `style/mod.rs` (`TextFit`, `TextFitKind`, `TextFitTarget`), `layout/layout.rs` (`Layout::set_text_fit`,
+  `Layout::text_fit_block_scale`): CSS Text 5 `text-fit` for a layout, as Blink does it by default (paint-time
+  scaling): lines are broken at the text's own size, then each line's text is scaled to fill it. `per-line` and
+  `per-line-all` scale a line by its own factor (Blink's `LineFitter`: what its inline boxes leave over its text;
+  lines within two pixels of their width, and with `per-line` a block's last line and lines before a forced break,
+  are left alone); `consistent` scales every line by the block's factor, which blitz-dom measures with
+  `text_fit_block_scale` on the lines broken without one (Blink's `MeasurePerBlockScale`) and sets before breaking
+  again. The `<percentage>` limit bounds the factor.
+- `layout/line_break.rs` (`fit_line`, `rescale_box_metrics`), `layout/style_metrics.rs` (`scale_style_metrics`,
+  `StyleMetrics::{font, annotation}`), `layout/data.rs` (`LineData::text_fit`, `LayoutData::line_style_metrics`):
+  a committed line takes the scaled advance (inline boxes, span edges and letter or word spacing given as lengths
+  keep their size) and span boxes at the scale (font metrics scaled, line heights resolved again unless lengths,
+  emphasis-mark space scaled), which `Line`'s span accessors read.
+- `layout/run.rs`, `layout/cluster.rs`, `layout/line.rs`, `layout/spacing.rs` (`Spacing::{fit, fixed}`,
+  `SpacingScales`, `StyleProperty::SpacingScales`): a run's font size, font metrics (`Run::font_metrics` returns
+  them by value now), advance, glyphs and clusters are at its line's scale (`Run::text_fit_scale`); letter and word
+  spacing that are percentages scale too. A break with `text-fit` lines is not resumed.
+
+Covered by `text_fit_scales_lines_to_their_width` in `crates/pyro-render/tests/text_spacing.rs`; WPT
+`css-text/text-fit`.
+
 ## Bidi side of out-of-flow boxes (WPT css-position, round 3 lane P)
 
 `PositionedInlineBox::is_rtl` (`layout/line.rs`): whether the level the box resolved to (as U+FFFC) is right-to-left.

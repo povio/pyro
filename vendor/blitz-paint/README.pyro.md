@@ -874,6 +874,11 @@ Covered by `crates/pyro-render/tests/selection_highlight.rs`.
 `src/render.rs` (inline box fragments): a span's own edge leaves out its inline-start or inline-end margin as
 `blitz_dom::span_edge_margins` gives it: left and right in horizontal text, top and bottom (by the inline direction)
 in a vertical writing mode, whose lines are laid out turned (blitz-dom keeps those margins as span edges now).
+## Annotations on `text-fit` lines (WPT round 3, lane TS)
+
+`src/text.rs` (`draw_text_annotations`, `draw_annotation`): emphasis marks and ruby annotations over a line that
+parley scales with CSS `text-fit` are drawn at the line's scale, as the text they mark.
+
 ## Corner shapes and border shapes (WPT round 3, lane CB)
 
 - `src/kurbo_css/contoured.rs` (new), `src/kurbo_css/css_box.rs` (`CssBox::with_corner_curvature`, `contour`,
