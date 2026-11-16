@@ -117,7 +117,10 @@ fn node_list_item_child(
     let mut marker = match (content, image) {
         (Some(text), _) => Marker::String(text),
         (None, Some(image)) => image,
-        (None, None) => marker_for_style(list_style_type, index)?,
+        (None, None) => match custom_counter_marker(doc, list_style_type, index) {
+            Some(marker) => marker,
+            None => marker_for_style(list_style_type, index)?,
+        },
     };
     // pyro: a `::marker` rule's `text-transform` transforms the marker's string; the item's
     // does not reach it (Blink's UA sheet has `::marker { text-transform: none }`).
@@ -379,6 +382,48 @@ fn marker_style_node(
     *node.stylo_element_data_mut().ensure_init_mut() = data;
     node.update_layout_styles();
     Some(node_id)
+}
+
+/// pyro: the marker of an item whose `list-style-type` names an `@counter-style` rule that extends
+/// another style (`system: extends <name>`): the item's number in the extended style, with the
+/// rule's `prefix` and `suffix` (the extended style's when it gives none). It is text in the
+/// item's font, also for an extended `disc` (CSS Counter Styles 3: only the predefined bullets
+/// may be drawn otherwise). Other systems are not supported (`None`: the marker of the name).
+fn custom_counter_marker(doc: &BaseDocument, list_style_type: &ListStyleType, index: usize) -> Option<Marker> {
+    use style::counter_style::{Symbol, System};
+    let CounterStyle::Name(name) = &list_style_type.0 else {
+        return None;
+    };
+    // The styles a rule cannot redefine.
+    if matches!(
+        &*name.0,
+        "decimal" | "disc" | "circle" | "square" | "disclosure-open" | "disclosure-closed" | "none"
+    ) {
+        return None;
+    }
+    let rule = doc
+        .stylist
+        .iter_extra_data_origins_rev()
+        .find_map(|(data, _)| data.counter_styles.get(&name.0).cloned())?;
+    let guard = doc.guard.read();
+    let rule = rule.read_with(&guard);
+    let System::Extends(base) = rule.resolved_system() else {
+        return None;
+    };
+    let symbol = |symbol: &Symbol| match symbol {
+        Symbol::String(text) => text.to_string(),
+        Symbol::Ident(ident) => ident.0.to_string(),
+    };
+    let descriptors = rule.descriptors();
+    let bullet = matches!(&*base.0, "disc" | "circle" | "square" | "disclosure-open" | "disclosure-closed");
+    let prefix = descriptors.prefix.as_ref().map(symbol).unwrap_or_default();
+    let suffix = descriptors
+        .suffix
+        .as_ref()
+        .map(symbol)
+        .unwrap_or_else(|| if bullet { " ".into() } else { ". ".into() });
+    let text = super::counters::format(index as i32 + 1, &CounterStyle::Name(base.clone()));
+    Some(Marker::String(format!("{prefix}{text}{suffix}")))
 }
 
 // Determine the marker to render for a given list style type

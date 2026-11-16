@@ -124,6 +124,8 @@ pub(crate) fn init_stylo_prefs() {
         style_config::set_pref!("layout.css.contain.enabled", true);
         style_config::set_pref!("layout.css.content.alt-text.enabled", true);
         style_config::set_pref!("layout.css.corner-shape.enabled", true);
+        // pyro: `closest-corner`/`farthest-corner` radii in `ellipse()` (CSS Shapes 2).
+        style_config::set_pref!("layout.css.ellipse-corners.enabled", true);
         style_config::set_pref!("layout.css.counters.enabled", true);
         // pyro: `::first-line` parses and is cascaded (`layout::first_line`).
         style_config::set_pref!("layout.css.first-line.enabled", true);

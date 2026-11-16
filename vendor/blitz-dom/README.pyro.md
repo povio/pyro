@@ -2027,3 +2027,18 @@ hidden UI fonts, `.AppleSystemUIFont`, `.SF NS Mono`) matches no font, as in Saf
   passed only while margins and autospace were both missing.
 
 Covered by `crates/pyro-render/tests/text_spacing.rs`.
+## Counter inheritance, `@counter-style` markers (WPT round 3, lane CB)
+
+- `src/layout/counters.rs` (`Walk::reset`): counters are inherited as CSS Lists 3 § 4.4.1 has it (Chromium,
+  WebKit): a `counter-reset` on an element whose parent already has a counter of that name makes a counter of the
+  element and its descendants alone; the element's following siblings keep the parent's (WPT `counter-001`,
+  `counters-001`). Without one on the parent, the following siblings inherit the new counter, as before. Counters a
+  `::before` or `::after` makes for itself end with it. The `list-item` counter an HTML list (`ol`, `ul`, `menu`,
+  `dir`) resets keeps the CSS 2.1 scope (items after a list nested in a list continue the nested one: WPT
+  `counter-list-item-2`). The children of a `display: contents` element count in its parent's scope, as boxes of the
+  parent (WPT `counter-order-display-contents`), and an increment past the integer range leaves the counter as it
+  was (Blink's `CalculateCounterValue`).
+- `src/layout/list.rs` (`custom_counter_marker`): the marker of a `list-style-type` naming an `@counter-style` rule
+  with `system: extends <style>` is the item's number in that style with the rule's `prefix` and `suffix` (the
+  extended style's when absent), as text in the item's font (WPT `marker-text-matches-*`). Other systems are not
+  supported.
