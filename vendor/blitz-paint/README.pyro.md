@@ -816,3 +816,16 @@ Covered by `crates/pyro-render/tests/gradient_stops_image_set.rs`.
   repeating (WPT `object-position-png-001*`/`-002*`).
 - `src/text.rs`: under `font-size-adjust` a run has the used font size; `text-decoration-thickness` and
   `text-underline-offset` percentages stay of the computed one (WPT `text-decoration-thickness-percent-001`).
+
+## Highlight colours of `::selection` (WPT round 3, lane I)
+
+- `src/highlight.rs` (`highlight_of`), `src/text.rs`: the highlight is the nearest `::selection` style that declares
+  `color` or `background-color` (`BaseDocument::style_declares`: author and user rules, a `revert` declares
+  nothing), an ancestor's when the nearer ones declare neither; with none, the system's `HighlightText` on
+  `Highlight` (CSS Pseudo-Elements 4 § 3.4, as Chromium: an empty `::selection {}`, one with other properties only
+  or invalid values still paints the selection). A style that declares a background but no `color` leaves the text
+  its own colour (`Highlight::color` is `None`). The nearest style's own decoration is drawn either way, in
+  `HighlightText` with the system's colours (`ResolvedDecoration::with_current_color`).
+
+Covered by `crates/pyro-render/tests/selection_highlight.rs`.
+

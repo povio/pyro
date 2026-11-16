@@ -1970,7 +1970,7 @@ diff --git a/packages/blitz-paint/src/highlight.rs b/packages/blitz-paint/src/hi
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-paint/src/highlight.rs
-@@ -0,0 +1,278 @@
+@@ -0,0 +1,302 @@
 +//! pyro: the document selection painted as Chromium paints it (CSS Pseudo-Elements 4 § 3,
 +//! highlight painting).
 +//!
@@ -1982,7 +1982,8 @@ new file mode 100644
 +//! line stays one line across the selection's edges. A `::selection` style's own text decoration
 +//! is drawn over the selected text, as a decoration of the element whose style it is. The highlight is the `::selection` style of
 +//! the nearest element that has one (the text's element, its parent, ...), else the system's:
-+//! `HighlightText` on `Highlight`. Text that `user-select: none` keeps from being selected is not
++//! `HighlightText` on `Highlight`, also for a `::selection` style that declares neither `color` nor
++//! `background-color`. Text that `user-select: none` keeps from being selected is not
 +//! highlighted.
 +//!
 +//! Each line holding selected text is drawn twice, clipped: everything but the selected
@@ -2013,7 +2014,9 @@ new file mode 100644
 +#[derive(Clone)]
 +pub(crate) struct Highlight {
 +    pub background: Color,
-+    pub color: Color,
++    /// `None`: the text keeps its own colour (a `::selection` style that declares a
++    /// `background-color` but no `color`).
++    pub color: Option<Color>,
 +    /// The element whose `::selection` style this is (`None`: the system's highlight), and the
 +    /// text decoration of that style: lines drawn over the selected text, as an element's own
 +    /// are over its content.
@@ -2031,18 +2034,32 @@ new file mode 100644
 +    if let Some((_, highlight)) = cache.iter().find(|(id, _)| *id == node_id) {
 +        return highlight.clone();
 +    }
++    use style::properties::LonghandId;
 +    use style::values::computed::UserSelect;
-+    let mut selection = None;
-+    let mut owner = None;
++    // pyro: the nearest `::selection` style that declares `color` or `background-color` is the
++    // highlight's (an ancestor's when the nearer ones declare neither, WPT
++    // `highlight-paired-cascade-008`); with none, the system's colours are (CSS Pseudo-Elements 4
++    // § 3.4, as Chromium). The nearest style's own decoration is drawn either way.
++    let declares = |style: &style::servo_arc::Arc<style::properties::ComputedValues>, longhand| {
++        doc.style_declares(style, &[longhand])
++    };
++    let mut nearest: Option<(NodeId, style::servo_arc::Arc<style::properties::ComputedValues>)> = None;
++    let mut declaring = None;
 +    let mut selectable = None;
 +    let mut current = Some(node_id);
 +    while let Some(id) = current {
 +        let Some(node) = doc.get_node(id) else { break };
-+        if selection.is_none() && node.is_element() {
-+            selection = node.try_stylo_element_data().and_then(|data| {
++        if declaring.is_none() && node.is_element() {
++            let style = node.try_stylo_element_data().and_then(|data| {
 +                data.get().and_then(|data| data.styles.pseudos.get(&PseudoElement::Selection).cloned())
 +            });
-+            owner = selection.as_ref().map(|_| id);
++            if let Some(style) = style {
++                let color = declares(&style, LonghandId::Color);
++                if color || declares(&style, LonghandId::BackgroundColor) {
++                    declaring = Some((style.clone(), color));
++                }
++                nearest.get_or_insert((id, style));
++            }
 +        }
 +        if selectable.is_none() {
 +            // `auto` is what the parent's is (`none` stays `none` in the content of an element).
@@ -2052,22 +2069,29 @@ new file mode 100644
 +                Some(_) => selectable = Some(true),
 +            }
 +        }
-+        if selection.is_some() && selectable.is_some() {
++        if declaring.is_some() && selectable.is_some() {
 +            break;
 +        }
 +        current = node.parent;
 +    }
-+    let highlight = (selectable != Some(false)).then(|| match selection {
-+        Some(style) => {
++    let decoration = nearest.as_ref().and_then(|(_, style)| own_decoration(style));
++    let owner = nearest.as_ref().map(|(id, _)| *id);
++    let highlight = (selectable != Some(false)).then(|| match declaring {
++        Some((style, declares_color)) => {
 +            let color = style.clone_color();
 +            Highlight {
 +                background: style.get_background().background_color.resolve_to_absolute(&color).as_srgb_color(),
-+                color: color.as_srgb_color(),
++                color: declares_color.then(|| color.as_srgb_color()),
 +                owner,
-+                decoration: own_decoration(&style).map(Rc::new),
++                decoration: decoration.map(Rc::new),
 +            }
 +        }
-+        None => Highlight { background: HIGHLIGHT, color: HIGHLIGHT_TEXT, owner: None, decoration: None },
++        None => Highlight {
++            background: HIGHLIGHT,
++            color: Some(HIGHLIGHT_TEXT),
++            owner,
++            decoration: decoration.map(|decoration| Rc::new(decoration.with_current_color(HIGHLIGHT_TEXT))),
++        },
 +    });
 +    cache.push((node_id, highlight.clone()));
 +    highlight
@@ -14785,7 +14809,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
                  }
                  geom
              }
-@@ -442,160 +1193,473 @@
+@@ -442,160 +1193,483 @@
          let brush = anyrender::Paint::from(brush_override.unwrap_or(deco.color));
  
          // `text-decoration-inset` shortens (or, when negative, extends) the line from the
@@ -15102,6 +15126,31 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 -                win_ascent(win_ascent_ratios, &geom.font, geom.font_size).unwrap_or(geom.ascent);
 -            let offset = ascent / 3.0 + size / 2.0;
 +/// pyro: the decoration a box draws as a decorating box (`text-decoration-line`), if any.
++impl ResolvedDecoration {
++    /// pyro: the decoration with `color` for its colour when that is the text's (`currentcolor`).
++    pub(crate) fn with_current_color(mut self, color: Color) -> Self {
++        if self.current_color {
++            self.color = color;
++        }
++        self
++    }
++}
+ 
+-            draw_decoration_line(
+-                scene,
+-                transform,
+-                scale,
+-                acc.min_x,
+-                width,
+-                geom.baseline,
+-                offset,
+-                size,
+-                &brush,
+-                1.0,
+-                deco.style,
+-                inset_start,
+-                inset_end,
+-            );
 +pub(crate) fn own_decoration(styles: &style::properties::ComputedValues) -> Option<ResolvedDecoration> {
 +    let itext = styles.get_inherited_text();
 +    let text = styles.get_text();
@@ -15128,7 +15177,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 +            let font_size = styles.get_font().font_size.computed_size().px();
 +            let auto = LengthPercentage::new_length(Length::new((font_size / 12.5).max(1.0)));
 +            Some((auto.clone(), auto))
-+        }
+         }
 +        GenericTextDecorationInset::LengthPercentage { start, end } => {
 +            let zero = |v: &LengthPercentage| v.to_length().is_some_and(|l| l.px() == 0.0);
 +            (!zero(start) || !zero(end)).then(|| (start.clone(), end.clone()))
@@ -15171,29 +15220,14 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 +        skip_ink: itext.text_decoration_skip_ink,
 +    })
 +}
- 
--            draw_decoration_line(
--                scene,
--                transform,
--                scale,
--                acc.min_x,
--                width,
--                geom.baseline,
--                offset,
--                size,
--                &brush,
--                1.0,
--                deco.style,
--                inset_start,
--                inset_end,
--            );
++
 +/// pyro: how far (CSS px) a box's own text decorations can reach outside its line boxes: their
 +/// thickness and offset, and an em for where the font puts them.
 +pub(crate) fn decoration_ink_reach(styles: &style::properties::ComputedValues) -> f64 {
 +    let text = styles.get_text();
 +    if text.text_decoration_line.is_empty() {
 +        return 0.0;
-+    }
+     }
 +    let font_size = styles.get_font().font_size.used_size.0.px();
 +    let em = Length::new(font_size);
 +    let thickness = match &text.text_decoration_thickness {
@@ -15206,8 +15240,10 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 +        .non_auto()
 +        .map_or(0.0, |lp| lp.resolve(em).px().abs());
 +    f64::from(font_size + thickness + offset)
-+}
-+
+ }
+ 
+-pub(crate) fn stroke_text<'a>(
+-    scene: &mut impl PaintScene,
 +/// pyro: whether the decorations of a box's ancestors stop at it (CSS Text Decoration 3, 2.1):
 +/// they are not propagated to out-of-flow boxes (floats, absolutely positioned boxes) nor
 +/// into the contents of atomic inlines (inline blocks, inline tables, inline flex and grid
@@ -15241,7 +15277,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 +    let remember = |cache: &mut Vec<Option<(NodeId, Propagated)>>, id: NodeId, value: &Propagated| {
 +        if cache.len() <= slot(id) {
 +            cache.resize(slot(id) + 1, None);
-         }
++        }
 +        cache[slot(id)] = Some((id, value.clone()));
 +    };
 +    scratch.clear();
@@ -15283,12 +15319,10 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 +        }
 +        remember(cache, child, &result);
 +        parent = child;
-     }
++    }
 +    result
- }
- 
--pub(crate) fn stroke_text<'a>(
--    scene: &mut impl PaintScene,
++}
++
 +/// `transform` with its content moved `shift` along the x axis of the text.
 +fn shifted(transform: Affine, shift: f64) -> Affine {
 +    if shift == 0.0 {
@@ -15381,7 +15415,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
      stack.clear();
      path_scratch.clear();
      deco_boxes.clear();
-@@ -608,152 +1672,734 @@
+@@ -608,152 +1682,736 @@
      // for each run, only resolve styles for the nodes newly descended into (popping
      // as we ascend). `path_scratch` is a reusable buffer for the run's node path.
      for line in lines {
@@ -15522,7 +15556,9 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 +                let own = stack.last().map(|e| e.fill_color).unwrap_or(Color::BLACK);
 +                // pyro: selected text in its highlight's colour.
 +                match highlighting {
-+                    true => crate::highlight::highlight_of(doc, style.brush.id, highlights).map_or(own, |h| h.color),
++                    true => crate::highlight::highlight_of(doc, style.brush.id, highlights)
++                        .and_then(|h| h.color)
++                        .unwrap_or(own),
 +                    false => own,
 +                }
 +            });
@@ -15716,8 +15752,8 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 +        // pyro: over selected text, decorations of the text's colour take the highlight's.
 +        if highlighting {
 +            for acc in deco_boxes.iter_mut().filter(|acc| acc.deco.current_color && !acc.selection) {
-+                if let Some(highlight) = crate::highlight::highlight_of(doc, acc.node_id, highlights) {
-+                    acc.deco.color = highlight.color;
++                if let Some(color) = crate::highlight::highlight_of(doc, acc.node_id, highlights).and_then(|h| h.color) {
++                    acc.deco.color = color;
                  }
 +            }
 +        }
@@ -16228,7 +16264,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
      selection_start: usize,
      selection_end: usize,
  ) {
-@@ -761,12 +2407,54 @@
+@@ -761,12 +2419,54 @@
      let focus = Cursor::from_byte_index(layout, selection_end, Affinity::Downstream);
      let selection = Selection::new(anchor, focus);
  
@@ -16285,10 +16321,11 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
  /// Approximates macOS font smoothing (stem dilation). CoreGraphics dilates each side by an amount
  /// in device pixels that grows with the device ppem up to 0.3px (fitted to Safari's ink at 9-72px
  /// and 1x-3x scale), and keeps dilating at large sizes, so there is no ppem cutoff. glifo applies
-@@ -804,3 +2492,232 @@
+@@ -803,4 +2503,233 @@
+         prev = *point;
      }
      prev.1
- }
++}
 +
 +/// pyro: where `text-decoration-skip-ink` leaves gaps in a decoration line spanning `extent`
 +/// (layout x), as Blink's `TextPainter::ClipDecorationLine` cuts them: around the ink of every
@@ -16368,7 +16405,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 +        }
 +    }
 +    merged
-+}
+ }
 +
 +/// pyro: whether a character is CJK (Han, kana, Hangul, their punctuation and compatibility
 +/// forms), whose glyphs `text-decoration-skip-ink: auto` does not skip (Blink's

@@ -1402,6 +1402,16 @@ fn flush_line_decorations<S: PaintScene>(
 }
 
 /// pyro: the decoration a box draws as a decorating box (`text-decoration-line`), if any.
+impl ResolvedDecoration {
+    /// pyro: the decoration with `color` for its colour when that is the text's (`currentcolor`).
+    pub(crate) fn with_current_color(mut self, color: Color) -> Self {
+        if self.current_color {
+            self.color = color;
+        }
+        self
+    }
+}
+
 pub(crate) fn own_decoration(styles: &style::properties::ComputedValues) -> Option<ResolvedDecoration> {
     let itext = styles.get_inherited_text();
     let text = styles.get_text();
@@ -1788,7 +1798,9 @@ pub(crate) fn stroke_text<'a, S: PaintScene>(
                 let own = stack.last().map(|e| e.fill_color).unwrap_or(Color::BLACK);
                 // pyro: selected text in its highlight's colour.
                 match highlighting {
-                    true => crate::highlight::highlight_of(doc, style.brush.id, highlights).map_or(own, |h| h.color),
+                    true => crate::highlight::highlight_of(doc, style.brush.id, highlights)
+                        .and_then(|h| h.color)
+                        .unwrap_or(own),
                     false => own,
                 }
             });
@@ -1943,8 +1955,8 @@ pub(crate) fn stroke_text<'a, S: PaintScene>(
         // pyro: over selected text, decorations of the text's colour take the highlight's.
         if highlighting {
             for acc in deco_boxes.iter_mut().filter(|acc| acc.deco.current_color && !acc.selection) {
-                if let Some(highlight) = crate::highlight::highlight_of(doc, acc.node_id, highlights) {
-                    acc.deco.color = highlight.color;
+                if let Some(color) = crate::highlight::highlight_of(doc, acc.node_id, highlights).and_then(|h| h.color) {
+                    acc.deco.color = color;
                 }
             }
         }

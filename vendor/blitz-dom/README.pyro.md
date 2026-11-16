@@ -1906,3 +1906,16 @@ Covered by `crates/pyro-render/tests/phantom_line_boxes.rs`.
 - `src/font_metrics.rs`: `BlitzFontMetricsProvider::extents_for` (ascent, descent, line gap, cap height).
 
 Covered by `crates/pyro-render/tests/initial_letter.rs`.
+
+## Selection ends and declared highlight colours (WPT round 3, lane I)
+
+- `src/dom_selection.rs` (`produced_offset`): the white space a text node's text starts with in its inline layout
+  that the node before left to it (trailing collapsible white space belongs to the next text) has no counterpart in
+  its content: offsets skip it, so a selection ending at the end of `<span>` text after a space keeps its last
+  letter (and one starting at the span's text leaves the space out).
+- `src/dom_selection.rs` (`BaseDocument::style_declares`): whether author or user rules declare some longhands of a
+  style (the highest-priority declaration of each: `revert` declares nothing, `revert-layer` defers), read from
+  the style's rule nodes; blitz-paint's highlight asks it of `::selection` styles.
+
+Covered by `crates/pyro-render/tests/selection_highlight.rs` and the `dom_selection` unit tests.
+

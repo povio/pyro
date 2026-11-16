@@ -9,7 +9,8 @@
 //! line stays one line across the selection's edges. A `::selection` style's own text decoration
 //! is drawn over the selected text, as a decoration of the element whose style it is. The highlight is the `::selection` style of
 //! the nearest element that has one (the text's element, its parent, ...), else the system's:
-//! `HighlightText` on `Highlight`. Text that `user-select: none` keeps from being selected is not
+//! `HighlightText` on `Highlight`, also for a `::selection` style that declares neither `color` nor
+//! `background-color`. Text that `user-select: none` keeps from being selected is not
 //! highlighted.
 //!
 //! Each line holding selected text is drawn twice, clipped: everything but the selected
@@ -40,7 +41,9 @@ const HIGHLIGHT_TEXT: Color = Color::from_rgb8(0, 0, 0);
 #[derive(Clone)]
 pub(crate) struct Highlight {
     pub background: Color,
-    pub color: Color,
+    /// `None`: the text keeps its own colour (a `::selection` style that declares a
+    /// `background-color` but no `color`).
+    pub color: Option<Color>,
     /// The element whose `::selection` style this is (`None`: the system's highlight), and the
     /// text decoration of that style: lines drawn over the selected text, as an element's own
     /// are over its content.
@@ -58,18 +61,32 @@ pub(crate) fn highlight_of(
     if let Some((_, highlight)) = cache.iter().find(|(id, _)| *id == node_id) {
         return highlight.clone();
     }
+    use style::properties::LonghandId;
     use style::values::computed::UserSelect;
-    let mut selection = None;
-    let mut owner = None;
+    // pyro: the nearest `::selection` style that declares `color` or `background-color` is the
+    // highlight's (an ancestor's when the nearer ones declare neither, WPT
+    // `highlight-paired-cascade-008`); with none, the system's colours are (CSS Pseudo-Elements 4
+    // § 3.4, as Chromium). The nearest style's own decoration is drawn either way.
+    let declares = |style: &style::servo_arc::Arc<style::properties::ComputedValues>, longhand| {
+        doc.style_declares(style, &[longhand])
+    };
+    let mut nearest: Option<(NodeId, style::servo_arc::Arc<style::properties::ComputedValues>)> = None;
+    let mut declaring = None;
     let mut selectable = None;
     let mut current = Some(node_id);
     while let Some(id) = current {
         let Some(node) = doc.get_node(id) else { break };
-        if selection.is_none() && node.is_element() {
-            selection = node.try_stylo_element_data().and_then(|data| {
+        if declaring.is_none() && node.is_element() {
+            let style = node.try_stylo_element_data().and_then(|data| {
                 data.get().and_then(|data| data.styles.pseudos.get(&PseudoElement::Selection).cloned())
             });
-            owner = selection.as_ref().map(|_| id);
+            if let Some(style) = style {
+                let color = declares(&style, LonghandId::Color);
+                if color || declares(&style, LonghandId::BackgroundColor) {
+                    declaring = Some((style.clone(), color));
+                }
+                nearest.get_or_insert((id, style));
+            }
         }
         if selectable.is_none() {
             // `auto` is what the parent's is (`none` stays `none` in the content of an element).
@@ -79,22 +96,29 @@ pub(crate) fn highlight_of(
                 Some(_) => selectable = Some(true),
             }
         }
-        if selection.is_some() && selectable.is_some() {
+        if declaring.is_some() && selectable.is_some() {
             break;
         }
         current = node.parent;
     }
-    let highlight = (selectable != Some(false)).then(|| match selection {
-        Some(style) => {
+    let decoration = nearest.as_ref().and_then(|(_, style)| own_decoration(style));
+    let owner = nearest.as_ref().map(|(id, _)| *id);
+    let highlight = (selectable != Some(false)).then(|| match declaring {
+        Some((style, declares_color)) => {
             let color = style.clone_color();
             Highlight {
                 background: style.get_background().background_color.resolve_to_absolute(&color).as_srgb_color(),
-                color: color.as_srgb_color(),
+                color: declares_color.then(|| color.as_srgb_color()),
                 owner,
-                decoration: own_decoration(&style).map(Rc::new),
+                decoration: decoration.map(Rc::new),
             }
         }
-        None => Highlight { background: HIGHLIGHT, color: HIGHLIGHT_TEXT, owner: None, decoration: None },
+        None => Highlight {
+            background: HIGHLIGHT,
+            color: Some(HIGHLIGHT_TEXT),
+            owner,
+            decoration: decoration.map(|decoration| Rc::new(decoration.with_current_color(HIGHLIGHT_TEXT))),
+        },
     });
     cache.push((node_id, highlight.clone()));
     highlight

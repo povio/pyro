@@ -17,6 +17,42 @@ pub struct DomSelection {
 }
 
 impl BaseDocument {
+    /// pyro: whether author or user rules (style sheets, style attributes, animations) give
+    /// `style` a declaration of some of `longhands`. A `revert` at the highest priority declares
+    /// nothing (it rolls back to the user agent's, which declares none of these for a highlight
+    /// pseudo-element); `revert-layer` defers to the declarations below it. Highlight painting asks
+    /// it of a `::selection` style: one without its own `color` or `background-color` is drawn in
+    /// the system's highlight colours (CSS Pseudo-Elements 4 § 3.4, as Chromium).
+    pub fn style_declares(
+        &self,
+        style: &style::properties::ComputedValues,
+        longhands: &[style::properties::LonghandId],
+    ) -> bool {
+        use style::properties::{CSSWideKeyword, PropertyDeclaration, PropertyDeclarationId};
+        use style::stylesheets::Origin;
+        let guard = self.guard.read();
+        longhands.iter().any(|&longhand| {
+            for node in style.rules().self_and_ancestors() {
+                if node.cascade_level().origin().origin() == Origin::UserAgent {
+                    continue;
+                }
+                let Some(source) = node.style_source() else { continue };
+                let Some((declaration, _)) = source.read(&guard).get(PropertyDeclarationId::Longhand(longhand)) else {
+                    continue;
+                };
+                return match declaration {
+                    PropertyDeclaration::CSSWideKeyword(wide) => match wide.keyword {
+                        CSSWideKeyword::Revert => false,
+                        CSSWideKeyword::RevertLayer | CSSWideKeyword::RevertRule => continue,
+                        _ => true,
+                    },
+                    _ => true,
+                };
+            }
+            false
+        })
+    }
+
     /// pyro: the selection painted from now on (`None`: none), in place of blitz's own.
     pub fn set_dom_selection(&mut self, selection: Option<DomSelection>) {
         self.dom_selection = selection;
@@ -97,6 +133,11 @@ fn produced_offset(content: &str, produced: &str, utf16: usize) -> usize {
         return content.len();
     }
     let mut out = produced.char_indices().peekable();
+    // White space that the node before left to this node's text (its trailing collapsible white
+    // space belongs to the next node, `TextLayout::text_nodes`) is not in this content.
+    if content.chars().next().is_some_and(|c| !c.is_whitespace()) {
+        while out.next_if(|&(_, p)| p.is_whitespace()).is_some() {}
+    }
     let mut units = 0;
     for c in content.chars() {
         if units >= utf16 {
@@ -132,5 +173,13 @@ mod tests {
         assert_eq!(produced_offset("\n  Lorem  ipsum", "Lorem ipsum", 8), 5);
         assert_eq!(produced_offset("\n  Lorem  ipsum", "Lorem ipsum", 10), 6);
         assert_eq!(produced_offset("\n  Lorem  ipsum", "Lorem ipsum", 15), 11);
+    }
+
+    #[test]
+    fn offsets_skip_white_space_of_the_node_before() {
+        // "Text <span>sample</span>": the span's text produced " sample".
+        assert_eq!(produced_offset("sample", " sample", 0), 1);
+        assert_eq!(produced_offset("sample", " sample", 5), 6);
+        assert_eq!(produced_offset("sample", " sample", 6), 7);
     }
 }
