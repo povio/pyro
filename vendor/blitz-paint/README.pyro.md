@@ -903,3 +903,7 @@ in a vertical writing mode, whose lines are laid out turned (blitz-dom keeps tho
   Shapes 2, pref `layout.css.ellipse-corners.enabled`, set by pyro) are the distance to that corner, for either axis.
 - `src/render.rs` (`draw_marker`, `draw_marker_symbol`): in a right-to-left list item the outside marker is placed
   after the border box's right edge (a disc, circle or square mirrored), not before its left edge.
+
+`src/text.rs` (`VerticalLine::run_placement`): a run stands upright or not by its first visible character; an
+empty inline box's strut (U+2061) or a bidi control at its start made the whole run sideways (WPT
+`text-spacing-trim-start-oof-001` in `vertical-rl`).

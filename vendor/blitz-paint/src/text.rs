@@ -135,9 +135,15 @@ impl VerticalLine {
             return (Affine::IDENTITY, None);
         };
         let metrics = run.run().font_metrics();
+        // pyro: by the run's first visible character: an empty inline box's strut (U+2061) or a
+        // bidi control before it decides nothing.
         let upright = self.all_upright
             || source
-                .and_then(|text| text.get(run.run().text_range())?.chars().next())
+                .and_then(|text| {
+                    text.get(run.run().text_range())?.chars().find(|&c| {
+                        !matches!(c, '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2060}'..='\u{206F}' | '\u{FEFF}')
+                    })
+                })
                 .is_some_and(is_upright_char);
         if !upright {
             return (self.fragment_shift(run), None);
