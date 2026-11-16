@@ -1280,13 +1280,11 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
      }
 diff -ruN a/style_adjuster.rs b/style_adjuster.rs
 --- a/style_adjuster.rs	2026-11-11 19:55:57
-+++ b/style_adjuster.rs	2026-11-16 18:58:01
-@@ -184,6 +184,36 @@
-         self.style
-             .mutate_box()
++++ b/style_adjuster.rs	2026-11-16 23:18:56
+@@ -186,6 +186,36 @@
              .set_adjusted_display(new_display, false);
-+    }
-+
+     }
+ 
 +    /// pyro: `display: -webkit-box` in the servo engine, which has no legacy box layout. With
 +    /// `-webkit-box-orient: vertical` and a line clamp the box is a block container whose lines
 +    /// are clamped, as in Blink and Gecko (above); the style keeps that in
@@ -1315,10 +1313,31 @@ diff -ruN a/style_adjuster.rs b/style_adjuster.rs
 +        if clamps {
 +            self.style.add_flags(ComputedValueFlags::WEBKIT_LINE_CLAMP_APPLIES);
 +        }
++    }
++
+     /// CSS 2.1 section 9.7:
+     ///
+     ///    If 'position' has the value 'absolute' or 'fixed', [...] the computed
+@@ -419,9 +449,16 @@
+         }
+ 
+         if overflow_x.is_scrollable() != overflow_y.is_scrollable() {
++            // pyro: `clip` beside `hidden` stays `clip`, as in Blink: that axis neither scrolls nor
++            // keeps a scroll offset (WPT css-overflow `single-axis-overflow-scroll-to-clip`)
++            use crate::values::computed::Overflow;
++            let adjust = |own: Overflow, other: Overflow| match (own, other) {
++                (Overflow::Clip, Overflow::Hidden) => Overflow::Clip,
++                _ => own.to_scrollable(),
++            };
+             let box_style = self.style.mutate_box();
+-            box_style.set_overflow_x(overflow_x.to_scrollable());
+-            box_style.set_overflow_y(overflow_y.to_scrollable());
++            box_style.set_overflow_x(adjust(overflow_x, overflow_y));
++            box_style.set_overflow_y(adjust(overflow_y, overflow_x));
+         }
      }
  
-     /// CSS 2.1 section 9.7:
-@@ -821,6 +851,90 @@
+@@ -821,6 +858,90 @@
      /// for web-compat reasons.
      /// We intentionally don't check 'list-style-image' below since we want it to use
      /// the same font as its fallback ('list-style-type') in case it fails to load.
@@ -1409,7 +1428,7 @@ diff -ruN a/style_adjuster.rs b/style_adjuster.rs
      #[cfg(feature = "gecko")]
      fn adjust_for_marker_pseudo(&mut self, author_or_user_specified_properties: &LonghandIdSet) {
          use crate::values::computed::counters::Content;
-@@ -1064,6 +1178,8 @@
+@@ -1064,6 +1185,8 @@
          //     "Should always have an element around for non-pseudo styles"
          // );
  
@@ -1418,7 +1437,7 @@ diff -ruN a/style_adjuster.rs b/style_adjuster.rs
          self.adjust_for_links(element);
          self.adjust_for_prohibited_display_contents(element);
          #[cfg(feature = "gecko")]
-@@ -1090,6 +1206,12 @@
+@@ -1090,6 +1213,12 @@
          self.adjust_for_appearance(element);
          #[cfg(feature = "gecko")]
          self.adjust_for_marker_pseudo(author_or_user_specified_properties);

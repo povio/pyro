@@ -3178,6 +3178,15 @@ impl Layout {
                 if border_box { 0.0 } else { b.border[start] + b.border[end] + b.padding[start] + b.padding[end] };
             return format!("{}px", crate::computed::fmt_num((size - inset).max(0.0)));
         }
+        // pyro: an `auto` or percentage margin of a rendered box resolves to its used value (Blink
+        // reports the used margin then; WPT css-flexbox `auto-margins-001`)
+        if let (Some(side), Some(value)) = (margin_side(name), declared.as_deref()) {
+            if value == "auto" || value.contains('%') || value.contains('(') {
+                if let Some(q) = self.box_quads(dom, el) {
+                    return format!("{}px", crate::computed::fmt_num(q.margin[side]));
+                }
+            }
+        }
         if let Some(v) = declared.as_deref().and_then(|v| self.resolved_value(dom, el, name, v)) {
             return v;
         }
@@ -3188,6 +3197,17 @@ impl Layout {
             return v;
         }
         default_property_value(dom, el, name).to_owned()
+    }
+}
+
+/// The side index ([`TOP`], [`RIGHT`], [`BOTTOM`], [`LEFT`]) of a physical margin property.
+fn margin_side(name: &str) -> Option<usize> {
+    match name {
+        "margin-top" => Some(TOP),
+        "margin-right" => Some(RIGHT),
+        "margin-bottom" => Some(BOTTOM),
+        "margin-left" => Some(LEFT),
+        _ => None,
     }
 }
 

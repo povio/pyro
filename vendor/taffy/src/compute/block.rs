@@ -827,7 +827,15 @@ fn compute_inner(
             .maybe_sub(content_box_inset.vertical_axis_sum());
         let intrinsic_width = determine_content_based_container_width(tree, &items, available_width, percentage_height)
             + content_box_inset.horizontal_axis_sum();
-        intrinsic_width.maybe_clamp(min_size.width, max_size.width).maybe_max(Some(padding_border_size.width))
+        // pyro: a content size ignores the box's own `min-width`/`max-width`, as inline layout's
+        // does (a flex base size is the content's, `max-width` clamps the hypothetical size only;
+        // WPT css-flexbox `flex-base-size-ignores-max-width`)
+        // (a box with a ratio keeps them: its height follows the width they give)
+        let (min_width, max_width) = match inputs.sizing_mode {
+            SizingMode::ContentSize if aspect_ratio.is_none() => (None, None),
+            _ => (min_size.width, max_size.width),
+        };
+        intrinsic_width.maybe_clamp(min_width, max_width).maybe_max(Some(padding_border_size.width))
     });
 
     // Short-circuit if computing size and both dimensions known
@@ -928,6 +936,7 @@ fn compute_inner(
                 height.max(intrinsic_outer_height.maybe_min(max_size.height))
             }
             Some(height) => height,
+            None if inputs.sizing_mode == SizingMode::ContentSize => intrinsic_outer_height,
             None => intrinsic_outer_height.maybe_clamp(min_size.height, max_size.height),
         })
         .maybe_max(Some(padding_border_size.height));
@@ -1438,6 +1447,14 @@ fn determine_content_based_container_width(
                 _ => width,
             }
         });
+        // pyro: keyword `min-width`/`max-width` bound an automatic width's contribution too
+        // (`min-width: max-content` on a block in a flex item; WPT css-flexbox
+        // `flex-item-content-is-min-width-max-content`)
+        let width = match (known_dimensions.width, available_space.width) {
+            (Some(_), _) => width,
+            // (`stretch` only against a definite width: there is nothing to stretch to otherwise)
+            (None, available) => clamp_width_by_keywords(tree, item, width, available.into_option(), None, Size::NONE),
+        };
 
         // pyro: a table is never narrower than its min-content width, whatever its `width` or
         // `max-width` (CSS Tables 3 §3.9.2): its contribution is at least that.

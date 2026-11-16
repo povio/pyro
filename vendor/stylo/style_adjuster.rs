@@ -449,9 +449,16 @@ impl<'a, 'b: 'a> StyleAdjuster<'a, 'b> {
         }
 
         if overflow_x.is_scrollable() != overflow_y.is_scrollable() {
+            // pyro: `clip` beside `hidden` stays `clip`, as in Blink: that axis neither scrolls nor
+            // keeps a scroll offset (WPT css-overflow `single-axis-overflow-scroll-to-clip`)
+            use crate::values::computed::Overflow;
+            let adjust = |own: Overflow, other: Overflow| match (own, other) {
+                (Overflow::Clip, Overflow::Hidden) => Overflow::Clip,
+                _ => own.to_scrollable(),
+            };
             let box_style = self.style.mutate_box();
-            box_style.set_overflow_x(overflow_x.to_scrollable());
-            box_style.set_overflow_y(overflow_y.to_scrollable());
+            box_style.set_overflow_x(adjust(overflow_x, overflow_y));
+            box_style.set_overflow_y(adjust(overflow_y, overflow_x));
         }
     }
 

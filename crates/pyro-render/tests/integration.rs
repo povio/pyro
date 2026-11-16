@@ -25,6 +25,7 @@ mod filter_drop_shadow;
 mod filter_image_function;
 mod first_line;
 mod flex_collapse;
+mod flex_content_sizes;
 mod flex_gaps;
 mod flex_last_baseline;
 mod flex_natural_ratio;

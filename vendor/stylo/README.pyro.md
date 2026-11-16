@@ -320,6 +320,12 @@ blitz-dom passes it to parley, which scales the lines (their READMEs).
   `matching_fn` that compares the name (blitz-dom `BaseDocument::highlight_pseudo_style`). Both apply
   `APPLIES_TO_HIGHLIGHT` properties only.
 
+## `overflow: clip` beside `hidden` (WPT round 3, lane FO)
+
+`StyleAdjuster::adjust_for_overflow` keeps `clip` when the other axis is `hidden` (Blink): that axis neither scrolls
+nor keeps a scroll offset. Other mixes still turn `visible` into `auto` and `clip` into `hidden` (WPT css-overflow
+`single-axis-overflow-scroll-to-clip`).
+
 ## Updating or dropping the patch
 
 - When upstream has the change: delete this directory and the `[patch.crates-io]` entry.

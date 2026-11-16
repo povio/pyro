@@ -890,7 +890,13 @@ fn compute_constants(
     let has_definite_cross_size = known_dimensions_are_definite.cross(dir) && known_dimensions.cross(dir).is_some();
     let cross_axis_available_space_is_definite =
         has_definite_cross_size || matches!(available_space.cross(dir), AvailableSpace::Definite(_));
-    let gap = style.gap().resolve_or_zero(node_inner_size.or(Size::zero()), |val, basis| tree.calc(val, basis));
+    // pyro: a percentage row gap resolves against a definite height only: a height a parent flex
+    // container gave without one of its own is not (Blink; WPT css-flexbox `gap-percentage-wrap`)
+    let gap_basis = Size {
+        width: node_inner_size.width,
+        height: node_inner_size.height.filter(|_| known_dimensions_are_definite.height),
+    };
+    let gap = style.gap().resolve_or_zero(gap_basis.or(Size::zero()), |val, basis| tree.calc(val, basis));
 
     let container_size = Size::zero();
     let inner_container_size = Size::zero();
@@ -1574,9 +1580,13 @@ fn resolve_size_keyword(
     parent_size: Size<Option<f32>>,
     stretch: Option<f32>,
 ) -> Option<f32> {
-    let available = match resolve_sizing_keyword(keyword, stretch, parent_size.get_abs(axis), |val, basis| tree.calc(val, basis))? {
-        SizingKeywordResolution::Exact(size) => return Some(size),
-        SizingKeywordResolution::Measure(available) => available,
+    let available = match resolve_sizing_keyword(keyword, stretch, parent_size.get_abs(axis), |val, basis| tree.calc(val, basis)) {
+        Some(SizingKeywordResolution::Exact(size)) => return Some(size),
+        Some(SizingKeywordResolution::Measure(available)) => available,
+        // `fit-content` with nothing to fit into (a column container's indefinite height) is the
+        // max-content size (WPT css-flexbox `flex-item-min-block-size-intrinsic-max-block-size`)
+        None if keyword.tag() == crate::CompactLength::FIT_CONTENT_KEYWORD_TAG => AvailableSpace::MaxContent,
+        None => return None,
     };
     let mut known_dimensions = known_dimensions;
     match axis {
@@ -1638,7 +1648,13 @@ fn collect_flex_lines<'a>(
     // Wrapping into multiple lines requires a definite main size. If the container's known main size
     // is derived from its own content (and is thus indefinite) then all items are collected into a
     // single flex line, matching how the container was sized under a min/max-content constraint.
-    if !constants.is_wrap || !constants.known_main_size_is_definite {
+    // pyro: so is a column's under a min-content constraint with no main size of its own: its min-content
+    // block size is its single line's, as in Blink (WPT css-flexbox `flex-minimum-height-flex-items-029`)
+    let intrinsic_column = !constants.is_row
+        && constants.node_inner_size.main(constants.dir).is_none()
+        && constants.max_size.main(constants.dir).is_none()
+        && available_space.main(constants.dir) == AvailableSpace::MinContent;
+    if !constants.is_wrap || !constants.known_main_size_is_definite || intrinsic_column {
         let mut lines = new_vec_with_capacity(1);
         lines.push(FlexLine { items: flex_items.as_mut_slice(), cross_size: 0.0, offset_cross: 0.0 });
         lines
@@ -1840,6 +1856,12 @@ fn determine_container_main_size(
             AvailableSpace::Definite(main_axis_available_space) => {
                 let main_axis_gap = constants.gap.main(constants.dir);
                 let item_main_length = |child: &FlexItem| {
+                    // pyro: a column's items contribute their hypothetical main sizes, as under an
+                    // intrinsic constraint below (their automatic minimum sizes count: WPT css-flexbox
+                    // `flex-minimum-height-flex-items-029`)
+                    if !constants.is_row {
+                        return child.hypothetical_outer_size.main(constants.dir);
+                    }
                     let padding_border_sum = (child.padding + child.border).main_axis_sum(constants.dir);
                     (child.flex_basis.maybe_max(child.min_size.main(constants.dir))
                         + child.margin.main_axis_sum(constants.dir))
@@ -1930,7 +1952,9 @@ fn determine_container_main_size(
                     f32_max(f32_min(size, main_axis_available_space + main_content_box_inset), min_content_size)
                 }
             }
-            AvailableSpace::MinContent if constants.is_wrap => {
+            // pyro: rows only: a column's items count with their automatic minimum sizes below (WPT
+            // css-flexbox `flex-minimum-height-flex-items-029`)
+            AvailableSpace::MinContent if constants.is_wrap && constants.is_row => {
                 let longest_line_length: f32 = lines
                     .iter()
                     .map(|line| {
@@ -1997,7 +2021,9 @@ fn determine_container_main_size(
                             // its flex basis, so a `0px` basis contributes its minimum and a percentage basis
                             // of an indefinite container (used as `content`) its content height.
                             _ if !constants.is_row => {
-                                item.flex_basis.max(item.resolved_minimum_main_size).maybe_min(style_max) + margin_sum
+                                // (the minimum wins over a smaller maximum: WPT css-flexbox
+                                // `flex-item-min-block-size-intrinsic-max-block-size`)
+                                item.flex_basis.maybe_min(style_max).max(item.resolved_minimum_main_size) + margin_sum
                             }
                             // If the clamping values are such that max <= min, then we can avoid the expensive step of computing the content size
                             // as we know that the clamping values will override it anyway
@@ -2803,7 +2829,16 @@ fn distribute_remaining_free_space(flex_lines: &mut [FlexLine], constants: &Algo
         let num_items = line.items.len();
         let layout_reverse = constants.dir.is_reverse();
         let gap = constants.gap.main(constants.dir);
-        let justify_content_mode = apply_alignment_fallback(free_space, num_items, constants.justify_content);
+        // pyro: an overflowing `space-between` falls back to plain `flex-start`, not `safe flex-start`
+        // (Blink; csswg-drafts#11937, WPT css-flexbox `justify-content_space-between-003.tentative`)
+        let justify_content_mode = match constants.justify_content {
+            crate::style::AlignContent { keyword: AlignContentKeyword::SpaceBetween, safety: crate::style::AlignmentSafety::Default }
+                if free_space < 0.0 =>
+            {
+                AlignContentKeyword::FlexStart
+            }
+            justify_content => apply_alignment_fallback(free_space, num_items, justify_content),
+        };
 
         let justify_item = |(i, child): (usize, &mut FlexItem)| {
             child.offset_main =

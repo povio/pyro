@@ -26626,7 +26626,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
          }
          self.mark_ancestors_dirty();
  
-@@ -864,7 +1733,9 @@
+@@ -864,9 +1733,13 @@
              .and_then(|el| el.text_input_data())
          {
              if !input_data.is_multiline {
@@ -26635,9 +26635,14 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
 +                // input's line is 8.25px down (painted from 8px), not 8.5px (9px).
 +                let content_box_height = self.unrounded_layout().content_box_height();
                  let input_height = input_data.editor.try_layout().unwrap().height() / scale as f32;
-                 let y_offset = ((content_box_height - input_height) / 2.0).max(0.0);
+-                let y_offset = ((content_box_height - input_height) / 2.0).max(0.0);
++                // pyro: a line taller than the content box is centred too, overflowing both
++                // edges (Blink; WPT css-overflow `input-scrollable-region-001`)
++                let y_offset = (content_box_height - input_height) / 2.0;
  
-@@ -1061,6 +1932,11 @@
+                 return y_offset as f64;
+             }
+@@ -1061,6 +1934,11 @@
          matches!(self.data, NodeData::Element { .. })
      }
  
@@ -26649,7 +26654,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      pub fn is_anonymous(&self) -> bool {
          matches!(self.data, NodeData::AnonymousBlock { .. })
      }
-@@ -1161,13 +2037,21 @@
+@@ -1161,13 +2039,21 @@
      pub fn layout_style(&self) -> stylo_taffy::TaffyStyloStyle<ComputedStyleRef<'_>> {
          let styles = self
              .try_stylo_element_data()
@@ -26673,7 +26678,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
              }
              if el.name.local == local_name!("button") {
                  flags |= stylo_taffy::StyleFlags::IS_BUTTON;
-@@ -1175,21 +2059,111 @@
+@@ -1175,21 +2061,111 @@
              if el.is_button_input() {
                  flags |= stylo_taffy::StyleFlags::IS_BUTTON_INPUT;
              }
@@ -26787,7 +26792,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      }
  
      /// The node's style for Taffy, expressed in the axes of the writing mode `layout_wm` (the writing
-@@ -1234,6 +2208,19 @@
+@@ -1234,6 +2210,19 @@
              .unwrap_or(stylo_taffy::WritingMode::empty())
      }
  
@@ -26807,7 +26812,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      /// The node's `display` as a [`taffy::Display`]. Returns [`taffy::Display::Block`]
      /// for nodes without computed styles (e.g. text nodes).
      pub fn taffy_display(&self) -> taffy::Display {
-@@ -1290,7 +2277,7 @@
+@@ -1290,7 +2279,7 @@
              }
              NodeData::Element(..) | NodeData::AnonymousBlock(..) => {
                  for child_id in self.children.iter() {
@@ -26816,7 +26821,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                  }
              }
              _ => {}
-@@ -1358,10 +2345,27 @@
+@@ -1358,10 +2347,27 @@
              return true;
          }
  
@@ -26844,7 +26849,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
          if style.get_box().isolation == Isolation::Isolate {
              return true;
          }
-@@ -1369,6 +2373,20 @@
+@@ -1369,6 +2375,20 @@
          if style.get_effects().mix_blend_mode != style::computed_values::mix_blend_mode::T::Normal {
              return true;
          }
@@ -26865,7 +26870,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
          // TODO: contain
  
          false
-@@ -1500,11 +2518,15 @@
+@@ -1500,11 +2520,15 @@
              || y < overflow_rect.top() + client_y
              || y > overflow_rect.bottom() + client_y);
  
@@ -26881,7 +26886,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                  x >= bbox.left && x <= bbox.right && y >= bbox.top && y <= bbox.bottom
              }
              None => false,
-@@ -1533,6 +2555,7 @@
+@@ -1533,6 +2557,7 @@
          {
              *scrollbar = Some(sb);
          }
@@ -26889,7 +26894,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
  
          // Text clusters and callers of the returned coordinates work in the
          // inline root's content box, but embedded boxes store border-box
-@@ -1559,7 +2582,7 @@
+@@ -1559,7 +2584,7 @@
                      let pos = hoisted_child.position(self.tree(), self.id);
                      let x = x - pos.x;
                      let y = y - pos.y;
@@ -26898,7 +26903,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                          return Some(hit);
                      }
                  }
-@@ -1574,12 +2597,18 @@
+@@ -1574,12 +2599,18 @@
              let child_position = child.taffy_position();
              let mut child_x = x;
              let mut child_y = y;
@@ -26919,7 +26924,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                      child_x -= self.scroll_offset().x as f32;
                      child_y -= self.scroll_offset().y as f32;
                      let viewport_scroll = self.tree().viewport_scroll();
-@@ -1590,7 +2619,7 @@
+@@ -1590,7 +2621,7 @@
                  child_x -= offset.x;
                  child_y -= offset.y;
              }
@@ -26928,7 +26933,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                  return Some(hit);
              }
          }
-@@ -1605,7 +2634,7 @@
+@@ -1605,7 +2636,7 @@
                      let pos = hoisted_child.position(self.tree(), self.id);
                      let x = x - pos.x;
                      let y = y - pos.y;
@@ -26937,7 +26942,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                          return Some(hit);
                      }
                  }
-@@ -1716,7 +2745,7 @@
+@@ -1716,7 +2747,7 @@
              return false;
          };
          if self.flags.is_inline_root()
@@ -26946,7 +26951,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
          {
              return false;
          }
-@@ -1741,8 +2770,13 @@
+@@ -1741,8 +2772,13 @@
          let y = y + self.final_layout().location.y - self.scroll_offset().y as f32;
  
          // Recurse up the positioning hierarchy
@@ -26961,7 +26966,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
              .unwrap_or(crate::util::Point { x, y })
      }
  
-@@ -1818,8 +2852,28 @@
+@@ -1818,8 +2854,28 @@
  
          let root_layout = inline_root.unrounded_layout();
          let content_box_inset = root_layout.padding + root_layout.border;
@@ -26992,7 +26997,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
  
          fn union(acc: &mut Option<taffy::Rect<f32>>, left: f32, top: f32, right: f32, bottom: f32) {
              *acc = Some(match *acc {
-@@ -1877,11 +2931,36 @@
+@@ -1877,11 +2933,36 @@
                  }
              }
  

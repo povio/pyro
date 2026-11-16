@@ -2359,3 +2359,7 @@ whose text is a `::marker` `content` string keep the marker's font (not the bund
 - `src/layout/table.rs` (hinted column widths): a table that shrinks to fit its columns is no wider than its
   `max-width`, nor narrower than its columns' min-content widths (WPT css-text `overflow-wrap-min-content-size-001`,
   `word-break-min-content-001`). Covered by `a_shrinking_table_is_no_wider_than_its_max_width`.
+
+
+A single-line text input's line is centred in its content box also when it is taller than the box (it overflows
+both edges, as in Blink; WPT css-overflow `input-scrollable-region-001`).

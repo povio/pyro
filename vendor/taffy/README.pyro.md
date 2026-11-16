@@ -559,3 +559,13 @@ Column-only subgrids (css-grid-2 §9 standalone axis): a subgrid in its columns 
 column-only subgrid children at their definite (else max-content) height and gives their items the rows they span
 (`resolve_standalone_heights`, `GridItem::standalone_size.height`), so an orthogonal item's width follows its row
 (WPT `subgrid/standalone-axis-size-010`). Nested ones still see the rows of their last measure.
+
+
+**Flex content sizes (lane FO).** A block's content size (`SizingMode::ContentSize`) ignores its own `min-width`,
+`max-width`, `min-height` and `max-height`, as inline layout's does, unless the box has a ratio (its height follows
+the width they give): a flex base size is the content's. Keyword `min-width`/`max-width` (`clamp_width_by_keywords`)
+bound an automatic width's intrinsic contribution too. In flex: a column's automatic size counts each item's
+hypothetical main size with the minimum winning over a smaller maximum; a column's min-content size under no max
+size is one line's (`collect_flex_lines`); `fit-content` in a min/max with nothing to fit into is max-content;
+percentage row gaps resolve only against a definite height; an overflowing `space-between` (not explicitly safe)
+falls back to plain `flex-start` (csswg-drafts#11937). Covered by `crates/pyro-render/tests/flex_content_sizes.rs`.

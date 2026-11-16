@@ -1737,7 +1737,9 @@ impl Node {
                 // input's line is 8.25px down (painted from 8px), not 8.5px (9px).
                 let content_box_height = self.unrounded_layout().content_box_height();
                 let input_height = input_data.editor.try_layout().unwrap().height() / scale as f32;
-                let y_offset = ((content_box_height - input_height) / 2.0).max(0.0);
+                // pyro: a line taller than the content box is centred too, overflowing both
+                // edges (Blink; WPT css-overflow `input-scrollable-region-001`)
+                let y_offset = (content_box_height - input_height) / 2.0;
 
                 return y_offset as f64;
             }
