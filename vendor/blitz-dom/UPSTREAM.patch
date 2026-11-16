@@ -8891,7 +8891,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
 +    {
 +        return false;
 +    }
- 
++
 +    // The first build keeps the lines of the layout's last break over the text that did not
 +    // change, for `BreakLines::resume`. The strut build follows a build of the same content.
 +    text_layout.text = if strut_build {
@@ -8987,7 +8987,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
 +    text_layout.percent_span_edges = bidi_scan.percent_edges;
 +    text_layout.span_block_edges = bidi_scan.block_edges;
 +    return true;
-+
+ 
 +    /// pyro: lays out on one line what an annotation draws: a ruby annotation's content in its
 +    /// style, or the emphasis mark of an element in its font at half its size (as an `<rt>` has it).
 +    fn build_annotation(
@@ -9445,7 +9445,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
                          });
                      }
                  };
-@@ -291,10 +1230,75 @@
+@@ -291,10 +1230,93 @@
              NodeData::Text(data) => {
                  // node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
                  // dbg!(&data.content);
@@ -9517,14 +9517,32 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
 +                        let text =
 +                            text_transformer.transform(&data.content, parent_text_transform, builder);
 +                        let before = if hyphenates { word_before(builder.text()) } else { String::new() };
-+                        builder.push_text(&hyphenate(&before, text));
++                        let text = hyphenate(&before, text);
++                        // pyro: a preserved newline ends the bidi paragraph as a `<br>` does: the
++                        // embeddings and overrides still open go on after it.
++                        let preserves_newlines = bidi
++                            && !bidi_scan.open_controls.is_empty()
++                            && parent_style.as_ref().is_some_and(|style| {
++                                use style::computed_values::white_space_collapse::T as Collapse;
++                                !matches!(style.get_inherited_text().white_space_collapse, Collapse::Collapse | Collapse::PreserveSpaces)
++                            });
++                        if preserves_newlines && text.contains('\n') {
++                            for piece in text.split_inclusive('\n') {
++                                builder.push_text(piece);
++                                if piece.ends_with('\n') {
++                                    reopen_bidi_controls(builder, bidi_scan);
++                                }
++                            }
++                        } else {
++                            builder.push_text(&text);
++                        }
 +                    }
 +                }
 +                text_nodes.push((node_id, start..builder.text().len()));
              }
              NodeData::Comment { .. } => {
                  // node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
-@@ -303,3 +1307,250 @@
+@@ -303,3 +1325,250 @@
          }
      }
  }

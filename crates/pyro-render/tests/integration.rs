@@ -99,6 +99,7 @@ mod svg_image_natural_size;
 mod svg_reference_cycles;
 mod svg_viewport_clip;
 mod tab_stops;
+mod text_breaks_bidi_paragraphs;
 mod text_spacing;
 mod table_cell_height;
 mod table_cell_width;

@@ -2320,3 +2320,6 @@ parley, which scales those on fitted lines. parley does the scaling (its README)
 - `src/layout/inline/layout.rs`: an inline layout in a vertical writing mode with a central dominant baseline also
   exports its baselines from the block-start edge (`taffy::Baselines::dominant_first/last`: the middle of the line's
   content, turned for `vertical-lr`), which grid baseline alignment reads (vendor/taffy/README.pyro.md).
+- `src/layout/inline/build.rs` (text nodes): a preserved newline ends the bidi paragraph like a `<br>`, so the
+  embeddings and overrides still open (`unicode-bidi: bidi-override` of the block) are pushed again after it (WPT
+  css-text `pre-wrap-align-*-003`). Covered by `bidi_override_holds_after_a_preserved_newline`.

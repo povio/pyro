@@ -342,3 +342,11 @@ blitz-dom puts an inline-level absolutely positioned box on the start side of it
   first line's text indent adds to the box (WPT `css/CSS2/text/text-indent-intrinsic-001`); a line kept from wrapping
   while its running width is negative counts its content only, not a negative text indent (`line_indent`; WPT
   `text-indent-intrinsic-003/004`). Covered by `crates/pyro-render/tests/css2_intrinsic_and_hints.rs`.
+- `src/layout/line_break.rs` (`wraps_after`, `LineState::after_box`): an atomic inline counts as a character of the
+  span around it (`parent_style_index`): whether the line may wrap before it is decided as before text, and there is
+  a soft wrap opportunity after it that the next atom's `wraps_after` takes, so images in two adjacent `nowrap` spans
+  wrap between them in a block that wraps (WPT css-text `line-breaking-030/031`).
+- `src/resolve/tree.rs` (`PendingWhitespace::segment_break`): a collapsible white space sequence holding a segment
+  break next to U+200B ZERO WIDTH SPACE is removed (CSS Text 4 § 4.1.3), across inline box boundaries and
+  out-of-flow boxes (WPT `seg-break-transformation-018/019`). Both covered by
+  `crates/pyro-render/tests/text_breaks_bidi_paragraphs.rs`.

@@ -122,6 +122,9 @@ struct LineState {
     /// pyro: the style of the last character appended to the line and whether it is white space,
     /// which decide whether the line may wrap before the next atom (`wraps_after`).
     last_char: Option<(u16, bool)>,
+    /// pyro: the last thing appended to the line is an atomic inline: there is a soft wrap
+    /// opportunity after it (whether the line may take it is `wraps_after`'s to decide).
+    after_box: bool,
     /// pyro: the line's first atom is fullwidth opening punctuation set half-width at the line's
     /// start, or set back full-width there: its shaped cluster, and how far its glyph moves and
     /// its advance changes. The shaped text takes it when the line is committed.
@@ -146,6 +149,7 @@ impl LineState {
         self.has_inline_content = false;
         self.content_start = 0;
         self.last_char = None;
+        self.after_box = false;
         self.start_trim = None;
         self.end_trim = None;
     }
@@ -749,6 +753,7 @@ impl BreakerState {
         }
         if let Some(last) = atom.characters().last() {
             self.line.last_char = Some((last.style_index, last.whitespace != Whitespace::None));
+            self.line.after_box = false;
         }
         self.line.shy = None;
         self.line.no_break_after = false;
@@ -1159,6 +1164,9 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                 quantize,
             );
             layout_box.baseline_offset = placement.baseline_offset;
+            // pyro: the box counts as a character of the span around it (`wraps_after`).
+            self.state.line.last_char = Some((layout_box.parent_style_index, false));
+            self.state.line.after_box = true;
             self.state
                 .append_aligned_inline_box_to_line(next_x, inline_box, placement, quantize);
         } else {
@@ -1650,11 +1658,24 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                         return self.max_height_break_data(height_contribution);
                     }
 
+                    // pyro: the box's style is that of the span around it: whether the line
+                    // may wrap before it is decided as before text (`wraps_after`), so that two
+                    // `nowrap` spans each holding an image wrap between them in a block that wraps.
+                    let box_style = self.layout.data.inline_boxes[item.index].parent_style_index;
+                    let wraps_before = wraps_after(
+                        &self.layout.data.styles,
+                        self.state.line.last_char,
+                        box_style,
+                        self.state.line.text_wrap_mode,
+                    );
+                    let box_wrap_mode = self.layout.data.styles[usize::from(box_style)].text_wrap_mode;
+
                     // If the box fits on the current line (or we are at the start of the current line)
                     // then simply move on to the next item
-                    if next_x <= fit_advance || self.state.line.text_wrap_mode != TextWrapMode::Wrap
+                    if next_x <= fit_advance || !wraps_before
                     {
                         self.append_layout_inline_box(item.index, next_x);
+                        self.state.line.text_wrap_mode = box_wrap_mode;
 
                         // There is a soft wrap opportunity after an inline box, unless wrapping
                         // is disabled
@@ -1735,7 +1756,7 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                                 max_advance,
                                 line_indent,
                             );
-                        } else if is_soft_wrap_opportunity
+                        } else if (is_soft_wrap_opportunity || self.state.line.after_box)
                             && wraps_after(&self.layout.data.styles, self.state.line.last_char, style_index, text_wrap_mode)
                         {
                             // We don't record boundaries when the advance is 0. As we do not want overflowing content to cause extra consecutive

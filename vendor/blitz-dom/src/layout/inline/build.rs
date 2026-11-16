@@ -1295,7 +1295,25 @@ fn build_inline_layout_with(
                         let text =
                             text_transformer.transform(&data.content, parent_text_transform, builder);
                         let before = if hyphenates { word_before(builder.text()) } else { String::new() };
-                        builder.push_text(&hyphenate(&before, text));
+                        let text = hyphenate(&before, text);
+                        // pyro: a preserved newline ends the bidi paragraph as a `<br>` does: the
+                        // embeddings and overrides still open go on after it.
+                        let preserves_newlines = bidi
+                            && !bidi_scan.open_controls.is_empty()
+                            && parent_style.as_ref().is_some_and(|style| {
+                                use style::computed_values::white_space_collapse::T as Collapse;
+                                !matches!(style.get_inherited_text().white_space_collapse, Collapse::Collapse | Collapse::PreserveSpaces)
+                            });
+                        if preserves_newlines && text.contains('\n') {
+                            for piece in text.split_inclusive('\n') {
+                                builder.push_text(piece);
+                                if piece.ends_with('\n') {
+                                    reopen_bidi_controls(builder, bidi_scan);
+                                }
+                            }
+                        } else {
+                            builder.push_text(&text);
+                        }
                     }
                 }
                 text_nodes.push((node_id, start..builder.text().len()));

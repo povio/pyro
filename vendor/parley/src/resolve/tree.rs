@@ -29,6 +29,9 @@ struct PendingWhitespace {
     /// Whether any of the collapsed whitespace came from a span that allows wrapping, in which
     /// case the collapsed space is a soft wrap opportunity.
     wrappable: bool,
+    /// pyro: whether the sequence holds a segment break: next to a zero-width space it is removed
+    /// (CSS Text 4 § 4.1.3), with the white space collapsed around it.
+    segment_break: bool,
 }
 
 /// Whether `c` is a segment break, i.e. a character which is a forced line break when preserved.
@@ -46,6 +49,9 @@ pub(crate) fn is_bidi_control(c: char) -> bool {
 /// APPLICATION: default ignorable, zero-width, line breaking class AL), so that the box's
 /// line height and font take part in the line's height (CSS 2.1 § 10.8) as in browsers.
 pub(crate) const EMPTY_BOX_STRUT: char = '\u{2061}';
+
+/// pyro: U+200B ZERO WIDTH SPACE, which removes a segment break next to it.
+const ZERO_WIDTH_SPACE: char = '\u{200B}';
 
 /// pyro: whether `text` ends with a segment break, bidi formatting characters and empty-box
 /// struts after it aside.
@@ -210,8 +216,9 @@ impl<B: Brush> TreeStyleBuilder<B> {
                         let wrappable = self.tree[span].style.text_wrap_mode == TextWrapMode::Wrap;
                         let pending = self
                             .pending_whitespace
-                            .get_or_insert(PendingWhitespace { span, wrappable });
+                            .get_or_insert(PendingWhitespace { span, wrappable, segment_break: false });
                         pending.wrappable |= wrappable;
+                        pending.segment_break |= rest[..whitespace_len].contains(is_segment_break);
                         rest = &rest[whitespace_len..];
                         continue;
                     }
@@ -241,6 +248,11 @@ impl<B: Brush> TreeStyleBuilder<B> {
                         rest = &rest[controls_len..];
                         continue;
                     }
+                    if rest.starts_with(ZERO_WIDTH_SPACE)
+                        && self.pending_whitespace.as_ref().is_some_and(|pending| pending.segment_break)
+                    {
+                        self.drop_pending_whitespace();
+                    }
                     self.flush_pending_whitespace();
                     self.commit_text(span, &rest[..text_len]);
                     rest = &rest[text_len..];
@@ -263,7 +275,16 @@ impl<B: Brush> TreeStyleBuilder<B> {
         let is_at_start = !self.has_content && !self.last_item_is_inline_box;
         // pyro: an inline box after the segment break is content of the new line: the white space
         // after it is kept (`<br>` then inline-blocks with spaces between them).
-        if is_at_start || (ends_with_segment_break(&self.text) && !self.last_item_is_inline_box) {
+        // pyro: a segment break after a zero-width space is removed with the white space around it.
+        let after_zero_width_space = pending.segment_break
+            && self
+                .text
+                .trim_end_matches(|c| is_bidi_control(c) || c == EMPTY_BOX_STRUT)
+                .ends_with(ZERO_WIDTH_SPACE);
+        if is_at_start
+            || after_zero_width_space
+            || (ends_with_segment_break(&self.text) && !self.last_item_is_inline_box)
+        {
             self.deferred_edges.clear();
             self.commit_deferred_controls();
             return;
