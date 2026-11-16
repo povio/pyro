@@ -2323,3 +2323,10 @@ parley, which scales those on fitted lines. parley does the scaling (its README)
 - `src/layout/inline/build.rs` (text nodes): a preserved newline ends the bidi paragraph like a `<br>`, so the
   embeddings and overrides still open (`unicode-bidi: bidi-override` of the block) are pushed again after it (WPT
   css-text `pre-wrap-align-*-003`). Covered by `bidi_override_holds_after_a_preserved_newline`.
+**SVG image root background, replaced ratios, stretch in anonymous blocks, size containers (lane S2).** An SVG
+image's root `background-color` (attribute or `style`, `SvgIntrinsicDimensions::root_background`) is painted over the
+bands of its viewport outside the area usvg painted it in (its `viewBox`), even-odd, so letterboxed images show it as
+browsers do. `ReplacedContext::ratio_in_box_sizing_box`: an `aspect-ratio: <ratio>` without `auto` is between
+`box-sizing` boxes (a border box under `border-box`). An anonymous block hands its parent's height as the definite
+available height to its atomic inlines (`height: stretch` on an iframe). `effective_size_containment`: a
+`container-type: size` (`inline-size`) box has size (inline-size) containment for layout.

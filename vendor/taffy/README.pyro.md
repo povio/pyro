@@ -542,3 +542,8 @@ in contributions and are computed per axis as it is sized (with the other axis' 
 the final sizes before `align_and_position_item`, which aligns the item to its group's side
 (`ItemBaselineAlignment`). A grid container reports a last baseline (its last row: a last-baseline group, else its
 last item).
+**Stretch beside floats and for absolutely positioned boxes (lane S2).** Tables and compressible replaced elements
+resolve `stretch` in `width`, `min-width` or `max-width` through the block parent (`block_item_known_dimensions`),
+and the float-slot search clamps a given width by the keyword limits (`clamp_width_by_keywords`), so `stretch` is
+the slot's width. `resolve_absolute_sizing_keywords` takes the stretch-fit size of the inset-modified containing
+block, which an auto inset bounds at the static position.

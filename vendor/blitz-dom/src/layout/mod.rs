@@ -237,7 +237,7 @@ impl LayoutPassState<'_> {
         let mut inputs = self.adjusted_child_inputs(node_id, inputs);
         // pyro: size containment (`Self::size_contained_size`) and inline-size containment
         // (`Self::inline_size_contained_width`)
-        let contain = self.nodes[dom_node_id(node_id)].primary_styles().map(|styles| styles.get_box().contain);
+        let contain = self.nodes[dom_node_id(node_id)].primary_styles().map(|styles| effective_size_containment(&styles));
         if contain.is_some_and(|contain| contain.contains(style::values::computed::Contain::BLOCK_SIZE)) {
             if let Some(size) = self.size_contained_size(node_id, inputs) {
                 if inputs.run_mode != RunMode::PerformLayout {
@@ -297,7 +297,7 @@ impl LayoutPassState<'_> {
         let node = &self.nodes[dom_node_id(node_id)];
         let content = {
             let styles = node.primary_styles()?;
-            if !styles.get_box().contain.contains(Contain::INLINE_SIZE | Contain::BLOCK_SIZE) {
+            if !effective_size_containment(&styles).contains(Contain::INLINE_SIZE | Contain::BLOCK_SIZE) {
                 return None;
             }
             let display = styles.clone_display();
@@ -1131,9 +1131,13 @@ impl LayoutPassState<'_> {
                             (intrinsic_sizes, default_object_size)
                         };
 
+                    let ratio_in_box_sizing_box = node
+                        .primary_styles()
+                        .is_some_and(|style| !style.get_position().aspect_ratio.auto);
                     let replaced_context = ReplacedContext {
                         intrinsic_sizes,
                         default_object_size,
+                        ratio_in_box_sizing_box,
                     };
 
                     let mut style = node.layout_style();
@@ -2204,4 +2208,20 @@ impl BaseDocument {
             && !box_style.position.is_absolutely_positioned()
             && !parent_is_cell
     }
+}
+
+/// pyro: `contain` with the size containment a size container has (`container-type: size` is
+/// size containment, `inline-size` inline-size containment; css-contain-3 §2): its content does
+/// not size it (WPT css-conditional `container-queries/flex-basis-with-container-type`).
+pub(crate) fn effective_size_containment(styles: &style::properties::ComputedValues) -> style::values::computed::Contain {
+    use style::values::computed::Contain;
+    use style::values::specified::box_::ContainerType;
+    let box_style = styles.get_box();
+    let mut contain = box_style.contain;
+    if box_style.container_type.intersects(ContainerType::SIZE) {
+        contain |= Contain::INLINE_SIZE | Contain::BLOCK_SIZE;
+    } else if box_style.container_type.intersects(ContainerType::INLINE_SIZE) {
+        contain |= Contain::INLINE_SIZE;
+    }
+    contain
 }

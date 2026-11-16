@@ -87,6 +87,7 @@ mod soft_hyphens;
 mod split_inline_containing_block;
 mod static_position;
 mod sticky_paint;
+mod stretch_and_replaced_ratios;
 mod style_element_text;
 mod style_sheet_charset;
 mod subgrid;

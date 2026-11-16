@@ -1572,7 +1572,13 @@ fn block_item_known_dimensions(
 ) -> Size<Option<f32>> {
     // Unless stretched, tables and compressible replaced elements resolve their own width
     // <https://www.w3.org/TR/CSS22/visudet.html#block-replaced-width>
-    if (item.is_table || item.is_compressible_replaced) && !is_stretch {
+    // pyro: `stretch` in `width`, `min-width` or `max-width` is the stretch width for them too
+    // (beside floats: the slot's;
+    // WPT css-sizing `stretch/replaced-next-to-float-*`)
+    let stretch_keyword = item.size_style.width.is_stretch()
+        || item.min_size_keyword.width.is_stretch()
+        || item.max_size_keyword.width.is_stretch();
+    if (item.is_table || item.is_compressible_replaced) && !is_stretch && !stretch_keyword {
         Size::NONE
     } else {
         // The automatic width of a block-level box whose `justify-self` is neither `normal` nor `stretch`
@@ -2084,7 +2090,18 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
                                 laid_out = Some(size);
                                 size.width
                             } else {
-                                item.size.width.unwrap_or(0.0).maybe_clamp(item.min_size.width, item.max_size.width)
+                                let width =
+                                    item.size.width.unwrap_or(0.0).maybe_clamp(item.min_size.width, item.max_size.width);
+                                // pyro: `max-width: stretch` (and the other keywords) bound it in the slot
+                                // (WPT css-sizing `stretch/bfc-next-to-float-2`)
+                                clamp_width_by_keywords(
+                                    tree,
+                                    item,
+                                    width,
+                                    Some(stretch_width),
+                                    Some(container_inner_width),
+                                    parent_size,
+                                )
                             };
                             if width.max(item.padding_border_sum.width) > slot.border_width + FIT_TOLERANCE {
                                 slot_segment = Some(segment_id);

@@ -731,9 +731,16 @@ impl LayoutPassState<'_> {
         };
 
         // Compute size of inline boxes
+        // pyro: an anonymous block is no containing block: its atomic inlines stretch to the
+        // height of the one around it too (`height: stretch` on an iframe; WPT css-sizing
+        // `stretch/stretch-anonymous-block-001`).
+        let child_available_space = match (self.nodes[node_id].is_anonymous(), parent_size.height) {
+            (true, Some(height)) => Size { height: AvailableSpace::Definite(height), ..available_space },
+            _ => available_space,
+        };
         let child_inputs = taffy::tree::LayoutInput {
             known_dimensions: Size::NONE,
-            available_space,
+            available_space: child_available_space,
             sizing_mode: SizingMode::InherentSize,
             parent_size: Size {
                 width: available_space.width.into_option(),

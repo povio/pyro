@@ -4036,6 +4036,24 @@ impl ElementCx<'_, '_> {
                         None,
                     );
                 }
+                // pyro: an SVG image's root background covers its whole viewport (the object
+                // rect), not just the `viewBox` usvg paints it in: the bands of a letterboxed
+                // image are painted here (WPT css-sizing `aspect-ratio/replaced-element-004`).
+                if let (false, Some(color)) = (inline, svg.intrinsic_dimensions.root_background) {
+                    let size = svg.tree.size();
+                    let painted = (Affine::translate((x, y)) * viewport).transform_rect_bbox(Rect::new(
+                        0.0,
+                        0.0,
+                        size.width().into(),
+                        size.height().into(),
+                    ));
+                    let object = Rect::new(x, y, x + paint_size.width as f64, y + paint_size.height as f64);
+                    let mut bands = kurbo::BezPath::new();
+                    bands.extend(object.path_elements(0.1));
+                    bands.extend(painted.path_elements(0.1));
+                    let color = peniko::Color::from_rgba8(color.red, color.green, color.blue, color.alpha);
+                    scene.fill(Fill::EvenOdd, self.transform, color, None, &bands);
+                }
                 // pyro: with what the document knows of its filters (tainted primitives).
                 match crate::filters::svg_filter_notes(self.context.dom, self.node, &svg.tree) {
                     Some(notes) => {

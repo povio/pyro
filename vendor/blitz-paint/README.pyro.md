@@ -969,3 +969,8 @@ Tables (round 3 lane C2T), covered by `crates/pyro-render/tests/table_paint_orde
   and padding there. Only `sideways-lr` lines (turned the other way) keep the background colours alone. WPT css-inline
   `text-box-trim-inline-box-004/005` and `-text-decoration-002` (vertical variants). Covered by
   `a_vertical_spans_block_sides_are_painted_over_the_next_block` in `crates/pyro-render/tests/inline_box_decorations.rs`.
+
+**SVG image root background bands (lane S2).** `draw_svg` paints an SVG image's root `background-color` over its
+viewport outside the area usvg painted it in (the tree's size, its `viewBox`), with an even-odd fill of the object
+rect and that area: a browser paints the root's background over the whole viewport (WPT css-sizing
+`aspect-ratio/replaced-element-004/006`).

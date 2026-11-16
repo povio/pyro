@@ -205,3 +205,15 @@ fn flex_items_with_a_ratio() {
         (200, 25),
     );
 }
+
+/// A size container (`container-type: size`) has size containment: its content (`100cqh`, the
+/// viewport's height while its own is unknown) does not raise the automatic minimum size of a
+/// ratio flex item (WPT css-conditional `container-queries/flex-basis-with-container-type`).
+#[test]
+fn a_size_container_flex_item_with_a_ratio_ignores_its_content() {
+    check(
+        "<div style='display:flex;flex-direction:column;width:100px'><div style='aspect-ratio:1;container-type:size'>\
+         <div style='width:100%;height:100cqh;background:green'></div></div></div>",
+        (100, 100),
+    );
+}
