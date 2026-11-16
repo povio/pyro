@@ -134,3 +134,17 @@ fn a_shrinking_table_is_no_wider_than_its_max_width() {
     assert!((got[0][2] - got[1][2]).abs() < 0.5 && got[1][3] > 3.0 * 40.0, "{got:?}");
     assert!((got[2][2] - got[3][2]).abs() < 0.5 && got[3][3] > 40.0, "{got:?}");
 }
+
+#[test]
+fn white_space_ending_a_line_leaves_the_span_edges_after_it_at_the_content() {
+    // The spaces around the empty bordered span collapse into one that ends the line: it is
+    // removed, and the span's border follows the letter.
+    let got = boxes(
+        "<div><span id=a>A</span></div>\
+         <div><span>A  <span id=b style='border-left:10px solid'>  </span>  </span></div>\
+         <div><span>A  <span id=c style='border-left:10px solid'>  </span>  B</span></div>",
+        &["a", "b", "c"],
+    );
+    assert!((got[1][0] - (got[0][0] + got[0][2])).abs() < 0.5, "{got:?}");
+    assert!(got[2][0] > got[0][0] + got[0][2] + 5.0, "a kept space goes before the edge: {got:?}");
+}

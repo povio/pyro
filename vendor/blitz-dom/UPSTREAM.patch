@@ -9087,7 +9087,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
          match marker {
              // Bullet glyphs live in the bundled bullet font. The position-outside
              // path already asks for it; without the same span here a marker like
-@@ -80,50 +506,440 @@
+@@ -80,50 +506,443 @@
                  builder.push_text(&format!("{char} "));
                  builder.pop_style_span();
              }
@@ -9342,8 +9342,11 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
 +            layout.break_all_lines(None);
 +            layout.full_width()
 +        };
-+        let space = advance_of("\u{a0}") + (parley_style.letter_spacing + parley_style.word_spacing) * scale;
++        // The space (U+0020) of the first font that has one: measured between two digits, as a
++        // font without spaces may still map U+00A0 (WPT css-text `tab-size-integer-005`).
 +        let ch = advance_of("0");
++        let space = (advance_of("0 0") - 2.0 * ch).max(0.0)
++            + (parley_style.letter_spacing + parley_style.word_spacing) * scale;
 +        text_layout.layout.set_tab_stops(space, ch / 2.0);
 +    }
 +    // pyro: the shaped text's content widths, for every layout of it (`TextLayout::
@@ -9534,7 +9537,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
      ) {
          let node = &nodes[node_id];
  
-@@ -143,6 +959,26 @@
+@@ -143,6 +962,26 @@
                      }
                  }
  
@@ -9561,7 +9564,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
                  let display = node.display_style().unwrap_or(Display::inline());
                  let position = style
                      .map(|s| s.clone_position())
-@@ -161,41 +997,44 @@
+@@ -161,41 +1000,44 @@
                          // node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
                      }
                      (DisplayOutside::None, DisplayInside::Contents) => {
@@ -9628,7 +9631,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
                              }
                              builder.push_inline_box(InlineBox {
                                  id: node_id.as_u64(),
-@@ -210,66 +1049,165 @@
+@@ -210,66 +1052,165 @@
                                      .primary_styles()
                                      .map(|s| stylo_to_parley::vertical_align(&s))
                                      .unwrap_or_default(),
@@ -9815,7 +9818,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
                          }
                          builder.push_inline_box(InlineBox {
                              id: node_id.as_u64(),
-@@ -284,6 +1222,7 @@
+@@ -284,6 +1225,7 @@
                                  .primary_styles()
                                  .map(|s| stylo_to_parley::vertical_align(&s))
                                  .unwrap_or_default(),
@@ -9823,7 +9826,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
                          });
                      }
                  };
-@@ -291,10 +1230,93 @@
+@@ -291,10 +1233,93 @@
              NodeData::Text(data) => {
                  // node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
                  // dbg!(&data.content);
@@ -9920,7 +9923,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
              }
              NodeData::Comment { .. } => {
                  // node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
-@@ -303,3 +1325,250 @@
+@@ -303,3 +1328,250 @@
          }
      }
  }

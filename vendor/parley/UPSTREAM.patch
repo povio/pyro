@@ -200,7 +200,7 @@ index 0000000..0930692
 +    }
 +}
 diff --git a/src/builder.rs b/src/builder.rs
-index 4d5dcf2..11ef481 100644
+index 4d5dcf2..4479f55 100644
 --- a/src/builder.rs
 +++ b/src/builder.rs
 @@ -35,6 +35,11 @@ impl BuilderOptions<'_> {
@@ -238,7 +238,7 @@ index 4d5dcf2..11ef481 100644
      /// Returns the pushed text so far, after whitespace processing, but excluding any trailing
      /// collapsible whitespace.
      ///
-@@ -284,10 +305,21 @@ impl<'b, B: Brush> TreeBuilder<'b, B> {
+@@ -284,10 +305,19 @@ impl<'b, B: Brush> TreeBuilder<'b, B> {
          self.lcx.tree_style_builder.has_pending_whitespace()
      }
  
@@ -257,20 +257,18 @@ index 4d5dcf2..11ef481 100644
 +                self.lcx.tree_style_builder.flush_pending_whitespace();
 +                self.lcx.tree_style_builder.set_last_item_is_inline_box();
 +            }
-+            // pyro: white space before a span's start edge is outside the span.
-+            InlineBoxKind::SpanStart => self.lcx.tree_style_builder.begin_span_start_edge(),
 +            _ => {}
          }
  
          // TODO: arrange type better here to factor out the index
-@@ -298,6 +330,24 @@ impl<'b, B: Brush> TreeBuilder<'b, B> {
+@@ -298,6 +328,24 @@ impl<'b, B: Brush> TreeBuilder<'b, B> {
              parent_style_index,
              baseline_offset: 0.,
          });
-+        if kind == InlineBoxKind::SpanEnd {
-+            // pyro: white space pending before a span's end edge is inside the span.
++        if matches!(kind, InlineBoxKind::SpanStart | InlineBoxKind::SpanEnd) {
++            // pyro: white space pending before a span's edge goes before the edge if it is kept.
 +            let box_index = self.lcx.inline_boxes.len() - 1;
-+            self.lcx.tree_style_builder.pushed_span_end_edge(box_index);
++            self.lcx.tree_style_builder.pushed_span_edge(box_index);
 +        }
 +    }
 +
@@ -288,7 +286,7 @@ index 4d5dcf2..11ef481 100644
      }
  
      /// Sets the paragraph's base direction.
-@@ -315,12 +365,9 @@ impl<'b, B: Brush> TreeBuilder<'b, B> {
+@@ -315,12 +363,9 @@ impl<'b, B: Brush> TreeBuilder<'b, B> {
      }
  
      #[inline]
@@ -303,7 +301,7 @@ index 4d5dcf2..11ef481 100644
  
          // Call generic layout builder method
          build_into_layout(layout, &text, self.lcx, self.fcx, self.options);
-@@ -334,6 +381,22 @@ impl<'b, B: Brush> TreeBuilder<'b, B> {
+@@ -334,6 +379,22 @@ impl<'b, B: Brush> TreeBuilder<'b, B> {
          let text = self.build_into(&mut layout);
          (layout, text)
      }
@@ -326,7 +324,7 @@ index 4d5dcf2..11ef481 100644
  }
  
  fn build_into_layout<B: Brush>(
-@@ -355,6 +418,35 @@ fn build_into_layout<B: Brush>(
+@@ -355,6 +416,35 @@ fn build_into_layout<B: Brush>(
          "at least one style run is required"
      );
  
@@ -362,7 +360,7 @@ index 4d5dcf2..11ef481 100644
      crate::analysis::analyze_text(
          lcx,
          text,
-@@ -406,6 +498,7 @@ fn build_into_layout<B: Brush>(
+@@ -406,6 +496,7 @@ fn build_into_layout<B: Brush>(
              text,
              layout,
              &lcx.analysis_data_sources,
@@ -370,7 +368,7 @@ index 4d5dcf2..11ef481 100644
          );
      }
  
-@@ -415,13 +508,18 @@ fn build_into_layout<B: Brush>(
+@@ -415,13 +506,18 @@ fn build_into_layout<B: Brush>(
          fcx,
          &lcx.style_table,
          &layout.data.shaped_text,
@@ -3854,7 +3852,7 @@ index f465832..a8e29d4 100644
          }
      }
 diff --git a/src/resolve/tree.rs b/src/resolve/tree.rs
-index c102610..bcd774e 100644
+index c102610..a50243b 100644
 --- a/src/resolve/tree.rs
 +++ b/src/resolve/tree.rs
 @@ -16,6 +16,9 @@ struct StyleTreeNode<B: Brush> {
@@ -3904,15 +3902,11 @@ index c102610..bcd774e 100644
  /// Builder for constructing a tree of styles
  #[derive(Clone)]
  pub(crate) struct TreeStyleBuilder<B: Brush> {
-@@ -50,6 +76,20 @@ pub(crate) struct TreeStyleBuilder<B: Brush> {
+@@ -50,6 +76,16 @@ pub(crate) struct TreeStyleBuilder<B: Brush> {
      /// Whether the most recently pushed item is an inline box, in which case pending collapsible
      /// whitespace is not at the start of the inline formatting context.
      last_item_is_inline_box: bool,
-+    /// pyro: set after a span's start edge that follows a committed collapsed space: collapsible
-+    /// white space is removed until content follows (the space before the edge is the one it
-+    /// collapses into).
-+    collapse_after_edge: bool,
-+    /// pyro: span end edges (indices into the context's inline boxes) pushed while white space
++    /// pyro: span start and end edges (indices into the context's inline boxes) pushed while white space
 +    /// was pending. That white space is inside their spans: when it is kept, they move behind it.
 +    deferred_edges: Vec<usize>,
 +    /// pyro: the moves of [`Self::deferred_edges`]: inline box index and its new text index.
@@ -3925,11 +3919,10 @@ index c102610..bcd774e 100644
  }
  
  impl<B: Brush> Default for TreeStyleBuilder<B> {
-@@ -62,6 +102,11 @@ impl<B: Brush> Default for TreeStyleBuilder<B> {
+@@ -62,6 +98,10 @@ impl<B: Brush> Default for TreeStyleBuilder<B> {
              current_span: usize::MAX,
              pending_whitespace: None,
              last_item_is_inline_box: false,
-+            collapse_after_edge: false,
 +            deferred_edges: Vec::new(),
 +            edge_moves: Vec::new(),
 +            deferred_controls: Vec::new(),
@@ -3937,11 +3930,10 @@ index c102610..bcd774e 100644
          }
      }
  }
-@@ -82,6 +127,11 @@ impl<B: Brush> TreeStyleBuilder<B> {
+@@ -82,6 +122,10 @@ impl<B: Brush> TreeStyleBuilder<B> {
          self.text.clear();
          self.pending_whitespace = None;
          self.last_item_is_inline_box = false;
-+        self.collapse_after_edge = false;
 +        self.deferred_edges.clear();
 +        self.edge_moves.clear();
 +        self.deferred_controls.clear();
@@ -3949,7 +3941,7 @@ index c102610..bcd774e 100644
  
          // The root style is always materialised at index 0 so that it can act as the parent of
          // every other style (and as the strut for otherwise empty lines).
-@@ -93,6 +143,7 @@ impl<B: Brush> TreeStyleBuilder<B> {
+@@ -93,6 +137,7 @@ impl<B: Brush> TreeStyleBuilder<B> {
              style: root_style,
              style_id: Some(0),
              wrappable_style_id: None,
@@ -3957,27 +3949,17 @@ index c102610..bcd774e 100644
          });
          self.current_span = 0;
      }
-@@ -101,6 +152,32 @@ impl<B: Brush> TreeStyleBuilder<B> {
-     /// treated as whitespace at the start of the inline formatting context.
-     pub(crate) fn set_last_item_is_inline_box(&mut self) {
+@@ -103,6 +148,24 @@ impl<B: Brush> TreeStyleBuilder<B> {
          self.last_item_is_inline_box = true;
-+        self.collapse_after_edge = false;
-+    }
-+
-+    /// pyro: a span's start edge is about to be pushed. White space pending before it is outside
-+    /// the span: it is resolved now, and collapsible white space after the edge collapses into it.
-+    pub(crate) fn begin_span_start_edge(&mut self) {
-+        let len = self.text.len();
-+        self.flush_pending_whitespace();
-+        if self.text.len() > len {
-+            self.collapse_after_edge = true;
-+        }
-+    }
-+
-+    /// pyro: a span's end edge was pushed as inline box `box_index` at the end of the text so
-+    /// far. White space pending before it is inside the span: if it is kept, the edge moves
-+    /// behind it (see [`Self::take_edge_moves`]).
-+    pub(crate) fn pushed_span_end_edge(&mut self, box_index: usize) {
+     }
+ 
++    /// pyro: a span's start or end edge was pushed as inline box `box_index` at the end of the
++    /// text so far. White space pending before it collapses with any after it: if it is kept
++    /// (content follows it), the edge moves behind it (see [`Self::take_edge_moves`]): the space
++    /// is outside a span it starts and inside a span it ends; if it is not (it ends the line or
++    /// the paragraph), the edge stays next to the content before it (WPT css-text
++    /// `line-edge-white-space-collapse-001`).
++    pub(crate) fn pushed_span_edge(&mut self, box_index: usize) {
 +        if self.pending_whitespace.is_some() {
 +            self.deferred_edges.push(box_index);
 +        }
@@ -3987,10 +3969,12 @@ index c102610..bcd774e 100644
 +    /// index behind that white space.
 +    pub(crate) fn take_edge_moves(&mut self) -> Vec<(usize, usize)> {
 +        core::mem::take(&mut self.edge_moves)
-     }
- 
++    }
++
      /// Applies white space processing to `text` in the current span and commits the result, leaving
-@@ -117,7 +194,7 @@ impl<B: Brush> TreeStyleBuilder<B> {
+     /// any trailing collapsible whitespace pending.
+     pub(crate) fn push_text(&mut self, text: &str) {
+@@ -117,7 +180,7 @@ impl<B: Brush> TreeStyleBuilder<B> {
                      // Pending whitespace is always from a `WhiteSpaceCollapse::Collapse` or
                      // `WhiteSpaceCollapse::PreserveBreaks` span, and following CSS Text 4 § 4.3.1 Rule 1
                      // must be removed if it immediately precedes a preserved segment break.
@@ -3999,19 +3983,7 @@ index c102610..bcd774e 100644
                  }
                  self.flush_pending_whitespace();
                  self.commit_text(span, text);
-@@ -127,6 +204,11 @@ impl<B: Brush> TreeStyleBuilder<B> {
-                 while !rest.is_empty() {
-                     let whitespace_len =
-                         rest.find(|c| !mode.is_collapsible(c)).unwrap_or(rest.len());
-+                    if whitespace_len > 0 && self.collapse_after_edge {
-+                        // pyro: it collapses into the space before the span's start edge.
-+                        rest = &rest[whitespace_len..];
-+                        continue;
-+                    }
-                     if whitespace_len > 0 {
-                         // The collapsed space is attributed to the span the whitespace sequence
-                         // started in, but is a wrap opportunity if any of the spans it collapses
-@@ -134,8 +216,9 @@ impl<B: Brush> TreeStyleBuilder<B> {
+@@ -134,8 +197,9 @@ impl<B: Brush> TreeStyleBuilder<B> {
                          let wrappable = self.tree[span].style.text_wrap_mode == TextWrapMode::Wrap;
                          let pending = self
                              .pending_whitespace
@@ -4022,7 +3994,7 @@ index c102610..bcd774e 100644
                          rest = &rest[whitespace_len..];
                          continue;
                      }
-@@ -146,7 +229,7 @@ impl<B: Brush> TreeStyleBuilder<B> {
+@@ -146,7 +210,7 @@ impl<B: Brush> TreeStyleBuilder<B> {
                          // reach this point, so only `LS` and `PS` are treated as forced breaks. In
                          // `PreserveBreaks` mode `CR` and `LF` are not collapsible and are also
                          // preserved as forced breaks.
@@ -4031,7 +4003,7 @@ index c102610..bcd774e 100644
                          let break_len = rest.chars().next().unwrap().len_utf8();
                          self.commit_text(span, &rest[..break_len]);
                          rest = &rest[break_len..];
-@@ -155,6 +238,21 @@ impl<B: Brush> TreeStyleBuilder<B> {
+@@ -155,6 +219,21 @@ impl<B: Brush> TreeStyleBuilder<B> {
                      let text_len = rest
                          .find(|c| mode.is_collapsible(c) || is_segment_break(c))
                          .unwrap_or(rest.len());
@@ -4053,7 +4025,7 @@ index c102610..bcd774e 100644
                      self.flush_pending_whitespace();
                      self.commit_text(span, &rest[..text_len]);
                      rest = &rest[text_len..];
-@@ -173,8 +271,22 @@ impl<B: Brush> TreeStyleBuilder<B> {
+@@ -173,8 +252,22 @@ impl<B: Brush> TreeStyleBuilder<B> {
          // Whitespace at the start of the inline formatting context is removed, as is whitespace
          // immediately following a preserved segment break. Whitespace following a preserved space
          // or tab is retained, as only collapsible whitespace collapses.
@@ -4078,7 +4050,7 @@ index c102610..bcd774e 100644
              return;
          }
  
-@@ -184,6 +296,69 @@ impl<B: Brush> TreeStyleBuilder<B> {
+@@ -184,6 +277,76 @@ impl<B: Brush> TreeStyleBuilder<B> {
              self.resolve_style_id(pending.span)
          };
          self.commit_styled_text(style_index, " ");
@@ -4113,10 +4085,17 @@ index c102610..bcd774e 100644
 +    }
 +
 +    /// pyro: commits the strut of an empty inline box (`EMPTY_BOX_STRUT`) in the current span,
-+    /// where the text is now. It is no content: white space collapses across it.
++    /// where the text is now. It is no content: white space collapses across it. White space
++    /// pending before it and the edges of the box (`deferred_edges`), when kept, goes before it
++    /// with them; a box without edges keeps its strut next to the content before it (WPT
++    /// css-text `line-break-anywhere-and-white-space-004`).
 +    pub(crate) fn push_empty_box_strut(&mut self) {
 +        let style_index = self.resolve_unspaced_style_id(self.current_span);
-+        self.commit_control(style_index, EMPTY_BOX_STRUT);
++        if self.pending_whitespace.is_some() && !self.deferred_edges.is_empty() {
++            self.deferred_controls.push((style_index, EMPTY_BOX_STRUT));
++        } else {
++            self.commit_control(style_index, EMPTY_BOX_STRUT);
++        }
 +    }
 +
 +    fn commit_deferred_controls(&mut self) {
@@ -4148,16 +4127,15 @@ index c102610..bcd774e 100644
      }
  
      /// The style table index of the span that text is currently being pushed into.
-@@ -211,6 +386,8 @@ impl<B: Brush> TreeStyleBuilder<B> {
+@@ -211,6 +374,7 @@ impl<B: Brush> TreeStyleBuilder<B> {
              }),
          }
          self.last_item_is_inline_box = false;
-+        self.collapse_after_edge = false;
 +        self.has_content = true;
      }
  
      /// The index of `span`'s style in the style table, adding it (and any ancestors that have not
-@@ -238,6 +415,25 @@ impl<B: Brush> TreeStyleBuilder<B> {
+@@ -238,6 +402,25 @@ impl<B: Brush> TreeStyleBuilder<B> {
          style_id as u16
      }
  
@@ -4183,7 +4161,7 @@ index c102610..bcd774e 100644
      /// The index of `span`'s style with wrapping enabled, adding it to the table if necessary.
      fn resolve_wrappable_style_id(&mut self, span: usize) -> u16 {
          if self.tree[span].style.text_wrap_mode == TextWrapMode::Wrap {
-@@ -272,6 +468,7 @@ impl<B: Brush> TreeStyleBuilder<B> {
+@@ -272,6 +455,7 @@ impl<B: Brush> TreeStyleBuilder<B> {
              style,
              style_id: None,
              wrappable_style_id: None,
@@ -4191,7 +4169,7 @@ index c102610..bcd774e 100644
          });
          self.current_span = self.tree.len() - 1;
      }
-@@ -304,6 +501,9 @@ impl<B: Brush> TreeStyleBuilder<B> {
+@@ -304,6 +488,9 @@ impl<B: Brush> TreeStyleBuilder<B> {
          while self.tree[self.current_span].parent.is_some() {
              self.pop_style_span();
          }

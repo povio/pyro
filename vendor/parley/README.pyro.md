@@ -355,3 +355,9 @@ blitz-dom puts an inline-level absolutely positioned box on the start side of it
   `text-indent-overflow-ref`, a 200px start margin in a 200px block).
 - `src/layout/whitespace.rs` (`is_collapsible`): collapsible white space is spaces, tabs and segment breaks; a form
   feed is a control character (WPT `control-chars-00C`).
+- `src/resolve/tree.rs` (`pushed_span_edge`, `push_empty_box_strut`), `src/builder.rs`: white space pending before a
+  span's start edge is no longer committed there: it collapses with the white space after the edge, and goes before
+  the edge (and an empty box's strut) only if content follows; at a line's or paragraph's end it is removed and the
+  edges stay next to the content before it (WPT css-text `line-edge-white-space-collapse-001`). An empty box without
+  edges keeps its strut next to the content before it (`line-break-anywhere-and-white-space-004`). Covered by
+  `white_space_ending_a_line_leaves_the_span_edges_after_it_at_the_content`.

@@ -751,8 +751,11 @@ fn build_inline_layout_with(
             layout.break_all_lines(None);
             layout.full_width()
         };
-        let space = advance_of("\u{a0}") + (parley_style.letter_spacing + parley_style.word_spacing) * scale;
+        // The space (U+0020) of the first font that has one: measured between two digits, as a
+        // font without spaces may still map U+00A0 (WPT css-text `tab-size-integer-005`).
         let ch = advance_of("0");
+        let space = (advance_of("0 0") - 2.0 * ch).max(0.0)
+            + (parley_style.letter_spacing + parley_style.word_spacing) * scale;
         text_layout.layout.set_tab_stops(space, ch / 2.0);
     }
     // pyro: the shaped text's content widths, for every layout of it (`TextLayout::

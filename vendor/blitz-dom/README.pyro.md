@@ -2380,3 +2380,5 @@ items increment it by −1; without `start` its initial value is CSS Lists 3 § 
 `li value` (`counter-set`), each unless an author rule declares the property; `counter-reset: reversed(name)` works
 for any counter. A changed number damages the item and its parent; `start`, `reversed` and `value` changes dirty
 the counters. Covered by `crates/pyro-render/tests/list_numbering.rs`.
+- `src/layout/inline/build.rs` (tab stops): the space a `tab-size` number counts is U+0020 of the first font that has
+  one, measured between two digits (a font without spaces may map U+00A0; WPT css-text `tab-size-integer-005`).
