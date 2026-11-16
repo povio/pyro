@@ -160,6 +160,9 @@ type Declared = (Longhand, Value, bool);
 struct Rule {
     selectors: List,
     declarations: Vec<Declared>,
+    /// The root of the tree whose sheet holds the rule (a document or a shadow root): its
+    /// selectors match that tree's elements only (CSS Scoping). `None`: every element.
+    scope: Option<NodeId>,
 }
 
 /// One CSS animation an element's style asks for.
@@ -274,6 +277,23 @@ impl TimingRules {
         out
     }
 
+    /// [`TimingRules::parse`] of sheets with the root of the tree each belongs to (a document or a
+    /// shadow root): a rule matches the elements of its own tree only, as the cascade's do (a
+    /// shadow tree's `div` rule does not animate its host or the document's divs).
+    pub fn parse_scoped<'a>(sheets: impl Iterator<Item = (NodeId, &'a str)>, viewport: &Viewport) -> TimingRules {
+        let mut out = TimingRules::default();
+        for (scope, text) in sheets {
+            if mentions(text) || text.contains("keyframes") {
+                let first = out.rules.len();
+                rule_list(&mut Parser::new(text), text, viewport, &mut out);
+                for rule in &mut out.rules[first..] {
+                    rule.scope = Some(scope);
+                }
+            }
+        }
+        out
+    }
+
     pub fn has_keyframes(&self, name: &str) -> bool {
         self.keyframes.contains(name)
     }
@@ -303,11 +323,17 @@ impl TimingRules {
     fn candidates(&self, dom: &Dom, doc: NodeId, longhand: Longhand, inline_word: &str) -> Vec<NodeId> {
         let mut seen = FxHashSet::default();
         let mut out = Vec::new();
-        let Ok(root) = dom.check(doc) else { return out };
+        let Ok(document) = dom.check(doc) else { return out };
         for rule in &self.rules {
             if !rule.declarations.iter().any(|d| d.0 == longhand) {
                 continue;
             }
+            // The rule's tree: the document's, or a shadow tree of it.
+            let root = match rule.scope.map(|scope| dom.check(scope)) {
+                Some(Ok(scope)) => scope,
+                Some(Err(_)) => continue,
+                None => document,
+            };
             for idx in crate::stylo::select::query(dom, root, &rule.selectors, false) {
                 if seen.insert(idx) {
                     out.push(dom.id_of(idx));
@@ -343,11 +369,14 @@ impl TimingRules {
                 Some(style) if mentions(style) => declarations(style),
                 _ => Vec::new(),
             };
-        // The rules that match, with their specificity, once for all longhands.
+        // The rules that match, with their specificity, once for all longhands: those of the
+        // element's own tree.
+        let tree = dom.id_of(dom.root_idx(idx));
         let matching: Vec<(u32, usize, &Rule)> = self
             .rules
             .iter()
             .enumerate()
+            .filter(|(_, rule)| rule.scope.is_none_or(|scope| scope == tree))
             .filter_map(|(order, rule)| {
                 let specificity = rule
                     .selectors
@@ -794,7 +823,7 @@ fn rule_list(p: &mut Parser<'_>, src: &str, viewport: &Viewport, out: &mut Timin
                         let declarations = declarations(body);
                         if !declarations.is_empty() {
                             if let Some(selectors) = crate::stylo::select::parse(prelude) {
-                                out.rules.push(Rule { selectors, declarations });
+                                out.rules.push(Rule { selectors, declarations, scope: None });
                             }
                         }
                     }

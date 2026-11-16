@@ -1324,6 +1324,11 @@ Before, shadow styles were global and slots were left out (no `:host`, `::slotte
   (`collect_layout_children_with_wrap`) is wrapped in the spans of its `display: contents` ancestors
   (`contents_ancestors`), which it lost. `display: contents` still draws no decoration (`own_decoration`).
 
+- `src/layout/list.rs`, `src/layout/construct.rs`: a list's walk numbering its items goes on through `display:
+  contents` children (`list_numbering`: a list element among them numbers its own), and such a child flattened into
+  its parent's boxes numbers none itself: items assigned to different slots of one `<ol>` are 1, 2, 3 (WPT css-lists
+  `counter-list-item-slot-order`; each slot restarted at 1 once slots were elements).
+
 Tests: `shadow_scoping` in pyro-render. Selector matching on the featureless host: `vendor/selectors/README.pyro.md`.
 
 ## List markers (WPT reftests)

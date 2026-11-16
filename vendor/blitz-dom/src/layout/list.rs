@@ -58,7 +58,32 @@ pub(super) fn collect_list_item_children(
                     marker_changed(node);
                 }
             }
+            // pyro: the list items of a `display: contents` child (a slot's assigned items) are
+            // this list's, numbered on (WPT css-lists `counter-list-item-slot-order`); a list
+            // element numbers its own.
+            if doc.nodes[child].primary_styles().is_some_and(|style| style.get_box().display.is_contents()) {
+                match list_numbering(doc, child) {
+                    Some((mut own, own_reversed)) => {
+                        crate::util::ensure_stack(|| collect_list_item_children(doc, &mut own, own_reversed, child))
+                    }
+                    None => crate::util::ensure_stack(|| collect_list_item_children(doc, index, reversed, child)),
+                }
+            }
         }
+    }
+}
+
+/// pyro: the first index and direction of the numbering a list element (`ol`, `ul`, `menu`,
+/// `dir`) starts for its items; `None` for other elements, whose items continue their parent's.
+pub(super) fn list_numbering(doc: &BaseDocument, node_id: NodeId) -> Option<(usize, bool)> {
+    let el = doc.nodes[node_id].element_data()?;
+    match el.name.local {
+        local_name!("ol") => Some((
+            el.attr_parsed(local_name!("start")).map(|start: usize| start - 1).unwrap_or(0),
+            el.attr_parsed(local_name!("reversed")).unwrap_or(false),
+        )),
+        local_name!("ul") | local_name!("menu") | local_name!("dir") => Some((0, false)),
+        _ => None,
     }
 }
 

@@ -643,7 +643,12 @@ fn collect_layout_children_with_wrap(
         } else {
             (0, false)
         };
-        collect_list_item_children(doc, &mut index, reversed, container_node_id);
+        // pyro: the items of a `display: contents` element flattened into its parent's boxes
+        // (`wrap`) are numbered by the parent's list (`collect_list_item_children`), unless it
+        // is a list itself.
+        if wrap.is_none() || super::list::list_numbering(doc, container_node_id).is_some() {
+            collect_list_item_children(doc, &mut index, reversed, container_node_id);
+        }
     }
 
     // pyro: a list item's inside marker that is text (a number, or a symbol the page styles

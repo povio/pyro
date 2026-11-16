@@ -1433,6 +1433,30 @@ impl StyleEngine {
         }
     }
 
+    /// [`StyleEngine::for_each_author_sheet`] with the root of the tree each sheet belongs to (the
+    /// document or a shadow root).
+    pub fn for_each_scoped_author_sheet(&self, dom: &Dom, f: &mut dyn FnMut(NodeId, &str)) {
+        for sheet in &self.sheets {
+            if sheet.disabled || !dom.is_alive(sheet.owner) || !dom.is_connected(sheet.owner).unwrap_or(false) {
+                continue;
+            }
+            let Ok(owner) = dom.check(sheet.owner) else { continue };
+            let scope = dom.id_of(dom.root_idx(owner));
+            match &sheet.source {
+                SheetSource::Text(text) => f(scope, text),
+                SheetSource::StyleElement => f(scope, &dom.child_text_content(sheet.owner)),
+            }
+        }
+        for (scope, ids) in &self.adopted {
+            if !dom.is_alive(*scope) || !dom.is_connected(*scope).unwrap_or(false) {
+                continue;
+            }
+            for text in ids.iter().filter_map(|id| self.constructed.get(id)) {
+                f(*scope, text);
+            }
+        }
+    }
+
     /// `scope.adoptedStyleSheets = sheets` (a document or shadow root):
     /// each constructed sheet's id and text, in order.
     pub fn set_adopted(&mut self, scope: NodeId, sheets: Vec<(u64, Rc<str>)>) {
@@ -1804,10 +1828,17 @@ impl StyleEngine {
                 return rules.clone();
             }
         }
-        let mut texts = Vec::new();
-        self.for_each_author_sheet(dom, &mut |text| texts.push(text.to_owned()));
-        texts.extend(unregistered.iter().map(|(n, _)| dom.child_text_content(*n).into_owned()));
-        let rules = Rc::new(crate::timing::TimingRules::parse(texts.iter().map(String::as_str), &self.viewport));
+        // Each sheet's rules match the elements of its own tree (a shadow root's, or the document's).
+        let mut texts: Vec<(NodeId, String)> = Vec::new();
+        self.for_each_scoped_author_sheet(dom, &mut |scope, text| texts.push((scope, text.to_owned())));
+        texts.extend(unregistered.iter().filter_map(|(n, _)| {
+            let idx = dom.check(*n).ok()?;
+            Some((dom.id_of(dom.root_idx(idx)), dom.child_text_content(*n).into_owned()))
+        }));
+        let rules = Rc::new(crate::timing::TimingRules::parse_scoped(
+            texts.iter().map(|(scope, text)| (*scope, text.as_str())),
+            &self.viewport,
+        ));
         *self.timing_rules.borrow_mut() = Some((key, unregistered, rules.clone()));
         rules
     }

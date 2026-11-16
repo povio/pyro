@@ -306,3 +306,47 @@ fn part_rules_of_an_outer_shadow_tree() {
     );
     assert_eq!(background(&r[0].1), GREEN);
 }
+
+#[test]
+fn a_manually_assigning_slot_renders_its_assigned_nodes() {
+    // Built from a tree after `assign()`: the slot holds the nodes assigned to it.
+    let r = restyled(
+        "<div id=h><template shadowrootmode=open shadowrootslotassignment=manual><slot id=s style='color:green'></slot></template>\
+         <span id=a>a</span><span id=b>b</span></div>",
+        &["a"],
+        |d, doc| {
+            let s = find(d, doc, "s").unwrap();
+            let a = find(d, doc, "a").unwrap();
+            d.slot_assign(s, &[a]).unwrap();
+        },
+    );
+    let green = |s: &style::properties::ComputedValues| {
+        s.get_inherited_text().color.clone().into_srgb_legacy().raw_components()[1]
+    };
+    assert_eq!(green(&r[0].1), 128.0 / 255.0, "the assigned span inherits from the slot");
+}
+
+/// The page `body` painted (from markup, as blitz-html parses it).
+fn paint(body: &str) -> RgbaImage {
+    let fetcher: Arc<dyn Fetcher> = Arc::new(NoFetch);
+    let snapshot = Snapshot {
+        html: format!("{STYLE}{body}"),
+        base_url: "http://test/".into(),
+        width: 400,
+        height: 200,
+        device_scale_factor: 1.0,
+        ..Default::default()
+    };
+    Renderer::new().render(&snapshot, Area::Viewport, Backend::Cpu, &fetcher).unwrap().0
+}
+
+#[test]
+fn list_items_in_display_contents_children_are_numbered_on() {
+    // A slot (or any `display: contents` element) between a list and its items does not restart
+    // their numbering (WPT css-lists `counter-list-item-slot-order`).
+    let flat = paint("<ol><li>x</li><li>y</li><li>z</li></ol>");
+    let wrapped = paint(
+        "<ol><div style='display:contents'><li>x</li></div><div style='display:contents'><li>y</li><li>z</li></div></ol>",
+    );
+    assert!(flat.data == wrapped.data, "the markers read 1. 2. 3. either way");
+}
