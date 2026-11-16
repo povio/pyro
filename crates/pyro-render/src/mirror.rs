@@ -119,11 +119,23 @@ thread_local! {
     /// External `<use href>` values seen by the mirrors since the last
     /// [`take_sprite_hrefs`].
     static SPRITE_HREFS: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+    /// External SVG `<image>`/`<feImage>` hrefs seen by the mirrors since the last
+    /// [`take_svg_image_hrefs`].
+    static SVG_IMAGE_HREFS: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
-/// Notes `kind`'s href when it is a `<use>` referring to another document.
+/// Notes `kind`'s href when it is a `<use>` referring to another document, or an SVG `<image>` or
+/// `<feImage>` showing a resource that is no `data:` URL ([`take_svg_image_hrefs`]).
 fn note_sprite(kind: &TreeKind) {
     let TreeKind::Element { name, attrs } = kind else { return };
+    if name.ns == blitz_dom::ns!(svg) && matches!(&*name.local, "image" | "feImage") {
+        for (attr, value) in attrs {
+            if attr.local == blitz_dom::local_name!("href") && crate::svg_use::is_external_image(value) {
+                SVG_IMAGE_HREFS.with(|h| h.borrow_mut().push(value.clone()));
+            }
+        }
+        return;
+    }
     if name.local != blitz_dom::local_name!("use") {
         return;
     }
@@ -132,6 +144,11 @@ fn note_sprite(kind: &TreeKind) {
             SPRITE_HREFS.with(|h| h.borrow_mut().push(value.clone()));
         }
     }
+}
+
+/// The external SVG `<image href>`/`<feImage href>` values created or changed since the last call.
+pub(crate) fn take_svg_image_hrefs() -> Vec<String> {
+    SVG_IMAGE_HREFS.with(|h| std::mem::take(&mut *h.borrow_mut()))
 }
 
 /// The external `<use href>` values created or changed since the last call.

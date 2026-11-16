@@ -366,6 +366,10 @@ pub struct BaseDocument {
     /// replaces it and the definition (SVG source with that id). Added to
     /// each `<svg>` that refers to them when it is rendered.
     pub svg_sprites: HashMap<String, (String, String)>,
+    /// pyro: external images of SVG `<image href>` and `<feImage href>`, by href as written: `data:`
+    /// URLs of the fetched resource, turned by its EXIF orientation and not, one of which replaces the href in each `<svg>` that has it
+    /// when it is rendered (usvg loads `data:` URLs only).
+    pub svg_images: HashMap<String, (String, String)>,
     /// Changes to the stylist [`Device`] that have been requested since the
     /// last [`resolve`](Self::resolve), to be applied (coalesced into a single
     /// device rebuild) at the start of the next resolve.
@@ -754,6 +758,7 @@ impl BaseDocument {
             viewport,
             media_type,
             svg_sprites: HashMap::new(),
+            svg_images: HashMap::new(),
             pending_device_changes: DeviceChanges::empty(),
             last_layout_space: None,
             layout_size: None,
@@ -2086,6 +2091,26 @@ impl BaseDocument {
     /// pyro: damages the outermost `<svg>` around SVG element `node_id`, so that its box (and the
     /// SVG source it is drawn from) is built again.
     #[cfg(feature = "svg")]
+    /// pyro: every inline `<svg>` root is built again (its source changes with
+    /// [`Self::svg_images`]).
+    pub fn damage_inline_svgs(&mut self) {
+        let roots: Vec<NodeId> = self
+            .nodes
+            .iter()
+            .filter(|(_, node)| {
+                node.element_data().is_some_and(|e| e.name.ns == markup5ever::ns!(svg) && e.name.local == local_name!("svg"))
+                    && !node.parent.and_then(|p| self.nodes.get(p)).and_then(|p| p.element_data()).is_some_and(|e| e.name.ns == markup5ever::ns!(svg))
+            })
+            .map(|(id, _)| id)
+            .collect();
+        for id in roots {
+            if let Some(node) = self.get_node_mut(id) {
+                node.clear_layout_cache();
+                node.insert_damage(ALL_DAMAGE);
+            }
+        }
+    }
+
     pub(crate) fn damage_inline_svg_root(&mut self, node_id: NodeId) {
         let mut root = None;
         let mut next = Some(node_id);
@@ -2965,6 +2990,27 @@ impl BaseDocument {
     /// `svg` (an `<svg>` element's source) with its external `<use>`
     /// references pointing at local copies of their targets
     /// ([`BaseDocument::svg_sprites`]), put in a `<defs>` first in it.
+    /// pyro: `svg` (the source of the `<svg>` element `root`) with its external `<image>` and
+    /// `<feImage>` hrefs replaced by the `data:` URLs of [`Self::svg_images`]: turned as their EXIF
+    /// orientation says, or not under `image-orientation: none`.
+    pub(crate) fn with_svg_images(&self, mut svg: String, root: NodeId) -> String {
+        if self.svg_images.is_empty() {
+            return svg;
+        }
+        let unturned = self
+            .get_node(root)
+            .and_then(|node| node.primary_styles())
+            .is_some_and(|style| crate::util::image_unoriented(&style));
+        for (href, (turned, raw)) in &self.svg_images {
+            let attr = format!("href=\"{}\"", href.replace('&', "&amp;").replace('"', "&quot;"));
+            if svg.contains(&attr) {
+                let data = if unturned { raw } else { turned };
+                svg = svg.replace(&attr, &format!("href=\"{data}\""));
+            }
+        }
+        svg
+    }
+
     pub(crate) fn with_svg_sprites(&self, mut svg: String) -> String {
         if self.svg_sprites.is_empty() {
             return svg;

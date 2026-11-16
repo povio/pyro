@@ -3234,6 +3234,14 @@ fn collect_table_cells(
                 .and_then(|val| val.parse().ok())
                 .unwrap_or(1);
             let mut style = table_taffy_style(node, wm);
+            // pyro: a cell `width` that stays a `calc()` (a length and a percentage) is `auto` in
+            // table layout, as in Blink (WPT css-values `calc-width-table-auto-1`, `-fixed-1`).
+            if !wm.is_vertical()
+                && matches!(stylo_style.get_width(), style::values::computed::Size::LengthPercentage(lp)
+                    if matches!(lp.0.unpack(), UnpackedLengthPercentage::Calc(_)))
+            {
+                style.size.width = taffy::Dimension::auto();
+            }
             let col = cursor.next_free();
             // pyro: relative positioning of the cell, its row and its row group, which move the
             // cell (`table_cell_relative_offset`).

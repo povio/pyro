@@ -96,6 +96,7 @@ mod style_sheet_charset;
 mod subgrid;
 mod svg_content;
 mod svg_css_effects;
+mod svg_external_images;
 mod svg_external_references;
 mod svg_filter_primitives;
 mod svg_filters;

@@ -636,7 +636,9 @@ fn collect_layout_children_with_wrap(
 
         #[cfg(feature = "svg")]
         if matches!(tag_name, "svg") {
-            let outer_html = doc.with_svg_sprites(doc.get_node(container_node_id).unwrap().svg_source());
+            let outer_html = doc.with_svg_sprites(
+                doc.with_svg_images(doc.get_node(container_node_id).unwrap().svg_source(), container_node_id),
+            );
             // pyro: with the resources it references in the page's other `<svg>`s.
             let outer_html = doc.with_cross_svg_references(outer_html);
 

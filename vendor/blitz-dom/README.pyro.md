@@ -2382,3 +2382,11 @@ for any counter. A changed number damages the item and its parent; `start`, `rev
 the counters. Covered by `crates/pyro-render/tests/list_numbering.rs`.
 - `src/layout/inline/build.rs` (tab stops): the space a `tab-size` number counts is U+0020 of the first font that has
   one, measured between two digits (a font without spaces may map U+00A0; WPT css-text `tab-size-integer-005`).
+- `src/document.rs` (`BaseDocument::svg_images`, `with_svg_images`, `damage_inline_svgs`), `src/layout/construct.rs`,
+  `src/node/svg.rs`: SVG `<image href>` and `<feImage href>` of a resource that is no `data:` URL are drawn from the
+  `data:` URLs pyro-render fetched for that href (usvg loads `data:` URLs only; a JPEG comes as PNGs turned by its
+  EXIF orientation and not): each `<svg>` source (inline, or the reference document of an HTML box's
+  `filter: url(#f)`) has the href replaced when it is built, unturned under the root's `image-orientation: none`;
+  new entries build the inline `<svg>`s again.
+- `src/layout/table.rs`: a table cell `width` that stays a `calc()` (a length and a percentage) is `auto` in table
+  layout, as in Blink (WPT css-values `calc-width-table-auto-1`, `-fixed-1`).

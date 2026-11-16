@@ -772,6 +772,9 @@ pub struct Renderer {
     /// External SVG sprite files of persistent documents, by resource
     /// scope and URL.
     sprites: HashMap<(String, String), Arc<String>>,
+    /// External SVG `<image>`/`<feImage>` resources as `data:` URLs (`svg_use::resolve_images`),
+    /// by resource scope and URL.
+    svg_images: HashMap<(String, String), Arc<(String, String)>>,
     /// Longest wait for sub-resources per render.
     pub fetch_timeout: Duration,
     /// Longest wait, before the first layout, for the fonts and images the
@@ -815,6 +818,7 @@ impl Renderer {
             pdf_cache: pdf::PdfCache::default(),
             geometry: HashMap::new(),
             sprites: HashMap::new(),
+            svg_images: HashMap::new(),
             fetch_timeout: Duration::from_secs(10),
             first_layout_wait: Duration::from_secs(3),
             hyphen_digit_breaks: hyphen_digit_breaks(),
@@ -983,6 +987,18 @@ impl Renderer {
                     self.animations.insert(live.page, frame.clone());
                 }
                 self.apply_animations(live.page);
+                let images = mirror::take_svg_image_hrefs();
+                if let (false, Some(m)) = (images.is_empty(), self.mirrors.get_mut(&live.page)) {
+                    svg_use::resolve_images(
+                        &mut m.doc,
+                        images,
+                        &snap.base_url,
+                        &snap.resource_scope,
+                        &mut self.svg_images,
+                        fetcher,
+                        self.fetch_timeout,
+                    );
+                }
                 let hrefs = mirror::take_sprite_hrefs();
                 if let (false, Some(m)) = (hrefs.is_empty(), self.mirrors.get_mut(&live.page)) {
                     svg_use::resolve_sprites(
@@ -1068,6 +1084,18 @@ impl Renderer {
 
                 svg_use::resolve(&mut doc, &snap.base_url, fetcher, self.fetch_timeout)
                     .map_err(RenderError::Resource)?;
+                let images = svg_use::image_hrefs(&doc);
+                if !images.is_empty() {
+                    svg_use::resolve_images(
+                        &mut doc,
+                        images,
+                        &snap.base_url,
+                        &snap.resource_scope,
+                        &mut self.svg_images,
+                        fetcher,
+                        self.fetch_timeout,
+                    );
+                }
                 let (doc, bridge) = fresh.insert((doc, bridge));
                 let clip = doc.query_selector(&format!("[{CLIP_ATTRIBUTE}]")).ok().flatten();
                 (doc, &*bridge, clip)
