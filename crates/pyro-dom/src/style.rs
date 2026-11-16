@@ -805,6 +805,10 @@ struct Sheet {
     /// Bumped whenever `source` is set (a loader or CSSOM text, or the
     /// `<style>` element's sheet read again).
     revision: u64,
+    /// `CSSStyleSheet.disabled`: the sheet applies nothing (its text is empty
+    /// to the renderer). Kept when the sheet is read again (a `<style>`'s
+    /// registration can come after a script disabled its sheet) or edited.
+    disabled: bool,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -1345,7 +1349,7 @@ impl StyleEngine {
             }
             s.source = source;
         } else {
-            self.sheets.push(Sheet { owner, source, revision });
+            self.sheets.push(Sheet { owner, source, revision, disabled: false });
         }
         self.sheets_added();
     }
@@ -1371,9 +1375,32 @@ impl StyleEngine {
     /// `<style>` element read from the DOM, or no sheet.
     pub fn sheet_text(&self, owner: NodeId) -> Option<&str> {
         self.sheets.iter().find(|s| s.owner == owner).and_then(|s| match &s.source {
+            _ if s.disabled => Some(""),
             SheetSource::Text(t) => Some(t.as_str()),
             SheetSource::StyleElement => None,
         })
+    }
+
+    /// `CSSStyleSheet.disabled` of the sheet `owner` (a `<style>` or `<link>`) owns.
+    pub fn sheet_disabled(&self, owner: NodeId) -> bool {
+        self.sheets.iter().any(|s| s.owner == owner && s.disabled)
+    }
+
+    /// Sets `CSSStyleSheet.disabled` of the sheet of `owner`: a disabled sheet applies nothing.
+    /// A `<style>` element not registered yet (a shadow tree's) is registered.
+    pub fn set_sheet_disabled(&mut self, owner: NodeId, disabled: bool) {
+        self.revisions += 1;
+        let revision = self.revisions;
+        match self.sheets.iter_mut().find(|s| s.owner == owner) {
+            Some(s) if s.disabled == disabled => return,
+            Some(s) => {
+                s.disabled = disabled;
+                s.revision = revision;
+            }
+            None if !disabled => return,
+            None => self.sheets.push(Sheet { owner, source: SheetSource::StyleElement, revision, disabled }),
+        }
+        self.sheets_added();
     }
 
     /// Calls `f` with the text of each author sheet whose owner is connected,
@@ -1383,7 +1410,7 @@ impl StyleEngine {
     /// element"), not the text of deeper descendants.
     pub fn for_each_author_sheet(&self, dom: &Dom, f: &mut dyn FnMut(&str)) {
         for sheet in &self.sheets {
-            if !dom.is_alive(sheet.owner) || !dom.is_connected(sheet.owner).unwrap_or(false) {
+            if sheet.disabled || !dom.is_alive(sheet.owner) || !dom.is_connected(sheet.owner).unwrap_or(false) {
                 continue;
             }
             match &sheet.source {
@@ -1496,9 +1523,13 @@ impl StyleEngine {
     /// DOM (the low bit tells the two apart). `None`: no sheet.
     pub fn sheet_revision(&self, dom: &Dom, owner: NodeId) -> Option<u64> {
         let sheet = self.sheets.iter().find(|s| s.owner == owner)?;
+        // A disabled sheet's text is empty: its own identity, its revision of the toggle.
+        if sheet.disabled {
+            return Some((sheet.revision << 2) | 2);
+        }
         Some(match &sheet.source {
-            SheetSource::Text(_) => sheet.revision << 1,
-            SheetSource::StyleElement => (dom.style_element_text_revision(owner).unwrap_or_default() << 1) | 1,
+            SheetSource::Text(_) => sheet.revision << 2,
+            SheetSource::StyleElement => (dom.style_element_text_revision(owner).unwrap_or_default() << 2) | 1,
         })
     }
 
@@ -1521,7 +1552,12 @@ impl StyleEngine {
         for n in found {
             if !self.sheets.iter().any(|s| s.owner == n) {
                 self.revisions += 1;
-                self.sheets.push(Sheet { owner: n, source: SheetSource::StyleElement, revision: self.revisions });
+                self.sheets.push(Sheet {
+                    owner: n,
+                    source: SheetSource::StyleElement,
+                    revision: self.revisions,
+                    disabled: false,
+                });
             }
         }
         self.sheets_added();
