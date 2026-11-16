@@ -28,7 +28,9 @@ use crate::{
 /// margin, border and padding, in CSS pixels; `None` for a side with none of them. A side whose
 /// margin, border and padding add up to nothing (a border and a negative margin as wide) still
 /// is an edge: it paints, and its line is no empty line (CSS 2.1 § 9.4.2). Percentages resolve
-/// against zero and `auto` margins are zero. A vertical writing mode keeps the box edgeless.
+/// against zero and `auto` margins are zero. In a vertical writing mode only the margins are
+/// edges (top and bottom, by the inline direction): borders and padding stay out, as their sides
+/// are not painted there.
 pub(crate) fn span_edge_widths(style: &style::properties::ComputedValues) -> (Option<f32>, Option<f32>) {
     let (start, end, _) = span_edge_widths_in(style, 0.0);
     (start, end)
@@ -44,9 +46,6 @@ pub(crate) fn span_edge_widths_in(
 ) -> (Option<f32>, Option<f32>, bool) {
     use style::values::computed::{Length, LengthPercentage, Margin};
     use style::values::generics::length::GenericMargin;
-    if style.writing_mode.is_vertical() {
-        return (None, None, false);
-    }
     let length = |v: &LengthPercentage| v.resolve(Length::new(basis)).px();
     let margin = |v: &Margin| match v {
         GenericMargin::LengthPercentage(v) => length(v),
@@ -57,6 +56,15 @@ pub(crate) fn span_edge_widths_in(
         _ => false,
     };
     let (b, p, m) = (style.get_border(), style.get_padding(), style.get_margin());
+    if style.writing_mode.is_vertical() {
+        let edge = |v: &Margin| {
+            let (width, percent) = (margin(v), margin_percent(v));
+            ((width != 0.0 || percent).then_some(width), percent)
+        };
+        let ((top, top_percent), (bottom, bottom_percent)) = (edge(&m.margin_top), edge(&m.margin_bottom));
+        let percent = top_percent || bottom_percent;
+        return if style.writing_mode.is_inline_tb() { (top, bottom, percent) } else { (bottom, top, percent) };
+    }
     // The used width: none where the side has no border style.
     let border = |width: &style::values::computed::BorderSideWidth, style: style::values::computed::BorderStyle| {
         if style.none_or_hidden() { 0.0 } else { width.0.to_f32_px() }
@@ -83,6 +91,28 @@ pub(crate) fn span_edge_widths_in(
         (right, left, percent)
     } else {
         (left, right, percent)
+    }
+}
+
+/// pyro: the margins of an inline box on its inline-start and inline-end sides (CSS px,
+/// percentages against `basis`, `auto` 0): left and right (right and left when right-to-left), or
+/// in a vertical writing mode top and bottom (bottom and top when the inline direction is reversed).
+/// The part of a span edge ([`span_edge_widths`]) outside its box.
+pub fn span_edge_margins(style: &style::properties::ComputedValues, basis: f32) -> (f32, f32) {
+    use style::values::computed::{Length, Margin};
+    use style::values::generics::length::GenericMargin;
+    let margin = |v: &Margin| match v {
+        GenericMargin::LengthPercentage(v) => v.resolve(Length::new(basis)).px(),
+        _ => 0.0,
+    };
+    let m = style.get_margin();
+    let wm = style.writing_mode;
+    if wm.is_vertical() {
+        let (top, bottom) = (margin(&m.margin_top), margin(&m.margin_bottom));
+        if wm.is_inline_tb() { (top, bottom) } else { (bottom, top) }
+    } else {
+        let (left, right) = (margin(&m.margin_left), margin(&m.margin_right));
+        if style.clone_direction() == style::computed_values::direction::T::Rtl { (right, left) } else { (left, right) }
     }
 }
 

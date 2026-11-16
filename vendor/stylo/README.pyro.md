@@ -239,6 +239,15 @@ for servo too (upstream: gecko only, so any declaration using them was dropped).
 size container through `TElement::query_container_size`, as `@container` conditions do (Blitz answers it with
 the container's laid-out content box, see blitz-dom's README); without one, against the small viewport.
 
+## `text-spacing-trim` (WPT round 3, lane TS)
+
+`properties/longhands.toml`, `properties/data.py`, `values/specified/text.rs` (`TextSpacingTrim`), `values/specified/mod.rs`,
+`values/computed/{mod,text}.rs`: the `text-spacing-trim` longhand (CSS Text 4 § 9.2.1; `normal | space-all |
+space-first | trim-start | trim-both | trim-all | auto`), inherited, for the servo engine. blitz-dom passes it to parley,
+which trims fullwidth punctuation while shaping and at line edges (their READMEs). `text-autospace` was already there;
+pyro turns it on with its pref (`layout.css.text-autospace.enabled`); its initial value stays `no-autospace`, as in
+Chromium (whose default is not the spec's `normal`).
+
 ## Updating or dropping the patch
 
 - When upstream has the change: delete this directory and the `[patch.crates-io]` entry.

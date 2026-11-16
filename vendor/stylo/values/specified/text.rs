@@ -1356,6 +1356,38 @@ bitflags! {
     }
 }
 
+/// pyro: the `text-spacing-trim` property: which fullwidth punctuation is set half-width.
+///
+/// https://drafts.csswg.org/css-text-4/#text-spacing-trim-property
+#[allow(missing_docs)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    FromPrimitive,
+    Hash,
+    MallocSizeOf,
+    Parse,
+    PartialEq,
+    SpecifiedValueInfo,
+    ToComputedValue,
+    ToCss,
+    ToResolvedValue,
+    ToShmem,
+    ToTyped,
+)]
+#[repr(u8)]
+pub enum TextSpacingTrim {
+    Normal,
+    SpaceAll,
+    SpaceFirst,
+    TrimStart,
+    TrimBoth,
+    TrimAll,
+    Auto,
+}
+
 /* Bug 1980111: Uncomment the following to support 'replace' value.
 impl TextAutospace {
     fn validate_mixed_flags(&self) -> bool {

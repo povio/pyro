@@ -73,6 +73,8 @@ pub struct Style<B: Brush> {
     pub(crate) tab_size: crate::style::TabSize,
     /// pyro: what a soft hyphen of this style does at the end of a line.
     pub(crate) soft_hyphen: crate::style::SoftHyphen,
+    /// pyro: which fullwidth punctuation of this style is set half-width at line edges.
+    pub(crate) text_spacing_trim: crate::style::TextSpacingTrim,
     /// The locale of the text, if any.
     ///
     /// This is useful for consumers exposing the text to assistive technologies,

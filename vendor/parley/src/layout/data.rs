@@ -251,6 +251,14 @@ pub(crate) struct LayoutData<B: Brush> {
     /// pyro: the soft hyphens that show a hyphen (their lines end at them): each one's shaped
     /// cluster with the glyph and advance it was shaped with.
     pub(crate) shown_hyphens: Vec<(u32, u32, f32)>,
+    /// pyro: the shaped clusters a line's edge changed (fullwidth punctuation set half-width at
+    /// a line's start or end, `text-spacing-trim`; the space after an ideograph that ends a line,
+    /// `text-autospace`): each one with its glyph's x offset and its advance as shaped. Each line
+    /// break starts from the shaped clusters ([`Self::restore_edge_clusters`]).
+    pub(crate) edge_clusters: Vec<(u32, f32, f32)>,
+    /// pyro: the shaped clusters that `text-autospace` added a space after, by index, with the
+    /// space: the line breaker drops it where a line ends there.
+    pub(crate) autospace: Vec<(u32, f32)>,
 }
 
 impl<B: Brush> Default for LayoutData<B> {
@@ -281,6 +289,8 @@ impl<B: Brush> Default for LayoutData<B> {
             tab_space: -1.0,
             tab_min_advance: 0.0,
             shown_hyphens: Vec::new(),
+            edge_clusters: Vec::new(),
+            autospace: Vec::new(),
         }
     }
 }
@@ -306,6 +316,8 @@ impl<B: Brush> LayoutData<B> {
         self.tab_space = -1.0;
         self.tab_min_advance = 0.0;
         self.shown_hyphens.clear();
+        self.edge_clusters.clear();
+        self.autospace.clear();
         self.styles.clear();
         self.style_metrics.clear();
         self.inline_boxes.clear();
@@ -318,6 +330,31 @@ impl<B: Brush> LayoutData<B> {
         self.line_starts.clear();
         self.adopted.clear();
         self.alignment = None;
+    }
+
+    /// pyro: the space `text-autospace` added after the shaped cluster at `cluster`, or 0.
+    #[inline]
+    pub(crate) fn trailing_autospace(&self, cluster: u32) -> f32 {
+        if self.autospace.is_empty() {
+            return 0.0;
+        }
+        self.autospace
+            .binary_search_by_key(&cluster, |&(index, _)| index)
+            .map_or(0.0, |found| self.autospace[found].1)
+    }
+
+    /// pyro: gives the clusters that lines' edges changed back what they were shaped with.
+    pub(crate) fn restore_edge_clusters(&mut self) {
+        for (cluster, x, advance) in self.edge_clusters.drain(..) {
+            self.shaped_text.unshift_cluster(cluster, x, advance);
+        }
+    }
+
+    /// pyro: changes a line's edge cluster (see [`Self::edge_clusters`]).
+    pub(crate) fn shift_edge_cluster(&mut self, cluster: u32, dx: f32, d_advance: f32) {
+        if let Some((x, advance)) = self.shaped_text.shift_cluster(cluster, dx, d_advance) {
+            self.edge_clusters.push((cluster, x, advance));
+        }
     }
 
     /// Push an inline box to the list of items
@@ -428,6 +465,12 @@ impl<B: Brush> LayoutData<B> {
     /// - min-content width: any conditionally-hanging suffix hangs in full, so all hanging
     ///   whitespace hangs in full.
     pub(crate) fn calculate_content_widths(&self) -> ContentWidths {
+        // pyro: the shaped clusters, not what the last break's line edges made of them.
+        if !self.edge_clusters.is_empty() {
+            let mut data = self.clone();
+            data.restore_edge_clusters();
+            return data.calculate_content_widths();
+        }
         let mut measurer = ContentWidthsMeasurer::new(self.indent_amount, self.indent_options);
         measurer.tabs = self.tab_stops();
         measurer.measure(self)

@@ -308,6 +308,13 @@ impl CharInfo {
         }
     }
 
+    /// pyro: sets whether there is a soft wrap opportunity before the character.
+    #[inline(always)]
+    fn set_soft_wrap_opportunity(&mut self, value: bool) {
+        self.flags = self.flags & !Self::SOFT_WRAP_OPPORTUNITY_MASK
+            | (value as u16) << Self::SOFT_WRAP_OPPORTUNITY_SHIFT;
+    }
+
     /// Whether this character is a variation selector.
     #[inline(always)]
     pub fn is_variation_selector(self) -> bool {
@@ -835,6 +842,8 @@ pub(crate) fn analyze_text(
         ));
     }
 
+    quotation_mark_breaks(text, options, &mut analysis.info);
+
     if needs_bidi_resolution || options.base_direction == BaseDirection::Rtl {
         let class_of = |ch: char| {
             let bidi_class = data_sources.properties(ch).bidi_class();
@@ -882,6 +891,73 @@ pub(crate) fn analyze_text(
                 }
             }
             start = end;
+        }
+    }
+}
+
+/// pyro: soft wrap opportunities around curly quotation marks as Chromium's ICU finds them,
+/// which ICU4X does not yet:
+/// - UAX #14 LB19a: before an opening one (U+2018, U+201B, U+201C, U+201F) and after a closing one
+///   (U+2019, U+201D) where East Asian characters (East_Asian_Width F, W or H) are on both sides;
+/// - in Chinese text, before U+201C after an East Asian character and after U+201D before
+///   anything but punctuation that does not open and white space, as if they were opening and
+///   closing brackets (Chromium breaks `国国国国“` before the quotation mark in `zh`, not in `ja`).
+/// Not where breaking is anywhere already or `keep-all` keeps East Asian text together.
+fn quotation_mark_breaks(text: &str, options: &AnalysisOptions<'_>, info: &mut [CharInfo]) {
+    if !text.chars().any(|ch| matches!(ch, '\u{2018}'..='\u{201F}')) {
+        return;
+    }
+    let east_asian = |ch: Option<char>| {
+        ch.is_some_and(|ch| {
+            matches!(ch as u32, 0x1100..=0x115F | 0x2E80..=0x303E | 0x3041..=0x33FF | 0x3400..=0x4DBF
+                | 0x4E00..=0x9FFF | 0xA000..=0xA4CF | 0xA960..=0xA97F | 0xAC00..=0xD7A3 | 0xF900..=0xFAFF
+                | 0xFE10..=0xFE19 | 0xFE30..=0xFE6F | 0xFF00..=0xFFEE | 0x20000..=0x3FFFD)
+        })
+    };
+    let config_at = |byte: usize| {
+        options
+            .line_break
+            .iter()
+            .find(|(range, _)| range.contains(&byte))
+            .map(|(_, config)| *config)
+            .unwrap_or_default()
+    };
+    let chars: Vec<(usize, char)> = text.char_indices().collect();
+    for (index, &(byte, ch)) in chars.iter().enumerate() {
+        let opening = matches!(ch, '\u{2018}' | '\u{201B}' | '\u{201C}' | '\u{201F}');
+        let closing = matches!(ch, '\u{2019}' | '\u{201D}');
+        if !opening && !closing {
+            continue;
+        }
+        let config = config_at(byte);
+        if config.line_break == LineBreak::Anywhere || config.word_break == WordBreak::KeepAll {
+            continue;
+        }
+        let chinese = config.language.is_some_and(|language| language.language() == "zh");
+        let before = index.checked_sub(1).map(|at| chars[at].1);
+        let after = chars.get(index + 1).map(|&(_, ch)| ch);
+        let surrounded = east_asian(before) && east_asian(after);
+        if opening && (surrounded || (chinese && ch == '\u{201C}' && east_asian(before))) {
+            info[index].set_soft_wrap_opportunity(true);
+        }
+        if closing
+            && let Some(next) = after
+            && (surrounded
+                || (chinese
+                    && ch == '\u{201D}'
+                    && !next.is_whitespace()
+                    && !matches!(
+                        Properties::get(next).general_category(),
+                        GeneralCategory::ClosePunctuation
+                            | GeneralCategory::FinalPunctuation
+                            | GeneralCategory::OtherPunctuation
+                            | GeneralCategory::DashPunctuation
+                            | GeneralCategory::ConnectorPunctuation
+                            | GeneralCategory::InitialPunctuation
+                            | GeneralCategory::Control
+                    )))
+        {
+            info[index + 1].set_soft_wrap_opportunity(true);
         }
     }
 }

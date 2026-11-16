@@ -2011,3 +2011,19 @@ flex items").
 `src/stylo_to_parley.rs` (`is_hidden_family`), `src/font_metrics.rs`: a family name that starts with a dot (macOS's
 hidden UI fonts, `.AppleSystemUIFont`, `.SF NS Mono`) matches no font, as in Safari and Chrome (WPT
 `standard-font-family`).
+## `text-spacing-trim`, `text-autospace` (WPT round 3, lane TS)
+
+- `src/stylo_to_parley.rs` (`text_spacing_trim`, `text_autospace`): the two CSS Text 4 properties become parley's
+  `TextStyle::text_spacing_trim` and `text_autospace`. Font features that set fullwidth punctuation widths themselves
+  (`halt`, `hwid`, `palt`, `pwid`, `qwid`, `twid`, `valt`, `vhal`, `vpal`, as Blink's `IsExclusiveFeature`;
+  `font-variant-east-asian: proportional-width` is `pwid`) turn trimming off. Upright text in a vertical writing mode
+  (`text-orientation: upright`, `text-combine-upright: all`) gets no autospace, as in Blink.
+- `src/document.rs`: the `layout.css.text-autospace.enabled` and `layout.css.text-combine-upright.enabled` prefs (the
+  layout ignores `text-combine-upright`; autospace reads it).
+- `src/layout/inline/build.rs` (`span_edge_widths_in`, `span_edge_margins`), `src/layout/inline/layout.rs`: in a
+  vertical writing mode an inline box's inline-axis margins (top and bottom, by the inline direction) are span edges;
+  they were dropped with the borders and padding, which stay out (their sides are not painted in turned lines). The
+  geometry and blitz-paint's fragments take the same logical margins. WPT `text-autospace-004` (`sideways-lr`)
+  passed only while margins and autospace were both missing.
+
+Covered by `crates/pyro-render/tests/text_spacing.rs`.

@@ -2142,6 +2142,9 @@ fn span_padding_box(
         }
         found
     };
+    let rtl_of = |style: &style::properties::ComputedValues| {
+        style.clone_direction() == style::computed_values::direction::T::Rtl
+    };
     let style = nodes[span].primary_styles()?;
     let length = |v: &LengthPercentage| v.resolve(Length::new(0.0)).px() * scale;
     let margin = |v: &Margin| match v {
@@ -2152,10 +2155,18 @@ fn span_padding_box(
     let border = |width: &style::values::computed::BorderSideWidth, style: style::values::computed::BorderStyle| {
         if style.none_or_hidden() { 0.0 } else { width.0.to_f32_px() * scale }
     };
-    let outer_left = margin(&m.margin_left) + border(&b.border_left_width, b.border_left_style);
-    let outer_right = margin(&m.margin_right) + border(&b.border_right_width, b.border_right_style);
+    // pyro: in a vertical writing mode a span edge is its margin only (`span_edge_widths_in`).
+    let (outer_left, outer_right) = if style.writing_mode.is_vertical() {
+        let (start, end) = crate::layout::inline::span_edge_margins(&style, 0.0);
+        if rtl_of(&style) { (end * scale, start * scale) } else { (start * scale, end * scale) }
+    } else {
+        (
+            margin(&m.margin_left) + border(&b.border_left_width, b.border_left_style),
+            margin(&m.margin_right) + border(&b.border_right_width, b.border_right_style),
+        )
+    };
     let (padding_top, padding_bottom) = (length(&p.padding_top.0), length(&p.padding_bottom.0));
-    let rtl = style.clone_direction() == style::computed_values::direction::T::Rtl;
+    let rtl = rtl_of(&style);
     drop(style);
 
     // (x0, x1, top, bottom) of the first and the last fragment.

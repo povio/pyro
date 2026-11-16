@@ -533,7 +533,7 @@ index fdb826c..2a2c2a9 100644
 +    }
  }
 diff --git a/src/layout/data.rs b/src/layout/data.rs
-index e6ab383..425a530 100644
+index e6ab383..4c278f0 100644
 --- a/src/layout/data.rs
 +++ b/src/layout/data.rs
 @@ -4,6 +4,7 @@
@@ -573,7 +573,7 @@ index e6ab383..425a530 100644
      /// The width constraint that was used to line break the layout
      pub(crate) layout_max_advance: f32,
      /// The computed width of the layout excluding hanging whitespace
-@@ -236,6 +242,15 @@ pub(crate) struct LayoutData<B: Brush> {
+@@ -236,6 +242,23 @@ pub(crate) struct LayoutData<B: Brush> {
      pub(crate) indent_amount: f32,
      /// Options controlling text-indent behavior (each-line, hanging).
      pub(crate) indent_options: IndentOptions,
@@ -586,10 +586,18 @@ index e6ab383..425a530 100644
 +    /// pyro: the soft hyphens that show a hyphen (their lines end at them): each one's shaped
 +    /// cluster with the glyph and advance it was shaped with.
 +    pub(crate) shown_hyphens: Vec<(u32, u32, f32)>,
++    /// pyro: the shaped clusters a line's edge changed (fullwidth punctuation set half-width at
++    /// a line's start or end, `text-spacing-trim`; the space after an ideograph that ends a line,
++    /// `text-autospace`): each one with its glyph's x offset and its advance as shaped. Each line
++    /// break starts from the shaped clusters ([`Self::restore_edge_clusters`]).
++    pub(crate) edge_clusters: Vec<(u32, f32, f32)>,
++    /// pyro: the shaped clusters that `text-autospace` added a space after, by index, with the
++    /// space: the line breaker drops it where a line ends there.
++    pub(crate) autospace: Vec<(u32, f32)>,
  }
  
  impl<B: Brush> Default for LayoutData<B> {
-@@ -257,15 +272,26 @@ impl<B: Brush> Default for LayoutData<B> {
+@@ -257,15 +280,28 @@ impl<B: Brush> Default for LayoutData<B> {
              lines: Vec::new(),
              line_items: Vec::new(),
              aligned_subtree_offsets: Vec::new(),
@@ -602,6 +610,8 @@ index e6ab383..425a530 100644
 +            tab_space: -1.0,
 +            tab_min_advance: 0.0,
 +            shown_hyphens: Vec::new(),
++            edge_clusters: Vec::new(),
++            autospace: Vec::new(),
          }
      }
  }
@@ -616,17 +626,19 @@ index e6ab383..425a530 100644
      pub(crate) fn clear(&mut self) {
          self.scale = 1.;
          self.quantize = true;
-@@ -277,6 +303,9 @@ impl<B: Brush> LayoutData<B> {
+@@ -277,6 +313,11 @@ impl<B: Brush> LayoutData<B> {
          self.layout_max_advance = 0.0;
          self.indent_amount = 0.0;
          self.indent_options = IndentOptions::default();
 +        self.tab_space = -1.0;
 +        self.tab_min_advance = 0.0;
 +        self.shown_hyphens.clear();
++        self.edge_clusters.clear();
++        self.autospace.clear();
          self.styles.clear();
          self.style_metrics.clear();
          self.inline_boxes.clear();
-@@ -286,6 +315,8 @@ impl<B: Brush> LayoutData<B> {
+@@ -286,9 +327,36 @@ impl<B: Brush> LayoutData<B> {
          self.lines.clear();
          self.line_items.clear();
          self.aligned_subtree_offsets.clear();
@@ -635,7 +647,35 @@ index e6ab383..425a530 100644
          self.alignment = None;
      }
  
-@@ -319,7 +350,7 @@ impl<B: Brush> LayoutData<B> {
++    /// pyro: the space `text-autospace` added after the shaped cluster at `cluster`, or 0.
++    #[inline]
++    pub(crate) fn trailing_autospace(&self, cluster: u32) -> f32 {
++        if self.autospace.is_empty() {
++            return 0.0;
++        }
++        self.autospace
++            .binary_search_by_key(&cluster, |&(index, _)| index)
++            .map_or(0.0, |found| self.autospace[found].1)
++    }
++
++    /// pyro: gives the clusters that lines' edges changed back what they were shaped with.
++    pub(crate) fn restore_edge_clusters(&mut self) {
++        for (cluster, x, advance) in self.edge_clusters.drain(..) {
++            self.shaped_text.unshift_cluster(cluster, x, advance);
++        }
++    }
++
++    /// pyro: changes a line's edge cluster (see [`Self::edge_clusters`]).
++    pub(crate) fn shift_edge_cluster(&mut self, cluster: u32, dx: f32, d_advance: f32) {
++        if let Some((x, advance)) = self.shaped_text.shift_cluster(cluster, dx, d_advance) {
++            self.edge_clusters.push((cluster, x, advance));
++        }
++    }
++
+     /// Push an inline box to the list of items
+     pub(crate) fn push_inline_box(&mut self, index: usize, bidi_level: BidiLevel) {
+         self.items.push(LayoutItem {
+@@ -319,7 +387,7 @@ impl<B: Brush> LayoutData<B> {
          let line_height = self.styles[style_index as usize].line_height.resolve(
              shaped_run.font_size,
              &shaped_run.font_metrics,
@@ -644,7 +684,7 @@ index e6ab383..425a530 100644
          );
  
          // The run's box metrics, if it's uniform across all the styles within the run. A run's box
-@@ -337,7 +368,7 @@ impl<B: Brush> LayoutData<B> {
+@@ -337,7 +405,7 @@ impl<B: Brush> LayoutData<B> {
                  run_box_metrics(
                      &self.styles[usize::from(first_style)],
                      shaped_run,
@@ -653,11 +693,17 @@ index e6ab383..425a530 100644
                  )
              } else {
                  None
-@@ -397,7 +428,55 @@ impl<B: Brush> LayoutData<B> {
+@@ -397,7 +465,61 @@ impl<B: Brush> LayoutData<B> {
      /// - min-content width: any conditionally-hanging suffix hangs in full, so all hanging
      ///   whitespace hangs in full.
      pub(crate) fn calculate_content_widths(&self) -> ContentWidths {
 -        ContentWidthsMeasurer::new(self.indent_amount, self.indent_options).measure(self)
++        // pyro: the shaped clusters, not what the last break's line edges made of them.
++        if !self.edge_clusters.is_empty() {
++            let mut data = self.clone();
++            data.restore_edge_clusters();
++            return data.calculate_content_widths();
++        }
 +        let mut measurer = ContentWidthsMeasurer::new(self.indent_amount, self.indent_options);
 +        measurer.tabs = self.tab_stops();
 +        measurer.measure(self)
@@ -710,7 +756,7 @@ index e6ab383..425a530 100644
      }
  }
  
-@@ -429,6 +508,39 @@ struct ContentWidthsMeasurer {
+@@ -429,6 +551,39 @@ struct ContentWidthsMeasurer {
      /// Indents for lines following a soft/hard wrap.
      soft_indent: f32,
      hard_indent: f32,
@@ -750,7 +796,7 @@ index e6ab383..425a530 100644
  }
  
  impl ContentWidthsMeasurer {
-@@ -445,7 +557,9 @@ impl ContentWidthsMeasurer {
+@@ -445,7 +600,9 @@ impl ContentWidthsMeasurer {
              text_wrap_mode: TextWrapMode::Wrap,
              soft_indent: indent_options.indent_following_soft_wrap_break(indent_amount),
              hard_indent: indent_options.indent_following_forced_line_break(indent_amount),
@@ -760,7 +806,7 @@ index e6ab383..425a530 100644
          }
      }
  
-@@ -522,6 +636,27 @@ impl ContentWidthsMeasurer {
+@@ -522,6 +679,27 @@ impl ContentWidthsMeasurer {
                  }
                  LayoutItemKind::InlineBox => {
                      let inline_box = &layout_data.inline_boxes[item.index].inline_box;
@@ -788,7 +834,7 @@ index e6ab383..425a530 100644
                      if inline_box.kind == InlineBoxKind::InFlow {
                          let next = items.as_slice().iter().find(|next| {
                              next.kind == LayoutItemKind::TextRun
-@@ -596,7 +731,11 @@ impl ContentWidthsMeasurer {
+@@ -596,7 +774,11 @@ impl ContentWidthsMeasurer {
                  skip_atom = false;
                  let prev_text_wrap_mode = self.text_wrap_mode;
                  self.text_wrap_mode = style.text_wrap_mode;
@@ -800,7 +846,7 @@ index e6ab383..425a530 100644
                      && (cluster.is_soft_wrap_opportunity_before()
                          || style.overflow_wrap == OverflowWrap::Anywhere)
                  {
-@@ -611,7 +750,15 @@ impl ContentWidthsMeasurer {
+@@ -611,7 +793,15 @@ impl ContentWidthsMeasurer {
                      continue;
                  }
                  if SPACED {
@@ -817,7 +863,7 @@ index e6ab383..425a530 100644
                  }
              } else if skip_atom {
                  // The next line starts after the whole newline atom.
-@@ -620,6 +767,15 @@ impl ContentWidthsMeasurer {
+@@ -620,6 +810,15 @@ impl ContentWidthsMeasurer {
              }
  
              let mut advance = cluster.advance;
@@ -833,7 +879,7 @@ index e6ab383..425a530 100644
              if SPACED {
                  let owns_gap = if is_rtl {
                      is_atom_start
-@@ -630,9 +786,10 @@ impl ContentWidthsMeasurer {
+@@ -630,9 +829,10 @@ impl ContentWidthsMeasurer {
                  };
                  if owns_gap {
                      advance += gap;
@@ -845,7 +891,7 @@ index e6ab383..425a530 100644
              self.running_max_width += advance;
  
              // A cluster hangs if all of its characters hang. Its first character is checked via the
-@@ -663,7 +820,9 @@ impl ContentWidthsMeasurer {
+@@ -663,7 +863,9 @@ impl ContentWidthsMeasurer {
      fn measure_inline_box(&mut self, inline_box: &InlineBox, followed_by_inline_content: bool) {
          // Inline boxes have soft wrap opportunities on both sides.
          let wraps = self.text_wrap_mode == TextWrapMode::Wrap;
@@ -1037,7 +1083,7 @@ index 1569071..de48786 100644
                  }
                  LineItem::Run(run) => {
 diff --git a/src/layout/line_break.rs b/src/layout/line_break.rs
-index 3c3798c..a6aeb82 100644
+index 3c3798c..c571915 100644
 --- a/src/layout/line_break.rs
 +++ b/src/layout/line_break.rs
 @@ -10,7 +10,8 @@ use alloc::vec::Vec;
@@ -1083,7 +1129,7 @@ index 3c3798c..a6aeb82 100644
      }
  
      /// Drops the lines from `len` onwards, along with their aligned subtree offsets.
-@@ -83,6 +98,22 @@ struct LineState {
+@@ -83,6 +98,33 @@ struct LineState {
      /// These are the line's justification opportunities, before subtracting those that end up in
      /// the line's hanging whitespace.
      num_word_separators: u32,
@@ -1103,10 +1149,21 @@ index 3c3798c..a6aeb82 100644
 +    shy: Option<(u32, u32, f32)>,
 +    /// pyro: the last atom appended is a soft hyphen that no line ends at (`hyphens: none`).
 +    no_break_after: bool,
++    /// pyro: text or an atomic inline was appended to the line: what comes next does not start
++    /// it (CSS `text-spacing-trim` at a line's start).
++    has_inline_content: bool,
++    /// pyro: the line's first atom is fullwidth opening punctuation set half-width at the line's
++    /// start, or set back full-width there: its shaped cluster, and how far its glyph moves and
++    /// its advance changes. The shaped text takes it when the line is committed.
++    start_trim: Option<(u32, f32, f32)>,
++    /// pyro: the last atom appended to the line (white space after it aside) is closing
++    /// punctuation set half-width to end the line (CSS `text-spacing-trim`): its shaped cluster
++    /// and the advance taken off it. Content appended after it gives the advance back.
++    end_trim: Option<(u32, f32)>,
  }
  
  impl LineState {
-@@ -91,6 +122,11 @@ impl LineState {
+@@ -91,6 +133,14 @@ impl LineState {
          self.x = 0.0;
          self.box_metrics.reset();
          self.num_word_separators = 0;
@@ -1115,10 +1172,13 @@ index 3c3798c..a6aeb82 100644
 +        self.justify_from = 0;
 +        self.shy = None;
 +        self.no_break_after = false;
++        self.has_inline_content = false;
++        self.start_trim = None;
++        self.end_trim = None;
      }
  }
  
-@@ -449,7 +485,7 @@ impl LineBoxMetrics {
+@@ -449,7 +499,7 @@ impl LineBoxMetrics {
          let shaped_run = &data.shaped_text.runs()[run_idx];
          let Some(run_box) = data.runs[run_idx]
              .run_box
@@ -1127,7 +1187,7 @@ index 3c3798c..a6aeb82 100644
          else {
              return;
          };
-@@ -552,6 +588,8 @@ pub struct LineBreakData {
+@@ -552,6 +602,8 @@ pub struct LineBreakData {
      pub line_y_start: f64,
      /// The position of the bottom of the line
      pub line_y_end: f64,
@@ -1136,7 +1196,7 @@ index 3c3798c..a6aeb82 100644
  }
  
  #[derive(Clone, Debug)]
-@@ -614,6 +652,9 @@ pub struct BreakerState {
+@@ -614,6 +666,9 @@ pub struct BreakerState {
      line_max_advance: f32,
      /// The max height available to the current line.
      line_max_height: f32,
@@ -1146,7 +1206,7 @@ index 3c3798c..a6aeb82 100644
  
      /// The state of the current line
      line: LineState,
-@@ -645,6 +686,7 @@ impl Default for BreakerState {
+@@ -645,6 +700,7 @@ impl Default for BreakerState {
              layout_max_advance: 0.0,
              line_max_advance: 0.0,
              line_max_height: f32::MAX,
@@ -1154,12 +1214,17 @@ index 3c3798c..a6aeb82 100644
              line: LineState::default(),
              contributed: Vec::new(),
              subtrees: SubtreeHistory::default(),
-@@ -675,6 +717,30 @@ impl BreakerState {
+@@ -675,6 +731,35 @@ impl BreakerState {
          self.cluster_idx = atom.shaped_clusters_range().end;
          self.line.x = next_x;
          self.line.num_word_separators += u32::from(is_word_separator);
 +        self.line.shy = None;
 +        self.line.no_break_after = false;
++        // pyro: an invisible formatting character (a bidi control, an empty inline box's strut)
++        // is no content that starts the line.
++        if atom.advance() != 0.0 || atom.characters()[0].whitespace != Whitespace::None {
++            self.line.has_inline_content = true;
++        }
 +        if let [character] = atom.characters()
 +            && character.flags.is_soft_hyphen()
 +            && atom.shaped_clusters_range().len() == 1
@@ -1185,16 +1250,17 @@ index 3c3798c..a6aeb82 100644
          self.line.box_metrics.add_text(
              self.item_idx,
              self.run_idx,
-@@ -711,6 +777,8 @@ impl BreakerState {
+@@ -711,6 +796,9 @@ impl BreakerState {
          placement: InlineBoxPlacement,
          quantize: bool,
      ) {
 +        self.line.shy = None;
 +        self.line.no_break_after = false;
++        self.line.has_inline_content = true;
          self.item_idx += 1;
          self.line.items.end += 1;
          self.line.x = next_x;
-@@ -768,6 +836,33 @@ impl BreakerState {
+@@ -768,6 +856,33 @@ impl BreakerState {
          self.subtrees.restore(prev_state.subtrees_len);
      }
  
@@ -1228,7 +1294,7 @@ index 3c3798c..a6aeb82 100644
      #[inline(always)]
      fn update_max_height_exceeded(&mut self) {
          self.line.max_height_exceeded = self.line_max_height != f32::MAX
-@@ -796,6 +891,13 @@ impl BreakerState {
+@@ -796,6 +911,13 @@ impl BreakerState {
          self.line_max_advance = advance;
      }
  
@@ -1242,7 +1308,7 @@ index 3c3798c..a6aeb82 100644
      /// Get the max-height of the current line
      #[inline(always)]
      pub fn line_max_height(&self) -> f32 {
-@@ -829,6 +931,13 @@ impl BreakerState {
+@@ -829,6 +951,13 @@ impl BreakerState {
      pub fn set_line_y(&mut self, y: f64) {
          self.line_y = y;
      }
@@ -1256,7 +1322,7 @@ index 3c3798c..a6aeb82 100644
  }
  
  /// Line breaking support for a paragraph.
-@@ -838,6 +947,17 @@ pub struct BreakLines<'a, B: Brush> {
+@@ -838,28 +967,118 @@ pub struct BreakLines<'a, B: Brush> {
      state: BreakerState,
      prev_state: Option<BreakerState>,
      done: bool,
@@ -1274,8 +1340,11 @@ index 3c3798c..a6aeb82 100644
  }
  
  impl<'a, B: Brush> BreakLines<'a, B> {
-@@ -846,20 +966,97 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+     pub(crate) fn new(layout: &'a mut Layout<B>) -> Self {
+         layout.data.width = 0.;
          layout.data.height = 0.;
++        // pyro: line edges are decided again from the shaped clusters.
++        layout.data.restore_edge_clusters();
          let mut lines = LineLayout::default();
          lines.swap(&mut layout.data);
 -        lines.lines.clear();
@@ -1375,7 +1444,7 @@ index 3c3798c..a6aeb82 100644
      /// Reset the per-line running state in preparation for building a new line.
      ///
      /// The line starts out containing the root span box (the "strut", CSS 2 §10.8).
-@@ -877,6 +1074,31 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+@@ -877,6 +1096,31 @@ impl<'a, B: Brush> BreakLines<'a, B> {
          state.update_max_height_exceeded();
      }
  
@@ -1407,7 +1476,7 @@ index 3c3798c..a6aeb82 100644
      /// Add the layout's inline box `index` to the current line. Out-of-flow boxes contribute
      /// nothing to the line's metrics.
      fn append_layout_inline_box(&mut self, index: usize, next_x: f32) {
-@@ -906,6 +1128,42 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+@@ -906,6 +1150,76 @@ impl<'a, B: Brush> BreakLines<'a, B> {
          max_advance: f32,
          line_indent: f32,
      ) -> Option<YieldData> {
@@ -1447,10 +1516,44 @@ index 3c3798c..a6aeb82 100644
 +        for (cluster, advance) in self.state.line.tabs.drain(..) {
 +            self.layout.data.shaped_text.set_cluster_advance(cluster, advance);
 +        }
++        // pyro: and its edges their fullwidth punctuation trimming.
++        if let Some((cluster, dx, d_advance)) = self.state.line.start_trim.take() {
++            self.layout.data.shift_edge_cluster(cluster, dx, d_advance);
++        }
++        if let Some((cluster, removed)) = self.state.line.end_trim.take() {
++            // Only where the line wraps after it: a paragraph's (or forced break's) last line
++            // that fits only so overflows with the bracket full-width, as in Chromium.
++            let always = self.layout.data.styles[self.layout.data.shaped_text.characters()[self
++                .layout
++                .data
++                .shaped_text
++                .shaped_clusters()[cluster as usize]
++                .chars_range()
++                .start as usize]
++                .style_index as usize]
++                .text_spacing_trim
++                == crate::style::TextSpacingTrim::TrimBoth;
++            if always || matches!(reason, BreakReason::Regular | BreakReason::Emergency) {
++                self.layout.data.shift_edge_cluster(cluster, 0.0, -removed);
++            } else {
++                self.state.line.x += removed;
++            }
++        }
++        // pyro: a line ending after an ideograph or a letter drops the space `text-autospace`
++        // put after it.
++        if let Some(last) = self.state.line.clusters.end.checked_sub(1)
++            && self.state.line.clusters.start <= last
++        {
++            let space = self.layout.data.trailing_autospace(last);
++            if space != 0.0 {
++                self.layout.data.shift_edge_cluster(last, 0.0, -space);
++                self.state.line.x -= space;
++            }
++        }
          commit_line(
              self.layout,
              &mut self.lines,
-@@ -929,6 +1187,7 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+@@ -929,6 +1243,7 @@ impl<'a, B: Brush> BreakLines<'a, B> {
  
          self.state.items = self.lines.line_items.len();
          self.state.lines = self.lines.lines.len();
@@ -1458,7 +1561,7 @@ index 3c3798c..a6aeb82 100644
          self.state.prev_boundary = None;
          self.state.emergency_boundary = None;
  
-@@ -952,6 +1211,7 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+@@ -952,6 +1267,7 @@ impl<'a, B: Brush> BreakLines<'a, B> {
              metrics: self.lines.lines.last().unwrap().metrics,
              line_y_start,
              line_y_end: self.state.line_y,
@@ -1466,7 +1569,7 @@ index 3c3798c..a6aeb82 100644
          }
      }
  
-@@ -987,6 +1247,7 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+@@ -987,6 +1303,7 @@ impl<'a, B: Brush> BreakLines<'a, B> {
      // than blink, for reasons which haven't been fully understood.
      #[doc(hidden)]
      pub fn set_prior_line_width(&mut self, advance: f32) {
@@ -1474,7 +1577,7 @@ index 3c3798c..a6aeb82 100644
          if let Some(line) = self.lines.lines.last_mut() {
              line.metrics.inline_max_coord = line.metrics.inline_min_coord + advance;
          }
-@@ -994,6 +1255,7 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+@@ -994,6 +1311,7 @@ impl<'a, B: Brush> BreakLines<'a, B> {
  
      /// Reverts the to an externally saved state.
      pub fn revert_to(&mut self, state: BreakerState) {
@@ -1482,7 +1585,7 @@ index 3c3798c..a6aeb82 100644
          self.state = state;
          self.lines.truncate(self.state.lines);
          self.lines.line_items.truncate(self.state.items);
-@@ -1026,6 +1288,18 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+@@ -1026,6 +1344,18 @@ impl<'a, B: Brush> BreakLines<'a, B> {
      /// Computes the next line in the paragraph. Returns the advance and size
      /// (width and height for horizontal layouts) of the line.
      pub fn break_next(&mut self) -> Option<YieldData> {
@@ -1501,7 +1604,7 @@ index 3c3798c..a6aeb82 100644
          assert!(
              self.state.layout_max_advance == f32::INFINITY
                  || self.state.line_max_advance - self.state.layout_max_advance < 1.0
-@@ -1035,6 +1309,14 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+@@ -1035,6 +1365,14 @@ impl<'a, B: Brush> BreakLines<'a, B> {
          if self.done {
              return None;
          }
@@ -1516,7 +1619,7 @@ index 3c3798c..a6aeb82 100644
          match &mut self.prev_state {
              Some(prev_state) => prev_state.clone_from(&self.state),
              None => self.prev_state = Some(self.state.clone()),
-@@ -1052,6 +1334,8 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+@@ -1052,6 +1390,8 @@ impl<'a, B: Brush> BreakLines<'a, B> {
          let line_indent = self.resolve_indent();
  
          let max_advance = max_advance - line_indent;
@@ -1525,7 +1628,7 @@ index 3c3798c..a6aeb82 100644
  
          // Iterate over remaining runs in the Layout
          let item_count = self.layout.data.items.len();
-@@ -1060,6 +1344,8 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+@@ -1060,6 +1400,8 @@ impl<'a, B: Brush> BreakLines<'a, B> {
  
              match item.kind {
                  LayoutItemKind::InlineBox => {
@@ -1534,7 +1637,7 @@ index 3c3798c..a6aeb82 100644
                      let inline_box = &self.layout.data.inline_boxes[item.index].inline_box;
  
                      // In-flow boxes are aligned relative to their containing style's span box
-@@ -1082,19 +1368,56 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+@@ -1082,19 +1424,56 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                                  advance: self.state.line.x,
                              }));
                          }
@@ -1593,7 +1696,7 @@ index 3c3798c..a6aeb82 100644
                      {
                          self.append_layout_inline_box(item.index, next_x);
  
-@@ -1103,15 +1426,28 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+@@ -1103,15 +1482,28 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                          if self.state.line.text_wrap_mode == TextWrapMode::Wrap {
                              self.state.mark_line_break_opportunity();
                          }
@@ -1630,7 +1733,7 @@ index 3c3798c..a6aeb82 100644
                      }
                  }
                  LayoutItemKind::TextRun => {
-@@ -1126,6 +1462,9 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+@@ -1126,6 +1518,9 @@ impl<'a, B: Brush> BreakLines<'a, B> {
  
                      // Iterate over the remaining atoms in the Run
                      for atom in slice.atoms_from(self.state.cluster_idx) {
@@ -1640,7 +1743,7 @@ index 3c3798c..a6aeb82 100644
                          // Retrieve metadata about the atom
                          let first_character = &atom.characters()[0];
                          let whitespace = first_character.whitespace;
-@@ -1164,7 +1503,19 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+@@ -1164,7 +1559,19 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                          } else if is_soft_wrap_opportunity && text_wrap_mode == TextWrapMode::Wrap {
                              // We don't record boundaries when the advance is 0. As we do not want overflowing content to cause extra consecutive
                              // line breaks. We should accept the overflowing fragment in that scenario.
@@ -1661,7 +1764,7 @@ index 3c3798c..a6aeb82 100644
                                  self.state.mark_line_break_opportunity();
                                  // break_opportunity = true;
                              }
-@@ -1174,13 +1525,40 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+@@ -1174,21 +1581,84 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                          && text_wrap_mode == TextWrapMode::Wrap
                          // If we're at the start of the line, this particular atom will never fit, so it's not a valid emergency break opportunity.
                          && self.state.line.x != 0.0
@@ -1700,19 +1803,56 @@ index 3c3798c..a6aeb82 100644
 +                            self.state.line.tabs.retain(|&mut (index, _)| index != cluster);
 +                            self.state.line.tabs.push((cluster, reach));
 +                        }
++
++                        // pyro: closing punctuation trimmed to end the line is not at its end
++                        // when more than white space follows it.
++                        if whitespace == Whitespace::None
++                            && let Some((_, removed)) = self.state.line.end_trim.take()
++                        {
++                            self.state.line.x += removed;
++                        }
++                        // pyro: fullwidth opening punctuation at the line's start (CSS
++                        // `text-spacing-trim`).
++                        if !self.state.line.has_inline_content {
++                            let start_trim = line_start_trim(
++                                &self.layout.data,
++                                &atom,
++                                self.lines.lines.last().is_none_or(|line| line.break_reason == BreakReason::Explicit),
++                            );
++                            if let Some((_, _, d_advance)) = start_trim {
++                                advance += d_advance;
++                            }
++                            self.state.line.start_trim = start_trim;
++                        }
++                        // pyro: and closing punctuation that may be set half-width to end it.
++                        let end_trim = line_end_trim(&self.layout.data, &atom);
  
                          // Compute the x position of the content being currently processed
-                         let next_x = self.state.line.x + advance;
-@@ -1188,7 +1566,7 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+-                        let next_x = self.state.line.x + advance;
++                        let mut next_x = self.state.line.x + advance;
++                        // pyro: `trim-both` sets every line's last closing punctuation
++                        // half-width; content appended after it gives the advance back.
++                        if let Some((cluster, removed, true)) = end_trim {
++                            next_x -= removed;
++                            self.state.line.end_trim = Some((cluster, removed));
++                        }
++
++                        // pyro: the space `text-autospace` puts after the atom goes if the line
++                        // ends there.
++                        let autospace = self
++                            .layout
++                            .data
++                            .trailing_autospace(atom.shaped_clusters_range().end.saturating_sub(1));
+ 
                          // If the content fits (the x position does NOT exceed max_advance)
                          //
                          // We simply append the atom to the current line
 -                        if next_x <= max_advance {
-+                        if next_x <= fit_advance + FIT_TOLERANCE {
++                        if next_x - autospace <= fit_advance + FIT_TOLERANCE {
                              if max_height_exceeded {
                                  return self.max_height_break_data(line_height);
                              }
-@@ -1216,7 +1594,7 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+@@ -1216,7 +1686,7 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                                  spacing,
                                  item.bidi_level.is_rtl(),
                              );
@@ -1721,7 +1861,32 @@ index 3c3798c..a6aeb82 100644
                                  if max_height_exceeded {
                                      return self.max_height_break_data(line_height);
                                  }
-@@ -1283,6 +1661,8 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+@@ -1228,6 +1698,24 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+                                     is_separator,
+                                 );
+                             }
++                            // pyro: closing punctuation that does not fit is set half-width
++                            // if the line then ends with it (CSS `text-spacing-trim`, not
++                            // `space-all`).
++                            else if let Some((cluster, removed, false)) = end_trim
++                                && next_x - removed <= fit_advance + FIT_TOLERANCE
++                            {
++                                if max_height_exceeded {
++                                    return self.max_height_break_data(line_height);
++                                }
++                                self.state.append_atom_to_line(
++                                    &atom,
++                                    next_x - removed,
++                                    style_index,
++                                    &self.layout.data,
++                                    is_separator,
++                                );
++                                self.state.line.end_trim = Some((cluster, removed));
++                            }
+                             // Case: we have previously encountered a REGULAR line-breaking opportunity in the current line
+                             //
+                             // We "take" the line-breaking opportunity by starting a new line and resetting our
+@@ -1283,6 +1771,8 @@ impl<'a, B: Brush> BreakLines<'a, B> {
          if self.state.line.items.end == 0 {
              self.state.line.items.end = 1;
          }
@@ -1730,7 +1895,7 @@ index 3c3798c..a6aeb82 100644
          self.done = true;
          self.start_new_line(BreakReason::None, max_advance, line_indent)
      }
-@@ -1300,6 +1680,8 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+@@ -1300,6 +1790,8 @@ impl<'a, B: Brush> BreakLines<'a, B> {
      /// ligature or a multi-character grapheme), the whole atom is placed on the line before
      /// breaking.
      pub fn break_next_with_length(&mut self, max_chars: u32) -> Option<()> {
@@ -1739,7 +1904,7 @@ index 3c3798c..a6aeb82 100644
          if self.done {
              return None;
          }
-@@ -1318,7 +1700,13 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+@@ -1318,7 +1810,13 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                      let inline_box = &self.layout.data.inline_boxes[item.index].inline_box;
  
                      if inline_box.kind != InlineBoxKind::InFlow {
@@ -1754,7 +1919,7 @@ index 3c3798c..a6aeb82 100644
                          continue;
                      }
  
-@@ -1617,6 +2005,9 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+@@ -1617,6 +2115,9 @@ impl<'a, B: Brush> BreakLines<'a, B> {
          } else {
              line.metrics.baseline + line_box_extents.under
          };
@@ -1764,7 +1929,7 @@ index 3c3798c..a6aeb82 100644
          line.metrics.content_block_min_coord = line.metrics.baseline - content_box_extents.over;
          line.metrics.content_block_max_coord = line.metrics.baseline + content_box_extents.under;
  
-@@ -1628,6 +2019,10 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+@@ -1628,6 +2129,10 @@ impl<'a, B: Brush> BreakLines<'a, B> {
  
  impl<B: Brush> Drop for BreakLines<'_, B> {
      fn drop(&mut self) {
@@ -1775,7 +1940,7 @@ index 3c3798c..a6aeb82 100644
          // Compute the overall width and height of the entire layout
          // The "width" excludes hanging whitespace. The "full_width" includes it.
          let mut layout_width = 0_f32;
-@@ -1773,6 +2168,12 @@ fn commit_line<B: Brush>(
+@@ -1773,6 +2278,12 @@ fn commit_line<B: Brush>(
              }
          }
      }
@@ -1788,7 +1953,7 @@ index 3c3798c..a6aeb82 100644
      // let end_run_idx = lines.line_items.last().map(|item| item.index).unwrap_or(0);
      let end_item_idx = lines.line_items.len();
  
-@@ -1789,19 +2190,34 @@ fn commit_line<B: Brush>(
+@@ -1789,19 +2300,34 @@ fn commit_line<B: Brush>(
          BreakReason::Regular | BreakReason::Emergency => f32::INFINITY,
          BreakReason::Explicit | BreakReason::None => state.x - max_advance,
      };
@@ -1825,7 +1990,7 @@ index 3c3798c..a6aeb82 100644
      }
  
      lines.lines.push(LineData {
-@@ -1812,12 +2228,14 @@ fn commit_line<B: Brush>(
+@@ -1812,12 +2338,14 @@ fn commit_line<B: Brush>(
          num_justification_opportunities,
          justification: Justification {
              justification_end_cluster,
@@ -1840,7 +2005,7 @@ index 3c3798c..a6aeb82 100644
              ..Default::default()
          },
          aligned_subtree_offsets: 0..0,
-@@ -1866,8 +2284,11 @@ fn hanging_whitespace<B: Brush>(
+@@ -1866,8 +2394,11 @@ fn hanging_whitespace<B: Brush>(
      layout: &Layout<B>,
      line_items: &[LineItemData],
      overflow: f32,
@@ -1853,7 +2018,7 @@ index 3c3798c..a6aeb82 100644
      // Atoms with shaped clusters before this index may be stretched by justification.
      let mut justification_end_cluster = u32::MAX;
      let mut hanging_opportunities = 0;
-@@ -1888,8 +2309,8 @@ fn hanging_whitespace<B: Brush>(
+@@ -1888,8 +2419,8 @@ fn hanging_whitespace<B: Brush>(
              LayoutItemKind::InlineBox => {
                  let item = &layout.data.inline_boxes[line_item.index].inline_box;
  
@@ -1864,7 +2029,7 @@ index 3c3798c..a6aeb82 100644
                      break;
                  }
              }
-@@ -1943,6 +2364,21 @@ fn hanging_whitespace<B: Brush>(
+@@ -1943,6 +2474,21 @@ fn hanging_whitespace<B: Brush>(
                          }
                      }
                      hanging_whitespace_advance += hanging;
@@ -1886,7 +2051,7 @@ index 3c3798c..a6aeb82 100644
                      // Justification can't stretch within an atom, so it stops at the start of the
                      // last atom that hangs in its entirety or only partially.
                      justification_end_cluster = atom.shaped_clusters_range().start;
-@@ -1965,9 +2401,165 @@ fn hanging_whitespace<B: Brush>(
+@@ -1965,9 +2511,209 @@ fn hanging_whitespace<B: Brush>(
          hanging_whitespace_advance,
          justification_end_cluster,
          hanging_opportunities,
@@ -1894,6 +2059,50 @@ index 3c3798c..a6aeb82 100644
      )
  }
  
++/// pyro: fullwidth opening punctuation starting a line (CSS `text-spacing-trim`): the shaped
++/// cluster of `atom`, its glyph's move and its advance's change, if the line's start sets it
++/// otherwise than shaping did (half-width after punctuation). `first`: the line is a block's
++/// first or follows a forced break.
++fn line_start_trim<B: Brush>(data: &LayoutData<B>, atom: &Atom<'_>, first: bool) -> Option<(u32, f32, f32)> {
++    use crate::style::TextSpacingTrim;
++    let character = atom.characters().first()?;
++    if !character.flags.is_trim_open() || atom.shaped_clusters_range().len() != 1 {
++        return None;
++    }
++    let trimmed = match data.styles[character.style_index as usize].text_spacing_trim {
++        TextSpacingTrim::SpaceAll | TextSpacingTrim::Normal => false,
++        TextSpacingTrim::SpaceFirst => !first,
++        TextSpacingTrim::TrimStart | TextSpacingTrim::TrimBoth | TextSpacingTrim::TrimAll => true,
++    };
++    let cluster = atom.shaped_clusters_range().start;
++    let advance = atom.shaped_clusters().first()?.advance;
++    match (trimmed, character.flags.is_trimmed()) {
++        // Its ink is in the end half of its em box: the glyph moves back by the half taken off.
++        (true, false) => Some((cluster, -advance / 2.0, -advance / 2.0)),
++        (false, true) => Some((cluster, advance, advance)),
++        _ => None,
++    }
++}
++
++/// pyro: a fullwidth closing bracket that may be set half-width to end a line (CSS
++/// `text-spacing-trim`; Chromium trims no full stop or comma there): the shaped cluster of `atom`,
++/// the advance taken off, and whether every line's last such bracket is (`trim-both`) rather than
++/// only one that does not fit.
++fn line_end_trim<B: Brush>(data: &LayoutData<B>, atom: &Atom<'_>) -> Option<(u32, f32, bool)> {
++    use crate::style::TextSpacingTrim;
++    let character = atom.characters().last()?;
++    if !character.flags.is_trim_close() || character.flags.is_trimmed() || atom.shaped_clusters_range().len() != 1 {
++        return None;
++    }
++    let always = match data.styles[character.style_index as usize].text_spacing_trim {
++        TextSpacingTrim::SpaceAll | TextSpacingTrim::TrimAll => return None,
++        TextSpacingTrim::Normal | TextSpacingTrim::SpaceFirst | TextSpacingTrim::TrimStart => false,
++        TextSpacingTrim::TrimBoth => true,
++    };
++    let advance = atom.shaped_clusters().first()?.advance;
++    Some((atom.shaped_clusters_range().start, advance / 2.0, always))
++}
++
 +/// pyro: UAX #9 rule L1 for a line whose items are `line_items[start..]` (logical order): its
 +/// trailing white space (spaces, tabs, a segment break) and zero-width formatting characters
 +/// get the paragraph's level. A text item ending in some is split in two at their start.
@@ -2053,7 +2262,7 @@ index 3c3798c..a6aeb82 100644
  fn reorder_line_items(runs: &mut [LineItemData]) {
      let run_count = runs.len();
 diff --git a/src/layout/mod.rs b/src/layout/mod.rs
-index 6e2baba..b33685b 100644
+index 6e2baba..558c664 100644
 --- a/src/layout/mod.rs
 +++ b/src/layout/mod.rs
 @@ -7,6 +7,7 @@ mod alignment;
@@ -2064,7 +2273,7 @@ index 6e2baba..b33685b 100644
  mod run;
  mod spacing;
  pub(crate) mod style_metrics;
-@@ -68,6 +69,10 @@ pub struct Style<B: Brush> {
+@@ -68,6 +69,12 @@ pub struct Style<B: Brush> {
      pub(crate) text_wrap_mode: TextWrapMode,
      /// Per-cluster whitespace collapsing and hanging behavior.
      pub(crate) white_space_collapse: WhiteSpaceCollapse,
@@ -2072,6 +2281,8 @@ index 6e2baba..b33685b 100644
 +    pub(crate) tab_size: crate::style::TabSize,
 +    /// pyro: what a soft hyphen of this style does at the end of a line.
 +    pub(crate) soft_hyphen: crate::style::SoftHyphen,
++    /// pyro: which fullwidth punctuation of this style is set half-width at line edges.
++    pub(crate) text_spacing_trim: crate::style::TextSpacingTrim,
      /// The locale of the text, if any.
      ///
      /// This is useful for consumers exposing the text to assistive technologies,
@@ -2596,7 +2807,7 @@ index e967f50..9b099dd 100644
  
  pub use builder::{RangedBuilder, StyleRunBuilder, TreeBuilder};
 diff --git a/src/resolve/mod.rs b/src/resolve/mod.rs
-index f465832..f597650 100644
+index f465832..d054b99 100644
 --- a/src/resolve/mod.rs
 +++ b/src/resolve/mod.rs
 @@ -15,7 +15,7 @@ use super::style::{
@@ -2608,7 +2819,7 @@ index f465832..f597650 100644
  use crate::util::nearly_eq;
  use crate::{LineBreak, LineHeight, OverflowWrap, VerticalAlign, layout};
  use crate::{TextWrapMode, WhiteSpaceCollapse, WordBreak};
-@@ -169,6 +169,12 @@ impl ResolveContext {
+@@ -169,6 +169,14 @@ impl ResolveContext {
              StyleProperty::OverflowWrap(value) => OverflowWrap(*value),
              StyleProperty::TextWrapMode(value) => TextWrapMode(*value),
              StyleProperty::WhiteSpaceCollapse(value) => WhiteSpaceCollapse(*value),
@@ -2618,10 +2829,12 @@ index f465832..f597650 100644
 +            StyleProperty::FontSizeAdjusted(value) => FontSizeAdjusted(*value),
 +            StyleProperty::AutoOpticalSize(value) => AutoOpticalSize(*value),
 +            StyleProperty::LanguageOverride(value) => LanguageOverride(*value),
++            StyleProperty::TextSpacingTrim(value) => TextSpacingTrim(*value),
++            StyleProperty::TextAutospace(value) => TextAutospace(*value),
          }
      }
  
-@@ -210,6 +216,14 @@ impl ResolveContext {
+@@ -210,6 +218,16 @@ impl ResolveContext {
              overflow_wrap: raw_style.overflow_wrap,
              text_wrap_mode: raw_style.text_wrap_mode,
              white_space_collapse: raw_style.white_space_collapse,
@@ -2631,12 +2844,14 @@ index f465832..f597650 100644
 +            font_size_adjusted: raw_style.font_size_adjusted,
 +            auto_optical_size: raw_style.auto_optical_size,
 +            language_override: raw_style.language_override,
++            text_spacing_trim: raw_style.text_spacing_trim,
++            text_autospace: raw_style.text_autospace,
 +            annotation_space: raw_style.annotation_space.scale(scale),
 +            text_box_trim: raw_style.text_box_trim,
          }
      }
  
-@@ -400,6 +414,26 @@ pub(crate) enum ResolvedProperty<B: Brush> {
+@@ -400,6 +418,30 @@ pub(crate) enum ResolvedProperty<B: Brush> {
      TextWrapMode(TextWrapMode),
      /// Whitespace collapsing and hanging behavior.
      WhiteSpaceCollapse(WhiteSpaceCollapse),
@@ -2652,6 +2867,10 @@ index f465832..f597650 100644
 +    AutoOpticalSize(bool),
 +    /// pyro: the OpenType language system to shape with.
 +    LanguageOverride(Option<[u8; 4]>),
++    /// pyro: which fullwidth punctuation is set half-width.
++    TextSpacingTrim(crate::style::TextSpacingTrim),
++    /// pyro: where space is added between ideographs and other characters.
++    TextAutospace(crate::style::TextAutospace),
 +}
 +
 +/// pyro: `tab_size` with a length in layout units.
@@ -2663,7 +2882,7 @@ index f465832..f597650 100644
  }
  
  /// Flattened group of style properties.
-@@ -448,6 +482,23 @@ pub(crate) struct ResolvedStyle<B: Brush> {
+@@ -448,6 +490,27 @@ pub(crate) struct ResolvedStyle<B: Brush> {
      pub(crate) text_wrap_mode: TextWrapMode,
      /// Whitespace collapsing and hanging behavior.
      pub(crate) white_space_collapse: WhiteSpaceCollapse,
@@ -2680,6 +2899,10 @@ index f465832..f597650 100644
 +    pub(crate) auto_optical_size: bool,
 +    /// pyro: the OpenType language system to shape with ([`TextStyle::language_override`]).
 +    pub(crate) language_override: Option<[u8; 4]>,
++    /// pyro: which fullwidth punctuation is set half-width.
++    pub(crate) text_spacing_trim: crate::style::TextSpacingTrim,
++    /// pyro: where space is added between ideographs and other characters.
++    pub(crate) text_autospace: crate::style::TextAutospace,
 +    /// pyro: room beyond the content area ([`TextStyle::annotation_space`]), scaled.
 +    pub(crate) annotation_space: AnnotationSpace,
 +    /// pyro: the edges the content area is trimmed to ([`TextStyle::text_box_trim`]).
@@ -2687,7 +2910,7 @@ index f465832..f597650 100644
  }
  
  impl<B: Brush> ResolvedStyle<B> {
-@@ -481,6 +532,12 @@ impl<B: Brush> ResolvedStyle<B> {
+@@ -481,6 +544,14 @@ impl<B: Brush> ResolvedStyle<B> {
              OverflowWrap(value) => self.overflow_wrap = value,
              TextWrapMode(value) => self.text_wrap_mode = value,
              WhiteSpaceCollapse(value) => self.white_space_collapse = value,
@@ -2697,10 +2920,12 @@ index f465832..f597650 100644
 +            FontSizeAdjusted(value) => self.font_size_adjusted = value,
 +            AutoOpticalSize(value) => self.auto_optical_size = value,
 +            LanguageOverride(value) => self.language_override = value,
++            TextSpacingTrim(value) => self.text_spacing_trim = value,
++            TextAutospace(value) => self.text_autospace = value,
          }
      }
  
-@@ -513,6 +570,12 @@ impl<B: Brush> ResolvedStyle<B> {
+@@ -513,6 +584,14 @@ impl<B: Brush> ResolvedStyle<B> {
              OverflowWrap(value) => self.overflow_wrap == *value,
              TextWrapMode(value) => self.text_wrap_mode == *value,
              WhiteSpaceCollapse(value) => self.white_space_collapse == *value,
@@ -2710,15 +2935,18 @@ index f465832..f597650 100644
 +            FontSizeAdjusted(value) => self.font_size_adjusted == *value,
 +            AutoOpticalSize(value) => self.auto_optical_size == *value,
 +            LanguageOverride(value) => self.language_override == *value,
++            TextSpacingTrim(value) => self.text_spacing_trim == *value,
++            TextAutospace(value) => self.text_autospace == *value,
          }
      }
  
-@@ -527,6 +590,8 @@ impl<B: Brush> ResolvedStyle<B> {
+@@ -527,6 +606,9 @@ impl<B: Brush> ResolvedStyle<B> {
              overflow_wrap: self.overflow_wrap,
              text_wrap_mode: self.text_wrap_mode,
              white_space_collapse: self.white_space_collapse,
 +            tab_size: self.tab_size,
 +            soft_hyphen: self.soft_hyphen,
++            text_spacing_trim: self.text_spacing_trim,
              locale: self.locale,
          }
      }
@@ -3032,11 +3260,185 @@ index c102610..1713557 100644
  
          style_table.clear();
          style_runs.clear();
+diff --git a/src/shape/autospace.rs b/src/shape/autospace.rs
+new file mode 100644
+index 0000000..714b993
+--- /dev/null
++++ b/src/shape/autospace.rs
+@@ -0,0 +1,159 @@
++// Copyright 2026 the Parley Authors
++// SPDX-License-Identifier: Apache-2.0 OR MIT
++
++//! pyro: CSS Text 4 `text-autospace`: 1/8 of an ideographic advance between ideographs (and kana,
++//! Hangul) and the letters and numerals of other scripts, as Blink does it (`TextAutoSpace`): the
++//! characters' classes are the East_Asian_Spacing property of UTR #59 (Wide, Narrow, Conditional,
++//! Other), marks take their base's class, and Conditional punctuation (`!`, `#`, `%`, ...) counts as
++//! Narrow in Chinese text only. The space is added after the earlier character of the pair (its
++//! cluster's advance); after right-to-left text it goes to the right edge of that text, before the
++//! left-to-right text that follows. The line breaker drops the space after the last character of
++//! a line ([`LayoutData::autospace`]).
++
++use alloc::vec::Vec;
++
++use super::super::layout::Layout;
++use super::super::resolve::ResolvedStyle;
++use crate::inline_box::LayoutInlineBox;
++use crate::style::Brush;
++use parley_engine::shape::{EastAsianSpacing as Class, east_asian_spacing as class, is_mark};
++
++/// Whether a language is Chinese (the macrolanguage `zh` or one it covers).
++fn is_chinese(language: &str) -> bool {
++    let primary = language.split(['-', '_']).next().unwrap_or("");
++    primary.eq_ignore_ascii_case("zh")
++        || [
++            "cdo", "cjy", "cmn", "cnp", "cpx", "csp", "czh", "czo", "gan", "hak", "hsn", "lzh",
++            "mnp", "nan", "wuu", "yue",
++        ]
++        .iter()
++        .any(|code| primary.eq_ignore_ascii_case(code))
++}
++
++/// Adds the spaces `text-autospace` asks for to the shaped clusters of `layout`, and records in
++/// `layout.data.autospace` those after a cluster (dropped where a line ends there).
++pub(crate) fn apply<B: Brush>(
++    layout: &mut Layout<B>,
++    text: &str,
++    styles: &[ResolvedStyle<B>],
++    inline_boxes: &[LayoutInlineBox],
++) {
++    layout.data.autospace.clear();
++    if styles.iter().all(|style| style.text_autospace.is_none())
++        || !text.chars().any(|ch| ch as u32 >= 0x02C7 && !(0x1200..=0x3004).contains(&(ch as u32)))
++    {
++        return;
++    }
++    let chinese = styles
++        .first()
++        .and_then(|style| style.locale.as_ref())
++        .is_some_and(|locale| is_chinese(locale.as_str()));
++    let resolve = |class: Class| match class {
++        Class::Conditional if chinese => Class::Narrow,
++        Class::Conditional => Class::Other,
++        class => class,
++    };
++    // Atomic inlines, floats and positioned boxes are characters to Blink (U+FFFC, Other); span
++    // edges are not.
++    let separators: Vec<usize> = inline_boxes
++        .iter()
++        .filter(|b| !b.inline_box.kind.is_span_edge())
++        .map(|b| b.inline_box.index)
++        .collect();
++    let shaped_text = &layout.data.shaped_text;
++    let characters = shaped_text.characters();
++    let clusters = shaped_text.shaped_clusters();
++    // Each cluster in logical order with its run's direction.
++    let mut order: Vec<(u32, bool)> = Vec::with_capacity(clusters.len());
++    for run in shaped_text.runs() {
++        let rtl = run.bidi_level.is_rtl();
++        order.extend(run.shaped_clusters_range.clone().map(|index| (index, rtl)));
++    }
++    // (cluster, space, trailing): `trailing`: after the cluster's glyph, else at the right edge
++    // of right-to-left text.
++    let mut spaces: Vec<(u32, f32, bool)> = Vec::new();
++    // The last cluster that is not only marks: its class, whether its style spaces, its index in
++    // `order`.
++    let mut last: Option<(Class, usize)> = None;
++    for (position, &(index, rtl)) in order.iter().enumerate() {
++        let cluster = &clusters[index as usize];
++        let chars = cluster.chars_range();
++        let Some(first) = characters.get(chars.start as usize) else {
++            continue;
++        };
++        let byte = first.text_byte_start as usize;
++        let Some(ch) = text[byte..].chars().next() else {
++            continue;
++        };
++        if separators.contains(&byte) {
++            last = None;
++        }
++        if is_mark(ch) {
++            continue;
++        }
++        let style = &styles[first.style_index as usize];
++        let class = if style.text_autospace.is_none() { Class::Other } else { resolve(class(ch)) };
++        if let Some((last_class, last_position)) = last {
++            let numeric = |a: Class, b: Class| a == Class::Numeric || b == Class::Numeric;
++            let pair = match (last_class, class) {
++                (Class::Wide, Class::Narrow | Class::Numeric) | (Class::Narrow | Class::Numeric, Class::Wide) => {
++                    Some(numeric(last_class, class))
++                }
++                _ => None,
++            };
++            if let Some(numeric) = pair {
++                let (last_index, _) = order[last_position];
++                let last_style = &styles[characters[clusters[last_index as usize].chars_range().start as usize].style_index as usize];
++                let allowed = |style: &ResolvedStyle<B>| {
++                    if numeric { style.text_autospace.ideograph_numeric } else { style.text_autospace.ideograph_alpha }
++                };
++                // The space goes right before the cluster (after the marks of the one before).
++                let (before_index, before_rtl) = order[position - 1];
++                if allowed(style) && allowed(last_style) {
++                    if !before_rtl {
++                        let before_style = &styles[characters[clusters[before_index as usize].chars_range().start as usize].style_index as usize];
++                        spaces.push((before_index, before_style.font_size / 8.0, true));
++                    } else if !rtl {
++                        // The right edge of the right-to-left text before: its first cluster.
++                        let mut start = position - 1;
++                        while start > 0 && order[start - 1].1 {
++                            start -= 1;
++                        }
++                        spaces.push((order[start].0, style.font_size / 8.0, false));
++                    }
++                }
++            }
++        }
++        last = Some((class, position));
++    }
++    for &(cluster, space, trailing) in &spaces {
++        let advance = layout.data.shaped_text.shaped_clusters()[cluster as usize].advance;
++        layout.data.shaped_text.set_cluster_advance(cluster, advance + space);
++        if trailing {
++            layout.data.autospace.push((cluster, space));
++        }
++    }
++    layout.data.autospace.sort_by_key(|&(cluster, _)| cluster);
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn classes() {
++        assert_eq!(class('国'), Class::Wide);
++        assert_eq!(class('あ'), Class::Wide);
++        assert_eq!(class('\u{20000}'), Class::Wide);
++        assert_eq!(class('A'), Class::Narrow);
++        assert_eq!(class('1'), Class::Numeric);
++        assert_eq!(class('!'), Class::Conditional);
++        assert_eq!(class('#'), Class::Conditional);
++        assert_eq!(class('$'), Class::Other);
++        assert_eq!(class('。'), Class::Other);
++        assert_eq!(class('Ａ'), Class::Other);
++        assert_eq!(class('\u{5d0}'), Class::Narrow);
++        assert!(is_mark('\u{301}') && is_mark('\u{FE00}'));
++        assert!(is_chinese("zh-Hant") && is_chinese("yue") && !is_chinese("ja"));
++    }
++}
 diff --git a/src/shape/mod.rs b/src/shape/mod.rs
-index 060a32d..fbabafc 100644
+index 060a32d..adb207c 100644
 --- a/src/shape/mod.rs
 +++ b/src/shape/mod.rs
-@@ -15,6 +15,7 @@ use super::layout::Layout;
+@@ -4,6 +4,8 @@
+ //! Text shaping implementation using `harfrust`for shaping
+ //! and `icu` for text analysis.
+ 
++mod autospace;
++
+ use alloc::vec::Vec;
+ use parley_engine::shape::{CharCluster, Coverage};
+ use parley_engine::{
+@@ -15,6 +17,7 @@ use super::layout::Layout;
  use super::resolve::{ResolveContext, ResolvedStyle};
  use super::style::{Brush, FontFeature};
  use crate::inline_box::LayoutInlineBox;
@@ -3044,7 +3446,7 @@ index 060a32d..fbabafc 100644
  use crate::util::{nearly_eq, nearly_zero};
  use crate::{FontContext, FontData, Spacing};
  
-@@ -54,7 +55,12 @@ pub(crate) fn shape_text<'a, B: Brush>(
+@@ -54,7 +57,12 @@ pub(crate) fn shape_text<'a, B: Brush>(
      mut text: &str,
      layout: &mut Layout<B>,
      analysis_data_sources: &AnalysisDataSources,
@@ -3057,7 +3459,7 @@ index 060a32d..fbabafc 100644
      // If we have both empty text and no inline boxes, shape with a fake space
      // to generate metrics that can be used to size a cursor.
      if text.is_empty() && inline_boxes.is_empty() {
-@@ -98,6 +104,9 @@ pub(crate) fn shape_text<'a, B: Brush>(
+@@ -98,6 +106,9 @@ pub(crate) fn shape_text<'a, B: Brush>(
          })
          .collect();
  
@@ -3067,7 +3469,51 @@ index 060a32d..fbabafc 100644
      // Split when shaping-relevant style properties change and at inline boxes.
      let items = {
          // TODO: we currently walk characters here, but we could instead just walk boundaries of
-@@ -152,6 +161,9 @@ pub(crate) fn shape_text<'a, B: Brush>(
+@@ -109,6 +120,8 @@ pub(crate) fn shape_text<'a, B: Brush>(
+ 
+         // Positioned at `item_start_char`, i.e., the first character not yet covered by an item.
+         let mut chars = text.char_indices().enumerate().peekable();
++        // pyro: whether the item being built follows an atomic inline box.
++        let mut after_atomic_box = false;
+         core::iter::from_fn(move || {
+             if item_start_char == char_count {
+                 return None;
+@@ -121,22 +134,24 @@ pub(crate) fn shape_text<'a, B: Brush>(
+             // never a split point.
+             chars.next();
+ 
+-            let char_end = loop {
++            let char_end = 'item: loop {
+                 let Some(&(char_index, (byte_index, _))) = chars.peek() else {
+                     // End of text.
+-                    break char_count;
++                    break (char_count, false);
+                 };
+ 
+                 // Split at inlines boxes, so each box falls on a shaping boundary.
+                 //
+                 // We loop because there may be multiple boxes at this index.
+                 let mut split = false;
++                let mut atomic = false;
+                 while let Some(inline_box) = inline_box_iter.peek() {
+                     if inline_box.index < byte_index {
+                         // Inline boxes *before* this index are popped (this occurs if the itemizer
+                         // split a run and we were not called, such as at a bidi boundary).
+                         inline_box_iter.next();
+                     } else if inline_box.index == byte_index {
++                        atomic |= inline_box.kind == InlineBoxKind::InFlow;
+                         inline_box_iter.next();
+                         split = true;
+                     } else {
+@@ -145,41 +160,56 @@ pub(crate) fn shape_text<'a, B: Brush>(
+                 }
+ 
+                 if split {
+-                    break char_index;
++                    break 'item (char_index, atomic);
+                 }
+ 
+                 let style_index = char_style_indices[char_index];
                  if style_index != item_style_index {
                      let style = &styles[usize::from(style_index)];
                      split = !nearly_eq(style.font_size, item_style.font_size)
@@ -3077,7 +3523,25 @@ index 060a32d..fbabafc 100644
                          || style.locale != item_style.locale
                          || style.font_variations != item_style.font_variations
                          || style.font_features != item_style.font_features
-@@ -172,14 +184,20 @@ pub(crate) fn shape_text<'a, B: Brush>(
+                         || !nearly_eq(style.letter_spacing, item_style.letter_spacing)
+-                        || !nearly_eq(style.word_spacing, item_style.word_spacing);
++                        || !nearly_eq(style.word_spacing, item_style.word_spacing)
++                        || spacing_trim(style) != spacing_trim(item_style);
+                 }
+ 
+                 if split {
+-                    break char_index;
++                    break 'item (char_index, false);
+                 }
+ 
+                 chars.next();
+             };
++            let (char_end, isolated_after) = char_end;
+ 
+             item_start_char = char_end;
++            let isolated_before = core::mem::replace(&mut after_atomic_box, isolated_after);
+             Some(parley_engine::itemize::Item {
+                 char_end: char_end as u32,
                  options: ShapeOptions {
                      language: item_style.locale,
                      font_size: item_style.font_size,
@@ -3088,6 +3552,9 @@ index 060a32d..fbabafc 100644
 +                    face_size_adjust: !item_style.font_size_adjusted,
 +                    auto_opsz: item_style.auto_optical_size,
 +                    language_override: item_style.language_override,
++                    spacing_trim: spacing_trim(item_style),
++                    isolated_before,
++                    isolated_after,
                  },
              })
          })
@@ -3099,7 +3566,7 @@ index 060a32d..fbabafc 100644
  
      scx.shape_text(
          text,
-@@ -190,6 +208,7 @@ pub(crate) fn shape_text<'a, B: Brush>(
+@@ -190,6 +220,7 @@ pub(crate) fn shape_text<'a, B: Brush>(
          &mut layout.data.shaped_text,
      );
  
@@ -3107,7 +3574,7 @@ index 060a32d..fbabafc 100644
      let mut inline_box_iter = inline_boxes
          .iter()
          .map(|b| &b.inline_box)
-@@ -201,19 +220,11 @@ pub(crate) fn shape_text<'a, B: Brush>(
+@@ -201,19 +232,11 @@ pub(crate) fn shape_text<'a, B: Brush>(
          let run_style_index = char_style_indices[shaped_run.range.char_range.start];
          let run_style = &styles[usize::from(run_style_index)];
  
@@ -3130,7 +3597,7 @@ index 060a32d..fbabafc 100644
                  inline_box_iter.next();
              } else {
                  break;
-@@ -234,19 +245,92 @@ pub(crate) fn shape_text<'a, B: Brush>(
+@@ -234,19 +257,110 @@ pub(crate) fn shape_text<'a, B: Brush>(
      }
  
      // Process any remaining inline boxes whose index is greater than the length of the text
@@ -3147,6 +3614,24 @@ index 060a32d..fbabafc 100644
      for (box_idx, _inline_box) in inline_box_iter {
 -        layout.data.push_inline_box(box_idx, bidi_level);
 +        layout.data.push_inline_box(box_idx, box_levels[box_idx]);
+     }
++
++    // pyro: CSS `text-autospace`.
++    autospace::apply(layout, text, styles, inline_boxes);
++}
++
++/// pyro: how the shaper trims a style's fullwidth punctuation (CSS `text-spacing-trim`): the
++/// line edges are the line breaker's.
++fn spacing_trim<B: Brush>(style: &ResolvedStyle<B>) -> parley_engine::shape::SpacingTrim {
++    use crate::style::TextSpacingTrim;
++    use parley_engine::shape::SpacingTrim;
++    match style.text_spacing_trim {
++        TextSpacingTrim::SpaceAll => SpacingTrim::None,
++        TextSpacingTrim::TrimAll => SpacingTrim::All,
++        TextSpacingTrim::Normal
++        | TextSpacingTrim::SpaceFirst
++        | TextSpacingTrim::TrimStart
++        | TextSpacingTrim::TrimBoth => SpacingTrim::Adjacent,
 +    }
 +}
 +
@@ -3229,12 +3714,12 @@ index 060a32d..fbabafc 100644
 +            levels[index] = after.or(before[index]);
 +        }
 +        after = level_of(slot, &levels).or(after);
-     }
++    }
 +    levels.into_iter().map(|level| level.unwrap_or(paragraph)).collect()
  }
  
  /// The font to use if a font query doesn't return any font candidates at all.
-@@ -259,6 +343,15 @@ enum LastResortFont {
+@@ -259,6 +373,15 @@ enum LastResortFont {
  
  struct FontSelector<'a, 'b, B: Brush> {
      query: &'b mut Query<'a>,
@@ -3250,7 +3735,7 @@ index 060a32d..fbabafc 100644
      fonts_id: Option<usize>,
      rcx: &'a ResolveContext,
      styles: &'a [ResolvedStyle<B>],
-@@ -284,11 +377,14 @@ impl<'a, 'b, B: Brush> FontSelector<'a, 'b, B> {
+@@ -284,11 +407,14 @@ impl<'a, 'b, B: Brush> FontSelector<'a, 'b, B> {
          rcx: &'a ResolveContext,
          styles: &'a [ResolvedStyle<B>],
          analysis_data_sources: &'a AnalysisDataSources,
@@ -3265,7 +3750,7 @@ index 060a32d..fbabafc 100644
              fonts_id: None,
              rcx,
              styles,
-@@ -360,12 +456,36 @@ impl<'a, 'b, B: Brush> parley_engine::FontSelector for FontSelector<'a, 'b, B> {
+@@ -360,12 +486,36 @@ impl<'a, 'b, B: Brush> parley_engine::FontSelector for FontSelector<'a, 'b, B> {
          // not *too* expensive, once the new borrow checker (Polonius) is stable, we could remove
          // this check and do the last-resort scan after the failed query:
          // <https://blog.rust-lang.org/2026/08/04/enabling-polonius-alpha-on-nightly/>.
@@ -3304,7 +3789,7 @@ index 060a32d..fbabafc 100644
                      fontique::QueryStatus::Stop
                  } else {
                      fontique::QueryStatus::Continue
-@@ -373,6 +493,12 @@ impl<'a, 'b, B: Brush> parley_engine::FontSelector for FontSelector<'a, 'b, B> {
+@@ -373,6 +523,12 @@ impl<'a, 'b, B: Brush> parley_engine::FontSelector for FontSelector<'a, 'b, B> {
              });
              yields_font
          });
@@ -3318,10 +3803,10 @@ index 060a32d..fbabafc 100644
              if matches!(self.last_resort_font, LastResortFont::Unresolved) {
                  if let Some(font) = any_font(self.query) {
 diff --git a/src/style/mod.rs b/src/style/mod.rs
-index d9977df..e4c45a8 100644
+index d9977df..68d2f98 100644
 --- a/src/style/mod.rs
 +++ b/src/style/mod.rs
-@@ -43,6 +43,37 @@ pub enum WhiteSpaceCollapse {
+@@ -43,6 +43,80 @@ pub enum WhiteSpaceCollapse {
      BreakSpaces,
  }
  
@@ -3356,10 +3841,53 @@ index d9977df..e4c45a8 100644
 +    NoBreak,
 +}
 +
++/// pyro: which fullwidth punctuation is set half-width, flush (CSS Text 4 `text-spacing-trim`).
++/// The font's `halt` feature sets a character half-width; fonts without it are not trimmed.
++#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
++pub enum TextSpacingTrim {
++    /// None (`space-all`, or font features that set those widths themselves: `halt`, `palt`, ...).
++    SpaceAll,
++    /// Punctuation next to punctuation collapses; opening punctuation at the start of a line keeps
++    /// its width; closing punctuation at the end of a line that does not fit is trimmed (`normal`,
++    /// `auto`).
++    #[default]
++    Normal,
++    /// As [`Self::TrimStart`], except on a block's first line and after a forced break.
++    SpaceFirst,
++    /// As [`Self::Normal`], and opening punctuation at the start of every line is trimmed.
++    TrimStart,
++    /// As [`Self::TrimStart`], and closing punctuation at the end of every line is trimmed.
++    TrimBoth,
++    /// All fullwidth punctuation is trimmed.
++    TrimAll,
++}
++
++/// pyro: where `text-autospace` adds 1/8 ic between ideographs and other characters
++/// (CSS Text 4 `text-autospace`). The default adds none.
++#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
++pub struct TextAutospace {
++    /// Between ideographs and non-ideographic letters.
++    pub ideograph_alpha: bool,
++    /// Between ideographs and non-ideographic decimal numerals.
++    pub ideograph_numeric: bool,
++}
++
++impl TextAutospace {
++    /// No space anywhere.
++    pub const NONE: Self = Self { ideograph_alpha: false, ideograph_numeric: false };
++    /// CSS `normal`: ideographs are spaced from letters and from numerals.
++    pub const NORMAL: Self = Self { ideograph_alpha: true, ideograph_numeric: true };
++
++    /// Whether no space is added.
++    pub const fn is_none(self) -> bool {
++        !self.ideograph_alpha && !self.ideograph_numeric
++    }
++}
++
  /// The height that this text takes up. The default is `MetricsRelative(1.0)`, which is the given
  /// font's preferred line height.
  #[derive(Debug, Clone, Copy, PartialEq)]
-@@ -89,15 +120,32 @@ impl LineHeight {
+@@ -89,15 +163,32 @@ impl LineHeight {
  
      /// The line height in layout units for text set in a font with `metrics` at `font_size`.
      ///
@@ -3398,7 +3926,7 @@ index d9977df..e4c45a8 100644
              }
              Self::MetricsRelative(value) => {
                  (metrics.ascent + metrics.descent + metrics.leading) * value
-@@ -106,6 +154,11 @@ impl LineHeight {
+@@ -106,6 +197,11 @@ impl LineHeight {
      }
  }
  
@@ -3410,7 +3938,7 @@ index d9977df..e4c45a8 100644
  /// Which reference of a span (or [`InlineBox`]) is aligned with the same reference of its
  /// *parent* span (the enclosing style span, or the root style for top-level content). Mirrors the
  /// CSS `alignment-baseline` property.
-@@ -277,6 +330,19 @@ pub enum StyleProperty<'a, B: Brush> {
+@@ -277,6 +373,23 @@ pub enum StyleProperty<'a, B: Brush> {
      TextWrapMode(TextWrapMode),
      /// Whitespace collapsing and hanging behavior.
      WhiteSpaceCollapse(WhiteSpaceCollapse),
@@ -3427,10 +3955,14 @@ index d9977df..e4c45a8 100644
 +    AutoOpticalSize(bool),
 +    /// pyro: the OpenType language system to shape with (`font-language-override`).
 +    LanguageOverride(Option<[u8; 4]>),
++    /// pyro: which fullwidth punctuation is set half-width.
++    TextSpacingTrim(TextSpacingTrim),
++    /// pyro: where space is added between ideographs and other characters.
++    TextAutospace(TextAutospace),
  }
  
  /// Unresolved styles.
-@@ -334,6 +400,73 @@ pub struct TextStyle<'family, 'settings, B: Brush> {
+@@ -334,6 +447,78 @@ pub struct TextStyle<'family, 'settings, B: Brush> {
      pub text_wrap_mode: TextWrapMode,
      /// Whitespace collapsing and hanging behavior.
      pub white_space_collapse: WhiteSpaceCollapse,
@@ -3451,6 +3983,11 @@ index d9977df..e4c45a8 100644
 +    /// pyro: the OpenType language system tag to shape with instead of the locale's (CSS
 +    /// `font-language-override`, padded with spaces).
 +    pub language_override: Option<[u8; 4]>,
++    /// pyro: which fullwidth punctuation of this style is set half-width (CSS `text-spacing-trim`).
++    pub text_spacing_trim: TextSpacingTrim,
++    /// pyro: where this style's text spaces ideographs from letters and numerals (CSS
++    /// `text-autospace`).
++    pub text_autospace: TextAutospace,
 +    /// pyro: room the span's text needs beyond its content area, over and under it, for what is
 +    /// drawn there (ruby annotations, emphasis marks). The line box holds the span's content area
 +    /// grown by it, where its line height leaves too little (CSS Ruby 1, 4.4).
@@ -3504,7 +4041,7 @@ index d9977df..e4c45a8 100644
  }
  
  impl<B: Brush> Default for TextStyle<'static, 'static, B> {
-@@ -365,6 +498,14 @@ impl<B: Brush> Default for TextStyle<'static, 'static, B> {
+@@ -365,6 +550,16 @@ impl<B: Brush> Default for TextStyle<'static, 'static, B> {
              overflow_wrap: OverflowWrap::default(),
              text_wrap_mode: TextWrapMode::default(),
              white_space_collapse: WhiteSpaceCollapse::default(),
@@ -3514,6 +4051,8 @@ index d9977df..e4c45a8 100644
 +            font_size_adjusted: false,
 +            auto_optical_size: false,
 +            language_override: None,
++            text_spacing_trim: TextSpacingTrim::default(),
++            text_autospace: TextAutospace::default(),
 +            annotation_space: AnnotationSpace::default(),
 +            text_box_trim: TextBoxTrim::default(),
          }

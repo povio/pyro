@@ -13,7 +13,7 @@ use crate::{
     Analysis, CharInfo, ShapedText,
     itemize::{Item, Segment, TextRange},
     lru_cache::LruCache,
-    shape::{CharCluster, cache},
+    shape::{CharCluster, SpacingTrim, cache, han_kerning},
 };
 
 /// Runs `$f` with the glyph cache. With `std` it is one per thread, shared
@@ -72,6 +72,13 @@ pub struct ShapeOptions<'a> {
     /// pyro: the OpenType language system tag to shape with instead of `language`'s (CSS
     /// `font-language-override`).
     pub language_override: Option<[u8; 4]>,
+    /// pyro: how the item's fullwidth punctuation is trimmed (CSS `text-spacing-trim`).
+    pub spacing_trim: SpacingTrim,
+    /// pyro: whether an atomic inline sits right before the item: its first character has no
+    /// punctuation before it to be trimmed against.
+    pub isolated_before: bool,
+    /// pyro: whether an atomic inline sits right after the item.
+    pub isolated_after: bool,
 }
 
 /// The font instance to shape an item with.
@@ -133,6 +140,9 @@ pub struct Shaper {
     unicode_buffer: Option<harfrust::UnicodeBuffer>,
     features: Vec<harfrust::Feature>,
     char_cluster: CharCluster,
+    /// pyro: what fullwidth punctuation trimming knows about fonts (`han_kerning::FontData`), by
+    /// font blob, index and language.
+    han_fonts: Vec<(u64, u32, Option<harfrust::Language>, han_kerning::FontData)>,
 }
 
 impl Default for Shaper {
@@ -147,6 +157,7 @@ impl Default for Shaper {
             unicode_buffer: Some(harfrust::UnicodeBuffer::new()),
             features: Vec::new(),
             char_cluster: CharCluster::default(),
+            han_fonts: Vec::new(),
         }
     }
 }
@@ -214,6 +225,7 @@ impl Shaper {
                 "items must not span past the text"
             );
 
+            let mut first_segment = true;
             loop {
                 let segment = itemizer
                     .next(
@@ -222,10 +234,15 @@ impl Shaper {
                     )
                     .expect("A segment must be yielded, given items tile the full text exactly");
 
+                let item_edges = (
+                    mem::take(&mut first_segment),
+                    segment.range.char_range.end == item.char_end as usize,
+                );
                 if shape_segment(
                     self,
                     text,
                     &segment,
+                    item_edges,
                     &item.options,
                     &mut select_font,
                     analysis.char_info(),
@@ -272,6 +289,7 @@ fn shape_segment(
     scx: &mut Shaper,
     text: &str,
     segment: &Segment,
+    (at_item_start, at_item_end): (bool, bool),
     options: &ShapeOptions<'_>,
     select_font: &mut impl FontSelector,
     char_info: &[CharInfo],
@@ -327,7 +345,12 @@ fn shape_segment(
     }));
 
     // Shape a run of the segment with a single font, appending it to `shaped_text`.
-    let mut shape_run = |font: &FontInstance, range: TextRange| {
+    // pyro: `before`/`after`: the fonts of the runs around this one in the segment (whose
+    // characters fullwidth punctuation trimming classes by their own font).
+    let mut shape_run = |font: &FontInstance,
+                         range: TextRange,
+                         before_font: Option<&FontInstance>,
+                         after_font: Option<&FontInstance>| {
         // pyro: a font its `@font-face` rule sizes (`size-adjust`) is shaped, measured and drawn
         // at the item's size times that factor.
         // pyro: and a face's `@font-face` features and variation settings
@@ -369,6 +392,9 @@ fn shape_segment(
                 face_size_adjust: options.face_size_adjust,
                 auto_opsz: false,
                 language_override: options.language_override,
+                spacing_trim: options.spacing_trim,
+                isolated_before: options.isolated_before,
+                isolated_after: options.isolated_after,
             };
             &adjusted
         } else {
@@ -418,12 +444,64 @@ fn shape_segment(
         let run_text = &text[range.byte_range.clone()];
         let pre_context = context_before(&text[..range.byte_range.start]);
         let post_context = context_after(&text[range.byte_range.end..]);
+
+        // pyro: fullwidth punctuation next to punctuation is shaped with the font's `halt`
+        // (CSS `text-spacing-trim`); the plan takes the feature without its ranges.
+        let trim = (options.spacing_trim != SpacingTrim::None
+            && !segment.bidi_level.is_rtl()
+            && run_text.chars().any(han_kerning::is_candidate))
+        .then(|| {
+            let data = han_data(&mut scx.han_fonts, font, language.as_ref(), options).clone();
+            // The characters around the run, classed by the font that draws them (Blink classes
+            // them by the run's own font, which leaves fallback fonts' punctuation alone).
+            let before = (!(range.byte_range.start == text_range.start && at_item_start && options.isolated_before))
+                .then(|| text[..range.byte_range.start].chars().next_back())
+                .flatten()
+                .map(|ch| match before_font {
+                    Some(other) if other != font => {
+                        han_data(&mut scx.han_fonts, other, language.as_ref(), options).char_type(ch)
+                    }
+                    _ => data.char_type(ch),
+                });
+            let after = (!(range.byte_range.end == text_range.end && at_item_end && options.isolated_after))
+                .then(|| text[range.byte_range.end..].chars().next())
+                .flatten()
+                .map(|ch| match after_font {
+                    Some(other) if other != font => {
+                        han_data(&mut scx.han_fonts, other, language.as_ref(), options).char_type(ch)
+                    }
+                    _ => data.char_type(ch),
+                });
+            han_kerning::RunTrim::new(options.spacing_trim, &data, run_text, before, after)
+        })
+        .flatten();
+        let mut run_features;
+        let mut plan_features;
+        let (run_features, plan_features) = match &trim {
+            Some(trim) if trim.trimmed().next().is_some() => {
+                let halt = harfrust::Tag::new(b"halt");
+                run_features = features.to_vec();
+                plan_features = features.to_vec();
+                // The fields directly: `Feature::new` stores an exclusive end minus one, which
+                // `set_masks` then reads as exclusive (`i..i + 1` would select nothing).
+                run_features.extend(trim.trimmed().map(|i| harfrust::Feature {
+                    tag: halt,
+                    value: 1,
+                    start: i as u32,
+                    end: i as u32 + 1,
+                }));
+                plan_features.push(harfrust::Feature { tag: halt, value: 1, start: 0, end: 1 });
+                (&run_features[..], &plan_features[..])
+            }
+            _ => (features, features),
+        };
+
         let glyph_key = cache::GlyphKey {
             font_blob_id: font.font.data.id(),
             font_index: font.font.index,
             synthesis: &font.synthesis,
             variations: options.variations,
-            features,
+            features: run_features,
             direction,
             script: hb_script,
             language: language.as_ref(),
@@ -446,6 +524,7 @@ fn shape_segment(
                 glyphs,
                 instance.coords(),
                 Some(metrics),
+                trim.as_ref(),
             );
             Some(())
         });
@@ -465,7 +544,7 @@ fn shape_segment(
                 direction,
                 hb_script,
                 language.clone(),
-                features,
+                plan_features,
                 Some(options.variations),
             ),
             || {
@@ -474,7 +553,7 @@ fn shape_segment(
                     direction,
                     Some(hb_script),
                     language.as_ref(),
-                    features,
+                    plan_features,
                 )
             },
         );
@@ -512,7 +591,7 @@ fn shape_segment(
             buffer,
             HarfShapeOptions::new()
                 .plan(Some(shaper_plan))
-                .features(features)
+                .features(run_features)
                 .point_size(Some(options.point_size)),
         );
 
@@ -527,6 +606,7 @@ fn shape_segment(
             &glyph_buffer,
             harf_shaper.coords(),
             None,
+            trim.as_ref(),
         );
 
         // The glyphs stay in the cache; the next run gets a new buffer.
@@ -541,6 +621,8 @@ fn shape_segment(
     // This is the run being accumulated, i.e., consecutive graphemes for which `select_font`
     // returns the same font.
     let mut run: Option<(FontInstance, TextRange)> = None;
+    // pyro: the font of the run shaped before it in the segment.
+    let mut before_font: Option<FontInstance> = None;
 
     // The segment's characters with their analysis data and style indices.
     let mut chars = segment_text
@@ -579,16 +661,95 @@ fn shape_segment(
         } else {
             if let Some((run_font, run_range)) = run.take() {
                 // The font changed: shape the previous run.
-                shape_run(&run_font, run_range);
+                let after_font: FontInstance = font.into();
+                shape_run(&run_font, run_range, before_font.as_ref(), Some(&after_font));
+                before_font = Some(run_font);
             }
             run = Some((font.into(), grapheme));
         }
     }
     if let Some((run_font, run_range)) = run {
-        shape_run(&run_font, run_range);
+        shape_run(&run_font, run_range, before_font.as_ref(), None);
     }
 
     Ok(())
+}
+
+/// pyro: the trimming data of `font` in `language` (`han_font_data`), from `fonts` or probed
+/// and kept there.
+fn han_data<'a>(
+    fonts: &'a mut Vec<(u64, u32, Option<harfrust::Language>, han_kerning::FontData)>,
+    font: &FontInstance,
+    language: Option<&harfrust::Language>,
+    options: &ShapeOptions<'_>,
+) -> &'a han_kerning::FontData {
+    let found = fonts.iter().position(|(id, index, lang, _)| {
+        *id == font.font.data.id() && *index == font.font.index && lang.as_ref() == language
+    });
+    let index = found.unwrap_or_else(|| {
+        let data = match harfrust::FontRef::from_index(font.font.data.as_ref(), font.font.index) {
+            Ok(font_ref) => {
+                let instance = harfrust::ShaperInstance::from_variations(
+                    &font_ref,
+                    variations_iter(&font.synthesis, options.variations),
+                );
+                han_font_data(&font_ref, &instance, language, options.point_size)
+            }
+            Err(_) => han_kerning::FontData::NONE,
+        };
+        if fonts.len() >= 32 {
+            fonts.clear();
+        }
+        fonts.push((font.font.data.id(), font.font.index, language.cloned(), data));
+        fonts.len() - 1
+    });
+    &fonts[index].3
+}
+
+/// pyro: what fullwidth punctuation trimming needs to know about `font` in `language`: whether
+/// it has `halt`, and what `halt` does to the punctuation whose kind depends on the glyph, each
+/// shaped alone in Han script (for which CJK fonts' `locl` picks the language's form).
+fn han_font_data(
+    font: &harfrust::FontRef<'_>,
+    instance: &harfrust::ShaperInstance,
+    language: Option<&harfrust::Language>,
+    point_size: f32,
+) -> han_kerning::FontData {
+    use skrifa::raw::TableProvider as _;
+    let halt = skrifa::raw::types::Tag::new(b"halt");
+    let has_halt = font
+        .gpos()
+        .ok()
+        .and_then(|gpos| gpos.feature_list().ok())
+        .is_some_and(|list| list.feature_records().iter().any(|record| record.feature_tag() == halt));
+    let data = harfrust::ShaperData::new(font);
+    let shaper = data.shaper(font).instance(Some(instance)).build();
+    // Blink shapes them in the locale's script for Han, whatever the run's script.
+    let script = harfrust::script::HAN;
+    let mut buffer = Some(harfrust::UnicodeBuffer::new());
+    han_kerning::FontData::new(has_halt, |ch, with_halt| {
+        let mut unicode = buffer.take().unwrap_or_default();
+        unicode.clear();
+        unicode.add(ch, 0);
+        unicode.set_direction(harfrust::Direction::LeftToRight);
+        unicode.set_script(script);
+        if let Some(language) = language {
+            unicode.set_language(language.clone());
+        }
+        let features = [harfrust::Feature::new(harfrust::Tag::new(b"halt"), u32::from(with_halt), ..)];
+        let glyphs = shaper.shape(
+            unicode,
+            HarfShapeOptions::new().features(if with_halt { &features } else { &[] }).point_size(Some(point_size)),
+        );
+        let found = match (glyphs.glyph_infos(), glyphs.glyph_positions()) {
+            ([info], [position]) if info.glyph_id != 0 => {
+                Some((position.x_advance as f32, position.x_offset as f32))
+            }
+            _ => None,
+        };
+        buffer = Some(glyphs.clear());
+        found
+    })
 }
 
 /// Up to harfrust's context length (5 characters) of `text`'s end.

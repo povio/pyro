@@ -57,6 +57,7 @@ mod iframe;
 mod layout;
 pub use layout::table::{CollapsedEdge, CollapsedEdges, TableCell, TableContext};
 pub use layout::multicol::{ColumnFragment, ColumnFragments};
+pub use layout::inline::span_edge_margins;
 mod mutator;
 mod query_selector;
 mod resolve;

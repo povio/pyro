@@ -856,3 +856,9 @@ Covered by `crates/pyro-render/tests/selection_highlight.rs`.
   between its exact ends (each missing component the other end's, 0 where both miss it) by the renderer's own
   interpolation, as the equivalent hard-stop gradient is; it was subdivided through the mix, off by a level here
   and there (WPT `gradient-none-interpolation`). Covered by `crates/pyro-render/tests/gradient_stops_image_set.rs`.
+
+## Inline boxes' margins in vertical writing modes (WPT round 3, lane TS)
+
+`src/render.rs` (inline box fragments): a span's own edge leaves out its inline-start or inline-end margin as
+`blitz_dom::span_edge_margins` gives it: left and right in horizontal text, top and bottom (by the inline direction)
+in a vertical writing mode, whose lines are laid out turned (blitz-dom keeps those margins as span edges now).

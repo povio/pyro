@@ -85,6 +85,7 @@ mod svg_image_natural_size;
 mod svg_reference_cycles;
 mod svg_viewport_clip;
 mod tab_stops;
+mod text_spacing;
 mod table_cell_height;
 mod table_cell_width;
 mod table_collapsed_borders;

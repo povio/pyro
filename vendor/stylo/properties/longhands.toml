@@ -2622,6 +2622,17 @@ has_effect_on_gecko_scrollbars = false
 spec = "https://drafts.csswg.org/css-text-4/#text-autospace-property"
 affects = "layout"
 
+# pyro: CSS Text 4 `text-spacing-trim` (fullwidth punctuation trimming), for Servo: blitz-dom
+# passes it to parley's shaping and line breaking.
+[text-spacing-trim]
+type = "TextSpacingTrim"
+initial = "computed::TextSpacingTrim::Normal"
+struct = "inherited_text"
+engine = "servo"
+animation_type = "discrete"
+spec = "https://drafts.csswg.org/css-text-4/#text-spacing-trim-property"
+affects = "layout"
+
 [text-autospace-size]
 type = "Number"
 initial = "0.125"

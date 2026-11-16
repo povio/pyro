@@ -613,6 +613,59 @@ pub(crate) fn vertical_align(style: &stylo::ComputedValues) -> parley::VerticalA
     parley::VerticalAlign::new(alignment, shift)
 }
 
+/// pyro: CSS Text 4 `text-spacing-trim`. Font features that set the widths of fullwidth
+/// punctuation themselves (`halt`, `palt`, `font-variant-east-asian: proportional-width`, ...)
+/// leave it all to the font, as in Blink.
+fn text_spacing_trim(
+    style: &stylo::ComputedValues,
+    features: &[parley::FontFeature],
+) -> parley::TextSpacingTrim {
+    use style::values::computed::TextSpacingTrim as Trim;
+    // Blink's `IsExclusiveFeature`.
+    const WIDTH_FEATURES: [&[u8; 4]; 9] =
+        [b"halt", b"hwid", b"palt", b"pwid", b"qwid", b"twid", b"valt", b"vhal", b"vpal"];
+    if features
+        .iter()
+        .any(|feature| feature.value != 0 && WIDTH_FEATURES.contains(&&feature.tag.to_bytes()))
+    {
+        return parley::TextSpacingTrim::SpaceAll;
+    }
+    match style.get_inherited_text().text_spacing_trim {
+        Trim::Normal | Trim::Auto => parley::TextSpacingTrim::Normal,
+        Trim::SpaceAll => parley::TextSpacingTrim::SpaceAll,
+        Trim::SpaceFirst => parley::TextSpacingTrim::SpaceFirst,
+        Trim::TrimStart => parley::TextSpacingTrim::TrimStart,
+        Trim::TrimBoth => parley::TextSpacingTrim::TrimBoth,
+        Trim::TrimAll => parley::TextSpacingTrim::TrimAll,
+    }
+}
+
+/// pyro: CSS Text 4 `text-autospace`. Upright text in a vertical writing mode (`text-orientation:
+/// upright`, `text-combine-upright: all`) gets none, as in Blink.
+fn text_autospace(style: &stylo::ComputedValues) -> parley::TextAutospace {
+    use style::values::computed::TextAutospace as Autospace;
+    let itext_styles = style.get_inherited_text();
+    let value = itext_styles.text_autospace;
+    if value.is_empty() {
+        return parley::TextAutospace::NONE;
+    }
+    let wm = style.writing_mode;
+    if wm.is_vertical()
+        && !wm.is_sideways()
+        && (wm.contains(style::logical_geometry::WritingMode::UPRIGHT)
+            || itext_styles.text_combine_upright == style::values::computed::TextCombineUpright::All)
+    {
+        return parley::TextAutospace::NONE;
+    }
+    if value.intersects(Autospace::NORMAL | Autospace::AUTO) {
+        return parley::TextAutospace::NORMAL;
+    }
+    parley::TextAutospace {
+        ideograph_alpha: value.contains(Autospace::IDEOGRAPH_ALPHA),
+        ideograph_numeric: value.contains(Autospace::IDEOGRAPH_NUMERIC),
+    }
+}
+
 pub(crate) fn style(
     span_id: NodeId,
     style: &stylo::ComputedValues,
@@ -724,7 +777,7 @@ pub(crate) fn style(
         font_style,
         font_weight,
         font_variations: parley::FontVariations::List(Cow::Owned(font_variations)),
-        font_features: parley::FontFeatures::List(Cow::Owned(font_features)),
+        font_features: parley::FontFeatures::List(Cow::Owned(font_features.clone())),
         locale: parley::Language::parse(&font_styles._x_lang.0).ok(),
         line_height,
         vertical_align,
@@ -759,6 +812,8 @@ pub(crate) fn style(
         overflow_wrap,
         word_break,
         line_break,
+        text_spacing_trim: text_spacing_trim(style, &font_features),
+        text_autospace: text_autospace(style),
 
         // Contains NodeId
         brush: TextBrush::from_id(span_id),

@@ -88,6 +88,10 @@ pub(crate) fn init_stylo_prefs() {
     INIT.call_once(|| {
         style_config::set_pref!("layout.css.flexbox-balance.enabled", true);
         style_config::set_pref!("layout.css.text-box.enabled", true);
+        // pyro: `text-autospace` (parley spaces ideographs from letters and numerals).
+        style_config::set_pref!("layout.css.text-autospace.enabled", true);
+        // pyro: `text-combine-upright` (no text-autospace in such upright text; the layout ignores it).
+        style_config::set_pref!("layout.css.text-combine-upright.enabled", true);
         // pyro: `initial-letter` on `::first-letter` (`layout::first_letter`).
         style_config::set_pref!("layout.css.initial-letter.enabled", true);
         // pyro: `light-dark()` of images (the computed value is the image of the used scheme).

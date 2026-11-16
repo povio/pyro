@@ -251,3 +251,35 @@ to parley_engine (`ShapeOptions::auto_opsz`, `ShapeOptions::language_override`).
 Copy the published crate from `~/.cargo/registry/src/*/parley-<version>` and re-apply
 `UPSTREAM.patch`, or delete this directory and the `[patch.crates-io]` entry when upstream caches
 builds itself.
+
+## `text-spacing-trim` and `text-autospace` (WPT round 3, lane TS)
+
+- `style/mod.rs` (`TextSpacingTrim`, `TextAutospace`, `StyleProperty::{TextSpacingTrim, TextAutospace}`),
+  `resolve/mod.rs`, `layout/mod.rs` (`Style::text_spacing_trim`): the two CSS Text 4 properties per style.
+- `shape/mod.rs`: items split where a style's trimming changes; each item tells parley_engine how its fullwidth
+  punctuation is trimmed (`ShapeOptions::spacing_trim`) and whether an atomic inline sits before or after it
+  (`isolated_before`/`isolated_after`: no punctuation pair across it). parley_engine applies the font's `halt` where
+  punctuation meets punctuation (its README).
+- `layout/line_break.rs` (`line_start_trim`, `line_end_trim`, `LineState::{start_trim, end_trim,
+  has_inline_content}`), `layout/data.rs` (`LayoutData::edge_clusters`): a line's first atom, when it is fullwidth
+  opening punctuation, is set half-width (`trim-start`, `trim-both`, `trim-all`; `space-first` except on a block's
+  first line and after a forced break) or back full-width (`normal`, after punctuation that shaping trimmed it
+  against): the line measures it so and, when committed, moves its glyph and changes its advance
+  (`ShapedText::shift_cluster`). Closing punctuation that does not fit is set half-width when the line then fits and
+  ends with it (Blink's allow-end; `trim-both` always at a line's end); content appended after it gives the advance
+  back. Only closing brackets (`TRIM_CLOSE`: Pe, not full stops, commas or colons) and only where the line wraps after
+  them: a paragraph's or forced break's last line that fits only so overflows with the bracket full-width, as in
+  Chromium. Each line break starts from the shaped clusters (`restore_edge_clusters`); content widths are measured
+  on them too. An invisible formatting character (a bidi control, an empty inline box's strut U+2061) does not start
+  a line's content.
+- `shape/autospace.rs`, `layout/data.rs` (`LayoutData::autospace`, `trailing_autospace`): `text-autospace` adds 1/8 of
+  the style's font size between Wide characters (ideographs, kana, Hangul) and Narrow ones (letters, marks, numerals;
+  Conditional punctuation such as `!` and `#` when the block's language is Chinese), by UTR #59's East_Asian_Spacing
+  (parley_engine's `east_asian_spacing`); marks take their base's class, atomic inlines and out-of-flow boxes
+  separate. The space goes after the cluster before the pair's second character, or to the right edge of
+  right-to-left text before left-to-right text (Blink's `TextAutoSpace` and `ApplyTextAutoSpacing`). A line that
+  ends after such a cluster drops its space (it fits if it would without the space).
+
+Not done: trimming in `ContentWidthsMeasurer` (min/max-content widths count the shaped widths), vertical
+`vhal`/`vchw` (pyro shapes vertical text horizontally, so `halt` serves), `text-spacing` (the shorthand Chromium does
+not ship either). Covered by `crates/pyro-render/tests/text_spacing.rs`.

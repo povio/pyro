@@ -2099,9 +2099,8 @@ impl ElementCx<'_, '_> {
         let mut painted_fragments = Vec::new();
         use parley::{InlineBoxKind, PositionedLayoutItem};
         use style::computed_values::direction::T as Direction;
-        use style::values::computed::{Length, LengthPercentage, Margin};
+        use style::values::computed::{Length, LengthPercentage};
         use style::values::generics::image::GenericImage;
-        use style::values::generics::length::GenericMargin;
 
         struct Fragment {
             node: NodeId,
@@ -2243,15 +2242,15 @@ impl ElementCx<'_, '_> {
                     if let Some((_, kind)) = edge.filter(|&(id, _)| id == node)
                         && let Some(style) = dom.get_node(node).and_then(|node| node.primary_styles())
                     {
-                        let margin = |v: &Margin| match v {
-                            GenericMargin::LengthPercentage(v) => length(v) * self.scale as f32,
-                            _ => 0.0,
-                        };
+                        // pyro: the inline-start and -end margins (top and bottom in a vertical
+                        // writing mode, whose lines are laid out turned).
+                        let (start, end) = blitz_dom::span_edge_margins(&style, 0.0);
                         let rtl = style.clone_direction() == Direction::Rtl;
+                        let margin = if kind == InlineBoxKind::SpanStart { start } else { end } * self.scale as f32;
                         if (kind == InlineBoxKind::SpanStart) != rtl {
-                            x0 += margin(&style.get_margin().margin_left);
+                            x0 += margin;
                         } else {
-                            x1 -= margin(&style.get_margin().margin_right);
+                            x1 -= margin;
                         }
                     }
                     // pyro: a fragment holds the items of its element that are next to each other in

@@ -28,3 +28,10 @@ ownership of these files, the following Creative Commons Zero declaration applie
 `す` and `ペ` with their `palt` metrics and a kerning pair between them. Its name table says "© 2014-2020 Adobe
 (http://www.adobe.com/)"; Noto Sans JP is licensed under the SIL Open Font License, Version 1.1
 (https://openfontlicense.org).
+
+`NotoSansCJKjp-halt-subset.otf`: a subset of the Noto Sans CJK JP subset web-platform-tests keeps for
+`text-spacing-trim` (`fonts/noto/cjk/NotoSansCJKjp-Regular-subset-halt.otf`), © 2014-2021 Adobe
+(http://www.adobe.com/). Licensed under the SIL Open Font License, Version 1.1 (its LICENSE.txt there). It
+keeps ASCII, 国, 水, the ideographic space, 、。「」・（）： and every layout feature (`halt`, `vhal`, `locl` for
+Chinese and Korean, `vert`). Made with HarfBuzz 15's `hb-subset --unicodes=20-7E,3000-3002,300C-300D,30FB,56FD,6C34,
+FF08-FF09,FF1A --layout-features='*' --layout-scripts='*' --name-IDs='*' --name-languages='*' --notdef-outline`.

@@ -138,3 +138,33 @@ private-use subtag harfrust maps to a tag). WPT `font-feature-settings-descripto
 OpenType's `kana` script): the font's kerning and contextual forms reach across `すペ` (WPT
 `hiragana-katakana-kerning`). Covered by `crates/pyro-render/tests/font_face_settings.rs`
 (`kerning_reaches_across_hiragana_and_katakana`).
+## Fullwidth punctuation trimming (`text-spacing-trim`; WPT round 3, lane TS)
+
+`shape/han_kerning.rs`, `shape/shaper.rs` (`ShapeOptions::{spacing_trim, isolated_before, isolated_after}`,
+`han_font_data`), `shape/shaped_text.rs`, `shape/data.rs` (`CharacterFlags::{is_trim_open, is_trim_close,
+is_trimmed}`, now 16 bits): Blink's `HanKerning`. A run with fullwidth punctuation in a font with `halt` is shaped with
+`halt` on each opening bracket after an opening or closing bracket, a middle dot or a narrow opening bracket, and on
+each closing bracket before a closing bracket, a middle dot or a narrow closing one (`trim-all`: on all of them); the
+characters around the run count too, unless an atomic inline separates them. Full stops, commas, colons, semicolons
+and quotation marks are classed by their glyph in the run's font and language (CJK fonts' `locl` draws `。`
+centred for Traditional Chinese, `：` at the start for Simplified Chinese, quotes fullwidth for Chinese): what `halt`
+does to each, shaped alone in Han script, says where its ink is (Blink reads glyph bounds; `halt` moves the glyph by
+the same). Per font, index and language in the `Shaper`. The plan takes `halt` without its ranges, so runs with
+different ranges share it. Each character records whether its font can set it half-width as opening or closing
+punctuation and whether it was, for parley's line edges; an opening bracket's glyph is never stored inline, so that
+the line breaker can move it (`ShapedText::shift_cluster`, `unshift_cluster`).
+
+The characters around a run are classed by the font of the run they are in (Blink classes them by the run's own
+font, which leaves punctuation drawn by fallback fonts untrimmed; WPT `text-spacing-trim-fallback-001`). Only
+closing brackets (Unicode Pe, fullwidth) get `is_trim_close`: Chromium trims no full stop or comma at a line's end.
+
+`analysis.rs` (`quotation_mark_breaks`): soft wrap opportunities around curly quotation marks as Chromium's ICU has
+them, which ICU4X does not: UAX #14 LB19a (before U+2018/U+201B/U+201C/U+201F and after U+2019/U+201D when East
+Asian characters are on both sides), and in Chinese text U+201C and U+201D as opening and closing brackets (a break
+before `“` after an East Asian character even at the text's end; after `”` before anything but non-opening
+punctuation and white space). Not under `line-break: anywhere` or `word-break: keep-all`. WPT
+`line-break-quotation-double-cjk-*`, `text-spacing-trim-start-001`.
+
+`shape/east_asian_spacing.rs` (`east_asian_spacing`, `is_mark`): UTR #59's East_Asian_Spacing classes (Wide ranges
+from its data file; Conditional: Po but not `" ' * / · † ‡ …` and not wide, fullwidth or halfwidth; Narrow: letters,
+marks and numerals that are not), for parley's `text-autospace`.

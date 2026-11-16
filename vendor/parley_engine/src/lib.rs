@@ -59,6 +59,9 @@
 //!             face_size_adjust: true,
 //!             auto_opsz: false,
 //!             language_override: None,
+//!             spacing_trim: Default::default(),
+//!             isolated_before: false,
+//!             isolated_after: false,
 //!         },
 //!      }],
 //!      select_font, // Selects fonts covering each cluster.
