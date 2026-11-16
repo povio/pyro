@@ -1058,6 +1058,9 @@ fn compute_inner(
         let mut overlap = false;
         let mut reach = f32::NEG_INFINITY;
         let mut after_overflow = false;
+        // pyro: the content of a last child that overflows it overflows this box too (a trimmed
+        // line's glyphs nested in blocks reach into what follows them all).
+        let mut last_overflows = false;
         for item in items.iter() {
             let Some(layout) = item.final_layout.as_ref() else { continue };
             if layout.size.height > 0.0 && (after_overflow || layout.location.y + 0.01 < reach) {
@@ -1067,8 +1070,13 @@ fn compute_inner(
             let (child_overlap, child_overflows) = tree.block_child_flow_overlap(item.node_id);
             overlap |= child_overlap;
             after_overflow |= child_overflows;
+            last_overflows = child_overflows;
         }
-        tree.set_block_flow_overlap(node_id, overlap, intrinsic_outer_height > container_outer_height + 0.01);
+        tree.set_block_flow_overlap(
+            node_id,
+            overlap,
+            last_overflows || intrinsic_outer_height > container_outer_height + 0.01,
+        );
     }
 
     // 4. Collect out-of-flow candidates in document order (direct out-of-flow children plus

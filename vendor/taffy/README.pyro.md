@@ -523,3 +523,8 @@ bound it through the ratio. A replaced item's `aspect-ratio` converts a definite
 `auto <ratio>`). Block layout follows the ratio in content-size measures too (`height_follows_ratio` without the
 sizing-mode condition: a max-content flex base size of `min-width: 100px; aspect-ratio: 1` is 100px tall), and
 derives a known axis through the ratio's box. Covered by `crates/pyro-render/tests/aspect_ratio.rs`.
+- `src/compute/block.rs` (`set_block_flow_overlap`): a container whose last in-flow child's content overflows it
+  records that its own content overflows too, so the overflow reaches past nested blocks to the container that paints
+  them in Appendix E phases (WPT css-inline `text-box-trim-accumulation-002/003/004`: trimmed glyphs over the next
+  block). Covered by `a_spans_border_nested_in_blocks_is_painted_over_the_next_blocks_background` in
+  `crates/pyro-render/tests/text_box_trim.rs`.

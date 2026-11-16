@@ -2305,3 +2305,8 @@ Round 3 lane C2T (CSS2), covered by `crates/pyro-render/tests/css2_intrinsic_and
 - `src/layout/inline/build.rs` (`has_block_edges`): in a vertical writing mode an inline box's block-axis border and
   padding are its left and right ones: a root with such boxes is painted in Appendix E phases
   (`FLOW_CONTENT_OVERFLOWS`), so the boxes reaching past its lines paint over the block backgrounds after it.
+- `src/layout/text_box.rs` (`is_empty_anonymous_block`): an anonymous block holding only collapsible white space and
+  the empty heads or tails of split inlines (no content, no inline-axis edges) is no line for `text-box-trim`: the
+  container's trim reaches the first or last line of the block in the inline after or before it (WPT css-inline
+  `text-box-trim-block-in-inline-*`). Covered by `a_trim_reaches_the_first_line_of_a_block_in_an_inline`.
+
