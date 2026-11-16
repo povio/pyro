@@ -119,6 +119,9 @@ struct LineState {
     has_inline_content: bool,
     /// pyro: the first shaped cluster of the line's content (`Justification::content_start_cluster`).
     content_start: u32,
+    /// pyro: the style of the last character appended to the line and whether it is white space,
+    /// which decide whether the line may wrap before the next atom (`wraps_after`).
+    last_char: Option<(u16, bool)>,
     /// pyro: the line's first atom is fullwidth opening punctuation set half-width at the line's
     /// start, or set back full-width there: its shaped cluster, and how far its glyph moves and
     /// its advance changes. The shaped text takes it when the line is committed.
@@ -142,6 +145,7 @@ impl LineState {
         self.no_break_after = false;
         self.has_inline_content = false;
         self.content_start = 0;
+        self.last_char = None;
         self.start_trim = None;
         self.end_trim = None;
     }
@@ -742,6 +746,9 @@ impl BreakerState {
             + u32::from(atom.characters().last().is_some_and(|last| last.flags.expands_after()));
         if line_start {
             self.line.content_start = atom.shaped_clusters_range().start;
+        }
+        if let Some(last) = atom.characters().last() {
+            self.line.last_char = Some((last.style_index, last.whitespace != Whitespace::None));
         }
         self.line.shy = None;
         self.line.no_break_after = false;
@@ -1568,7 +1575,9 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                                 max_advance,
                                 line_indent,
                             );
-                        } else if is_soft_wrap_opportunity && text_wrap_mode == TextWrapMode::Wrap {
+                        } else if is_soft_wrap_opportunity
+                            && wraps_after(&self.layout.data.styles, self.state.line.last_char, style_index, text_wrap_mode)
+                        {
                             // We don't record boundaries when the advance is 0. As we do not want overflowing content to cause extra consecutive
                             // line breaks. We should accept the overflowing fragment in that scenario.
                             // pyro: nor after a span's start edge, which the opportunity was
@@ -2550,6 +2559,48 @@ fn hanging_whitespace<B: Brush>(
         hanging_opportunities,
         collapsed_advance.min(hanging_whitespace_advance).max(0.),
     )
+}
+
+/// pyro: whether a line may wrap at a soft wrap opportunity after the last character on it (its
+/// style and whether it is white space, `last`) and before an atom of style `next`, as Chromium
+/// decides it where `white-space` changes: after white space by its own style; after anything
+/// else by its own style or, where the elements around it end there, by the style of the element
+/// around both (`<span nowrap>国</span>国` and `<span nowrap>国</span><span nowrap>国</span>` wrap
+/// between the two in a block that wraps, `国<span>国</span>` in a `nowrap` block does not).
+/// `lagged`: the wrap mode the breaker had for the previous atom, used without a last character.
+fn wraps_after<B: Brush>(styles: &[crate::layout::Style<B>], last: Option<(u16, bool)>, next: u16, lagged: TextWrapMode) -> bool {
+    let Some((last, space)) = last else {
+        return lagged == TextWrapMode::Wrap;
+    };
+    let wraps = |index: u16| styles[usize::from(index)].text_wrap_mode == TextWrapMode::Wrap;
+    if wraps(last) || space || last == next {
+        return wraps(last);
+    }
+    // The nearest style that is `last`'s or an ancestor of it and an ancestor of `next`.
+    let is_ancestor_of_next = |ancestor: u16| {
+        let mut index = next;
+        loop {
+            if index == ancestor {
+                return true;
+            }
+            let parent = styles[usize::from(index)].parent;
+            if parent == index {
+                return false;
+            }
+            index = parent;
+        }
+    };
+    let mut index = last;
+    loop {
+        if is_ancestor_of_next(index) {
+            return index != last && wraps(index);
+        }
+        let parent = styles[usize::from(index)].parent;
+        if parent == index {
+            return false;
+        }
+        index = parent;
+    }
 }
 
 /// pyro: fullwidth opening punctuation starting a line (CSS `text-spacing-trim`): the shaped

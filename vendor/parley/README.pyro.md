@@ -298,3 +298,13 @@ not ship either). Covered by `crates/pyro-render/tests/text_spacing.rs`.
   characters (bidi controls) are passed over; cursive scripts (Arabic) get no `inter-character` space between letters. Upstream justified only at word separators, so CJK lines (no spaces) stayed
   start-aligned. Covered by `justified_cjk_text_spreads_between_characters` in
   `crates/pyro-render/tests/text_spacing.rs`.
+
+## Wrapping where `white-space` changes (WPT round 3, lane TS)
+
+`layout/line_break.rs` (`wraps_after`, `LineState::last_char`): whether a soft wrap opportunity between two atoms of
+different `text-wrap-mode` is taken follows Chromium: after white space by the white space's own style; after
+anything else by its own style or, where elements around it end at the opportunity, by the style of the element
+around both (`<span nowrap>国</span>国` and `<span nowrap>国</span><span nowrap>国</span>` wrap between the two in a
+block that wraps; `国<span>国</span>` in a `nowrap` block does not). The breaker used the previous atom's mode alone.
+Covered by `white_space_changes_wrap_as_in_chromium` in `crates/pyro-render/tests/text_spacing.rs`; WPT
+`white-space-wrap-after-nowrap-001`.

@@ -178,3 +178,22 @@ fn justified_cjk_text_spreads_between_characters() {
     // `inter-word` only between words: none here.
     assert_near(&x("text-justify:inter-word"), &[0.0, 20.0, 40.0, 60.0]);
 }
+
+#[test]
+fn white_space_changes_wrap_as_in_chromium() {
+    // One ideograph per line where the line may wrap between the two.
+    let lines = |body: &str| {
+        boxes(&format!("<style>.nw{{white-space:nowrap}}.n{{white-space:normal}}</style><div id=d style='width:20px'>{body}</div>"), &["d"])[0].height / 40.0
+    };
+    assert_near(
+        &[
+            lines("<span class=nw>国</span>国"),
+            lines("<span class=nw>国</span><span class=nw>国</span>"),
+            lines("<span class=nw>国国</span>"),
+            lines("<span class=nw>a </span>b"),
+            lines("<span class=nw><span class=n>国</span>国</span>"),
+            lines("<span class=nw>国<span class=n>国</span></span>"),
+        ],
+        &[2.0, 2.0, 1.0, 1.0, 2.0, 1.0],
+    );
+}
