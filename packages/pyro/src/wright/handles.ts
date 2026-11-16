@@ -242,7 +242,7 @@ export class ElementHandle<T = Node> extends JSHandle<T> {
     await this.marked(async (l) => {
       if (state === 'visible' || state === 'hidden') return l.waitFor({ state, timeout: o.timeout });
       if (state === 'stable') return;
-      const deadline = Date.now() + (o.timeout ?? 30_000);
+      const deadline = Date.now() + this._page._timeout(o.timeout);
       for (;;) {
         const ok = state === 'enabled' ? await l.isEnabled() : state === 'disabled' ? !(await l.isEnabled()) : await l.isEditable();
         if (ok) return;

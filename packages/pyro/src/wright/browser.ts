@@ -24,6 +24,8 @@ import {
   harHandler,
   initScriptSource,
   Page,
+  TimeoutError,
+  limit,
   callOwner,
   sameRoute,
   WORKER_AUTO_ATTACH,
@@ -727,7 +729,9 @@ export class BrowserContext {
     const o = typeof optionsOrPredicate === 'function' ? { predicate: optionsOrPredicate } : optionsOrPredicate;
     this.enableFor(event);
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error(`browserContext.waitForEvent: Timeout ${o.timeout ?? 30_000}ms exceeded`)), o.timeout ?? 30_000);
+      // The context's default timeout, as in Playwright; 0 is no limit.
+      const ms = limit(o.timeout ?? this._defaultTimeout ?? 30_000);
+      const timer = setTimeout(() => reject(new TimeoutError(`browserContext.waitForEvent: Timeout ${ms}ms exceeded while waiting for event "${String(event)}"`)), ms);
       const listener = (arg: any) => {
         if (o.predicate && !o.predicate(arg)) return;
         clearTimeout(timer);

@@ -298,6 +298,11 @@ How a run goes, as with `playwright test`:
   `n`, split as Playwright splits it, so each CI job computes the same
   parts: whole files, or single tests where they are parallel, in order,
   balanced by test count. Each shard runs the dependencies it needs.
+- **Action and navigation timeouts:** as in Playwright Test, `actionTimeout`
+  and `navigationTimeout` default to 0, no limit of their own (the test's
+  timeout bounds the call); a 0 timeout anywhere (`setDefaultTimeout(0)`,
+  `{ timeout: 0 }`, `expect`'s) is no limit, and there is no upper bound.
+  Outside a test (`chromium.launch()`) the default is Playwright's 30 s.
 - **Timeouts and screenshots:** a test that times out keeps its pages, as in
   Playwright. The call its test function waits on is cancelled in the
   browser (`Pyro.cancelRun`; a page script it runs that does not return is

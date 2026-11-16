@@ -64,8 +64,12 @@ use super::{EngineHost, Queued};
 use crate::msg::{self, CdpError, CdpResult};
 use crate::target::{PageCommand, PageKey};
 
+/// A step's timeout when neither it nor its run sets one. A step has no
+/// upper bound: Playwright's "no limit" (its 0) arrives as a timeout longer
+/// than any run (`NO_LIMIT` in the wright), and 0 means one try.
 const DEFAULT_TIMEOUT_MS: u64 = 5_000;
-const MAX_TIMEOUT_MS: u64 = 600_000;
+/// Longest `delay` of a mocked response.
+const MAX_DELAY_MS: u64 = 600_000;
 /// Waiting runs per connection (each holds only its parsed steps).
 const MAX_WAITERS: usize = 1024;
 const MAX_STEPS: usize = 10_000;
@@ -4252,7 +4256,7 @@ impl MockParams {
             default_type,
             headers,
             body,
-            delay: Duration::from_millis(self.delay.unwrap_or(0).min(MAX_TIMEOUT_MS)),
+            delay: Duration::from_millis(self.delay.unwrap_or(0).min(MAX_DELAY_MS)),
             abort: self.abort,
             times: self.times,
             passthrough,
@@ -4325,7 +4329,14 @@ struct RunParams {
 }
 
 fn timeout_of(step: Option<u64>, default: Option<u64>) -> Duration {
-    Duration::from_millis(step.or(default).unwrap_or(DEFAULT_TIMEOUT_MS).min(MAX_TIMEOUT_MS))
+    Duration::from_millis(step.or(default).unwrap_or(DEFAULT_TIMEOUT_MS))
+}
+
+/// When a step started at `now` with `timeout` times out; a timeout past
+/// what the clock can count never does (a century stands for it).
+fn deadline_after(now: Instant, timeout: Duration) -> Instant {
+    const CENTURY: Duration = Duration::from_secs(100 * 365 * 24 * 3600);
+    now.checked_add(timeout).or_else(|| now.checked_add(CENTURY)).unwrap_or(now)
 }
 
 impl ActParams {
@@ -4840,7 +4851,7 @@ impl EngineHost {
         let waiter = Waiter {
             job,
             phase: Phase::Try,
-            step_deadline: now + first,
+            step_deadline: deadline_after(now, first),
             doc: Weak::new(),
             seen: 0,
             reason: String::new(),
@@ -5793,7 +5804,7 @@ impl EngineHost {
         w.job.index += 1;
         w.phase = Phase::Try;
         if let Some((_, timeout)) = w.job.steps.get(w.job.index) {
-            w.step_deadline = Instant::now() + *timeout;
+            w.step_deadline = deadline_after(Instant::now(), *timeout);
         }
     }
 
@@ -5899,6 +5910,19 @@ fn id_of(browser: &Browser, pid: PageId) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn step_timeouts_have_no_upper_bound() {
+        assert_eq!(timeout_of(None, None), Duration::from_millis(DEFAULT_TIMEOUT_MS));
+        assert_eq!(timeout_of(None, Some(0)), Duration::ZERO);
+        // Longer than the 600 s cap there used to be (Playwright has none).
+        assert_eq!(timeout_of(Some(900_000), Some(1)), Duration::from_secs(900));
+        // The wright's "no limit" (2^31 - 1 ms), and more than any clock counts.
+        let now = Instant::now();
+        assert!(deadline_after(now, timeout_of(Some((1 << 31) - 1), None)) > now + Duration::from_secs(86_400 * 24));
+        assert!(deadline_after(now, timeout_of(Some(u64::MAX), None)) > now + Duration::from_secs(86_400 * 365));
+        assert_eq!(deadline_after(now, Duration::ZERO), now);
+    }
 
     #[test]
     fn an_unknown_key_fails_the_step_when_it_is_read() {
