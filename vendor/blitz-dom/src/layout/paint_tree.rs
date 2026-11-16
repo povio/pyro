@@ -570,12 +570,17 @@ impl BaseDocument {
                     let positioned = child
                         .primary_styles()
                         .is_some_and(|style| style.clone_position() != Position::Static);
+                    // pyro: a cell of a positioned row or row group paints with it, as the
+                    // positioned box it is part of (CSS 2.1 Appendix E step 8).
+                    let part_positioned = !positioned
+                        && self.table_cell_positioned_parts(child_id).iter().any(Option::is_some);
+                    let positioned = positioned || part_positioned;
                     let z_index = if is_flex_or_grid || positioned {
                         child.z_index()
                     } else {
                         0
                     };
-                    let paint_order = node_to_paint_order(child, is_flex_or_grid);
+                    let paint_order = if part_positioned { (2, 0) } else { node_to_paint_order(child, is_flex_or_grid) };
                     // pyro: a stacking context that is not positioned (a transform, an opacity,
                     // a filter) paints as a positioned box with `z-index: 0` does (CSS 2.1
                     // Appendix E step 8; CSS Transforms 1, CSS Color 4 `opacity`): above the
@@ -717,7 +722,7 @@ impl BaseDocument {
         let Some(SpecialElementData::TableRoot(ctx)) = node.data.downcast_element().map(|e| &e.special_data) else {
             return false;
         };
-        if !crate::layout::table::keeps_cells(ctx) {
+        if !crate::layout::table::keeps_cells(ctx) || crate::layout::table::table_has_positioned_parts(self, ctx) {
             return false;
         }
         let ctx = std::sync::Arc::clone(ctx);
@@ -775,6 +780,7 @@ impl BaseDocument {
         placed.take_paint();
         let first = children.first().map(|&id| node_to_paint_order(&self.nodes[id], false));
         let plain = crate::layout::table::keeps_cells(ctx)
+            && !crate::layout::table::table_has_positioned_parts(self, ctx)
             && no_entries
             && node.before().is_none()
             && node.after().is_none()

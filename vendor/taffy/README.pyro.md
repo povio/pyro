@@ -400,3 +400,16 @@ to its measure function, which a min-content measurement does not transfer throu
 
 The property's ratio and every other use of `aspect_ratio` are unchanged. Covered by
 `crates/pyro-render/tests/flex_natural_ratio.rs`.
+
+## Static positions and positioned table parts (WPT css-position, round 3 lane P)
+
+- `compute/block.rs`: an inline-level out-of-flow child of a block container (`BlockItemStyle::
+  original_display_is_inline`) has the static position of the start of a line at its place: beside the floats
+  there (`BlockContext::find_content_slot`), where `text-align` puts the line's content (`BlockContainerStyle::
+  text_align_edge`), as Blink's `HandleOutOfFlowPositioned` (WPT `inline-level-absolute-in-block-level-context-*`,
+  `position-absolute-dynamic-static-position-floats-*`).
+- `tree/traits.rs` (`LayoutContainingBlock::static_position_is_containing_block`), `compute/oof.rs`
+  (`layout_oof_box`): a box whose static-position rectangle is its whole containing block (an element in the top
+  layer, css-position-4) is aligned in it by its self-alignment (WPT `top-layer-box-uses-icb-*`).
+- `compute/block.rs`: a table child gives a block container no last baseline (an inline-block holding only tables
+  sits on its bottom margin edge, as in Chromium; WPT `position-relative-table-*`).

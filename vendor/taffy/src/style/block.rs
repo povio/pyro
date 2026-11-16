@@ -1,6 +1,7 @@
 //! Style types for Block layout
 use crate::geometry::{Line, Size};
 use crate::style::Dimension;
+use crate::tree::AxisStaticEdge;
 use crate::style::{AlignContent, AlignItems, AlignSelf};
 use crate::{CoreStyle, Style};
 
@@ -33,6 +34,19 @@ pub trait BlockContainerStyle: CoreStyle {
     fn margin_trim(&self) -> Line<bool> {
         Line::FALSE
     }
+
+    /// pyro: the edge of a line box in Taffy's inline axis (`Start`: left) that `text-align`
+    /// puts the line's content against, or its middle (`Center`); `justify` is the start edge.
+    /// An inline-level out-of-flow child of a block container has its static position there,
+    /// beside the floats at its place.
+    #[inline(always)]
+    fn text_align_edge(&self) -> AxisStaticEdge {
+        if self.direction().is_rtl() {
+            AxisStaticEdge::End
+        } else {
+            AxisStaticEdge::Start
+        }
+    }
 }
 
 /// The set of styles required for a Block layout item (child of a Block container)
@@ -63,6 +77,14 @@ pub trait BlockItemStyle: CoreStyle {
     /// measured for the automatic minimum height of a box with a preferred aspect ratio.
     #[inline(always)]
     fn breaks_lines_in_block_axis(&self) -> bool {
+        false
+    }
+
+    /// pyro: whether the item's `display` was inline-level before `position` blockified it (an
+    /// absolutely positioned box's): its static position in a block container is then that of
+    /// the start of a line at its place ([`BlockContainerStyle::text_align_edge`]).
+    #[inline(always)]
+    fn original_display_is_inline(&self) -> bool {
         false
     }
 

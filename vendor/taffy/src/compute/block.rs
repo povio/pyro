@@ -6,8 +6,8 @@ use crate::style::{
 };
 use crate::style_helpers::TaffyMaxContent;
 use crate::tree::{
-    AxisStaticPosition, LayoutPartialTree, LayoutPartialTreeExt, NodeId, OofCandidate, OofCandidates,
-    OofPositioningArea,
+    AxisStaticEdge, AxisStaticPosition, LayoutPartialTree, LayoutPartialTreeExt, NodeId, OofCandidate,
+    OofCandidates, OofPositioningArea,
 };
 use crate::tree::{Baselines, CollapsibleMarginSet, Layout, LayoutInput, LayoutOutput, RunMode, SizingMode};
 use crate::util::debug::debug_log;
@@ -436,6 +436,15 @@ struct BlockItem {
     /// The computed "static position" of this item. The static position is the position
     /// taking into account padding, border, margins, and scrollbar_gutters but not inset
     static_position: Point<f32>,
+    /// pyro: the item is a block container (no replaced element): its last baseline is its own,
+    /// none when it holds no line box.
+    is_block_container: bool,
+    /// pyro: the item is out of flow and was inline-level before `position` blockified it
+    /// (`BlockItemStyle::original_display_is_inline`).
+    is_inline_level_oof: bool,
+    /// pyro: for such an item, the inline-axis point of its static position: where the content
+    /// of a line starting at its place would sit (beside floats, by `text-align`).
+    inline_static_x: Option<f32>,
     /// Whether margins can be collapsed through this item
     can_be_collapsed_through: bool,
 
@@ -783,6 +792,8 @@ fn compute_inner(
         || border.bottom > 0.0;
 
     let text_align = style.text_align();
+    // pyro: where `text-align` puts the content of a line (`BlockContainerStyle::text_align_edge`).
+    let line_edge = style.text_align_edge();
     let align_content = style.align_content();
     let justify_items = style.justify_items();
     // pyro: `margin-trim`
@@ -855,6 +866,7 @@ fn compute_inner(
         #[cfg(feature = "content_size")]
         resolved_padding,
         text_align,
+        line_edge,
         justify_items,
         direction,
         own_margins_collapse_with_children,
@@ -1036,9 +1048,13 @@ fn compute_inner(
             // child's hypothetical position in the block axis. The child's self-alignment
             // properties determine how it is aligned within that rectangle.
             // <https://www.w3.org/TR/css-position-3/#staticpos-rect>
-            let inline_area = Line {
-                start: resolved_content_box_inset.left,
-                end: container_outer_width - resolved_content_box_inset.right,
+            // pyro: an inline-level one's is a point on the line at its place.
+            let inline_area = match item.inline_static_x {
+                Some(x) => Line { start: x, end: x },
+                None => Line {
+                    start: resolved_content_box_inset.left,
+                    end: container_outer_width - resolved_content_box_inset.right,
+                },
             };
             let block_area = Line { start: item.static_position.y, end: item.static_position.y };
             // A `justify_self` of `None` takes the container's `justify-items`. Block containers have
@@ -1248,6 +1264,9 @@ fn generate_item_list(
                 // Fields to be computed later (for now we initialise with dummy values)
                 computed_size: Size::zero(),
                 static_position: Point::zero(),
+                is_block_container: is_block && !child_style.is_compressible_replaced(),
+                is_inline_level_oof: position.is_out_of_flow() && child_style.original_display_is_inline(),
+                inline_static_x: None,
                 can_be_collapsed_through: false,
                 final_layout: None,
                 oof_candidates: OofCandidates::new(),
@@ -1643,6 +1662,7 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
     resolved_border: Rect<f32>,
     #[cfg(feature = "content_size")] resolved_padding: Rect<f32>,
     text_align: TextAlign,
+    #[cfg_attr(not(feature = "float_layout"), allow(unused_variables))] line_edge: AxisStaticEdge,
     justify_items: AlignItems,
     direction: Direction,
     own_margins_collapse_with_children: Line<bool>,
@@ -1726,7 +1746,28 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
                 Direction::Ltr => resolved_content_box_inset.left,
                 Direction::Rtl => container_outer_width - resolved_content_box_inset.right,
             };
-            item.static_position = Point { x, y: y_offset_for_absolute }
+            item.static_position = Point { x, y: y_offset_for_absolute };
+            // pyro: an inline-level out-of-flow child (inline-level before `position` blockified
+            // it) has the static position of the start of a line at its place: beside the floats
+            // there, where `text-align` puts the line's content (Blink's
+            // `HandleOutOfFlowPositioned`; WPT `inline-level-absolute-in-block-level-context-*`).
+            #[cfg(feature = "float_layout")]
+            if item.is_inline_level_oof {
+                let line_start = resolved_content_box_inset.left;
+                let line_end = container_outer_width - resolved_content_box_inset.right;
+                let (left, right) = if block_ctx.has_active_floats(y_offset_for_absolute) {
+                    let slot = block_ctx.find_content_slot(y_offset_for_absolute, 0.0, Clear::None, None);
+                    (slot.x.max(line_start), (slot.x + slot.width).min(line_end))
+                } else {
+                    (line_start, line_end)
+                };
+                let right = right.max(left);
+                item.inline_static_x = Some(match line_edge {
+                    AxisStaticEdge::Start => left,
+                    AxisStaticEdge::End => right,
+                    AxisStaticEdge::Center => (left + right) / 2.0,
+                });
+            }
         } else {
             #[cfg_attr(not(feature = "float_layout"), allow(unused_mut))]
             let mut item_margin = item
@@ -2305,8 +2346,16 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
             // child that has one (an inline-block's, CSS 2.1 § 10.8.1, is its last line box's).
             // A child that is a scroll container gives its bottom margin edge, whatever lines it
             // holds (as an inline-block that is one does; WPT `baseline-block-with-overflow-001`).
-            let child_last_baseline = if item.overflow.y.is_scroll_container() {
+            // A table gives none: it is skipped, as in Chromium (an inline-block holding only
+            // tables sits on its bottom margin edge whatever their rows hold; WPT
+            // `position-relative-table-*`).
+            // A block container gives its own: none when it holds no line box (but tables).
+            let child_last_baseline = if item.is_table {
+                None
+            } else if item.overflow.y.is_scroll_container() {
                 Some(item_layout.size.height + resolved_margin.bottom)
+            } else if item.is_block_container {
+                item_layout.baselines.last
             } else {
                 item_layout.baselines.last.or(item_layout.baselines.first)
             };

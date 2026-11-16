@@ -308,3 +308,9 @@ around both (`<span nowrap>国</span>国` and `<span nowrap>国</span><span nowr
 block that wraps; `国<span>国</span>` in a `nowrap` block does not). The breaker used the previous atom's mode alone.
 Covered by `white_space_changes_wrap_as_in_chromium` in `crates/pyro-render/tests/text_spacing.rs`; WPT
 `white-space-wrap-after-nowrap-001`.
+## Bidi side of out-of-flow boxes (WPT css-position, round 3 lane P)
+
+`PositionedInlineBox::is_rtl` (`layout/line.rs`): whether the level the box resolved to (as U+FFFC) is right-to-left.
+blitz-dom puts an inline-level absolutely positioned box on the start side of its place in that direction (Blink's
+`InlineItem::Direction()`): Latin text in a right-to-left paragraph runs left to right, and so does the box after it
+(WPT `static-position/htb-rtl-*`, `vlr-rtl-*`, `vrl-rtl-*`).

@@ -660,7 +660,18 @@ impl ElementCx<'_, '_> {
             return;
         };
 
+        // pyro: a positioned row group or row paints its background with its cells, in the
+        // positioned layer (`draw_positioned_table_part_backgrounds`), not here.
+        let positioned = |node_id: NodeId| -> bool {
+            self.context.dom.get_node(node_id).and_then(|node| node.primary_styles()).is_some_and(|style| {
+                use style::computed_values::position::T as Position;
+                matches!(style.clone_position(), Position::Relative | Position::Sticky)
+            })
+        };
         let background_color = |node_id: NodeId| -> Option<Color> {
+            if positioned(node_id) {
+                return None;
+            }
             let node = self.context.dom.get_node(node_id)?;
             let style = node.primary_styles()?;
             let current_color = style.clone_color();
@@ -696,7 +707,7 @@ impl ElementCx<'_, '_> {
         // pyro: a part with a background image paints it (with its colour) cell by cell too,
         // positioned against the part's own box (CSS 2.1 §17.5.1).
         let has_image = |node_id: NodeId| -> bool {
-            self.context.dom.get_node(node_id).and_then(|node| node.primary_styles()).is_some_and(|style| {
+            !positioned(node_id) && self.context.dom.get_node(node_id).and_then(|node| node.primary_styles()).is_some_and(|style| {
                 style
                     .get_background()
                     .background_image
@@ -718,9 +729,10 @@ impl ElementCx<'_, '_> {
             .rows
             .iter()
             .map(|row| {
-                self.context.dom.get_node(row.node_id).and_then(|node| node.primary_styles()).is_some_and(|style| {
-                    style.get_effects().box_shadow.0.iter().any(|shadow| !shadow.inset)
-                })
+                !positioned(row.node_id)
+                    && self.context.dom.get_node(row.node_id).and_then(|node| node.primary_styles()).is_some_and(|style| {
+                        style.get_effects().box_shadow.0.iter().any(|shadow| !shadow.inset)
+                    })
             })
             .collect();
         let any_shadow = row_shadows.iter().any(|shadow| *shadow);
@@ -847,6 +859,49 @@ impl ElementCx<'_, '_> {
                         }
                     }
                 }
+            }
+        }
+    }
+
+    /// pyro: the backgrounds of the positioned row group and row of the table cell this is (see
+    /// `BaseDocument::table_cell_positioned_parts`), group first, in the cell's border box: a
+    /// positioned part paints with its cells, in the positioned layer, under each cell's own
+    /// background (WPT `position-relative-table-*`, `position-sticky-table-*`).
+    pub(super) fn draw_positioned_table_part_backgrounds(&self, scene: &mut impl PaintScene) {
+        let dom = self.context.dom;
+        let parts = dom.table_cell_positioned_parts(self.node.id);
+        if parts.iter().all(Option::is_none) {
+            return;
+        }
+        let Some(table_node) = self.node.layout_parent.get().and_then(|id| dom.get_node(id)) else { return };
+        let Some(SpecialElementData::TableRoot(table)) = table_node.element_data().map(|e| &e.special_data) else {
+            return;
+        };
+        let index = self.node.layout_data().table_cell_index as usize;
+        let Some(cell) = table.cells.get(index).filter(|cell| cell.node_id == self.node.id) else { return };
+        let layout = self.node.final_layout();
+        let shape = Rect::new(0.0, 0.0, layout.size.width as f64, layout.size.height as f64).scale_from_origin(self.scale);
+        let mut part_rects = None;
+        for (part, kind) in parts.into_iter().zip([PartKind::RowGroup, PartKind::Row]) {
+            let Some(part) = part else { continue };
+            let Some(node) = dom.get_node(part) else { continue };
+            let Some(style) = node.primary_styles() else { continue };
+            let current_color = style.clone_color();
+            let background = style.get_background();
+            let color = background.background_color.resolve_to_absolute(&current_color).as_srgb_color();
+            let image = background.background_image.0.iter().any(|image| !matches!(image, ComputedImage::None));
+            if image {
+                let rects = part_rects.get_or_insert_with(|| self.table_part_rects(table));
+                if let Some(rects) = rects.as_ref() {
+                    // The part's box in the cell's space.
+                    let location = layout.location;
+                    let rect = rects.rect(table, part, kind, cell) - Vec2::new(location.x as f64, location.y as f64);
+                    self.draw_table_part_background(scene, part, rect, &shape, self.transform);
+                    continue;
+                }
+            }
+            if color != Color::TRANSPARENT {
+                scene.fill(Fill::NonZero, self.transform, color, None, &shape);
             }
         }
     }

@@ -197,7 +197,7 @@ struct BidiScan {
     controls: bool,
     /// Such a box, or the root, is right-to-left.
     rtl: bool,
-    /// Some inline box (not atomic, not split) is relatively positioned.
+    /// Some inline box (not atomic, not split) is relatively positioned (or sticky).
     relative: bool,
     /// Some inline box's margin or padding at an edge is a percentage (`span_edge_widths_in`).
     percent_edges: bool,
@@ -309,7 +309,8 @@ fn open_span(
     let mut parley_style = stylo_to_parley::style(node_id, style);
     parley_style.text_box_trim = crate::layout::text_box::span_trim(style);
     builder.push_style_span(parley_style);
-    bidi_scan.relative |= style.clone_position() == PositionProperty::Relative;
+    // (A sticky one is painted moved too: `BaseDocument::inline_span_relative_offset`.)
+    bidi_scan.relative |= matches!(style.clone_position(), PositionProperty::Relative | PositionProperty::Sticky);
     let rtl = style.clone_direction() == style::computed_values::direction::T::Rtl;
     let controls = bidi_controls(style);
     if let Some((start_controls, _)) = controls {
@@ -1037,9 +1038,9 @@ fn build_inline_layout_with(
                                 annotations.ruby = Some(node_id);
                             }
 
-                            bidi_scan.relative |= node
-                                .primary_styles()
-                                .is_some_and(|style| style.clone_position() == PositionProperty::Relative);
+                            bidi_scan.relative |= node.primary_styles().is_some_and(|style| {
+                                matches!(style.clone_position(), PositionProperty::Relative | PositionProperty::Sticky)
+                            });
                             bidi_scan.block_edges |= node.primary_styles().is_some_and(|style| has_block_edges(&style));
                             // pyro: the bidi formatting characters its `unicode-bidi` stands for,
                             // around its edges, as Blink places them.

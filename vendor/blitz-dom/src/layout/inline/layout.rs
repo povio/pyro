@@ -810,6 +810,13 @@ impl LayoutPassState<'_> {
                 && !style
                     .flags
                     .intersects(StyleFlags::IS_BUTTON | StyleFlags::IS_BUTTON_INPUT);
+            // pyro: a block container's last baseline is its own: with no line box in it (a
+            // table gives none) it has none, and sits on its bottom margin edge (CSS 2.1
+            // § 10.8.1), not on its first baseline.
+            let own_last_baseline = is_flow
+                && !style
+                    .flags
+                    .intersects(StyleFlags::IS_REPLACED | StyleFlags::IS_BUTTON | StyleFlags::IS_BUTTON_INPUT);
             let contain_layout = box_style.slow_clone_contain().contains(Contain::LAYOUT);
             let exports_baseline = !(contain_layout
                 || (baseline_source == BaselineSource::Auto && is_block_axis_scroll_container));
@@ -838,7 +845,9 @@ impl LayoutPassState<'_> {
                 }
                 ibox.width = (margin.left + margin.right + output.size.width) * scale;
                 ibox.baseline = if exports_baseline {
-                    let baseline = if uses_last_baseline {
+                    let baseline = if uses_last_baseline && own_last_baseline {
+                        output.baselines.last
+                    } else if uses_last_baseline {
                         output.baselines.last.or(output.baselines.first)
                     } else {
                         output.baselines.first.or(output.baselines.last)
@@ -1853,6 +1862,21 @@ impl LayoutPassState<'_> {
                             )
                         };
 
+                        // pyro: an inline-level box is put on the start side of its place in
+                        // the direction of the text there (the bidi level it resolved to), not
+                        // in the container's: Latin text in a right-to-left paragraph runs left
+                        // to right, and so does the box after it (Blink's `InlineItem::Direction()`;
+                        // WPT `static-position/htb-rtl-*`). A block-level box takes the container's.
+                        let static_direction = if is_inline_level
+                            && ibox.is_rtl != inline_layout.layout.is_rtl()
+                        {
+                            match container_direction {
+                                Direction::Ltr => Direction::Rtl,
+                                Direction::Rtl => Direction::Ltr,
+                            }
+                        } else {
+                            container_direction
+                        };
                         oof_candidates.push(OofCandidate { containing_block: None,
                             node: taffy::NodeId::from(ibox.id),
                             order,
@@ -1861,11 +1885,11 @@ impl LayoutPassState<'_> {
                                 x: AxisStaticPosition::from_alignment(
                                     justify_self.resolve_self_relative(
                                         item_direction,
-                                        container_direction,
+                                        static_direction,
                                         true,
                                     ),
                                     inline_area,
-                                    container_direction.is_rtl(),
+                                    static_direction.is_rtl(),
                                 ),
                                 y: AxisStaticPosition::from_alignment(
                                     align_self.resolve_self_relative(

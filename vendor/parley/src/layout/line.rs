@@ -324,6 +324,10 @@ pub struct PositionedInlineBox {
     pub kind: InlineBoxKind,
     /// pyro: the index in [`Layout::styles`] of the style of the span the box is in.
     pub style_index: u16,
+    /// pyro: whether the bidi level the box resolved to (as U+FFFC) is right-to-left: the
+    /// direction of the text at its place, on whose start side an out-of-flow box's static
+    /// position puts it (Blink's `InlineItem::Direction()`).
+    pub is_rtl: bool,
 }
 
 /// Sequence of fully positioned glyphs with the same style.
@@ -502,9 +506,10 @@ impl<'a, B: Brush> Iterator for GlyphRunIter<'a, B> {
                     let x = self.offset
                         + self.line.data.metrics.inline_min_coord
                         + self.line.data.metrics.offset;
-                    let box_index = self.line.layout.data.line_items
-                        [self.line.data.item_range.start + self.item_index]
-                        .index;
+                    let line_item = &self.line.layout.data.line_items
+                        [self.line.data.item_range.start + self.item_index];
+                    let box_index = line_item.index;
+                    let is_rtl = line_item.is_rtl();
                     // pyro: a span's edge is as tall as the span's content area on this line.
                     let style_index =
                         self.line.layout.data.inline_boxes[box_index].parent_style_index;
@@ -528,6 +533,7 @@ impl<'a, B: Brush> Iterator for GlyphRunIter<'a, B> {
                         id: inline_box.id,
                         kind: inline_box.kind,
                         style_index,
+                        is_rtl,
                     }));
                 }
                 LineItem::Run(run) => {

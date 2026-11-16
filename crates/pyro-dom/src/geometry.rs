@@ -77,6 +77,9 @@ pub struct ExternalSticky {
     /// Its containing block's content box (x, y, width, height), document
     /// coordinates: the box never leaves it.
     pub limit: Option<(f64, f64, f64, f64)>,
+    /// The [`crate::snapshot::render_key`] of its containing block's element:
+    /// the sticky boxes holding that element move the limit with them.
+    pub cb: Option<u64>,
 }
 
 /// The whole document's boxes as the external engine laid it out, keyed

@@ -5595,7 +5595,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              |scene| {
                  // If the element has a CSS `mask`, then push an isolation layer for the
                  // masked content. The mask is applied when the layer is popped below.
-@@ -608,201 +1186,534 @@
+@@ -608,197 +1186,534 @@
                  // Save it so that the mask can be drawn untransformed by scroll offsets.
                  let unscrolled_transform = cx.transform;
  
@@ -5786,12 +5786,16 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 -                // (they should always be rendered as part of an inline layout)
 -                // unreachable!()
 +            cx.draw_outset_box_shadow(scene);
-+            if cx.context.backgrounds && !is_root && self.canvas_background != Some(node.id) {
-+                cx.draw_background(scene);
++            // pyro: a cell of a positioned row or row group paints their backgrounds first.
++            if cx.context.backgrounds && !hidden {
++                cx.draw_positioned_table_part_backgrounds(scene);
              }
 -            NodeData::Document(_) => {}
 -            // NodeData::Doctype => {}
 -            NodeData::Comment { .. } => {} // NodeData::ProcessingInstruction { .. } => {}
++            if cx.context.backgrounds && !is_root && self.canvas_background != Some(node.id) {
++                cx.draw_background(scene);
++            }
 +            cx.draw_inset_box_shadow(scene);
          }
 -    }
@@ -5894,10 +5898,6 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                    y: content_position.y - node.scroll_offset().y,
 +                };
  
--/// Ensure that the `resized_image` field has a correctly sized image
--fn to_peniko_image(image: &RasterImageData, quality: peniko::ImageQuality) -> peniko::ImageBrush {
--    peniko::ImageBrush {
--        image: ImageData {
 +                cx.transform = self.scrolled_transform(node, cx.transform);
 +                if !hidden {
 +                    cx.draw_image(scene);
@@ -6294,14 +6294,10 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +    Affine::new([t.sx, t.ky, t.kx, t.sy, t.tx, t.ty].map(f64::from))
 +}
 +
-+/// Ensure that the `resized_image` field has a correctly sized image
-+fn to_peniko_image(image: &RasterImageData, quality: peniko::ImageQuality) -> peniko::ImageBrush {
-+    peniko::ImageBrush {
-+        image: ImageData {
-             data: image.data.clone(),
-             format: peniko::ImageFormat::Rgba8,
-             width: image.width,
-@@ -818,6 +1729,35 @@
+ /// Ensure that the `resized_image` field has a correctly sized image
+ fn to_peniko_image(image: &RasterImageData, quality: peniko::ImageQuality) -> peniko::ImageBrush {
+     peniko::ImageBrush {
+@@ -818,6 +1733,35 @@
      }
  }
  
@@ -6337,7 +6333,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
  /// A context of loaded and hot data to draw the element from
  struct ElementCx<'dom, 'a> {
      context: &'dom BlitzDomPainter<'dom, 'a>,
-@@ -836,7 +1776,185 @@
+@@ -836,7 +1780,185 @@
      custom_widget_scene: Option<&'a Scene>,
  }
  
@@ -6524,7 +6520,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
  fn convert_rect(rect: &parley::BoundingBox) -> kurbo::Rect {
      peniko::kurbo::Rect::new(rect.x0, rect.y0, rect.x1, rect.y1)
  }
-@@ -967,8 +2085,496 @@
+@@ -967,8 +2089,496 @@
          }
      }
  
@@ -7021,7 +7017,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              let text_layout = self.element
                  .inline_layout_data
                  .as_ref()
-@@ -976,6 +2582,11 @@
+@@ -976,6 +2586,11 @@
                      panic!("Tried to render node marked as inline root that does not have an inline layout: {:?}", self.node);
                  });
  
@@ -7033,7 +7029,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              // Text keeps its unrounded position; only box edges are snapped to whole pixels.
              let subpixel_offset = text_layout.content_box_subpixel_offset;
              let pos = Point {
-@@ -984,23 +2595,78 @@
+@@ -984,23 +2599,78 @@
              };
              let transform =
                  self.transform * Affine::translate((pos.x * self.scale, pos.y * self.scale));
@@ -7123,7 +7119,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
                      sel_start,
                      sel_end,
                  );
-@@ -1008,46 +2674,323 @@
+@@ -1008,46 +2678,323 @@
  
              // Render text
              let mut draw_text_context = self.context.draw_text_context.borrow_mut();
@@ -7484,7 +7480,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              if self.node.is_focussed() {
                  // Render selection/caret
                  for (rect, _line_idx) in input_data.editor.selection_geometry().iter() {
-@@ -1078,50 +3021,170 @@
+@@ -1078,50 +3025,170 @@
  
              // Render text
              let mut draw_text_context = self.context.draw_text_context.borrow_mut();
@@ -7675,7 +7671,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
                      / layout.scale()
                      + text_layout.block_offset
              } else {
-@@ -1129,7 +3192,7 @@
+@@ -1129,7 +3196,7 @@
              };
  
              let pos = Point {
@@ -7684,7 +7680,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
                  y: pos.y + (content_box_subpixel_offset.y + y_offset) as f64,
              };
  
-@@ -1145,83 +3208,493 @@
+@@ -1145,83 +3212,493 @@
                  TextPaintOptions {
                      scale: self.scale,
                      brush_override: None,
@@ -8228,7 +8224,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
      #[cfg(feature = "svg")]
      fn draw_svg(&self, scene: &mut impl PaintScene) {
          use style::properties::generated::longhands::object_fit::computed_value::T as ObjectFit;
-@@ -1232,6 +3705,11 @@
+@@ -1232,6 +3709,11 @@
  
          let width = self.frame.content_box.width() as f32;
          let height = self.frame.content_box.height() as f32;
@@ -8240,7 +8236,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          let svg_size = svg.tree.size();
  
          let x = self.frame.content_box.origin().x;
-@@ -1253,9 +3731,20 @@
+@@ -1253,9 +3735,20 @@
  
          // Apply object-fit algorithm
          let container_size = taffy::Size { width, height };
@@ -8264,7 +8260,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          };
          let paint_size = compute_object_fit(container_size, Some(object_size), object_fit);
  
-@@ -1266,26 +3755,149 @@
+@@ -1266,26 +3759,149 @@
          let y_offset = object_position.vertical.resolve(
              CSSPixelLength::new(container_size.height - paint_size.height) / self.scale as f32,
          ) * self.scale as f32;
@@ -8415,7 +8411,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
      fn with_replaced_content_clip<S: PaintScene>(
          &self,
          scene: &mut S,
-@@ -1293,15 +3905,27 @@
+@@ -1293,15 +3909,27 @@
          paint_size: taffy::Size<f32>,
          x_offset: f32,
          y_offset: f32,
@@ -8444,7 +8440,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              BlendMode::default(),
              1.0,
              self.transform,
-@@ -1329,9 +3953,22 @@
+@@ -1329,9 +3957,22 @@
                  width: width as f32,
                  height: height as f32,
              };
@@ -8470,7 +8466,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              };
              let paint_size = compute_object_fit(container_size, Some(object_size), object_fit);
  
-@@ -1347,10 +3984,28 @@
+@@ -1347,10 +3988,28 @@
  
              let x_scale = paint_size.width as f64 / object_size.width as f64;
              let y_scale = paint_size.height as f64 / object_size.height as f64;
@@ -8499,7 +8495,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
  
              self.with_replaced_content_clip(
                  scene,
-@@ -1358,8 +4013,23 @@
+@@ -1358,8 +4017,23 @@
                  paint_size,
                  x_offset.px(),
                  y_offset.px(),
@@ -8524,7 +8520,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
                  },
              );
          }
-@@ -1427,6 +4097,14 @@
+@@ -1427,6 +4101,14 @@
      }
  }
  
@@ -8539,7 +8535,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
  fn insets_from_taffy_rect(input: taffy::Rect<f64>) -> Insets {
      Insets {
          x0: input.left,
-@@ -1457,12 +4135,93 @@
+@@ -1457,12 +4139,93 @@
          }
      };
      let s_border = style.get_border();
@@ -8743,7 +8739,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
              origin: (*get_cyclic(&svg_styles.mask_origin.0, idx)).into(),
              // There is no `mask-attachment` property
              attachment: StyloBackgroundAttachment::Scroll,
-@@ -129,54 +152,352 @@
+@@ -129,56 +152,354 @@
  
  impl ElementCx<'_, '_> {
      pub(super) fn draw_background(&self, scene: &mut impl PaintScene) {
@@ -8965,10 +8961,10 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
          }
          if text_run {
              self.end_text_clip_group(scene);
-+        }
+         }
 +        self.context.layer_manager.maybe_pop_layer(scene, blend_group);
-+    }
-+
+     }
+ 
 +    /// pyro: the border box that `background-clip: border-box` layers are cut to under a rounded
 +    /// border that hides the background's edge, as Chromium paints it
 +    /// (`BoxDecorationData::ComputeBleedAvoidance`, `kBackgroundBleedShrinkBackground`): every
@@ -9070,7 +9066,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
 +        let scrolls = |overflow: Overflow| !matches!(overflow, Overflow::Visible | Overflow::Clip);
 +        if !(scrolls(box_style.overflow_x) || scrolls(box_style.overflow_y)) {
 +            return None;
-         }
++        }
 +        let scale = self.scale;
 +        let padding_box = self.frame.padding_box;
 +        // The scrollable overflow, relative to the padding box's top left (CSS px), with the
@@ -9103,9 +9099,11 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
 +            0.0,
 +            NonUniformRoundedRectRadii::default(),
 +        ))
-     }
- 
++    }
++
      /// Starts an isolated group for `background-clip: text` layers; layers drawn
+     /// until [`end_text_clip_group`](Self::end_text_clip_group) are clipped to text.
+     fn begin_text_clip_group(&self, scene: &mut impl PaintScene) {
 @@ -217,6 +538,7 @@
              BoxModelBox::BorderBox => self.frame.border_box_path(),
              BoxModelBox::PaddingBox => self.frame.padding_box_path(),
@@ -9222,14 +9220,33 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
          }
      }
  
-@@ -308,11 +693,49 @@
+@@ -275,7 +660,18 @@
+             return;
+         };
+ 
++        // pyro: a positioned row group or row paints its background with its cells, in the
++        // positioned layer (`draw_positioned_table_part_backgrounds`), not here.
++        let positioned = |node_id: NodeId| -> bool {
++            self.context.dom.get_node(node_id).and_then(|node| node.primary_styles()).is_some_and(|style| {
++                use style::computed_values::position::T as Position;
++                matches!(style.clone_position(), Position::Relative | Position::Sticky)
++            })
++        };
+         let background_color = |node_id: NodeId| -> Option<Color> {
++            if positioned(node_id) {
++                return None;
++            }
+             let node = self.context.dom.get_node(node_id)?;
+             let style = node.primary_styles()?;
+             let current_color = style.clone_color();
+@@ -308,11 +704,50 @@
                  ]
              })
              .collect();
 +        // pyro: a part with a background image paints it (with its colour) cell by cell too,
 +        // positioned against the part's own box (CSS 2.1 §17.5.1).
 +        let has_image = |node_id: NodeId| -> bool {
-+            self.context.dom.get_node(node_id).and_then(|node| node.primary_styles()).is_some_and(|style| {
++            !positioned(node_id) && self.context.dom.get_node(node_id).and_then(|node| node.primary_styles()).is_some_and(|style| {
 +                style
 +                    .get_background()
 +                    .background_image
@@ -9252,9 +9269,10 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
 +            .rows
 +            .iter()
 +            .map(|row| {
-+                self.context.dom.get_node(row.node_id).and_then(|node| node.primary_styles()).is_some_and(|style| {
-+                    style.get_effects().box_shadow.0.iter().any(|shadow| !shadow.inset)
-+                })
++                !positioned(row.node_id)
++                    && self.context.dom.get_node(row.node_id).and_then(|node| node.primary_styles()).is_some_and(|style| {
++                        style.get_effects().box_shadow.0.iter().any(|shadow| !shadow.inset)
++                    })
 +            })
 +            .collect();
 +        let any_shadow = row_shadows.iter().any(|shadow| *shadow);
@@ -9273,7 +9291,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
  
          let cell_rect = |cell_id: NodeId| -> Option<Rect> {
              let layout = self.context.dom.get_node(cell_id)?.final_layout();
-@@ -344,13 +767,29 @@
+@@ -344,13 +779,29 @@
          let after = gutter - before;
  
          for cell in &table.cells {
@@ -9304,7 +9322,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
                  continue;
              }
              let Some(mut rect) = cell_rect(cell.node_id) else {
-@@ -367,25 +806,104 @@
+@@ -367,25 +818,147 @@
              }
  
              let shape = rect.scale_from_origin(self.scale);
@@ -9361,6 +9379,52 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
 -        let bg_color = background_color
 -            .resolve_to_absolute(&current_color)
 -            .as_srgb_color();
++    /// pyro: the backgrounds of the positioned row group and row of the table cell this is (see
++    /// `BaseDocument::table_cell_positioned_parts`), group first, in the cell's border box: a
++    /// positioned part paints with its cells, in the positioned layer, under each cell's own
++    /// background (WPT `position-relative-table-*`, `position-sticky-table-*`).
++    pub(super) fn draw_positioned_table_part_backgrounds(&self, scene: &mut impl PaintScene) {
++        let dom = self.context.dom;
++        let parts = dom.table_cell_positioned_parts(self.node.id);
++        if parts.iter().all(Option::is_none) {
++            return;
++        }
++        let Some(table_node) = self.node.layout_parent.get().and_then(|id| dom.get_node(id)) else { return };
++        let Some(SpecialElementData::TableRoot(table)) = table_node.element_data().map(|e| &e.special_data) else {
++            return;
++        };
++        let index = self.node.layout_data().table_cell_index as usize;
++        let Some(cell) = table.cells.get(index).filter(|cell| cell.node_id == self.node.id) else { return };
++        let layout = self.node.final_layout();
++        let shape = Rect::new(0.0, 0.0, layout.size.width as f64, layout.size.height as f64).scale_from_origin(self.scale);
++        let mut part_rects = None;
++        for (part, kind) in parts.into_iter().zip([PartKind::RowGroup, PartKind::Row]) {
++            let Some(part) = part else { continue };
++            let Some(node) = dom.get_node(part) else { continue };
++            let Some(style) = node.primary_styles() else { continue };
++            let current_color = style.clone_color();
++            let background = style.get_background();
++            let color = background.background_color.resolve_to_absolute(&current_color).as_srgb_color();
++            let image = background.background_image.0.iter().any(|image| !matches!(image, ComputedImage::None));
++            if image {
++                let rects = part_rects.get_or_insert_with(|| self.table_part_rects(table));
++                if let Some(rects) = rects.as_ref() {
++                    // The part's box in the cell's space.
++                    let location = layout.location;
++                    let rect = rects.rect(table, part, kind, cell) - Vec2::new(location.x as f64, location.y as f64);
++                    self.draw_table_part_background(scene, part, rect, &shape, self.transform);
++                    continue;
++                }
++            }
++            if color != Color::TRANSPARENT {
++                scene.fill(Fill::NonZero, self.transform, color, None, &shape);
++            }
++        }
++    }
+ 
+-        if bg_color != Color::TRANSPARENT {
+-            // Fill the color
+-            scene.fill(Fill::NonZero, self.transform, bg_color, None, shape);
 +    /// pyro: where a table's rows and columns are (CSS px, the table's space), for the boxes of its
 +    /// parts whose backgrounds are positioned against them.
 +    fn table_part_rects(&self, table: &blitz_dom::TableContext) -> Option<TablePartRects> {
@@ -9377,10 +9441,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
 +            .collect();
 +        (!columns.is_empty() && !rows.is_empty()).then_some(TablePartRects { columns, rows })
 +    }
- 
--        if bg_color != Color::TRANSPARENT {
--            // Fill the color
--            scene.fill(Fill::NonZero, self.transform, bg_color, None, shape);
++
 +    /// pyro: the background of a table part (`part`, the box its images are positioned against,
 +    /// CSS px in the table's space) painted in `clip` (device px, the table's space): one cell.
 +    fn draw_table_part_background(
@@ -9420,7 +9481,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
      /// Whether the layer is positioned against the viewport
      /// (`background-attachment: fixed`) rather than the element's origin box.
      /// `fixed` behaves as `scroll` on elements affected by a CSS transform
-@@ -410,23 +928,43 @@
+@@ -410,23 +983,43 @@
  
      /// Whether this element or any of its ancestors has a CSS transform
      ///
@@ -9469,7 +9530,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
          let Some(bg_image) = layer.image_data else {
              return;
          };
-@@ -439,14 +977,10 @@
+@@ -439,14 +1032,10 @@
              return;
          }
  
@@ -9487,7 +9548,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
  
          // Size the SVG per the CSS default sizing algorithm
          // (https://drafts.csswg.org/css-images/#default-sizing). An SVG image
-@@ -461,7 +995,7 @@
+@@ -461,7 +1050,7 @@
          }
          .filter(|r| r.is_finite() && *r > 0.0);
  
@@ -9496,7 +9557,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
              layer,
              frame_w,
              frame_h,
-@@ -476,29 +1010,77 @@
+@@ -476,29 +1065,77 @@
              return;
          }
  
@@ -9588,7 +9649,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
          let Some(bg_image) = layer.image_data else {
              return;
          };
-@@ -509,95 +1091,163 @@
+@@ -509,95 +1146,163 @@
          let image_rendering = self.style.clone_image_rendering();
          let quality = to_image_quality(image_rendering);
  
@@ -9800,13 +9861,14 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
          let (bg_pos, bg_size) = compute_layer_position_and_size(
              layer,
              origin_rect.width() / self.scale,
-@@ -629,24 +1279,50 @@
+@@ -628,25 +1333,51 @@
+             bg_pos.y,
              bg_size.height,
          );
- 
++
 +        let tile_rect = Rect::new(0.0, 0.0, x.rect_len, y.rect_len);
 +        let bounding_box = self.frame.border_box.bounding_box();
-+
+ 
 +        let (gradient, gradient_transform) = make(tile_rect, bounding_box);
 +        // pyro: a gradient of one colour is that colour (`linear-gradient(white, white)`): the
 +        // ramp came out a level short of it in places. Repeating in both axes, its tiles cover
@@ -9864,7 +9926,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
          let transform = base_transform.then_translate(Vec2 {
              x: x.translate,
              y: y.translate,
-@@ -681,35 +1357,84 @@
+@@ -681,35 +1412,84 @@
  
      let bg_size = compute_layer_size(layer, container_w as f32, container_h as f32, size_mode);
  
@@ -9896,19 +9958,6 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
 -
 -        let count = (container_h / bg_size.height).round();
 -        let height = container_h / count;
--
--        Size::new(width, height)
--    } else if matches!(repeat_x, Round) {
--        let count = (container_w / bg_size.width).round();
--        let width = container_w / count;
--        Size::new(width, bg_size.height)
--    } else if matches!(repeat_y, Round) {
--        let count = (container_h / bg_size.height).round();
--        let height = container_h / count;
--        Size::new(bg_size.width, height)
--    } else {
--        bg_size
--    };
 +/// Which axes of a `background-size` are `auto` (x, y).
 +fn size_is_auto(size: &BackgroundSize) -> (bool, bool) {
 +    use style::values::generics::length::GenericLengthPercentageOrAuto as Lpa;
@@ -9920,7 +9969,17 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
 +    }
 +}
  
--    (bg_pos, bg_size)
+-        Size::new(width, height)
+-    } else if matches!(repeat_x, Round) {
+-        let count = (container_w / bg_size.width).round();
+-        let width = container_w / count;
+-        Size::new(width, bg_size.height)
+-    } else if matches!(repeat_y, Round) {
+-        let count = (container_h / bg_size.height).round();
+-        let height = container_h / count;
+-        Size::new(bg_size.width, height)
+-    } else {
+-        bg_size
 +/// pyro: the round step of CSS Backgrounds 3 §3.9 on a layer sized `size` in a positioning area
 +/// `container_w` x `container_h`: a `round` axis is scaled to fit a whole number of copies (at
 +/// least one), and when only one axis rounds and `background-size` is `auto` in the other (`auto`
@@ -9941,7 +10000,9 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
 +        } else {
 +            len
 +        }
-+    };
+     };
+-
+-    (bg_pos, bg_size)
 +    match (round_x, round_y) {
 +        (true, true) => Size::new(
 +            round(container_w, size.width),
@@ -9970,7 +10031,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
  }
  
  #[inline]
-@@ -875,48 +1600,64 @@
+@@ -875,48 +1655,64 @@
      stride: f64,
  }
  
@@ -10064,7 +10125,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
          },
      }
  }
-@@ -958,11 +1699,24 @@
+@@ -958,11 +1754,24 @@
          }
          Space => {
              let (count, stride) = compute_space_count_and_stride(origin_len, tile_len);
@@ -10094,7 +10155,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
              }
          }
          NoRepeat => AxisTiling {
-@@ -986,6 +1740,16 @@
+@@ -986,6 +1795,16 @@
      (count, stride)
  }
  
@@ -10111,7 +10172,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
  /// Whether drawing the layer is guaranteed to paint nothing, making its clip
  /// layer unnecessary
  fn layer_paints_nothing(layer: &ImageLayerStyles) -> bool {
-@@ -1009,3 +1773,55 @@
+@@ -1009,3 +1828,55 @@
          -extend_length
      }
  }

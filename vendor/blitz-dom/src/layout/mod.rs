@@ -1167,6 +1167,20 @@ impl LayoutPassState<'_> {
             }
         }
 
+        // pyro: an absolutely positioned box whose containing block is a positioned row or row
+        // group of this table (they have no boxes of their own) is laid out here, against the
+        // part's box moved by its relative offset (`table_part_containing_block`).
+        if inputs.run_mode == RunMode::PerformLayout && !output.oof_candidates.is_empty() {
+            let table_id = dom_node_id(node_id);
+            for candidate in output.oof_candidates.as_mut_slice() {
+                if candidate.containing_block.is_some() || candidate.position != taffy::Position::Absolute {
+                    continue;
+                }
+                candidate.containing_block =
+                    self.table_part_containing_block(table_id, &context, dom_node_id(candidate.node));
+            }
+        }
+
         // HACK: Cap scrollable overflow at node size to prevent scrolling
         let overflow = output.scrollable_overflow_rect;
         output.scrollable_overflow_rect = taffy::ScrollableOverflow::new(
@@ -1184,6 +1198,69 @@ impl LayoutPassState<'_> {
 }
 
 impl LayoutPassState<'_> {
+    /// pyro: the containing block of the absolutely positioned box `box_id` when it is a
+    /// positioned row or row group of the table `table_id` (the nearest positioned ancestor of the
+    /// box below the table): the part's box (rows span every column; a row group spans its rows),
+    /// moved by the relative offsets of it and of its row group, as `(size, offset)` from the
+    /// table's border box.
+    #[inline(never)]
+    fn table_part_containing_block(
+        &self,
+        table_id: crate::NodeId,
+        context: &crate::layout::table::TableContext,
+        box_id: crate::NodeId,
+    ) -> Option<(taffy::Size<f32>, taffy::Point<f32>)> {
+        use style::computed_values::position::T as Position;
+        let mut current = self.nodes[box_id].parent;
+        let part = loop {
+            let id = current?;
+            if id == table_id {
+                return None;
+            }
+            let node = &self.nodes[id];
+            if node.primary_styles().is_some_and(|style| style.clone_position() != Position::Static) {
+                break id;
+            }
+            current = node.parent;
+        };
+        let rows: Vec<usize> = context
+            .rows
+            .iter()
+            .enumerate()
+            .filter(|(_, row)| row.node_id == part || row.group == Some(part))
+            .map(|(index, _)| index)
+            .collect();
+        let (&first, &last) = (rows.first()?, rows.last()?);
+        let grid = context.computed_grid_info.borrow();
+        let grid = grid.as_ref()?;
+        let top = context.grid_box.borrow().map_or(0.0, |(top, _)| top);
+        let row_lines = &grid.rows.positions;
+        let column_lines = &grid.columns.positions;
+        let (Some(first_row), Some(last_row)) = (row_lines.get(first), row_lines.get(last)) else { return None };
+        let x0 = column_lines.iter().map(|line| line.start.min(line.end)).fold(f32::INFINITY, f32::min);
+        let x1 = column_lines.iter().map(|line| line.start.max(line.end)).fold(f32::NEG_INFINITY, f32::max);
+        if !x0.is_finite() || !x1.is_finite() {
+            return None;
+        }
+        let (y0, y1) = (first_row.start.min(last_row.start), first_row.end.max(last_row.end));
+        // Its relative offset, and its row group's for a row.
+        let doc: &BaseDocument = self;
+        let table_parent = Some(table_id);
+        let group = context.rows[first].group.filter(|&group| group != part);
+        let mut offset = taffy::Point::ZERO;
+        let own_parent = if group.is_some() { group } else { table_parent };
+        for (id, parent) in [(Some(part), own_parent), (group, table_parent)] {
+            if let Some(own) = id.and_then(|id| crate::layout::table::table_part_relative_offset(doc, id, parent)) {
+                offset.x += own.x;
+                offset.y += own.y;
+            }
+        }
+        Some((
+            taffy::Size { width: (x1 - x0).max(0.0), height: (y1 - y0).max(0.0) },
+            taffy::Point { x: x0 + offset.x, y: top + y0 + offset.y },
+        ))
+    }
+
     /// pyro: the widest min-content width of a table's captions, with their margins.
     #[inline(never)]
     fn table_captions_min_width(
@@ -1282,9 +1359,32 @@ impl LayoutPassState<'_> {
                     candidates.translate(taffy::Point { x: margin.left, y: *y + margin.top });
                     output.oof_candidates.append(&mut candidates);
                 }
+                // pyro: a relatively positioned caption is moved by its insets (CSS 2.1 § 9.4.3;
+                // WPT `position-relative-table-caption`), percentages against the table's width
+                // and given height.
+                let relative = {
+                    let style = self.nodes[*caption].layout_style();
+                    if style.position() == taffy::Position::Relative {
+                        let inset = style.inset();
+                        let left = taffy::MaybeResolve::maybe_resolve(inset.left, Some(width), resolve_calc_value);
+                        let right = taffy::MaybeResolve::maybe_resolve(inset.right, Some(width), resolve_calc_value);
+                        let top = taffy::MaybeResolve::maybe_resolve(inset.top, inputs.known_dimensions.height, resolve_calc_value);
+                        let bottom = taffy::MaybeResolve::maybe_resolve(inset.bottom, inputs.known_dimensions.height, resolve_calc_value);
+                        let x = match context.style.direction {
+                            taffy::Direction::Rtl => right.map(|right| -right).or(left),
+                            taffy::Direction::Ltr => left.or(right.map(|right| -right)),
+                        };
+                        taffy::Point {
+                            x: x.unwrap_or(0.0),
+                            y: top.or(bottom.map(|bottom| -bottom)).unwrap_or(0.0),
+                        }
+                    } else {
+                        taffy::Point::ZERO
+                    }
+                };
                 let layout = taffy::Layout {
                     order: (context.cells.len() + context.oof_children.len() + order) as u32,
-                    location: taffy::Point { x: margin.left, y: *y + margin.top },
+                    location: taffy::Point { x: margin.left + relative.x, y: *y + margin.top + relative.y },
                     size: out.size,
                     scrollable_overflow_rect: out.scrollable_overflow_rect,
                     scrollbar_size: taffy::Size::ZERO,
@@ -1434,6 +1534,12 @@ impl LayoutContainingBlock for LayoutPassState<'_> {
         let mut list = hoisted;
         list.clear();
         *self.node_from_id(node_id).hoisted_children.borrow_mut() = list;
+    }
+
+    /// pyro: an element in the top layer (a modal dialog, a showing popover) has the initial
+    /// containing block as its static-position rectangle.
+    fn static_position_is_containing_block(&self, node_id: NodeId) -> bool {
+        self.doc.is_in_top_layer(dom_node_id(node_id))
     }
 
     fn add_hoisted_children(&mut self, node_id: NodeId, hoisted: &[NodeId]) {

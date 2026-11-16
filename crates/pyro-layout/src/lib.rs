@@ -665,7 +665,7 @@ impl BlitzGeometry {
 }
 
 fn external_sticky(s: pyro_render::StickyBox) -> ExternalSticky {
-    ExternalSticky { insets: s.insets, limit: s.limit }
+    ExternalSticky { insets: s.insets, limit: s.limit, cb: s.cb }
 }
 
 impl GeometrySource for BlitzGeometry {

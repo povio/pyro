@@ -37,3 +37,7 @@ entry) once a Blitz release carries these commits and changes.
 - `src/wrapper.rs`: `TaffyStyloStyle::natural_ratio`, set by blitz-dom on a replaced element with a natural aspect ratio;
   `CoreStyle::natural_aspect_ratio` answers it (in the layout's axes) while `aspect-ratio` is `auto`, for Taffy's flex
   algorithm (vendor/taffy/README.pyro.md, "Natural aspect ratios of flex items").
+- `src/wrapper.rs`: `BlockContainerStyle::text_align_edge` (`start`/`end` by the direction in Taffy's axes,
+  `left`/`right` by the line-left side) and `BlockItemStyle::original_display_is_inline`, for the static positions of
+  inline-level out-of-flow boxes in block containers (vendor/taffy/README.pyro.md, "Static positions and positioned
+  table parts").

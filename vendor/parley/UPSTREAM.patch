@@ -942,7 +942,7 @@ index 4b0cf9a..97b12da 100644
      pub fn break_lines(&mut self) -> BreakLines<'_, B> {
          BreakLines::new(self)
 diff --git a/src/layout/line.rs b/src/layout/line.rs
-index 1569071..de48786 100644
+index 1569071..7112177 100644
 --- a/src/layout/line.rs
 +++ b/src/layout/line.rs
 @@ -82,6 +82,39 @@ impl<'a, B: Brush> Line<'a, B> {
@@ -1011,16 +1011,20 @@ index 1569071..de48786 100644
      /// The minimum block-axis coordinate of the line's content.
      ///
      /// This covers, roughly, the line's glyphs and inline boxes. This does not take into account
-@@ -277,6 +322,8 @@ pub struct PositionedInlineBox {
+@@ -277,6 +322,12 @@ pub struct PositionedInlineBox {
      pub baseline: Option<f32>,
      pub id: u64,
      pub kind: InlineBoxKind,
 +    /// pyro: the index in [`Layout::styles`] of the style of the span the box is in.
 +    pub style_index: u16,
++    /// pyro: whether the bidi level the box resolved to (as U+FFFC) is right-to-left: the
++    /// direction of the text at its place, on whose start side an out-of-flow box's static
++    /// position puts it (Blink's `InlineItem::Direction()`).
++    pub is_rtl: bool,
  }
  
  /// Sequence of fully positioned glyphs with the same style.
-@@ -299,6 +346,28 @@ impl<'a, B: Brush> GlyphRun<'a, B> {
+@@ -299,6 +350,28 @@ impl<'a, B: Brush> GlyphRun<'a, B> {
          &self.run
      }
  
@@ -1049,11 +1053,18 @@ index 1569071..de48786 100644
      /// Returns the associated style.
      ///
      /// See also [`Self::style_index`].
-@@ -436,20 +505,29 @@ impl<'a, B: Brush> Iterator for GlyphRunIter<'a, B> {
-                     let box_index = self.line.layout.data.line_items
-                         [self.line.data.item_range.start + self.item_index]
-                         .index;
+@@ -433,23 +506,34 @@ impl<'a, B: Brush> Iterator for GlyphRunIter<'a, B> {
+                     let x = self.offset
+                         + self.line.data.metrics.inline_min_coord
+                         + self.line.data.metrics.offset;
+-                    let box_index = self.line.layout.data.line_items
+-                        [self.line.data.item_range.start + self.item_index]
+-                        .index;
 -                    let y = self.line.inline_box_top(box_index);
++                    let line_item = &self.line.layout.data.line_items
++                        [self.line.data.item_range.start + self.item_index];
++                    let box_index = line_item.index;
++                    let is_rtl = line_item.is_rtl();
 +                    // pyro: a span's edge is as tall as the span's content area on this line.
 +                    let style_index =
 +                        self.line.layout.data.inline_boxes[box_index].parent_style_index;
@@ -1079,6 +1090,7 @@ index 1569071..de48786 100644
                          id: inline_box.id,
                          kind: inline_box.kind,
 +                        style_index,
++                        is_rtl,
                      }));
                  }
                  LineItem::Run(run) => {

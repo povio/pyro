@@ -3141,6 +3141,11 @@ fn collect_table_cells(
             if node.layout_child_of.get().is_none() {
                 enter_layout_tree(doc, node_id);
             }
+            let relative = table_cell_relative_offset(
+                doc,
+                node_id,
+                rows.last().map(|row| (row.node_id, row.group.or_else(|| row_group_of(doc, row.node_id)))),
+            );
             let node = &mut doc.nodes[node_id];
             let rowspan: u16 = node
                 .attr(local_name!("rowspan"))
@@ -3163,6 +3168,20 @@ fn collect_table_cells(
                 .unwrap_or(1);
             let mut style = table_taffy_style(node, wm);
             let col = cursor.next_free();
+            // pyro: relative positioning of the cell, its row and its row group, which move the
+            // cell (`table_cell_relative_offset`).
+            if let Some(offset) = relative.filter(|_| !wm.is_vertical()) {
+                let keeps_own_x = [style.inset.left, style.inset.right]
+                    .into_iter()
+                    .any(|inset| inset.into_raw().tag() != taffy::CompactLength::LENGTH_TAG && !inset.is_auto());
+                style.position = taffy::Position::Relative;
+                style.inset.top = style_helpers::length(offset.y);
+                style.inset.bottom = style_helpers::auto();
+                if !keeps_own_x {
+                    style.inset.left = style_helpers::length(offset.x);
+                    style.inset.right = style_helpers::auto();
+                }
+            }
 
             // In the collapsed borders model the borders are laid out as gutters between
             // the cells (see the table's `gap`) rather than as part of the cells
@@ -3916,5 +3935,136 @@ pub(crate) mod tests {
             }
             assert_eq!(own_node.final_layout(), grid_node.final_layout(), "node {id}: {}", own_node.node_debug_str());
         }
+    }
+}
+
+/// pyro: whether table part `node_id` (a row group, row or cell) is relatively positioned or
+/// sticky: it paints as a positioned box, with its cells (a row group and a row have no boxes of
+/// their own), and is the containing block of the absolutely positioned boxes in it.
+pub(crate) fn is_positioned_table_part(doc: &BaseDocument, node_id: NodeId) -> bool {
+    use style::computed_values::position::T as Position;
+    doc.nodes
+        .get(node_id)
+        .and_then(|node| node.primary_styles())
+        .is_some_and(|style| matches!(style.clone_position(), Position::Relative | Position::Sticky))
+}
+
+/// pyro: whether some row or row group of `table` is positioned ([`is_positioned_table_part`]).
+pub(crate) fn table_has_positioned_parts(doc: &BaseDocument, table: &TableContext) -> bool {
+    table.rows.iter().any(|row| {
+        is_positioned_table_part(doc, row.node_id) || row.group.is_some_and(|group| is_positioned_table_part(doc, group))
+    })
+}
+
+/// pyro: the offset relative positioning (CSS 2.1 § 9.4.3) gives table part `node_id` (a cell,
+/// row or row group) by its own insets, `None` when it is not relatively positioned. A percentage
+/// `top` or `bottom` resolves against the height `parent` (the row for a cell, the row group for a
+/// row, the table for a row group) is given as a length, else it is `auto`, as in Chromium (WPT
+/// `position-relative-010` to `-013`); a percentage `left` or `right` is `auto` (the width it would
+/// resolve against is not known yet).
+pub(crate) fn table_part_relative_offset(
+    doc: &BaseDocument,
+    node_id: NodeId,
+    parent: Option<NodeId>,
+) -> Option<taffy::Point<f32>> {
+    use style::computed_values::direction::T as Direction;
+    use style::computed_values::position::T as Position;
+    use style::values::computed::Inset;
+    use style::values::generics::length::GenericSize;
+    let style = doc.nodes.get(node_id)?.primary_styles()?;
+    if style.clone_position() != Position::Relative {
+        return None;
+    }
+    let parent_height = parent
+        .and_then(|parent| doc.nodes.get(parent))
+        .and_then(|parent| parent.primary_styles())
+        .and_then(|parent| match parent.get_position().height {
+            GenericSize::LengthPercentage(ref height) => height.0.to_length().map(|length| length.px()),
+            _ => None,
+        });
+    let resolve = |inset: &Inset, basis: Option<f32>| match inset {
+        Inset::LengthPercentage(value) => match value.to_length() {
+            Some(length) => Some(length.px()),
+            None => basis.map(|basis| value.resolve(Length::new(basis)).px()),
+        },
+        _ => None,
+    };
+    let position = style.get_position();
+    let (left, right) = (resolve(&position.left, None), resolve(&position.right, None));
+    let (top, bottom) = (resolve(&position.top, parent_height), resolve(&position.bottom, parent_height));
+    let x = match style.clone_direction() {
+        Direction::Rtl => right.map(|right| -right).or(left),
+        Direction::Ltr => left.or(right.map(|right| -right)),
+    };
+    Some(taffy::Point { x: x.unwrap_or(0.0), y: top.or(bottom.map(|bottom| -bottom)).unwrap_or(0.0) })
+}
+
+/// pyro: the row group row `row_id` is in (its parent, when that is one): known before
+/// `collect_table_cells` sets `TableRow::group`, after the group's rows.
+fn row_group_of(doc: &BaseDocument, row_id: NodeId) -> Option<NodeId> {
+    let parent = doc.nodes.get(row_id)?.parent?;
+    let display = doc.nodes.get(parent)?.display_style()?;
+    matches!(
+        display.inside(),
+        DisplayInside::TableRowGroup | DisplayInside::TableHeaderGroup | DisplayInside::TableFooterGroup
+    )
+    .then_some(parent)
+}
+
+/// pyro: the table `node_id` is in: its nearest ancestor that is a table (or itself).
+fn table_of(doc: &BaseDocument, node_id: NodeId) -> Option<NodeId> {
+    let mut current = Some(node_id);
+    while let Some(id) = current {
+        let node = doc.nodes.get(id)?;
+        if node.display_style().is_some_and(|display| display.inside() == DisplayInside::Table) {
+            return Some(id);
+        }
+        current = node.parent;
+    }
+    None
+}
+
+/// pyro: how far relative positioning moves table cell `cell_id`: its own offset and those of
+/// its row and row group (`row`: the row and its group), which have no boxes of their own and move
+/// their cells ([`table_part_relative_offset`]). `None` when none of them is relatively positioned.
+fn table_cell_relative_offset(
+    doc: &BaseDocument,
+    cell_id: NodeId,
+    row: Option<(NodeId, Option<NodeId>)>,
+) -> Option<taffy::Point<f32>> {
+    let (row, group) = row.map_or((None, None), |(row, group)| (Some(row), group));
+    let table = table_of(doc, cell_id);
+    let parts = [(Some(cell_id), row), (row, group.or(table)), (group, table)];
+    let mut offset: Option<taffy::Point<f32>> = None;
+    for (part, parent) in parts {
+        let Some(own) = part.and_then(|part| table_part_relative_offset(doc, part, parent)) else { continue };
+        let sum = offset.get_or_insert(taffy::Point::ZERO);
+        sum.x += own.x;
+        sum.y += own.y;
+    }
+    offset
+}
+
+impl BaseDocument {
+    /// pyro: the row group and row (`[group, row]`) of table cell `cell_id`, from its table's
+    /// context; `None` for a node that is no cell of a table laid out.
+    pub fn table_cell_parts(&self, cell_id: NodeId) -> Option<[Option<NodeId>; 2]> {
+        let node = self.nodes.get(cell_id)?;
+        let index = node.layout_data().table_cell_index;
+        if index == u32::MAX {
+            return None;
+        }
+        let table = node.layout_parent.get().and_then(|id| self.nodes.get(id))?;
+        let SpecialElementData::TableRoot(ctx) = &table.element_data()?.special_data else { return None };
+        let cell = ctx.cells.get(index as usize).filter(|cell| cell.node_id == cell_id)?;
+        let row = ctx.rows.get(cell.row as usize)?;
+        Some([row.group, Some(row.node_id)])
+    }
+
+    /// pyro: the row group and row of table cell `cell_id` that are positioned (relative or
+    /// sticky): the cell paints with them, as positioned boxes paint, over their backgrounds.
+    pub fn table_cell_positioned_parts(&self, cell_id: NodeId) -> [Option<NodeId>; 2] {
+        self.table_cell_parts(cell_id)
+            .map_or([None, None], |parts| parts.map(|part| part.filter(|&part| is_positioned_table_part(self, part))))
     }
 }

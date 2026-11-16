@@ -926,3 +926,7 @@ blitz-dom's inline build makes a `display: contents` element a style span of its
 its README, "Shadow trees"), so its id is a glyph run's brush. `src/render.rs` (`paints`) gives it no inline box
 to paint (background, border, shadow, outline), and `src/render/clip_path.rs` no clip, mask, opacity or backdrop:
 it has no box (WPT css-display `display-contents-inline-001`, `-flex-001`, `-oof-*`, `-button`).
+- `src/render/background.rs` (`draw_positioned_table_part_backgrounds`), `src/render.rs`: the background of a
+  relatively positioned or sticky row group or row is painted by each of its cells, under the cell's own, in the
+  positioned layer the cells paint in (blitz-dom `paint_tree.rs`); the table's background phase leaves it out (WPT
+  `position-relative-table-*`, `position-sticky-table-*`). Covered by `crates/pyro-render/tests/table_part_positioning.rs`.

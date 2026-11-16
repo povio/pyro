@@ -42,6 +42,18 @@ pub(crate) fn inline_span_offset(
     root_id: NodeId,
     cb: taffy::Size<f32>,
 ) -> taffy::Point<f32> {
+    inline_span_offset_with(nodes, node_id, root_id, cb, false)
+}
+
+/// [`inline_span_offset`], with the `position: sticky` offsets of the inline boxes on the way
+/// when `sticky` (`Node::sticky_offset`: where scrolling holds them, known once laid out).
+fn inline_span_offset_with(
+    nodes: &NodeTree,
+    node_id: NodeId,
+    root_id: NodeId,
+    cb: taffy::Size<f32>,
+    sticky: bool,
+) -> taffy::Point<f32> {
     let root = &nodes[root_id];
     // The spans of an anonymous inline root are descendants of its parent.
     let root_parent = root.is_anonymous().then_some(root.parent).flatten();
@@ -64,6 +76,11 @@ pub(crate) fn inline_span_offset(
                 let own = relative_offset(&style, cb, cb_rtl);
                 offset.x += own.x;
                 offset.y += own.y;
+            }
+            if sticky && style.clone_position() == Position::Sticky && display.is_inline_flow() {
+                let own = node.sticky_offset();
+                offset.x += own.x as f32;
+                offset.y += own.y as f32;
             }
         }
         current = node.parent;
@@ -101,14 +118,14 @@ impl BaseDocument {
     /// pyro: how far `position: relative` moves what the inline box (not atomic) `node_id` holds,
     /// laid out by the inline root `root_id` (CSS px): the relative offsets of it and of the
     /// inline boxes around it, up to the root (see [`inline_span_offset`]), percentages against
-    /// the root's content box.
+    /// the root's content box; and how far `position: sticky` holds them where they are painted.
     pub fn inline_span_relative_offset(&self, node_id: NodeId, root_id: NodeId) -> (f32, f32) {
         let layout = self.nodes[root_id].unrounded_layout();
         let cb = taffy::Size {
             width: layout.size.width - layout.border.left - layout.border.right - layout.padding.left - layout.padding.right,
             height: layout.size.height - layout.border.top - layout.border.bottom - layout.padding.top - layout.padding.bottom,
         };
-        let offset = inline_span_offset(&self.nodes, node_id, root_id, cb);
+        let offset = inline_span_offset_with(&self.nodes, node_id, root_id, cb, true);
         (offset.x, offset.y)
     }
 

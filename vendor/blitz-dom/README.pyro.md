@@ -2097,3 +2097,22 @@ Covered by `crates/pyro-render/tests/text_spacing.rs`.
 `inter-character`).
   supported. A predefined style the marker code has no case of (`armenian`, `georgian`, `lower-greek`, ...) is the
   text `counter()` gives with a `. ` suffix (it was a `□`); an unknown name is `decimal`.
+
+## Static positions, sticky inline boxes, positioned table parts (WPT css-position, round 3 lane P)
+
+- `src/layout/inline/layout.rs`: an inline-level absolutely positioned box is put on the start side of its place in
+  the direction of the text there (parley's `PositionedInlineBox::is_rtl`), a block-level one in the container's.
+- `src/layout/mod.rs` (`static_position_is_containing_block`): an element in the top layer has the initial
+  containing block as its static-position rectangle.
+- `src/layout/inline/relative.rs`, `build.rs`: a sticky inline box (not atomic) is painted moved by its sticky offset
+  (`Node::sticky_offset`), as a relatively positioned one is by its relative offset (`inline_span_relative_offset`).
+- `src/layout/table.rs` (`table_cell_relative_offset`, `table_part_relative_offset`): relative positioning of a row
+  and a row group moves their cells (rows and row groups have no boxes); a percentage `top`/`bottom` of a cell, row
+  or row group resolves against the length height its parent is given, else is `auto` (Chromium; WPT
+  `position-relative-010` to `-013`).
+- `src/layout/paint_tree.rs`: a cell of a relatively positioned or sticky row or row group paints as a positioned
+  box (CSS 2.1 Appendix E step 8), with the part's background under it (blitz-paint).
+- `src/layout/mod.rs` (`table_part_containing_block`): an absolutely positioned box whose containing block is a
+  positioned row or row group is laid out by the table against the part's box moved by its relative offset; a
+  relatively positioned caption moves.
+Covered by `crates/pyro-render/tests/static_position.rs` and `table_part_positioning.rs`.

@@ -99,8 +99,9 @@ pub struct TextLayout {
     /// the struts of empty inline boxes (U+2061), in `text`: they are no content (see
     /// [`Self::has_no_text`]).
     pub bidi_controls: bool,
-    /// pyro: some inline box (not atomic) laid out here is relatively positioned: what it holds
-    /// is painted moved (`BaseDocument::inline_span_relative_offset`). Set by each build.
+    /// pyro: some inline box (not atomic) laid out here is relatively positioned (or sticky):
+    /// what it holds is painted moved (`BaseDocument::inline_span_relative_offset`). Set by each
+    /// build.
     pub relative_spans: bool,
     /// pyro: some inline box's margin or padding at an edge is a percentage: each layout gives
     /// those edges their width (`span_edge_widths_in`).

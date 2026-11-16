@@ -415,6 +415,22 @@ impl<T: Deref<Target = ComputedValues>> taffy::BlockContainerStyle for TaffyStyl
         self.layout_wm().logical_text_align(align)
     }
 
+    /// pyro: `start`/`end` by the direction in Taffy's axes, `left`/`right` by the line-left
+    /// side (the bottom in `sideways-lr`, Taffy's right there).
+    #[inline]
+    fn text_align_edge(&self) -> taffy::AxisStaticEdge {
+        use taffy::AxisStaticEdge::{Center, End, Start};
+        let (start, end) = if taffy::CoreStyle::direction(self).is_rtl() { (End, Start) } else { (Start, End) };
+        let (left, right) = if self.layout_wm().line_left_is_bottom() { (End, Start) } else { (Start, End) };
+        match self.style.clone_text_align() {
+            stylo::TextAlign::Start | stylo::TextAlign::Justify => start,
+            stylo::TextAlign::End => end,
+            stylo::TextAlign::Left | stylo::TextAlign::MozLeft => left,
+            stylo::TextAlign::Right | stylo::TextAlign::MozRight => right,
+            stylo::TextAlign::Center | stylo::TextAlign::MozCenter => Center,
+        }
+    }
+
     #[inline]
     fn align_content(&self) -> taffy::AlignContent {
         let display = self.effective_display();
@@ -566,6 +582,11 @@ impl<T: Deref<Target = ComputedValues>> taffy::BlockItemStyle for TaffyStyloStyl
             width: convert::max_size_keyword(&position.max_width),
             height: convert::max_size_keyword(&position.max_height),
         })
+    }
+
+    #[inline]
+    fn original_display_is_inline(&self) -> bool {
+        self.style.get_box().original_display.outside() == stylo::DisplayOutside::Inline
     }
 
     #[inline]

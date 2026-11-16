@@ -1555,16 +1555,56 @@ impl Layout {
         box_of: &dyn Fn(NodeId) -> Option<LayoutBox>,
     ) -> (f64, f64) {
         let (mut x, mut y) = (0.0, 0.0);
+        let mut memo = FxHashMap::default();
         let mut cur = Some(node);
         while let Some(n) = cur {
-            if let Some(sticky) = sticky_of(n) {
-                let (dx, dy) = self.sticky_offset(dom, n, &sticky, box_of);
+            if sticky_of(n).is_some() {
+                let (dx, dy) = self.sticky_delta(dom, n, sticky_of, box_of, &mut memo);
                 x += dx;
                 y += dy;
             }
             cur = dom.parent_element(n).ok().flatten();
         }
         (x, y)
+    }
+
+    /// The offset `el`'s own stickiness adds to its sticky ancestors' (the box moves by
+    /// all of them): computed with its box moved by theirs, and its containing block by
+    /// the ones that hold that block, as Blink's sticky constraints do (a sticky cell in
+    /// a sticky row is where the row holds it before it holds itself; WPT
+    /// `position-sticky-table-parts`). `memo` keeps the ones computed.
+    fn sticky_delta(
+        &self,
+        dom: &Dom,
+        el: NodeId,
+        sticky_of: &dyn Fn(NodeId) -> Option<ExternalSticky>,
+        box_of: &dyn Fn(NodeId) -> Option<LayoutBox>,
+        memo: &mut FxHashMap<NodeId, (f64, f64)>,
+    ) -> (f64, f64) {
+        if let Some(&delta) = memo.get(&el) {
+            return delta;
+        }
+        let Some(sticky) = sticky_of(el) else { return (0.0, 0.0) };
+        let cb = sticky.cb.and_then(|key| node_of(dom, key));
+        let (mut box_shift, mut cb_shift) = ((0.0, 0.0), (0.0, 0.0));
+        let mut holds_cb = cb.is_none();
+        let mut cur = dom.parent_element(el).ok().flatten();
+        while let Some(n) = cur {
+            holds_cb |= Some(n) == cb;
+            if sticky_of(n).is_some() {
+                let (dx, dy) = self.sticky_delta(dom, n, sticky_of, box_of, memo);
+                box_shift.0 += dx;
+                box_shift.1 += dy;
+                if holds_cb {
+                    cb_shift.0 += dx;
+                    cb_shift.1 += dy;
+                }
+            }
+            cur = dom.parent_element(n).ok().flatten();
+        }
+        let delta = self.sticky_offset(dom, el, &sticky, box_of, box_shift, cb_shift);
+        memo.insert(el, delta);
+        delta
     }
 
     /// CSS Positioned Layout 3 sticky positioning for one box laid out in
@@ -1581,6 +1621,8 @@ impl Layout {
         el: NodeId,
         sticky: &ExternalSticky,
         box_of: &dyn Fn(NodeId) -> Option<LayoutBox>,
+        box_shift: (f64, f64),
+        cb_shift: (f64, f64),
     ) -> (f64, f64) {
         let Some(b) = box_of(el) else { return (0.0, 0.0) };
         // Scrollport in document coordinates of the scrolled content.
@@ -1629,9 +1671,10 @@ impl Layout {
         let (wx, wy) = if fixed { (0.0, 0.0) } else { (self.window_scroll.0 as f64, self.window_scroll.1 as f64) };
         let port =
             port.unwrap_or(Rect { x: wx, y: wy, width: self.inner_width() as f64, height: self.inner_height() as f64 });
-        let limit = sticky.limit.map(|(x, y, width, height)| Rect { x, y, width, height });
+        let limit =
+            sticky.limit.map(|(x, y, width, height)| Rect { x: x + cb_shift.0, y: y + cb_shift.1, width, height });
         let inset = |side: usize, basis: f64| sticky.insets[side].map(|(px, fraction)| px + fraction * basis);
-        let r = b.rect;
+        let r = Rect { x: b.rect.x + box_shift.0, y: b.rect.y + box_shift.1, ..b.rect };
         // One axis: start inset pulls forward, end inset pulls back, both
         // bounded by the containing block (`lo`..`hi` along the axis).
         let axis = |start: Option<f64>,
@@ -2500,10 +2543,12 @@ impl Layout {
         if sticky.is_empty() {
             return Vec::new();
         }
+        let mut memo = FxHashMap::default();
         let mut out: Vec<(u64, (f64, f64))> = sticky
-            .iter()
-            .filter_map(|(&el, s)| {
-                let offset = self.sticky_offset(dom, el, s, &|n| self.layout_box(dom, n));
+            .keys()
+            .filter_map(|&el| {
+                let offset =
+                    self.sticky_delta(dom, el, &|n| sticky.get(&n).copied(), &|n| self.layout_box(dom, n), &mut memo);
                 (offset != (0.0, 0.0)).then(|| (crate::snapshot::render_key(el), offset))
             })
             .collect();

@@ -1478,7 +1478,9 @@ impl Renderer {
             }
             let (Some(key), Some(b)) = (m.key_of(id), g.element_box(doc, id)) else { continue };
             if b.position == BoxPosition::Sticky {
-                sticky.push((key, g.sticky_box(doc, id)));
+                let (mut s, cb) = g.sticky_box(doc, id);
+                s.cb = cb.and_then(|cb| m.key_of(cb));
+                sticky.push((key, s));
             }
             boxes.push((key, b));
         }
@@ -1526,7 +1528,11 @@ impl Renderer {
                 }
                 let key = m.key_of(id)?;
                 let b = g.element_box(doc, id)?;
-                (b.position == BoxPosition::Sticky).then(|| (key, g.sticky_box(doc, id)))
+                (b.position == BoxPosition::Sticky).then(|| {
+                    let (mut s, cb) = g.sticky_box(doc, id);
+                    s.cb = cb.and_then(|cb| m.key_of(cb));
+                    (key, s)
+                })
             })
             .collect();
         out.sort_by_key(|(key, _)| *key);

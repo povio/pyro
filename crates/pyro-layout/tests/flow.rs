@@ -2907,6 +2907,46 @@ fn sticky_boxes_stay_in_their_scrollport_like_chromium() {
 }
 
 #[test]
+fn nested_reversed_and_split_inline_sticky_boxes_like_chromium() {
+    // WPT css-position sticky: every table part sticky (`position-sticky-table-parts`): a cell
+    // in a sticky row is where the row holds it, it adds no offset of its own (each sticky box
+    // is held after its sticky ancestors, its containing block moved by the ones holding that);
+    // a sticky child of a `column-reverse` scroller is bounded by content above the scrollport
+    // (`position-sticky-column-reverse-flex`); a sticky block in an inline box has the scroller,
+    // not the inline, as its containing block (`position-sticky-large-top-2`). Chromium
+    // (2026-11-16), before and after scrolling 150, -400 and 50: td 5 / 5, column-reverse
+    // child 300 / 300, large-top 555 / 505.
+    let rows: String = (0..7)
+        .map(|i| if i == 0 { "<tr><td id=td1></td></tr>".to_string() } else { "<tr><td></td></tr>".to_string() })
+        .collect();
+    let html = format!(
+        "<!doctype html><style>*{{margin:0}}body{{margin:0}}\
+         #t{{overflow:auto;height:250px;width:100px;position:relative}}\
+         table{{border-collapse:collapse}}td{{padding:0;height:50px;width:50px}}#t table *{{position:sticky;top:5px}}\
+         #c{{overflow:auto;height:100px;width:100px;display:flex;flex-direction:column-reverse;scrollbar-width:none}}\
+         #cs{{position:sticky;bottom:0;min-height:50px;width:50px}}\
+         #l{{overflow:auto;height:200px;width:200px;padding:5px 3px 0 8px}}#ls{{position:sticky;top:200px;width:50px;height:50px}}\
+         </style><body><div id=t><div style=\"height:700px\"><table><tbody>{rows}</tbody></table></div></div>\
+         <div id=c><div id=cs></div><div style=\"min-height:400px\"></div></div>\
+         <div id=l><span><div id=ls></div></span><div style=\"height:200px;width:150px\"></div></div></body>"
+    );
+    let mut p = page(&html);
+    p.layout.set_viewport(Viewport::new(800, 600));
+    let y = |p: &Page, id: &str| p.layout.bounding_client_rect(&p.dom, p.id(id)).y;
+    let near = |a: f64, b: f64, what: &str| assert!((a - b).abs() < 0.5, "{what}: {a} vs {b}");
+    near(y(&p, "td1"), 5.0, "the cell at rest, held 5px down by its row");
+    near(y(&p, "cs"), 300.0, "the column-reverse child at rest");
+    near(y(&p, "ls"), 555.0, "the large-top block at rest");
+    let (t, c, l) = (p.id("t"), p.id("c"), p.id("l"));
+    p.layout.set_scroll_top(&p.dom, t, 150);
+    p.layout.set_scroll_top(&p.dom, c, -400);
+    p.layout.set_scroll_top(&p.dom, l, 50);
+    near(y(&p, "td1"), 5.0, "the cell stays with its row");
+    near(y(&p, "cs"), 300.0, "the column-reverse child stays at the scrollport's bottom");
+    near(y(&p, "ls"), 505.0, "the large-top block reaches its containing block's end");
+}
+
+#[test]
 fn validity_has_anchors_invalidate_selectively_without_stale_geometry() {
     // Tailwind's has-invalid: utility as Lightning CSS serves it to TOS. A
     // `:has()` testing descendant validity made every DOM change restyle the

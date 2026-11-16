@@ -239,6 +239,16 @@ pub trait LayoutContainingBlock: LayoutPartialTree {
     /// implementing paint/hit-testing traversals.
     fn add_hoisted_children(&mut self, node_id: NodeId, hoisted: &[NodeId]);
 
+    /// pyro: whether the static-position rectangle of the out-of-flow box `node_id` is its whole
+    /// containing block (its inset-resolution area) rather than its place in the flow: an
+    /// element in the top layer's is the initial containing block (css-position-4 § 3.3; WPT
+    /// `top-layer-box-uses-icb-*`), the box being aligned in it by its self-alignment.
+    #[inline(always)]
+    fn static_position_is_containing_block(&self, node_id: NodeId) -> bool {
+        let _ = node_id;
+        false
+    }
+
     /// Read back the detailed layout information most recently recorded for `node_id`
     /// (as stored by [`LayoutGridContainer::set_detailed_grid_info`]).
     ///

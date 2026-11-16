@@ -592,15 +592,23 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
 
     // Static positions are relative to the containing block's border box: make them relative to
     // the inset-resolution area
-    let static_position = Point {
-        x: AxisStaticPosition {
-            area: candidate.static_position.x.area.map(|v| v - area_offset.x),
-            align: candidate.static_position.x.align,
-        },
-        y: AxisStaticPosition {
-            area: candidate.static_position.y.area.map(|v| v - area_offset.y),
-            align: candidate.static_position.y.align,
-        },
+    let static_position = if tree.static_position_is_containing_block(candidate.node) {
+        // pyro: the whole area (a box in the top layer)
+        Point {
+            x: AxisStaticPosition::from_alignment(justify_self, Line { start: 0.0, end: area_width }, direction.is_rtl()),
+            y: AxisStaticPosition::from_alignment(align_self, Line { start: 0.0, end: area_height }, false),
+        }
+    } else {
+        Point {
+            x: AxisStaticPosition {
+                area: candidate.static_position.x.area.map(|v| v - area_offset.x),
+                align: candidate.static_position.x.align,
+            },
+            y: AxisStaticPosition {
+                area: candidate.static_position.y.area.map(|v| v - area_offset.y),
+                align: candidate.static_position.y.align,
+            },
+        }
     };
 
     let horizontal = OofAxis {

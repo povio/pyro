@@ -1268,6 +1268,10 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
                 }
             }
             cx.draw_outset_box_shadow(scene);
+            // pyro: a cell of a positioned row or row group paints their backgrounds first.
+            if cx.context.backgrounds && !hidden {
+                cx.draw_positioned_table_part_backgrounds(scene);
+            }
             if cx.context.backgrounds && !is_root && self.canvas_background != Some(node.id) {
                 cx.draw_background(scene);
             }
