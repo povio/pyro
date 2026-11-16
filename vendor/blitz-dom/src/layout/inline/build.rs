@@ -886,7 +886,40 @@ fn build_inline_layout_with(
     }
 
     #[allow(clippy::too_many_arguments)]
+    /// pyro: builds `node_id`'s inline content, with the scroll pseudo-element boxes generated
+    /// beside it (`scroll_markers`) before and after it.
+    #[allow(clippy::too_many_arguments)]
     fn build_inline_layout_recursive(
+        builder: &mut TreeBuilder<TextBrush>,
+        text_transformer: &mut TextTransformer,
+        nodes: &crate::NodeTree,
+        node_id: NodeId,
+        parent_text_transform: &CaseTransform,
+        text_nodes: &mut Vec<(NodeId, std::ops::Range<usize>)>,
+        strut: &mut bool,
+        first_letter: Option<&FirstLetterSplit>,
+        annotations: &mut FoundAnnotations,
+        bidi: bool,
+        bidi_scan: &mut BidiScan,
+    ) {
+        match crate::layout::scroll_markers::siblings_of(&nodes[node_id]) {
+            None => build_inline_layout_node(
+                builder, text_transformer, nodes, node_id, parent_text_transform, text_nodes, strut, first_letter,
+                annotations, bidi, bidi_scan,
+            ),
+            Some((before, after)) => {
+                for id in before.into_iter().chain(std::iter::once(node_id)).chain(after) {
+                    build_inline_layout_node(
+                        builder, text_transformer, nodes, id, parent_text_transform, text_nodes, strut, first_letter,
+                        annotations, bidi, bidi_scan,
+                    );
+                }
+            }
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn build_inline_layout_node(
         builder: &mut TreeBuilder<TextBrush>,
         text_transformer: &mut TextTransformer,
         nodes: &crate::NodeTree,

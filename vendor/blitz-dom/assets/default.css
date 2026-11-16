@@ -50,6 +50,20 @@ a[href] {
     cursor: pointer;
 }
 
+/* pyro: CSS Overflow 5 scroll markers, as Chromium styles them: a group is a block box (its
+   layout and size containment are forced, `StyleAdjuster`), a marker is styled as a link
+   (`a[href]` above). A `::scroll-button()` takes the rules for `button`. */
+::scroll-marker-group {
+    display: block;
+}
+
+::scroll-marker,
+::column::scroll-marker {
+    color: rgb(0, 0, 238);
+    text-decoration: underline;
+    cursor: pointer;
+}
+
 /* https://html.spec.whatwg.org/#bidi-rendering */
 input {
     display: inline-block;
@@ -186,6 +200,8 @@ input[type="button"] {
     background-color: #EFEFEF;
     text-align: center;
     display: inline-block;
+    /* pyro: Chromium's buttons size their border box. */
+    box-sizing: border-box;
 }
 
 /* Button-flavored inputs clip their contents to the border box and never

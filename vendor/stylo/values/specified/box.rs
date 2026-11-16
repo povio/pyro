@@ -2644,3 +2644,90 @@ pub enum DirectionProperty {
     Ltr,
     Rtl,
 }
+
+/// pyro: the `scroll-marker-group` property (CSS Overflow 5): whether a scroll container
+/// generates a `::scroll-marker-group` box, and on which side of its own box it goes.
+/// `none | [ [ before | after ] || [ links | tabs ] ]`.
+/// https://drafts.csswg.org/css-overflow-5/#scroll-marker-group-property
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    MallocSizeOf,
+    PartialEq,
+    Parse,
+    SpecifiedValueInfo,
+    ToComputedValue,
+    ToCss,
+    ToResolvedValue,
+    ToShmem,
+    ToTyped,
+)]
+#[css(bitflags(
+    single = "none",
+    mixed = "before,after,links,tabs",
+    validate_mixed = "Self::validate_mixed_flags",
+))]
+#[repr(C)]
+pub struct ScrollMarkerGroup(u8);
+bitflags! {
+    impl ScrollMarkerGroup: u8 {
+        /// No group.
+        const NONE = 0;
+        /// The group box goes before the scroll container's box.
+        const BEFORE = 1 << 0;
+        /// The group box goes after the scroll container's box.
+        const AFTER = 1 << 1;
+        /// The markers are links (the focus model).
+        const LINKS = 1 << 2;
+        /// The markers are tabs (the focus model).
+        const TABS = 1 << 3;
+    }
+}
+
+impl ScrollMarkerGroup {
+    fn validate_mixed_flags(&self) -> bool {
+        !self.contains(Self::BEFORE | Self::AFTER) && !self.contains(Self::LINKS | Self::TABS)
+    }
+
+    /// Whether the scroll container generates a group box (a side given).
+    pub fn generates_group(self) -> bool {
+        self.intersects(Self::BEFORE | Self::AFTER)
+    }
+
+    /// Whether the group box goes before the scroll container's box.
+    pub fn is_before(self) -> bool {
+        self.contains(Self::BEFORE)
+    }
+}
+
+/// pyro: the `scroll-target-group` property (CSS Overflow 5): `none | auto`. With `auto`, the
+/// element's links to elements of the document are scroll markers.
+/// https://drafts.csswg.org/css-overflow-5/#scroll-target-group
+#[allow(missing_docs)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Deserialize,
+    Eq,
+    FromPrimitive,
+    Hash,
+    MallocSizeOf,
+    Parse,
+    PartialEq,
+    Serialize,
+    SpecifiedValueInfo,
+    ToComputedValue,
+    ToCss,
+    ToResolvedValue,
+    ToShmem,
+    ToTyped,
+)]
+#[repr(u8)]
+pub enum ScrollTargetGroup {
+    None,
+    Auto,
+}

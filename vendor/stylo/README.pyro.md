@@ -265,6 +265,33 @@ their `system: extends` for list markers (its README).
 `::file-selector-button` and `::details-content`; the trait's default (servo's until now) dropped such rules
 (WPT css-shadow `slotted-with-pseudo-element`, `slotted-placeholder`). The rule collector already collects the
 slotted rules of a pseudo-element. blitz-dom keeps shadow trees' styles (its README).
+## Scroll markers and scroll buttons, `content-visibility: auto` (WPT round 3, lane SM)
+
+- `properties/longhands.toml`, `values/specified/box.rs` (`ScrollMarkerGroup`, `ScrollTargetGroup`),
+  `properties/data.py`: `scroll-marker-group` (`none | [ before | after ] || [ links | tabs ]`, rebuilds boxes) and
+  `scroll-target-group` (`none | auto`) for servo (CSS Overflow 5 § 3.1).
+- `servo/selector_parser.rs`: the lazy pseudo-elements `::scroll-marker-group`, `::scroll-marker`, `::column` and
+  `::scroll-button(<direction> | *)` (functional: one variant per argument). `::column::scroll-marker` parses
+  (`::column` lets `::scroll-marker` follow it as `::before` lets `::marker`). `:target-current` is a state
+  pseudo-class (`TARGET_CURRENT`, the Gecko-only `STYLEEDITOR_TRANSITIONING` bit, never set by servo otherwise);
+  `::scroll-marker` and `::scroll-button()` accept state pseudo-classes after them (`:target-current`, `:enabled`,
+  `:disabled` count as user action states for that). A button is element-backed (the UA's `button` rules apply to it).
+  `PSEUDO_COUNT` passed 32: `pseudo_none_array` builds its array with `array::from_fn`.
+- `stylist.rs`: every `::scroll-button()` rule is filed under `::scroll-button(*)` (`PseudoElement::rule_map_key`)
+  and its bucket never matches alone (`has_argument`): the button's node matches the argument against its direction.
+  `Stylist::compute_pseudo_node_style` styles a node that is a pseudo-element's box in normal matching mode, so state
+  pseudo-classes after the pseudo-element match the node's own state (lazy matching on the originating element
+  rejects every selector with one).
+- `style_adjuster.rs`: a `::scroll-marker-group` always has layout containment, and size containment unless it is
+  absolutely positioned (CSS Overflow 5's recommended `contain: size !important`; Chromium contains its layout too).
+  `content-visibility` is parsed for servo; `auto` adds layout, style and paint containment to the computed `contain`
+  (every element is taken as relevant to the user: no size containment), `hidden` does nothing yet.
+- `style_adjuster.rs` (`adjust_for_author_styled_button`): a button (`button`, `input` of type `button`, `submit`
+  or `reset`, `::scroll-button()`) whose border or background an author or user styles has square corners unless
+  one rounds them: pyro's UA sheet rounds buttons by 1px for Chromium's native look, which Chromium drops then
+  (appearance devolves).
+
+blitz-dom generates and lays out the boxes (its README).
 
 ## Updating or dropping the patch
 

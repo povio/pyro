@@ -1434,6 +1434,64 @@ impl Stylist {
         ))
     }
 
+    /// pyro: the style of a node that is a pseudo-element's box (`element.implemented_pseudo_element()`,
+    /// which reaches its originating element through `pseudo_element_originating_element()`), whose
+    /// rules are matched against the node itself in normal mode: state pseudo-classes after the
+    /// pseudo-element (`::scroll-marker:target-current`, `::scroll-button(*):disabled`) match the
+    /// node's own state, which lazy matching on the originating element cannot see. `None` when
+    /// `is_probe` and no rule applies.
+    pub fn compute_pseudo_node_style<E>(
+        &self,
+        guards: &StylesheetGuards,
+        element: E,
+        originating_element_style: &ComputedValues,
+        is_probe: bool,
+    ) -> Option<Arc<ComputedValues>>
+    where
+        E: TElement,
+    {
+        let pseudo = element.implemented_pseudo_element()?;
+        let mut selector_caches = SelectorCaches::default();
+        let animation_declarations = AnimationDeclarations::default();
+        let mut declarations = ApplicableDeclarationList::new();
+        let mut matching_context = MatchingContext::<'_, E::Impl>::new(
+            MatchingMode::Normal,
+            None,
+            &mut selector_caches,
+            self.quirks_mode,
+            NeedsSelectorFlags::No,
+            MatchingForInvalidation::No,
+        );
+        matching_context.extra_data.originating_element_style = Some(originating_element_style);
+        self.push_applicable_declarations(
+            element,
+            None,
+            None,
+            None,
+            &animation_declarations,
+            RuleInclusion::All,
+            &mut declarations,
+            &mut matching_context,
+        );
+        if declarations.is_empty() && is_probe {
+            return None;
+        }
+        let rules = self.rule_tree.compute_rule_node(&mut declarations, guards);
+        let inputs = CascadeInputs {
+            rules: Some(rules),
+            visited_rules: None,
+            flags: matching_context.extra_data.cascade_input_flags,
+            included_cascade_flags: RuleCascadeFlags::empty(),
+        };
+        Some(self.compute_pseudo_element_style_with_inputs(
+            inputs,
+            &pseudo,
+            guards,
+            Some(originating_element_style),
+            Some(element),
+        ))
+    }
+
     /// Computes a pseudo-element style lazily using the given CascadeInputs.
     /// This can be used for truly lazy pseudo-elements or to avoid redoing
     /// selector matching for eager pseudo-elements when we need to recompute
@@ -4125,6 +4183,14 @@ impl CascadeData {
         for selector in selectors.slice() {
             self.num_selectors += 1;
 
+            // pyro: rules are filed under each pseudo-element's `rule_map_key` (every
+            // `::scroll-button()` rule under `::scroll-button(*)`).
+            #[cfg(feature = "servo")]
+            let pseudo_element_keys: SmallVec<[PseudoElement; 3]> =
+                selector.pseudo_elements().iter().map(|p| p.rule_map_key()).collect();
+            #[cfg(feature = "servo")]
+            let pseudo_elements: SmallVec<[&PseudoElement; 3]> = pseudo_element_keys.iter().collect();
+            #[cfg(not(feature = "servo"))]
             let pseudo_elements = selector.pseudo_elements();
             let inner_pseudo_element = pseudo_elements.first();
             if let Some(pseudo) = inner_pseudo_element {

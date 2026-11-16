@@ -50,6 +50,21 @@ pub enum PseudoElement {
     Backdrop,
     DetailsContent,
     Marker,
+    // pyro: CSS Overflow 5's scroll markers and scroll buttons, and Multi-column 2's `::column`
+    // (whose only use is `::column::scroll-marker`). Every `::scroll-button()` rule is filed under
+    // `ScrollButtonAll` (`rule_map_key`); a button's node matches the argument (`scroll_button_matches`).
+    ScrollMarkerGroup,
+    ScrollMarker,
+    Column,
+    ScrollButtonAll,
+    ScrollButtonBlockStart,
+    ScrollButtonInlineStart,
+    ScrollButtonInlineEnd,
+    ScrollButtonBlockEnd,
+    ScrollButtonUp,
+    ScrollButtonDown,
+    ScrollButtonLeft,
+    ScrollButtonRight,
 
     // Implemented pseudos. These pseudo elements are representing the
     // elements within an UA shadow DOM, and matching the elements with
@@ -93,6 +108,18 @@ impl ToCss for PseudoElement {
             Backdrop => "::backdrop",
             DetailsContent => "::details-content",
             Marker => "::marker",
+            ScrollMarkerGroup => "::scroll-marker-group",
+            ScrollMarker => "::scroll-marker",
+            Column => "::column",
+            ScrollButtonAll => "::scroll-button(*)",
+            ScrollButtonBlockStart => "::scroll-button(block-start)",
+            ScrollButtonInlineStart => "::scroll-button(inline-start)",
+            ScrollButtonInlineEnd => "::scroll-button(inline-end)",
+            ScrollButtonBlockEnd => "::scroll-button(block-end)",
+            ScrollButtonUp => "::scroll-button(up)",
+            ScrollButtonDown => "::scroll-button(down)",
+            ScrollButtonLeft => "::scroll-button(left)",
+            ScrollButtonRight => "::scroll-button(right)",
             ColorSwatch => "::color-swatch",
             FileSelectorButton => "::file-selector-button",
             Placeholder => "::placeholder",
@@ -120,11 +147,21 @@ impl ::selectors::parser::PseudoElement for PseudoElement {
     // pyro: `::before::marker` and `::after::marker` (CSS Pseudo-Elements 4 § 4.1): the marker
     // of a `::before` or `::after` box that is a list item.
     fn valid_after_before_or_after(&self) -> bool {
-        matches!(self, Self::Marker)
+        matches!(self, Self::Marker | Self::ScrollMarker)
     }
 
+    // pyro: `::column` lets `::scroll-marker` follow it as `::before` and `::after` let
+    // `::marker` (`::column::scroll-marker`, Multi-column 2 § 4.8).
     fn is_before_or_after(&self) -> bool {
-        matches!(self, Self::Before | Self::After)
+        matches!(self, Self::Before | Self::After | Self::Column)
+    }
+
+    // pyro: `::scroll-marker:target-current`, `::scroll-button(*):disabled`, and the user action
+    // states, match the pseudo-element's own state (its box node's, `blitz-dom`). `::column`
+    // accepts them too, or the parser would reject them after its `::scroll-marker` as well
+    // (`::column::scroll-marker:target-current`: the state the first pseudo-element sets stays).
+    fn accepts_state_pseudo_classes(&self) -> bool {
+        self.is_scroll_marker() || self.is_scroll_button() || *self == Self::Column
     }
 
     // pyro: `::slotted()` can be followed by a tree-abiding pseudo-element (CSS Scoping 1 § 3.2.2),
@@ -163,7 +200,8 @@ impl PseudoElement {
 
     /// An array of `None`, one per pseudo-element.
     pub fn pseudo_none_array<T>() -> [Option<T>; PSEUDO_COUNT] {
-        Default::default()
+        // pyro: more than 32 pseudo-elements, past `Default` for arrays.
+        std::array::from_fn(|_| None)
     }
 
     /// Creates a pseudo-element from an eager index.
@@ -192,6 +230,41 @@ impl PseudoElement {
     #[inline]
     pub fn is_marker(&self) -> bool {
         *self == PseudoElement::Marker
+    }
+
+    /// pyro: whether this pseudo-element is `::scroll-marker`.
+    #[inline]
+    pub fn is_scroll_marker(&self) -> bool {
+        *self == PseudoElement::ScrollMarker
+    }
+
+    /// pyro: whether this pseudo-element is a `::scroll-button()`, whatever its argument.
+    #[inline]
+    pub fn is_scroll_button(&self) -> bool {
+        matches!(
+            *self,
+            PseudoElement::ScrollButtonAll
+                | PseudoElement::ScrollButtonBlockStart
+                | PseudoElement::ScrollButtonInlineStart
+                | PseudoElement::ScrollButtonInlineEnd
+                | PseudoElement::ScrollButtonBlockEnd
+                | PseudoElement::ScrollButtonUp
+                | PseudoElement::ScrollButtonDown
+                | PseudoElement::ScrollButtonLeft
+                | PseudoElement::ScrollButtonRight
+        )
+    }
+
+    /// pyro: the key a rule for this pseudo-element is filed under in the stylist's maps: every
+    /// `::scroll-button()` rule under `::scroll-button(*)`, as which a button's box is styled (its
+    /// node then matches each rule's argument against its direction).
+    #[inline]
+    pub fn rule_map_key(&self) -> PseudoElement {
+        if self.is_scroll_button() {
+            PseudoElement::ScrollButtonAll
+        } else {
+            *self
+        }
     }
 
     /// Whether this pseudo-element is the ::selection pseudo.
@@ -287,7 +360,19 @@ impl PseudoElement {
             | PseudoElement::SliderTrack
             | PseudoElement::MozProgressBar
             | PseudoElement::ServoTextControlInnerContainer
-            | PseudoElement::ServoTextControlInnerEditor => PseudoElementCascadeType::Lazy,
+            | PseudoElement::ServoTextControlInnerEditor
+            | PseudoElement::ScrollMarkerGroup
+            | PseudoElement::ScrollMarker
+            | PseudoElement::Column
+            | PseudoElement::ScrollButtonAll
+            | PseudoElement::ScrollButtonBlockStart
+            | PseudoElement::ScrollButtonInlineStart
+            | PseudoElement::ScrollButtonInlineEnd
+            | PseudoElement::ScrollButtonBlockEnd
+            | PseudoElement::ScrollButtonUp
+            | PseudoElement::ScrollButtonDown
+            | PseudoElement::ScrollButtonLeft
+            | PseudoElement::ScrollButtonRight => PseudoElementCascadeType::Lazy,
             PseudoElement::ServoAnonymousBox
             | PseudoElement::ServoAnonymousTable
             | PseudoElement::ServoAnonymousTableCell
@@ -343,9 +428,12 @@ impl PseudoElement {
     }
 
     /// Whether this pseudo-element takes an argument.
+    ///
+    /// pyro: a `::scroll-button()` does; its rules share one map (`rule_map_key`), so a bucket
+    /// does not decide whether one matches.
     #[inline]
     pub fn has_argument(&self) -> bool {
-        false
+        self.is_scroll_button()
     }
 
     /// Whether this pseudo-element is the ::target-text pseudo.
@@ -367,7 +455,10 @@ impl PseudoElement {
     #[inline]
     pub fn is_element_backed(&self) -> bool {
         use selectors::parser::PseudoElement;
+        // pyro: a `::scroll-button()` is styled as the `button` element its box is (CSS Overflow
+        // 5 § 3.2): the UA rules for `button` apply to it (`RuleCollector`).
         self.parses_as_element_backed()
+            || self.is_scroll_button()
             || matches!(
                 self,
                 Self::Placeholder
@@ -382,6 +473,10 @@ impl PseudoElement {
             )
     }
 }
+
+/// pyro: the element state `:target-current` matches. Servo has no state of its own for it; this
+/// Gecko devtools bit is never set by Servo.
+pub const TARGET_CURRENT: ElementState = ElementState::STYLEEDITOR_TRANSITIONING;
 
 /// The type used for storing `:lang` arguments.
 pub type Lang = Box<str>;
@@ -434,6 +529,8 @@ pub enum NonTSPseudoClass {
     Required,
     ServoNonZeroBorder,
     Target,
+    /// pyro: `:target-current` (CSS Overflow 5): the active scroll marker of its group.
+    TargetCurrent,
     UserInvalid,
     UserValid,
     Valid,
@@ -446,11 +543,20 @@ impl ::selectors::parser::NonTSPseudoClass for NonTSPseudoClass {
         matches!(*self, NonTSPseudoClass::Active | NonTSPseudoClass::Hover)
     }
 
+    // pyro: also the states a pseudo-element that accepts state pseudo-classes can have
+    // (`::scroll-marker:target-current`, `::scroll-button():disabled`), which the selector
+    // parser lets follow it only when they are user action states.
     #[inline]
     fn is_user_action_state(&self) -> bool {
         matches!(
             *self,
-            NonTSPseudoClass::Active | NonTSPseudoClass::Hover | NonTSPseudoClass::Focus
+            NonTSPseudoClass::Active
+                | NonTSPseudoClass::Hover
+                | NonTSPseudoClass::Focus
+                | NonTSPseudoClass::FocusVisible
+                | NonTSPseudoClass::TargetCurrent
+                | NonTSPseudoClass::Enabled
+                | NonTSPseudoClass::Disabled
         )
     }
 
@@ -515,6 +621,7 @@ impl ToCss for NonTSPseudoClass {
             Self::Required => ":required",
             Self::ServoNonZeroBorder => ":-servo-nonzero-border",
             Self::Target => ":target",
+            Self::TargetCurrent => ":target-current",
             Self::UserInvalid => ":user-invalid",
             Self::UserValid => ":user-valid",
             Self::Valid => ":valid",
@@ -561,6 +668,7 @@ impl NonTSPseudoClass {
             Self::ReadWrite => ElementState::READWRITE,
             Self::Required => ElementState::REQUIRED,
             Self::Target => ElementState::URLTARGET,
+            Self::TargetCurrent => TARGET_CURRENT,
             Self::UserInvalid => ElementState::USER_INVALID,
             Self::UserValid => ElementState::USER_VALID,
             Self::Valid => ElementState::VALID,
@@ -680,6 +788,7 @@ impl<'a, 'i> ::selectors::Parser<'i> for SelectorParser<'a> {
             "read-write" => NonTSPseudoClass::ReadWrite,
             "required" => NonTSPseudoClass::Required,
             "target" => NonTSPseudoClass::Target,
+            "target-current" => NonTSPseudoClass::TargetCurrent,
             "user-invalid" => NonTSPseudoClass::UserInvalid,
             "user-valid" => NonTSPseudoClass::UserValid,
             "valid" => NonTSPseudoClass::Valid,
@@ -751,6 +860,9 @@ impl<'a, 'i> ::selectors::Parser<'i> for SelectorParser<'a> {
             "first-letter" => FirstLetter,
             "first-line" if crate::pref!("layout.css.first-line.enabled") => FirstLine,
             "marker" => Marker,
+            "scroll-marker-group" => ScrollMarkerGroup,
+            "scroll-marker" => ScrollMarker,
+            "column" => Column,
             "details-content" => DetailsContent,
             "color-swatch" => ColorSwatch,
             "placeholder" => Placeholder,
@@ -811,6 +923,33 @@ impl<'a, 'i> ::selectors::Parser<'i> for SelectorParser<'a> {
         };
 
         Ok(pseudo_element)
+    }
+
+    // pyro: `::scroll-button(<direction> | *)` (CSS Overflow 5 § 3.2).
+    fn parse_functional_pseudo_element(
+        &self,
+        name: &str,
+        arguments: &mut CssParser<'i>,
+    ) -> Result<PseudoElement, ParseError> {
+        use self::PseudoElement::*;
+        if !name.eq_ignore_ascii_case("scroll-button") {
+            return Err(ParseError::custom(SelectorParseErrorKind::UnexpectedIdent));
+        }
+        if arguments.try_parse(|input| input.expect_delim('*')).is_ok() {
+            return Ok(ScrollButtonAll);
+        }
+        let ident = arguments.expect_ident()?;
+        Ok(match_ignore_ascii_case! { &ident,
+            "block-start" => ScrollButtonBlockStart,
+            "inline-start" => ScrollButtonInlineStart,
+            "inline-end" => ScrollButtonInlineEnd,
+            "block-end" => ScrollButtonBlockEnd,
+            "up" => ScrollButtonUp,
+            "down" => ScrollButtonDown,
+            "left" => ScrollButtonLeft,
+            "right" => ScrollButtonRight,
+            _ => return Err(ParseError::custom(SelectorParseErrorKind::UnexpectedIdent)),
+        })
     }
 
     fn default_namespace(&self) -> Option<Namespace> {

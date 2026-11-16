@@ -339,10 +339,12 @@ impl BaseDocument {
     /// ancestor stacking contexts. Fixed descendants must not escape their
     /// modal/opacity context merely because layout positions them at the root.
     fn restore_out_of_flow_stacking_owners(&mut self, root_id: NodeId) {
+        // pyro: a scroll marker group's or scroll button's box is a box of its originating
+        // element's parent, not inside the element (`scroll_markers::box_parent`).
         let context_of = |doc: &Self, mut node: Option<NodeId>| {
             while let Some(id) = node {
                 if doc.nodes[id].stacking_context.is_some() { return id; }
-                node = doc.nodes[id].parent;
+                node = crate::layout::scroll_markers::box_parent(&doc.nodes, id);
             }
             root_id
         };
@@ -351,7 +353,7 @@ impl BaseDocument {
             let node = &self.nodes[id];
             if !node.flags.is_in_document() { return None; }
             let cb = node.oof_containing_block.get()?;
-            let target = context_of(self, node.parent);
+            let target = context_of(self, crate::layout::scroll_markers::box_parent(&self.nodes, id));
             (target != context_of(self, Some(cb))).then_some((id, target))
         }).collect();
         if moves.is_empty() { return; }

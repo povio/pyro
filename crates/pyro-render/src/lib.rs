@@ -217,6 +217,10 @@ pub struct Snapshot {
     /// positions have it; those of other elements are reset. `None` leaves
     /// the document's.
     pub sticky_offsets: Option<Vec<(u64, (f64, f64))>>,
+    /// The current scroll targets of a [`Live`] document (CSS Overflow 5 § 2.1, scroll marker
+    /// selection): each scroll container's key (`u64::MAX` for the viewport) and its target's.
+    /// `None` leaves the document's.
+    pub scroll_targets: Option<Vec<(u64, u64)>>,
     /// Straight RGBA painted under the document where it has no background
     /// (CDP `Emulation.setDefaultBackgroundColorOverride`); `None`: white.
     pub background: Option<[u8; 4]>,
@@ -987,6 +991,9 @@ impl Renderer {
                         if let Some(offsets) = &snap.sticky_offsets {
                             m.set_sticky_offsets(offsets);
                         }
+                        if let Some(targets) = &snap.scroll_targets {
+                            m.set_scroll_targets(targets);
+                        }
                         m.set_canvases(&snap.canvases);
                         // The selection's text nodes, both in the document.
                         let selection = snap.selection.filter(|_| selection).and_then(|s| {
@@ -1086,6 +1093,10 @@ impl Renderer {
         let (origin, scale, w, h) = match area {
             Area::Viewport => {
                 doc.set_viewport_scroll(blitz_dom::Point { x: snap.scroll_x, y: snap.scroll_y });
+                // Scroll markers and buttons follow the viewport's scroll (`:target-current`).
+                if doc.tracks_scroll_states() {
+                    doc.resolve(0.0);
+                }
                 ((0.0, 0.0), dpr, physical(vw as f64), physical(vh as f64))
             }
             Area::FullPage => {
@@ -1102,6 +1113,9 @@ impl Renderer {
                     true => (x, y),
                     false => {
                         doc.set_viewport_scroll(blitz_dom::Point { x: snap.scroll_x, y: snap.scroll_y });
+                        if doc.tracks_scroll_states() {
+                            doc.resolve(0.0);
+                        }
                         (x - snap.scroll_x, y - snap.scroll_y)
                     }
                 };
