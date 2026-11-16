@@ -1397,6 +1397,22 @@ fn determine_content_based_container_width(
             }
         });
 
+        // pyro: a table is never narrower than its min-content width, whatever its `width` or
+        // `max-width` (CSS Tables 3 §3.9.2): its contribution is at least that.
+        let width = if item.is_table && (item.size.width.is_some() || item.max_size.width.is_some()) {
+            let content = tree.measure_child_size(
+                item.node_id,
+                Size::NONE,
+                Size::NONE,
+                Size { width: AvailableSpace::MinContent, height: AvailableSpace::MaxContent },
+                SizingMode::ContentSize,
+                crate::AbsoluteAxis::Horizontal,
+                if item.is_in_same_bfc { Line::TRUE } else { Line::FALSE },
+            );
+            width.max(content)
+        } else {
+            width
+        };
         let width = f32_max(width, item.padding_border_sum.width) + item_x_margin_sum;
 
         #[cfg(feature = "float_layout")]

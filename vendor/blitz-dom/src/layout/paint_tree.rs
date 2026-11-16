@@ -1023,6 +1023,49 @@ impl Node {
         })
     }
 
+    /// pyro: whether this internal table box (row group, row, cell) paints in the phases of its
+    /// table's painter (Blink: a table's collapsed borders go after the backgrounds of the blocks
+    /// in its cells and before their inline content, floats and positioned boxes). Only a part
+    /// that is no layer root, makes no stacking context and has no float or positioned box among
+    /// its `paint_children` (those would be the phase painter's to paint; the paint tree lifts
+    /// them only out of `paints_in_ancestor_phases` boxes); any other part paints whole with the
+    /// block backgrounds.
+    pub fn paints_in_table_phases(&self) -> bool {
+        use style::values::specified::box_::DisplayInside;
+        let Some(style) = self.primary_styles() else {
+            return false;
+        };
+        if !matches!(
+            style.clone_display().inside(),
+            DisplayInside::TableRowGroup
+                | DisplayInside::TableHeaderGroup
+                | DisplayInside::TableFooterGroup
+                | DisplayInside::TableRow
+                | DisplayInside::TableCell
+        ) || style.clone_float() != Float::None
+            || self.is_paint_layer_root()
+            || self.stacking_context.is_some()
+            || self.is_stacking_context_root(false)
+            || self.plane_3d().is_some()
+            || !style.get_effects().backdrop_filter.0.is_empty()
+            || style.get_column().is_multicol()
+        {
+            return false;
+        }
+        let tree = self.tree();
+        self.paint_children.borrow().as_ref().is_none_or(|children| {
+            children.iter().all(|&id| {
+                tree.get(id).is_none_or(|child| {
+                    child.primary_styles().is_none_or(|s| {
+                        s.clone_position() == Position::Static
+                            && s.clone_float() == Float::None
+                            && !child.is_stacking_context_root(false)
+                    })
+                })
+            })
+        })
+    }
+
     /// pyro: whether this box is laid out at the inline level (an atomic inline: an inline
     /// block, an image): in its parent's paint phases it paints with the inline content.
     pub fn is_inline_level(&self) -> bool {

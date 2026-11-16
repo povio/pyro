@@ -906,6 +906,58 @@ impl ElementCx<'_, '_> {
         }
     }
 
+    /// pyro: the outlines of a table's row groups and rows (they paint no box of their own: the
+    /// cells paint their backgrounds), each around the tracks it spans, groups first. A row with
+    /// `visibility` other than `visible` (a collapsed one) has none.
+    pub(crate) fn draw_table_part_outlines(&self, scene: &mut impl PaintScene) {
+        let SpecialElementData::TableRoot(table) = &self.element.special_data else {
+            return;
+        };
+        let dom = self.context.dom;
+        let has_outline = |id: NodeId| {
+            dom.get_node(id).and_then(|node| node.primary_styles()).is_some_and(|style| {
+                let outline = style.get_outline();
+                outline.outline_style != style::values::computed::OutlineStyle::none()
+                    && outline.outline_width.0.to_f32_px() > 0.0
+                    && style.get_inherited_box().visibility == style::computed_values::visibility::T::Visible
+                    // (A positioned part paints as a layer of its own, its outline with it.)
+                    && style.clone_position() == style::computed_values::position::T::Static
+            })
+        };
+        let mut parts: Vec<(NodeId, Vec<usize>)> = Vec::new();
+        for (at, row) in table.rows.iter().enumerate() {
+            if let Some(group) = row.group.filter(|group| has_outline(*group)) {
+                match parts.iter_mut().find(|(id, _)| *id == group) {
+                    Some((_, rows)) => rows.push(at),
+                    None => parts.push((group, vec![at])),
+                }
+            }
+        }
+        for (at, row) in table.rows.iter().enumerate() {
+            if !row.collapsed && has_outline(row.node_id) {
+                parts.push((row.node_id, vec![at]));
+            }
+        }
+        if parts.is_empty() {
+            return;
+        }
+        let Some(rects) = self.table_part_rects(table) else { return };
+        let (x0, x1) = (rects.columns[0].0, rects.columns[rects.columns.len() - 1].1);
+        for (id, rows) in parts {
+            let open: Vec<usize> = rows.iter().copied().filter(|&at| !table.rows[at].collapsed).collect();
+            let (Some(&first), Some(&last)) = (open.first(), open.last()) else { continue };
+            let (Some(top), Some(bottom)) = (rects.rows.get(first), rects.rows.get(last)) else { continue };
+            let Some(node) = dom.get_node(id) else { continue };
+            if node.element_data().is_none() {
+                continue;
+            }
+            let mut layout = taffy::Layout::new();
+            layout.size = taffy::Size { width: (x1 - x0) as f32, height: (bottom.1 - top.0) as f32 };
+            let transform = self.transform * Affine::translate(Vec2::new(x0, top.0) * self.scale);
+            self.context.element_cx(node, layout, transform, None).draw_outline(scene);
+        }
+    }
+
     /// pyro: where a table's rows and columns are (CSS px, the table's space), for the boxes of its
     /// parts whose backgrounds are positioned against them.
     fn table_part_rects(&self, table: &blitz_dom::TableContext) -> Option<TablePartRects> {
@@ -942,7 +994,14 @@ impl ElementCx<'_, '_> {
         let transform = base * Affine::translate(Vec2::new(part.x0, part.y0) * self.scale);
         let part_cx = self.context.element_cx(node, layout, transform, None);
         scene.push_clip_layer(Fill::NonZero, base, clip);
-        part_cx.draw_background(scene);
+        // pyro: over the whole cell (`clip`, which a cell spanning rows or columns makes larger
+        // than the part's box): the colour and the tiles cover it, the images positioned against
+        // the part's box (Blink paints a part's background in the cell's rect).
+        let canvas = *clip - Vec2::new(part.x0, part.y0) * self.scale;
+        if let (Some(style), Some(element)) = (node.primary_styles(), node.element_data()) {
+            let style = (*style).clone();
+            part_cx.draw_background_layers(scene, &style, &element.background_images, Some(canvas));
+        }
         scene.pop_layer();
     }
 

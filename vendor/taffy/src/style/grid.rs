@@ -215,6 +215,11 @@ pub trait GridContainerStyle: CoreStyle {
     /// Defines the size of implicitly created rows
     fn grid_template_row_names(&self) -> Option<Self::TemplateLineNames<'_>>;
 
+    /// pyro: the explicit row tracks that are collapsed (`Style::collapsed_rows`), sorted.
+    #[inline(always)]
+    fn collapsed_rows(&self) -> &[u16] {
+        &[]
+    }
     /// Controls how items get placed into the grid for auto-placed items
     #[inline(always)]
     fn grid_auto_flow(&self) -> GridAutoFlow {

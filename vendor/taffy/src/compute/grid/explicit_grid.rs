@@ -362,6 +362,31 @@ pub(super) fn initialize_grid_tracks(
         create_implicit_tracks(tracks, counts.positive_implicit + grid_area_tracks, iter, gap)
     }
 
+    // pyro: collapsed explicit rows (a table's `visibility: collapse` rows) and one gutter
+    // each: the one after, or before for a row with no other row after it.
+    if axis == AbsoluteAxis::Vertical {
+        let collapsed = style.collapsed_rows();
+        if !collapsed.is_empty() {
+            let first = counts.negative_implicit as usize;
+            let rows = counts.len();
+            for &row in collapsed {
+                let index = first + row as usize;
+                if row as usize >= counts.explicit as usize || index >= rows {
+                    continue;
+                }
+                let track = 1 + 2 * index;
+                tracks[track].collapse();
+                let later_open = (index + 1..rows)
+                    .any(|r| !tracks[1 + 2 * r].is_collapsed && !collapsed.contains(&((r - first) as u16)));
+                if later_open {
+                    tracks[track + 1].collapse();
+                } else {
+                    tracks[track - 1].collapse();
+                }
+            }
+        }
+    }
+
     // Mark first and last grid lines as collapsed
     tracks.first_mut().unwrap().collapse();
     tracks.last_mut().unwrap().collapse();

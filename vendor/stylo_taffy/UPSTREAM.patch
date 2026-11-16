@@ -65,6 +65,14 @@ diff --git a/packages/stylo_taffy/src/convert.rs b/packages/stylo_taffy/src/conv
          // Should never be hit. But no real reason to panic here.
          _ => return None,
      };
+@@ -967,6 +997,7 @@
+         display: self::display(display),
+         box_sizing: self::box_sizing(style.clone_box_sizing()),
+         item_is_table: display.inside() == stylo::DisplayInside::Table,
++        collapsed_rows: Default::default(),
+         item_is_replaced: false,
+         item_is_compressible_replaced: false,
+         position: self::position(style.clone_position()),
 diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrapper.rs
 --- a/packages/stylo_taffy/src/wrapper.rs
 +++ b/packages/stylo_taffy/src/wrapper.rs

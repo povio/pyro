@@ -56,3 +56,4 @@ entry) once a Blitz release carries these commits and changes.
   Taffy's `FLEX_START`/`FLEX_END`, which are `start`/`end` outside flex layout.
 - `src/wrapper.rs`: `OofItemStyle::min_size_keyword`/`max_size_keyword` (the block item's), for the sizing
   keywords in the minimum and maximum sizes of absolutely positioned boxes (vendor/taffy/README.pyro.md).
+- `src/convert.rs`: `collapsed_rows` (vendor/taffy/README.pyro.md) is empty; blitz-dom's table layout sets it.

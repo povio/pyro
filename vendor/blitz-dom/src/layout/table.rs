@@ -991,7 +991,32 @@ fn resolve_collapsed_edges(
         }
     }
     offer_rows_groups_and_table(&mut edges, doc, table, rows, table_columns, 0..rows.len(), &all);
+    for &area in areas {
+        clear_spanned(&mut edges, area, &all);
+    }
     edges
+}
+
+/// pyro: the grid lines inside a cell that spans rows or columns have no collapsed border: the
+/// cell covers them (Blink resolves borders only on the edges of cells), so the borders rows,
+/// columns or groups gave them are not drawn there.
+fn clear_spanned(edges: &mut CollapsedEdges, (r0, c0, r1, c1): (usize, usize, usize, usize), range: &EdgeRange) {
+    let ncols = edges.columns;
+    if r1 > edges.rows || c1 > ncols {
+        return;
+    }
+    for line in (r0 + 1)..r1 {
+        if range.lines.contains(&line) {
+            for c in c0..c1 {
+                edges.horizontal[line * ncols + c] = CollapsedEdge::NONE;
+            }
+        }
+    }
+    for r in r0.max(range.rows.start)..r1.min(range.rows.end) {
+        for line in (c0 + 1)..c1 {
+            edges.vertical[r * (ncols + 1) + line] = CollapsedEdge::NONE;
+        }
+    }
 }
 
 /// The order in which the borders of a table's boxes win among equals (css-tables-3 §11.3):
@@ -1825,6 +1850,8 @@ pub(crate) fn build_table_context(doc: &mut BaseDocument, table_root_node_id: No
         _ => 0.0,
     };
     style.grid_template_rows = row_tracks(&rows, gutter);
+    // pyro: a collapsed row takes its border spacing with it (taffy `Style::collapsed_rows`).
+    style.collapsed_rows = rows.iter().enumerate().filter(|(_, row)| row.collapsed).map(|(i, _)| i as u16).collect();
     if let Some(edges) = &collapsed_edges {
         let zero = style_helpers::length(0.0);
         style.gap = taffy::Size { width: zero, height: zero };
@@ -2650,6 +2677,9 @@ fn update_rows(doc: &mut BaseDocument, table: NodeId, ctx: &mut TableContext) ->
                 }
             }
             offer_rows_groups_and_table(edges, doc, table, &ctx.rows, &ctx.columns, around, &range);
+            for cell in &ctx.cells[ca..cb] {
+                clear_spanned(edges, cell_area(cell, ncols), &range);
+            }
             touched.push((ca, cb));
         }
         if edges_in_use(edges, ctx.collapse_gap) != ctx.collapsed_edges.is_some() {
@@ -2701,6 +2731,8 @@ fn update_rows(doc: &mut BaseDocument, table: NodeId, ctx: &mut TableContext) ->
         _ => 0.0,
     };
     ctx.style.grid_template_rows = row_tracks(&ctx.rows, gutter);
+    // pyro: a collapsed row takes its border spacing with it (taffy `Style::collapsed_rows`).
+    ctx.style.collapsed_rows = ctx.rows.iter().enumerate().filter(|(_, row)| row.collapsed).map(|(i, _)| i as u16).collect();
     if boxes_changed {
         let (before, after) = (doc.nodes[table].before(), doc.nodes[table].after());
         let layout_children = before

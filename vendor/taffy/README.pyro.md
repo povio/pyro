@@ -497,3 +497,11 @@ as tall as its rows (WPT `css/css-grid/grid-definition/grid-auto-repeat-aspect-r
 - `tree/traits.rs` (`LayoutBlockContainer::block_container_percentage_height`), `compute/block.rs`: a height
   percentage heights of a container's children resolve against when the container's own is unknown as it is laid
   out (blitz-dom's multi-column strip: the container's definite height; WPT `position-sticky-child-multicolumn`).
+- `style/mod.rs` (`Style::collapsed_rows`), `style/grid.rs` (`GridContainerStyle::collapsed_rows`),
+  `compute/grid/explicit_grid.rs` (`initialize_grid_tracks`): explicit row tracks the container marks collapsed (a
+  table's `visibility: collapse` rows, from blitz-dom) are collapsed tracks with one gutter each, the one after them
+  (before them when no open row follows), so a collapsed row takes its border spacing with it (WPT
+  `css-tables/visibility-collapse-border-spacing-001/002`).
+- `compute/block.rs` (`determine_content_based_container_width`): a table with a `width` or `max-width` contributes at
+  least its min-content width (its content measured without them): a table is never narrower than its content (WPT
+  `css-tables/table-intrinsic-size-001`).

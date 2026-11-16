@@ -2261,3 +2261,10 @@ ends there, as for authored soft hyphens. `hyphenate-limit-chars` bounds the wor
 (`auto`: 5, 2 and 2, as Blink); a word with an authored soft hyphen is left alone. Chromium's dictionaries derive from
 the same TeX patterns. Covered by `hyphens_auto_breaks_words_of_a_known_language` in
 `crates/pyro-render/tests/text_spacing.rs`; WPT `css-text/hyphens/hyphens-auto-*`.
+
+`src/layout/table.rs` (`clear_spanned`): the collapsed border segments inside a cell that spans rows or columns are
+cleared after conflict resolution (Blink resolves borders on cell edges only: a column's or row's border is not drawn
+through a spanning cell; WPT `css-tables/tentative/border-collapse-spanning-cells-001/002`). The table's style lists
+its collapsed rows in taffy's `Style::collapsed_rows`, so a collapsed row takes its border spacing with it.
+`src/layout/paint_tree.rs` (`Node::paints_in_table_phases`): the row groups, rows and cells blitz-paint paints in a
+collapsed table's phases (no layer root, stacking context, float or positioned box among their paint children).

@@ -132,7 +132,11 @@ fn linear_gradient(
 ) -> (peniko::Gradient, Option<Affine>) {
     let (direction, items, flags) = gradient;
 
-    let center = bounding_box.center();
+    // pyro: the line goes through the centre of the gradient's box (its tile), not of the
+    // element's border box: a tile larger than the box (`background-size: 230px 50px` on a
+    // 50px cell) or moved off it had its line shifted by the difference.
+    let _ = bounding_box;
+    let center = rect.center();
     let (start, end) = match direction {
         LineDirection::Angle(angle) => {
             let angle = -angle.radians64() + std::f64::consts::PI;

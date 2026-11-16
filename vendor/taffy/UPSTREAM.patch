@@ -1,5 +1,5 @@
 diff --git a/src/compute/block.rs b/src/compute/block.rs
-index 3cd3e713..901a4544 100644
+index 3cd3e713..4db44925 100644
 --- a/src/compute/block.rs
 +++ b/src/compute/block.rs
 @@ -6,8 +6,8 @@ use crate::style::{
@@ -647,7 +647,30 @@ index 3cd3e713..901a4544 100644
              .horizontal_axis_sum();
          let width = known_dimensions.width.unwrap_or_else(|| {
              let item_available_width =
-@@ -1156,6 +1416,88 @@ fn determine_content_based_container_width(
+@@ -1137,6 +1397,22 @@ fn determine_content_based_container_width(
+             }
+         });
+ 
++        // pyro: a table is never narrower than its min-content width, whatever its `width` or
++        // `max-width` (CSS Tables 3 §3.9.2): its contribution is at least that.
++        let width = if item.is_table && (item.size.width.is_some() || item.max_size.width.is_some()) {
++            let content = tree.measure_child_size(
++                item.node_id,
++                Size::NONE,
++                Size::NONE,
++                Size { width: AvailableSpace::MinContent, height: AvailableSpace::MaxContent },
++                SizingMode::ContentSize,
++                crate::AbsoluteAxis::Horizontal,
++                if item.is_in_same_bfc { Line::TRUE } else { Line::FALSE },
++            );
++            width.max(content)
++        } else {
++            width
++        };
+         let width = f32_max(width, item.padding_border_sum.width) + item_x_margin_sum;
+ 
+         #[cfg(feature = "float_layout")]
+@@ -1156,6 +1432,88 @@ fn determine_content_based_container_width(
      max_child_width
  }
  
@@ -736,7 +759,7 @@ index 3cd3e713..901a4544 100644
  /// Resolve the known dimensions an in-flow block-level item is laid out with
  #[allow(clippy::too_many_arguments)]
  fn block_item_known_dimensions(
-@@ -1211,17 +1553,100 @@ fn block_item_known_dimensions(
+@@ -1211,17 +1569,100 @@ fn block_item_known_dimensions(
              children_margins_adjoin_own_edges,
          );
  
@@ -840,7 +863,7 @@ index 3cd3e713..901a4544 100644
      }
  }
  
-@@ -1239,13 +1664,15 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
+@@ -1239,13 +1680,15 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
      resolved_border: Rect<f32>,
      #[cfg(feature = "content_size")] resolved_padding: Rect<f32>,
      text_align: TextAlign,
@@ -857,7 +880,7 @@ index 3cd3e713..901a4544 100644
      // Resolve container_inner_width for sizing child nodes using initial content_box_inset
      let container_inner_width = (container_outer_width - resolved_content_box_inset.horizontal_axis_sum()).max(0.0);
      #[cfg(feature = "content_size")]
-@@ -1294,10 +1721,21 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
+@@ -1294,10 +1737,21 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
      let mut active_collapsible_margin_set = CollapsibleMarginSet::ZERO;
      let mut is_collapsing_with_first_margin_set = true;
      let mut first_baseline: Option<f32> = None;
@@ -879,7 +902,7 @@ index 3cd3e713..901a4544 100644
  
      #[cfg(feature = "float_layout")]
      let mut has_active_floats = block_ctx.has_active_floats(committed_y_offset);
-@@ -1310,11 +1748,41 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
+@@ -1310,11 +1764,41 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
                  Direction::Ltr => resolved_content_box_inset.left,
                  Direction::Rtl => container_outer_width - resolved_content_box_inset.right,
              };
@@ -923,7 +946,7 @@ index 3cd3e713..901a4544 100644
              let item_non_auto_margin = item_margin.map(|m| m.unwrap_or(0.0));
              let item_non_auto_x_margin_sum = item_non_auto_margin.horizontal_axis_sum();
  
-@@ -1518,14 +1986,26 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
+@@ -1518,14 +2002,26 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
                          // for the item's border box, which must not overlap any float
                          // The item's height isn't known until it is laid out, so only its styled
                          // (minimum) height is checked against floats below its top edge
@@ -951,7 +974,7 @@ index 3cd3e713..901a4544 100644
                          let slot = loop {
                              let slot = block_ctx.find_bfc_slot(
                                  min_y,
-@@ -1536,15 +2016,41 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
+@@ -1536,15 +2032,41 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
                                  slot_segment,
                              );
                              let Some(segment_id) = slot.segment_id else { break slot };
@@ -977,8 +1000,7 @@ index 3cd3e713..901a4544 100644
 +                            if width.max(item.padding_border_sum.width) > slot.border_width + FIT_TOLERANCE {
 +                                slot_segment = Some(segment_id);
 +                                continue;
-                             }
--                            slot_segment = Some(segment_id);
++                            }
 +                            // pyro: the item must not overlap the floats beside any of its height,
 +                            // which it has once laid out in the slot: taller than the slot stays as
 +                            // wide, it is placed again beside the floats of its height (WPT
@@ -996,12 +1018,13 @@ index 3cd3e713..901a4544 100644
 +                                    height_retries += 1;
 +                                    continue;
 +                                }
-+                            }
+                             }
+-                            slot_segment = Some(segment_id);
 +                            break slot;
                          };
  
                          // If the item had to move down to avoid floats then it "separates from the
-@@ -1621,6 +2127,18 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
+@@ -1621,6 +2143,18 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
              item.oof_candidates = item_layout.oof_candidates.take();
              let final_size = item_layout.size;
  
@@ -1020,7 +1043,7 @@ index 3cd3e713..901a4544 100644
              let top_margin_set = item_layout.top_margin.collapse_with_margin(item_margin.top.unwrap_or(0.0));
              let bottom_margin_set = item_layout.bottom_margin.collapse_with_margin(item_margin.bottom.unwrap_or(0.0));
  
-@@ -1791,7 +2309,11 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
+@@ -1791,7 +2325,11 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
                  };
                  let align_to_end = match keyword {
                      AlignItemsKeyword::Center => None,
@@ -1033,7 +1056,7 @@ index 3cd3e713..901a4544 100644
                      _ => Some(false),
                  };
                  let offset = match align_to_end {
-@@ -1826,6 +2348,26 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
+@@ -1826,6 +2364,26 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
                      child_first_baseline(item_layout.baselines.first, item_layout.size.height, item.overflow.y);
                  first_baseline = child_baseline.map(|baseline| location.y - inset_offset.y + baseline);
              }
@@ -1060,7 +1083,7 @@ index 3cd3e713..901a4544 100644
  
              // Used auto margins include float-avoidance offsets, unlike the alignment margins above.
              #[cfg(feature = "float_layout")]
-@@ -1908,6 +2450,7 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
+@@ -1908,6 +2466,7 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
                  y_offset_for_absolute = committed_y_offset + item_layout.size.height + y_margin_offset;
              } else {
                  committed_y_offset = location.y - inset_offset.y + item_layout.size.height;
@@ -1068,7 +1091,7 @@ index 3cd3e713..901a4544 100644
                  // A self-collapsing item with clearance is not collapsed through (its margins do not collapse
                  // with margins of preceding siblings), but its top and bottom margins still collapse with each
                  // other and with the margins of following siblings.
-@@ -1931,6 +2474,38 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
+@@ -1931,6 +2490,38 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
          }
      }
  
@@ -1107,7 +1130,7 @@ index 3cd3e713..901a4544 100644
      // The margins of a self-collapsing element with clearance do not collapse with the bottom
      // margin of the parent block: they extend the parent's content height instead of escaping it
      let last_child_bottom_margin_set =
-@@ -1947,5 +2522,5 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
+@@ -1947,5 +2538,5 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
  
      committed_y_offset += resolved_content_box_inset.bottom + bottom_y_margin_offset;
      let content_height = f32_max(0.0, committed_y_offset);
@@ -2503,6 +2526,42 @@ index b84e8751..39818a3f 100644
  }
  
  /// The offset applied to an item in a single axis by its `inset` if it is `position: relative`
+diff --git a/src/compute/grid/explicit_grid.rs b/src/compute/grid/explicit_grid.rs
+index 037a2d1c..d0abc8ef 100644
+--- a/src/compute/grid/explicit_grid.rs
++++ b/src/compute/grid/explicit_grid.rs
+@@ -362,6 +362,31 @@ pub(super) fn initialize_grid_tracks(
+         create_implicit_tracks(tracks, counts.positive_implicit + grid_area_tracks, iter, gap)
+     }
+ 
++    // pyro: collapsed explicit rows (a table's `visibility: collapse` rows) and one gutter
++    // each: the one after, or before for a row with no other row after it.
++    if axis == AbsoluteAxis::Vertical {
++        let collapsed = style.collapsed_rows();
++        if !collapsed.is_empty() {
++            let first = counts.negative_implicit as usize;
++            let rows = counts.len();
++            for &row in collapsed {
++                let index = first + row as usize;
++                if row as usize >= counts.explicit as usize || index >= rows {
++                    continue;
++                }
++                let track = 1 + 2 * index;
++                tracks[track].collapse();
++                let later_open = (index + 1..rows)
++                    .any(|r| !tracks[1 + 2 * r].is_collapsed && !collapsed.contains(&((r - first) as u16)));
++                if later_open {
++                    tracks[track + 1].collapse();
++                } else {
++                    tracks[track - 1].collapse();
++                }
++            }
++        }
++    }
++
+     // Mark first and last grid lines as collapsed
+     tracks.first_mut().unwrap().collapse();
+     tracks.last_mut().unwrap().collapse();
 diff --git a/src/compute/grid/mod.rs b/src/compute/grid/mod.rs
 index f0109c6e..2e8d3dc7 100644
 --- a/src/compute/grid/mod.rs
@@ -6190,10 +6249,22 @@ index bc9488b3..05b0f23e 100644
  
  use crate::geometry::AbsoluteAxis;
 diff --git a/src/style/grid.rs b/src/style/grid.rs
-index a3f746b1..0b709f86 100644
+index a3f746b1..e6708bee 100644
 --- a/src/style/grid.rs
 +++ b/src/style/grid.rs
-@@ -272,6 +272,60 @@ pub trait GridContainerStyle: CoreStyle {
+@@ -215,6 +215,11 @@ pub trait GridContainerStyle: CoreStyle {
+     /// Defines the size of implicitly created rows
+     fn grid_template_row_names(&self) -> Option<Self::TemplateLineNames<'_>>;
+ 
++    /// pyro: the explicit row tracks that are collapsed (`Style::collapsed_rows`), sorted.
++    #[inline(always)]
++    fn collapsed_rows(&self) -> &[u16] {
++        &[]
++    }
+     /// Controls how items get placed into the grid for auto-placed items
+     #[inline(always)]
+     fn grid_auto_flow(&self) -> GridAutoFlow {
+@@ -272,6 +277,60 @@ pub trait GridContainerStyle: CoreStyle {
              _ => alignment,
          }
      }
@@ -6254,7 +6325,7 @@ index a3f746b1..0b709f86 100644
  }
  
  /// The set of styles required for a CSS Grid item (child of a CSS Grid container)
-@@ -308,6 +362,28 @@ pub trait GridItemStyle: CoreStyle {
+@@ -308,6 +367,28 @@ pub trait GridItemStyle: CoreStyle {
              AbsoluteAxis::Vertical => self.grid_row(),
          }
      }
@@ -6284,7 +6355,7 @@ index a3f746b1..0b709f86 100644
  
  /// Controls whether grid items are placed row-wise or column-wise. And whether the sparse or dense packing algorithm is used.
 diff --git a/src/style/mod.rs b/src/style/mod.rs
-index a9e57f33..8b348d8e 100644
+index a9e57f33..0185ea7c 100644
 --- a/src/style/mod.rs
 +++ b/src/style/mod.rs
 @@ -41,7 +41,7 @@ pub use self::grid::{
@@ -6336,7 +6407,27 @@ index a9e57f33..8b348d8e 100644
      /// Defines which row in the grid the box should start and end at, when the box's containing
      /// block is a grid container
      #[cfg(feature = "grid")]
-@@ -1128,6 +1154,10 @@ impl<T: CoreStyle> CoreStyle for &'_ T {
+@@ -715,6 +741,10 @@ pub struct Style<S: CheapCloneStr = DefaultCheapStr> {
+     /// Whether a child is display:table or not. This affects children of block layouts.
+     /// This should really be part of `Display`, but it is currently seperate because table layout isn't implemented
+     pub item_is_table: bool,
++    /// pyro: the explicit row tracks (indices) that are collapsed: a table's `visibility: collapse`
++    /// rows, which take no space and no gutter (the cells' border spacing) either.
++    #[cfg(feature = "grid")]
++    pub collapsed_rows: GridTrackVec<u16>,
+     /// Is it a replaced element like an image or video? Implies `is_compressible_replaced`.
+     /// <https://html.spec.whatwg.org/multipage/rendering.html#replaced-elements>
+     pub item_is_replaced: bool,
+@@ -877,6 +907,8 @@ impl<S: CheapCloneStr> Style<S> {
+         dummy: core::marker::PhantomData,
+         display: Display::DEFAULT,
+         item_is_table: false,
++        #[cfg(feature = "grid")]
++        collapsed_rows: GridTrackVec::new(),
+         item_is_replaced: false,
+         item_is_compressible_replaced: false,
+         box_sizing: BoxSizing::BorderBox,
+@@ -1128,6 +1160,10 @@ impl<T: CoreStyle> CoreStyle for &'_ T {
          (*self).aspect_ratio()
      }
      #[inline(always)]
@@ -6347,6 +6438,37 @@ index a9e57f33..8b348d8e 100644
      fn margin(&self) -> Rect<LengthPercentageAuto> {
          (*self).margin()
      }
+@@ -1430,6 +1466,10 @@ impl<S: CheapCloneStr> GridContainerStyle for Style<S> {
+         self.grid_auto_columns.iter().copied()
+     }
+     #[inline(always)]
++    fn collapsed_rows(&self) -> &[u16] {
++        &self.collapsed_rows
++    }
++    #[inline(always)]
+     fn grid_auto_flow(&self) -> GridAutoFlow {
+         self.grid_auto_flow
+     }
+@@ -1552,6 +1592,10 @@ impl<T: GridContainerStyle> GridContainerStyle for &'_ T {
+         (*self).grid_template_row_names()
+     }
+     #[inline(always)]
++    fn collapsed_rows(&self) -> &[u16] {
++        (*self).collapsed_rows()
++    }
++    #[inline(always)]
+     fn grid_auto_flow(&self) -> GridAutoFlow {
+         (*self).grid_auto_flow()
+     }
+@@ -1636,6 +1680,8 @@ mod tests {
+             dummy: core::marker::PhantomData,
+             display: Default::default(),
+             item_is_table: false,
++            #[cfg(feature = "grid")]
++            collapsed_rows: GridTrackVec::new(),
+             item_is_replaced: false,
+             item_is_compressible_replaced: false,
+             box_sizing: Default::default(),
 diff --git a/src/tree/layout.rs b/src/tree/layout.rs
 index e250d742..dd2b4b52 100644
 --- a/src/tree/layout.rs

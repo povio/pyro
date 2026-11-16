@@ -938,3 +938,18 @@ other axis alone, at its content box, with square corners whatever its `border-r
 axis and does not round the cut; it was cut on both axes along the rounded content edge). WPT
 `css/css-overflow/rounded-overflow-clip-visible`, `-visible-clip`, `overflow-clip-x-visible-y-svg`,
 `overflow-clip-y-visible-x-svg`. Covered by `crates/pyro-render/tests/overflow_clip.rs`.
+
+Tables (round 3 lane C2T), covered by `crates/pyro-render/tests/table_paint_order.rs`:
+- `src/render.rs` (`table_borders_in_phases`, `draw_children_in_phases`): a collapsed table paints its parts in phases
+  (`Node::paints_in_table_phases`) and its borders after the block backgrounds in its cells, before their floats,
+  inline content and positioned boxes, as Blink (WPT `css-tables/tentative/collapsed-borders-painting-order-*`,
+  `collapsed-border-paint-phase-001`). The phase path no longer paints the box of an element whose `visibility`
+  hides it. A collapsed table with positioned parts leaves its borders to its last cell in one of them
+  (`last_positioned_table_cell`, `draw_deferred_table_borders`), which paints them after itself, over all of them
+  (WPT `collapsed-border-positioned-tr-td`).
+- `src/render/background.rs` (`draw_table_part_background`): a row's, row group's or column's background is painted
+  over the whole cell (the canvas mode of `draw_background_layers`), its images positioned against the part: a cell
+  spanning rows shows the row's colour below the row (WPT `css-tables/tentative/paint/background-image-row`).
+  `draw_table_part_outlines`: the outlines of rows and row groups, which paint no box, after the table's content.
+- `src/gradient.rs` (`linear_gradient`): an angled linear gradient's line goes through the centre of its tile, not
+  of the element's border box (a tile larger than the box or moved off it showed the wrong part of the gradient).

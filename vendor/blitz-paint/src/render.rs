@@ -1024,7 +1024,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         if phase != FlowPhase::All {
             match phase {
                 FlowPhase::Background => {
-                    if !node.is_inline_with_only_block_children() && !node.is_split_inline() {
+                    if !hidden && !node.is_inline_with_only_block_children() && !node.is_split_inline() {
                         cx.draw_outset_box_shadow(scene);
                         if cx.context.backgrounds && self.canvas_background != Some(node_id) {
                             cx.draw_background(scene);
@@ -1283,9 +1283,12 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         // pyro: a collapsed table whose cells hold half of the borders around them draws the
         // borders over the cells' backgrounds, after its children (Chromium paints collapsed
         // borders after the cells' backgrounds); one with uniform gutters draws them here.
-        let borders_after_cells = matches!(&cx.element.special_data,
+        // pyro: and a collapsed table paints its parts in phases, its borders after the
+        // backgrounds of their blocks, before their inline content (`table_borders_in_phases`).
+        let borders_in_phases = cx.table_borders_in_phases();
+        let borders_after_cells = !borders_in_phases && matches!(&cx.element.special_data,
             blitz_dom::node::SpecialElementData::TableRoot(table) if table.collapsed_edges.is_some());
-        if !borders_after_cells && !hidden {
+        if !borders_after_cells && !borders_in_phases && !hidden {
             cx.draw_table_borders(scene);
         }
         if paints_own_box {
@@ -1338,10 +1341,12 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
                 if !cx.draw_columns(scene, content_position, child_clip_rect) {
                     // pyro: floats among the paint children: in the phases of CSS 2.1 Appendix E.
                     // pyro: and so are in-flow boxes that overlap (`FLOW_BOXES_OVERLAP`).
-                    if node.flags.intersects(
-                        blitz_dom::node::NodeFlags::HAS_FLOAT_PAINT_CHILDREN
-                            | blitz_dom::node::NodeFlags::FLOW_BOXES_OVERLAP,
-                    ) {
+                    if borders_in_phases
+                        || node.flags.intersects(
+                            blitz_dom::node::NodeFlags::HAS_FLOAT_PAINT_CHILDREN
+                                | blitz_dom::node::NodeFlags::FLOW_BOXES_OVERLAP,
+                        )
+                    {
                         cx.draw_children_in_phases(
                             scene,
                             cx.transform,
@@ -1362,6 +1367,9 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             },
         );
         cx.transform = unscrolled_transform;
+        // pyro: the borders of a collapsed table with positioned parts, after its last positioned
+        // cell (`table_borders_deferred`).
+        cx.draw_deferred_table_borders(scene);
         if hidden {
             return;
         }
@@ -1374,6 +1382,8 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         #[cfg(feature = "scrollbars")]
         cx.draw_scrollbars(scene);
 
+        // pyro: and those of a table's rows and row groups, which paint no box.
+        cx.draw_table_part_outlines(scene);
         // The outline goes over the box and its contents (Chromium paints it
         // in a phase of its own after the foreground): one with a negative
         // `outline-offset` lies inside the box, over its background.
@@ -3427,6 +3437,62 @@ impl ElementCx<'_, '_> {
     /// pyro: the paint level of `child`, one of this node's `paint_children` (as
     /// blitz-dom's paint tree sorts them): 0 in-flow, 1 a float, 2 a positioned box or a
     /// stacking context (a positioned float too).
+    /// pyro: whether this element is a collapsed table that paints its parts in phases
+    /// ([`Node::paints_in_table_phases`]) and its borders between them
+    /// (`draw_children_in_phases`). Not in columns or a 3D plane, which paint children their way.
+    /// pyro: whether this element is a collapsed table that paints its parts in phases
+    /// ([`Node::paints_in_table_phases`]) and its borders between them
+    /// (`draw_children_in_phases`). Not in columns, which paint children their way.
+    fn table_borders_in_phases(&self) -> bool {
+        matches!(&self.element.special_data,
+            blitz_dom::node::SpecialElementData::TableRoot(table)
+                if table.border_collapse == style::computed_values::border_collapse::T::Collapse
+                    && !table.cells.is_empty())
+            && self.node.column_fragments().is_none()
+    }
+
+    /// pyro: a collapsed table with positioned parts (rows, row groups, cells) leaves its borders to
+    /// the last cell painted in one of them (`last_positioned_table_cell`): the positioned parts
+    /// paint later, in their own layers, and Chromium paints the borders over them too (WPT
+    /// `collapsed-border-positioned-tr-td`).
+    fn table_borders_deferred(&self) -> bool {
+        let blitz_dom::node::SpecialElementData::TableRoot(table) = &self.element.special_data else {
+            return false;
+        };
+        table.border_collapse == style::computed_values::border_collapse::T::Collapse
+            && last_positioned_table_cell(self.context.dom.as_ref(), table).is_some()
+    }
+
+    /// pyro: the borders of the collapsed table this cell is the last positioned cell of
+    /// (`table_borders_deferred`), after the cell.
+    fn draw_deferred_table_borders(&self, scene: &mut impl PaintScene) {
+        if !self.node.primary_styles().is_some_and(|style| {
+            style.clone_display().inside() == style::values::specified::box_::DisplayInside::TableCell
+        }) {
+            return;
+        }
+        let dom = self.context.dom.as_ref();
+        let Some(table_node) = self.node.layout_parent.get().and_then(|id| dom.get_node(id)) else { return };
+        let Some(blitz_dom::node::SpecialElementData::TableRoot(table)) =
+            table_node.element_data().map(|element| &element.special_data)
+        else {
+            return;
+        };
+        if table.border_collapse != style::computed_values::border_collapse::T::Collapse
+            || last_positioned_table_cell(dom, table) != Some(self.node.id)
+            || table_node
+                .primary_styles()
+                .is_none_or(|style| style.get_inherited_box().visibility != StyloVisibility::Visible)
+        {
+            return;
+        }
+        let location = self.node.final_layout().location;
+        let transform = self.transform
+            * Affine::translate(Vec2::new(-location.x as f64, -location.y as f64) * self.scale);
+        let table_cx = self.context.element_cx(table_node, *table_node.final_layout(), transform, None);
+        table_cx.draw_table_borders(scene);
+    }
+
     fn paint_level(&self, child: &Node) -> u8 {
         let Some(style) = child.primary_styles() else {
             return 0;
@@ -3463,6 +3529,15 @@ impl ElementCx<'_, '_> {
             clip_rect,
             FlowPhase::Background,
         );
+        // pyro: a collapsed table's borders, over the backgrounds of the blocks in its cells
+        // (Blink paints them after its descendants' block backgrounds), under their floats and
+        // inline content.
+        if self.table_borders_in_phases()
+            && !self.table_borders_deferred()
+            && self.style.get_inherited_box().visibility == StyloVisibility::Visible
+        {
+            self.draw_table_borders(scene);
+        }
         if let Some(children) = &*self.node.paint_children.borrow() {
             let tree = self.context.dom.as_ref().tree();
             for &child_id in children {
@@ -3516,7 +3591,7 @@ impl ElementCx<'_, '_> {
             if self.paint_level(child) != 0 {
                 continue;
             }
-            let child_phase = if child.paints_in_ancestor_phases() {
+            let child_phase = if child.paints_in_ancestor_phases() || child.paints_in_table_phases() {
                 phase
             } else if phase == FlowPhase::Outline {
                 // (A box painted whole paints its outline with it.)
@@ -4243,4 +4318,25 @@ struct InlineBoxFragment {
     reaches_above: bool,
     /// pyro: its element's style on the first line, in place of its own (`::first-line`).
     style: Option<style::servo_arc::Arc<ComputedValues>>,
+}
+
+/// pyro: the last cell (in tree order, which is the order positioned boxes paint in) of a collapsed
+/// table that is positioned or in a positioned row or row group; `None` without one.
+fn last_positioned_table_cell(dom: &BaseDocument, table: &blitz_dom::TableContext) -> Option<NodeId> {
+    let positioned = |id: NodeId| {
+        dom.get_node(id)
+            .and_then(|node| node.primary_styles())
+            .is_some_and(|style| style.clone_position() != style::computed_values::position::T::Static)
+    };
+    let row_positioned: Vec<bool> =
+        table.rows.iter().map(|row| positioned(row.node_id) || row.group.is_some_and(positioned)).collect();
+    if !row_positioned.iter().any(|p| *p) && !table.cells.iter().any(|cell| positioned(cell.node_id)) {
+        return None;
+    }
+    table
+        .cells
+        .iter()
+        .rev()
+        .find(|cell| row_positioned.get(cell.row as usize).copied().unwrap_or(false) || positioned(cell.node_id))
+        .map(|cell| cell.node_id)
 }

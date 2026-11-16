@@ -102,6 +102,7 @@ mod table_collapsed_borders;
 mod table_flex_intrinsic_height;
 mod table_part_positioning;
 mod table_flex_items;
+mod table_paint_order;
 mod table_parts;
 mod table_structure;
 mod tagged_images;
