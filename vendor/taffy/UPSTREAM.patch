@@ -6607,10 +6607,10 @@ index 6ad11edc..16653270 100644
          })
      }
 diff --git a/src/compute/grid/types/named.rs b/src/compute/grid/types/named.rs
-index 70838fe7..42d39209 100644
+index 70838fe7..674c80a0 100644
 --- a/src/compute/grid/types/named.rs
 +++ b/src/compute/grid/types/named.rs
-@@ -598,6 +598,92 @@ impl<S: CheapCloneStr> NamedLineResolver<S> {
+@@ -598,6 +598,107 @@ impl<S: CheapCloneStr> NamedLineResolver<S> {
          self.areas
      }
  
@@ -6623,6 +6623,18 @@ index 70838fe7..42d39209 100644
 +            AbsoluteAxis::Horizontal => (&mut self.column_lines, &mut self.column_line_name_pairs, GridAreaAxis::Column),
 +            AbsoluteAxis::Vertical => (&mut self.row_lines, &mut self.row_line_name_pairs, GridAreaAxis::Row),
 +        };
++        // The edges of the subgrid's own named areas past its last line are on its last line (as Blink: WPT
++        // `subgrid/line-names-008`)
++        if let Some(last) = u32::try_from(inherited.len()).ok().filter(|last| *last > 0) {
++            for area in self.areas.values_mut() {
++                for end in [GridAreaEnd::Start, GridAreaEnd::End] {
++                    let line = area.line_mut(area_axis, end);
++                    if *line > last {
++                        *line = last;
++                    }
++                }
++            }
++        }
 +        for (index, names) in own.iter().enumerate() {
 +            for name in names {
 +                pairs.push((index as u32 + 1, name.clone()));
@@ -6679,13 +6691,16 @@ index 70838fe7..42d39209 100644
 +            let overlaps = |(start, end): (i32, i32), line: Line<OriginZeroLine>| {
 +                start < line.end.0 as i32 && end > line.start.0 as i32
 +            };
-+            if !overlaps(columns, area.horizontal) || !overlaps(rows, area.vertical) {
-+                continue;
-+            }
++            // pyro: an area's implicit line names are names of the grid's lines, which the subgrid takes where it
++            // spans the area in this axis, clamped to its edge lines, whatever rows (columns) it is in (as Blink;
++            // WPT `subgrid/line-names-005`)
 +            let ((start, end), line) = match axis {
 +                AbsoluteAxis::Horizontal => (columns, area.horizontal),
 +                AbsoluteAxis::Vertical => (rows, area.vertical),
 +            };
++            if !overlaps((start, end), line) {
++                continue;
++            }
 +            let first = start.max(line.start.0 as i32) - line.start.0 as i32;
 +            let last = end.min(line.end.0 as i32) - line.start.0 as i32;
 +            let name = name.0.as_ref();

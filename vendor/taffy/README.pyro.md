@@ -551,3 +551,6 @@ Subgrids (css-grid-2 §9): a subgrid's items (virtual items) join the parent's b
 with their alignment axes swapped (nested, reversed: fallback alignment). `subgrid::record_subgrid_baselines` gives
 the subgrid each line's group baseline and the parent's `baseline_synthesis` (`SubgridAxisContext::baselines`,
 `baseline_synthesis`), which its own final shims take.
+`compute/grid/types/named.rs` (`add_subgrid_line_names`): in a subgridded axis, the edges of the subgrid's own named
+areas past its last line are on its last line, and the parent's area names reach a subgrid that spans the area in
+that axis whatever rows (columns) it is in (`area_names_for_subgrid`), as Blink (WPT `subgrid/line-names-*`).
