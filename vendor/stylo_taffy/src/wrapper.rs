@@ -41,6 +41,10 @@ bitflags! {
         /// pyro: the node is a replaced element with a natural aspect ratio (a loaded image, a
         /// canvas): `aspect-ratio: auto <ratio>` then means the natural one (css-sizing-4 §5.1).
         const HAS_NATURAL_RATIO = 1 << 6;
+        /// pyro: the node is the `<body>` whose `overflow` the viewport takes (CSS Overflow 3
+        /// §3.3): its used `overflow` is `visible` in both axes, so it is no scroll container
+        /// (it does not establish a block formatting context, its margins collapse).
+        const OVERFLOW_TO_VIEWPORT = 1 << 7;
     }
 }
 
@@ -217,6 +221,9 @@ impl<T: Deref<Target = ComputedValues>> taffy::CoreStyle for TaffyStyloStyle<T> 
 
     #[inline]
     fn overflow(&self) -> taffy::Point<taffy::Overflow> {
+        if self.flags.contains(StyleFlags::OVERFLOW_TO_VIEWPORT) {
+            return taffy::Point { x: taffy::Overflow::Visible, y: taffy::Overflow::Visible };
+        }
         let box_styles = self.style.get_box();
         let overflow = taffy::Point {
             x: convert::overflow(box_styles.overflow_x),

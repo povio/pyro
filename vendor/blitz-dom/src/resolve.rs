@@ -752,6 +752,33 @@ impl BaseDocument {
             && html.clone_contain() == Contain::empty()
     }
 
+    /// pyro: flags the `<body>` whose `overflow` the viewport takes (`NodeFlags::
+    /// OVERFLOW_TO_VIEWPORT`), so that layout reads its `overflow` as `visible` (CSS Overflow 3
+    /// §3.3): `body { overflow: hidden }` made it a scroll container, a block formatting context
+    /// root whose children's margins no longer collapsed through it. A body whose flag changes
+    /// (the root's `overflow` or either's containment changed) is laid out again.
+    fn mark_viewport_body(&mut self) {
+        let Some(root) = self.try_root_element() else {
+            return;
+        };
+        let root_id = root.id;
+        let bodies: Vec<NodeId> = root
+            .children
+            .iter()
+            .copied()
+            .filter(|&child| self.nodes[child].data.is_element_with_tag_name(&crate::local_name!("body")))
+            .collect();
+        for body in bodies {
+            let goes = self.body_overflow_goes_to_viewport(body);
+            let node = &mut self.nodes[body];
+            if node.flags.contains(NodeFlags::OVERFLOW_TO_VIEWPORT) != goes {
+                node.flags.set(NodeFlags::OVERFLOW_TO_VIEWPORT, goes);
+                node.clear_layout_cache();
+                self.nodes[root_id].clear_layout_cache();
+            }
+        }
+    }
+
     /// Ensure that the layout_children field is populated for all nodes
     /// pyro: the `@font-feature-values` rules in effect, for the style conversions of the
     /// layout about to run on this thread (`font-variant-alternates`).
@@ -1124,6 +1151,7 @@ impl BaseDocument {
         }
         self.last_layout_space = Some(available_space);
         phase_profile::laid_out();
+        self.mark_viewport_body();
 
         let root_element_id = crate::taffy_node_id(self.root_element().id);
 

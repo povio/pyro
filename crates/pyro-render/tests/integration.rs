@@ -93,6 +93,7 @@ mod text_wrap_balance;
 mod text_overflow_ellipsis;
 mod three_d_contexts;
 mod transform_3d;
+mod viewport_overflow;
 mod vertical_text_decorations;
 mod unicode_bidi;
 mod vertical_writing_mode;

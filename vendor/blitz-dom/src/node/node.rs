@@ -146,6 +146,10 @@ bitflags! {
         /// pyro: the box's last layout clamped its lines (`layout::line_clamp`): one of
         /// its blocks holds a clamp mark.
         const CLAMPS_LINES = 1 << 25;
+        /// pyro: the `<body>` whose `overflow` the viewport takes
+        /// (`BaseDocument::body_overflow_goes_to_viewport`): its layout style reads `overflow:
+        /// visible`. Set before each layout pass (`BaseDocument::mark_viewport_body`).
+        const OVERFLOW_TO_VIEWPORT = 1 << 26;
     }
 }
 
@@ -2039,6 +2043,10 @@ impl Node {
         }
         if self.flags.contains(NodeFlags::IS_SPLIT_INLINE) {
             flags |= stylo_taffy::StyleFlags::IS_SPLIT_INLINE;
+        }
+        // pyro
+        if self.flags.contains(NodeFlags::OVERFLOW_TO_VIEWPORT) {
+            flags |= stylo_taffy::StyleFlags::OVERFLOW_TO_VIEWPORT;
         }
 
         #[cfg(feature = "writing-mode")]

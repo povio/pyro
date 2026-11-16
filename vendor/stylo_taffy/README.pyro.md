@@ -27,3 +27,6 @@ entry) once a Blitz release carries these commits and changes.
 - `src/convert.rs`, `src/wrapper.rs`: `BlockItemStyle::min_size_keyword`/`max_size_keyword` answer the sizing
   keywords of `min-width`, `max-width`, `min-height` and `max-height` (`min_size`/`max_size` still say `auto` for
   them), for Taffy's block layout (vendor/taffy/README.pyro.md).
+- `src/wrapper.rs`: `StyleFlags::OVERFLOW_TO_VIEWPORT`, set by blitz-dom on the `<body>` whose `overflow` the viewport
+  takes (CSS Overflow 3 §3.3): `overflow()` answers `visible` in both axes, so `body { overflow: hidden }` makes no
+  scroll container (no block formatting context; its children's margins collapse through it).

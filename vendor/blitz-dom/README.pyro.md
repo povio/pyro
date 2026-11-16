@@ -1919,3 +1919,13 @@ Covered by `crates/pyro-render/tests/initial_letter.rs`.
 
 Covered by `crates/pyro-render/tests/selection_highlight.rs` and the `dom_selection` unit tests.
 
+## The `<body>` whose `overflow` the viewport takes (WPT round 3, lane G)
+
+`src/resolve.rs` (`mark_viewport_body`, before each layout pass), `src/node/node.rs` (`NodeFlags::OVERFLOW_TO_VIEWPORT`,
+`Node::layout_style`): the `<body>` whose `overflow` goes to the viewport (`body_overflow_goes_to_viewport`: the root's
+is `visible`, neither has containment) is laid out with `overflow: visible` (stylo_taffy's
+`StyleFlags::OVERFLOW_TO_VIEWPORT`). `body { overflow: hidden }` made it a scroll container: a block formatting context
+root whose first child's top margin no longer collapsed with its own (8px lower than in browsers; WPT
+`css/css-grid/layout-algorithm/grid-as-flex-item-should-not-shrink-to-fit-*`). A body whose flag changes is laid out
+again with the root. Paint and scrolling already treated such a body's `overflow` as the viewport's. Covered by
+`crates/pyro-render/tests/viewport_overflow.rs`.
