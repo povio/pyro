@@ -1097,15 +1097,12 @@ impl<T: Deref<Target = ComputedValues>> taffy::GridItemStyle for TaffyStyloStyle
         self.grid_row_placement()
     }
 
-    /// pyro: a grid container in flow whose template in the parent's `axis` is `subgrid`, with neither
-    /// layout nor paint containment (each makes it an independent formatting context, css-grid-2 §7.2),
-    /// in the parent's orientation (orthogonal subgrids are not laid out as such).
+    /// pyro: a grid container in flow whose template in the parent's `axis` is `subgrid` (its own other axis
+    /// in an orthogonal flow), with neither layout nor paint containment (each makes it an independent
+    /// formatting context, css-grid-2 §7.2).
     fn is_subgrid(&self, axis: taffy::AbsoluteAxis) -> bool {
         use style::values::computed::Contain;
         if self.effective_display().inside() != stylo::DisplayInside::Grid {
-            return false;
-        }
-        if self.style.writing_mode.is_vertical() != self.layout_wm().is_vertical() {
             return false;
         }
         if matches!(self.style.clone_position(), stylo::Position::Absolute | stylo::Position::Fixed) {
@@ -1120,11 +1117,34 @@ impl<T: Deref<Target = ComputedValues>> taffy::GridItemStyle for TaffyStyloStyle
         ) {
             return false;
         }
-        let source = match axis {
+        let source = match self.subgrid_axis(axis) {
             taffy::AbsoluteAxis::Horizontal => self.template_columns_source(),
             taffy::AbsoluteAxis::Vertical => self.template_rows_source(),
         };
         matches!(source, stylo::GenericGridTemplateComponent::Subgrid(_))
+    }
+
+    /// pyro: the parent's inline axis is this box's block axis in an orthogonal flow
+    fn subgrid_axis(&self, axis: taffy::AbsoluteAxis) -> taffy::AbsoluteAxis {
+        if self.style.writing_mode.is_vertical() != self.layout_wm().is_vertical() {
+            axis.other_axis()
+        } else {
+            axis
+        }
+    }
+
+    /// pyro: whether the parent's tracks in `axis` and this subgrid's in the matching axis of its own run
+    /// opposite ways on the screen
+    fn subgrid_reversed(&self, axis: taffy::AbsoluteAxis) -> bool {
+        // Whether the tracks along a writing mode's inline (`Horizontal`) or block axis run right to left or
+        // bottom to top
+        let reversed = |wm: WritingMode, axis: taffy::AbsoluteAxis| match (axis, wm.is_vertical()) {
+            (taffy::AbsoluteAxis::Horizontal, false) => !wm.is_bidi_ltr(),
+            (taffy::AbsoluteAxis::Horizontal, true) => !wm.is_inline_tb(),
+            (taffy::AbsoluteAxis::Vertical, false) => false,
+            (taffy::AbsoluteAxis::Vertical, true) => !wm.is_vertical_lr(),
+        };
+        reversed(self.layout_wm(), axis) != reversed(self.style.writing_mode, self.subgrid_axis(axis))
     }
 
     #[inline]

@@ -41,3 +41,6 @@ entry) once a Blitz release carries these commits and changes.
   `left`/`right` by the line-left side) and `BlockItemStyle::original_display_is_inline`, for the static positions of
   inline-level out-of-flow boxes in block containers (vendor/taffy/README.pyro.md, "Static positions and positioned
   table parts").
+- `src/wrapper.rs`: `GridItemStyle::subgrid_axis`/`subgrid_reversed` for orthogonal subgrids: the parent's inline axis is
+  the child's block axis when one of them is vertical, and whether the tracks run opposite ways is found from both
+  writing modes (inline: `direction` or `is_inline_tb`; block: top to bottom, or `vertical-lr`/`-rl`).

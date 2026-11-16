@@ -226,6 +226,12 @@ pub trait GeometrySource {
     fn sync_styles(&self, _dom: &Dom, _style: &crate::style::StyleEngine) {}
     /// One element's box as of the last sync (`None`: not rendered).
     fn element_box(&self, key: u64) -> Option<ExternalBox>;
+    /// The engine's resolved value of one element's `property` as of the last sync (`None`: the engine
+    /// has none, and the document's own cascade answers). Asked for what only layout knows: a subgrid's
+    /// `grid-template-columns`/`-rows` (`subgrid` with each line's names).
+    fn resolved_style_value(&self, _key: u64, _property: &str) -> Option<String> {
+        None
+    }
     /// One element's boxes as quads as of the last sync (`None`: not
     /// rendered, or the engine does not report them).
     fn element_quads(&self, _key: u64) -> Option<ExternalQuads> {

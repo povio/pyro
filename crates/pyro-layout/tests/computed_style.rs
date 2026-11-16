@@ -323,3 +323,15 @@ fn properties_stylo_does_not_parse_still_cascade() {
     assert_eq!(v("c", "line-clamp"), "3", "only matching @media apply");
     assert_eq!(v("cc", "line-clamp"), "none", "not inherited");
 }
+
+/// pyro (lane G): a subgrid's `grid-template-columns` resolves to `subgrid` with the names of each of
+/// the lines it spans (its own), which only its layout knows (css-grid-2 §7.2.6.2).
+#[test]
+fn a_subgrids_template_resolves_to_its_lines() {
+    let p = Page::new(
+        r#"<!doctype html><div style="display:grid;grid-template-columns:10px 20px 30px">
+        <div id=s style="display:grid;grid-template-columns:subgrid [a];grid-column:span 3"></div></div>"#,
+    );
+    let el = p.find("#s");
+    assert_eq!(p.layout.computed_style_value(&p.dom.borrow(), el, "grid-template-columns"), "subgrid [a] [] [] []");
+}

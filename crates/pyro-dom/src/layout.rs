@@ -3143,6 +3143,19 @@ impl Layout {
                 .unwrap_or_else(|| format!("{}px", self.style.computed_font_size(dom, Some(el))));
         }
         let declared = self.style.computed_value(dom, el, name);
+        // pyro: a subgrid's template resolves to `subgrid` with each of its lines' names, which only its
+        // layout knows (how many tracks it spans; css-grid-2 §7.2.6.2)
+        if matches!(name, "grid-template-columns" | "grid-template-rows")
+            && declared.as_deref().is_some_and(|value| value.starts_with("subgrid"))
+        {
+            if let Some(value) = self
+                .synced_geometry_source(dom)
+                .and_then(|source| source.resolved_style_value(crate::snapshot::render_key(el), name))
+                .filter(|value| value.starts_with("subgrid"))
+            {
+                return value;
+            }
+        }
         if name == "width" || name == "height" {
             if !self.is_visible(dom, el) {
                 return "auto".into();

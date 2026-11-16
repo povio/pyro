@@ -371,6 +371,19 @@ pub trait GridItemStyle: CoreStyle {
     fn is_subgrid(&self, _axis: AbsoluteAxis) -> bool {
         false
     }
+
+    /// pyro: for a subgrid, its own axis that is its parent's `axis` (the other one in an orthogonal flow)
+    #[inline(always)]
+    fn subgrid_axis(&self, axis: AbsoluteAxis) -> AbsoluteAxis {
+        axis
+    }
+
+    /// pyro: for a subgrid, whether its tracks in its own axis that is its parent's `axis` run the other way
+    /// from the parent's (another `direction`, block flow or inline flow)
+    #[inline(always)]
+    fn subgrid_reversed(&self, _axis: AbsoluteAxis) -> bool {
+        false
+    }
 }
 
 /// Controls whether grid items are placed row-wise or column-wise. And whether the sparse or dense packing algorithm is used.

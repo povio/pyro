@@ -1294,6 +1294,15 @@ impl Renderer {
         changed
     }
 
+    /// The resolved value of `property` of the element keyed `key` in `page`'s persistent document as of
+    /// the last sync (Blink's `getComputedStyle` value: used track sizes, a subgrid's line names; blitz-dom's
+    /// `resolved_style_value`). `None`: not mirrored.
+    pub fn resolved_style_value(&self, page: u64, key: u64, property: &str) -> Option<String> {
+        let m = self.mirrors.get(&page)?;
+        let id = m.node(key)?;
+        Some(m.doc.resolved_style_value(id, property))
+    }
+
     /// The computed style of the element keyed `key` in `page`'s persistent
     /// document as of the last sync; one under `display: none` (which the
     /// traversal does not style) is resolved now. `None`: not mirrored.

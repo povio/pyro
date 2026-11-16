@@ -386,8 +386,13 @@ A subgrid in its rows only records its own columns (`SubgridContext::own_columns
 lays it out at its width if needed (`resolve_standalone_widths`): its items' heights depend on its columns. The resolved
 value of a subgridded axis is `subgrid` with each line's own names (`DetailedGridTracksInfo::subgrid`).
 
-Not done: orthogonal subgrids (laid out as `none`), baseline alignment across a subgrid, the subgrid's own rows for a
-subgrid in its columns only (its items' column contributions see an indefinite height). Covered by
+A subgrid in an orthogonal flow matches its parent's axes swapped: `GridItemStyle::subgrid_axis` names its own axis for
+each of the parent's, `subgrid_reversed` whether its tracks there run the other way (stylo_taffy compares the writing
+modes' track progressions), and the context, the virtual items and the track sizes are mapped through them (subgrids
+nested in an orthogonal one are left to it).
+
+Not done: baseline alignment across a subgrid, the subgrid's own rows for a subgrid in its columns only (its items'
+column contributions see an indefinite height). Covered by
 `crates/pyro-render/tests/subgrid.rs`; WPT `css/css-grid/subgrid`: 36 → 63 of 102 reftests.
 
 ## Natural aspect ratios of flex items (WPT round 3, lane G)

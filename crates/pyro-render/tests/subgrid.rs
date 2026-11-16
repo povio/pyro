@@ -119,3 +119,18 @@ fn subgrid_tracks_follow_the_parents_lines_when_the_gap_is_wider() {
     );
     check(&img, &[(170, 10, WHITE), (180, 10, BLUE), (270, 10, BLUE), (280, 10, GREEN), (370, 10, GREEN), (380, 10, WHITE)]);
 }
+
+/// A `vertical-lr` subgrid in its rows inside a horizontal grid: its rows are the parent's columns,
+/// running left to right, so its two items sit in the parent's 30px and 50px columns.
+#[test]
+fn an_orthogonal_subgrids_rows_are_its_parents_columns() {
+    let img = render(
+        "<div style='display:grid;grid-template-columns:30px 50px;justify-content:start'>\
+           <div style='display:grid;writing-mode:vertical-lr;grid-template-rows:subgrid;grid-column:span 2'>\
+             <div style='inline-size:20px;background:green'></div>\
+             <div style='inline-size:20px;background:blue'></div>\
+           </div>\
+         </div>",
+    );
+    check(&img, &[(15, 10, GREEN), (29, 10, GREEN), (31, 10, BLUE), (79, 10, BLUE), (81, 10, WHITE)]);
+}

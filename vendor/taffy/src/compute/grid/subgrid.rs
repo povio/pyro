@@ -181,8 +181,8 @@ pub(super) fn child_placement<Tree: LayoutGridContainer>(
     if subgrid.width || subgrid.height {
         let own = tree.get_grid_container_style(child);
         let span = |axis| {
-            own.subgrid_line_names(axis).map_or(1, |list| list.fixed_len().saturating_sub(1).clamp(1, MAX_GRID_TRACKS as usize))
-                as u16
+            own.subgrid_line_names(child_style.subgrid_axis(axis))
+                .map_or(1, |list| list.fixed_len().saturating_sub(1).clamp(1, MAX_GRID_TRACKS as usize)) as u16
         };
         if subgrid.width {
             column = with_automatic_span(column, span(AbsoluteAxis::Horizontal));
@@ -369,6 +369,20 @@ pub(super) struct SubgridParent<'a, S: CheapCloneStr> {
     pub percent_basis: Option<f32>,
 }
 
+/// How a subgrid's own axis matches one of its parent's: which of its own it is (the other one in an
+/// orthogonal flow), and whether its tracks run the other way
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct AxisMap {
+    own: AbsoluteAxis,
+    reversed: bool,
+}
+
+/// The maps of a subgrid's axes against those of the grid whose writing mode its `style` is read in
+fn axis_maps(style: &impl GridItemStyle) -> InBothAbsAxis<AxisMap> {
+    let map = |axis| AxisMap { own: style.subgrid_axis(axis), reversed: style.subgrid_reversed(axis) };
+    InBothAbsAxis { horizontal: map(AbsoluteAxis::Horizontal), vertical: map(AbsoluteAxis::Vertical) }
+}
+
 /// The context a grid (`parent`) gives its child `node`, a subgrid in `axes` placed at `area` (the grid's
 /// origin-zero lines): the spanned track counts and their line names, the subgrid's gaps, and the track
 /// sizes it was given before while it spans as many tracks (until the grid sizes them again)
@@ -378,7 +392,7 @@ fn child_context<Tree: LayoutGridContainer>(
     axes: Size<bool>,
     area: InBothAbsAxis<Line<OriginZeroLine>>,
     parent: &SubgridParent<'_, Tree::CustomIdent>,
-    child_direction: Direction,
+    maps: InBothAbsAxis<AxisMap>,
 ) -> SubgridContext<Tree::CustomIdent> {
     let previous = tree.subgrid_context(node);
     let mut context = SubgridContext {
@@ -391,7 +405,7 @@ fn child_context<Tree: LayoutGridContainer>(
         }
         let line = area.get(axis);
         let track_count = line.span();
-        let reversed = axis == AbsoluteAxis::Horizontal && child_direction != parent.direction;
+        let AxisMap { own, reversed } = maps.get(axis);
         let mut line_names = parent.names.names_of_lines(axis, line.start.0, line.end.0);
         for (index, name) in parent.names.area_names_for_subgrid(axis, area) {
             if let Some(names) = line_names.get_mut(index as usize) {
@@ -402,13 +416,13 @@ fn child_context<Tree: LayoutGridContainer>(
             line_names.reverse();
         }
         let previous_axis =
-            previous.as_ref().and_then(|previous| previous.axis(axis)).filter(|previous| previous.track_count == track_count);
+            previous.as_ref().and_then(|previous| previous.axis(own)).filter(|previous| previous.track_count == track_count);
         let track_sizes = previous_axis.and_then(|previous| previous.track_sizes.clone());
         let track_spans = previous_axis.and_then(|previous| previous.track_spans.clone());
-        *context.axis_mut(axis) = Some(SubgridAxisContext {
+        *context.axis_mut(own) = Some(SubgridAxisContext {
             track_count,
             line_names,
-            gap: subgrid_gap(tree, node, axis, parent.gap.get_abs(axis), parent.percent_basis),
+            gap: subgrid_gap(tree, node, own, parent.gap.get_abs(axis), parent.percent_basis),
             reversed,
             track_sizes,
             track_spans,
@@ -433,13 +447,13 @@ pub(super) fn prepare_subgrid_items<Tree: LayoutGridContainer>(
             continue;
         }
         let area = InBothAbsAxis { horizontal: items[index].column, vertical: items[index].row };
-        let direction = tree.get_grid_child_style(node).direction();
-        let context = child_context(tree, node, subgrid, area, parent, direction);
+        let maps = axis_maps(&tree.get_grid_child_style(node));
+        let context = child_context(tree, node, subgrid, area, parent, maps);
         tree.set_subgrid_context(node, Some(context.clone()));
         let item = &mut items[index];
         item.excluded = subgrid;
         stretch_subgrid_item(item, subgrid);
-        collect_virtual_items(tree, node, &context, area, subgrid, Rect::ZERO, parent, items);
+        collect_virtual_items(tree, node, &context, area, subgrid, Rect::ZERO, parent, maps, items);
     }
 }
 
@@ -461,8 +475,11 @@ fn collect_virtual_items<Tree: LayoutGridContainer>(
     sizing: Size<bool>,
     edge_extra: Rect<f32>,
     parent: &SubgridParent<'_, Tree::CustomIdent>,
+    maps: InBothAbsAxis<AxisMap>,
     out: &mut Vec<GridItem>,
 ) {
+    // An orthogonal subgrid's own axes are the sizing grid's swapped
+    let orthogonal = maps.horizontal.own != AbsoluteAxis::Horizontal;
     let style = tree.get_grid_child_style(node);
     let mbp = margin_border_padding(tree, &style, parent.percent_basis);
     let direction = style.direction();
@@ -496,7 +513,8 @@ fn collect_virtual_items<Tree: LayoutGridContainer>(
         item.owner_lines = Size { width: item.column, height: item.row };
         let mut extra = Rect::ZERO;
         for axis in [AbsoluteAxis::Horizontal, AbsoluteAxis::Vertical] {
-            let Some(sub) = context.axis(axis).filter(|_| sizing.get_abs(axis)) else {
+            let own = maps.get(axis).own;
+            let Some(sub) = context.axis(own).filter(|_| sizing.get_abs(axis)) else {
                 // The subgrid's own tracks: the item's area in the sizing grid is the subgrid's whole span
                 match axis {
                     AbsoluteAxis::Horizontal => item.column = area.horizontal,
@@ -505,7 +523,7 @@ fn collect_virtual_items<Tree: LayoutGridContainer>(
                 continue;
             };
             let count = sub.track_count as i16;
-            let line = local.get(axis);
+            let line = local.get(own);
             let (start, end) = if sub.reversed { (count - line.end.0, count - line.start.0) } else { (line.start.0, line.end.0) };
             let origin = area.get(axis).start.0;
             let mapped = Line { start: OriginZeroLine(origin + start), end: OriginZeroLine(origin + end) };
@@ -522,7 +540,11 @@ fn collect_virtual_items<Tree: LayoutGridContainer>(
         item.is_virtual = true;
         item.extra_margin = extra;
         let mut excluded = Size { width: !sizing.width, height: !sizing.height };
-        let nested = Size { width: item.subgrid.width && sizing.width, height: item.subgrid.height && sizing.height };
+        // (Subgrids nested in an orthogonal one are left to it.)
+        let nested = Size {
+            width: item.subgrid.width && sizing.width && !orthogonal,
+            height: item.subgrid.height && sizing.height && !orthogonal,
+        };
         if nested.width || nested.height {
             // A nested subgrid: its lines' names are this subgrid's for its area; its direction is compared
             // with the sizing grid's, whose lines its items are mapped to.
@@ -535,13 +557,27 @@ fn collect_virtual_items<Tree: LayoutGridContainer>(
                 direction,
                 percent_basis: parent.percent_basis,
             };
-            let item_direction = tree.get_grid_child_style(item.node).direction();
-            let mut nested_context = child_context(tree, item.node, nested, local, &nested_parent, item_direction);
-            if let Some(columns) = nested_context.columns.as_mut() {
-                columns.reversed = item_direction != parent.direction;
+            // Its maps against the sizing grid, and against this subgrid (its names are this subgrid's)
+            let nested_maps = axis_maps(&tree.get_grid_child_style(item.node));
+            let relative = InBothAbsAxis {
+                horizontal: AxisMap {
+                    own: nested_maps.horizontal.own,
+                    reversed: nested_maps.horizontal.reversed != maps.horizontal.reversed,
+                },
+                vertical: AxisMap {
+                    own: nested_maps.vertical.own,
+                    reversed: nested_maps.vertical.reversed != maps.vertical.reversed,
+                },
+            };
+            let mut nested_context = child_context(tree, item.node, nested, local, &nested_parent, relative);
+            for axis in [AbsoluteAxis::Horizontal, AbsoluteAxis::Vertical] {
+                let map = nested_maps.get(axis);
+                if let Some(sub) = nested_context.axis_mut(map.own).as_mut() {
+                    sub.reversed = map.reversed;
+                }
             }
             let mapped_area = InBothAbsAxis { horizontal: item.column, vertical: item.row };
-            collect_virtual_items(tree, item.node, &nested_context, mapped_area, nested, extra, parent, out);
+            collect_virtual_items(tree, item.node, &nested_context, mapped_area, nested, extra, parent, nested_maps, out);
             stretch_subgrid_item(&mut item, nested);
             excluded.width |= nested.width;
             excluded.height |= nested.height;
@@ -819,8 +855,9 @@ pub(super) fn update_subgrid_track_sizes<Tree: LayoutGridContainer>(
         let Some(mut context) = tree.subgrid_context(item.node) else { continue };
         let style = tree.get_grid_child_style(item.node);
         let mbp = margin_border_padding(tree, &style, parent.percent_basis);
+        let own = style.subgrid_axis(axis);
         drop(style);
-        let Some(sub) = context.axis_mut(axis).as_mut() else { continue };
+        let Some(sub) = context.axis_mut(own).as_mut() else { continue };
         let (edge_start, edge_end) = match axis {
             AbsoluteAxis::Horizontal if rtl => (mbp.right, mbp.left),
             AbsoluteAxis::Horizontal => (mbp.left, mbp.right),
