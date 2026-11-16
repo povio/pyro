@@ -146,10 +146,11 @@ impl FontInfo {
             // font's, which left 600 on a regular face thin). See README.pyro.md.
             synth.embolden = true;
         }
-        // pyro: a face whose `font-style` range is all oblique (`oblique 45deg 67.5deg`) is used
-        // at the angle of its range nearest the one asked for (0deg for normal, 14deg for italic).
+        // pyro: a face whose `font-style` range is all oblique (`oblique 45deg 67.5deg`, or one
+        // angle) is used at the angle of its range nearest the one asked for (0deg for normal,
+        // 14deg for italic).
         let oblique_range = match (self.style, self.slant_range) {
-            (FontStyle::Oblique(_), Some((a, b))) if a != b && self.has_slant_axis() => Some((a.min(b), a.max(b))),
+            (FontStyle::Oblique(_), Some((a, b))) if self.has_slant_axis() => Some((a.min(b), a.max(b))),
             _ => None,
         };
         if let Some((min, max)) = oblique_range {

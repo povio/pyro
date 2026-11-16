@@ -106,8 +106,8 @@ attribute (the lower bound). A variable font's `wght`/`wdth` axis is held to the
 whose range has no bold in it is faked bold, as on a face without the axis (WPT `matching/range-descriptor-reversed`,
 `variations/font-descriptor-range-reversed*`, `variations/font-weight-3`).
 
-A face whose `font-style` range is all oblique (`oblique 45deg 67.5deg`) has its `slnt` axis held to the angle of the
-range nearest the request (0deg for normal, 14deg for italic) whatever is asked (WPT
+A face whose `font-style` range is all oblique (`oblique 45deg 67.5deg`, or one angle) has its `slnt` axis held to the
+angle of the range nearest the request (0deg for normal, 14deg for italic) whatever is asked (WPT
 `matching/fixed-stretch-style-over-weight`).
 
 `src/font.rs` (`synthesis`): a face a `@font-face` rule declares italic, of a variable font with an `ital` axis, is

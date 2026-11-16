@@ -846,3 +846,7 @@ Covered by `crates/pyro-render/tests/selection_highlight.rs`.
 - `src/render/border_image.rs` (`unturned_raster`): under `image-orientation: none` a border image is sliced from
   its pixels as stored, before the EXIF orientation turned them (WPT `image-orientation-border-image`). Covered by
   `crates/pyro-render/tests/border_image_orientation.rs`.
+- `src/gradient.rs` (`srgb_filled`, `Ramp::curved`): in sRGB a segment whose stops miss a component is drawn
+  between its exact ends (each missing component the other end's, 0 where both miss it) by the renderer's own
+  interpolation, as the equivalent hard-stop gradient is; it was subdivided through the mix, off by a level here
+  and there (WPT `gradient-none-interpolation`). Covered by `crates/pyro-render/tests/gradient_stops_image_set.rs`.

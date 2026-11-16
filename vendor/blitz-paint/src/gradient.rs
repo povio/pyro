@@ -553,6 +553,12 @@ impl Ramp {
         // A missing component is the other stop's across the whole segment, its ends too
         // (`color(srgb none 0.5 0.5)` after a red stop is red there): those go through the mix.
         let missing = has_missing(&from.color) || has_missing(&to.color);
+        // pyro: in sRGB the segment's ends are exact: each missing component the other end's (0
+        // where both miss it), and the renderer's line between them is the interpolation.
+        if missing && self.method.space == StyloColorSpace::Srgb && (fraction <= 0.0 || fraction >= 1.0) {
+            let (end, other) = if fraction <= 0.0 { (from, to) } else { (to, from) };
+            return srgb_filled(&end.color, &other.color);
+        }
         if fraction <= 0.0 && !missing {
             return srgb_sample(&from.color);
         }
@@ -600,11 +606,9 @@ impl Ramp {
             return false;
         }
         let to = &self.stops[segment as usize + 1];
-        let from = &self.stops[segment as usize];
-        to.hint.is_some()
-            || self.method.space != StyloColorSpace::Srgb
-            || has_missing(&from.color)
-            || has_missing(&to.color)
+        // pyro: missing components of sRGB stops are resolved at the segment's ends
+        // (`color_in`): the renderer's line between them is the interpolation.
+        to.hint.is_some() || self.method.space != StyloColorSpace::Srgb
     }
 
     /// Samples of `[from, to]` (`from < to`), appended to `out` with `at(t)` as their offsets.
@@ -671,6 +675,23 @@ impl Ramp {
         out.push((at(middle), color));
         self.subdivide(segment, (middle, color), (q, end), depth - 1, forced, at, out);
     }
+}
+
+/// pyro: `color` in premultiplied sRGB with each missing component `other`'s (0 where both miss
+/// it), clipped to the gamut (CSS Color 4 §12.2, interpolating in sRGB).
+fn srgb_filled(color: &AbsoluteColor, other: &AbsoluteColor) -> Sample {
+    use style::color::ColorFlags as F;
+    let (color, other) = (color.to_color_space(StyloColorSpace::Srgb), other.to_color_space(StyloColorSpace::Srgb));
+    let mut components = *color.raw_components();
+    let others = other.raw_components();
+    for (i, flag) in [F::C0_IS_NONE, F::C1_IS_NONE, F::C2_IS_NONE, F::ALPHA_IS_NONE].into_iter().enumerate() {
+        if color.flags.contains(flag) {
+            components[i] = if other.flags.contains(flag) { 0.0 } else { others[i] };
+        }
+    }
+    let fix = |c: f32| if c.is_finite() { c.clamp(0.0, 1.0) } else { 0.0 };
+    let [r, g, b, a] = components.map(fix);
+    [r * a, g * a, b * a, a]
 }
 
 /// Whether a component of `color` is `none`.

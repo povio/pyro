@@ -1448,7 +1448,7 @@ diff --git a/packages/blitz-paint/src/gradient.rs b/packages/blitz-paint/src/gra
      }
  
      let gradient_transform = Some(
-@@ -299,201 +407,347 @@
+@@ -299,201 +407,368 @@
      (gradient, gradient_transform)
  }
  
@@ -1558,7 +1558,6 @@ diff --git a/packages/blitz-paint/src/gradient.rs b/packages/blitz-paint/src/gra
              }
 -            GenericGradientItem::InterpolationHint(position) => {
 -                hint = item_resolver(gradient_length, position);
--                continue;
 +        }
 +        let count = stops.len();
 +        if count == 0 {
@@ -1573,13 +1572,7 @@ diff --git a/packages/blitz-paint/src/gradient.rs b/packages/blitz-paint/src/gra
 +            if let Some(hint) = hint {
 +                *hint = hint.max(furthest);
 +                furthest = *hint;
-             }
--        };
--
--        if idx == 0 && !repeating && offset != 0.0 {
--            gradient
--                .stops
--                .push(peniko::ColorStop { color, offset: 0.0 });
++            }
 +            if let Some(position) = position {
 +                *position = position.max(furthest);
 +                furthest = *position;
@@ -1590,8 +1583,14 @@ diff --git a/packages/blitz-paint/src/gradient.rs b/packages/blitz-paint/src/gra
 +        while i < count {
 +            if stops[i].0.is_some() {
 +                i += 1;
-+                continue;
-+            }
+                 continue;
+             }
+-        };
+-
+-        if idx == 0 && !repeating && offset != 0.0 {
+-            gradient
+-                .stops
+-                .push(peniko::ColorStop { color, offset: 0.0 });
 +            let run_end = (i..count).find(|&j| stops[j].0.is_some()).unwrap_or(count - 1);
 +            let from = stops[i - 1].0.unwrap_or(0.0);
 +            let to = stops[run_end].0.unwrap_or(from);
@@ -1600,7 +1599,7 @@ diff --git a/packages/blitz-paint/src/gradient.rs b/packages/blitz-paint/src/gra
 +                stops[j].0 = Some(from + (to - from) * (j - (i - 1)) as f64 / steps);
 +            }
 +            i = run_end + 1;
-         }
++        }
 +        let mut ramp = Vec::with_capacity(count);
 +        for (idx, (position, color, hint)) in stops.iter().enumerate() {
 +            let offset = position.unwrap_or(0.0);
@@ -1612,7 +1611,7 @@ diff --git a/packages/blitz-paint/src/gradient.rs b/packages/blitz-paint/src/gra
 +            // The midpoint is where the hint puts it without one.
 +            let hint = hint.filter(|fraction| (*fraction - 0.5).abs() > 1e-9);
 +            ramp.push(RampStop { offset, color: *color, hint });
-+        }
+         }
 +        Self { stops: ramp, method }
 +    }
  
@@ -1725,6 +1724,12 @@ diff --git a/packages/blitz-paint/src/gradient.rs b/packages/blitz-paint/src/gra
 +        // A missing component is the other stop's across the whole segment, its ends too
 +        // (`color(srgb none 0.5 0.5)` after a red stop is red there): those go through the mix.
 +        let missing = has_missing(&from.color) || has_missing(&to.color);
++        // pyro: in sRGB the segment's ends are exact: each missing component the other end's (0
++        // where both miss it), and the renderer's line between them is the interpolation.
++        if missing && self.method.space == StyloColorSpace::Srgb && (fraction <= 0.0 || fraction >= 1.0) {
++            let (end, other) = if fraction <= 0.0 { (from, to) } else { (to, from) };
++            return srgb_filled(&end.color, &other.color);
++        }
 +        if fraction <= 0.0 && !missing {
 +            return srgb_sample(&from.color);
 +        }
@@ -1780,11 +1785,9 @@ diff --git a/packages/blitz-paint/src/gradient.rs b/packages/blitz-paint/src/gra
 +            return false;
 +        }
 +        let to = &self.stops[segment as usize + 1];
-+        let from = &self.stops[segment as usize];
-+        to.hint.is_some()
-+            || self.method.space != StyloColorSpace::Srgb
-+            || has_missing(&from.color)
-+            || has_missing(&to.color)
++        // pyro: missing components of sRGB stops are resolved at the segment's ends
++        // (`color_in`): the renderer's line between them is the interpolation.
++        to.hint.is_some() || self.method.space != StyloColorSpace::Srgb
 +    }
 +
 +    /// Samples of `[from, to]` (`from < to`), appended to `out` with `at(t)` as their offsets.
@@ -1883,6 +1886,23 @@ diff --git a/packages/blitz-paint/src/gradient.rs b/packages/blitz-paint/src/gra
 -            match position {
 -                AngleOrPercentage::Angle(angle) => {
 -                    Some(angle.radians() / (std::f64::consts::PI * 2.0) as f32)
++/// pyro: `color` in premultiplied sRGB with each missing component `other`'s (0 where both miss
++/// it), clipped to the gamut (CSS Color 4 §12.2, interpolating in sRGB).
++fn srgb_filled(color: &AbsoluteColor, other: &AbsoluteColor) -> Sample {
++    use style::color::ColorFlags as F;
++    let (color, other) = (color.to_color_space(StyloColorSpace::Srgb), other.to_color_space(StyloColorSpace::Srgb));
++    let mut components = *color.raw_components();
++    let others = other.raw_components();
++    for (i, flag) in [F::C0_IS_NONE, F::C1_IS_NONE, F::C2_IS_NONE, F::ALPHA_IS_NONE].into_iter().enumerate() {
++        if color.flags.contains(flag) {
++            components[i] = if other.flags.contains(flag) { 0.0 } else { others[i] };
++        }
++    }
++    let fix = |c: f32| if c.is_finite() { c.clamp(0.0, 1.0) } else { 0.0 };
++    let [r, g, b, a] = components.map(fix);
++    [r * a, g * a, b * a, a]
++}
++
 +/// Whether a component of `color` is `none`.
 +fn has_missing(color: &AbsoluteColor) -> bool {
 +    use style::color::ColorFlags as F;
