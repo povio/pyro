@@ -79,7 +79,7 @@ fn assert_near(got: &[f64], want: &[f64]) {
 #[test]
 fn punctuation_next_to_punctuation_is_half_width() {
     let got = widths(
-        "<p><span id=a>国（（国</span> <span id=b>国））国</span> <span id=c>国）（国</span> \
+        "<p style='white-space:nowrap'><span id=a>国（（国</span> <span id=b>国））国</span> <span id=c>国）（国</span> \
          <span id=d>国（）国</span> <span id=e>国）・国</span> <span id=f>国・（国</span> \
          <span id=g>国（・国</span> <span id=h>国)（国</span> <span id=i>国(（国</span></p>",
         &["a", "b", "c", "d", "e", "f", "g", "h", "i"],
@@ -140,7 +140,7 @@ fn a_closing_bracket_that_does_not_fit_ends_its_line_half_width() {
 #[test]
 fn ideographs_and_letters_are_spaced_an_eighth_em() {
     let got = widths(
-        "<p style='text-autospace:normal'><span id=a>国X</span> <span id=b>X国</span> <span id=c>国1国</span> <span id=d>国。X</span>\
+        "<p style='text-autospace:normal;white-space:nowrap'><span id=a>国X</span> <span id=b>X国</span> <span id=c>国1国</span> <span id=d>国。X</span>\
          <span id=e style='text-autospace:no-autospace'>国X</span></p>",
         &["a", "b", "c", "d", "e"],
     );
