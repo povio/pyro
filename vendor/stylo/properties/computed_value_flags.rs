@@ -147,6 +147,10 @@ bitflags! {
         /// pyro: the legacy line clamp applies to this box: it had `display: -webkit-box` (or
         /// `-webkit-inline-box`), `-webkit-box-orient: vertical` and a `-webkit-line-clamp`.
         const WEBKIT_LINE_CLAMP_APPLIES = 1 << 30;
+
+        /// pyro: a legacy horizontal `-webkit-box` laid out as flex: its children take
+        /// `-webkit-box-flex` as their flex factors and ignore `align-self`.
+        const IS_WEBKIT_BOX = 1 << 31;
     }
 }
 

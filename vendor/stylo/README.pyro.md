@@ -336,6 +336,14 @@ nor keeps a scroll offset. Other mixes still turn `visible` into `auto` and `cli
   against that size (stylo_taffy, blitz-dom). A `<length-percentage>` or `calc-size()` basis, `any`, `max-*` and
   interpolation are not supported; the value serializes as `calc-size(<calculation>)` with `size` as `100%`.
 
+## Legacy `-webkit-box` alignment and flexing for servo (WPT round 3, lane FO)
+
+`-webkit-box-align`, `-webkit-box-pack`, `-webkit-box-direction` and `-webkit-box-flex` parse for servo.
+`adjust_for_webkit_box` makes a horizontal box a single-line flex row (`flex-wrap: nowrap`) aligned by them and sets
+`ComputedValueFlags::IS_WEBKIT_BOX`; `adjust_for_webkit_box_child` gives its children `-webkit-box-flex` as flex-grow
+and flex-shrink and `align-self: auto` (Blink's `LayoutDeprecatedFlexibleBox`; WPT css-flexbox
+`flexbox-safe-overflow-position-006`, `balance/webkit-box-no-balance`).
+
 ## Updating or dropping the patch
 
 - When upstream has the change: delete this directory and the `[patch.crates-io]` entry.

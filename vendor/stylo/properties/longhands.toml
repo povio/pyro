@@ -4378,6 +4378,48 @@ servo_restyle_damage = "rebuild_box"
 type = "BoxOrient"
 initial = "computed::BoxOrient::Horizontal"
 
+# pyro: the other legacy `-webkit-box` properties for the servo engine (the gecko ones are the
+# `-moz-box-*` aliases): `StyleAdjuster::adjust_for_webkit_box` maps them onto flex layout.
+[-webkit-box-align]
+struct = "box"
+engine = "servo"
+spec = "Nonstandard (https://developer.mozilla.org/en-US/docs/Web/CSS/box-align)"
+animation_type = "discrete"
+affects = "layout"
+servo_restyle_damage = "rebuild_box"
+type = "BoxAlign"
+initial = "computed::BoxAlign::Stretch"
+
+[-webkit-box-pack]
+struct = "box"
+engine = "servo"
+spec = "Nonstandard (https://developer.mozilla.org/en-US/docs/Web/CSS/box-pack)"
+animation_type = "discrete"
+affects = "layout"
+servo_restyle_damage = "rebuild_box"
+type = "BoxPack"
+initial = "computed::BoxPack::Start"
+
+[-webkit-box-direction]
+struct = "box"
+engine = "servo"
+spec = "Nonstandard (https://developer.mozilla.org/en-US/docs/Web/CSS/box-direction)"
+animation_type = "discrete"
+affects = "layout"
+servo_restyle_damage = "rebuild_box"
+type = "BoxDirection"
+initial = "computed::BoxDirection::Normal"
+
+[-webkit-box-flex]
+struct = "box"
+engine = "servo"
+spec = "Nonstandard (https://developer.mozilla.org/en-US/docs/Web/CSS/box-flex)"
+animation_type = "discrete"
+affects = "layout"
+servo_restyle_damage = "rebuild_box"
+type = "NonNegativeNumber"
+initial = "From::from(0.)"
+
 [-moz-box-pack]
 struct = "xul"
 engine = "gecko"

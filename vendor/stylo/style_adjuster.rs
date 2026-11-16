@@ -210,10 +210,58 @@ impl<'a, 'b: 'a> StyleAdjuster<'a, 'b> {
             (false, true) => Display::Flex,
             (false, false) => Display::InlineFlex,
         };
+        // pyro: a horizontal box is a single-line flex row: `-webkit-box-direction`,
+        // `-webkit-box-align` and `-webkit-box-pack` give its direction and alignment.
+        if !vertical {
+            use crate::values::computed::{BoxAlign, BoxDirection, BoxPack};
+            use crate::values::specified::align::{AlignFlags, ContentDistribution, ItemPlacement};
+            use crate::values::specified::position::{FlexDirection, FlexWrap};
+            let (align, pack, direction) = (
+                box_style.slow_clone__webkit_box_align(),
+                box_style.slow_clone__webkit_box_pack(),
+                box_style.slow_clone__webkit_box_direction(),
+            );
+            let pos = self.style.mutate_position();
+            pos.set_flex_direction(match direction {
+                BoxDirection::Normal => FlexDirection::Row,
+                BoxDirection::Reverse => FlexDirection::RowReverse,
+            });
+            pos.set_flex_wrap(FlexWrap::NOWRAP);
+            pos.set_align_items(ItemPlacement(match align {
+                BoxAlign::Stretch => AlignFlags::STRETCH,
+                BoxAlign::Start => AlignFlags::FLEX_START,
+                BoxAlign::Center => AlignFlags::CENTER,
+                BoxAlign::Baseline => AlignFlags::BASELINE,
+                BoxAlign::End => AlignFlags::FLEX_END,
+            }));
+            pos.set_justify_content(ContentDistribution::new(match pack {
+                BoxPack::Start => AlignFlags::FLEX_START,
+                BoxPack::Center => AlignFlags::CENTER,
+                BoxPack::End => AlignFlags::FLEX_END,
+                BoxPack::Justify => AlignFlags::SPACE_BETWEEN,
+            }));
+            self.style.add_flags(ComputedValueFlags::IS_WEBKIT_BOX);
+        }
         self.style.mutate_box().set_adjusted_display(new_display, true);
         if clamps {
             self.style.add_flags(ComputedValueFlags::WEBKIT_LINE_CLAMP_APPLIES);
         }
+    }
+
+    /// pyro: a child of a legacy horizontal `-webkit-box` (laid out as flex) flexes by
+    /// `-webkit-box-flex`, growing and shrinking alike, and its `align-self` does nothing (the
+    /// box's `-webkit-box-align` aligns it): Blink's `LayoutDeprecatedFlexibleBox`.
+    #[cfg(feature = "servo")]
+    fn adjust_for_webkit_box_child(&mut self, layout_parent_style: &ComputedValues) {
+        use crate::values::specified::align::SelfAlignment;
+        if !layout_parent_style.flags.contains(ComputedValueFlags::IS_WEBKIT_BOX) {
+            return;
+        }
+        let flex = self.style.get_box().slow_clone__webkit_box_flex();
+        let pos = self.style.mutate_position();
+        pos.set_flex_grow(flex);
+        pos.set_flex_shrink(flex);
+        pos.set_align_self(SelfAlignment::auto());
     }
 
     /// CSS 2.1 section 9.7:
@@ -1186,7 +1234,10 @@ impl<'a, 'b: 'a> StyleAdjuster<'a, 'b> {
         // );
 
         #[cfg(feature = "servo")]
-        self.adjust_for_webkit_box();
+        {
+            self.adjust_for_webkit_box();
+            self.adjust_for_webkit_box_child(layout_parent_style);
+        }
         self.adjust_for_links(element);
         self.adjust_for_prohibited_display_contents(element);
         #[cfg(feature = "gecko")]

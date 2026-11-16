@@ -167,8 +167,8 @@ diff -ruN a/invalidation/viewport_units.rs b/invalidation/viewport_units.rs
      if uses_viewport_units {
 diff -ruN a/properties/computed_value_flags.rs b/properties/computed_value_flags.rs
 --- a/properties/computed_value_flags.rs	2026-11-11 19:55:57
-+++ b/properties/computed_value_flags.rs	2026-11-15 20:15:35
-@@ -143,6 +143,10 @@
++++ b/properties/computed_value_flags.rs	2026-11-17 00:11:39
+@@ -143,6 +143,14 @@
  
          /// Whether this style uses an element-scoped `random()`.
          const USES_ELEMENT_SCOPED_RANDOM = 1 << 29;
@@ -176,6 +176,10 @@ diff -ruN a/properties/computed_value_flags.rs b/properties/computed_value_flags
 +        /// pyro: the legacy line clamp applies to this box: it had `display: -webkit-box` (or
 +        /// `-webkit-inline-box`), `-webkit-box-orient: vertical` and a `-webkit-line-clamp`.
 +        const WEBKIT_LINE_CLAMP_APPLIES = 1 << 30;
++
++        /// pyro: a legacy horizontal `-webkit-box` laid out as flex: its children take
++        /// `-webkit-box-flex` as their flex factors and ignore `align-self`.
++        const IS_WEBKIT_BOX = 1 << 31;
      }
  }
  
@@ -263,7 +267,7 @@ diff -ruN a/properties/helpers.mako.rs b/properties/helpers.mako.rs
                              if !context.builder.effective_zoom_for_inheritance.is_one() {
 diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 --- a/properties/longhands.toml	2026-11-11 19:55:57
-+++ b/properties/longhands.toml	2026-11-16 17:29:52
++++ b/properties/longhands.toml	2026-11-17 00:11:39
 @@ -473,7 +473,6 @@
  type = "BreakBetween"
  initial = "computed::BreakBetween::Auto"
@@ -504,10 +508,12 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  affects = "overflow"
  
  [text-underline-offset]
-@@ -3173,6 +3239,15 @@
+@@ -3171,6 +3237,15 @@
+ boxed = true
+ logical_group = "border-radius"
  logical = true
- affects = "paint"
- 
++affects = "paint"
++
 +[border-shape]
 +type = "basic_shape::BorderShape"
 +initial = "generics::basic_shape::BorderShape::None"
@@ -515,11 +521,9 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +animation_type = "none"
 +boxed = true
 +spec = "https://drafts.csswg.org/css-borders-4/#propdef-border-shape"
-+affects = "paint"
-+
+ affects = "paint"
+ 
  [corner-top-left-shape]
- type = "CornerShape"
- initial = "computed::CornerShape::round()"
 @@ -3383,9 +3458,9 @@
  type = "MarginTrim"
  initial = "computed::MarginTrim::empty()"
@@ -558,10 +562,13 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/css-images/#propdef-image-orientation"
  animation_type = "discrete"
  affects = "layout"
-@@ -4290,6 +4365,19 @@
- type = "BoxOrient"
- initial = "computed::BoxOrient::Horizontal"
- 
+@@ -4287,9 +4362,64 @@
+ affects = "layout"
+ gecko_ffi_name = "mBoxOrient"
+ aliases = ["-webkit-box-orient"]
++type = "BoxOrient"
++initial = "computed::BoxOrient::Horizontal"
++
 +# pyro: `-webkit-box-orient` for the servo engine (the gecko one is `-moz-box-orient`'s alias):
 +# with `display: -webkit-box` and `-webkit-line-clamp` it makes the legacy line clamp apply
 +# (`StyleAdjuster::adjust_for_webkit_box`).
@@ -572,8 +579,50 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +animation_type = "discrete"
 +affects = "layout"
 +servo_restyle_damage = "rebuild_box"
-+type = "BoxOrient"
-+initial = "computed::BoxOrient::Horizontal"
+ type = "BoxOrient"
+ initial = "computed::BoxOrient::Horizontal"
+ 
++# pyro: the other legacy `-webkit-box` properties for the servo engine (the gecko ones are the
++# `-moz-box-*` aliases): `StyleAdjuster::adjust_for_webkit_box` maps them onto flex layout.
++[-webkit-box-align]
++struct = "box"
++engine = "servo"
++spec = "Nonstandard (https://developer.mozilla.org/en-US/docs/Web/CSS/box-align)"
++animation_type = "discrete"
++affects = "layout"
++servo_restyle_damage = "rebuild_box"
++type = "BoxAlign"
++initial = "computed::BoxAlign::Stretch"
++
++[-webkit-box-pack]
++struct = "box"
++engine = "servo"
++spec = "Nonstandard (https://developer.mozilla.org/en-US/docs/Web/CSS/box-pack)"
++animation_type = "discrete"
++affects = "layout"
++servo_restyle_damage = "rebuild_box"
++type = "BoxPack"
++initial = "computed::BoxPack::Start"
++
++[-webkit-box-direction]
++struct = "box"
++engine = "servo"
++spec = "Nonstandard (https://developer.mozilla.org/en-US/docs/Web/CSS/box-direction)"
++animation_type = "discrete"
++affects = "layout"
++servo_restyle_damage = "rebuild_box"
++type = "BoxDirection"
++initial = "computed::BoxDirection::Normal"
++
++[-webkit-box-flex]
++struct = "box"
++engine = "servo"
++spec = "Nonstandard (https://developer.mozilla.org/en-US/docs/Web/CSS/box-flex)"
++animation_type = "discrete"
++affects = "layout"
++servo_restyle_damage = "rebuild_box"
++type = "NonNegativeNumber"
++initial = "From::from(0.)"
 +
  [-moz-box-pack]
  struct = "xul"
@@ -1280,11 +1329,13 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
      }
 diff -ruN a/style_adjuster.rs b/style_adjuster.rs
 --- a/style_adjuster.rs	2026-11-11 19:55:57
-+++ b/style_adjuster.rs	2026-11-16 23:18:56
-@@ -186,6 +186,36 @@
++++ b/style_adjuster.rs	2026-11-17 00:12:05
+@@ -184,8 +184,86 @@
+         self.style
+             .mutate_box()
              .set_adjusted_display(new_display, false);
-     }
- 
++    }
++
 +    /// pyro: `display: -webkit-box` in the servo engine, which has no legacy box layout. With
 +    /// `-webkit-box-orient: vertical` and a line clamp the box is a block container whose lines
 +    /// are clamped, as in Blink and Gecko (above); the style keeps that in
@@ -1309,16 +1360,64 @@ diff -ruN a/style_adjuster.rs b/style_adjuster.rs
 +            (false, true) => Display::Flex,
 +            (false, false) => Display::InlineFlex,
 +        };
++        // pyro: a horizontal box is a single-line flex row: `-webkit-box-direction`,
++        // `-webkit-box-align` and `-webkit-box-pack` give its direction and alignment.
++        if !vertical {
++            use crate::values::computed::{BoxAlign, BoxDirection, BoxPack};
++            use crate::values::specified::align::{AlignFlags, ContentDistribution, ItemPlacement};
++            use crate::values::specified::position::{FlexDirection, FlexWrap};
++            let (align, pack, direction) = (
++                box_style.slow_clone__webkit_box_align(),
++                box_style.slow_clone__webkit_box_pack(),
++                box_style.slow_clone__webkit_box_direction(),
++            );
++            let pos = self.style.mutate_position();
++            pos.set_flex_direction(match direction {
++                BoxDirection::Normal => FlexDirection::Row,
++                BoxDirection::Reverse => FlexDirection::RowReverse,
++            });
++            pos.set_flex_wrap(FlexWrap::NOWRAP);
++            pos.set_align_items(ItemPlacement(match align {
++                BoxAlign::Stretch => AlignFlags::STRETCH,
++                BoxAlign::Start => AlignFlags::FLEX_START,
++                BoxAlign::Center => AlignFlags::CENTER,
++                BoxAlign::Baseline => AlignFlags::BASELINE,
++                BoxAlign::End => AlignFlags::FLEX_END,
++            }));
++            pos.set_justify_content(ContentDistribution::new(match pack {
++                BoxPack::Start => AlignFlags::FLEX_START,
++                BoxPack::Center => AlignFlags::CENTER,
++                BoxPack::End => AlignFlags::FLEX_END,
++                BoxPack::Justify => AlignFlags::SPACE_BETWEEN,
++            }));
++            self.style.add_flags(ComputedValueFlags::IS_WEBKIT_BOX);
++        }
 +        self.style.mutate_box().set_adjusted_display(new_display, true);
 +        if clamps {
 +            self.style.add_flags(ComputedValueFlags::WEBKIT_LINE_CLAMP_APPLIES);
 +        }
+     }
+ 
++    /// pyro: a child of a legacy horizontal `-webkit-box` (laid out as flex) flexes by
++    /// `-webkit-box-flex`, growing and shrinking alike, and its `align-self` does nothing (the
++    /// box's `-webkit-box-align` aligns it): Blink's `LayoutDeprecatedFlexibleBox`.
++    #[cfg(feature = "servo")]
++    fn adjust_for_webkit_box_child(&mut self, layout_parent_style: &ComputedValues) {
++        use crate::values::specified::align::SelfAlignment;
++        if !layout_parent_style.flags.contains(ComputedValueFlags::IS_WEBKIT_BOX) {
++            return;
++        }
++        let flex = self.style.get_box().slow_clone__webkit_box_flex();
++        let pos = self.style.mutate_position();
++        pos.set_flex_grow(flex);
++        pos.set_flex_shrink(flex);
++        pos.set_align_self(SelfAlignment::auto());
 +    }
 +
      /// CSS 2.1 section 9.7:
      ///
      ///    If 'position' has the value 'absolute' or 'fixed', [...] the computed
-@@ -419,9 +449,16 @@
+@@ -419,9 +497,16 @@
          }
  
          if overflow_x.is_scrollable() != overflow_y.is_scrollable() {
@@ -1337,7 +1436,7 @@ diff -ruN a/style_adjuster.rs b/style_adjuster.rs
          }
      }
  
-@@ -821,6 +858,90 @@
+@@ -821,6 +906,90 @@
      /// for web-compat reasons.
      /// We intentionally don't check 'list-style-image' below since we want it to use
      /// the same font as its fallback ('list-style-type') in case it fails to load.
@@ -1428,16 +1527,19 @@ diff -ruN a/style_adjuster.rs b/style_adjuster.rs
      #[cfg(feature = "gecko")]
      fn adjust_for_marker_pseudo(&mut self, author_or_user_specified_properties: &LonghandIdSet) {
          use crate::values::computed::counters::Content;
-@@ -1064,6 +1185,8 @@
+@@ -1064,6 +1233,11 @@
          //     "Should always have an element around for non-pseudo styles"
          // );
  
 +        #[cfg(feature = "servo")]
-+        self.adjust_for_webkit_box();
++        {
++            self.adjust_for_webkit_box();
++            self.adjust_for_webkit_box_child(layout_parent_style);
++        }
          self.adjust_for_links(element);
          self.adjust_for_prohibited_display_contents(element);
          #[cfg(feature = "gecko")]
-@@ -1090,6 +1213,12 @@
+@@ -1090,6 +1264,12 @@
          self.adjust_for_appearance(element);
          #[cfg(feature = "gecko")]
          self.adjust_for_marker_pseudo(author_or_user_specified_properties);
