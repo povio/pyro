@@ -88,3 +88,21 @@ fn calc_margins_count_in_intrinsic_widths() {
         (100, 100),
     );
 }
+
+/// `fit-content` is the max-content width, at most the available width but at least the
+/// min-content width, whatever lays the box out: a grid with `fr` columns measured under the
+/// available width gave its max-content width (BBC News' grids have `min-width: fit-content`).
+#[test]
+fn fit_content_is_at_most_the_available_width() {
+    // Each item: max-content 400px (eight 50px boxes on a line), min-content 50px.
+    let item = format!("<div style='font-size:0'>{}</div>", "<span style='display:inline-block;width:50px;height:20px'></span>".repeat(8));
+    check(
+        &format!("<div style='width:300px'><div style='display:grid;grid-template-columns:1fr 1fr;min-width:fit-content;background:green'>{item}{item}</div></div>"),
+        (300, 60),
+    );
+    // At least the min-content width.
+    check(
+        "<div style='width:300px'><div style='display:flex;min-width:fit-content;height:20px;background:green'><span style='flex:none;width:350px'></span></div></div>",
+        (350, 20),
+    );
+}

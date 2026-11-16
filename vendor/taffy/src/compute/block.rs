@@ -1436,17 +1436,33 @@ fn clamp_width_by_keywords(
         Some(match resolution {
             SizingKeywordResolution::Exact(width) => width,
             SizingKeywordResolution::Measure(available_width) => {
-                let content_width = tree.measure_child_size(
-                    item.node_id,
-                    // (its height stays: percentage heights in it resolve as they will)
-                    Size { width: None, height: item.size.height.maybe_clamp(item.min_size.height, item.max_size.height) },
-                    parent_size,
-                    Size { width: available_width, height: AvailableSpace::MaxContent },
-                    // The content's width, the item's own `width` aside
-                    SizingMode::ContentSize,
-                    crate::AbsoluteAxis::Horizontal,
-                    if item.is_in_same_bfc { Line::TRUE } else { Line::FALSE },
-                );
+                let mut measure = |available_width: AvailableSpace| {
+                    tree.measure_child_size(
+                        item.node_id,
+                        // (its height stays: percentage heights in it resolve as they will)
+                        Size { width: None, height: item.size.height.maybe_clamp(item.min_size.height, item.max_size.height) },
+                        parent_size,
+                        Size { width: available_width, height: AvailableSpace::MaxContent },
+                        // The content's width, the item's own `width` aside
+                        SizingMode::ContentSize,
+                        crate::AbsoluteAxis::Horizontal,
+                        if item.is_in_same_bfc { Line::TRUE } else { Line::FALSE },
+                    )
+                };
+                let content_width = match available_width {
+                    // `fit-content` (and `fit-content(<length-percentage>)`): the max-content
+                    // width, at most the available width but at least the min-content width (CSS
+                    // Sizing 3 §5.1), from the two intrinsic widths. A measure under the definite
+                    // width is not that for every box: a grid container with `fr` columns
+                    // measured its max-content width there, and `min-width: fit-content` (BBC
+                    // News' grids) made it as wide as its `max-width`.
+                    AvailableSpace::Definite(available) => {
+                        let min_content = measure(AvailableSpace::MinContent);
+                        let max_content = measure(AvailableSpace::MaxContent);
+                        max_content.min(min_content.max(available))
+                    }
+                    intrinsic => measure(intrinsic),
+                };
                 // A width the preferred aspect ratio gives from a height is an intrinsic width
                 if item.width_from_ratio {
                     content_width.max(width)

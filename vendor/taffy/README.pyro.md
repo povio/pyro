@@ -110,7 +110,9 @@ absolutely positioned boxes, tables. Covered by `crates/pyro-render/tests/aspect
 keyword there was `auto`; `BlockItemStyle::min_size_keyword`/`max_size_keyword` (default: none) name it, and the
 item's block parent applies it: in the inline axis the item's content width under the keyword's constraint
 (`clamp_width_by_keywords`, measured in `SizingMode::ContentSize` with the item's height kept, so percentage
-heights in it resolve as they will; `stretch` is the stretch width), also where the parent sizes itself by its
+heights in it resolve as they will; `stretch` is the stretch width; `fit-content` is the max-content width, at
+most the available width but at least the min-content width, from two measures: one measure under the definite
+width gave a grid container with `fr` columns its max-content width), also where the parent sizes itself by its
 content; in the block axis the content height at the item's width, or the stretch height. A width the preferred
 aspect ratio gives from a height counts as an intrinsic width. Out-of-flow boxes, floats, flex and grid items
 are not done. Covered by `crates/pyro-render/tests/sizing_keywords.rs`.
