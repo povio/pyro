@@ -3921,7 +3921,18 @@ impl ElementCx<'_, '_> {
                     false => ReplacedClip::Fit,
                 },
                 |scene| {
-                    scene.draw_image(to_peniko_image(image, quality).as_ref(), transform);
+                    // pyro: a pixelated image stops at its edge: a partly covered edge row or
+                    // column (`object-position: 50% 13%` puts the image 1.3px down) sampled the
+                    // opposite edge's pixels (the brush repeated). A smoothed image keeps
+                    // blending its edge with the opposite one, as a repeating background's
+                    // tiles do across their seams (WPT `background-repeat-round`,
+                    // `background-size-cover`, whose references are scaled `<img>`s).
+                    let mut brush = to_peniko_image(image, quality);
+                    if quality == peniko::ImageQuality::Low {
+                        brush.sampler.x_extend = peniko::Extend::Pad;
+                        brush.sampler.y_extend = peniko::Extend::Pad;
+                    }
+                    scene.draw_image(brush.as_ref(), transform);
                 },
             );
         }

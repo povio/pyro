@@ -4689,10 +4689,14 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
  fn convert_rect(rect: &parley::BoundingBox) -> kurbo::Rect {
      peniko::kurbo::Rect::new(rect.x0, rect.y0, rect.x1, rect.y1)
  }
-@@ -967,8 +2078,493 @@
-         }
-     }
- 
+@@ -963,12 +2074,497 @@
+                     None,
+                     &stroke_rect.to_rounded_rect(radius - stroke_width / 2.0),
+                 );
++            }
++        }
++    }
++
 +    /// pyro: paints the boxes of the inline (non-atomic) elements in this inline root's lines, as
 +    /// Chromium does. An element has one fragment per line it has content on: from the start of
 +    /// its first content there to the end of its last (its own start and end edges without their
@@ -5112,7 +5116,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +            let mut whole = box_cx(transform, size, border, padding);
 +            if let Some(style) = &fragment.style {
 +                whole.style = style.clone();
-+            }
+             }
 +            whole
 +        });
 +        let piece = Rect::from_origin_size(Point::ZERO, size);
@@ -5125,7 +5129,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                scene.pop_layer();
 +            }
 +            None => cx.draw_outset_box_shadow(scene),
-+        }
+         }
 +        if self.context.backgrounds {
 +            // pyro: a `background-clip: text` layer shows through the box's own glyphs.
 +            let text_clip = cx.style.get_background().background_clip.0.iter().any(|clip| {
@@ -5172,8 +5176,8 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +        cx.draw_border(scene);
 +        // Over the box, as a block's outline is (see `render_element`).
 +        cx.draw_outline(scene);
-+    }
-+
+     }
+ 
      fn draw_inline_layout(&self, scene: &mut impl PaintScene, pos: Point) {
          if self.node.flags.is_inline_root() {
 +            // pyro: inline elements with a clip path or a mask (clip_path.rs).
@@ -5694,9 +5698,9 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                }
 +            }
 +            draw_text_context.line_tops = None;
-         }
-     }
- 
++        }
++    }
++
 +    /// pyro: an inside marker that is an image (`list-style-image`): at the start of the
 +    /// item's first line, its bottom on the baseline (the inline layout left room for it).
 +    fn draw_inside_marker_image(&self, scene: &mut impl PaintScene, pos: Point, width: f32, height: f32) {
@@ -5724,9 +5728,9 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                anyrender_svg::render_svg_tree(scene, &svg.tree, self.transform * origin * Affine::scale(self.scale));
 +            }
 +            _ => {}
-+        }
-+    }
-+
+         }
+     }
+ 
      fn draw_marker(&self, scene: &mut impl PaintScene, pos: Point) {
          if let Some(ListItemLayout {
 +            marker: Marker::Image { width, height },
@@ -5798,7 +5802,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
                  y: pos.y + (content_box_subpixel_offset.y + y_offset) as f64,
              };
  
-@@ -1145,13 +3192,147 @@
+@@ -1145,79 +3192,408 @@
                  TextPaintOptions {
                      scale: self.scale,
                      brush_override: None,
@@ -5813,6 +5817,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          }
      }
  
+-    fn draw_children(
 +    /// pyro: an outside `disc`, `circle` or `square` marker, as Chromium paints one: a shape
 +    /// sized from the item's font (Blink's `ListMarker::RelativeSymbolMarkerRect`), not a glyph
 +    /// of a bullet font. With `a` the font's ascent in whole pixels and `o = a * 2 / 3` in
@@ -5822,12 +5827,15 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +    /// edge. The first line is the item's own or that of the first box in it that has one; the
 +    /// font is the item's, which the marker's layout is a line of (blitz-dom).
 +    fn draw_marker_symbol(
-+        &self,
-+        scene: &mut impl PaintScene,
+         &self,
+         scene: &mut impl PaintScene,
+-        parent_style_transform: Affine,
+-        clip_rect: Rect,
 +        pos: Point,
 +        symbol: char,
 +        marker_layout: &parley::Layout<blitz_dom::node::TextBrush>,
-+    ) {
+     ) {
+-        // Negative z_index hoisted nodes
 +        let font_ascent = |line: &parley::Line<'_, blitz_dom::node::TextBrush>| {
 +            line.items().find_map(|item| match item {
 +                parley::PositionedLayoutItem::GlyphRun(run) => Some(run.run().font_metrics().ascent),
@@ -5858,7 +5866,19 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +            _ => scene.fill(Fill::NonZero, self.transform, &paint, None, &rect),
 +        }
 +    }
-+
+ 
+-        if let Some(hoisted) = &self.node.stacking_context {
+-            for hoisted_child in hoisted.neg_z_hoisted_children() {
+-                let position = hoisted_child.position(self.node.tree(), self.node.id);
+-                let pos = kurbo::Vec2 {
+-                    x: position.x as f64 * self.scale,
+-                    y: position.y as f64 * self.scale,
+-                };
+-                self.render_node(
+-                    scene,
+-                    hoisted_child.node_id,
+-                    parent_style_transform.pre_translate(pos),
+-                    clip_rect,
 +    /// pyro: the baseline an outside marker sits on, in CSS px from the top of the list item's
 +    /// content box: that of the item's first line, the first line of the first box in it that has
 +    /// one, or, when there is none, that of the marker's own line (a line of the item's font).
@@ -5932,41 +5952,28 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                let size = Affine::scale_non_uniform(
 +                    f64::from(width) * self.scale / f64::from(raster.width),
 +                    f64::from(height) * self.scale / f64::from(raster.height),
-+                );
+                 );
 +                scene.draw_image(to_peniko_image(raster, quality).as_ref(), self.transform * origin * size);
-+            }
+             }
 +            #[cfg(feature = "svg")]
 +            blitz_dom::node::ImageData::Svg(svg) => {
 +                anyrender_svg::render_svg_tree(scene, &svg.tree, self.transform * origin * Affine::scale(self.scale));
 +            }
 +            _ => {}
-+        }
+         }
 +    }
-+
-     fn draw_children(
-         &self,
-         scene: &mut impl PaintScene,
-@@ -1159,65 +3340,260 @@
-         clip_rect: Rect,
-     ) {
-         // Negative z_index hoisted nodes
+ 
++    fn draw_children(
++        &self,
++        scene: &mut impl PaintScene,
++        parent_style_transform: Affine,
++        clip_rect: Rect,
++    ) {
++        // Negative z_index hoisted nodes
 +        self.draw_neg_z_children(scene, parent_style_transform, clip_rect);
 +        self.draw_children_above(scene, parent_style_transform, clip_rect);
 +    }
- 
--        if let Some(hoisted) = &self.node.stacking_context {
--            for hoisted_child in hoisted.neg_z_hoisted_children() {
--                let position = hoisted_child.position(self.node.tree(), self.node.id);
--                let pos = kurbo::Vec2 {
--                    x: position.x as f64 * self.scale,
--                    y: position.y as f64 * self.scale,
--                };
--                self.render_node(
--                    scene,
--                    hoisted_child.node_id,
--                    parent_style_transform.pre_translate(pos),
--                    clip_rect,
--                );
++
 +    /// pyro: [`Self::draw_children`] without the stacking contexts of negative z-index.
 +    fn draw_children_above(
 +        &self,
@@ -5974,14 +5981,33 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +        parent_style_transform: Affine,
 +        clip_rect: Rect,
 +    ) {
-+        // Regular children
-+        if let Some(children) = &*self.node.paint_children.borrow() {
-+            for child_id in children {
+         // Regular children
+         if let Some(children) = &*self.node.paint_children.borrow() {
+             for child_id in children {
+-                // Fixed-position children of the root element are positioned against
+-                // the viewport and do not scroll with it, so cancel out the viewport
+-                // scroll (applied in `paint_scene`). A fixed box contained by a
+-                // transformed ancestor scrolls with it like any out-of-flow box.
+-                let child = &self.context.dom.as_ref().tree()[*child_id];
+-                let child_transform = if child.taffy_position() == taffy::Position::Fixed
+-                    && Some(self.node.id) == self.context.root_element_id
+-                {
+-                    let scroll = self.context.dom.as_ref().viewport_scroll();
+-                    parent_style_transform.pre_translate(kurbo::Vec2 {
+-                        x: scroll.x * self.scale,
+-                        y: scroll.y * self.scale,
+-                    })
+-                } else if let Some(offset) = child.lifted_paint_offset(self.node.id) {
+-                    parent_style_transform.pre_translate(kurbo::Vec2 {
+-                        x: offset.x as f64 * self.scale,
+-                        y: offset.y as f64 * self.scale,
+-                    })
+-                } else {
+-                    parent_style_transform
 +                self.draw_paint_child(scene, *child_id, parent_style_transform, clip_rect);
-             }
-         }
- 
--        // Regular children
++            }
++        }
++
 +        self.draw_pos_z_children(scene, parent_style_transform, clip_rect);
 +    }
 +
@@ -6060,26 +6086,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +            clip_rect,
 +            FlowPhase::Background,
 +        );
-         if let Some(children) = &*self.node.paint_children.borrow() {
--            for child_id in children {
--                // Fixed-position children of the root element are positioned against
--                // the viewport and do not scroll with it, so cancel out the viewport
--                // scroll (applied in `paint_scene`). A fixed box contained by a
--                // transformed ancestor scrolls with it like any out-of-flow box.
--                let child = &self.context.dom.as_ref().tree()[*child_id];
--                let child_transform = if child.taffy_position() == taffy::Position::Fixed
--                    && Some(self.node.id) == self.context.root_element_id
--                {
--                    let scroll = self.context.dom.as_ref().viewport_scroll();
--                    parent_style_transform.pre_translate(kurbo::Vec2 {
--                        x: scroll.x * self.scale,
--                        y: scroll.y * self.scale,
--                    })
--                } else if let Some(offset) = child.lifted_paint_offset(self.node.id) {
--                    parent_style_transform.pre_translate(kurbo::Vec2 {
--                        x: offset.x as f64 * self.scale,
--                        y: offset.y as f64 * self.scale,
--                    })
++        if let Some(children) = &*self.node.paint_children.borrow() {
 +            let tree = self.context.dom.as_ref().tree();
 +            for &child_id in children {
 +                if self.paint_level(&tree[child_id]) == 1 {
@@ -6192,8 +6199,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                let frame = create_css_rect(&styles, node.final_layout(), self.scale);
 +                let clip = if node.element_data().is_some_and(|el| el.text_input_data().is_some()) {
 +                    frame.text_input_clip_path()
-                 } else {
--                    parent_style_transform
++                } else {
 +                    box_shadow::overflow_clip_path(&frame, &styles, self.scale)
                  };
 -                self.render_node(scene, *child_id, child_transform, clip_rect);
@@ -6524,7 +6530,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
  
              self.with_replaced_content_clip(
                  scene,
-@@ -1358,6 +3916,10 @@
+@@ -1358,8 +3916,23 @@
                  paint_size,
                  x_offset.px(),
                  y_offset.px(),
@@ -6533,9 +6539,23 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                    false => ReplacedClip::Fit,
 +                },
                  |scene| {
-                     scene.draw_image(to_peniko_image(image, quality).as_ref(), transform);
+-                    scene.draw_image(to_peniko_image(image, quality).as_ref(), transform);
++                    // pyro: a pixelated image stops at its edge: a partly covered edge row or
++                    // column (`object-position: 50% 13%` puts the image 1.3px down) sampled the
++                    // opposite edge's pixels (the brush repeated). A smoothed image keeps
++                    // blending its edge with the opposite one, as a repeating background's
++                    // tiles do across their seams (WPT `background-repeat-round`,
++                    // `background-size-cover`, whose references are scaled `<img>`s).
++                    let mut brush = to_peniko_image(image, quality);
++                    if quality == peniko::ImageQuality::Low {
++                        brush.sampler.x_extend = peniko::Extend::Pad;
++                        brush.sampler.y_extend = peniko::Extend::Pad;
++                    }
++                    scene.draw_image(brush.as_ref(), transform);
                  },
-@@ -1466,3 +4028,58 @@
+             );
+         }
+@@ -1466,3 +4039,58 @@
  
      CssBox::new(border_box, border, padding, outline_width, border_radii)
  }
@@ -15361,7 +15381,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
      stack.clear();
      path_scratch.clear();
      deco_boxes.clear();
-@@ -608,152 +1672,725 @@
+@@ -608,152 +1672,734 @@
      // for each run, only resolve styles for the nodes newly descended into (popping
      // as we ascend). `path_scratch` is a reusable buffer for the run's node path.
      for line in lines {
@@ -15439,6 +15459,15 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 +            let metrics = run.font_metrics();
 +            let style = glyph_run.style();
 +            let css_font_size = font_size as f64 / scale;
++            // pyro: under `font-size-adjust` the run's size is the used one; decoration
++            // thickness and offset percentages are of the computed font size.
++            let css_font_size = doc
++                .get_node(style.brush.id)
++                .and_then(|node| node.primary_styles())
++                .filter(|styles| {
++                    styles.get_font().font_size_adjust != style::values::computed::font::FontSizeAdjust::None
++                })
++                .map_or(css_font_size, |styles| f64::from(styles.get_font().font_size.computed_size().px()));
  
 -                let css_font_size = font_size as f64 / scale;
 +            // Reconcile the stack with this run's ancestor path. Build the path
@@ -16199,7 +16228,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
      selection_start: usize,
      selection_end: usize,
  ) {
-@@ -761,12 +2398,54 @@
+@@ -761,12 +2407,54 @@
      let focus = Cursor::from_byte_index(layout, selection_end, Affinity::Downstream);
      let selection = Selection::new(anchor, focus);
  
@@ -16256,7 +16285,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
  /// Approximates macOS font smoothing (stem dilation). CoreGraphics dilates each side by an amount
  /// in device pixels that grows with the device ppem up to 0.3px (fitted to Safari's ink at 9-72px
  /// and 1x-3x scale), and keeps dilating at large sizes, so there is no ppem cutoff. glifo applies
-@@ -804,3 +2483,232 @@
+@@ -804,3 +2492,232 @@
      }
      prev.1
  }

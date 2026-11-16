@@ -1735,6 +1735,15 @@ pub(crate) fn stroke_text<'a, S: PaintScene>(
             let metrics = run.font_metrics();
             let style = glyph_run.style();
             let css_font_size = font_size as f64 / scale;
+            // pyro: under `font-size-adjust` the run's size is the used one; decoration
+            // thickness and offset percentages are of the computed font size.
+            let css_font_size = doc
+                .get_node(style.brush.id)
+                .and_then(|node| node.primary_styles())
+                .filter(|styles| {
+                    styles.get_font().font_size_adjust != style::values::computed::font::FontSizeAdjust::None
+                })
+                .map_or(css_font_size, |styles| f64::from(styles.get_font().font_size.computed_size().px()));
 
             // Reconcile the stack with this run's ancestor path. Build the path
             // (inline root -> run node), keep the shared prefix already on the stack,

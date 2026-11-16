@@ -763,8 +763,47 @@ impl BaseDocument {
         crate::stylo_to_parley::set_font_feature_values(rules);
     }
 
+    /// pyro: `font-size-adjust` (CSS Fonts 5 §3.6): the used font size is the font size times
+    /// the property's value over the first available font's ratio of the named metric to its
+    /// size (`ex-height`, `cap-height`, `ch-width`, `ic-width`, `ic-height`), so that fallback
+    /// fonts keep the metric's size. Computed here for every style that has the property, for
+    /// the style conversions of the layout about to run (which cannot ask for font metrics).
+    fn publish_font_size_adjustments(&self) {
+        use style::values::computed::font::FontSizeAdjust;
+        let provider = crate::font_metrics::BlitzFontMetricsProvider { font_ctx: self.font_ctx.clone() };
+        let mut scales = std::collections::HashMap::new();
+        for (_, node) in self.nodes.iter() {
+            let Some(style) = node.primary_styles() else { continue };
+            let font = style.get_font();
+            if font.font_size_adjust == FontSizeAdjust::None {
+                continue;
+            }
+            let key = font as *const style::properties::style_structs::Font as usize;
+            if scales.contains_key(&key) {
+                continue;
+            }
+            let size = font.font_size.used_size.0;
+            // The font that draws the text: the property keeps the metric of each font used
+            // (a fallback one too); a run is taken to be drawn in the font that has `x`.
+            let metrics = provider.metrics_for(font, size, 'x');
+            let (wanted, metric) = match font.font_size_adjust {
+                FontSizeAdjust::None => continue,
+                FontSizeAdjust::ExHeight(v) => (v.0, metrics.x_height),
+                FontSizeAdjust::CapHeight(v) => (v.0, metrics.cap_height.or(Some(metrics.ascent))),
+                FontSizeAdjust::ChWidth(v) => (v.0, metrics.zero_advance_measure),
+                FontSizeAdjust::IcWidth(v) | FontSizeAdjust::IcHeight(v) => (v.0, metrics.ic_width),
+            };
+            let ratio = metric.map_or(0.0, |metric| metric.px() / size.px());
+            // (A font without the metric, or a size of 0, is left as it is.)
+            let scale = if ratio > 0.0 && ratio.is_finite() && wanted.is_finite() { wanted / ratio } else { 1.0 };
+            scales.insert(key, scale);
+        }
+        crate::stylo_to_parley::set_font_size_adjustments(scales);
+    }
+
     pub fn resolve_layout_children(&mut self) {
         self.publish_font_feature_values();
+        self.publish_font_size_adjustments();
         // pyro: the boxes that left a container's list this pass and that no container
         // collected again are out of the layout tree, with what their subtrees built
         // (`BaseDocument::leave_layout_tree`).

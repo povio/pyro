@@ -58,6 +58,9 @@ pub struct FontFaceOverrides {
     pub width: Option<f32>,
     /// `font-style` descriptor mapped to fontique's `FontStyle`.
     pub style: Option<parley::fontique::FontStyle>,
+    /// pyro: the slant angles the `font-style` descriptor allows a variable font's `slnt`
+    /// axis: `(0, 0)` for `normal`, the range of `oblique <angle> <angle>`.
+    pub slant_range: Option<(f32, f32)>,
     /// `unicode-range` descriptor: the code points the face is used for.
     /// `None` (no descriptor) is every code point.
     pub unicode_range: Option<parley::fontique::UnicodeRange>,
@@ -461,6 +464,12 @@ pub(crate) fn fetch_font_face_rules<'a>(
                         .and_then(|range| range.compute())
                         .map(|range| range.0.0.to_float().min(range.1.0.to_float())),
                     style: descriptor.font_style.as_ref().map(stylo_to_fontique_style),
+                    slant_range: descriptor.font_style.as_ref().and_then(|style| match style {
+                        FontStyleRange::Italic => None,
+                        FontStyleRange::Oblique(min, max) => {
+                            Some((min.degrees().unwrap_or(0.0), max.degrees().unwrap_or(0.0)))
+                        }
+                    }),
                     unicode_range: descriptor.unicode_range.as_deref().map(unicode_range),
                     precedence: RULE_ORDER.fetch_add(1, Ao::Relaxed),
                 };
@@ -604,7 +613,10 @@ fn stylo_to_fontique_style(style: &FontStyleRange) -> parley::fontique::FontStyl
             // Stylo emits `Oblique(0deg, 0deg)` for the literal CSS `normal`
             // keyword. Map that back to `Normal` so parley's font matching
             // doesn't misclassify upright fonts.
-            if angle.is_none_or(|a| a == 0.0) && max.degrees().is_none_or(|a| a == 0.0) {
+            // pyro: a range that has 0deg in it (`oblique 0deg 15deg`, a variable font's `slnt`
+            // axis) is an upright face that can slant (`FontFaceOverrides::slant_range`).
+            let (low, high) = (angle.unwrap_or(0.0), max.degrees().unwrap_or(0.0));
+            if low.min(high) <= 0.0 && low.max(high) >= 0.0 {
                 Fq::Normal
             } else {
                 Fq::Oblique(angle)

@@ -350,6 +350,30 @@ pub(crate) fn font_kerning(
 }
 
 thread_local! {
+    /// pyro: for the layout running on this thread: the factor `font-size-adjust` scales the
+    /// font size by, by the address of the font style struct of each style that has the
+    /// property (`BaseDocument::publish_font_size_adjustments`). The conversions have neither
+    /// the document nor its fonts (which the layout has locked).
+    static FONT_SIZE_ADJUSTMENTS: std::cell::RefCell<std::collections::HashMap<usize, f32>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+/// pyro: see `FONT_SIZE_ADJUSTMENTS`.
+pub(crate) fn set_font_size_adjustments(scales: std::collections::HashMap<usize, f32>) {
+    FONT_SIZE_ADJUSTMENTS.with(|slot| *slot.borrow_mut() = scales);
+}
+
+/// pyro: the factor `font-size-adjust` scales this font style's size by (1 without it).
+pub(crate) fn font_size_adjustment(font_styles: &stylo::Font) -> f32 {
+    use style::values::computed::font::FontSizeAdjust;
+    if font_styles.font_size_adjust == FontSizeAdjust::None {
+        return 1.0;
+    }
+    let key = font_styles as *const stylo::Font as usize;
+    FONT_SIZE_ADJUSTMENTS.with(|scales| scales.borrow().get(&key).copied().unwrap_or(1.0))
+}
+
+thread_local! {
     /// pyro: the document's `@font-feature-values` rules, in cascade order, for the layout
     /// running on this thread (`set_font_feature_values`): `font-variant-alternates` names
     /// its values through them.
@@ -573,11 +597,16 @@ pub(crate) fn style(
 
     // Convert font size and line height
     let font_size = font_styles.font_size.used_size.0.px();
+    // pyro: `font-size-adjust` scales the used font size (`set_font_size_adjustments`), not the
+    // computed one a `line-height` number multiplies.
+    let adjust = font_size_adjustment(font_styles);
     let line_height = match font_styles.line_height {
         stylo::LineHeight::Normal => parley::LineHeight::NORMAL,
+        stylo::LineHeight::Number(num) if adjust != 1.0 => parley::LineHeight::Absolute(num.0 * font_size),
         stylo::LineHeight::Number(num) => parley::LineHeight::FontSizeRelative(num.0),
         stylo::LineHeight::Length(value) => parley::LineHeight::Absolute(value.0.px()),
     };
+    let font_size = font_size * adjust;
     let vertical_align = self::vertical_align(style);
 
     let letter_spacing = itext_styles

@@ -811,3 +811,8 @@ Covered by `crates/pyro-render/tests/gradient_stops_image_set.rs`.
 
 - `src/render.rs` (`draw_marker_symbol`): a disc, circle or square marker is drawn in the colour of the item's
   `::marker` style (`ListItemLayout::style_node`).
+- `src/render.rs` (`draw_image`): a pixelated replaced raster image is sampled clamped to its edge (a smoothed one keeps blending with the opposite edge, as background tiles do across seams). At a fractional
+  position (`object-position: 50% 13%`) the partly covered edge row took the opposite edge's pixels, the brush
+  repeating (WPT `object-position-png-001*`/`-002*`).
+- `src/text.rs`: under `font-size-adjust` a run has the used font size; `text-decoration-thickness` and
+  `text-underline-offset` percentages stay of the computed one (WPT `text-decoration-thickness-percent-001`).

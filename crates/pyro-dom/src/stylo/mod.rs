@@ -50,6 +50,9 @@ pub(crate) fn enable_features() {
         style_config::set_pref!("layout.css.font-size-adjust.enabled", true);
         // pyro: `font-synthesis-style`, `-small-caps` and `-position` (and the shorthand).
         style_config::set_pref!("layout.css.font-synthesis.enabled", true);
+        // pyro: `font-variant-caps: all-small-caps | petite-caps | all-petite-caps | unicase |
+        // titling-caps` (blitz-dom maps each to its OpenType features).
+        style_config::set_pref!("layout.css.font-variant-caps.all-values.enabled", true);
         style_config::set_pref!("layout.css.forced-color-adjust.enabled", true);
         style_config::set_pref!("layout.css.masking.enabled", true);
         style_config::set_pref!("layout.css.math-properties.enabled", true);

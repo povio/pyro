@@ -1852,3 +1852,24 @@ Covered by `crates/pyro-render/tests/object_view_box_embed.rs`.
   cascaded onto the marker's style (`ElementData::sampled_marker`, `Stylist::compute_for_declarations`).
 
 Covered by `crates/pyro-render/tests/marker_pseudo.rs`.
+## `font-size-adjust` (WPT css-fonts, round 3 lane F)
+
+- `src/resolve.rs` (`publish_font_size_adjustments`), `src/stylo_to_parley.rs` (`font_size_adjustment`),
+  `src/font_metrics.rs` (`metrics_for`): the used font size of a style with `font-size-adjust` is its font size
+  times the value over the font's own ratio of the named metric (`ex-height`, `cap-height`, `ch-width`,
+  `ic-width`, `ic-height`) to its size. The font is the one of the list that draws `x` (its `unicode-range` and
+  character map), taken to draw the run; a fallback font used for other characters is not scaled on its own
+  (parley sizes a run by its style, not by its font). The factors are computed before layout for every style
+  with the property (one walk over the nodes, a pointer comparison each where the property is unset), by font
+  style struct, into a thread-local the style conversions read: they have no document, and the layout holds
+  the font context's lock. A `line-height` number keeps multiplying the unscaled size.
+
+Covered by `crates/pyro-render/tests/font_size_adjust.rs`.
+
+## `font-variant-caps` values, the `font-style` descriptor's range (WPT css-fonts, round 3 lane F)
+
+- `src/document.rs` (`init_stylo_prefs`): `font-variant-caps: all-small-caps | petite-caps | all-petite-caps |
+  unicase | titling-caps` parse (`stylo_to_parley::font_variant_caps` already mapped them to features).
+- `src/net.rs` (`FontFaceOverrides::slant_range`, `stylo_to_fontique_style`): a `font-style` descriptor range
+  that has 0deg in it (`oblique 0deg 15deg`, `oblique -15deg 15deg`) is an upright face whose `slnt` axis may
+  go that far (vendored fontique clamps to it); `normal` forbids the axis.

@@ -55,6 +55,32 @@ impl FontMetricsProvider for BlitzFontMetricsProvider {
         font_size: CSSPixelLength,
         _flags: QueryFontMetricsFlags,
     ) -> FontMetrics {
+        // The first available font: the first of the list that has U+0020.
+        self.metrics_for(font_styles, font_size, ' ')
+    }
+
+    fn base_size_for_generic(
+        &self,
+        generic: style::values::computed::font::GenericFontFamily,
+    ) -> style::values::computed::Length {
+        let size = match generic {
+            style::values::computed::font::GenericFontFamily::Monospace => 13.0,
+            _ => 16.0,
+        };
+        style::values::computed::Length::from(Au::from_f32_px(size))
+    }
+}
+
+impl BlitzFontMetricsProvider {
+    /// pyro: the metrics of the first font of `font_styles`' list that draws `text_char` (in its
+    /// `unicode-range` and character map): `' '` is CSS's first available font, a letter the
+    /// font a run of Latin text is drawn in (`font-size-adjust` scales by that one).
+    pub(crate) fn metrics_for(
+        &self,
+        font_styles: &FontStyles,
+        font_size: CSSPixelLength,
+        text_char: char,
+    ) -> FontMetrics {
         use parley::fontique::{Query, QueryFont, QueryStatus};
         use skrifa::instance::{LocationRef, Size};
         use skrifa::metrics::{GlyphMetrics, Metrics};
@@ -156,7 +182,7 @@ impl FontMetricsProvider for BlitzFontMetricsProvider {
         let zero_advance = advance_of(&mut query, '0', font_size.px(), &variations);
         let ic_advance = advance_of(&mut query, '\u{6C34}', font_size.px(), &variations);
         let (ascent, x_height, cap_height) =
-            metrics_of(&mut query, ' ', Size::new(font_size.px()), &variations)
+            metrics_of(&mut query, text_char, Size::new(font_size.px()), &variations)
                 .unwrap_or((0.0, None, None));
 
         FontMetrics {
@@ -168,16 +194,5 @@ impl FontMetricsProvider for BlitzFontMetricsProvider {
             script_percent_scale_down: None,
             script_script_percent_scale_down: None,
         }
-    }
-
-    fn base_size_for_generic(
-        &self,
-        generic: style::values::computed::font::GenericFontFamily,
-    ) -> style::values::computed::Length {
-        let size = match generic {
-            style::values::computed::font::GenericFontFamily::Monospace => 13.0,
-            _ => 16.0,
-        };
-        style::values::computed::Length::from(Au::from_f32_px(size))
     }
 }

@@ -27,6 +27,10 @@ pub struct FontInfo {
     charmap_index: CharmapIndex,
     unicode_range: UnicodeRange,
     precedence: u64,
+    /// pyro: the slant angles (CSS degrees, clockwise positive) a `@font-face` rule's
+    /// `font-style` descriptor allows the font: `(0, 0)` for `normal`, the range of `oblique
+    /// <angle> <angle>`. `None` without a descriptor: the font's own `slnt` axis decides.
+    slant_range: Option<(f32, f32)>,
 }
 
 impl FontInfo {
@@ -118,13 +122,17 @@ impl FontInfo {
         if self.style != style {
             match style {
                 FontStyle::Normal => {}
+                // pyro: the `slnt` axis counts counter-clockwise, CSS angles clockwise: `oblique
+                // 10deg` is `slnt -10` (upstream set `slnt 14` for italic, a backslant). And a
+                // `@font-face` rule's `font-style` says how far the axis may go (`slant_range`):
+                // `normal` not at all (the slant is then faked), a range clamps the angle.
                 FontStyle::Italic => {
                     if self.style == FontStyle::Normal {
-                        if self.has_italic_axis() {
+                        if self.has_italic_axis() && self.slant_range.is_none() {
                             synth.vars[len] = (Tag::new(b"ital"), 1.0);
                             len += 1;
-                        } else if self.has_slant_axis() {
-                            synth.vars[len] = (Tag::new(b"slnt"), 14.0);
+                        } else if let Some(slnt) = self.slant_axis_value(14.0) {
+                            synth.vars[len] = (Tag::new(b"slnt"), slnt);
                             len += 1;
                         } else {
                             synth.skew = 14;
@@ -134,10 +142,10 @@ impl FontInfo {
                 FontStyle::Oblique(angle) => {
                     if self.style == FontStyle::Normal {
                         let degrees = angle.unwrap_or(14.0);
-                        if self.has_slant_axis() {
-                            synth.vars[len] = (Tag::new(b"slnt"), degrees);
+                        if let Some(slnt) = self.slant_axis_value(degrees) {
+                            synth.vars[len] = (Tag::new(b"slnt"), slnt);
                             len += 1;
-                        } else if self.has_italic_axis() && degrees > 0. {
+                        } else if self.has_italic_axis() && degrees > 0. && self.slant_range.is_none() {
                             synth.vars[len] = (Tag::new(b"ital"), 1.0);
                             len += 1;
                         } else {
@@ -274,6 +282,7 @@ impl FontInfo {
             charmap_index,
             unicode_range: UnicodeRange::default(),
             precedence: 0,
+            slant_range: None,
         })
     }
 
@@ -292,6 +301,19 @@ impl FontInfo {
         }
         if self.weight == FontWeight::default() {
             self.weight = weight;
+        }
+    }
+
+    /// pyro: the `slnt` axis value that slants the font `degrees` clockwise, when the font has
+    /// the axis and its `@font-face` rule lets it be used (see `slant_range`).
+    fn slant_axis_value(&self, degrees: f32) -> Option<f32> {
+        if !self.has_slant_axis() {
+            return None;
+        }
+        match self.slant_range {
+            None => Some(-degrees),
+            Some((min, max)) if min == max => None,
+            Some((min, max)) => Some(-degrees.clamp(min.min(max), min.max(max))),
         }
     }
 
@@ -319,6 +341,9 @@ impl FontInfo {
         }
         if let Some(precedence) = info_override.precedence {
             self.precedence = precedence;
+        }
+        if let Some(slant_range) = info_override.slant_range {
+            self.slant_range = Some(slant_range);
         }
     }
 }
@@ -529,6 +554,9 @@ pub struct FontInfoOverride<'a> {
     /// `@font-face` implementation gives each rule a precedence rising in rule
     /// order.
     pub precedence: Option<u64>,
+    /// pyro: the slant angles the font is allowed (`FontInfo`'s `slant_range`): CSS's
+    /// `font-style` descriptor, `(0.0, 0.0)` for `normal`.
+    pub slant_range: Option<(f32, f32)>,
 }
 
 #[cfg(test)]
@@ -581,6 +609,32 @@ mod tests {
 
         let synthesis = font.synthesis(font.width(), font.style(), FontWeight::THIN);
         assert!(!synthesis.any());
+    }
+
+    #[test]
+    fn slant_synthesis_follows_the_axis_direction_and_the_allowed_range() {
+        let slnt = Tag::new(b"slnt");
+        let oblique = |font: &FontInfo, degrees: f32| {
+            font.synthesis(font.width(), FontStyle::Oblique(Some(degrees)), font.weight())
+        };
+        let slant_of = |synthesis: &Synthesis| {
+            synthesis.variation_settings().iter().find(|(tag, _)| *tag == slnt).map(|(_, value)| *value)
+        };
+
+        // CSS angles are clockwise, the `slnt` axis counter-clockwise.
+        let mut font = font_info(ROBOTO_FLEX);
+        assert!(font.has_slant_axis());
+        assert_eq!(slant_of(&oblique(&font, 10.0)), Some(-10.0));
+
+        // `font-style: oblique 0deg 5deg` clamps the angle.
+        font.apply_override(&FontInfoOverride { slant_range: Some((0.0, 5.0)), ..Default::default() });
+        assert_eq!(slant_of(&oblique(&font, 10.0)), Some(-5.0));
+
+        // `font-style: normal` leaves the axis alone: the slant is faked.
+        font.apply_override(&FontInfoOverride { slant_range: Some((0.0, 0.0)), ..Default::default() });
+        let synthesis = oblique(&font, 10.0);
+        assert_eq!(slant_of(&synthesis), None);
+        assert_eq!(synthesis.skew(), Some(10.0));
     }
 
     #[test]
