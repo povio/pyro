@@ -1041,16 +1041,19 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
         }
     }
 
-    // pyro: the subgrids' tracks as the aligned tracks place them; the subgrids' items are theirs to lay out.
-    if has_subgrid_items {
-        subgrid::update_subgrid_track_sizes(tree, &items[..own_item_count], AbsoluteAxis::Horizontal, &columns, true, &subgrid_parent);
-        subgrid::update_subgrid_track_sizes(tree, &items[..own_item_count], AbsoluteAxis::Vertical, &rows, true, &subgrid_parent);
-    }
-    items.truncate(own_item_count);
-
-    // pyro: the baseline shims with the final track sizes (an item's baselines can depend on both)
+    // pyro: the baseline shims with the final track sizes (an item's baselines can depend on both), with the
+    // parent's group baselines in a subgrid's subgridded axes; a subgrid's items here give it this grid's.
     if has_baseline_aligned_item && replay.is_none() {
         for axis in [AbstractAxis::Inline, AbstractAxis::Block] {
+            let parent_axis = own_subgrid.as_ref().and_then(|context| match axis {
+                AbstractAxis::Inline => context.columns.as_ref(),
+                AbstractAxis::Block => context.rows.as_ref(),
+            });
+            let parent_baselines = parent_axis.and_then(|sub| sub.baselines.clone());
+            let mut synthesis = baseline_synthesis;
+            if let Some(parent_synthesis) = parent_axis.and_then(|sub| sub.baseline_synthesis) {
+                synthesis.set(axis, parent_synthesis);
+            }
             baseline::resolve_baseline_shims(
                 tree,
                 axis,
@@ -1058,11 +1061,22 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
                 Some(&columns),
                 Some(&rows),
                 inner_node_size,
-                baseline_synthesis,
+                synthesis,
                 direction,
+                parent_baselines.as_deref(),
             );
+            if has_subgrid_items {
+                subgrid::record_subgrid_baselines(tree, &items, axis, synthesis.get(axis));
+            }
         }
     }
+
+    // pyro: the subgrids' tracks as the aligned tracks place them; the subgrids' items are theirs to lay out.
+    if has_subgrid_items {
+        subgrid::update_subgrid_track_sizes(tree, &items[..own_item_count], AbsoluteAxis::Horizontal, &columns, true, &subgrid_parent);
+        subgrid::update_subgrid_track_sizes(tree, &items[..own_item_count], AbsoluteAxis::Vertical, &rows, true, &subgrid_parent);
+    }
+    items.truncate(own_item_count);
 
     // 9. Size, Align, and Position Grid Items
 

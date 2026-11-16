@@ -314,6 +314,7 @@ pub(super) fn track_sizing_algorithm<Tree: LayoutPartialTree>(
             inner_node_size,
             params.synthesis,
             params.direction,
+            None,
         );
     }
 

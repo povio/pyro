@@ -70,3 +70,20 @@ fn justify_baseline_follows_the_items_block_flow() {
     );
     check(&img, &[(90, 10, GREEN), (10, 10, WHITE), (10, 30, BLUE), (90, 30, WHITE)]);
 }
+
+/// A subgrid's item shares its parent's row baseline group (css-grid-2 §9): with the subgrid's 10px top padding
+/// as an extra margin, the blue box (synthesized baseline at its bottom) is shimmed to 20..40, beside the green
+/// 0..40 in the parent (aligned in the subgrid alone, it sat at 10..30).
+#[test]
+fn subgrid_items_share_the_parents_baseline_groups() {
+    let img = render(
+        "<div style='display:grid;grid-template-columns:50px 50px;align-items:baseline;width:200px'>\
+           <div style='height:40px;background:green'></div>\
+           <div style='display:grid;grid-template-rows:subgrid;grid-row:1;align-items:baseline;padding-top:10px'>\
+             <div style='height:20px;background:blue'></div>\
+           </div>\
+         </div>",
+    );
+    // (the subgrid's definite row places it first, in the first column)
+    check(&img, &[(75, 5, GREEN), (75, 35, GREEN), (25, 15, WHITE), (25, 25, BLUE), (25, 39, BLUE), (25, 45, WHITE)]);
+}

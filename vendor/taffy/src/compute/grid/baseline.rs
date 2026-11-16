@@ -43,10 +43,12 @@ pub(super) fn resolve_baseline_shims(
     inner_node_size: Size<Option<f32>>,
     synthesis: Size<f32>,
     direction: Direction,
+    // pyro: for a subgrid, per line of `axis`, the parent's group baselines (`SubgridAxisContext::baselines`)
+    parent_baselines: Option<&[[Option<f32>; 2]]>,
 ) {
     // (key: whether the group aligns to the end, the line it aligns to; value: the item's distance from
     // that side of its margin box to its baseline)
-    let mut measured: Vec<(usize, bool, u16, f32)> = Vec::new();
+    let mut measured: Vec<(usize, bool, u16, f32, Option<f32>, f32)> = Vec::new();
     for (index, item) in items.iter_mut().enumerate() {
         match axis {
             AbstractAxis::Block => {
@@ -55,6 +57,7 @@ pub(super) fn resolve_baseline_shims(
             }
             AbstractAxis::Inline => item.baseline_shim_inline = Line { start: 0.0, end: 0.0 },
         }
+        item.baseline_distance = None;
         if !item.participates_in_baseline_alignment_in(axis) {
             continue;
         }
@@ -68,7 +71,7 @@ pub(super) fn resolve_baseline_shims(
             height: rows.map(|tracks| span_size(tracks, item.row_indexes)),
         };
         let margin_basis = area.width.or(inner_node_size.width);
-        let margin = item.margin.resolve_or_zero(margin_basis, |val, basis| tree.calc(val, basis));
+        let margin = item.margin.resolve_or_zero(margin_basis, |val, basis| tree.calc(val, basis)) + item.extra_margin;
         let known = item.known_dimensions_cached(tree, area);
         let available = Size {
             width: area
@@ -136,17 +139,30 @@ pub(super) fn resolve_baseline_shims(
         let placement = item.placement_indexes(axis);
         let (line, distance) =
             if is_end { (placement.end, margin_end + size - from_start) } else { (placement.start, margin_start + from_start) };
-        measured.push((index, is_end, line, distance));
+        // (the item's lines in origin-zero coordinates, which a subgrid's parent gives its baselines in)
+        let own_line = if is_end { item.placement(axis).end.0 } else { item.placement(axis).start.0 };
+        let parent = parent_baselines
+            .and_then(|lines| usize::try_from(own_line).ok().and_then(|line| lines.get(line)))
+            .and_then(|line| line[is_end as usize]);
+        let extra = match axis {
+            AbstractAxis::Block if is_end => item.extra_margin.bottom,
+            AbstractAxis::Block => item.extra_margin.top,
+            AbstractAxis::Inline if is_end != direction.is_rtl() => item.extra_margin.right,
+            AbstractAxis::Inline => item.extra_margin.left,
+        };
+        measured.push((index, is_end, line, distance, parent, extra));
     }
 
-    for &(index, is_end, line, distance) in &measured {
+    for &(index, is_end, line, distance, parent, extra) in &measured {
         let group_max = measured
             .iter()
             .filter(|other| other.1 == is_end && other.2 == line)
             .map(|other| other.3)
+            .chain(parent)
             .fold(f32::NEG_INFINITY, f32::max);
         let shim = group_max - distance;
         let item = &mut items[index];
+        item.baseline_distance = Some(group_max - extra);
         match axis {
             AbstractAxis::Block if is_end => item.baseline_shim_block_end = shim,
             AbstractAxis::Block => item.baseline_shim = shim,

@@ -547,3 +547,7 @@ resolve `stretch` in `width`, `min-width` or `max-width` through the block paren
 and the float-slot search clamps a given width by the keyword limits (`clamp_width_by_keywords`), so `stretch` is
 the slot's width. `resolve_absolute_sizing_keywords` takes the stretch-fit size of the inset-modified containing
 block, which an auto inset bounds at the static position.
+Subgrids (css-grid-2 §9): a subgrid's items (virtual items) join the parent's baseline groups, orthogonal subgrids'
+with their alignment axes swapped (nested, reversed: fallback alignment). `subgrid::record_subgrid_baselines` gives
+the subgrid each line's group baseline and the parent's `baseline_synthesis` (`SubgridAxisContext::baselines`,
+`baseline_synthesis`), which its own final shims take.

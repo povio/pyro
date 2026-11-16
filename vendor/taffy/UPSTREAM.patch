@@ -2821,10 +2821,10 @@ index b84e8751..ad491717 100644
  /// The offset applied to an item in a single axis by its `inset` if it is `position: relative`
 diff --git a/src/compute/grid/baseline.rs b/src/compute/grid/baseline.rs
 new file mode 100644
-index 00000000..38551144
+index 00000000..5f4dabea
 --- /dev/null
 +++ b/src/compute/grid/baseline.rs
-@@ -0,0 +1,164 @@
+@@ -0,0 +1,180 @@
 +//! pyro: baseline self-alignment of grid items in both axes (css-align-3 §9, css-grid-1 §11.5 step 1).
 +//!
 +//! Items with `align-self` (block axis) or `justify-self` (inline axis) `baseline` / `last baseline` form
@@ -2870,10 +2870,12 @@ index 00000000..38551144
 +    inner_node_size: Size<Option<f32>>,
 +    synthesis: Size<f32>,
 +    direction: Direction,
++    // pyro: for a subgrid, per line of `axis`, the parent's group baselines (`SubgridAxisContext::baselines`)
++    parent_baselines: Option<&[[Option<f32>; 2]]>,
 +) {
 +    // (key: whether the group aligns to the end, the line it aligns to; value: the item's distance from
 +    // that side of its margin box to its baseline)
-+    let mut measured: Vec<(usize, bool, u16, f32)> = Vec::new();
++    let mut measured: Vec<(usize, bool, u16, f32, Option<f32>, f32)> = Vec::new();
 +    for (index, item) in items.iter_mut().enumerate() {
 +        match axis {
 +            AbstractAxis::Block => {
@@ -2882,6 +2884,7 @@ index 00000000..38551144
 +            }
 +            AbstractAxis::Inline => item.baseline_shim_inline = Line { start: 0.0, end: 0.0 },
 +        }
++        item.baseline_distance = None;
 +        if !item.participates_in_baseline_alignment_in(axis) {
 +            continue;
 +        }
@@ -2895,7 +2898,7 @@ index 00000000..38551144
 +            height: rows.map(|tracks| span_size(tracks, item.row_indexes)),
 +        };
 +        let margin_basis = area.width.or(inner_node_size.width);
-+        let margin = item.margin.resolve_or_zero(margin_basis, |val, basis| tree.calc(val, basis));
++        let margin = item.margin.resolve_or_zero(margin_basis, |val, basis| tree.calc(val, basis)) + item.extra_margin;
 +        let known = item.known_dimensions_cached(tree, area);
 +        let available = Size {
 +            width: area
@@ -2963,17 +2966,30 @@ index 00000000..38551144
 +        let placement = item.placement_indexes(axis);
 +        let (line, distance) =
 +            if is_end { (placement.end, margin_end + size - from_start) } else { (placement.start, margin_start + from_start) };
-+        measured.push((index, is_end, line, distance));
++        // (the item's lines in origin-zero coordinates, which a subgrid's parent gives its baselines in)
++        let own_line = if is_end { item.placement(axis).end.0 } else { item.placement(axis).start.0 };
++        let parent = parent_baselines
++            .and_then(|lines| usize::try_from(own_line).ok().and_then(|line| lines.get(line)))
++            .and_then(|line| line[is_end as usize]);
++        let extra = match axis {
++            AbstractAxis::Block if is_end => item.extra_margin.bottom,
++            AbstractAxis::Block => item.extra_margin.top,
++            AbstractAxis::Inline if is_end != direction.is_rtl() => item.extra_margin.right,
++            AbstractAxis::Inline => item.extra_margin.left,
++        };
++        measured.push((index, is_end, line, distance, parent, extra));
 +    }
 +
-+    for &(index, is_end, line, distance) in &measured {
++    for &(index, is_end, line, distance, parent, extra) in &measured {
 +        let group_max = measured
 +            .iter()
 +            .filter(|other| other.1 == is_end && other.2 == line)
 +            .map(|other| other.3)
++            .chain(parent)
 +            .fold(f32::NEG_INFINITY, f32::max);
 +        let shim = group_max - distance;
 +        let item = &mut items[index];
++        item.baseline_distance = Some(group_max - extra);
 +        match axis {
 +            AbstractAxis::Block if is_end => item.baseline_shim_block_end = shim,
 +            AbstractAxis::Block => item.baseline_shim = shim,
@@ -3026,7 +3042,7 @@ index 037a2d1c..d0abc8ef 100644
      tracks.first_mut().unwrap().collapse();
      tracks.last_mut().unwrap().collapse();
 diff --git a/src/compute/grid/mod.rs b/src/compute/grid/mod.rs
-index f0109c6e..825e0e55 100644
+index f0109c6e..951d1511 100644
 --- a/src/compute/grid/mod.rs
 +++ b/src/compute/grid/mod.rs
 @@ -36,15 +36,22 @@ pub(crate) use types::{GridCoordinate, GridLine, OriginZeroLine, MAX_GRID_TRACKS
@@ -3736,7 +3752,7 @@ index f0109c6e..825e0e55 100644
  
      // If only the container's size has been requested
      if run_mode == RunMode::ComputeSize {
-@@ -693,6 +1030,40 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -693,6 +1030,54 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
          false,
      );
  
@@ -3751,16 +3767,19 @@ index f0109c6e..825e0e55 100644
 +        }
 +    }
 +
-+    // pyro: the subgrids' tracks as the aligned tracks place them; the subgrids' items are theirs to lay out.
-+    if has_subgrid_items {
-+        subgrid::update_subgrid_track_sizes(tree, &items[..own_item_count], AbsoluteAxis::Horizontal, &columns, true, &subgrid_parent);
-+        subgrid::update_subgrid_track_sizes(tree, &items[..own_item_count], AbsoluteAxis::Vertical, &rows, true, &subgrid_parent);
-+    }
-+    items.truncate(own_item_count);
-+
-+    // pyro: the baseline shims with the final track sizes (an item's baselines can depend on both)
++    // pyro: the baseline shims with the final track sizes (an item's baselines can depend on both), with the
++    // parent's group baselines in a subgrid's subgridded axes; a subgrid's items here give it this grid's.
 +    if has_baseline_aligned_item && replay.is_none() {
 +        for axis in [AbstractAxis::Inline, AbstractAxis::Block] {
++            let parent_axis = own_subgrid.as_ref().and_then(|context| match axis {
++                AbstractAxis::Inline => context.columns.as_ref(),
++                AbstractAxis::Block => context.rows.as_ref(),
++            });
++            let parent_baselines = parent_axis.and_then(|sub| sub.baselines.clone());
++            let mut synthesis = baseline_synthesis;
++            if let Some(parent_synthesis) = parent_axis.and_then(|sub| sub.baseline_synthesis) {
++                synthesis.set(axis, parent_synthesis);
++            }
 +            baseline::resolve_baseline_shims(
 +                tree,
 +                axis,
@@ -3768,16 +3787,27 @@ index f0109c6e..825e0e55 100644
 +                Some(&columns),
 +                Some(&rows),
 +                inner_node_size,
-+                baseline_synthesis,
++                synthesis,
 +                direction,
++                parent_baselines.as_deref(),
 +            );
++            if has_subgrid_items {
++                subgrid::record_subgrid_baselines(tree, &items, axis, synthesis.get(axis));
++            }
 +        }
 +    }
++
++    // pyro: the subgrids' tracks as the aligned tracks place them; the subgrids' items are theirs to lay out.
++    if has_subgrid_items {
++        subgrid::update_subgrid_track_sizes(tree, &items[..own_item_count], AbsoluteAxis::Horizontal, &columns, true, &subgrid_parent);
++        subgrid::update_subgrid_track_sizes(tree, &items[..own_item_count], AbsoluteAxis::Vertical, &rows, true, &subgrid_parent);
++    }
++    items.truncate(own_item_count);
 +
      // 9. Size, Align, and Position Grid Items
  
      #[cfg_attr(not(feature = "content_size"), allow(unused_mut))]
-@@ -721,6 +1092,13 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -721,6 +1106,13 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
      };
  
      // Position in-flow children (stored in items vector)
@@ -3791,7 +3821,7 @@ index f0109c6e..825e0e55 100644
      for (index, item) in items.iter_mut().enumerate() {
          // Tracks are stored in logical order. In RTL the physical offsets are assigned
          // right-to-left, so an item's physical left edge is derived from its logical end
-@@ -739,25 +1117,97 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -739,25 +1131,97 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
                  columns[item.column_indexes.end as usize].offset
              },
          };
@@ -3907,7 +3937,7 @@ index f0109c6e..825e0e55 100644
  
          #[cfg(feature = "content_size")]
          {
-@@ -765,6 +1215,24 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -765,6 +1229,24 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
          }
      }
  
@@ -3932,7 +3962,7 @@ index f0109c6e..825e0e55 100644
      // Position hidden and absolutely positioned children, merging in the candidates bubbled out
      // of in-flow children's subtrees (`items` is sorted by `source_order`, i.e. child index)
      let mut order = items.len() as u32;
-@@ -841,7 +1309,7 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -841,7 +1323,7 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
              };
              drop(child_style);
  
@@ -3941,7 +3971,7 @@ index f0109c6e..825e0e55 100644
                  node: child,
                  order,
                  position,
-@@ -869,19 +1337,17 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -869,19 +1351,17 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
      // resolve the grid areas of out-of-flow boxes whose containing block is this grid
      let areas =
          name_resolver.populate_detailed_line_resolvers(&mut detailed_row_line_names, &mut detailed_column_line_names);
@@ -3969,7 +3999,7 @@ index f0109c6e..825e0e55 100644
              items: items.iter().map(DetailedGridItemsInfo::from_grid_item).collect(),
              areas,
          },
-@@ -926,25 +1392,38 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -926,25 +1406,38 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
          return output;
      }
  
@@ -4014,7 +4044,7 @@ index f0109c6e..825e0e55 100644
      };
  
      // A scroll container's own padding at the end of the content is part of its scrollable
-@@ -976,13 +1455,86 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -976,13 +1469,86 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
      let mut output = LayoutOutput::from_sizes_and_baselines(
          container_border_box,
          scrollable_overflow_rect,
@@ -4102,7 +4132,7 @@ index f0109c6e..825e0e55 100644
  /// Resolve the static-position rectangle (the grid area determined by the grid-placement
  /// properties) for an out-of-flow child of a positioned grid container.
  ///
-@@ -1298,6 +1850,10 @@ pub struct DetailedGridTracksInfo<S: CheapCloneStr = DefaultCheapStr> {
+@@ -1298,6 +1864,10 @@ pub struct DetailedGridTracksInfo<S: CheapCloneStr = DefaultCheapStr> {
      /// [`DetailedGridTracksInfo::iter_line_names`] for indices relative to the full grid
      /// (including implicit tracks). Empty if the grid has no named lines.
      pub line_names: GridLineNames<S>,
@@ -4113,7 +4143,7 @@ index f0109c6e..825e0e55 100644
  }
  
  impl<S: CheapCloneStr> DetailedGridTracksInfo<S> {
-@@ -1337,6 +1893,7 @@ impl<S: CheapCloneStr> DetailedGridTracksInfo<S> {
+@@ -1337,6 +1907,7 @@ impl<S: CheapCloneStr> DetailedGridTracksInfo<S> {
              collapsed_tracks,
              empty_axis_line,
              line_names,
@@ -4121,7 +4151,7 @@ index f0109c6e..825e0e55 100644
          }
      }
  
-@@ -1380,6 +1937,16 @@ impl<S: CheapCloneStr> DetailedGridTracksInfo<S> {
+@@ -1380,6 +1951,16 @@ impl<S: CheapCloneStr> DetailedGridTracksInfo<S> {
              out.write_char(']')
          }
  
@@ -4138,7 +4168,7 @@ index f0109c6e..825e0e55 100644
          if self.positions.is_empty() {
              return out.write_str("none");
          }
-@@ -1454,3 +2021,131 @@ impl DetailedGridItemsInfo {
+@@ -1454,3 +2035,131 @@ impl DetailedGridItemsInfo {
          }
      }
  }
@@ -4272,10 +4302,10 @@ index f0109c6e..825e0e55 100644
 +}
 diff --git a/src/compute/grid/subgrid.rs b/src/compute/grid/subgrid.rs
 new file mode 100644
-index 00000000..34cc58b5
+index 00000000..21cec73f
 --- /dev/null
 +++ b/src/compute/grid/subgrid.rs
-@@ -0,0 +1,973 @@
+@@ -0,0 +1,1048 @@
 +//! pyro: subgrids (css-grid-2 §9).
 +//!
 +//! A grid item whose `grid-template-columns` or `grid-template-rows` is `subgrid`, and which is no
@@ -4388,6 +4418,13 @@ index 00000000..34cc58b5
 +    /// direction: centred on the parent's gutters, a track can end before it starts (a gap wider than it), so
 +    /// that its size (`track_sizes`, never negative) does not give where the next one starts
 +    pub track_spans: Option<Vec<(f32, f32)>>,
++    /// pyro: per line of the subgrid (in its order), the baselines of the parent's baseline-sharing groups that
++    /// the subgrid's items there take part in (css-grid-2 §9), as the distance from the line to the group's
++    /// baseline that an item of the subgrid aligned there gets (`[start side, end side]`)
++    pub baselines: Option<Vec<[Option<f32>; 2]>>,
++    /// pyro: where the parent synthesizes baselines in this axis (`GridContainerStyle::baseline_synthesis`), which
++    /// the subgrid's items share its groups with
++    pub baseline_synthesis: Option<f32>,
 +}
 +
 +/// The context the grid `node` has from its parent, in the axes its style makes it a subgrid in
@@ -4722,6 +4759,7 @@ index 00000000..34cc58b5
 +            previous.as_ref().and_then(|previous| previous.axis(own)).filter(|previous| previous.track_count == track_count);
 +        let track_sizes = previous_axis.and_then(|previous| previous.track_sizes.clone());
 +        let track_spans = previous_axis.and_then(|previous| previous.track_spans.clone());
++        let baselines = previous_axis.and_then(|previous| previous.baselines.clone());
 +        *context.axis_mut(own) = Some(SubgridAxisContext {
 +            track_count,
 +            line_names,
@@ -4729,6 +4767,8 @@ index 00000000..34cc58b5
 +            reversed,
 +            track_sizes,
 +            track_spans,
++            baselines,
++            baseline_synthesis: previous_axis.and_then(|previous| previous.baseline_synthesis),
 +        });
 +    }
 +    context
@@ -4756,7 +4796,7 @@ index 00000000..34cc58b5
 +        let item = &mut items[index];
 +        item.excluded = subgrid;
 +        stretch_subgrid_item(item, subgrid);
-+        collect_virtual_items(tree, node, &context, area, subgrid, Rect::ZERO, parent, maps, items);
++        collect_virtual_items(tree, node, &context, area, subgrid, Rect::ZERO, parent, maps, items, true);
 +    }
 +}
 +
@@ -4780,6 +4820,8 @@ index 00000000..34cc58b5
 +    parent: &SubgridParent<'_, Tree::CustomIdent>,
 +    maps: InBothAbsAxis<AxisMap>,
 +    out: &mut Vec<GridItem>,
++    // pyro: whether `node` is a child of the sizing grid (not a nested subgrid)
++    top_level: bool,
 +) {
 +    // An orthogonal subgrid's own axes are the sizing grid's swapped
 +    let orthogonal = maps.horizontal.own != AbsoluteAxis::Horizontal;
@@ -4842,6 +4884,24 @@ index 00000000..34cc58b5
 +        }
 +        item.is_virtual = true;
 +        item.extra_margin = extra;
++        // pyro: the items of a subgrid that is a child of the sizing grid, in axes mapped straight onto it, take
++        // part in its baseline alignment (`record_subgrid_baselines`); the others are aligned by their fallback.
++        let no_baseline = |alignment: crate::style::AlignSelf| match alignment.keyword {
++            crate::AlignItemsKeyword::Baseline => crate::style::AlignSelf::START,
++            crate::AlignItemsKeyword::LastBaseline => crate::style::AlignSelf::END,
++            _ => alignment,
++        };
++        if orthogonal {
++            // (its alignment in the subgrid's axes, which are this grid's swapped)
++            core::mem::swap(&mut item.align_self, &mut item.justify_self);
++            item.baseline_flow = Size { width: item.baseline_flow.height, height: item.baseline_flow.width };
++        }
++        if !top_level || maps.vertical.reversed {
++            item.align_self = no_baseline(item.align_self);
++        }
++        if !top_level || maps.horizontal.reversed {
++            item.justify_self = no_baseline(item.justify_self);
++        }
 +        let mut excluded = Size { width: !sizing.width, height: !sizing.height };
 +        // (Subgrids nested in an orthogonal one are left to it.)
 +        let nested = Size {
@@ -4880,7 +4940,7 @@ index 00000000..34cc58b5
 +                }
 +            }
 +            let mapped_area = InBothAbsAxis { horizontal: item.column, vertical: item.row };
-+            collect_virtual_items(tree, item.node, &nested_context, mapped_area, nested, extra, parent, nested_maps, out);
++            collect_virtual_items(tree, item.node, &nested_context, mapped_area, nested, extra, parent, nested_maps, out, false);
 +            stretch_subgrid_item(&mut item, nested);
 +            excluded.width |= nested.width;
 +            excluded.height |= nested.height;
@@ -4942,6 +5002,9 @@ index 00000000..34cc58b5
 +            spacer.box_sizing = crate::style::BoxSizing::BorderBox;
 +            spacer.aspect_ratio = None;
 +            spacer.is_compressible_replaced = false;
++            // (no part in baseline alignment)
++            spacer.align_self = crate::style::AlignSelf::START;
++            spacer.justify_self = crate::style::AlignSelf::START;
 +            spacer.is_virtual = true;
 +            spacer.subgrid_owner = Some(node);
 +            let mut extra = Rect::ZERO;
@@ -5123,6 +5186,8 @@ index 00000000..34cc58b5
 +                reversed: false,
 +                track_sizes: None,
 +                track_spans: None,
++                baselines: None,
++                baseline_synthesis: None,
 +            });
 +            tree.set_subgrid_context(owner, Some(context));
 +        }
@@ -5247,6 +5312,46 @@ index 00000000..34cc58b5
 +        // The gutter at the track's physical end edge starts where the track ends
 +        let gutter = if rtl { track - 1 } else { track + 1 };
 +        tracks[gutter].offset = content_start + right;
++    }
++}
++
++/// pyro: give each subgrid the baselines of the groups its items (virtual items here) take part in, in the axis
++/// `axis` (css-grid-2 §9): an item's shim is the same in the subgrid as here, its distance to the group's baseline
++/// less the subgrid's margin, border and padding (or gap difference) at the line.
++pub(super) fn record_subgrid_baselines<Tree: LayoutGridContainer>(
++    tree: &mut Tree,
++    items: &[GridItem],
++    axis: AbstractAxis,
++    synthesis: f32,
++) {
++    let mut owners: Vec<NodeId> = items.iter().filter_map(|item| item.subgrid_owner).collect();
++    owners.sort_unstable_by_key(|owner| u64::from(*owner));
++    owners.dedup();
++    for owner in owners {
++        let Some(mut context) = tree.subgrid_context(owner) else { continue };
++        let own_axis = tree.get_grid_child_style(owner).subgrid_axis(match axis {
++            AbstractAxis::Inline => AbsoluteAxis::Horizontal,
++            AbstractAxis::Block => AbsoluteAxis::Vertical,
++        });
++        // (Orthogonal or reversed subgrids are not mapped.)
++        let Some(sub) = context.axis_mut(own_axis).as_mut().filter(|sub| !sub.reversed) else { continue };
++        let mut baselines: Vec<[Option<f32>; 2]> = (0..=sub.track_count).map(|_| [None, None]).collect();
++        for item in items.iter().filter(|item| item.subgrid_owner == Some(owner) && item.participates_in_baseline_alignment_in(axis)) {
++            let lines = item.owner_lines.get_abs(own_axis);
++            let is_end = item.baseline_group_is_end(axis);
++            let Some(distance) = item.baseline_distance else { continue };
++            let line = if is_end { lines.end.0 } else { lines.start.0 };
++            let Some(slot) = usize::try_from(line).ok().and_then(|line| baselines.get_mut(line)) else { continue };
++            let slot = &mut slot[is_end as usize];
++            *slot = Some(slot.map_or(distance, |other: f32| other.max(distance)));
++        }
++        let baselines = baselines.iter().any(|line| line[0].is_some() || line[1].is_some()).then_some(baselines);
++        let synthesis = baselines.is_some().then_some(synthesis);
++        if sub.baselines != baselines || sub.baseline_synthesis != synthesis {
++            sub.baselines = baselines;
++            sub.baseline_synthesis = synthesis;
++            tree.set_subgrid_context(owner, Some(context));
++        }
 +    }
 +}
 diff --git a/src/compute/grid/table_baseline.rs b/src/compute/grid/table_baseline.rs
@@ -5818,7 +5923,7 @@ index 00000000..9a97edf9
 +        })
 +}
 diff --git a/src/compute/grid/track_sizing.rs b/src/compute/grid/track_sizing.rs
-index 18063621..c1da7b39 100644
+index 18063621..f2c8bea1 100644
 --- a/src/compute/grid/track_sizing.rs
 +++ b/src/compute/grid/track_sizing.rs
 @@ -1,12 +1,12 @@
@@ -5881,7 +5986,7 @@ index 18063621..c1da7b39 100644
  
      // Resolve fit-content() limits against the container's inner size (these are fixed for the rest of this pass)
      let axis_inner_node_size = inner_node_size.get(axis);
-@@ -282,15 +298,31 @@ pub(super) fn track_sizing_algorithm<Tree: LayoutPartialTree>(
+@@ -282,15 +298,32 @@ pub(super) fn track_sizing_algorithm<Tree: LayoutPartialTree>(
      }
  
      // 11.5.1 Shim item baselines
@@ -5903,6 +6008,7 @@ index 18063621..c1da7b39 100644
 +            inner_node_size,
 +            params.synthesis,
 +            params.direction,
++            None,
 +        );
      }
  
@@ -5916,7 +6022,7 @@ index 18063621..c1da7b39 100644
          track.base_size == track.growth_limit
              && track
                  .min_track_sizing_function
-@@ -328,7 +360,13 @@ pub(super) fn track_sizing_algorithm<Tree: LayoutPartialTree>(
+@@ -328,7 +361,13 @@ pub(super) fn track_sizing_algorithm<Tree: LayoutPartialTree>(
          available_grid_space.get(axis),
          inner_node_size,
          get_track_size_estimate,
@@ -5930,7 +6036,7 @@ index 18063621..c1da7b39 100644
  
      // 11.6. Maximise Tracks
      // Distributes free space (if any) to tracks with FINITE growth limits, up to their limits.
-@@ -449,95 +487,15 @@ fn initialize_track_sizes(
+@@ -449,95 +488,15 @@ fn initialize_track_sizes(
      }
  }
  
@@ -6035,7 +6141,7 @@ index 18063621..c1da7b39 100644
  }
  
  /// 11.5 Resolve Intrinsic Track Sizes
-@@ -551,7 +509,21 @@ fn resolve_intrinsic_track_sizes<Tree: LayoutPartialTree>(
+@@ -551,7 +510,21 @@ fn resolve_intrinsic_track_sizes<Tree: LayoutPartialTree>(
      axis_available_grid_space: AvailableSpace,
      inner_node_size: Size<Option<f32>>,
      get_track_size_estimate: impl Fn(&GridTrack, Option<f32>, &Tree) -> Option<f32>,
@@ -6057,7 +6163,7 @@ index 18063621..c1da7b39 100644
      // Step 1. Shim baseline-aligned items so their intrinsic size contributions reflect their baseline alignment.
  
      // Already done at this point. See resolve_item_baselines function.
-@@ -565,9 +537,15 @@ fn resolve_intrinsic_track_sizes<Tree: LayoutPartialTree>(
+@@ -565,9 +538,15 @@ fn resolve_intrinsic_track_sizes<Tree: LayoutPartialTree>(
      // Items that cross a flexible track are all processed together in a single batch (regardless of their span), so
      // they only need to be moved to the end of the list. And the order in which items within a batch are processed
      // does not affect the result, so the remaining items only need to be sorted if any of them span more than one track.
@@ -6075,7 +6181,7 @@ index 18063621..c1da7b39 100644
          if item.crosses_flexible_track(axis) {
              partitioned_items.push_back(item);
          } else {
-@@ -601,6 +579,15 @@ fn resolve_intrinsic_track_sizes<Tree: LayoutPartialTree>(
+@@ -601,6 +580,15 @@ fn resolve_intrinsic_track_sizes<Tree: LayoutPartialTree>(
          // 2. Size tracks to fit non-spanning items: For each track with an intrinsic track sizing function and not a flexible sizing function,
          // consider the items in it with a span of 1:
          let batch_span = batch[0].placement(axis).span();
@@ -6091,7 +6197,7 @@ index 18063621..c1da7b39 100644
          if !is_flex && batch_span == 1 {
              for item in batch.iter_mut() {
                  let track_index = item.placement_indexes(axis).start + 1;
-@@ -998,6 +985,56 @@ fn resolve_intrinsic_track_sizes<Tree: LayoutPartialTree>(
+@@ -998,6 +986,56 @@ fn resolve_intrinsic_track_sizes<Tree: LayoutPartialTree>(
          .for_each(|track| track.growth_limit = track.base_size);
  }
  
@@ -6148,7 +6254,7 @@ index 18063621..c1da7b39 100644
  /// The sum of the flex factors of the flexible tracks in an item's spanned track range
  #[inline(always)]
  fn crossed_flex_factor_sum(tracks: &[GridTrack]) -> f32 {
-@@ -1295,7 +1332,7 @@ fn expand_flexible_tracks<Tree: LayoutPartialTree>(
+@@ -1295,7 +1333,7 @@ fn expand_flexible_tracks<Tree: LayoutPartialTree>(
                  // that the item crosses and a space to fill of the item’s max-content contribution.
                  items
                      .iter_mut()
@@ -6157,7 +6263,7 @@ index 18063621..c1da7b39 100644
                      .map(|item| {
                          let max_content_contribution = item_sizer.max_content_contribution(item, axis_tracks);
                          let tracks = &axis_tracks[item.track_range_excluding_lines(axis)];
-@@ -1334,9 +1371,20 @@ fn expand_flexible_tracks<Tree: LayoutPartialTree>(
+@@ -1334,9 +1372,20 @@ fn expand_flexible_tracks<Tree: LayoutPartialTree>(
  
      // For each flexible track, if the product of the used flex fraction and the track’s flex factor is greater
      // than the track’s base size, set its base size to that product.
@@ -6180,7 +6286,7 @@ index 18063621..c1da7b39 100644
  }
  
 diff --git a/src/compute/grid/types/grid_item.rs b/src/compute/grid/types/grid_item.rs
-index 6ad11edc..f4819a8f 100644
+index 6ad11edc..16653270 100644
 --- a/src/compute/grid/types/grid_item.rs
 +++ b/src/compute/grid/types/grid_item.rs
 @@ -21,7 +21,7 @@ pub(in super::super) struct KnownDimensionsCacheEntry {
@@ -6192,12 +6298,15 @@ index 6ad11edc..f4819a8f 100644
  pub(in super::super) struct GridItem {
      /// The id of the node that this item represents
      pub node: NodeId,
-@@ -66,9 +66,26 @@ pub(in super::super) struct GridItem {
+@@ -66,9 +66,29 @@ pub(in super::super) struct GridItem {
      /// The item's first baseline (horizontal), measured from the top of its border box. Set from the item's
      /// intrinsic layout when resolving baseline alignment during track sizing, then from its final layout.
      pub baseline: Option<f32>,
 +    /// pyro: the item's last baseline, from its final layout
 +    pub last_baseline: Option<f32>,
++    /// pyro: for an item baseline-aligned in the axis last resolved, the distance from its track's edge (its
++    /// group's side) to its group's baseline, without `extra_margin` (`subgrid::record_subgrid_baselines`)
++    pub baseline_distance: Option<f32>,
      /// Shim for baseline alignment that acts like an extra top margin
 -    /// TODO: Support last baseline and vertical text baselines
      pub baseline_shim: f32,
@@ -6220,7 +6329,7 @@ index 6ad11edc..f4819a8f 100644
  
      /// The item's definite row-start and row-end (same as `row` field, except in a different coordinate system)
      /// (as indexes into the Vec<GridTrack> stored in a grid's AbstractAxisTracks)
-@@ -98,6 +115,12 @@ pub(in super::super) struct GridItem {
+@@ -98,6 +118,12 @@ pub(in super::super) struct GridItem {
      pub minimum_contribution_cache: Size<Option<f32>>,
      /// Cache for the max-content size
      pub max_content_contribution_cache: Size<Option<f32>>,
@@ -6233,7 +6342,7 @@ index 6ad11edc..f4819a8f 100644
  
      /// Final y position, excluding any relative offset (which does not affect the container's baseline).
      /// Used to compute baseline alignment for the container.
-@@ -108,6 +131,27 @@ pub(in super::super) struct GridItem {
+@@ -108,6 +134,27 @@ pub(in super::super) struct GridItem {
      /// Out-of-flow candidates bubbled out of this item's subtree (anchors relative to the
      /// container's border box)
      pub oof_candidates: OofCandidates,
@@ -6261,11 +6370,12 @@ index 6ad11edc..f4819a8f 100644
  }
  
  impl GridItem {
-@@ -139,7 +183,18 @@ impl GridItem {
+@@ -139,7 +186,19 @@ impl GridItem {
              align_self: style.align_self().unwrap_or(parent_align_items),
              justify_self: style.justify_self().unwrap_or(parent_justify_items),
              baseline: None,
 +            last_baseline: None,
++            baseline_distance: None,
              baseline_shim: 0.0,
 +            baseline_shim_block_end: 0.0,
 +            baseline_shim_inline: Line { start: 0.0, end: 0.0 },
@@ -6280,7 +6390,7 @@ index 6ad11edc..f4819a8f 100644
              row_indexes: Line { start: 0, end: 0 }, // Properly initialised later
              column_indexes: Line { start: 0, end: 0 }, // Properly initialised later
              crosses_flexible_row: false,            // Properly initialised later
-@@ -151,9 +206,17 @@ impl GridItem {
+@@ -151,9 +210,17 @@ impl GridItem {
              max_content_contribution_cache: Size::NONE,
              known_dimensions_cache: None,
              minimum_contribution_cache: Size::NONE,
@@ -6298,14 +6408,14 @@ index 6ad11edc..f4819a8f 100644
          }
      }
  
-@@ -177,11 +240,44 @@ impl GridItem {
+@@ -177,11 +244,43 @@ impl GridItem {
      /// See <https://www.w3.org/TR/css-align-3/#baseline-align-self>
      #[inline(always)]
      pub fn participates_in_baseline_alignment(&self) -> bool {
 -        self.align_self.keyword == AlignItemsKeyword::Baseline
 +        // pyro: a subgrid's items and a subgrid stretched in its rows take no part (yet).
-+        !self.is_virtual
-+            && !self.excluded.height
++        // pyro: a subgrid's items in this grid's tracks (virtual items) take part (css-grid-2 §9)
++        !self.excluded.height
 +            && matches!(self.align_self.keyword, AlignItemsKeyword::Baseline | AlignItemsKeyword::LastBaseline)
              && !self.has_auto_block_margin()
              && !self.has_cyclic_block_size_dependency()
@@ -6314,8 +6424,7 @@ index 6ad11edc..f4819a8f 100644
 +    /// pyro: whether the item takes part in baseline alignment in the inline axis (`justify-self: baseline`)
 +    #[inline(always)]
 +    pub fn participates_in_inline_baseline_alignment(&self) -> bool {
-+        !self.is_virtual
-+            && !self.excluded.width
++        !self.excluded.width
 +            && matches!(self.justify_self.keyword, AlignItemsKeyword::Baseline | AlignItemsKeyword::LastBaseline)
 +            && !(self.margin.left.is_auto() || self.margin.right.is_auto())
 +            && !(self.size.width.0.uses_percentage() && (self.crosses_intrinsic_column || self.crosses_flexible_column))
@@ -6344,7 +6453,7 @@ index 6ad11edc..f4819a8f 100644
      /// This item's placement in the specified axis in OriginZero coordinates
      pub fn placement(&self, axis: AbstractAxis) -> Line<OriginZeroLine> {
          match axis {
-@@ -297,7 +393,7 @@ impl GridItem {
+@@ -297,7 +396,7 @@ impl GridItem {
      /// Retrieve the known_dimensions for the given grid area size from the cache or compute them.
      /// The min-content and max-content contributions of an item are both computed from the same known_dimensions.
      #[inline(always)]
@@ -6353,7 +6462,7 @@ index 6ad11edc..f4819a8f 100644
          &mut self,
          tree: &mut impl LayoutPartialTree,
          grid_area_size: Size<Option<f32>>,
-@@ -312,6 +408,17 @@ impl GridItem {
+@@ -312,6 +411,17 @@ impl GridItem {
          known_dimensions
      }
  
@@ -6371,7 +6480,7 @@ index 6ad11edc..f4819a8f 100644
      /// Whether the given self-alignment stretches the item: `stretch`, or `normal` unless the item is replaced
      #[inline(always)]
      fn is_stretch_aligned(&self, alignment: AlignSelf) -> bool {
-@@ -349,7 +456,7 @@ impl GridItem {
+@@ -349,7 +459,7 @@ impl GridItem {
              .maybe_resolve(grid_area_size, |val, basis| tree.calc(val, basis))
              .maybe_apply_aspect_ratio(aspect_ratio)
              .maybe_add(box_sizing_adjustment);
@@ -6380,7 +6489,7 @@ index 6ad11edc..f4819a8f 100644
              .min_size
              .maybe_resolve(grid_area_size, |val, basis| tree.calc(val, basis))
              .maybe_apply_aspect_ratio(aspect_ratio)
-@@ -357,6 +464,10 @@ impl GridItem {
+@@ -357,6 +467,10 @@ impl GridItem {
              // The size of the item is floored by its padding and border
              .or(padding_border_size.map(Some))
              .maybe_max(padding_border_size);
@@ -6391,7 +6500,7 @@ index 6ad11edc..f4819a8f 100644
          let max_size = self
              .max_size
              .maybe_resolve(grid_area_size, |val, basis| tree.calc(val, basis))
-@@ -479,6 +590,12 @@ impl GridItem {
+@@ -479,6 +593,12 @@ impl GridItem {
                  .sum::<Option<f32>>(),
          );
  
@@ -6404,7 +6513,7 @@ index 6ad11edc..f4819a8f 100644
          size.set(
              axis.other(),
              other_axis_tracks[self.track_range_excluding_lines(axis.other())]
-@@ -526,11 +643,18 @@ impl GridItem {
+@@ -526,11 +646,18 @@ impl GridItem {
          tree: &impl LayoutPartialTree,
      ) -> Size<f32> {
          Rect {
@@ -6427,7 +6536,7 @@ index 6ad11edc..f4819a8f 100644
          }
          .sum_axes()
      }
-@@ -584,6 +708,7 @@ impl GridItem {
+@@ -584,6 +711,7 @@ impl GridItem {
          self.min_content_contribution_cache.get(axis).unwrap_or_else(|| {
              let size = self.min_content_contribution(axis, tree, grid_area_size, available_space);
              self.min_content_contribution_cache.set(axis, Some(size));
@@ -6435,7 +6544,7 @@ index 6ad11edc..f4819a8f 100644
              size
          })
      }
-@@ -637,12 +762,15 @@ impl GridItem {
+@@ -637,12 +765,15 @@ impl GridItem {
          if available_space.width.is_none() && available_space.height.is_none() {
              return available_space;
          }
@@ -6456,7 +6565,7 @@ index 6ad11edc..f4819a8f 100644
          }
      }
  
-@@ -689,6 +817,7 @@ impl GridItem {
+@@ -689,6 +820,7 @@ impl GridItem {
          self.max_content_contribution_cache.get(axis).unwrap_or_else(|| {
              let size = self.max_content_contribution(axis, tree, grid_area_size, available_space);
              self.max_content_contribution_cache.set(axis, Some(size));
@@ -6464,7 +6573,7 @@ index 6ad11edc..f4819a8f 100644
              size
          })
      }
-@@ -805,6 +934,22 @@ impl GridItem {
+@@ -805,6 +937,22 @@ impl GridItem {
              })
      }
  
@@ -6487,7 +6596,7 @@ index 6ad11edc..f4819a8f 100644
      /// Retrieve the item's minimum contribution from the cache or compute it using the provided parameters
      #[inline(always)]
      pub fn minimum_contribution_cached(
-@@ -818,6 +963,9 @@ impl GridItem {
+@@ -818,6 +966,9 @@ impl GridItem {
          self.minimum_contribution_cache.get(axis).unwrap_or_else(|| {
              let size = self.minimum_contribution(tree, axis, axis_tracks, grid_area_size, inner_node_size);
              self.minimum_contribution_cache.set(axis, Some(size));

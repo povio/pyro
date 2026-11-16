@@ -110,6 +110,13 @@ pub struct SubgridAxisContext<S> {
     /// direction: centred on the parent's gutters, a track can end before it starts (a gap wider than it), so
     /// that its size (`track_sizes`, never negative) does not give where the next one starts
     pub track_spans: Option<Vec<(f32, f32)>>,
+    /// pyro: per line of the subgrid (in its order), the baselines of the parent's baseline-sharing groups that
+    /// the subgrid's items there take part in (css-grid-2 §9), as the distance from the line to the group's
+    /// baseline that an item of the subgrid aligned there gets (`[start side, end side]`)
+    pub baselines: Option<Vec<[Option<f32>; 2]>>,
+    /// pyro: where the parent synthesizes baselines in this axis (`GridContainerStyle::baseline_synthesis`), which
+    /// the subgrid's items share its groups with
+    pub baseline_synthesis: Option<f32>,
 }
 
 /// The context the grid `node` has from its parent, in the axes its style makes it a subgrid in
@@ -444,6 +451,7 @@ fn child_context<Tree: LayoutGridContainer>(
             previous.as_ref().and_then(|previous| previous.axis(own)).filter(|previous| previous.track_count == track_count);
         let track_sizes = previous_axis.and_then(|previous| previous.track_sizes.clone());
         let track_spans = previous_axis.and_then(|previous| previous.track_spans.clone());
+        let baselines = previous_axis.and_then(|previous| previous.baselines.clone());
         *context.axis_mut(own) = Some(SubgridAxisContext {
             track_count,
             line_names,
@@ -451,6 +459,8 @@ fn child_context<Tree: LayoutGridContainer>(
             reversed,
             track_sizes,
             track_spans,
+            baselines,
+            baseline_synthesis: previous_axis.and_then(|previous| previous.baseline_synthesis),
         });
     }
     context
@@ -478,7 +488,7 @@ pub(super) fn prepare_subgrid_items<Tree: LayoutGridContainer>(
         let item = &mut items[index];
         item.excluded = subgrid;
         stretch_subgrid_item(item, subgrid);
-        collect_virtual_items(tree, node, &context, area, subgrid, Rect::ZERO, parent, maps, items);
+        collect_virtual_items(tree, node, &context, area, subgrid, Rect::ZERO, parent, maps, items, true);
     }
 }
 
@@ -502,6 +512,8 @@ fn collect_virtual_items<Tree: LayoutGridContainer>(
     parent: &SubgridParent<'_, Tree::CustomIdent>,
     maps: InBothAbsAxis<AxisMap>,
     out: &mut Vec<GridItem>,
+    // pyro: whether `node` is a child of the sizing grid (not a nested subgrid)
+    top_level: bool,
 ) {
     // An orthogonal subgrid's own axes are the sizing grid's swapped
     let orthogonal = maps.horizontal.own != AbsoluteAxis::Horizontal;
@@ -564,6 +576,24 @@ fn collect_virtual_items<Tree: LayoutGridContainer>(
         }
         item.is_virtual = true;
         item.extra_margin = extra;
+        // pyro: the items of a subgrid that is a child of the sizing grid, in axes mapped straight onto it, take
+        // part in its baseline alignment (`record_subgrid_baselines`); the others are aligned by their fallback.
+        let no_baseline = |alignment: crate::style::AlignSelf| match alignment.keyword {
+            crate::AlignItemsKeyword::Baseline => crate::style::AlignSelf::START,
+            crate::AlignItemsKeyword::LastBaseline => crate::style::AlignSelf::END,
+            _ => alignment,
+        };
+        if orthogonal {
+            // (its alignment in the subgrid's axes, which are this grid's swapped)
+            core::mem::swap(&mut item.align_self, &mut item.justify_self);
+            item.baseline_flow = Size { width: item.baseline_flow.height, height: item.baseline_flow.width };
+        }
+        if !top_level || maps.vertical.reversed {
+            item.align_self = no_baseline(item.align_self);
+        }
+        if !top_level || maps.horizontal.reversed {
+            item.justify_self = no_baseline(item.justify_self);
+        }
         let mut excluded = Size { width: !sizing.width, height: !sizing.height };
         // (Subgrids nested in an orthogonal one are left to it.)
         let nested = Size {
@@ -602,7 +632,7 @@ fn collect_virtual_items<Tree: LayoutGridContainer>(
                 }
             }
             let mapped_area = InBothAbsAxis { horizontal: item.column, vertical: item.row };
-            collect_virtual_items(tree, item.node, &nested_context, mapped_area, nested, extra, parent, nested_maps, out);
+            collect_virtual_items(tree, item.node, &nested_context, mapped_area, nested, extra, parent, nested_maps, out, false);
             stretch_subgrid_item(&mut item, nested);
             excluded.width |= nested.width;
             excluded.height |= nested.height;
@@ -664,6 +694,9 @@ fn collect_virtual_items<Tree: LayoutGridContainer>(
             spacer.box_sizing = crate::style::BoxSizing::BorderBox;
             spacer.aspect_ratio = None;
             spacer.is_compressible_replaced = false;
+            // (no part in baseline alignment)
+            spacer.align_self = crate::style::AlignSelf::START;
+            spacer.justify_self = crate::style::AlignSelf::START;
             spacer.is_virtual = true;
             spacer.subgrid_owner = Some(node);
             let mut extra = Rect::ZERO;
@@ -845,6 +878,8 @@ fn resolve_owner<Tree: LayoutGridContainer>(
                 reversed: false,
                 track_sizes: None,
                 track_spans: None,
+                baselines: None,
+                baseline_synthesis: None,
             });
             tree.set_subgrid_context(owner, Some(context));
         }
@@ -969,5 +1004,45 @@ pub(super) fn place_subgrid_tracks<S>(
         // The gutter at the track's physical end edge starts where the track ends
         let gutter = if rtl { track - 1 } else { track + 1 };
         tracks[gutter].offset = content_start + right;
+    }
+}
+
+/// pyro: give each subgrid the baselines of the groups its items (virtual items here) take part in, in the axis
+/// `axis` (css-grid-2 §9): an item's shim is the same in the subgrid as here, its distance to the group's baseline
+/// less the subgrid's margin, border and padding (or gap difference) at the line.
+pub(super) fn record_subgrid_baselines<Tree: LayoutGridContainer>(
+    tree: &mut Tree,
+    items: &[GridItem],
+    axis: AbstractAxis,
+    synthesis: f32,
+) {
+    let mut owners: Vec<NodeId> = items.iter().filter_map(|item| item.subgrid_owner).collect();
+    owners.sort_unstable_by_key(|owner| u64::from(*owner));
+    owners.dedup();
+    for owner in owners {
+        let Some(mut context) = tree.subgrid_context(owner) else { continue };
+        let own_axis = tree.get_grid_child_style(owner).subgrid_axis(match axis {
+            AbstractAxis::Inline => AbsoluteAxis::Horizontal,
+            AbstractAxis::Block => AbsoluteAxis::Vertical,
+        });
+        // (Orthogonal or reversed subgrids are not mapped.)
+        let Some(sub) = context.axis_mut(own_axis).as_mut().filter(|sub| !sub.reversed) else { continue };
+        let mut baselines: Vec<[Option<f32>; 2]> = (0..=sub.track_count).map(|_| [None, None]).collect();
+        for item in items.iter().filter(|item| item.subgrid_owner == Some(owner) && item.participates_in_baseline_alignment_in(axis)) {
+            let lines = item.owner_lines.get_abs(own_axis);
+            let is_end = item.baseline_group_is_end(axis);
+            let Some(distance) = item.baseline_distance else { continue };
+            let line = if is_end { lines.end.0 } else { lines.start.0 };
+            let Some(slot) = usize::try_from(line).ok().and_then(|line| baselines.get_mut(line)) else { continue };
+            let slot = &mut slot[is_end as usize];
+            *slot = Some(slot.map_or(distance, |other: f32| other.max(distance)));
+        }
+        let baselines = baselines.iter().any(|line| line[0].is_some() || line[1].is_some()).then_some(baselines);
+        let synthesis = baselines.is_some().then_some(synthesis);
+        if sub.baselines != baselines || sub.baseline_synthesis != synthesis {
+            sub.baselines = baselines;
+            sub.baseline_synthesis = synthesis;
+            tree.set_subgrid_context(owner, Some(context));
+        }
     }
 }

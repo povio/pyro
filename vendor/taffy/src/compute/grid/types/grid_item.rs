@@ -68,6 +68,9 @@ pub(in super::super) struct GridItem {
     pub baseline: Option<f32>,
     /// pyro: the item's last baseline, from its final layout
     pub last_baseline: Option<f32>,
+    /// pyro: for an item baseline-aligned in the axis last resolved, the distance from its track's edge (its
+    /// group's side) to its group's baseline, without `extra_margin` (`subgrid::record_subgrid_baselines`)
+    pub baseline_distance: Option<f32>,
     /// Shim for baseline alignment that acts like an extra top margin
     pub baseline_shim: f32,
     /// pyro: shim for `last baseline` alignment (or first baseline of an item whose block flow runs the
@@ -184,6 +187,7 @@ impl GridItem {
             justify_self: style.justify_self().unwrap_or(parent_justify_items),
             baseline: None,
             last_baseline: None,
+            baseline_distance: None,
             baseline_shim: 0.0,
             baseline_shim_block_end: 0.0,
             baseline_shim_inline: Line { start: 0.0, end: 0.0 },
@@ -241,8 +245,8 @@ impl GridItem {
     #[inline(always)]
     pub fn participates_in_baseline_alignment(&self) -> bool {
         // pyro: a subgrid's items and a subgrid stretched in its rows take no part (yet).
-        !self.is_virtual
-            && !self.excluded.height
+        // pyro: a subgrid's items in this grid's tracks (virtual items) take part (css-grid-2 §9)
+        !self.excluded.height
             && matches!(self.align_self.keyword, AlignItemsKeyword::Baseline | AlignItemsKeyword::LastBaseline)
             && !self.has_auto_block_margin()
             && !self.has_cyclic_block_size_dependency()
@@ -251,8 +255,7 @@ impl GridItem {
     /// pyro: whether the item takes part in baseline alignment in the inline axis (`justify-self: baseline`)
     #[inline(always)]
     pub fn participates_in_inline_baseline_alignment(&self) -> bool {
-        !self.is_virtual
-            && !self.excluded.width
+        !self.excluded.width
             && matches!(self.justify_self.keyword, AlignItemsKeyword::Baseline | AlignItemsKeyword::LastBaseline)
             && !(self.margin.left.is_auto() || self.margin.right.is_auto())
             && !(self.size.width.0.uses_percentage() && (self.crosses_intrinsic_column || self.crosses_flexible_column))
