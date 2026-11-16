@@ -382,8 +382,13 @@ impl Dom {
                         // Only the slot the root assigns that name to: a second slot of the
                         // name rendered the same children again (two nodes of one key, which
                         // the renderer refuses: no screenshot).
-                        let assigned =
-                            if self.takes_assignment(n, name) { self.slotted(host, name) } else { Vec::new() };
+                        let assigned = if self.assigns_manually(n) {
+                            self.slot_assigned(n)
+                        } else if self.takes_assignment(n, name) {
+                            self.slotted(host, name)
+                        } else {
+                            Vec::new()
+                        };
                         if assigned.is_empty() {
                             (self.child_idx_iter(n).collect(), scope, false)
                         } else {
@@ -947,6 +952,12 @@ impl Dom {
             cur = self.following_in(cur, root);
         }
         false
+    }
+
+    /// Whether `slot`'s shadow root assigns its slots manually (`HTMLSlotElement.assign()`).
+    fn assigns_manually(&self, slot: u32) -> bool {
+        matches!(&self.n(self.root_idx(slot)).kind,
+            NodeKind::Fragment(f) if f.shadow.is_some() && f.flags & crate::node::shadow_flags::MANUAL_SLOTS != 0)
     }
 
     /// Light children of `host` assigned to the slot named `name` (the

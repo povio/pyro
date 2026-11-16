@@ -625,3 +625,28 @@ fn a_disabled_style_element_sheet_applies_nothing() {
     eval(r, "document.styleSheets[0].disabled = false");
     assert_eq!(eval(r, "getComputedStyle(t).width"), "30px");
 }
+
+#[test]
+fn manually_assigned_slots() {
+    // `slotAssignment: "manual"`: `HTMLSlotElement.assign()` decides the assigned nodes, in its order;
+    // a node is in one slot at most; only children of the host count; changes fire `slotchange`.
+    let e = env("<body><div id=host><b id=a>a</b><i id=b>b</i></div><p id=other>o</p></body>");
+    let r = &e.main;
+    eval(
+        r,
+        "window.sr = host.attachShadow({mode: 'open', slotAssignment: 'manual'}); \
+         sr.innerHTML = '<slot id=s1></slot><slot id=s2></slot>'; \
+         window.s1 = sr.getElementById('s1'); window.s2 = sr.getElementById('s2'); \
+         window.log = []; sr.addEventListener('slotchange', e => log.push(e.target.id));",
+    );
+    assert_eq!(eval(r, "s1.assignedNodes().length + ':' + (a.assignedSlot === null)"), "0:true");
+    eval(r, "s1.assign(b, a, other)");
+    assert_eq!(eval(r, "s1.assignedNodes().map(n => n.id).join() + ':' + a.assignedSlot.id"), "b,a:s1");
+    eval(r, "s2.assign(a)");
+    assert_eq!(
+        eval(r, "s1.assignedNodes().map(n => n.id).join() + '|' + s2.assignedNodes().map(n => n.id).join()"),
+        "b|a"
+    );
+    // `slotchange` (in the mutation observer microtask): both slots changed.
+    assert_eq!(eval(r, "[...new Set(log)].sort().join()"), "s1,s2");
+}

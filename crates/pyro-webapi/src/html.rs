@@ -2524,6 +2524,23 @@ simple_class!(HtmlSlotElement, "HTMLSlotElement", HtmlElement, |def| {
     reflect_str!(def, "name", "name");
     def.method("assignedNodes", 0, |s, n, a| slot_assigned(s, n, a, false));
     def.method("assignedElements", 0, |s, n, a| slot_assigned(s, n, a, true));
+    // `assign(...nodes)`: the slot's manually assigned nodes (Elements and Texts).
+    def.method("assign", 0, |s, n, a| {
+        let mut nodes = Vec::with_capacity(a.len());
+        for i in 0..a.len() {
+            let node = crate::node::node_arg(s, a.get(i), "HTMLSlotElement.assign")?;
+            let kind = n.page().dom.borrow().node_type(node).js()?;
+            if !matches!(kind, pyro_dom::NodeType::Element | pyro_dom::NodeType::Text) {
+                return Err(JsError::Type(
+                    "Failed to execute 'assign' on 'HTMLSlotElement': parameter is not of type '(Element or Text)'."
+                        .into(),
+                ));
+            }
+            nodes.push(node);
+        }
+        n.page().dom.borrow_mut().slot_assign(n.id, &nodes).js()?;
+        Ok(s.undefined())
+    });
 });
 simple_class!(HtmlCanvasElement, "HTMLCanvasElement", HtmlElement, |def| {
     // Setting either dimension clears the bitmap and resets the context.

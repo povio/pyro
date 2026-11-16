@@ -1379,7 +1379,8 @@ impl Dom {
         r
     }
 
-    /// DOM "find a slot" (named assignment; manual slots hold no state yet).
+    /// DOM "find a slot": by name, or (a root assigning manually) the slot whose manually
+    /// assigned nodes hold `i` (`HTMLSlotElement.assign()`).
     pub(crate) fn find_slot(&self, i: u32, open_only: bool) -> Option<u32> {
         if !matches!(self.n(i).kind, NodeKind::Element(_) | NodeKind::Text(_)) {
             return None;
@@ -1393,8 +1394,15 @@ impl Dom {
             return None;
         }
         let NodeKind::Fragment(f) = &self.n(sr).kind else { return None };
-        if f.flags & shadow_flags::MANUAL_SLOTS != 0 || (open_only && f.shadow == Some(ShadowRootMode::Closed)) {
+        if open_only && f.shadow == Some(ShadowRootMode::Closed) {
             return None;
+        }
+        if f.flags & shadow_flags::MANUAL_SLOTS != 0 {
+            let id = self.id_of(i);
+            return self.slot_state.manual.iter().find_map(|(slot, list)| {
+                let s = self.check(*slot).ok()?;
+                (list.contains(&id) && self.is_slot(s) && self.root_idx(s) == sr).then_some(s)
+            });
         }
         let name = self.n(i).element().and_then(|e| e.attr_local(&local_name!("slot"))).unwrap_or("");
         let mut cur = self.n(sr).first_child;
@@ -1417,6 +1425,18 @@ impl Dom {
 
     pub(crate) fn slot_assigned(&self, slot: u32) -> Vec<u32> {
         let host = match &self.n(self.root_idx(slot)).kind {
+            NodeKind::Fragment(f) if f.shadow.is_some() && f.flags & shadow_flags::MANUAL_SLOTS != 0 => {
+                // DOM "find slottables" of a manually assigning root: the slot's manually
+                // assigned nodes that are children of the host, in the order they were given.
+                let Some(list) = self.slot_state.manual.get(&self.id_of(slot)) else { return Vec::new() };
+                return list
+                    .iter()
+                    .filter_map(|&n| self.check(n).ok())
+                    .filter(|&n| {
+                        self.n(n).parent == f.host && matches!(self.n(n).kind, NodeKind::Element(_) | NodeKind::Text(_))
+                    })
+                    .collect();
+            }
             NodeKind::Fragment(f) if f.shadow.is_some() => f.host,
             _ => return Vec::new(),
         };
