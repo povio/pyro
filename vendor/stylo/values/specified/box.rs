@@ -180,7 +180,7 @@ impl DisplayInside {
     fn is_valid_for_list_item(self) -> bool {
         match self {
             DisplayInside::Flow => true,
-            #[cfg(feature = "gecko")]
+            // pyro: `flow-root list-item` in servo too (CSS Display 3; Blink parses it).
             DisplayInside::FlowRoot => true,
             _ => false,
         }

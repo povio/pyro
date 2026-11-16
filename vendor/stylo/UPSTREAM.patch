@@ -2379,7 +2379,7 @@ diff -ruN a/values/specified/basic_shape.rs b/values/specified/basic_shape.rs
  pub type BasicShape =
 diff -ruN a/values/specified/box.rs b/values/specified/box.rs
 --- a/values/specified/box.rs	2026-11-11 19:55:57
-+++ b/values/specified/box.rs	2026-11-16 18:58:01
++++ b/values/specified/box.rs	2026-11-16 20:04:46
 @@ -15,7 +15,7 @@
      GenericLineClamp, GenericOverflowClipMargin, GenericPerspective, GenericScrollbarInset,
      MaxLines, OverflowClipMarginBox,
@@ -2433,6 +2433,15 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
      WebkitBox,
  }
  
+@@ -179,7 +180,7 @@
+     fn is_valid_for_list_item(self) -> bool {
+         match self {
+             DisplayInside::Flow => true,
+-            #[cfg(feature = "gecko")]
++            // pyro: `flow-root list-item` in servo too (CSS Display 3; Blink parses it).
+             DisplayInside::FlowRoot => true,
+             _ => false,
+         }
 @@ -239,7 +240,6 @@
      );
      pub const Block: Self =

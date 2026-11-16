@@ -21,7 +21,7 @@ bitflags! {
     /// Flags for style information that Taffy needs but which is not part of the
     /// stylo [`ComputedValues`]
     #[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
-    pub struct StyleFlags: u8 {
+    pub struct StyleFlags: u16 {
         /// Whether the node is a replaced element (e.g. an image or form control)
         const IS_REPLACED = 1 << 0;
         /// Whether an inline span laid out by the node (an inline root) is a containing block
@@ -45,6 +45,9 @@ bitflags! {
         /// §3.3): its used `overflow` is `visible` in both axes, so it is no scroll container
         /// (it does not establish a block formatting context, its margins collapse).
         const OVERFLOW_TO_VIEWPORT = 1 << 7;
+        /// pyro: the node is a `<fieldset>`: an inline one is an inline-block and a table-type one a
+        /// block (HTML § 15.3.13).
+        const IS_FIELDSET = 1 << 8;
     }
 }
 
@@ -81,6 +84,8 @@ impl<T: Deref<Target = ComputedValues>> TaffyStyloStyle<T> {
         let display = self.style.clone_display();
         if self.flags.contains(StyleFlags::IS_BUTTON_INPUT) {
             convert::button_input_display(display)
+        } else if self.flags.contains(StyleFlags::IS_FIELDSET) {
+            convert::fieldset_display(display)
         } else {
             display
         }

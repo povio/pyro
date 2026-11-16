@@ -234,6 +234,20 @@ pub fn button_input_display(input: stylo::Display) -> stylo::Display {
     }
 }
 
+/// pyro: the display a `<fieldset>` is laid out with (HTML § 15.3.13 "The fieldset and legend
+/// elements"; Blink's LayoutFieldset): an inline-level one is an inline-block (`inline-flex` and
+/// `inline-grid` stay), a table or table-internal one a block.
+pub fn fieldset_display(input: stylo::Display) -> stylo::Display {
+    use stylo::{DisplayInside, DisplayOutside};
+    match (input.outside(), input.inside()) {
+        (DisplayOutside::None, _) => input,
+        (DisplayOutside::Inline, DisplayInside::Flex | DisplayInside::Grid) => input,
+        (DisplayOutside::Inline, _) => stylo::Display::InlineBlock,
+        (DisplayOutside::Block, DisplayInside::Flex | DisplayInside::Grid | DisplayInside::Flow | DisplayInside::FlowRoot) => input,
+        _ => stylo::Display::Block,
+    }
+}
+
 #[inline]
 pub fn is_block(input: stylo::Display) -> bool {
     self::display(input) == taffy::Display::Block

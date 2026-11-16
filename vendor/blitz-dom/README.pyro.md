@@ -2286,3 +2286,19 @@ Round 3 lane C2T (CSS2), covered by `crates/pyro-render/tests/css2_intrinsic_and
 - `src/layout/table.rs`: `rowspan="0"` spans the rest of the row group, and a rowspan never reaches past its group in
   the column cursor (`ColumnCursor::end_group`); a table without rows has no border spacing (its caption alone is the
   table, as Chromium), and an incremental update that removes the last row builds the table again.
+### `display: contents` content and fieldsets (WPT round 3, lane ID)
+
+- `src/layout/construct.rs` (`push_hoisted_children_and_pseudos`, `collect_complex_layout_children_in`): collapsible
+  white space between inline content hoisted out of `display: contents` elements stays in the open run (anonymous
+  block or flex/grid item): `x <div style="display: contents">y</div>` is "x y"; white space that starts a run or makes
+  a run alone still gives no box (WPT css-display `display-contents-flex-002/003`, `-list-001`, their dynamic
+  variants).
+- `src/layout/construct.rs` (`flush_contents_pseudos`), `find_inline_layout_embedded_boxes`, `src/layout/inline/build.rs`:
+  a `display: contents` element's `::before` and `::after` are its parent's content. They are made before the parent's
+  children are classified (on a first build an empty contents element's generated text came out as blocks), and an
+  inline root walks them with the element's children (they were dropped when the parent was all inline). WPT
+  `display-contents-dynamic-pseudo-insertion-001`, `-fieldset-002`, `-shadow-dom-1`.
+- `src/node/node.rs` (`Node::display_style`, `Node::is_fieldset`, `StyleFlags::IS_FIELDSET`), `src/node/stylo_data.rs`
+  (`LayoutStyles::derive`): a `<fieldset>` is laid out with `stylo_taffy::convert::fieldset_display` (an inline one is
+  an inline-block, a table-type one a block) and has no table-part or cell layout style (a `table-cell` fieldset kept
+  its `height` in none). Covered by `crates/pyro-render/tests/display_contents_boxes.rs`.

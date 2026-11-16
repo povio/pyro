@@ -50,11 +50,17 @@ pub(crate) struct LayoutStyles {
 
 impl LayoutStyles {
     /// The layout styles of a node whose primary style is `style` and whose half collapsed
-    /// borders (a cell of a table without uniform ones) are `collapsed_border`.
+    /// borders (a cell of a table without uniform ones) are `collapsed_border`. pyro: a
+    /// `<fieldset>` (`fieldset`) is no table part whatever its `display` (it lays out as a block:
+    /// `stylo_taffy::convert::fieldset_display`).
     pub(crate) fn derive(
         style: &style::properties::ComputedValues,
         collapsed_border: Option<[f32; 4]>,
+        fieldset: bool,
     ) -> Self {
+        if fieldset {
+            return Self::default();
+        }
         Self {
             table_part: table_part_style(style),
             cell: cell_layout_style(style, collapsed_border),
@@ -77,9 +83,10 @@ impl LayoutStyles {
         &self,
         style: &style::properties::ComputedValues,
         collapsed_border: Option<[f32; 4]>,
+        fieldset: bool,
         node_id: blitz_traits::node_id::NodeId,
     ) {
-        let fresh = Self::derive(style, collapsed_border);
+        let fresh = Self::derive(style, collapsed_border, fieldset);
         assert_eq!(
             self.table_part, fresh.table_part,
             "stale table-part Taffy style on node {node_id:?}"

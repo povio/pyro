@@ -298,6 +298,12 @@ slotted rules of a pseudo-element. blitz-dom keeps shadow trees' styles (its REA
 
 blitz-dom generates and lays out the boxes (its README).
 
+## `flow-root list-item` for servo (WPT round 3, lane ID)
+
+`values/specified/box.rs` (`DisplayInside::is_valid_for_list_item`): `flow-root` with `list-item` parses in servo too
+(upstream only with the gecko feature), as in Blink: `display: flow-root list-item` is a list item that establishes a
+block formatting context (WPT css-display `display-flow-root-list-item-001`).
+
 ## Updating or dropping the patch
 
 - When upstream has the change: delete this directory and the `[patch.crates-io]` entry.

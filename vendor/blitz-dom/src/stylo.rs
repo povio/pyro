@@ -2370,7 +2370,7 @@ impl<'dom> DomTraversal<BlitzNode<'dom>> for RecalcStyle<'_> {
             drop(old_primary);
             if derive {
                 let derived = match new_primary {
-                    Some(style) => LayoutStyles::derive(style, el.collapsed_border()),
+                    Some(style) => LayoutStyles::derive(style, el.collapsed_border(), el.is_fieldset()),
                     None => LayoutStyles::default(),
                 };
                 // SAFETY: the traversal has exclusive access to `el`, and nothing reads its
@@ -2383,7 +2383,7 @@ impl<'dom> DomTraversal<BlitzNode<'dom>> for RecalcStyle<'_> {
                 if let (Some(style), Some(stylo)) = (new_primary, el.try_stylo_element_data()) {
                     stylo
                         .layout_styles()
-                        .assert_current(style, el.collapsed_border(), el.id);
+                        .assert_current(style, el.collapsed_border(), el.is_fieldset(), el.id);
                 }
             }
             if collapsed_edges_changed {
@@ -2605,14 +2605,14 @@ fn sync_pseudo_element_styles(
             }
         }
         if LayoutStyles::affected_by(diff.damage) {
-            let derived = LayoutStyles::derive(&pe_style, pe_node.collapsed_border());
+            let derived = LayoutStyles::derive(&pe_style, pe_node.collapsed_border(), false);
             // SAFETY: as for `pe_data` above (only the owner's `process_preorder` reaches it).
             unsafe { stylo_data.set_layout_styles(derived) };
         } else {
             #[cfg(debug_assertions)]
             stylo_data
                 .layout_styles()
-                .assert_current(&pe_style, pe_node.collapsed_border(), pe_node_id);
+                .assert_current(&pe_style, pe_node.collapsed_border(), false, pe_node_id);
         }
         pe_node.record_out_of_flow(&pe_style);
         pe_data.styles.primary = Some(pe_style);

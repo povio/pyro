@@ -17,6 +17,7 @@ mod containing_block_chain;
 mod corner_border_shape;
 mod dictionary_line_breaks;
 mod direction_text;
+mod display_contents_boxes;
 mod document_facts;
 mod dotted_dashed_lines;
 mod filter_color;

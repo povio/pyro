@@ -998,7 +998,9 @@ fn build_inline_layout_with(
                             Some(s) => builder.push_style_span(contents_style(node.id, s)),
                             None => builder.push_style_modification_span(&[]),
                         }
-                        for child_id in node.children.iter().copied() {
+                        // pyro: with its `::before` and `::after`.
+                        let children = node.before().into_iter().chain(node.children.iter().copied()).chain(node.after());
+                        for child_id in children {
                             // node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
                             crate::util::ensure_stack(|| build_inline_layout_recursive(
                                 builder,

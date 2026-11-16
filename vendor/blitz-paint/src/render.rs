@@ -3187,7 +3187,7 @@ impl ElementCx<'_, '_> {
                 .and_then(|text_layout| Some((text_layout, text_layout.layout.lines().next()?)));
             // pyro: the marker goes with the line, which floats beside the item move.
             let line_x = first_line.as_ref().filter(|_| !rtl).map_or(0.0, |(text_layout, line)| {
-                line.metrics().inline_min_coord / text_layout.layout.scale()
+                marker_line_x(line) / text_layout.layout.scale()
             });
             let y_offset = if let Some((text_layout, first_text_line)) = &first_line
             {
@@ -3326,7 +3326,7 @@ impl ElementCx<'_, '_> {
                 let line_scale = text.layout.scale();
                 (
                     content_top + (line.metrics().baseline + shift as f32) / layout_scale + text.block_offset,
-                    line.metrics().inline_min_coord / line_scale,
+                    marker_line_x(line) / line_scale,
                 )
             }
             None => (marker_layout.lines().next().map_or(0.0, |line| line.metrics().baseline / layout_scale), 0.0),
@@ -4339,4 +4339,24 @@ fn last_positioned_table_cell(dom: &BaseDocument, table: &blitz_dom::TableContex
         .rev()
         .find(|cell| row_positioned.get(cell.row as usize).copied().unwrap_or(false) || positioned(cell.node_id))
         .map(|cell| cell.node_id)
+}
+
+/// pyro: where an outside marker's line starts: floats beside the item move the line and its
+/// marker (WPT CSS2 `list-style-applies-to-017`), but the item's own floats on a line with nothing
+/// in flow (a list item holding only a float) come after the marker: it stays before the item's
+/// border box (WPT css-display `display-flow-root-list-item-001`).
+fn marker_line_x(line: &parley::Line<'_, blitz_dom::node::TextBrush>) -> f32 {
+    let (mut in_flow, mut own_float) = (false, false);
+    for item in line.items() {
+        match item {
+            // (The strut of an item without in-flow content is a zero-width word joiner.)
+            parley::PositionedLayoutItem::GlyphRun(run) => in_flow |= run.advance() > 0.0,
+            parley::PositionedLayoutItem::InlineBox(ibox) => match ibox.kind {
+                parley::InlineBoxKind::InFlow => in_flow = true,
+                parley::InlineBoxKind::CustomOutOfFlow => own_float = true,
+                _ => {}
+            },
+        }
+    }
+    if in_flow || !own_float { line.metrics().inline_min_coord } else { 0.0 }
 }

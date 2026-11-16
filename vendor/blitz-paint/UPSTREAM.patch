@@ -7667,7 +7667,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                .and_then(|text_layout| Some((text_layout, text_layout.layout.lines().next()?)));
 +            // pyro: the marker goes with the line, which floats beside the item move.
 +            let line_x = first_line.as_ref().filter(|_| !rtl).map_or(0.0, |(text_layout, line)| {
-+                line.metrics().inline_min_coord / text_layout.layout.scale()
++                marker_line_x(line) / text_layout.layout.scale()
 +            });
 +            let y_offset = if let Some((text_layout, first_text_line)) = &first_line
              {
@@ -7692,7 +7692,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
                  y: pos.y + (content_box_subpixel_offset.y + y_offset) as f64,
              };
  
-@@ -1145,83 +3222,558 @@
+@@ -1145,13 +3222,154 @@
                  TextPaintOptions {
                      scale: self.scale,
                      brush_override: None,
@@ -7707,7 +7707,6 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          }
      }
  
--    fn draw_children(
 +    /// pyro: an outside `disc`, `circle` or `square` marker, as Chromium paints one: a shape
 +    /// sized from the item's font (Blink's `ListMarker::RelativeSymbolMarkerRect`), not a glyph
 +    /// of a bullet font. With `a` the font's ascent in whole pixels and `o = a * 2 / 3` in
@@ -7717,15 +7716,12 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +    /// edge. The first line is the item's own or that of the first box in it that has one; the
 +    /// font is the item's, which the marker's layout is a line of (blitz-dom).
 +    fn draw_marker_symbol(
-         &self,
-         scene: &mut impl PaintScene,
--        parent_style_transform: Affine,
--        clip_rect: Rect,
++        &self,
++        scene: &mut impl PaintScene,
 +        pos: Point,
 +        symbol: char,
 +        marker_layout: &parley::Layout<blitz_dom::node::TextBrush>,
-     ) {
--        // Negative z_index hoisted nodes
++    ) {
 +        let font_ascent = |line: &parley::Line<'_, blitz_dom::node::TextBrush>| {
 +            line.items().find_map(|item| match item {
 +                parley::PositionedLayoutItem::GlyphRun(run) => Some(run.run().font_metrics().ascent),
@@ -7763,19 +7759,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +            _ => scene.fill(Fill::NonZero, self.transform, &paint, None, &rect),
 +        }
 +    }
- 
--        if let Some(hoisted) = &self.node.stacking_context {
--            for hoisted_child in hoisted.neg_z_hoisted_children() {
--                let position = hoisted_child.position(self.node.tree(), self.node.id);
--                let pos = kurbo::Vec2 {
--                    x: position.x as f64 * self.scale,
--                    y: position.y as f64 * self.scale,
--                };
--                self.render_node(
--                    scene,
--                    hoisted_child.node_id,
--                    parent_style_transform.pre_translate(pos),
--                    clip_rect,
++
 +    /// pyro: the baseline an outside marker sits on, in CSS px from the top of the list item's
 +    /// content box: that of the item's first line, the first line of the first box in it that has
 +    /// one, or, when there is none, that of the marker's own line (a line of the item's font).
@@ -7816,7 +7800,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                let line_scale = text.layout.scale();
 +                (
 +                    content_top + (line.metrics().baseline + shift as f32) / layout_scale + text.block_offset,
-+                    line.metrics().inline_min_coord / line_scale,
++                    marker_line_x(line) / line_scale,
 +                )
 +            }
 +            None => (marker_layout.lines().next().map_or(0.0, |line| line.metrics().baseline / layout_scale), 0.0),
@@ -7849,28 +7833,41 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                let size = Affine::scale_non_uniform(
 +                    f64::from(width) * self.scale / f64::from(raster.width),
 +                    f64::from(height) * self.scale / f64::from(raster.height),
-                 );
++                );
 +                scene.draw_image(to_peniko_image(raster, quality).as_ref(), self.transform * origin * size);
-             }
++            }
 +            #[cfg(feature = "svg")]
 +            blitz_dom::node::ImageData::Svg(svg) => {
 +                anyrender_svg::render_svg_tree(scene, &svg.tree, self.transform * origin * Affine::scale(self.scale));
 +            }
 +            _ => {}
-         }
++        }
 +    }
- 
-+    fn draw_children(
-+        &self,
-+        scene: &mut impl PaintScene,
-+        parent_style_transform: Affine,
-+        clip_rect: Rect,
-+    ) {
-+        // Negative z_index hoisted nodes
++
+     fn draw_children(
+         &self,
+         scene: &mut impl PaintScene,
+@@ -1159,69 +3377,403 @@
+         clip_rect: Rect,
+     ) {
+         // Negative z_index hoisted nodes
 +        self.draw_neg_z_children(scene, parent_style_transform, clip_rect);
 +        self.draw_children_above(scene, parent_style_transform, clip_rect);
 +    }
-+
+ 
+-        if let Some(hoisted) = &self.node.stacking_context {
+-            for hoisted_child in hoisted.neg_z_hoisted_children() {
+-                let position = hoisted_child.position(self.node.tree(), self.node.id);
+-                let pos = kurbo::Vec2 {
+-                    x: position.x as f64 * self.scale,
+-                    y: position.y as f64 * self.scale,
+-                };
+-                self.render_node(
+-                    scene,
+-                    hoisted_child.node_id,
+-                    parent_style_transform.pre_translate(pos),
+-                    clip_rect,
+-                );
 +    /// pyro: [`Self::draw_children`] without the stacking contexts of negative z-index.
 +    fn draw_children_above(
 +        &self,
@@ -7878,44 +7875,14 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +        parent_style_transform: Affine,
 +        clip_rect: Rect,
 +    ) {
-         // Regular children
-         if let Some(children) = &*self.node.paint_children.borrow() {
-             for child_id in children {
--                // Fixed-position children of the root element are positioned against
--                // the viewport and do not scroll with it, so cancel out the viewport
--                // scroll (applied in `paint_scene`). A fixed box contained by a
--                // transformed ancestor scrolls with it like any out-of-flow box.
--                let child = &self.context.dom.as_ref().tree()[*child_id];
--                let child_transform = if child.taffy_position() == taffy::Position::Fixed
--                    && Some(self.node.id) == self.context.root_element_id
--                {
--                    let scroll = self.context.dom.as_ref().viewport_scroll();
--                    parent_style_transform.pre_translate(kurbo::Vec2 {
--                        x: scroll.x * self.scale,
--                        y: scroll.y * self.scale,
--                    })
--                } else if let Some(offset) = child.lifted_paint_offset(self.node.id) {
--                    parent_style_transform.pre_translate(kurbo::Vec2 {
--                        x: offset.x as f64 * self.scale,
--                        y: offset.y as f64 * self.scale,
--                    })
--                } else {
--                    parent_style_transform
--                };
--                self.render_node(scene, *child_id, child_transform, clip_rect);
++        // Regular children
++        if let Some(children) = &*self.node.paint_children.borrow() {
++            for child_id in children {
 +                self.draw_paint_child(scene, *child_id, parent_style_transform, clip_rect);
              }
          }
  
--        // Positive z_index hoisted nodes
--        if let Some(hoisted) = &self.node.stacking_context {
--            for hoisted_child in hoisted.pos_z_hoisted_children() {
--                let position = hoisted_child.position(self.node.tree(), self.node.id);
--                let pos = kurbo::Vec2 {
--                    x: position.x as f64 * self.scale,
--                    y: position.y as f64 * self.scale,
--                };
--                self.render_node(
+-        // Regular children
 +        self.draw_pos_z_children(scene, parent_style_transform, clip_rect);
 +    }
 +
@@ -8059,14 +8026,37 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +        {
 +            self.draw_table_borders(scene);
 +        }
-+        if let Some(children) = &*self.node.paint_children.borrow() {
+         if let Some(children) = &*self.node.paint_children.borrow() {
+-            for child_id in children {
+-                // Fixed-position children of the root element are positioned against
+-                // the viewport and do not scroll with it, so cancel out the viewport
+-                // scroll (applied in `paint_scene`). A fixed box contained by a
+-                // transformed ancestor scrolls with it like any out-of-flow box.
+-                let child = &self.context.dom.as_ref().tree()[*child_id];
+-                let child_transform = if child.taffy_position() == taffy::Position::Fixed
+-                    && Some(self.node.id) == self.context.root_element_id
+-                {
+-                    let scroll = self.context.dom.as_ref().viewport_scroll();
+-                    parent_style_transform.pre_translate(kurbo::Vec2 {
+-                        x: scroll.x * self.scale,
+-                        y: scroll.y * self.scale,
+-                    })
+-                } else if let Some(offset) = child.lifted_paint_offset(self.node.id) {
+-                    parent_style_transform.pre_translate(kurbo::Vec2 {
+-                        x: offset.x as f64 * self.scale,
+-                        y: offset.y as f64 * self.scale,
+-                    })
+-                } else {
+-                    parent_style_transform
+-                };
+-                self.render_node(scene, *child_id, child_transform, clip_rect);
 +            let tree = self.context.dom.as_ref().tree();
 +            for &child_id in children {
 +                if self.paint_level(&tree[child_id]) == 1 {
 +                    self.draw_paint_child(scene, child_id, parent_style_transform, clip_rect);
 +                }
-+            }
-+        }
+             }
+         }
 +        self.draw_inline_layout(scene, content_position);
 +        self.draw_marker(scene, content_position);
 +        let outer_outlines = self.context.deferred_outlines.replace(false);
@@ -8090,7 +8080,16 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +        }
 +        self.draw_pos_z_children(scene, parent_style_transform, clip_rect);
 +    }
-+
+ 
+-        // Positive z_index hoisted nodes
+-        if let Some(hoisted) = &self.node.stacking_context {
+-            for hoisted_child in hoisted.pos_z_hoisted_children() {
+-                let position = hoisted_child.position(self.node.tree(), self.node.id);
+-                let pos = kurbo::Vec2 {
+-                    x: position.x as f64 * self.scale,
+-                    y: position.y as f64 * self.scale,
+-                };
+-                self.render_node(
 +    /// pyro: one phase (`FlowPhase::Background` or `Foreground`) of the in-flow `paint_children`
 +    /// of a node painted in phases: a block box of the normal flow
 +    /// (`Node::paints_in_ancestor_phases`) in that phase, any other block-level box whole with
@@ -8627,7 +8626,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
  fn insets_from_taffy_rect(input: taffy::Rect<f64>) -> Insets {
      Insets {
          x0: input.left,
-@@ -1457,12 +4229,114 @@
+@@ -1457,12 +4229,134 @@
          }
      };
      let s_border = style.get_border();
@@ -8746,6 +8745,26 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +        .rev()
 +        .find(|cell| row_positioned.get(cell.row as usize).copied().unwrap_or(false) || positioned(cell.node_id))
 +        .map(|cell| cell.node_id)
++}
++
++/// pyro: where an outside marker's line starts: floats beside the item move the line and its
++/// marker (WPT CSS2 `list-style-applies-to-017`), but the item's own floats on a line with nothing
++/// in flow (a list item holding only a float) come after the marker: it stays before the item's
++/// border box (WPT css-display `display-flow-root-list-item-001`).
++fn marker_line_x(line: &parley::Line<'_, blitz_dom::node::TextBrush>) -> f32 {
++    let (mut in_flow, mut own_float) = (false, false);
++    for item in line.items() {
++        match item {
++            // (The strut of an item without in-flow content is a zero-width word joiner.)
++            parley::PositionedLayoutItem::GlyphRun(run) => in_flow |= run.advance() > 0.0,
++            parley::PositionedLayoutItem::InlineBox(ibox) => match ibox.kind {
++                parley::InlineBoxKind::InFlow => in_flow = true,
++                parley::InlineBoxKind::CustomOutOfFlow => own_float = true,
++                _ => {}
++            },
++        }
++    }
++    if in_flow || !own_float { line.metrics().inline_min_coord } else { 0.0 }
 +}
 diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-paint/src/render/background.rs
 --- a/packages/blitz-paint/src/render/background.rs

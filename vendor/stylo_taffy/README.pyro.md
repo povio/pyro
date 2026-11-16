@@ -57,3 +57,6 @@ entry) once a Blitz release carries these commits and changes.
 - `src/wrapper.rs`: `OofItemStyle::min_size_keyword`/`max_size_keyword` (the block item's), for the sizing
   keywords in the minimum and maximum sizes of absolutely positioned boxes (vendor/taffy/README.pyro.md).
 - `src/convert.rs`: `collapsed_rows` (vendor/taffy/README.pyro.md) is empty; blitz-dom's table layout sets it.
+- `src/convert.rs` (`fieldset_display`), `src/wrapper.rs` (`StyleFlags::IS_FIELDSET`, now 16 bits): a `<fieldset>`
+  lays out as HTML's rendering section says whatever its `display`: an inline-level one is an inline-block
+  (`inline-flex`/`inline-grid` stay), a table or table-internal one a block (WPT css-display `table-display-on-fieldset`, `display-inline-on-block-container`).
