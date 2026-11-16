@@ -2596,7 +2596,7 @@ index e967f50..9b099dd 100644
  
  pub use builder::{RangedBuilder, StyleRunBuilder, TreeBuilder};
 diff --git a/src/resolve/mod.rs b/src/resolve/mod.rs
-index f465832..150ba0c 100644
+index f465832..f597650 100644
 --- a/src/resolve/mod.rs
 +++ b/src/resolve/mod.rs
 @@ -15,7 +15,7 @@ use super::style::{
@@ -2608,7 +2608,7 @@ index f465832..150ba0c 100644
  use crate::util::nearly_eq;
  use crate::{LineBreak, LineHeight, OverflowWrap, VerticalAlign, layout};
  use crate::{TextWrapMode, WhiteSpaceCollapse, WordBreak};
-@@ -169,6 +169,10 @@ impl ResolveContext {
+@@ -169,6 +169,12 @@ impl ResolveContext {
              StyleProperty::OverflowWrap(value) => OverflowWrap(*value),
              StyleProperty::TextWrapMode(value) => TextWrapMode(*value),
              StyleProperty::WhiteSpaceCollapse(value) => WhiteSpaceCollapse(*value),
@@ -2616,10 +2616,12 @@ index f465832..150ba0c 100644
 +            StyleProperty::SoftHyphen(value) => SoftHyphen(*value),
 +            StyleProperty::DictionaryBreaks(value) => DictionaryBreaks(*value),
 +            StyleProperty::FontSizeAdjusted(value) => FontSizeAdjusted(*value),
++            StyleProperty::AutoOpticalSize(value) => AutoOpticalSize(*value),
++            StyleProperty::LanguageOverride(value) => LanguageOverride(*value),
          }
      }
  
-@@ -210,6 +214,12 @@ impl ResolveContext {
+@@ -210,6 +216,14 @@ impl ResolveContext {
              overflow_wrap: raw_style.overflow_wrap,
              text_wrap_mode: raw_style.text_wrap_mode,
              white_space_collapse: raw_style.white_space_collapse,
@@ -2627,12 +2629,14 @@ index f465832..150ba0c 100644
 +            soft_hyphen: raw_style.soft_hyphen,
 +            dictionary_breaks: raw_style.dictionary_breaks,
 +            font_size_adjusted: raw_style.font_size_adjusted,
++            auto_optical_size: raw_style.auto_optical_size,
++            language_override: raw_style.language_override,
 +            annotation_space: raw_style.annotation_space.scale(scale),
 +            text_box_trim: raw_style.text_box_trim,
          }
      }
  
-@@ -400,6 +410,22 @@ pub(crate) enum ResolvedProperty<B: Brush> {
+@@ -400,6 +414,26 @@ pub(crate) enum ResolvedProperty<B: Brush> {
      TextWrapMode(TextWrapMode),
      /// Whitespace collapsing and hanging behavior.
      WhiteSpaceCollapse(WhiteSpaceCollapse),
@@ -2644,6 +2648,10 @@ index f465832..150ba0c 100644
 +    DictionaryBreaks(bool),
 +    /// pyro: whether the font size is set by `font-size-adjust`.
 +    FontSizeAdjusted(bool),
++    /// pyro: whether the first font variation is the automatic `opsz`.
++    AutoOpticalSize(bool),
++    /// pyro: the OpenType language system to shape with.
++    LanguageOverride(Option<[u8; 4]>),
 +}
 +
 +/// pyro: `tab_size` with a length in layout units.
@@ -2655,7 +2663,7 @@ index f465832..150ba0c 100644
  }
  
  /// Flattened group of style properties.
-@@ -448,6 +474,18 @@ pub(crate) struct ResolvedStyle<B: Brush> {
+@@ -448,6 +482,23 @@ pub(crate) struct ResolvedStyle<B: Brush> {
      pub(crate) text_wrap_mode: TextWrapMode,
      /// Whitespace collapsing and hanging behavior.
      pub(crate) white_space_collapse: WhiteSpaceCollapse,
@@ -2667,6 +2675,11 @@ index f465832..150ba0c 100644
 +    pub(crate) dictionary_breaks: bool,
 +    /// pyro: whether the font size is set by `font-size-adjust` ([`TextStyle::font_size_adjusted`]).
 +    pub(crate) font_size_adjusted: bool,
++    /// pyro: whether the first font variation is the automatic `opsz`
++    /// ([`TextStyle::auto_optical_size`]).
++    pub(crate) auto_optical_size: bool,
++    /// pyro: the OpenType language system to shape with ([`TextStyle::language_override`]).
++    pub(crate) language_override: Option<[u8; 4]>,
 +    /// pyro: room beyond the content area ([`TextStyle::annotation_space`]), scaled.
 +    pub(crate) annotation_space: AnnotationSpace,
 +    /// pyro: the edges the content area is trimmed to ([`TextStyle::text_box_trim`]).
@@ -2674,7 +2687,7 @@ index f465832..150ba0c 100644
  }
  
  impl<B: Brush> ResolvedStyle<B> {
-@@ -481,6 +519,10 @@ impl<B: Brush> ResolvedStyle<B> {
+@@ -481,6 +532,12 @@ impl<B: Brush> ResolvedStyle<B> {
              OverflowWrap(value) => self.overflow_wrap = value,
              TextWrapMode(value) => self.text_wrap_mode = value,
              WhiteSpaceCollapse(value) => self.white_space_collapse = value,
@@ -2682,10 +2695,12 @@ index f465832..150ba0c 100644
 +            SoftHyphen(value) => self.soft_hyphen = value,
 +            DictionaryBreaks(value) => self.dictionary_breaks = value,
 +            FontSizeAdjusted(value) => self.font_size_adjusted = value,
++            AutoOpticalSize(value) => self.auto_optical_size = value,
++            LanguageOverride(value) => self.language_override = value,
          }
      }
  
-@@ -513,6 +555,10 @@ impl<B: Brush> ResolvedStyle<B> {
+@@ -513,6 +570,12 @@ impl<B: Brush> ResolvedStyle<B> {
              OverflowWrap(value) => self.overflow_wrap == *value,
              TextWrapMode(value) => self.text_wrap_mode == *value,
              WhiteSpaceCollapse(value) => self.white_space_collapse == *value,
@@ -2693,10 +2708,12 @@ index f465832..150ba0c 100644
 +            SoftHyphen(value) => self.soft_hyphen == *value,
 +            DictionaryBreaks(value) => self.dictionary_breaks == *value,
 +            FontSizeAdjusted(value) => self.font_size_adjusted == *value,
++            AutoOpticalSize(value) => self.auto_optical_size == *value,
++            LanguageOverride(value) => self.language_override == *value,
          }
      }
  
-@@ -527,6 +573,8 @@ impl<B: Brush> ResolvedStyle<B> {
+@@ -527,6 +590,8 @@ impl<B: Brush> ResolvedStyle<B> {
              overflow_wrap: self.overflow_wrap,
              text_wrap_mode: self.text_wrap_mode,
              white_space_collapse: self.white_space_collapse,
@@ -3016,7 +3033,7 @@ index c102610..1713557 100644
          style_table.clear();
          style_runs.clear();
 diff --git a/src/shape/mod.rs b/src/shape/mod.rs
-index 060a32d..ec31bda 100644
+index 060a32d..fbabafc 100644
 --- a/src/shape/mod.rs
 +++ b/src/shape/mod.rs
 @@ -15,6 +15,7 @@ use super::layout::Layout;
@@ -3050,15 +3067,17 @@ index 060a32d..ec31bda 100644
      // Split when shaping-relevant style properties change and at inline boxes.
      let items = {
          // TODO: we currently walk characters here, but we could instead just walk boundaries of
-@@ -152,6 +161,7 @@ pub(crate) fn shape_text<'a, B: Brush>(
+@@ -152,6 +161,9 @@ pub(crate) fn shape_text<'a, B: Brush>(
                  if style_index != item_style_index {
                      let style = &styles[usize::from(style_index)];
                      split = !nearly_eq(style.font_size, item_style.font_size)
 +                        || style.font_size_adjusted != item_style.font_size_adjusted
++                        || style.auto_optical_size != item_style.auto_optical_size
++                        || style.language_override != item_style.language_override
                          || style.locale != item_style.locale
                          || style.font_variations != item_style.font_variations
                          || style.font_features != item_style.font_features
-@@ -172,14 +182,18 @@ pub(crate) fn shape_text<'a, B: Brush>(
+@@ -172,14 +184,20 @@ pub(crate) fn shape_text<'a, B: Brush>(
                  options: ShapeOptions {
                      language: item_style.locale,
                      font_size: item_style.font_size,
@@ -3067,6 +3086,8 @@ index 060a32d..ec31bda 100644
                      features: &style_features[item_style_index as usize],
                      variations: rcx.variations(item_style.font_variations).unwrap_or(&[]),
 +                    face_size_adjust: !item_style.font_size_adjusted,
++                    auto_opsz: item_style.auto_optical_size,
++                    language_override: item_style.language_override,
                  },
              })
          })
@@ -3078,7 +3099,7 @@ index 060a32d..ec31bda 100644
  
      scx.shape_text(
          text,
-@@ -190,6 +204,7 @@ pub(crate) fn shape_text<'a, B: Brush>(
+@@ -190,6 +208,7 @@ pub(crate) fn shape_text<'a, B: Brush>(
          &mut layout.data.shaped_text,
      );
  
@@ -3086,7 +3107,7 @@ index 060a32d..ec31bda 100644
      let mut inline_box_iter = inline_boxes
          .iter()
          .map(|b| &b.inline_box)
-@@ -201,19 +216,11 @@ pub(crate) fn shape_text<'a, B: Brush>(
+@@ -201,19 +220,11 @@ pub(crate) fn shape_text<'a, B: Brush>(
          let run_style_index = char_style_indices[shaped_run.range.char_range.start];
          let run_style = &styles[usize::from(run_style_index)];
  
@@ -3109,7 +3130,7 @@ index 060a32d..ec31bda 100644
                  inline_box_iter.next();
              } else {
                  break;
-@@ -234,19 +241,92 @@ pub(crate) fn shape_text<'a, B: Brush>(
+@@ -234,19 +245,92 @@ pub(crate) fn shape_text<'a, B: Brush>(
      }
  
      // Process any remaining inline boxes whose index is greater than the length of the text
@@ -3213,7 +3234,7 @@ index 060a32d..ec31bda 100644
  }
  
  /// The font to use if a font query doesn't return any font candidates at all.
-@@ -259,6 +339,15 @@ enum LastResortFont {
+@@ -259,6 +343,15 @@ enum LastResortFont {
  
  struct FontSelector<'a, 'b, B: Brush> {
      query: &'b mut Query<'a>,
@@ -3229,7 +3250,7 @@ index 060a32d..ec31bda 100644
      fonts_id: Option<usize>,
      rcx: &'a ResolveContext,
      styles: &'a [ResolvedStyle<B>],
-@@ -284,11 +373,14 @@ impl<'a, 'b, B: Brush> FontSelector<'a, 'b, B> {
+@@ -284,11 +377,14 @@ impl<'a, 'b, B: Brush> FontSelector<'a, 'b, B> {
          rcx: &'a ResolveContext,
          styles: &'a [ResolvedStyle<B>],
          analysis_data_sources: &'a AnalysisDataSources,
@@ -3244,7 +3265,7 @@ index 060a32d..ec31bda 100644
              fonts_id: None,
              rcx,
              styles,
-@@ -360,12 +452,36 @@ impl<'a, 'b, B: Brush> parley_engine::FontSelector for FontSelector<'a, 'b, B> {
+@@ -360,12 +456,36 @@ impl<'a, 'b, B: Brush> parley_engine::FontSelector for FontSelector<'a, 'b, B> {
          // not *too* expensive, once the new borrow checker (Polonius) is stable, we could remove
          // this check and do the last-resort scan after the failed query:
          // <https://blog.rust-lang.org/2026/08/04/enabling-polonius-alpha-on-nightly/>.
@@ -3283,7 +3304,7 @@ index 060a32d..ec31bda 100644
                      fontique::QueryStatus::Stop
                  } else {
                      fontique::QueryStatus::Continue
-@@ -373,6 +489,12 @@ impl<'a, 'b, B: Brush> parley_engine::FontSelector for FontSelector<'a, 'b, B> {
+@@ -373,6 +493,12 @@ impl<'a, 'b, B: Brush> parley_engine::FontSelector for FontSelector<'a, 'b, B> {
              });
              yields_font
          });
@@ -3297,7 +3318,7 @@ index 060a32d..ec31bda 100644
              if matches!(self.last_resort_font, LastResortFont::Unresolved) {
                  if let Some(font) = any_font(self.query) {
 diff --git a/src/style/mod.rs b/src/style/mod.rs
-index d9977df..8154585 100644
+index d9977df..e4c45a8 100644
 --- a/src/style/mod.rs
 +++ b/src/style/mod.rs
 @@ -43,6 +43,37 @@ pub enum WhiteSpaceCollapse {
@@ -3389,7 +3410,7 @@ index d9977df..8154585 100644
  /// Which reference of a span (or [`InlineBox`]) is aligned with the same reference of its
  /// *parent* span (the enclosing style span, or the root style for top-level content). Mirrors the
  /// CSS `alignment-baseline` property.
-@@ -277,6 +330,15 @@ pub enum StyleProperty<'a, B: Brush> {
+@@ -277,6 +330,19 @@ pub enum StyleProperty<'a, B: Brush> {
      TextWrapMode(TextWrapMode),
      /// Whitespace collapsing and hanging behavior.
      WhiteSpaceCollapse(WhiteSpaceCollapse),
@@ -3402,10 +3423,14 @@ index d9977df..8154585 100644
 +    /// pyro: whether the font size is set by `font-size-adjust` (a face's `size-adjust` is then
 +    /// not applied).
 +    FontSizeAdjusted(bool),
++    /// pyro: whether the first font variation is the automatic `opsz` (`font-optical-sizing`).
++    AutoOpticalSize(bool),
++    /// pyro: the OpenType language system to shape with (`font-language-override`).
++    LanguageOverride(Option<[u8; 4]>),
  }
  
  /// Unresolved styles.
-@@ -334,6 +396,66 @@ pub struct TextStyle<'family, 'settings, B: Brush> {
+@@ -334,6 +400,73 @@ pub struct TextStyle<'family, 'settings, B: Brush> {
      pub text_wrap_mode: TextWrapMode,
      /// Whitespace collapsing and hanging behavior.
      pub white_space_collapse: WhiteSpaceCollapse,
@@ -3419,6 +3444,13 @@ index d9977df..8154585 100644
 +    /// pyro: whether the font size is set by CSS `font-size-adjust`: it fixes the size of the
 +    /// metric it names for every font, so a face's `size-adjust` (`@font-face`) is not applied.
 +    pub font_size_adjusted: bool,
++    /// pyro: whether the first of `font_variations` is the `opsz` value CSS
++    /// `font-optical-sizing: auto` gives (the font size): a face's `font-variation-settings`
++    /// descriptor overrides it, and it follows the face's `size-adjust`.
++    pub auto_optical_size: bool,
++    /// pyro: the OpenType language system tag to shape with instead of the locale's (CSS
++    /// `font-language-override`, padded with spaces).
++    pub language_override: Option<[u8; 4]>,
 +    /// pyro: room the span's text needs beyond its content area, over and under it, for what is
 +    /// drawn there (ruby annotations, emphasis marks). The line box holds the span's content area
 +    /// grown by it, where its line height leaves too little (CSS Ruby 1, 4.4).
@@ -3472,7 +3504,7 @@ index d9977df..8154585 100644
  }
  
  impl<B: Brush> Default for TextStyle<'static, 'static, B> {
-@@ -365,6 +487,12 @@ impl<B: Brush> Default for TextStyle<'static, 'static, B> {
+@@ -365,6 +498,14 @@ impl<B: Brush> Default for TextStyle<'static, 'static, B> {
              overflow_wrap: OverflowWrap::default(),
              text_wrap_mode: TextWrapMode::default(),
              white_space_collapse: WhiteSpaceCollapse::default(),
@@ -3480,6 +3512,8 @@ index d9977df..8154585 100644
 +            soft_hyphen: SoftHyphen::default(),
 +            dictionary_breaks: true,
 +            font_size_adjusted: false,
++            auto_optical_size: false,
++            language_override: None,
 +            annotation_space: AnnotationSpace::default(),
 +            text_box_trim: TextBoxTrim::default(),
          }

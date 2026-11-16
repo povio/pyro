@@ -239,6 +239,13 @@ they keep their max advance (alignment, hanging white space). blitz-dom sets it 
 a metric of every font). `layout/style_metrics.rs`: the strut's first available font has its `@font-face`
 metrics (`FontMetrics::from_font_instance` applies them), without `size-adjust` under `font-size-adjust`.
 
+## Automatic `opsz`, `font-language-override` (WPT css-fonts, round 3 lane F)
+
+`TextStyle::auto_optical_size` and `TextStyle::language_override` (`style/mod.rs`, `StyleProperty`,
+`resolve/mod.rs`, `shape/mod.rs`): whether the first of the style's font variations is the automatic `opsz` (CSS
+`font-optical-sizing: auto`), and the OpenType language system tag to shape with; items split on both and pass them
+to parley_engine (`ShapeOptions::auto_opsz`, `ShapeOptions::language_override`).
+
 ## Updating or dropping the patch
 
 Copy the published crate from `~/.cargo/registry/src/*/parley-<version>` and re-apply

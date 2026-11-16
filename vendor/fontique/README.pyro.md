@@ -88,3 +88,20 @@ left out (WPT `font-palette-empty-font-family`).
 `without_size_adjust`): a face registered with `size-adjust`, `ascent-override`, `descent-override` or
 `line-gap-override` keeps them, and the synthesis a query gives for it carries them to the shaper (parley_engine
 applies them), as it carries the variation settings.
+
+## `@font-face` `font-feature-settings` and `font-variation-settings` (WPT css-fonts, round 3 lane F)
+
+`src/font.rs` (`FaceSettings`, `FontInfoOverride::face_settings`, `Synthesis::face_settings`): a face's descriptor
+features and variation settings are interned in a process-wide table (`FaceSettings::intern`, behind `std`; equal
+settings share an id) and faces and their synthesis carry the id, so `Synthesis` stays `Copy`. parley_engine
+applies them.
+
+## Font matching with `@font-face` ranges (WPT css-fonts, round 3 lane F)
+
+`src/font.rs` (`FontInfoOverride::weight_range`, `width_range`, `FontInfo::matched_weight`, `matched_width`,
+`matched_style`, `synthesis`), `src/matching.rs` (`match_font`, `match_fonts`): a face whose `@font-face` rule gives
+a `font-weight` or `font-stretch` range, or an oblique `font-style` range, is a candidate at the value of its range
+nearest the one asked for (CSS Fonts 4 §5.2; a reversed range is the same range). Upstream kept one value per
+attribute (the lower bound). A variable font's `wght`/`wdth` axis is held to the range, and a bold request on a face
+whose range has no bold in it is faked bold, as on a face without the axis (WPT `matching/range-descriptor-reversed`,
+`variations/font-descriptor-range-reversed*`, `variations/font-weight-3`).

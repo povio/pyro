@@ -926,6 +926,8 @@ mod tests {
                 features: &[],
                 variations: &[],
                 face_size_adjust: true,
+                auto_opsz: false,
+                language_override: None,
             },
         }];
         shaper.shape_text(
@@ -1086,6 +1088,8 @@ mod tests {
                     features: &[],
                     variations: &[],
                     face_size_adjust: true,
+                    auto_opsz: false,
+                    language_override: None,
                 },
             },
             Item {
@@ -1097,6 +1101,8 @@ mod tests {
                     features: &[],
                     variations: &[],
                     face_size_adjust: true,
+                    auto_opsz: false,
+                    language_override: None,
                 },
             },
         ];

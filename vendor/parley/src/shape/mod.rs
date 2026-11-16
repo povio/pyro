@@ -162,6 +162,8 @@ pub(crate) fn shape_text<'a, B: Brush>(
                     let style = &styles[usize::from(style_index)];
                     split = !nearly_eq(style.font_size, item_style.font_size)
                         || style.font_size_adjusted != item_style.font_size_adjusted
+                        || style.auto_optical_size != item_style.auto_optical_size
+                        || style.language_override != item_style.language_override
                         || style.locale != item_style.locale
                         || style.font_variations != item_style.font_variations
                         || style.font_features != item_style.font_features
@@ -187,6 +189,8 @@ pub(crate) fn shape_text<'a, B: Brush>(
                     features: &style_features[item_style_index as usize],
                     variations: rcx.variations(item_style.font_variations).unwrap_or(&[]),
                     face_size_adjust: !item_style.font_size_adjusted,
+                    auto_opsz: item_style.auto_optical_size,
+                    language_override: item_style.language_override,
                 },
             })
         })

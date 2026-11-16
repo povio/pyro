@@ -121,3 +121,13 @@ new_for_non_complex_scripts` although the `complex-scripts` feature is on.
 `ascent-override`, `descent-override` and `line-gap-override` replace the font's ascent, descent and line gap with
 fractions of that size. WPT `size-adjust-01`..`-03`, `size-adjust.tentative`, `ascent-descent-override`,
 `line-gap-override`, `font-size-adjust-metrics-override`.
+
+## Face features and variations, automatic `opsz`, `font-language-override` (WPT css-fonts, round 3 lane F)
+
+`shape/shaper.rs` (`shape_run`): a face's `@font-face` features (`fontique::Synthesis::face_settings`) come
+before the item's, so the property's win for the same tag; its variation settings come after the automatic `opsz`
+(`ShapeOptions::auto_opsz`: the item's first variation) and before the property's (CSS Fonts 4 §7.2). The automatic
+`opsz` is the size the face is used at (times its `size-adjust`). The cache keys see the effective variations and
+features. `ShapeOptions::language_override` shapes with that OpenType language system (`x-hbot<tag>`, the
+private-use subtag harfrust maps to a tag). WPT `font-feature-settings-descriptor-*`,
+`font-variation-settings-descriptor-*`, `variations/variable-opsz-size-adjust`, `font-language-override-*`.

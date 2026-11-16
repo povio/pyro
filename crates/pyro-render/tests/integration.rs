@@ -22,6 +22,7 @@ mod filter_image_function;
 mod first_line;
 mod floats;
 mod font_face_metrics;
+mod font_face_settings;
 mod font_optical_sizing;
 mod font_palette;
 mod font_unicode_range;

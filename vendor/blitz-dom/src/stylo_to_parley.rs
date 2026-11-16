@@ -123,8 +123,7 @@ pub(crate) fn font_variations(
 ) -> Vec<parley::FontVariation> {
     const OPSZ: parley::Tag = parley::Tag::new(b"opsz");
     let settings = &font_styles.font_variation_settings.0;
-    let auto_opsz = font_styles.font_optical_sizing == stylo::FontOpticalSizing::Auto
-        && !settings.iter().any(|v| v.tag.0.to_be_bytes() == *b"opsz");
+    let auto_opsz = auto_optical_size(font_styles);
     let mut variations = Vec::with_capacity(settings.len() + usize::from(auto_opsz));
     if auto_opsz {
         variations.push(parley::FontVariation {
@@ -137,6 +136,13 @@ pub(crate) fn font_variations(
         value: v.value,
     }));
     variations
+}
+
+/// pyro: whether `font_variations` starts with the automatic `opsz` (`font-optical-sizing: auto`
+/// and no `opsz` in `font-variation-settings`).
+fn auto_optical_size(font_styles: &stylo::Font) -> bool {
+    font_styles.font_optical_sizing == stylo::FontOpticalSizing::Auto
+        && !font_styles.font_variation_settings.0.iter().any(|v| v.tag.0.to_be_bytes() == *b"opsz")
 }
 
 #[inline]
@@ -721,6 +727,11 @@ pub(crate) fn style(
         dictionary_breaks,
         // pyro: `font-size-adjust` sets the size (a face's `size-adjust` is then not applied).
         font_size_adjusted: font_styles.font_size_adjust != style::values::computed::font::FontSizeAdjust::None,
+        // pyro: the first variation is the automatic `opsz` (`font_variations`).
+        auto_optical_size: auto_optical_size(font_styles),
+        // pyro: `font-language-override` names the OpenType language system to shape with.
+        language_override: (font_styles.font_language_override.0 != 0)
+            .then(|| font_styles.font_language_override.0.to_be_bytes()),
         soft_hyphen: match (itext_styles.hyphens, &itext_styles.hyphenate_character) {
             (style::computed_values::hyphens::T::None, _) => parley::SoftHyphen::NoBreak,
             (_, style::values::computed::HyphenateCharacter::Auto) => parley::SoftHyphen::Auto,

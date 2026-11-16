@@ -339,6 +339,10 @@ pub enum StyleProperty<'a, B: Brush> {
     /// pyro: whether the font size is set by `font-size-adjust` (a face's `size-adjust` is then
     /// not applied).
     FontSizeAdjusted(bool),
+    /// pyro: whether the first font variation is the automatic `opsz` (`font-optical-sizing`).
+    AutoOpticalSize(bool),
+    /// pyro: the OpenType language system to shape with (`font-language-override`).
+    LanguageOverride(Option<[u8; 4]>),
 }
 
 /// Unresolved styles.
@@ -406,6 +410,13 @@ pub struct TextStyle<'family, 'settings, B: Brush> {
     /// pyro: whether the font size is set by CSS `font-size-adjust`: it fixes the size of the
     /// metric it names for every font, so a face's `size-adjust` (`@font-face`) is not applied.
     pub font_size_adjusted: bool,
+    /// pyro: whether the first of `font_variations` is the `opsz` value CSS
+    /// `font-optical-sizing: auto` gives (the font size): a face's `font-variation-settings`
+    /// descriptor overrides it, and it follows the face's `size-adjust`.
+    pub auto_optical_size: bool,
+    /// pyro: the OpenType language system tag to shape with instead of the locale's (CSS
+    /// `font-language-override`, padded with spaces).
+    pub language_override: Option<[u8; 4]>,
     /// pyro: room the span's text needs beyond its content area, over and under it, for what is
     /// drawn there (ruby annotations, emphasis marks). The line box holds the span's content area
     /// grown by it, where its line height leaves too little (CSS Ruby 1, 4.4).
@@ -491,6 +502,8 @@ impl<B: Brush> Default for TextStyle<'static, 'static, B> {
             soft_hyphen: SoftHyphen::default(),
             dictionary_breaks: true,
             font_size_adjusted: false,
+            auto_optical_size: false,
+            language_override: None,
             annotation_space: AnnotationSpace::default(),
             text_box_trim: TextBoxTrim::default(),
         }

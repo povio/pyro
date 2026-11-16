@@ -61,9 +61,17 @@ pub struct FontFaceOverrides {
     /// pyro: the slant angles the `font-style` descriptor allows a variable font's `slnt`
     /// axis: `(0, 0)` for `normal`, the range of `oblique <angle> <angle>`.
     pub slant_range: Option<(f32, f32)>,
+    /// pyro: the `font-weight` descriptor's range (either order; a single weight is a range of
+    /// one): font matching takes its weight nearest the one asked for, a `wght` axis is held to it.
+    pub weight_range: Option<(f32, f32)>,
+    /// pyro: the `font-stretch` (`font-width`) descriptor's range in percentages, as `weight_range`.
+    pub width_range: Option<(f32, f32)>,
     /// pyro: the `size-adjust`, `ascent-override`, `descent-override` and `line-gap-override`
     /// descriptors, `None` when the rule has none of them.
     pub face_metrics: Option<parley::fontique::FaceMetrics>,
+    /// pyro: the `font-feature-settings` and `font-variation-settings` descriptors, interned
+    /// (`parley::fontique::FaceSettings::intern`), `None` when the rule has neither.
+    pub face_settings: Option<u32>,
     /// `unicode-range` descriptor: the code points the face is used for.
     /// `None` (no descriptor) is every code point.
     pub unicode_range: Option<parley::fontique::UnicodeRange>,
@@ -457,10 +465,20 @@ pub(crate) fn fetch_font_face_rules<'a>(
                 static RULE_ORDER: AtomicU64 = AtomicU64::new(1);
                 let overrides = FontFaceOverrides {
                     family_name: Some(family.name.to_string()),
-                    weight: descriptor
+                    // pyro: a reversed range (`900 100`) is the same range.
+                    weight: descriptor.font_weight.as_ref().and_then(|range| {
+                        let (a, b) = (range.0.compute()?.value(), range.1.compute()?.value());
+                        Some(a.min(b))
+                    }),
+                    weight_range: descriptor
                         .font_weight
                         .as_ref()
-                        .and_then(|range| range.0.compute().map(|w| w.value())),
+                        .and_then(|range| Some((range.0.compute()?.value(), range.1.compute()?.value()))),
+                    width_range: descriptor
+                        .font_width
+                        .as_ref()
+                        .and_then(|range| range.compute())
+                        .map(|range| (range.0.0.to_float(), range.1.0.to_float())),
                     width: descriptor
                         .font_width
                         .as_ref()
@@ -492,6 +510,20 @@ pub(crate) fn fetch_font_face_rules<'a>(
                             line_gap: metric(&descriptor.line_gap_override),
                         };
                         (face != parley::fontique::FaceMetrics::default()).then_some(face)
+                    },
+                    face_settings: {
+                        let features = descriptor.font_feature_settings.as_ref().map_or(Vec::new(), |settings| {
+                            settings
+                                .0
+                                .iter()
+                                .filter_map(|f| Some((f.tag.0.to_be_bytes(), u16::try_from(f.value.resolve()?).ok()?)))
+                                .collect()
+                        });
+                        let variations = descriptor.font_variation_settings.as_ref().map_or(Vec::new(), |settings| {
+                            settings.0.iter().filter_map(|v| Some((v.tag.0.to_be_bytes(), v.value.resolve()?))).collect()
+                        });
+                        let id = parley::fontique::FaceSettings { features, variations }.intern();
+                        (id != 0).then_some(id)
                     },
                 };
                 Some((src, overrides))

@@ -16,15 +16,19 @@ pub(crate) fn match_fonts(
     weight: FontWeight,
     synthesize_style: bool,
 ) -> impl Iterator<Item = usize> + '_ {
-    let best = match_font(set, width, style, weight, synthesize_style).map(|index| {
-        let font = &set[index];
-        (font.width(), font.style(), font.weight())
-    });
+    // pyro: with the attributes a `@font-face` range gives each face for this request.
+    let matched = move |font: &FontInfo| {
+        (
+            font.matched_width(width.percentage()),
+            font.matched_style(style),
+            font.matched_weight(weight.value()),
+        )
+    };
+    let best = match_font(set, width, style, weight, synthesize_style).map(|index| matched(&set[index]));
     set.iter().enumerate().filter_map(move |(index, font)| {
-        let (best_width, best_style, best_weight) = best?;
+        let best = best?;
         // We need to return each font with the best attributes, as there might be multiple subsets.
-        (font.width() == best_width && font.style() == best_style && font.weight() == best_weight)
-            .then_some(index)
+        (matched(font) == best).then_some(index)
     })
 }
 
@@ -49,14 +53,16 @@ pub fn match_font(
         weight: f32,
         has_slnt: bool,
     }
+    // pyro: a face with `@font-face` ranges is a candidate at the values of its ranges nearest
+    // the ones asked for (CSS Fonts 4 §5.2).
     let mut set: SmallVec<[Candidate; 16]> = set
         .iter()
         .enumerate()
         .map(|(i, font)| Candidate {
             index: i,
-            width: (font.width().ratio() * 100.0) as i32,
-            style: font.style(),
-            weight: font.weight().value(),
+            width: font.matched_width(width.percentage()) as i32,
+            style: font.matched_style(style),
+            weight: font.matched_weight(weight.value()),
             has_slnt: font.has_slant_axis(),
         })
         .collect();

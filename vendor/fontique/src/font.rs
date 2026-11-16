@@ -33,6 +33,13 @@ pub struct FontInfo {
     slant_range: Option<(f32, f32)>,
     /// pyro: the size and metrics a `@font-face` rule's descriptors give the font.
     face_metrics: FaceMetrics,
+    /// pyro: the features and variation settings a `@font-face` rule gives the font
+    /// ([`FaceSettings`] id, 0 for none).
+    face_settings: u32,
+    /// pyro: the weights a `@font-face` rule's `font-weight` range gives the font (`min <= max`).
+    weight_range: Option<(f32, f32)>,
+    /// pyro: the widths (percentages) a `@font-face` rule's `font-stretch` range gives the font.
+    width_range: Option<(f32, f32)>,
 }
 
 impl FontInfo {
@@ -98,7 +105,17 @@ impl FontInfo {
     pub fn synthesis(&self, width: FontWidth, style: FontStyle, weight: FontWeight) -> Synthesis {
         let mut synth = Synthesis::default();
         let mut len = 0_usize;
-        if self.has_width_axis() && self.width != width {
+        // pyro: a `@font-face` range holds the axes to it (the face is used at the nearest value).
+        let width = match self.width_range {
+            Some((min, max)) => FontWidth::from_percentage(width.percentage().clamp(min, max)),
+            None => width,
+        };
+        let wanted_weight = weight;
+        let weight = match self.weight_range {
+            Some((min, max)) => FontWeight::new(weight.value().clamp(min, max)),
+            None => weight,
+        };
+        if self.has_width_axis() && (self.width != width || self.width_range.is_some()) {
             synth.vars[len] = (Tag::new(b"wdth"), width.percentage());
             len += 1;
         }
@@ -116,7 +133,15 @@ impl FontInfo {
                 synth.vars[len] = (Tag::new(b"wght"), weight.value());
                 len += 1;
             }
-        } else if weight.value() >= SYNTHETIC_BOLD_WEIGHT && self.weight.value() < SYNTHETIC_BOLD_WEIGHT {
+            // pyro: a range without bold in it is faked bold, as a face without the axis.
+            if self.weight_range.is_some_and(|(_, max)| max < SYNTHETIC_BOLD_WEIGHT)
+                && wanted_weight.value() >= SYNTHETIC_BOLD_WEIGHT
+            {
+                synth.embolden = true;
+            }
+        } else if wanted_weight.value() >= SYNTHETIC_BOLD_WEIGHT
+            && self.weight_range.map_or(self.weight.value(), |(_, max)| max) < SYNTHETIC_BOLD_WEIGHT
+        {
             // pyro: as Chromium does (upstream: a requested weight more than 200 above the
             // font's, which left 600 on a regular face thin). See README.pyro.md.
             synth.embolden = true;
@@ -159,6 +184,7 @@ impl FontInfo {
         }
         synth.len = len as u8;
         synth.face_metrics = self.face_metrics;
+        synth.face_settings = self.face_settings;
         synth
     }
 
@@ -287,6 +313,9 @@ impl FontInfo {
             precedence: 0,
             slant_range: None,
             face_metrics: FaceMetrics::default(),
+            face_settings: 0,
+            weight_range: None,
+            width_range: None,
         })
     }
 
@@ -310,6 +339,42 @@ impl FontInfo {
 
     /// pyro: the `slnt` axis value that slants the font `degrees` clockwise, when the font has
     /// the axis and its `@font-face` rule lets it be used (see `slant_range`).
+    /// pyro: the weight font matching takes the face to have for a request for `weight`: the
+    /// nearest of its `@font-face` range, else its own (CSS Fonts 4 §5.2).
+    pub(crate) fn matched_weight(&self, weight: f32) -> f32 {
+        match self.weight_range {
+            Some((min, max)) => weight.clamp(min, max),
+            None => self.weight.value(),
+        }
+    }
+
+    /// pyro: the width (percentage) font matching takes the face to have, as `matched_weight`.
+    pub(crate) fn matched_width(&self, width: f32) -> f32 {
+        match self.width_range {
+            Some((min, max)) => width.clamp(min, max),
+            None => self.width.percentage(),
+        }
+    }
+
+    /// pyro: the style font matching takes the face to have for a request for `style`: an
+    /// oblique range (`font-style: oblique 20deg 40deg`) gives the angle of it nearest the one
+    /// asked for (14deg for italic, 0deg for normal).
+    pub(crate) fn matched_style(&self, style: FontStyle) -> FontStyle {
+        let Some((a, b)) = self.slant_range.filter(|(a, b)| a != b) else {
+            return self.style;
+        };
+        if self.style == FontStyle::Italic {
+            return self.style;
+        }
+        let wanted = match style {
+            FontStyle::Normal => 0.0,
+            FontStyle::Italic => 14.0,
+            FontStyle::Oblique(angle) => angle.unwrap_or(14.0),
+        };
+        let angle = wanted.clamp(a.min(b), a.max(b));
+        if angle == 0.0 { FontStyle::Normal } else { FontStyle::Oblique(Some(angle)) }
+    }
+
     fn slant_axis_value(&self, degrees: f32) -> Option<f32> {
         if !self.has_slant_axis() {
             return None;
@@ -351,6 +416,15 @@ impl FontInfo {
         }
         if let Some(face_metrics) = info_override.face_metrics {
             self.face_metrics = face_metrics;
+        }
+        if let Some(face_settings) = info_override.face_settings {
+            self.face_settings = face_settings;
+        }
+        if let Some((a, b)) = info_override.weight_range {
+            self.weight_range = Some((a.min(b), a.max(b)));
+        }
+        if let Some((a, b)) = info_override.width_range {
+            self.width_range = Some((a.min(b), a.max(b)));
         }
     }
 }
@@ -413,6 +487,58 @@ pub struct Synthesis {
     /// pyro: the font's `@font-face` size and metrics descriptors (they travel with the font
     /// a query selects, as its synthesis does).
     face_metrics: FaceMetrics,
+    /// pyro: the font's `@font-face` features and variation settings ([`FaceSettings`] id).
+    face_settings: u32,
+}
+
+/// pyro: what a `@font-face` rule's `font-feature-settings` and `font-variation-settings`
+/// descriptors give a face: its own features and variation settings, which the properties of the
+/// same names override (CSS Fonts 4 §7.2). Faces carry them as an interned id
+/// ([`FaceSettings::intern`]), so that [`Synthesis`] stays `Copy`.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct FaceSettings {
+    /// OpenType features (tags) and their values.
+    pub features: alloc::vec::Vec<([u8; 4], u16)>,
+    /// Variation axis values (by axis tag).
+    pub variations: alloc::vec::Vec<([u8; 4], f32)>,
+}
+
+#[cfg(feature = "std")]
+static FACE_SETTINGS: std::sync::Mutex<alloc::vec::Vec<alloc::sync::Arc<FaceSettings>>> =
+    std::sync::Mutex::new(alloc::vec::Vec::new());
+
+impl FaceSettings {
+    /// The id of these settings (equal settings share one), 0 for none.
+    pub fn intern(self) -> u32 {
+        if self.features.is_empty() && self.variations.is_empty() {
+            return 0;
+        }
+        #[cfg(feature = "std")]
+        {
+            let mut all = FACE_SETTINGS.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(index) = all.iter().position(|settings| **settings == self) {
+                return index as u32 + 1;
+            }
+            all.push(alloc::sync::Arc::new(self));
+            all.len() as u32
+        }
+        #[cfg(not(feature = "std"))]
+        0
+    }
+
+    /// The settings of id `id`.
+    pub fn get(id: u32) -> Option<alloc::sync::Arc<Self>> {
+        if id == 0 {
+            return None;
+        }
+        #[cfg(feature = "std")]
+        {
+            let all = FACE_SETTINGS.lock().unwrap_or_else(|e| e.into_inner());
+            all.get(id as usize - 1).cloned()
+        }
+        #[cfg(not(feature = "std"))]
+        None
+    }
 }
 
 /// pyro: what a `@font-face` rule's `size-adjust`, `ascent-override`, `descent-override` and
@@ -435,6 +561,11 @@ impl Synthesis {
     /// pyro: the font's `@font-face` size and metrics descriptors.
     pub fn face_metrics(&self) -> &FaceMetrics {
         &self.face_metrics
+    }
+
+    /// pyro: the font's `@font-face` features and variation settings, if it has any.
+    pub fn face_settings(&self) -> Option<alloc::sync::Arc<FaceSettings>> {
+        FaceSettings::get(self.face_settings)
     }
 
     /// pyro: the factor of the font size the font is used at (`size-adjust`), 1 without one.
@@ -602,6 +733,15 @@ pub struct FontInfoOverride<'a> {
     pub slant_range: Option<(f32, f32)>,
     /// pyro: the size and metrics `@font-face` descriptors give the font.
     pub face_metrics: Option<FaceMetrics>,
+    /// pyro: the features and variation settings `@font-face` descriptors give the font, an id of
+    /// [`FaceSettings::intern`].
+    pub face_settings: Option<u32>,
+    /// pyro: a `@font-face` rule's `font-weight` range (either order): font matching takes the
+    /// weight of the range nearest the one asked for (CSS Fonts 4 §5.2), and a `wght` axis is
+    /// held to it.
+    pub weight_range: Option<(f32, f32)>,
+    /// pyro: a `@font-face` rule's `font-stretch` range in percentages, as `weight_range`.
+    pub width_range: Option<(f32, f32)>,
 }
 
 #[cfg(test)]

@@ -173,6 +173,8 @@ impl ResolveContext {
             StyleProperty::SoftHyphen(value) => SoftHyphen(*value),
             StyleProperty::DictionaryBreaks(value) => DictionaryBreaks(*value),
             StyleProperty::FontSizeAdjusted(value) => FontSizeAdjusted(*value),
+            StyleProperty::AutoOpticalSize(value) => AutoOpticalSize(*value),
+            StyleProperty::LanguageOverride(value) => LanguageOverride(*value),
         }
     }
 
@@ -218,6 +220,8 @@ impl ResolveContext {
             soft_hyphen: raw_style.soft_hyphen,
             dictionary_breaks: raw_style.dictionary_breaks,
             font_size_adjusted: raw_style.font_size_adjusted,
+            auto_optical_size: raw_style.auto_optical_size,
+            language_override: raw_style.language_override,
             annotation_space: raw_style.annotation_space.scale(scale),
             text_box_trim: raw_style.text_box_trim,
         }
@@ -418,6 +422,10 @@ pub(crate) enum ResolvedProperty<B: Brush> {
     DictionaryBreaks(bool),
     /// pyro: whether the font size is set by `font-size-adjust`.
     FontSizeAdjusted(bool),
+    /// pyro: whether the first font variation is the automatic `opsz`.
+    AutoOpticalSize(bool),
+    /// pyro: the OpenType language system to shape with.
+    LanguageOverride(Option<[u8; 4]>),
 }
 
 /// pyro: `tab_size` with a length in layout units.
@@ -482,6 +490,11 @@ pub(crate) struct ResolvedStyle<B: Brush> {
     pub(crate) dictionary_breaks: bool,
     /// pyro: whether the font size is set by `font-size-adjust` ([`TextStyle::font_size_adjusted`]).
     pub(crate) font_size_adjusted: bool,
+    /// pyro: whether the first font variation is the automatic `opsz`
+    /// ([`TextStyle::auto_optical_size`]).
+    pub(crate) auto_optical_size: bool,
+    /// pyro: the OpenType language system to shape with ([`TextStyle::language_override`]).
+    pub(crate) language_override: Option<[u8; 4]>,
     /// pyro: room beyond the content area ([`TextStyle::annotation_space`]), scaled.
     pub(crate) annotation_space: AnnotationSpace,
     /// pyro: the edges the content area is trimmed to ([`TextStyle::text_box_trim`]).
@@ -523,6 +536,8 @@ impl<B: Brush> ResolvedStyle<B> {
             SoftHyphen(value) => self.soft_hyphen = value,
             DictionaryBreaks(value) => self.dictionary_breaks = value,
             FontSizeAdjusted(value) => self.font_size_adjusted = value,
+            AutoOpticalSize(value) => self.auto_optical_size = value,
+            LanguageOverride(value) => self.language_override = value,
         }
     }
 
@@ -559,6 +574,8 @@ impl<B: Brush> ResolvedStyle<B> {
             SoftHyphen(value) => self.soft_hyphen == *value,
             DictionaryBreaks(value) => self.dictionary_breaks == *value,
             FontSizeAdjusted(value) => self.font_size_adjusted == *value,
+            AutoOpticalSize(value) => self.auto_optical_size == *value,
+            LanguageOverride(value) => self.language_override == *value,
         }
     }
 

@@ -1974,3 +1974,15 @@ the document, also where no `@container` rule exists but styles use container un
 `ComputedValueFlags::USES_CONTAINER_UNITS`): they were dropped as soon as the stylist had no container
 condition. Covered by `crates/pyro-render/tests/container_queries.rs`
 (`container_units_resolve_against_the_size_container`).
+
+## `@font-face` `font-feature-settings` and `font-variation-settings`, `font-language-override` (WPT css-fonts, round 3 lane F)
+
+- `src/net.rs` (`FontFaceOverrides::face_settings`), `src/document.rs`: the descriptors are interned
+  (`fontique::FaceSettings`) and registered with the face.
+- `src/stylo_to_parley.rs`: `TextStyle::auto_optical_size` (the automatic `opsz` leads the variations,
+  `auto_optical_size`) and `TextStyle::language_override` from `font-language-override`.
+
+Covered by `crates/pyro-render/tests/font_face_settings.rs`.
+- `src/net.rs` (`FontFaceOverrides::weight_range`, `width_range`): the `font-weight` and `font-stretch`
+  descriptors' ranges go to fontique (its README, "Font matching with `@font-face` ranges"); `weight` is the
+  lower end of a reversed range too.

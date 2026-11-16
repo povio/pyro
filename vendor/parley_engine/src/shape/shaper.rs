@@ -65,6 +65,13 @@ pub struct ShapeOptions<'a> {
     /// pyro: whether a font is used at its `size-adjust` (`fontique::Synthesis::size_adjust`):
     /// not when CSS `font-size-adjust` sets the size, which fixes a metric of every font.
     pub face_size_adjust: bool,
+    /// pyro: whether the first of `variations` is the automatic `opsz` (CSS
+    /// `font-optical-sizing: auto`): it follows a face's `size-adjust`, and a face's
+    /// `font-variation-settings` descriptor overrides it.
+    pub auto_opsz: bool,
+    /// pyro: the OpenType language system tag to shape with instead of `language`'s (CSS
+    /// `font-language-override`).
+    pub language_override: Option<[u8; 4]>,
 }
 
 /// The font instance to shape an item with.
@@ -295,10 +302,21 @@ fn shape_segment(
         harfrust::Direction::LeftToRight
     };
     let hb_script = script_to_harfrust(segment.script);
-    let language = options
-        .language
-        .as_ref()
-        .and_then(|lang| lang.as_str().parse::<harfrust::Language>().ok());
+    // pyro: `font-language-override` names the OpenType language system itself (harfrust takes
+    // it as the private-use subtag `x-hbot<tag>`, upper-cased). Registered tags are upper case: one
+    // with a lower-case letter (`"trk"`) matches none, which is the script's default system.
+    let language = match options.language_override {
+        Some(tag) if tag.iter().any(u8::is_ascii_lowercase) => None,
+        Some(tag) => core::str::from_utf8(&tag).ok().and_then(|tag| {
+            alloc::format!("x-hbot{}", tag.trim_end().to_ascii_lowercase())
+                .parse::<harfrust::Language>()
+                .ok()
+        }),
+        None => options
+            .language
+            .as_ref()
+            .and_then(|lang| lang.as_str().parse::<harfrust::Language>().ok()),
+    };
     scx.features.clear();
     scx.features.extend(options.features.iter().map(|feature| {
         harfrust::Feature::new(
@@ -312,20 +330,62 @@ fn shape_segment(
     let mut shape_run = |font: &FontInstance, range: TextRange| {
         // pyro: a font its `@font-face` rule sizes (`size-adjust`) is shaped, measured and drawn
         // at the item's size times that factor.
+        // pyro: and a face's `@font-face` features and variation settings
+        // (`font-feature-settings`, `font-variation-settings` descriptors) apply under those of
+        // the properties, over the automatic `opsz` (CSS Fonts 4 §7.2), which follows the
+        // face's size.
+        let face = font.synthesis.face_settings();
+        let adjust = if options.face_size_adjust { font.synthesis.size_adjust() } else { 1.0 };
+        let face_variations = face.as_ref().is_some_and(|face| !face.variations.is_empty());
+        let auto_opsz_scaled = adjust != 1.0 && options.auto_opsz && !options.variations.is_empty();
+        let variations: alloc::vec::Vec<FontVariation>;
         let adjusted;
-        let options = match font.synthesis.size_adjust() {
-            adjust if adjust != 1.0 && options.face_size_adjust => {
-                adjusted = ShapeOptions {
-                    font_size: options.font_size * adjust,
-                    point_size: options.point_size * adjust,
-                    language: options.language.clone(),
-                    features: options.features,
-                    variations: options.variations,
-                    face_size_adjust: true,
-                };
-                &adjusted
+        let options = if adjust != 1.0 || face_variations {
+            let (auto, rest) = if options.auto_opsz && !options.variations.is_empty() {
+                (&options.variations[..1], &options.variations[1..])
+            } else {
+                (&[][..], options.variations)
+            };
+            variations = if face_variations || auto_opsz_scaled {
+                auto.iter()
+                    .map(|v| FontVariation { tag: v.tag, value: v.value * adjust })
+                    .chain(face.iter().flat_map(|face| {
+                        face.variations.iter().map(|(tag, value)| FontVariation {
+                            tag: parlance::Tag::from_bytes(*tag),
+                            value: *value,
+                        })
+                    }))
+                    .chain(rest.iter().copied())
+                    .collect()
+            } else {
+                options.variations.to_vec()
+            };
+            adjusted = ShapeOptions {
+                font_size: options.font_size * adjust,
+                point_size: options.point_size * adjust,
+                language: options.language.clone(),
+                features: options.features,
+                variations: &variations,
+                face_size_adjust: options.face_size_adjust,
+                auto_opsz: false,
+                language_override: options.language_override,
+            };
+            &adjusted
+        } else {
+            options
+        };
+        let face_features: alloc::vec::Vec<harfrust::Feature>;
+        let features: &[harfrust::Feature] = match &face {
+            Some(face) if !face.features.is_empty() => {
+                face_features = face
+                    .features
+                    .iter()
+                    .map(|(tag, value)| harfrust::Feature::new(harfrust::Tag::new(tag), u32::from(*value), ..))
+                    .chain(scx.features.iter().cloned())
+                    .collect();
+                &face_features
             }
-            _ => options,
+            _ => &scx.features,
         };
         // pyro: the font is parsed only when something has to be built from it (shaper
         // data, instance, or the shaper of a run the glyph cache does not hold); a cached run needs
@@ -363,7 +423,7 @@ fn shape_segment(
             font_index: font.font.index,
             synthesis: &font.synthesis,
             variations: options.variations,
-            features: &scx.features,
+            features,
             direction,
             script: hb_script,
             language: language.as_ref(),
@@ -405,7 +465,7 @@ fn shape_segment(
                 direction,
                 hb_script,
                 language.clone(),
-                &scx.features,
+                features,
                 Some(options.variations),
             ),
             || {
@@ -414,7 +474,7 @@ fn shape_segment(
                     direction,
                     Some(hb_script),
                     language.as_ref(),
-                    &scx.features,
+                    features,
                 )
             },
         );
@@ -452,7 +512,7 @@ fn shape_segment(
             buffer,
             HarfShapeOptions::new()
                 .plan(Some(shaper_plan))
-                .features(&scx.features)
+                .features(features)
                 .point_size(Some(options.point_size)),
         );
 
