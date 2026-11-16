@@ -1843,10 +1843,19 @@ Covered by WPT `css/css-sizing/aspect-ratio/replaced-element-029`, `-030` and `g
   remembered): Taffy's leaf layout, with the box's own style, gives that size, and the box's algorithm then lays
   its content out with both dimensions known. A replaced element keeps its natural aspect ratio
   (`replaced::natural_ratio`): one size gives the other (WPT css-flexbox `canvas-contain-size`). `contain: size` did nothing before. Not for non-atomic inline
-  boxes, tables and internal table boxes. `contain: inline-size` alone is not done.
+  boxes, tables and internal table boxes.
+- `src/layout/mod.rs` (`inline_size_contained_width`): `contain: inline-size` alone (css-contain-2 §3.2): a box
+  whose width its parent leaves to it (shrink-to-fit, or measured for its min-content or max-content contribution)
+  is as wide as an empty box whose content is `contain-intrinsic-width` (Taffy's leaf layout with the box's own
+  style); its content is then laid out at that width and gives its height. A box given its width (a block in flow,
+  a stretched item) keeps it. Danex's list cells (Tailwind's `[contain:inline-size]` on a truncating line in a
+  column `inline-flex`, Pyro 0.0.38 fault 5) took the line's whole text width (320 px, up to `max-width`) where
+  Chrome takes none (264 px, the cell's `::after` minimum). Horizontal non-replaced boxes only: vertical writing
+  modes and replaced elements are left as they were (WPT `contain-intrinsic-size-028.html`, testharness: 4 of 48,
+  its horizontal boxes).
 
-Covered by `crates/pyro-render/tests/size_containment.rs`; WPT `css/css-sizing/contain-intrinsic-size`: 23 more
-reftests pass.
+Covered by `crates/pyro-render/tests/size_containment.rs` and `inline_size_containment.rs`; WPT
+`css/css-sizing/contain-intrinsic-size`: 23 more reftests pass.
 ## `image-set()`, images as `content`, font features and descriptors (WPT css-images and css-fonts, round 3 lane F)
 
 - `src/util.rs` (`unfiltered_image`, `image_resolution`): an `image-set()` layer loads and draws the option

@@ -234,16 +234,24 @@ impl LayoutPassState<'_> {
         // pyro: this runs once per tree level of a recursive layout; what is not part
         // of the recursion stays out of its frame (see `dispatch_child_layout`).
         let mut inputs = self.adjusted_child_inputs(node_id, inputs);
-        // pyro: size containment (`Self::size_contained_size`)
-        if self.nodes[dom_node_id(node_id)].primary_styles().is_some_and(|styles| {
-            styles.get_box().contain.contains(style::values::computed::Contain::BLOCK_SIZE)
-        }) {
+        // pyro: size containment (`Self::size_contained_size`) and inline-size containment
+        // (`Self::inline_size_contained_width`)
+        let contain = self.nodes[dom_node_id(node_id)].primary_styles().map(|styles| styles.get_box().contain);
+        if contain.is_some_and(|contain| contain.contains(style::values::computed::Contain::BLOCK_SIZE)) {
             if let Some(size) = self.size_contained_size(node_id, inputs) {
                 if inputs.run_mode != RunMode::PerformLayout {
                     return taffy::tree::LayoutOutput::from_outer_size(size);
                 }
                 inputs.known_dimensions = size.map(Some);
             }
+        } else if inputs.known_dimensions.width.is_none()
+            && contain.is_some_and(|contain| contain.contains(style::values::computed::Contain::INLINE_SIZE))
+            && let Some(width) = self.inline_size_contained_width(node_id, inputs)
+        {
+            if inputs.run_mode == RunMode::ComputeSize && inputs.axis == taffy::RequestedAxis::Horizontal {
+                return taffy::tree::LayoutOutput::from_outer_size(taffy::Size { width, height: 0.0 });
+            }
+            inputs.known_dimensions.width = Some(width);
         }
         // pyro: a box that clamps its lines ends at the clamp line, which its laid-out
         // content names (`layout::line_clamp`): a measuring run lays it out too, and what
@@ -336,6 +344,63 @@ impl LayoutPassState<'_> {
             },
         );
         Some(output.size)
+    }
+
+    /// pyro: the width of a box with inline-size containment (`contain: inline-size`,
+    /// css-contain-2 §3.2) that its parent leaves to it (a shrink-to-fit box, or one measured for
+    /// its min-content or max-content contribution): its width as an empty box whose content is
+    /// `contain-intrinsic-width` wide (`none` is zero). Its content is then laid out at that width,
+    /// and its height follows from it. A truncating `display: block` line with `contain:
+    /// inline-size` in a column flex container (Tailwind's `[contain:inline-size]`, Danex's list
+    /// cells) gives the container none of its width, as in Chrome. `None`: no inline-size
+    /// containment applies (as for `size_contained_size`), and replaced elements and vertical
+    /// writing modes are left as they were.
+    #[inline(never)]
+    fn inline_size_contained_width(&self, node_id: NodeId, inputs: taffy::tree::LayoutInput) -> Option<f32> {
+        use style::values::generics::box_::ContainIntrinsicSize;
+        use style::values::specified::box_::{DisplayInside, DisplayOutside};
+        #[cfg(feature = "writing-mode")]
+        if self.layout_wm.is_vertical() {
+            return None;
+        }
+        let node = &self.nodes[dom_node_id(node_id)];
+        if node.data.downcast_element().is_some_and(replaced::is_replaced) {
+            return None;
+        }
+        let content_width = {
+            let styles = node.primary_styles()?;
+            if styles.writing_mode.is_vertical() {
+                return None;
+            }
+            let display = styles.clone_display();
+            let contained = match display.outside() {
+                DisplayOutside::Inline => display.inside() != DisplayInside::Flow,
+                DisplayOutside::Block => true,
+                _ => false,
+            } && display.inside() != DisplayInside::Table;
+            if !contained {
+                return None;
+            }
+            match &styles.get_position().contain_intrinsic_width {
+                ContainIntrinsicSize::None | ContainIntrinsicSize::AutoNone => 0.0,
+                ContainIntrinsicSize::Length(length) | ContainIntrinsicSize::AutoLength(length) => length.0.px(),
+            }
+        };
+        let style = self.child_layout_style(node);
+        let output = taffy::compute_leaf_layout(
+            taffy::tree::LayoutInput {
+                run_mode: RunMode::ComputeSize,
+                axis: taffy::RequestedAxis::Horizontal,
+                ..inputs
+            },
+            &style,
+            resolve_calc_value,
+            |known_dimensions, _available_space| taffy::Size {
+                width: known_dimensions.width.unwrap_or(content_width),
+                height: known_dimensions.height.unwrap_or(0.0),
+            },
+        );
+        Some(output.size.width)
     }
 
     #[inline(never)]
