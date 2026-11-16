@@ -138,3 +138,33 @@ fn hidden_system_font_names_fall_back() {
     assert!(ink(&b[0]) > 500);
     assert_eq!([ink(&b[1]), ink(&b[2])], [ink(&b[0]); 2]);
 }
+
+/// Hiragana and Katakana shape in one run (both are OpenType's `kana`): the font's kerning between
+/// `す` (Hiragana) and `ペ` (Katakana) applies (WPT css/css-fonts/hiragana-katakana-kerning).
+#[test]
+fn kerning_reaches_across_hiragana_and_katakana() {
+    const KANA: &[u8] = include_bytes!("fonts/NotoSansJP-kana_test-subset.otf");
+    struct Kana;
+    impl Fetcher for Kana {
+        fn fetch(&self, url: String, done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>) {
+            if url.ends_with("/kana.otf") { done(Ok(KANA.to_vec())) } else { done(Err("offline".into())) }
+        }
+    }
+    let snapshot = Snapshot {
+        html: "<!doctype html><style>@font-face { font-family: Kana; src: url(kana.otf) }\
+               body { margin: 0; background: #fff } p { margin: 0; height: 100px; font: 80px/100px Kana; font-feature-settings: 'palt' }</style>\
+               <p style='font-kerning: normal'>すペ</p><p style='font-kerning: none'>すペ</p>"
+            .into(),
+        base_url: "http://test/".into(),
+        width: 300,
+        height: 200,
+        device_scale_factor: 1.0,
+        ..Default::default()
+    };
+    let fetcher: Arc<dyn Fetcher> = Arc::new(Kana);
+    let img = Renderer::new().render(&snapshot, Area::Viewport, Backend::Cpu, &fetcher).unwrap().0;
+    let width = img.width as usize;
+    let band = |b: usize| -> Vec<u8> { img.data[(b * 100 + 5) * width * 4..(b * 100 + 95) * width * 4].to_vec() };
+    assert!(band(0).chunks(4).any(|p| p[0] < 128), "drawn");
+    assert_ne!(band(0), band(1), "kerned");
+}

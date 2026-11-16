@@ -23,3 +23,8 @@ drawn in colour, with 16 CPAL palettes of 8 entries (palette 2 is marked light, 
 as Ahem's: "The Ahem font belongs to the public domain. In jurisdictions that do not recognize public domain
 ownership of these files, the following Creative Commons Zero declaration applies"
 (http://dev.w3.org/CSS/fonts/ahem/COPYING).
+
+`NotoSansJP-kana_test-subset.otf`: web-platform-tests' subset of Noto Sans JP (`css/css-fonts/resources/`), the kana
+`す` and `ペ` with their `palt` metrics and a kerning pair between them. Its name table says "© 2014-2020 Adobe
+(http://www.adobe.com/)"; Noto Sans JP is licensed under the SIL Open Font License, Version 1.1
+(https://openfontlicense.org).

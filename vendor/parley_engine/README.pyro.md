@@ -131,3 +131,10 @@ before the item's, so the property's win for the same tag; its variation setting
 features. `ShapeOptions::language_override` shapes with that OpenType language system (`x-hbot<tag>`, the
 private-use subtag harfrust maps to a tag). WPT `font-feature-settings-descriptor-*`,
 `font-variation-settings-descriptor-*`, `variations/variable-opsz-size-adjust`, `font-language-override-*`.
+
+## Hiragana and Katakana in one run (WPT css-fonts, round 3 lane F)
+
+`itemize.rs` (`kana`): Katakana is itemized as Hiragana, so kana of both scripts shape in one run (both are
+OpenType's `kana` script): the font's kerning and contextual forms reach across `すペ` (WPT
+`hiragana-katakana-kerning`). Covered by `crates/pyro-render/tests/font_face_settings.rs`
+(`kerning_reaches_across_hiragana_and_katakana`).

@@ -113,7 +113,7 @@ impl Analysis {
         let first_real_script = self
             .char_info()
             .iter()
-            .map(|x| x.script)
+            .map(|x| kana(x.script))
             .find(|&script| real_script(script))
             .unwrap_or(IcuScript::Latin);
 
@@ -173,7 +173,10 @@ impl Itemizer<'_> {
             } else {
                 self.bidi_levels[0]
             };
-            let mut script = self.char_info[0].script;
+            // pyro: Katakana shapes in one run with Hiragana (both are OpenType's `kana`), so a
+            // font's kerning and contextual forms reach across `すペ` (WPT
+            // css-fonts/hiragana-katakana-kerning).
+            let mut script = kana(self.char_info[0].script);
 
             if !real_script(script) {
                 // This is a very simple heuristic, where if a character does not have a "real
@@ -230,6 +233,11 @@ impl Itemizer<'_> {
             bidi_level: item_bidi_level,
         })
     }
+}
+
+/// pyro: Katakana as Hiragana: one OpenType script (`kana`), shaped in one run.
+fn kana(script: IcuScript) -> IcuScript {
+    if script == IcuScript::Katakana { IcuScript::Hiragana } else { script }
 }
 
 fn real_script(script: IcuScript) -> bool {
