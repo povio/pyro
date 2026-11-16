@@ -69,6 +69,9 @@ pub struct TaffyStyloStyle<T: Deref<Target = ComputedValues>> {
     /// `parent_size.width`, i.e. the containing block's block size.
     #[cfg(feature = "writing-mode")]
     pub percent_basis: Option<f32>,
+    /// pyro: the natural aspect ratio of a replaced element (width over height, physical), set by the
+    /// tree; `CoreStyle::natural_aspect_ratio` answers it while `aspect-ratio` is `auto`.
+    pub natural_ratio: Option<f32>,
 }
 
 impl<T: Deref<Target = ComputedValues>> TaffyStyloStyle<T> {
@@ -97,6 +100,7 @@ impl<T: Deref<Target = ComputedValues>> TaffyStyloStyle<T> {
             align_axis_is_inline: false,
             #[cfg(feature = "writing-mode")]
             percent_basis: None,
+            natural_ratio: None,
         }
     }
 
@@ -113,6 +117,7 @@ impl<T: Deref<Target = ComputedValues>> TaffyStyloStyle<T> {
             align_axis_is_inline: false,
             #[cfg(feature = "writing-mode")]
             percent_basis: None,
+            natural_ratio: None,
         }
     }
 
@@ -307,6 +312,14 @@ impl<T: Deref<Target = ComputedValues>> taffy::CoreStyle for TaffyStyloStyle<T> 
         }
         let ratio = convert::aspect_ratio(aspect_ratio);
         self.layout_wm().logical_aspect_ratio(ratio)
+    }
+
+    #[inline]
+    fn natural_aspect_ratio(&self) -> Option<f32> {
+        if !self.style.get_position().aspect_ratio.auto {
+            return None;
+        }
+        self.layout_wm().logical_aspect_ratio(self.natural_ratio)
     }
 
     #[inline]

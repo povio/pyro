@@ -181,6 +181,13 @@ pub trait CoreStyle {
     fn aspect_ratio(&self) -> Option<f32> {
         Style::<Self::CustomIdent>::DEFAULT.aspect_ratio
     }
+    /// pyro: the natural aspect ratio of a replaced element whose `aspect-ratio` is `auto` (its
+    /// preferred aspect ratio, css-sizing-4 §5.1), width over height in the layout's axes. Read by
+    /// the flex algorithm only: elsewhere the element's measure function applies it.
+    #[inline(always)]
+    fn natural_aspect_ratio(&self) -> Option<f32> {
+        None
+    }
     /// pyro: whether the preferred aspect ratio is that of the content box whatever `box-sizing`
     /// says: `aspect-ratio: auto <ratio>` on a non-replaced box (css-sizing-4 §5.1).
     #[inline(always)]

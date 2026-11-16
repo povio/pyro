@@ -381,3 +381,20 @@ value of a subgridded axis is `subgrid` with each line's own names (`DetailedGri
 Not done: orthogonal subgrids (laid out as `none`), baseline alignment across a subgrid, the subgrid's own rows for a
 subgrid in its columns only (its items' column contributions see an indefinite height). Covered by
 `crates/pyro-render/tests/subgrid.rs`; WPT `css/css-grid/subgrid`: 36 → 63 of 102 reftests.
+
+## Natural aspect ratios of flex items (WPT round 3, lane G)
+
+`style/mod.rs` (`CoreStyle::natural_aspect_ratio`, default none), `compute/flexbox.rs`: a replaced element's natural
+ratio is its preferred aspect ratio when `aspect-ratio` is `auto` (css-sizing-4 §5.1), between content boxes. The flex
+algorithm knew only the property's ratio (`aspect_ratio`, in the box-sizing box), and a replaced item's ratio was left
+to its measure function, which a min-content measurement does not transfer through. Now (`FlexItem::natural_ratio`):
+
+- a definite preferred cross size, clamped by the item's minimum and maximum cross sizes, gives its main size through
+  the ratio, so also its flex base size and its transferred size suggestion (the automatic minimum is the smaller of
+  it and the content size suggestion; css-flexbox-1 §4.5): an image with `height: 100px; max-width: 150px` and a
+  natural 200x200 size is 100px wide, not 150px (WPT `flex-aspect-ratio-img-row-012`, `flex-minimum-width-flex-items-011`);
+- a definite cross size (a stretched one) gives the flex base size (§9.2 B) and bounds the content size suggestion, as
+  Blink measures a replaced element's min-content size with a definite block size (`relayout-intrinsic-block-size`).
+
+The property's ratio and every other use of `aspect_ratio` are unchanged. Covered by
+`crates/pyro-render/tests/flex_natural_ratio.rs`.

@@ -2023,12 +2023,14 @@ impl Node {
         self.assert_layout_styles_are_current();
 
         let mut flags = stylo_taffy::StyleFlags::empty();
+        let mut natural_ratio = None;
         if let Some(el) = self.data.downcast_element() {
             if crate::layout::replaced::is_replaced(el) {
                 flags |= stylo_taffy::StyleFlags::IS_REPLACED;
                 // pyro
                 if styles.get_position().aspect_ratio.auto && crate::layout::replaced::has_natural_ratio(el) {
                     flags |= stylo_taffy::StyleFlags::HAS_NATURAL_RATIO;
+                    natural_ratio = crate::layout::replaced::natural_ratio(el);
                 }
             }
             if el.name.local == local_name!("button") {
@@ -2053,11 +2055,15 @@ impl Node {
         {
             // Own-layout_wm by default: the node's own algorithm reads its style in its own axes
             let layout_wm = styles.writing_mode;
-            stylo_taffy::TaffyStyloStyle::new_in(styles, flags, layout_wm)
+            let mut style = stylo_taffy::TaffyStyloStyle::new_in(styles, flags, layout_wm);
+            style.natural_ratio = natural_ratio;
+            style
         }
         #[cfg(not(feature = "writing-mode"))]
         {
-            stylo_taffy::TaffyStyloStyle::new(styles, flags)
+            let mut style = stylo_taffy::TaffyStyloStyle::new(styles, flags);
+            style.natural_ratio = natural_ratio;
+            style
         }
     }
 

@@ -46,6 +46,8 @@ struct FlexItem {
     max_size: Size<Option<f32>>,
     /// The aspect ratio of this item
     aspect_ratio: Option<f32>,
+    /// pyro: a replaced element's natural ratio (its `aspect-ratio` is `auto`), between content boxes
+    natural_ratio: Option<f32>,
     /// The cross-alignment of this item
     align_self: AlignSelf,
 
@@ -856,6 +858,11 @@ fn generate_anonymous_flex_items(
         .filter(|(_, _, style)| style.box_generation_mode() != BoxGenerationMode::None)
         .map(|(index, child, child_style)| {
             let aspect_ratio = child_style.aspect_ratio();
+            // pyro: a replaced element's natural ratio is its preferred aspect ratio (css-sizing-4 §5.1),
+            // between content boxes: a definite preferred cross size gives its main size and its
+            // transferred size suggestion, a definite cross size its flex base size (css-flexbox-1 §9.2
+            // B, §4.5). `aspect_ratio` (the property's, in the box-sizing box) stays the style's.
+            let natural_ratio = aspect_ratio.is_none().then(|| child_style.natural_aspect_ratio()).flatten();
             let padding = child_style
                 .padding()
                 .resolve_or_zero(constants.node_inner_size.width, |val, basis| tree.calc(val, basis));
@@ -867,24 +874,39 @@ fn generate_anonymous_flex_items(
             } else {
                 Size::ZERO
             };
+            let mut size = child_style
+                .size()
+                .maybe_resolve(percent_resolution_size, |val, basis| tree.calc(val, basis))
+                .maybe_apply_aspect_ratio(aspect_ratio)
+                .maybe_add(box_sizing_adjustment);
+            let min_size = child_style
+                .min_size()
+                .maybe_resolve(percent_resolution_size, |val, basis| tree.calc(val, basis))
+                .maybe_add(box_sizing_adjustment);
+            let max_size = child_style
+                .max_size()
+                .maybe_resolve(percent_resolution_size, |val, basis| tree.calc(val, basis))
+                .maybe_add(box_sizing_adjustment);
+            if let Some(ratio) = natural_ratio {
+                let padding_border = (padding + border).sum_axes();
+                let main = size.main(constants.dir);
+                if let (None, Some(cross)) = (main, size.cross(constants.dir)) {
+                    // The cross size as its minimum and maximum clamp it
+                    let cross = cross.maybe_clamp(min_size.cross(constants.dir), max_size.cross(constants.dir));
+                    let content_cross = (cross - padding_border.cross(constants.dir)).max(0.0);
+                    let content_main = if constants.dir.is_row() { content_cross * ratio } else { content_cross / ratio };
+                    size.set_main(constants.dir, Some(content_main + padding_border.main(constants.dir)));
+                }
+            }
             FlexItem {
                 node: child,
                 order: index as u32,
-                size: child_style
-                    .size()
-                    .maybe_resolve(percent_resolution_size, |val, basis| tree.calc(val, basis))
-                    .maybe_apply_aspect_ratio(aspect_ratio)
-                    .maybe_add(box_sizing_adjustment),
+                size,
                 size_style: child_style.size(),
-                min_size: child_style
-                    .min_size()
-                    .maybe_resolve(percent_resolution_size, |val, basis| tree.calc(val, basis))
-                    .maybe_add(box_sizing_adjustment),
-                max_size: child_style
-                    .max_size()
-                    .maybe_resolve(percent_resolution_size, |val, basis| tree.calc(val, basis))
-                    .maybe_add(box_sizing_adjustment),
+                min_size,
+                max_size,
                 aspect_ratio,
+                natural_ratio,
 
                 relative_inset: if child_style.position() == Position::Relative {
                     let inset = child_style.inset().zip_size(constants.node_inner_size, |p, s| {
@@ -1169,6 +1191,14 @@ fn determine_flex_base_size(
                     child.flex_basis_is_definite = true;
                     break 'flex_basis if dir.is_row() { cross * ratio } else { cross / ratio };
                 }
+                // pyro: a natural ratio is between content boxes
+                if let (Some(ratio), Some(cross)) = (child.natural_ratio, child_known_dimensions.cross(dir)) {
+                    let padding_border = (child.padding + child.border).sum_axes();
+                    let content_cross = (cross - padding_border.cross(dir)).max(0.0);
+                    child.flex_basis_is_definite = true;
+                    break 'flex_basis padding_border.main(dir)
+                        + if dir.is_row() { content_cross * ratio } else { content_cross / ratio };
+                }
             }
 
             // E. Otherwise, size the item into the available space using its used flex basis
@@ -1244,6 +1274,20 @@ fn determine_flex_base_size(
                     dir.main_axis(),
                     Line::FALSE,
                 )
+            };
+
+            // pyro: the min-content size of a replaced element with a definite (stretched) cross size is
+            // that size through its natural ratio, as in Blink (WPT `relayout-intrinsic-block-size`).
+            let min_content_main_size = match (child_cross_size_is_definite, child.natural_ratio) {
+                (true, Some(ratio)) => match child_known_dimensions.cross(dir) {
+                    Some(cross) => {
+                        let cross = (cross - padding_border_axes_sums.cross(dir).unwrap_or(0.0)).max(0.0);
+                        let through = if dir.is_row() { cross * ratio } else { cross / ratio };
+                        min_content_main_size.min(through + padding_border_axes_sums.main(dir).unwrap_or(0.0))
+                    }
+                    None => min_content_main_size,
+                },
+                _ => min_content_main_size,
             };
 
             // 4.5. Automatic Minimum Size of Flex Items

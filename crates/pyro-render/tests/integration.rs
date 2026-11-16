@@ -20,6 +20,7 @@ mod filter_color;
 mod filter_drop_shadow;
 mod filter_image_function;
 mod first_line;
+mod flex_natural_ratio;
 mod floats;
 mod font_face_metrics;
 mod font_face_settings;

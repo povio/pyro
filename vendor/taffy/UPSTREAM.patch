@@ -996,10 +996,120 @@ index ec094c9e..2758e69f 100644
      /// Whether the parent clips unreachable overflow and includes end padding.
      pub parent_is_scroll_container: bool,
 diff --git a/src/compute/flexbox.rs b/src/compute/flexbox.rs
-index a8dbbcf2..df553b4b 100644
+index a8dbbcf2..9cff9197 100644
 --- a/src/compute/flexbox.rs
 +++ b/src/compute/flexbox.rs
-@@ -1542,8 +1542,41 @@ fn determine_container_main_size(
+@@ -46,6 +46,8 @@ struct FlexItem {
+     max_size: Size<Option<f32>>,
+     /// The aspect ratio of this item
+     aspect_ratio: Option<f32>,
++    /// pyro: a replaced element's natural ratio (its `aspect-ratio` is `auto`), between content boxes
++    natural_ratio: Option<f32>,
+     /// The cross-alignment of this item
+     align_self: AlignSelf,
+ 
+@@ -856,6 +858,11 @@ fn generate_anonymous_flex_items(
+         .filter(|(_, _, style)| style.box_generation_mode() != BoxGenerationMode::None)
+         .map(|(index, child, child_style)| {
+             let aspect_ratio = child_style.aspect_ratio();
++            // pyro: a replaced element's natural ratio is its preferred aspect ratio (css-sizing-4 §5.1),
++            // between content boxes: a definite preferred cross size gives its main size and its
++            // transferred size suggestion, a definite cross size its flex base size (css-flexbox-1 §9.2
++            // B, §4.5). `aspect_ratio` (the property's, in the box-sizing box) stays the style's.
++            let natural_ratio = aspect_ratio.is_none().then(|| child_style.natural_aspect_ratio()).flatten();
+             let padding = child_style
+                 .padding()
+                 .resolve_or_zero(constants.node_inner_size.width, |val, basis| tree.calc(val, basis));
+@@ -867,24 +874,39 @@ fn generate_anonymous_flex_items(
+             } else {
+                 Size::ZERO
+             };
++            let mut size = child_style
++                .size()
++                .maybe_resolve(percent_resolution_size, |val, basis| tree.calc(val, basis))
++                .maybe_apply_aspect_ratio(aspect_ratio)
++                .maybe_add(box_sizing_adjustment);
++            let min_size = child_style
++                .min_size()
++                .maybe_resolve(percent_resolution_size, |val, basis| tree.calc(val, basis))
++                .maybe_add(box_sizing_adjustment);
++            let max_size = child_style
++                .max_size()
++                .maybe_resolve(percent_resolution_size, |val, basis| tree.calc(val, basis))
++                .maybe_add(box_sizing_adjustment);
++            if let Some(ratio) = natural_ratio {
++                let padding_border = (padding + border).sum_axes();
++                let main = size.main(constants.dir);
++                if let (None, Some(cross)) = (main, size.cross(constants.dir)) {
++                    // The cross size as its minimum and maximum clamp it
++                    let cross = cross.maybe_clamp(min_size.cross(constants.dir), max_size.cross(constants.dir));
++                    let content_cross = (cross - padding_border.cross(constants.dir)).max(0.0);
++                    let content_main = if constants.dir.is_row() { content_cross * ratio } else { content_cross / ratio };
++                    size.set_main(constants.dir, Some(content_main + padding_border.main(constants.dir)));
++                }
++            }
+             FlexItem {
+                 node: child,
+                 order: index as u32,
+-                size: child_style
+-                    .size()
+-                    .maybe_resolve(percent_resolution_size, |val, basis| tree.calc(val, basis))
+-                    .maybe_apply_aspect_ratio(aspect_ratio)
+-                    .maybe_add(box_sizing_adjustment),
++                size,
+                 size_style: child_style.size(),
+-                min_size: child_style
+-                    .min_size()
+-                    .maybe_resolve(percent_resolution_size, |val, basis| tree.calc(val, basis))
+-                    .maybe_add(box_sizing_adjustment),
+-                max_size: child_style
+-                    .max_size()
+-                    .maybe_resolve(percent_resolution_size, |val, basis| tree.calc(val, basis))
+-                    .maybe_add(box_sizing_adjustment),
++                min_size,
++                max_size,
+                 aspect_ratio,
++                natural_ratio,
+ 
+                 relative_inset: if child_style.position() == Position::Relative {
+                     let inset = child_style.inset().zip_size(constants.node_inner_size, |p, s| {
+@@ -1169,6 +1191,14 @@ fn determine_flex_base_size(
+                     child.flex_basis_is_definite = true;
+                     break 'flex_basis if dir.is_row() { cross * ratio } else { cross / ratio };
+                 }
++                // pyro: a natural ratio is between content boxes
++                if let (Some(ratio), Some(cross)) = (child.natural_ratio, child_known_dimensions.cross(dir)) {
++                    let padding_border = (child.padding + child.border).sum_axes();
++                    let content_cross = (cross - padding_border.cross(dir)).max(0.0);
++                    child.flex_basis_is_definite = true;
++                    break 'flex_basis padding_border.main(dir)
++                        + if dir.is_row() { content_cross * ratio } else { content_cross / ratio };
++                }
+             }
+ 
+             // E. Otherwise, size the item into the available space using its used flex basis
+@@ -1246,6 +1276,20 @@ fn determine_flex_base_size(
+                 )
+             };
+ 
++            // pyro: the min-content size of a replaced element with a definite (stretched) cross size is
++            // that size through its natural ratio, as in Blink (WPT `relayout-intrinsic-block-size`).
++            let min_content_main_size = match (child_cross_size_is_definite, child.natural_ratio) {
++                (true, Some(ratio)) => match child_known_dimensions.cross(dir) {
++                    Some(cross) => {
++                        let cross = (cross - padding_border_axes_sums.cross(dir).unwrap_or(0.0)).max(0.0);
++                        let through = if dir.is_row() { cross * ratio } else { cross / ratio };
++                        min_content_main_size.min(through + padding_border_axes_sums.main(dir).unwrap_or(0.0))
++                    }
++                    None => min_content_main_size,
++                },
++                _ => min_content_main_size,
++            };
++
+             // 4.5. Automatic Minimum Size of Flex Items
+             // https://www.w3.org/TR/css-flexbox-1/#min-size-auto
+             let clamped_min_content_size =
+@@ -1542,8 +1586,41 @@ fn determine_container_main_size(
  
                  if lines.len() > 1 {
                      f32_max(size, main_axis_available_space)
@@ -1042,7 +1152,7 @@ index a8dbbcf2..df553b4b 100644
                  }
              }
              AvailableSpace::MinContent if constants.is_wrap => {
-@@ -1607,6 +1640,14 @@ fn determine_container_main_size(
+@@ -1607,6 +1684,14 @@ fn determine_container_main_size(
                              style_max.maybe_min(flex_basis_max).or(flex_basis_max).unwrap_or(f32::INFINITY);
  
                          let content_contribution = match (min_main_size, style_preferred, max_main_size) {
@@ -1057,7 +1167,7 @@ index a8dbbcf2..df553b4b 100644
                              // If the clamping values are such that max <= min, then we can avoid the expensive step of computing the content size
                              // as we know that the clamping values will override it anyway
                              (min, Some(pref), max) if max <= min || max <= pref => pref.min(max).max(min) + margin_sum,
-@@ -3032,7 +3073,7 @@ fn collect_oof_candidates(
+@@ -3032,7 +3117,7 @@ fn collect_oof_candidates(
          let main = AxisStaticPosition { area: main_area, align: AxisStaticAlign::from_keyword(main_edge) };
  
          let static_position = if constants.is_row { Point { x: main, y: cross } } else { Point { x: cross, y: main } };
@@ -5048,7 +5158,7 @@ index a3f746b1..f134be7c 100644
  
  /// Controls whether grid items are placed row-wise or column-wise. And whether the sparse or dense packing algorithm is used.
 diff --git a/src/style/mod.rs b/src/style/mod.rs
-index a9e57f33..96bdcfd4 100644
+index a9e57f33..8eaf8d13 100644
 --- a/src/style/mod.rs
 +++ b/src/style/mod.rs
 @@ -41,7 +41,7 @@ pub use self::grid::{
@@ -5060,10 +5170,17 @@ index a9e57f33..96bdcfd4 100644
  #[cfg(feature = "grid")]
  pub(crate) use self::grid::{NonNamedGridPlacement, OriginZeroGridPlacement};
  
-@@ -181,6 +181,12 @@ pub trait CoreStyle {
+@@ -181,6 +181,19 @@ pub trait CoreStyle {
      fn aspect_ratio(&self) -> Option<f32> {
          Style::<Self::CustomIdent>::DEFAULT.aspect_ratio
      }
++    /// pyro: the natural aspect ratio of a replaced element whose `aspect-ratio` is `auto` (its
++    /// preferred aspect ratio, css-sizing-4 §5.1), width over height in the layout's axes. Read by
++    /// the flex algorithm only: elsewhere the element's measure function applies it.
++    #[inline(always)]
++    fn natural_aspect_ratio(&self) -> Option<f32> {
++        None
++    }
 +    /// pyro: whether the preferred aspect ratio is that of the content box whatever `box-sizing`
 +    /// says: `aspect-ratio: auto <ratio>` on a non-replaced box (css-sizing-4 §5.1).
 +    #[inline(always)]
@@ -5073,7 +5190,7 @@ index a9e57f33..96bdcfd4 100644
  
      // Spacing Properties
      /// How large should the margin be on each side?
-@@ -1128,6 +1134,10 @@ impl<T: CoreStyle> CoreStyle for &'_ T {
+@@ -1128,6 +1141,10 @@ impl<T: CoreStyle> CoreStyle for &'_ T {
          (*self).aspect_ratio()
      }
      #[inline(always)]

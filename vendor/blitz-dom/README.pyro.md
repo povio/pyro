@@ -2004,3 +2004,7 @@ without a `height` usvg took the content's bounds: `width="20px"` with a circle 
 image (usvg refuses it: `InvalidSize`): the image keeps its declared dimensions and `viewBox` ratio, and its content is
 parsed as of an SVG without a size, drawn in the box it is given, as in browsers (`grid-item-aspect-ratio-stretch-3`).
 Covered by `crates/pyro-render/tests/svg_image_natural_size.rs`.
+
+`src/node/node.rs` (`Node::layout_style`): a replaced element with a natural aspect ratio gives it to its layout style
+(stylo_taffy's `natural_ratio`), for Taffy's flex algorithm (vendor/taffy/README.pyro.md, "Natural aspect ratios of
+flex items").

@@ -34,3 +34,6 @@ entry) once a Blitz release carries these commits and changes.
   (the `<line-name-list>` of `grid-template-*: subgrid`, `repeat(<integer>)` expanded, `repeat(auto-fill)` marked),
   `gap_is_normal`, and `GridItemStyle::is_subgrid` (a grid container in flow, in its parent's orientation, with no
   layout or paint containment and no size container type, whose template in the axis is `subgrid`).
+- `src/wrapper.rs`: `TaffyStyloStyle::natural_ratio`, set by blitz-dom on a replaced element with a natural aspect ratio;
+  `CoreStyle::natural_aspect_ratio` answers it (in the layout's axes) while `aspect-ratio` is `auto`, for Taffy's flex
+  algorithm (vendor/taffy/README.pyro.md, "Natural aspect ratios of flex items").
