@@ -197,3 +197,19 @@ fn white_space_changes_wrap_as_in_chromium() {
         &[2.0, 2.0, 1.0, 1.0, 2.0, 1.0],
     );
 }
+
+#[test]
+fn hyphens_auto_breaks_words_of_a_known_language() {
+    // A line as narrow as a syllable: "ex-am-ple" takes three 40px lines, unhyphenated one.
+    let height = |attrs: &str| boxes(&format!("<div id=d {attrs}>example</div>"), &["d"])[0].height;
+    assert_near(
+        &[
+            height("lang=en style='width:1px;hyphens:auto'"),
+            height("style='width:1px;hyphens:auto'"),
+            height("lang=en style='width:1px;hyphens:manual'"),
+            height("lang=en style='width:1px;hyphens:auto;hyphenate-limit-chars:8'"),
+            height("lang=en style='width:1px;hyphens:auto;hyphenate-limit-chars:auto 3 2'"),
+        ],
+        &[120.0, 40.0, 40.0, 40.0, 80.0],
+    );
+}

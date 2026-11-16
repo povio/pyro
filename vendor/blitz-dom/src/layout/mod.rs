@@ -28,6 +28,7 @@ pub(crate) mod counters;
 pub(crate) mod damage;
 pub(crate) mod first_letter;
 pub(crate) mod first_line;
+pub(crate) mod hyphenate;
 pub(crate) mod inline;
 pub(crate) mod line_clamp;
 pub(crate) mod list;

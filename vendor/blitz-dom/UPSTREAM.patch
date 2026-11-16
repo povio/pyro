@@ -7730,6 +7730,137 @@ new file mode 100644
 +        &mut TreeCountingCaches::default(),
 +    )
 +}
+diff --git a/packages/blitz-dom/src/layout/hyphenate.rs b/packages/blitz-dom/src/layout/hyphenate.rs
+new file mode 100644
+--- /dev/null
++++ b/packages/blitz-dom/src/layout/hyphenate.rs
+@@ -0,0 +1,126 @@
++//! pyro: `hyphens: auto` (CSS Text 3 § 5.4): words of a language with hyphenation patterns get a
++//! soft hyphen (U+00AD) at each hyphenation opportunity, which parley's line breaker shows as the
++//! font's hyphen where a line ends there (as for authored soft hyphens). The patterns are TeX's
++//! (`hypher`), from which Chromium's (Android's) dictionaries derive. `hyphenate-limit-chars`
++//! bounds the word and the parts around a hyphen, `auto` as in Blink: 5, 2 and 2.
++
++use std::borrow::Cow;
++
++use style::properties::ComputedValues;
++use style::values::computed::text::Hyphens;
++use style::values::generics::text::NumberOrAuto;
++
++/// The patterns for `lang` (a BCP 47 tag; its language subtag decides), if any.
++fn language(lang: &str) -> Option<hypher::Lang> {
++    let primary = lang.split(['-', '_']).next()?.to_ascii_lowercase();
++    let code: [u8; 2] = primary.as_bytes().try_into().ok()?;
++    match &code {
++        // Norwegian Bokmål and Nynorsk use the Norwegian patterns.
++        b"nb" | b"nn" => hypher::Lang::from_iso(*b"no"),
++        _ => hypher::Lang::from_iso(code),
++    }
++}
++
++/// Whether `c` belongs to a word: a letter, a combining mark or a soft hyphen.
++pub(crate) fn is_word_char(c: char) -> bool {
++    c.is_alphabetic() || is_mark(c) || c == '\u{ad}'
++}
++
++/// Whether `c` is invisible formatting (an empty inline box's strut, a bidi control) that a
++/// word continues across.
++pub(crate) fn is_invisible(c: char) -> bool {
++    matches!(c, '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2060}'..='\u{2069}' | '\u{FEFF}')
++}
++
++/// The byte offsets in `text` where `style` puts a soft hyphen: the hyphenation opportunities of
++/// its words (`hyphens: auto` in a language with patterns), none for a word with a soft hyphen of
++/// its own.
++fn opportunities(text: &str, style: &ComputedValues) -> Vec<usize> {
++    let itext = style.get_inherited_text();
++    let mut points = Vec::new();
++    if itext.hyphens != Hyphens::Auto || !text.chars().any(char::is_alphabetic) {
++        return points;
++    }
++    let Some(lang) = language(&style.get_font()._x_lang.0) else {
++        return points;
++    };
++    let limit = |value: &NumberOrAuto<i32>, auto: usize| match value {
++        NumberOrAuto::Number(n) => (*n).max(1) as usize,
++        NumberOrAuto::Auto => auto,
++    };
++    let limits = &itext.hyphenate_limit_chars;
++    let word_min = limit(&limits.total_word_length, 5);
++    let before_min = limit(&limits.pre_hyphen_length, 2);
++    let after_min = limit(&limits.post_hyphen_length, 2);
++    let mut offset = 0;
++    while offset < text.len() {
++        let rest = &text[offset..];
++        let Some(start) = rest.find(|c: char| c.is_alphabetic()) else {
++            break;
++        };
++        let word_start = offset + start;
++        let word_len = text[word_start..]
++            .char_indices()
++            .find(|&(_, c)| !is_word_char(c))
++            .map_or(text.len() - word_start, |(i, _)| i);
++        let word = &text[word_start..word_start + word_len];
++        offset = word_start + word_len;
++        if word.chars().count() < word_min || word.contains('\u{ad}') {
++            continue;
++        }
++        let mut at = word_start;
++        let mut syllables = hypher::hyphenate_bounded(word, lang, before_min, after_min).peekable();
++        while let Some(syllable) = syllables.next() {
++            at += syllable.len();
++            if syllables.peek().is_some() {
++                points.push(at);
++            }
++        }
++    }
++    points
++}
++
++/// `text` with soft hyphens at the hyphenation opportunities that `style` gives it, with
++/// `before` and `after` the parts of its first and last words outside it (text of other nodes):
++/// an opportunity where `text` starts belongs to the text before it.
++pub(crate) fn hyphenate<'a>(before: &str, text: &'a str, after: &str, style: &ComputedValues) -> Cow<'a, str> {
++    if style.get_inherited_text().hyphens != Hyphens::Auto {
++        return Cow::Borrowed(text);
++    }
++    let context = format!("{before}{text}{after}");
++    let points: Vec<usize> = opportunities(&context, style)
++        .into_iter()
++        .filter(|&at| at > before.len() && at <= before.len() + text.len())
++        .map(|at| at - before.len())
++        .collect();
++    if points.is_empty() {
++        return Cow::Borrowed(text);
++    }
++    let mut out = String::with_capacity(text.len() + 2 * points.len());
++    let mut last = 0;
++    for at in points {
++        out.push_str(&text[last..at]);
++        out.push('\u{ad}');
++        last = at;
++    }
++    out.push_str(&text[last..]);
++    Cow::Owned(out)
++}
++
++fn is_mark(c: char) -> bool {
++    matches!(c as u32, 0x0300..=0x036F | 0x1AB0..=0x1AFF | 0x1DC0..=0x1DFF | 0x20D0..=0x20FF | 0xFE20..=0xFE2F)
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn english_patterns() {
++        let lang = language("en-US").unwrap();
++        let joined: Vec<&str> = hypher::hyphenate_bounded("example", lang, 2, 2).collect();
++        assert_eq!(joined, ["ex", "am", "ple"]);
++        assert!(language("De-dE").is_some());
++        assert!(language("x").is_none());
++    }
++}
 diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/src/layout/inline/build.rs
 --- a/packages/blitz-dom/src/layout/inline/build.rs
 +++ b/packages/blitz-dom/src/layout/inline/build.rs
@@ -8393,7 +8524,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
 +    {
 +        return false;
 +    }
- 
++
 +    // The first build keeps the lines of the layout's last break over the text that did not
 +    // change, for `BreakLines::resume`. The strut build follows a build of the same content.
 +    text_layout.text = if strut_build {
@@ -8606,7 +8737,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
 +        }
 +        close_span(builder, end, bidi, bidi_scan);
 +    }
-+
+ 
 +    #[allow(clippy::too_many_arguments)]
      fn build_inline_layout_recursive(
          builder: &mut TreeBuilder<TextBrush>,
@@ -8905,7 +9036,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
                          });
                      }
                  };
-@@ -291,10 +1186,61 @@
+@@ -291,10 +1186,75 @@
              NodeData::Text(data) => {
                  // node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
                  // dbg!(&data.content);
@@ -8918,6 +9049,19 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
 -                    text_transformer.transform(&data.content, parent_text_transform, builder);
 -                builder.push_text(text);
 +                let start = builder.text().len();
++                // pyro: `hyphens: auto` adds soft hyphens (`layout::hyphenate`), by the style of
++                // the text's parent, to words that may go on in the text before and after.
++                let parent_style = node.parent.and_then(|parent| nodes.get(parent)?.primary_styles());
++                let hyphenates = parent_style.as_ref().is_some_and(|style| {
++                    style.get_inherited_text().hyphens == style::values::computed::text::Hyphens::Auto
++                });
++                let after = if hyphenates { word_after(nodes, node_id) } else { String::new() };
++                let hyphenate = |before: &str, text: &str| match &parent_style {
++                    Some(style) if hyphenates => {
++                        crate::layout::hyphenate::hyphenate(before, text, &after, style).into_owned()
++                    }
++                    _ => text.to_owned(),
++                };
 +                // pyro: the first letter in a span of the `::first-letter` style.
 +                let letter = first_letter
 +                    .filter(|split| split.text == node_id && data.content.get(split.range.clone()).is_some())
@@ -8929,7 +9073,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
 +                        let content = &data.content;
 +                        let head = &content[..split.range.start];
 +                        let text = text_transformer.transform(head, parent_text_transform, builder);
-+                        builder.push_text(text);
++                        { let before = word_before(builder.text()); builder.push_text(&hyphenate(&before, text)); }
 +                        builder.push_inline_box(InlineBox {
 +                            id: split.style_node.as_u64(),
 +                            kind: InlineBoxKind::CustomOutOfFlow,
@@ -8944,13 +9088,13 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
 +                        });
 +                        let tail = &content[split.range.end..];
 +                        let text = text_transformer.transform(tail, parent_text_transform, builder);
-+                        builder.push_text(text);
++                        { let before = word_before(builder.text()); builder.push_text(&hyphenate(&before, text)); }
 +                    }
 +                    Some((split, letter_style)) => {
 +                        let content = &data.content;
 +                        let head = &content[..split.range.start];
 +                        let text = text_transformer.transform(head, parent_text_transform, builder);
-+                        builder.push_text(text);
++                        { let before = word_before(builder.text()); builder.push_text(&hyphenate(&before, text)); }
 +                        builder.push_style_span(stylo_to_parley::style(split.style_node, &letter_style));
 +                        let letter = &content[split.range.clone()];
 +                        let text = text_transformer.transform(letter, &CaseTransform::from_style(&letter_style), builder);
@@ -8958,19 +9102,20 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
 +                        builder.pop_style_span();
 +                        let tail = &content[split.range.end..];
 +                        let text = text_transformer.transform(tail, parent_text_transform, builder);
-+                        builder.push_text(text);
++                        { let before = word_before(builder.text()); builder.push_text(&hyphenate(&before, text)); }
 +                    }
 +                    None => {
 +                        let text =
 +                            text_transformer.transform(&data.content, parent_text_transform, builder);
-+                        builder.push_text(text);
++                        let before = if hyphenates { word_before(builder.text()) } else { String::new() };
++                        builder.push_text(&hyphenate(&before, text));
 +                    }
 +                }
 +                text_nodes.push((node_id, start..builder.text().len()));
              }
              NodeData::Comment { .. } => {
                  // node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
-@@ -303,3 +1249,157 @@
+@@ -303,3 +1263,250 @@
          }
      }
  }
@@ -9127,6 +9272,99 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
 +            Some(text)
 +        }
 +    }
++}
++
++/// pyro: the end of the word that the built text ends in (its letters, marks and soft hyphens,
++/// across invisible formatting), for `hyphens: auto`.
++fn word_before(text: &str) -> String {
++    use crate::layout::hyphenate::{is_invisible, is_word_char};
++    let mut chars: Vec<char> = Vec::new();
++    for c in text.chars().rev() {
++        if is_invisible(c) {
++            continue;
++        }
++        if !is_word_char(c) || chars.len() >= 64 {
++            break;
++        }
++        chars.push(c);
++    }
++    chars.iter().rev().collect()
++}
++
++/// pyro: the start of the word that goes on after the text node `node_id`, in the text of the
++/// inline content that follows it (out-of-flow boxes and hidden elements passed over, atomic
++/// inlines, `<br>` and blocks ending it), for `hyphens: auto`.
++fn word_after(nodes: &crate::NodeTree, node_id: NodeId) -> String {
++    use crate::layout::hyphenate::{is_invisible, is_word_char};
++    use style::values::specified::box_::{DisplayInside, DisplayOutside};
++    let mut out = String::new();
++    // Whether an element's content continues the inline content: an inline or contents element.
++    let continues = |id: NodeId| {
++        nodes.get(id).and_then(|node| node.primary_styles()).is_some_and(|style| {
++            let display = style.get_box().display;
++            matches!(
++                (display.outside(), display.inside()),
++                (DisplayOutside::Inline, DisplayInside::Flow) | (DisplayOutside::None, DisplayInside::Contents)
++            ) && !style.clone_position().is_absolutely_positioned()
++                && !style.clone_float().is_floating()
++        })
++    };
++    let passed_over = |id: NodeId| {
++        nodes.get(id).and_then(|node| node.primary_styles()).is_some_and(|style| {
++            let display = style.get_box().display;
++            display.is_none()
++                || style.clone_position().is_absolutely_positioned()
++                || style.clone_float().is_floating()
++        })
++    };
++    // The next node after `id` and its subtree, inside inline content.
++    let next = |mut id: NodeId| -> Option<NodeId> {
++        loop {
++            let node = nodes.get(id)?;
++            let parent = node.parent?;
++            let siblings = &nodes.get(parent)?.children;
++            let index = siblings.iter().position(|&child| child == id)?;
++            if let Some(&sibling) = siblings.get(index + 1) {
++                return Some(sibling);
++            }
++            if !continues(parent) {
++                return None;
++            }
++            id = parent;
++        }
++    };
++    let mut current = next(node_id);
++    while let Some(id) = current {
++        let node = &nodes[id];
++        match &node.data {
++            crate::node::NodeData::Text(data) => {
++                for c in data.content.chars() {
++                    if is_invisible(c) {
++                        continue;
++                    }
++                    if !is_word_char(c) || out.len() >= 64 {
++                        return out;
++                    }
++                    out.push(c);
++                }
++                current = next(id);
++            }
++            crate::node::NodeData::Element(element) => {
++                if passed_over(id) {
++                    current = next(id);
++                } else if continues(id) && !element.name.local.eq_str_ignore_ascii_case("br") {
++                    current = match node.children.first() {
++                        Some(&child) => Some(child),
++                        None => next(id),
++                    };
++                } else {
++                    return out;
++                }
++            }
++            _ => current = next(id),
++        }
++    }
++    out
 +}
 diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom/src/layout/inline/layout.rs
 --- a/packages/blitz-dom/src/layout/inline/layout.rs
@@ -11697,7 +11935,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  use std::cell::Ref;
  use std::ops::{Deref, DerefMut};
  use std::sync::Arc;
-@@ -24,18 +24,25 @@
+@@ -24,18 +24,26 @@
  };
  
  pub(crate) mod construct;
@@ -11705,6 +11943,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  pub(crate) mod damage;
 +pub(crate) mod first_letter;
 +pub(crate) mod first_line;
++pub(crate) mod hyphenate;
  pub(crate) mod inline;
 +pub(crate) mod line_clamp;
  pub(crate) mod list;
@@ -11725,7 +11964,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  };
  use self::table::TableTreeWrapper;
  
-@@ -47,16 +54,21 @@
+@@ -47,16 +55,21 @@
  };
  
  /// The intrinsic dimensions and default object size for a replaced element
@@ -11754,7 +11993,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
          return (IntrinsicSizes::default(), taffy::Size::ZERO);
      }
      if *tag_name == local_name!("canvas") {
-@@ -101,6 +113,17 @@
+@@ -101,6 +114,17 @@
      /// size, against which its percentage padding resolves (see `layout::writing_mode`).
      #[cfg(feature = "writing-mode")]
      pub(crate) orthogonal_percent_basis: Option<(crate::NodeId, f32)>,
@@ -11772,7 +12011,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  }
  
  impl<'doc> LayoutPassState<'doc> {
-@@ -138,6 +161,11 @@
+@@ -138,6 +162,11 @@
              current_align_axis_is_inline: false,
              #[cfg(feature = "writing-mode")]
              orthogonal_percent_basis: None,
@@ -11784,7 +12023,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
          }
      }
  }
-@@ -174,14 +202,25 @@
+@@ -174,14 +203,25 @@
          inputs: taffy::tree::LayoutInput,
          block_ctx: Option<&mut BlockContext<'_>>,
      ) -> taffy::tree::LayoutOutput {
@@ -11818,7 +12057,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      /// Lay out `node_id` in the writing mode of the currently running algorithm (its parent's)
-@@ -191,13 +230,319 @@
+@@ -191,13 +231,319 @@
          inputs: taffy::tree::LayoutInput,
          block_ctx: Option<&mut BlockContext<'_>>,
      ) -> taffy::tree::LayoutOutput {
@@ -12140,7 +12379,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      /// The style of a node being laid out *by* the node whose algorithm is currently running,
      /// expressed in that node's writing mode (see `layout::writing_mode`).
      #[inline]
-@@ -217,13 +562,91 @@
+@@ -217,13 +563,91 @@
          }
      }
  
@@ -12232,7 +12471,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
          let node = &mut self.nodes[dom_node_id(node_id)];
  
          let font_styles = node.primary_styles().map(|style| {
-@@ -239,8 +662,35 @@
+@@ -239,8 +663,35 @@
              (font_size, line_height)
          });
          let font_size = font_styles.map(|s| s.0);
@@ -12269,7 +12508,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
          match &mut node.data {
              NodeData::Text(data) => {
                  // With the new "inline context" architecture all text nodes should be wrapped in an "inline layout context"
-@@ -255,7 +705,7 @@
+@@ -255,7 +706,7 @@
                  #[cfg(not(feature = "tracing"))]
                  let _ = data;
  
@@ -12278,7 +12517,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
                  // unreachable!();
  
                  // compute_leaf_layout(inputs, &node.style, |known_dimensions, available_space| {
-@@ -292,9 +742,11 @@
+@@ -292,9 +743,11 @@
                          &node.layout_style(),
                          resolve_calc_value,
                          |_known_size, _available_space| taffy::Size {
@@ -12293,7 +12532,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
                              height: resolved_line_height.unwrap_or(16.0) * rows,
                          },
                      );
-@@ -322,19 +774,86 @@
+@@ -322,19 +775,86 @@
                                  &mut doc.font_ctx.lock().unwrap(),
                                  &mut doc.layout_ctx,
                              );
@@ -12383,7 +12622,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
                                  inputs,
                                  &node.layout_style(),
                                  resolve_calc_value,
-@@ -354,28 +873,72 @@
+@@ -354,28 +874,72 @@
                                          height: min_size,
                                      }
                                  },
@@ -12467,7 +12706,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
                      // Width/height attributes are presentational hints mapped to the CSS
                      // width/height properties by
                      // `synthesize_presentational_hints_for_legacy_attributes`, so they
-@@ -407,39 +970,50 @@
+@@ -407,39 +971,50 @@
                              }
                              #[cfg(feature = "svg")]
                              ImageData::Svg(svg) => {
@@ -12539,7 +12778,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
                              // A canvas's content attributes determine its intrinsic size,
                              // overriding the widget-reported one; the widget-reported size
                              // in turn overrides the tag's fallback.
-@@ -472,6 +1046,73 @@
+@@ -472,6 +1047,73 @@
                          _ => unreachable!(),
                      };
  
@@ -12613,7 +12852,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
                      #[cfg(feature = "writing-mode")]
                      let (intrinsic_sizes, default_object_size) =
                          if node.writing_mode().is_vertical() {
-@@ -495,119 +1136,455 @@
+@@ -495,119 +1137,455 @@
  
                      let mut style = node.layout_style();
                      style.set_percent_basis(orthogonal_percent_basis);
@@ -13155,7 +13394,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  impl TraversePartialTree for LayoutPassState<'_> {
      type ChildIter<'a>
          = RefCellChildIter<'a>
-@@ -667,7 +1644,11 @@
+@@ -667,7 +1645,11 @@
      }
  
      fn set_unrounded_layout(&mut self, node_id: NodeId, layout: &Layout) {
@@ -13168,7 +13407,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      fn resolve_calc_value(&self, calc_ptr: *const (), parent_size: f32) -> f32 {
-@@ -698,17 +1679,26 @@
+@@ -698,17 +1680,26 @@
  
      fn clear_hoisted_children(&mut self, node_id: NodeId) {
          let containing_block = dom_node_id(node_id);
@@ -13197,7 +13436,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      fn add_hoisted_children(&mut self, node_id: NodeId, hoisted: &[NodeId]) {
-@@ -721,6 +1711,7 @@
+@@ -721,6 +1712,7 @@
              self.node_from_id(hoisted_id)
                  .oof_containing_block
                  .set(Some(containing_block));
@@ -13205,7 +13444,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
          }
      }
  
-@@ -732,6 +1723,70 @@
+@@ -732,6 +1724,70 @@
      }
  }
  
@@ -13276,7 +13515,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  impl taffy::CacheTree for LayoutPassState<'_> {
      #[inline]
      fn cache_get(
-@@ -739,10 +1794,12 @@
+@@ -739,10 +1795,12 @@
          node_id: NodeId,
          inputs: &taffy::LayoutInput,
      ) -> Option<taffy::LayoutOutput> {
@@ -13293,7 +13532,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      #[inline]
-@@ -752,9 +1809,11 @@
+@@ -752,9 +1810,11 @@
          inputs: &taffy::LayoutInput,
          layout_output: taffy::LayoutOutput,
      ) {
@@ -13308,7 +13547,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      #[inline]
-@@ -782,16 +1841,92 @@
+@@ -782,16 +1842,92 @@
          self.child_layout_style(self.node_from_id(child_node_id))
      }
  
@@ -13405,7 +13644,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  }
  
-@@ -844,6 +1979,30 @@
+@@ -844,6 +1980,30 @@
              element.detailed_layout_info = DetailedLayoutInfo::Grid(Box::new(detailed_grid_info));
          }
      }
@@ -13436,7 +13675,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  }
  
  impl RoundTree for LayoutPassState<'_> {
-@@ -852,7 +2011,19 @@
+@@ -852,7 +2012,19 @@
      }
  
      fn set_final_layout(&mut self, node_id: NodeId, layout: &Layout) {
@@ -13457,7 +13696,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      fn is_out_of_flow(&self, node_id: NodeId) -> bool {
-@@ -868,6 +2039,30 @@
+@@ -868,6 +2040,30 @@
      fn get_hoisted_child_id(&self, node_id: NodeId, index: usize) -> NodeId {
          taffy_node_id(self.node_from_id(node_id).hoisted_children.borrow()[index])
      }
@@ -13488,7 +13727,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  }
  
  pub(crate) struct TaffyDebugTree<'doc>(pub(crate) &'doc BaseDocument);
-@@ -972,3 +2167,13 @@
+@@ -972,3 +2168,13 @@
          })
      }
  }

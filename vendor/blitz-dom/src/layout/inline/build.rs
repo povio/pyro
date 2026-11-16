@@ -1192,6 +1192,19 @@ fn build_inline_layout_with(
                 }
 
                 let start = builder.text().len();
+                // pyro: `hyphens: auto` adds soft hyphens (`layout::hyphenate`), by the style of
+                // the text's parent, to words that may go on in the text before and after.
+                let parent_style = node.parent.and_then(|parent| nodes.get(parent)?.primary_styles());
+                let hyphenates = parent_style.as_ref().is_some_and(|style| {
+                    style.get_inherited_text().hyphens == style::values::computed::text::Hyphens::Auto
+                });
+                let after = if hyphenates { word_after(nodes, node_id) } else { String::new() };
+                let hyphenate = |before: &str, text: &str| match &parent_style {
+                    Some(style) if hyphenates => {
+                        crate::layout::hyphenate::hyphenate(before, text, &after, style).into_owned()
+                    }
+                    _ => text.to_owned(),
+                };
                 // pyro: the first letter in a span of the `::first-letter` style.
                 let letter = first_letter
                     .filter(|split| split.text == node_id && data.content.get(split.range.clone()).is_some())
@@ -1203,7 +1216,7 @@ fn build_inline_layout_with(
                         let content = &data.content;
                         let head = &content[..split.range.start];
                         let text = text_transformer.transform(head, parent_text_transform, builder);
-                        builder.push_text(text);
+                        { let before = word_before(builder.text()); builder.push_text(&hyphenate(&before, text)); }
                         builder.push_inline_box(InlineBox {
                             id: split.style_node.as_u64(),
                             kind: InlineBoxKind::CustomOutOfFlow,
@@ -1218,13 +1231,13 @@ fn build_inline_layout_with(
                         });
                         let tail = &content[split.range.end..];
                         let text = text_transformer.transform(tail, parent_text_transform, builder);
-                        builder.push_text(text);
+                        { let before = word_before(builder.text()); builder.push_text(&hyphenate(&before, text)); }
                     }
                     Some((split, letter_style)) => {
                         let content = &data.content;
                         let head = &content[..split.range.start];
                         let text = text_transformer.transform(head, parent_text_transform, builder);
-                        builder.push_text(text);
+                        { let before = word_before(builder.text()); builder.push_text(&hyphenate(&before, text)); }
                         builder.push_style_span(stylo_to_parley::style(split.style_node, &letter_style));
                         let letter = &content[split.range.clone()];
                         let text = text_transformer.transform(letter, &CaseTransform::from_style(&letter_style), builder);
@@ -1232,12 +1245,13 @@ fn build_inline_layout_with(
                         builder.pop_style_span();
                         let tail = &content[split.range.end..];
                         let text = text_transformer.transform(tail, parent_text_transform, builder);
-                        builder.push_text(text);
+                        { let before = word_before(builder.text()); builder.push_text(&hyphenate(&before, text)); }
                     }
                     None => {
                         let text =
                             text_transformer.transform(&data.content, parent_text_transform, builder);
-                        builder.push_text(text);
+                        let before = if hyphenates { word_before(builder.text()) } else { String::new() };
+                        builder.push_text(&hyphenate(&before, text));
                     }
                 }
                 text_nodes.push((node_id, start..builder.text().len()));
@@ -1402,4 +1416,97 @@ pub(crate) fn line_end_ellipsis(style: &style::properties::ComputedValues, clips
             Some(text)
         }
     }
+}
+
+/// pyro: the end of the word that the built text ends in (its letters, marks and soft hyphens,
+/// across invisible formatting), for `hyphens: auto`.
+fn word_before(text: &str) -> String {
+    use crate::layout::hyphenate::{is_invisible, is_word_char};
+    let mut chars: Vec<char> = Vec::new();
+    for c in text.chars().rev() {
+        if is_invisible(c) {
+            continue;
+        }
+        if !is_word_char(c) || chars.len() >= 64 {
+            break;
+        }
+        chars.push(c);
+    }
+    chars.iter().rev().collect()
+}
+
+/// pyro: the start of the word that goes on after the text node `node_id`, in the text of the
+/// inline content that follows it (out-of-flow boxes and hidden elements passed over, atomic
+/// inlines, `<br>` and blocks ending it), for `hyphens: auto`.
+fn word_after(nodes: &crate::NodeTree, node_id: NodeId) -> String {
+    use crate::layout::hyphenate::{is_invisible, is_word_char};
+    use style::values::specified::box_::{DisplayInside, DisplayOutside};
+    let mut out = String::new();
+    // Whether an element's content continues the inline content: an inline or contents element.
+    let continues = |id: NodeId| {
+        nodes.get(id).and_then(|node| node.primary_styles()).is_some_and(|style| {
+            let display = style.get_box().display;
+            matches!(
+                (display.outside(), display.inside()),
+                (DisplayOutside::Inline, DisplayInside::Flow) | (DisplayOutside::None, DisplayInside::Contents)
+            ) && !style.clone_position().is_absolutely_positioned()
+                && !style.clone_float().is_floating()
+        })
+    };
+    let passed_over = |id: NodeId| {
+        nodes.get(id).and_then(|node| node.primary_styles()).is_some_and(|style| {
+            let display = style.get_box().display;
+            display.is_none()
+                || style.clone_position().is_absolutely_positioned()
+                || style.clone_float().is_floating()
+        })
+    };
+    // The next node after `id` and its subtree, inside inline content.
+    let next = |mut id: NodeId| -> Option<NodeId> {
+        loop {
+            let node = nodes.get(id)?;
+            let parent = node.parent?;
+            let siblings = &nodes.get(parent)?.children;
+            let index = siblings.iter().position(|&child| child == id)?;
+            if let Some(&sibling) = siblings.get(index + 1) {
+                return Some(sibling);
+            }
+            if !continues(parent) {
+                return None;
+            }
+            id = parent;
+        }
+    };
+    let mut current = next(node_id);
+    while let Some(id) = current {
+        let node = &nodes[id];
+        match &node.data {
+            crate::node::NodeData::Text(data) => {
+                for c in data.content.chars() {
+                    if is_invisible(c) {
+                        continue;
+                    }
+                    if !is_word_char(c) || out.len() >= 64 {
+                        return out;
+                    }
+                    out.push(c);
+                }
+                current = next(id);
+            }
+            crate::node::NodeData::Element(element) => {
+                if passed_over(id) {
+                    current = next(id);
+                } else if continues(id) && !element.name.local.eq_str_ignore_ascii_case("br") {
+                    current = match node.children.first() {
+                        Some(&child) => Some(child),
+                        None => next(id),
+                    };
+                } else {
+                    return out;
+                }
+            }
+            _ => current = next(id),
+        }
+    }
+    out
 }

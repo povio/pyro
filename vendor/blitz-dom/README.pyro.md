@@ -2198,3 +2198,14 @@ item `BOX_DAMAGE`, as on a table row or row group: a collapsed flex item leaves 
   `crates/pyro-render/tests/split_inline_containing_block.rs`.
 - `src/layout/multicol.rs`, `src/layout/mod.rs` (`multicol_percent_height`): percentage heights in a multi-column
   container's strip resolve against the container's definite height (taffy `block_container_percentage_height`).
+Covered by `crates/pyro-render/tests/scroll_markers.rs`.
+
+## `hyphens: auto` (WPT round 3, lane TS)
+
+`src/layout/hyphenate.rs`, `src/layout/inline/build.rs` (text nodes), `Cargo.toml` (`hypher`, MIT OR Apache-2.0, TeX
+patterns of 25 languages): text in a `hyphens: auto` element of a language with patterns gets a soft hyphen at each
+hyphenation opportunity of its words, which parley shows as the font's hyphen (or `hyphenate-character`) where a line
+ends there, as for authored soft hyphens. `hyphenate-limit-chars` bounds the word and the parts around the hyphen
+(`auto`: 5, 2 and 2, as Blink); a word with an authored soft hyphen is left alone. Chromium's dictionaries derive from
+the same TeX patterns. Covered by `hyphens_auto_breaks_words_of_a_known_language` in
+`crates/pyro-render/tests/text_spacing.rs`; WPT `css-text/hyphens/hyphens-auto-*`.
