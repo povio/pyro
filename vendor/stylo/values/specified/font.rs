@@ -1756,7 +1756,7 @@ impl FontPalette {
             return input.parse_nested_block(|input| {
                 let interpolation = crate::color::mix::ColorInterpolationMethod::parse(context, input)?;
                 input.expect_comma()?;
-                let mut item = |input: &mut Parser<'_>| -> Result<(FontPalette, Option<f32>), ParseError> {
+                let item = |input: &mut Parser<'_>| -> Result<(FontPalette, Option<f32>), ParseError> {
                     let percentage = |input: &mut Parser<'_>| {
                         input.try_parse(|input| -> Result<f32, ParseError> {
                             let p = crate::values::specified::Percentage::parse(context, input)?;

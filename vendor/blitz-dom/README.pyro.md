@@ -1966,3 +1966,11 @@ the child's layout parent is a grid.
   measure the face at its `size-adjust`, with its ascent override, except under `font-size-adjust`.
 
 Covered by `crates/pyro-render/tests/font_face_metrics.rs`.
+
+## Container units (WPT css-images, round 3 lane F)
+
+`src/resolve.rs` (`resolve`): the container sizes Stylo queried are kept, and a change of one after layout restyles
+the document, also where no `@container` rule exists but styles use container units (`cqw`, ...;
+`ComputedValueFlags::USES_CONTAINER_UNITS`): they were dropped as soon as the stylist had no container
+condition. Covered by `crates/pyro-render/tests/container_queries.rs`
+(`container_units_resolve_against_the_size_container`).

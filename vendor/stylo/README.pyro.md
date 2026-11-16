@@ -232,6 +232,13 @@ kept for serialization (`1.23 drop`) and `sink` stays 0 then. pyro turns the pro
   no element); upstream dropped the declaration. `FontPaletteOverrideColor`'s fields are public, with
   `resolved_index` there and on `FontPaletteBase`.
 
+## Container units for servo (WPT css-images, round 3 lane F)
+
+`values/specified/length.rs` (`LengthUnit::parse_dimension`): `cqw`, `cqh`, `cqi`, `cqb`, `cqmin` and `cqmax` parse
+for servo too (upstream: gecko only, so any declaration using them was dropped). They compute against the nearest
+size container through `TElement::query_container_size`, as `@container` conditions do (Blitz answers it with
+the container's laid-out content box, see blitz-dom's README); without one, against the small viewport.
+
 ## Updating or dropping the patch
 
 - When upstream has the change: delete this directory and the `[patch.crates-io]` entry.

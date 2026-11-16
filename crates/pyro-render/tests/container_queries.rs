@@ -268,3 +268,28 @@ fn clean_container_query_style_reads_reuse_layout_until_geometry_dependencies_ch
     added.resolve_style(0.0);
     assert_eq!(size(&added, "#target"), (10.0, 20.0));
 }
+
+/// pyro: container units (`cqw`, `cqh`, `cqi`, `cqb`, `cqmin`, `cqmax`) parse and resolve against
+/// the nearest size container, without any `@container` rule in the document; they were dropped
+/// as invalid (Stylo parsed them for Gecko only), so `width: 50cqw` was `auto` and a
+/// `radial-gradient()` positioned with them was not drawn (WPT
+/// css/css-images/radial-gradient-container-relative-units-*).
+#[test]
+fn container_units_resolve_against_the_size_container() {
+    const UNITS: &str = r#"<!doctype html><style>
+body {margin:0}
+#c {container-type:size;width:200px;height:100px}
+#w {width:50cqw;height:10cqh;background:blue}
+#i {width:25cqi;height:20cqb}
+#m {width:50cqmin;height:10cqmax}
+#no {width:50cqw;height:5px}
+</style><div id=c><div id=w></div><div id=i></div><div id=m></div></div><div id=no></div>"#;
+    let mut doc = HtmlDocument::from_html(UNITS, DocumentConfig::default());
+    doc.viewport_mut().window_size = (800, 600);
+    doc.resolve(0.0);
+    assert_eq!(size(&doc, "#w"), (100.0, 10.0));
+    assert_eq!(size(&doc, "#i"), (50.0, 20.0));
+    assert_eq!(size(&doc, "#m"), (50.0, 20.0));
+    // Without a container, the small viewport.
+    assert_eq!(size(&doc, "#no"), (400.0, 5.0));
+}

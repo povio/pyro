@@ -1805,7 +1805,7 @@ diff -ruN a/values/specified/effects.rs b/values/specified/effects.rs
              let f = input.expect_function()?;
 diff -ruN a/values/specified/font.rs b/values/specified/font.rs
 --- a/values/specified/font.rs	2026-11-11 19:55:57
-+++ b/values/specified/font.rs	2026-11-16 08:11:29
++++ b/values/specified/font.rs	2026-11-16 09:55:47
 @@ -1642,44 +1642,154 @@
  #[derive(
      Clone,
@@ -1941,7 +1941,7 @@ diff -ruN a/values/specified/font.rs b/values/specified/font.rs
 +            return input.parse_nested_block(|input| {
 +                let interpolation = crate::color::mix::ColorInterpolationMethod::parse(context, input)?;
 +                input.expect_comma()?;
-+                let mut item = |input: &mut Parser<'_>| -> Result<(FontPalette, Option<f32>), ParseError> {
++                let item = |input: &mut Parser<'_>| -> Result<(FontPalette, Option<f32>), ParseError> {
 +                    let percentage = |input: &mut Parser<'_>| {
 +                        input.try_parse(|input| -> Result<f32, ParseError> {
 +                            let p = crate::values::specified::Percentage::parse(context, input)?;
@@ -2165,6 +2165,31 @@ diff -ruN a/values/specified/image.rs b/values/specified/image.rs
      /// Provides an alternate method for parsing, but only for urls.
      pub fn parse_only_url(
          context: &ParserContext,
+diff -ruN a/values/specified/length.rs b/values/specified/length.rs
+--- a/values/specified/length.rs	2026-11-11 19:55:57
++++ b/values/specified/length.rs	2026-11-16 09:55:47
+@@ -187,13 +187,14 @@
+             "lvi" if !in_page_rule => Self::Lvi,
+             "dvi" if !in_page_rule => Self::Dvi,
+             // Container query lengths. Inherit the limitation from viewport units since
+-            // we may fall back to them.
+-            "cqw" if !in_page_rule && cfg!(feature = "gecko") => Self::Cqw,
+-            "cqh" if !in_page_rule && cfg!(feature = "gecko") => Self::Cqh,
+-            "cqi" if !in_page_rule && cfg!(feature = "gecko") => Self::Cqi,
+-            "cqb" if !in_page_rule && cfg!(feature = "gecko") => Self::Cqb,
+-            "cqmin" if !in_page_rule && cfg!(feature = "gecko") => Self::Cqmin,
+-            "cqmax" if !in_page_rule && cfg!(feature = "gecko") => Self::Cqmax,
++            // we may fall back to them. pyro: for servo too (Blitz answers container size
++            // queries for `@container`).
++            "cqw" if !in_page_rule => Self::Cqw,
++            "cqh" if !in_page_rule => Self::Cqh,
++            "cqi" if !in_page_rule => Self::Cqi,
++            "cqb" if !in_page_rule => Self::Cqb,
++            "cqmin" if !in_page_rule => Self::Cqmin,
++            "cqmax" if !in_page_rule => Self::Cqmax,
+             _ => return Err(()),
+         })
+     }
 diff -ruN a/values/specified/number.rs b/values/specified/number.rs
 --- a/values/specified/number.rs	2026-11-11 19:55:57
 +++ b/values/specified/number.rs	2026-11-16 08:07:01
