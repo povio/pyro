@@ -734,6 +734,12 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
             .maybe_clamp(min_size.height, max_size.height)
             .max(padding_border_size.height),
     };
+    // pyro: a table's height is a minimum (CSS 2.1 §17.5.3): rows taller than it (a `height`, or a
+    // height its flex or grid parent gave it) make the table taller.
+    if table_rows {
+        container_border_box.height =
+            container_border_box.height.max(initial_row_sum + content_box_inset.vertical_axis_sum());
+    }
     let mut container_content_box = Size {
         width: f32_max(0.0, container_border_box.width - content_box_inset.horizontal_axis_sum()),
         height: f32_max(0.0, container_border_box.height - content_box_inset.vertical_axis_sum()),
@@ -942,6 +948,14 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
                 .max(padding_border_size.height);
             container_content_box.height =
                 f32_max(0.0, container_border_box.height - content_box_inset.vertical_axis_sum());
+        }
+    }
+    // pyro: as above, after rows sized again
+    if table_rows {
+        let rows = rows.iter().map(|track| track.base_size).sum::<f32>() + content_box_inset.vertical_axis_sum();
+        if container_border_box.height < rows {
+            container_border_box.height = rows;
+            container_content_box.height = f32_max(0.0, rows - content_box_inset.vertical_axis_sum());
         }
     }
 

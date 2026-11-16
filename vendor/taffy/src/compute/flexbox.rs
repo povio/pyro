@@ -3,6 +3,7 @@ use crate::compute::common::alignment::{
     child_first_baseline, compute_alignment_offset, resolve_self_alignment_safety,
 };
 use crate::geometry::{Line, Point, Rect, Size};
+use crate::geometry::AbsoluteAxis;
 use crate::style::{
     AlignContent, AlignContentKeyword, AlignItems, AlignItemsKeyword, AlignSelf, AvailableSpace, Contain,
     JustifyContent, LengthPercentageAuto, Overflow, Position,
@@ -48,6 +49,12 @@ struct FlexItem {
     aspect_ratio: Option<f32>,
     /// pyro: a replaced element's natural ratio (its `aspect-ratio` is `auto`), between content boxes
     natural_ratio: Option<f32>,
+    /// pyro: the item is a table, never smaller than its min-content size in the main axis
+    is_table: bool,
+    /// pyro: the sizing keywords of its min and max sizes (`min_size`/`max_size` have none: `auto` there),
+    /// resolved by measuring the item (`resolve_size_keyword`)
+    min_size_keyword: Size<Dimension>,
+    max_size_keyword: Size<Dimension>,
     /// The cross-alignment of this item
     align_self: AlignSelf,
 
@@ -104,6 +111,8 @@ struct FlexItem {
 
     /// The position of the bottom edge of this item
     baseline: f32,
+    /// pyro: the distance from this item's last baseline to its outer cross-end edge, for `last baseline`
+    last_baseline_descent: f32,
 
     /// A temporary value for the main offset
     ///
@@ -151,6 +160,14 @@ impl FlexItem {
     /// See <https://www.w3.org/TR/css-flexbox-1/#baseline-participation>
     fn participates_in_baseline_alignment(&self, dir: FlexDirection) -> bool {
         self.align_self == AlignSelf::BASELINE
+            && !self.margin_is_auto.cross_start(dir)
+            && !self.margin_is_auto.cross_end(dir)
+    }
+
+    /// pyro: whether the item takes part in last-baseline alignment (`align-self: last baseline`, no `auto`
+    /// cross-axis margin); its group is aligned on the line's last baseline, from the line's cross end
+    fn participates_in_last_baseline_alignment(&self, dir: FlexDirection) -> bool {
+        self.align_self.keyword == AlignItemsKeyword::LastBaseline
             && !self.margin_is_auto.cross_start(dir)
             && !self.margin_is_auto.cross_end(dir)
     }
@@ -907,6 +924,9 @@ fn generate_anonymous_flex_items(
                 max_size,
                 aspect_ratio,
                 natural_ratio,
+                is_table: child_style.is_table(),
+                min_size_keyword: child_style.min_size_keyword(),
+                max_size_keyword: child_style.max_size_keyword(),
 
                 relative_inset: if child_style.position() == Position::Relative {
                     let inset = child_style.inset().zip_size(constants.node_inner_size, |p, s| {
@@ -943,6 +963,7 @@ fn generate_anonymous_flex_items(
                 content_flex_fraction: 0.0,
 
                 baseline: 0.0,
+                last_baseline_descent: 0.0,
 
                 offset_main: 0.0,
                 offset_cross: 0.0,
@@ -1033,11 +1054,27 @@ fn determine_flex_base_size(
     let dir = constants.dir;
 
     for child in flex_items.iter_mut() {
-        let child_style = tree.get_flexbox_child_style(child.node);
-
         // Parent size for child sizing
         let cross_axis_parent_size = constants.node_inner_size.cross(dir);
         let child_parent_size = Size::from_cross(dir, cross_axis_parent_size);
+
+        // pyro: sizing keywords in the min and max cross sizes: the item measured in the cross axis
+        for minimum in [true, false] {
+            let keyword = if minimum { child.min_size_keyword.cross(dir) } else { child.max_size_keyword.cross(dir) };
+            if !keyword.is_sizing_keyword() {
+                continue;
+            }
+            let stretch = cross_axis_parent_size.map(|size| (size - child.margin.cross_axis_sum(dir)).max(0.0));
+            let resolved =
+                resolve_size_keyword(tree, child.node, keyword, dir.cross_axis(), Size::NONE, child_parent_size, stretch);
+            if let Some(size) = resolved {
+                match minimum {
+                    true => child.min_size.set_cross(dir, Some(size)),
+                    false => child.max_size.set_cross(dir, Some(size)),
+                }
+            }
+        }
+        let child_style = tree.get_flexbox_child_style(child.node);
 
         // Available space for child sizing (excluding the child's margins)
         // Min/max sizes transferred through the aspect ratio are taken into account here
@@ -1251,6 +1288,25 @@ fn determine_flex_base_size(
 
         let padding_border_axes_sums = (child.padding + child.border).sum_axes().map(Some);
 
+        // pyro: sizing keywords in the min and max main sizes: the item measured in the main axis
+        // (WPT `flex-item-max-width-min-content`, `flex-item-min-width-min-content-max-width`)
+        for minimum in [true, false] {
+            let keyword = if minimum { child.min_size_keyword.main(dir) } else { child.max_size_keyword.main(dir) };
+            if !keyword.is_sizing_keyword() {
+                continue;
+            }
+            let stretch = constants.node_inner_size.main(dir).map(|size| (size - child.margin.main_axis_sum(dir)).max(0.0));
+            let known = child_known_dimensions.with_main(dir, None);
+            let resolved = resolve_size_keyword(tree, child.node, keyword, dir.main_axis(), known, child_parent_size, stretch);
+            if let Some(size) = resolved {
+                match minimum {
+                    true => child.min_size.set_main(dir, Some(size)),
+                    false => child.max_size.set_main(dir, Some(size)),
+                }
+            }
+        }
+        let transferred_max_size = child.max_size.maybe_apply_aspect_ratio(child.aspect_ratio);
+
         // Note that it is important that the `parent_size` parameter in the main axis is not set for this
         // function call as it used for resolving percentages, and percentage size in an axis should not contribute
         // to a min-content contribution in that same axis. However the `parent_size` and `available_space` *should*
@@ -1297,6 +1353,26 @@ fn determine_flex_base_size(
             clamped_min_content_size.maybe_max(padding_border_axes_sums.main(dir))
         });
 
+        // pyro: a table is never smaller than its min-content size (Blink): its width in a row, its content
+        // height at its width in a column, whatever its `min-width`/`min-height`.
+        if child.is_table {
+            let min_content = tree.measure_child_size(
+                child.node,
+                child_known_dimensions,
+                child_parent_size,
+                Size::MIN_CONTENT.with_cross(dir, cross_axis_available_space),
+                SizingMode::ContentSize,
+                dir.main_axis(),
+                Line::FALSE,
+            );
+            child.resolved_minimum_main_size = child.resolved_minimum_main_size.max(min_content);
+            // Nor does a maximum size make it smaller (a table's `max-width` below its min-content width)
+            if let Some(max) = child.max_size.main(dir) {
+                child.max_size.set_main(dir, Some(max.max(min_content)));
+            }
+        }
+        let transferred_max_size = child.max_size.maybe_apply_aspect_ratio(child.aspect_ratio);
+
         // Sizes transferred through the aspect ratio clamp the hypothetical main size,
         // but do not participate in resolving flexible lengths or clamping the final size.
         // https://github.com/w3c/csswg-drafts/issues/10997
@@ -1311,6 +1387,55 @@ fn determine_flex_base_size(
         child.hypothetical_inner_size.set_main(constants.dir, hypothetical_inner_size);
         child.hypothetical_outer_size.set_main(constants.dir, hypothetical_outer_size);
     }
+}
+
+/// pyro: a sizing keyword (`min-content`, `max-content`, `fit-content`, `stretch`) in a flex item's minimum or
+/// maximum size in `axis`, resolved: its content size measured under the keyword's constraint, or its stretch size
+fn resolve_size_keyword(
+    tree: &mut impl LayoutFlexboxContainer,
+    node: NodeId,
+    keyword: Dimension,
+    axis: AbsoluteAxis,
+    known_dimensions: Size<Option<f32>>,
+    parent_size: Size<Option<f32>>,
+    stretch: Option<f32>,
+) -> Option<f32> {
+    let available = match resolve_sizing_keyword(keyword, stretch, parent_size.get_abs(axis), |val, basis| tree.calc(val, basis))? {
+        SizingKeywordResolution::Exact(size) => return Some(size),
+        SizingKeywordResolution::Measure(available) => available,
+    };
+    let mut known_dimensions = known_dimensions;
+    match axis {
+        AbsoluteAxis::Horizontal => known_dimensions.width = None,
+        AbsoluteAxis::Vertical => known_dimensions.height = None,
+    }
+    let mut measure = |available: AvailableSpace| {
+        let mut available_space = Size::MAX_CONTENT;
+        match axis {
+            AbsoluteAxis::Horizontal => available_space.width = available,
+            AbsoluteAxis::Vertical => available_space.height = available,
+        }
+        tree.measure_child_size(
+            node,
+            known_dimensions,
+            parent_size,
+            available_space,
+            SizingMode::ContentSize,
+            axis,
+            Line::FALSE,
+        )
+    };
+    Some(match available {
+        // `fit-content`: the max-content size, at most the available size but at least the min-content
+        // size (CSS Sizing 3 §5.1), from the two intrinsic sizes, as block items' (`clamp_width_by_keywords`):
+        // a grid container with `fr` tracks measures its max-content size under a definite one
+        AvailableSpace::Definite(available) => {
+            let min_content = measure(AvailableSpace::MinContent);
+            let max_content = measure(AvailableSpace::MaxContent);
+            max_content.min(min_content.max(available))
+        }
+        intrinsic => measure(intrinsic),
+    })
 }
 
 /// Collect flex items into flex lines.
@@ -2202,15 +2327,20 @@ fn calculate_children_base_lines(
 
     for line in flex_lines {
         // If a flex line has one or zero items participating in baseline alignment then baseline alignment is a no-op so we skip
+        // (pyro: for each of the first-baseline and last-baseline groups)
         let line_baseline_child_count =
             line.items.iter().filter(|child| child.participates_in_baseline_alignment(constants.dir)).count();
-        if line_baseline_child_count <= 1 {
+        let line_last_baseline_child_count =
+            line.items.iter().filter(|child| child.participates_in_last_baseline_alignment(constants.dir)).count();
+        if line_baseline_child_count <= 1 && line_last_baseline_child_count <= 1 {
             continue;
         }
 
         for child in line.items.iter_mut() {
             // Only calculate baselines for children participating in baseline alignment
-            if !child.participates_in_baseline_alignment(constants.dir) {
+            let first = line_baseline_child_count > 1 && child.participates_in_baseline_alignment(constants.dir);
+            let last = line_last_baseline_child_count > 1 && child.participates_in_last_baseline_alignment(constants.dir);
+            if !first && !last {
                 continue;
             }
 
@@ -2254,6 +2384,16 @@ fn calculate_children_base_lines(
             );
 
             let height = measured_size_and_baselines.size.height;
+            if last {
+                // pyro: a box without a last baseline (or a scroll container) has one synthesized from its
+                // border box's bottom edge
+                let last_baseline = match child.overflow.y.is_scroll_container() {
+                    true => height,
+                    false => measured_size_and_baselines.baselines.last.unwrap_or(height).min(height),
+                };
+                child.last_baseline_descent = height - last_baseline + child.margin.bottom;
+                continue;
+            }
             let baseline = child_first_baseline(measured_size_and_baselines.baselines.first, height, child.overflow.y)
                 .unwrap_or(height);
 
@@ -2297,12 +2437,21 @@ fn calculate_cross_size(flex_lines: &mut [FlexLine], node_size: Size<Option<f32>
         //       previous two steps and zero.
         for line in flex_lines.iter_mut() {
             let max_baseline: f32 = line.items.iter().map(|child| child.baseline).fold(0.0, |acc, x| acc.max(x));
+            // pyro: the last-baseline group as the first-baseline group, from the line's cross end
+            let max_last_descent: f32 = line
+                .items
+                .iter()
+                .filter(|child| child.participates_in_last_baseline_alignment(constants.dir))
+                .map(|child| child.last_baseline_descent)
+                .fold(0.0, |acc, x| acc.max(x));
             line.cross_size = line
                 .items
                 .iter()
                 .map(|child| {
                     if child.participates_in_baseline_alignment(constants.dir) {
                         max_baseline - child.baseline + child.hypothetical_outer_size.cross(constants.dir)
+                    } else if constants.is_row && child.participates_in_last_baseline_alignment(constants.dir) {
+                        max_last_descent - child.last_baseline_descent + child.hypothetical_outer_size.cross(constants.dir)
                     } else {
                         child.hypothetical_outer_size.cross(constants.dir)
                     }
@@ -2394,11 +2543,16 @@ fn determine_used_cross_size(
                         .max_size()
                         .maybe_resolve(constants.node_inner_size, |val, basis| tree.calc(val, basis))
                         .maybe_add(box_sizing_adjustment);
+                    // pyro: a sizing keyword in the max cross size was resolved by measuring the item
+                    // (`determine_flex_base_size`); the style alone has no size for it
+                    let max_cross = match child.max_size_keyword.cross(constants.dir).is_sizing_keyword() {
+                        true => child.max_size.cross(constants.dir),
+                        false => max_size_ignoring_aspect_ratio.cross(constants.dir),
+                    };
 
-                    (line_cross_size - child.margin.cross_axis_sum(constants.dir)).max(0.0).maybe_clamp(
-                        child.min_size.cross(constants.dir),
-                        max_size_ignoring_aspect_ratio.cross(constants.dir),
-                    )
+                    (line_cross_size - child.margin.cross_axis_sum(constants.dir))
+                        .max(0.0)
+                        .maybe_clamp(child.min_size.cross(constants.dir), max_cross)
                 } else {
                     child.hypothetical_inner_size.cross(constants.dir)
                 },
@@ -2505,6 +2659,12 @@ fn resolve_cross_axis_auto_margins(flex_lines: &mut [FlexLine], constants: &Algo
             .filter(|child| child.participates_in_baseline_alignment(constants.dir))
             .map(|child| child.outer_target_size.cross(constants.dir) - child.baseline)
             .fold(0.0, |acc, x| acc.max(x));
+        let max_last_descent: f32 = line
+            .items
+            .iter()
+            .filter(|child| child.participates_in_last_baseline_alignment(constants.dir))
+            .map(|child| child.last_baseline_descent)
+            .fold(0.0, |acc, x| acc.max(x));
 
         for child in line.items.iter_mut() {
             let free_space = line_cross_size - child.outer_target_size.cross(constants.dir);
@@ -2536,6 +2696,7 @@ fn resolve_cross_axis_auto_margins(flex_lines: &mut [FlexLine], constants: &Algo
                     free_space,
                     max_baseline,
                     max_baseline_to_bottom_distance,
+                    max_last_descent,
                     constants,
                 );
             }
@@ -2555,6 +2716,7 @@ fn align_flex_items_along_cross_axis(
     free_space: f32,
     max_baseline: f32,
     max_baseline_to_bottom_distance: f32,
+    max_last_descent: f32,
     constants: &AlgoConstants,
 ) -> f32 {
     let cross_axis_should_reverse = constants.is_column && matches!(constants.layout_direction, Direction::Rtl);
@@ -2618,6 +2780,17 @@ fn align_flex_items_along_cross_axis(
                 } else {
                     0.0
                 }
+            }
+        }
+        // pyro: the item's last baseline on the line's last baseline (its group's largest descent above the
+        // line's cross end); otherwise (a column, wrap-reverse) its fallback alignment, `end`
+        AlignItemsKeyword::LastBaseline => {
+            if constants.is_row && !constants.is_wrap_reverse {
+                free_space - (max_last_descent - child.last_baseline_descent).max(0.0)
+            } else if cross_axis_should_reverse {
+                0.0
+            } else {
+                free_space
             }
         }
         AlignItemsKeyword::Stretch => {
@@ -3079,14 +3252,20 @@ fn collect_oof_candidates(
         let cross_edge_for = |keyword: AlignItemsKeyword| {
             let start_position = match keyword {
                 AlignItemsKeyword::Start | AlignItemsKeyword::Baseline => !cross_is_rtl,
-                AlignItemsKeyword::End => cross_is_rtl,
+                AlignItemsKeyword::End | AlignItemsKeyword::LastBaseline => cross_is_rtl,
                 _ => true,
             };
             match (keyword, cross_axis_flex_start_reversed) {
                 // Stretch alignment does not apply to absolutely positioned items
                 // See "Example 3" at https://www.w3.org/TR/css-flexbox-1/#abspos-items
                 // Note: Stretch should be FlexStart not Start when we support both
-                (AlignItemsKeyword::Start | AlignItemsKeyword::End | AlignItemsKeyword::Baseline, _) => {
+                (
+                    AlignItemsKeyword::Start
+                    | AlignItemsKeyword::End
+                    | AlignItemsKeyword::Baseline
+                    | AlignItemsKeyword::LastBaseline,
+                    _,
+                ) => {
                     if start_position {
                         AxisStaticEdge::Start
                     } else {

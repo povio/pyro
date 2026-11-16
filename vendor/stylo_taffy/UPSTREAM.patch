@@ -31,6 +31,19 @@ diff --git a/packages/stylo_taffy/src/convert.rs b/packages/stylo_taffy/src/conv
  #[inline]
  pub fn max_size(val: &stylo::MaxSize) -> taffy::LengthPercentageAuto {
      match val {
+@@ -592,9 +615,9 @@
+         stylo::AlignFlags::RIGHT => taffy::AlignItems::END,
+         stylo::AlignFlags::CENTER => taffy::AlignItems::CENTER,
+         stylo::AlignFlags::BASELINE => taffy::AlignItems::BASELINE,
+-        // Taffy does not support last-baseline alignment, so map it to its
+-        // fallback alignment of `self-end` (https://www.w3.org/TR/css-align-3/#baseline-values)
+-        stylo::AlignFlags::LAST_BASELINE => taffy::AlignItems::END,
++        // pyro: Taffy aligns flex rows by last baselines; elsewhere it behaves as its fallback
++        // alignment, `safe end` (https://www.w3.org/TR/css-align-3/#baseline-values)
++        stylo::AlignFlags::LAST_BASELINE => taffy::AlignItems::LAST_BASELINE,
+         // Should never be hit. But no real reason to panic here.
+         _ => return None,
+     };
 diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrapper.rs
 --- a/packages/stylo_taffy/src/wrapper.rs
 +++ b/packages/stylo_taffy/src/wrapper.rs
@@ -283,7 +296,29 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
          self.layout_wm().logical_clear(clear)
      }
  }
-@@ -874,6 +1002,48 @@
+@@ -595,6 +723,21 @@
+         self.style.get_position().flex_shrink.0
+     }
+ 
++    #[inline]
++    fn is_table(&self) -> bool {
++        convert::is_table(self.effective_display())
++    }
++
++    #[inline]
++    fn min_size_keyword(&self) -> taffy::Size<taffy::Dimension> {
++        <Self as taffy::BlockItemStyle>::min_size_keyword(self)
++    }
++
++    #[inline]
++    fn max_size_keyword(&self) -> taffy::Size<taffy::Dimension> {
++        <Self as taffy::BlockItemStyle>::max_size_keyword(self)
++    }
++
+     #[inline]
+     fn align_self(&self) -> Option<taffy::AlignSelf> {
+         self.self_alignment(
+@@ -874,6 +1017,48 @@
          convert::grid_auto_flow(self.style.get_position().grid_auto_flow)
      }
  
@@ -332,7 +367,7 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
      #[inline]
      fn gap(&self) -> taffy::Size<taffy::LengthPercentage> {
          let position_styles = self.style.get_position();
-@@ -927,6 +1097,56 @@
+@@ -927,6 +1112,56 @@
          self.grid_row_placement()
      }
  

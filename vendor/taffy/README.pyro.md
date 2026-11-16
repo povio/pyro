@@ -424,3 +424,37 @@ The property's ratio and every other use of `aspect_ratio` are unchanged. Covere
   layer, css-position-4) is aligned in it by its self-alignment (WPT `top-layer-box-uses-icb-*`).
 - `compute/block.rs`: a table child gives a block container no last baseline (an inline-block holding only tables
   sits on its bottom margin edge, as in Chromium; WPT `position-relative-table-*`).
+## Tables: a height is a minimum; tables as flex items (WPT round 3, lane G)
+
+`compute/grid/mod.rs`: a table grid (`grid_rows_are_table_rows`) is at least as tall as its rows, whatever height it
+was given (CSS 2.1 §17.5.3): its `height`, or the height a flex or grid parent gave it. The rows were laid out taller and
+the table box kept the smaller height: `<table style="height:20px">` around a 50px row was 20px tall, and the next block
+overlapped the row.
+
+`compute/flexbox.rs`, `style/flex.rs` (`FlexboxItemStyle::is_table`, default false): a table flex item is never smaller
+than its min-content size in the main axis, as in Blink: its resolved minimum main size is at least its min-content
+width (row) or its rows' height at its width (column), whatever its `min-width`/`min-height`, and its maximum main size
+is raised to it (WPT `table-as-item-fixed-min-width-3`, `table-as-item-min-content-height-1/2`, `ortho-table-item-001`).
+Covered by `crates/pyro-render/tests/table_flex_items.rs`.
+
+## Sizing keywords in flex items' minimum and maximum sizes (WPT round 3, lane G)
+
+`compute/flexbox.rs` (`resolve_size_keyword`), `style/flex.rs` (`FlexboxItemStyle::min_size_keyword`/`max_size_keyword`,
+default `auto`): `min-content`, `max-content`, `fit-content` and `stretch` in a flex item's `min-width`, `min-height`,
+`max-width` or `max-height` (which `min_size()`/`max_size()` give as `auto`) resolve by measuring the item in that axis
+under the keyword's constraint (`fit-content` from the min-content and max-content sizes, clamped by the available size,
+as block items'), or to the stretch size: in the cross axis before the item's sizes are transferred, in the main axis
+before its minimum and hypothetical main sizes; a stretched item is clamped by its resolved maximum cross size (WPT
+`flex-item-max-width-min-content`, `flex-item-max-height-min-content`, `flex-item-min-width-min-content-max-width`,
+`flex-item-min-height-min-content-overflow`). Block items had them (lane S); grid items and out-of-flow boxes still do
+not. Covered by `crates/pyro-render/tests/flex_size_keywords.rs`.
+
+## `last baseline` in flex rows (WPT round 3, lane G)
+
+`style/alignment.rs` (`AlignItemsKeyword::LastBaseline`, `AlignItems::LAST_BASELINE`), `compute/flexbox.rs`: the items
+of a flex row with `align-self: last baseline` (no `auto` cross margin) are aligned on their last baselines from the
+line's cross end, as the first-baseline group is from its start (css-align-3 §9.3): each item's distance from its last
+baseline (synthesized at the bottom border edge without one, or for a scroll container) to its outer cross end, the
+group's largest makes room in the line's cross size, and each item sits that much above the end less its own.
+stylo_taffy mapped `last baseline` to `end` before. In columns, wrap-reverse lines, grids and for absolutely positioned
+boxes it still behaves as its fallback, `end`. Covered by `crates/pyro-render/tests/flex_last_baseline.rs`.

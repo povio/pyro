@@ -2309,7 +2309,11 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
                 };
                 let align_to_end = match keyword {
                     AlignItemsKeyword::Center => None,
-                    AlignItemsKeyword::End | AlignItemsKeyword::FlexEnd | AlignItemsKeyword::SelfEnd => Some(true),
+                    // pyro: `last baseline` falls back to `end` (it aligns flex rows only)
+                    AlignItemsKeyword::End
+                    | AlignItemsKeyword::FlexEnd
+                    | AlignItemsKeyword::SelfEnd
+                    | AlignItemsKeyword::LastBaseline => Some(true),
                     _ => Some(false),
                 };
                 let offset = match align_to_end {

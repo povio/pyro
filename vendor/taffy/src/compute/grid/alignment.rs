@@ -616,7 +616,8 @@ pub(super) fn align_item_within_area(
                 resolved_margin.start
             }
         }
-        AlignItemsKeyword::End | AlignItemsKeyword::FlexEnd => {
+        // pyro: `last baseline` is not aligned in grids yet: its fallback, `end`
+        AlignItemsKeyword::End | AlignItemsKeyword::FlexEnd | AlignItemsKeyword::LastBaseline => {
             if direction.is_rtl() {
                 resolved_margin.start
             } else {

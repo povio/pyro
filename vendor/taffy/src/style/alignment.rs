@@ -55,6 +55,9 @@ pub enum AlignItemsKeyword {
     Center,
     /// Items are aligned such as their baselines align.
     Baseline,
+    /// pyro: items are aligned such as their last baselines align (`last baseline`); its fallback is
+    /// `safe end`. Flex rows align by it; elsewhere it behaves as its fallback.
+    LastBaseline,
     /// Stretch to fill the container.
     Stretch,
 }
@@ -178,6 +181,8 @@ impl AlignItems {
     pub const CENTER: Self = Self { keyword: AlignItemsKeyword::Center, safety: AlignmentSafety::Default };
     /// Items are aligned such as their baselines align.
     pub const BASELINE: Self = Self { keyword: AlignItemsKeyword::Baseline, safety: AlignmentSafety::Default };
+    /// pyro: `last baseline` (see [`AlignItemsKeyword::LastBaseline`])
+    pub const LAST_BASELINE: Self = Self { keyword: AlignItemsKeyword::LastBaseline, safety: AlignmentSafety::Default };
     /// Stretch to fill the container.
     pub const STRETCH: Self = Self { keyword: AlignItemsKeyword::Stretch, safety: AlignmentSafety::Default };
     /// Like [`AlignItems::START`], but falls back to [`AlignItems::START`] when the
@@ -518,6 +523,7 @@ impl serde::Serialize for AlignItems {
             (AlignItemsKeyword::Center, AlignmentSafety::Unsafe) => "UnsafeCenter",
             (AlignItemsKeyword::Normal, _) => "Normal",
             (AlignItemsKeyword::Baseline, _) => "Baseline",
+            (AlignItemsKeyword::LastBaseline, _) => "LastBaseline",
             (AlignItemsKeyword::Stretch, _) => "Stretch",
             (AlignItemsKeyword::Start, AlignmentSafety::Safe) => "SafeStart",
             (AlignItemsKeyword::End, AlignmentSafety::Safe) => "SafeEnd",

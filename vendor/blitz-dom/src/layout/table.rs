@@ -181,6 +181,7 @@ impl TableTreeWrapper<'_, '_> {
             return None;
         }
         let mut style = style.clone();
+        raise_max_width_to_columns(&mut style, sum_min + gap * (n - 1) as f32, extra, parent);
         if inner < sum_min {
             // A table never gets narrower than its columns' min-content widths.
             if shrink {
@@ -232,7 +233,12 @@ impl TableTreeWrapper<'_, '_> {
         let mut at = self.doc.nodes[cell.node_id].parent;
         while let Some(id) = at {
             let node = &self.doc.nodes[id];
-            if node.primary_styles().is_some_and(|s| s.clone_display().inside() == DisplayInside::TableCell) {
+            // pyro: a flex or grid container too, as Blink's `TableNode::AllowColumnPercentages`: measured
+            // there, a table with a 100% column was as wide as `f32::MAX / 4` (WPT
+            // `table-with-infinite-max-intrinsic-width`, in css-flexbox and css-grid)
+            if node.primary_styles().is_some_and(|s| {
+                matches!(s.clone_display().inside(), DisplayInside::TableCell | DisplayInside::Flex | DisplayInside::Grid)
+            }) {
                 return true;
             }
             at = node.parent;
@@ -469,6 +475,7 @@ impl TableTreeWrapper<'_, '_> {
             out
         };
         let mut style = style.clone();
+        raise_max_width_to_columns(&mut style, sum_min + gap * (n - 1) as f32, extra, parent);
         if inner < sum_min {
             let content = sum_min + gap * (n - 1) as f32;
             let grown = match style.box_sizing {
@@ -4066,5 +4073,19 @@ impl BaseDocument {
     pub fn table_cell_positioned_parts(&self, cell_id: NodeId) -> [Option<NodeId>; 2] {
         self.table_cell_parts(cell_id)
             .map_or([None, None], |parts| parts.map(|part| part.filter(|&part| is_positioned_table_part(self, part))))
+    }
+}
+
+/// pyro: nor does a table's `max-width` make it narrower than its columns' min-content widths (`content`,
+/// spacing included; `extra` its padding and borders): a width its flex or grid parent gives it beyond the
+/// maximum still stands up to them (CSS 2.1 §17.5.2, as in Blink; WPT `css/css-flexbox/table-as-item-*`).
+fn raise_max_width_to_columns(style: &mut taffy::Style<Atom>, content: f32, extra: f32, parent: Option<f32>) {
+    let grown = match style.box_sizing {
+        taffy::BoxSizing::ContentBox => content,
+        taffy::BoxSizing::BorderBox => content + extra,
+    };
+    use taffy::MaybeResolve;
+    if style.max_size.width.maybe_resolve(parent, resolve_calc_value).is_some_and(|max: f32| max < grown) {
+        style.max_size.width = style_helpers::length(grown);
     }
 }

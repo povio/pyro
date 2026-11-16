@@ -41,6 +41,12 @@ entry) once a Blitz release carries these commits and changes.
   `left`/`right` by the line-left side) and `BlockItemStyle::original_display_is_inline`, for the static positions of
   inline-level out-of-flow boxes in block containers (vendor/taffy/README.pyro.md, "Static positions and positioned
   table parts").
+- `src/wrapper.rs`: `FlexboxItemStyle::is_table` (a table wrapper box), for Taffy's flex algorithm (vendor/taffy/README.pyro.md,
+  "Tables: a height is a minimum; tables as flex items").
+- `src/wrapper.rs`: `FlexboxItemStyle::min_size_keyword`/`max_size_keyword`, the block items' (vendor/taffy/README.pyro.md,
+  "Sizing keywords in flex items' minimum and maximum sizes").
+- `src/convert.rs` (`item_alignment`): `last baseline` is Taffy's `AlignItems::LAST_BASELINE` (it was `end`, its fallback),
+  for flex rows (vendor/taffy/README.pyro.md, "`last baseline` in flex rows").
 - `src/wrapper.rs`: `GridItemStyle::subgrid_axis`/`subgrid_reversed` for orthogonal subgrids: the parent's inline axis is
   the child's block axis when one of them is vertical, and whether the tracks run opposite ways is found from both
   writing modes (inline: `direction` or `is_inline_tb`; block: top to bottom, or `vertical-lr`/`-rl`).

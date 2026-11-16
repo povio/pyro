@@ -73,6 +73,23 @@ pub trait FlexboxItemStyle: CoreStyle {
     fn align_self(&self) -> Option<AlignSelf> {
         Style::<Self::CustomIdent>::DEFAULT.align_self
     }
+    /// pyro: whether the item is a table (its wrapper box): it is never smaller than its min-content
+    /// size in the main axis, as in Blink (WPT `css/css-flexbox/table-as-item-*`)
+    #[inline(always)]
+    fn is_table(&self) -> bool {
+        false
+    }
+    /// pyro: `min-width`/`min-height` when they are sizing keywords (`min_size()` says `auto` for them);
+    /// `auto` in an axis without one
+    #[inline(always)]
+    fn min_size_keyword(&self) -> Size<Dimension> {
+        Size { width: Dimension::auto(), height: Dimension::auto() }
+    }
+    /// pyro: `max-width`/`max-height` when they are sizing keywords (see [`Self::min_size_keyword`])
+    #[inline(always)]
+    fn max_size_keyword(&self) -> Size<Dimension> {
+        Size { width: Dimension::auto(), height: Dimension::auto() }
+    }
 }
 
 use crate::geometry::AbsoluteAxis;

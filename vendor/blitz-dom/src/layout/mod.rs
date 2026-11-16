@@ -1137,6 +1137,62 @@ impl LayoutPassState<'_> {
             }
         }
 
+        // pyro: a height a flex or grid parent gives a table is its wrapper box's, captions included
+        // (css-flexbox-1 §4.1): the grid gets what the captions leave. The table's own `height` is its
+        // grid's, as in block flow (WPT `css/css-flexbox/table-as-item-stretch-cross-size*`).
+        if let (Some(height), false) = (inputs.known_dimensions.height, table_wrapper.ctx.captions.is_empty()) {
+            let own = {
+                use taffy::MaybeResolve;
+                let style = &table_wrapper.ctx.style;
+                let parent = inputs.parent_size;
+                style.size.height.maybe_resolve(parent.height, resolve_calc_value).map(|own| match style.box_sizing {
+                    taffy::BoxSizing::BorderBox => own,
+                    taffy::BoxSizing::ContentBox => {
+                        own + style.padding.resolve_or_zero(parent.width, resolve_calc_value).vertical_axis_sum()
+                            + style.border.resolve_or_zero(parent.width, resolve_calc_value).vertical_axis_sum()
+                    }
+                })
+            };
+            // An inflexible item of a column flex container has its definite flex basis as its height: the
+            // table box's, as `height` is (WPT `table-as-item-inflexible-in-column-2`).
+            let inflexible_in_column = {
+                let node = &table_wrapper.doc.nodes[dom_node_id(node_id)];
+                let column_parent = node.layout_parent.get().is_some_and(|parent| {
+                    table_wrapper.doc.nodes[parent].primary_styles().is_some_and(|style| {
+                        style.clone_display().inside() == style::values::specified::box_::DisplayInside::Flex
+                            && matches!(
+                                style.get_position().flex_direction,
+                                style::computed_values::flex_direction::T::Column
+                                    | style::computed_values::flex_direction::T::ColumnReverse
+                            )
+                    })
+                });
+                column_parent
+                    && node.primary_styles().is_some_and(|style| {
+                        style.get_position().flex_grow.0 == 0.0 && style.get_position().flex_shrink.0 == 0.0
+                    })
+            };
+            if !inflexible_in_column && own.is_none_or(|own| (own - height).abs() > 0.01) {
+                let context = Arc::clone(&table_wrapper.ctx);
+                let mut scratch = output.clone();
+                let grid = scratch.size.height;
+                let measuring = taffy::tree::LayoutInput { run_mode: RunMode::ComputeSize, ..inputs };
+                table_wrapper.doc.lay_out_table_captions(&context, measuring, &mut scratch);
+                let captions = scratch.size.height - grid;
+                if captions > 0.0 {
+                    let inner = taffy::tree::LayoutInput {
+                        known_dimensions: taffy::Size {
+                            width: inputs.known_dimensions.width,
+                            height: Some((height - captions).max(0.0)),
+                        },
+                        ..inputs
+                    };
+                    table_wrapper.style = table_wrapper.auto_column_widths(&inner);
+                    output = compute_grid_layout(&mut table_wrapper, node_id, inner);
+                }
+            }
+        }
+
         // Absolutely positioned children take no part in the table grid. Their
         // static position is the top-left of the table's content box.
         let context = table_wrapper.ctx;

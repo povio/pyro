@@ -101,7 +101,11 @@ impl OofAlignment {
             AlignItemsKeyword::Normal => Self::Normal,
             AlignItemsKeyword::Stretch => Self::Stretch,
             AlignItemsKeyword::Center => Self::Center,
-            AlignItemsKeyword::End | AlignItemsKeyword::FlexEnd | AlignItemsKeyword::SelfEnd => Self::End,
+            AlignItemsKeyword::End
+            | AlignItemsKeyword::FlexEnd
+            | AlignItemsKeyword::SelfEnd
+            // pyro: the fallback alignment of `last baseline` is `end`
+            | AlignItemsKeyword::LastBaseline => Self::End,
             // The fallback alignment of `baseline` is `start`
             AlignItemsKeyword::Start
             | AlignItemsKeyword::FlexStart

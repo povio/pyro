@@ -2159,3 +2159,20 @@ Chromium generates and lays them out (`src/layout/scroll_markers.rs`; the stylo 
   auto; WPT `targeted-column-scroll-marker-selection-001`).
 
 Covered by `crates/pyro-render/tests/scroll_markers.rs`.
+
+## A table's `max-width` does not narrow it below its columns (WPT round 3, lane G)
+
+`src/layout/table.rs` (`raise_max_width_to_columns`): the table grid's `max-width` is raised to its columns' min-content
+widths (spacing, padding and borders in), as its `min-width` already was when its width was smaller: a width its flex or
+grid parent gave it beyond `max-width` was clamped back to it, narrower than its columns (WPT
+`table-as-item-auto-min-width`, `table-as-item-fixed-min-width`; vendor/taffy's README.pyro.md, "Tables").
+
+`src/layout/mod.rs` (`compute_table_root_layout`): a height a flex or grid parent gives a table with captions is its
+wrapper box's (css-flexbox-1 §4.1): the grid is laid out again with what the captions leave (the table's own `height`,
+recognised by its value, is its grid's as in block flow). A stretched table with captions was taller than its line by
+them (WPT `table-as-item-stretch-cross-size*`, `table-as-item-flex-cross-size`).
+
+`src/layout/table.rs` (`is_inside_a_cell`): column percentages are not allowed while a table is measured (an available
+width that is not definite) inside a flex or grid container either, not only inside a cell, as Blink's
+`TableNode::AllowColumnPercentages`: a table with a 100% column measured there was `f32::MAX / 4` wide (WPT
+`table-with-infinite-max-intrinsic-width`, `item-with-table-with-infinite-max-intrinsic-width`).

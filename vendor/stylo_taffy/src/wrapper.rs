@@ -724,6 +724,21 @@ impl<T: Deref<Target = ComputedValues>> taffy::FlexboxItemStyle for TaffyStyloSt
     }
 
     #[inline]
+    fn is_table(&self) -> bool {
+        convert::is_table(self.effective_display())
+    }
+
+    #[inline]
+    fn min_size_keyword(&self) -> taffy::Size<taffy::Dimension> {
+        <Self as taffy::BlockItemStyle>::min_size_keyword(self)
+    }
+
+    #[inline]
+    fn max_size_keyword(&self) -> taffy::Size<taffy::Dimension> {
+        <Self as taffy::BlockItemStyle>::max_size_keyword(self)
+    }
+
+    #[inline]
     fn align_self(&self) -> Option<taffy::AlignSelf> {
         self.self_alignment(
             self.style.get_position().align_self.0,
