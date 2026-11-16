@@ -88,7 +88,29 @@
       mapClear.call(this);
       sync();
     }
-    highlightsFromPoint() { return []; }
+    highlightsFromPoint(x, y, options) {
+      // WebIDL: `x`, `y` are doubles; `options.shadowRoots` is a sequence<ShadowRoot>.
+      Number(x);
+      Number(y);
+      if (options !== undefined && options !== null) {
+        if (typeof options !== 'object' && typeof options !== 'function') {
+          throw new TypeError("Failed to execute 'highlightsFromPoint': options is not an object.");
+        }
+        const roots = options.shadowRoots;
+        if (roots !== undefined) {
+          if (roots === null || typeof roots[Symbol.iterator] !== 'function') {
+            throw new TypeError("Failed to execute 'highlightsFromPoint': shadowRoots is not a sequence.");
+          }
+          const SR = globalThis.ShadowRoot;
+          for (const root of roots) {
+            if (typeof SR !== 'function' || !(root instanceof SR)) {
+              throw new TypeError("Failed to execute 'highlightsFromPoint': shadowRoots holds a value that is not a ShadowRoot.");
+            }
+          }
+        }
+      }
+      return [];
+    }
   }
   Object.defineProperty(HighlightRegistry.prototype, Symbol.toStringTag, { value: 'HighlightRegistry', configurable: true });
   registry = new HighlightRegistry();
