@@ -784,6 +784,12 @@ impl selectors::Element for BlitzNode<'_> {
             NonTSPseudoClass::TargetCurrent => {
                 self.element_state().contains(style::selector_parser::TARGET_CURRENT)
             }
+            NonTSPseudoClass::TargetBefore => {
+                self.element_state().contains(style::selector_parser::TARGET_BEFORE)
+            }
+            NonTSPseudoClass::TargetAfter => {
+                self.element_state().contains(style::selector_parser::TARGET_AFTER)
+            }
             // pyro: links to the document itself (`ElementData::flush_link_visited`), but not
             // inside `:has()`, where Chromium takes every link as unvisited (WPT
             // `css/selectors/has-visited.html`, `invalidation/link-pseudo-in-has.html`).

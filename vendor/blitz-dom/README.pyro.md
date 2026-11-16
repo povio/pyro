@@ -2153,17 +2153,25 @@ Chromium generates and lays them out (`src/layout/scroll_markers.rs`; the stylo 
   boxes generated beside them (`with_box_siblings`): a group before or after its scroll container's box, the
   buttons after it (before an `after` group; Chromium's order, WPT `scroll-buttons-layout-parent`); the root
   element's are its first and last boxes. Classification, anonymous blocks, `display: contents` hoisting and inline
-  formatting contexts take them as children. A marker's or button's box holds what its `content` generates
+  formatting contexts take them as children, once: an anonymous block wrapping a run of its container's boxes
+  (`NodeFlags::WRAPS_BOX_RUN`) places none again (they were placed by its container's walk, in it or beside it; a
+  block-level group beside an inline-block scroller was wrapped again without end). A non-replaced inline box is
+  no scroll container (no group, no buttons: `overflow` does not apply to it). A marker's or button's box holds what its `content` generates
   (`flush_pseudo_elements`); counters see the markers in their group and the buttons, in the scope of their
   originating element (`src/layout/counters.rs`). The damage walks visit the boxes an element owns
-  (`src/layout/damage.rs`); a dropped element drops them, and its marker leaves its group (`src/document.rs`).
+  (`src/layout/damage.rs`); a dropped element drops them, and its marker leaves its group (`src/document.rs`). A
+  dropped box drops only the children still its own (a marker can move to another group in the same pass) and
+  leaves every list that holds it (its group's children, a wrapping anonymous block's children, layout and paint
+  children: `detach_from_box_lists`); a moved marker leaves its old group's list. A dangling id there panicked
+  the damage walk (WPT `scroll-marker-group-scroll-container-change-crash`, `-body-overflow-propagation-*`).
 - `::column::scroll-marker`: a multi-column scroll container with a group has a `::column` node (for selector
   matching only) and a marker per column of its last layout; `update_target_current` builds them again when the
   count changes.
 - After layout (`src/resolve.rs`), `update_target_current` picks each group's active marker (CSS Overflow 5
   § 3.1.8's example algorithm as Chromium selects: the nearest scroll container the targets share, then by block
   and inline axis, targets past the reachable range spread over the first and last eighth of a scrollport; a scroll
-  container's current scroll target, `set_scroll_targets`, decides first) and sets `:target-current` on its marker,
+  container's current scroll target, `set_scroll_targets`, decides first) and sets `:target-current` on its marker
+  (`:target-before` on the markers before it, `:target-after` on those after it),
   on the links of `scroll-target-group: auto` elements, and `:enabled`/`:disabled` on buttons (whether the element
   can scroll that way); a change runs another style and layout pass.
 - `src/layout/paint_tree.rs` (`restore_out_of_flow_stacking_owners`): a group's or button's box belongs to the
@@ -2176,7 +2184,8 @@ Chromium generates and lays them out (`src/layout/scroll_markers.rs`; the stylo 
   resolves percentage heights against its column height (the strip was laid out with none: `height: 80%` items were
   auto; WPT `targeted-column-scroll-marker-selection-001`).
 
-Covered by `crates/pyro-render/tests/scroll_markers.rs`.
+Covered by `crates/pyro-render/tests/scroll_markers.rs` and `incremental_construction.rs`
+(`scroll_markers_moving_between_groups`).
 
 ## A table's `max-width` does not narrow it below its columns (WPT round 3, lane G)
 

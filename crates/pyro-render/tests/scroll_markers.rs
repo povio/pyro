@@ -138,3 +138,45 @@ fn content_visibility_auto_clips_its_overflow() {
     assert_eq!(pixel(&img, 150, 50), WHITE);
     assert_eq!(pixel(&img, 50, 150), WHITE);
 }
+
+#[test]
+fn a_block_group_beside_an_inline_level_scroller_is_built_once() {
+    // The block-level group splits the inline content around it once: the anonymous block
+    // wrapping the scroller does not place its group again (box construction recursed without
+    // end). The group (blue, 20px tall) comes before the line holding the scroller.
+    let img = render(
+        "<style>#t{display:inline-block;overflow:auto;width:40px;height:20px;background:rgb(0,128,0);
+          scroll-marker-group:before;vertical-align:top}
+          #t::scroll-marker-group{display:block;height:20px;background:rgb(0,0,255)}</style>
+         <div style='font:20px/20px monospace'><span id=t>x</span></div>",
+    );
+    assert_eq!(pixel(&img, 10, 10), BLUE, "the group's box first");
+    assert_eq!(pixel(&img, 10, 30), GREEN, "then the line with the scroller");
+    assert_eq!(pixel(&img, 10, 50), WHITE, "and no second group");
+}
+
+#[test]
+fn an_inline_box_is_no_scroll_container() {
+    // `overflow` does not apply to a non-replaced inline box: no group (WPT
+    // inline-with-scroll-marker-group-crash hung on its block group).
+    let img = render(
+        "<style>#t{overflow:auto;scroll-marker-group:before}
+          #t::scroll-marker-group{display:block;height:20px;background:rgb(255,0,0)}</style>
+         <span id=t></span>",
+    );
+    assert_eq!(pixel(&img, 10, 10), WHITE);
+}
+
+#[test]
+fn markers_before_and_after_the_current_one() {
+    // `:target-before` and `:target-after`: the markers of a group before and after its active
+    // one (the first, at the start).
+    let img = render(&format!(
+        "{MARKERS}<style>.s>div::scroll-marker:target-after{{background:rgb(255,0,0)}}
+          .s>div::scroll-marker:target-before{{background:rgb(255,255,255)}}</style>
+         <div class=s style='scroll-marker-group:after'><div></div><div></div><div></div></div>"
+    ));
+    assert_eq!(pixel(&img, 10, 75), BLUE, "the current one");
+    assert_eq!(pixel(&img, 30, 75), RED, "after it");
+    assert_eq!(pixel(&img, 50, 75), RED, "after it");
+}

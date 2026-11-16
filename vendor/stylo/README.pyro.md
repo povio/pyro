@@ -273,9 +273,11 @@ slotted rules of a pseudo-element. blitz-dom keeps shadow trees' styles (its REA
 - `servo/selector_parser.rs`: the lazy pseudo-elements `::scroll-marker-group`, `::scroll-marker`, `::column` and
   `::scroll-button(<direction> | *)` (functional: one variant per argument). `::column::scroll-marker` parses
   (`::column` lets `::scroll-marker` follow it as `::before` lets `::marker`). `:target-current` is a state
-  pseudo-class (`TARGET_CURRENT`, the Gecko-only `STYLEEDITOR_TRANSITIONING` bit, never set by servo otherwise);
-  `::scroll-marker` and `::scroll-button()` accept state pseudo-classes after them (`:target-current`, `:enabled`,
-  `:disabled` count as user action states for that). A button is element-backed (the UA's `button` rules apply to it).
+  pseudo-class (`TARGET_CURRENT`, the Gecko-only `STYLEEDITOR_TRANSITIONING` bit, never set by servo otherwise), so
+  are `:target-before` and `:target-after` (`TARGET_BEFORE`, `TARGET_AFTER`: the Gecko-only `DEVTOOLS_HIGHLIGHTED`
+  and `REVEALED` bits); `::scroll-marker` and `::scroll-button()` accept state pseudo-classes after them
+  (`:target-current`, `:target-before`, `:target-after`, `:enabled`, `:disabled` count as user action states for
+  that). A button is element-backed (the UA's `button` rules apply to it).
   `PSEUDO_COUNT` passed 32: `pseudo_none_array` builds its array with `array::from_fn`.
 - `stylist.rs`: every `::scroll-button()` rule is filed under `::scroll-button(*)` (`PseudoElement::rule_map_key`)
   and its bucket never matches alone (`has_argument`): the button's node matches the argument against its direction.

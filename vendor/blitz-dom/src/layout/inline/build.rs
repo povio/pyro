@@ -575,7 +575,7 @@ fn build_inline_layout_with(
         build_inline_layout_recursive(
             &mut builder,
             &mut text_transformer,
-            nodes,
+            nodes, inline_context_root_node_id,
             before_id,
             &text_transform,
             text_nodes,
@@ -627,7 +627,7 @@ fn build_inline_layout_with(
         build_inline_layout_recursive(
             &mut builder,
             &mut text_transformer,
-            nodes,
+            nodes, inline_context_root_node_id,
             child_id,
             &text_transform,
             text_nodes,
@@ -645,7 +645,7 @@ fn build_inline_layout_with(
         build_inline_layout_recursive(
             &mut builder,
             &mut text_transformer,
-            nodes,
+            nodes, inline_context_root_node_id,
             after_id,
             &text_transform,
             text_nodes,
@@ -795,7 +795,7 @@ fn build_inline_layout_with(
                     build_inline_layout_recursive(
                         &mut builder,
                         &mut text_transformer,
-                        nodes,
+                        nodes, node_id,
                         child_id,
                         &text_transform,
                         &mut Vec::new(),
@@ -872,7 +872,7 @@ fn build_inline_layout_with(
         }
         for child_id in part {
             crate::util::ensure_stack(|| build_inline_layout_recursive(
-                builder, text_transformer, nodes, child_id, &text_transform, text_nodes, strut, first_letter, annotations,
+                builder, text_transformer, nodes, node_id, child_id, &text_transform, text_nodes, strut, first_letter, annotations,
                 bidi, bidi_scan,
             ));
         }
@@ -887,12 +887,14 @@ fn build_inline_layout_with(
 
     #[allow(clippy::too_many_arguments)]
     /// pyro: builds `node_id`'s inline content, with the scroll pseudo-element boxes generated
-    /// beside it (`scroll_markers`) before and after it.
+    /// beside it (`scroll_markers`) before and after it, unless `container` (whose box list holds
+    /// `node_id`'s box) placed them already (`scroll_markers::siblings_of`).
     #[allow(clippy::too_many_arguments)]
     fn build_inline_layout_recursive(
         builder: &mut TreeBuilder<TextBrush>,
         text_transformer: &mut TextTransformer,
         nodes: &crate::NodeTree,
+        container: NodeId,
         node_id: NodeId,
         parent_text_transform: &CaseTransform,
         text_nodes: &mut Vec<(NodeId, std::ops::Range<usize>)>,
@@ -902,7 +904,7 @@ fn build_inline_layout_with(
         bidi: bool,
         bidi_scan: &mut BidiScan,
     ) {
-        match crate::layout::scroll_markers::siblings_of(&nodes[node_id]) {
+        match crate::layout::scroll_markers::siblings_of(nodes, container, &nodes[node_id]) {
             None => build_inline_layout_node(
                 builder, text_transformer, nodes, node_id, parent_text_transform, text_nodes, strut, first_letter,
                 annotations, bidi, bidi_scan,
@@ -1001,7 +1003,7 @@ fn build_inline_layout_with(
                             crate::util::ensure_stack(|| build_inline_layout_recursive(
                                 builder,
                                 text_transformer,
-                                nodes,
+                                nodes, node_id,
                                 child_id,
                                 &text_transform,
                                 text_nodes,
@@ -1127,7 +1129,7 @@ fn build_inline_layout_with(
                                 crate::util::ensure_stack(|| build_inline_layout_recursive(
                                     builder,
                                     text_transformer,
-                                    nodes,
+                                    nodes, node_id,
                                     before_id,
                                     &text_transform,
                                     text_nodes,
@@ -1143,7 +1145,7 @@ fn build_inline_layout_with(
                                 crate::util::ensure_stack(|| build_inline_layout_recursive(
                                     builder,
                                     text_transformer,
-                                    nodes,
+                                    nodes, node_id,
                                     child_id,
                                     &text_transform,
                                     text_nodes,
@@ -1158,7 +1160,7 @@ fn build_inline_layout_with(
                                 crate::util::ensure_stack(|| build_inline_layout_recursive(
                                     builder,
                                     text_transformer,
-                                    nodes,
+                                    nodes, node_id,
                                     after_id,
                                     &text_transform,
                                     text_nodes,

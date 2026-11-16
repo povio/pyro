@@ -477,6 +477,10 @@ impl PseudoElement {
 /// pyro: the element state `:target-current` matches. Servo has no state of its own for it; this
 /// Gecko devtools bit is never set by Servo.
 pub const TARGET_CURRENT: ElementState = ElementState::STYLEEDITOR_TRANSITIONING;
+/// pyro: the element state `:target-before` matches (a Gecko-only bit Servo never sets otherwise).
+pub const TARGET_BEFORE: ElementState = ElementState::DEVTOOLS_HIGHLIGHTED;
+/// pyro: the element state `:target-after` matches (a Gecko-only bit Servo never sets otherwise).
+pub const TARGET_AFTER: ElementState = ElementState::REVEALED;
 
 /// The type used for storing `:lang` arguments.
 pub type Lang = Box<str>;
@@ -531,6 +535,10 @@ pub enum NonTSPseudoClass {
     Target,
     /// pyro: `:target-current` (CSS Overflow 5): the active scroll marker of its group.
     TargetCurrent,
+    /// pyro: `:target-before` and `:target-after` (CSS Overflow 5): the scroll markers of a group
+    /// before and after its active one, in tree order.
+    TargetBefore,
+    TargetAfter,
     UserInvalid,
     UserValid,
     Valid,
@@ -555,6 +563,8 @@ impl ::selectors::parser::NonTSPseudoClass for NonTSPseudoClass {
                 | NonTSPseudoClass::Focus
                 | NonTSPseudoClass::FocusVisible
                 | NonTSPseudoClass::TargetCurrent
+                | NonTSPseudoClass::TargetBefore
+                | NonTSPseudoClass::TargetAfter
                 | NonTSPseudoClass::Enabled
                 | NonTSPseudoClass::Disabled
         )
@@ -622,6 +632,8 @@ impl ToCss for NonTSPseudoClass {
             Self::ServoNonZeroBorder => ":-servo-nonzero-border",
             Self::Target => ":target",
             Self::TargetCurrent => ":target-current",
+            Self::TargetBefore => ":target-before",
+            Self::TargetAfter => ":target-after",
             Self::UserInvalid => ":user-invalid",
             Self::UserValid => ":user-valid",
             Self::Valid => ":valid",
@@ -669,6 +681,8 @@ impl NonTSPseudoClass {
             Self::Required => ElementState::REQUIRED,
             Self::Target => ElementState::URLTARGET,
             Self::TargetCurrent => TARGET_CURRENT,
+            Self::TargetBefore => TARGET_BEFORE,
+            Self::TargetAfter => TARGET_AFTER,
             Self::UserInvalid => ElementState::USER_INVALID,
             Self::UserValid => ElementState::USER_VALID,
             Self::Valid => ElementState::VALID,
@@ -789,6 +803,8 @@ impl<'a, 'i> ::selectors::Parser<'i> for SelectorParser<'a> {
             "required" => NonTSPseudoClass::Required,
             "target" => NonTSPseudoClass::Target,
             "target-current" => NonTSPseudoClass::TargetCurrent,
+            "target-before" => NonTSPseudoClass::TargetBefore,
+            "target-after" => NonTSPseudoClass::TargetAfter,
             "user-invalid" => NonTSPseudoClass::UserInvalid,
             "user-valid" => NonTSPseudoClass::UserValid,
             "valid" => NonTSPseudoClass::Valid,

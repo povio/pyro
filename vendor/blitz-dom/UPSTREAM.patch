@@ -4058,7 +4058,15 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
  
          if doc.nodes[container_node_id]
              .flags
-@@ -180,10 +191,12 @@
+@@ -169,6 +180,7 @@
+         doc.nodes[node_id]
+             .layout_parent
+             .set(Some(container_node_id));
++        doc.nodes[node_id].flags.insert(NodeFlags::WRAPS_BOX_RUN);
+ 
+         self.children.push(node_id);
+         self.anonymous_block_id = Some(node_id);
+@@ -180,10 +192,12 @@
      if let Some(before) = node.before() {
          layout_children.push(before);
      }
@@ -4073,7 +4081,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
      if let Some(after) = node.after() {
          layout_children.push(after);
      }
-@@ -226,8 +239,17 @@
+@@ -226,8 +240,17 @@
          collect_layout_children_with_wrap(doc, child_id, out, wrap);
          return;
      }
@@ -4092,7 +4100,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
          let display_outside = if child.is_or_contains_block() {
              DisplayOutside::Block
          } else {
-@@ -255,14 +277,16 @@
+@@ -255,14 +278,16 @@
      }
      // Take children array from node to avoid borrow checker issues.
      let children = std::mem::take(&mut doc.nodes[container_node_id].children);
@@ -4111,7 +4119,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
      if let Some(after) = doc.nodes[container_node_id].after() {
          push_hoisted_child(doc, after, out, wrap);
      }
-@@ -272,10 +296,12 @@
+@@ -272,10 +297,12 @@
      if let Some(before) = node.before() {
          layout_children.push(before);
      }
@@ -4126,7 +4134,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
      if let Some(after) = node.after() {
          layout_children.push(after);
      }
-@@ -320,9 +346,25 @@
+@@ -320,9 +347,25 @@
      // inline or block box in that formatting context.
      let pseudo_ids = node.before().into_iter().chain(node.after());
      let child_ids = node.children.iter().copied().chain(pseudo_ids);
@@ -4153,7 +4161,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
          // Comment nodes generate no boxes and must not affect the
          // inline-vs-block classification: an unstyled comment would
          // default to display:inline below and force an inline
-@@ -341,10 +383,13 @@
+@@ -341,10 +384,13 @@
              // Transparent for box generation: the contents node casts
              // no vote itself — its children decide.
              classification.has_contents = true;
@@ -4168,7 +4176,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
          } else {
              let position = style
                  .map(|s| s.clone_position())
-@@ -396,7 +441,53 @@
+@@ -396,7 +442,53 @@
      container_node_id: NodeId,
      out: &mut LayoutChildren,
  ) {
@@ -4223,7 +4231,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
  }
  
  fn collect_layout_children_with_wrap(
-@@ -410,17 +501,46 @@
+@@ -410,17 +502,46 @@
          *doc.nodes[container_node_id].display_constructed_as_mut() = display;
      }
  
@@ -4273,7 +4281,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
      if let Some(el) = doc.nodes[container_node_id].data.downcast_element() {
          // Handle text inputs
          let tag_name = el.name.local.as_ref();
-@@ -434,7 +554,7 @@
+@@ -434,7 +555,7 @@
                  return;
              } else if matches!(
                  type_attr,
@@ -4282,7 +4290,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
              ) {
                  create_text_editor(doc, container_node_id, false);
                  return;
-@@ -444,9 +564,39 @@
+@@ -444,9 +565,39 @@
              }
          }
  
@@ -4323,7 +4331,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
  
              // Remove contruction damage from subtree
              doc.iter_subtree_mut(container_node_id, |id: NodeId, doc: &mut BaseDocument| {
-@@ -454,7 +604,12 @@
+@@ -454,7 +605,12 @@
              });
  
              match crate::util::parse_svg_image(outer_html.as_bytes()) {
@@ -4337,7 +4345,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
                      doc.get_node_mut(container_node_id)
                          .unwrap()
                          .element_data_mut()
-@@ -488,13 +643,37 @@
+@@ -488,13 +644,37 @@
          } else {
              (0, false)
          };
@@ -4377,7 +4385,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
              return;
          }
      }
-@@ -530,7 +709,9 @@
+@@ -530,7 +710,9 @@
                  .any(|child| {
                      let display = child.display_style().unwrap_or(Display::inline());
                      let node_kind = child.data.kind();
@@ -4388,7 +4396,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
                  });
  
              if !has_text_node_or_contents {
-@@ -553,9 +734,9 @@
+@@ -553,9 +735,9 @@
          }
  
          DisplayInside::Table => {
@@ -4400,7 +4408,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
              doc.nodes[container_node_id]
                  .flags
                  .insert(NodeFlags::IS_TABLE_ROOT);
-@@ -564,13 +745,10 @@
+@@ -564,13 +746,10 @@
                  .downcast_element_mut()
                  .unwrap()
                  .special_data = data;
@@ -4418,7 +4426,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
          }
  
          // Flow, FlowRoot and TableCell, plus internal table displays (row,
-@@ -584,6 +762,18 @@
+@@ -584,6 +763,18 @@
              let mut classification = FlowClassification::default();
              classify_flow_children(doc, container_node_id, &mut classification);
  
@@ -4437,7 +4445,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
              // Inline box whose in-flow content is block-level only: it is laid out as block
              // boxes, so paint must not draw its own box over them.
              if doc.nodes[container_node_id]
-@@ -597,7 +787,7 @@
+@@ -597,7 +788,7 @@
                      .insert(NodeFlags::IS_INLINE_WITH_ONLY_BLOCK_CHILDREN);
              }
  
@@ -4446,7 +4454,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
                  // Contents-transparent: a display:contents child may be
                  // holding the out-of-flow elements (otherwise the contents
                  // node itself would be pushed as a layout box).
-@@ -609,18 +799,39 @@
+@@ -609,18 +800,39 @@
              }
  
              // TODO: fix display:contents
@@ -4498,7 +4506,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
                  doc.nodes[container_node_id]
                      .flags
                      .insert(NodeFlags::IS_INLINE_ROOT);
-@@ -629,6 +840,14 @@
+@@ -629,6 +841,14 @@
                  return;
              }
  
@@ -4513,7 +4521,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
              // If the children are either all inline or all block then simply return the regular children
              // as the layout children
              if classification.all_block & !classification.has_contents {
-@@ -651,29 +870,224 @@
+@@ -651,29 +871,224 @@
      }
  }
  
@@ -4755,7 +4763,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
      let (before_style, after_style, before_node_id, after_node_id) = {
          let node = &doc.nodes[node_id];
  
-@@ -689,8 +1103,23 @@
+@@ -689,8 +1104,23 @@
              .as_ref()
              .and_then(|d| d.styles.pseudos.as_array()[0].clone());
  
@@ -4779,7 +4787,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
  
      // Sync pseudo element
      // TODO: Make incremental
-@@ -719,11 +1148,11 @@
+@@ -719,11 +1149,11 @@
                      .insert(NodeFlags::IS_IN_DOCUMENT);
              }
  
@@ -4796,7 +4804,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
  
              doc.nodes[new_node_id].record_out_of_flow(pe_style);
              let mut element_data = StyloElementData::default();
-@@ -733,6 +1162,11 @@
+@@ -733,6 +1163,11 @@
              *doc.nodes[new_node_id]
                  .stylo_element_data_mut()
                  .ensure_init_mut() = element_data;
@@ -4808,7 +4816,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
  
              let node = &mut doc.nodes[node_id];
              node.set_pe_by_index(idx, Some(new_node_id));
-@@ -750,53 +1184,77 @@
+@@ -750,53 +1185,77 @@
              // the style-pointer comparison below, as the pseudo-element's style may
              // already have been updated by `sync_pseudo_element_styles` during the
              // style traversal without the text having been updated.
@@ -4924,7 +4932,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
  /// Handles the cases where there are text nodes or inline nodes that need to be wrapped in an anonymous block node
  fn collect_complex_layout_children(
      doc: &mut BaseDocument,
-@@ -805,9 +1263,86 @@
+@@ -805,9 +1264,86 @@
      hide_whitespace: bool,
      needs_wrap: fn(NodeKind, DisplayOutside) -> bool,
  ) {
@@ -4974,7 +4982,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
 +            }
 +        }
 +        if siblings && scroll_markers::has_box_siblings(&doc.nodes[child_id]) {
-+            let boxes: Vec<NodeId> = scroll_markers::with_box_siblings(&doc.nodes, child_id, [child_id]).collect();
++            let boxes = scroll_markers::with_own_siblings(&doc.nodes, container_node_id, child_id);
 +            for id in boxes {
 +                let (start, end) = if id == child_id { (at_middle_start, at_middle_end) } else { (false, false) };
 +                place_complex_child(doc, out, container_node_id, id, hide_whitespace, needs_wrap, start, end);
@@ -5013,7 +5021,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
  
          // Get Display style. Default to inline because nodes without styles are probably text nodes
          let contains_block = doc.nodes[child_id].is_or_contains_block();
-@@ -827,9 +1362,19 @@
+@@ -827,9 +1363,19 @@
          // Taffy knows how to deal with `Display::None` children.
          //
          // Also hide all-whitespace flexbox children as these should be ignored
@@ -5034,7 +5042,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
          // Recurse into `Display::Contents` nodes, wrapping hoisted text and
          // inline children as if they were direct children of this container
          else if display_inside == DisplayInside::Contents {
-@@ -844,23 +1389,95 @@
+@@ -844,23 +1390,95 @@
          else if needs_wrap(child_node_kind, display_outside) {
              out.push_wrapped(container_node_id, child_id, doc);
          }
@@ -5134,7 +5142,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
      let alignment = node
          .primary_styles()
          .map(|s| stylo_to_parley::text_align(s.clone_text_align()))
-@@ -875,6 +1492,22 @@
+@@ -875,6 +1493,22 @@
      } else {
          node.attr(local_name!("value")).unwrap_or("").to_string()
      };
@@ -5157,7 +5165,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
      let is_focussed = node.is_focussed();
      let element = &mut node.data.downcast_element_mut().unwrap();
      if !matches!(element.special_data, SpecialElementData::TextInput(_)) {
-@@ -894,6 +1527,9 @@
+@@ -894,6 +1528,9 @@
          unreachable!();
      };
  
@@ -5167,7 +5175,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
      let editor = &mut text_input_data.editor;
      editor.set_scale(doc.viewport.scale_f64() as f32);
      editor.set_width(None);
-@@ -923,6 +1559,65 @@
+@@ -923,6 +1560,65 @@
      editor.refresh_layout(&mut doc.font_ctx.lock().unwrap(), &mut doc.layout_ctx);
  }
  
@@ -5233,7 +5241,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
  fn create_checkbox_input(doc: &mut BaseDocument, input_element_id: NodeId) {
      let node = &mut doc.nodes[input_element_id];
  
-@@ -944,6 +1639,25 @@
+@@ -944,6 +1640,25 @@
  ) {
      flush_inline_pseudos_recursive(doc, inline_context_root_node_id);
  
@@ -5259,7 +5267,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
      iter_children_and_pseudos!(doc.nodes[inline_context_root_node_id], |child_id| {
          find_inline_layout_embedded_boxes_recursive(
              &mut doc.nodes,
-@@ -953,10 +1667,41 @@
+@@ -953,10 +1668,41 @@
          );
      });
  
@@ -5285,7 +5293,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
      fn flush_inline_pseudos_recursive(doc: &mut BaseDocument, node_id: NodeId) {
          doc.iter_children_mut(node_id, |child_id, doc| {
 +            // pyro: and the scroll pseudo-element boxes beside it (`scroll_markers`).
-+            if let Some((before, after)) = scroll_markers::siblings_of(&doc.nodes[child_id]) {
++            if let Some((before, after)) = scroll_markers::siblings_of(&doc.nodes, node_id, &doc.nodes[child_id]) {
 +                for id in before.into_iter().chain(after) {
 +                    flush_pseudo_elements(doc, id);
 +                    let display = doc.nodes[id].display_style().unwrap_or(Display::inline());
@@ -5302,7 +5310,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
                  .display_style()
                  .unwrap_or(Display::inline());
              let do_recurse = match (display.outside(), display.inside()) {
-@@ -965,16 +1710,33 @@
+@@ -965,16 +1711,33 @@
                  (_, _) => false,
              };
              if do_recurse {
@@ -5319,7 +5327,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
          node_id: NodeId,
          layout_children: &mut ThinVec<NodeId>,
 +    ) {
-+        match scroll_markers::siblings_of(&nodes[node_id]) {
++        match scroll_markers::siblings_of(nodes, parent_id, &nodes[node_id]) {
 +            None => find_inline_layout_embedded_boxes_of(nodes, parent_id, node_id, layout_children),
 +            Some((before, after)) => {
 +                for id in before.into_iter().chain(std::iter::once(node_id)).chain(after) {
@@ -5337,7 +5345,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
      ) {
          let node = &mut nodes[node_id];
  
-@@ -992,6 +1754,11 @@
+@@ -992,6 +1755,11 @@
  
                  let display = node.display_style().unwrap_or(Display::inline());
  
@@ -5349,7 +5357,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
                  match (display.outside(), display.inside()) {
                      (DisplayOutside::None, DisplayInside::None) => {
                          node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
-@@ -999,43 +1766,76 @@
+@@ -999,43 +1767,76 @@
                      (DisplayOutside::None, DisplayInside::Contents) => {
                          node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
                          iter_children!(nodes[node_id], |child_id| {
@@ -8645,7 +8653,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
          match marker {
              // Bullet glyphs live in the bundled bullet font. The position-outside
              // path already asks for it; without the same span here a marker like
-@@ -80,12 +499,77 @@
+@@ -80,50 +499,440 @@
                  builder.push_text(&format!("{char} "));
                  builder.pop_style_span();
              }
@@ -8723,8 +8731,10 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
  
      if let Some(before_id) = root_node.before() {
          build_inline_layout_recursive(
-@@ -94,17 +578,69 @@
-             nodes,
+             &mut builder,
+             &mut text_transformer,
+-            nodes,
++            nodes, inline_context_root_node_id,
              before_id,
              &text_transform,
 +            text_nodes,
@@ -8777,7 +8787,8 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
          build_inline_layout_recursive(
              &mut builder,
              &mut text_transformer,
-             nodes,
+-            nodes,
++            nodes, inline_context_root_node_id,
              child_id,
              &text_transform,
 +            text_nodes,
@@ -8794,8 +8805,9 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
      if let Some(after_id) = root_node.after() {
          build_inline_layout_recursive(
              &mut builder,
-@@ -112,18 +648,289 @@
-             nodes,
+             &mut text_transformer,
+-            nodes,
++            nodes, inline_context_root_node_id,
              after_id,
              &text_transform,
 +            text_nodes,
@@ -8823,7 +8835,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
 +    {
 +        return false;
 +    }
- 
++
 +    // The first build keeps the lines of the layout's last break over the text that did not
 +    // change, for `BreakLines::resume`. The strut build follows a build of the same content.
 +    text_layout.text = if strut_build {
@@ -8947,7 +8959,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
 +                    build_inline_layout_recursive(
 +                        &mut builder,
 +                        &mut text_transformer,
-+                        nodes,
++                        nodes, node_id,
 +                        child_id,
 +                        &text_transform,
 +                        &mut Vec::new(),
@@ -9024,7 +9036,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
 +        }
 +        for child_id in part {
 +            crate::util::ensure_stack(|| build_inline_layout_recursive(
-+                builder, text_transformer, nodes, child_id, &text_transform, text_nodes, strut, first_letter, annotations,
++                builder, text_transformer, nodes, node_id, child_id, &text_transform, text_nodes, strut, first_letter, annotations,
 +                bidi, bidi_scan,
 +            ));
 +        }
@@ -9036,17 +9048,19 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
 +        }
 +        close_span(builder, end, bidi, bidi_scan);
 +    }
-+
+ 
 +    #[allow(clippy::too_many_arguments)]
 +    /// pyro: builds `node_id`'s inline content, with the scroll pseudo-element boxes generated
-+    /// beside it (`scroll_markers`) before and after it.
++    /// beside it (`scroll_markers`) before and after it, unless `container` (whose box list holds
++    /// `node_id`'s box) placed them already (`scroll_markers::siblings_of`).
 +    #[allow(clippy::too_many_arguments)]
      fn build_inline_layout_recursive(
-         builder: &mut TreeBuilder<TextBrush>,
-         text_transformer: &mut TextTransformer,
-         nodes: &crate::NodeTree,
-         node_id: NodeId,
-         parent_text_transform: &CaseTransform,
++        builder: &mut TreeBuilder<TextBrush>,
++        text_transformer: &mut TextTransformer,
++        nodes: &crate::NodeTree,
++        container: NodeId,
++        node_id: NodeId,
++        parent_text_transform: &CaseTransform,
 +        text_nodes: &mut Vec<(NodeId, std::ops::Range<usize>)>,
 +        strut: &mut bool,
 +        first_letter: Option<&FirstLetterSplit>,
@@ -9054,7 +9068,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
 +        bidi: bool,
 +        bidi_scan: &mut BidiScan,
 +    ) {
-+        match crate::layout::scroll_markers::siblings_of(&nodes[node_id]) {
++        match crate::layout::scroll_markers::siblings_of(nodes, container, &nodes[node_id]) {
 +            None => build_inline_layout_node(
 +                builder, text_transformer, nodes, node_id, parent_text_transform, text_nodes, strut, first_letter,
 +                annotations, bidi, bidi_scan,
@@ -9072,11 +9086,11 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
 +
 +    #[allow(clippy::too_many_arguments)]
 +    fn build_inline_layout_node(
-+        builder: &mut TreeBuilder<TextBrush>,
-+        text_transformer: &mut TextTransformer,
-+        nodes: &crate::NodeTree,
-+        node_id: NodeId,
-+        parent_text_transform: &CaseTransform,
+         builder: &mut TreeBuilder<TextBrush>,
+         text_transformer: &mut TextTransformer,
+         nodes: &crate::NodeTree,
+         node_id: NodeId,
+         parent_text_transform: &CaseTransform,
 +        text_nodes: &mut Vec<(NodeId, std::ops::Range<usize>)>,
 +        strut: &mut bool,
 +        first_letter: Option<&FirstLetterSplit>,
@@ -9086,7 +9100,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
      ) {
          let node = &nodes[node_id];
  
-@@ -143,6 +950,26 @@
+@@ -143,6 +952,26 @@
                      }
                  }
  
@@ -9113,7 +9127,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
                  let display = node.display_style().unwrap_or(Display::inline());
                  let position = style
                      .map(|s| s.clone_position())
-@@ -161,41 +988,42 @@
+@@ -161,41 +990,42 @@
                          // node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
                      }
                      (DisplayOutside::None, DisplayInside::Contents) => {
@@ -9148,7 +9162,8 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
 +                            crate::util::ensure_stack(|| build_inline_layout_recursive(
                                  builder,
                                  text_transformer,
-                                 nodes,
+-                                nodes,
++                                nodes, node_id,
                                  child_id,
                                  &text_transform,
 -                            );
@@ -9176,7 +9191,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
                              }
                              builder.push_inline_box(InlineBox {
                                  id: node_id.as_u64(),
-@@ -210,66 +1038,165 @@
+@@ -210,66 +1040,165 @@
                                      .primary_styles()
                                      .map(|s| stylo_to_parley::vertical_align(&s))
                                      .unwrap_or_default(),
@@ -9282,7 +9297,8 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
 +                                crate::util::ensure_stack(|| build_inline_layout_recursive(
                                      builder,
                                      text_transformer,
-                                     nodes,
+-                                    nodes,
++                                    nodes, node_id,
                                      before_id,
                                      &text_transform,
 -                                );
@@ -9300,7 +9316,8 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
 +                                crate::util::ensure_stack(|| build_inline_layout_recursive(
                                      builder,
                                      text_transformer,
-                                     nodes,
+-                                    nodes,
++                                    nodes, node_id,
                                      child_id,
                                      &text_transform,
 -                                );
@@ -9317,7 +9334,8 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
 +                                crate::util::ensure_stack(|| build_inline_layout_recursive(
                                      builder,
                                      text_transformer,
-                                     nodes,
+-                                    nodes,
++                                    nodes, node_id,
                                      after_id,
                                      &text_transform,
 -                                );
@@ -9360,7 +9378,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
                          }
                          builder.push_inline_box(InlineBox {
                              id: node_id.as_u64(),
-@@ -284,6 +1211,7 @@
+@@ -284,6 +1213,7 @@
                                  .primary_styles()
                                  .map(|s| stylo_to_parley::vertical_align(&s))
                                  .unwrap_or_default(),
@@ -9368,7 +9386,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
                          });
                      }
                  };
-@@ -291,10 +1219,75 @@
+@@ -291,10 +1221,75 @@
              NodeData::Text(data) => {
                  // node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
                  // dbg!(&data.content);
@@ -9447,7 +9465,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
              }
              NodeData::Comment { .. } => {
                  // node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
-@@ -303,3 +1296,250 @@
+@@ -303,3 +1298,250 @@
          }
      }
  }
@@ -16335,7 +16353,7 @@ diff --git a/packages/blitz-dom/src/layout/scroll_markers.rs b/packages/blitz-do
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/layout/scroll_markers.rs
-@@ -0,0 +1,1290 @@
+@@ -0,0 +1,1395 @@
 +//! pyro: CSS Overflow 5's scroll markers and scroll buttons: the boxes of `::scroll-marker-group`,
 +//! `::scroll-marker` and `::scroll-button()`, and `:target-current`.
 +//!
@@ -16440,10 +16458,36 @@ new file mode 100644
 +    pseudo_boxes(node)
 +}
 +
-+/// pyro: the scroll pseudo-element boxes generated before and after `node`'s own box in its
-+/// parent's box list (`box_siblings`): the inline formatting context builders take them there.
-+pub(crate) fn siblings_of(node: &Node) -> Option<(Option<NodeId>, SmallVec<[NodeId; 5]>)> {
++/// The boxes beside `node` (`box_siblings`) in `container`'s box list: none when `container` is
++/// an anonymous block wrapping a run of its parent's boxes (`NodeFlags::WRAPS_BOX_RUN`). The walk
++/// over the parent placed them already, in that block or beside it: placing them again would put
++/// them twice, and a block-level group beside an inline-level scroller would be wrapped again
++/// without end (the block would hold block-level content beside inline content once more).
++fn box_siblings_in(nodes: &NodeTree, container: NodeId, node: &Node) -> Option<(Option<NodeId>, SmallVec<[NodeId; 5]>)> {
++    if nodes.get(container).is_some_and(|container| container.flags.contains(NodeFlags::WRAPS_BOX_RUN)) {
++        return None;
++    }
 +    box_siblings(node)
++}
++
++/// pyro: the scroll pseudo-element boxes generated before and after `node`'s own box in the box
++/// list of `container` (`box_siblings_in`): the inline formatting context builders take them there.
++pub(crate) fn siblings_of(nodes: &NodeTree, container: NodeId, node: &Node) -> Option<(Option<NodeId>, SmallVec<[NodeId; 5]>)> {
++    box_siblings_in(nodes, container, node)
++}
++
++/// pyro: `child` with the boxes beside it in `container`'s box list, in order (`box_siblings_in`).
++pub(crate) fn with_own_siblings(nodes: &NodeTree, container: NodeId, child: NodeId) -> SmallVec<[NodeId; 7]> {
++    let mut out = SmallVec::new();
++    match nodes.get(child).and_then(|node| box_siblings_in(nodes, container, node)) {
++        Some((before, after)) => {
++            out.extend(before);
++            out.push(child);
++            out.extend(after);
++        }
++        None => out.push(child),
++    }
++    out
 +}
 +
 +/// The root element's group and buttons, its first and last boxes (CSS Overflow 5 § 3.1.3).
@@ -16484,7 +16528,7 @@ new file mode 100644
 +        .into_iter()
 +        .chain(ids.into_iter().flat_map(move |id| {
 +            let mut out: SmallVec<[NodeId; 7]> = SmallVec::new();
-+            match nodes.get(id).and_then(box_siblings) {
++            match nodes.get(id).and_then(|node| box_siblings_in(nodes, container, node)) {
 +                Some((before, after)) => {
 +                    out.extend(before);
 +                    out.push(id);
@@ -16510,7 +16554,7 @@ new file mode 100644
 +        out.push((usize::MAX, *first));
 +    }
 +    for (index, id) in ids.into_iter().enumerate() {
-+        match nodes.get(id).and_then(box_siblings) {
++        match nodes.get(id).and_then(|node| box_siblings_in(nodes, container, node)) {
 +            Some((before, after)) => {
 +                out.extend(before.map(|id| (usize::MAX, id)));
 +                out.push((index, id));
@@ -16550,7 +16594,10 @@ new file mode 100644
 +/// with boxes of its own.
 +pub(crate) fn any_box_siblings(nodes: &NodeTree, container: NodeId) -> bool {
 +    let node = &nodes[container];
-+    own_boxes(node).is_some() || node.children.iter().any(|&child| nodes.get(child).is_some_and(has_box_siblings))
++    own_boxes(node).is_some()
++        || node.children.iter().any(|&child| {
++            nodes.get(child).is_some_and(|child| !child.is_root_element() && box_siblings_in(nodes, container, child).is_some())
++        })
 +}
 +
 +/// pyro: the scroll pseudo-element boxes `node` owns (its group, with the markers in it, and its
@@ -16590,10 +16637,20 @@ new file mode 100644
 +    }
 +}
 +
-+/// Whether the element with this style is a scroll container (CSS Overflow 3 § 3).
++/// Whether the element with this style is a scroll container (CSS Overflow 3 § 3). `overflow`
++/// does not apply to a non-replaced inline box (nor to a box `display: contents` or `none`): a
++/// `<span style="overflow: auto">` has no scroll marker group and no scroll buttons (WPT
++/// inline-with-scroll-marker-group-crash; a block-level group beside an inline is no box it has).
 +fn is_scroll_container(style: &ComputedValues) -> bool {
++    use style::values::specified::box_::{DisplayInside, DisplayOutside};
 +    let scrolls = |overflow: Overflow| !matches!(overflow, Overflow::Visible | Overflow::Clip);
 +    let b = style.get_box();
++    let display = b.display;
++    if matches!(display.inside(), DisplayInside::Contents | DisplayInside::None)
++        || (display.outside() == DisplayOutside::Inline && display.inside() == DisplayInside::Flow)
++    {
++        return false;
++    }
 +    scrolls(b.slow_clone_overflow_x()) || scrolls(b.slow_clone_overflow_y())
 +}
 +
@@ -16902,7 +16959,12 @@ new file mode 100644
 +                let existing = self.nodes[*element].scroll_pseudos().and_then(|pseudos| pseudos.marker);
 +                let marker = match existing {
 +                    Some(marker) if self.nodes.contains_key(marker) => {
-+                        self.nodes[marker].parent = Some(group);
++                        // A marker moving from another group leaves that group's children
++                        // (which may be dropped later in this pass, or keep its box list).
++                        let old_group = self.nodes[marker].parent.replace(group);
++                        if let Some(old_group) = old_group.filter(|&old| old != group) {
++                            self.detach_from_box_lists(marker, Some(old_group));
++                        }
 +                        marker
 +                    }
 +                    _ => self.create_scroll_pseudo_node(PseudoElement::ScrollMarker, *element, group, 0),
@@ -17031,19 +17093,67 @@ new file mode 100644
 +        {
 +            pseudos.marker = None;
 +        }
-+        let children = self.nodes[node_id].children.clone();
++        // Its children: a group's markers that are still its own (a marker that moved to another
++        // group in this pass is that group's now), and generated text.
++        let children = std::mem::take(&mut self.nodes[node_id].children);
 +        for child in children {
-+            if self.nodes.get(child).is_some_and(|child| child.scroll_pseudo().is_some()) {
-+                self.drop_scroll_pseudo_node(child);
-+            } else {
-+                self.drop_node_ignoring_parent(child);
++            match self.nodes.get(child) {
++                None => {}
++                Some(node) if node.scroll_pseudo().is_some() => {
++                    if node.parent == Some(node_id) {
++                        self.drop_scroll_pseudo_node(child);
++                    }
++                }
++                Some(_) => {
++                    self.drop_node_ignoring_parent(child);
++                }
 +            }
 +        }
 +        let anonymous = std::mem::take(&mut self.nodes[node_id].anonymous_blocks);
 +        for anon in anonymous {
 +            self.deallocate_anonymous_block(anon);
 +        }
++        // No list keeps its id: its parent's children (a marker's group), the anonymous block that
++        // wrapped its box, and the box lists that held it.
++        let parent = self.nodes[node_id].parent;
++        self.detach_from_box_lists(node_id, parent);
 +        self.remove_node_from_tree(node_id);
++    }
++
++    /// Removes `node_id` from the children of `parent` (a scroll pseudo node's group) and from every
++    /// box list that holds it (its layout parent's children when that is an anonymous block, and
++    /// the layout and paint children lists), damaging each owner for box construction.
++    fn detach_from_box_lists(&mut self, node_id: NodeId, parent: Option<NodeId>) {
++        let node = &self.nodes[node_id];
++        let mut owners: SmallVec<[NodeId; 3]> = SmallVec::new();
++        owners.extend(parent);
++        owners.extend(node.layout_parent.get());
++        owners.extend(node.layout_child_of.get());
++        for owner in owners {
++            let Some(owner_node) = self.nodes.get_mut(owner) else { continue };
++            let mut changed = false;
++            // A DOM element's children are the DOM's: only pseudo nodes and anonymous blocks list
++            // a pseudo box among theirs.
++            if (owner_node.scroll_pseudo().is_some() || owner_node.is_anonymous()) && owner_node.children.contains(&node_id) {
++                owner_node.children.retain(|&id| id != node_id);
++                changed = true;
++            }
++            if let Some(list) = owner_node.layout_children.get_mut().as_mut()
++                && list.contains(&node_id)
++            {
++                list.retain(|&id| id != node_id);
++                changed = true;
++            }
++            if let Some(list) = owner_node.paint_children.get_mut().as_mut()
++                && list.contains(&node_id)
++            {
++                list.retain(|&id| id != node_id);
++                changed = true;
++            }
++            if changed {
++                self.damage_for_construction(owner);
++            }
++        }
 +    }
 +
 +    /// Sets a button's `:enabled`/`:disabled` state: disabled when its originating element cannot
@@ -17376,7 +17486,17 @@ new file mode 100644
 +    /// `:enabled`/`:disabled` state of each scroll button, which depend on scroll positions.
 +    /// Whether a state changed (styles were computed again, or elements wait for a restyle).
 +    pub(crate) fn update_target_current(&mut self) -> bool {
-+        use style::selector_parser::TARGET_CURRENT;
++        use style_dom::ElementState;
++        use style::selector_parser::{TARGET_AFTER, TARGET_BEFORE, TARGET_CURRENT};
++        const TARGET_STATES: ElementState = TARGET_CURRENT.union(TARGET_BEFORE).union(TARGET_AFTER);
++        // `:target-current` on the active marker, `:target-before` on the ones before it and
++        // `:target-after` on the ones after it (none without an active marker).
++        let target_states = |index: usize, active: Option<usize>| match active {
++            Some(active) if index == active => TARGET_CURRENT,
++            Some(active) if index < active => TARGET_BEFORE,
++            Some(_) => TARGET_AFTER,
++            None => ElementState::empty(),
++        };
 +        if self.scroll_pseudo_owners.is_empty() && self.scroll_target_groups.is_empty() {
 +            return false;
 +        }
@@ -17399,9 +17519,10 @@ new file mode 100644
 +            let active = self.select_active_target(&targets);
 +            for (index, marker) in markers.into_iter().enumerate() {
 +                let Some(data) = self.nodes.get_mut(marker).and_then(|node| node.element_data_mut()) else { continue };
-+                let current = Some(index) == active;
-+                if data.element_state.contains(TARGET_CURRENT) != current {
-+                    data.element_state.set(TARGET_CURRENT, current);
++                let state = target_states(index, active);
++                if data.element_state & TARGET_STATES != state {
++                    data.element_state.remove(TARGET_STATES);
++                    data.element_state.insert(state);
 +                    if let Some(style) = self.pseudo_node_style(marker) {
 +                        self.set_scroll_pseudo_style(marker, style);
 +                    }
@@ -17430,12 +17551,14 @@ new file mode 100644
 +            let targets: Vec<Option<Target>> = links.iter().map(|&link| self.link_target(link).map(|id| (id, None))).collect();
 +            let active = self.select_active_target(&targets);
 +            for (index, link) in links.into_iter().enumerate() {
-+                let current = Some(index) == active && targets[index].is_some();
++                let state = if targets[index].is_some() { target_states(index, active) } else { ElementState::empty() };
 +                let Some(node) = self.nodes.get(link) else { continue };
-+                if node.element_data().is_some_and(|data| data.element_state.contains(TARGET_CURRENT) != current) {
++                if node.element_data().is_some_and(|data| data.element_state & TARGET_STATES != state) {
 +                    self.snapshot_node_state_only(link);
 +                    let node = &mut self.nodes[link];
-+                    node.element_data_mut().unwrap().element_state.set(TARGET_CURRENT, current);
++                    let data = node.element_data_mut().unwrap();
++                    data.element_state.remove(TARGET_STATES);
++                    data.element_state.insert(state);
 +                    node.mark_ancestors_dirty();
 +                    changed = true;
 +                }
@@ -24594,7 +24717,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
  use super::{Attribute, DocumentData, ElementData, LayoutData};
  
  #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-@@ -60,9 +60,279 @@
+@@ -60,9 +60,284 @@
          const IS_IN_DOCUMENT = 0b00000100;
          /// Whether the node is an inline box whose in-flow content is block-level only
          const IS_INLINE_WITH_ONLY_BLOCK_CHILDREN = 0b00001000;
@@ -24701,6 +24824,11 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
 +        const FINAL_LAYOUT_STALE = 1 << 21;
 +        /// pyro: the box's layout algorithm is running (`LayoutPassState::compute_child_layout_internal`).
 +        const IN_LAYOUT = 1 << 27;
++        /// pyro: an anonymous block wrapping a run of its container's inline-level boxes
++        /// (`LayoutChildren::create_anonymous_block`). The container's walk placed the scroll
++        /// pseudo-element boxes beside those boxes already (`scroll_markers`), in this block or
++        /// beside it: its own construction and inline layout do not place them again.
++        const WRAPS_BOX_RUN = 1 << 28;
      }
  }
  
@@ -24874,7 +25002,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
  impl NodeFlags {
      #[inline(always)]
      pub fn is_inline_root(&self) -> bool {
-@@ -84,6 +354,7 @@
+@@ -84,6 +359,7 @@
          self.remove(Self::IS_INLINE_ROOT);
          self.remove(Self::IS_TABLE_ROOT);
          self.remove(Self::IS_INLINE_WITH_ONLY_BLOCK_CHILDREN);
@@ -24882,7 +25010,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      }
  }
  
-@@ -101,6 +372,11 @@
+@@ -101,6 +377,11 @@
      pub layout_parent: Cell<Option<NodeId>>,
      /// A separate child list that includes anonymous collections of inline elements
      pub layout_children: RefCell<Option<ThinVec<NodeId>>>,
@@ -24894,7 +25022,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      /// Out-of-flow (absolutely/fixed positioned) boxes for which this node is the
      /// containing block. Recorded by Taffy's out-of-flow positioning pass. The
      /// `Layout.location` of these boxes is relative to this node's border box.
-@@ -239,19 +515,6 @@
+@@ -239,19 +520,6 @@
          }
      }
  
@@ -24914,7 +25042,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      #[inline]
      pub fn cache(&self) -> &Cache {
          &self.layout_data().cache
-@@ -267,9 +530,23 @@
+@@ -267,9 +535,23 @@
          &self.layout_data().unrounded_layout
      }
  
@@ -24941,7 +25069,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      }
  
      #[inline]
-@@ -292,6 +569,21 @@
+@@ -292,6 +574,21 @@
          &mut self.layout_data_mut().scroll_offset
      }
  
@@ -24963,7 +25091,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      #[inline]
      pub fn scrollable_overflow(&self) -> &KurboRect {
          &self.layout_data().scrollable_overflow
-@@ -302,6 +594,17 @@
+@@ -302,6 +599,17 @@
          &mut self.layout_data_mut().scrollable_overflow
      }
  
@@ -24981,7 +25109,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      /// Style data from stylo, if this node kind carries it (element or document
      /// nodes). Returns `None` for text/comment nodes.
      #[inline]
-@@ -417,6 +720,7 @@
+@@ -417,6 +725,7 @@
              parent: None,
              children: ThinVec::new(),
              layout_parent: Cell::new(None),
@@ -24989,7 +25117,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
              oof_containing_block: Cell::new(None),
              layout_children: RefCell::new(None),
              hoisted_children: RefCell::new(ThinVec::new()),
-@@ -425,30 +729,423 @@
+@@ -425,30 +734,423 @@
              stacking_context: None,
              sc_contribution_cache: RefCell::new(ThinVec::new()),
  
@@ -25429,7 +25557,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
  
          let slot = self.transform_mut();
          match (slot.as_deref_mut(), transform) {
-@@ -456,7 +1153,7 @@
+@@ -456,7 +1158,7 @@
              (None, Some(new)) => *slot = Some(Box::new(new)),
              (_, None) => *slot = None,
          }
@@ -25438,7 +25566,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      }
  
      pub fn pe_by_index(&self, index: usize) -> Option<NodeId> {
-@@ -489,7 +1186,39 @@
+@@ -489,7 +1191,39 @@
          )
      }
  
@@ -25478,7 +25606,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
          let style = self.primary_styles();
          let style = style.as_ref();
  
-@@ -517,11 +1246,21 @@
+@@ -517,11 +1251,21 @@
              DisplayOutside::None => false,
              DisplayOutside::Block => true,
              _ => {
@@ -25504,7 +25632,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                  } else {
                      false
                  }
-@@ -537,6 +1276,26 @@
+@@ -537,6 +1281,26 @@
              .contains(NodeFlags::IS_INLINE_WITH_ONLY_BLOCK_CHILDREN)
      }
  
@@ -25531,7 +25659,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      pub fn is_whitespace_node(&self) -> bool {
          match &self.data {
              NodeData::Text(data) => data.content.chars().all(|c| c.is_ascii_whitespace()),
-@@ -633,6 +1392,56 @@
+@@ -633,6 +1397,56 @@
              .is_some_and(|flag| flag.load(Ordering::Relaxed))
      }
  
@@ -25588,7 +25716,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      /// Clears the damaged_descendants flag on this node.
      pub fn unset_damaged_descendants(&self) {
          if let Some(flag) = self.damaged_descendants_flag() {
-@@ -649,6 +1458,8 @@
+@@ -649,6 +1463,8 @@
      pub fn mark_damaged(&self) {
          if let Some(flag) = self.damaged_descendants_flag() {
              if flag.swap(true, Ordering::Relaxed) {
@@ -25597,7 +25725,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                  return;
              }
          }
-@@ -659,6 +1470,8 @@
+@@ -659,6 +1475,8 @@
              // because all further ancestors must also have it set
              if let Some(flag) = parent.damaged_descendants_flag() {
                  if flag.swap(true, Ordering::Relaxed) {
@@ -25606,7 +25734,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                      break;
                  }
              }
-@@ -666,6 +1479,55 @@
+@@ -666,6 +1484,55 @@
          }
      }
  
@@ -25662,7 +25790,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      // pub fn damage_mut(&mut self) -> Option<&mut RestyleDamage> {
      //     self.stylo_element_data
      //         .get_mut()
-@@ -761,8 +1623,8 @@
+@@ -761,8 +1628,8 @@
  
      pub fn focus(&mut self, shell_provider: Arc<dyn ShellProvider>) {
          if let Some(data) = self.element_data_mut() {
@@ -25673,7 +25801,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
          }
          self.mark_ancestors_dirty();
  
-@@ -864,7 +1726,9 @@
+@@ -864,7 +1731,9 @@
              .and_then(|el| el.text_input_data())
          {
              if !input_data.is_multiline {
@@ -25684,7 +25812,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                  let input_height = input_data.editor.try_layout().unwrap().height() / scale as f32;
                  let y_offset = ((content_box_height - input_height) / 2.0).max(0.0);
  
-@@ -1061,6 +1925,11 @@
+@@ -1061,6 +1930,11 @@
          matches!(self.data, NodeData::Element { .. })
      }
  
@@ -25696,7 +25824,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      pub fn is_anonymous(&self) -> bool {
          matches!(self.data, NodeData::AnonymousBlock { .. })
      }
-@@ -1161,13 +2030,21 @@
+@@ -1161,13 +2035,21 @@
      pub fn layout_style(&self) -> stylo_taffy::TaffyStyloStyle<ComputedStyleRef<'_>> {
          let styles = self
              .try_stylo_element_data()
@@ -25720,7 +25848,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
              }
              if el.name.local == local_name!("button") {
                  flags |= stylo_taffy::StyleFlags::IS_BUTTON;
-@@ -1179,17 +2056,96 @@
+@@ -1179,17 +2061,96 @@
                  flags |= inline_layout.span_cb_flags;
              }
          }
@@ -25819,7 +25947,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      }
  
      /// The node's style for Taffy, expressed in the axes of the writing mode `layout_wm` (the writing
-@@ -1234,6 +2190,19 @@
+@@ -1234,6 +2195,19 @@
              .unwrap_or(stylo_taffy::WritingMode::empty())
      }
  
@@ -25839,7 +25967,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      /// The node's `display` as a [`taffy::Display`]. Returns [`taffy::Display::Block`]
      /// for nodes without computed styles (e.g. text nodes).
      pub fn taffy_display(&self) -> taffy::Display {
-@@ -1290,7 +2259,7 @@
+@@ -1290,7 +2264,7 @@
              }
              NodeData::Element(..) | NodeData::AnonymousBlock(..) => {
                  for child_id in self.children.iter() {
@@ -25848,7 +25976,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                  }
              }
              _ => {}
-@@ -1358,10 +2327,27 @@
+@@ -1358,10 +2332,27 @@
              return true;
          }
  
@@ -25876,7 +26004,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
          if style.get_box().isolation == Isolation::Isolate {
              return true;
          }
-@@ -1369,6 +2355,20 @@
+@@ -1369,6 +2360,20 @@
          if style.get_effects().mix_blend_mode != style::computed_values::mix_blend_mode::T::Normal {
              return true;
          }
@@ -25897,7 +26025,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
          // TODO: contain
  
          false
-@@ -1500,11 +2500,15 @@
+@@ -1500,11 +2505,15 @@
              || y < overflow_rect.top() + client_y
              || y > overflow_rect.bottom() + client_y);
  
@@ -25913,7 +26041,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                  x >= bbox.left && x <= bbox.right && y >= bbox.top && y <= bbox.bottom
              }
              None => false,
-@@ -1533,6 +2537,7 @@
+@@ -1533,6 +2542,7 @@
          {
              *scrollbar = Some(sb);
          }
@@ -25921,7 +26049,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
  
          // Text clusters and callers of the returned coordinates work in the
          // inline root's content box, but embedded boxes store border-box
-@@ -1559,7 +2564,7 @@
+@@ -1559,7 +2569,7 @@
                      let pos = hoisted_child.position(self.tree(), self.id);
                      let x = x - pos.x;
                      let y = y - pos.y;
@@ -25930,7 +26058,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                          return Some(hit);
                      }
                  }
-@@ -1574,12 +2579,18 @@
+@@ -1574,12 +2584,18 @@
              let child_position = child.taffy_position();
              let mut child_x = x;
              let mut child_y = y;
@@ -25951,7 +26079,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                      child_x -= self.scroll_offset().x as f32;
                      child_y -= self.scroll_offset().y as f32;
                      let viewport_scroll = self.tree().viewport_scroll();
-@@ -1590,7 +2601,7 @@
+@@ -1590,7 +2606,7 @@
                  child_x -= offset.x;
                  child_y -= offset.y;
              }
@@ -25960,7 +26088,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                  return Some(hit);
              }
          }
-@@ -1605,7 +2616,7 @@
+@@ -1605,7 +2621,7 @@
                      let pos = hoisted_child.position(self.tree(), self.id);
                      let x = x - pos.x;
                      let y = y - pos.y;
@@ -25969,7 +26097,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                          return Some(hit);
                      }
                  }
-@@ -1716,7 +2727,7 @@
+@@ -1716,7 +2732,7 @@
              return false;
          };
          if self.flags.is_inline_root()
@@ -25978,7 +26106,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
          {
              return false;
          }
-@@ -1741,8 +2752,13 @@
+@@ -1741,8 +2757,13 @@
          let y = y + self.final_layout().location.y - self.scroll_offset().y as f32;
  
          // Recurse up the positioning hierarchy
@@ -25993,7 +26121,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
              .unwrap_or(crate::util::Point { x, y })
      }
  
-@@ -1818,8 +2834,28 @@
+@@ -1818,8 +2839,28 @@
  
          let root_layout = inline_root.unrounded_layout();
          let content_box_inset = root_layout.padding + root_layout.border;
@@ -26024,7 +26152,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
  
          fn union(acc: &mut Option<taffy::Rect<f32>>, left: f32, top: f32, right: f32, bottom: f32) {
              *acc = Some(match *acc {
-@@ -1877,11 +2913,36 @@
+@@ -1877,11 +2918,36 @@
                  }
              }
  
@@ -32035,7 +32163,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
      ) -> bool {
          match *pseudo_class {
              NonTSPseudoClass::Active => self.element_state().contains(ElementState::ACTIVE),
-@@ -501,44 +745,73 @@
+@@ -501,44 +745,79 @@
                  .element_state()
                  .intersects(ElementState::VISITED_OR_UNVISITED),
              NonTSPseudoClass::Checked => self.element_state().contains(ElementState::CHECKED),
@@ -32093,6 +32221,12 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
 +            NonTSPseudoClass::TargetCurrent => {
 +                self.element_state().contains(style::selector_parser::TARGET_CURRENT)
 +            }
++            NonTSPseudoClass::TargetBefore => {
++                self.element_state().contains(style::selector_parser::TARGET_BEFORE)
++            }
++            NonTSPseudoClass::TargetAfter => {
++                self.element_state().contains(style::selector_parser::TARGET_AFTER)
++            }
 +            // pyro: links to the document itself (`ElementData::flush_link_visited`), but not
 +            // inside `:has()`, where Chromium takes every link as unvisited (WPT
 +            // `css/selectors/has-visited.html`, `invalidation/link-pseudo-in-has.html`).
@@ -32133,7 +32267,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
          }
      }
  
-@@ -547,6 +820,18 @@
+@@ -547,6 +826,18 @@
          pe: &PseudoElement,
          _context: &mut MatchingContext<Self::Impl>,
      ) -> bool {
@@ -32152,7 +32286,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
          let pseudo = match self.try_stylo_element_data().and_then(|s| s.get()) {
              Some(el) => el
                  .styles
-@@ -586,7 +871,8 @@
+@@ -586,7 +877,8 @@
      }
  
      fn is_html_slot_element(&self) -> bool {
@@ -32162,7 +32296,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
      }
  
      fn has_id(
-@@ -612,15 +898,21 @@
+@@ -612,15 +904,21 @@
          })
      }
  
@@ -32188,7 +32322,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
      }
  
      fn is_empty(&self) -> bool {
-@@ -641,6 +933,16 @@
+@@ -641,6 +939,16 @@
      }
  
      fn add_element_unique_hashes(&self, filter: &mut selectors::bloom::BloomFilter) -> bool {
@@ -32205,7 +32339,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
          each_relevant_element_hash(*self, |hash| filter.insert_hash(hash & BLOOM_HASH_MASK));
          true
      }
-@@ -651,19 +953,46 @@
+@@ -651,19 +959,46 @@
  
      type TraversalChildrenIterator = Traverser<'a>;
  
@@ -32256,7 +32390,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
      }
  
      fn traversal_children(&self) -> style::dom::LayoutIterator<Self::TraversalChildrenIterator> {
-@@ -701,11 +1030,35 @@
+@@ -701,11 +1036,35 @@
      }
  
      fn has_part_attr(&self) -> bool {
@@ -32294,7 +32428,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
      }
  
      fn id(&self) -> Option<&style::Atom> {
-@@ -806,6 +1159,8 @@
+@@ -806,6 +1165,8 @@
      fn may_have_animations(&self) -> bool {
          self.element_data()
              .is_some_and(|data| data.may_have_animations.load(Ordering::Relaxed))
@@ -32303,7 +32437,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
      }
  
      fn set_may_have_animations(&self) {
-@@ -818,6 +1173,10 @@
+@@ -818,6 +1179,10 @@
          if !self.may_have_animations() {
              return false;
          }
@@ -32314,7 +32448,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
          let key = AnimationSetKey::new_for_non_pseudo(TNode::opaque(&TElement::as_node(self)));
          context
              .animations
-@@ -852,6 +1211,10 @@
+@@ -852,6 +1217,10 @@
          &self,
          context: &SharedStyleContext,
      ) -> Option<Arc<Locked<PropertyDeclarationBlock>>> {
@@ -32325,7 +32459,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
          let opaque = TNode::opaque(&TElement::as_node(self));
          context.animations.get_animation_declarations(
              &AnimationSetKey::new_for_non_pseudo(opaque),
-@@ -864,6 +1227,9 @@
+@@ -864,6 +1233,9 @@
          &self,
          context: &SharedStyleContext,
      ) -> Option<Arc<Locked<PropertyDeclarationBlock>>> {
@@ -32335,7 +32469,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
          let opaque = TNode::opaque(&TElement::as_node(self));
          context.animations.get_transition_declarations(
              &AnimationSetKey::new_for_non_pseudo(opaque),
-@@ -873,31 +1239,55 @@
+@@ -873,31 +1245,55 @@
      }
  
      fn shadow_root(&self) -> Option<<Self::ConcreteNode as TNode>::ConcreteShadowRoot> {
@@ -32399,7 +32533,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
      }
  
      fn is_html_document_body_element(&self) -> bool {
-@@ -917,27 +1307,168 @@
+@@ -917,27 +1313,168 @@
          root_element.children.contains(&self.id)
      }
  
@@ -32578,7 +32712,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
              ));
          };
  
-@@ -1083,6 +1614,37 @@
+@@ -1083,6 +1620,37 @@
                  .find(|declaration| matches!(declaration, PropertyDeclaration::FontFamily(_)))
          }
  
@@ -32616,7 +32750,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
          // `<input type=image>` is the only input type that is replaced
          // content, and it is the only one that takes the embedded-content
          // presentational attributes. The type attribute is matched ASCII
-@@ -1100,6 +1662,23 @@
+@@ -1100,6 +1668,23 @@
              let name = &attr.name.local;
              let value = attr.value.as_str();
  
@@ -32640,7 +32774,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
              if *name == local_name!("lang") {
                  if attr.name.ns == ns!(xml) {
                      lang = Some(value);
-@@ -1358,6 +1937,15 @@
+@@ -1358,6 +1943,15 @@
                  }
              }
  
@@ -32656,7 +32790,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
              if *name == local_name!("bgcolor") {
                  use style::values::specified::Color;
                  if let Some((r, g, b, a)) = parse_color_attr(value) {
-@@ -1373,148 +1961,59 @@
+@@ -1373,148 +1967,59 @@
              }
          }
  
@@ -32844,7 +32978,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
          None
      }
  }
-@@ -1527,6 +2026,37 @@
+@@ -1527,6 +2032,37 @@
      /// dedicated storage on the node (see `flush_image_layers_from_style`)
      /// because their style changed during this traversal.
      nodes_needing_style_image_flush: Mutex<Vec<NodeId>>,
@@ -32882,7 +33016,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  }
  
  impl<'a> RecalcStyle<'a> {
-@@ -1534,11 +2064,187 @@
+@@ -1534,11 +2070,187 @@
          RecalcStyle {
              context,
              nodes_needing_style_image_flush: Mutex::new(Vec::new()),
@@ -33070,7 +33204,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  impl<'dom> DomTraversal<BlitzNode<'dom>> for RecalcStyle<'_> {
      fn process_preorder<F: FnMut(BlitzNode<'dom>)>(
          &self,
-@@ -1546,14 +2252,213 @@
+@@ -1546,14 +2258,213 @@
          node: BlitzNode<'dom>,
          note_child: F,
      ) {
@@ -33284,7 +33418,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
              }
  
              if !data.damage.is_empty() {
-@@ -1597,6 +2502,12 @@
+@@ -1597,6 +2508,12 @@
      }
  }
  
@@ -33297,7 +33431,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  /// Flush updated pseudo-element (`::before`/`::after`) styles from the owning
  /// element's freshly-computed stylo data to the pseudo-element's anonymous node.
  ///
-@@ -1669,12 +2580,41 @@
+@@ -1669,12 +2586,41 @@
                      .push(pe_node_id);
              }
          }
@@ -33339,7 +33473,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  /// Whether a node's `background-image`/`mask-image` layers need flushing to
  /// dedicated storage on the node: the URLs referenced by the new style differ
  /// from the image data currently stored on the node.
-@@ -1689,11 +2629,12 @@
+@@ -1689,11 +2635,12 @@
              // (a style list of `none` layers and empty storage are in sync).
              return style_images
                  .iter()
@@ -33354,7 +33488,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
                  (Image::Url(ComputedUrl::Valid(url)), Some(data)) => **url != *data.url,
                  (Image::Url(ComputedUrl::Valid(_)), None) => true,
                  (_, Some(_)) => true,
-@@ -1707,6 +2648,26 @@
+@@ -1707,6 +2654,26 @@
              &style.get_background().background_image.0,
              &el.background_images,
          ) || out_of_sync(&style.get_svg().mask_image.0, &el.mask_images)
@@ -33381,7 +33515,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
      })
  }
  
-@@ -1737,3 +2698,734 @@
+@@ -1737,3 +2704,734 @@
  
      // let val = CSSInlineStyleDeclaration();
  }

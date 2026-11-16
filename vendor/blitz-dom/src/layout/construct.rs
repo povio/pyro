@@ -180,6 +180,7 @@ impl LayoutChildren {
         doc.nodes[node_id]
             .layout_parent
             .set(Some(container_node_id));
+        doc.nodes[node_id].flags.insert(NodeFlags::WRAPS_BOX_RUN);
 
         self.children.push(node_id);
         self.anonymous_block_id = Some(node_id);
@@ -1307,7 +1308,7 @@ fn collect_complex_layout_children_in(
             }
         }
         if siblings && scroll_markers::has_box_siblings(&doc.nodes[child_id]) {
-            let boxes: Vec<NodeId> = scroll_markers::with_box_siblings(&doc.nodes, child_id, [child_id]).collect();
+            let boxes = scroll_markers::with_own_siblings(&doc.nodes, container_node_id, child_id);
             for id in boxes {
                 let (start, end) = if id == child_id { (at_middle_start, at_middle_end) } else { (false, false) };
                 place_complex_child(doc, out, container_node_id, id, hide_whitespace, needs_wrap, start, end);
@@ -1689,7 +1690,7 @@ pub(crate) fn find_inline_layout_embedded_boxes(
     fn flush_inline_pseudos_recursive(doc: &mut BaseDocument, node_id: NodeId) {
         doc.iter_children_mut(node_id, |child_id, doc| {
             // pyro: and the scroll pseudo-element boxes beside it (`scroll_markers`).
-            if let Some((before, after)) = scroll_markers::siblings_of(&doc.nodes[child_id]) {
+            if let Some((before, after)) = scroll_markers::siblings_of(&doc.nodes, node_id, &doc.nodes[child_id]) {
                 for id in before.into_iter().chain(after) {
                     flush_pseudo_elements(doc, id);
                     let display = doc.nodes[id].display_style().unwrap_or(Display::inline());
@@ -1722,7 +1723,7 @@ pub(crate) fn find_inline_layout_embedded_boxes(
         node_id: NodeId,
         layout_children: &mut ThinVec<NodeId>,
     ) {
-        match scroll_markers::siblings_of(&nodes[node_id]) {
+        match scroll_markers::siblings_of(nodes, parent_id, &nodes[node_id]) {
             None => find_inline_layout_embedded_boxes_of(nodes, parent_id, node_id, layout_children),
             Some((before, after)) => {
                 for id in before.into_iter().chain(std::iter::once(node_id)).chain(after) {

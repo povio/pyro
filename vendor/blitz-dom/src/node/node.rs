@@ -163,6 +163,11 @@ bitflags! {
         const FINAL_LAYOUT_STALE = 1 << 21;
         /// pyro: the box's layout algorithm is running (`LayoutPassState::compute_child_layout_internal`).
         const IN_LAYOUT = 1 << 27;
+        /// pyro: an anonymous block wrapping a run of its container's inline-level boxes
+        /// (`LayoutChildren::create_anonymous_block`). The container's walk placed the scroll
+        /// pseudo-element boxes beside those boxes already (`scroll_markers`), in this block or
+        /// beside it: its own construction and inline layout do not place them again.
+        const WRAPS_BOX_RUN = 1 << 28;
     }
 }
 

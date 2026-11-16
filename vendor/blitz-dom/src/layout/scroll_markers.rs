@@ -102,10 +102,36 @@ fn box_siblings(node: &Node) -> Option<(Option<NodeId>, SmallVec<[NodeId; 5]>)> 
     pseudo_boxes(node)
 }
 
-/// pyro: the scroll pseudo-element boxes generated before and after `node`'s own box in its
-/// parent's box list (`box_siblings`): the inline formatting context builders take them there.
-pub(crate) fn siblings_of(node: &Node) -> Option<(Option<NodeId>, SmallVec<[NodeId; 5]>)> {
+/// The boxes beside `node` (`box_siblings`) in `container`'s box list: none when `container` is
+/// an anonymous block wrapping a run of its parent's boxes (`NodeFlags::WRAPS_BOX_RUN`). The walk
+/// over the parent placed them already, in that block or beside it: placing them again would put
+/// them twice, and a block-level group beside an inline-level scroller would be wrapped again
+/// without end (the block would hold block-level content beside inline content once more).
+fn box_siblings_in(nodes: &NodeTree, container: NodeId, node: &Node) -> Option<(Option<NodeId>, SmallVec<[NodeId; 5]>)> {
+    if nodes.get(container).is_some_and(|container| container.flags.contains(NodeFlags::WRAPS_BOX_RUN)) {
+        return None;
+    }
     box_siblings(node)
+}
+
+/// pyro: the scroll pseudo-element boxes generated before and after `node`'s own box in the box
+/// list of `container` (`box_siblings_in`): the inline formatting context builders take them there.
+pub(crate) fn siblings_of(nodes: &NodeTree, container: NodeId, node: &Node) -> Option<(Option<NodeId>, SmallVec<[NodeId; 5]>)> {
+    box_siblings_in(nodes, container, node)
+}
+
+/// pyro: `child` with the boxes beside it in `container`'s box list, in order (`box_siblings_in`).
+pub(crate) fn with_own_siblings(nodes: &NodeTree, container: NodeId, child: NodeId) -> SmallVec<[NodeId; 7]> {
+    let mut out = SmallVec::new();
+    match nodes.get(child).and_then(|node| box_siblings_in(nodes, container, node)) {
+        Some((before, after)) => {
+            out.extend(before);
+            out.push(child);
+            out.extend(after);
+        }
+        None => out.push(child),
+    }
+    out
 }
 
 /// The root element's group and buttons, its first and last boxes (CSS Overflow 5 § 3.1.3).
@@ -146,7 +172,7 @@ pub(crate) fn with_box_siblings<'a>(
         .into_iter()
         .chain(ids.into_iter().flat_map(move |id| {
             let mut out: SmallVec<[NodeId; 7]> = SmallVec::new();
-            match nodes.get(id).and_then(box_siblings) {
+            match nodes.get(id).and_then(|node| box_siblings_in(nodes, container, node)) {
                 Some((before, after)) => {
                     out.extend(before);
                     out.push(id);
@@ -172,7 +198,7 @@ pub(crate) fn indexed_with_box_siblings(
         out.push((usize::MAX, *first));
     }
     for (index, id) in ids.into_iter().enumerate() {
-        match nodes.get(id).and_then(box_siblings) {
+        match nodes.get(id).and_then(|node| box_siblings_in(nodes, container, node)) {
             Some((before, after)) => {
                 out.extend(before.map(|id| (usize::MAX, id)));
                 out.push((index, id));
@@ -212,7 +238,10 @@ pub(crate) fn has_box_siblings(node: &Node) -> bool {
 /// with boxes of its own.
 pub(crate) fn any_box_siblings(nodes: &NodeTree, container: NodeId) -> bool {
     let node = &nodes[container];
-    own_boxes(node).is_some() || node.children.iter().any(|&child| nodes.get(child).is_some_and(has_box_siblings))
+    own_boxes(node).is_some()
+        || node.children.iter().any(|&child| {
+            nodes.get(child).is_some_and(|child| !child.is_root_element() && box_siblings_in(nodes, container, child).is_some())
+        })
 }
 
 /// pyro: the scroll pseudo-element boxes `node` owns (its group, with the markers in it, and its
@@ -252,10 +281,20 @@ pub(crate) fn scroll_button_matches(pe: &PseudoElement, direction: u8, wm: style
     }
 }
 
-/// Whether the element with this style is a scroll container (CSS Overflow 3 § 3).
+/// Whether the element with this style is a scroll container (CSS Overflow 3 § 3). `overflow`
+/// does not apply to a non-replaced inline box (nor to a box `display: contents` or `none`): a
+/// `<span style="overflow: auto">` has no scroll marker group and no scroll buttons (WPT
+/// inline-with-scroll-marker-group-crash; a block-level group beside an inline is no box it has).
 fn is_scroll_container(style: &ComputedValues) -> bool {
+    use style::values::specified::box_::{DisplayInside, DisplayOutside};
     let scrolls = |overflow: Overflow| !matches!(overflow, Overflow::Visible | Overflow::Clip);
     let b = style.get_box();
+    let display = b.display;
+    if matches!(display.inside(), DisplayInside::Contents | DisplayInside::None)
+        || (display.outside() == DisplayOutside::Inline && display.inside() == DisplayInside::Flow)
+    {
+        return false;
+    }
     scrolls(b.slow_clone_overflow_x()) || scrolls(b.slow_clone_overflow_y())
 }
 
@@ -564,7 +603,12 @@ impl BaseDocument {
                 let existing = self.nodes[*element].scroll_pseudos().and_then(|pseudos| pseudos.marker);
                 let marker = match existing {
                     Some(marker) if self.nodes.contains_key(marker) => {
-                        self.nodes[marker].parent = Some(group);
+                        // A marker moving from another group leaves that group's children
+                        // (which may be dropped later in this pass, or keep its box list).
+                        let old_group = self.nodes[marker].parent.replace(group);
+                        if let Some(old_group) = old_group.filter(|&old| old != group) {
+                            self.detach_from_box_lists(marker, Some(old_group));
+                        }
                         marker
                     }
                     _ => self.create_scroll_pseudo_node(PseudoElement::ScrollMarker, *element, group, 0),
@@ -693,19 +737,67 @@ impl BaseDocument {
         {
             pseudos.marker = None;
         }
-        let children = self.nodes[node_id].children.clone();
+        // Its children: a group's markers that are still its own (a marker that moved to another
+        // group in this pass is that group's now), and generated text.
+        let children = std::mem::take(&mut self.nodes[node_id].children);
         for child in children {
-            if self.nodes.get(child).is_some_and(|child| child.scroll_pseudo().is_some()) {
-                self.drop_scroll_pseudo_node(child);
-            } else {
-                self.drop_node_ignoring_parent(child);
+            match self.nodes.get(child) {
+                None => {}
+                Some(node) if node.scroll_pseudo().is_some() => {
+                    if node.parent == Some(node_id) {
+                        self.drop_scroll_pseudo_node(child);
+                    }
+                }
+                Some(_) => {
+                    self.drop_node_ignoring_parent(child);
+                }
             }
         }
         let anonymous = std::mem::take(&mut self.nodes[node_id].anonymous_blocks);
         for anon in anonymous {
             self.deallocate_anonymous_block(anon);
         }
+        // No list keeps its id: its parent's children (a marker's group), the anonymous block that
+        // wrapped its box, and the box lists that held it.
+        let parent = self.nodes[node_id].parent;
+        self.detach_from_box_lists(node_id, parent);
         self.remove_node_from_tree(node_id);
+    }
+
+    /// Removes `node_id` from the children of `parent` (a scroll pseudo node's group) and from every
+    /// box list that holds it (its layout parent's children when that is an anonymous block, and
+    /// the layout and paint children lists), damaging each owner for box construction.
+    fn detach_from_box_lists(&mut self, node_id: NodeId, parent: Option<NodeId>) {
+        let node = &self.nodes[node_id];
+        let mut owners: SmallVec<[NodeId; 3]> = SmallVec::new();
+        owners.extend(parent);
+        owners.extend(node.layout_parent.get());
+        owners.extend(node.layout_child_of.get());
+        for owner in owners {
+            let Some(owner_node) = self.nodes.get_mut(owner) else { continue };
+            let mut changed = false;
+            // A DOM element's children are the DOM's: only pseudo nodes and anonymous blocks list
+            // a pseudo box among theirs.
+            if (owner_node.scroll_pseudo().is_some() || owner_node.is_anonymous()) && owner_node.children.contains(&node_id) {
+                owner_node.children.retain(|&id| id != node_id);
+                changed = true;
+            }
+            if let Some(list) = owner_node.layout_children.get_mut().as_mut()
+                && list.contains(&node_id)
+            {
+                list.retain(|&id| id != node_id);
+                changed = true;
+            }
+            if let Some(list) = owner_node.paint_children.get_mut().as_mut()
+                && list.contains(&node_id)
+            {
+                list.retain(|&id| id != node_id);
+                changed = true;
+            }
+            if changed {
+                self.damage_for_construction(owner);
+            }
+        }
     }
 
     /// Sets a button's `:enabled`/`:disabled` state: disabled when its originating element cannot
@@ -1038,7 +1130,17 @@ impl BaseDocument {
     /// `:enabled`/`:disabled` state of each scroll button, which depend on scroll positions.
     /// Whether a state changed (styles were computed again, or elements wait for a restyle).
     pub(crate) fn update_target_current(&mut self) -> bool {
-        use style::selector_parser::TARGET_CURRENT;
+        use style_dom::ElementState;
+        use style::selector_parser::{TARGET_AFTER, TARGET_BEFORE, TARGET_CURRENT};
+        const TARGET_STATES: ElementState = TARGET_CURRENT.union(TARGET_BEFORE).union(TARGET_AFTER);
+        // `:target-current` on the active marker, `:target-before` on the ones before it and
+        // `:target-after` on the ones after it (none without an active marker).
+        let target_states = |index: usize, active: Option<usize>| match active {
+            Some(active) if index == active => TARGET_CURRENT,
+            Some(active) if index < active => TARGET_BEFORE,
+            Some(_) => TARGET_AFTER,
+            None => ElementState::empty(),
+        };
         if self.scroll_pseudo_owners.is_empty() && self.scroll_target_groups.is_empty() {
             return false;
         }
@@ -1061,9 +1163,10 @@ impl BaseDocument {
             let active = self.select_active_target(&targets);
             for (index, marker) in markers.into_iter().enumerate() {
                 let Some(data) = self.nodes.get_mut(marker).and_then(|node| node.element_data_mut()) else { continue };
-                let current = Some(index) == active;
-                if data.element_state.contains(TARGET_CURRENT) != current {
-                    data.element_state.set(TARGET_CURRENT, current);
+                let state = target_states(index, active);
+                if data.element_state & TARGET_STATES != state {
+                    data.element_state.remove(TARGET_STATES);
+                    data.element_state.insert(state);
                     if let Some(style) = self.pseudo_node_style(marker) {
                         self.set_scroll_pseudo_style(marker, style);
                     }
@@ -1092,12 +1195,14 @@ impl BaseDocument {
             let targets: Vec<Option<Target>> = links.iter().map(|&link| self.link_target(link).map(|id| (id, None))).collect();
             let active = self.select_active_target(&targets);
             for (index, link) in links.into_iter().enumerate() {
-                let current = Some(index) == active && targets[index].is_some();
+                let state = if targets[index].is_some() { target_states(index, active) } else { ElementState::empty() };
                 let Some(node) = self.nodes.get(link) else { continue };
-                if node.element_data().is_some_and(|data| data.element_state.contains(TARGET_CURRENT) != current) {
+                if node.element_data().is_some_and(|data| data.element_state & TARGET_STATES != state) {
                     self.snapshot_node_state_only(link);
                     let node = &mut self.nodes[link];
-                    node.element_data_mut().unwrap().element_state.set(TARGET_CURRENT, current);
+                    let data = node.element_data_mut().unwrap();
+                    data.element_state.remove(TARGET_STATES);
+                    data.element_state.insert(state);
                     node.mark_ancestors_dirty();
                     changed = true;
                 }

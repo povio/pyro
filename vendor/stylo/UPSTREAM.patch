@@ -1,6 +1,6 @@
 diff -ruN a/color/mix.rs b/color/mix.rs
 --- a/color/mix.rs	2026-11-11 19:55:57
-+++ b/color/mix.rs	2026-11-16 08:08:26
++++ b/color/mix.rs	2026-11-16 15:05:29
 @@ -20,10 +20,12 @@
      Clone,
      Copy,
@@ -201,7 +201,7 @@ diff -ruN a/properties/counted_unknown_properties.py b/properties/counted_unknow
      "-webkit-app-region",
 diff -ruN a/properties/data.py b/properties/data.py
 --- a/properties/data.py	2026-11-11 19:55:57
-+++ b/properties/data.py	2026-11-16 16:33:29
++++ b/properties/data.py	2026-11-16 18:58:01
 @@ -342,9 +342,19 @@
          allow_quirks=False,
          ignored_when_colors_disabled=False,
@@ -263,7 +263,7 @@ diff -ruN a/properties/helpers.mako.rs b/properties/helpers.mako.rs
                              if !context.builder.effective_zoom_for_inheritance.is_one() {
 diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 --- a/properties/longhands.toml	2026-11-11 19:55:57
-+++ b/properties/longhands.toml	2026-11-16 16:33:29
++++ b/properties/longhands.toml	2026-11-16 18:58:01
 @@ -473,7 +473,6 @@
  type = "BreakBetween"
  initial = "computed::BreakBetween::Auto"
@@ -780,7 +780,7 @@ diff -ruN a/servo/restyle_damage.rs b/servo/restyle_damage.rs
  fn compute_damage(old: &ComputedValues, new: &ComputedValues) -> ServoRestyleDamage {
 diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
 --- a/servo/selector_parser.rs	2026-11-11 19:55:57
-+++ b/servo/selector_parser.rs	2026-11-16 17:04:01
++++ b/servo/selector_parser.rs	2026-11-16 18:59:05
 @@ -50,6 +50,21 @@
      Backdrop,
      DetailsContent,
@@ -822,10 +822,11 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
              ColorSwatch => "::color-swatch",
              FileSelectorButton => "::file-selector-button",
              Placeholder => "::placeholder",
-@@ -116,6 +143,42 @@
+@@ -115,6 +142,42 @@
+ impl ::selectors::parser::PseudoElement for PseudoElement {
      fn parses_as_element_backed(&self) -> bool {
          matches!(self, Self::DetailsContent)
-     }
++    }
 +
 +    // pyro: `::before::marker` and `::after::marker` (CSS Pseudo-Elements 4 § 4.1): the marker
 +    // of a `::before` or `::after` box that is a list item.
@@ -861,10 +862,9 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
 +                | Self::FileSelectorButton
 +                | Self::DetailsContent
 +        )
-+    }
+     }
  }
  
- /// The number of eager pseudo-elements. Keep this in sync with cascade_type.
 @@ -137,7 +200,8 @@
  
      /// An array of `None`, one per pseudo-element.
@@ -875,12 +875,10 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
      }
  
      /// Creates a pseudo-element from an eager index.
-@@ -166,6 +230,41 @@
-     #[inline]
-     pub fn is_marker(&self) -> bool {
+@@ -168,6 +232,41 @@
          *self == PseudoElement::Marker
-+    }
-+
+     }
+ 
 +    /// pyro: whether this pseudo-element is `::scroll-marker`.
 +    #[inline]
 +    pub fn is_scroll_marker(&self) -> bool {
@@ -914,9 +912,11 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
 +        } else {
 +            *self
 +        }
-     }
- 
++    }
++
      /// Whether this pseudo-element is the ::selection pseudo.
+     #[inline]
+     pub fn is_selection(&self) -> bool {
 @@ -261,7 +360,19 @@
              | PseudoElement::SliderTrack
              | PseudoElement::MozProgressBar
@@ -963,18 +963,22 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
              || matches!(
                  self,
                  Self::Placeholder
-@@ -357,6 +474,10 @@
+@@ -357,6 +474,14 @@
      }
  }
  
 +/// pyro: the element state `:target-current` matches. Servo has no state of its own for it; this
 +/// Gecko devtools bit is never set by Servo.
 +pub const TARGET_CURRENT: ElementState = ElementState::STYLEEDITOR_TRANSITIONING;
++/// pyro: the element state `:target-before` matches (a Gecko-only bit Servo never sets otherwise).
++pub const TARGET_BEFORE: ElementState = ElementState::DEVTOOLS_HIGHLIGHTED;
++/// pyro: the element state `:target-after` matches (a Gecko-only bit Servo never sets otherwise).
++pub const TARGET_AFTER: ElementState = ElementState::REVEALED;
 +
  /// The type used for storing `:lang` arguments.
  pub type Lang = Box<str>;
  
-@@ -376,6 +497,9 @@
+@@ -376,6 +501,9 @@
      /// The :state` pseudo-class.
      CustomState(CustomState),
      Default,
@@ -984,16 +988,20 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
      Defined,
      Disabled,
      Enabled,
-@@ -405,6 +529,8 @@
+@@ -405,6 +533,12 @@
      Required,
      ServoNonZeroBorder,
      Target,
 +    /// pyro: `:target-current` (CSS Overflow 5): the active scroll marker of its group.
 +    TargetCurrent,
++    /// pyro: `:target-before` and `:target-after` (CSS Overflow 5): the scroll markers of a group
++    /// before and after its active one, in tree order.
++    TargetBefore,
++    TargetAfter,
      UserInvalid,
      UserValid,
      Valid,
-@@ -417,11 +543,20 @@
+@@ -417,11 +551,22 @@
          matches!(*self, NonTSPseudoClass::Active | NonTSPseudoClass::Hover)
      }
  
@@ -1010,12 +1018,14 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
 +                | NonTSPseudoClass::Focus
 +                | NonTSPseudoClass::FocusVisible
 +                | NonTSPseudoClass::TargetCurrent
++                | NonTSPseudoClass::TargetBefore
++                | NonTSPseudoClass::TargetAfter
 +                | NonTSPseudoClass::Enabled
 +                | NonTSPseudoClass::Disabled
          )
      }
  
-@@ -441,6 +576,11 @@
+@@ -441,6 +586,11 @@
              serialize_identifier(lang, dest)?;
              return dest.write_char(')');
          }
@@ -1027,11 +1037,13 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
  
          dest.write_str(match *self {
              Self::Active => ":active",
-@@ -481,11 +621,12 @@
+@@ -481,11 +631,14 @@
              Self::Required => ":required",
              Self::ServoNonZeroBorder => ":-servo-nonzero-border",
              Self::Target => ":target",
 +            Self::TargetCurrent => ":target-current",
++            Self::TargetBefore => ":target-before",
++            Self::TargetAfter => ":target-after",
              Self::UserInvalid => ":user-invalid",
              Self::UserValid => ":user-valid",
              Self::Valid => ":valid",
@@ -1041,11 +1053,13 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
          })
      }
  }
-@@ -527,11 +668,12 @@
+@@ -527,11 +680,14 @@
              Self::ReadWrite => ElementState::READWRITE,
              Self::Required => ElementState::REQUIRED,
              Self::Target => ElementState::URLTARGET,
 +            Self::TargetCurrent => TARGET_CURRENT,
++            Self::TargetBefore => TARGET_BEFORE,
++            Self::TargetAfter => TARGET_AFTER,
              Self::UserInvalid => ElementState::USER_INVALID,
              Self::UserValid => ElementState::USER_VALID,
              Self::Valid => ElementState::VALID,
@@ -1055,15 +1069,17 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
                  ElementState::empty()
              },
          }
-@@ -646,6 +788,7 @@
+@@ -646,6 +802,9 @@
              "read-write" => NonTSPseudoClass::ReadWrite,
              "required" => NonTSPseudoClass::Required,
              "target" => NonTSPseudoClass::Target,
 +            "target-current" => NonTSPseudoClass::TargetCurrent,
++            "target-before" => NonTSPseudoClass::TargetBefore,
++            "target-after" => NonTSPseudoClass::TargetAfter,
              "user-invalid" => NonTSPseudoClass::UserInvalid,
              "user-valid" => NonTSPseudoClass::UserValid,
              "valid" => NonTSPseudoClass::Valid,
-@@ -697,6 +840,9 @@
+@@ -697,6 +856,9 @@
                  let result = AtomIdent::from(parser.expect_ident()?.as_ref());
                  NonTSPseudoClass::CustomState(CustomState(result))
              },
@@ -1073,7 +1089,7 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
              _ => return Err(ParseError::custom(SelectorParseErrorKind::UnexpectedIdent)),
          };
  
-@@ -714,6 +860,9 @@
+@@ -714,6 +876,9 @@
              "first-letter" => FirstLetter,
              "first-line" if crate::pref!("layout.css.first-line.enabled") => FirstLine,
              "marker" => Marker,
@@ -1083,7 +1099,7 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
              "details-content" => DetailsContent,
              "color-swatch" => ColorSwatch,
              "placeholder" => Placeholder,
-@@ -774,6 +923,33 @@
+@@ -774,6 +939,33 @@
          };
  
          Ok(pseudo_element)
@@ -1119,7 +1135,7 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
      fn default_namespace(&self) -> Option<Namespace> {
 diff -ruN a/style_adjuster.rs b/style_adjuster.rs
 --- a/style_adjuster.rs	2026-11-11 19:55:57
-+++ b/style_adjuster.rs	2026-11-16 16:00:21
++++ b/style_adjuster.rs	2026-11-16 18:58:01
 @@ -184,6 +184,36 @@
          self.style
              .mutate_box()
@@ -1323,7 +1339,7 @@ diff -ruN a/style_resolver.rs b/style_resolver.rs
          stylist.push_applicable_declarations(
 diff -ruN a/stylesheets/font_palette_values_rule.rs b/stylesheets/font_palette_values_rule.rs
 --- a/stylesheets/font_palette_values_rule.rs	2026-11-11 19:55:57
-+++ b/stylesheets/font_palette_values_rule.rs	2026-11-16 08:07:01
++++ b/stylesheets/font_palette_values_rule.rs	2026-11-16 15:05:29
 @@ -35,8 +35,10 @@
  #[allow(missing_docs)]
  #[derive(Clone, Debug, MallocSizeOf, PartialEq, ToShmem)]
@@ -1387,7 +1403,7 @@ diff -ruN a/stylesheets/font_palette_values_rule.rs b/stylesheets/font_palette_v
              return Ok(FontPaletteBase::Index(v));
 diff -ruN a/stylesheets/rule_parser.rs b/stylesheets/rule_parser.rs
 --- a/stylesheets/rule_parser.rs	2026-11-11 19:55:57
-+++ b/stylesheets/rule_parser.rs	2026-11-16 15:38:55
++++ b/stylesheets/rule_parser.rs	2026-11-16 16:33:29
 @@ -279,10 +279,11 @@
              "font-face" => Self::FontFace,
              "font-feature-values" => Self::FontFeatureValues,
@@ -1404,7 +1420,7 @@ diff -ruN a/stylesheets/rule_parser.rs b/stylesheets/rule_parser.rs
              "-webkit-keyframes" => Self::Keyframes(Some(VendorPrefix::WebKit)),
 diff -ruN a/stylist.rs b/stylist.rs
 --- a/stylist.rs	2026-11-11 19:55:57
-+++ b/stylist.rs	2026-11-16 12:33:03
++++ b/stylist.rs	2026-11-16 18:58:01
 @@ -31,8 +31,8 @@
  use crate::parser::ParserContext;
  use crate::properties::StyleBuilder;
@@ -1773,7 +1789,7 @@ diff -ruN a/values/animated/effects.rs b/values/animated/effects.rs
 -pub type AnimatedFilter = GenericFilter<Angle, Number, Length, AnimatedSimpleShadow, Impossible>;
 diff -ruN a/values/computed/basic_shape.rs b/values/computed/basic_shape.rs
 --- a/values/computed/basic_shape.rs	2026-11-11 19:55:57
-+++ b/values/computed/basic_shape.rs	2026-11-16 13:24:33
++++ b/values/computed/basic_shape.rs	2026-11-16 16:33:29
 @@ -24,6 +24,9 @@
  /// A computed `shape-outside` value.
  pub type ShapeOutside = generic::GenericShapeOutside<BasicShape, Image>;
@@ -1786,7 +1802,7 @@ diff -ruN a/values/computed/basic_shape.rs b/values/computed/basic_shape.rs
      generic::GenericBasicShape<Angle, LengthPercentage, Position, LengthPercentage, InsetRect>;
 diff -ruN a/values/computed/box.rs b/values/computed/box.rs
 --- a/values/computed/box.rs	2026-11-11 19:55:57
-+++ b/values/computed/box.rs	2026-11-16 12:25:08
++++ b/values/computed/box.rs	2026-11-16 18:58:01
 @@ -22,8 +22,8 @@
      BoxDirection, BoxOrient, BoxPack, BreakBetween, BreakWithin, Clear, Contain, ContainerName,
      ContainerType, ContentVisibility, DirectionProperty, Display, DominantBaseline, Float,
@@ -1868,7 +1884,7 @@ diff -ruN a/values/computed/image.rs b/values/computed/image.rs
      }
 diff -ruN a/values/computed/mod.rs b/values/computed/mod.rs
 --- a/values/computed/mod.rs	2026-11-11 19:55:57
-+++ b/values/computed/mod.rs	2026-11-16 16:33:29
++++ b/values/computed/mod.rs	2026-11-16 18:58:01
 @@ -69,7 +69,7 @@
      ContainIntrinsicSize, ContainerName, ContainerType, ContentVisibility, DirectionProperty,
      Display, DominantBaseline, Float, ImageOrientation, Isolation, LineClamp, MarginTrim, Orient,
@@ -1889,7 +1905,7 @@ diff -ruN a/values/computed/mod.rs b/values/computed/mod.rs
      TextDecorationInset, TextDecorationLength, TextDecorationSkipInk, TextJustify,
 diff -ruN a/values/computed/text.rs b/values/computed/text.rs
 --- a/values/computed/text.rs	2026-11-11 19:55:57
-+++ b/values/computed/text.rs	2026-11-16 16:15:58
++++ b/values/computed/text.rs	2026-11-16 16:33:29
 @@ -26,7 +26,7 @@
  
  pub use crate::values::specified::text::{
@@ -1901,7 +1917,7 @@ diff -ruN a/values/computed/text.rs b/values/computed/text.rs
      TextUnderlinePosition, TextWrapMode, TextWrapStyle, UnicodeBidi, WhiteSpaceCollapse, WordBreak,
 diff -ruN a/values/generics/basic_shape.rs b/values/generics/basic_shape.rs
 --- a/values/generics/basic_shape.rs	2026-11-11 19:55:57
-+++ b/values/generics/basic_shape.rs	2026-11-16 13:24:33
++++ b/values/generics/basic_shape.rs	2026-11-16 16:33:29
 @@ -134,6 +134,97 @@
  
  pub use self::GenericClipPath as ClipPath;
@@ -2104,7 +2120,7 @@ diff -ruN a/values/generics/mod.rs b/values/generics/mod.rs
  pub struct GreaterThanOrEqualToOne<T>(pub T);
 diff -ruN a/values/generics/text.rs b/values/generics/text.rs
 --- a/values/generics/text.rs	2026-11-11 19:55:57
-+++ b/values/generics/text.rs	2026-11-16 08:17:18
++++ b/values/generics/text.rs	2026-11-16 11:59:59
 @@ -103,6 +103,34 @@
      pub size: Number,
      /// The sink, >=1, if specified, 0 otherwise.
@@ -2162,7 +2178,7 @@ diff -ruN a/values/generics/text.rs b/values/generics/text.rs
              self.sink.to_css(dest)?;
 diff -ruN a/values/specified/align.rs b/values/specified/align.rs
 --- a/values/specified/align.rs	2026-11-11 19:55:57
-+++ b/values/specified/align.rs	2026-11-16 17:37:53
++++ b/values/specified/align.rs	2026-11-16 18:58:01
 @@ -67,6 +67,10 @@
          const SPACE_EVENLY = 16;
          /// `anchor-center`
@@ -2305,7 +2321,7 @@ diff -ruN a/values/specified/background.rs b/values/specified/background.rs
  }
 diff -ruN a/values/specified/basic_shape.rs b/values/specified/basic_shape.rs
 --- a/values/specified/basic_shape.rs	2026-11-11 19:55:57
-+++ b/values/specified/basic_shape.rs	2026-11-16 13:24:33
++++ b/values/specified/basic_shape.rs	2026-11-16 16:33:29
 @@ -37,8 +37,54 @@
  /// A specified `clip-path` value.
  pub type ClipPath = generic::GenericClipPath<BasicShape, SpecifiedUrl>;
@@ -2363,7 +2379,7 @@ diff -ruN a/values/specified/basic_shape.rs b/values/specified/basic_shape.rs
  pub type BasicShape =
 diff -ruN a/values/specified/box.rs b/values/specified/box.rs
 --- a/values/specified/box.rs	2026-11-11 19:55:57
-+++ b/values/specified/box.rs	2026-11-16 12:25:07
++++ b/values/specified/box.rs	2026-11-16 18:58:01
 @@ -15,7 +15,7 @@
      GenericLineClamp, GenericOverflowClipMargin, GenericPerspective, GenericScrollbarInset,
      MaxLines, OverflowClipMarginBox,
@@ -2697,7 +2713,7 @@ diff -ruN a/values/specified/effects.rs b/values/specified/effects.rs
              let f = input.expect_function()?;
 diff -ruN a/values/specified/font.rs b/values/specified/font.rs
 --- a/values/specified/font.rs	2026-11-11 19:55:57
-+++ b/values/specified/font.rs	2026-11-16 09:55:47
++++ b/values/specified/font.rs	2026-11-16 15:05:29
 @@ -1642,44 +1642,154 @@
  #[derive(
      Clone,
@@ -3059,7 +3075,7 @@ diff -ruN a/values/specified/image.rs b/values/specified/image.rs
          context: &ParserContext,
 diff -ruN a/values/specified/length.rs b/values/specified/length.rs
 --- a/values/specified/length.rs	2026-11-11 19:55:57
-+++ b/values/specified/length.rs	2026-11-16 09:55:47
++++ b/values/specified/length.rs	2026-11-16 15:05:29
 @@ -187,13 +187,14 @@
              "lvi" if !in_page_rule => Self::Lvi,
              "dvi" if !in_page_rule => Self::Dvi,
@@ -3084,7 +3100,7 @@ diff -ruN a/values/specified/length.rs b/values/specified/length.rs
      }
 diff -ruN a/values/specified/mod.rs b/values/specified/mod.rs
 --- a/values/specified/mod.rs	2026-11-11 19:55:57
-+++ b/values/specified/mod.rs	2026-11-16 16:33:29
++++ b/values/specified/mod.rs	2026-11-16 18:58:01
 @@ -48,7 +48,7 @@
      ContainIntrinsicSize, ContainerName, ContainerType, ContentVisibility, DirectionProperty,
      Display, DominantBaseline, Float, ImageOrientation, Isolation, LineClamp, MarginTrim, Orient,
@@ -3105,7 +3121,7 @@ diff -ruN a/values/specified/mod.rs b/values/specified/mod.rs
      TextDecorationInset, TextDecorationLength, TextDecorationSkipInk, TextJustify, TextTransform,
 diff -ruN a/values/specified/number.rs b/values/specified/number.rs
 --- a/values/specified/number.rs	2026-11-11 19:55:57
-+++ b/values/specified/number.rs	2026-11-16 08:07:01
++++ b/values/specified/number.rs	2026-11-16 15:05:29
 @@ -487,6 +487,47 @@
          })
      }
@@ -3156,7 +3172,7 @@ diff -ruN a/values/specified/number.rs b/values/specified/number.rs
          match self.0.unpack_mut() {
 diff -ruN a/values/specified/text.rs b/values/specified/text.rs
 --- a/values/specified/text.rs	2026-11-11 19:55:57
-+++ b/values/specified/text.rs	2026-11-16 16:15:58
++++ b/values/specified/text.rs	2026-11-16 16:33:29
 @@ -152,11 +152,26 @@
          {
              return Ok(Self::normal());
