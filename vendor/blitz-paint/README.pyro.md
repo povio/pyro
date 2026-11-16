@@ -930,3 +930,11 @@ it has no box (WPT css-display `display-contents-inline-001`, `-flex-001`, `-oof
   relatively positioned or sticky row group or row is painted by each of its cells, under the cell's own, in the
   positioned layer the cells paint in (blitz-dom `paint_tree.rs`); the table's background phase leaves it out (WPT
   `position-relative-table-*`, `position-sticky-table-*`). Covered by `crates/pyro-render/tests/table_part_positioning.rs`.
+
+## An inline `<svg>` visible on one axis (WPT round 3, lane SM)
+
+`src/render.rs` (`ElementCx::draw_svg`): an inline `<svg>` whose `overflow` is `visible` on one axis is cut on the
+other axis alone, at its content box, with square corners whatever its `border-radius` (Chromium clips such a box per
+axis and does not round the cut; it was cut on both axes along the rounded content edge). WPT
+`css/css-overflow/rounded-overflow-clip-visible`, `-visible-clip`, `overflow-clip-x-visible-y-svg`,
+`overflow-clip-y-visible-x-svg`. Covered by `crates/pyro-render/tests/overflow_clip.rs`.

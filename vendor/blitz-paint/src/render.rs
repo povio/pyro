@@ -3810,10 +3810,25 @@ impl ElementCx<'_, '_> {
         // show in the rest of the box (Chromium draws the image into that rect, clipped). A
         // second cut, only where the content reaches past a rect that leaves some of the box.
         let mut object_clip = None;
-        let clip = if inline && !document_root && {
+        let (visible_x, visible_y) = {
             let b = self.style.get_box();
-            matches!(b.overflow_x, Overflow::Visible) && matches!(b.overflow_y, Overflow::Visible)
-        } {
+            (matches!(b.overflow_x, Overflow::Visible), matches!(b.overflow_y, Overflow::Visible))
+        };
+        let clip = if inline && !document_root && visible_x && visible_y {
+            ReplacedClip::Never
+        } else if inline && !document_root && visible_x != visible_y {
+            // pyro: an inline `<svg>` visible on one axis is cut on the other alone, at its
+            // content box, with square corners (Chromium clips it per axis and does not round
+            // the cut; WPT css-overflow/rounded-overflow-clip-visible,
+            // overflow-clip-x-visible-y-svg).
+            let content = self.frame.content_box;
+            const FAR: f64 = 1.0e7;
+            object_clip = Some(Rect::new(
+                if visible_x { -FAR } else { content.x0 },
+                if visible_y { -FAR } else { content.y0 },
+                if visible_x { FAR } else { content.x1 },
+                if visible_y { FAR } else { content.y1 },
+            ));
             ReplacedClip::Never
         } else if !inline && replaced_overflow_is_visible(self.element, &self.style) {
             // pyro: an SVG image whose `overflow` the author made visible is cut at its own
