@@ -14,7 +14,7 @@ use crate::{BaseDocument, NodeTree};
 /// The relative offset `style` gives a box (CSS px), percentages against `cb`, the size of its
 /// containing block: `left` wins over `right` where the containing block is left-to-right, and
 /// `top` over `bottom`.
-fn relative_offset(style: &ComputedValues, cb: taffy::Size<f32>, cb_rtl: bool) -> taffy::Point<f32> {
+pub(crate) fn relative_offset(style: &ComputedValues, cb: taffy::Size<f32>, cb_rtl: bool) -> taffy::Point<f32> {
     let position = style.get_position();
     let resolve = |inset: &Inset, basis: f32| match inset {
         Inset::LengthPercentage(value) => Some(value.resolve(Length::new(basis)).px()),

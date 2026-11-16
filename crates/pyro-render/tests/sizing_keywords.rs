@@ -106,3 +106,21 @@ fn fit_content_is_at_most_the_available_width() {
         (350, 20),
     );
 }
+
+#[test]
+fn keywords_bound_absolutely_positioned_boxes() {
+    // Stretched between its insets (200px), it is held to its content's height by
+    // `max-height: fit-content` (WPT `css-position/position-absolute-fit-content`), and widened to
+    // its content's by `min-width: max-content`.
+    check(
+        "<div style='position:relative;width:100px;height:200px'>\
+         <div style='position:absolute;inset:0;max-height:fit-content;background:green'><div style='height:100px'></div></div></div>",
+        (100, 100),
+    );
+    check(
+        "<div style='position:relative;width:100px;height:200px'>\
+         <div style='position:absolute;left:0;top:0;width:10px;height:50px;min-width:max-content;background:green'>\
+         <div style='width:80px'></div></div></div>",
+        (80, 50),
+    );
+}

@@ -450,3 +450,20 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
      #[inline]
      fn grid_column(&self) -> taffy::Line<taffy::GridPlacement<Atom>> {
          self.grid_column_placement()
+@@ -950,6 +1150,16 @@
+ }
+ 
+ impl<T: Deref<Target = ComputedValues>> taffy::OofItemStyle for TaffyStyloStyle<T> {
++    #[inline]
++    fn min_size_keyword(&self) -> taffy::Size<taffy::Dimension> {
++        taffy::BlockItemStyle::min_size_keyword(self)
++    }
++
++    #[inline]
++    fn max_size_keyword(&self) -> taffy::Size<taffy::Dimension> {
++        taffy::BlockItemStyle::max_size_keyword(self)
++    }
++
+     #[inline]
+     fn align_self(&self) -> Option<taffy::AlignSelf> {
+         self.oof_self_alignment(

@@ -2189,3 +2189,10 @@ table whose 2,000 cells all hold the Danex cell +1.0%, 1,500 right-aligned colum
 item `BOX_DAMAGE`, as on a table row or row group: a collapsed flex item leaves its line, which keeps its cross size
 (vendor/taffy's README.pyro.md, "`visibility: collapse` on flex items"), so the restyle changes layout, not only paint
 (`crates/pyro-render/tests/mirror.rs`, `review_moved_longhands_match_fresh_builds`).
+- `src/layout/inline/layout.rs` (`split_inline_containing_block`), `src/layout/mod.rs`
+  (`lay_out_out_of_flow_boxes`): the containing block of an absolutely positioned box in a positioned inline box split
+  around block-level content is the bounding box of the inline's head (at the end of the anonymous block before its
+  box) and tail (at the start of the one after), an empty one a point at its line's end or start (Chromium): the
+  split box and the inline roots around it leave such boxes to their parent, which lays them out against it (WPT
+  `position-absolute-in-inline-003`, `position-absolute-dynamic-relayout-005/006`). Covered by
+  `crates/pyro-render/tests/split_inline_containing_block.rs`.

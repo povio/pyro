@@ -23,7 +23,9 @@ use crate::{AxisStaticEdge, BoxSizing, Direction};
 use super::common::scrollable_overflow::{
     compute_scrollable_overflow_contribution, finalize_scrollable_overflow, ScrollableOverflowContainer,
 };
-use super::common::sizing_keyword::resolve_absolute_sizing_keywords;
+use super::common::sizing_keyword::{resolve_absolute_sizing_keywords, resolve_sizing_keyword, SizingKeywordResolution};
+use crate::geometry::AbsoluteAxis;
+use crate::style::Dimension;
 
 /// Resolve the final static offset of an out-of-flow box from its static position, given the
 /// box's final size and resolved margins.
@@ -570,12 +572,14 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
         .maybe_add(box_sizing_adjustment)
         .or(padding_border_sum.map(Some))
         .maybe_max(padding_border_sum);
-    let max_size = child_style
+    let mut max_size = child_style
         .max_size()
         .maybe_resolve(area_size, |val, basis| tree.calc(val, basis))
         .maybe_apply_aspect_ratio(aspect_ratio)
         .maybe_add(box_sizing_adjustment);
     let mut known_dimensions = style_size.maybe_clamp(min_size, max_size);
+    // pyro: sizing keywords in the minimum and maximum sizes (resolved below)
+    let (min_keyword, max_keyword) = (child_style.min_size_keyword(), child_style.max_size_keyword());
 
     let is_replaced = child_style.is_replaced();
     let is_table = child_style.is_table();
@@ -700,6 +704,66 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
             known_dimensions.height = Some(stretch_fit_size.height);
             known_dimensions =
                 known_dimensions.maybe_apply_aspect_ratio(stretch_aspect_ratio).maybe_clamp(min_size, max_size);
+        }
+    }
+
+    // pyro: sizing keywords in `min-width`/`max-width`/`min-height`/`max-height` (`min-content`,
+    // `max-content`, `fit-content`, `fit-content(...)`, `stretch`; css-sizing-3 § 5.1), which
+    // `min_size`/`max_size` cannot say: each is the size the keyword would give the box, the widths
+    // first, the heights at the width (WPT `position-absolute-fit-content`).
+    if [min_keyword.width, min_keyword.height, max_keyword.width, max_keyword.height]
+        .iter()
+        .any(|keyword| keyword.is_sizing_keyword())
+    {
+        let resolve = |tree: &mut Tree, keyword: Dimension, axis: AbsoluteAxis, known: Size<Option<f32>>| {
+            let (stretch, basis) = match axis {
+                AbsoluteAxis::Horizontal => (stretch_fit_size.width, area_width),
+                AbsoluteAxis::Vertical => (stretch_fit_size.height, area_height),
+            };
+            match resolve_sizing_keyword(keyword, Some(stretch), Some(basis), |val, basis| tree.calc(val, basis))? {
+                SizingKeywordResolution::Exact(size) => Some(size),
+                SizingKeywordResolution::Measure(available) => Some(tree.measure_child_size(
+                    candidate.node,
+                    match axis {
+                        AbsoluteAxis::Horizontal => Size { width: None, height: known.height },
+                        AbsoluteAxis::Vertical => Size { width: known.width, height: None },
+                    },
+                    area_size.map(Some),
+                    match axis {
+                        AbsoluteAxis::Horizontal => {
+                            Size { width: available, height: AvailableSpace::Definite(stretch_fit_size.height) }
+                        }
+                        AbsoluteAxis::Vertical => Size {
+                            width: AvailableSpace::Definite(known.width.unwrap_or(stretch_fit_size.width)),
+                            height: available,
+                        },
+                    },
+                    SizingMode::ContentSize,
+                    axis,
+                    Line::FALSE,
+                )),
+            }
+        };
+        for axis in [AbsoluteAxis::Horizontal, AbsoluteAxis::Vertical] {
+            let (min_kw, max_kw) = match axis {
+                AbsoluteAxis::Horizontal => (min_keyword.width, max_keyword.width),
+                AbsoluteAxis::Vertical => (min_keyword.height, max_keyword.height),
+            };
+            if let Some(size) = resolve(tree, min_kw, axis, known_dimensions) {
+                let min = match axis {
+                    AbsoluteAxis::Horizontal => &mut min_size.width,
+                    AbsoluteAxis::Vertical => &mut min_size.height,
+                };
+                *min = Some(min.map_or(size, |min| f32_max(min, size)));
+            }
+            if let Some(size) = resolve(tree, max_kw, axis, known_dimensions) {
+                let max = match axis {
+                    AbsoluteAxis::Horizontal => &mut max_size.width,
+                    AbsoluteAxis::Vertical => &mut max_size.height,
+                };
+                *max = Some(max.map_or(size, |max| max.min(size)));
+            }
+            known_dimensions = known_dimensions.maybe_clamp(min_size, max_size);
         }
     }
 

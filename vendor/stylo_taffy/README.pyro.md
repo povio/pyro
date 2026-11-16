@@ -54,3 +54,5 @@ entry) once a Blitz release carries these commits and changes.
   (vendor/taffy/README.pyro.md, "`visibility: collapse` on flex items").
 - `src/convert.rs` (`content_alignment`, `item_alignment`): `flow-start`/`flow-end` (vendor/stylo/README.pyro.md) are
   Taffy's `FLEX_START`/`FLEX_END`, which are `start`/`end` outside flex layout.
+- `src/wrapper.rs`: `OofItemStyle::min_size_keyword`/`max_size_keyword` (the block item's), for the sizing
+  keywords in the minimum and maximum sizes of absolutely positioned boxes (vendor/taffy/README.pyro.md).

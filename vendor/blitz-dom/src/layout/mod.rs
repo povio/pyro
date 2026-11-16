@@ -400,6 +400,31 @@ impl LayoutPassState<'_> {
 
     #[inline(never)]
     fn lay_out_out_of_flow_boxes(&mut self, node_id: NodeId, output: &mut taffy::tree::LayoutOutput) {
+        let dom_id = dom_node_id(node_id);
+        // pyro: a positioned inline box split around block-level content (`NodeFlags::IS_SPLIT_INLINE`)
+        // lays out no absolutely positioned box itself: their containing block is the box its
+        // fragments bound, which the tail after its box ends, so its parent lays them out once both
+        // are laid out (`split_inline_containing_block`).
+        if self.nodes[dom_id].is_split_inline() && self.split_inline_contains_absolute(dom_id) {
+            if output.oof_candidates.iter().all(|candidate| {
+                candidate.containing_block.is_none() && candidate.position == taffy::Position::Absolute
+            }) {
+                self.clear_hoisted_children(node_id);
+                return;
+            }
+        }
+        if !output.oof_candidates.is_empty() && self.has_positioned_split_inline_child(dom_id) {
+            for index in 0..output.oof_candidates.as_mut_slice().len() {
+                let candidate = output.oof_candidates.as_mut_slice()[index];
+                if candidate.containing_block.is_some() || candidate.position != taffy::Position::Absolute {
+                    continue;
+                }
+                let Some(span) = self.split_inline_holding(dom_id, dom_node_id(candidate.node)) else { continue };
+                if let Some(cb) = self.split_inline_containing_block(dom_id, span) {
+                    output.oof_candidates.as_mut_slice()[index].containing_block = Some(cb);
+                }
+            }
+        }
         compute_oof_layout(self, node_id, output);
     }
 

@@ -240,6 +240,19 @@ pub trait OofItemStyle: CoreStyle {
     fn is_table(&self) -> bool {
         false
     }
+    /// pyro: `min-width`/`min-height` when they are sizing keywords (`min-content`,
+    /// `max-content`, `fit-content`, `fit-content(...)`, `stretch`), which
+    /// [`CoreStyle::min_size`] cannot say (it says `auto` then); `auto` in an axis without one.
+    #[inline(always)]
+    fn min_size_keyword(&self) -> Size<Dimension> {
+        Size { width: Dimension::auto(), height: Dimension::auto() }
+    }
+    /// pyro: `max-width`/`max-height` when they are sizing keywords (see
+    /// [`Self::min_size_keyword`]).
+    #[inline(always)]
+    fn max_size_keyword(&self) -> Size<Dimension> {
+        Size { width: Dimension::auto(), height: Dimension::auto() }
+    }
     /// Defines which row in the grid the box should start and end at, when the box's containing
     /// block is a grid container
     #[cfg(feature = "grid")]

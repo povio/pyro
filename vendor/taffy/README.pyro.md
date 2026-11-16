@@ -485,3 +485,6 @@ resolved again against its main size, which a row's later layout knows anyway. C
 its used width makes it through the ratio (between content boxes for `box-sizing: content-box`), and at least as tall as
 its rows unless `min-height` is set or it is a scroll container (the automatic minimum size, css-sizing-4 §5.1). It was
 as tall as its rows (WPT `css/css-grid/grid-definition/grid-auto-repeat-aspect-ratio-001`).
+- `compute/oof.rs` (`layout_oof_box`), `style/mod.rs` (`OofItemStyle::min_size_keyword`, `max_size_keyword`): sizing
+  keywords in the minimum and maximum sizes of an absolutely positioned box (`max-height: fit-content`, ...) bound it
+  as the keyword would size it, the widths first, the heights at the width (WPT `position-absolute-fit-content`).

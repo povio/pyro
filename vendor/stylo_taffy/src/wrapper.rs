@@ -1191,6 +1191,16 @@ impl<T: Deref<Target = ComputedValues>> taffy::GridItemStyle for TaffyStyloStyle
 
 impl<T: Deref<Target = ComputedValues>> taffy::OofItemStyle for TaffyStyloStyle<T> {
     #[inline]
+    fn min_size_keyword(&self) -> taffy::Size<taffy::Dimension> {
+        taffy::BlockItemStyle::min_size_keyword(self)
+    }
+
+    #[inline]
+    fn max_size_keyword(&self) -> taffy::Size<taffy::Dimension> {
+        taffy::BlockItemStyle::max_size_keyword(self)
+    }
+
+    #[inline]
     fn align_self(&self) -> Option<taffy::AlignSelf> {
         self.oof_self_alignment(
             self.style.get_position().align_self.0,

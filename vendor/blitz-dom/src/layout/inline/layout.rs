@@ -532,7 +532,9 @@ impl LayoutPassState<'_> {
                     && display.inside() == DisplayInside::Flow
                 {
                     let claims = stylo_taffy::convert::inline_containing_block_claims(&style);
-                    if claims.absolute {
+                    // pyro: not a split inline's: its parent lays its boxes out
+                    // (`split_inline_containing_block`).
+                    if claims.absolute && !(ancestor.is_split_inline() && self.split_inline_contains_absolute(id)) {
                         flags |= StyleFlags::SPAN_ABSOLUTE_CB;
                     }
                     if claims.fixed {
@@ -2000,6 +2002,11 @@ impl LayoutPassState<'_> {
                 else {
                     continue;
                 };
+                // pyro: a split inline's box spans its head, its block-level content and its tail:
+                // its parent lays the box out (`split_inline_containing_block`).
+                if self.nodes[span].is_split_inline() && self.split_inline_contains_absolute(span) {
+                    continue;
+                }
                 let Some((x, y, width, height)) = span_padding_box(&self.nodes, &inline_layout, span, scale) else {
                     continue;
                 };
@@ -2298,4 +2305,125 @@ fn span_padding_box(
     let (left, right) = if rtl { (last.0, first.1) } else { (first.0, last.1) };
     let (top, bottom) = (first.2, last.3);
     Some((left / scale, top / scale, (right - left).max(0.0) / scale, (bottom - top).max(0.0) / scale))
+}
+
+impl LayoutPassState<'_> {
+    /// pyro: whether the split inline `span` is the containing block of absolutely positioned
+    /// boxes (it is positioned) in a horizontal writing mode (`split_inline_containing_block`).
+    pub(crate) fn split_inline_contains_absolute(&self, span: NodeId) -> bool {
+        use style::computed_values::position::T as Position;
+        self.nodes[span].primary_styles().is_some_and(|style| {
+            style.clone_position() != Position::Static && !style.writing_mode.is_vertical()
+        })
+    }
+
+    /// pyro: whether a layout child of `parent` is a split inline that is a containing block
+    /// ([`Self::split_inline_contains_absolute`]).
+    pub(crate) fn has_positioned_split_inline_child(&self, parent: NodeId) -> bool {
+        self.nodes[parent].layout_children.borrow().as_ref().is_some_and(|children| {
+            children
+                .iter()
+                .any(|&child| self.nodes[child].is_split_inline() && self.split_inline_contains_absolute(child))
+        })
+    }
+
+    /// pyro: the split inline that is the containing block of the absolutely positioned box
+    /// `box_id`, when it is a layout child of `parent`: the box's nearest positioned ancestor.
+    pub(crate) fn split_inline_holding(&self, parent: NodeId, box_id: NodeId) -> Option<NodeId> {
+        use style::computed_values::position::T as Position;
+        let mut current = self.nodes[box_id].parent;
+        while let Some(id) = current {
+            if id == parent {
+                return None;
+            }
+            let node = &self.nodes[id];
+            if node.primary_styles().is_some_and(|style| style.clone_position() != Position::Static) {
+                return (node.is_split_inline()
+                    && node.layout_parent.get() == Some(parent)
+                    && self.split_inline_contains_absolute(id))
+                .then_some(id);
+            }
+            current = node.parent;
+        }
+        None
+    }
+
+    /// pyro: the containing block of the absolutely positioned boxes in the split inline `span`
+    /// (a positioned inline box split around block-level content), a layout child of `parent`: the
+    /// bounding box of the padding boxes of its first and last fragments (CSS 2.1 § 10.1 4.1), its
+    /// head at the end of the anonymous block before its box and its tail at the start of the one
+    /// after, moved by its relative offset; as `(size, offset)` from `parent`'s border box. A piece
+    /// with no fragment there (an empty head or tail) is a point: the end of the last line before,
+    /// the start of the first line after, or the top or the bottom of its box without such a line
+    /// (as Chromium places an empty fragment; WPT `position-absolute-in-inline-003`,
+    /// `position-absolute-dynamic-relayout-*`).
+    pub(crate) fn split_inline_containing_block(
+        &self,
+        parent: NodeId,
+        span: NodeId,
+    ) -> Option<(taffy::Size<f32>, taffy::Point<f32>)> {
+        let scale = self.viewport.scale();
+        let children = self.nodes[parent].layout_children.borrow();
+        let children = children.as_ref()?;
+        let at = children.iter().position(|&child| child == span)?;
+        let style = self.nodes[span].primary_styles()?;
+        let rtl = style.clone_direction() == style::computed_values::direction::T::Rtl;
+        let parent_layout = self.nodes[parent].unrounded_layout();
+        let cb_size = taffy::Size {
+            width: parent_layout.size.width - parent_layout.border.left - parent_layout.border.right
+                - parent_layout.padding.left - parent_layout.padding.right,
+            height: parent_layout.size.height - parent_layout.border.top - parent_layout.border.bottom
+                - parent_layout.padding.top - parent_layout.padding.bottom,
+        };
+        let parent_rtl = self.nodes[parent]
+            .primary_styles()
+            .is_some_and(|style| style.clone_direction() == style::computed_values::direction::T::Rtl);
+        let relative = if style.clone_position() == style::computed_values::position::T::Relative {
+            crate::layout::inline::relative::relative_offset(&style, cb_size, parent_rtl)
+        } else {
+            taffy::Point::ZERO
+        };
+        drop(style);
+        // The box laid out for the span's block-level content, without its relative offset.
+        let own = self.nodes[span].unrounded_layout();
+        let own_x = own.location.x - relative.x;
+        let own_y = own.location.y - relative.y;
+        // (x0, y0, x1, y1) of a piece, from the parent's border box.
+        // (An anonymous block next to the box holds the head or the tail; when the span starts or
+        // ends with a block-level box, its empty fragment is on that block's line all the same.)
+        let piece = |anonymous: NodeId, last: bool| -> Option<(f32, f32, f32, f32)> {
+            let node = &self.nodes[anonymous];
+            if !node.is_anonymous() {
+                return None;
+            }
+            let text_layout = node.data.downcast_element()?.inline_layout_data.as_deref()?;
+            let location = node.unrounded_layout().location;
+            let origin = (location.x, location.y + text_layout.line_box_top);
+            if let Some((x, y, width, height)) = span_padding_box(&self.nodes, text_layout, span, scale) {
+                return Some((origin.0 + x, origin.1 + y, origin.0 + x + width, origin.1 + y + height));
+            }
+            let line = if last { text_layout.layout.lines().last() } else { text_layout.layout.lines().next() };
+            let metrics = *line?.metrics();
+            let start = metrics.offset / scale;
+            let end = (metrics.offset + metrics.advance - metrics.collapsed_advance) / scale;
+            // The end of the last line (in the line's direction), the start of the first.
+            let x = if last != rtl { end } else { start };
+            let (top, bottom) = (metrics.block_min_coord / scale, metrics.block_max_coord / scale);
+            Some((origin.0 + x, origin.1 + top, origin.0 + x, origin.1 + bottom))
+        };
+        let head = at
+            .checked_sub(1)
+            .and_then(|before| piece(children[before], true))
+            .unwrap_or((own_x, own_y, own_x, own_y));
+        let tail = children
+            .get(at + 1)
+            .and_then(|&after| piece(after, false))
+            .unwrap_or((own_x, own_y + own.size.height, own_x, own_y + own.size.height));
+        let (x0, y0) = (head.0.min(tail.0), head.1.min(tail.1));
+        let (x1, y1) = (head.2.max(tail.2), head.3.max(tail.3));
+        Some((
+            taffy::Size { width: (x1 - x0).max(0.0), height: (y1 - y0).max(0.0) },
+            taffy::Point { x: x0 + relative.x, y: y0 + relative.y },
+        ))
+    }
 }
