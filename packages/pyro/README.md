@@ -526,9 +526,13 @@ Types are Playwright's own shapes, checked by `bun run test:types`:
 `expect()` offers Locator, Page or APIResponse matchers by what it is given
 (`toPass` only on functions), `expect.extend` matchers are typed from their
 arguments, `getByRole` takes the ARIA role union, and `evaluate`/`$eval`
-infer argument and return types. Deprecated APIs (`locator.type`,
-`elementHandle.type`, `noWaitAfter`, `page.accessibility`, FrameLocator
-`first`/`last`/`nth`) are left out, so using one is a type error.
+infer argument and return types. Deprecated methods (`locator.type`,
+`elementHandle.type`, `page.accessibility`, FrameLocator
+`first`/`last`/`nth`) are left out, so using one is a type error. Deprecated
+options compile and mean what they mean in Playwright: `noWaitAfter` and the
+`logger` launch and context option do nothing, and `isVisible()`,
+`isHidden()` and `elementHandle.inputValue()` take a `timeout` that
+`isVisible()` and `isHidden()` ignore.
 
 - `page.clock` / `context.clock`: `install`, `pauseAt`, `resume`,
   `fastForward`, `runFor`, `setFixedTime`, `setSystemTime`. Date, timers,

@@ -59,6 +59,11 @@ export function limit(ms: number): number {
 
 type TextMatch = string | RegExp;
 type Timeout = { timeout?: number };
+/**
+ * Playwright's deprecated `noWaitAfter` (its actions no longer wait for the
+ * navigations they start); accepted, as there, and without effect.
+ */
+type NoWaitAfter = { noWaitAfter?: boolean };
 type RunReply = { reads: Record<string, any>; results: any[]; requests: LogEntry[]; ms: number };
 /** A request of the run's log; header values the log redacts (cookies, credentials) read `[REDACTED]`. */
 type LogEntry = {
@@ -366,7 +371,7 @@ export class ConsoleMessage {
 // ---- locators ----
 
 type FilterOptions = { has?: Locator; hasNot?: Locator; hasText?: TextMatch; hasNotText?: TextMatch; visible?: boolean };
-type ClickOptions = Timeout & {
+type ClickOptions = Timeout & NoWaitAfter & {
   button?: 'left' | 'right' | 'middle';
   clickCount?: number;
   delay?: number;
@@ -570,18 +575,18 @@ export class Locator extends Scope {
     ];
     await this._page._run('locator.click', checks, this._desc);
   }
-  async fill(value: string, options: Timeout & { force?: boolean } = {}): Promise<void> {
+  async fill(value: string, options: Timeout & NoWaitAfter & { force?: boolean } = {}): Promise<void> {
     return this.act('fill', 'fill', options.timeout, { value: String(value) });
   }
-  async clear(options: Timeout = {}): Promise<void> {
+  async clear(options: Timeout & NoWaitAfter & { force?: boolean } = {}): Promise<void> {
     return this.act('clear', 'fill', options.timeout, { value: '' });
   }
-  async press(key: string, options: Timeout & { delay?: number } = {}): Promise<void> {
+  async press(key: string, options: Timeout & NoWaitAfter & { delay?: number } = {}): Promise<void> {
     // An unknown key fails at once, as in Playwright (no element wait).
     checkChord('press', key);
     return this.act('press', 'press', options.timeout, { value: key, ...this.held() });
   }
-  async pressSequentially(text: string, options: Timeout & { delay?: number } = {}): Promise<void> {
+  async pressSequentially(text: string, options: Timeout & NoWaitAfter & { delay?: number } = {}): Promise<void> {
     return this.act('pressSequentially', 'type', options.timeout, { value: text, ...this.held() });
   }
   /** The modifier keys `keyboard.down()` holds, for a key action's events. */
@@ -589,15 +594,15 @@ export class Locator extends Scope {
     const modifiers = this._page.keyboard._held();
     return modifiers.length ? { modifiers } : {};
   }
-  async check(options: Timeout & { force?: boolean; trial?: boolean } = {}): Promise<void> {
+  async check(options: Timeout & NoWaitAfter & { force?: boolean; trial?: boolean; position?: { x: number; y: number } } = {}): Promise<void> {
     if (options.trial) return this.trial(options.timeout);
     return this.act('check', 'check', options.timeout);
   }
-  async uncheck(options: Timeout & { force?: boolean; trial?: boolean } = {}): Promise<void> {
+  async uncheck(options: Timeout & NoWaitAfter & { force?: boolean; trial?: boolean; position?: { x: number; y: number } } = {}): Promise<void> {
     if (options.trial) return this.trial(options.timeout);
     return this.act('uncheck', 'uncheck', options.timeout);
   }
-  async setChecked(checked: boolean, options: Timeout & { force?: boolean; trial?: boolean } = {}): Promise<void> {
+  async setChecked(checked: boolean, options: Timeout & NoWaitAfter & { force?: boolean; trial?: boolean; position?: { x: number; y: number } } = {}): Promise<void> {
     return checked ? this.check(options) : this.uncheck(options);
   }
   async focus(options: Timeout = {}): Promise<void> {
@@ -606,10 +611,10 @@ export class Locator extends Scope {
   async blur(options: Timeout = {}): Promise<void> {
     return this.act('blur', 'blur', options.timeout, { settle: false });
   }
-  async dragTo(target: Locator, options: Timeout = {}): Promise<void> {
+  async dragTo(target: Locator, options: Timeout & NoWaitAfter & { force?: boolean; trial?: boolean } = {}): Promise<void> {
     return this.act('dragTo', 'drag', options.timeout, { to: target._spec });
   }
-  async setInputFiles(files: string | string[] | FilePayload | FilePayload[], options: Timeout = {}): Promise<void> {
+  async setInputFiles(files: string | string[] | FilePayload | FilePayload[], options: Timeout & NoWaitAfter = {}): Promise<void> {
     const list = (Array.isArray(files) ? files : [files]) as (string | FilePayload)[];
     const wire = list.map((f) =>
       typeof f === 'string'
@@ -620,7 +625,7 @@ export class Locator extends Scope {
   }
   async selectOption(
     values: string | { value?: string; label?: string; index?: number } | (string | { value?: string; label?: string; index?: number })[] | null,
-    options: Timeout = {},
+    options: Timeout & NoWaitAfter & { force?: boolean } = {},
   ): Promise<string[]> {
     const list = values === null ? [] : Array.isArray(values) ? values : [values];
     const wanted = list.map((v) => (typeof v === 'string' ? { valueOrLabel: v } : v));
@@ -687,14 +692,18 @@ export class Locator extends Scope {
   async allInnerTexts(): Promise<string[]> {
     return this.evaluateAll((els: HTMLElement[]) => els.map((e) => e.innerText ?? e.textContent ?? ''));
   }
-  /** Like Playwright: no waiting; `false` when nothing matches. */
-  async isVisible(): Promise<boolean> {
+  /**
+   * Like Playwright: no waiting; `false` when nothing matches. `timeout` is
+   * Playwright's deprecated option, ignored as there.
+   */
+  async isVisible(_options: Timeout = {}): Promise<boolean> {
     return this._evaluateAll<boolean | 'strict'>(IS_VISIBLE).then((v) => {
       if (v === 'strict') throw new Error(`locator.isVisible: strict mode violation: ${this._desc} resolved to several elements`);
       return v as boolean;
     });
   }
-  async isHidden(): Promise<boolean> {
+  /** Like Playwright: no waiting; `timeout` (deprecated) is ignored. */
+  async isHidden(_options: Timeout = {}): Promise<boolean> {
     return !(await this.isVisible());
   }
   async isEnabled(options: Timeout = {}): Promise<boolean> {
@@ -2796,7 +2805,7 @@ export class FileChooser {
   isMultiple(): boolean {
     return this._multiple;
   }
-  async setFiles(files: Parameters<Locator['setInputFiles']>[0], options: Timeout = {}): Promise<void> {
+  async setFiles(files: Parameters<Locator['setInputFiles']>[0], options: Timeout & NoWaitAfter = {}): Promise<void> {
     await this._element.setInputFiles(files, options);
   }
 }
