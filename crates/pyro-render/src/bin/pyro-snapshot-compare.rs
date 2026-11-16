@@ -28,6 +28,8 @@ struct Capture {
     #[serde(default)]
     xml_document: bool,
     #[serde(default)]
+    quirks_mode: bool,
+    #[serde(default)]
     content_language: Option<String>,
 }
 #[derive(Deserialize)]
@@ -108,6 +110,7 @@ fn compare(worker: &RenderWorker, request: Request) -> Result<serde_json::Value,
         canvases: Vec::new(),
         animations: None,
         xml_document: s.xml_document,
+        quirks_mode: s.quirks_mode,
         content_language: s.content_language,
         selection: None,
     };

@@ -55,6 +55,8 @@ pub struct RenderSnapshot {
     pub canvases: Vec<crate::canvas::CanvasBitmap>,
     /// An XML document (`pyro_dom::Dom::is_xml_document`), in every form.
     pub xml_document: bool,
+    /// A document in quirks mode (`pyro_dom::Dom::is_quirks_mode`), in every form.
+    pub quirks_mode: bool,
     /// The document's HTTP `Content-Language`
     /// (`pyro_dom::Dom::content_language`), in every form.
     pub content_language: Option<String>,
@@ -165,6 +167,7 @@ fn snapshot_of(
             focused: dom.focused(document).ok().flatten().map(pyro_dom::snapshot::render_key),
             canvases: Vec::new(),
             xml_document: dom.is_xml_document(document),
+            quirks_mode: dom.is_quirks_mode(document),
             content_language: dom.content_language(document).map(str::to_owned),
             selection: None,
         }

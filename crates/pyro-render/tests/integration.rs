@@ -51,6 +51,7 @@ mod inline_size_containment;
 mod inline_svg_viewport;
 mod input_percentage_min_content;
 mod input_placeholder;
+mod intrinsic_percentages;
 mod lang_pseudo_class;
 mod line_break_resume;
 mod line_clamp;

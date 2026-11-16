@@ -505,3 +505,10 @@ as tall as its rows (WPT `css/css-grid/grid-definition/grid-auto-repeat-aspect-r
 - `compute/block.rs` (`determine_content_based_container_width`): a table with a `width` or `max-width` contributes at
   least its min-content width (its content measured without them): a table is never narrower than its content (WPT
   `css-tables/table-intrinsic-size-001`).
+**Percentages in intrinsic widths and against a content width (lane S2).** Block `compute_inner` hands its definite
+percentage basis for heights (own height, the ratio's, or the passed-through one) to the children it measures for
+its content width (`determine_content_based_container_width`'s `percentage_height`): a float of `height: 100px`
+around a `height: 100%` canvas is as wide as the canvas at that height. When the container's width came from its
+content (no known width: floats, inline-blocks), the item list is generated again with that width, so the children's
+percentage sizes, min/max sizes and padding resolve against it, as at a given width. Covered by
+`crates/pyro-render/tests/intrinsic_percentages.rs`.

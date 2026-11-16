@@ -806,7 +806,16 @@ fn compute_inner(
     // 2. Compute container width
     let container_outer_width = known_dimensions.width.unwrap_or_else(|| {
         let available_width = available_space.width.maybe_sub(content_box_inset.horizontal_axis_sum());
-        let intrinsic_width = determine_content_based_container_width(tree, &items, available_width)
+        // pyro: percentage heights in the children resolve against a definite height of the
+        // container in this pass too, as at final layout (a float of `height: 100px` around a
+        // `height: 100%` canvas is as wide as the canvas there; WPT css-sizing
+        // `intrinsic-percent-replaced-*`).
+        let percentage_height = percentage_basis_dimensions
+            .height
+            .or(if inputs.sizing_mode == SizingMode::InherentSize { size.height.maybe_max(min_size.height) } else { None })
+            .or(if tree.block_container_passes_percentage_height(node_id) { parent_size.height } else { None })
+            .maybe_sub(content_box_inset.vertical_axis_sum());
+        let intrinsic_width = determine_content_based_container_width(tree, &items, available_width, percentage_height)
             + content_box_inset.horizontal_axis_sum();
         intrinsic_width.maybe_clamp(min_size.width, max_size.width).maybe_max(Some(padding_border_size.width))
     });
@@ -819,6 +828,19 @@ fn compute_inner(
     // We can also short-circuit if the width is known and only the width has been requested.
     if run_mode == RunMode::ComputeSize && inputs.axis == RequestedAxis::Horizontal {
         return LayoutOutput::from_outer_size(Size { width: container_outer_width, height: 0.0 });
+    }
+
+    // pyro: a width the content gave (a float's or an inline-block's shrink-to-fit width) is
+    // the basis of the children's percentages from here on, as a given one is: their sizes
+    // were resolved without it (`min-width: 200%` in a float did nothing; WPT css-sizing
+    // `intrinsic-percent-non-replaced-*`).
+    if container_content_box_size.width.is_none() {
+        let inner_width = (container_outer_width - content_box_inset.horizontal_axis_sum()).max(0.0);
+        items = generate_item_list(
+            tree,
+            node_id,
+            Size { width: Some(inner_width), height: container_content_box_size.height },
+        );
     }
 
     // Under `SizingMode::ContentSize` the container's own `height`/`min-height` are ignored,
@@ -1339,8 +1361,10 @@ fn determine_content_based_container_width(
     tree: &mut impl LayoutPartialTree,
     items: &[BlockItem],
     available_width: AvailableSpace,
+    percentage_height: Option<f32>,
 ) -> f32 {
     let available_space = Size { width: available_width, height: AvailableSpace::MinContent };
+    let parent_size = Size { width: None, height: percentage_height };
 
     let mut max_child_width = 0.0;
     #[cfg(feature = "float_layout")]
@@ -1379,7 +1403,7 @@ fn determine_content_based_container_width(
             let width = tree.measure_child_size(
                 item.node_id,
                 known_dimensions,
-                Size::NONE,
+                parent_size,
                 Size { width: item_available_width, height: available_space.height },
                 SizingMode::InherentSize,
                 crate::AbsoluteAxis::Horizontal,

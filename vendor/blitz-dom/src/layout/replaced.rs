@@ -176,7 +176,7 @@ enum Violation {
 
 pub fn compute_replaced_layout(
     inputs: LayoutInput,
-    style: &impl CoreStyle,
+    style: &(impl CoreStyle + taffy::BlockItemStyle),
     resolve_calc_value: impl Fn(*const (), f32) -> f32,
     context: &ReplacedContext,
 ) -> LayoutOutput {
@@ -411,6 +411,45 @@ pub fn compute_replaced_layout(
         .maybe_resolve(basis_for_max_and_preferred, &resolve_calc_value)
         .maybe_max(min_size)
         .maybe_sub(box_sizing_adjustment);
+
+    // pyro: `min-content`, `max-content` and `fit-content` in min/max sizes. A replaced
+    // element's content size in an axis is its natural size there, or the size the aspect
+    // ratio gives from its definite size in the other axis (clamped by that axis' lengths),
+    // as Chromium has it (csswg-drafts#3973, WPT css-sizing `replaced-*-min-content`).
+    let (min_style, max_style) = (style.min_size_keyword(), style.max_size_keyword());
+    let is_content_keyword = |d: taffy::Dimension| d.is_sizing_keyword() && !d.is_stretch();
+    let mut min_size = min_size;
+    let mut max_size = max_size;
+    if is_content_keyword(min_style.width)
+        || is_content_keyword(max_style.width)
+        || is_content_keyword(min_style.height)
+        || is_content_keyword(max_style.height)
+    {
+        let content_width = style_size
+            .height
+            .map(|h| h.maybe_clamp(min_size.height, max_size.height))
+            .zip(aspect_ratio)
+            .map(|(h, ratio)| h * ratio)
+            .unwrap_or(inherent_size.width);
+        let content_height = style_size
+            .width
+            .map(|w| w.maybe_clamp(min_size.width, max_size.width))
+            .zip(aspect_ratio)
+            .map(|(w, ratio)| w / ratio)
+            .unwrap_or(inherent_size.height);
+        if is_content_keyword(min_style.width) {
+            min_size.width = Some(content_width);
+        }
+        if is_content_keyword(min_style.height) {
+            min_size.height = Some(content_height);
+        }
+        if is_content_keyword(max_style.width) {
+            max_size.width = Some(content_width.maybe_max(min_size.width));
+        }
+        if is_content_keyword(max_style.height) {
+            max_size.height = Some(content_height.maybe_max(min_size.height));
+        }
+    }
 
     // For ContentSize mode, ignore preferred/min size styles in the axis being measured: the
     // parent layout algorithm applies them itself, and content-based measurement should return

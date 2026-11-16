@@ -740,6 +740,12 @@ impl LayoutPassState<'_> {
                 // Anonymous blocks do not establish the containing block for percentages.
                 height: if self.nodes[node_id].is_anonymous() {
                     parent_size.height
+                } else if known_dimensions.height.is_none()
+                    && node_size.height.is_none()
+                    && self.quirks_skips_for_percent_height(&self.nodes[node_id])
+                {
+                    // pyro: the percentage height quirk (`quirks_skips_for_percent_height`)
+                    parent_size.height
                 } else {
                     available_space.height.into_option()
                 },

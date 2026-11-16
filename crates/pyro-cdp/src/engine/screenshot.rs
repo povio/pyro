@@ -358,6 +358,7 @@ impl EngineHost {
             // CSS animations, transitions and Web Animations as they are now.
             animations: Some(Arc::new(pyro_layout::animation_frame(&dom.animation_frame()))),
             xml_document: s.xml_document,
+            quirks_mode: s.quirks_mode,
             content_language: s.content_language,
             // The document selection, highlighted as Chromium paints it.
             selection: s.selection.map(|(start, end)| pyro_render::TextSelection { start, end }),
@@ -739,7 +740,7 @@ impl EngineHost {
                 "snapshot": { "html": s.html, "baseUrl": frame.base_url, "sheets": s.sheets,
                     "width": s.width, "height": s.height, "deviceScaleFactor": s.device_scale_factor,
                     "dark": s.dark, "scrollX": s.scroll_x, "scrollY": s.scroll_y,
-                    "xmlDocument": s.xml_document, "contentLanguage": s.content_language }
+                    "xmlDocument": s.xml_document, "quirksMode": s.quirks_mode, "contentLanguage": s.content_language }
             });
             return Ok(std::rc::Rc::new(std::cell::RefCell::new(Some(Ok(value)))));
         }

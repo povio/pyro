@@ -75,6 +75,7 @@ impl BaseDocument {
             line_break_override: self.layout_ctx.line_break_override(),
             // pyro: a frame's document is parsed as HTML.
             xml_document: false,
+            quirks_mode: false,
             content_language: None,
             // A sub-document is a separate devtools target with its own provider
             #[cfg(feature = "devtools")]

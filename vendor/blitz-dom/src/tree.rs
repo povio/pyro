@@ -54,6 +54,8 @@ pub struct NodeTree {
     viewport_scroll: crate::Point<f64>,
     /// pyro: [`crate::DocumentConfig::xml_document`].
     pub(crate) xml_document: bool,
+    /// pyro: [`crate::DocumentConfig::quirks_mode`].
+    pub(crate) quirks_mode: bool,
     /// pyro: [`crate::DocumentConfig::content_language`].
     pub(crate) content_language: Option<Box<str>>,
     /// pyro: the styles of each shadow root, by host (`crate::shadow`).
@@ -71,6 +73,7 @@ impl NodeTree {
             geometry_generation: AtomicU64::new(1),
             viewport_scroll: crate::Point::ZERO,
             xml_document: false,
+            quirks_mode: false,
             content_language: None,
             shadow_roots: HashMap::new(),
             has_shadow_hosts: false,

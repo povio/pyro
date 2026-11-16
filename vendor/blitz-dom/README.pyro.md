@@ -2268,3 +2268,12 @@ through a spanning cell; WPT `css-tables/tentative/border-collapse-spanning-cell
 its collapsed rows in taffy's `Style::collapsed_rows`, so a collapsed row takes its border spacing with it.
 `src/layout/paint_tree.rs` (`Node::paints_in_table_phases`): the row groups, rows and cells blitz-paint paints in a
 collapsed table's phases (no layer root, stacking context, float or positioned box among their paint children).
+**Replaced content keywords, percentage height quirk (lane S2).** `compute_replaced_layout` resolves `min-content`,
+`max-content` and `fit-content` in min/max sizes (from `BlockItemStyle::min_size_keyword`/`max_size_keyword`; the
+style's `min_size()` says `auto` for them) to the element's content size: in an axis, the size the ratio gives from
+its definite size in the other axis (clamped there), else its natural size, as Chromium does (csswg-drafts#3973).
+`DocumentConfig::quirks_mode` (from pyro-dom's parser) turns on the percentage height quirk: an `auto`-height block
+container (flow or flow-root, in flow, not a table cell's child) hands its own percentage basis for heights to its
+children (`BaseDocument::quirks_skips_for_percent_height`, used by `block_container_passes_percentage_height` and by
+inline layout for its atomic inlines), Chromium's `UseParentPercentageResolutionBlockSizeForChildren`. Covered by
+`crates/pyro-render/tests/intrinsic_percentages.rs`.

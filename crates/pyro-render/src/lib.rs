@@ -234,6 +234,9 @@ pub struct Snapshot {
     /// attribute names case-sensitively. A [`Live`] document whose value
     /// changes is built anew.
     pub xml_document: bool,
+    /// A document in quirks mode: percentage heights look through `auto`-height blocks for
+    /// their basis (Quirks Mode §3.5). A [`Live`] document whose value changes is built anew.
+    pub quirks_mode: bool,
     /// The document's HTTP `Content-Language` (one language tag), the last
     /// fallback for `:lang()`. A [`Live`] document whose value changes is
     /// built anew.
@@ -888,6 +891,7 @@ impl Renderer {
             media_type: Some(media_type(snap.print)),
             line_break_override: self.hyphen_digit_breaks.then_some(parley::HYPHEN_DIGIT_LINE_BREAK_OVERRIDE),
             xml_document: snap.xml_document,
+            quirks_mode: snap.quirks_mode,
             content_language: snap.content_language.clone(),
             ..DocumentConfig::default()
         };
@@ -909,6 +913,7 @@ impl Renderer {
                     || m.base_url != snap.base_url
                     || m.facts.0 != snap.xml_document
                     || m.facts.1 != snap.content_language
+                    || m.facts.2 != snap.quirks_mode
                     || m.doc.line_break_override().is_some() != self.hyphen_digit_breaks =>
             {
                 Some(Rebuild::Document)

@@ -1863,7 +1863,7 @@ impl taffy::LayoutBlockContainer for LayoutPassState<'_> {
 
     fn block_container_passes_percentage_height(&self, node_id: NodeId) -> bool {
         let node = self.node_from_id(node_id);
-        node.is_split_inline() || node.is_inline_with_only_block_children()
+        node.is_split_inline() || node.is_inline_with_only_block_children() || self.quirks_skips_for_percent_height(node)
     }
 
     fn block_container_percentage_height(&self, node_id: NodeId) -> Option<f32> {
@@ -2178,4 +2178,30 @@ fn pyro_natural_size(element: &crate::node::ElementData) -> Option<(f32, f32)> {
     let token = attr.value.split_ascii_whitespace().find_map(|t| t.strip_prefix("natural="))?;
     let (w, h) = token.split_once(',')?;
     Some((w.parse().ok()?, h.parse().ok()?))
+}
+
+impl BaseDocument {
+    /// pyro: Quirks Mode §3.5, "The percentage height calculation quirk": in quirks mode a block
+    /// container of `auto` height (the caller asks only then) that is no table cell and not out
+    /// of flow hands its own percentage basis for heights on to its children, as Chromium's
+    /// `UseParentPercentageResolutionBlockSizeForChildren` does (WPT css-sizing
+    /// `intrinsic-percent-replaced-*` in quirks mode).
+    pub(crate) fn quirks_skips_for_percent_height(&self, node: &Node) -> bool {
+        use style::values::specified::box_::DisplayInside;
+        if !self.tree().quirks_mode {
+            return false;
+        }
+        let Some(style) = node.primary_styles() else { return false };
+        let box_style = style.get_box();
+        // A table cell's children keep their own basis (WPT css-tables
+        // `percentages-grandchildren-quirks-mode-001`).
+        let parent_is_cell = node
+            .layout_parent
+            .get()
+            .and_then(|parent| self.nodes[parent].primary_styles())
+            .is_some_and(|parent| parent.get_box().display.inside() == DisplayInside::TableCell);
+        matches!(box_style.display.inside(), DisplayInside::Flow | DisplayInside::FlowRoot)
+            && !box_style.position.is_absolutely_positioned()
+            && !parent_is_cell
+    }
 }

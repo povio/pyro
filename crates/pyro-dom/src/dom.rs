@@ -1082,6 +1082,12 @@ impl Dom {
         self.check(doc).is_ok_and(|i| matches!(&self.n(i).kind, NodeKind::Document(d) if d.kind == DocumentKind::Xml))
     }
 
+    /// Whether `doc` is in quirks mode (not limited quirks): an HTML document whose doctype
+    /// the parser found missing or legacy.
+    pub fn is_quirks_mode(&self, doc: NodeId) -> bool {
+        self.check(doc).is_ok_and(|i| matches!(&self.n(i).kind, NodeKind::Document(d) if d.quirks == QuirksMode::Quirks))
+    }
+
     pub fn set_quirks_mode(&mut self, doc: NodeId, q: QuirksMode) -> DomResult<()> {
         let i = self.check(doc)?;
         if let NodeKind::Document(d) = &mut self.n_mut(i).kind {

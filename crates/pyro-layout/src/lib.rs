@@ -397,6 +397,7 @@ impl BlitzGeometry {
             scroll_targets: None,
             animations: None,
             xml_document: dom.is_xml_document(style.document()),
+            quirks_mode: dom.is_quirks_mode(style.document()),
             content_language: dom.content_language(style.document()).map(str::to_owned),
             selection: None,
         };
