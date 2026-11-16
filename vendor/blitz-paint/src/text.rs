@@ -422,7 +422,7 @@ struct DecorationStackEntry {
 /// pyro: one `text-shadow`, resolved: its colour (`currentColor` is the text's `color`) and its
 /// offset and blur radius in CSS px.
 #[derive(Clone, Copy, Debug, PartialEq)]
-struct TextShadow {
+pub(crate) struct TextShadow {
     color: Color,
     x: f64,
     y: f64,
@@ -486,6 +486,26 @@ fn synthesis_allowed(doc: &BaseDocument, node_id: NodeId) -> (bool, bool) {
 
 pub(crate) fn text_fill_color(doc: &BaseDocument, node_id: NodeId) -> Color {
     resolve_decoration_entry(doc, node_id).fill_color
+}
+
+/// pyro: a highlight style's `text-shadow`, its `currentcolor` the colour the highlighted text is
+/// drawn in.
+pub(crate) fn highlight_shadows(styles: &style::properties::ComputedValues, current: Color) -> Vec<TextShadow> {
+    let itext = styles.get_inherited_text();
+    itext
+        .text_shadow
+        .0
+        .iter()
+        .map(|shadow| TextShadow {
+            color: match shadow.color.is_currentcolor() {
+                true => current,
+                false => shadow.color.resolve_to_absolute(&itext.color).as_srgb_color(),
+            },
+            x: f64::from(shadow.horizontal.px()),
+            y: f64::from(shadow.vertical.px()),
+            blur: f64::from(shadow.blur.px()),
+        })
+        .collect()
 }
 
 /// Resolve the cached style values for a single node into a [`DecorationStackEntry`].
@@ -672,7 +692,13 @@ pub(crate) struct DrawTextContext {
     /// pyro: the next `stroke_text` draws selected text (`highlight`): in the colours of its
     /// highlight, found once per inline root (`highlights`).
     pub(crate) highlighting: bool,
-    pub(crate) highlights: Vec<(NodeId, Option<crate::highlight::Highlight>)>,
+    pub(crate) highlights: crate::highlight::HighlightCache,
+    /// pyro: the next `stroke_text` draws the text's shadows alone (no glyphs, no decoration
+    /// lines but their shadows): those of highlighted text, under the highlights' backgrounds.
+    pub(crate) shadows_only: bool,
+    /// pyro: the next `stroke_text` draws only the glyphs whose middle is in one of these
+    /// stretches (layout x): a highlight's shadows are cast by its glyphs alone.
+    pub(crate) glyph_spans: Option<SmallVec<[(f32, f32); 4]>>,
 }
 
 /// pyro: an inline box whose background is clipped to its text (`background-clip: text`): the
@@ -1642,7 +1668,11 @@ pub(crate) fn stroke_text<'a, S: PaintScene>(
         first_line_styles,
         highlighting,
         highlights,
+        shadows_only,
+        glyph_spans,
     } = context;
+    let shadows_only = *shadows_only;
+    let glyph_spans = glyph_spans.as_ref();
     let shift = *text_shift;
     let cut = *cut;
     let only_within = *only_within;
@@ -1802,7 +1832,8 @@ pub(crate) fn stroke_text<'a, S: PaintScene>(
                 });
             }
 
-            let fill_color = brush_override.unwrap_or_else(|| {
+            let fill_color = if shadows_only { Some(Color::TRANSPARENT) } else { brush_override };
+            let fill_color = fill_color.unwrap_or_else(|| {
                 let own = stack.last().map(|e| e.fill_color).unwrap_or(Color::BLACK);
                 // pyro: selected text in its highlight's colour.
                 match highlighting {
@@ -1812,8 +1843,15 @@ pub(crate) fn stroke_text<'a, S: PaintScene>(
                     false => own,
                 }
             });
-            let shadows: &[TextShadow] = match stack.last() {
-                Some(entry) if paint_shadows => &entry.shadows,
+            // pyro: highlighted text casts its highlight's shadows.
+            let highlight_shadows = match highlighting && paint_shadows {
+                true => crate::highlight::highlight_of(doc, style.brush.id, highlights).and_then(|h| h.shadows),
+                false => None,
+            };
+            let shadows: &[TextShadow] = match (stack.last(), &highlight_shadows) {
+                (_, Some(shadows)) => shadows,
+                (_, None) if highlighting => &[],
+                (Some(entry), None) if paint_shadows => &entry.shadows,
                 _ => &[],
             };
             // pyro: the glyphs `text-overflow` keeps of the run (all without a cut).
@@ -1862,6 +1900,23 @@ pub(crate) fn stroke_text<'a, S: PaintScene>(
                         (kept, drawn)
                     }
                 }
+            };
+            // pyro: the glyphs in `glyph_spans`, when given.
+            let (kept, drawn) = match glyph_spans {
+                Some(spans) if drawn => {
+                    let (mut first, mut last) = (usize::MAX, 0);
+                    for (index, glyph) in glyph_run.positioned_glyphs().enumerate() {
+                        let middle = glyph.x + glyph.advance / 2.0;
+                        if spans.iter().any(|&(x0, x1)| middle > x0 && middle < x1) {
+                            first = first.min(index);
+                            last = index + 1;
+                        }
+                    }
+                    let kept = kept.start.max(first)..kept.end.min(last);
+                    let drawn = !kept.is_empty();
+                    (kept, drawn)
+                }
+                _ => (kept, drawn),
             };
             // pyro: `visibility` hides a run with its decorations and shadows; it keeps its place.
             if stack.last().is_some_and(|entry| entry.hidden) {
@@ -2150,7 +2205,7 @@ pub(crate) fn stroke_text<'a, S: PaintScene>(
                 }
             }
         }
-        if !deco_boxes.is_empty() {
+        if !deco_boxes.is_empty() && !shadows_only {
             flush(scene, DecorationPhase::UnderOver);
         }
         for (glyph_run, paint) in glyph_runs.iter().zip(run_paints.iter()).filter(|(_, paint)| paint.drawn) {
@@ -2161,7 +2216,7 @@ pub(crate) fn stroke_text<'a, S: PaintScene>(
             }
             draw_run(scene, glyph_run, paint, None, runs);
         }
-        if !deco_boxes.is_empty() {
+        if !deco_boxes.is_empty() && !shadows_only {
             flush(scene, DecorationPhase::LineThrough);
         }
     }

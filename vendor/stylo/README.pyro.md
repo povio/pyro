@@ -310,6 +310,16 @@ block formatting context (WPT css-display `display-flow-root-list-item-001`).
 (`[none | grow | shrink] [consistent | per-line | per-line-all]? <percentage>?`, inherited as in Blink) for servo.
 blitz-dom passes it to parley, which scales the lines (their READMEs).
 
+## `::highlight()` and `::target-text` (WPT round 3, lane PX)
+
+- `servo/selector_parser.rs`: the lazy pseudo-elements `::target-text` and `::highlight(<custom-ident>)`. A
+  highlight's name is a process-wide id (`highlight_name_id`, `highlight_name`), so `PseudoElement` stays `Copy`:
+  `Highlight(u16)` makes the enum carry data, so `index()`/`eager_index()` read the `#[repr(u8)]` tag
+  (`discriminant()`) and `from_eager_index` matches instead of transmuting. Every `::highlight()` rule is filed under
+  `Highlight(ANY_HIGHLIGHT)` (`rule_map_key`, `has_argument()`); a style for one name is computed lazily with a
+  `matching_fn` that compares the name (blitz-dom `BaseDocument::highlight_pseudo_style`). Both apply
+  `APPLIES_TO_HIGHLIGHT` properties only.
+
 ## Updating or dropping the patch
 
 - When upstream has the change: delete this directory and the `[patch.crates-io]` entry.

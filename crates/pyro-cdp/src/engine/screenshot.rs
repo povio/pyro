@@ -362,6 +362,15 @@ impl EngineHost {
             content_language: s.content_language,
             // The document selection, highlighted as Chromium paints it.
             selection: s.selection.map(|(start, end)| pyro_render::TextSelection { start, end }),
+            // Custom highlights and the target text, under the selection.
+            highlights: s
+                .highlights
+                .into_iter()
+                .map(|(name, ranges)| pyro_render::TextHighlight {
+                    name,
+                    ranges: ranges.into_iter().map(|(start, end)| pyro_render::TextSelection { start, end }).collect(),
+                })
+                .collect(),
         })
     }
 

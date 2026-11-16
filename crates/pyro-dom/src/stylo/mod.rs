@@ -291,6 +291,22 @@ pub fn parse_pseudo_arg(text: &str) -> PseudoArg {
     if !text.starts_with(':') {
         return PseudoArg::Element;
     }
+    // `::highlight(<name>)` (CSS Custom Highlight API).
+    if let Some(inner) = text
+        .get(..12)
+        .filter(|head| head.eq_ignore_ascii_case("::highlight("))
+        .and_then(|_| text[12..].strip_suffix(')'))
+    {
+        let name = inner.trim();
+        let ident = !name.is_empty()
+            && !name.starts_with(|c: char| c.is_ascii_digit())
+            && name.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_' || !c.is_ascii());
+        if !ident {
+            return PseudoArg::Invalid;
+        }
+        let id = style::selector_parser::highlight_name_id(&style::Atom::from(name));
+        return PseudoArg::Pseudo(PseudoElement::Highlight(id));
+    }
     let mut parser = cssparser::Parser::new(text);
     let mut next = || parser.next_including_whitespace_and_comments().ok().cloned();
     let _ = next(); // the leading colon
@@ -308,6 +324,7 @@ pub fn parse_pseudo_arg(text: &str) -> PseudoArg {
         "after" => PseudoElement::After,
         "first-letter" => PseudoElement::FirstLetter,
         "selection" if double => PseudoElement::Selection,
+        "target-text" if double => PseudoElement::TargetText,
         "marker" if double => PseudoElement::Marker,
         "placeholder" if double => PseudoElement::Placeholder,
         "backdrop" if double => PseudoElement::Backdrop,

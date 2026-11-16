@@ -589,6 +589,9 @@ pub struct BaseDocument {
     pub(crate) first_line_changed: Vec<NodeId>,
     /// pyro: the embedder's selection, painted in place of `text_selection` (`dom_selection`).
     pub(crate) dom_selection: Option<crate::DomSelection>,
+    /// pyro: the embedder's highlights (custom highlights and the target text), bottom first
+    /// (`dom_highlights`).
+    pub(crate) dom_highlights: Vec<(crate::HighlightName, Vec<crate::DomSelection>)>,
     /// pyro: the styles of elements on first lines, cascaded again (`layout::first_line`).
     pub(crate) first_line_reparented: crate::layout::first_line::ReparentCache,
 
@@ -817,6 +820,7 @@ impl BaseDocument {
             first_line_styles: false,
             first_line_changed: Vec::new(),
             dom_selection: None,
+            dom_highlights: Vec::new(),
             first_line_reparented: Default::default(),
             generated_counters: false,
             text_box_trim_styles: false,

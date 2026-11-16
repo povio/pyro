@@ -244,6 +244,17 @@ pub struct Snapshot {
     /// The page's selection, painted highlighted in screenshots of a [`Live`]
     /// document ([`Renderer::paint`]; PDFs show none).
     pub selection: Option<TextSelection>,
+    /// The page's custom highlights and target text, bottom first, painted under the selection
+    /// in screenshots of a [`Live`] document.
+    pub highlights: Vec<TextHighlight>,
+}
+
+/// A highlight of a page ([`Snapshot::highlights`]): a custom highlight's name (`None`: the
+/// target text, `::target-text`) and its ranges.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TextHighlight {
+    pub name: Option<String>,
+    pub ranges: Vec<TextSelection>,
 }
 
 /// A page's selection ([`Snapshot::selection`]): from `start` to `end` in
@@ -1001,6 +1012,7 @@ impl Renderer {
                         }
                         m.set_canvases(&snap.canvases);
                         // The selection's text nodes, both in the document.
+                        let selection_paint = selection;
                         let selection = snap.selection.filter(|_| selection).and_then(|s| {
                             Some(blitz_dom::DomSelection {
                                 start: (m.node(s.start.0)?, s.start.1 as usize),
@@ -1008,6 +1020,29 @@ impl Renderer {
                             })
                         });
                         m.doc.set_dom_selection(selection);
+                        let highlights = snap
+                            .highlights
+                            .iter()
+                            .filter(|_| selection_paint)
+                            .map(|highlight| {
+                                let name = match &highlight.name {
+                                    Some(name) => blitz_dom::HighlightName::Custom(name.clone()),
+                                    None => blitz_dom::HighlightName::TargetText,
+                                };
+                                let ranges = highlight
+                                    .ranges
+                                    .iter()
+                                    .filter_map(|s| {
+                                        Some(blitz_dom::DomSelection {
+                                            start: (m.node(s.start.0)?, s.start.1 as usize),
+                                            end: (m.node(s.end.0)?, s.end.1 as usize),
+                                        })
+                                    })
+                                    .collect();
+                                (name, ranges)
+                            })
+                            .collect();
+                        m.doc.set_dom_highlights(highlights);
                         let clip = live.clip.and_then(|k| m.node(k));
                         (&mut m.doc, &m.bridge, clip)
                     }
@@ -1162,6 +1197,7 @@ impl Renderer {
         // (Painting knows where the page lands in the image's pixels: see `paint_scene_for_device`.)
         blitz_paint::paint_scene_for_device(&mut page, doc, dpr, extent_w, extent_h, 0, 0, transform);
         doc.set_dom_selection(None);
+        doc.set_dom_highlights(Vec::new());
         scene.append_scene(page, transform);
         let hash = scene_hash(&scene, w, h, &mut self.blob_hashes);
         timings.scene = t.elapsed();

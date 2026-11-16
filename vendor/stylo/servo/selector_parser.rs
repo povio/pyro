@@ -24,7 +24,6 @@ use dom::{DocumentState, ElementState};
 use selectors::attr::{AttrSelectorOperation, CaseSensitivity, NamespaceConstraint};
 use selectors::parser::SelectorParseErrorKind;
 use std::fmt;
-use std::mem;
 use std::ops::{Deref, DerefMut};
 use style_traits::{ParseError, StyleParseErrorKind};
 
@@ -65,6 +64,12 @@ pub enum PseudoElement {
     ScrollButtonDown,
     ScrollButtonLeft,
     ScrollButtonRight,
+    // pyro: CSS Pseudo-Elements 4's `::target-text`, and the Custom Highlight API's
+    // `::highlight(<name>)`, its name by `highlight_name_id` (every rule is filed under
+    // `Highlight(ANY_HIGHLIGHT)`, `rule_map_key`; a lazy style for one name matches it with a
+    // `matching_fn`). Both are styled lazily, when highlights are painted.
+    TargetText,
+    Highlight(u16),
 
     // Implemented pseudos. These pseudo elements are representing the
     // elements within an UA shadow DOM, and matching the elements with
@@ -91,7 +96,35 @@ pub enum PseudoElement {
 }
 
 /// The count of all pseudo-elements.
-pub const PSEUDO_COUNT: usize = PseudoElement::ServoTableWrapper as usize + 1;
+pub const PSEUDO_COUNT: usize = PseudoElement::ServoTableWrapper.discriminant() as usize + 1;
+
+/// pyro: the `Highlight` argument rules for any `::highlight()` are filed under; names get ids
+/// from 1 (`highlight_name_id`).
+pub const ANY_HIGHLIGHT: u16 = 0;
+
+static HIGHLIGHT_NAMES: std::sync::RwLock<Vec<Atom>> = std::sync::RwLock::new(Vec::new());
+
+/// pyro: the id of a `::highlight()` name (ids live as long as the process; names are few).
+pub fn highlight_name_id(name: &Atom) -> u16 {
+    if let Some(index) = HIGHLIGHT_NAMES.read().unwrap().iter().position(|n| n == name) {
+        return index as u16 + 1;
+    }
+    let mut names = HIGHLIGHT_NAMES.write().unwrap();
+    if let Some(index) = names.iter().position(|n| n == name) {
+        return index as u16 + 1;
+    }
+    if names.len() >= u16::MAX as usize - 1 {
+        return u16::MAX;
+    }
+    names.push(name.clone());
+    names.len() as u16
+}
+
+/// pyro: the name of a `::highlight()` id (`None` for `ANY_HIGHLIGHT` or an unknown id).
+pub fn highlight_name(id: u16) -> Option<Atom> {
+    let index = (id as usize).checked_sub(1)?;
+    HIGHLIGHT_NAMES.read().unwrap().get(index).cloned()
+}
 
 impl ToCss for PseudoElement {
     fn to_css<W>(&self, dest: &mut W) -> fmt::Result
@@ -120,6 +153,14 @@ impl ToCss for PseudoElement {
             ScrollButtonDown => "::scroll-button(down)",
             ScrollButtonLeft => "::scroll-button(left)",
             ScrollButtonRight => "::scroll-button(right)",
+            TargetText => "::target-text",
+            Highlight(id) => {
+                dest.write_str("::highlight(")?;
+                if let Some(name) = highlight_name(id) {
+                    serialize_identifier(&name.to_string(), dest)?;
+                }
+                return dest.write_char(')');
+            },
             ColorSwatch => "::color-swatch",
             FileSelectorButton => "::file-selector-button",
             Placeholder => "::placeholder",
@@ -189,13 +230,20 @@ impl PseudoElement {
     #[inline]
     pub fn eager_index(&self) -> usize {
         debug_assert!(self.is_eager());
-        self.clone() as usize
+        self.discriminant() as usize
+    }
+
+    /// pyro: the variant's tag (`Highlight` carries a name id, so no `as` cast).
+    #[inline]
+    pub const fn discriminant(&self) -> u8 {
+        // SAFETY: a `#[repr(u8)]` enum starts with its `u8` tag.
+        unsafe { *(self as *const Self as *const u8) }
     }
 
     /// An index for this pseudo-element to be indexed in an enumerated array.
     #[inline]
     pub fn index(&self) -> usize {
-        self.clone() as usize
+        self.discriminant() as usize
     }
 
     /// An array of `None`, one per pseudo-element.
@@ -209,8 +257,15 @@ impl PseudoElement {
     pub fn from_eager_index(i: usize) -> Self {
         const _: () = assert!(EAGER_PSEUDO_COUNT <= (u8::MAX as usize));
         assert!(i < EAGER_PSEUDO_COUNT);
-        let result: PseudoElement = unsafe { mem::transmute(i as u8) };
+        let result = match i {
+            0 => PseudoElement::After,
+            1 => PseudoElement::Before,
+            2 => PseudoElement::Selection,
+            3 => PseudoElement::FirstLetter,
+            _ => PseudoElement::FirstLine,
+        };
         debug_assert!(result.is_eager());
+        debug_assert_eq!(result.eager_index(), i);
         result
     }
 
@@ -262,6 +317,8 @@ impl PseudoElement {
     pub fn rule_map_key(&self) -> PseudoElement {
         if self.is_scroll_button() {
             PseudoElement::ScrollButtonAll
+        } else if self.is_highlight() {
+            PseudoElement::Highlight(ANY_HIGHLIGHT)
         } else {
             *self
         }
@@ -372,7 +429,9 @@ impl PseudoElement {
             | PseudoElement::ScrollButtonUp
             | PseudoElement::ScrollButtonDown
             | PseudoElement::ScrollButtonLeft
-            | PseudoElement::ScrollButtonRight => PseudoElementCascadeType::Lazy,
+            | PseudoElement::ScrollButtonRight
+            | PseudoElement::TargetText
+            | PseudoElement::Highlight(_) => PseudoElementCascadeType::Lazy,
             PseudoElement::ServoAnonymousBox
             | PseudoElement::ServoAnonymousTable
             | PseudoElement::ServoAnonymousTableCell
@@ -403,7 +462,9 @@ impl PseudoElement {
                 PropertyFlags::APPLIES_TO_MARKER
             },
             PseudoElement::Placeholder => PropertyFlags::APPLIES_TO_PLACEHOLDER,
-            PseudoElement::Selection => PropertyFlags::APPLIES_TO_HIGHLIGHT,
+            PseudoElement::Selection | PseudoElement::TargetText | PseudoElement::Highlight(_) => {
+                PropertyFlags::APPLIES_TO_HIGHLIGHT
+            },
             _ => PropertyFlags::empty(),
         }
     }
@@ -424,7 +485,7 @@ impl PseudoElement {
 
     /// Whether this pseudo-element is the ::highlight pseudo.
     pub fn is_highlight(&self) -> bool {
-        false
+        matches!(self, PseudoElement::Highlight(_))
     }
 
     /// Whether this pseudo-element takes an argument.
@@ -433,13 +494,13 @@ impl PseudoElement {
     /// does not decide whether one matches.
     #[inline]
     pub fn has_argument(&self) -> bool {
-        self.is_scroll_button()
+        self.is_scroll_button() || self.is_highlight()
     }
 
     /// Whether this pseudo-element is the ::target-text pseudo.
     #[inline]
     pub fn is_target_text(&self) -> bool {
-        false
+        *self == PseudoElement::TargetText
     }
 
     /// Whether this is a highlight pseudo-element that is styled lazily during
@@ -879,6 +940,7 @@ impl<'a, 'i> ::selectors::Parser<'i> for SelectorParser<'a> {
             "scroll-marker-group" => ScrollMarkerGroup,
             "scroll-marker" => ScrollMarker,
             "column" => Column,
+            "target-text" => TargetText,
             "details-content" => DetailsContent,
             "color-swatch" => ColorSwatch,
             "placeholder" => Placeholder,
@@ -948,6 +1010,10 @@ impl<'a, 'i> ::selectors::Parser<'i> for SelectorParser<'a> {
         arguments: &mut CssParser<'i>,
     ) -> Result<PseudoElement, ParseError> {
         use self::PseudoElement::*;
+        if name.eq_ignore_ascii_case("highlight") {
+            let ident = arguments.expect_ident()?;
+            return Ok(Highlight(highlight_name_id(&Atom::from(ident.as_ref()))));
+        }
         if !name.eq_ignore_ascii_case("scroll-button") {
             return Err(ParseError::custom(SelectorParseErrorKind::UnexpectedIdent));
         }

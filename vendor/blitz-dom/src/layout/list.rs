@@ -138,6 +138,7 @@ fn node_list_item_child(
     // the marker's `content`: `none` leaves no marker, strings replace it (CSS Lists 3 § 3.2).
     let (marker_style, rule_style) = item_marker_style(doc, child_id, &styles);
     let content = rule_style.as_ref().and_then(|style| marker_content(style, index));
+    let from_content = content.is_some();
     let style_node = marker_style_node(doc, child_id, marker_style.clone());
     let mut marker = match (content, image) {
         (Some(text), _) => Marker::String(text),
@@ -190,7 +191,8 @@ fn node_list_item_child(
             // font (Blink's `ListMarker::RelativeSymbolMarkerRect`), so their layout is a line of
             // that font.
             let symbol = matches!(marker, Marker::Char('•' | '◦' | '▪') | Marker::Image { .. });
-            if let Some(font_family) = font_for_bullet_style(list_style_type).filter(|_| !symbol) {
+            // (A `content` string is text in the marker's own font.)
+            if let Some(font_family) = font_for_bullet_style(list_style_type).filter(|_| !symbol && !from_content) {
                 parley_style.font_family = font_family;
             }
 

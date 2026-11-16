@@ -69,7 +69,7 @@ mod scrolling;
 mod selection;
 /// pyro: the embedder's document selection, painted as highlighted text.
 mod dom_selection;
-pub use dom_selection::DomSelection;
+pub use dom_selection::{DomSelection, HighlightName};
 /// pyro: the colour space of tagged images.
 mod icc;
 /// pyro: the language of an element, for `:lang()`.

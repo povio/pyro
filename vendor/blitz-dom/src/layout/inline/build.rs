@@ -1256,7 +1256,7 @@ fn build_inline_layout_with(
                 match letter {
                     // pyro: an initial letter is a box of its own (`layout::first_letter`): the
                     // root's text leaves the letter out and holds the box in its place.
-                    Some((split, _)) if split.initial.is_some() => {
+                    Some((split, _)) if split.initial.is_some() || split.floated => {
                         let content = &data.content;
                         let head = &content[..split.range.start];
                         let text = text_transformer.transform(head, parent_text_transform, builder);

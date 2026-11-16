@@ -16,7 +16,8 @@
 //! letter's colour, background and decorations as an inline element's. Its parent is the letter's
 //! text's parent, from which the style inherits (the fictional tag sequence of CSS 2.1 nests the
 //! pseudo-element in the innermost element holding the letter). A floated first letter (a drop
-//! cap) is not supported: it is left unstyled.
+//! cap) is a box as an initial letter's (below), a block of the letter's style floated as it says,
+//! placed by the first line as any float in it (`FirstLetterSplit::floated`).
 //!
 //! An `initial-letter` (CSS Inline 3 § 7, as Blink lays it out) makes the style node the letter's
 //! box: a block of its own holding a copy of the letter's text, whose font size makes the
@@ -155,10 +156,7 @@ pub(super) fn origin(
         if let Some(style) = eager_pseudo(node, pseudo).filter(|_| !split) {
             // A floated first letter is not supported. pyro: an initial letter is (its
             // `float` does not apply).
-            let applies = is_block_container(display)
-                && (!pseudo.is_first_letter()
-                    || CopyStyleGetters::clone_float(&*style) == Float::None
-                    || style.slow_clone_initial_letter().size > 0.0);
+            let applies = is_block_container(display);
             return applies.then_some((current, style));
         }
         // Only an in-flow block box passes its first line on to its container. pyro: an
@@ -284,6 +282,7 @@ pub(crate) fn split(doc: &mut BaseDocument, root: NodeId) -> Option<FirstLetterS
         _ => String::new(),
     };
     let initial = initial_letter(doc, root, &style).filter(|_| !letter_text.is_empty());
+    let floated = initial.is_none() && !letter_text.is_empty() && CopyStyleGetters::clone_float(&*style) != Float::None;
     let style_node = match initial {
         Some((_, font_size, text_line_height)) => {
             let rtl = doc.nodes[root]
@@ -294,13 +293,27 @@ pub(crate) fn split(doc: &mut BaseDocument, root: NodeId) -> Option<FirstLetterS
             set_letter_text(doc, root, box_id, &letter_text);
             box_id
         }
+        // pyro: a floated first letter is a floated block box of the letter.
+        None if floated => {
+            let mut builder = style::properties::StyleBuilder::for_derived_style(
+                doc.stylist.device(),
+                Some(&doc.stylist),
+                &style,
+                None,
+            );
+            builder.set_display(Display::Block);
+            let box_style = builder.build();
+            let box_id = style_node(doc, origin_id, text_parent, box_style);
+            set_letter_text(doc, root, box_id, &letter_text);
+            box_id
+        }
         None => {
             let style_node = style_node(doc, origin_id, text_parent, style);
             clear_letter_text(doc, style_node);
             style_node
         }
     };
-    Some(FirstLetterSplit { text, range, style_node, initial: initial.map(|(initial, _, _)| initial) })
+    Some(FirstLetterSplit { text, range, style_node, initial: initial.map(|(initial, _, _)| initial), floated })
 }
 
 /// pyro: whether the `::first-letter` style `letter` of the inline root `root` makes an initial

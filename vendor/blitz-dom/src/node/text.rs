@@ -157,6 +157,9 @@ pub struct FirstLetterSplit {
     /// first line it starts (`layout::first_letter::InitialLetter`). The root's text leaves the
     /// letter out.
     pub initial: Option<InitialLetter>,
+    /// pyro: a floated `::first-letter` (a drop cap): the style node is a floated block box of
+    /// the letter, as an initial letter's, placed as any float of the first line.
+    pub floated: bool,
 }
 
 /// pyro: what the first line needs to place an initial letter box (Blink's legacy initial

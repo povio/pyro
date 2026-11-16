@@ -417,14 +417,17 @@ impl crate::document::BaseDocument {
                 author: &guard.read(),
                 ua_or_user: &guard.read(),
             };
+            // pyro: `::highlight(<name>)` rules share one map; the name must match.
+            let wanted = *pseudo;
+            let matches = move |pe: &PseudoElement| *pe == wanted;
             let lazy = self.stylist.lazily_compute_pseudo_element_style(
                 &guards,
                 node,
-                pseudo,
+                &pseudo.rule_map_key(),
                 RuleInclusion::All,
                 &primary,
                 false,
-                None,
+                pseudo.is_highlight().then_some(&matches as &dyn Fn(&PseudoElement) -> bool),
             );
             if lazy.is_some() {
                 return lazy;

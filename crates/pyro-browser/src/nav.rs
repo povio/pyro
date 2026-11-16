@@ -553,10 +553,11 @@ impl PageNav {
     /// place when it is the same URL, and `hashchange` is queued. Returns
     /// false for any other URL, which is a navigation to load.
     pub(crate) fn navigate_to_fragment(&self, url: &str) -> bool {
-        let (Ok(current), Ok(target)) = (Url::parse(&self.url()), Url::parse(url)) else { return false };
+        let (Ok(current), Ok(mut target)) = (Url::parse(&self.url()), Url::parse(url)) else { return false };
         if target.fragment().is_none() || !same_document_except_fragment(&current, &target) {
             return false;
         }
+        self.take_fragment_directive(&mut target);
         let kind = if current == target { SameDocumentKind::Replace } else { SameDocumentKind::Fragment };
         let navigation_type = if kind == SameDocumentKind::Replace { "replace" } else { "push" };
         match self.navigate_event(navigation_type, target.as_str(), true) {
@@ -572,6 +573,22 @@ impl PageNav {
         self.fire_fragment_popstate();
         self.queue_hashchange(current.as_str(), target.as_str());
         true
+    }
+
+    /// URL Fragment Text Directives: a same-document navigation's directive (`:~:text=...`)
+    /// leaves its URL and selects the document's target text.
+    fn take_fragment_directive(&self, target: &mut Url) {
+        let Some((fragment, directives)) = target
+            .fragment()
+            .and_then(pyro_webapi::highlights::split_fragment_directive)
+            .map(|(fragment, directives)| (fragment.to_owned(), directives.to_owned()))
+        else {
+            return;
+        };
+        target.set_fragment(Some(&fragment));
+        if let Some(page) = self.page_dom.borrow().upgrade() {
+            pyro_webapi::highlights::apply_fragment_directive(&page, &directives);
+        }
     }
 
     /// Queues `hashchange` at the window when a same-document navigation
@@ -966,8 +983,11 @@ pub(crate) fn navigate_cross_origin(nav: &PageNav, base: &str, input: Value<'_>,
 /// HTML "navigate" from script (Location, `navigation.navigate`): a
 /// fragment change is same-document, anything else loads. Returns whether
 /// it stayed in the document.
-fn navigate_to(nav: &PageNav, target: Url, replace: bool) -> bool {
+fn navigate_to(nav: &PageNav, mut target: Url, replace: bool) -> bool {
     let current = Url::parse(&nav.url()).ok();
+    if current.as_ref().is_some_and(|current| same_document_except_fragment(current, &target)) {
+        nav.take_fragment_directive(&mut target);
+    }
     let same_url = current.as_ref() == Some(&target);
     let navigation_type = if replace || same_url { "replace" } else { "push" };
     match nav.navigate_event(navigation_type, target.as_str(), true) {

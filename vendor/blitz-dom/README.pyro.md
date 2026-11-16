@@ -2330,3 +2330,20 @@ browsers do. `ReplacedContext::ratio_in_box_sizing_box`: an `aspect-ratio: <rati
 `box-sizing` boxes (a border box under `border-box`). An anonymous block hands its parent's height as the definite
 available height to its atomic inlines (`height: stretch` on an iframe). `effective_size_containment`: a
 `container-type: size` (`inline-size`) box has size (inline-size) containment for layout.
+
+## Custom highlights and the target text (WPT round 3, lane PX)
+
+`HighlightName` and `BaseDocument::set_dom_highlights`: the embedder's custom highlights (CSS Custom Highlight API)
+and the target text of a fragment's text directive, bottom first, each a list of `DomSelection` ranges;
+`highlight_layer_ranges` maps them to inline roots' byte ranges as the selection's. `highlight_pseudo_style` computes
+an element's `::highlight(<name>)` / `::target-text` style lazily (`None` without a rule), and
+`style_declares_current_color` tells a highlight's `color: currentcolor` (which computes to the inherited colour) from a
+colour. `getComputedStyle(el, '::highlight(x)')` matches the name too (the lazy path's `matching_fn`).
+
+## Floated `::first-letter` (WPT round 3, lane PX)
+
+A `::first-letter` with `float` is a box as an initial letter's (`FirstLetterSplit::floated`, the `IS_INITIAL_LETTER_BOX`
+style node holding a copy of the letter, `display: block`), but laid out as any inline root and placed as any float
+of the first line (`compute_inline_layout` takes the initial-letter path only with `initial-letter`). Outside markers
+whose text is a `::marker` `content` string keep the marker's font (not the bundled bullet font). Covered by
+`a_floated_first_letter_is_a_float` in `crates/pyro-render/tests/initial_letter.rs`.

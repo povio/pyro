@@ -172,6 +172,11 @@ pub struct BlitzDomPainter<'dom, 'a> {
     pub(crate) draw_text_context: RefCell<DrawTextContext>,
     /// Cached selection ranges for O(1) lookup: node_id -> (start_offset, end_offset)
     pub(crate) selection_ranges: HashMap<NodeId, (usize, usize)>,
+    /// pyro: the highlights painted (custom highlights and the target text, then the selection),
+    /// bottom first, and each inline root's highlighted bytes: (index in `highlight_layers`,
+    /// start, end).
+    pub(crate) highlight_layers: Vec<crate::highlight::Layer>,
+    pub(crate) highlight_ranges: HashMap<NodeId, Vec<(usize, usize, usize)>>,
     /// Paint background colors and images (false: printing without them).
     pub backgrounds: bool,
     /// Print: text at its layout-unit x, not its box's whole-pixel x (Chromium keeps the fraction in the
@@ -216,6 +221,22 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             .map(|(node_id, start, end)| (node_id, (start, end)))
             .collect();
 
+        // pyro: at most 31 highlights below the selection (bits of a mask).
+        let mut highlight_layers = Vec::new();
+        let mut highlight_ranges: HashMap<NodeId, Vec<(usize, usize, usize)>> = HashMap::new();
+        for (name, ranges) in dom.highlight_layer_ranges().into_iter().take(31) {
+            let layer = highlight_layers.len();
+            highlight_layers.push(crate::highlight::Layer::Named(name));
+            for (node_id, start, end) in ranges {
+                highlight_ranges.entry(node_id).or_default().push((layer, start, end));
+            }
+        }
+        let selection_layer = highlight_layers.len();
+        highlight_layers.push(crate::highlight::Layer::Selection);
+        for (&node_id, &(start, end)) in &selection_ranges {
+            highlight_ranges.entry(node_id).or_default().push((selection_layer, start, end));
+        }
+
         let layer_manager = LayerManager::default();
         let effects = crate::layers::document_effects(dom);
         let root_element_id = dom.try_root_element().map(|el| el.id);
@@ -245,6 +266,8 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             backdrop_ancestors: effects.backdrop_ancestors,
             draw_text_context: RefCell::new(DrawTextContext::default()),
             selection_ranges,
+            highlight_layers,
+            highlight_ranges,
             backgrounds: true,
             fractional_text_x: false,
             composite_3d: false,
@@ -2690,7 +2713,8 @@ impl ElementCx<'_, '_> {
             // interleaves.
             let fragments = self.inline_box_fragments(text_layout, transform, tops, None);
             let selection = self.context.selection_ranges.get(&self.node.id).copied();
-            let by_line = selection.is_none()
+            let highlighted = self.context.highlight_ranges.get(&self.node.id);
+            let by_line = highlighted.is_none()
                 && text_layout.ellipsis.is_none()
                 && text_layout.clamp.is_none()
                 && text_layout.annotations.is_empty()
@@ -2737,7 +2761,7 @@ impl ElementCx<'_, '_> {
             // Render text selection highlight (if any) using cached selection ranges
             // pyro: highlighted as Chromium paints selected text (`highlight`), but in lines cut
             // by an ellipsis; a recording paint (the PDF's) draws no selection.
-            let highlight = selection
+            let highlight = highlighted
                 .filter(|_| {
                     text_layout.ellipsis.is_none()
                         && text_layout.clamp.is_none()
@@ -2767,7 +2791,7 @@ impl ElementCx<'_, '_> {
                 shadows: true,
             };
             match highlight {
-                Some(selection) => crate::highlight::stroke_highlighted_text(
+                Some(ranges) => crate::highlight::stroke_highlighted_text(
                     scene,
                     self.context.dom,
                     self.node.id,
@@ -2776,7 +2800,8 @@ impl ElementCx<'_, '_> {
                     transform,
                     tops,
                     options,
-                    selection,
+                    &self.context.highlight_layers,
+                    ranges,
                     &mut draw_text_context,
                 ),
                 None => stroke_inline_text(

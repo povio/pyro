@@ -16,7 +16,105 @@ pub struct DomSelection {
     pub end: (NodeId, usize),
 }
 
+/// pyro: a highlight painted under the selection: a custom highlight (`::highlight(<name>)`) or
+/// the document's target text (`::target-text`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum HighlightName {
+    Custom(String),
+    TargetText,
+}
+
+impl HighlightName {
+    /// The pseudo-element its rules are filed under, and the one a rule must name to match.
+    fn pseudo(&self) -> (style::selector_parser::PseudoElement, style::selector_parser::PseudoElement) {
+        use style::selector_parser::PseudoElement;
+        match self {
+            HighlightName::Custom(name) => (
+                PseudoElement::Highlight(style::selector_parser::ANY_HIGHLIGHT),
+                PseudoElement::Highlight(style::selector_parser::highlight_name_id(&style::Atom::from(name.as_str()))),
+            ),
+            HighlightName::TargetText => (PseudoElement::TargetText, PseudoElement::TargetText),
+        }
+    }
+}
+
 impl BaseDocument {
+    /// pyro: the highlights painted from now on, bottom first (custom highlights by priority,
+    /// then the target text), each with its ranges.
+    pub fn set_dom_highlights(&mut self, highlights: Vec<(HighlightName, Vec<DomSelection>)>) {
+        self.dom_highlights = highlights;
+    }
+
+    /// pyro: the highlights (`set_dom_highlights`), bottom first, each with the inline roots
+    /// holding its text and the bytes of their text it covers.
+    pub fn highlight_layer_ranges(&self) -> Vec<(HighlightName, Vec<(NodeId, usize, usize)>)> {
+        self.dom_highlights
+            .iter()
+            .map(|(name, ranges)| {
+                (name.clone(), ranges.iter().flat_map(|range| self.dom_selection_ranges(*range)).collect())
+            })
+            .collect()
+    }
+
+    /// pyro: the style of a highlight pseudo-element of the element `node_id` when a rule gives
+    /// it one (`None`: no rule does).
+    pub fn highlight_pseudo_style(
+        &self,
+        node_id: NodeId,
+        name: &HighlightName,
+    ) -> Option<style::servo_arc::Arc<style::properties::ComputedValues>> {
+        use style::shared_lock::StylesheetGuards;
+        use style::stylist::RuleInclusion;
+        let node = self.nodes.get(node_id)?;
+        let primary = node.primary_styles()?;
+        let (key, wanted) = name.pseudo();
+        let matches = move |pe: &style::selector_parser::PseudoElement| *pe == wanted;
+        let read_guard = self.guard.read();
+        let guards = StylesheetGuards::same(&read_guard);
+        self.stylist.lazily_compute_pseudo_element_style::<&crate::Node>(
+            &guards,
+            node,
+            &key,
+            RuleInclusion::All,
+            &primary,
+            true,
+            Some(&matches),
+        )
+    }
+
+    /// pyro: whether the author declaration of `longhand` that `style` uses is `currentcolor`
+    /// (`color: currentcolor` computes to the inherited colour, which a highlight replaces with
+    /// the colour of the highlight below).
+    pub fn style_declares_current_color(
+        &self,
+        style: &style::properties::ComputedValues,
+        longhand: style::properties::LonghandId,
+    ) -> bool {
+        use style::properties::{CSSWideKeyword, PropertyDeclaration, PropertyDeclarationId};
+        use style::stylesheets::Origin;
+        use style::values::specified::Color;
+        let guard = self.guard.read();
+        for node in style.rules().self_and_ancestors() {
+            if node.cascade_level().origin().origin() == Origin::UserAgent {
+                continue;
+            }
+            let Some(source) = node.style_source() else { continue };
+            let Some((declaration, _)) = source.read(&guard).get(PropertyDeclarationId::Longhand(longhand)) else {
+                continue;
+            };
+            return match declaration {
+                PropertyDeclaration::Color(value) => matches!(value.0, Color::CurrentColor),
+                PropertyDeclaration::BackgroundColor(value) => matches!(value, Color::CurrentColor),
+                PropertyDeclaration::CSSWideKeyword(wide) => match wide.keyword {
+                    CSSWideKeyword::RevertLayer | CSSWideKeyword::RevertRule => continue,
+                    _ => false,
+                },
+                _ => false,
+            };
+        }
+        false
+    }
+
     /// pyro: whether author or user rules (style sheets, style attributes, animations) give
     /// `style` a declaration of some of `longhands`. A `revert` at the highest priority declares
     /// nothing (it rolls back to the user agent's, which declares none of these for a highlight

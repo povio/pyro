@@ -974,3 +974,13 @@ Tables (round 3 lane C2T), covered by `crates/pyro-render/tests/table_paint_orde
 viewport outside the area usvg painted it in (the tree's size, its `viewBox`), with an even-odd fill of the object
 rect and that area: a browser paints the root's background over the whole viewport (WPT css-sizing
 `aspect-ratio/replaced-element-004/006`).
+## Highlight overlays (WPT round 3, lane PX)
+
+`highlight.rs` paints custom highlights and the target text under the selection (CSS Pseudo-Elements 4 § 3.5), the
+selection's painter generalised to layers: each atom of a line has the set of highlights over it; the stretches get
+the originating text's shadows (under the backgrounds), each highlight's background bottom first, then the text in
+each set's colours with the top highlight's `text-shadow`. A highlight's `color` that is not declared or is
+`currentcolor` is the colour of the highlight below (or the text's), its `currentcolor` background and decorations
+that colour; each property comes from the nearest element whose highlight style declares it (`cascade-highlight-005`).
+The target text defaults to `Mark` on `MarkText` unless a style declares either colour; custom highlights draw nothing
+of their own then. Covered by `highlights_paint_under_the_selection` in `crates/pyro-render/tests/selection_highlight.rs`.

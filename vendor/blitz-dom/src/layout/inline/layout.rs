@@ -403,7 +403,10 @@ impl LayoutPassState<'_> {
         inputs: taffy::tree::LayoutInput,
         block_ctx: Option<&mut BlockContext<'_>>,
     ) -> taffy::LayoutOutput {
-        if self.nodes[node_id].flags.contains(NodeFlags::IS_INITIAL_LETTER_BOX) {
+        // (A floated first letter's box is laid out as any inline root.)
+        if self.nodes[node_id].flags.contains(NodeFlags::IS_INITIAL_LETTER_BOX)
+            && self.nodes[node_id].primary_styles().is_some_and(|style| style.slow_clone_initial_letter().size > 0.0)
+        {
             return self.compute_initial_letter_box_layout(node_id, inputs);
         }
         let LayoutInput {
