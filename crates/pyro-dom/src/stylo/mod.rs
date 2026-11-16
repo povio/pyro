@@ -50,6 +50,8 @@ pub(crate) fn enable_features() {
         style_config::set_pref!("layout.css.contain.enabled", true);
         style_config::set_pref!("layout.css.content.alt-text.enabled", true);
         style_config::set_pref!("layout.css.corner-shape.enabled", true);
+        // pyro: `closest-corner`/`farthest-corner` radii in `ellipse()` (CSS Shapes 2).
+        style_config::set_pref!("layout.css.ellipse-corners.enabled", true);
         style_config::set_pref!("layout.css.counters.enabled", true);
         style_config::set_pref!("layout.css.font-size-adjust.enabled", true);
         // pyro: `font-synthesis-style`, `-small-caps` and `-position` (and the shorthand).

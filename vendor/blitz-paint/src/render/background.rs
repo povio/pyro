@@ -210,6 +210,15 @@ impl ElementCx<'_, '_> {
                 .filter(|_| attachment == StyloBackgroundAttachment::Local)
         };
 
+        // pyro: with a `border-shape`, the background is clipped to its inner shape (to the shape,
+        // with one) instead of the rounded box (CSS Borders 4 §11).
+        let border_shape = canvas.is_none().then(|| self.border_shape()).flatten();
+        let shape_clip = border_shape.as_ref().map(|shape| shape.background_clip());
+        let shape_bounds = border_shape.as_ref().map(|shape| {
+            use kurbo::Shape as _;
+            shape.outer_path().bounding_box()
+        });
+
         // The background color is clipped by the clip of the last layer in the list
         let last_clip = *get_cyclic(&bg_styles.background_clip.0, layer_count - 1);
         let last_attachment = *get_cyclic(&bg_styles.background_attachment.0, layer_count - 1);
@@ -224,6 +233,18 @@ impl ElementCx<'_, '_> {
                 (Some(canvas), _) => canvas.to_path(0.1),
                 (None, Some(local)) => local.box_path(clip),
                 (None, None) if border_area => self.border_area_path(),
+                (None, None) if shape_clip.is_some() => {
+                    let shape = shape_clip.clone().unwrap();
+                    match clip {
+                        BoxModelBox::BorderBox => shape,
+                        BoxModelBox::NoClip => self.box_path(clip),
+                        _ => {
+                            use crate::kurbo_css::contoured::{boolean, flatten, rect_polygon};
+                            let shapes = [flatten(&shape), vec![rect_polygon(self.box_rect(clip))]];
+                            boolean(&shapes, |inside| inside[0] && inside[1])
+                        }
+                    }
+                }
                 (None, None) => match clip {
                     BoxModelBox::BorderBox => shrunk_border_box
                         .get_or_init(|| self.bleed_avoiding_border_box(style))
@@ -307,6 +328,11 @@ impl ElementCx<'_, '_> {
             let local = local_cx(layer.attachment);
             let cx = local.unwrap_or(self);
             let area = canvas.unwrap_or_else(|| cx.box_rect(layer.clip));
+            // pyro: a `border-shape` reaching out of the box takes the painting area with it.
+            let area = match &shape_bounds {
+                Some(bounds) if canvas.is_none() => area.union(*bounds),
+                _ => area,
+            };
 
             if local.is_some() {
                 scene.push_clip_layer(
@@ -425,7 +451,8 @@ impl ElementCx<'_, '_> {
             kurbo::Insets::ZERO,
             0.0,
             radii,
-        );
+        )
+        .contoured_like(&self.frame);
         Some(shrunk.border_box_path())
     }
 

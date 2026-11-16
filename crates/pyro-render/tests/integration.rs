@@ -13,6 +13,7 @@ mod clip_path_mask;
 mod compositing_rounding;
 mod container_queries;
 mod containing_block_chain;
+mod corner_border_shape;
 mod dictionary_line_breaks;
 mod direction_text;
 mod document_facts;

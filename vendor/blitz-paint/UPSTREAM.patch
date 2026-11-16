@@ -2293,10 +2293,1135 @@ new file mode 100644
 +    }
 +    context.highlights = cache;
 +}
+diff --git a/packages/blitz-paint/src/kurbo_css/contoured.rs b/packages/blitz-paint/src/kurbo_css/contoured.rs
+new file mode 100644
+--- /dev/null
++++ b/packages/blitz-paint/src/kurbo_css/contoured.rs
+@@ -0,0 +1,1112 @@
++//! pyro: corner shapes (CSS Borders 4 `corner-shape`, `superellipse()`), drawn as Blink draws them
++//! (`ContouredRect` and `ContouredRect::Corner` in `platform/geometry/contoured_rect.cc`,
++//! `PathBuilder::AddContouredRect` and `CornerClipOutPath` in `platform/geometry/path_builder.cc`,
++//! `ComputeContouredBorderFromStyle` in `core/paint/contoured_border_geometry.cc`).
++//!
++//! A corner is the quarter of a superellipse of exponent `2^k` in the box its radii make
++//! (`k` = 1 is round, 0 a bevel, -1 a scoop, ±∞ square and notch). The border box's own contour
++//! follows the corners as given. A box inset or outset from it (the padding box, a shadow, an
++//! outline) keeps its curves aligned with the border box's, so that a border looks as thick along
++//! the curve as along the sides: it is its rectangle less each corner's "clip-out" region, the
++//! area outside a curve moved inwards along its normals by the inset (Blink takes the regions out
++//! with Skia's path ops; [`boolean`] does it on flattened outlines here).
++
++use std::f64::consts::{FRAC_1_SQRT_2, SQRT_2};
++
++use kurbo::{BezPath, PathEl, Point, Rect, Shape as _, Vec2};
++
++use super::NonUniformRoundedRectRadii;
++
++/// The exponents of Blink's `ContouredRect::CornerCurvature`.
++pub const ROUND: f64 = 2.0;
++pub const BEVEL: f64 = 1.0;
++pub const STRAIGHT: f64 = 1000.0;
++pub const NOTCH: f64 = 1.0 / STRAIGHT;
++/// `Superellipse::kHighCurvatureThreshold`: parameters beyond ±16 draw as ±16.
++const HIGH_CURVATURE: f64 = 16.0;
++/// How finely corner curves are flattened (device px). vello_cpu flattens the curves it fills to
++/// within 0.25px (`vello_common::flatten::TOL`), which leaves a curve's antialiased pixels up
++/// to a quarter of their range off where Skia draws them; a corner-shaped edge is drawn as the
++/// polygon flattened here instead, as close to the curve as Chromium draws it.
++const FLATTEN_TOLERANCE: f64 = 0.02;
++
++/// The exponent of a corner whose `superellipse()` parameter is `k` (`Superellipse::Exponent`):
++/// `2^k`, `k` clamped to ±16.
++pub fn exponent(k: f64) -> f64 {
++    if k.is_nan() {
++        return ROUND;
++    }
++    // An interpolated keyword (`round` to `round`) comes back a hair off its value.
++    let k = if (k - k.round()).abs() < 1e-4 { k.round() } else { k };
++    2f64.powf(k.clamp(-HIGH_CURVATURE, HIGH_CURVATURE))
++}
++
++/// Whether a corner of parameter `k` has no radius at all (`Superellipse::IsDegenerate`: square,
++/// or so close to it that nothing would show).
++pub fn is_degenerate(k: f64) -> bool {
++    k >= HIGH_CURVATURE
++}
++
++fn clamp_curvature(curvature: f64) -> f64 {
++    curvature.clamp(NOTCH, STRAIGHT)
++}
++
++/// The exponent of each corner of a box (`ContouredRect::CornerCurvature`).
++#[derive(Clone, Copy, Debug, PartialEq)]
++pub struct CornerCurvature {
++    pub top_left: f64,
++    pub top_right: f64,
++    pub bottom_right: f64,
++    pub bottom_left: f64,
++}
++
++impl CornerCurvature {
++    pub const ROUND: Self = Self {
++        top_left: ROUND,
++        top_right: ROUND,
++        bottom_right: ROUND,
++        bottom_left: ROUND,
++    };
++
++    pub fn is_round(&self) -> bool {
++        *self == Self::ROUND
++    }
++
++    pub fn is_convex(&self) -> bool {
++        [self.top_left, self.top_right, self.bottom_right, self.bottom_left]
++            .iter()
++            .all(|&c| c >= BEVEL)
++    }
++}
++
++fn normalize(v: Vec2) -> Vec2 {
++    let length = v.hypot();
++    if length == 0.0 || !length.is_finite() {
++        v
++    } else {
++        v / length
++    }
++}
++
++fn cross(a: Vec2, b: Vec2) -> f64 {
++    a.x * b.y - a.y * b.x
++}
++
++/// The intersection of the lines through `a0`, `a1` and through `b0`, `b1`.
++fn line_intersection(a0: Point, a1: Point, b0: Point, b1: Point) -> Option<Point> {
++    let (a, b) = (a1 - a0, b1 - b0);
++    let denominator = cross(a, b);
++    if denominator.abs() < 1e-6 {
++        return None;
++    }
++    Some(a0 + a * (cross(b0 - a0, b) / denominator))
++}
++
++/// The intersection of the segment `a0`-`a1` with the line through `b0`, `b1`, or of the
++/// segment `b0`-`b1` with the line through `a0`, `a1` (Blink's `SegmentLineIntersection`).
++fn segment_line_intersection(a0: Point, a1: Point, b0: Point, b1: Point) -> Option<Point> {
++    let (a, b) = (a1 - a0, b1 - b0);
++    let denominator = cross(a, b);
++    if denominator.abs() < 1e-6 {
++        return None;
++    }
++    let offset = b0 - a0;
++    let a_scale = cross(offset, b) / denominator;
++    if (0.0..=1.0).contains(&a_scale) {
++        return Some(a0 + a * a_scale);
++    }
++    let b_scale = cross(offset, a) / denominator;
++    if (0.0..=1.0).contains(&b_scale) {
++        return Some(b0 + b * b_scale);
++    }
++    None
++}
++
++/// One corner of a contour: an axis-aligned quad whose points are, clockwise, where the curve
++/// starts, the box's corner, where it ends, and the corner's centre (Blink's
++/// `ContouredRect::Corner`).
++#[derive(Clone, Copy, Debug, PartialEq)]
++struct Corner {
++    v: [Point; 4],
++    curvature: f64,
++}
++
++impl Corner {
++    /// The corner of `rect` (a corner's box) turned `rotation` quarters: 0 top right, 1 bottom
++    /// right, 2 bottom left, 3 top left.
++    fn from_rect(rect: Rect, rotation: usize, curvature: f64) -> Self {
++        let mut v = [
++            Point::new(rect.x0, rect.y0),
++            Point::new(rect.x1, rect.y0),
++            Point::new(rect.x1, rect.y1),
++            Point::new(rect.x0, rect.y1),
++        ];
++        v.rotate_left(rotation);
++        Self { v, curvature }
++    }
++
++    fn new(v: [Point; 4], curvature: f64) -> Self {
++        Self {
++            v,
++            curvature: clamp_curvature(curvature),
++        }
++    }
++
++    fn start(&self) -> Point {
++        self.v[0]
++    }
++    fn outer(&self) -> Point {
++        self.v[1]
++    }
++    fn end(&self) -> Point {
++        self.v[2]
++    }
++    fn center(&self) -> Point {
++        self.v[3]
++    }
++    fn v1(&self) -> Vec2 {
++        self.outer() - self.start()
++    }
++    fn v2(&self) -> Vec2 {
++        self.end() - self.outer()
++    }
++    fn v3(&self) -> Vec2 {
++        self.center() - self.end()
++    }
++    fn v4(&self) -> Vec2 {
++        self.start() - self.center()
++    }
++    fn is_straight(&self) -> bool {
++        self.curvature == STRAIGHT
++    }
++    fn is_bevel(&self) -> bool {
++        self.curvature == BEVEL
++    }
++    fn is_round(&self) -> bool {
++        self.curvature == ROUND
++    }
++    fn is_notch(&self) -> bool {
++        self.curvature == NOTCH
++    }
++    fn is_concave(&self) -> bool {
++        self.curvature < 1.0
++    }
++    fn is_empty(&self) -> bool {
++        self.v1().hypot() == 0.0 || self.v2().hypot() == 0.0
++    }
++
++    /// The corner bulging the other way (a scoop for a round corner).
++    fn inverse(&self) -> Self {
++        Self::new(
++            [self.start(), self.center(), self.end(), self.outer()],
++            1.0 / self.curvature,
++        )
++    }
++
++    fn bounding_box(&self) -> Rect {
++        Rect::from_points(self.start(), self.end())
++    }
++
++    /// A point of the unit corner (`(0, 1)` the start, `(1, 0)` the end, `(1, 1)` the outer
++    /// corner) in this corner.
++    fn map_point(&self, x: f64, y: f64) -> Point {
++        self.center() + self.v1() * x + self.v4() * y
++    }
++
++    fn half_corner(&self) -> Point {
++        let h = half_corner_for_curvature(self.curvature);
++        self.map_point(h, h)
++    }
++
++    /// This corner (of an inset or outset box) moved so that its curve stays parallel to
++    /// `origin`'s, the corner it was inset from: `ContouredRect::Corner::AlignedToOrigin`.
++    fn aligned_to_origin(&self, origin: &Corner, edge_inset_start: f64, edge_inset_end: f64) -> Corner {
++        if origin.is_empty() || self == origin {
++            return *self;
++        }
++        let start_radius = origin.v2().hypot();
++        let end_radius = origin.v3().hypot();
++        // Insets beyond the radius are kept (the inset box's radii stopped at zero).
++        let start_inset = if edge_inset_start >= 0.0 && self.v2().hypot() == 0.0 {
++            edge_inset_start
++        } else {
++            start_radius - self.v2().hypot()
++        };
++        let end_inset = if edge_inset_end >= 0.0 && self.v3().hypot() == 0.0 {
++            edge_inset_end
++        } else {
++            end_radius - self.v3().hypot()
++        };
++        let parameter = origin.curvature.log2();
++        let exponent = 2f64.powf(parameter.abs());
++        let convex_half_corner = 0.5f64.powf(1.0 / exponent);
++        let half_corner = if parameter < 0.0 {
++            1.0 - convex_half_corner
++        } else {
++            convex_half_corner
++        };
++        let control_point_x = (half_corner / (SQRT_2 - 1.0) - FRAC_1_SQRT_2).clamp(0.0, 1.0);
++        let inset_difference = (end_inset - start_inset).clamp(-start_radius, end_radius);
++
++        let mut start_control_point_x = control_point_x;
++        let mut end_control_point_x = control_point_x;
++        if inset_difference != 0.0 {
++            let bevel_normal_delta = (start_radius * start_radius + end_radius * end_radius
++                - inset_difference * inset_difference)
++                .max(0.0)
++                .sqrt();
++            let bevel_normal_x = end_radius * inset_difference + start_radius * bevel_normal_delta;
++            let bevel_normal_y = -start_radius * inset_difference + end_radius * bevel_normal_delta;
++            let bevel_control_point_x = start_radius * bevel_normal_y
++                / (start_radius * bevel_normal_y + end_radius * bevel_normal_x);
++            start_control_point_x = if parameter < 0.0 {
++                bevel_control_point_x * (2.0 * control_point_x)
++            } else {
++                1.0 - (1.0 - bevel_control_point_x) * (2.0 * (1.0 - control_point_x))
++            };
++            end_control_point_x = 2.0 * control_point_x - start_control_point_x;
++        }
++
++        let unmapped_start_normal = normalize(Vec2::new(
++            (1.0 - start_control_point_x) * start_radius,
++            start_control_point_x * end_radius,
++        ));
++        let unmapped_end_normal = normalize(Vec2::new(
++            end_control_point_x * start_radius,
++            (1.0 - end_control_point_x) * end_radius,
++        ));
++        let v3 = normalize(origin.v3());
++        let v2 = normalize(origin.v2());
++        let start_normal = v3 * unmapped_start_normal.x + v2 * unmapped_start_normal.y;
++        let end_normal = v3 * unmapped_end_normal.x + v2 * unmapped_end_normal.y;
++
++        let original_outer = self.outer() - v3 * end_inset - v2 * start_inset;
++        let mut adjusted_start = original_outer + v3 * end_radius + start_normal * start_inset;
++        let mut adjusted_end = original_outer + v2 * start_radius + end_normal * end_inset;
++
++        let start_tangent = Vec2::new(-start_normal.y, start_normal.x);
++        let end_tangent = Vec2::new(-end_normal.y, end_normal.x);
++        if parameter >= 0.0 && start_inset < 0.0 {
++            adjusted_start = line_intersection(
++                adjusted_start,
++                adjusted_start - start_tangent,
++                self.outer() + v3,
++                self.outer(),
++            )
++            .unwrap_or(adjusted_start);
++        }
++        if parameter >= 0.0 && end_inset < 0.0 {
++            adjusted_end = line_intersection(
++                adjusted_end,
++                adjusted_end + end_tangent,
++                self.outer() + v2,
++                self.outer(),
++            )
++            .unwrap_or(adjusted_end);
++        }
++
++        let adjusted_height = (adjusted_end - adjusted_start).dot(v2);
++        let adjusted_outer = adjusted_end - v2 * adjusted_height;
++        let adjusted_center = adjusted_start + v2 * adjusted_height;
++        if parameter <= -1.0 || parameter >= 0.0 {
++            return Corner::new(
++                [adjusted_start, adjusted_outer, adjusted_end, adjusted_center],
++                origin.curvature,
++            );
++        }
++
++        // Between a scoop and a bevel the aligned curve is the ellipse arc tangent to the
++        // normals' tangents at both ends.
++        let tangent_intersection = line_intersection(
++            adjusted_start,
++            adjusted_start - start_tangent,
++            adjusted_end,
++            adjusted_end + end_tangent,
++        )
++        .unwrap_or(adjusted_start);
++        Corner::new(
++            [
++                adjusted_start,
++                tangent_intersection,
++                adjusted_end,
++                adjusted_start + (adjusted_end - tangent_intersection),
++            ],
++            ROUND,
++        )
++    }
++}
++
++/// The x (and y) of a unit superellipse corner at its middle (`HalfCornerForCurvature`).
++fn half_corner_for_curvature(curvature: f64) -> f64 {
++    0.5f64.powf(1.0 / clamp_curvature(curvature))
++}
++
++/// The cubic Bézier that follows half of a convex superellipse corner of exponent `curvature`,
++/// from its start `(0, 1)` to its middle (`ApproximateSuperellipseHalfCornerAsBezierCurve`):
++/// the two control points and the end.
++fn half_corner_cubic(curvature: f64) -> [Vec2; 3] {
++    const P: [f64; 7] = [
++        1.2430920942724248,
++        2.010479023614843,
++        0.32922901179443753,
++        0.2823023142212073,
++        1.3473704261055421,
++        2.9149468637949814,
++        0.9106507102917086,
++    ];
++    let s = curvature.log2();
++    let slope = P[0] + (P[6] - P[0]) * 0.5 * (1.0 + (P[5] * (s - P[1])).tanh());
++    let base = 1.0 / (1.0 + (-slope * (0.0 - P[1])).exp());
++    let logistic = 1.0 / (1.0 + (-slope * (s - P[1])).exp());
++    let a = (logistic - base) / (1.0 - base);
++    let b = P[2] * (-P[3] * s.powf(P[4])).exp();
++    let half_corner = half_corner_for_curvature(curvature);
++    [
++        Vec2::new(a, 1.0),
++        Vec2::new(half_corner - b, half_corner + b),
++        Vec2::new(half_corner, half_corner),
++    ]
++}
++
++/// The kappa of a cubic Bézier quarter ellipse (the conic Skia draws a round corner with).
++const KAPPA: f64 = 0.552_284_749_830_793_4;
++
++/// Draws `corner`'s curve: a line to its start, then the curve to its end (`AddCurvedCorner`).
++fn add_curved_corner(path: &mut BezPath, corner: &Corner) {
++    if corner.is_concave() {
++        add_curved_corner(path, &corner.inverse());
++        return;
++    }
++    line_or_move_to(path, corner.start());
++    if corner.is_straight() || corner.is_empty() {
++        path.line_to(corner.outer());
++        path.line_to(corner.end());
++    } else if corner.is_bevel() {
++        path.line_to(corner.end());
++    } else if corner.is_round() {
++        let (start, outer, end) = (corner.start(), corner.outer(), corner.end());
++        path.curve_to(
++            start + (outer - start) * KAPPA,
++            end + (outer - end) * KAPPA,
++            end,
++        );
++    } else {
++        let [p1, p2, p3] = half_corner_cubic(corner.curvature);
++        path.curve_to(
++            corner.map_point(p1.x, p1.y),
++            corner.map_point(p2.x, p2.y),
++            corner.map_point(p3.x, p3.y),
++        );
++        path.curve_to(
++            corner.map_point(p2.y, p2.x),
++            corner.map_point(p1.y, p1.x),
++            corner.end(),
++        );
++    }
++}
++
++fn line_or_move_to(path: &mut BezPath, point: Point) {
++    if path.elements().is_empty() || matches!(path.elements().last(), Some(PathEl::ClosePath)) {
++        path.move_to(point);
++    } else {
++        path.line_to(point);
++    }
++}
++
++/// The region outside an inset corner's curve, aligned with its origin (`CornerClipOutPath`):
++/// what is taken out of the inset box's rectangle at that corner. `None` when nothing is.
++fn corner_clip_out_path(
++    origin: &Corner,
++    target: &Corner,
++    edge_inset_start: f64,
++    edge_inset_end: f64,
++) -> Option<BezPath> {
++    let start_radius = origin.v2().hypot();
++    let end_radius = origin.v3().hypot();
++    if start_radius == 0.0 || end_radius == 0.0 || origin.is_straight() {
++        return None;
++    }
++    let start_inset = if edge_inset_start >= 0.0 && target.v2().hypot() == 0.0 {
++        edge_inset_start
++    } else {
++        start_radius - target.v2().hypot()
++    };
++    let end_inset = if edge_inset_end >= 0.0 && target.v3().hypot() == 0.0 {
++        edge_inset_end
++    } else {
++        end_radius - target.v3().hypot()
++    };
++    let parameter = origin.curvature.log2();
++    let inset_difference = (end_inset - start_inset).clamp(-start_radius, end_radius);
++    if parameter <= 0.0 && (inset_difference == -start_radius || inset_difference == end_radius) {
++        return None;
++    }
++
++    let aligned = target.aligned_to_origin(origin, edge_inset_start, edge_inset_end);
++    let v3 = normalize(origin.v3());
++    let v2 = normalize(origin.v2());
++    let original_outer = target.outer() - v3 * end_inset - v2 * start_inset;
++    let original_start = original_outer + v3 * end_radius;
++    let original_end = original_outer + v2 * start_radius;
++
++    let mut miter_start = aligned.start();
++    let mut miter_end = aligned.end();
++    if parameter < 0.0 && start_inset < 0.0 {
++        let start_normal = normalize((aligned.start() - original_start) * (1.0 / start_inset));
++        let start_tangent = Vec2::new(-start_normal.y, start_normal.x);
++        miter_start = line_intersection(
++            aligned.start(),
++            aligned.start() - start_tangent,
++            target.outer() + v3,
++            target.outer(),
++        )
++        .unwrap_or(aligned.start());
++    }
++    if parameter < 0.0 && end_inset < 0.0 {
++        let end_normal = normalize((aligned.end() - original_end) * (1.0 / end_inset));
++        let end_tangent = Vec2::new(-end_normal.y, end_normal.x);
++        miter_end = line_intersection(
++            aligned.end(),
++            aligned.end() + end_tangent,
++            target.outer() + v2,
++            target.outer(),
++        )
++        .unwrap_or(aligned.end());
++    }
++
++    let self_intersection = if parameter < 0.0
++        && start_inset < 0.0
++        && end_inset < 0.0
++        && (-end_inset >= start_radius || -start_inset >= end_radius)
++    {
++        segment_line_intersection(miter_start, aligned.start(), miter_end, aligned.end())
++    } else {
++        None
++    };
++
++    let mut path = BezPath::new();
++    path.move_to(miter_start);
++    if let Some(point) = self_intersection {
++        path.line_to(point);
++    } else if origin.is_notch() {
++        path.line_to(aligned.center());
++    } else {
++        add_curved_corner(&mut path, &aligned);
++    }
++    path.line_to(miter_end);
++    path.line_to(target.outer());
++    path.close_path();
++    Some(path)
++}
++
++/// The box of each corner of a rounded rect, as Blink's `FloatRoundedRect::*Corner()`, in the
++/// order top right, bottom right, bottom left, top left.
++fn corner_rects(rect: Rect, radii: &NonUniformRoundedRectRadii) -> [Rect; 4] {
++    let (tl, tr, br, bl) = (radii.top_left, radii.top_right, radii.bottom_right, radii.bottom_left);
++    [
++        Rect::new(rect.x1 - tr.x, rect.y0, rect.x1, rect.y0 + tr.y),
++        Rect::new(rect.x1 - br.x, rect.y1 - br.y, rect.x1, rect.y1),
++        Rect::new(rect.x0, rect.y1 - bl.y, rect.x0 + bl.x, rect.y1),
++        Rect::new(rect.x0, rect.y0, rect.x0 + tl.x, rect.y0 + tl.y),
++    ]
++}
++
++/// A box with shaped corners, possibly inset or outset from another (`ContouredRect`).
++#[derive(Clone, Debug, PartialEq)]
++pub struct ContouredRect {
++    pub rect: Rect,
++    pub radii: NonUniformRoundedRectRadii,
++    pub curvature: CornerCurvature,
++    /// The box (usually the border box) this one was inset or outset from, with its radii:
++    /// the corners' curves stay parallel to its.
++    pub origin: Option<(Rect, NonUniformRoundedRectRadii)>,
++}
++
++impl ContouredRect {
++    fn curvatures(&self) -> [f64; 4] {
++        let c = &self.curvature;
++        [c.top_right, c.bottom_right, c.bottom_left, c.top_left]
++    }
++
++    fn corners_of(&self, rect: Rect, radii: &NonUniformRoundedRectRadii) -> [Corner; 4] {
++        let rects = corner_rects(rect, radii);
++        let curvatures = self.curvatures();
++        std::array::from_fn(|i| Corner::from_rect(rects[i], i, curvatures[i]))
++    }
++
++    /// The path of the contour.
++    pub fn path(&self) -> BezPath {
++        let rect = Rect::new(
++            self.rect.x0,
++            self.rect.y0,
++            self.rect.x1.max(self.rect.x0),
++            self.rect.y1.max(self.rect.y0),
++        );
++        let identity = match &self.origin {
++            None => true,
++            Some((origin, radii)) => *origin == rect && *radii == self.radii,
++        };
++        let targets = self.corners_of(rect, &self.radii);
++        if identity {
++            let mut path = BezPath::new();
++            path.move_to(targets[0].start());
++            for corner in &targets {
++                add_curved_corner(&mut path, corner);
++            }
++            path.close_path();
++            return polygons_path(&flatten(&path));
++        }
++        let (origin_rect, origin_radii) = self.origin.as_ref().unwrap();
++        let origins = self.corners_of(*origin_rect, origin_radii);
++        let insets = [
++            (rect.y0 - origin_rect.y0, origin_rect.x1 - rect.x1),
++            (origin_rect.x1 - rect.x1, origin_rect.y1 - rect.y1),
++            (origin_rect.y1 - rect.y1, rect.x0 - origin_rect.x0),
++            (rect.x0 - origin_rect.x0, rect.y0 - origin_rect.y0),
++        ];
++        let cuts: Vec<BezPath> = (0..4)
++            .filter_map(|i| corner_clip_out_path(&origins[i], &targets[i], insets[i].0, insets[i].1))
++            .collect();
++        if cuts.is_empty() {
++            return rect.to_path(0.1);
++        }
++        let mut shapes = vec![vec![rect_polygon(rect)]];
++        shapes.extend(cuts.iter().map(flatten));
++        boolean(&shapes, |inside| inside[0] && !inside[1..].iter().any(|&b| b))
++    }
++}
++
++/// `rect`'s corners, clockwise from the top left.
++pub fn rect_polygon(rect: Rect) -> Vec<Point> {
++    vec![
++        Point::new(rect.x0, rect.y0),
++        Point::new(rect.x1, rect.y0),
++        Point::new(rect.x1, rect.y1),
++        Point::new(rect.x0, rect.y1),
++    ]
++}
++
++/// A path of closed `polygons`.
++pub fn polygons_path(polygons: &[Vec<Point>]) -> BezPath {
++    let mut path = BezPath::new();
++    for polygon in polygons {
++        let Some((first, rest)) = polygon.split_first() else {
++            continue;
++        };
++        path.move_to(*first);
++        for p in rest {
++            path.line_to(*p);
++        }
++        path.close_path();
++    }
++    path
++}
++
++/// Every contour of `path` as a polygon, its curves flattened.
++pub fn flatten(path: &BezPath) -> Vec<Vec<Point>> {
++    flatten_with(path, FLATTEN_TOLERANCE)
++}
++
++/// Every contour of `path` as a polygon, its curves flattened to within `tolerance`.
++pub fn flatten_with(path: &BezPath, tolerance: f64) -> Vec<Vec<Point>> {
++    let mut polygons = Vec::new();
++    let mut current: Vec<Point> = Vec::new();
++    kurbo::flatten(path.elements().iter().copied(), tolerance, |el| match el {
++        PathEl::MoveTo(p) => {
++            if current.len() > 2 {
++                polygons.push(std::mem::take(&mut current));
++            }
++            current.clear();
++            current.push(p);
++        }
++        PathEl::LineTo(p) => {
++            if current.last() != Some(&p) {
++                current.push(p);
++            }
++        }
++        PathEl::ClosePath => {
++            if current.len() > 2 {
++                polygons.push(std::mem::take(&mut current));
++            }
++            current.clear();
++        }
++        _ => {}
++    });
++    if current.len() > 2 {
++        polygons.push(current);
++    }
++    polygons
++}
++
++/// The opposite-corner constraint for boxes with concave corners
++/// (`RadiiConstraintFactorForOppositeCorners`): the scale of the radii at which the hulls of two
++/// opposite corners touch without overlapping, 1 when they do not overlap.
++fn opposite_corners_constraint(a: &Corner, b: &Corner) -> f64 {
++    if !rects_intersect(a.bounding_box(), b.bounding_box()) {
++        return 1.0;
++    }
++    let (hull_a, hull_b) = (hull_quad(a), hull_quad(b));
++    if !quads_intersect(&hull_a, &hull_b) {
++        return 1.0;
++    }
++    const NEAR_TOUCHING: f64 = 1.0 - 5.0 * f32::EPSILON as f64;
++    if !quads_intersect(
++        &scale_quad(&hull_a, a.outer(), NEAR_TOUCHING),
++        &scale_quad(&hull_b, b.outer(), NEAR_TOUCHING),
++    ) {
++        return 1.0;
++    }
++    let (mut min, mut max) = (0.0f64, 1.0f64);
++    while max - min > 0.05 {
++        let scale = (min + max) / 2.0;
++        if quads_intersect(&scale_quad(&hull_a, a.outer(), scale), &scale_quad(&hull_b, b.outer(), scale)) {
++            max = scale;
++        } else {
++            min = scale;
++        }
++    }
++    min
++}
++
++/// Blink's `gfx::RectF::Intersects`: overlapping with a positive area.
++fn rects_intersect(a: Rect, b: Rect) -> bool {
++    a.x0 < b.x1 && b.x0 < a.x1 && a.y0 < b.y1 && b.y0 < a.y1
++}
++
++fn hull_quad(corner: &Corner) -> [Point; 4] {
++    let half_corner = corner.half_corner();
++    let d = half_corner - corner.outer();
++    // `LineF::Normal()`: the direction turned a quarter.
++    let normal = Vec2::new(-d.y, d.x);
++    let perpendicular = half_corner + normal;
++    let i1 = line_intersection(half_corner, perpendicular, corner.start(), corner.center())
++        .unwrap_or(corner.center());
++    let i2 = line_intersection(half_corner, perpendicular, corner.end(), corner.center())
++        .unwrap_or(corner.center());
++    [corner.start(), i1, i2, corner.end()]
++}
++
++fn scale_quad(quad: &[Point; 4], origin: Point, scale: f64) -> [Point; 4] {
++    quad.map(|p| origin + (p - origin) * scale)
++}
++
++/// `gfx::QuadF::IntersectsQuad`: neither quad is wholly outside one edge of the other.
++fn quads_intersect(a: &[Point; 4], b: &[Point; 4]) -> bool {
++    !fully_outside_one_edge(a, b) && !fully_outside_one_edge(b, a)
++}
++
++fn fully_outside_one_edge(q: &[Point; 4], other: &[Point; 4]) -> bool {
++    let [p1, p2, p3, p4] = *q;
++    let counter_clockwise = {
++        let p24 = p2.y - p4.y;
++        let p31 = p3.y - p1.y;
++        p1.x * p24 + p2.x * p31 < p3.x * p24 + p4.x * p31
++    };
++    let edges = if counter_clockwise {
++        [(p1, p4 - p1), (p2, p1 - p2), (p3, p2 - p3), (p4, p3 - p4)]
++    } else {
++        [(p1, p2 - p1), (p2, p3 - p2), (p3, p4 - p3), (p4, p1 - p4)]
++    };
++    edges
++        .iter()
++        .any(|&(base, vector)| other.iter().all(|&p| cross(vector, p - base) < 0.0))
++}
++
++/// The radii of a box's corners scaled so that the hulls of opposite concave corners do not
++/// overlap (`ComputeContouredBorderFromStyle`), for a box whose radii already fit it.
++pub fn constrain_opposite_corners(
++    rect: Rect,
++    radii: NonUniformRoundedRectRadii,
++    curvature: &CornerCurvature,
++) -> NonUniformRoundedRectRadii {
++    if curvature.is_convex() {
++        return radii;
++    }
++    let contour = ContouredRect {
++        rect,
++        radii,
++        curvature: *curvature,
++        origin: None,
++    };
++    let [tr, br, bl, tl] = contour.corners_of(rect, &radii);
++    let factor = opposite_corners_constraint(&tl, &br)
++        .min(opposite_corners_constraint(&bl, &tr))
++        .min(1.0);
++    if factor >= 1.0 {
++        return radii;
++    }
++    let scale = |r: Vec2| {
++        let r = r * factor;
++        if r.x == 0.0 || r.y == 0.0 { Vec2::ZERO } else { r }
++    };
++    NonUniformRoundedRectRadii {
++        top_left: scale(radii.top_left),
++        top_right: scale(radii.top_right),
++        bottom_right: scale(radii.bottom_right),
++        bottom_left: scale(radii.bottom_left),
++    }
++}
++
++// ---------- Polygon boolean ----------
++
++/// A point index, snapping points within `SNAP` of each other together.
++struct Points {
++    points: Vec<Point>,
++    cells: std::collections::HashMap<(i64, i64), Vec<usize>>,
++}
++
++const SNAP: f64 = 1e-6;
++
++impl Points {
++    fn new() -> Self {
++        Self {
++            points: Vec::new(),
++            cells: std::collections::HashMap::new(),
++        }
++    }
++
++    fn cell(p: Point) -> (i64, i64) {
++        ((p.x / SNAP).floor() as i64, (p.y / SNAP).floor() as i64)
++    }
++
++    fn id(&mut self, p: Point) -> usize {
++        let (cx, cy) = Self::cell(p);
++        for dx in -1..=1 {
++            for dy in -1..=1 {
++                if let Some(ids) = self.cells.get(&(cx + dx, cy + dy)) {
++                    for &id in ids {
++                        let q = self.points[id];
++                        if (q.x - p.x).abs() <= SNAP && (q.y - p.y).abs() <= SNAP {
++                            return id;
++                        }
++                    }
++                }
++            }
++        }
++        let id = self.points.len();
++        self.points.push(p);
++        self.cells.entry((cx, cy)).or_default().push(id);
++        id
++    }
++}
++
++/// The nonzero winding number of `polygon` around `p`.
++fn winding(polygon: &[Point], p: Point) -> i32 {
++    let mut w = 0;
++    let n = polygon.len();
++    for i in 0..n {
++        let (a, b) = (polygon[i], polygon[(i + 1) % n]);
++        if a.y <= p.y {
++            if b.y > p.y && cross(b - a, p - a) > 0.0 {
++                w += 1;
++            }
++        } else if b.y <= p.y && cross(b - a, p - a) < 0.0 {
++            w -= 1;
++        }
++    }
++    w
++}
++
++/// The region of the plane that `inside` selects, given whether a point is inside each of
++/// `shapes` (each a set of polygons, filled by the nonzero rule), as a path of closed polygons
++/// wound so that it fills with the nonzero rule. Edges are split where they cross, kept where
++/// the selection differs on their two sides, and joined into loops.
++pub fn boolean(shapes: &[Vec<Vec<Point>>], inside: impl Fn(&[bool]) -> bool) -> BezPath {
++    struct Segment {
++        a: Point,
++        b: Point,
++        bounds: Rect,
++        splits: Vec<(f64, Point)>,
++    }
++    let mut segments: Vec<Segment> = Vec::new();
++    for polygon in shapes.iter().flatten() {
++        let n = polygon.len();
++        for i in 0..n {
++            let (a, b) = (polygon[i], polygon[(i + 1) % n]);
++            if (b - a).hypot() <= SNAP {
++                continue;
++            }
++            segments.push(Segment {
++                a,
++                b,
++                bounds: Rect::from_points(a, b).inflate(SNAP, SNAP),
++                splits: Vec::new(),
++            });
++        }
++    }
++    let bounds: Vec<Rect> = shapes
++        .iter()
++        .map(|shape| {
++            shape.iter().flatten().fold(
++                Rect::new(f64::MAX, f64::MAX, f64::MIN, f64::MIN),
++                |r, &q| Rect::new(r.x0.min(q.x), r.y0.min(q.y), r.x1.max(q.x), r.y1.max(q.y)),
++            )
++        })
++        .collect();
++
++    // Split every segment where another crosses or touches it.
++    for i in 0..segments.len() {
++        for j in i + 1..segments.len() {
++            let (s, t) = (&segments[i], &segments[j]);
++            if s.bounds.x1 < t.bounds.x0
++                || t.bounds.x1 < s.bounds.x0
++                || s.bounds.y1 < t.bounds.y0
++                || t.bounds.y1 < s.bounds.y0
++            {
++                continue;
++            }
++            let (a, b, c, d) = (s.a, s.b, t.a, t.b);
++            let (r, q) = (b - a, d - c);
++            let (rl, ql) = (r.hypot(), q.hypot());
++            let denominator = cross(r, q);
++            let mut on_s: Vec<(f64, Point)> = Vec::new();
++            let mut on_t: Vec<(f64, Point)> = Vec::new();
++            if denominator.abs() > 1e-12 * rl * ql {
++                let u = cross(c - a, q) / denominator;
++                let v = cross(c - a, r) / denominator;
++                let (eu, ev) = (SNAP / rl, SNAP / ql);
++                if u >= -eu && u <= 1.0 + eu && v >= -ev && v <= 1.0 + ev {
++                    let p = a + r * u.clamp(0.0, 1.0);
++                    on_s.push((u.clamp(0.0, 1.0), p));
++                    on_t.push((v.clamp(0.0, 1.0), p));
++                }
++            } else if (cross(r, c - a) / rl).abs() <= SNAP {
++                // Collinear: each splits the other at its ends.
++                for p in [c, d] {
++                    let u = (p - a).dot(r) / (rl * rl);
++                    if u > 0.0 && u < 1.0 {
++                        on_s.push((u, p));
++                    }
++                }
++                for p in [a, b] {
++                    let v = (p - c).dot(q) / (ql * ql);
++                    if v > 0.0 && v < 1.0 {
++                        on_t.push((v, p));
++                    }
++                }
++            }
++            segments[i].splits.extend(on_s);
++            segments[j].splits.extend(on_t);
++        }
++    }
++
++    // The pieces, each once.
++    let mut points = Points::new();
++    let mut pieces: Vec<(usize, usize)> = Vec::new();
++    let mut seen = std::collections::HashSet::new();
++    for s in &mut segments {
++        s.splits.push((0.0, s.a));
++        s.splits.push((1.0, s.b));
++        s.splits.sort_by(|x, y| x.0.total_cmp(&y.0));
++        let ids: Vec<usize> = s.splits.iter().map(|&(_, p)| points.id(p)).collect();
++        for w in ids.windows(2) {
++            let (x, y) = (w[0], w[1]);
++            if x != y && seen.insert((x.min(y), x.max(y))) {
++                pieces.push((x, y));
++            }
++        }
++    }
++
++    // Keep the pieces with the selection on one side only, the selection on their left.
++    let selected = |p: Point| {
++        let memberships: Vec<bool> = shapes
++            .iter()
++            .zip(&bounds)
++            .map(|(shape, b)| {
++                p.x >= b.x0
++                    && p.x <= b.x1
++                    && p.y >= b.y0
++                    && p.y <= b.y1
++                    && shape.iter().map(|polygon| winding(polygon, p)).sum::<i32>() != 0
++            })
++            .collect();
++        inside(&memberships)
++    };
++    let mut edges: Vec<(usize, usize)> = Vec::new();
++    for &(x, y) in &pieces {
++        let (a, b) = (points.points[x], points.points[y]);
++        let direction = b - a;
++        let length = direction.hypot();
++        let normal = Vec2::new(-direction.y, direction.x) / length * (SNAP * 10.0);
++        let middle = a.midpoint(b);
++        let (left, right) = (selected(middle + normal), selected(middle - normal));
++        if left != right {
++            edges.push(if left { (x, y) } else { (y, x) });
++        }
++    }
++
++    // Join them into loops.
++    let mut from: std::collections::HashMap<usize, Vec<usize>> = std::collections::HashMap::new();
++    for (i, &(x, _)) in edges.iter().enumerate() {
++        from.entry(x).or_default().push(i);
++    }
++    let mut used = vec![false; edges.len()];
++    let mut path = BezPath::new();
++    for first in 0..edges.len() {
++        if used[first] {
++            continue;
++        }
++        used[first] = true;
++        let start = edges[first].0;
++        path.move_to(points.points[start]);
++        let mut at = edges[first].1;
++        let mut count = 1;
++        while at != start && count <= edges.len() {
++            path.line_to(points.points[at]);
++            let Some(next) = from
++                .get(&at)
++                .and_then(|list| list.iter().copied().find(|&e| !used[e]))
++            else {
++                break;
++            };
++            used[next] = true;
++            at = edges[next].1;
++            count += 1;
++        }
++        path.close_path();
++    }
++    path
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    fn uniform(r: f64) -> NonUniformRoundedRectRadii {
++        let v = Vec2::new(r, r);
++        NonUniformRoundedRectRadii {
++            top_left: v,
++            top_right: v,
++            bottom_right: v,
++            bottom_left: v,
++        }
++    }
++
++    fn all(c: f64) -> CornerCurvature {
++        CornerCurvature {
++            top_left: c,
++            top_right: c,
++            bottom_right: c,
++            bottom_left: c,
++        }
++    }
++
++    /// WPT `corner-shape-squircle-ref.html` was drawn with Blink's curves: its top right
++    /// corner is `C 86.001 0.000 92.009 -0.036 96.022 3.978 C 100.036 7.991 100.000 13.999
++    /// 100.000 25.000`.
++    #[test]
++    fn squircle_corner_matches_blink() {
++        let contour = ContouredRect {
++            rect: Rect::new(0.0, 0.0, 100.0, 100.0),
++            radii: uniform(25.0),
++            curvature: all(exponent(2.0)),
++            origin: None,
++        };
++        let path = contour.path();
++        let curves: Vec<_> = path
++            .elements()
++            .iter()
++            .filter_map(|el| match *el {
++                PathEl::CurveTo(a, b, c) => Some([a, b, c]),
++                _ => None,
++            })
++            .collect();
++        let close = |p: Point, x: f64, y: f64| (p.x - x).abs() < 2e-3 && (p.y - y).abs() < 2e-3;
++        assert!(close(curves[0][0], 86.001, 0.0), "{:?}", curves[0]);
++        assert!(close(curves[0][1], 92.009, -0.036), "{:?}", curves[0]);
++        assert!(close(curves[0][2], 96.022, 3.978), "{:?}", curves[0]);
++        assert!(close(curves[1][0], 100.036, 7.991), "{:?}", curves[1]);
++        assert!(close(curves[1][1], 100.0, 13.999), "{:?}", curves[1]);
++        assert!(close(curves[1][2], 100.0, 25.0), "{:?}", curves[1]);
++    }
++
++    /// The padding edge of a bevelled 100px box with 25px radii and a 5px border is the bevel
++    /// moved 5px along its normal (WPT `corner-shape-bevel-ref.html`: 27.071px 5px).
++    #[test]
++    fn inner_bevel_is_parallel() {
++        let outer = Rect::new(0.0, 0.0, 100.0, 100.0);
++        let contour = ContouredRect {
++            rect: outer.inset(-5.0),
++            radii: uniform(20.0),
++            curvature: all(exponent(0.0)),
++            origin: Some((outer, uniform(25.0))),
++        };
++        let path = contour.path();
++        let area = path.area().abs();
++        // The 90px square less four right triangles of legs 22.929 - 5 = 17.929... the cut
++        // corners are triangles whose legs run from the corner to 27.071 - 5.
++        let leg = 27.071_067_8 - 5.0;
++        let expected = 90.0 * 90.0 - 4.0 * leg * leg / 2.0;
++        assert!((area - expected).abs() < 0.05, "{area} vs {expected}");
++        let bounds = path.bounding_box();
++        assert!((bounds.x0 - 5.0).abs() < 1e-6 && (bounds.x1 - 95.0).abs() < 1e-6, "{bounds:?}");
++    }
++
++    /// Scoop corners of radius 75 on a 150px box with a 20px border leave the middle of the
++    /// box: WPT `inner-corner-collapse002-ref.html` (circles of radius 95 around the corners).
++    #[test]
++    fn overlapping_scoops_leave_the_middle() {
++        let outer = Rect::new(0.0, 0.0, 150.0, 150.0);
++        let contour = ContouredRect {
++            rect: outer.inset(-20.0),
++            radii: uniform(55.0),
++            curvature: all(exponent(-1.0)),
++            origin: Some((outer, uniform(75.0))),
++        };
++        let path = contour.path();
++        let bounds = path.bounding_box();
++        assert!((bounds.x0 - 58.31).abs() < 0.05 && (bounds.x1 - 91.69).abs() < 0.05, "{bounds:?}");
++        assert!((bounds.y0 - 58.31).abs() < 0.05 && (bounds.y1 - 91.69).abs() < 0.05, "{bounds:?}");
++        // Nothing of the box outside the four circles is left out, nothing inside one kept.
++        for (p, expected) in [((75.0, 75.0), true), ((60.0, 75.0), true), ((57.0, 75.0), false), ((30.0, 30.0), false)] {
++            let p = Point::new(p.0, p.1);
++            assert_eq!(path.winding(p) != 0, expected, "{p:?}");
++        }
++    }
++
++    #[test]
++    fn boolean_difference_of_rects() {
++        let square = |x0: f64, y0: f64, x1: f64, y1: f64| {
++            vec![Point::new(x0, y0), Point::new(x1, y0), Point::new(x1, y1), Point::new(x0, y1)]
++        };
++        let path = boolean(
++            &[vec![square(0.0, 0.0, 10.0, 10.0)], vec![square(5.0, -5.0, 15.0, 5.0)]],
++            |m| m[0] && !m[1],
++        );
++        assert!((path.area().abs() - 75.0).abs() < 1e-9);
++        // A cut sharing an edge and a corner with the subject.
++        let path = boolean(
++            &[vec![square(0.0, 0.0, 10.0, 10.0)], vec![square(5.0, 0.0, 10.0, 5.0)]],
++            |m| m[0] && !m[1],
++        );
++        assert!((path.area().abs() - 75.0).abs() < 1e-9);
++        assert_eq!(path.winding(Point::new(7.0, 2.0)), 0);
++        assert_ne!(path.winding(Point::new(2.0, 2.0)), 0);
++    }
++
++    /// Concave corners whose hulls meet are scaled down until they (nearly) touch: two 220px
++    /// scoops on a 240px box have hulls meeting at a scale of 0.727, which Blink's binary
++    /// search (steps down to 0.05) settles at 0.71875. Convex corners are left alone.
++    #[test]
++    fn opposite_scoops_are_constrained() {
++        let rect = Rect::new(0.0, 0.0, 240.0, 240.0);
++        let radii = NonUniformRoundedRectRadii {
++            top_left: Vec2::new(220.0, 220.0),
++            bottom_right: Vec2::new(220.0, 220.0),
++            ..NonUniformRoundedRectRadii::default()
++        };
++        let scoops = CornerCurvature {
++            top_left: exponent(-1.0),
++            bottom_right: exponent(-1.0),
++            ..CornerCurvature::ROUND
++        };
++        let constrained = constrain_opposite_corners(rect, radii, &scoops);
++        assert!((constrained.top_left.x - 220.0 * 0.71875).abs() < 1e-9, "{constrained:?}");
++        let squircles = CornerCurvature {
++            top_left: exponent(2.0),
++            bottom_right: exponent(2.0),
++            ..CornerCurvature::ROUND
++        };
++        assert_eq!(constrain_opposite_corners(rect, radii, &squircles), radii);
++    }
++}
 diff --git a/packages/blitz-paint/src/kurbo_css/css_box.rs b/packages/blitz-paint/src/kurbo_css/css_box.rs
 --- a/packages/blitz-paint/src/kurbo_css/css_box.rs
 +++ b/packages/blitz-paint/src/kurbo_css/css_box.rs
-@@ -40,8 +40,45 @@
+@@ -1,6 +1,7 @@
+ use kurbo::{Arc, BezPath, Insets, PathEl, Point, Rect, Shape as _, Vec2};
+ use std::{f64::consts::FRAC_PI_2, f64::consts::PI};
+ 
++use super::contoured::{self, ContouredRect, CornerCurvature};
+ use super::non_uniform_radii::NonUniformRoundedRectRadii;
+ use super::{Corner, CssBoxKind, Direction, Edge, add_insets, get_corner_insets};
+ 
+@@ -40,8 +41,54 @@
      pub outline_width: f64,
  
      pub border_radii: NonUniformRoundedRectRadii,
@@ -2306,6 +3431,15 @@ diff --git a/packages/blitz-paint/src/kurbo_css/css_box.rs b/packages/blitz-pain
 +    /// [`inner_radii_scale`]).
 +    padding_radii_scale: f64,
 +    content_radii_scale: f64,
++
++    /// pyro: the corners' shapes (`corner-shape`), when one is not round: each corner's
++    /// superellipse exponent ([`CssBox::with_corner_curvature`]). The box's edges are then
++    /// [`ContouredRect`]s.
++    pub corner_curvature: Option<CornerCurvature>,
++    /// pyro: the border box (with its radii) this box's edges stay parallel to, when this box
++    /// is one derived from an element's (an outline's, a shadow's, a line of a double border):
++    /// its own border box otherwise.
++    pub contour_origin: Option<(Rect, NonUniformRoundedRectRadii)>,
  }
  
 +/// pyro: the scale an inner box's radii need to fit it, as Blink fits them
@@ -2342,27 +3476,142 @@ diff --git a/packages/blitz-paint/src/kurbo_css/css_box.rs b/packages/blitz-pain
  impl CssBox {
      pub fn new(
          border_box: Rect,
-@@ -73,6 +110,10 @@
-         if min_factor < 1.0 {
+@@ -74,6 +121,10 @@
              border_radii *= min_factor
          }
-+
+ 
 +        let padding_radii_scale = inner_radii_scale(padding_box, &border_radii, border);
 +        let content_radii_scale =
 +            inner_radii_scale(content_box, &border_radii, add_insets(border, padding));
- 
++
          Self {
              padding_box,
-@@ -83,6 +124,8 @@
+             border_box,
+@@ -83,9 +134,108 @@
              padding_width: padding,
              border_width: border,
              border_radii,
 +            padding_radii_scale,
 +            content_radii_scale,
++            corner_curvature: None,
++            contour_origin: None,
          }
      }
  
-@@ -196,6 +239,9 @@
++    /// pyro: this box with shaped corners (`corner-shape`), `curvature` holding each corner's
++    /// superellipse exponent (`2^k` for `superellipse(k)`). A corner without a radius stays
++    /// round (Blink's `EffectiveCurvature`), and a box with a concave corner has its radii scaled
++    /// so that the hulls of opposite corners do not overlap (`ComputeContouredBorderFromStyle`).
++    /// A box whose corners are all round is left as it is.
++    pub fn with_corner_curvature(mut self, mut curvature: CornerCurvature) -> Self {
++        let radii = self.border_radii;
++        for (c, r) in [
++            (&mut curvature.top_left, radii.top_left),
++            (&mut curvature.top_right, radii.top_right),
++            (&mut curvature.bottom_right, radii.bottom_right),
++            (&mut curvature.bottom_left, radii.bottom_left),
++        ] {
++            if r.x <= 0.0 || r.y <= 0.0 {
++                *c = contoured::ROUND;
++            }
++        }
++        if curvature.is_round() {
++            self.corner_curvature = None;
++            return self;
++        }
++        self.border_radii =
++            contoured::constrain_opposite_corners(self.border_box, self.border_radii, &curvature);
++        self.corner_curvature = Some(curvature);
++        self
++    }
++
++    /// pyro: this box (an outline's, a shadow's) shaped as `element`'s corners are, its curves
++    /// parallel to `element`'s border box's.
++    pub fn contoured_like(mut self, element: &CssBox) -> Self {
++        if let Some(curvature) = element.corner_curvature {
++            self.corner_curvature = Some(curvature);
++            self.contour_origin = Some(element.contour_origin());
++        }
++        self
++    }
++
++    fn contour_origin(&self) -> (Rect, NonUniformRoundedRectRadii) {
++        self.contour_origin
++            .unwrap_or((self.border_box, self.border_radii))
++    }
++
++    /// pyro: the edge of one of this box's boxes as a [`ContouredRect`], when its corners are
++    /// shaped (Blink's `ContouredBorder` and `ContouredInnerBorder`): an inner box's radii are the
++    /// border radii less the widths between (each stopping at zero), and its curves stay
++    /// parallel to the border's.
++    pub fn contour(&self, kind: CssBoxKind) -> Option<ContouredRect> {
++        let curvature = self.corner_curvature?;
++        let (rect, insets) = match kind {
++            CssBoxKind::OutlineBox => return None,
++            CssBoxKind::BorderBox => (self.border_box, Insets::ZERO),
++            CssBoxKind::PaddingBox => (self.padding_box, self.border_width),
++            CssBoxKind::ContentBox => (
++                self.content_box,
++                add_insets(self.border_width, self.padding_width),
++            ),
++        };
++        let shrink = |r: Vec2, corner: Corner| {
++            let inset = get_corner_insets(insets, corner);
++            Vec2::new(
++                if r.x > 0.0 { (r.x - inset.x).max(0.0) } else { r.x },
++                if r.y > 0.0 { (r.y - inset.y).max(0.0) } else { r.y },
++            )
++        };
++        let r = &self.border_radii;
++        let radii = NonUniformRoundedRectRadii {
++            top_left: shrink(r.top_left, Corner::TopLeft),
++            top_right: shrink(r.top_right, Corner::TopRight),
++            bottom_right: shrink(r.bottom_right, Corner::BottomRight),
++            bottom_left: shrink(r.bottom_left, Corner::BottomLeft),
++        };
++        let origin = self.contour_origin();
++        let identity = origin == (rect, radii);
++        Some(ContouredRect {
++            rect,
++            radii,
++            curvature,
++            origin: (!identity).then_some(origin),
++        })
++    }
++
++    /// pyro: the area of the border (the border box less the padding box) of a box with shaped
++    /// corners, and with `side` the part of it that side paints.
++    fn contoured_border_area(&self, side: Option<Edge>) -> Option<BezPath> {
++        let outer = self.contour(CssBoxKind::BorderBox)?;
++        let inner = self.contour(CssBoxKind::PaddingBox)?;
++        let mut shapes = vec![contoured::flatten(&outer.path()), contoured::flatten(&inner.path())];
++        if let Some(edge) = side {
++            shapes.push(vec![side_region(self.border_box, self.border_width, edge)]);
++        }
++        Some(contoured::boolean(&shapes, |inside| {
++            inside[0] && !inside[1] && inside.get(2).copied().unwrap_or(true)
++        }))
++    }
++
+     /// Construct a BezPath representing one edge of a box's border.
+     /// Takes into account border-radius and the possibility that the edges
+     /// are different colors.
+@@ -98,6 +248,10 @@
+     pub fn border_edge_shape(&self, edge: Edge) -> BezPath {
+         use {Corner::*, CssBoxKind::*, Direction::*, Edge::*};
+ 
++        if let Some(path) = self.contoured_border_area(Some(edge)) {
++            return path;
++        }
++
+         let mut path = BezPath::new();
+ 
+         let (c0, c1) = match edge {
+@@ -193,9 +347,13 @@
+             0.0,
+             slice_radii,
+         )
++        .contoured_like(self)
      }
  
      /// Construct a bezpath drawing the outline
@@ -2372,32 +3621,110 @@ diff --git a/packages/blitz-paint/src/kurbo_css/css_box.rs b/packages/blitz-pain
      pub fn outline(&self) -> BezPath {
          let mut path = BezPath::new();
  
-@@ -209,6 +255,24 @@
-         path
-     }
+@@ -205,12 +363,48 @@
  
+         self.shape(&mut path, CssBoxKind::BorderBox, Direction::Anticlockwise);
+         path.move_to(self.corner(Corner::TopLeft, CssBoxKind::BorderBox));
++
++        path
++    }
++
 +    /// Construct a bezpath of the whole border area: the border box less the
 +    /// padding box
 +    pub fn border_ring(&self) -> BezPath {
++        // pyro: with shaped corners, the border edge's curves and the padding edge (inside it)
++        // wound the other way, so that the ring fills by the nonzero rule.
++        if let (Some(outer), Some(inner)) = (
++            self.contour(CssBoxKind::BorderBox),
++            self.contour(CssBoxKind::PaddingBox),
++        ) {
++            let mut path = outer.path();
++            let inner = inner.path();
++            if (path.area() > 0.0) == (inner.area() > 0.0) {
++                path.extend(&inner.reverse_subpaths());
++            } else {
++                path.extend(&inner);
++            }
++            return path;
++        }
 +        // Two closed contours, each starting on its own first corner (a
 +        // contour started on the box's corner point would cut that corner off
 +        // a rounded box).
 +        let mut path = BezPath::new();
 +        self.shape(&mut path, CssBoxKind::BorderBox, Direction::Clockwise);
 +        path.close_path();
-+
+ 
 +        let mut hole = BezPath::new();
 +        self.shape(&mut hole, CssBoxKind::PaddingBox, Direction::Anticlockwise);
 +        hole.close_path();
 +        path.extend(&hole);
 +
-+        path
-+    }
-+
+         path
+     }
+ 
      /// Construct a bezpath drawing the frame border
      pub fn border_box_path(&self) -> BezPath {
++        if let Some(contour) = self.contour(CssBoxKind::BorderBox) {
++            return contour.path();
++        }
          let mut path = BezPath::new();
-@@ -583,7 +647,25 @@
+         self.shape(&mut path, CssBoxKind::BorderBox, Direction::Clockwise);
+         path
+@@ -218,6 +412,9 @@
+ 
+     /// Construct a bezpath drawing the frame padding
+     pub fn padding_box_path(&self) -> BezPath {
++        if let Some(contour) = self.contour(CssBoxKind::PaddingBox) {
++            return contour.path();
++        }
+         let mut path = BezPath::new();
+         self.shape(&mut path, CssBoxKind::PaddingBox, Direction::Clockwise);
+         path
+@@ -225,6 +422,9 @@
+ 
+     /// Construct a bezpath drawing the frame content
+     pub fn content_box_path(&self) -> BezPath {
++        if let Some(contour) = self.contour(CssBoxKind::ContentBox) {
++            return contour.path();
++        }
+         let mut path = BezPath::new();
+         self.shape(&mut path, CssBoxKind::ContentBox, Direction::Clockwise);
+         path
+@@ -252,6 +452,9 @@
+     /// path (see [`Self::is_uniform_corner_border`]); this catches the true ellipses
+     /// (unequal axes) that a rounded rect can't represent.
+     pub fn is_elliptical_border(&self) -> bool {
++        if self.corner_curvature.is_some() {
++            return false;
++        }
+         let (rx, ry) = (
+             self.border_box.width() / 2.0,
+             self.border_box.height() / 2.0,
+@@ -274,6 +477,9 @@
+     /// width/color and each radius to be 0 or ≥ the border width for the stroke to
+     /// reproduce the CSS shape exactly.)
+     pub fn is_uniform_corner_border(&self) -> bool {
++        if self.corner_curvature.is_some() {
++            return false;
++        }
+         let is_circular = |c: Vec2| (c.x - c.y).abs() < 0.01;
+         let radii = &self.border_radii;
+         is_circular(radii.top_left)
+@@ -301,6 +507,13 @@
+ 
+     /// Construct a bezpath drawing the frame
+     pub fn shadow_clip(&self, shadow_rect: Rect) -> BezPath {
++        if let Some(contour) = self.contour(CssBoxKind::BorderBox) {
++            let shapes = [
++                vec![contoured::rect_polygon(shadow_rect)],
++                contoured::flatten(&contour.path()),
++            ];
++            return contoured::boolean(&shapes, |inside| inside[0] && !inside[1]);
++        }
+         let mut path = BezPath::new();
+         self.shadow_clip_shape(&mut path, shadow_rect);
+         path
+@@ -583,7 +796,25 @@
              ContentBox => {
                  corner_radii - get_corner_insets(add_insets(*border_width, *padding_width), corner)
              }
@@ -2423,6 +3750,100 @@ diff --git a/packages/blitz-paint/src/kurbo_css/css_box.rs b/packages/blitz-pain
  
          (border_box.origin() + center, radii)
      }
+@@ -594,6 +825,64 @@
+     }
+ }
+ 
++/// pyro: the part of a box (`rect`, its border `widths`) the border's side `edge` paints at
++/// shaped corners: the points nearer that side than any other, measuring each side's distance
++/// in its own width, as the miter from each outer corner to the inner one divides a border. A
++/// side without width paints nothing; the others then share its corners.
++fn side_region(rect: Rect, widths: Insets, edge: Edge) -> Vec<Point> {
++    let width = |e: Edge| match e {
++        Edge::Top => widths.y0,
++        Edge::Right => widths.x1,
++        Edge::Bottom => widths.y1,
++        Edge::Left => widths.x0,
++    };
++    // A side's distance from a point as `a·x + b·y + c`, over its width.
++    let distance = |e: Edge| -> (f64, f64, f64) {
++        match e {
++            Edge::Top => (0.0, 1.0, -rect.y0),
++            Edge::Right => (-1.0, 0.0, rect.x1),
++            Edge::Bottom => (0.0, -1.0, rect.y1),
++            Edge::Left => (1.0, 0.0, -rect.x0),
++        }
++    };
++    if width(edge) <= 0.0 {
++        return Vec::new();
++    }
++    // (A little more than the box: curves may overshoot its edge by a hair.)
++    let mut polygon = contoured::rect_polygon(rect.inflate(1.0, 1.0));
++    let (a, b, c) = distance(edge);
++    let w = width(edge);
++    for other in [Edge::Top, Edge::Right, Edge::Bottom, Edge::Left] {
++        if other == edge || width(other) <= 0.0 {
++            continue;
++        }
++        let (oa, ob, oc) = distance(other);
++        let ow = width(other);
++        // Keep d/w <= od/ow: (a·ow - oa·w)·x + (b·ow - ob·w)·y + (c·ow - oc·w) <= 0.
++        let (ka, kb, kc) = (a * ow - oa * w, b * ow - ob * w, c * ow - oc * w);
++        polygon = clip_half_plane(&polygon, |p| ka * p.x + kb * p.y + kc);
++    }
++    polygon
++}
++
++/// The part of the convex `polygon` where `f` is not positive (Sutherland–Hodgman).
++fn clip_half_plane(polygon: &[Point], f: impl Fn(Point) -> f64) -> Vec<Point> {
++    let mut out = Vec::with_capacity(polygon.len() + 1);
++    let n = polygon.len();
++    for i in 0..n {
++        let (p, q) = (polygon[i], polygon[(i + 1) % n]);
++        let (fp, fq) = (f(p), f(q));
++        if fp <= 0.0 {
++            out.push(p);
++        }
++        if (fp <= 0.0) != (fq <= 0.0) {
++            let t = fp / (fp - fq);
++            out.push(p + (q - p) * t);
++        }
++    }
++    out
++}
++
+ /// Makes it easier to insert objects into a bezpath without having to do checks
+ /// Mostly because I consider the vello api slightly defficient
+ trait BuildBezpath {
+diff --git a/packages/blitz-paint/src/kurbo_css/mod.rs b/packages/blitz-paint/src/kurbo_css/mod.rs
+--- a/packages/blitz-paint/src/kurbo_css/mod.rs
++++ b/packages/blitz-paint/src/kurbo_css/mod.rs
+@@ -8,13 +8,15 @@
+ 
+ use kurbo::{Insets, Vec2};
+ 
++pub mod contoured;
+ mod css_box;
+ mod non_uniform_radii;
+ 
++pub use contoured::CornerCurvature;
+ pub use css_box::CssBox;
+ pub use non_uniform_radii::NonUniformRoundedRectRadii;
+ 
+-#[derive(Debug, Clone, Copy)]
++#[derive(Debug, Clone, Copy, PartialEq)]
+ pub enum Edge {
+     Top,
+     Right,
+@@ -22,7 +24,7 @@
+     Left,
+ }
+ 
+-#[derive(Debug, Clone, Copy)]
++#[derive(Debug, Clone, Copy, PartialEq)]
+ pub(crate) enum Corner {
+     TopLeft,
+     TopRight,
 diff --git a/packages/blitz-paint/src/layers.rs b/packages/blitz-paint/src/layers.rs
 --- a/packages/blitz-paint/src/layers.rs
 +++ b/packages/blitz-paint/src/layers.rs
@@ -3011,10 +4432,11 @@ new file mode 100644
 diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/render.rs
 --- a/packages/blitz-paint/src/render.rs
 +++ b/packages/blitz-paint/src/render.rs
-@@ -1,13 +1,19 @@
+@@ -1,13 +1,20 @@
  mod background;
  mod border;
 +mod border_image;
++mod border_shape;
  mod box_shadow;
  mod clip_path;
  mod form_controls;
@@ -3032,7 +4454,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
  use std::sync::Arc;
  
  use super::kurbo_css::CssBox;
-@@ -28,6 +34,7 @@
+@@ -28,6 +35,7 @@
  use blitz_dom::{BaseDocument, ElementData, Node, NodeId, local_name};
  use blitz_traits::devtools::DevtoolSettings;
  
@@ -3040,7 +4462,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
  use style::values::computed::{BorderCornerRadius, ColorOrAuto};
  use style::{
      dom::TElement,
-@@ -45,7 +52,6 @@
+@@ -45,7 +53,6 @@
  use kurbo::{self, Affine, Insets, Point, Rect, Shape, Size, Stroke, Vec2};
  use peniko::{self, BlendMode, Fill, ImageData, ImageSampler};
  use style::computed_values::isolation::T as Isolation;
@@ -3048,7 +4470,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
  use taffy::Layout;
  
  /// An opacity just below 1.0, used to force the renderer to allocate an isolated
-@@ -112,6 +118,24 @@
+@@ -112,6 +119,24 @@
      }
  }
  
@@ -3073,7 +4495,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
  /// A short-lived struct which holds a bunch of parameters for rendering a scene so
  /// that we don't have to pass them down as parameters
  pub struct BlitzDomPainter<'dom, 'a> {
-@@ -124,16 +148,46 @@
+@@ -124,16 +149,46 @@
      pub(crate) initial_y: f64,
      /// The id of the document's root element (cached to avoid re-resolving it for every element)
      pub(crate) root_element_id: Option<NodeId>,
@@ -3120,7 +4542,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
  
      // Pre-computed `Scene`s for each CustomWidget
      pub(crate) custom_widget_scenes: &'a CustomWidgetSceneMap,
-@@ -157,7 +211,9 @@
+@@ -157,7 +212,9 @@
              .collect();
  
          let layer_manager = LayerManager::default();
@@ -3130,7 +4552,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
  
          Self {
              dom,
-@@ -167,13 +223,29 @@
+@@ -167,13 +224,29 @@
              initial_x,
              initial_y,
              root_element_id,
@@ -3160,7 +4582,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              custom_widget_scenes,
          }
      }
-@@ -198,46 +270,22 @@
+@@ -198,46 +271,22 @@
              return;
          };
          let root_id = root_element.id;
@@ -3222,7 +4644,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          }
  
          // The root clip rectangle is the viewport (in screen coordinates, with the
-@@ -254,6 +302,10 @@
+@@ -254,6 +303,10 @@
              }),
              viewport_clip_rect,
          );
@@ -3233,7 +4655,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
  
          // Render debug overlay
          if self.dom.devtools().highlight_hover {
-@@ -284,17 +336,293 @@
+@@ -284,17 +337,293 @@
                      self.initial_x,
                      self.initial_y,
                  );
@@ -3528,7 +4950,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
      fn scrolled_transform(&self, node: &Node, transform: Affine) -> Affine {
          transform.then_translate(Vec2 {
              x: -node.scroll_offset().x * self.scale,
-@@ -312,13 +640,26 @@
+@@ -312,13 +641,26 @@
              !display.is_inline_flow() && !is_internal_table_box_other_than_cell
          };
          let element = node.element_data();
@@ -3558,7 +4980,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
      }
  
      fn draw_text_mask(
-@@ -328,6 +669,10 @@
+@@ -328,6 +670,10 @@
          transform: Affine,
          root: bool,
      ) {
@@ -3569,16 +4991,16 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          let node = &self.dom.as_ref().tree()[node_id];
          if matches!(node.taffy_display(), taffy::Display::None) || (!root && node.is_out_of_flow())
          {
-@@ -345,7 +690,7 @@
+@@ -345,7 +691,7 @@
          let clip = if cx.text_input.is_some() {
              cx.frame.text_input_clip_path()
          } else {
 -            cx.frame.padding_box_path()
-+            box_shadow::overflow_clip_path(&cx.frame, &styles, self.scale)
++            cx.overflow_clip_path(&styles)
          };
          let pushed = self.layer_manager.maybe_push_layer(
              scene,
-@@ -368,18 +713,46 @@
+@@ -368,18 +714,46 @@
                      + layout.block_offset as f64;
                  let text_transform =
                      transform * Affine::translate((x * self.scale, y * self.scale));
@@ -3629,7 +5051,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              }
          }
          if let Some(children) = &*node.layout_children.borrow() {
-@@ -413,12 +786,24 @@
+@@ -413,12 +787,24 @@
          clip_rect: Rect,
      ) {
          let node = &self.dom.as_ref().tree()[node_id];
@@ -3654,7 +5076,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          // Only draw elements with a style
          let Some(styles) = node.primary_styles() else {
              return;
-@@ -430,18 +815,40 @@
+@@ -430,18 +816,40 @@
              return;
          }
  
@@ -3698,7 +5120,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          let should_clip = self.should_clip_node(node, &styles);
          let is_text_input = node
              .element_data()
-@@ -482,10 +889,63 @@
+@@ -482,10 +890,63 @@
          // Cull elements that fall entirely outside the current clip rectangle. In addition to
          // the viewport, `clip_rect` is narrowed by any ancestor scrollport (see below), so this
          // also culls elements scrolled out of view inside a clipping/scrolling container.
@@ -3766,7 +5188,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          {
              return;
          }
-@@ -508,10 +968,11 @@
+@@ -508,10 +969,11 @@
          }
  
          // Optimise zero-area (/very small area) clips by not rendering at all
@@ -3779,7 +5201,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              return;
          }
  
-@@ -528,23 +989,62 @@
+@@ -528,23 +990,62 @@
          // rectangle passed to descendants to the visible (clipped) region so that content
          // scrolled out of view is culled rather than drawn and clipped away. The box used
          // here matches the clip applied to the content below.
@@ -3800,7 +5222,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
                  cx.frame.text_input_clip_path()
              } else {
 -                cx.frame.padding_box_path()
-+                box_shadow::overflow_clip_path(&cx.frame, &styles, self.scale)
++                cx.overflow_clip_path(&styles)
              };
 -            clip_rect.intersect(screen_transform.transform_rect_bbox(clip_box.bounding_box()))
 +            source_rect.intersect(screen_transform.transform_rect_bbox(clip_box.bounding_box()))
@@ -3850,7 +5272,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
  
          // CSS 2 `clip` property (absolutely positioned elements only). Applies to the whole of
          // the element's rendering (including outlines and shadows), so it is the outermost layer.
-@@ -552,6 +1052,17 @@
+@@ -552,6 +1053,17 @@
          if css_clip_rect.is_some_and(|rect| rect.is_zero_area()) {
              return;
          }
@@ -3868,7 +5290,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          let css_clip_layer_pushed = self.layer_manager.maybe_push_layer(
              scene,
              css_clip_rect.is_some(),
-@@ -566,40 +1077,100 @@
+@@ -566,40 +1078,100 @@
          // Use the viewport in scene coordinates so outlines, shadows and overflowing
          // descendants are not clipped to the element's border box.
          let blend = convert_blend_mode(effects.mix_blend_mode);
@@ -3989,7 +5411,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              |scene| {
                  // If the element has a CSS `mask`, then push an isolation layer for the
                  // masked content. The mask is applied when the layer is popped below.
-@@ -608,208 +1179,541 @@
+@@ -608,207 +1180,540 @@
                  // Save it so that the mask can be drawn untransformed by scroll offsets.
                  let unscrolled_transform = cx.transform;
  
@@ -4262,7 +5684,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +        let clip = if is_text_input {
 +            &cx.frame.text_input_clip_path()
 +        } else {
-+            &box_shadow::overflow_clip_path(&cx.frame, &cx.style, cx.scale)
++            &cx.overflow_clip_path(&cx.style)
 +        };
  
 -/// The transform from an SVG's rendered tree to a viewport of the given size.
@@ -4298,7 +5720,6 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 -            height: image.height,
 -            alpha_type: peniko::ImageAlphaType::Alpha,
 -        },
--        sampler: ImageSampler {
 +                cx.transform = self.scrolled_transform(node, cx.transform);
 +                if !hidden {
 +                    cx.draw_image(scene);
@@ -4705,11 +6126,10 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +            height: image.height,
 +            alpha_type: peniko::ImageAlphaType::Alpha,
 +        },
-+        sampler: ImageSampler {
+         sampler: ImageSampler {
              x_extend: peniko::Extend::Repeat,
              y_extend: peniko::Extend::Repeat,
-             quality,
-@@ -818,6 +1722,35 @@
+@@ -818,6 +1723,35 @@
      }
  }
  
@@ -4745,7 +6165,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
  /// A context of loaded and hot data to draw the element from
  struct ElementCx<'dom, 'a> {
      context: &'dom BlitzDomPainter<'dom, 'a>,
-@@ -836,7 +1769,185 @@
+@@ -836,7 +1770,185 @@
      custom_widget_scene: Option<&'a Scene>,
  }
  
@@ -4932,7 +6352,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
  fn convert_rect(rect: &parley::BoundingBox) -> kurbo::Rect {
      peniko::kurbo::Rect::new(rect.x0, rect.y0, rect.x1, rect.y1)
  }
-@@ -967,8 +2078,492 @@
+@@ -967,8 +2079,492 @@
          }
      }
  
@@ -5425,7 +6845,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              let text_layout = self.element
                  .inline_layout_data
                  .as_ref()
-@@ -976,6 +2571,11 @@
+@@ -976,6 +2572,11 @@
                      panic!("Tried to render node marked as inline root that does not have an inline layout: {:?}", self.node);
                  });
  
@@ -5437,7 +6857,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              // Text keeps its unrounded position; only box edges are snapped to whole pixels.
              let subpixel_offset = text_layout.content_box_subpixel_offset;
              let pos = Point {
-@@ -984,42 +2584,310 @@
+@@ -984,42 +2585,310 @@
              };
              let transform =
                  self.transform * Affine::translate((pos.x * self.scale, pos.y * self.scale));
@@ -5504,8 +6924,9 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +            for fragment in &fragments {
 +                self.paint_inline_box_fragment(scene, fragment, transform, tops);
 +            }
-+
-+            // Render text selection highlight (if any) using cached selection ranges
+ 
+             // Render text selection highlight (if any) using cached selection ranges
+-            if let Some(&(sel_start, sel_end)) = self.context.selection_ranges.get(&self.node.id) {
 +            // pyro: highlighted as Chromium paints selected text (`highlight`), but in lines cut
 +            // by an ellipsis; a recording paint (the PDF's) draws no selection.
 +            let highlight = selection
@@ -5515,14 +6936,17 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                        && self.context.draw_text_context.borrow().runs.is_none()
 +                });
 +            if let (Some((sel_start, sel_end)), None) = (selection, highlight) {
-+                crate::text::draw_text_selection(
-+                    scene,
-+                    &text_layout.layout,
+                 crate::text::draw_text_selection(
+                     scene,
+                     &text_layout.layout,
+-                    transform,
 +                    |line| match (tops, text_layout.layout.get(line)) {
 +                        (Some(tops), Some(line)) => transform * Affine::translate((0.0, tops.shift(line.metrics()))),
 +                        _ => transform,
 +                    },
-+                    sel_start,
+                     sel_start,
+-                    sel_end,
+-                );
 +                    sel_end,
 +                );
 +            }
@@ -5692,29 +7116,19 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                    .counterclockwise(wm.contains(WritingMode::WRITING_MODE_SIDEWAYS_LR)),
 +            )
 +        };
- 
--            // Render text selection highlight (if any) using cached selection ranges
--            if let Some(&(sel_start, sel_end)) = self.context.selection_ranges.get(&self.node.id) {
--                crate::text::draw_text_selection(
++
 +        if self.context.backgrounds {
 +            for (index, line) in text_layout.layout.lines().enumerate() {
 +                let vertical = vertical(&line);
 +                crate::text::draw_inline_backgrounds(
-                     scene,
--                    &text_layout.layout,
--                    transform,
--                    sel_start,
--                    sel_end,
++                    scene,
 +                    std::iter::once(line),
 +                    self.context.dom,
 +                    line_transform(index),
 +                    self.node.id,
 +                    vertical,
-                 );
-             }
--
--            // Render text
--            let mut draw_text_context = self.context.draw_text_context.borrow_mut();
++                );
++            }
 +        }
 +        if let Some(&(sel_start, sel_end)) = self.context.selection_ranges.get(&self.node.id) {
 +            crate::text::draw_text_selection(
@@ -5728,24 +7142,22 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +        let mut draw_text_context = self.context.draw_text_context.borrow_mut();
 +        for (index, line) in text_layout.layout.lines().enumerate() {
 +            let vertical = vertical(&line);
-             crate::text::stroke_text(
-                 scene,
--                text_layout.layout.lines(),
++            crate::text::stroke_text(
++                scene,
 +                std::iter::once(line),
-                 self.context.dom,
--                transform,
++                self.context.dom,
 +                line_transform(index),
-                 TextPaintOptions {
-                     scale: self.scale,
-                     brush_override: None,
++                TextPaintOptions {
++                    scale: self.scale,
++                    brush_override: None,
 +                    shadows: true,
-                 },
-                 self.node.id,
++                },
++                self.node.id,
 +                Some(&text_layout.text),
-                 &mut draw_text_context,
++                &mut draw_text_context,
 +                vertical,
 +                Some(&text_layout.layout),
-             );
++            );
 +            // pyro: ruby annotations and emphasis marks, turned with their line.
 +            if !text_layout.annotations.is_empty() {
 +                let recording = draw_text_context.runs.is_some();
@@ -5765,11 +7177,26 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                        None,
 +                    );
 +                }
-+            }
+             }
+-
+-            // Render text
+-            let mut draw_text_context = self.context.draw_text_context.borrow_mut();
+-            crate::text::stroke_text(
+-                scene,
+-                text_layout.layout.lines(),
+-                self.context.dom,
+-                transform,
+-                TextPaintOptions {
+-                    scale: self.scale,
+-                    brush_override: None,
+-                },
+-                self.node.id,
+-                &mut draw_text_context,
+-            );
          }
      }
  
-@@ -1030,9 +2898,15 @@
+@@ -1030,9 +2899,15 @@
              // within the content box of it's node.
              let y_offset = self.node.text_input_v_centering_offset(self.scale);
              let subpixel_offset = input_data.content_box_subpixel_offset;
@@ -5787,7 +7214,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              };
  
              // Apply the scroll offset (stored in CSS pixels, scaled here to device pixels) so
-@@ -1047,7 +2921,65 @@
+@@ -1047,7 +2922,65 @@
  
              let transform = self.transform
                  * Affine::translate((pos.x * self.scale - scroll_x, pos.y * self.scale - scroll_y));
@@ -5853,7 +7280,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              if self.node.is_focussed() {
                  // Render selection/caret
                  for (rect, _line_idx) in input_data.editor.selection_geometry().iter() {
-@@ -1078,32 +3010,127 @@
+@@ -1078,50 +3011,170 @@
  
              // Render text
              let mut draw_text_context = self.context.draw_text_context.borrow_mut();
@@ -5994,8 +7421,21 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              };
              // Outside markers are placed outside the list item's border box
              // (`pos` is the origin of its content box)
-@@ -1114,14 +3141,33 @@
-                 + item_layout.border.left);
+             let item_layout = self.node.final_layout();
+-            let x_offset = -(layout.full_width() / layout.scale()
+-                + x_padding
+-                + item_layout.padding.left
+-                + item_layout.border.left);
++            // pyro: after its right edge in a right-to-left item.
++            let rtl = !self.style.writing_mode.is_bidi_ltr();
++            let x_offset = if rtl {
++                item_layout.size.width - item_layout.padding.left - item_layout.border.left + x_padding
++            } else {
++                -(layout.full_width() / layout.scale()
++                    + x_padding
++                    + item_layout.padding.left
++                    + item_layout.border.left)
++            };
  
              // Align the marker with the baseline of the first line of text in the list item
 -            let y_offset = if let Some((text_layout, first_text_line)) = &self
@@ -6014,7 +7454,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 -                .and_then(|text_layout| Some((text_layout, text_layout.layout.lines().next()?)))
 +                .and_then(|text_layout| Some((text_layout, text_layout.layout.lines().next()?)));
 +            // pyro: the marker goes with the line, which floats beside the item move.
-+            let line_x = first_line.as_ref().map_or(0.0, |(text_layout, line)| {
++            let line_x = first_line.as_ref().filter(|_| !rtl).map_or(0.0, |(text_layout, line)| {
 +                line.metrics().inline_min_coord / text_layout.layout.scale()
 +            });
 +            let y_offset = if let Some((text_layout, first_text_line)) = &first_line
@@ -6031,7 +7471,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
                      / layout.scale()
                      + text_layout.block_offset
              } else {
-@@ -1129,7 +3175,7 @@
+@@ -1129,7 +3182,7 @@
              };
  
              let pos = Point {
@@ -6040,7 +7480,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
                  y: pos.y + (content_box_subpixel_offset.y + y_offset) as f64,
              };
  
-@@ -1145,83 +3191,446 @@
+@@ -1145,83 +3198,453 @@
                  TextPaintOptions {
                      scale: self.scale,
                      brush_override: None,
@@ -6088,8 +7528,15 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +        let offset = ascent * 2 / 3;
 +        let size = ((offset + 1) / 2) as f64;
 +        let subpixel = self.list_item.map_or(taffy::Point::ZERO, |item| item.content_box_subpixel_offset);
-+        let x = pos.x + (subpixel.x + line_x - item_layout.padding.left - item_layout.border.left) as f64
-+            - (offset + 7) as f64;
++        // pyro: mirrored after the border box's right edge in a right-to-left item.
++        let x = if self.style.writing_mode.is_bidi_ltr() {
++            pos.x + (subpixel.x + line_x - item_layout.padding.left - item_layout.border.left) as f64
++                - (offset + 7) as f64
++        } else {
++            pos.x + (subpixel.x + item_layout.size.width - item_layout.padding.left - item_layout.border.left) as f64
++                + (offset + 7) as f64
++                - size
++        };
 +        let y = pos.y + (subpixel.y + baseline) as f64 - (ascent - 3 * (ascent - offset) / 2) as f64;
 +        let (x, y) = ((x + 0.5).floor() * self.scale, (y + 0.5).floor() * self.scale);
 +        let rect = Rect::new(x, y, x + size * self.scale, y + size * self.scale);
@@ -6537,7 +7984,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
      #[cfg(feature = "svg")]
      fn draw_svg(&self, scene: &mut impl PaintScene) {
          use style::properties::generated::longhands::object_fit::computed_value::T as ObjectFit;
-@@ -1232,6 +3641,11 @@
+@@ -1232,6 +3655,11 @@
  
          let width = self.frame.content_box.width() as f32;
          let height = self.frame.content_box.height() as f32;
@@ -6549,7 +7996,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          let svg_size = svg.tree.size();
  
          let x = self.frame.content_box.origin().x;
-@@ -1253,9 +3667,20 @@
+@@ -1253,9 +3681,20 @@
  
          // Apply object-fit algorithm
          let container_size = taffy::Size { width, height };
@@ -6573,7 +8020,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          };
          let paint_size = compute_object_fit(container_size, Some(object_size), object_fit);
  
-@@ -1266,26 +3691,149 @@
+@@ -1266,26 +3705,149 @@
          let y_offset = object_position.vertical.resolve(
              CSSPixelLength::new(container_size.height - paint_size.height) / self.scale as f32,
          ) * self.scale as f32;
@@ -6704,8 +8151,8 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                }
              },
          );
-+    }
-+
+     }
+ 
 +    /// pyro: whether a corner of the content box is rounded: its radii exceed the border and
 +    /// padding there (the content edge's curve, CSS Backgrounds 3 §5.3).
 +    fn content_edge_is_rounded(&self) -> bool {
@@ -6716,15 +8163,15 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +            || rounded(r.top_right, i.x1, i.y0)
 +            || rounded(r.bottom_right, i.x1, i.y1)
 +            || rounded(r.bottom_left, i.x0, i.y1)
-     }
- 
++    }
++
      /// Clip replaced content to the content box when its object-fit/object-position
      /// rect overflows it.
 +    /// pyro: or as `clip` says (see [`ReplacedClip`]).
      fn with_replaced_content_clip<S: PaintScene>(
          &self,
          scene: &mut S,
-@@ -1293,15 +3841,27 @@
+@@ -1293,15 +3855,27 @@
          paint_size: taffy::Size<f32>,
          x_offset: f32,
          y_offset: f32,
@@ -6753,7 +8200,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              BlendMode::default(),
              1.0,
              self.transform,
-@@ -1329,9 +3889,22 @@
+@@ -1329,9 +3903,22 @@
                  width: width as f32,
                  height: height as f32,
              };
@@ -6779,7 +8226,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              };
              let paint_size = compute_object_fit(container_size, Some(object_size), object_fit);
  
-@@ -1347,10 +3920,28 @@
+@@ -1347,10 +3934,28 @@
  
              let x_scale = paint_size.width as f64 / object_size.width as f64;
              let y_scale = paint_size.height as f64 / object_size.height as f64;
@@ -6808,7 +8255,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
  
              self.with_replaced_content_clip(
                  scene,
-@@ -1358,8 +3949,23 @@
+@@ -1358,8 +3963,23 @@
                  paint_size,
                  x_offset.px(),
                  y_offset.px(),
@@ -6833,9 +8280,49 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
                  },
              );
          }
-@@ -1466,3 +4072,58 @@
+@@ -1457,12 +4077,93 @@
+         }
+     };
+     let s_border = style.get_border();
++    // pyro: `border-shape` ignores `border-radius` and `corner-shape` (CSS Borders 4 §11.5.1).
++    let border_shape = !matches!(
++        s_border.border_shape,
++        style::values::generics::basic_shape::GenericBorderShape::None
++    );
++    // pyro: a corner whose shape is (nearly) square has no radius (Blink's `CalcRadiiFor`).
++    let shaped = |radius: &BorderCornerRadius, k: f32| {
++        if border_shape || crate::kurbo_css::contoured::is_degenerate(k as f64) {
++            Vec2::ZERO
++        } else {
++            resolve_radii(radius)
++        }
++    };
+     let border_radii = NonUniformRoundedRectRadii {
+-        top_left: resolve_radii(&s_border.border_top_left_radius),
+-        top_right: resolve_radii(&s_border.border_top_right_radius),
+-        bottom_right: resolve_radii(&s_border.border_bottom_right_radius),
+-        bottom_left: resolve_radii(&s_border.border_bottom_left_radius),
++        top_left: shaped(&s_border.border_top_left_radius, s_border.corner_top_left_shape.k),
++        top_right: shaped(&s_border.border_top_right_radius, s_border.corner_top_right_shape.k),
++        bottom_right: shaped(&s_border.border_bottom_right_radius, s_border.corner_bottom_right_shape.k),
++        bottom_left: shaped(&s_border.border_bottom_left_radius, s_border.corner_bottom_left_shape.k),
+     };
  
-     CssBox::new(border_box, border, padding, outline_width, border_radii)
+-    CssBox::new(border_box, border, padding, outline_width, border_radii)
++    let frame = CssBox::new(border_box, border, padding, outline_width, border_radii);
++    // pyro: `corner-shape` (CSS Borders 4).
++    let exponent = |k: f32| crate::kurbo_css::contoured::exponent(k as f64);
++    let curvature = crate::kurbo_css::CornerCurvature {
++        top_left: exponent(s_border.corner_top_left_shape.k),
++        top_right: exponent(s_border.corner_top_right_shape.k),
++        bottom_right: exponent(s_border.corner_bottom_right_shape.k),
++        bottom_left: exponent(s_border.corner_bottom_left_shape.k),
++    };
++    if curvature.is_round() || !frame.has_border_radius() {
++        frame
++    } else {
++        frame.with_corner_curvature(curvature)
++    }
  }
 +
 +/// pyro: what [`BlitzDomPainter::paint_element`] needs of `render_element`'s state.
@@ -6997,7 +8484,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
              origin: (*get_cyclic(&svg_styles.mask_origin.0, idx)).into(),
              // There is no `mask-attachment` property
              attachment: StyloBackgroundAttachment::Scroll,
-@@ -129,54 +152,325 @@
+@@ -129,54 +152,352 @@
  
  impl ElementCx<'_, '_> {
      pub(super) fn draw_background(&self, scene: &mut impl PaintScene) {
@@ -7061,6 +8548,15 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
 +                .filter(|_| attachment == StyloBackgroundAttachment::Local)
 +        };
 +
++        // pyro: with a `border-shape`, the background is clipped to its inner shape (to the shape,
++        // with one) instead of the rounded box (CSS Borders 4 §11).
++        let border_shape = canvas.is_none().then(|| self.border_shape()).flatten();
++        let shape_clip = border_shape.as_ref().map(|shape| shape.background_clip());
++        let shape_bounds = border_shape.as_ref().map(|shape| {
++            use kurbo::Shape as _;
++            shape.outer_path().bounding_box()
++        });
++
          // The background color is clipped by the clip of the last layer in the list
          let last_clip = *get_cyclic(&bg_styles.background_clip.0, layer_count - 1);
 +        let last_attachment = *get_cyclic(&bg_styles.background_attachment.0, layer_count - 1);
@@ -7076,6 +8572,18 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
 +                (Some(canvas), _) => canvas.to_path(0.1),
 +                (None, Some(local)) => local.box_path(clip),
 +                (None, None) if border_area => self.border_area_path(),
++                (None, None) if shape_clip.is_some() => {
++                    let shape = shape_clip.clone().unwrap();
++                    match clip {
++                        BoxModelBox::BorderBox => shape,
++                        BoxModelBox::NoClip => self.box_path(clip),
++                        _ => {
++                            use crate::kurbo_css::contoured::{boolean, flatten, rect_polygon};
++                            let shapes = [flatten(&shape), vec![rect_polygon(self.box_rect(clip))]];
++                            boolean(&shapes, |inside| inside[0] && inside[1])
++                        }
++                    }
++                }
 +                (None, None) => match clip {
 +                    BoxModelBox::BorderBox => shrunk_border_box
 +                        .get_or_init(|| self.bleed_avoiding_border_box(style))
@@ -7164,6 +8672,11 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
 +            let local = local_cx(layer.attachment);
 +            let cx = local.unwrap_or(self);
 +            let area = canvas.unwrap_or_else(|| cx.box_rect(layer.clip));
++            // pyro: a `border-shape` reaching out of the box takes the painting area with it.
++            let area = match &shape_bounds {
++                Some(bounds) if canvas.is_none() => area.union(*bounds),
++                _ => area,
++            };
  
 +            if local.is_some() {
 +                scene.push_clip_layer(
@@ -7193,7 +8706,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
          }
          if text_run {
              self.end_text_clip_group(scene);
-         }
++        }
 +        self.context.layer_manager.maybe_pop_layer(scene, blend_group);
 +    }
 +
@@ -7284,7 +8797,8 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
 +            kurbo::Insets::ZERO,
 +            0.0,
 +            radii,
-+        );
++        )
++        .contoured_like(&self.frame);
 +        Some(shrunk.border_box_path())
 +    }
 +
@@ -7297,7 +8811,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
 +        let scrolls = |overflow: Overflow| !matches!(overflow, Overflow::Visible | Overflow::Clip);
 +        if !(scrolls(box_style.overflow_x) || scrolls(box_style.overflow_y)) {
 +            return None;
-+        }
+         }
 +        let scale = self.scale;
 +        let padding_box = self.frame.padding_box;
 +        // The scrollable overflow, relative to the padding box's top left (CSS px), with the
@@ -7333,7 +8847,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
      }
  
      /// Starts an isolated group for `background-clip: text` layers; layers drawn
-@@ -217,6 +511,7 @@
+@@ -217,6 +538,7 @@
              BoxModelBox::BorderBox => self.frame.border_box_path(),
              BoxModelBox::PaddingBox => self.frame.padding_box_path(),
              BoxModelBox::ContentBox => self.frame.content_box_path(),
@@ -7341,7 +8855,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
          }
      }
  
-@@ -226,20 +521,36 @@
+@@ -226,20 +548,36 @@
              BoxModelBox::BorderBox => self.frame.border_box,
              BoxModelBox::PaddingBox => self.frame.padding_box,
              BoxModelBox::ContentBox => self.frame.content_box,
@@ -7381,7 +8895,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
              }
              GenericImage::LightDark(_) => {
                  #[cfg(feature = "tracing")]
-@@ -253,14 +564,61 @@
+@@ -253,14 +591,61 @@
                  #[cfg(feature = "tracing")]
                  warn!("Implement image layer drawing for Image::CrossFade")
              }
@@ -7449,7 +8963,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
          }
      }
  
-@@ -308,11 +666,49 @@
+@@ -308,11 +693,49 @@
                  ]
              })
              .collect();
@@ -7500,7 +9014,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
  
          let cell_rect = |cell_id: NodeId| -> Option<Rect> {
              let layout = self.context.dom.get_node(cell_id)?.final_layout();
-@@ -344,13 +740,29 @@
+@@ -344,13 +767,29 @@
          let after = gutter - before;
  
          for cell in &table.cells {
@@ -7531,7 +9045,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
                  continue;
              }
              let Some(mut rect) = cell_rect(cell.node_id) else {
-@@ -367,25 +779,104 @@
+@@ -367,25 +806,104 @@
              }
  
              let shape = rect.scale_from_origin(self.scale);
@@ -7647,7 +9161,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
      /// Whether the layer is positioned against the viewport
      /// (`background-attachment: fixed`) rather than the element's origin box.
      /// `fixed` behaves as `scroll` on elements affected by a CSS transform
-@@ -410,23 +901,43 @@
+@@ -410,23 +928,43 @@
  
      /// Whether this element or any of its ancestors has a CSS transform
      ///
@@ -7696,7 +9210,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
          let Some(bg_image) = layer.image_data else {
              return;
          };
-@@ -439,14 +950,10 @@
+@@ -439,14 +977,10 @@
              return;
          }
  
@@ -7714,7 +9228,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
  
          // Size the SVG per the CSS default sizing algorithm
          // (https://drafts.csswg.org/css-images/#default-sizing). An SVG image
-@@ -461,7 +968,7 @@
+@@ -461,7 +995,7 @@
          }
          .filter(|r| r.is_finite() && *r > 0.0);
  
@@ -7723,7 +9237,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
              layer,
              frame_w,
              frame_h,
-@@ -476,29 +983,77 @@
+@@ -476,29 +1010,77 @@
              return;
          }
  
@@ -7815,7 +9329,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
          let Some(bg_image) = layer.image_data else {
              return;
          };
-@@ -509,95 +1064,163 @@
+@@ -509,95 +1091,163 @@
          let image_rendering = self.style.clone_image_rendering();
          let quality = to_image_quality(image_rendering);
  
@@ -8027,11 +9541,10 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
          let (bg_pos, bg_size) = compute_layer_position_and_size(
              layer,
              origin_rect.width() / self.scale,
-@@ -628,25 +1251,51 @@
-             bg_pos.y,
+@@ -629,24 +1279,50 @@
              bg_size.height,
          );
-+
+ 
 +        let tile_rect = Rect::new(0.0, 0.0, x.rect_len, y.rect_len);
 +        let bounding_box = self.frame.border_box.bounding_box();
 +
@@ -8061,7 +9574,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
 +            );
 +            return;
 +        }
- 
++
          // FIXME: https://wpt.live/css/css-backgrounds/background-size/background-size-near-zero-gradient.html
          if x.count as u64 * y.count as u64 > 500 {
              return;
@@ -8092,7 +9605,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
          let transform = base_transform.then_translate(Vec2 {
              x: x.translate,
              y: y.translate,
-@@ -681,35 +1330,84 @@
+@@ -681,35 +1357,84 @@
  
      let bg_size = compute_layer_size(layer, container_w as f32, container_h as f32, size_mode);
  
@@ -8198,7 +9711,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
  }
  
  #[inline]
-@@ -875,48 +1573,64 @@
+@@ -875,48 +1600,64 @@
      stride: f64,
  }
  
@@ -8292,7 +9805,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
          },
      }
  }
-@@ -958,11 +1672,24 @@
+@@ -958,11 +1699,24 @@
          }
          Space => {
              let (count, stride) = compute_space_count_and_stride(origin_len, tile_len);
@@ -8322,7 +9835,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
              }
          }
          NoRepeat => AxisTiling {
-@@ -986,6 +1713,16 @@
+@@ -986,6 +1740,16 @@
      (count, stride)
  }
  
@@ -8339,7 +9852,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
  /// Whether drawing the layer is guaranteed to paint nothing, making its clip
  /// layer unnecessary
  fn layer_paints_nothing(layer: &ImageLayerStyles) -> bool {
-@@ -1009,3 +1746,55 @@
+@@ -1009,3 +1773,55 @@
          -extend_length
      }
  }
@@ -8416,7 +9929,7 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
      render::{ElementCx, PhysicalTracks},
  };
  
-@@ -90,64 +90,400 @@
+@@ -90,64 +90,405 @@
      (outer, inner)
  }
  
@@ -8848,6 +10361,11 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
 +        {
 +            return;
 +        }
++        // pyro: a `border-shape` is drawn instead of the border (and of its image).
++        if let Some(shape) = self.border_shape() {
++            shape.paint(scene, self.transform);
++            return;
++        }
 +        // pyro: a border image is drawn instead of the border's styles (Blink's
 +        // `BoxPainterBase::PaintBorder`); one that cannot be drawn leaves them.
 +        if self.draw_border_image(scene) {
@@ -8857,7 +10375,7 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
          let style = &*self.style;
          let border = style.get_border();
          let current_color = style.clone_color();
-@@ -196,7 +532,11 @@
+@@ -196,7 +537,11 @@
                      // `r`, inner radius `r - width`, concentric). For 0 < r < width CSS
                      // draws a rounded outer edge against a sharp inner corner, which a
                      // stroke can't represent — leave those to the per-edge fill.
@@ -8870,10 +10388,39 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
                      let stroke_is_exact = is_exact(radii.top_left)
                          && is_exact(radii.top_right)
                          && is_exact(radii.bottom_right)
-@@ -227,6 +567,10 @@
+@@ -227,6 +572,39 @@
              }
          }
  
++        // pyro: a border of one colour and solid sides around shaped corners (`corner-shape`) is
++        // the area between the border edge and the padding edge, filled once.
++        if self.frame.corner_curvature.is_some() {
++            let sides = [
++                (Edge::Top, &border.border_top_color, border.border_top_style),
++                (Edge::Right, &border.border_right_color, border.border_right_style),
++                (Edge::Bottom, &border.border_bottom_color, border.border_bottom_style),
++                (Edge::Left, &border.border_left_color, border.border_left_style),
++            ];
++            let mut visible = sides.iter().filter(|(edge, color, style)| {
++                self.edge_width(*edge) > 0.0
++                    && !style.none_or_hidden()
++                    && color.resolve_to_absolute(&current_color).alpha > 0.0
++            });
++            if let Some(first) = visible.clone().next() {
++                let color = first.1.resolve_to_absolute(&current_color).as_srgb_color();
++                let uniform = sides.iter().all(|(edge, c, style)| {
++                    self.edge_width(*edge) <= 0.0
++                        || style.none_or_hidden()
++                        || (*style == BorderStyle::Solid
++                            && c.resolve_to_absolute(&current_color).as_srgb_color() == color)
++                });
++                if uniform && visible.all(|(_, _, style)| *style == BorderStyle::Solid) {
++                    scene.fill(Fill::NonZero, self.transform, color, None, &self.frame.border_ring());
++                    return;
++                }
++            }
++        }
++
 +        if self.draw_square_solid_sides_overdrawn(scene) {
 +            return;
 +        }
@@ -8881,7 +10428,7 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
          // (colour, path) pairs to be filled. Several entries may share a colour;
          // they are grouped before filling so that adjacent same-coloured regions
          // are drawn together, avoiding anti-aliasing seams between them.
-@@ -234,6 +578,7 @@
+@@ -234,6 +612,7 @@
          // At most 8 entries: 4 edges, each of which can contribute 2 (the outer
          // and inner halves of a `groove`/`ridge`).
          let mut borders: SmallVec<[(Color, BezPath); 8]> = SmallVec::new();
@@ -8889,7 +10436,7 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
  
          for &edge in &[Edge::Top, Edge::Right, Edge::Bottom, Edge::Left] {
              let (color, edge_style) = match edge {
-@@ -244,7 +589,11 @@
+@@ -244,7 +623,11 @@
              };
              let color = color.resolve_to_absolute(&current_color).as_srgb_color();
  
@@ -8902,7 +10449,7 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
                  continue;
              }
  
-@@ -253,10 +602,9 @@
+@@ -253,10 +636,9 @@
                  // guard against drawing them anyway.
                  BorderStyle::None | BorderStyle::Hidden => {}
  
@@ -8916,7 +10463,7 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
  
                  // A double border is two solid lines separated by a gap, splitting
                  // the border width into three equal parts (outer line / gap / inner
-@@ -315,6 +663,20 @@
+@@ -315,6 +697,20 @@
              }
          }
  
@@ -8937,7 +10484,7 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
          if borders.is_empty() {
              return;
          }
-@@ -338,7 +700,140 @@
+@@ -338,7 +734,144 @@
              }
              scene.fill(Fill::NonZero, self.transform, color, None, &path);
              start = next;
@@ -8949,6 +10496,10 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
 +    /// colour; a `double` side its two lines; a dotted or dashed side its marks when the corners
 +    /// are square (with rounded corners, the whole side).
 +    pub(super) fn border_area_path(&self) -> BezPath {
++        // pyro: with a `border-shape`, the area its border covers.
++        if let Some(shape) = self.border_shape() {
++            return shape.border_area_path();
++        }
 +        let border = self.style.get_border();
 +        let sides = [
 +            (Edge::Top, border.border_top_style),
@@ -9078,7 +10629,7 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
      }
  
      /// The border width (in device pixels) of a single edge.
-@@ -351,163 +846,152 @@
+@@ -351,163 +884,152 @@
          }
      }
  
@@ -9376,7 +10927,7 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
      }
  
      pub(crate) fn draw_table_borders(&self, scene: &mut impl PaintScene) {
-@@ -522,6 +1006,10 @@
+@@ -522,6 +1044,10 @@
          let Some(grid_info) = &mut *table.computed_grid_info.borrow_mut() else {
              return;
          };
@@ -9387,7 +10938,7 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
          let Some(border_style) = table.border_style.as_deref() else {
              return;
          };
-@@ -531,31 +1019,36 @@
+@@ -531,31 +1057,36 @@
          let cols = PhysicalTracks::from_tracks(&grid_info.columns);
          let rows = PhysicalTracks::from_tracks(&grid_info.rows);
  
@@ -9438,7 +10989,7 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
  
          let mut fill = |x0: f64, y0: f64, x1: f64, y1: f64| {
              let shape = Rect::new(x0, y0, x1, y1).scale_from_origin(self.scale);
-@@ -571,12 +1064,12 @@
+@@ -571,12 +1102,12 @@
              fill(left, bottom - border_width.height, right, bottom);
          }
          for (prev, next) in rows.iter().zip(rows.iter().skip(1)) {
@@ -9453,7 +11004,7 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
              if outer_border_style.border_left_style != BorderStyle::Hidden {
                  fill(left, y0, left + border_width.width, y1);
              }
-@@ -589,8 +1082,144 @@
+@@ -589,8 +1120,144 @@
          }
      }
  
@@ -9600,7 +11151,7 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
      /// ✅ solid - Defines a solid border
      /// ❌ double - Defines a double border
      /// ❌ groove - Defines a 3D grooved border. The effect depends on the border-color value
-@@ -600,33 +1229,64 @@
+@@ -600,33 +1267,92 @@
      /// ✅ none - Defines no border
      /// ✅ hidden - Defines a hidden border
      pub(crate) fn draw_outline(&self, scene: &mut impl PaintScene) {
@@ -9618,6 +11169,32 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
 +        let Some((style, color, width, outset)) = self.outline_line() else {
 +            return;
          };
++        // pyro: around a `border-shape`, a solid or double outline is the band between the outer
++        // edge grown by the offset and by the offset and the width
++        // (`BorderShapePainter::PaintOutline`); other styles are drawn around the box.
++        if matches!(style, BorderStyle::Solid | BorderStyle::Double) {
++            if let Some(shape) = self.border_shape() {
++                use crate::kurbo_css::contoured::{boolean, flatten};
++                let offset = outset - width;
++                let band = |outer: f64, inner: f64| {
++                    let shapes = [
++                        flatten(&shape.outer_path_with_offset(outer)),
++                        flatten(&shape.outer_path_with_offset(inner)),
++                    ];
++                    boolean(&shapes, |inside| inside[0] != inside[1])
++                };
++                let line = (width / 3.0).round();
++                let path = if style == BorderStyle::Double && line >= 1.0 {
++                    let mut path = band(offset + width, offset + width - line);
++                    path.extend(&band(offset + line, offset));
++                    path
++                } else {
++                    band(offset + width, offset)
++                };
++                scene.fill(Fill::NonZero, self.transform, color, None, &path);
++                return;
++            }
++        }
 +        let bb = self.frame.border_box;
 +        // A rounded corner grows with the outline, and a square one stays
 +        // square.
@@ -9640,7 +11217,9 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
 +                bottom_right: corner(radii.bottom_right),
 +                bottom_left: corner(radii.bottom_left),
 +            },
-+        );
++        )
++        // pyro: shaped corners (`corner-shape`) stay parallel to the border box's.
++        .contoured_like(&self.frame);
  
 -        let path = match style {
 -            BorderStyle::None | BorderStyle::Hidden => return,
@@ -10394,10 +11973,335 @@ new file mode 100644
 +    }
 +    RasterImageData::new(sw as u32, sh as u32, std::sync::Arc::new(pixels))
 +}
+diff --git a/packages/blitz-paint/src/render/border_shape.rs b/packages/blitz-paint/src/render/border_shape.rs
+new file mode 100644
+--- /dev/null
++++ b/packages/blitz-paint/src/render/border_shape.rs
+@@ -0,0 +1,320 @@
++//! pyro: `border-shape` (CSS Borders 4 §11), as Blink's `BorderShapePainter` draws it.
++//!
++//! With one shape the border is a stroke along it, as wide as the relevant side's border and in
++//! its colour; with two it fills the area between the outer and the inner one. `border-radius`
++//! and `corner-shape` are then ignored. The background is clipped to the inner shape (to the
++//! shape itself with one), the overflow to the inner edge of the border, and shadows and the
++//! outline follow its outer edge.
++
++use super::ElementCx;
++use blitz_dom::CopyStyleGetters;
++use super::clip_path::ElementClip;
++use crate::color::{Color, ToColorColor as _};
++use crate::kurbo_css::contoured::{boolean, flatten_with, polygons_path};
++
++/// How finely shape outlines are flattened, and their strokes expanded (device px): as vello_cpu
++/// strokes and fills curves (`vello_common::flatten::TOL`), so that an edge worked out here (the
++/// inner edge of a stroke, which clips the overflow) falls where the drawn stroke's does.
++const TOLERANCE: f64 = 0.25;
++
++fn flatten(path: &BezPath) -> Vec<Vec<Point>> {
++    flatten_with(path, TOLERANCE)
++}
++
++/// `path` with every subpath closed: a stroke draws the closing side (shapes built for fills,
++/// such as a rectangle's, end at their last corner).
++fn closed(path: &BezPath) -> BezPath {
++    let mut out = BezPath::new();
++    let mut open = false;
++    for el in path.elements() {
++        match el {
++            PathEl::MoveTo(_) => {
++                if open {
++                    out.close_path();
++                }
++                open = true;
++            }
++            PathEl::ClosePath => open = false,
++            _ => {}
++        }
++        out.push(*el);
++    }
++    if open {
++        out.close_path();
++    }
++    out
++}
++use anyrender::PaintScene;
++use kurbo::{BezPath, Cap, Join, PathEl, Point, Rect, Shape as _, Stroke, StrokeOpts};
++use peniko::Fill;
++use style::values::computed::basic_shape::BasicShape;
++use style::values::generics::basic_shape::{
++    BorderShapeBox, GenericBasicShape, GenericBorderShape, GenericBorderShapeItem, ShapeBox,
++};
++use style::values::specified::BorderStyle;
++
++/// An element's resolved `border-shape`, in device px in the element's space.
++pub(super) struct BorderShape {
++    /// The outer shape (the only one in stroke mode).
++    outer: BezPath,
++    /// The inner shape, with two.
++    inner: Option<BezPath>,
++    /// The outer shape's box when it is a circle or an ellipse (Skia grows those as ovals).
++    oval: Option<Rect>,
++    /// Whether the outer shape is all straight lines: its stroke's miters are then never cut.
++    polygon: bool,
++    /// The relevant side's border width (the stroke's width) and colour.
++    width: f64,
++    color: Color,
++}
++
++impl BorderShape {
++    /// The stroke Blink draws a border shape with (`GetStrokeData`): mitered, the miters of a
++    /// polygon never cut, those of curves at 4 widths.
++    fn stroke(&self, width: f64) -> Stroke {
++        Stroke::new(width)
++            .with_join(Join::Miter)
++            .with_miter_limit(if self.polygon { 1e10 } else { 4.0 })
++            .with_caps(Cap::Butt)
++    }
++
++    /// The area `path`'s stroke of `width` covers, as polygons.
++    fn stroke_area(&self, path: &BezPath, width: f64) -> Vec<Vec<Point>> {
++        let outline = kurbo::stroke(
++            path.elements().iter().copied(),
++            &self.stroke(width),
++            &StrokeOpts::default(),
++            TOLERANCE,
++        );
++        flatten(&outline)
++    }
++
++    /// The outer edge of the border: the outer shape, grown by half the stroke in stroke mode
++    /// (`BorderShapePainter::OuterPath`).
++    pub(super) fn outer_path(&self) -> BezPath {
++        if self.inner.is_some() || self.width <= 0.0 {
++            return self.outer.clone();
++        }
++        let shapes = [flatten(&self.outer), self.stroke_area(&self.outer, self.width)];
++        boolean(&shapes, |inside| inside[0] || inside[1])
++    }
++
++    /// The inner edge of the border: the inner shape, or the shape less half the stroke in
++    /// stroke mode (`BorderShapePainter::InnerPath`). It clips the overflow.
++    pub(super) fn inner_path(&self) -> BezPath {
++        if let Some(inner) = &self.inner {
++            return inner.clone();
++        }
++        if self.width <= 0.0 {
++            return self.outer.clone();
++        }
++        let shapes = [flatten(&self.outer), self.stroke_area(&self.outer, self.width)];
++        boolean(&shapes, |inside| inside[0] && !inside[1])
++    }
++
++    /// What the background is clipped to: the inner shape, or the shape in stroke mode (the
++    /// stroke is drawn over it).
++    pub(super) fn background_clip(&self) -> BezPath {
++        self.inner.clone().unwrap_or_else(|| self.outer.clone())
++    }
++
++    /// The outer edge moved out by `offset` (in, when negative), for shadows and outlines
++    /// (`BorderShapePainter::OuterPathWithOffset`): an oval grows as an oval, anything else by
++    /// its stroke.
++    pub(super) fn outer_path_with_offset(&self, offset: f64) -> BezPath {
++        let total = offset + if self.inner.is_none() { self.width / 2.0 } else { 0.0 };
++        if total == 0.0 {
++            return self.outer.clone();
++        }
++        if let Some(oval) = self.oval {
++            let grown = oval.inflate(total, total);
++            if grown.width() > 0.0 && grown.height() > 0.0 {
++                // (Drawn as a `border-radius: 50%` box is, as `ellipse()` is.)
++                let radius = kurbo::Vec2::new(grown.width() / 2.0, grown.height() / 2.0);
++                let radii = crate::kurbo_css::NonUniformRoundedRectRadii {
++                    top_left: radius,
++                    top_right: radius,
++                    bottom_right: radius,
++                    bottom_left: radius,
++                };
++                let insets = kurbo::Insets::ZERO;
++                return closed(&crate::kurbo_css::CssBox::new(grown, insets, insets, 0.0, radii).border_box_path());
++            }
++            return BezPath::new();
++        }
++        let shapes = [flatten(&self.outer), self.stroke_area(&self.outer, total.abs() * 2.0)];
++        if total > 0.0 {
++            boolean(&shapes, |inside| inside[0] || inside[1])
++        } else {
++            boolean(&shapes, |inside| inside[0] && !inside[1])
++        }
++    }
++
++    /// `path` moved out by `offset` (in, when negative) along its normals: united with its
++    /// stroke of twice the offset, or less it, mitered at 4 widths (Blink's default
++    /// `StrokeData`, as an inner shadow's spread is applied).
++    pub(super) fn offset_path(&self, path: &BezPath, offset: f64) -> BezPath {
++        if offset == 0.0 {
++            return path.clone();
++        }
++        let stroke = Stroke::new(offset.abs() * 2.0).with_join(Join::Miter).with_miter_limit(4.0);
++        let outline = kurbo::stroke(path.elements().iter().copied(), &stroke, &StrokeOpts::default(), TOLERANCE);
++        let shapes = [flatten(path), flatten(&outline)];
++        if offset > 0.0 {
++            boolean(&shapes, |inside| inside[0] || inside[1])
++        } else {
++            boolean(&shapes, |inside| inside[0] && !inside[1])
++        }
++    }
++
++    /// The area the border covers (`background-clip: border-area` paints there): between the
++    /// shapes, or the stroke along the shape (`BorderShapePainter::PaintBorderArea`).
++    pub(super) fn border_area_path(&self) -> BezPath {
++        if let Some(inner) = &self.inner {
++            let shapes = [flatten(&self.outer), flatten(inner)];
++            return boolean(&shapes, |inside| inside[0] && !inside[1]);
++        }
++        if self.width <= 0.0 {
++            return BezPath::new();
++        }
++        polygons_path(&self.stroke_area(&self.outer, self.width))
++    }
++
++    /// Draws the border: the area between the shapes, or the stroke along the shape.
++    pub(super) fn paint(&self, scene: &mut impl PaintScene, transform: kurbo::Affine) {
++        if self.color.components[3] <= 0.0 {
++            return;
++        }
++        if let Some(inner) = &self.inner {
++            let shapes = [flatten(&self.outer), flatten(inner)];
++            let area = boolean(&shapes, |inside| inside[0] && !inside[1]);
++            scene.fill(Fill::NonZero, transform, self.color, None, &area);
++            return;
++        }
++        // A stroke of no width would be a hairline: nothing is drawn.
++        if self.width <= 0.0 {
++            return;
++        }
++        scene.stroke(&self.stroke(self.width), transform, self.color, None, &self.outer);
++    }
++}
++
++impl ElementCx<'_, '_> {
++    /// pyro: this element's `border-shape`, resolved; `None` for `none` (or a shape that cannot
++    /// be drawn).
++    pub(super) fn border_shape(&self) -> Option<BorderShape> {
++        let (outer, inner) = match &self.style.get_border().border_shape {
++            GenericBorderShape::None => return None,
++            GenericBorderShape::Single(item) => (item, None),
++            GenericBorderShape::Double(outer, inner) => (outer, Some(inner)),
++        };
++        let path = |item: &GenericBorderShapeItem<BasicShape>, default: BorderShapeBox| {
++            let reference = match item.reference {
++                BorderShapeBox::Default => default,
++                other => other,
++            };
++            let reference = self.border_shape_reference(reference);
++            match self.basic_shape_clip_with(&item.shape, reference, false) {
++                ElementClip::Shape(mut path, _) => {
++                    path.apply_affine(kurbo::Affine::scale(self.scale));
++                    closed(&path)
++                }
++                _ => BezPath::new(),
++            }
++        };
++        let (outer_default, inner_default) = if inner.is_some() {
++            (
++                BorderShapeBox::ShapeBox(ShapeBox::BorderBox),
++                BorderShapeBox::ShapeBox(ShapeBox::PaddingBox),
++            )
++        } else {
++            (BorderShapeBox::HalfBorderBox, BorderShapeBox::HalfBorderBox)
++        };
++        let outer_path = path(outer, outer_default);
++        let inner_path = inner.map(|inner| path(inner, inner_default));
++        let oval = matches!(*outer.shape, GenericBasicShape::Circle(_) | GenericBasicShape::Ellipse(_))
++            .then(|| outer_path.bounding_box())
++            .filter(|b| b.width() > 0.0 && b.height() > 0.0);
++        let polygon = outer_path
++            .elements()
++            .iter()
++            .all(|el| matches!(el, PathEl::MoveTo(_) | PathEl::LineTo(_) | PathEl::ClosePath));
++        let (width, color) = self.border_shape_side();
++        Some(BorderShape {
++            outer: outer_path,
++            inner: inner_path,
++            oval,
++            polygon,
++            width,
++            color,
++        })
++    }
++
++    /// The box a `border-shape` shape is drawn in (CSS px from the border box's origin):
++    /// `half-border-box` is the border box less half of each border width; `fill-box` is the
++    /// content box and `stroke-box` and `view-box` the border box, as for `clip-path`.
++    fn border_shape_reference(&self, reference: BorderShapeBox) -> Rect {
++        let frame = &self.frame;
++        let device = match reference {
++            BorderShapeBox::Default
++            | BorderShapeBox::HalfBorderBox => {
++                let b = frame.border_width;
++                Rect::new(
++                    frame.border_box.x0 + b.x0 / 2.0,
++                    frame.border_box.y0 + b.y0 / 2.0,
++                    frame.border_box.x1 - b.x1 / 2.0,
++                    frame.border_box.y1 - b.y1 / 2.0,
++                )
++            }
++            BorderShapeBox::StrokeBox
++            | BorderShapeBox::ViewBox
++            | BorderShapeBox::ShapeBox(ShapeBox::BorderBox) => frame.border_box,
++            BorderShapeBox::ShapeBox(ShapeBox::PaddingBox) => frame.padding_box,
++            BorderShapeBox::FillBox | BorderShapeBox::ShapeBox(ShapeBox::ContentBox) => {
++                frame.content_box
++            }
++            BorderShapeBox::ShapeBox(ShapeBox::MarginBox) => {
++                let to_css = 1.0 / self.scale;
++                let border_box = Rect::new(
++                    frame.border_box.x0 * to_css,
++                    frame.border_box.y0 * to_css,
++                    frame.border_box.x1 * to_css,
++                    frame.border_box.y1 * to_css,
++                );
++                return border_box + self.margins();
++            }
++        };
++        let to_css = 1.0 / self.scale;
++        Rect::new(device.x0 * to_css, device.y0 * to_css, device.x1 * to_css, device.y1 * to_css)
++    }
++
++    /// The width (device px) and colour of the relevant side for `border-shape`: the first of
++    /// block-start, inline-start, block-end and inline-end whose style is not `none`, else
++    /// block-start.
++    fn border_shape_side(&self) -> (f64, Color) {
++        use style::logical_geometry::PhysicalSide;
++        let border = self.style.get_border();
++        let wm = self.style.writing_mode;
++        let side = |s: PhysicalSide| match s {
++            PhysicalSide::Top => (border.border_top_style, &border.border_top_color, self.frame.border_width.y0),
++            PhysicalSide::Right => (border.border_right_style, &border.border_right_color, self.frame.border_width.x1),
++            PhysicalSide::Bottom => (border.border_bottom_style, &border.border_bottom_color, self.frame.border_width.y1),
++            PhysicalSide::Left => (border.border_left_style, &border.border_left_color, self.frame.border_width.x0),
++        };
++        let order = [
++            wm.block_start_physical_side(),
++            wm.inline_start_physical_side(),
++            wm.block_end_physical_side(),
++            wm.inline_end_physical_side(),
++        ];
++        let (_, color, width) = order
++            .iter()
++            .map(|&s| side(s))
++            .find(|(style, _, _)| *style != BorderStyle::None)
++            .unwrap_or_else(|| side(order[0]));
++        let color = color
++            .resolve_to_absolute(&self.style.clone_color())
++            .as_srgb_color();
++        (width, color)
++    }
++}
 diff --git a/packages/blitz-paint/src/render/box_shadow.rs b/packages/blitz-paint/src/render/box_shadow.rs
 --- a/packages/blitz-paint/src/render/box_shadow.rs
 +++ b/packages/blitz-paint/src/render/box_shadow.rs
-@@ -1,9 +1,157 @@
+@@ -1,17 +1,273 @@
  use super::ElementCx;
  use crate::color::{Color, ToColorColor as _};
 +use crate::kurbo_css::{CssBox, NonUniformRoundedRectRadii};
@@ -10406,7 +12310,7 @@ diff --git a/packages/blitz-paint/src/render/box_shadow.rs b/packages/blitz-pain
 -use kurbo::{Rect, Vec2};
 +use kurbo::{Insets, Rect, Vec2};
  use peniko::{Compose, Fill, Mix};
-+
+ 
 +/// pyro: a corner radius of a shadow shape grown by `spread` (shrunk when negative), as CSS
 +/// Backgrounds 3 §7.1.1 has it (and WPT's `box-shadow-radius-generated-ref.html` computes it): a
 +/// radius larger than the spread, or of a corner that covers more than its box (`coverage`, the
@@ -10515,7 +12419,9 @@ diff --git a/packages/blitz-paint/src/render/box_shadow.rs b/packages/blitz-pain
 +        bottom_left: inner(frame.border_radii.bottom_left, insets.x0, insets.y1),
 +    };
 +    let radii = spread_radii(&radii, rect.size(), margin);
-+    CssBox::new(rect.inflate(margin, margin), Insets::ZERO, Insets::ZERO, 0.0, radii).border_box_path()
++    CssBox::new(rect.inflate(margin, margin), Insets::ZERO, Insets::ZERO, 0.0, radii)
++        .contoured_like(frame)
++        .border_box_path()
 +}
 +
 +/// pyro: the single radius of a shadow shape whose corners are all circular arcs of one radius
@@ -10553,10 +12459,124 @@ diff --git a/packages/blitz-paint/src/render/box_shadow.rs b/packages/blitz-pain
 +        bottom_left: inner(r.bottom_left, w.x0, w.y1),
 +    }
 +}
- 
++
  impl ElementCx<'_, '_> {
++    /// pyro: what this element clips its overflow to ([`overflow_clip_path`]): with a
++    /// `border-shape`, the inner edge of its border.
++    pub(super) fn overflow_clip_path(&self, style: &style::properties::ComputedValues) -> kurbo::BezPath {
++        if let Some(shape) = self.border_shape() {
++            return shape.inner_path();
++        }
++        overflow_clip_path(&self.frame, style, self.scale)
++    }
++
++    /// pyro: a shadow of `path` (this element's space, device px) filled in `color`, moved by
++    /// `offset` and blurred by `blur` (the CSS blur radius, device px: a standard deviation of
++    /// half of it, as Chromium blurs), drawn through a filter layer when blurred.
++    fn fill_shadow_path(
++        &self,
++        scene: &mut impl PaintScene,
++        path: &kurbo::BezPath,
++        color: Color,
++        offset: Vec2,
++        blur: f64,
++    ) {
++        let transform = self.transform.then_translate(offset);
++        if blur <= 0.0 {
++            scene.fill(Fill::NonZero, transform, color, None, path);
++            return;
++        }
++        use kurbo::Shape as _;
++        let filter = std::sync::Arc::new(anyrender::Filter::single(anyrender::filters::FilterEffect::blur(
++            (blur / 2.0) as f32,
++        )));
++        let bounds = path.bounding_box().inflate(blur * 2.0, blur * 2.0);
++        let mut group = anyrender::Scene::new();
++        group.push_layer(Fill::NonZero, Mix::Normal, 1.0, transform, &bounds, Some(filter), None);
++        group.fill(Fill::NonZero, transform, color, None, path);
++        group.pop_layer();
++        scene.append_scene(group, kurbo::Affine::IDENTITY);
++    }
++
++    /// pyro: the shadows of an element with a `border-shape` (CSS Borders 4 §11.5.2): an outer
++    /// shadow is its outer edge grown by the spread, blurred and cut out of the outer edge
++    /// (`PaintNormalBoxShadow`); an inner one fills around the inner edge shrunk by the spread,
++    /// inside the inner edge (`PaintInsetBoxShadowForBorderShape`).
++    fn draw_border_shape_shadows(
++        &self,
++        scene: &mut impl PaintScene,
++        shape: &super::border_shape::BorderShape,
++        inset: bool,
++    ) {
++        use crate::kurbo_css::contoured::{boolean, flatten, rect_polygon};
++        use kurbo::Shape as _;
++        let current_color = self.style.clone_color();
++        let box_shadow = &self.style.get_effects().box_shadow.0;
++        let clip = if inset { shape.inner_path() } else { shape.outer_path() };
++        let mut clipped = false;
++        for shadow in box_shadow.iter().filter(|s| s.inset == inset).rev() {
++            let color = shadow.base.color.resolve_to_absolute(&current_color).as_srgb_color();
++            if color.components[3] <= 0.0 {
++                continue;
++            }
++            let offset = Vec2::new(
++                shadow.base.horizontal.px() as f64 * self.scale,
++                shadow.base.vertical.px() as f64 * self.scale,
++            );
++            let spread = shadow.spread.px() as f64 * self.scale;
++            let blur = shadow.base.blur.px() as f64 * self.scale;
++            if !clipped {
++                if inset {
++                    scene.push_clip_layer(Fill::NonZero, self.transform, &clip);
++                } else {
++                    // Everything but the outer edge's area.
++                    let far = clip.bounding_box().inflate(1e5, 1e5);
++                    let outside = boolean(
++                        &[vec![rect_polygon(far)], flatten(&clip)],
++                        |inside| inside[0] && !inside[1],
++                    );
++                    scene.push_clip_layer(Fill::NonZero, self.transform, &outside);
++                }
++                clipped = true;
++            }
++            if inset {
++                // The hole is the inner edge shrunk by the spread; the shadow is all around it.
++                let hole = if spread == 0.0 {
++                    clip.clone()
++                } else {
++                    shape.offset_path(&clip, -spread)
++                };
++                let far = clip.bounding_box().inflate(blur * 3.0 + spread.abs() + offset.hypot() + 10.0, 0.0);
++                let far = far.inflate(0.0, blur * 3.0 + spread.abs() + offset.hypot() + 10.0);
++                let around = boolean(
++                    &[vec![rect_polygon(far)], flatten(&hole)],
++                    |inside| inside[0] && !inside[1],
++                );
++                self.fill_shadow_path(scene, &around, color, offset, blur);
++            } else {
++                let path = shape.outer_path_with_offset(spread);
++                self.fill_shadow_path(scene, &path, color, offset, blur);
++            }
++        }
++        if clipped {
++            scene.pop_layer();
++        }
++    }
++
      pub(super) fn draw_outset_box_shadow(&self, scene: &mut impl PaintScene) {
-@@ -21,7 +169,11 @@
+         let box_shadow = &self.style.get_effects().box_shadow.0;
+         let has_outset_shadow = box_shadow.iter().any(|s| !s.inset);
+         if !has_outset_shadow {
+             return;
+         }
++        if let Some(shape) = self.border_shape() {
++            self.draw_border_shape_shadows(scene, &shape, false);
++            return;
++        }
+ 
+         let current_color = self.style.clone_color();
+         let opacity = self.style.get_effects().opacity;
+@@ -21,7 +277,11 @@
              .background_color
              .resolve_to_absolute(&current_color)
              .as_srgb_color();
@@ -10569,7 +12589,7 @@ diff --git a/packages/blitz-paint/src/render/box_shadow.rs b/packages/blitz-pain
          let needs_clip = opacity < 1.0 || !bg_is_opaque;
  
          let max_shadow_rect = box_shadow.iter().fold(Rect::ZERO, |prev, shadow| {
-@@ -76,12 +228,42 @@
+@@ -76,12 +336,51 @@
                              continue;
                          }
  
@@ -10586,7 +12606,8 @@ diff --git a/packages/blitz-paint/src/render/box_shadow.rs b/packages/blitz-pain
 +                            self.frame.border_box.size(),
 +                            spread,
 +                        );
-+                        let shape = CssBox::new(rect, Insets::ZERO, Insets::ZERO, 0.0, radii);
++                        let shape = CssBox::new(rect, Insets::ZERO, Insets::ZERO, 0.0, radii)
++                            .contoured_like(&self.frame);
  
 -                        // Fill the color
 -                        scene.draw_box_shadow(transform, rect, shadow_color, radius, blur);
@@ -10607,24 +12628,38 @@ diff --git a/packages/blitz-paint/src/render/box_shadow.rs b/packages/blitz-pain
 +                        }
 +
 +                        // pyro: Chromium blurs with a standard deviation of half the blur
-+                        // radius (`BlurRadiusToStdDev`), in device px. Corners of differing radii
-+                        // are drawn with their average (vello's blurred rectangle has one).
-+                        let radius = uniform_radius(&shape.border_radii)
-+                            .unwrap_or_else(|| shape.border_radii.average());
++                        // radius (`BlurRadiusToStdDev`), in device px. vello's blurred rectangle
++                        // has one circular radius: a shape with others (elliptical or differing
++                        // corners, shaped corners) is its path, blurred.
 +                        let std_dev = blur * self.scale / 2.0;
-+                        scene.draw_box_shadow(transform, rect, shadow_color, radius, std_dev);
++                        match uniform_radius(&shape.border_radii).filter(|_| shape.corner_curvature.is_none()) {
++                            Some(radius) => scene.draw_box_shadow(transform, rect, shadow_color, radius, std_dev),
++                            None => {
++                                let offset = Vec2::new(
++                                    shadow.base.horizontal.px() as f64 * self.scale,
++                                    shadow.base.vertical.px() as f64 * self.scale,
++                                );
++                                self.fill_shadow_path(scene, &shape.border_box_path(), shadow_color, offset, blur * self.scale);
++                            }
++                        }
                      }
                  }
              },
-@@ -97,6 +279,7 @@
+@@ -95,8 +394,13 @@
+         if !has_inset_shadow {
+             return;
          }
++        if let Some(shape) = self.border_shape() {
++            self.draw_border_shape_shadows(scene, &shape, true);
++            return;
++        }
  
          let padding_box = self.frame.padding_box_path();
 +        let inner_radii = padding_radii(&self.frame);
  
          for shadow in box_shadow.iter().filter(|s| s.inset) {
              let shadow_color = shadow
-@@ -104,17 +287,40 @@
+@@ -104,17 +408,40 @@
                  .color
                  .resolve_to_absolute(&current_color)
                  .as_srgb_color();
@@ -10651,7 +12686,7 @@ diff --git a/packages/blitz-paint/src/render/box_shadow.rs b/packages/blitz-pain
 +            let hole = self.frame.padding_box.inflate(-spread, -spread);
 +            let hole_shape = (hole.width() > 0.0 && hole.height() > 0.0).then(|| {
 +                let radii = spread_radii(&inner_radii, self.frame.padding_box.size(), -spread);
-+                CssBox::new(hole, Insets::ZERO, Insets::ZERO, 0.0, radii)
++                CssBox::new(hole, Insets::ZERO, Insets::ZERO, 0.0, radii).contoured_like(&self.frame)
              });
  
 +            // pyro: without blur the shadow is the padding box less the moved hole, one fill in
@@ -10672,7 +12707,7 @@ diff --git a/packages/blitz-paint/src/render/box_shadow.rs b/packages/blitz-pain
              scene.push_layer(
                  Fill::NonZero,
                  Mix::Normal,
-@@ -141,19 +347,35 @@
+@@ -141,19 +468,35 @@
                  None,
                  None,
              );
@@ -10847,7 +12882,7 @@ diff --git a/packages/blitz-paint/src/render/clip_path.rs b/packages/blitz-paint
      /// Compute the rectangle (in scaled pixels, relative to the border box origin) described by
      /// the CSS 2 `clip` property, if it applies. `clip` only applies to absolutely positioned
      /// elements; `auto` components resolve to the corresponding border box edge.
-@@ -41,251 +149,384 @@
+@@ -41,251 +149,473 @@
          Some(Rect::new(x0, y0, x1.max(x0), y1.max(y0)))
      }
  
@@ -10948,7 +12983,7 @@ diff --git a/packages/blitz-paint/src/render/clip_path.rs b/packages/blitz-paint
 +
 +    /// The margins (CSS px). An inline box (no box of layout's own) has its style's, in every
 +    /// side, as Chromium takes them for its margin box.
-+    fn margins(&self) -> Insets {
++    pub(super) fn margins(&self) -> Insets {
 +        if self.style.get_box().display.is_inline_flow() {
 +            let margin = self.style.get_margin();
 +            let resolve = |v: &style::values::computed::Margin| match v {
@@ -10990,6 +13025,35 @@ diff --git a/packages/blitz-paint/src/render/clip_path.rs b/packages/blitz-paint
 +    fn rounded_reference_box(&self, geometry_box: &ShapeGeometryBox) -> BezPath {
 +        let frame = &self.frame;
 +        let to_css = 1.0 / self.scale;
++        // pyro: shaped corners (`corner-shape`): the box's edge as its background and border
++        // follow it, the margin box's curves parallel to the border box's.
++        if frame.corner_curvature.is_some() {
++            let mut path = match geometry_box {
++                ShapeGeometryBox::ElementDependent
++                | ShapeGeometryBox::StrokeBox
++                | ShapeGeometryBox::ViewBox
++                | ShapeGeometryBox::ShapeBox(ShapeBox::BorderBox) => frame.border_box_path(),
++                ShapeGeometryBox::ShapeBox(ShapeBox::PaddingBox) => frame.padding_box_path(),
++                ShapeGeometryBox::FillBox | ShapeGeometryBox::ShapeBox(ShapeBox::ContentBox) => {
++                    frame.content_box_path()
++                }
++                ShapeGeometryBox::ShapeBox(ShapeBox::MarginBox) => {
++                    let m = scale_insets(self.margins(), self.scale);
++                    let r = frame.border_radii;
++                    let radii = NonUniformRoundedRectRadii {
++                        top_left: outset_radius(r.top_left, m.x0, m.y0),
++                        top_right: outset_radius(r.top_right, m.x1, m.y0),
++                        bottom_right: outset_radius(r.bottom_right, m.x1, m.y1),
++                        bottom_left: outset_radius(r.bottom_left, m.x0, m.y1),
++                    };
++                    CssBox::new(frame.border_box + m, Insets::ZERO, Insets::ZERO, 0.0, radii)
++                        .contoured_like(frame)
++                        .border_box_path()
++                }
++            };
++            path.apply_affine(Affine::scale(to_css));
++            return path;
++        }
 +        let radii = frame.border_radii * to_css;
 +        let border = scale_insets(frame.border_width, to_css);
 +        let padding = scale_insets(frame.padding_width, to_css);
@@ -11025,8 +13089,25 @@ diff --git a/packages/blitz-paint/src/render/clip_path.rs b/packages/blitz-paint
 +        rounded_rect(rect, radii)
 +    }
  
++    /// pyro: `path` (CSS px) with its curves flattened to within 0.02 device px, as Skia draws
++    /// them and as shaped corners are drawn (`corner-shape`): vello_cpu's own flattening (to
++    /// 0.25px) moved their antialiased pixels by up to a quarter of their range. Used for
++    /// `path()`, `shape()` and an SVG `<clipPath>` of one path, which their tests compare with
++    /// one another (ovals stay as `border-radius` draws them).
++    fn flattened(&self, path: &BezPath) -> BezPath {
++        let mut flat = BezPath::new();
++        kurbo::flatten(path.elements().iter().copied(), 0.02 / self.scale, |el| flat.push(el));
++        flat
++    }
++
 +    /// Convert a CSS basic-shape in its reference box (CSS px) to a clip.
-+    fn basic_shape_clip(&self, shape: &BasicShape, reference: Rect) -> ElementClip {
++    pub(super) fn basic_shape_clip(&self, shape: &BasicShape, reference: Rect) -> ElementClip {
++        self.basic_shape_clip_with(shape, reference, true)
++    }
++
++    /// pyro: [`Self::basic_shape_clip`], `path()` and `shape()` curves flattened only with
++    /// `flatten` (`border-shape` strokes them: its miters depend on whether they are curves).
++    pub(super) fn basic_shape_clip_with(&self, shape: &BasicShape, reference: Rect, flatten: bool) -> ElementClip {
 +        let w = reference.width();
 +        let h = reference.height();
 +        let ox = reference.x0;
@@ -11047,8 +13128,15 @@ diff --git a/packages/blitz-paint/src/render/clip_path.rs b/packages/blitz-paint
 -                let ry = resolve_shape_radius(&ellipse.semiaxis_y, h, w, cy - oy, cx - ox);
 -                Some(Ellipse::new(Point::new(cx, cy), (rx, ry), 0.0).into_path(0.1))
 +                let center = resolve_position(&ellipse.position, reference);
-+                let rx = ellipse_radius(&ellipse.semiaxis_x, center.x, reference.x0, reference.x1);
-+                let ry = ellipse_radius(&ellipse.semiaxis_y, center.y, reference.y0, reference.y1);
++                // pyro: a corner keyword is the distance to that corner, for either radius.
++                let dx = [(center.x - reference.x0).abs(), (reference.x1 - center.x).abs()];
++                let dy = [(center.y - reference.y0).abs(), (reference.y1 - center.y).abs()];
++                let corners = (
++                    dx[0].min(dx[1]).hypot(dy[0].min(dy[1])),
++                    dx[0].max(dx[1]).hypot(dy[0].max(dy[1])),
++                );
++                let rx = ellipse_radius(&ellipse.semiaxis_x, center.x, reference.x0, reference.x1, corners);
++                let ry = ellipse_radius(&ellipse.semiaxis_y, center.y, reference.y0, reference.y1, corners);
 +                ElementClip::shape(oval(center, rx, ry), Fill::NonZero)
              }
              GenericBasicShape::Polygon(polygon) => {
@@ -11163,6 +13251,7 @@ diff --git a/packages/blitz-paint/src/render/clip_path.rs b/packages/blitz-paint
 +                match path {
 +                    Some(mut path) => {
 +                        path.apply_affine(Affine::translate((ox, oy)));
++                        let path = if flatten { self.flattened(&path) } else { path };
 +                        ElementClip::shape(path, fill_rule(fill))
 +                    }
 +                    None => ElementClip::Nothing,
@@ -11228,6 +13317,40 @@ diff --git a/packages/blitz-paint/src/render/clip_path.rs b/packages/blitz-paint
  }
  
 -/// Resolve a LengthPercentage value against a basis length (already scaled)
++/// pyro: whether `path` is an ellipse as SVG draws `<circle>` and `<ellipse>`: four curves from
++/// the middle of one side of its box to the next. Such clips are left as `border-radius: 50%`
++/// draws them (their tests' references are those boxes).
++fn is_oval(path: &BezPath) -> bool {
++    use kurbo::PathEl;
++    let bounds = path.bounding_box();
++    let center = bounds.center();
++    let on_side = |p: Point| {
++        let eps = 1e-6 * (1.0 + bounds.width().max(bounds.height()));
++        ((p.x - bounds.x0).abs() < eps || (p.x - bounds.x1).abs() < eps) && (p.y - center.y).abs() < eps
++            || ((p.y - bounds.y0).abs() < eps || (p.y - bounds.y1).abs() < eps) && (p.x - center.x).abs() < eps
++    };
++    let mut curves = 0;
++    for el in path.elements() {
++        match *el {
++            PathEl::MoveTo(p) if curves == 0 => {
++                if !on_side(p) {
++                    return false;
++                }
++            }
++            PathEl::CurveTo(_, _, p) => {
++                curves += 1;
++                if !on_side(p) {
++                    return false;
++                }
++            }
++            PathEl::ClosePath => {}
++            PathEl::LineTo(p) if on_side(p) => {}
++            _ => return false,
++        }
++    }
++    curves == 4
++}
++
 +/// A rectangle with elliptical corners, the radii shrunk together where they overlap (as
 +/// `border-radius`'s are). One whose corners make a whole ellipse is that ellipse, drawn as
 +/// `circle()` and `ellipse()` are (the same box clips alike whichever way it is given).
@@ -11374,6 +13497,7 @@ diff --git a/packages/blitz-paint/src/render/clip_path.rs b/packages/blitz-paint
 +    center: f64,
 +    start: f64,
 +    end: f64,
++    corners: (f64, f64),
 +) -> f64 {
 +    let near = (center - start).abs().min((end - center).abs());
 +    let far = (center - start).abs().max((end - center).abs());
@@ -11381,10 +13505,10 @@ diff --git a/packages/blitz-paint/src/render/clip_path.rs b/packages/blitz-paint
 +        GenericShapeRadius::Length(lp) => resolve_lp(&lp.0, end - start),
 +        GenericShapeRadius::ClosestSide => near,
 +        GenericShapeRadius::FarthestSide => far,
-+        // Behind a pref that is off (`layout.css.ellipse-corners.enabled`): the corner's
-+        // distance along this axis.
-+        GenericShapeRadius::ClosestCorner => near,
-+        GenericShapeRadius::FarthestCorner => far,
++        // pyro: (`layout.css.ellipse-corners.enabled`) the distance to the closest or farthest
++        // corner, in both axes (WPT `clip-path-ellipse-closest-farthest-corner`).
++        GenericShapeRadius::ClosestCorner => corners.0,
++        GenericShapeRadius::FarthestCorner => corners.1,
 +    }
 +}
 +
@@ -11403,7 +13527,7 @@ diff --git a/packages/blitz-paint/src/render/clip_path.rs b/packages/blitz-paint
      resolve_angle: impl Fn(&Angle) -> f64,
  ) -> Option<BezPath> {
      if commands.is_empty() {
-@@ -369,29 +610,32 @@
+@@ -369,29 +699,32 @@
                  arc_size,
                  rotate,
              } => {
@@ -11454,7 +13578,7 @@ diff --git a/packages/blitz-paint/src/render/clip_path.rs b/packages/blitz-paint
                  }
                  last_control = None;
                  cur = p;
-@@ -473,3 +717,850 @@
+@@ -473,3 +806,851 @@
          AxisEndPoint::ByCoordinate(val) => cur_val + resolve(val),
      }
  }
@@ -11761,6 +13885,7 @@ diff --git a/packages/blitz-paint/src/render/clip_path.rs b/packages/blitz-paint
 +        match single_shape(clip) {
 +            Some((mut shape, fill)) => {
 +                shape.apply_affine(user);
++                let shape = if is_oval(&shape) { shape } else { self.flattened(&shape) };
 +                Some(ElementClip::shape(shape, fill))
 +            }
 +            None => Some(ElementClip::Svg {

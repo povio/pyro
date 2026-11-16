@@ -8,13 +8,15 @@
 
 use kurbo::{Insets, Vec2};
 
+pub mod contoured;
 mod css_box;
 mod non_uniform_radii;
 
+pub use contoured::CornerCurvature;
 pub use css_box::CssBox;
 pub use non_uniform_radii::NonUniformRoundedRectRadii;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Edge {
     Top,
     Right,
@@ -22,7 +24,7 @@ pub enum Edge {
     Left,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) enum Corner {
     TopLeft,
     TopRight,

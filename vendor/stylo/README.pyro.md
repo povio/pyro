@@ -247,6 +247,17 @@ space-first | trim-start | trim-both | trim-all | auto`), inherited, for the ser
 which trims fullwidth punctuation while shaping and at line edges (their READMEs). `text-autospace` was already there;
 pyro turns it on with its pref (`layout.css.text-autospace.enabled`); its initial value stays `no-autospace`, as in
 Chromium (whose default is not the spec's `normal`).
+## `border-shape` (WPT round 3, lane CB)
+
+`properties/longhands.toml`, `values/generics/basic_shape.rs` (`BorderShapeBox`, `GenericBorderShapeItem`,
+`GenericBorderShape`), `values/specified/basic_shape.rs`, `values/computed/basic_shape.rs`: `border-shape: none |
+[ <basic-shape> <geometry-box>? ]{1,2}` (CSS Borders 4 § 11) is parsed and computed for servo (upstream has no such
+property), boxed, not animated, in the border struct. A shape's box may also be `half-border-box`; an omitted box is
+kept as `Default` (serialized as nothing) for blitz-paint to resolve: `half-border-box` for a single shape, the border
+and padding boxes for two.
+
+`stylesheets/rule_parser.rs`: `@counter-style` rules are parsed for servo too (upstream: gecko only). blitz-dom reads
+their `system: extends` for list markers (its README).
 
 ## Updating or dropping the patch
 

@@ -1,0 +1,320 @@
+//! pyro: `border-shape` (CSS Borders 4 §11), as Blink's `BorderShapePainter` draws it.
+//!
+//! With one shape the border is a stroke along it, as wide as the relevant side's border and in
+//! its colour; with two it fills the area between the outer and the inner one. `border-radius`
+//! and `corner-shape` are then ignored. The background is clipped to the inner shape (to the
+//! shape itself with one), the overflow to the inner edge of the border, and shadows and the
+//! outline follow its outer edge.
+
+use super::ElementCx;
+use blitz_dom::CopyStyleGetters;
+use super::clip_path::ElementClip;
+use crate::color::{Color, ToColorColor as _};
+use crate::kurbo_css::contoured::{boolean, flatten_with, polygons_path};
+
+/// How finely shape outlines are flattened, and their strokes expanded (device px): as vello_cpu
+/// strokes and fills curves (`vello_common::flatten::TOL`), so that an edge worked out here (the
+/// inner edge of a stroke, which clips the overflow) falls where the drawn stroke's does.
+const TOLERANCE: f64 = 0.25;
+
+fn flatten(path: &BezPath) -> Vec<Vec<Point>> {
+    flatten_with(path, TOLERANCE)
+}
+
+/// `path` with every subpath closed: a stroke draws the closing side (shapes built for fills,
+/// such as a rectangle's, end at their last corner).
+fn closed(path: &BezPath) -> BezPath {
+    let mut out = BezPath::new();
+    let mut open = false;
+    for el in path.elements() {
+        match el {
+            PathEl::MoveTo(_) => {
+                if open {
+                    out.close_path();
+                }
+                open = true;
+            }
+            PathEl::ClosePath => open = false,
+            _ => {}
+        }
+        out.push(*el);
+    }
+    if open {
+        out.close_path();
+    }
+    out
+}
+use anyrender::PaintScene;
+use kurbo::{BezPath, Cap, Join, PathEl, Point, Rect, Shape as _, Stroke, StrokeOpts};
+use peniko::Fill;
+use style::values::computed::basic_shape::BasicShape;
+use style::values::generics::basic_shape::{
+    BorderShapeBox, GenericBasicShape, GenericBorderShape, GenericBorderShapeItem, ShapeBox,
+};
+use style::values::specified::BorderStyle;
+
+/// An element's resolved `border-shape`, in device px in the element's space.
+pub(super) struct BorderShape {
+    /// The outer shape (the only one in stroke mode).
+    outer: BezPath,
+    /// The inner shape, with two.
+    inner: Option<BezPath>,
+    /// The outer shape's box when it is a circle or an ellipse (Skia grows those as ovals).
+    oval: Option<Rect>,
+    /// Whether the outer shape is all straight lines: its stroke's miters are then never cut.
+    polygon: bool,
+    /// The relevant side's border width (the stroke's width) and colour.
+    width: f64,
+    color: Color,
+}
+
+impl BorderShape {
+    /// The stroke Blink draws a border shape with (`GetStrokeData`): mitered, the miters of a
+    /// polygon never cut, those of curves at 4 widths.
+    fn stroke(&self, width: f64) -> Stroke {
+        Stroke::new(width)
+            .with_join(Join::Miter)
+            .with_miter_limit(if self.polygon { 1e10 } else { 4.0 })
+            .with_caps(Cap::Butt)
+    }
+
+    /// The area `path`'s stroke of `width` covers, as polygons.
+    fn stroke_area(&self, path: &BezPath, width: f64) -> Vec<Vec<Point>> {
+        let outline = kurbo::stroke(
+            path.elements().iter().copied(),
+            &self.stroke(width),
+            &StrokeOpts::default(),
+            TOLERANCE,
+        );
+        flatten(&outline)
+    }
+
+    /// The outer edge of the border: the outer shape, grown by half the stroke in stroke mode
+    /// (`BorderShapePainter::OuterPath`).
+    pub(super) fn outer_path(&self) -> BezPath {
+        if self.inner.is_some() || self.width <= 0.0 {
+            return self.outer.clone();
+        }
+        let shapes = [flatten(&self.outer), self.stroke_area(&self.outer, self.width)];
+        boolean(&shapes, |inside| inside[0] || inside[1])
+    }
+
+    /// The inner edge of the border: the inner shape, or the shape less half the stroke in
+    /// stroke mode (`BorderShapePainter::InnerPath`). It clips the overflow.
+    pub(super) fn inner_path(&self) -> BezPath {
+        if let Some(inner) = &self.inner {
+            return inner.clone();
+        }
+        if self.width <= 0.0 {
+            return self.outer.clone();
+        }
+        let shapes = [flatten(&self.outer), self.stroke_area(&self.outer, self.width)];
+        boolean(&shapes, |inside| inside[0] && !inside[1])
+    }
+
+    /// What the background is clipped to: the inner shape, or the shape in stroke mode (the
+    /// stroke is drawn over it).
+    pub(super) fn background_clip(&self) -> BezPath {
+        self.inner.clone().unwrap_or_else(|| self.outer.clone())
+    }
+
+    /// The outer edge moved out by `offset` (in, when negative), for shadows and outlines
+    /// (`BorderShapePainter::OuterPathWithOffset`): an oval grows as an oval, anything else by
+    /// its stroke.
+    pub(super) fn outer_path_with_offset(&self, offset: f64) -> BezPath {
+        let total = offset + if self.inner.is_none() { self.width / 2.0 } else { 0.0 };
+        if total == 0.0 {
+            return self.outer.clone();
+        }
+        if let Some(oval) = self.oval {
+            let grown = oval.inflate(total, total);
+            if grown.width() > 0.0 && grown.height() > 0.0 {
+                // (Drawn as a `border-radius: 50%` box is, as `ellipse()` is.)
+                let radius = kurbo::Vec2::new(grown.width() / 2.0, grown.height() / 2.0);
+                let radii = crate::kurbo_css::NonUniformRoundedRectRadii {
+                    top_left: radius,
+                    top_right: radius,
+                    bottom_right: radius,
+                    bottom_left: radius,
+                };
+                let insets = kurbo::Insets::ZERO;
+                return closed(&crate::kurbo_css::CssBox::new(grown, insets, insets, 0.0, radii).border_box_path());
+            }
+            return BezPath::new();
+        }
+        let shapes = [flatten(&self.outer), self.stroke_area(&self.outer, total.abs() * 2.0)];
+        if total > 0.0 {
+            boolean(&shapes, |inside| inside[0] || inside[1])
+        } else {
+            boolean(&shapes, |inside| inside[0] && !inside[1])
+        }
+    }
+
+    /// `path` moved out by `offset` (in, when negative) along its normals: united with its
+    /// stroke of twice the offset, or less it, mitered at 4 widths (Blink's default
+    /// `StrokeData`, as an inner shadow's spread is applied).
+    pub(super) fn offset_path(&self, path: &BezPath, offset: f64) -> BezPath {
+        if offset == 0.0 {
+            return path.clone();
+        }
+        let stroke = Stroke::new(offset.abs() * 2.0).with_join(Join::Miter).with_miter_limit(4.0);
+        let outline = kurbo::stroke(path.elements().iter().copied(), &stroke, &StrokeOpts::default(), TOLERANCE);
+        let shapes = [flatten(path), flatten(&outline)];
+        if offset > 0.0 {
+            boolean(&shapes, |inside| inside[0] || inside[1])
+        } else {
+            boolean(&shapes, |inside| inside[0] && !inside[1])
+        }
+    }
+
+    /// The area the border covers (`background-clip: border-area` paints there): between the
+    /// shapes, or the stroke along the shape (`BorderShapePainter::PaintBorderArea`).
+    pub(super) fn border_area_path(&self) -> BezPath {
+        if let Some(inner) = &self.inner {
+            let shapes = [flatten(&self.outer), flatten(inner)];
+            return boolean(&shapes, |inside| inside[0] && !inside[1]);
+        }
+        if self.width <= 0.0 {
+            return BezPath::new();
+        }
+        polygons_path(&self.stroke_area(&self.outer, self.width))
+    }
+
+    /// Draws the border: the area between the shapes, or the stroke along the shape.
+    pub(super) fn paint(&self, scene: &mut impl PaintScene, transform: kurbo::Affine) {
+        if self.color.components[3] <= 0.0 {
+            return;
+        }
+        if let Some(inner) = &self.inner {
+            let shapes = [flatten(&self.outer), flatten(inner)];
+            let area = boolean(&shapes, |inside| inside[0] && !inside[1]);
+            scene.fill(Fill::NonZero, transform, self.color, None, &area);
+            return;
+        }
+        // A stroke of no width would be a hairline: nothing is drawn.
+        if self.width <= 0.0 {
+            return;
+        }
+        scene.stroke(&self.stroke(self.width), transform, self.color, None, &self.outer);
+    }
+}
+
+impl ElementCx<'_, '_> {
+    /// pyro: this element's `border-shape`, resolved; `None` for `none` (or a shape that cannot
+    /// be drawn).
+    pub(super) fn border_shape(&self) -> Option<BorderShape> {
+        let (outer, inner) = match &self.style.get_border().border_shape {
+            GenericBorderShape::None => return None,
+            GenericBorderShape::Single(item) => (item, None),
+            GenericBorderShape::Double(outer, inner) => (outer, Some(inner)),
+        };
+        let path = |item: &GenericBorderShapeItem<BasicShape>, default: BorderShapeBox| {
+            let reference = match item.reference {
+                BorderShapeBox::Default => default,
+                other => other,
+            };
+            let reference = self.border_shape_reference(reference);
+            match self.basic_shape_clip_with(&item.shape, reference, false) {
+                ElementClip::Shape(mut path, _) => {
+                    path.apply_affine(kurbo::Affine::scale(self.scale));
+                    closed(&path)
+                }
+                _ => BezPath::new(),
+            }
+        };
+        let (outer_default, inner_default) = if inner.is_some() {
+            (
+                BorderShapeBox::ShapeBox(ShapeBox::BorderBox),
+                BorderShapeBox::ShapeBox(ShapeBox::PaddingBox),
+            )
+        } else {
+            (BorderShapeBox::HalfBorderBox, BorderShapeBox::HalfBorderBox)
+        };
+        let outer_path = path(outer, outer_default);
+        let inner_path = inner.map(|inner| path(inner, inner_default));
+        let oval = matches!(*outer.shape, GenericBasicShape::Circle(_) | GenericBasicShape::Ellipse(_))
+            .then(|| outer_path.bounding_box())
+            .filter(|b| b.width() > 0.0 && b.height() > 0.0);
+        let polygon = outer_path
+            .elements()
+            .iter()
+            .all(|el| matches!(el, PathEl::MoveTo(_) | PathEl::LineTo(_) | PathEl::ClosePath));
+        let (width, color) = self.border_shape_side();
+        Some(BorderShape {
+            outer: outer_path,
+            inner: inner_path,
+            oval,
+            polygon,
+            width,
+            color,
+        })
+    }
+
+    /// The box a `border-shape` shape is drawn in (CSS px from the border box's origin):
+    /// `half-border-box` is the border box less half of each border width; `fill-box` is the
+    /// content box and `stroke-box` and `view-box` the border box, as for `clip-path`.
+    fn border_shape_reference(&self, reference: BorderShapeBox) -> Rect {
+        let frame = &self.frame;
+        let device = match reference {
+            BorderShapeBox::Default
+            | BorderShapeBox::HalfBorderBox => {
+                let b = frame.border_width;
+                Rect::new(
+                    frame.border_box.x0 + b.x0 / 2.0,
+                    frame.border_box.y0 + b.y0 / 2.0,
+                    frame.border_box.x1 - b.x1 / 2.0,
+                    frame.border_box.y1 - b.y1 / 2.0,
+                )
+            }
+            BorderShapeBox::StrokeBox
+            | BorderShapeBox::ViewBox
+            | BorderShapeBox::ShapeBox(ShapeBox::BorderBox) => frame.border_box,
+            BorderShapeBox::ShapeBox(ShapeBox::PaddingBox) => frame.padding_box,
+            BorderShapeBox::FillBox | BorderShapeBox::ShapeBox(ShapeBox::ContentBox) => {
+                frame.content_box
+            }
+            BorderShapeBox::ShapeBox(ShapeBox::MarginBox) => {
+                let to_css = 1.0 / self.scale;
+                let border_box = Rect::new(
+                    frame.border_box.x0 * to_css,
+                    frame.border_box.y0 * to_css,
+                    frame.border_box.x1 * to_css,
+                    frame.border_box.y1 * to_css,
+                );
+                return border_box + self.margins();
+            }
+        };
+        let to_css = 1.0 / self.scale;
+        Rect::new(device.x0 * to_css, device.y0 * to_css, device.x1 * to_css, device.y1 * to_css)
+    }
+
+    /// The width (device px) and colour of the relevant side for `border-shape`: the first of
+    /// block-start, inline-start, block-end and inline-end whose style is not `none`, else
+    /// block-start.
+    fn border_shape_side(&self) -> (f64, Color) {
+        use style::logical_geometry::PhysicalSide;
+        let border = self.style.get_border();
+        let wm = self.style.writing_mode;
+        let side = |s: PhysicalSide| match s {
+            PhysicalSide::Top => (border.border_top_style, &border.border_top_color, self.frame.border_width.y0),
+            PhysicalSide::Right => (border.border_right_style, &border.border_right_color, self.frame.border_width.x1),
+            PhysicalSide::Bottom => (border.border_bottom_style, &border.border_bottom_color, self.frame.border_width.y1),
+            PhysicalSide::Left => (border.border_left_style, &border.border_left_color, self.frame.border_width.x0),
+        };
+        let order = [
+            wm.block_start_physical_side(),
+            wm.inline_start_physical_side(),
+            wm.block_end_physical_side(),
+            wm.inline_end_physical_side(),
+        ];
+        let (_, color, width) = order
+            .iter()
+            .map(|&s| side(s))
+            .find(|(style, _, _)| *style != BorderStyle::None)
+            .unwrap_or_else(|| side(order[0]));
+        let color = color
+            .resolve_to_absolute(&self.style.clone_color())
+            .as_srgb_color();
+        (width, color)
+    }
+}

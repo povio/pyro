@@ -134,6 +134,97 @@ pub enum GenericClipPath<BasicShape, U> {
 
 pub use self::GenericClipPath as ClipPath;
 
+/// pyro: the reference box of a `border-shape` shape (CSS Borders 4): a `<geometry-box>`, or
+/// `half-border-box` (the border box less half of each border width). `Default` when none is
+/// given: `half-border-box` for a single shape; the border box for the outer of two, the padding
+/// box for the inner.
+#[allow(missing_docs)]
+#[derive(
+    Animate,
+    Clone,
+    ComputeSquaredDistance,
+    Copy,
+    Debug,
+    MallocSizeOf,
+    PartialEq,
+    Parse,
+    SpecifiedValueInfo,
+    ToAnimatedValue,
+    ToComputedValue,
+    ToCss,
+    ToResolvedValue,
+    ToShmem,
+    ToTyped,
+)]
+#[repr(u8)]
+#[derive(Default)]
+pub enum BorderShapeBox {
+    #[css(skip)]
+    #[default]
+    Default,
+    HalfBorderBox,
+    FillBox,
+    StrokeBox,
+    ViewBox,
+    ShapeBox(ShapeBox),
+}
+
+/// pyro: one shape of `border-shape`: a `<basic-shape>` in its reference box.
+#[allow(missing_docs)]
+#[derive(
+    Clone,
+    Debug,
+    MallocSizeOf,
+    PartialEq,
+    SpecifiedValueInfo,
+    ToAnimatedValue,
+    ToComputedValue,
+    ToCss,
+    ToResolvedValue,
+    ToShmem,
+    ToTyped,
+)]
+#[typed(todo_derive_fields)]
+#[repr(C)]
+pub struct GenericBorderShapeItem<BasicShape> {
+    pub shape: Box<BasicShape>,
+    pub reference: BorderShapeBox,
+}
+
+/// pyro: a value of `border-shape` (CSS Borders 4): `none`, one shape (the border is a stroke
+/// along it), or two (the border fills the area between the outer and the inner).
+#[allow(missing_docs)]
+#[derive(
+    Clone,
+    Debug,
+    MallocSizeOf,
+    PartialEq,
+    SpecifiedValueInfo,
+    ToAnimatedValue,
+    ToComputedValue,
+    ToCss,
+    ToResolvedValue,
+    ToShmem,
+    ToTyped,
+)]
+#[typed(todo_derive_fields)]
+#[repr(C, u8)]
+pub enum GenericBorderShape<BasicShape> {
+    None,
+    Single(GenericBorderShapeItem<BasicShape>),
+    Double(GenericBorderShapeItem<BasicShape>, GenericBorderShapeItem<BasicShape>),
+}
+
+pub use self::GenericBorderShape as BorderShape;
+
+impl<B> GenericBorderShape<B> {
+    /// `none`.
+    #[inline]
+    pub fn none() -> Self {
+        Self::None
+    }
+}
+
 /// A value for the `shape-outside` property.
 #[allow(missing_docs)]
 #[derive(

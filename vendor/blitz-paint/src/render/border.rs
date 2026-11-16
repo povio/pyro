@@ -478,6 +478,11 @@ impl ElementCx<'_, '_> {
         {
             return;
         }
+        // pyro: a `border-shape` is drawn instead of the border (and of its image).
+        if let Some(shape) = self.border_shape() {
+            shape.paint(scene, self.transform);
+            return;
+        }
         // pyro: a border image is drawn instead of the border's styles (Blink's
         // `BoxPainterBase::PaintBorder`); one that cannot be drawn leaves them.
         if self.draw_border_image(scene) {
@@ -562,6 +567,35 @@ impl ElementCx<'_, '_> {
                     let ry = (bb.height() + pb.height()) / 4.0;
                     let e = kurbo::Ellipse::new(bb.center(), (rx, ry), 0.0);
                     scene.stroke(&stroke, self.transform, color, None, &e);
+                    return;
+                }
+            }
+        }
+
+        // pyro: a border of one colour and solid sides around shaped corners (`corner-shape`) is
+        // the area between the border edge and the padding edge, filled once.
+        if self.frame.corner_curvature.is_some() {
+            let sides = [
+                (Edge::Top, &border.border_top_color, border.border_top_style),
+                (Edge::Right, &border.border_right_color, border.border_right_style),
+                (Edge::Bottom, &border.border_bottom_color, border.border_bottom_style),
+                (Edge::Left, &border.border_left_color, border.border_left_style),
+            ];
+            let mut visible = sides.iter().filter(|(edge, color, style)| {
+                self.edge_width(*edge) > 0.0
+                    && !style.none_or_hidden()
+                    && color.resolve_to_absolute(&current_color).alpha > 0.0
+            });
+            if let Some(first) = visible.clone().next() {
+                let color = first.1.resolve_to_absolute(&current_color).as_srgb_color();
+                let uniform = sides.iter().all(|(edge, c, style)| {
+                    self.edge_width(*edge) <= 0.0
+                        || style.none_or_hidden()
+                        || (*style == BorderStyle::Solid
+                            && c.resolve_to_absolute(&current_color).as_srgb_color() == color)
+                });
+                if uniform && visible.all(|(_, _, style)| *style == BorderStyle::Solid) {
+                    scene.fill(Fill::NonZero, self.transform, color, None, &self.frame.border_ring());
                     return;
                 }
             }
@@ -708,6 +742,10 @@ impl ElementCx<'_, '_> {
     /// colour; a `double` side its two lines; a dotted or dashed side its marks when the corners
     /// are square (with rounded corners, the whole side).
     pub(super) fn border_area_path(&self) -> BezPath {
+        // pyro: with a `border-shape`, the area its border covers.
+        if let Some(shape) = self.border_shape() {
+            return shape.border_area_path();
+        }
         let border = self.style.get_border();
         let sides = [
             (Edge::Top, border.border_top_style),
@@ -1232,6 +1270,32 @@ impl ElementCx<'_, '_> {
         let Some((style, color, width, outset)) = self.outline_line() else {
             return;
         };
+        // pyro: around a `border-shape`, a solid or double outline is the band between the outer
+        // edge grown by the offset and by the offset and the width
+        // (`BorderShapePainter::PaintOutline`); other styles are drawn around the box.
+        if matches!(style, BorderStyle::Solid | BorderStyle::Double) {
+            if let Some(shape) = self.border_shape() {
+                use crate::kurbo_css::contoured::{boolean, flatten};
+                let offset = outset - width;
+                let band = |outer: f64, inner: f64| {
+                    let shapes = [
+                        flatten(&shape.outer_path_with_offset(outer)),
+                        flatten(&shape.outer_path_with_offset(inner)),
+                    ];
+                    boolean(&shapes, |inside| inside[0] != inside[1])
+                };
+                let line = (width / 3.0).round();
+                let path = if style == BorderStyle::Double && line >= 1.0 {
+                    let mut path = band(offset + width, offset + width - line);
+                    path.extend(&band(offset + line, offset));
+                    path
+                } else {
+                    band(offset + width, offset)
+                };
+                scene.fill(Fill::NonZero, self.transform, color, None, &path);
+                return;
+            }
+        }
         let bb = self.frame.border_box;
         // A rounded corner grows with the outline, and a square one stays
         // square.
@@ -1254,7 +1318,9 @@ impl ElementCx<'_, '_> {
                 bottom_right: corner(radii.bottom_right),
                 bottom_left: corner(radii.bottom_left),
             },
-        );
+        )
+        // pyro: shaped corners (`corner-shape`) stay parallel to the border box's.
+        .contoured_like(&self.frame);
 
         match style {
             BorderStyle::None | BorderStyle::Hidden => {}

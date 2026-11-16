@@ -1,6 +1,7 @@
 mod background;
 mod border;
 mod border_image;
+mod border_shape;
 mod box_shadow;
 mod clip_path;
 mod form_controls;
@@ -690,7 +691,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         let clip = if cx.text_input.is_some() {
             cx.frame.text_input_clip_path()
         } else {
-            box_shadow::overflow_clip_path(&cx.frame, &styles, self.scale)
+            cx.overflow_clip_path(&styles)
         };
         let pushed = self.layer_manager.maybe_push_layer(
             scene,
@@ -1005,7 +1006,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             let clip_box = if is_text_input {
                 cx.frame.text_input_clip_path()
             } else {
-                box_shadow::overflow_clip_path(&cx.frame, &styles, self.scale)
+                cx.overflow_clip_path(&styles)
             };
             source_rect.intersect(screen_transform.transform_rect_bbox(clip_box.bounding_box()))
         } else {
@@ -1287,7 +1288,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         let clip = if is_text_input {
             &cx.frame.text_input_clip_path()
         } else {
-            &box_shadow::overflow_clip_path(&cx.frame, &cx.style, cx.scale)
+            &cx.overflow_clip_path(&cx.style)
         };
 
         // Clip layer if box requires clipping. Opacity set to 1.0
@@ -3135,10 +3136,16 @@ impl ElementCx<'_, '_> {
             // Outside markers are placed outside the list item's border box
             // (`pos` is the origin of its content box)
             let item_layout = self.node.final_layout();
-            let x_offset = -(layout.full_width() / layout.scale()
-                + x_padding
-                + item_layout.padding.left
-                + item_layout.border.left);
+            // pyro: after its right edge in a right-to-left item.
+            let rtl = !self.style.writing_mode.is_bidi_ltr();
+            let x_offset = if rtl {
+                item_layout.size.width - item_layout.padding.left - item_layout.border.left + x_padding
+            } else {
+                -(layout.full_width() / layout.scale()
+                    + x_padding
+                    + item_layout.padding.left
+                    + item_layout.border.left)
+            };
 
             // Align the marker with the baseline of the first line of text in the list item
             if let Marker::Char(symbol @ ('•' | '◦' | '▪')) = marker {
@@ -3155,7 +3162,7 @@ impl ElementCx<'_, '_> {
                 .as_ref()
                 .and_then(|text_layout| Some((text_layout, text_layout.layout.lines().next()?)));
             // pyro: the marker goes with the line, which floats beside the item move.
-            let line_x = first_line.as_ref().map_or(0.0, |(text_layout, line)| {
+            let line_x = first_line.as_ref().filter(|_| !rtl).map_or(0.0, |(text_layout, line)| {
                 line.metrics().inline_min_coord / text_layout.layout.scale()
             });
             let y_offset = if let Some((text_layout, first_text_line)) = &first_line
@@ -3231,8 +3238,15 @@ impl ElementCx<'_, '_> {
         let offset = ascent * 2 / 3;
         let size = ((offset + 1) / 2) as f64;
         let subpixel = self.list_item.map_or(taffy::Point::ZERO, |item| item.content_box_subpixel_offset);
-        let x = pos.x + (subpixel.x + line_x - item_layout.padding.left - item_layout.border.left) as f64
-            - (offset + 7) as f64;
+        // pyro: mirrored after the border box's right edge in a right-to-left item.
+        let x = if self.style.writing_mode.is_bidi_ltr() {
+            pos.x + (subpixel.x + line_x - item_layout.padding.left - item_layout.border.left) as f64
+                - (offset + 7) as f64
+        } else {
+            pos.x + (subpixel.x + item_layout.size.width - item_layout.padding.left - item_layout.border.left) as f64
+                + (offset + 7) as f64
+                - size
+        };
         let y = pos.y + (subpixel.y + baseline) as f64 - (ascent - 3 * (ascent - offset) / 2) as f64;
         let (x, y) = ((x + 0.5).floor() * self.scale, (y + 0.5).floor() * self.scale);
         let rect = Rect::new(x, y, x + size * self.scale, y + size * self.scale);
@@ -4063,14 +4077,40 @@ fn create_css_rect(style: &ComputedValues, layout: &Layout, scale: f64) -> CssBo
         }
     };
     let s_border = style.get_border();
+    // pyro: `border-shape` ignores `border-radius` and `corner-shape` (CSS Borders 4 §11.5.1).
+    let border_shape = !matches!(
+        s_border.border_shape,
+        style::values::generics::basic_shape::GenericBorderShape::None
+    );
+    // pyro: a corner whose shape is (nearly) square has no radius (Blink's `CalcRadiiFor`).
+    let shaped = |radius: &BorderCornerRadius, k: f32| {
+        if border_shape || crate::kurbo_css::contoured::is_degenerate(k as f64) {
+            Vec2::ZERO
+        } else {
+            resolve_radii(radius)
+        }
+    };
     let border_radii = NonUniformRoundedRectRadii {
-        top_left: resolve_radii(&s_border.border_top_left_radius),
-        top_right: resolve_radii(&s_border.border_top_right_radius),
-        bottom_right: resolve_radii(&s_border.border_bottom_right_radius),
-        bottom_left: resolve_radii(&s_border.border_bottom_left_radius),
+        top_left: shaped(&s_border.border_top_left_radius, s_border.corner_top_left_shape.k),
+        top_right: shaped(&s_border.border_top_right_radius, s_border.corner_top_right_shape.k),
+        bottom_right: shaped(&s_border.border_bottom_right_radius, s_border.corner_bottom_right_shape.k),
+        bottom_left: shaped(&s_border.border_bottom_left_radius, s_border.corner_bottom_left_shape.k),
     };
 
-    CssBox::new(border_box, border, padding, outline_width, border_radii)
+    let frame = CssBox::new(border_box, border, padding, outline_width, border_radii);
+    // pyro: `corner-shape` (CSS Borders 4).
+    let exponent = |k: f32| crate::kurbo_css::contoured::exponent(k as f64);
+    let curvature = crate::kurbo_css::CornerCurvature {
+        top_left: exponent(s_border.corner_top_left_shape.k),
+        top_right: exponent(s_border.corner_top_right_shape.k),
+        bottom_right: exponent(s_border.corner_bottom_right_shape.k),
+        bottom_left: exponent(s_border.corner_bottom_left_shape.k),
+    };
+    if curvature.is_round() || !frame.has_border_radius() {
+        frame
+    } else {
+        frame.with_corner_curvature(curvature)
+    }
 }
 
 /// pyro: what [`BlitzDomPainter::paint_element`] needs of `render_element`'s state.

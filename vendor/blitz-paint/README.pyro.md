@@ -862,3 +862,44 @@ Covered by `crates/pyro-render/tests/selection_highlight.rs`.
 `src/render.rs` (inline box fragments): a span's own edge leaves out its inline-start or inline-end margin as
 `blitz_dom::span_edge_margins` gives it: left and right in horizontal text, top and bottom (by the inline direction)
 in a vertical writing mode, whose lines are laid out turned (blitz-dom keeps those margins as span edges now).
+## Corner shapes and border shapes (WPT round 3, lane CB)
+
+- `src/kurbo_css/contoured.rs` (new), `src/kurbo_css/css_box.rs` (`CssBox::with_corner_curvature`, `contour`,
+  `contoured_like`), `src/render.rs` (`create_css_rect`): `corner-shape` (CSS Borders 4 § 4). Each corner is the
+  quarter of a superellipse of exponent `2^k` (`superellipse(k)`; `bevel` 0, `scoop` -1, `notch` -∞, `squircle` 2,
+  `square` ∞, which leaves the corner without a radius), drawn as Blink draws it (`ContouredRect`,
+  `PathBuilder::AddContouredRect`): a conic for `round`, a line for `bevel`, two cubics per corner otherwise
+  (`ApproximateSuperellipseHalfCornerAsBezierCurve`). A box with a concave corner has its radii scaled until the
+  hulls of opposite corners no longer overlap (`RadiiConstraintFactorForOppositeCorners`). An edge inset or outset
+  from the border edge (the padding and content edges, a shadow's spread, the outline, the bleed-avoiding
+  background) keeps its curves parallel to the border edge's: its rectangle less each corner's clip-out region
+  (`CornerClipOutPath`, `Corner::AlignedToOrigin`), taken out by a polygon boolean on flattened outlines
+  (`contoured::boolean`, in place of Skia's path ops). Corner curves are flattened to 0.02 device px (vello_cpu
+  flattens fills to 0.25px, which moved antialiased pixels by up to a quarter of their range against Chromium's).
+  The border of one colour fills the area between the edges once; sides of different colours split it by the
+  miters from each outer corner to the inner one (`side_region`). The background, borders, overflow clips,
+  `clip-path` boxes, backdrop filters, box shadows and outlines all follow the shapes. Interpolated keywords snap
+  back to their parameter (`exponent`), so a no-op animation stays round. Covered by
+  `crates/pyro-render/tests/corner_border_shape.rs` and `contoured.rs`'s unit tests.
+- `src/render/clip_path.rs` (`flattened`, `is_oval`): `path()`, `shape()` and an SVG `<clipPath>` of one path are
+  flattened to 0.02 device px too (ovals are not: `border-radius: 50%` boxes are their references), so that a
+  corner-shaped box and a `clip-path: path()` reference drawn alike cover the same pixels.
+- `src/render/border_shape.rs` (new), `src/render/border.rs`, `src/render/background.rs`,
+  `src/render/box_shadow.rs`: `border-shape` (CSS Borders 4 § 11), as Blink's `BorderShapePainter` draws it. With
+  one shape the border is a stroke along it (mitered; a polygon's miters are never cut, curves' at 4 widths) in the
+  relevant side's width and colour (the first of block-start, inline-start, block-end, inline-end whose style is not
+  `none`), its reference box `half-border-box` by default; with two, the area between the outer and the inner shape
+  (border box and padding box by default). `border-radius` and `corner-shape` are ignored. The background is
+  clipped to the inner shape (the shape, with one) and painted out to the border's outer bounds, `background-clip:
+  border-area` to the border's area, overflow to the border's inner edge; outer shadows are the outer edge grown by
+  the spread (an oval as an oval), cut out of it and blurred through a filter layer; inner shadows fill around the
+  inner edge shrunk by the spread; solid and double outlines are bands of the outer edge grown by the offset. Edges
+  worked out here (stroke outlines, offsets) use vello_cpu's own tolerance, so that a clip at a stroke's inner edge
+  falls where the drawn stroke's edge does.
+- `src/render/box_shadow.rs` (`fill_shadow_path`): a blurred outer shadow whose corners are not all one circular
+  radius (elliptical, differing or shaped corners) is its shape's path blurred through a filter layer; it was vello's
+  blurred rounded rectangle at the corners' average radius (a `border-radius: 50%` ellipse's shadow came out boxy).
+- `src/render/clip_path.rs` (`ellipse_radius`): `closest-corner` and `farthest-corner` radii of `ellipse()` (CSS
+  Shapes 2, pref `layout.css.ellipse-corners.enabled`, set by pyro) are the distance to that corner, for either axis.
+- `src/render.rs` (`draw_marker`, `draw_marker_symbol`): in a right-to-left list item the outside marker is placed
+  after the border box's right edge (a disc, circle or square mirrored), not before its left edge.

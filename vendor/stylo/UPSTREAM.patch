@@ -201,7 +201,7 @@ diff -ruN a/properties/counted_unknown_properties.py b/properties/counted_unknow
      "-webkit-app-region",
 diff -ruN a/properties/data.py b/properties/data.py
 --- a/properties/data.py	2026-11-11 19:55:57
-+++ b/properties/data.py	2026-11-16 12:18:07
++++ b/properties/data.py	2026-11-16 16:15:58
 @@ -342,9 +342,19 @@
          allow_quirks=False,
          ignored_when_colors_disabled=False,
@@ -254,7 +254,7 @@ diff -ruN a/properties/helpers.mako.rs b/properties/helpers.mako.rs
                              if !context.builder.effective_zoom_for_inheritance.is_one() {
 diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 --- a/properties/longhands.toml	2026-11-11 19:55:57
-+++ b/properties/longhands.toml	2026-11-16 14:41:05
++++ b/properties/longhands.toml	2026-11-16 16:15:59
 @@ -473,7 +473,6 @@
  type = "BreakBetween"
  initial = "computed::BreakBetween::Auto"
@@ -271,15 +271,15 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/css-break/#propdef-break-before"
  animation_type = "discrete"
  affects = "layout"
-@@ -491,11 +489,28 @@
+@@ -491,9 +489,26 @@
  type = "BreakWithin"
  initial = "computed::BreakWithin::Auto"
  struct = "box"
 -engine = "gecko"
  spec = "https://drafts.csswg.org/css-break/#propdef-break-inside"
- animation_type = "discrete"
- affects = "layout"
- 
++animation_type = "discrete"
++affects = "layout"
++
 +[orphans]
 +type = "PositiveInteger"
 +initial = "From::from(2)"
@@ -294,13 +294,11 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +initial = "From::from(2)"
 +struct = "inherited_text"
 +spec = "https://drafts.csswg.org/css-break/#propdef-widows"
-+animation_type = "discrete"
+ animation_type = "discrete"
 +servo_restyle_damage = "repaint"
-+affects = "layout"
-+
+ affects = "layout"
+ 
  [caption-side]
- type = "table::CaptionSide"
- initial = "computed::table::CaptionSide::Top"
 @@ -591,7 +606,6 @@
  type = "Color"
  initial = "computed_value::T::currentcolor()"
@@ -386,10 +384,12 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  struct = "list"
  animation_type = "discrete"
  spec = "https://drafts.csswg.org/css-lists/#propdef-list-style-image"
-@@ -1427,6 +1440,17 @@
+@@ -1425,6 +1438,17 @@
+ struct = "position"
+ boxed = true
  spec = "https://drafts.csswg.org/css-images-3/#the-object-position"
- affects = "layout"
- 
++affects = "layout"
++
 +# pyro: `object-view-box: none | <basic-shape-rect>` (CSS Images 5): the part of a replaced
 +# element's content that is its view, as a `clip-path` value of `none` or one rectangle.
 +[object-view-box]
@@ -399,11 +399,9 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +parse_method = "parse_object_view_box"
 +animation_type = "discrete"
 +spec = "https://drafts.csswg.org/css-images-5/#the-object-view-box"
-+affects = "layout"
-+
+ affects = "layout"
+ 
  [offset-anchor]
- type = "PositionOrAuto"
- initial = "computed::PositionOrAuto::auto()"
 @@ -2117,7 +2141,6 @@
  type = "TransformBox"
  initial = "computed::TransformBox::ViewBox"
@@ -412,12 +410,10 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/css-transforms/#transform-box"
  animation_type = "discrete"
  affects = "overflow"
-@@ -2597,6 +2620,17 @@
- gecko_pref = "layout.css.text-autospace.enabled"
- has_effect_on_gecko_scrollbars = false
+@@ -2599,6 +2622,17 @@
  spec = "https://drafts.csswg.org/css-text-4/#text-autospace-property"
-+affects = "layout"
-+
+ affects = "layout"
+ 
 +# pyro: CSS Text 4 `text-spacing-trim` (fullwidth punctuation trimming), for Servo: blitz-dom
 +# passes it to parley's shaping and line breaking.
 +[text-spacing-trim]
@@ -427,9 +423,11 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +engine = "servo"
 +animation_type = "discrete"
 +spec = "https://drafts.csswg.org/css-text-4/#text-spacing-trim-property"
- affects = "layout"
- 
++affects = "layout"
++
  [text-autospace-size]
+ type = "Number"
+ initial = "0.125"
 @@ -2635,7 +2669,6 @@
  type = "TextDecorationSkipInk"
  initial = "computed::TextDecorationSkipInk::Auto"
@@ -446,7 +444,23 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  affects = "overflow"
  
  [text-underline-offset]
-@@ -3383,9 +3417,9 @@
+@@ -3173,6 +3207,15 @@
+ logical = true
+ affects = "paint"
+ 
++[border-shape]
++type = "basic_shape::BorderShape"
++initial = "generics::basic_shape::BorderShape::None"
++struct = "border"
++animation_type = "none"
++boxed = true
++spec = "https://drafts.csswg.org/css-borders-4/#propdef-border-shape"
++affects = "paint"
++
+ [corner-top-left-shape]
+ type = "CornerShape"
+ initial = "computed::CornerShape::round()"
+@@ -3383,9 +3426,9 @@
  type = "MarginTrim"
  initial = "computed::MarginTrim::empty()"
  struct = "margin"
@@ -457,7 +471,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/css-box-4/#propdef-margin-trim"
  affects = "layout"
  
-@@ -3694,6 +3728,7 @@
+@@ -3694,6 +3737,7 @@
  [box-decoration-break]
  struct = "border"
  spec = "https://drafts.csswg.org/css-break/#propdef-box-decoration-break"
@@ -465,7 +479,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  animation_type = "discrete"
  affects = "layout"
  type = "BoxDecorationBreak"
-@@ -3770,7 +3805,6 @@
+@@ -3770,7 +3814,6 @@
  
  [column-fill]
  struct = "column"
@@ -473,7 +487,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/css-multicol/#propdef-column-fill"
  animation_type = "discrete"
  affects = "layout"
-@@ -3901,9 +3935,9 @@
+@@ -3901,9 +3944,9 @@
  type = "TextOrientation"
  initial = "computed::TextOrientation::Mixed"
  
@@ -484,7 +498,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/css-images/#propdef-image-orientation"
  animation_type = "discrete"
  affects = "layout"
-@@ -4290,6 +4324,19 @@
+@@ -4290,6 +4333,19 @@
  type = "BoxOrient"
  initial = "computed::BoxOrient::Horizontal"
  
@@ -954,9 +968,14 @@ diff -ruN a/stylesheets/font_palette_values_rule.rs b/stylesheets/font_palette_v
              return Ok(FontPaletteBase::Index(v));
 diff -ruN a/stylesheets/rule_parser.rs b/stylesheets/rule_parser.rs
 --- a/stylesheets/rule_parser.rs	2026-11-11 19:55:57
-+++ b/stylesheets/rule_parser.rs	2026-11-11 19:55:57
-@@ -282,7 +282,7 @@
-             "counter-style" if cfg!(feature = "gecko") => Self::CounterStyle,
++++ b/stylesheets/rule_parser.rs	2026-11-16 15:38:55
+@@ -279,10 +279,11 @@
+             "font-face" => Self::FontFace,
+             "font-feature-values" => Self::FontFeatureValues,
+             "font-palette-values" if crate::pref!("layout.css.font-palette.enabled", gecko = true) => Self::FontPaletteValues,
+-            "counter-style" if cfg!(feature = "gecko") => Self::CounterStyle,
++            // pyro: for servo too (blitz-dom reads `system: extends` for list markers).
++            "counter-style" => Self::CounterStyle,
              "media" => Self::Media,
              "custom-media" if crate::pref!("layout.css.custom-media.enabled") => Self::CustomMedia,
 -            "container" if cfg!(feature = "gecko") => Self::Container,
@@ -1253,6 +1272,19 @@ diff -ruN a/values/animated/effects.rs b/values/animated/effects.rs
 -/// An animated value for a single `filter`.
 -#[cfg(not(feature = "gecko"))]
 -pub type AnimatedFilter = GenericFilter<Angle, Number, Length, AnimatedSimpleShadow, Impossible>;
+diff -ruN a/values/computed/basic_shape.rs b/values/computed/basic_shape.rs
+--- a/values/computed/basic_shape.rs	2026-11-11 19:55:57
++++ b/values/computed/basic_shape.rs	2026-11-16 13:24:33
+@@ -24,6 +24,9 @@
+ /// A computed `shape-outside` value.
+ pub type ShapeOutside = generic::GenericShapeOutside<BasicShape, Image>;
+ 
++/// pyro: a computed value of `border-shape`.
++pub type BorderShape = generic::GenericBorderShape<BasicShape>;
++
+ /// A computed basic shape.
+ pub type BasicShape =
+     generic::GenericBasicShape<Angle, LengthPercentage, Position, LengthPercentage, InsetRect>;
 diff -ruN a/values/computed/box.rs b/values/computed/box.rs
 --- a/values/computed/box.rs	2026-11-11 19:55:57
 +++ b/values/computed/box.rs	2026-11-15 21:31:51
@@ -1326,7 +1358,7 @@ diff -ruN a/values/computed/image.rs b/values/computed/image.rs
      }
 diff -ruN a/values/computed/mod.rs b/values/computed/mod.rs
 --- a/values/computed/mod.rs	2026-11-11 19:55:57
-+++ b/values/computed/mod.rs	2026-11-16 12:18:07
++++ b/values/computed/mod.rs	2026-11-16 16:15:58
 @@ -129,7 +129,7 @@
  pub use self::text::{InitialLetter, LetterSpacing, LineBreak, TextIndent};
  pub use self::text::{OverflowWrap, RubyPosition, TextOverflow, WordBreak, WordSpacing};
@@ -1338,7 +1370,7 @@ diff -ruN a/values/computed/mod.rs b/values/computed/mod.rs
      TextDecorationInset, TextDecorationLength, TextDecorationSkipInk, TextJustify,
 diff -ruN a/values/computed/text.rs b/values/computed/text.rs
 --- a/values/computed/text.rs	2026-11-11 19:55:57
-+++ b/values/computed/text.rs	2026-11-16 12:18:07
++++ b/values/computed/text.rs	2026-11-16 16:15:58
 @@ -26,7 +26,7 @@
  
  pub use crate::values::specified::text::{
@@ -1348,6 +1380,107 @@ diff -ruN a/values/computed/text.rs b/values/computed/text.rs
      TextDecorationLine, TextDecorationSkipInk, TextDecorationStyle, TextEmphasisPosition,
      TextJustify, TextOverflow, TextRendering, TextSecurity, TextSizeAdjust, TextTransform,
      TextUnderlinePosition, TextWrapMode, TextWrapStyle, UnicodeBidi, WhiteSpaceCollapse, WordBreak,
+diff -ruN a/values/generics/basic_shape.rs b/values/generics/basic_shape.rs
+--- a/values/generics/basic_shape.rs	2026-11-11 19:55:57
++++ b/values/generics/basic_shape.rs	2026-11-16 13:24:33
+@@ -134,6 +134,97 @@
+ 
+ pub use self::GenericClipPath as ClipPath;
+ 
++/// pyro: the reference box of a `border-shape` shape (CSS Borders 4): a `<geometry-box>`, or
++/// `half-border-box` (the border box less half of each border width). `Default` when none is
++/// given: `half-border-box` for a single shape; the border box for the outer of two, the padding
++/// box for the inner.
++#[allow(missing_docs)]
++#[derive(
++    Animate,
++    Clone,
++    ComputeSquaredDistance,
++    Copy,
++    Debug,
++    MallocSizeOf,
++    PartialEq,
++    Parse,
++    SpecifiedValueInfo,
++    ToAnimatedValue,
++    ToComputedValue,
++    ToCss,
++    ToResolvedValue,
++    ToShmem,
++    ToTyped,
++)]
++#[repr(u8)]
++#[derive(Default)]
++pub enum BorderShapeBox {
++    #[css(skip)]
++    #[default]
++    Default,
++    HalfBorderBox,
++    FillBox,
++    StrokeBox,
++    ViewBox,
++    ShapeBox(ShapeBox),
++}
++
++/// pyro: one shape of `border-shape`: a `<basic-shape>` in its reference box.
++#[allow(missing_docs)]
++#[derive(
++    Clone,
++    Debug,
++    MallocSizeOf,
++    PartialEq,
++    SpecifiedValueInfo,
++    ToAnimatedValue,
++    ToComputedValue,
++    ToCss,
++    ToResolvedValue,
++    ToShmem,
++    ToTyped,
++)]
++#[typed(todo_derive_fields)]
++#[repr(C)]
++pub struct GenericBorderShapeItem<BasicShape> {
++    pub shape: Box<BasicShape>,
++    pub reference: BorderShapeBox,
++}
++
++/// pyro: a value of `border-shape` (CSS Borders 4): `none`, one shape (the border is a stroke
++/// along it), or two (the border fills the area between the outer and the inner).
++#[allow(missing_docs)]
++#[derive(
++    Clone,
++    Debug,
++    MallocSizeOf,
++    PartialEq,
++    SpecifiedValueInfo,
++    ToAnimatedValue,
++    ToComputedValue,
++    ToCss,
++    ToResolvedValue,
++    ToShmem,
++    ToTyped,
++)]
++#[typed(todo_derive_fields)]
++#[repr(C, u8)]
++pub enum GenericBorderShape<BasicShape> {
++    None,
++    Single(GenericBorderShapeItem<BasicShape>),
++    Double(GenericBorderShapeItem<BasicShape>, GenericBorderShapeItem<BasicShape>),
++}
++
++pub use self::GenericBorderShape as BorderShape;
++
++impl<B> GenericBorderShape<B> {
++    /// `none`.
++    #[inline]
++    pub fn none() -> Self {
++        Self::None
++    }
++}
++
+ /// A value for the `shape-outside` property.
+ #[allow(missing_docs)]
+ #[derive(
 diff -ruN a/values/generics/image.rs b/values/generics/image.rs
 --- a/values/generics/image.rs	2026-11-11 19:55:57
 +++ b/values/generics/image.rs	2026-11-15 07:03:49
@@ -1585,8 +1718,8 @@ diff -ruN a/values/specified/background.rs b/values/specified/background.rs
  }
 diff -ruN a/values/specified/basic_shape.rs b/values/specified/basic_shape.rs
 --- a/values/specified/basic_shape.rs	2026-11-11 19:55:57
-+++ b/values/specified/basic_shape.rs	2026-11-15 23:27:24
-@@ -37,6 +37,25 @@
++++ b/values/specified/basic_shape.rs	2026-11-16 13:24:33
+@@ -37,8 +37,54 @@
  /// A specified `clip-path` value.
  pub type ClipPath = generic::GenericClipPath<BasicShape, SpecifiedUrl>;
  
@@ -1611,7 +1744,36 @@ diff -ruN a/values/specified/basic_shape.rs b/values/specified/basic_shape.rs
 +
  /// A specified `shape-outside` value.
  pub type ShapeOutside = generic::GenericShapeOutside<BasicShape, Image>;
++
++/// pyro: a specified value of `border-shape`.
++pub type BorderShape = generic::GenericBorderShape<BasicShape>;
++
++impl Parse for BorderShape {
++    /// `none | [ <basic-shape> <geometry-box>? ]{1,2}`, `half-border-box` being a box too.
++    fn parse(context: &ParserContext, input: &mut Parser) -> Result<Self, ParseError> {
++        if input.try_parse(|i| i.expect_ident_matching("none")).is_ok() {
++            return Ok(Self::None);
++        }
++        let item = |input: &mut Parser| -> Result<generic::GenericBorderShapeItem<BasicShape>, ParseError> {
++            let shape = BasicShape::parse(context, input, AllowedBasicShapes::ALL, ShapeType::Filled)?;
++            let reference = input
++                .try_parse(|i| generic::BorderShapeBox::parse(context, i))
++                .unwrap_or_default();
++            Ok(generic::GenericBorderShapeItem {
++                shape: Box::new(shape),
++                reference,
++            })
++        };
++        let outer = item(input)?;
++        match input.try_parse(|i| item(i)) {
++            Ok(inner) => Ok(Self::Double(outer, inner)),
++            Err(_) => Ok(Self::Single(outer)),
++        }
++    }
++}
  
+ /// A specified basic shape.
+ pub type BasicShape =
 diff -ruN a/values/specified/box.rs b/values/specified/box.rs
 --- a/values/specified/box.rs	2026-11-11 19:55:57
 +++ b/values/specified/box.rs	2026-11-15 21:32:07
@@ -2243,7 +2405,7 @@ diff -ruN a/values/specified/length.rs b/values/specified/length.rs
      }
 diff -ruN a/values/specified/mod.rs b/values/specified/mod.rs
 --- a/values/specified/mod.rs	2026-11-11 19:55:57
-+++ b/values/specified/mod.rs	2026-11-16 12:18:07
++++ b/values/specified/mod.rs	2026-11-16 16:15:58
 @@ -121,7 +121,7 @@
  pub use self::text::{InitialLetter, LetterSpacing, LineBreak, TextAlign, TextIndent};
  pub use self::text::{OverflowWrap, TextEmphasisPosition, TextEmphasisStyle, WordBreak};
@@ -2306,7 +2468,7 @@ diff -ruN a/values/specified/number.rs b/values/specified/number.rs
          match self.0.unpack_mut() {
 diff -ruN a/values/specified/text.rs b/values/specified/text.rs
 --- a/values/specified/text.rs	2026-11-11 19:55:57
-+++ b/values/specified/text.rs	2026-11-16 12:18:07
++++ b/values/specified/text.rs	2026-11-16 16:15:58
 @@ -152,11 +152,26 @@
          {
              return Ok(Self::normal());
