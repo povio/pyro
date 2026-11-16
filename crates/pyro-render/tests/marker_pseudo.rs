@@ -43,7 +43,8 @@ fn columns(img: &RgbaImage, color: [u8; 3]) -> Vec<u32> {
 
 #[test]
 fn a_marker_has_the_colour_of_its_pseudo_element() {
-    for list in ["<ul><li>x</li></ul>", "<ol><li>x</li></ol>", "<ul style='list-style-position:inside'><li>x</li></ul>"] {
+    for list in ["<ul><li>x</li></ul>", "<ol><li>x</li></ol>", "<ul style='list-style-position:inside'><li>x</li></ul>"]
+    {
         let img = render(&format!("<style>li::marker{{color:#00f}}</style>{list}"));
         let blue = columns(&img, [0, 0, 255]);
         assert!(!blue.is_empty(), "{list}: the marker is blue");
@@ -57,8 +58,7 @@ fn a_marker_has_the_colour_of_its_pseudo_element() {
 #[test]
 fn marker_content_replaces_the_marker() {
     let plain = columns(&render("<style>li::marker{color:#00f}</style><ol><li>x</li></ol>"), [0, 0, 255]);
-    let text =
-        columns(&render("<style>li::marker{color:#00f;content:'MMMM'}</style><ol><li>x</li></ol>"), [0, 0, 255]);
+    let text = columns(&render("<style>li::marker{color:#00f;content:'MMMM'}</style><ol><li>x</li></ol>"), [0, 0, 255]);
     assert!(text.len() > plain.len() + 40, "four letters are wider than `1.`: {} {}", text.len(), plain.len());
     assert!(text.iter().all(|&x| x < 200), "outside the item");
     let none = columns(&render("<style>li::marker{color:#00f;content:none}</style><ol><li>x</li></ol>"), [0, 0, 255]);
@@ -79,4 +79,27 @@ fn the_marker_of_a_pseudo_elements_list_item_is_styled() {
     );
     let blue = columns(&img, [0, 0, 255]);
     assert!(blue.len() > 20 && blue.iter().all(|&x| x < 200), "{blue:?}");
+}
+
+/// A `::marker` rule's `text-transform` transforms the marker's string, inside and outside the
+/// item; the item's own `text-transform` does not reach its marker (Blink's UA sheet sets
+/// `text-transform: none` on `::marker`).
+#[test]
+fn marker_text_transform_comes_from_marker_rules() {
+    for position in ["outside", "inside"] {
+        let list = |style: &str, ty: &str| {
+            render(&format!(
+                "<style>li::marker{{color:#00f}} {style}</style><ol style='list-style:{ty} {position}'><li>x</li><li>x</li><li>x</li></ol>"
+            ))
+        };
+        let upper = columns(&list("", "upper-roman"), [0, 0, 255]);
+        assert_eq!(
+            columns(&list("li::marker{text-transform:uppercase}", "lower-roman"), [0, 0, 255]),
+            upper,
+            "{position}"
+        );
+        let lower = columns(&list("", "lower-roman"), [0, 0, 255]);
+        assert_ne!(lower, upper);
+        assert_eq!(columns(&list("li{text-transform:uppercase}", "lower-roman"), [0, 0, 255]), lower, "{position}");
+    }
 }

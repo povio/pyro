@@ -1929,3 +1929,14 @@ root whose first child's top margin no longer collapsed with its own (8px lower 
 `css/css-grid/layout-algorithm/grid-as-flex-item-should-not-shrink-to-fit-*`). A body whose flag changes is laid out
 again with the root. Paint and scrolling already treated such a body's `overflow` as the viewport's. Covered by
 `crates/pyro-render/tests/viewport_overflow.rs`.
+## `::marker` text-transform and tabular digits (WPT round 3, lane I)
+
+- `src/layout/list.rs`, `src/layout/text_transform.rs` (`TextTransformer::transform_alone`): a `::marker` rule's
+  `text-transform` transforms the marker's string (inside and outside); the item's own does not reach it (Blink's UA
+  sheet: `::marker { text-transform: none }`), read with `BaseDocument::style_declares`.
+- `src/layout/list.rs`, `src/layout/inline/build.rs`, `src/node/element.rs` (`ListItemLayout::tabular_nums`),
+  `src/stylo_to_parley.rs` (`with_tabular_nums`): marker digits are tabular (`tnum`, Blink's UA `::marker {
+  font-variant-numeric: tabular-nums }`) unless a `::marker` rule declares `font-variant-numeric`.
+
+Covered by `crates/pyro-render/tests/marker_pseudo.rs`.
+

@@ -119,6 +119,19 @@ fn node_list_item_child(
         (None, Some(image)) => image,
         (None, None) => marker_for_style(list_style_type, index)?,
     };
+    // pyro: a `::marker` rule's `text-transform` transforms the marker's string; the item's
+    // does not reach it (Blink's UA sheet has `::marker { text-transform: none }`).
+    if let (Marker::String(text), Some(style)) = (&marker, rule_style.as_ref())
+        && doc.style_declares(style, &[style::properties::LonghandId::TextTransform])
+    {
+        let transform = crate::layout::text_transform::CaseTransform::from_style(style);
+        let text = crate::layout::text_transform::TextTransformer::default().transform_alone(text, &transform);
+        marker = Marker::String(text);
+    }
+    // pyro: digits are tabular unless a `::marker` rule declares `font-variant-numeric`.
+    let tabular_nums = !rule_style
+        .as_ref()
+        .is_some_and(|style| doc.style_declares(style, &[style::properties::LonghandId::FontVariantNumeric]));
     // The marker's text has the pseudo-element's style.
     let text_style = marker_style.as_ref().unwrap_or(&styles);
     let brush = style_node.unwrap_or(child_id);
@@ -139,6 +152,11 @@ fn node_list_item_child(
             // The marker's suffix space takes room (`white-space: pre` in the UA sheet), as a
             // no-break space of a `content` string does.
             parley_style.white_space_collapse = parley::WhiteSpaceCollapse::Preserve;
+            if tabular_nums {
+                parley_style.font_features = parley::FontFeatures::List(std::borrow::Cow::Owned(
+                    stylo_to_parley::with_tabular_nums(&parley_style.font_features),
+                ));
+            }
 
             // pyro: blitz-paint paints a disc, circle or square as a shape sized from the item's
             // font (Blink's `ListMarker::RelativeSymbolMarkerRect`), so their layout is a line of
@@ -179,6 +197,7 @@ fn node_list_item_child(
         marker,
         style_node,
         position,
+        tabular_nums,
         content_box_subpixel_offset: taffy::Point::ZERO,
     })
 }

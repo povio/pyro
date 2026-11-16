@@ -1133,6 +1133,9 @@ pub struct ListItemLayout {
     /// rule styles the marker: its text is that node's (colour, font, shadows).
     pub style_node: Option<NodeId>,
     pub position: ListItemLayoutPosition,
+    /// pyro: the marker's digits are tabular (Blink's UA sheet: `::marker { font-variant-numeric:
+    /// tabular-nums }`), unless a `::marker` rule declares `font-variant-numeric`.
+    pub tabular_nums: bool,
     /// Offset (in physical CSS px) of the unrounded content box origin from the rounded one in
     /// `final_layout`. Paint draws text from the unrounded origin so that it keeps its sub-pixel
     /// position while box edges stay snapped. Set by the `writing-mode` layout pass; zero otherwise.

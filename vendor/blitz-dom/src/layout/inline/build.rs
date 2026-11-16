@@ -411,6 +411,7 @@ fn build_inline_layout_with(
         marker,
         style_node,
         position: ListItemLayoutPosition::Inside,
+        tabular_nums,
         ..
     }) = root_node
         .element_data()
@@ -434,6 +435,15 @@ fn build_inline_layout_with(
                 marker_style.font_family = BULLET_FONT_FAMILY.into();
                 builder.push_style_span(marker_style);
                 builder.push_text(&format!("{char} "));
+                builder.pop_style_span();
+            }
+            // pyro: with tabular digits (`ListItemLayout::tabular_nums`).
+            Marker::String(str) if *tabular_nums => {
+                let features = stylo_to_parley::with_tabular_nums(&parley_style.font_features);
+                builder.push_style_modification_span(&[parley::StyleProperty::FontFeatures(
+                    parley::FontFeatures::List(std::borrow::Cow::Owned(features)),
+                )]);
+                builder.push_text(str);
                 builder.pop_style_span();
             }
             Marker::String(str) => builder.push_text(str),

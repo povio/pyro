@@ -7702,7 +7702,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
      // Create a parley tree builder
      let mut builder = layout_ctx.tree_builder(font_ctx, scale, true, &parley_style);
      if let Some(style) = root_node_style.as_deref() {
-@@ -59,15 +389,41 @@
+@@ -59,15 +389,42 @@
          .map(|s| CaseTransform::from_style(s))
          .unwrap_or(CaseTransform::NONE);
  
@@ -7728,6 +7728,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
          marker,
 +        style_node,
          position: ListItemLayoutPosition::Inside,
++        tabular_nums,
          ..
      }) = root_node
          .element_data()
@@ -7744,9 +7745,19 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
          match marker {
              // Bullet glyphs live in the bundled bullet font. The position-outside
              // path already asks for it; without the same span here a marker like
-@@ -81,11 +437,67 @@
+@@ -80,12 +437,77 @@
+                 builder.push_text(&format!("{char} "));
                  builder.pop_style_span();
              }
++            // pyro: with tabular digits (`ListItemLayout::tabular_nums`).
++            Marker::String(str) if *tabular_nums => {
++                let features = stylo_to_parley::with_tabular_nums(&parley_style.font_features);
++                builder.push_style_modification_span(&[parley::StyleProperty::FontFeatures(
++                    parley::FontFeatures::List(std::borrow::Cow::Owned(features)),
++                )]);
++                builder.push_text(str);
++                builder.pop_style_span();
++            }
              Marker::String(str) => builder.push_text(str),
 +            // pyro: an image marker inside the item: room for it at the start of the first
 +            // line, as a run of no size of its own that is as tall as the image above the
@@ -7812,7 +7823,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
  
      if let Some(before_id) = root_node.before() {
          build_inline_layout_recursive(
-@@ -94,15 +506,45 @@
+@@ -94,15 +516,45 @@
              nodes,
              before_id,
              &text_transform,
@@ -7859,7 +7870,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
          );
      }
      if let Some(after_id) = root_node.after() {
-@@ -112,18 +554,256 @@
+@@ -112,18 +564,256 @@
              nodes,
              after_id,
              &text_transform,
@@ -8118,7 +8129,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
      ) {
          let node = &nodes[node_id];
  
-@@ -143,6 +823,26 @@
+@@ -143,6 +833,26 @@
                      }
                  }
  
@@ -8145,7 +8156,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
                  let display = node.display_style().unwrap_or(Display::inline());
                  let position = style
                      .map(|s| s.clone_position())
-@@ -180,22 +880,32 @@
+@@ -180,22 +890,32 @@
                          );
                          for child_id in node.children.iter().copied() {
                              // node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
@@ -8181,7 +8192,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
                              }
                              builder.push_inline_box(InlineBox {
                                  id: node_id.as_u64(),
-@@ -210,66 +920,165 @@
+@@ -210,66 +930,165 @@
                                      .primary_styles()
                                      .map(|s| stylo_to_parley::vertical_align(&s))
                                      .unwrap_or_default(),
@@ -8365,7 +8376,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
                          }
                          builder.push_inline_box(InlineBox {
                              id: node_id.as_u64(),
-@@ -284,6 +1093,7 @@
+@@ -284,6 +1103,7 @@
                                  .primary_styles()
                                  .map(|s| stylo_to_parley::vertical_align(&s))
                                  .unwrap_or_default(),
@@ -8373,7 +8384,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
                          });
                      }
                  };
-@@ -291,10 +1101,61 @@
+@@ -291,10 +1111,61 @@
              NodeData::Text(data) => {
                  // node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
                  // dbg!(&data.content);
@@ -8438,7 +8449,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
              }
              NodeData::Comment { .. } => {
                  // node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
-@@ -303,3 +1164,157 @@
+@@ -303,3 +1174,157 @@
          }
      }
  }
@@ -10463,7 +10474,7 @@ diff --git a/packages/blitz-dom/src/layout/list.rs b/packages/blitz-dom/src/layo
  // Return a child node which is of display: list-item
  fn node_list_item_child(
      doc: &mut BaseDocument,
-@@ -71,17 +100,51 @@
+@@ -71,17 +100,69 @@
          return None;
      };
  
@@ -10488,6 +10499,19 @@ diff --git a/packages/blitz-dom/src/layout/list.rs b/packages/blitz-dom/src/layo
 +        (None, Some(image)) => image,
 +        (None, None) => marker_for_style(list_style_type, index)?,
 +    };
++    // pyro: a `::marker` rule's `text-transform` transforms the marker's string; the item's
++    // does not reach it (Blink's UA sheet has `::marker { text-transform: none }`).
++    if let (Marker::String(text), Some(style)) = (&marker, rule_style.as_ref())
++        && doc.style_declares(style, &[style::properties::LonghandId::TextTransform])
++    {
++        let transform = crate::layout::text_transform::CaseTransform::from_style(style);
++        let text = crate::layout::text_transform::TextTransformer::default().transform_alone(text, &transform);
++        marker = Marker::String(text);
++    }
++    // pyro: digits are tabular unless a `::marker` rule declares `font-variant-numeric`.
++    let tabular_nums = !rule_style
++        .as_ref()
++        .is_some_and(|style| doc.style_declares(style, &[style::properties::LonghandId::FontVariantNumeric]));
 +    // The marker's text has the pseudo-element's style.
 +    let text_style = marker_style.as_ref().unwrap_or(&styles);
 +    let brush = style_node.unwrap_or(child_id);
@@ -10510,6 +10534,11 @@ diff --git a/packages/blitz-dom/src/layout/list.rs b/packages/blitz-dom/src/layo
 +            // The marker's suffix space takes room (`white-space: pre` in the UA sheet), as a
 +            // no-break space of a `content` string does.
 +            parley_style.white_space_collapse = parley::WhiteSpaceCollapse::Preserve;
++            if tabular_nums {
++                parley_style.font_features = parley::FontFeatures::List(std::borrow::Cow::Owned(
++                    stylo_to_parley::with_tabular_nums(&parley_style.font_features),
++                ));
++            }
  
 -            if let Some(font_family) = font_for_bullet_style(list_style_type) {
 +            // pyro: blitz-paint paints a disc, circle or square as a shape sized from the item's
@@ -10520,7 +10549,7 @@ diff --git a/packages/blitz-dom/src/layout/list.rs b/packages/blitz-dom/src/layo
                  parley_style.font_family = font_family;
              }
  
-@@ -95,11 +158,13 @@
+@@ -95,11 +176,13 @@
              );
  
              match &marker {
@@ -10534,12 +10563,13 @@ diff --git a/packages/blitz-dom/src/layout/list.rs b/packages/blitz-dom/src/layo
              };
  
              let mut layout = builder.build().0;
-@@ -112,11 +177,191 @@
+@@ -112,11 +195,192 @@
  
      Some(ListItemLayout {
          marker,
 +        style_node,
          position,
++        tabular_nums,
          content_box_subpixel_offset: taffy::Point::ZERO,
      })
  }
@@ -10726,7 +10756,7 @@ diff --git a/packages/blitz-dom/src/layout/list.rs b/packages/blitz-dom/src/layo
  // Determine the marker to render for a given list style type
  fn marker_for_style(list_style_type: &ListStyleType, index: usize) -> Option<Marker> {
      Some(match &list_style_type.0 {
-@@ -133,6 +378,19 @@
+@@ -133,6 +397,19 @@
                  Marker::String(format!("{}. ", marker.to_ascii_uppercase()))
              }
              "decimal" => Marker::String(format!("{}. ", index + 1)),
@@ -10746,7 +10776,7 @@ diff --git a/packages/blitz-dom/src/layout/list.rs b/packages/blitz-dom/src/layo
              "disc" => Marker::Char('•'),
              "circle" => Marker::Char('◦'),
              "square" => Marker::Char('▪'),
-@@ -171,6 +429,36 @@
+@@ -171,6 +448,36 @@
      None
  }
  
@@ -18670,6 +18700,37 @@ new file mode 100644
 +    let found = if start { children.iter().find(|id| in_flow(id)) } else { children.iter().rev().find(|id| in_flow(id)) };
 +    found == Some(&child)
 +}
+diff --git a/packages/blitz-dom/src/layout/text_transform.rs b/packages/blitz-dom/src/layout/text_transform.rs
+--- a/packages/blitz-dom/src/layout/text_transform.rs
++++ b/packages/blitz-dom/src/layout/text_transform.rs
+@@ -135,6 +135,27 @@
+         self.transform_nonempty(text, transform, builder)
+     }
+ 
++    /// pyro: transforms a text that is a word of its own, with nothing before it (a list
++    /// marker's string).
++    pub(crate) fn transform_alone(&mut self, text: &str, transform: &CaseTransform) -> String {
++        if transform.text_transform.is_empty() {
++            return text.to_string();
++        }
++        let mut output = OutputSink::new(text, &mut self.output);
++        output.width = transform.text_transform & WIDTH_TRANSFORMS;
++        output.white_space_collapse = transform.white_space_collapse;
++        match transform.text_transform.case() {
++            TextTransformCase::None => output.push_str(text),
++            TextTransformCase::Uppercase => uppercase(text, &transform.lang, &mut output),
++            TextTransformCase::Lowercase => lowercase(text, &transform.lang, &mut output),
++            TextTransformCase::MathAuto => math_auto(text, &mut output),
++            TextTransformCase::Capitalize => {
++                capitalize("", text, &transform.lang, &mut self.segmentation_buffer, &mut output)
++            }
++        }
++        output.finish().to_string()
++    }
++
+     fn transform_nonempty<'a, B: Brush>(
+         &'a mut self,
+         text: &'a str,
 diff --git a/packages/blitz-dom/src/layout/writing_mode.rs b/packages/blitz-dom/src/layout/writing_mode.rs
 --- a/packages/blitz-dom/src/layout/writing_mode.rs
 +++ b/packages/blitz-dom/src/layout/writing_mode.rs
@@ -21061,7 +21122,7 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
          }
      }
  }
-@@ -953,6 +1129,9 @@
+@@ -953,7 +1129,13 @@
  #[derive(Clone)]
  pub struct ListItemLayout {
      pub marker: Marker,
@@ -21069,9 +21130,13 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
 +    /// rule styles the marker: its text is that node's (colour, font, shadows).
 +    pub style_node: Option<NodeId>,
      pub position: ListItemLayoutPosition,
++    /// pyro: the marker's digits are tabular (Blink's UA sheet: `::marker { font-variant-numeric:
++    /// tabular-nums }`), unless a `::marker` rule declares `font-variant-numeric`.
++    pub tabular_nums: bool,
      /// Offset (in physical CSS px) of the unrounded content box origin from the rounded one in
      /// `final_layout`. Paint draws text from the unrounded origin so that it keeps its sub-pixel
-@@ -966,6 +1145,9 @@
+     /// position while box edges stay snapped. Set by the `writing-mode` layout pass; zero otherwise.
+@@ -966,6 +1148,9 @@
  pub enum Marker {
      Char(char),
      String(String),
@@ -30579,7 +30644,26 @@ diff --git a/packages/blitz-dom/src/stylo_to_kurbo.rs b/packages/blitz-dom/src/s
 diff --git a/packages/blitz-dom/src/stylo_to_parley.rs b/packages/blitz-dom/src/stylo_to_parley.rs
 --- a/packages/blitz-dom/src/stylo_to_parley.rs
 +++ b/packages/blitz-dom/src/stylo_to_parley.rs
-@@ -313,6 +313,10 @@
+@@ -140,6 +140,18 @@
+ }
+ 
+ #[inline]
++/// pyro: `features` with `tnum` on (tabular digits), unless it sets `tnum` or `pnum`.
++pub(crate) fn with_tabular_nums(features: &parley::FontFeatures<'_>) -> Vec<parley::FontFeature> {
++    let mut out: Vec<parley::FontFeature> = match features {
++        parley::FontFeatures::List(list) => list.to_vec(),
++        _ => Vec::new(),
++    };
++    if !out.iter().any(|f| f.tag == parley::Tag::from_bytes(*b"tnum") || f.tag == parley::Tag::from_bytes(*b"pnum")) {
++        out.push(feature(b"tnum", 1));
++    }
++    out
++}
++
+ fn feature(tag: &[u8; 4], value: u16) -> parley::FontFeature {
+     parley::FontFeature {
+         tag: parley::Tag::from_bytes(*tag),
+@@ -313,6 +325,10 @@
  pub(crate) fn font_features(font_styles: &stylo::Font) -> Vec<parley::FontFeature> {
      let mut features = Vec::new();
  
@@ -30590,7 +30674,7 @@ diff --git a/packages/blitz-dom/src/stylo_to_parley.rs b/packages/blitz-dom/src/
      self::font_variant_ligatures(font_styles.font_variant_ligatures, &mut features);
      self::font_variant_caps(font_styles.font_variant_caps, &mut features);
      self::font_variant_numeric(font_styles.font_variant_numeric, &mut features);
-@@ -321,12 +325,159 @@
+@@ -321,12 +337,159 @@
  
      self::font_feature_settings(&font_styles.font_feature_settings, &mut features);
  
@@ -30750,7 +30834,7 @@ diff --git a/packages/blitz-dom/src/stylo_to_parley.rs b/packages/blitz-dom/src/
  pub(crate) fn base_direction(
      direction: stylo::Direction,
      unicode_bidi: stylo::UnicodeBidi,
-@@ -446,11 +597,16 @@
+@@ -446,11 +609,16 @@
  
      // Convert font size and line height
      let font_size = font_styles.font_size.used_size.0.px();
@@ -30767,7 +30851,7 @@ diff --git a/packages/blitz-dom/src/stylo_to_parley.rs b/packages/blitz-dom/src/
      let vertical_align = self::vertical_align(style);
  
      let letter_spacing = itext_styles
-@@ -514,8 +670,9 @@
+@@ -514,8 +682,9 @@
          stylo::WordBreak::Normal => parley::WordBreak::Normal,
          stylo::WordBreak::BreakAll => parley::WordBreak::BreakAll,
          stylo::WordBreak::KeepAll => parley::WordBreak::KeepAll,
@@ -30778,7 +30862,7 @@ diff --git a/packages/blitz-dom/src/stylo_to_parley.rs b/packages/blitz-dom/src/
      let line_break = match itext_styles.line_break {
          stylo::LineBreak::Loose => parley::LineBreak::Loose,
          stylo::LineBreak::Normal => parley::LineBreak::Normal,
-@@ -549,6 +706,23 @@
+@@ -549,6 +718,23 @@
          letter_spacing,
          text_wrap_mode,
          white_space_collapse: white_space_collapse(itext_styles.white_space_collapse),
@@ -30802,7 +30886,7 @@ diff --git a/packages/blitz-dom/src/stylo_to_parley.rs b/packages/blitz-dom/src/
          overflow_wrap,
          word_break,
          line_break,
-@@ -569,6 +743,10 @@
+@@ -569,6 +755,10 @@
          strikethrough_offset: Default::default(),
          strikethrough_size: Default::default(),
          strikethrough_brush: Default::default(),

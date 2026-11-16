@@ -140,6 +140,18 @@ pub(crate) fn font_variations(
 }
 
 #[inline]
+/// pyro: `features` with `tnum` on (tabular digits), unless it sets `tnum` or `pnum`.
+pub(crate) fn with_tabular_nums(features: &parley::FontFeatures<'_>) -> Vec<parley::FontFeature> {
+    let mut out: Vec<parley::FontFeature> = match features {
+        parley::FontFeatures::List(list) => list.to_vec(),
+        _ => Vec::new(),
+    };
+    if !out.iter().any(|f| f.tag == parley::Tag::from_bytes(*b"tnum") || f.tag == parley::Tag::from_bytes(*b"pnum")) {
+        out.push(feature(b"tnum", 1));
+    }
+    out
+}
+
 fn feature(tag: &[u8; 4], value: u16) -> parley::FontFeature {
     parley::FontFeature {
         tag: parley::Tag::from_bytes(*tag),
