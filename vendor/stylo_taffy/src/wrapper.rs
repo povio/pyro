@@ -1060,6 +1060,24 @@ impl<T: Deref<Target = ComputedValues>> taffy::GridContainerStyle for TaffyStylo
         Some(names)
     }
 
+    /// pyro: synthesized baselines sit on the line-under edge (alphabetic) or in the middle (central:
+    /// vertical writing modes with upright or mixed text orientation), as Blink's
+    /// `LogicalBoxFragment::FirstBaselineOrSynthesize`.
+    fn baseline_synthesis(&self) -> taffy::Size<f32> {
+        let wm = self.style.writing_mode;
+        let block = if !wm.is_vertical() {
+            1.0
+        } else if !wm.is_sideways() {
+            0.5
+        } else if wm.intersects(WritingMode::LINE_INVERTED) {
+            // `vertical-lr`: the line-under side is the block-start side
+            0.0
+        } else {
+            1.0
+        };
+        taffy::Size { width: 1.0, height: block }
+    }
+
     /// pyro: a subgrid's `normal` gap is its parent's.
     fn gap_is_normal(&self) -> taffy::Size<bool> {
         let position = self.style.get_position();

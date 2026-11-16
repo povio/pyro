@@ -393,7 +393,7 @@ impl LayoutPassState<'_> {
         LayoutOutput::from_sizes_and_baselines(
             size,
             taffy::ScrollableOverflow::ZERO,
-            taffy::Baselines { first: Some(first), last: Some(first) },
+            taffy::Baselines::new(Some(first), Some(first)),
         )
     }
 
@@ -2065,14 +2065,32 @@ impl LayoutPassState<'_> {
             .then(|| last_line_index.and_then(|i| inline_layout.layout.get(i)))
             .flatten()
             .map(line_baseline);
+        // pyro: in a vertical writing mode with a central dominant baseline (text not sideways; Blink's
+        // `ComputedStyle::GetFontBaseline`), the baselines from the block-start edge, for grid baseline
+        // alignment. The lines of `vertical-lr` are painted turned within their slot (line-over at block-end).
+        // (Sideways text keeps `first_baseline`/`last_baseline`, which inline-block alignment agrees with.)
+        let (dominant_first, dominant_last) = {
+            let wm = self.nodes[node_id].writing_mode();
+            if wm.is_vertical() && !wm.is_sideways() && exports_baseline {
+                let dominant = |line: parley::Line<'_, _>| {
+                    let m = line.metrics();
+                    let central = (m.content_block_min_coord + m.content_block_max_coord) / 2.0;
+                    let central = if wm.intersects(stylo_taffy::WritingMode::LINE_INVERTED) {
+                        m.block_min_coord + m.block_max_coord - central
+                    } else {
+                        central
+                    };
+                    central / scale + line_box_top
+                };
+                (
+                    inline_layout.layout.lines().next().map(dominant),
+                    last_line_index.and_then(|i| inline_layout.layout.get(i)).map(dominant),
+                )
+            } else {
+                (None, None)
+            }
+        };
 
-        // pyro: the lines and where they start are what paint draws and the inline boxes are
-        // placed on. A measuring run that broke them with other inputs than the last final layout
-        // (the available width of a stretched column flex item, a table cell measured at another
-        // width) and left them elsewhere, or moved them (a cell's `vertical-align` in another
-        // height), leaves them unlike that layout, which a cached final layout of this root, or
-        // of a box it is laid out in, stands for: those lay out again. Lines broken beside floats
-        // are not compared (nor are the floats' places): a measuring run leaves them stale.
         let (block_offset_bits, line_box_top_bits) = (inline_layout.block_offset.to_bits(), line_box_top.to_bits());
         if inputs.run_mode == RunMode::PerformLayout {
             inline_layout.final_lines = Some(crate::node::LaidOutLines {
@@ -2160,8 +2178,9 @@ impl LayoutPassState<'_> {
                 )
             },
             baselines: taffy::Baselines {
-                first: first_baseline,
-                last: last_baseline,
+                dominant_first,
+                dominant_last,
+                ..taffy::Baselines::new(first_baseline, last_baseline)
             },
             top_margin: CollapsibleMarginSet::ZERO,
             bottom_margin: CollapsibleMarginSet::ZERO,

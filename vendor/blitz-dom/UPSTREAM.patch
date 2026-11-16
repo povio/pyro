@@ -10040,7 +10040,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
 +        LayoutOutput::from_sizes_and_baselines(
 +            size,
 +            taffy::ScrollableOverflow::ZERO,
-+            taffy::Baselines { first: Some(first), last: Some(first) },
++            taffy::Baselines::new(Some(first), Some(first)),
 +        )
 +    }
 +
@@ -10792,7 +10792,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
 -                            }
 -                            has_active_floats = true;
 -                        }
--
+ 
 -                        if has_active_floats {
 -                            let min_y = state.line_y() / scale as f64;
 -                            line_slot =
@@ -10803,6 +10803,11 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
 -                            state.set_line_x(0.0);
 -                            state.set_line_max_advance(max_advance);
 -                        }
++                                let min_y = state.line_y() / scale as f64;
++                                line_slot =
++                                    block_ctx.find_content_slot(min_y as f32, 0.0, Clear::None, None);
++                                has_active_floats = line_slot.segment_id.is_some();
++                                set_line_slot(state, &line_slot, scale, slack);
  
 -                        line_start_state = has_active_floats.then(|| breaker.state().clone());
 -                        continue;
@@ -10831,12 +10836,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
 -                                    .resolve_or_zero(inputs.parent_size, resolve_calc_value),
 -                            )
 -                        };
-+                                let min_y = state.line_y() / scale as f64;
-+                                line_slot =
-+                                    block_ctx.find_content_slot(min_y as f32, 0.0, Clear::None, None);
-+                                has_active_floats = line_slot.segment_id.is_some();
-+                                set_line_slot(state, &line_slot, scale, slack);
- 
+-
 -                        let output = self.compute_child_layout(
 -                            crate::taffy_node_id(node_id),
 -                            float_child_inputs,
@@ -11232,17 +11232,36 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
          let line_baseline =
              |line: parley::Line<'_, _>| (line.metrics().baseline / scale) + line_box_top;
          let exports_baseline = has_inline_content && !suppresses_baseline;
-@@ -1309,8 +2066,51 @@
+@@ -1308,9 +2065,70 @@
+             .then(|| last_line_index.and_then(|i| inline_layout.layout.get(i)))
              .flatten()
              .map(line_baseline);
- 
-+        // pyro: the lines and where they start are what paint draws and the inline boxes are
-+        // placed on. A measuring run that broke them with other inputs than the last final layout
-+        // (the available width of a stretched column flex item, a table cell measured at another
-+        // width) and left them elsewhere, or moved them (a cell's `vertical-align` in another
-+        // height), leaves them unlike that layout, which a cached final layout of this root, or
-+        // of a box it is laid out in, stands for: those lay out again. Lines broken beside floats
-+        // are not compared (nor are the floats' places): a measuring run leaves them stale.
++        // pyro: in a vertical writing mode with a central dominant baseline (text not sideways; Blink's
++        // `ComputedStyle::GetFontBaseline`), the baselines from the block-start edge, for grid baseline
++        // alignment. The lines of `vertical-lr` are painted turned within their slot (line-over at block-end).
++        // (Sideways text keeps `first_baseline`/`last_baseline`, which inline-block alignment agrees with.)
++        let (dominant_first, dominant_last) = {
++            let wm = self.nodes[node_id].writing_mode();
++            if wm.is_vertical() && !wm.is_sideways() && exports_baseline {
++                let dominant = |line: parley::Line<'_, _>| {
++                    let m = line.metrics();
++                    let central = (m.content_block_min_coord + m.content_block_max_coord) / 2.0;
++                    let central = if wm.intersects(stylo_taffy::WritingMode::LINE_INVERTED) {
++                        m.block_min_coord + m.block_max_coord - central
++                    } else {
++                        central
++                    };
++                    central / scale + line_box_top
++                };
++                (
++                    inline_layout.layout.lines().next().map(dominant),
++                    last_line_index.and_then(|i| inline_layout.layout.get(i)).map(dominant),
++                )
++            } else {
++                (None, None)
++            }
++        };
++
 +        let (block_offset_bits, line_box_top_bits) = (inline_layout.block_offset.to_bits(), line_box_top.to_bits());
 +        if inputs.run_mode == RunMode::PerformLayout {
 +            inline_layout.final_lines = Some(crate::node::LaidOutLines {
@@ -11269,7 +11288,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
 +                self.mark_final_layout_stale(node_id);
 +            }
 +        }
-+
+ 
          if inputs.run_mode == RunMode::PerformLayout {
              inline_layout.span_cb_flags = span_cb_flags;
 +            // pyro: lines taller than the box reach into what follows it (`FLOW_CONTENT_OVERFLOWS`).
@@ -11284,7 +11303,16 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
          }
  
          // Put layout back
-@@ -1366,6 +2166,7 @@
+@@ -1360,12 +2178,14 @@
+                 )
+             },
+             baselines: taffy::Baselines {
+-                first: first_baseline,
+-                last: last_baseline,
++                dominant_first,
++                dominant_last,
++                ..taffy::Baselines::new(first_baseline, last_baseline)
+             },
              top_margin: CollapsibleMarginSet::ZERO,
              bottom_margin: CollapsibleMarginSet::ZERO,
              margins_can_collapse_through: !has_styles_preventing_being_collapsed_through
@@ -11292,7 +11320,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
                  && final_size.height == 0.0
                  && measured_size.height == 0.0,
              oof_candidates,
-@@ -1384,3 +2185,277 @@
+@@ -1384,3 +2204,277 @@
  fn f32_max(a: f32, b: f32) -> f32 {
      a.max(b)
  }
@@ -13060,7 +13088,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 +                        let content_height = output.size.height - padding.vertical_axis_sum() - border.vertical_axis_sum();
 +                        let offset = ((content_height - line.line_height / scale) / 2.0).floor().max(0.0);
 +                        let baseline = padding.top + border.top + offset + line.baseline / scale;
-+                        output.baselines = taffy::Baselines { first: Some(baseline), last: Some(baseline) };
++                        output.baselines = taffy::Baselines::new(Some(baseline), Some(baseline));
 +                    }
 +                    return ChildLayout::Done(output);
                  }
@@ -13149,7 +13177,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 +                                    output.size.height - content_top - padding.bottom - border.bottom;
 +                                let (line_height, baseline) = (line.line_height / scale, line.baseline / scale);
 +                                let baseline = content_top + (content_height - line_height) / 2.0 + baseline;
-+                                output.baselines = taffy::Baselines { first: Some(baseline), last: Some(baseline) };
++                                output.baselines = taffy::Baselines::new(Some(baseline), Some(baseline));
 +                            }
 +                            return ChildLayout::Done(output);
                          }

@@ -1019,7 +1019,7 @@ fn compute_inner(
         size: final_outer_size,
         #[cfg(feature = "content_size")]
         scrollable_overflow_rect: crate::tree::ScrollableOverflow::ZERO,
-        baselines: Baselines { first: first_baseline, last: last_baseline },
+        baselines: Baselines::new(first_baseline, last_baseline),
         top_margin: if own_margins_collapse_with_children.start {
             first_child_top_margin_set
         } else {

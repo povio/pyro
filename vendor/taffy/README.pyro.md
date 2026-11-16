@@ -528,3 +528,17 @@ derives a known axis through the ratio's box. Covered by `crates/pyro-render/tes
   them in Appendix E phases (WPT css-inline `text-box-trim-accumulation-002/003/004`: trimmed glyphs over the next
   block). Covered by `a_spans_border_nested_in_blocks_is_painted_over_the_next_blocks_background` in
   `crates/pyro-render/tests/text_box_trim.rs`.
+
+**Grid baseline alignment in both axes (lane GB).** `compute/grid/baseline.rs` (new) replaces
+`track_sizing::resolve_item_baselines`: items with `align-self` or `justify-self` `baseline` / `last baseline` form
+baseline-sharing groups per track and side (css-align-3 §9.1): the start side for a first baseline, the end side for
+a last one, swapped when the item's block flow runs the other way (`GridItem::baseline_flow`, from
+`GridItemStyle::subgrid_axis`/`subgrid_reversed`: `vertical-rl` in `vertical-lr`, or an orthogonal item whose
+block-start is the grid's inline-end). Items whose block axis is perpendicular to the alignment axis, or without a
+baseline, get one synthesized at `GridContainerStyle::baseline_synthesis` (line-under edge, middle for central
+baselines). Orthogonal items' baselines survive `LayoutOutput::transpose` as `Baselines::orthogonal_first/last`.
+Shims sit on the group's side in both axes (`baseline_shim`, `baseline_shim_block_end`, `baseline_shim_inline`), count
+in contributions and are computed per axis as it is sized (with the other axis' sizes when known), then again with
+the final sizes before `align_and_position_item`, which aligns the item to its group's side
+(`ItemBaselineAlignment`). A grid container reports a last baseline (its last row: a last-baseline group, else its
+last item).

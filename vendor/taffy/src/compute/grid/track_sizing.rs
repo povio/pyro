@@ -272,7 +272,7 @@ pub(super) fn track_sizing_algorithm<Tree: LayoutPartialTree>(
     other_axis_tracks: &mut [GridTrack],
     items: &mut [GridItem],
     get_track_size_estimate: fn(&GridTrack, Option<f32>, &Tree) -> Option<f32>,
-    has_baseline_aligned_item: bool,
+    baselines: Option<BaselineParams>,
     table_rows: bool,
     // pyro: the tracks to size from their items (the others are as their items sized them
     // last time: `table_reuse`), and where to keep the tracks as their items sized them.
@@ -298,8 +298,23 @@ pub(super) fn track_sizing_algorithm<Tree: LayoutPartialTree>(
     }
 
     // 11.5.1 Shim item baselines
-    if has_baseline_aligned_item {
-        resolve_item_baselines(tree, axis, items, inner_node_size);
+    // pyro: in the axis being sized, with the other axis' track sizes when they are known
+    if let Some(params) = baselines {
+        let other = params.other_axis_known.then_some(&*other_axis_tracks);
+        let (columns, rows) = match axis {
+            AbstractAxis::Inline => (None, other),
+            AbstractAxis::Block => (other, None),
+        };
+        super::baseline::resolve_baseline_shims(
+            tree,
+            axis,
+            items,
+            columns,
+            rows,
+            inner_node_size,
+            params.synthesis,
+            params.direction,
+        );
     }
 
     // If all tracks have a fixed min track sizing function and base_size = growth_limit,
@@ -472,95 +487,15 @@ fn initialize_track_sizes(
     }
 }
 
-/// 11.5.1 Shim baseline-aligned items so their intrinsic size contributions reflect their baseline alignment.
-fn resolve_item_baselines(
-    tree: &mut impl LayoutPartialTree,
-    axis: AbstractAxis,
-    items: &mut [GridItem],
-    inner_node_size: Size<Option<f32>>,
-) {
-    // Sort items by track in the other axis (row) start position so that we can iterate items in groups which
-    // are in the same track in the other axis (row)
-    let other_axis = axis.other();
-    let mut items: Vec<&mut GridItem> = items.iter_mut().collect();
-    items.sort_by_key(|item| item.placement(other_axis).start);
-
-    // Iterate over grid rows
-    let mut remaining_items = &mut items[0..];
-    while !remaining_items.is_empty() {
-        // Get the row index of the current row
-        let current_row = remaining_items[0].placement(other_axis).start;
-
-        // Find the item index of the first item that is in a different row (or None if we've reached the end of the list)
-        let next_row_first_item =
-            remaining_items.iter().position(|item| item.placement(other_axis).start != current_row);
-
-        // Use this index to split the `remaining_items` slice in two slices:
-        //    - A `row_items` slice containing the items (that start) in the current row
-        //    - A new `remaining_items` consisting of the remainder of the `remaining_items` slice
-        //      that hasn't been split off into `row_items
-        let row_items = if let Some(index) = next_row_first_item {
-            let (row_items, tail) = remaining_items.split_at_mut(index);
-            remaining_items = tail;
-            row_items
-        } else {
-            let row_items = remaining_items;
-            remaining_items = &mut [];
-            row_items
-        };
-
-        // Count how many items in *this row* are baseline aligned
-        // If a row has one or zero items participating in baseline alignment then baseline alignment is a no-op
-        // for those items and we skip further computations for that row
-        let row_baseline_item_count = row_items.iter().filter(|item| item.participates_in_baseline_alignment()).count();
-        if row_baseline_item_count <= 1 {
-            continue;
-        }
-
-        // Compute the baselines of all items in the row participating in baseline alignment
-        for item in row_items.iter_mut() {
-            if !item.participates_in_baseline_alignment() {
-                continue;
-            }
-
-            let measured_size_and_baselines = tree.perform_child_layout(
-                item.node,
-                Size::NONE,
-                inner_node_size,
-                Size::MIN_CONTENT,
-                SizingMode::InherentSize,
-                Line::FALSE,
-            );
-
-            let height = measured_size_and_baselines.size.height;
-            let baseline = child_first_baseline(measured_size_and_baselines.baselines.first, height, item.overflow.y)
-                .unwrap_or(height);
-
-            item.baseline = Some(baseline);
-        }
-
-        // Items are aligned by the distance from the top of their margin box to their baseline
-        let margin_box_baseline = |item: &GridItem| {
-            item.baseline.unwrap_or(0.0)
-                + item.margin.top.resolve_or_zero(inner_node_size.width, |val, basis| tree.calc(val, basis))
-        };
-
-        // Compute the max baseline of all items in the row participating in baseline alignment
-        let row_max_baseline = row_items
-            .iter()
-            .filter(|item| item.participates_in_baseline_alignment())
-            .map(|item| margin_box_baseline(item))
-            .max_by(|a, b| a.total_cmp(b))
-            .unwrap();
-
-        // Compute the baseline shim for each item in the row participating in baseline alignment
-        for item in row_items.iter_mut() {
-            if item.participates_in_baseline_alignment() {
-                item.baseline_shim = row_max_baseline - margin_box_baseline(item);
-                item.known_dimensions_cache = None;
-            }
-        }
-    }
+/// pyro: what baseline alignment in track sizing takes from the container (`baseline::resolve_baseline_shims`)
+#[derive(Debug, Clone, Copy)]
+pub(super) struct BaselineParams {
+    /// The container's `baseline_synthesis`
+    pub synthesis: Size<f32>,
+    /// The container's direction
+    pub direction: crate::Direction,
+    /// Whether the other axis' tracks are sized
+    pub other_axis_known: bool,
 }
 
 /// 11.5 Resolve Intrinsic Track Sizes

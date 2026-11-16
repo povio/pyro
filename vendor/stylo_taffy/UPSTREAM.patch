@@ -394,7 +394,7 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
      #[inline]
      fn align_self(&self) -> Option<taffy::AlignSelf> {
          self.self_alignment(
-@@ -874,6 +1027,48 @@
+@@ -874,6 +1027,66 @@
          convert::grid_auto_flow(self.style.get_position().grid_auto_flow)
      }
  
@@ -431,6 +431,24 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
 +        Some(names)
 +    }
 +
++    /// pyro: synthesized baselines sit on the line-under edge (alphabetic) or in the middle (central:
++    /// vertical writing modes with upright or mixed text orientation), as Blink's
++    /// `LogicalBoxFragment::FirstBaselineOrSynthesize`.
++    fn baseline_synthesis(&self) -> taffy::Size<f32> {
++        let wm = self.style.writing_mode;
++        let block = if !wm.is_vertical() {
++            1.0
++        } else if !wm.is_sideways() {
++            0.5
++        } else if wm.intersects(WritingMode::LINE_INVERTED) {
++            // `vertical-lr`: the line-under side is the block-start side
++            0.0
++        } else {
++            1.0
++        };
++        taffy::Size { width: 1.0, height: block }
++    }
++
 +    /// pyro: a subgrid's `normal` gap is its parent's.
 +    fn gap_is_normal(&self) -> taffy::Size<bool> {
 +        let position = self.style.get_position();
@@ -443,7 +461,7 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
      #[inline]
      fn gap(&self) -> taffy::Size<taffy::LengthPercentage> {
          let position_styles = self.style.get_position();
-@@ -927,6 +1122,56 @@
+@@ -927,6 +1140,56 @@
          self.grid_row_placement()
      }
  
@@ -500,7 +518,7 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
      #[inline]
      fn grid_column(&self) -> taffy::Line<taffy::GridPlacement<Atom>> {
          self.grid_column_placement()
-@@ -950,6 +1195,16 @@
+@@ -950,6 +1213,16 @@
  }
  
  impl<T: Deref<Target = ComputedValues>> taffy::OofItemStyle for TaffyStyloStyle<T> {

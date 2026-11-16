@@ -293,6 +293,15 @@ pub trait GridContainerStyle: CoreStyle {
     fn gap_is_normal(&self) -> Size<bool> {
         Size { width: false, height: false }
     }
+
+    /// pyro: where an item without a baseline in an axis has its synthesized one (css-align-3 §9.1), as a
+    /// fraction of its border box from its start edge in that axis (`width`: the inline axis, `height`: the
+    /// block axis): the line-under edge for an alphabetic baseline, the middle for a central one (the grid's
+    /// dominant baseline).
+    #[inline(always)]
+    fn baseline_synthesis(&self) -> Size<f32> {
+        Size { width: 1.0, height: 1.0 }
+    }
 }
 
 /// pyro: the `<line-name-list>` of a `subgrid` axis (css-grid-2 §7.2): the line name sets in order,

@@ -2317,3 +2317,6 @@ container's `text-fit` goes to its parley layout before the final break (not bes
 where Blink turns it off too, and part of the break key); `consistent` breaks once without it to measure the block's
 factor (`Layout::text_fit_block_scale`), then again with it. Which letter and word spacing are percentages goes to
 parley, which scales those on fitted lines. parley does the scaling (its README).
+- `src/layout/inline/layout.rs`: an inline layout in a vertical writing mode with a central dominant baseline also
+  exports its baselines from the block-start edge (`taffy::Baselines::dominant_first/last`: the middle of the line's
+  content, turned for `vertical-lr`), which grid baseline alignment reads (vendor/taffy/README.pyro.md).

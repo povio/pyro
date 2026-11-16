@@ -85,6 +85,16 @@ pub(super) fn align_tracks(
     }
 }
 
+/// pyro: an item's baseline alignment in `align_and_position_item`
+#[derive(Debug, Clone, Copy)]
+pub(super) struct ItemBaselineAlignment {
+    /// The baseline shims, as extra margins on the physical sides
+    pub shim: Rect<f32>,
+    /// Per axis (`width`: inline, `height`: block) in which the item is baseline-aligned, whether its group
+    /// aligns to the end
+    pub end: Size<Option<bool>>,
+}
+
 /// Align and size a grid item into it's final position
 #[allow(clippy::too_many_arguments)]
 pub(super) fn align_and_position_item(
@@ -96,7 +106,9 @@ pub(super) fn align_and_position_item(
     // have the container's content box as their containing block in the stacking axis.
     containing_block_size: Size<f32>,
     container_alignment_styles: InBothAbsAxis<AlignItems>,
-    baseline_shim: f32,
+    // pyro: the item's baseline shims (physical sides) and, per axis it is baseline-aligned in, whether its
+    // baseline-sharing group aligns to the end (`baseline::resolve_baseline_shims`)
+    baseline: ItemBaselineAlignment,
     // pyro: a fixed table's cell, as wide as its columns (`GridItem::width_unfloored`)
     width_unfloored: bool,
     // pyro: the axes in which the item is a subgrid (`GridItem::subgrid`): it fills its area there
@@ -217,6 +229,16 @@ pub(super) fn align_and_position_item(
             _ => align_self,
         },
     };
+    // pyro: a baseline-aligned item is aligned to its group's side, its shim in the margin there
+    let to_side = |alignment: AlignSelf, is_end: Option<bool>| match is_end {
+        Some(true) => AlignSelf::END,
+        Some(false) => AlignSelf::START,
+        None => alignment,
+    };
+    let alignment_styles = InBothAbsAxis {
+        horizontal: to_side(alignment_styles.horizontal, baseline.end.width),
+        vertical: to_side(alignment_styles.vertical, baseline.end.height),
+    };
 
     // Note: This is not a bug. It is part of the CSS spec that both horizontal and vertical margins
     // resolve against the WIDTH of the grid area.
@@ -233,8 +255,14 @@ pub(super) fn align_and_position_item(
     drop(style);
 
     let grid_area_minus_item_margins_size = Size {
-        width: grid_area_size.width.maybe_sub(margin.left).maybe_sub(margin.right).max(0.0),
-        height: (grid_area_size.height.maybe_sub(margin.top).maybe_sub(margin.bottom) - baseline_shim).max(0.0),
+        width: (grid_area_size.width.maybe_sub(margin.left).maybe_sub(margin.right)
+            - baseline.shim.left
+            - baseline.shim.right)
+            .max(0.0),
+        height: (grid_area_size.height.maybe_sub(margin.top).maybe_sub(margin.bottom)
+            - baseline.shim.top
+            - baseline.shim.bottom)
+            .max(0.0),
     };
 
     // pyro: an item with a preferred aspect ratio and an explicit `stretch` alignment. In an axis
@@ -443,7 +471,7 @@ pub(super) fn align_and_position_item(
         position,
         inset_horizontal,
         margin.horizontal_components(),
-        0.0,
+        Line { start: baseline.shim.left, end: baseline.shim.right },
         direction,
     );
     let (y_without_relative_offset, y_margin, y_offset) = align_item_within_area(
@@ -453,7 +481,7 @@ pub(super) fn align_and_position_item(
         position,
         inset_vertical,
         margin.vertical_components(),
-        baseline_shim,
+        Line { start: baseline.shim.top, end: baseline.shim.bottom },
         Direction::Ltr,
     );
     // A relative offset moves the item, but does not affect the container's baseline (which is computed from the
@@ -495,6 +523,7 @@ pub(super) fn align_and_position_item(
         y_position: y_without_relative_offset,
         height,
         baseline: child_first_baseline(layout_output.baselines.first, height, overflow.y),
+        last_baseline: child_first_baseline(layout_output.baselines.last, height, overflow.y),
         layout,
         area: grid_area,
         y_offset,
@@ -522,6 +551,8 @@ pub(super) struct PositionedItem {
     pub y_position: f32,
     pub height: f32,
     pub baseline: Option<f32>,
+    /// pyro: its last baseline
+    pub last_baseline: Option<f32>,
     /// The layout it was given, and the grid area it was positioned in
     pub layout: Layout,
     pub area: Rect<f32>,
@@ -584,11 +615,14 @@ pub(super) fn align_item_within_area(
     position: Position,
     inset: Line<Option<f32>>,
     margin: Line<Option<f32>>,
-    baseline_shim: f32,
+    baseline_shim: Line<f32>,
     direction: Direction,
 ) -> (f32, Line<f32>, f32) {
     // Calculate grid area dimension in the axis
-    let non_auto_margin = Line { start: margin.start.unwrap_or(0.0) + baseline_shim, end: margin.end.unwrap_or(0.0) };
+    let non_auto_margin = Line {
+        start: margin.start.unwrap_or(0.0) + baseline_shim.start,
+        end: margin.end.unwrap_or(0.0) + baseline_shim.end,
+    };
     let grid_area_size = f32_max(grid_area.end - grid_area.start, 0.0);
     let free_space = f32_max(grid_area_size - resolved_size - non_auto_margin.sum(), 0.0);
 
@@ -596,8 +630,8 @@ pub(super) fn align_item_within_area(
     let auto_margin_count = margin.start.is_none() as u8 + margin.end.is_none() as u8;
     let auto_margin_size = if auto_margin_count > 0 { free_space / auto_margin_count as f32 } else { 0.0 };
     let resolved_margin = Line {
-        start: margin.start.unwrap_or(auto_margin_size) + baseline_shim,
-        end: margin.end.unwrap_or(auto_margin_size),
+        start: margin.start.unwrap_or(auto_margin_size) + baseline_shim.start,
+        end: margin.end.unwrap_or(auto_margin_size) + baseline_shim.end,
     };
 
     let overflows = resolved_size + non_auto_margin.sum() > grid_area_size;
@@ -605,7 +639,8 @@ pub(super) fn align_item_within_area(
 
     // Compute offset in the axis
     let alignment_based_offset = match alignment_keyword {
-        // TODO: Add support for baseline alignment. For now we treat it as "start".
+        // pyro: a baseline-aligned item comes as `start` or `end` (its group's side); these are the
+        // fallbacks of an item that takes no part in baseline alignment.
         AlignItemsKeyword::Start
         | AlignItemsKeyword::FlexStart
         | AlignItemsKeyword::Baseline
@@ -616,7 +651,6 @@ pub(super) fn align_item_within_area(
                 resolved_margin.start
             }
         }
-        // pyro: `last baseline` is not aligned in grids yet: its fallback, `end`
         AlignItemsKeyword::End | AlignItemsKeyword::FlexEnd | AlignItemsKeyword::LastBaseline => {
             if direction.is_rtl() {
                 resolved_margin.start

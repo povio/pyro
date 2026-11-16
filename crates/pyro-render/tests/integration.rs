@@ -39,6 +39,7 @@ mod font_unicode_range;
 mod fractional_scroll_overflow;
 mod generated_content;
 mod gradient_stops_image_set;
+mod grid_baselines;
 mod hanging_spaces;
 mod hyphen_digit_breaks;
 mod image_input_replaced;

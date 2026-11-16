@@ -60,3 +60,5 @@ entry) once a Blitz release carries these commits and changes.
 - `src/convert.rs` (`fieldset_display`), `src/wrapper.rs` (`StyleFlags::IS_FIELDSET`, now 16 bits): a `<fieldset>`
   lays out as HTML's rendering section says whatever its `display`: an inline-level one is an inline-block
   (`inline-flex`/`inline-grid` stay), a table or table-internal one a block (WPT css-display `table-display-on-fieldset`, `display-inline-on-block-container`).
+- `src/wrapper.rs`: `GridContainerStyle::baseline_synthesis` (vendor/taffy/README.pyro.md, grid baseline alignment):
+  synthesized baselines on the line-under edge, in the middle for vertical writing modes with central baselines.

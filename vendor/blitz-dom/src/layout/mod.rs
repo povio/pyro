@@ -843,7 +843,7 @@ impl LayoutPassState<'_> {
                         let content_height = output.size.height - padding.vertical_axis_sum() - border.vertical_axis_sum();
                         let offset = ((content_height - line.line_height / scale) / 2.0).floor().max(0.0);
                         let baseline = padding.top + border.top + offset + line.baseline / scale;
-                        output.baselines = taffy::Baselines { first: Some(baseline), last: Some(baseline) };
+                        output.baselines = taffy::Baselines::new(Some(baseline), Some(baseline));
                     }
                     return ChildLayout::Done(output);
                 }
@@ -932,7 +932,7 @@ impl LayoutPassState<'_> {
                                     output.size.height - content_top - padding.bottom - border.bottom;
                                 let (line_height, baseline) = (line.line_height / scale, line.baseline / scale);
                                 let baseline = content_top + (content_height - line_height) / 2.0 + baseline;
-                                output.baselines = taffy::Baselines { first: Some(baseline), last: Some(baseline) };
+                                output.baselines = taffy::Baselines::new(Some(baseline), Some(baseline));
                             }
                             return ChildLayout::Done(output);
                         }

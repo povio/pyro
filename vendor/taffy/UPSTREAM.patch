@@ -1,5 +1,5 @@
 diff --git a/src/compute/block.rs b/src/compute/block.rs
-index 3cd3e713..ff00c9e5 100644
+index 3cd3e713..9e4e4700 100644
 --- a/src/compute/block.rs
 +++ b/src/compute/block.rs
 @@ -6,8 +6,8 @@ use crate::style::{
@@ -481,7 +481,7 @@ index 3cd3e713..ff00c9e5 100644
          #[cfg(feature = "content_size")]
          scrollable_overflow_rect: crate::tree::ScrollableOverflow::ZERO,
 -        baselines: Baselines::from_first(first_baseline),
-+        baselines: Baselines { first: first_baseline, last: last_baseline },
++        baselines: Baselines::new(first_baseline, last_baseline),
          top_margin: if own_margins_collapse_with_children.start {
              first_child_top_margin_set
          } else {
@@ -2328,7 +2328,7 @@ index 82d0bd0a..6643f071 100644
                  let mut stretch_insets = FloatInsets::ZERO;
                  fit_insets[lead] =
 diff --git a/src/compute/grid/alignment.rs b/src/compute/grid/alignment.rs
-index b84e8751..39818a3f 100644
+index b84e8751..ad491717 100644
 --- a/src/compute/grid/alignment.rs
 +++ b/src/compute/grid/alignment.rs
 @@ -5,9 +5,10 @@ use crate::compute::common::alignment::{
@@ -2344,10 +2344,31 @@ index b84e8751..39818a3f 100644
  use crate::tree::{Layout, LayoutPartialTreeExt, NodeId, OofCandidates, SizingMode};
  use crate::util::sys::f32_max;
  use crate::util::{MaybeMath, MaybeResolve, ResolveOrZero};
-@@ -96,11 +97,15 @@ pub(super) fn align_and_position_item(
+@@ -84,6 +85,16 @@ pub(super) fn align_tracks(
+     }
+ }
+ 
++/// pyro: an item's baseline alignment in `align_and_position_item`
++#[derive(Debug, Clone, Copy)]
++pub(super) struct ItemBaselineAlignment {
++    /// The baseline shims, as extra margins on the physical sides
++    pub shim: Rect<f32>,
++    /// Per axis (`width`: inline, `height`: block) in which the item is baseline-aligned, whether its group
++    /// aligns to the end
++    pub end: Size<Option<bool>>,
++}
++
+ /// Align and size a grid item into it's final position
+ #[allow(clippy::too_many_arguments)]
+ pub(super) fn align_and_position_item(
+@@ -95,12 +106,18 @@ pub(super) fn align_and_position_item(
+     // have the container's content box as their containing block in the stacking axis.
      containing_block_size: Size<f32>,
      container_alignment_styles: InBothAbsAxis<AlignItems>,
-     baseline_shim: f32,
+-    baseline_shim: f32,
++    // pyro: the item's baseline shims (physical sides) and, per axis it is baseline-aligned in, whether its
++    // baseline-sharing group aligns to the end (`baseline::resolve_baseline_shims`)
++    baseline: ItemBaselineAlignment,
 +    // pyro: a fixed table's cell, as wide as its columns (`GridItem::width_unfloored`)
 +    width_unfloored: bool,
 +    // pyro: the axes in which the item is a subgrid (`GridItem::subgrid`): it fills its area there
@@ -2361,7 +2382,7 @@ index b84e8751..39818a3f 100644
      let grid_area_size = Size { width: grid_area.right - grid_area.left, height: grid_area.bottom - grid_area.top };
  
      let style = tree.get_grid_child_style(node);
-@@ -109,7 +114,10 @@ pub(super) fn align_and_position_item(
+@@ -109,7 +126,10 @@ pub(super) fn align_and_position_item(
      #[cfg(feature = "content_size")]
      let contain = style.contain();
      let scrollbar_width = style.scrollbar_width();
@@ -2373,7 +2394,7 @@ index b84e8751..39818a3f 100644
      let is_replaced = style.is_replaced();
      // Fall back to the container's justify-items/align-items if unset (`None`), and then resolve
      // writing-mode-relative self-start/self-end keywords against the item's own direction.
-@@ -147,20 +155,31 @@ pub(super) fn align_and_position_item(
+@@ -147,20 +167,31 @@ pub(super) fn align_and_position_item(
      let box_sizing_adjustment =
          if style.box_sizing() == BoxSizing::ContentBox { padding_border_size } else { Size::ZERO };
  
@@ -2410,7 +2431,7 @@ index b84e8751..39818a3f 100644
          .maybe_resolve(containing_block_size, |val, basis| tree.calc(val, basis))
          .maybe_apply_aspect_ratio(aspect_ratio)
          .maybe_add(box_sizing_adjustment);
-@@ -170,6 +189,8 @@ pub(super) fn align_and_position_item(
+@@ -170,6 +201,8 @@ pub(super) fn align_and_position_item(
      // and the then height is calculated from the width according the aspect ratio
      // Replaced elements are not stretched: they are sized as for `start`.
      // See: https://www.w3.org/TR/css-grid-1/#grid-item-sizing
@@ -2419,7 +2440,20 @@ index b84e8751..39818a3f 100644
      let alignment_styles = InBothAbsAxis {
          horizontal: match justify_self.keyword {
              AlignItemsKeyword::Normal => {
-@@ -199,9 +220,15 @@ pub(super) fn align_and_position_item(
+@@ -196,18 +229,74 @@ pub(super) fn align_and_position_item(
+             _ => align_self,
+         },
+     };
++    // pyro: a baseline-aligned item is aligned to its group's side, its shim in the margin there
++    let to_side = |alignment: AlignSelf, is_end: Option<bool>| match is_end {
++        Some(true) => AlignSelf::END,
++        Some(false) => AlignSelf::START,
++        None => alignment,
++    };
++    let alignment_styles = InBothAbsAxis {
++        horizontal: to_side(alignment_styles.horizontal, baseline.end.width),
++        vertical: to_side(alignment_styles.vertical, baseline.end.height),
++    };
  
      // Note: This is not a bug. It is part of the CSS spec that both horizontal and vertical margins
      // resolve against the WIDTH of the grid area.
@@ -2436,10 +2470,19 @@ index b84e8751..39818a3f 100644
  
      drop(style);
  
-@@ -210,6 +237,40 @@ pub(super) fn align_and_position_item(
-         height: (grid_area_size.height.maybe_sub(margin.top).maybe_sub(margin.bottom) - baseline_shim).max(0.0),
-     };
- 
+     let grid_area_minus_item_margins_size = Size {
+-        width: grid_area_size.width.maybe_sub(margin.left).maybe_sub(margin.right).max(0.0),
+-        height: (grid_area_size.height.maybe_sub(margin.top).maybe_sub(margin.bottom) - baseline_shim).max(0.0),
++        width: (grid_area_size.width.maybe_sub(margin.left).maybe_sub(margin.right)
++            - baseline.shim.left
++            - baseline.shim.right)
++            .max(0.0),
++        height: (grid_area_size.height.maybe_sub(margin.top).maybe_sub(margin.bottom)
++            - baseline.shim.top
++            - baseline.shim.bottom)
++            .max(0.0),
++    };
++
 +    // pyro: an item with a preferred aspect ratio and an explicit `stretch` alignment. In an axis
 +    // with an `auto` size, `stretch` fills the grid area whatever the ratio would give that axis
 +    // (both axes stretched: the ratio is not kept); the other axis, if `auto` and not stretched,
@@ -2472,12 +2515,10 @@ index b84e8751..39818a3f 100644
 +            }
 +        }
 +        _ => inherent_size,
-+    };
-+
+     };
+ 
      // A size that is a sizing keyword (min-content, max-content, fit-content,
-     // fit-content(...), stretch) either resolves to an exact size or is resolved
-     // by measuring the item under the corresponding available space constraint
-@@ -375,7 +436,7 @@ pub(super) fn align_and_position_item(
+@@ -375,30 +464,31 @@ pub(super) fn align_and_position_item(
      // Resolve final size
      let Size { width, height } = size.unwrap_or(layout_output.size).maybe_clamp(min_size, max_size);
  
@@ -2486,8 +2527,11 @@ index b84e8751..39818a3f 100644
          Line { start: grid_area.left, end: grid_area.right },
          alignment_styles.horizontal,
          width,
-@@ -385,7 +446,7 @@ pub(super) fn align_and_position_item(
-         0.0,
+         position,
+         inset_horizontal,
+         margin.horizontal_components(),
+-        0.0,
++        Line { start: baseline.shim.left, end: baseline.shim.right },
          direction,
      );
 -    let (y_without_relative_offset, y_margin) = align_item_within_area(
@@ -2495,7 +2539,13 @@ index b84e8751..39818a3f 100644
          Line { start: grid_area.top, end: grid_area.bottom },
          alignment_styles.vertical,
          height,
-@@ -398,7 +459,8 @@ pub(super) fn align_and_position_item(
+         position,
+         inset_vertical,
+         margin.vertical_components(),
+-        baseline_shim,
++        Line { start: baseline.shim.top, end: baseline.shim.bottom },
+         Direction::Ltr,
+     );
      // A relative offset moves the item, but does not affect the container's baseline (which is computed from the
      // returned y position, without the offset)
      let x = x + relative_offset(position, inset_horizontal, direction);
@@ -2505,7 +2555,7 @@ index b84e8751..39818a3f 100644
  
      let scrollbar_size = Size {
          width: if overflow.y == Overflow::Scroll { scrollbar_width } else { 0.0 },
-@@ -415,40 +477,102 @@ pub(super) fn align_and_position_item(
+@@ -415,40 +505,105 @@ pub(super) fn align_and_position_item(
          bubbled_candidates.append(&mut item_candidates);
      }
  
@@ -2541,6 +2591,7 @@ index b84e8751..39818a3f 100644
 +        y_position: y_without_relative_offset,
 +        height,
 +        baseline: child_first_baseline(layout_output.baselines.first, height, overflow.y),
++        last_baseline: child_first_baseline(layout_output.baselines.last, height, overflow.y),
 +        layout,
 +        area: grid_area,
 +        y_offset,
@@ -2568,6 +2619,8 @@ index b84e8751..39818a3f 100644
 +    pub y_position: f32,
 +    pub height: f32,
 +    pub baseline: Option<f32>,
++    /// pyro: its last baseline
++    pub last_baseline: Option<f32>,
 +    /// The layout it was given, and the grid area it was positioned in
 +    pub layout: Layout,
 +    pub area: Rect<f32>,
@@ -2577,7 +2630,9 @@ index b84e8751..39818a3f 100644
 +    /// The container's padding box offset its overflow contribution is measured from
 +    #[cfg(feature = "content_size")]
 +    padding_box_inset: Point<f32>,
-+    #[cfg(feature = "content_size")]
+     #[cfg(feature = "content_size")]
+-    let contribution = {
+-        let contribution_location = Point { x: x - padding_box_inset.left, y: y - padding_box_inset.top };
 +    overflow: Point<Overflow>,
 +    #[cfg(feature = "content_size")]
 +    contain: crate::style::Contain,
@@ -2586,9 +2641,7 @@ index b84e8751..39818a3f 100644
 +}
 +
 +impl PositionedItem {
-     #[cfg(feature = "content_size")]
--    let contribution = {
--        let contribution_location = Point { x: x - padding_box_inset.left, y: y - padding_box_inset.top };
++    #[cfg(feature = "content_size")]
 +    fn compute_contribution(&self) -> Rect<f32> {
          compute_scrollable_overflow_contribution(
 -            contribution_location,
@@ -2636,26 +2689,55 @@ index b84e8751..39818a3f 100644
  }
  
  /// Align and size a grid item along a single axis
-@@ -462,7 +586,7 @@ pub(super) fn align_item_within_area(
+@@ -460,11 +615,14 @@ pub(super) fn align_item_within_area(
+     position: Position,
+     inset: Line<Option<f32>>,
      margin: Line<Option<f32>>,
-     baseline_shim: f32,
+-    baseline_shim: f32,
++    baseline_shim: Line<f32>,
      direction: Direction,
 -) -> (f32, Line<f32>) {
 +) -> (f32, Line<f32>, f32) {
      // Calculate grid area dimension in the axis
-     let non_auto_margin = Line { start: margin.start.unwrap_or(0.0) + baseline_shim, end: margin.end.unwrap_or(0.0) };
+-    let non_auto_margin = Line { start: margin.start.unwrap_or(0.0) + baseline_shim, end: margin.end.unwrap_or(0.0) };
++    let non_auto_margin = Line {
++        start: margin.start.unwrap_or(0.0) + baseline_shim.start,
++        end: margin.end.unwrap_or(0.0) + baseline_shim.end,
++    };
      let grid_area_size = f32_max(grid_area.end - grid_area.start, 0.0);
-@@ -492,7 +616,8 @@ pub(super) fn align_item_within_area(
+     let free_space = f32_max(grid_area_size - resolved_size - non_auto_margin.sum(), 0.0);
+ 
+@@ -472,8 +630,8 @@ pub(super) fn align_item_within_area(
+     let auto_margin_count = margin.start.is_none() as u8 + margin.end.is_none() as u8;
+     let auto_margin_size = if auto_margin_count > 0 { free_space / auto_margin_count as f32 } else { 0.0 };
+     let resolved_margin = Line {
+-        start: margin.start.unwrap_or(auto_margin_size) + baseline_shim,
+-        end: margin.end.unwrap_or(auto_margin_size),
++        start: margin.start.unwrap_or(auto_margin_size) + baseline_shim.start,
++        end: margin.end.unwrap_or(auto_margin_size) + baseline_shim.end,
+     };
+ 
+     let overflows = resolved_size + non_auto_margin.sum() > grid_area_size;
+@@ -481,7 +639,8 @@ pub(super) fn align_item_within_area(
+ 
+     // Compute offset in the axis
+     let alignment_based_offset = match alignment_keyword {
+-        // TODO: Add support for baseline alignment. For now we treat it as "start".
++        // pyro: a baseline-aligned item comes as `start` or `end` (its group's side); these are the
++        // fallbacks of an item that takes no part in baseline alignment.
+         AlignItemsKeyword::Start
+         | AlignItemsKeyword::FlexStart
+         | AlignItemsKeyword::Baseline
+@@ -492,7 +651,7 @@ pub(super) fn align_item_within_area(
                  resolved_margin.start
              }
          }
 -        AlignItemsKeyword::End | AlignItemsKeyword::FlexEnd => {
-+        // pyro: `last baseline` is not aligned in grids yet: its fallback, `end`
 +        AlignItemsKeyword::End | AlignItemsKeyword::FlexEnd | AlignItemsKeyword::LastBaseline => {
              if direction.is_rtl() {
                  resolved_margin.start
              } else {
-@@ -524,7 +649,7 @@ pub(super) fn align_item_within_area(
+@@ -524,7 +683,7 @@ pub(super) fn align_item_within_area(
          alignment_based_offset
      };
  
@@ -2664,6 +2746,176 @@ index b84e8751..39818a3f 100644
  }
  
  /// The offset applied to an item in a single axis by its `inset` if it is `position: relative`
+diff --git a/src/compute/grid/baseline.rs b/src/compute/grid/baseline.rs
+new file mode 100644
+index 00000000..38551144
+--- /dev/null
++++ b/src/compute/grid/baseline.rs
+@@ -0,0 +1,164 @@
++//! pyro: baseline self-alignment of grid items in both axes (css-align-3 §9, css-grid-1 §11.5 step 1).
++//!
++//! Items with `align-self` (block axis) or `justify-self` (inline axis) `baseline` / `last baseline` form
++//! baseline-sharing groups: the items in the same track that align to the same side of it. An item's group
++//! aligns to the start of its track for a first baseline and to the end for a last baseline, the other way
++//! round when the item's block flow runs opposite to the grid's in that axis (`vertical-rl` in `vertical-lr`,
++//! or an orthogonal item whose block-start is the grid's inline-end). Items whose block axis is
++//! perpendicular to the alignment axis, or that have no baseline, get one synthesized from their border box
++//! ([`GridContainerStyle::baseline_synthesis`](crate::GridContainerStyle::baseline_synthesis)).
++//!
++//! Each item gets a shim (an extra margin on its group's side) so that, aligned to that side, the baselines
++//! of its group line up. Shims count in the items' contributions to track sizing; they are computed for an
++//! axis as its tracks are sized (with the other axis' sizes when known), and again with the final sizes
++//! before the items are placed.
++
++use super::types::{GridItem, GridTrack};
++use crate::compute::common::alignment::child_first_baseline;
++use crate::geometry::{AbstractAxis, Line, Size};
++use crate::style::AvailableSpace;
++use crate::tree::{LayoutPartialTree, LayoutPartialTreeExt, SizingMode};
++use crate::util::sys::Vec;
++use crate::util::ResolveOrZero;
++use crate::{AlignItemsKeyword, Direction};
++
++/// The size of the area an item spans in `tracks` (tracks and the gutters between them)
++fn span_size(tracks: &[GridTrack], range: Line<u16>) -> f32 {
++    let (start, end) = (range.start as usize + 1, range.end as usize);
++    if start >= end || end > tracks.len() {
++        return 0.0;
++    }
++    tracks[start..end].iter().map(|track| track.base_size).sum()
++}
++
++/// Compute the baseline shims of the items in `axis`. `columns` and `rows` are the track sizes to lay the
++/// items out with, when known.
++#[allow(clippy::too_many_arguments)]
++pub(super) fn resolve_baseline_shims(
++    tree: &mut impl LayoutPartialTree,
++    axis: AbstractAxis,
++    items: &mut [GridItem],
++    columns: Option<&[GridTrack]>,
++    rows: Option<&[GridTrack]>,
++    inner_node_size: Size<Option<f32>>,
++    synthesis: Size<f32>,
++    direction: Direction,
++) {
++    // (key: whether the group aligns to the end, the line it aligns to; value: the item's distance from
++    // that side of its margin box to its baseline)
++    let mut measured: Vec<(usize, bool, u16, f32)> = Vec::new();
++    for (index, item) in items.iter_mut().enumerate() {
++        match axis {
++            AbstractAxis::Block => {
++                item.baseline_shim = 0.0;
++                item.baseline_shim_block_end = 0.0;
++            }
++            AbstractAxis::Inline => item.baseline_shim_inline = Line { start: 0.0, end: 0.0 },
++        }
++        if !item.participates_in_baseline_alignment_in(axis) {
++            continue;
++        }
++        item.known_dimensions_cache = None;
++        item.min_content_contribution_cache = Size::NONE;
++        item.max_content_contribution_cache = Size::NONE;
++        item.minimum_contribution_cache = Size::NONE;
++
++        let area = Size {
++            width: columns.map(|tracks| span_size(tracks, item.column_indexes)),
++            height: rows.map(|tracks| span_size(tracks, item.row_indexes)),
++        };
++        let margin_basis = area.width.or(inner_node_size.width);
++        let margin = item.margin.resolve_or_zero(margin_basis, |val, basis| tree.calc(val, basis));
++        let known = item.known_dimensions_cached(tree, area);
++        let available = Size {
++            width: area
++                .width
++                .map(|width| {
++                    AvailableSpace::Definite(
++                        (width - margin.left - margin.right - item.baseline_shim_inline.sum()).max(0.0),
++                    )
++                })
++                .unwrap_or(AvailableSpace::MaxContent),
++            height: area
++                .height
++                .map(|height| {
++                    AvailableSpace::Definite(
++                        (height - margin.top - margin.bottom - item.baseline_shim - item.baseline_shim_block_end)
++                            .max(0.0),
++                    )
++                })
++                .unwrap_or(AvailableSpace::MaxContent),
++        };
++        let output = tree.perform_child_layout(item.node, known, area, available, SizingMode::InherentSize, Line::FALSE);
++        let size = known.get(axis).unwrap_or(output.size.get(axis));
++
++        let is_last = match axis {
++            AbstractAxis::Inline => item.justify_self.keyword,
++            AbstractAxis::Block => item.align_self.keyword,
++        } == AlignItemsKeyword::LastBaseline;
++        let (flow, raw, overflow) = match axis {
++            AbstractAxis::Inline => (
++                item.baseline_flow.width,
++                if is_last { output.baselines.orthogonal_last } else { output.baselines.orthogonal_first },
++                item.overflow.x,
++            ),
++            AbstractAxis::Block => (
++                item.baseline_flow.height,
++                {
++                    let (first, last) = output.baselines.dominant();
++                    if is_last {
++                        last
++                    } else {
++                        first
++                    }
++                },
++                item.overflow.y,
++            ),
++        };
++        let raw = flow.and_then(|_| child_first_baseline(raw, size, overflow));
++        // The baseline's distance from the item's border-box start edge in the grid's axis
++        let from_start = match (flow, raw) {
++            (Some(reversed), Some(baseline)) => {
++                if reversed {
++                    size - baseline
++                } else {
++                    baseline
++                }
++            }
++            _ => size * synthesis.get(axis),
++        };
++        let (margin_start, margin_end) = match axis {
++            AbstractAxis::Block => (margin.top, margin.bottom),
++            AbstractAxis::Inline if direction.is_rtl() => (margin.right, margin.left),
++            AbstractAxis::Inline => (margin.left, margin.right),
++        };
++        let is_end = item.baseline_group_is_end(axis);
++        let placement = item.placement_indexes(axis);
++        let (line, distance) =
++            if is_end { (placement.end, margin_end + size - from_start) } else { (placement.start, margin_start + from_start) };
++        measured.push((index, is_end, line, distance));
++    }
++
++    for &(index, is_end, line, distance) in &measured {
++        let group_max = measured
++            .iter()
++            .filter(|other| other.1 == is_end && other.2 == line)
++            .map(|other| other.3)
++            .fold(f32::NEG_INFINITY, f32::max);
++        let shim = group_max - distance;
++        let item = &mut items[index];
++        match axis {
++            AbstractAxis::Block if is_end => item.baseline_shim_block_end = shim,
++            AbstractAxis::Block => item.baseline_shim = shim,
++            AbstractAxis::Inline => {
++                // `baseline_shim_inline` is physical: the logical start is the right side in `rtl`
++                if is_end != direction.is_rtl() {
++                    item.baseline_shim_inline.end = shim;
++                } else {
++                    item.baseline_shim_inline.start = shim;
++                }
++            }
++        }
++        item.known_dimensions_cache = None;
++    }
++}
 diff --git a/src/compute/grid/explicit_grid.rs b/src/compute/grid/explicit_grid.rs
 index 037a2d1c..d0abc8ef 100644
 --- a/src/compute/grid/explicit_grid.rs
@@ -2701,10 +2953,14 @@ index 037a2d1c..d0abc8ef 100644
      tracks.first_mut().unwrap().collapse();
      tracks.last_mut().unwrap().collapse();
 diff --git a/src/compute/grid/mod.rs b/src/compute/grid/mod.rs
-index f0109c6e..2e8d3dc7 100644
+index f0109c6e..825e0e55 100644
 --- a/src/compute/grid/mod.rs
 +++ b/src/compute/grid/mod.rs
-@@ -39,12 +39,18 @@ mod alignment;
+@@ -36,15 +36,22 @@ pub(crate) use types::{GridCoordinate, GridLine, OriginZeroLine, MAX_GRID_TRACKS
+ pub use types::{GridLineNames, GridLineNamesIter};
+ 
+ mod alignment;
++mod baseline;
  mod explicit_grid;
  mod implicit_grid;
  mod placement;
@@ -2724,7 +2980,7 @@ index f0109c6e..2e8d3dc7 100644
  struct GridContainerConstants {
      /// The container's `direction` style
      direction: Direction,
-@@ -225,6 +231,9 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -225,6 +232,9 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
  ) -> LayoutOutput {
      let LayoutInput { known_dimensions, run_mode, .. } = inputs;
  
@@ -2734,7 +2990,7 @@ index f0109c6e..2e8d3dc7 100644
      let style = tree.get_grid_container_style(node);
      let constants = compute_container_constants(tree, &style, inputs);
      let GridContainerConstants {
-@@ -252,6 +261,12 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -252,6 +262,12 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
          mut inner_node_size,
      } = constants;
  
@@ -2747,7 +3003,7 @@ index f0109c6e..2e8d3dc7 100644
      // Note: we avoid accessing the grid rows/columns methods more than once as this can
      // cause an expensive-ish computation
      let grid_template_columns = style.grid_template_columns();
-@@ -302,31 +317,45 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -302,31 +318,45 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
  
      // Compute the number of rows and columns in the explicit grid *template*
      // (explicit tracks from grid_areas are computed separately below)
@@ -2809,7 +3065,7 @@ index f0109c6e..2e8d3dc7 100644
  
      // Build the per-line names of the explicit grid from the name resolver's collected pairs
      let mut detailed_column_line_names = name_resolver.detailed_line_names(AbsoluteAxis::Horizontal);
-@@ -336,105 +365,311 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -336,105 +366,322 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
      // Absolutely positioned children do not take part in grid placement and do not create implicit tracks,
      // so they are excluded here. Each child's style is read and its named lines resolved exactly once; the
      // results drive both the grid size estimate and item placement below.
@@ -2942,7 +3198,39 @@ index f0109c6e..2e8d3dc7 100644
 +        if let Some(context) = &own_subgrid {
 +            subgrid::clamp_placements(&mut placements, context);
 +        }
-+
+ 
+-    // 5. Grid Item Placement
+-    // Match items (children) to a definite grid position (row start/end and column start/end position)
+-    let mut cell_occupancy_matrix = CellOccupancyMatrix::with_track_counts(est_col_counts, est_row_counts);
+-    // `items` is in document order from here on (placement only fills in each item's grid area). The track
+-    // sizing and baseline passes sort references to the items rather than the items themselves.
+-    place_grid_items(&mut cell_occupancy_matrix, &mut items, &placements, style.grid_auto_flow());
+-
+-    // Extract track counts from previous step (auto-placement can expand the number of tracks)
+-    let final_col_counts = *cell_occupancy_matrix.track_counts(AbsoluteAxis::Horizontal);
+-    let final_row_counts = *cell_occupancy_matrix.track_counts(AbsoluteAxis::Vertical);
+-
+-    // 5. Initialize Tracks
+-    // Initialize (explicit and implicit) grid tracks (and gutters)
+-    // This resolves the min and max track sizing functions for all tracks and gutters
+-    let mut columns = GridTrackVec::new();
+-    let mut rows = GridTrackVec::new();
+-    initialize_grid_tracks(
+-        &mut columns,
+-        final_col_counts,
+-        &style,
+-        AbsoluteAxis::Horizontal,
+-        col_auto_repetition_count,
+-        |column_index| cell_occupancy_matrix.column_is_occupied(column_index),
+-    );
+-    initialize_grid_tracks(
+-        &mut rows,
+-        final_row_counts,
+-        &style,
+-        AbsoluteAxis::Vertical,
+-        row_auto_repetition_count,
+-        |row_index| cell_occupancy_matrix.row_is_occupied(row_index),
+-    );
 +        // 4. Implicit Grid: Estimate Track Counts
 +        // 5. Grid Item Placement
 +        // Match items (children) to a definite grid position (row start/end and column start/end position).
@@ -3006,7 +3294,7 @@ index f0109c6e..2e8d3dc7 100644
 +                (area.start.0 as isize) <= index as isize && (index as isize) < area.end.0 as isize
 +            }),
 +        };
-+
+ 
 +        // 5. Initialize Tracks
 +        // Initialize (explicit and implicit) grid tracks (and gutters)
 +        // This resolves the min and max track sizing functions for all tracks and gutters
@@ -3037,40 +3325,8 @@ index f0109c6e..2e8d3dc7 100644
 +                subgrid::subgrid_tracks(&mut rows, axis);
 +            }
 +        }
- 
--    // 5. Grid Item Placement
--    // Match items (children) to a definite grid position (row start/end and column start/end position)
--    let mut cell_occupancy_matrix = CellOccupancyMatrix::with_track_counts(est_col_counts, est_row_counts);
--    // `items` is in document order from here on (placement only fills in each item's grid area). The track
--    // sizing and baseline passes sort references to the items rather than the items themselves.
--    place_grid_items(&mut cell_occupancy_matrix, &mut items, &placements, style.grid_auto_flow());
--
--    // Extract track counts from previous step (auto-placement can expand the number of tracks)
--    let final_col_counts = *cell_occupancy_matrix.track_counts(AbsoluteAxis::Horizontal);
--    let final_row_counts = *cell_occupancy_matrix.track_counts(AbsoluteAxis::Vertical);
--
--    // 5. Initialize Tracks
--    // Initialize (explicit and implicit) grid tracks (and gutters)
--    // This resolves the min and max track sizing functions for all tracks and gutters
--    let mut columns = GridTrackVec::new();
--    let mut rows = GridTrackVec::new();
--    initialize_grid_tracks(
--        &mut columns,
--        final_col_counts,
--        &style,
--        AbsoluteAxis::Horizontal,
--        col_auto_repetition_count,
--        |column_index| cell_occupancy_matrix.column_is_occupied(column_index),
--    );
--    initialize_grid_tracks(
--        &mut rows,
--        final_row_counts,
--        &style,
--        AbsoluteAxis::Vertical,
--        row_auto_repetition_count,
--        |row_index| cell_occupancy_matrix.row_is_occupied(row_index),
--    );
- 
++
++
 +        // 6. Track Sizing
 +
 +        // Convert grid placements in origin-zero coordinates to indexes into the GridTrack (rows and columns) vectors
@@ -3110,6 +3366,7 @@ index f0109c6e..2e8d3dc7 100644
 +        let content_minimum = style.min_size().height.is_auto() && !overflow.x.is_scroll_container() && !overflow.y.is_scroll_container();
 +        (ratio, adjustment, content_minimum)
 +    });
++    let baseline_synthesis = style.baseline_synthesis();
      drop(style);
  
 -    // 6. Track Sizing
@@ -3144,7 +3401,18 @@ index f0109c6e..2e8d3dc7 100644
 +    }
  
      // Determine if the grid has any baseline aligned items
-     let has_baseline_aligned_item = items.iter().any(|item| item.participates_in_baseline_alignment());
+-    let has_baseline_aligned_item = items.iter().any(|item| item.participates_in_baseline_alignment());
++    let has_baseline_aligned_item = !table_rows
++        && items.iter().any(|item| {
++            item.participates_in_baseline_alignment() || item.participates_in_inline_baseline_alignment()
++        });
++    let baseline_params = |other_axis_known: bool| {
++        has_baseline_aligned_item.then_some(track_sizing::BaselineParams {
++            synthesis: baseline_synthesis,
++            direction,
++            other_axis_known,
++        })
++    };
  
      // Run track sizing algorithm for Inline axis
 -    track_sizing_algorithm(
@@ -3182,7 +3450,7 @@ index f0109c6e..2e8d3dc7 100644
 +            |track: &GridTrack, parent_size: Option<f32>, tree: &Tree| {
 +                track.max_track_sizing_function.definite_value(parent_size, |val, basis| tree.calc(val, basis))
 +            },
-+            has_baseline_aligned_item,
++            baseline_params(false),
 +            false,
 +            None,
 +            None,
@@ -3201,7 +3469,7 @@ index f0109c6e..2e8d3dc7 100644
      let initial_column_sum = columns.iter().map(|track| track.base_size).sum::<f32>();
      inner_node_size.width = inner_node_size.width.or_else(|| initial_column_sum.into());
  
-@@ -448,9 +683,28 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -448,9 +695,28 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
          return LayoutOutput::from_outer_size(Size { width, height: 0.0 });
      }
  
@@ -3231,10 +3499,12 @@ index f0109c6e..2e8d3dc7 100644
      track_sizing_algorithm(
          tree,
          AbstractAxis::Block,
-@@ -465,7 +719,13 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -464,8 +730,14 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+         &mut columns,
          &mut items,
          |track: &GridTrack, _, _| Some(track.base_size),
-         false, // TODO: Support baseline alignment in the vertical axis
+-        false, // TODO: Support baseline alignment in the vertical axis
++        baseline_params(true),
 +        table_rows,
 +        replay.as_ref().map(|replay| replay.affected_tracks.as_slice()),
 +        rows_sized.as_mut(),
@@ -3245,7 +3515,7 @@ index f0109c6e..2e8d3dc7 100644
      let initial_row_sum = rows.iter().map(|track| track.base_size).sum::<f32>();
  
      debug_log!("initial_column_sum", dbg:initial_column_sum);
-@@ -475,18 +735,39 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -475,18 +747,39 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
  
      // 6. Compute container size
      let resolved_style_size = known_dimensions.or(preferred_size);
@@ -3291,7 +3561,7 @@ index f0109c6e..2e8d3dc7 100644
      let mut container_content_box = Size {
          width: f32_max(0.0, container_border_box.width - content_box_inset.horizontal_axis_sum()),
          height: f32_max(0.0, container_border_box.height - content_box_inset.vertical_axis_sum()),
-@@ -516,7 +797,20 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -516,7 +809,20 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
      if !rerun_column_sizing {
          // Note: every item must be visited (no short-circuiting) as the closure updates each item's caches
          intrinsic_column_contribution_changed =
@@ -3313,7 +3583,7 @@ index f0109c6e..2e8d3dc7 100644
                  let grid_area_size = item.grid_area_size(
                      AbstractAxis::Inline,
                      &columns,
-@@ -567,6 +861,7 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -567,6 +873,7 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
          });
      }
  
@@ -3321,10 +3591,12 @@ index f0109c6e..2e8d3dc7 100644
      if rerun_column_sizing {
          // Re-run track sizing algorithm for Inline axis
          track_sizing_algorithm(
-@@ -583,14 +878,26 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -582,15 +889,27 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+             &mut rows,
              &mut items,
              |track: &GridTrack, _, _| Some(track.base_size),
-             has_baseline_aligned_item,
+-            has_baseline_aligned_item,
++            baseline_params(true),
 +            false,
 +            None,
 +            None,
@@ -3349,7 +3621,7 @@ index f0109c6e..2e8d3dc7 100644
                      let grid_area_size = item.grid_area_size(
                          AbstractAxis::Block,
                          &rows,
-@@ -617,6 +924,10 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -617,6 +936,10 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
      }
  
      if rerun_row_sizing {
@@ -3360,10 +3632,12 @@ index f0109c6e..2e8d3dc7 100644
          // Re-run track sizing algorithm for Block axis
          track_sizing_algorithm(
              tree,
-@@ -632,7 +943,13 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -631,8 +954,14 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+             &mut columns,
              &mut items,
              |track: &GridTrack, _, _| Some(track.base_size),
-             false, // TODO: Support baseline alignment in the vertical axis
+-            false, // TODO: Support baseline alignment in the vertical axis
++            baseline_params(true),
 +            table_rows,
 +            None,
 +            None,
@@ -3374,7 +3648,7 @@ index f0109c6e..2e8d3dc7 100644
      }
  
      if (intrinsic_column_contribution_changed && !has_percentage_column)
-@@ -661,6 +978,14 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -661,6 +990,14 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
                  f32_max(0.0, container_border_box.height - content_box_inset.vertical_axis_sum());
          }
      }
@@ -3389,7 +3663,7 @@ index f0109c6e..2e8d3dc7 100644
  
      // If only the container's size has been requested
      if run_mode == RunMode::ComputeSize {
-@@ -693,6 +1018,24 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -693,6 +1030,40 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
          false,
      );
  
@@ -3411,10 +3685,26 @@ index f0109c6e..2e8d3dc7 100644
 +    }
 +    items.truncate(own_item_count);
 +
++    // pyro: the baseline shims with the final track sizes (an item's baselines can depend on both)
++    if has_baseline_aligned_item && replay.is_none() {
++        for axis in [AbstractAxis::Inline, AbstractAxis::Block] {
++            baseline::resolve_baseline_shims(
++                tree,
++                axis,
++                &mut items,
++                Some(&columns),
++                Some(&rows),
++                inner_node_size,
++                baseline_synthesis,
++                direction,
++            );
++        }
++    }
++
      // 9. Size, Align, and Position Grid Items
  
      #[cfg_attr(not(feature = "content_size"), allow(unused_mut))]
-@@ -721,6 +1064,13 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -721,6 +1092,13 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
      };
  
      // Position in-flow children (stored in items vector)
@@ -3428,7 +3718,7 @@ index f0109c6e..2e8d3dc7 100644
      for (index, item) in items.iter_mut().enumerate() {
          // Tracks are stored in logical order. In RTL the physical offsets are assigned
          // right-to-left, so an item's physical left edge is derived from its logical end
-@@ -739,25 +1089,81 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -739,25 +1117,97 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
                  columns[item.column_indexes.end as usize].offset
              },
          };
@@ -3462,6 +3752,7 @@ index f0109c6e..2e8d3dc7 100644
 +                item.y_position = old.y_position;
 +                item.height = old.height;
 +                item.baseline = old.baseline;
++                item.last_baseline = old.last_baseline;
 +                continue;
 +            }
 +            Some(Some(moved)) => moved,
@@ -3478,6 +3769,20 @@ index f0109c6e..2e8d3dc7 100644
 +                } else {
 +                    item.baseline_shim
 +                };
++                let baseline = alignment::ItemBaselineAlignment {
++                    shim: Rect {
++                        left: item.baseline_shim_inline.start,
++                        right: item.baseline_shim_inline.end,
++                        top: baseline_shim,
++                        bottom: item.baseline_shim_block_end,
++                    },
++                    end: Size {
++                        width: (has_baseline_aligned_item && item.participates_in_inline_baseline_alignment())
++                            .then(|| item.baseline_group_is_end(AbstractAxis::Inline)),
++                        height: (has_baseline_aligned_item && item.participates_in_baseline_alignment())
++                            .then(|| item.baseline_group_is_end(AbstractAxis::Block)),
++                    },
++                };
 +                align_and_position_item(
 +                    tree,
 +                    item.node,
@@ -3485,7 +3790,7 @@ index f0109c6e..2e8d3dc7 100644
 +                    grid_area,
 +                    Size { width: grid_area.right - grid_area.left, height: grid_area.bottom - grid_area.top },
 +                    container_alignment_styles,
-+                    baseline_shim,
++                    baseline,
 +                    item.width_unfloored,
 +                    item.subgrid,
 +                    direction,
@@ -3520,6 +3825,7 @@ index f0109c6e..2e8d3dc7 100644
 +        item.y_position = placed.y_position;
 +        item.height = placed.height;
 +        item.baseline = placed.baseline;
++        item.last_baseline = placed.last_baseline;
 +        if index < positioned.len() {
 +            positioned[index] = placed;
 +        } else if table_rows {
@@ -3528,7 +3834,7 @@ index f0109c6e..2e8d3dc7 100644
  
          #[cfg(feature = "content_size")]
          {
-@@ -765,6 +1171,24 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -765,6 +1215,24 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
          }
      }
  
@@ -3553,7 +3859,7 @@ index f0109c6e..2e8d3dc7 100644
      // Position hidden and absolutely positioned children, merging in the candidates bubbled out
      // of in-flow children's subtrees (`items` is sorted by `source_order`, i.e. child index)
      let mut order = items.len() as u32;
-@@ -841,7 +1265,7 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -841,7 +1309,7 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
              };
              drop(child_style);
  
@@ -3562,7 +3868,7 @@ index f0109c6e..2e8d3dc7 100644
                  node: child,
                  order,
                  position,
-@@ -869,19 +1293,17 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -869,19 +1337,17 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
      // resolve the grid areas of out-of-flow boxes whose containing block is this grid
      let areas =
          name_resolver.populate_detailed_line_resolvers(&mut detailed_row_line_names, &mut detailed_column_line_names);
@@ -3590,7 +3896,57 @@ index f0109c6e..2e8d3dc7 100644
              items: items.iter().map(DetailedGridItemsInfo::from_grid_item).collect(),
              areas,
          },
-@@ -980,9 +1402,82 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -926,25 +1392,38 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+         return output;
+     }
+ 
+-    // Determine the grid container baseline(s) (currently we only compute the first baseline)
++    // Determine the grid container baselines
+     // Layout containment suppresses the box's baseline for baseline-alignment purposes
+-    let grid_container_baseline: Option<f32> = if contain.suppresses_baseline() {
+-        None
++    let (grid_container_baseline, grid_container_last_baseline) = if contain.suppresses_baseline() {
++        (None, None)
+     } else {
+         // Get the row index of the first row containing items
+         let first_row = items.iter().map(|item| item.row_indexes.start).min().unwrap();
+ 
+         // Check if any items in *this row* participate in baseline alignment
+         // (items with an auto block-axis margin do not participate: https://www.w3.org/TR/css-align-3/#baseline-align-self)
++        let first_group = |item: &GridItem| {
++            item.participates_in_baseline_alignment() && !item.baseline_group_is_end(AbstractAxis::Block)
++        };
+         let mut first_row_items = items.iter().filter(|item| item.row_indexes.start == first_row);
+         let first_item = first_row_items.next().unwrap();
+-        let item = if first_item.participates_in_baseline_alignment() {
++        let item = if first_group(first_item) {
+             first_item
+         } else {
+-            first_row_items.find(|item| item.participates_in_baseline_alignment()).unwrap_or(first_item)
++            first_row_items.find(|item| first_group(item)).unwrap_or(first_item)
+         };
++        let first = item.y_position + item.baseline.unwrap_or(item.height);
+ 
+-        Some(item.y_position + item.baseline.unwrap_or(item.height))
++        // pyro: the last baseline from the last row (css-grid-1 §10.1): its items in a last-baseline group, else
++        // its last item in grid order
++        let last_row = items.iter().map(|item| item.row_indexes.end).max().unwrap();
++        let last_group = |item: &GridItem| {
++            item.participates_in_baseline_alignment() && item.baseline_group_is_end(AbstractAxis::Block)
++        };
++        let last_row_items = || items.iter().filter(|item| item.row_indexes.end == last_row);
++        let item = last_row_items().find(|item| last_group(item)).or_else(|| last_row_items().last()).unwrap();
++        let last = item.y_position + item.last_baseline.unwrap_or(item.height);
++        (Some(first), Some(last))
+     };
+ 
+     // A scroll container's own padding at the end of the content is part of its scrollable
+@@ -976,13 +1455,86 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+     let mut output = LayoutOutput::from_sizes_and_baselines(
+         container_border_box,
+         scrollable_overflow_rect,
+-        Baselines::from_first(grid_container_baseline),
++        Baselines::new(grid_container_baseline, grid_container_last_baseline),
      );
      output.oof_candidates = oof_candidates;
      output.oof_positioning_area = oof_positioning_area;
@@ -3673,7 +4029,7 @@ index f0109c6e..2e8d3dc7 100644
  /// Resolve the static-position rectangle (the grid area determined by the grid-placement
  /// properties) for an out-of-flow child of a positioned grid container.
  ///
-@@ -1298,6 +1793,10 @@ pub struct DetailedGridTracksInfo<S: CheapCloneStr = DefaultCheapStr> {
+@@ -1298,6 +1850,10 @@ pub struct DetailedGridTracksInfo<S: CheapCloneStr = DefaultCheapStr> {
      /// [`DetailedGridTracksInfo::iter_line_names`] for indices relative to the full grid
      /// (including implicit tracks). Empty if the grid has no named lines.
      pub line_names: GridLineNames<S>,
@@ -3684,7 +4040,7 @@ index f0109c6e..2e8d3dc7 100644
  }
  
  impl<S: CheapCloneStr> DetailedGridTracksInfo<S> {
-@@ -1337,6 +1836,7 @@ impl<S: CheapCloneStr> DetailedGridTracksInfo<S> {
+@@ -1337,6 +1893,7 @@ impl<S: CheapCloneStr> DetailedGridTracksInfo<S> {
              collapsed_tracks,
              empty_axis_line,
              line_names,
@@ -3692,7 +4048,7 @@ index f0109c6e..2e8d3dc7 100644
          }
      }
  
-@@ -1380,6 +1880,16 @@ impl<S: CheapCloneStr> DetailedGridTracksInfo<S> {
+@@ -1380,6 +1937,16 @@ impl<S: CheapCloneStr> DetailedGridTracksInfo<S> {
              out.write_char(']')
          }
  
@@ -3709,7 +4065,7 @@ index f0109c6e..2e8d3dc7 100644
          if self.positions.is_empty() {
              return out.write_str("none");
          }
-@@ -1454,3 +1964,131 @@ impl DetailedGridItemsInfo {
+@@ -1454,3 +2021,131 @@ impl DetailedGridItemsInfo {
          }
      }
  }
@@ -5389,7 +5745,7 @@ index 00000000..9a97edf9
 +        })
 +}
 diff --git a/src/compute/grid/track_sizing.rs b/src/compute/grid/track_sizing.rs
-index 18063621..d2625293 100644
+index 18063621..c1da7b39 100644
 --- a/src/compute/grid/track_sizing.rs
 +++ b/src/compute/grid/track_sizing.rs
 @@ -1,12 +1,12 @@
@@ -5425,10 +5781,12 @@ index 18063621..d2625293 100644
          item.crosses_flexible_column =
              item.track_range_excluding_lines(AbstractAxis::Inline).any(|i| columns[i].is_flexible());
          item.crosses_intrinsic_column =
-@@ -269,11 +273,23 @@ pub(super) fn track_sizing_algorithm<Tree: LayoutPartialTree>(
+@@ -268,12 +272,24 @@ pub(super) fn track_sizing_algorithm<Tree: LayoutPartialTree>(
+     other_axis_tracks: &mut [GridTrack],
      items: &mut [GridItem],
      get_track_size_estimate: fn(&GridTrack, Option<f32>, &Tree) -> Option<f32>,
-     has_baseline_aligned_item: bool,
+-    has_baseline_aligned_item: bool,
++    baselines: Option<BaselineParams>,
 +    table_rows: bool,
 +    // pyro: the tracks to size from their items (the others are as their items sized them
 +    // last time: `table_reuse`), and where to keep the tracks as their items sized them.
@@ -5450,7 +5808,32 @@ index 18063621..d2625293 100644
  
      // Resolve fit-content() limits against the container's inner size (these are fixed for the rest of this pass)
      let axis_inner_node_size = inner_node_size.get(axis);
-@@ -290,7 +306,8 @@ pub(super) fn track_sizing_algorithm<Tree: LayoutPartialTree>(
+@@ -282,15 +298,31 @@ pub(super) fn track_sizing_algorithm<Tree: LayoutPartialTree>(
+     }
+ 
+     // 11.5.1 Shim item baselines
+-    if has_baseline_aligned_item {
+-        resolve_item_baselines(tree, axis, items, inner_node_size);
++    // pyro: in the axis being sized, with the other axis' track sizes when they are known
++    if let Some(params) = baselines {
++        let other = params.other_axis_known.then_some(&*other_axis_tracks);
++        let (columns, rows) = match axis {
++            AbstractAxis::Inline => (None, other),
++            AbstractAxis::Block => (other, None),
++        };
++        super::baseline::resolve_baseline_shims(
++            tree,
++            axis,
++            items,
++            columns,
++            rows,
++            inner_node_size,
++            params.synthesis,
++            params.direction,
++        );
+     }
+ 
+     // If all tracks have a fixed min track sizing function and base_size = growth_limit,
      // then the track sizes are already final and we can skip the rest of this function.
      // Note that tracks with an intrinsic min track sizing function can still grow beyond
      // a fixed growth limit (e.g. minmax(auto, 0px)), so they cannot be skipped.
@@ -5460,7 +5843,7 @@ index 18063621..d2625293 100644
          track.base_size == track.growth_limit
              && track
                  .min_track_sizing_function
-@@ -328,7 +345,13 @@ pub(super) fn track_sizing_algorithm<Tree: LayoutPartialTree>(
+@@ -328,7 +360,13 @@ pub(super) fn track_sizing_algorithm<Tree: LayoutPartialTree>(
          available_grid_space.get(axis),
          inner_node_size,
          get_track_size_estimate,
@@ -5474,7 +5857,112 @@ index 18063621..d2625293 100644
  
      // 11.6. Maximise Tracks
      // Distributes free space (if any) to tracks with FINITE growth limits, up to their limits.
-@@ -551,7 +574,21 @@ fn resolve_intrinsic_track_sizes<Tree: LayoutPartialTree>(
+@@ -449,95 +487,15 @@ fn initialize_track_sizes(
+     }
+ }
+ 
+-/// 11.5.1 Shim baseline-aligned items so their intrinsic size contributions reflect their baseline alignment.
+-fn resolve_item_baselines(
+-    tree: &mut impl LayoutPartialTree,
+-    axis: AbstractAxis,
+-    items: &mut [GridItem],
+-    inner_node_size: Size<Option<f32>>,
+-) {
+-    // Sort items by track in the other axis (row) start position so that we can iterate items in groups which
+-    // are in the same track in the other axis (row)
+-    let other_axis = axis.other();
+-    let mut items: Vec<&mut GridItem> = items.iter_mut().collect();
+-    items.sort_by_key(|item| item.placement(other_axis).start);
+-
+-    // Iterate over grid rows
+-    let mut remaining_items = &mut items[0..];
+-    while !remaining_items.is_empty() {
+-        // Get the row index of the current row
+-        let current_row = remaining_items[0].placement(other_axis).start;
+-
+-        // Find the item index of the first item that is in a different row (or None if we've reached the end of the list)
+-        let next_row_first_item =
+-            remaining_items.iter().position(|item| item.placement(other_axis).start != current_row);
+-
+-        // Use this index to split the `remaining_items` slice in two slices:
+-        //    - A `row_items` slice containing the items (that start) in the current row
+-        //    - A new `remaining_items` consisting of the remainder of the `remaining_items` slice
+-        //      that hasn't been split off into `row_items
+-        let row_items = if let Some(index) = next_row_first_item {
+-            let (row_items, tail) = remaining_items.split_at_mut(index);
+-            remaining_items = tail;
+-            row_items
+-        } else {
+-            let row_items = remaining_items;
+-            remaining_items = &mut [];
+-            row_items
+-        };
+-
+-        // Count how many items in *this row* are baseline aligned
+-        // If a row has one or zero items participating in baseline alignment then baseline alignment is a no-op
+-        // for those items and we skip further computations for that row
+-        let row_baseline_item_count = row_items.iter().filter(|item| item.participates_in_baseline_alignment()).count();
+-        if row_baseline_item_count <= 1 {
+-            continue;
+-        }
+-
+-        // Compute the baselines of all items in the row participating in baseline alignment
+-        for item in row_items.iter_mut() {
+-            if !item.participates_in_baseline_alignment() {
+-                continue;
+-            }
+-
+-            let measured_size_and_baselines = tree.perform_child_layout(
+-                item.node,
+-                Size::NONE,
+-                inner_node_size,
+-                Size::MIN_CONTENT,
+-                SizingMode::InherentSize,
+-                Line::FALSE,
+-            );
+-
+-            let height = measured_size_and_baselines.size.height;
+-            let baseline = child_first_baseline(measured_size_and_baselines.baselines.first, height, item.overflow.y)
+-                .unwrap_or(height);
+-
+-            item.baseline = Some(baseline);
+-        }
+-
+-        // Items are aligned by the distance from the top of their margin box to their baseline
+-        let margin_box_baseline = |item: &GridItem| {
+-            item.baseline.unwrap_or(0.0)
+-                + item.margin.top.resolve_or_zero(inner_node_size.width, |val, basis| tree.calc(val, basis))
+-        };
+-
+-        // Compute the max baseline of all items in the row participating in baseline alignment
+-        let row_max_baseline = row_items
+-            .iter()
+-            .filter(|item| item.participates_in_baseline_alignment())
+-            .map(|item| margin_box_baseline(item))
+-            .max_by(|a, b| a.total_cmp(b))
+-            .unwrap();
+-
+-        // Compute the baseline shim for each item in the row participating in baseline alignment
+-        for item in row_items.iter_mut() {
+-            if item.participates_in_baseline_alignment() {
+-                item.baseline_shim = row_max_baseline - margin_box_baseline(item);
+-                item.known_dimensions_cache = None;
+-            }
+-        }
+-    }
++/// pyro: what baseline alignment in track sizing takes from the container (`baseline::resolve_baseline_shims`)
++#[derive(Debug, Clone, Copy)]
++pub(super) struct BaselineParams {
++    /// The container's `baseline_synthesis`
++    pub synthesis: Size<f32>,
++    /// The container's direction
++    pub direction: crate::Direction,
++    /// Whether the other axis' tracks are sized
++    pub other_axis_known: bool,
+ }
+ 
+ /// 11.5 Resolve Intrinsic Track Sizes
+@@ -551,7 +509,21 @@ fn resolve_intrinsic_track_sizes<Tree: LayoutPartialTree>(
      axis_available_grid_space: AvailableSpace,
      inner_node_size: Size<Option<f32>>,
      get_track_size_estimate: impl Fn(&GridTrack, Option<f32>, &Tree) -> Option<f32>,
@@ -5496,7 +5984,7 @@ index 18063621..d2625293 100644
      // Step 1. Shim baseline-aligned items so their intrinsic size contributions reflect their baseline alignment.
  
      // Already done at this point. See resolve_item_baselines function.
-@@ -565,9 +602,15 @@ fn resolve_intrinsic_track_sizes<Tree: LayoutPartialTree>(
+@@ -565,9 +537,15 @@ fn resolve_intrinsic_track_sizes<Tree: LayoutPartialTree>(
      // Items that cross a flexible track are all processed together in a single batch (regardless of their span), so
      // they only need to be moved to the end of the list. And the order in which items within a batch are processed
      // does not affect the result, so the remaining items only need to be sorted if any of them span more than one track.
@@ -5514,7 +6002,7 @@ index 18063621..d2625293 100644
          if item.crosses_flexible_track(axis) {
              partitioned_items.push_back(item);
          } else {
-@@ -601,6 +644,15 @@ fn resolve_intrinsic_track_sizes<Tree: LayoutPartialTree>(
+@@ -601,6 +579,15 @@ fn resolve_intrinsic_track_sizes<Tree: LayoutPartialTree>(
          // 2. Size tracks to fit non-spanning items: For each track with an intrinsic track sizing function and not a flexible sizing function,
          // consider the items in it with a span of 1:
          let batch_span = batch[0].placement(axis).span();
@@ -5530,7 +6018,7 @@ index 18063621..d2625293 100644
          if !is_flex && batch_span == 1 {
              for item in batch.iter_mut() {
                  let track_index = item.placement_indexes(axis).start + 1;
-@@ -998,6 +1050,56 @@ fn resolve_intrinsic_track_sizes<Tree: LayoutPartialTree>(
+@@ -998,6 +985,56 @@ fn resolve_intrinsic_track_sizes<Tree: LayoutPartialTree>(
          .for_each(|track| track.growth_limit = track.base_size);
  }
  
@@ -5587,7 +6075,7 @@ index 18063621..d2625293 100644
  /// The sum of the flex factors of the flexible tracks in an item's spanned track range
  #[inline(always)]
  fn crossed_flex_factor_sum(tracks: &[GridTrack]) -> f32 {
-@@ -1295,7 +1397,7 @@ fn expand_flexible_tracks<Tree: LayoutPartialTree>(
+@@ -1295,7 +1332,7 @@ fn expand_flexible_tracks<Tree: LayoutPartialTree>(
                  // that the item crosses and a space to fill of the item’s max-content contribution.
                  items
                      .iter_mut()
@@ -5596,7 +6084,7 @@ index 18063621..d2625293 100644
                      .map(|item| {
                          let max_content_contribution = item_sizer.max_content_contribution(item, axis_tracks);
                          let tracks = &axis_tracks[item.track_range_excluding_lines(axis)];
-@@ -1334,9 +1436,20 @@ fn expand_flexible_tracks<Tree: LayoutPartialTree>(
+@@ -1334,9 +1371,20 @@ fn expand_flexible_tracks<Tree: LayoutPartialTree>(
  
      // For each flexible track, if the product of the used flex fraction and the track’s flex factor is greater
      // than the track’s base size, set its base size to that product.
@@ -5619,7 +6107,7 @@ index 18063621..d2625293 100644
  }
  
 diff --git a/src/compute/grid/types/grid_item.rs b/src/compute/grid/types/grid_item.rs
-index 6ad11edc..2adce339 100644
+index 6ad11edc..f4819a8f 100644
 --- a/src/compute/grid/types/grid_item.rs
 +++ b/src/compute/grid/types/grid_item.rs
 @@ -21,7 +21,7 @@ pub(in super::super) struct KnownDimensionsCacheEntry {
@@ -5631,10 +6119,25 @@ index 6ad11edc..2adce339 100644
  pub(in super::super) struct GridItem {
      /// The id of the node that this item represents
      pub node: NodeId,
-@@ -69,6 +69,12 @@ pub(in super::super) struct GridItem {
+@@ -66,9 +66,26 @@ pub(in super::super) struct GridItem {
+     /// The item's first baseline (horizontal), measured from the top of its border box. Set from the item's
+     /// intrinsic layout when resolving baseline alignment during track sizing, then from its final layout.
+     pub baseline: Option<f32>,
++    /// pyro: the item's last baseline, from its final layout
++    pub last_baseline: Option<f32>,
      /// Shim for baseline alignment that acts like an extra top margin
-     /// TODO: Support last baseline and vertical text baselines
+-    /// TODO: Support last baseline and vertical text baselines
      pub baseline_shim: f32,
++    /// pyro: shim for `last baseline` alignment (or first baseline of an item whose block flow runs the
++    /// other way) in the block axis: an extra bottom margin
++    pub baseline_shim_block_end: f32,
++    /// pyro: shims for baseline alignment in the inline axis (`justify-self`), as extra margins on the
++    /// physical left (`start`) and right (`end`) sides
++    pub baseline_shim_inline: Line<f32>,
++    /// pyro: per axis (`width`: inline, `height`: block), whether the item's block axis lies along it and its
++    /// block flow then runs the other way from the grid's (`Some(true)`); `None` if it is perpendicular, so
++    /// that the item's baselines in that axis are synthesized (css-align-3 §9.1).
++    pub baseline_flow: Size<Option<bool>>,
 +    /// pyro: a table cell aligned on its row's baseline (`table_baseline`): `baseline_shim` moves its content
 +    /// down inside it rather than acting as a margin.
 +    pub table_baseline: bool,
@@ -5644,7 +6147,7 @@ index 6ad11edc..2adce339 100644
  
      /// The item's definite row-start and row-end (same as `row` field, except in a different coordinate system)
      /// (as indexes into the Vec<GridTrack> stored in a grid's AbstractAxisTracks)
-@@ -98,6 +104,12 @@ pub(in super::super) struct GridItem {
+@@ -98,6 +115,12 @@ pub(in super::super) struct GridItem {
      pub minimum_contribution_cache: Size<Option<f32>>,
      /// Cache for the max-content size
      pub max_content_contribution_cache: Size<Option<f32>>,
@@ -5657,7 +6160,7 @@ index 6ad11edc..2adce339 100644
  
      /// Final y position, excluding any relative offset (which does not affect the container's baseline).
      /// Used to compute baseline alignment for the container.
-@@ -108,6 +120,27 @@ pub(in super::super) struct GridItem {
+@@ -108,6 +131,27 @@ pub(in super::super) struct GridItem {
      /// Out-of-flow candidates bubbled out of this item's subtree (anchors relative to the
      /// container's border box)
      pub oof_candidates: OofCandidates,
@@ -5685,16 +6188,26 @@ index 6ad11edc..2adce339 100644
  }
  
  impl GridItem {
-@@ -140,6 +173,8 @@ impl GridItem {
+@@ -139,7 +183,18 @@ impl GridItem {
+             align_self: style.align_self().unwrap_or(parent_align_items),
              justify_self: style.justify_self().unwrap_or(parent_justify_items),
              baseline: None,
++            last_baseline: None,
              baseline_shim: 0.0,
++            baseline_shim_block_end: 0.0,
++            baseline_shim_inline: Line { start: 0.0, end: 0.0 },
++            baseline_flow: Size {
++                width: (style.subgrid_axis(crate::AbsoluteAxis::Horizontal) == crate::AbsoluteAxis::Vertical)
++                    .then(|| style.subgrid_reversed(crate::AbsoluteAxis::Horizontal)),
++                height: (style.subgrid_axis(crate::AbsoluteAxis::Vertical) == crate::AbsoluteAxis::Vertical)
++                    .then(|| style.subgrid_reversed(crate::AbsoluteAxis::Vertical)),
++            },
 +            table_baseline: false,
 +            width_unfloored: false,
              row_indexes: Line { start: 0, end: 0 }, // Properly initialised later
              column_indexes: Line { start: 0, end: 0 }, // Properly initialised later
              crosses_flexible_row: false,            // Properly initialised later
-@@ -151,9 +186,17 @@ impl GridItem {
+@@ -151,9 +206,17 @@ impl GridItem {
              max_content_contribution_cache: Size::NONE,
              known_dimensions_cache: None,
              minimum_contribution_cache: Size::NONE,
@@ -5712,7 +6225,7 @@ index 6ad11edc..2adce339 100644
          }
      }
  
-@@ -177,7 +220,10 @@ impl GridItem {
+@@ -177,11 +240,44 @@ impl GridItem {
      /// See <https://www.w3.org/TR/css-align-3/#baseline-align-self>
      #[inline(always)]
      pub fn participates_in_baseline_alignment(&self) -> bool {
@@ -5720,11 +6233,54 @@ index 6ad11edc..2adce339 100644
 +        // pyro: a subgrid's items and a subgrid stretched in its rows take no part (yet).
 +        !self.is_virtual
 +            && !self.excluded.height
-+            && self.align_self.keyword == AlignItemsKeyword::Baseline
++            && matches!(self.align_self.keyword, AlignItemsKeyword::Baseline | AlignItemsKeyword::LastBaseline)
              && !self.has_auto_block_margin()
              && !self.has_cyclic_block_size_dependency()
      }
-@@ -312,6 +358,17 @@ impl GridItem {
+ 
++    /// pyro: whether the item takes part in baseline alignment in the inline axis (`justify-self: baseline`)
++    #[inline(always)]
++    pub fn participates_in_inline_baseline_alignment(&self) -> bool {
++        !self.is_virtual
++            && !self.excluded.width
++            && matches!(self.justify_self.keyword, AlignItemsKeyword::Baseline | AlignItemsKeyword::LastBaseline)
++            && !(self.margin.left.is_auto() || self.margin.right.is_auto())
++            && !(self.size.width.0.uses_percentage() && (self.crosses_intrinsic_column || self.crosses_flexible_column))
++    }
++
++    /// pyro: whether the item takes part in baseline alignment in `axis`
++    #[inline(always)]
++    pub fn participates_in_baseline_alignment_in(&self, axis: AbstractAxis) -> bool {
++        match axis {
++            AbstractAxis::Inline => self.participates_in_inline_baseline_alignment(),
++            AbstractAxis::Block => self.participates_in_baseline_alignment(),
++        }
++    }
++
++    /// pyro: whether the item's baseline-sharing group in `axis` aligns to the end of its tracks (css-align-3
++    /// §9.1: `last baseline`, flipped when the item's block flow runs the other way from the grid's)
++    #[inline(always)]
++    pub fn baseline_group_is_end(&self, axis: AbstractAxis) -> bool {
++        let (keyword, reversed) = match axis {
++            AbstractAxis::Inline => (self.justify_self.keyword, self.baseline_flow.width),
++            AbstractAxis::Block => (self.align_self.keyword, self.baseline_flow.height),
++        };
++        (keyword == AlignItemsKeyword::LastBaseline) != reversed.unwrap_or(false)
++    }
++
+     /// This item's placement in the specified axis in OriginZero coordinates
+     pub fn placement(&self, axis: AbstractAxis) -> Line<OriginZeroLine> {
+         match axis {
+@@ -297,7 +393,7 @@ impl GridItem {
+     /// Retrieve the known_dimensions for the given grid area size from the cache or compute them.
+     /// The min-content and max-content contributions of an item are both computed from the same known_dimensions.
+     #[inline(always)]
+-    fn known_dimensions_cached(
++    pub(crate) fn known_dimensions_cached(
+         &mut self,
+         tree: &mut impl LayoutPartialTree,
+         grid_area_size: Size<Option<f32>>,
+@@ -312,6 +408,17 @@ impl GridItem {
          known_dimensions
      }
  
@@ -5742,7 +6298,7 @@ index 6ad11edc..2adce339 100644
      /// Whether the given self-alignment stretches the item: `stretch`, or `normal` unless the item is replaced
      #[inline(always)]
      fn is_stretch_aligned(&self, alignment: AlignSelf) -> bool {
-@@ -349,7 +406,7 @@ impl GridItem {
+@@ -349,7 +456,7 @@ impl GridItem {
              .maybe_resolve(grid_area_size, |val, basis| tree.calc(val, basis))
              .maybe_apply_aspect_ratio(aspect_ratio)
              .maybe_add(box_sizing_adjustment);
@@ -5751,7 +6307,7 @@ index 6ad11edc..2adce339 100644
              .min_size
              .maybe_resolve(grid_area_size, |val, basis| tree.calc(val, basis))
              .maybe_apply_aspect_ratio(aspect_ratio)
-@@ -357,6 +414,10 @@ impl GridItem {
+@@ -357,6 +464,10 @@ impl GridItem {
              // The size of the item is floored by its padding and border
              .or(padding_border_size.map(Some))
              .maybe_max(padding_border_size);
@@ -5762,7 +6318,7 @@ index 6ad11edc..2adce339 100644
          let max_size = self
              .max_size
              .maybe_resolve(grid_area_size, |val, basis| tree.calc(val, basis))
-@@ -479,6 +540,12 @@ impl GridItem {
+@@ -479,6 +590,12 @@ impl GridItem {
                  .sum::<Option<f32>>(),
          );
  
@@ -5775,15 +6331,17 @@ index 6ad11edc..2adce339 100644
          size.set(
              axis.other(),
              other_axis_tracks[self.track_range_excluding_lines(axis.other())]
-@@ -526,11 +593,15 @@ impl GridItem {
+@@ -526,11 +643,18 @@ impl GridItem {
          tree: &impl LayoutPartialTree,
      ) -> Size<f32> {
          Rect {
 -            left: self.margin.left.resolve_or_zero(Some(0.0), |val, basis| tree.calc(val, basis)),
 -            right: self.margin.right.resolve_or_zero(Some(0.0), |val, basis| tree.calc(val, basis)),
 +            left: self.margin.left.resolve_or_zero(Some(0.0), |val, basis| tree.calc(val, basis))
++                + self.baseline_shim_inline.start
 +                + self.extra_margin.left,
 +            right: self.margin.right.resolve_or_zero(Some(0.0), |val, basis| tree.calc(val, basis))
++                + self.baseline_shim_inline.end
 +                + self.extra_margin.right,
              top: self.margin.top.resolve_or_zero(inner_node_width, |val, basis| tree.calc(val, basis))
 -                + self.baseline_shim,
@@ -5791,11 +6349,12 @@ index 6ad11edc..2adce339 100644
 +                + self.baseline_shim
 +                + self.extra_margin.top,
 +            bottom: self.margin.bottom.resolve_or_zero(inner_node_width, |val, basis| tree.calc(val, basis))
++                + self.baseline_shim_block_end
 +                + self.extra_margin.bottom,
          }
          .sum_axes()
      }
-@@ -584,6 +655,7 @@ impl GridItem {
+@@ -584,6 +708,7 @@ impl GridItem {
          self.min_content_contribution_cache.get(axis).unwrap_or_else(|| {
              let size = self.min_content_contribution(axis, tree, grid_area_size, available_space);
              self.min_content_contribution_cache.set(axis, Some(size));
@@ -5803,7 +6362,7 @@ index 6ad11edc..2adce339 100644
              size
          })
      }
-@@ -637,7 +709,8 @@ impl GridItem {
+@@ -637,12 +762,15 @@ impl GridItem {
          if available_space.width.is_none() && available_space.height.is_none() {
              return available_space;
          }
@@ -5811,9 +6370,20 @@ index 6ad11edc..2adce339 100644
 +        let margin = self.margin.resolve_or_zero(grid_area_size.width, |val, basis| tree.calc(val, basis))
 +            + self.extra_margin;
          Size {
-             width: available_space.width.map(|width| f32_max(width - margin.horizontal_axis_sum(), 0.0)),
-             height: available_space
-@@ -689,6 +762,7 @@ impl GridItem {
+-            width: available_space.width.map(|width| f32_max(width - margin.horizontal_axis_sum(), 0.0)),
+-            height: available_space
+-                .height
+-                .map(|height| f32_max(height - margin.vertical_axis_sum() - self.baseline_shim, 0.0)),
++            width: available_space
++                .width
++                .map(|width| f32_max(width - margin.horizontal_axis_sum() - self.baseline_shim_inline.sum(), 0.0)),
++            height: available_space.height.map(|height| {
++                f32_max(height - margin.vertical_axis_sum() - self.baseline_shim - self.baseline_shim_block_end, 0.0)
++            }),
+         }
+     }
+ 
+@@ -689,6 +817,7 @@ impl GridItem {
          self.max_content_contribution_cache.get(axis).unwrap_or_else(|| {
              let size = self.max_content_contribution(axis, tree, grid_area_size, available_space);
              self.max_content_contribution_cache.set(axis, Some(size));
@@ -5821,7 +6391,7 @@ index 6ad11edc..2adce339 100644
              size
          })
      }
-@@ -805,6 +879,22 @@ impl GridItem {
+@@ -805,6 +934,22 @@ impl GridItem {
              })
      }
  
@@ -5844,7 +6414,7 @@ index 6ad11edc..2adce339 100644
      /// Retrieve the item's minimum contribution from the cache or compute it using the provided parameters
      #[inline(always)]
      pub fn minimum_contribution_cached(
-@@ -818,6 +908,9 @@ impl GridItem {
+@@ -818,6 +963,9 @@ impl GridItem {
          self.minimum_contribution_cache.get(axis).unwrap_or_else(|| {
              let size = self.minimum_contribution(tree, axis, axis_tracks, grid_area_size, inner_node_size);
              self.minimum_contribution_cache.set(axis, Some(size));
@@ -6387,7 +6957,7 @@ index bc9488b3..05b0f23e 100644
  
  use crate::geometry::AbsoluteAxis;
 diff --git a/src/style/grid.rs b/src/style/grid.rs
-index a3f746b1..e6708bee 100644
+index a3f746b1..d435261a 100644
 --- a/src/style/grid.rs
 +++ b/src/style/grid.rs
 @@ -215,6 +215,11 @@ pub trait GridContainerStyle: CoreStyle {
@@ -6402,7 +6972,7 @@ index a3f746b1..e6708bee 100644
      /// Controls how items get placed into the grid for auto-placed items
      #[inline(always)]
      fn grid_auto_flow(&self) -> GridAutoFlow {
-@@ -272,6 +277,60 @@ pub trait GridContainerStyle: CoreStyle {
+@@ -272,6 +277,69 @@ pub trait GridContainerStyle: CoreStyle {
              _ => alignment,
          }
      }
@@ -6421,6 +6991,15 @@ index a3f746b1..e6708bee 100644
 +    #[inline(always)]
 +    fn gap_is_normal(&self) -> Size<bool> {
 +        Size { width: false, height: false }
++    }
++
++    /// pyro: where an item without a baseline in an axis has its synthesized one (css-align-3 §9.1), as a
++    /// fraction of its border box from its start edge in that axis (`width`: the inline axis, `height`: the
++    /// block axis): the line-under edge for an alphabetic baseline, the middle for a central one (the grid's
++    /// dominant baseline).
++    #[inline(always)]
++    fn baseline_synthesis(&self) -> Size<f32> {
++        Size { width: 1.0, height: 1.0 }
 +    }
 +}
 +
@@ -6463,7 +7042,7 @@ index a3f746b1..e6708bee 100644
  }
  
  /// The set of styles required for a CSS Grid item (child of a CSS Grid container)
-@@ -308,6 +367,28 @@ pub trait GridItemStyle: CoreStyle {
+@@ -308,6 +376,28 @@ pub trait GridItemStyle: CoreStyle {
              AbsoluteAxis::Vertical => self.grid_row(),
          }
      }
@@ -6608,10 +7187,67 @@ index a9e57f33..0185ea7c 100644
              item_is_compressible_replaced: false,
              box_sizing: Default::default(),
 diff --git a/src/tree/layout.rs b/src/tree/layout.rs
-index e250d742..dd2b4b52 100644
+index e250d742..f9ddda97 100644
 --- a/src/tree/layout.rs
 +++ b/src/tree/layout.rs
-@@ -417,7 +417,11 @@ impl AxisStaticPosition {
+@@ -319,15 +319,54 @@ pub struct Baselines {
+     pub first: Option<f32>,
+     /// The last baseline of the node, if any
+     pub last: Option<f32>,
++    /// pyro: the first and last baselines of a node laid out in a writing mode orthogonal to its parent's
++    /// (`LayoutOutput::transpose`), measured along the parent's inline axis from the node's own block-start
++    /// edge. Only grid baseline alignment in the inline axis (`justify-self: baseline`) reads them.
++    pub orthogonal_first: Option<f32>,
++    /// pyro: see `orthogonal_first`
++    pub orthogonal_last: Option<f32>,
++    /// pyro: the first and last baselines measured from the node's block-start edge in its dominant baseline
++    /// (central for vertical writing modes with upright or mixed text), where they differ from `first`/`last`
++    /// (which a vertical inline layout gives in its lines' own coordinates, alphabetic from the line-over side).
++    /// Only baseline self-alignment in grids reads them.
++    pub dominant_first: Option<f32>,
++    /// pyro: see `dominant_first`
++    pub dominant_last: Option<f32>,
+ }
+ 
+ impl Baselines {
+     /// A `Baselines` with neither a first nor a last baseline
+-    pub const NONE: Self = Self { first: None, last: None };
++    pub const NONE: Self = Self {
++        first: None,
++        last: None,
++        orthogonal_first: None,
++        orthogonal_last: None,
++        dominant_first: None,
++        dominant_last: None,
++    };
+ 
+     /// Create a `Baselines` from just a first baseline
+     pub const fn from_first(first: Option<f32>) -> Self {
+-        Self { first, last: None }
++        Self { first, ..Self::NONE }
++    }
++
++    /// pyro: a first and a last baseline
++    pub const fn new(first: Option<f32>, last: Option<f32>) -> Self {
++        Self { first, last, ..Self::NONE }
++    }
++
++    /// pyro: the baselines as seen from a parent in an orthogonal writing mode
++    pub const fn transpose(self) -> Self {
++        Self {
++            orthogonal_first: if self.dominant_first.is_some() { self.dominant_first } else { self.first },
++            orthogonal_last: if self.dominant_last.is_some() { self.dominant_last } else { self.last },
++            ..Self::NONE
++        }
++    }
++
++    /// pyro: the first and last baselines from the block-start edge in the dominant baseline
++    pub fn dominant(self) -> (Option<f32>, Option<f32>) {
++        (self.dominant_first.or(self.first), self.dominant_last.or(self.last))
+     }
+ }
+ 
+@@ -417,7 +456,11 @@ impl AxisStaticPosition {
          /// aligns the box to. Normal and Stretch (and anything else that is not an end or
          /// center alignment) fall back to start-alignment for static-position purposes.
          fn edge_for(keyword: AlignItemsKeyword, axis_is_rtl: bool) -> AxisStaticEdge {
@@ -6624,7 +7260,7 @@ index e250d742..dd2b4b52 100644
              match keyword {
                  AlignItemsKeyword::Center => AxisStaticEdge::Center,
                  _ if start_position => AxisStaticEdge::Start,
-@@ -456,6 +460,11 @@ pub struct OofCandidate {
+@@ -456,6 +499,11 @@ pub struct OofCandidate {
      pub position: Position,
      /// The static position of the box in each axis
      pub static_position: Point<AxisStaticPosition>,
@@ -6636,7 +7272,7 @@ index e250d742..dd2b4b52 100644
  }
  
  /// A list of [`OofCandidate`]s.
-@@ -541,6 +550,10 @@ impl OofCandidates {
+@@ -541,6 +589,10 @@ impl OofCandidates {
              candidate.static_position.x.area.end += offset.x;
              candidate.static_position.y.area.start += offset.y;
              candidate.static_position.y.area.end += offset.y;
@@ -6647,6 +7283,23 @@ index e250d742..dd2b4b52 100644
          }
      }
  }
+@@ -660,13 +712,14 @@ impl LayoutOutput {
+     /// Swap the horizontal and vertical axes of the output (inverse of [`LayoutInput::transpose`]).
+     ///
+     /// Baselines and collapsible margins are block-axis quantities that have no meaning on the
+-    /// parent's inline axis, so they are dropped. Out-of-flow candidates are unaffected.
++    /// parent's block axis: margins are dropped, baselines kept only as `Baselines::orthogonal_*`.
++    /// Out-of-flow candidates are unaffected.
+     pub fn transpose(self) -> Self {
+         Self {
+             size: self.size.transpose(),
+             #[cfg(feature = "content_size")]
+             scrollable_overflow_rect: self.scrollable_overflow_rect.transpose(),
+-            baselines: Baselines::NONE,
++            baselines: self.baselines.transpose(),
+             top_margin: CollapsibleMarginSet::ZERO,
+             bottom_margin: CollapsibleMarginSet::ZERO,
+             margins_can_collapse_through: false,
 diff --git a/src/tree/traits.rs b/src/tree/traits.rs
 index 7d4adf22..406c9ec9 100644
 --- a/src/tree/traits.rs
