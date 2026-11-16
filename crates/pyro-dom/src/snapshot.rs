@@ -12,9 +12,17 @@
 //!   processing instructions are left out, and so is an `<iframe>`'s `src`
 //!   (frames render as empty boxes); HTML markup leaves out event handler
 //!   (`on*`) attributes, which keyed trees keep (`content: attr(onclick)`);
-//! - a shadow host is serialized with its shadow tree in place of its
-//!   children, each `<slot>` replaced by the light children assigned to it
-//!   (its fallback content when none is): shadow styles become global;
+//! - the tree is the flat tree: a shadow host is serialized with its shadow
+//!   tree in place of its children (marked with the [`STATE_NS`]
+//!   `shadow-host` attribute), and each `<slot>` of a shadow tree with the
+//!   light children assigned to it in place of its own (marked
+//!   `assigned-slot`), else its fallback content. Its styles, `<style>`,
+//!   `<link>` and adopted sheets, stay in the shadow tree, which the renderer
+//!   scopes to it (CSS Scoping);
+//! - an element whose directionality comes from its content (`dir=auto`, a
+//!   `<bdi>`) carries it as a `dir=ltr` or `dir=rtl` token of the
+//!   [`STATE_NS`] `state` attribute: the renderer derives the others' from
+//!   their `dir` attribute and their parent in the DOM;
 //! - one element can be marked with an attribute (the clip target).
 
 use std::borrow::Cow;
@@ -32,6 +40,14 @@ use crate::serialize::{escape, is_void};
 /// the null namespace only), the renderer maps it to pseudo-classes.
 pub const STATE_NS: &str = "urn:x-pyro:state";
 
+/// Name ([`STATE_NS`]) of the attribute a shadow host carries in render
+/// trees: its render children are its shadow tree's.
+pub const SHADOW_HOST_ATTR: &str = "shadow-host";
+/// Name ([`STATE_NS`]) of the attribute a slot of a shadow tree carries in
+/// render trees when nodes are assigned to it: its render children are those
+/// (light children of its host), not its own.
+pub const ASSIGNED_SLOT_ATTR: &str = "assigned-slot";
+
 /// What the caller supplies.
 pub struct RenderHtml<'a> {
     /// Sheet text replacing a `<style>` element's own text (CSSOM edits);
@@ -45,9 +61,8 @@ pub struct RenderHtml<'a> {
     /// The constructed sheets (id and text) a document or shadow root adopts
     /// (`adoptedStyleSheets`), in order; `None` when nothing adopts any.
     /// They render as `<style>` elements after the document element's
-    /// children and after a shadow tree's, each text once: shadow styles are
-    /// global in the render tree, and a sheet shared by many shadow roots
-    /// (a component's) is one sheet to the renderer.
+    /// children and after a shadow tree's, each text once per tree (the
+    /// renderer shares the parsed sheet between trees).
     pub adopted: Option<&'a dyn Fn(NodeId) -> Vec<(u64, std::rc::Rc<str>)>>,
 }
 
@@ -286,19 +301,16 @@ impl Dom {
     }
 
     /// Pushes the `<style>` steps of the sheets `scope` adopts (rendered
-    /// after what `stack` holds above them), but texts already `emitted`.
-    fn push_adopted(
-        &self,
-        stack: &mut Vec<Step>,
-        opts: &RenderHtml<'_>,
-        scope: u32,
-        emitted: &mut rustc_hash::FxHashSet<std::rc::Rc<str>>,
-    ) {
+    /// after what `stack` holds above them), each text once; `emitted` counts
+    /// the adopted sheets rendered so far (their keys).
+    fn push_adopted(&self, stack: &mut Vec<Step>, opts: &RenderHtml<'_>, scope: u32, emitted: &mut usize) {
         let Some(adopted) = opts.adopted else { return };
         let mut sheets = Vec::new();
+        let mut texts = rustc_hash::FxHashSet::default();
         for (_, text) in adopted(self.id_of(scope)) {
-            if !text.is_empty() && emitted.insert(text.clone()) {
-                sheets.push((adopted_key(emitted.len()), text));
+            if !text.is_empty() && texts.insert(text.clone()) {
+                *emitted += 1;
+                sheets.push((adopted_key(*emitted), text));
             }
         }
         for (key, text) in sheets.into_iter().rev() {
@@ -317,8 +329,8 @@ impl Dom {
         let mut hosts: Vec<(u32, Scope)> = Vec::new();
         // Tags of the open elements, for `close`.
         let mut tags: Vec<String> = Vec::new();
-        // Adopted sheet texts rendered so far.
-        let mut emitted = rustc_hash::FxHashSet::default();
+        // Adopted sheets rendered so far.
+        let mut emitted = 0usize;
         let mut stack = Vec::new();
         push_children(&mut stack, roots, NONE);
         while let Some(step) = stack.pop() {
@@ -362,23 +374,27 @@ impl Dom {
                     if e.name.ns == ns!(svg) && local == "script" {
                         continue;
                     }
-                    // A slot in a shadow tree: the host's light children
+                    // A slot in a shadow tree: its children are the host's light children
                     // assigned to it, else its fallback content.
-                    if html && local == "slot" && scope != NONE {
+                    let slot_kids = (html && local == "slot" && scope != NONE).then(|| {
                         let (host, host_scope) = hosts[scope];
                         let name = e.attr("name").unwrap_or("");
                         // Only the slot the root assigns that name to: a second slot of the
                         // name rendered the same children again (two nodes of one key, which
                         // the renderer refuses: no screenshot).
-                        let assigned =
-                            if self.takes_assignment(n, name) { self.slotted(host, name) } else { Vec::new() };
-                        if assigned.is_empty() {
-                            push_children(&mut stack, self.child_idx_iter(n).collect(), scope);
+                        let assigned = if self.assigns_manually(n) {
+                            self.slot_assigned(n)
+                        } else if self.takes_assignment(n, name) {
+                            self.slotted(host, name)
                         } else {
-                            push_children(&mut stack, assigned, host_scope);
+                            Vec::new()
+                        };
+                        if assigned.is_empty() {
+                            (self.child_idx_iter(n).collect(), scope, false)
+                        } else {
+                            (assigned, host_scope, true)
                         }
-                        continue;
-                    }
+                    });
                     let id = self.id_of(n);
                     let is_sheet_link = html
                         && local == "link"
@@ -465,6 +481,17 @@ impl Dom {
                             valueless: false,
                         });
                     }
+                    let marker = |name: &str| RAttr {
+                        name: Cow::Owned(QualName::new(None, STATE_NS.into(), name.into())),
+                        value: Cow::Borrowed(""),
+                        valueless: true,
+                    };
+                    if slot_kids.as_ref().is_some_and(|(_, _, assigned)| *assigned) {
+                        attrs.push(marker(ASSIGNED_SLOT_ATTR));
+                    }
+                    if e.shadow_root != NIL {
+                        attrs.push(marker(SHADOW_HOST_ATTR));
+                    }
                     let tag = self.serialized_tag(n);
                     let void = html && is_void(local);
                     sink.open(render_key(id), &tag, &e.name, &attrs, mark == Some(n), void);
@@ -488,7 +515,9 @@ impl Dom {
                     if html && matches!(local, "iframe" | "frame") {
                         continue;
                     }
-                    if e.shadow_root != NIL {
+                    if let Some((kids, kids_scope, _)) = slot_kids {
+                        push_children(&mut stack, kids, kids_scope);
+                    } else if e.shadow_root != NIL {
                         hosts.push((n, scope));
                         self.push_adopted(&mut stack, opts, e.shadow_root, &mut emitted);
                         push_children(&mut stack, self.child_idx_iter(e.shadow_root).collect(), hosts.len() - 1);
@@ -667,10 +696,12 @@ impl Dom {
             });
         }
         // Validity is not local: a form or fieldset follows its controls,
-        // and a required radio group spans its radios.
+        // and a required radio group spans its radios. The directionality of a
+        // `dir=auto` element (or a `<bdi>`) follows its content.
         let mut dependents = Vec::new();
         for &i in changed.iter().chain(parents.iter()) {
             self.state_dependents(i, &mut dependents);
+            self.auto_dir_ancestors(i, &mut dependents);
         }
         changed.extend(dependents);
         changed.sort_unstable();
@@ -779,12 +810,31 @@ impl Dom {
             || local == "video"
             || (local == "input" && e.attr("type").is_some_and(|t| t.eq_ignore_ascii_case("image")));
         let natural = (e.is_html() && is_image).then(|| self.natural_size(self.id_of(n))).flatten();
-        if !kind && !editable && natural.is_none() {
+        // The directionality of an element whose content decides it (`dir=auto`, `<bdi>`).
+        let auto_dir = self.has_auto_directionality(n).then(|| self.directionality_idx(n));
+        // A custom element not defined yet is not `:defined`.
+        let undefined = e.is_html() && local.contains('-') && e.flags & crate::node::element_flags::CUSTOM_DEFINED == 0;
+        if !kind && !editable && natural.is_none() && auto_dir.is_none() && !undefined {
             return None;
         }
         let mut out = String::new();
+        if undefined {
+            out.push_str("undefined");
+        }
         if let Some((w, h)) = natural {
+            if !out.is_empty() {
+                out.push(' ');
+            }
             out.push_str(&format!("natural={w},{h}"));
+        }
+        if let Some(dir) = auto_dir {
+            if !out.is_empty() {
+                out.push(' ');
+            }
+            out.push_str(match dir {
+                crate::direction::Direction::Ltr => "dir=ltr",
+                crate::direction::Direction::Rtl => "dir=rtl",
+            });
         }
         for (pc, name) in [
             (Valid, "valid"),
@@ -852,6 +902,25 @@ impl Dom {
         }
     }
 
+    /// The inclusive ancestors of `i` whose directionality comes from their
+    /// content ([`Dom::has_auto_directionality`]): a change at `i` can change
+    /// their `dir` state token.
+    fn auto_dir_ancestors(&self, i: u32, out: &mut Vec<u32>) {
+        if !self.slot_live(i) {
+            return;
+        }
+        let mut k = i;
+        while k != NIL {
+            if self.has_auto_directionality(k) {
+                out.push(k);
+            }
+            k = match &self.n(k).kind {
+                NodeKind::Fragment(f) if f.shadow.is_some() => f.host,
+                _ => self.n(k).parent,
+            };
+        }
+    }
+
     /// Whether child `k` appears in the render tree (as itself).
     fn render_child(&self, k: u32) -> bool {
         match &self.n(k).kind {
@@ -883,6 +952,12 @@ impl Dom {
             cur = self.following_in(cur, root);
         }
         false
+    }
+
+    /// Whether `slot`'s shadow root assigns its slots manually (`HTMLSlotElement.assign()`).
+    fn assigns_manually(&self, slot: u32) -> bool {
+        matches!(&self.n(self.root_idx(slot)).kind,
+            NodeKind::Fragment(f) if f.shadow.is_some() && f.flags & crate::node::shadow_flags::MANUAL_SLOTS != 0)
     }
 
     /// Light children of `host` assigned to the slot named `name` (the

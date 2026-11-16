@@ -39,12 +39,14 @@ mod alignment;
 mod explicit_grid;
 mod implicit_grid;
 mod placement;
+mod subgrid;
 mod table_baseline;
 mod table_reuse;
 mod track_sizing;
 mod types;
 mod util;
 
+pub use subgrid::{OwnTracks, SubgridAxisContext, SubgridContext};
 pub use table_reuse::{TableGridReuse, TableGridSplice, TableGridState};
 /// The grid container's resolved box, size constraints, alignment styles and available space,
 /// computed once from the container's style and the layout inputs before the grid is laid out
@@ -259,6 +261,12 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
         mut inner_node_size,
     } = constants;
 
+    // pyro: the tracks this grid takes from its parent grid as a subgrid (css-grid-2 §9), in which
+    // `justify-content`/`align-content` do not apply: the subgrid's grid is aligned with its parent's.
+    let own_subgrid = if table_rows { None } else { subgrid::own_context(tree, node, &style) };
+    let justify_content = if own_subgrid.as_ref().is_some_and(|c| c.columns.is_some()) { AlignContent::START } else { justify_content };
+    let align_content = if own_subgrid.as_ref().is_some_and(|c| c.rows.is_some()) { AlignContent::START } else { align_content };
+
     // Note: we avoid accessing the grid rows/columns methods more than once as this can
     // cause an expensive-ish computation
     let grid_template_columns = style.grid_template_columns();
@@ -309,31 +317,45 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
 
     // Compute the number of rows and columns in the explicit grid *template*
     // (explicit tracks from grid_areas are computed separately below)
-    let (col_auto_repetition_count, grid_template_col_count) = compute_explicit_grid_size_in_axis(
-        &style,
-        auto_fit_container_size.width,
-        auto_repeat_fit_strategy.width,
-        |val, basis| tree.calc(val, basis),
-        AbsoluteAxis::Horizontal,
-    );
-    let (row_auto_repetition_count, grid_template_row_count) = compute_explicit_grid_size_in_axis(
-        &style,
-        auto_fit_container_size.height,
-        auto_repeat_fit_strategy.height,
-        |val, basis| tree.calc(val, basis),
-        AbsoluteAxis::Vertical,
-    );
+    // pyro: a subgridded axis has as many explicit tracks as the subgrid spans in its parent.
+    let subgrid_columns = subgrid::subgrid_track_count(own_subgrid.as_ref(), AbsoluteAxis::Horizontal);
+    let subgrid_rows = subgrid::subgrid_track_count(own_subgrid.as_ref(), AbsoluteAxis::Vertical);
+    let (col_auto_repetition_count, grid_template_col_count) = match subgrid_columns {
+        Some(count) => (0, count),
+        None => compute_explicit_grid_size_in_axis(
+            &style,
+            auto_fit_container_size.width,
+            auto_repeat_fit_strategy.width,
+            |val, basis| tree.calc(val, basis),
+            AbsoluteAxis::Horizontal,
+        ),
+    };
+    let (row_auto_repetition_count, grid_template_row_count) = match subgrid_rows {
+        Some(count) => (0, count),
+        None => compute_explicit_grid_size_in_axis(
+            &style,
+            auto_fit_container_size.height,
+            auto_repeat_fit_strategy.height,
+            |val, basis| tree.calc(val, basis),
+            AbsoluteAxis::Vertical,
+        ),
+    };
 
     // type CustomIdent<'a> = <<Tree as LayoutPartialTree>::CoreContainerStyle<'_> as CoreStyle>::CustomIdent;
     let mut name_resolver = NamedLineResolver::new(&style, col_auto_repetition_count, row_auto_repetition_count);
 
     // Clamp the explicit grid to MAX_GRID_TRACKS tracks in each axis
     // https://www.w3.org/TR/css-grid-1/#overlarge-grids
-    let explicit_col_count = grid_template_col_count.max(name_resolver.area_column_count()).min(MAX_GRID_TRACKS);
-    let explicit_row_count = grid_template_row_count.max(name_resolver.area_row_count()).min(MAX_GRID_TRACKS);
+    let explicit_col_count = subgrid_columns
+        .unwrap_or_else(|| grid_template_col_count.max(name_resolver.area_column_count()).min(MAX_GRID_TRACKS));
+    let explicit_row_count = subgrid_rows
+        .unwrap_or_else(|| grid_template_row_count.max(name_resolver.area_row_count()).min(MAX_GRID_TRACKS));
 
     name_resolver.set_explicit_column_count(explicit_col_count);
     name_resolver.set_explicit_row_count(explicit_row_count);
+    if let Some(context) = &own_subgrid {
+        subgrid::add_subgrid_line_names(&mut name_resolver, &style, context);
+    }
 
     // Build the per-line names of the explicit grid from the name resolver's collected pairs
     let mut detailed_column_line_names = name_resolver.detailed_line_names(AbsoluteAxis::Horizontal);
@@ -415,30 +437,39 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
             if child_style.box_generation_mode() == BoxGenerationMode::None || child_style.position().is_out_of_flow() {
                 continue;
             }
+            let mut child_subgrid = Size { width: false, height: false };
             let tree_area = match tree_extent {
                 Some(_) => Some(
                     tree.resolved_placement(node, child_node)
                         .expect("a tree answering track_counts answers resolved_placement for every in-flow child"),
                 ),
                 None => {
-                    placements.push(InBothAbsAxis {
-                        horizontal: name_resolver
-                            .resolve_column_names(&child_style.grid_column())
-                            .into_origin_zero(explicit_col_count),
-                        vertical: name_resolver
-                            .resolve_row_names(&child_style.grid_row())
-                            .into_origin_zero(explicit_row_count),
-                    });
+                    // pyro: a subgrid child's automatic span is the number of tracks its line names name.
+                    let (placement, subgrid) = subgrid::child_placement(
+                        &*tree,
+                        child_node,
+                        &child_style,
+                        &name_resolver,
+                        Size { width: explicit_col_count, height: explicit_row_count },
+                    );
+                    placements.push(placement);
+                    child_subgrid = subgrid;
                     None
                 }
             };
             let mut item =
                 GridItem::new_with_style_and_order(child_node, child_style, align_items, justify_items, index as u16);
+            item.subgrid = child_subgrid;
             if let Some(area) = tree_area {
                 item.column = area.width.map(|line| OriginZeroLine(line as i16));
                 item.row = area.height.map(|line| OriginZeroLine(line as i16));
             }
             items.push(item);
+        }
+
+        // pyro: a subgrid's items are clamped to its explicit grid in its subgridded axes before auto-placement.
+        if let Some(context) = &own_subgrid {
+            subgrid::clamp_placements(&mut placements, context);
         }
 
         // 4. Implicit Grid: Estimate Track Counts
@@ -474,8 +505,18 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
                 let mut cell_occupancy_matrix = CellOccupancyMatrix::with_track_counts(est_col_counts, est_row_counts);
                 place_grid_items(&mut cell_occupancy_matrix, &mut items, &placements, style.grid_auto_flow());
                 // Extract track counts from previous step (auto-placement can expand the number of tracks)
-                let final_col_counts = *cell_occupancy_matrix.track_counts(AbsoluteAxis::Horizontal);
-                let final_row_counts = *cell_occupancy_matrix.track_counts(AbsoluteAxis::Vertical);
+                let mut final_col_counts = *cell_occupancy_matrix.track_counts(AbsoluteAxis::Horizontal);
+                let mut final_row_counts = *cell_occupancy_matrix.track_counts(AbsoluteAxis::Vertical);
+                // pyro: a subgrid has no implicit tracks in a subgridded axis: its items are clamped to it.
+                if let Some(context) = &own_subgrid {
+                    subgrid::clamp_items(&mut items, context);
+                    if let Some(count) = subgrid_columns {
+                        final_col_counts = TrackCounts::from_raw(0, count, 0);
+                    }
+                    if let Some(count) = subgrid_rows {
+                        final_row_counts = TrackCounts::from_raw(0, count, 0);
+                    }
+                }
                 (final_col_counts, final_row_counts, Some(cell_occupancy_matrix))
             }
         };
@@ -516,6 +557,15 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
             row_auto_repetition_count,
             |row_index| track_has_items(row_index, AbsoluteAxis::Vertical),
         );
+        // pyro: a subgridded axis's tracks are fixed at the sizes the parent gave.
+        if let Some(context) = &own_subgrid {
+            if let Some(axis) = &context.columns {
+                subgrid::subgrid_tracks(&mut columns, axis);
+            }
+            if let Some(axis) = &context.rows {
+                subgrid::subgrid_tracks(&mut rows, axis);
+            }
+        }
 
 
         // 6. Track Sizing
@@ -530,11 +580,52 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
             (items, final_col_counts, final_row_counts, columns, rows)
         }
     };
+    // pyro: the gaps of this grid, for its subgrid children (in a subgridded axis, the gap it was given).
+    let own_gap = {
+        let gap = style.gap();
+        let calc = |val, basis| tree.calc(val, basis);
+        Size {
+            width: own_subgrid
+                .as_ref()
+                .and_then(|c| c.columns.as_ref())
+                .map_or_else(|| gap.width.resolve_or_zero(inner_node_size.width, calc), |c| c.gap),
+            height: own_subgrid
+                .as_ref()
+                .and_then(|c| c.rows.as_ref())
+                .map_or_else(|| gap.height.resolve_or_zero(inner_node_size.height, calc), |c| c.gap),
+        }
+    };
     drop(grid_template_rows);
     drop(grid_template_columns);
     drop(grid_auto_rows);
     drop(grid_auto_columns);
+    // pyro: a preferred aspect ratio (between content boxes for `box-sizing: content-box`), and whether the
+    // automatic minimum height applies (`min-height: auto`, no scroll container): for an `auto` height
+    let aspect_ratio = style.aspect_ratio().map(|ratio| {
+        let adjustment = if style.box_sizing() == BoxSizing::ContentBox { padding_border_size } else { Size::ZERO };
+        let overflow = style.overflow();
+        let content_minimum = style.min_size().height.is_auto() && !overflow.x.is_scroll_container() && !overflow.y.is_scroll_container();
+        (ratio, adjustment, content_minimum)
+    });
     drop(style);
+
+    // pyro: subgrid children (css-grid-2 §9): their contexts, and their items to size this grid's tracks
+    // in their place (appended to `items` until the tracks are sized).
+    let own_item_count = items.len();
+    let subgrid_parent = subgrid::SubgridParent {
+        names: &name_resolver,
+        gap: own_gap,
+        direction,
+        percent_basis: inner_node_size.width,
+    };
+    let has_subgrid_items = !table_rows && replay.is_none() && items.iter().any(|item| item.subgrid.width || item.subgrid.height);
+    if !table_rows && replay.is_none() {
+        subgrid::prepare_subgrid_items(tree, &mut items, &subgrid_parent);
+        if items.len() > own_item_count {
+            resolve_item_track_indexes(&mut items[own_item_count..], final_col_counts, final_row_counts);
+            determine_if_item_crosses_flexible_or_intrinsic_tracks(&mut items[own_item_count..], &columns, &rows, None);
+        }
+    }
 
     // pyro: a fixed table's cells are as wide as their columns.
     if table_rows && tree.table_cells_narrower_than_padding(node) {
@@ -569,6 +660,16 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
             None,
         );
     }
+    if has_subgrid_items {
+        subgrid::update_subgrid_track_sizes(tree, &items[..own_item_count], AbsoluteAxis::Horizontal, &columns, false, &subgrid_parent);
+    }
+    // pyro: a subgrid in its rows only keeps its columns for its parent's row sizing.
+    let records_own_columns = own_subgrid.as_ref().is_some_and(|c| c.rows.is_some() && c.columns.is_none());
+    if records_own_columns {
+        if let Some(width) = inner_node_size.width {
+            subgrid::record_own_columns(tree, node, &columns, width);
+        }
+    }
     let initial_column_sum = columns.iter().map(|track| track.base_size).sum::<f32>();
     inner_node_size.width = inner_node_size.width.or_else(|| initial_column_sum.into());
 
@@ -598,6 +699,10 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
         table_baseline::resolve_table_cell_baselines(tree, node, &mut items, &rows, &columns, inner_node_size);
     }
 
+    // pyro: the widths of the items of subgrids in their rows only, in their own columns.
+    if has_subgrid_items {
+        subgrid::resolve_standalone_widths(tree, &mut items, own_item_count, &columns, &subgrid_parent);
+    }
     // (A table laid out again sizes the rows of the items that changed from their items.)
     let mut rows_sized = table_rows.then(GridTrackVec::new);
     track_sizing_algorithm(
@@ -618,6 +723,9 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
         replay.as_ref().map(|replay| replay.affected_tracks.as_slice()),
         rows_sized.as_mut(),
     );
+    if has_subgrid_items {
+        subgrid::update_subgrid_track_sizes(tree, &items[..own_item_count], AbsoluteAxis::Vertical, &rows, false, &subgrid_parent);
+    }
     let initial_row_sum = rows.iter().map(|track| track.base_size).sum::<f32>();
 
     debug_log!("initial_column_sum", dbg:initial_column_sum);
@@ -627,18 +735,39 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
 
     // 6. Compute container size
     let resolved_style_size = known_dimensions.or(preferred_size);
+    let width = resolved_style_size
+        .get(AbstractAxis::Inline)
+        .unwrap_or_else(|| initial_column_sum + content_box_inset.horizontal_axis_sum())
+        .maybe_clamp(min_size.width, max_size.width)
+        .max(padding_border_size.width);
+    // pyro: an `auto` height with a preferred aspect ratio is the width's through it (css-sizing-4 §5.1), at
+    // least the rows' (its automatic minimum size) unless `min-height` is set or it is a scroll container
+    let rows_height = initial_row_sum + content_box_inset.vertical_axis_sum();
+    let auto_height = match aspect_ratio {
+        Some((ratio, adjustment, content_minimum)) => {
+            let height = (width - adjustment.width).max(0.0) / ratio + adjustment.height;
+            if content_minimum {
+                height.max(rows_height)
+            } else {
+                height
+            }
+        }
+        None => rows_height,
+    };
     let mut container_border_box = Size {
-        width: resolved_style_size
-            .get(AbstractAxis::Inline)
-            .unwrap_or_else(|| initial_column_sum + content_box_inset.horizontal_axis_sum())
-            .maybe_clamp(min_size.width, max_size.width)
-            .max(padding_border_size.width),
+        width,
         height: resolved_style_size
             .get(AbstractAxis::Block)
-            .unwrap_or_else(|| initial_row_sum + content_box_inset.vertical_axis_sum())
+            .unwrap_or(auto_height)
             .maybe_clamp(min_size.height, max_size.height)
             .max(padding_border_size.height),
     };
+    // pyro: a table's height is a minimum (CSS 2.1 §17.5.3): rows taller than it (a `height`, or a
+    // height its flex or grid parent gave it) make the table taller.
+    if table_rows {
+        container_border_box.height =
+            container_border_box.height.max(initial_row_sum + content_box_inset.vertical_axis_sum());
+    }
     let mut container_content_box = Size {
         width: f32_max(0.0, container_border_box.width - content_box_inset.horizontal_axis_sum()),
         height: f32_max(0.0, container_border_box.height - content_box_inset.vertical_axis_sum()),
@@ -668,7 +797,7 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
     if !rerun_column_sizing {
         // Note: every item must be visited (no short-circuiting) as the closure updates each item's caches
         intrinsic_column_contribution_changed =
-            items.iter_mut().filter(|item| item.crosses_intrinsic_column).fold(false, |any_changed, item| {
+            items.iter_mut().filter(|item| item.crosses_intrinsic_column && !item.excluded.width).fold(false, |any_changed, item| {
                 // pyro: the first column pass read nothing of this item that depends on its content or
                 // grid area (an `fr` column it does not size, with `min-width: 0` say), so the columns cannot
                 // change with it and measuring it here would only force a re-run on the empty cache. A definite
@@ -753,13 +882,22 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
             None,
             None,
         );
+        if has_subgrid_items {
+            subgrid::update_subgrid_track_sizes(tree, &items[..own_item_count], AbsoluteAxis::Horizontal, &columns, false, &subgrid_parent);
+            subgrid::resolve_standalone_widths(tree, &mut items, own_item_count, &columns, &subgrid_parent);
+        }
+        if records_own_columns {
+            if let Some(width) = inner_node_size.width {
+                subgrid::record_own_columns(tree, node, &columns, width);
+            }
+        }
 
         // The column widths may have changed, so the items' intrinsic height contributions need to be recomputed
         // (unless row sizing is being re-run anyway, in which case the caches have already been cleared).
         if !rerun_row_sizing {
             // Note: every item must be visited (no short-circuiting) as the closure updates each item's caches
             intrinsic_row_contribution_changed =
-                items.iter_mut().filter(|item| item.crosses_intrinsic_row).fold(false, |any_changed, item| {
+                items.iter_mut().filter(|item| item.crosses_intrinsic_row && !item.excluded.height).fold(false, |any_changed, item| {
                     let grid_area_size = item.grid_area_size(
                         AbstractAxis::Block,
                         &rows,
@@ -809,6 +947,9 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
             None,
             None,
         );
+        if has_subgrid_items {
+            subgrid::update_subgrid_track_sizes(tree, &items[..own_item_count], AbsoluteAxis::Vertical, &rows, false, &subgrid_parent);
+        }
     }
 
     if (intrinsic_column_contribution_changed && !has_percentage_column)
@@ -835,6 +976,14 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
                 .max(padding_border_size.height);
             container_content_box.height =
                 f32_max(0.0, container_border_box.height - content_box_inset.vertical_axis_sum());
+        }
+    }
+    // pyro: as above, after rows sized again
+    if table_rows {
+        let rows = rows.iter().map(|track| track.base_size).sum::<f32>() + content_box_inset.vertical_axis_sum();
+        if container_border_box.height < rows {
+            container_border_box.height = rows;
+            container_content_box.height = f32_max(0.0, rows - content_box_inset.vertical_axis_sum());
         }
     }
 
@@ -868,6 +1017,24 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
         align_content,
         false,
     );
+
+    // pyro: a subgrid's tracks where its parent's lines put them (a track can end before it starts).
+    if let Some(context) = &own_subgrid {
+        if let Some(axis) = &context.columns {
+            let content_left = border.left + padding.left + if direction.is_rtl() { scrollbar_gutter.x } else { 0.0 };
+            subgrid::place_subgrid_tracks(&mut columns, axis, content_left, container_content_box.width, direction.is_rtl());
+        }
+        if let Some(axis) = &context.rows {
+            subgrid::place_subgrid_tracks(&mut rows, axis, border.top + padding.top, container_content_box.height, false);
+        }
+    }
+
+    // pyro: the subgrids' tracks as the aligned tracks place them; the subgrids' items are theirs to lay out.
+    if has_subgrid_items {
+        subgrid::update_subgrid_track_sizes(tree, &items[..own_item_count], AbsoluteAxis::Horizontal, &columns, true, &subgrid_parent);
+        subgrid::update_subgrid_track_sizes(tree, &items[..own_item_count], AbsoluteAxis::Vertical, &rows, true, &subgrid_parent);
+    }
+    items.truncate(own_item_count);
 
     // 9. Size, Align, and Position Grid Items
 
@@ -977,6 +1144,7 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
                     container_alignment_styles,
                     baseline_shim,
                     item.width_unfloored,
+                    item.subgrid,
                     direction,
                     #[cfg(feature = "content_size")]
                     padding_box_inset,
@@ -1125,19 +1293,17 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
     // resolve the grid areas of out-of-flow boxes whose containing block is this grid
     let areas =
         name_resolver.populate_detailed_line_resolvers(&mut detailed_row_line_names, &mut detailed_column_line_names);
+    let mut detailed_rows =
+        DetailedGridTracksInfo::from_grid_tracks_and_track_count(final_row_counts, rows, detailed_row_line_names);
+    let mut detailed_columns =
+        DetailedGridTracksInfo::from_grid_tracks_and_track_count(final_col_counts, columns, detailed_column_line_names);
+    detailed_rows.subgrid = subgrid_rows.is_some();
+    detailed_columns.subgrid = subgrid_columns.is_some();
     tree.set_detailed_grid_info(
         node,
         DetailedGridInfo {
-            rows: DetailedGridTracksInfo::from_grid_tracks_and_track_count(
-                final_row_counts,
-                rows,
-                detailed_row_line_names,
-            ),
-            columns: DetailedGridTracksInfo::from_grid_tracks_and_track_count(
-                final_col_counts,
-                columns,
-                detailed_column_line_names,
-            ),
+            rows: detailed_rows,
+            columns: detailed_columns,
             items: items.iter().map(DetailedGridItemsInfo::from_grid_item).collect(),
             areas,
         },
@@ -1627,6 +1793,10 @@ pub struct DetailedGridTracksInfo<S: CheapCloneStr = DefaultCheapStr> {
     /// [`DetailedGridTracksInfo::iter_line_names`] for indices relative to the full grid
     /// (including implicit tracks). Empty if the grid has no named lines.
     pub line_names: GridLineNames<S>,
+
+    /// pyro: the axis is a subgrid's subgridded axis: its resolved `grid-template-*` is `subgrid` with the
+    /// names of each of its lines (css-grid-2 §7.2.6.2)
+    pub subgrid: bool,
 }
 
 impl<S: CheapCloneStr> DetailedGridTracksInfo<S> {
@@ -1666,6 +1836,7 @@ impl<S: CheapCloneStr> DetailedGridTracksInfo<S> {
             collapsed_tracks,
             empty_axis_line,
             line_names,
+            subgrid: false,
         }
     }
 
@@ -1707,6 +1878,16 @@ impl<S: CheapCloneStr> DetailedGridTracksInfo<S> {
                 out.write_str(name.as_ref())?;
             }
             out.write_char(']')
+        }
+
+        // pyro: `subgrid` and the subgrid's own names of each of its lines, the empty ones included
+        if self.subgrid {
+            out.write_str("subgrid")?;
+            for line in 0..=self.explicit_tracks as usize {
+                out.write_char(' ')?;
+                write_line_names(out, self.line_names.line(line))?;
+            }
+            return Ok(());
         }
 
         if self.positions.is_empty() {

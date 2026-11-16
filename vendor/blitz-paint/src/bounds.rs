@@ -155,6 +155,124 @@ fn union(a: Option<Rect>, b: Option<Rect>) -> Option<Rect> {
     }
 }
 
+/// pyro: whether a clip layer of `clip`, drawn with `transform` into device pixels, would leave
+/// every device pixel of `ink` (a rectangle in device pixels) as it is: each pixel the rectangle
+/// touches lies wholly inside the clip, where its coverage is full. The clip must be one contour
+/// of straight edges along its bounding box with curves in the corners between them (a rectangle
+/// or a rounded rectangle, as overflow clips are), and `transform` may only scale and translate;
+/// otherwise this answers `false`. A pixel inside the box's whole pixels and off every corner's
+/// curves is covered in whole. A coverage within 1/1024 of full or empty rounds to it in 8 bits,
+/// so an edge that close to a pixel boundary counts as on it.
+pub(crate) fn clip_covers_pixels(clip: &kurbo::BezPath, transform: kurbo::Affine, ink: Rect) -> bool {
+    use kurbo::{PathEl, Point};
+    const EPS: f64 = 1.0 / 1024.0;
+    let [a, b, c, d, e, f] = transform.as_coeffs();
+    if b.abs() > 1e-12 || c.abs() > 1e-12 || !ink.is_finite() || !transform.is_finite() {
+        return false;
+    }
+    let map = |p: Point| Point::new(a * p.x + e, d * p.y + f);
+    // The contour's segments in device pixels: each from the point before it, with its points
+    // (a curve's control points and end point; a line's end point).
+    let mut start: Option<Point> = None;
+    let mut at = Point::ZERO;
+    let mut segments: Vec<(Point, [Point; 3], usize)> = Vec::with_capacity(16);
+    for element in clip.elements() {
+        match *element {
+            PathEl::MoveTo(p) => {
+                if start.is_some() {
+                    return false;
+                }
+                start = Some(map(p));
+                at = map(p);
+            }
+            PathEl::LineTo(p) => {
+                let p = map(p);
+                segments.push((at, [p, p, p], 1));
+                at = p;
+            }
+            PathEl::QuadTo(p1, p2) => {
+                let (p1, p2) = (map(p1), map(p2));
+                segments.push((at, [p1, p2, p2], 2));
+                at = p2;
+            }
+            PathEl::CurveTo(p1, p2, p3) => {
+                let (p1, p2, p3) = (map(p1), map(p2), map(p3));
+                segments.push((at, [p1, p2, p3], 3));
+                at = p3;
+            }
+            PathEl::ClosePath => {}
+        }
+    }
+    let Some(start) = start else { return false };
+    // The fill closes the contour with a line back to its start.
+    if at != start {
+        segments.push((at, [start, start, start], 1));
+    }
+    let mut bbox = Rect::from_points(start, start);
+    let mut twice_area = 0.0;
+    for (from, points, n) in &segments {
+        for p in &points[..*n] {
+            bbox = bbox.union_pt(*p);
+        }
+        let to = points[n - 1];
+        twice_area += from.x * to.y - to.x * from.y;
+    }
+    // Straight edges lie on the box; each run of curves between them is a corner, which can cut
+    // into nothing outside its own box.
+    let near = |u: f64, v: f64| (u - v).abs() <= EPS;
+    let mut corners: Vec<Rect> = Vec::new();
+    let mut corner: Option<Rect> = None;
+    for (from, points, n) in &segments {
+        if *n == 1 {
+            if let Some(done) = corner.take() {
+                corners.push(done);
+            }
+            let to = points[0];
+            let on_box = if near(from.x, to.x) {
+                near(from.x, bbox.x0) || near(from.x, bbox.x1)
+            } else if near(from.y, to.y) {
+                near(from.y, bbox.y0) || near(from.y, bbox.y1)
+            } else {
+                false
+            };
+            if !on_box {
+                return false;
+            }
+        } else {
+            let mut piece = Rect::from_points(*from, *from);
+            for p in &points[..*n] {
+                piece = piece.union_pt(*p);
+            }
+            corner = Some(corner.map_or(piece, |c| c.union(piece)));
+        }
+    }
+    if let Some(done) = corner {
+        // (A run of curves at the end continues the one the contour starts with.)
+        match segments.first() {
+            Some((_, _, n)) if *n > 1 && !corners.is_empty() => corners[0] = corners[0].union(done),
+            _ => corners.push(done),
+        }
+    }
+    // The contour goes round the box once: its polygon holds at least the box less the corners
+    // (a degenerate one doubling back on itself holds nothing).
+    let corner_area: f64 = corners.iter().map(|c| c.area()).sum();
+    if twice_area.abs() * 0.5 < bbox.area() - corner_area - EPS {
+        return false;
+    }
+    // The pixels inside the box, and those the ink touches.
+    let inside = Rect::new((bbox.x0 - EPS).ceil(), (bbox.y0 - EPS).ceil(), (bbox.x1 + EPS).floor(), (bbox.y1 + EPS).floor());
+    let touched = Rect::new((ink.x0 + EPS).floor(), (ink.y0 + EPS).floor(), (ink.x1 - EPS).ceil(), (ink.y1 - EPS).ceil());
+    if touched.x0 >= touched.x1 || touched.y0 >= touched.y1 {
+        return true;
+    }
+    if touched.x0 < inside.x0 || touched.y0 < inside.y0 || touched.x1 > inside.x1 || touched.y1 > inside.y1 {
+        return false;
+    }
+    !corners.iter().any(|c| {
+        touched.x0 < c.x1 - EPS && touched.x1 > c.x0 + EPS && touched.y0 < c.y1 - EPS && touched.y1 > c.y0 + EPS
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -216,6 +334,46 @@ mod tests {
         assert_eq!(layer(FilterEffect::ColorMatrix(adds_alpha), false), Some(clip));
         assert_eq!(layer(FilterEffect::ColorMatrix(ColorMatrix::opacity(0.5)), false), None);
         assert_eq!(layer(FilterEffect::blur(2.0), true), Some(Rect::new(-6.0, -6.0, 16.0, 16.0)));
+    }
+
+    /// A clip covers the whole pixels inside its box and off its corners' curves: an edge between
+    /// pixels covers the pixel it cuts only in part, in device pixels after the transform.
+    #[test]
+    fn a_clip_covers_whole_pixels_off_its_curves() {
+        use kurbo::{BezPath, RoundedRect};
+        let id = Affine::IDENTITY;
+        let rect = Rect::new(10.0, 20.0, 110.0, 70.0).to_path(0.1);
+        assert!(clip_covers_pixels(&rect, id, Rect::new(30.0, 30.0, 60.0, 50.0)));
+        assert!(clip_covers_pixels(&rect, id, Rect::new(10.0, 20.0, 110.0, 70.0)), "flush with whole pixels");
+        assert!(!clip_covers_pixels(&rect, id, Rect::new(9.5, 30.0, 60.0, 50.0)));
+        assert!(clip_covers_pixels(&rect, id, Rect::new(30.0, 30.0, 30.0, 50.0)), "nothing");
+        let half = Rect::new(10.5, 20.0, 110.0, 70.0).to_path(0.1);
+        assert!(!clip_covers_pixels(&half, id, Rect::new(10.5, 30.0, 60.0, 50.0)), "the cut pixel");
+        assert!(clip_covers_pixels(&half, id, Rect::new(11.0, 30.0, 60.0, 50.0)));
+        // At 3x the edge is at 31.5 device px.
+        let three = Affine::scale(3.0);
+        assert!(!clip_covers_pixels(&half, three, Rect::new(31.5, 90.0, 150.0, 150.0)));
+        assert!(clip_covers_pixels(&half, three, Rect::new(32.0, 60.0, 330.0, 210.0)));
+        let rounded = RoundedRect::new(10.0, 20.0, 110.0, 70.0, 8.0).to_path(0.1);
+        assert!(clip_covers_pixels(&rounded, id, Rect::new(10.0, 28.0, 110.0, 62.0)), "between the corners");
+        assert!(clip_covers_pixels(&rounded, id, Rect::new(18.0, 20.0, 102.0, 70.0)));
+        assert!(!clip_covers_pixels(&rounded, id, Rect::new(12.0, 22.0, 30.0, 40.0)), "in a corner");
+        assert!(!clip_covers_pixels(&rounded, id, Rect::new(100.0, 60.0, 109.0, 69.0)));
+        // A rotated clip, or one that is no rounded rectangle, is not told.
+        assert!(!clip_covers_pixels(&rect, Affine::rotate(0.1), Rect::new(30.0, 30.0, 40.0, 40.0)));
+        let mut triangle = BezPath::new();
+        triangle.move_to((0.0, 0.0));
+        triangle.line_to((100.0, 0.0));
+        triangle.line_to((0.0, 100.0));
+        triangle.close_path();
+        assert!(!clip_covers_pixels(&triangle, id, Rect::new(1.0, 1.0, 2.0, 2.0)));
+        let mut doubled_back = BezPath::new();
+        doubled_back.move_to((0.0, 0.0));
+        doubled_back.line_to((100.0, 0.0));
+        doubled_back.line_to((0.0, 0.0));
+        doubled_back.line_to((0.0, 100.0));
+        doubled_back.close_path();
+        assert!(!clip_covers_pixels(&doubled_back, id, Rect::new(10.0, 10.0, 20.0, 20.0)));
     }
 
     #[test]

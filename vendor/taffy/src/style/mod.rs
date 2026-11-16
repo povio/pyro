@@ -41,7 +41,7 @@ pub use self::grid::{
 #[cfg(feature = "grid")]
 pub(crate) use self::grid::{GridAreaAxis, GridAreaEnd};
 #[cfg(feature = "grid")]
-pub use self::grid::{GridTemplateArea, GridTemplateAreas, NamedGridLine, TemplateLineNames};
+pub use self::grid::{GridTemplateArea, GridTemplateAreas, NamedGridLine, SubgridLineNames, TemplateLineNames};
 #[cfg(feature = "grid")]
 pub(crate) use self::grid::{NonNamedGridPlacement, OriginZeroGridPlacement};
 
@@ -181,6 +181,13 @@ pub trait CoreStyle {
     fn aspect_ratio(&self) -> Option<f32> {
         Style::<Self::CustomIdent>::DEFAULT.aspect_ratio
     }
+    /// pyro: the natural aspect ratio of a replaced element whose `aspect-ratio` is `auto` (its
+    /// preferred aspect ratio, css-sizing-4 §5.1), width over height in the layout's axes. Read by
+    /// the flex algorithm only: elsewhere the element's measure function applies it.
+    #[inline(always)]
+    fn natural_aspect_ratio(&self) -> Option<f32> {
+        None
+    }
     /// pyro: whether the preferred aspect ratio is that of the content box whatever `box-sizing`
     /// says: `aspect-ratio: auto <ratio>` on a non-replaced box (css-sizing-4 §5.1).
     #[inline(always)]
@@ -232,6 +239,19 @@ pub trait OofItemStyle: CoreStyle {
     #[inline(always)]
     fn is_table(&self) -> bool {
         false
+    }
+    /// pyro: `min-width`/`min-height` when they are sizing keywords (`min-content`,
+    /// `max-content`, `fit-content`, `fit-content(...)`, `stretch`), which
+    /// [`CoreStyle::min_size`] cannot say (it says `auto` then); `auto` in an axis without one.
+    #[inline(always)]
+    fn min_size_keyword(&self) -> Size<Dimension> {
+        Size { width: Dimension::auto(), height: Dimension::auto() }
+    }
+    /// pyro: `max-width`/`max-height` when they are sizing keywords (see
+    /// [`Self::min_size_keyword`]).
+    #[inline(always)]
+    fn max_size_keyword(&self) -> Size<Dimension> {
+        Size { width: Dimension::auto(), height: Dimension::auto() }
     }
     /// Defines which row in the grid the box should start and end at, when the box's containing
     /// block is a grid container
@@ -721,6 +741,10 @@ pub struct Style<S: CheapCloneStr = DefaultCheapStr> {
     /// Whether a child is display:table or not. This affects children of block layouts.
     /// This should really be part of `Display`, but it is currently seperate because table layout isn't implemented
     pub item_is_table: bool,
+    /// pyro: the explicit row tracks (indices) that are collapsed: a table's `visibility: collapse`
+    /// rows, which take no space and no gutter (the cells' border spacing) either.
+    #[cfg(feature = "grid")]
+    pub collapsed_rows: GridTrackVec<u16>,
     /// Is it a replaced element like an image or video? Implies `is_compressible_replaced`.
     /// <https://html.spec.whatwg.org/multipage/rendering.html#replaced-elements>
     pub item_is_replaced: bool,
@@ -883,6 +907,8 @@ impl<S: CheapCloneStr> Style<S> {
         dummy: core::marker::PhantomData,
         display: Display::DEFAULT,
         item_is_table: false,
+        #[cfg(feature = "grid")]
+        collapsed_rows: GridTrackVec::new(),
         item_is_replaced: false,
         item_is_compressible_replaced: false,
         box_sizing: BoxSizing::BorderBox,
@@ -1440,6 +1466,10 @@ impl<S: CheapCloneStr> GridContainerStyle for Style<S> {
         self.grid_auto_columns.iter().copied()
     }
     #[inline(always)]
+    fn collapsed_rows(&self) -> &[u16] {
+        &self.collapsed_rows
+    }
+    #[inline(always)]
     fn grid_auto_flow(&self) -> GridAutoFlow {
         self.grid_auto_flow
     }
@@ -1562,6 +1592,10 @@ impl<T: GridContainerStyle> GridContainerStyle for &'_ T {
         (*self).grid_template_row_names()
     }
     #[inline(always)]
+    fn collapsed_rows(&self) -> &[u16] {
+        (*self).collapsed_rows()
+    }
+    #[inline(always)]
     fn grid_auto_flow(&self) -> GridAutoFlow {
         (*self).grid_auto_flow()
     }
@@ -1646,6 +1680,8 @@ mod tests {
             dummy: core::marker::PhantomData,
             display: Default::default(),
             item_is_table: false,
+            #[cfg(feature = "grid")]
+            collapsed_rows: GridTrackVec::new(),
             item_is_replaced: false,
             item_is_compressible_replaced: false,
             box_sizing: Default::default(),

@@ -135,9 +135,15 @@ impl VerticalLine {
             return (Affine::IDENTITY, None);
         };
         let metrics = run.run().font_metrics();
+        // pyro: by the run's first visible character: an empty inline box's strut (U+2061) or a
+        // bidi control before it decides nothing.
         let upright = self.all_upright
             || source
-                .and_then(|text| text.get(run.run().text_range())?.chars().next())
+                .and_then(|text| {
+                    text.get(run.run().text_range())?.chars().find(|&c| {
+                        !matches!(c, '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2060}'..='\u{206F}' | '\u{FEFF}')
+                    })
+                })
                 .is_some_and(is_upright_char);
         if !upright {
             return (self.fragment_shift(run), None);
@@ -1402,6 +1408,16 @@ fn flush_line_decorations<S: PaintScene>(
 }
 
 /// pyro: the decoration a box draws as a decorating box (`text-decoration-line`), if any.
+impl ResolvedDecoration {
+    /// pyro: the decoration with `color` for its colour when that is the text's (`currentcolor`).
+    pub(crate) fn with_current_color(mut self, color: Color) -> Self {
+        if self.current_color {
+            self.color = color;
+        }
+        self
+    }
+}
+
 pub(crate) fn own_decoration(styles: &style::properties::ComputedValues) -> Option<ResolvedDecoration> {
     let itext = styles.get_inherited_text();
     let text = styles.get_text();
@@ -1734,7 +1750,9 @@ pub(crate) fn stroke_text<'a, S: PaintScene>(
             let font_size = run.font_size();
             let metrics = run.font_metrics();
             let style = glyph_run.style();
-            let css_font_size = font_size as f64 / scale;
+            // pyro: a face's `size-adjust` scales the run's size; decoration thickness and offset
+            // percentages are of the element's font size.
+            let css_font_size = font_size as f64 / scale / f64::from(run.synthesis().size_adjust());
             // pyro: under `font-size-adjust` the run's size is the used one; decoration
             // thickness and offset percentages are of the computed font size.
             let css_font_size = doc
@@ -1788,7 +1806,9 @@ pub(crate) fn stroke_text<'a, S: PaintScene>(
                 let own = stack.last().map(|e| e.fill_color).unwrap_or(Color::BLACK);
                 // pyro: selected text in its highlight's colour.
                 match highlighting {
-                    true => crate::highlight::highlight_of(doc, style.brush.id, highlights).map_or(own, |h| h.color),
+                    true => crate::highlight::highlight_of(doc, style.brush.id, highlights)
+                        .and_then(|h| h.color)
+                        .unwrap_or(own),
                     false => own,
                 }
             });
@@ -1943,8 +1963,8 @@ pub(crate) fn stroke_text<'a, S: PaintScene>(
         // pyro: over selected text, decorations of the text's colour take the highlight's.
         if highlighting {
             for acc in deco_boxes.iter_mut().filter(|acc| acc.deco.current_color && !acc.selection) {
-                if let Some(highlight) = crate::highlight::highlight_of(doc, acc.node_id, highlights) {
-                    acc.deco.color = highlight.color;
+                if let Some(color) = crate::highlight::highlight_of(doc, acc.node_id, highlights).and_then(|h| h.color) {
+                    acc.deco.color = color;
                 }
             }
         }
@@ -1995,7 +2015,9 @@ pub(crate) fn stroke_text<'a, S: PaintScene>(
         // a transform.
         let draw_run = |scene: &mut S, glyph_run: &parley::GlyphRun<'_, TextBrush>, paint: &RunPaint, shadow: Option<&TextShadow>, runs: &mut Option<Vec<crate::TextRun>>| {
             let run = glyph_run.run();
-            let font = run.font();
+            // pyro: a colour font is drawn in the palette of the run's element (`font-palette`).
+            let palette_font = crate::palette::palette_font(doc, glyph_run.style().brush.id, run.font());
+            let font = palette_font.as_ref().unwrap_or(run.font());
             let font_size = run.font_size();
             let metrics = run.font_metrics();
             let synthesis = run.synthesis();

@@ -487,6 +487,47 @@ impl Integer {
         })
     }
 
+    /// pyro: `resolve()`, with the font-relative lengths of a calc expression taken against a
+    /// font size of `font_size` px (`ex` and `ch` as half of it, `cap` 0.7 of it, `lh` 1.2 times
+    /// it). For an `<integer>` of a descriptor, which has no element: CSS Values 4 §6.1.1
+    /// resolves its font-relative units against the initial font.
+    pub fn resolve_with_font_size(&self, font_size: CSSFloat) -> Option<CSSInteger> {
+        use crate::values::specified::length::{LengthUnit, NoCalcLength};
+        if let Some(value) = self.resolve() {
+            return Some(value);
+        }
+        let Unpacked::Boxed(calc) = self.0.unpack() else {
+            return None;
+        };
+        let leaf = calc
+            .node
+            .resolve_map(|leaf| match leaf {
+                Leaf::Length(length) => {
+                    let factor = match length.length_unit() {
+                        unit if unit.is_absolute() => {
+                            return Ok(Leaf::Length(NoCalcLength::from_px(
+                                length.to_px_if_absolute().ok_or(())?,
+                            )));
+                        },
+                        LengthUnit::Em | LengthUnit::Rem | LengthUnit::Ic | LengthUnit::Ric => 1.0,
+                        LengthUnit::Ex | LengthUnit::Rex | LengthUnit::Ch | LengthUnit::Rch => 0.5,
+                        LengthUnit::Cap | LengthUnit::Rcap => 0.7,
+                        LengthUnit::Lh | LengthUnit::Rlh => 1.2,
+                        _ => return Err(()),
+                    };
+                    Ok(Leaf::Length(NoCalcLength::from_px(
+                        length.unitless_value() * factor * font_size,
+                    )))
+                },
+                other => Ok(other.clone()),
+            })
+            .ok()?;
+        match leaf {
+            Leaf::Number(number) => Some((number.value() + 0.5).floor() as CSSInteger),
+            _ => None,
+        }
+    }
+
     /// Makes sure this number matches the clamping, or errors otherwise.
     pub fn ensure_clamping_mode(&mut self, clamping_mode: AllowedNumericType) -> Result<(), ()> {
         match self.0.unpack_mut() {

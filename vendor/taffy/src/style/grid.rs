@@ -215,6 +215,11 @@ pub trait GridContainerStyle: CoreStyle {
     /// Defines the size of implicitly created rows
     fn grid_template_row_names(&self) -> Option<Self::TemplateLineNames<'_>>;
 
+    /// pyro: the explicit row tracks that are collapsed (`Style::collapsed_rows`), sorted.
+    #[inline(always)]
+    fn collapsed_rows(&self) -> &[u16] {
+        &[]
+    }
     /// Controls how items get placed into the grid for auto-placed items
     #[inline(always)]
     fn grid_auto_flow(&self) -> GridAutoFlow {
@@ -272,6 +277,60 @@ pub trait GridContainerStyle: CoreStyle {
             _ => alignment,
         }
     }
+
+    /// pyro: the `<line-name-list>` of the axis when its `grid-template-columns` (`Horizontal`) or
+    /// `grid-template-rows` (`Vertical`) is `subgrid` (css-grid-2 §7.2), else `None`. Whether the grid is a
+    /// subgrid in that axis is decided by its parent ([`GridItemStyle::is_subgrid`]), which then gives it
+    /// a [`SubgridContext`](crate::SubgridContext).
+    #[inline(always)]
+    fn subgrid_line_names(&self, _axis: AbsoluteAxis) -> Option<SubgridLineNames<Self::CustomIdent>> {
+        None
+    }
+
+    /// pyro: whether `column-gap` (`width`) and `row-gap` (`height`) are `normal`: a subgrid's
+    /// `normal` gap is its parent grid's gap (css-grid-2 §9).
+    #[inline(always)]
+    fn gap_is_normal(&self) -> Size<bool> {
+        Size { width: false, height: false }
+    }
+}
+
+/// pyro: the `<line-name-list>` of a `subgrid` axis (css-grid-2 §7.2): the line name sets in order,
+/// `repeat(<integer>, ...)` expanded. `auto_fill` is the range of `names` that a `repeat(auto-fill, ...)`
+/// gives (one repetition), repeated as many times as fit in the subgrid's lines.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct SubgridLineNames<S> {
+    /// The name sets, one per line, with one repetition of `repeat(auto-fill, ...)`
+    pub names: Vec<Vec<S>>,
+    /// The sets of `names` the `repeat(auto-fill, ...)` gives, if there is one
+    pub auto_fill: Option<core::ops::Range<usize>>,
+}
+
+impl<S: Clone> SubgridLineNames<S> {
+    /// The number of lines the list names with `repeat(auto-fill, ...)` repeated no times
+    pub fn fixed_len(&self) -> usize {
+        self.names.len() - self.auto_fill.as_ref().map_or(0, |fill| fill.len())
+    }
+
+    /// The names of each of `line_count` lines: `repeat(auto-fill, ...)` repeated as many times as fit
+    /// with the other sets, and the sets past the last line dropped (css-grid-2 §7.2.3)
+    pub fn expand(&self, line_count: usize) -> Vec<Vec<S>> {
+        let mut lines: Vec<Vec<S>> = Vec::with_capacity(line_count);
+        match &self.auto_fill {
+            Some(fill) if !fill.is_empty() => {
+                let repeats = line_count.saturating_sub(self.fixed_len()) / fill.len();
+                lines.extend(self.names[..fill.start].iter().cloned());
+                for _ in 0..repeats {
+                    lines.extend(self.names[fill.clone()].iter().cloned());
+                }
+                lines.extend(self.names[fill.end..].iter().cloned());
+            }
+            _ => lines.extend(self.names.iter().cloned()),
+        }
+        lines.truncate(line_count);
+        lines.resize(line_count, Vec::new());
+        lines
+    }
 }
 
 /// The set of styles required for a CSS Grid item (child of a CSS Grid container)
@@ -307,6 +366,28 @@ pub trait GridItemStyle: CoreStyle {
             AbsoluteAxis::Horizontal => self.grid_column(),
             AbsoluteAxis::Vertical => self.grid_row(),
         }
+    }
+
+    /// pyro: whether the item is a subgrid in its parent grid's `axis` (expressed in the parent's axes):
+    /// a grid container whose template in that axis is `subgrid` and which is no independent formatting
+    /// context (css-grid-2 §7.2: not out of flow, no layout or paint containment). Its own axes must be
+    /// the parent's (no orthogonal flow).
+    #[inline(always)]
+    fn is_subgrid(&self, _axis: AbsoluteAxis) -> bool {
+        false
+    }
+
+    /// pyro: for a subgrid, its own axis that is its parent's `axis` (the other one in an orthogonal flow)
+    #[inline(always)]
+    fn subgrid_axis(&self, axis: AbsoluteAxis) -> AbsoluteAxis {
+        axis
+    }
+
+    /// pyro: for a subgrid, whether its tracks in its own axis that is its parent's `axis` run the other way
+    /// from the parent's (another `direction`, block flow or inline flow)
+    #[inline(always)]
+    fn subgrid_reversed(&self, _axis: AbsoluteAxis) -> bool {
+        false
     }
 }
 

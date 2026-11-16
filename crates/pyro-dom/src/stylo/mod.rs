@@ -26,6 +26,8 @@ pub(crate) fn enable_features() {
     ONCE.call_once(|| {
         style_config::set_pref!("layout.css.flexbox-balance.enabled", true);
         style_config::set_pref!("layout.css.text-box.enabled", true);
+        // pyro: `initial-letter` on `::first-letter` (`layout::first_letter`).
+        style_config::set_pref!("layout.css.initial-letter.enabled", true);
         // pyro: `light-dark()` of images (the computed value is the image of the used scheme).
         style_config::set_pref!("layout.css.light-dark.images.enabled", true);
         style_config::set_pref!("layout.css.background-clip.text.enabled", true);
@@ -36,6 +38,8 @@ pub(crate) fn enable_features() {
         style_config::set_pref!("layout.css.progress-function.enabled", true);
         style_config::set_pref!("layout.css.font-variations.enabled", true);
         style_config::set_pref!("layout.css.text-indent-keywords.enabled", true);
+        // pyro: `grid-template-rows/columns: subgrid` (Taffy lays subgrids out, css-grid-2 §9).
+        style_config::set_pref!("layout.css.grid-template-subgrid-value.enabled", true);
         style_config::set_pref!("layout.css.word-break.break-word.enabled", true);
         // pyro-render builds Blitz with its `writing-mode` feature.
         style_config::set_pref!("layout.css.writing-mode.enabled", true);
@@ -46,6 +50,8 @@ pub(crate) fn enable_features() {
         style_config::set_pref!("layout.css.contain.enabled", true);
         style_config::set_pref!("layout.css.content.alt-text.enabled", true);
         style_config::set_pref!("layout.css.corner-shape.enabled", true);
+        // pyro: `closest-corner`/`farthest-corner` radii in `ellipse()` (CSS Shapes 2).
+        style_config::set_pref!("layout.css.ellipse-corners.enabled", true);
         style_config::set_pref!("layout.css.counters.enabled", true);
         style_config::set_pref!("layout.css.font-size-adjust.enabled", true);
         // pyro: `font-synthesis-style`, `-small-caps` and `-position` (and the shorthand).
@@ -53,6 +59,9 @@ pub(crate) fn enable_features() {
         // pyro: `font-variant-caps: all-small-caps | petite-caps | all-petite-caps | unicase |
         // titling-caps` (blitz-dom maps each to its OpenType features).
         style_config::set_pref!("layout.css.font-variant-caps.all-values.enabled", true);
+        // pyro: `font-palette` and `@font-palette-values` (blitz-paint draws COLR glyphs in the
+        // palette they select).
+        style_config::set_pref!("layout.css.font-palette.enabled", true);
         style_config::set_pref!("layout.css.forced-color-adjust.enabled", true);
         style_config::set_pref!("layout.css.masking.enabled", true);
         style_config::set_pref!("layout.css.math-properties.enabled", true);
@@ -70,6 +79,8 @@ pub(crate) fn enable_features() {
         style_config::set_pref!("layout.css.text-underline-position.enabled", true);
         style_config::set_pref!("layout.css.view-transitions.enabled", true);
         style_config::set_pref!("layout.css.writing-mode.text-orientation.enabled", true);
+        style_config::set_pref!("layout.css.text-autospace.enabled", true);
+        style_config::set_pref!("layout.css.text-combine-upright.enabled", true);
         style_config::set_pref!("layout.css.zoom.enabled", true);
         style_config::set_pref!("layout.css.has-selector.enabled", true);
         style_config::set_pref!("layout.css.container-queries.enabled", true);

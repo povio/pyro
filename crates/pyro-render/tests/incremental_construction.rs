@@ -490,3 +490,45 @@ fn presentational_attributes_written_after_the_first_cascade() {
         p.dom.borrow_mut().append_child(r2, c1).unwrap();
     });
 }
+
+/// CSS Overflow 5 scroll markers: a marker that moves to another group, and a group that goes
+/// away or moves, leave no id of a dropped box in any list (WPT
+/// `scroll-marker-group-scroll-container-change-crash`, `-body-overflow-propagation-00x-crash`,
+/// `-position-change-crash` panicked in the damage walk on a freed node).
+#[test]
+fn scroll_markers_moving_between_groups() {
+    let nested = r#"<!doctype html><style>body{margin:0}
+#outer,#inner{scroll-marker-group:before}
+#outer{overflow:auto;position:relative}
+#item{position:absolute;width:10px;height:10px}
+#item::scroll-marker{content:'';display:inline-block;width:10px;height:10px;background:green}
+</style><div id=outer><div id=inner><div id=item></div></div></div>"#;
+    check("a marker moves from the outer group to the inner one", nested, &|p| {
+        let (outer, inner, item) = (p.find("#outer"), p.find("#inner"), p.find("#item"));
+        let mut d = p.dom.borrow_mut();
+        d.set_attribute(outer, "style", "overflow:visible").unwrap();
+        d.set_attribute(inner, "style", "overflow:auto").unwrap();
+        d.set_attribute(item, "style", "position:static").unwrap();
+    });
+    let body = r#"<!doctype html><style>html{scroll-marker-group:before}
+body{scroll-marker-group:before;overflow:auto}
+#item::scroll-marker{content:'m'}</style><div id=item>x</div>"#;
+    check("the root stops propagating the body's overflow", body, &|p| {
+        let html = p.find("html");
+        p.dom.borrow_mut().set_attribute(html, "style", "overflow:clip").unwrap();
+    });
+    let position = r#"<!doctype html><style>#s{overflow:auto;scroll-marker-group:before}
+#i::scroll-marker{content:'m'}</style><div id=s><div id=i>x</div></div>"#;
+    check("the group moves after its scroll container", position, &|p| {
+        let s = p.find("#s");
+        p.dom.borrow_mut().set_attribute(s, "style", "scroll-marker-group:after").unwrap();
+    });
+    check("the group goes away with its markers", position, &|p| {
+        let s = p.find("#s");
+        p.dom.borrow_mut().set_attribute(s, "style", "overflow:visible").unwrap();
+    });
+    check("a marked element is removed", position, &|p| {
+        let (s, i) = (p.find("#s"), p.find("#i"));
+        p.dom.borrow_mut().remove_child(s, i).unwrap();
+    });
+}

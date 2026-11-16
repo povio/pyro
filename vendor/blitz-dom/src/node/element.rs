@@ -153,6 +153,10 @@ pub struct ElementData {
     /// pyro: the node holding this list item's `::marker` style, the brush of its marker's text
     /// (`layout::list`). Not in the tree; its parent is the item.
     pub marker_style: Option<NodeId>,
+    /// pyro: the element's scroll pseudo-element boxes (its `::scroll-marker-group`,
+    /// `::scroll-button()`s and `::scroll-marker`), or what pseudo-element box this node is
+    /// (`layout::scroll_markers`).
+    pub scroll: Option<Box<crate::layout::scroll_markers::ScrollPseudos>>,
 
     /// Detailed layout information from the most recent layout (currently
     /// grid track sizing information for grid containers only). Used by
@@ -211,6 +215,9 @@ pub struct LayoutData {
     /// through `Node::column_fragments`, which ignores them once the box's style makes it no
     /// multi-column container.
     pub columns: Option<Box<crate::layout::multicol::ColumnFragments>>,
+    /// pyro: what this node's parent grid last gave it as a subgrid (css-grid-2 §9; Taffy's
+    /// `LayoutGridContainer::set_subgrid_context`): its tracks there, their line names and sizes.
+    pub subgrid: Option<Box<taffy::SubgridContext<style::Atom>>>,
     /// The writing mode this node's layout algorithm ran in (the root takes it from `<body>`),
     /// recorded by the layout pass for CSSOM geometry lookups.
     #[cfg(feature = "writing-mode")]
@@ -233,6 +240,7 @@ impl LayoutData {
             table_cell_index: u32::MAX,
             table_baseline_offset: 0.0,
             columns: None,
+            subgrid: None,
             #[cfg(feature = "writing-mode")]
             writing_mode: stylo_taffy::WritingMode::empty(),
         }
@@ -427,6 +435,7 @@ impl Clone for ElementData {
             first_letter: None,
             first_line: None,
             marker_style: None,
+            scroll: None,
             detailed_layout_info: taffy::DetailedLayoutInfo::None,
             display_constructed_as: StyloDisplay::Block,
             layout_data: None,
@@ -553,6 +562,7 @@ impl ElementData {
             first_letter: None,
             first_line: None,
             marker_style: None,
+            scroll: None,
             detailed_layout_info: taffy::DetailedLayoutInfo::None,
             display_constructed_as: StyloDisplay::Block,
             layout_data: None,
@@ -1133,6 +1143,9 @@ pub struct ListItemLayout {
     /// rule styles the marker: its text is that node's (colour, font, shadows).
     pub style_node: Option<NodeId>,
     pub position: ListItemLayoutPosition,
+    /// pyro: the marker's digits are tabular (Blink's UA sheet: `::marker { font-variant-numeric:
+    /// tabular-nums }`), unless a `::marker` rule declares `font-variant-numeric`.
+    pub tabular_nums: bool,
     /// Offset (in physical CSS px) of the unrounded content box origin from the rounded one in
     /// `final_layout`. Paint draws text from the unrounded origin so that it keeps its sub-pixel
     /// position while box edges stay snapped. Set by the `writing-mode` layout pass; zero otherwise.

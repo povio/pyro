@@ -68,6 +68,8 @@ pub struct StickyBox {
     /// Its containing block's content box (the table's for table parts),
     /// document coordinates: the box never leaves it.
     pub limit: Option<(f64, f64, f64, f64)>,
+    /// The key of its containing block's element, which the sticky boxes holding it move.
+    pub cb: Option<u64>,
 }
 
 /// A box's place in its containing block (CSS px): its location, then its CSS transform.
@@ -326,7 +328,7 @@ impl Geometry {
         let (t, _) = self.transform(doc, container.id)?;
         let scroll = container.scroll_offset();
         let base = t * Affine::translate((-scroll.x, -scroll.y));
-        let mut out: Vec<Rect> = Vec::new();
+        let mut out: Vec<(Rect, f64)> = Vec::new();
         for f in &columns.fragments {
             let (y0, y1) = (strip.y0.max(f.start as f64), strip.y1.min(f.end as f64));
             let shows =
@@ -334,11 +336,20 @@ impl Geometry {
             if !shows {
                 continue;
             }
-            out.push(base.transform_rect_bbox(
-                Rect::new(strip.x0, y0, strip.x1, y1) + kurbo::Vec2::new(f.offset.x as f64, f.offset.y as f64),
+            out.push((
+                base.transform_rect_bbox(
+                    Rect::new(strip.x0, y0, strip.x1, y1) + kurbo::Vec2::new(f.offset.x as f64, f.offset.y as f64),
+                ),
+                y1 - y0,
             ));
         }
-        (!out.is_empty()).then_some(out)
+        // pyro: a sliver under a pixel where a box meets a column break (its unrounded strip
+        // position against the rounded break) is no fragment of it: a monolithic box a column
+        // holds stays one box (WPT css-overflow/scroll-markers/targeted-column-scroll-marker-*).
+        if out.iter().any(|&(_, height)| height >= 1.0) {
+            out.retain(|&(_, height)| height >= 1.0);
+        }
+        (!out.is_empty()).then(|| out.into_iter().map(|(rect, _)| rect).collect())
     }
 
     /// The box Blitz lays out for `id`, before the adjustments. A node that
@@ -444,9 +455,10 @@ impl Geometry {
         })
     }
 
-    /// The sticky inputs of `id` (see [`StickyBox`]).
-    pub(crate) fn sticky_box(&self, doc: &BaseDocument, id: NodeId) -> StickyBox {
-        let Some(style) = doc.get_node(id).and_then(|n| n.primary_styles()) else { return StickyBox::default() };
+    /// The sticky inputs of `id` (see [`StickyBox`]), and its containing block (whose key the
+    /// caller sets as [`StickyBox::cb`]).
+    pub(crate) fn sticky_box(&self, doc: &BaseDocument, id: NodeId) -> (StickyBox, Option<NodeId>) {
+        let Some(style) = doc.get_node(id).and_then(|n| n.primary_styles()) else { return (StickyBox::default(), None) };
         let inset = |v: &style::values::computed::Inset| {
             let style::values::generics::position::GenericInset::LengthPercentage(lp) = v else { return None };
             let px = lp.resolve(style::values::computed::Length::new(0.0)).px() as f64;
@@ -459,11 +471,43 @@ impl Geometry {
             inset(&style.slow_clone_bottom()),
             inset(&style.slow_clone_left()),
         ];
-        // Containing block: the table for table parts, else the parent.
+        // Containing block: the table for table parts, else the nearest ancestor that is no
+        // inline box (CSS 2.1 § 10.1: the nearest block container; an inline box split around
+        // a block-level sticky box is none: WPT `position-sticky-large-top-2`).
         let mut cb = doc.get_node(id).and_then(|n| n.parent);
         if is_table_part(doc, id) || is_cell(doc, id) {
             while let Some(c) = cb.filter(|&c| tag(doc, c) != Some("table")) {
                 cb = doc.get_node(c).and_then(|n| n.parent);
+            }
+        } else {
+            let inline = |c: NodeId| {
+                doc.get_node(c).and_then(|n| n.primary_styles()).is_some_and(|s| {
+                    let display = s.clone_display();
+                    display.is_inline_flow() || display.is_contents()
+                })
+            };
+            while let Some(c) = cb.filter(|&c| inline(c)) {
+                cb = doc.get_node(c).and_then(|n| n.parent);
+            }
+            // A table row or row group has no box: the box's containing block is the anonymous
+            // cell it is laid out in (WPT `position-sticky-contained-by-display-table`).
+            let row_or_group = |c: NodeId| {
+                use style::values::specified::box_::DisplayInside;
+                doc.get_node(c).and_then(|n| n.primary_styles()).is_some_and(|s| {
+                    matches!(
+                        s.clone_display().inside(),
+                        DisplayInside::TableRow
+                            | DisplayInside::TableRowGroup
+                            | DisplayInside::TableHeaderGroup
+                            | DisplayInside::TableFooterGroup
+                    )
+                })
+            };
+            if cb.is_some_and(|c| row_or_group(c) && !self.in_layout_tree(doc, c)) {
+                let layout_parent = doc.get_node(id).and_then(|n| n.layout_parent.get());
+                if layout_parent.is_some_and(|p| doc.get_node(p).is_some_and(|p| p.is_anonymous())) {
+                    cb = layout_parent;
+                }
             }
         }
         let limit = cb.and_then(|c| {
@@ -487,9 +531,19 @@ impl Geometry {
             } else {
                 (b.width, b.height)
             };
-            Some((b.x + l, b.y + t, (width - l - r).max(0.0), (height - t - bo).max(0.0)))
+            // One whose scroll origin is at an axis' end (right-to-left, a reversed flex
+            // container) has that content on the axis' start side: it reaches back from the
+            // scrollport's end (WPT `position-sticky-column-reverse-flex`).
+            let (dx, dy) = match scroll_container {
+                true => (
+                    if b.scroll_reversed[0] { (b.client_width - b.scroll_width).min(0.0) } else { 0.0 },
+                    if b.scroll_reversed[1] { (b.client_height - b.scroll_height).min(0.0) } else { 0.0 },
+                ),
+                false => (0.0, 0.0),
+            };
+            Some((b.x + l + dx, b.y + t + dy, (width - l - r).max(0.0), (height - t - bo).max(0.0)))
         });
-        StickyBox { insets, limit }
+        (StickyBox { insets, limit, cb: None }, cb)
     }
 
     fn adjusted_box(&self, doc: &BaseDocument, id: NodeId) -> Option<LayoutBox> {

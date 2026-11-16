@@ -19,6 +19,7 @@ mod dom;
 mod driver;
 mod fetch;
 mod input;
+mod keyboard;
 mod metrics;
 mod mocks;
 mod network;

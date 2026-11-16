@@ -75,3 +75,41 @@ for italic, a backslant). A `@font-face` rule's `font-style` descriptor says how
 without the axis (WPT `variations/font-slant-1`, `-2c`, `-3`, `slnt-variable`, `slnt-backslant-variable`).
 Without a descriptor the font's own axis is used as before. Test:
 `slant_synthesis_follows_the_axis_direction_and_the_allowed_range`.
+
+## Empty `@font-face` family names (WPT css-fonts, round 3 lane F)
+
+`src/collection/mod.rs` (`register_scanned_font`): a face registered under an override family name `""` is kept
+(CSS Fonts 4: a quoted family name may be empty, `font-family: ""`); a font file without a name of its own is still
+left out (WPT `font-palette-empty-font-family`).
+
+## `@font-face` `size-adjust` and metrics overrides (WPT css-fonts, round 3 lane F)
+
+`src/font.rs` (`FaceMetrics`, `FontInfoOverride::face_metrics`, `Synthesis::face_metrics`, `size_adjust`,
+`without_size_adjust`): a face registered with `size-adjust`, `ascent-override`, `descent-override` or
+`line-gap-override` keeps them, and the synthesis a query gives for it carries them to the shaper (parley_engine
+applies them), as it carries the variation settings.
+
+## `@font-face` `font-feature-settings` and `font-variation-settings` (WPT css-fonts, round 3 lane F)
+
+`src/font.rs` (`FaceSettings`, `FontInfoOverride::face_settings`, `Synthesis::face_settings`): a face's descriptor
+features and variation settings are interned in a process-wide table (`FaceSettings::intern`, behind `std`; equal
+settings share an id) and faces and their synthesis carry the id, so `Synthesis` stays `Copy`. parley_engine
+applies them.
+
+## Font matching with `@font-face` ranges (WPT css-fonts, round 3 lane F)
+
+`src/font.rs` (`FontInfoOverride::weight_range`, `width_range`, `FontInfo::matched_weight`, `matched_width`,
+`matched_style`, `synthesis`), `src/matching.rs` (`match_font`, `match_fonts`): a face whose `@font-face` rule gives
+a `font-weight` or `font-stretch` range, or an oblique `font-style` range, is a candidate at the value of its range
+nearest the one asked for (CSS Fonts 4 §5.2; a reversed range is the same range). Upstream kept one value per
+attribute (the lower bound). A variable font's `wght`/`wdth` axis is held to the range, and a bold request on a face
+whose range has no bold in it is faked bold, as on a face without the axis (WPT `matching/range-descriptor-reversed`,
+`variations/font-descriptor-range-reversed*`, `variations/font-weight-3`).
+
+A face whose `font-style` range is all oblique (`oblique 45deg 67.5deg`, or one angle) has its `slnt` axis held to the
+angle of the range nearest the request (0deg for normal, 14deg for italic) whatever is asked (WPT
+`matching/fixed-stretch-style-over-weight`).
+
+`src/font.rs` (`synthesis`): a face a `@font-face` rule declares italic, of a variable font with an `ital` axis, is
+used at `ital` 1; an oblique request slanted by a `slnt` axis sets `ital` 0 where the font has both (WPT
+`variations/ital-variable`). `Synthesis` holds four variation settings (`wdth`, `wght`, `slnt`, `ital`).

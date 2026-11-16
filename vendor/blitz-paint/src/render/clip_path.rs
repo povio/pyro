@@ -203,7 +203,7 @@ impl ElementCx<'_, '_> {
 
     /// The margins (CSS px). An inline box (no box of layout's own) has its style's, in every
     /// side, as Chromium takes them for its margin box.
-    fn margins(&self) -> Insets {
+    pub(super) fn margins(&self) -> Insets {
         if self.style.get_box().display.is_inline_flow() {
             let margin = self.style.get_margin();
             let resolve = |v: &style::values::computed::Margin| match v {
@@ -235,6 +235,35 @@ impl ElementCx<'_, '_> {
     fn rounded_reference_box(&self, geometry_box: &ShapeGeometryBox) -> BezPath {
         let frame = &self.frame;
         let to_css = 1.0 / self.scale;
+        // pyro: shaped corners (`corner-shape`): the box's edge as its background and border
+        // follow it, the margin box's curves parallel to the border box's.
+        if frame.corner_curvature.is_some() {
+            let mut path = match geometry_box {
+                ShapeGeometryBox::ElementDependent
+                | ShapeGeometryBox::StrokeBox
+                | ShapeGeometryBox::ViewBox
+                | ShapeGeometryBox::ShapeBox(ShapeBox::BorderBox) => frame.border_box_path(),
+                ShapeGeometryBox::ShapeBox(ShapeBox::PaddingBox) => frame.padding_box_path(),
+                ShapeGeometryBox::FillBox | ShapeGeometryBox::ShapeBox(ShapeBox::ContentBox) => {
+                    frame.content_box_path()
+                }
+                ShapeGeometryBox::ShapeBox(ShapeBox::MarginBox) => {
+                    let m = scale_insets(self.margins(), self.scale);
+                    let r = frame.border_radii;
+                    let radii = NonUniformRoundedRectRadii {
+                        top_left: outset_radius(r.top_left, m.x0, m.y0),
+                        top_right: outset_radius(r.top_right, m.x1, m.y0),
+                        bottom_right: outset_radius(r.bottom_right, m.x1, m.y1),
+                        bottom_left: outset_radius(r.bottom_left, m.x0, m.y1),
+                    };
+                    CssBox::new(frame.border_box + m, Insets::ZERO, Insets::ZERO, 0.0, radii)
+                        .contoured_like(frame)
+                        .border_box_path()
+                }
+            };
+            path.apply_affine(Affine::scale(to_css));
+            return path;
+        }
         let radii = frame.border_radii * to_css;
         let border = scale_insets(frame.border_width, to_css);
         let padding = scale_insets(frame.padding_width, to_css);
@@ -270,8 +299,25 @@ impl ElementCx<'_, '_> {
         rounded_rect(rect, radii)
     }
 
+    /// pyro: `path` (CSS px) with its curves flattened to within 0.02 device px, as Skia draws
+    /// them and as shaped corners are drawn (`corner-shape`): vello_cpu's own flattening (to
+    /// 0.25px) moved their antialiased pixels by up to a quarter of their range. Used for
+    /// `path()`, `shape()` and an SVG `<clipPath>` of one path, which their tests compare with
+    /// one another (ovals stay as `border-radius` draws them).
+    fn flattened(&self, path: &BezPath) -> BezPath {
+        let mut flat = BezPath::new();
+        kurbo::flatten(path.elements().iter().copied(), 0.02 / self.scale, |el| flat.push(el));
+        flat
+    }
+
     /// Convert a CSS basic-shape in its reference box (CSS px) to a clip.
-    fn basic_shape_clip(&self, shape: &BasicShape, reference: Rect) -> ElementClip {
+    pub(super) fn basic_shape_clip(&self, shape: &BasicShape, reference: Rect) -> ElementClip {
+        self.basic_shape_clip_with(shape, reference, true)
+    }
+
+    /// pyro: [`Self::basic_shape_clip`], `path()` and `shape()` curves flattened only with
+    /// `flatten` (`border-shape` strokes them: its miters depend on whether they are curves).
+    pub(super) fn basic_shape_clip_with(&self, shape: &BasicShape, reference: Rect, flatten: bool) -> ElementClip {
         let w = reference.width();
         let h = reference.height();
         let ox = reference.x0;
@@ -285,8 +331,15 @@ impl ElementCx<'_, '_> {
             }
             GenericBasicShape::Ellipse(ellipse) => {
                 let center = resolve_position(&ellipse.position, reference);
-                let rx = ellipse_radius(&ellipse.semiaxis_x, center.x, reference.x0, reference.x1);
-                let ry = ellipse_radius(&ellipse.semiaxis_y, center.y, reference.y0, reference.y1);
+                // pyro: a corner keyword is the distance to that corner, for either radius.
+                let dx = [(center.x - reference.x0).abs(), (reference.x1 - center.x).abs()];
+                let dy = [(center.y - reference.y0).abs(), (reference.y1 - center.y).abs()];
+                let corners = (
+                    dx[0].min(dx[1]).hypot(dy[0].min(dy[1])),
+                    dx[0].max(dx[1]).hypot(dy[0].max(dy[1])),
+                );
+                let rx = ellipse_radius(&ellipse.semiaxis_x, center.x, reference.x0, reference.x1, corners);
+                let ry = ellipse_radius(&ellipse.semiaxis_y, center.y, reference.y0, reference.y1, corners);
                 ElementClip::shape(oval(center, rx, ry), Fill::NonZero)
             }
             GenericBasicShape::Polygon(polygon) => {
@@ -349,6 +402,7 @@ impl ElementCx<'_, '_> {
                 match path {
                     Some(mut path) => {
                         path.apply_affine(Affine::translate((ox, oy)));
+                        let path = if flatten { self.flattened(&path) } else { path };
                         ElementClip::shape(path, fill_rule(fill))
                     }
                     None => ElementClip::Nothing,
@@ -396,6 +450,40 @@ fn inset_radii(radii: NonUniformRoundedRectRadii, inset: Insets) -> NonUniformRo
         bottom_right: shrink(radii.bottom_right, inset.x1, inset.y1),
         bottom_left: shrink(radii.bottom_left, inset.x0, inset.y1),
     }
+}
+
+/// pyro: whether `path` is an ellipse as SVG draws `<circle>` and `<ellipse>`: four curves from
+/// the middle of one side of its box to the next. Such clips are left as `border-radius: 50%`
+/// draws them (their tests' references are those boxes).
+fn is_oval(path: &BezPath) -> bool {
+    use kurbo::PathEl;
+    let bounds = path.bounding_box();
+    let center = bounds.center();
+    let on_side = |p: Point| {
+        let eps = 1e-6 * (1.0 + bounds.width().max(bounds.height()));
+        ((p.x - bounds.x0).abs() < eps || (p.x - bounds.x1).abs() < eps) && (p.y - center.y).abs() < eps
+            || ((p.y - bounds.y0).abs() < eps || (p.y - bounds.y1).abs() < eps) && (p.x - center.x).abs() < eps
+    };
+    let mut curves = 0;
+    for el in path.elements() {
+        match *el {
+            PathEl::MoveTo(p) if curves == 0 => {
+                if !on_side(p) {
+                    return false;
+                }
+            }
+            PathEl::CurveTo(_, _, p) => {
+                curves += 1;
+                if !on_side(p) {
+                    return false;
+                }
+            }
+            PathEl::ClosePath => {}
+            PathEl::LineTo(p) if on_side(p) => {}
+            _ => return false,
+        }
+    }
+    curves == 4
 }
 
 /// A rectangle with elliptical corners, the radii shrunk together where they overlap (as
@@ -502,6 +590,7 @@ fn ellipse_radius(
     center: f64,
     start: f64,
     end: f64,
+    corners: (f64, f64),
 ) -> f64 {
     let near = (center - start).abs().min((end - center).abs());
     let far = (center - start).abs().max((end - center).abs());
@@ -509,10 +598,10 @@ fn ellipse_radius(
         GenericShapeRadius::Length(lp) => resolve_lp(&lp.0, end - start),
         GenericShapeRadius::ClosestSide => near,
         GenericShapeRadius::FarthestSide => far,
-        // Behind a pref that is off (`layout.css.ellipse-corners.enabled`): the corner's
-        // distance along this axis.
-        GenericShapeRadius::ClosestCorner => near,
-        GenericShapeRadius::FarthestCorner => far,
+        // pyro: (`layout.css.ellipse-corners.enabled`) the distance to the closest or farthest
+        // corner, in both axes (WPT `clip-path-ellipse-closest-farthest-corner`).
+        GenericShapeRadius::ClosestCorner => corners.0,
+        GenericShapeRadius::FarthestCorner => corners.1,
     }
 }
 
@@ -1020,6 +1109,7 @@ impl ElementCx<'_, '_> {
         match single_shape(clip) {
             Some((mut shape, fill)) => {
                 shape.apply_affine(user);
+                let shape = if is_oval(&shape) { shape } else { self.flattened(&shape) };
                 Some(ElementClip::shape(shape, fill))
             }
             None => Some(ElementClip::Svg {
@@ -1083,6 +1173,8 @@ impl ElementCx<'_, '_> {
             dom.get_node(id)
                 .filter(|node| node.element_data().is_some())
                 .and_then(|node| node.primary_styles())
+                // pyro: a `display: contents` element has no box to clip, mask or fade.
+                .filter(|style| !style.clone_display().is_contents())
                 .is_some_and(|style| {
                     !matches!(style.get_clip_path(), StyloClipPath::None)
                         || style

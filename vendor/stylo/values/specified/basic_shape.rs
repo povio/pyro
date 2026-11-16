@@ -59,6 +59,33 @@ impl ClipPath {
 /// A specified `shape-outside` value.
 pub type ShapeOutside = generic::GenericShapeOutside<BasicShape, Image>;
 
+/// pyro: a specified value of `border-shape`.
+pub type BorderShape = generic::GenericBorderShape<BasicShape>;
+
+impl Parse for BorderShape {
+    /// `none | [ <basic-shape> <geometry-box>? ]{1,2}`, `half-border-box` being a box too.
+    fn parse(context: &ParserContext, input: &mut Parser) -> Result<Self, ParseError> {
+        if input.try_parse(|i| i.expect_ident_matching("none")).is_ok() {
+            return Ok(Self::None);
+        }
+        let item = |input: &mut Parser| -> Result<generic::GenericBorderShapeItem<BasicShape>, ParseError> {
+            let shape = BasicShape::parse(context, input, AllowedBasicShapes::ALL, ShapeType::Filled)?;
+            let reference = input
+                .try_parse(|i| generic::BorderShapeBox::parse(context, i))
+                .unwrap_or_default();
+            Ok(generic::GenericBorderShapeItem {
+                shape: Box::new(shape),
+                reference,
+            })
+        };
+        let outer = item(input)?;
+        match input.try_parse(|i| item(i)) {
+            Ok(inner) => Ok(Self::Double(outer, inner)),
+            Err(_) => Ok(Self::Single(outer)),
+        }
+    }
+}
+
 /// A specified basic shape.
 pub type BasicShape =
     generic::GenericBasicShape<Angle, AxisPosition, Position, LengthPercentage, BasicShapeRect>;

@@ -88,6 +88,12 @@ pub(crate) fn init_stylo_prefs() {
     INIT.call_once(|| {
         style_config::set_pref!("layout.css.flexbox-balance.enabled", true);
         style_config::set_pref!("layout.css.text-box.enabled", true);
+        // pyro: `text-autospace` (parley spaces ideographs from letters and numerals).
+        style_config::set_pref!("layout.css.text-autospace.enabled", true);
+        // pyro: `text-combine-upright` (no text-autospace in such upright text; the layout ignores it).
+        style_config::set_pref!("layout.css.text-combine-upright.enabled", true);
+        // pyro: `initial-letter` on `::first-letter` (`layout::first_letter`).
+        style_config::set_pref!("layout.css.initial-letter.enabled", true);
         // pyro: `light-dark()` of images (the computed value is the image of the used scheme).
         style_config::set_pref!("layout.css.light-dark.images.enabled", true);
         style_config::set_pref!("layout.css.background-clip.text.enabled", true);
@@ -103,6 +109,8 @@ pub(crate) fn init_stylo_prefs() {
         style_config::set_pref!("layout.css.progress-function.enabled", true);
         style_config::set_pref!("layout.css.font-variations.enabled", true);
         style_config::set_pref!("layout.css.text-indent-keywords.enabled", true);
+        // pyro: `grid-template-rows/columns: subgrid` (Taffy lays subgrids out, css-grid-2 §9).
+        style_config::set_pref!("layout.css.grid-template-subgrid-value.enabled", true);
         style_config::set_pref!("layout.css.word-break.break-word.enabled", true);
         #[cfg(feature = "writing-mode")]
         {
@@ -116,6 +124,8 @@ pub(crate) fn init_stylo_prefs() {
         style_config::set_pref!("layout.css.contain.enabled", true);
         style_config::set_pref!("layout.css.content.alt-text.enabled", true);
         style_config::set_pref!("layout.css.corner-shape.enabled", true);
+        // pyro: `closest-corner`/`farthest-corner` radii in `ellipse()` (CSS Shapes 2).
+        style_config::set_pref!("layout.css.ellipse-corners.enabled", true);
         style_config::set_pref!("layout.css.counters.enabled", true);
         // pyro: `::first-line` parses and is cascaded (`layout::first_line`).
         style_config::set_pref!("layout.css.first-line.enabled", true);
@@ -125,6 +135,9 @@ pub(crate) fn init_stylo_prefs() {
         // pyro: `font-variant-caps: all-small-caps | petite-caps | all-petite-caps | unicase |
         // titling-caps` (blitz-dom maps each to its OpenType features).
         style_config::set_pref!("layout.css.font-variant-caps.all-values.enabled", true);
+        // pyro: `font-palette` and `@font-palette-values` (blitz-paint draws COLR glyphs in the
+        // palette they select).
+        style_config::set_pref!("layout.css.font-palette.enabled", true);
         style_config::set_pref!("layout.css.forced-color-adjust.enabled", true);
         style_config::set_pref!("layout.css.masking.enabled", true);
         style_config::set_pref!("layout.css.math-properties.enabled", true);
@@ -406,6 +419,10 @@ pub struct BaseDocument {
     pub(crate) thread_font_contexts: ThreadLocal<RefCell<Box<FontContext>>>,
     /// A Parley layout context
     pub(crate) layout_ctx: parley::LayoutContext<TextBrush>,
+    /// pyro: the `font-family` names `@font-face` rules registered each font file under, by blob
+    /// id: `@font-palette-values` rules name the fonts they apply to by family
+    /// (`BaseDocument::font_face_families`).
+    pub(crate) font_face_families: HashMap<u64, Vec<String>>,
 
     /// The real (non-anonymous) node which is currently hovered (if any).
     /// This is never a layout-generated (anonymous) node, so it remains valid
@@ -463,6 +480,9 @@ pub struct BaseDocument {
     pub(crate) nodes_to_id: HashMap<String, SmallVec<[NodeId; 1]>>,
     /// Map of `<style>` and `<link>` node IDs to their associated stylesheet
     pub(crate) nodes_to_stylesheet: BTreeMap<NodeId, DocumentStyleSheet>,
+    /// pyro: the host whose shadow root holds the sheet of a `<style>` or `<link>` element of a
+    /// shadow tree (not in `nodes_to_stylesheet`: `crate::shadow`).
+    pub(crate) shadow_sheet_hosts: HashMap<NodeId, NodeId>,
     /// pyro: the text of `<link>` sheets with `@page` rules, by node. Parsing drops what
     /// printing needs of them: the servo build of Stylo has no `size` and no `page`.
     pub(crate) linked_page_css: BTreeMap<NodeId, String>,
@@ -548,6 +568,19 @@ pub struct BaseDocument {
     /// pyro: the list items with a `::marker` style node the last style traversal restyled
     /// (`layout::list::item_restyled`).
     pub(crate) marker_items_restyled: Vec<NodeId>,
+    /// pyro: the scroll pseudo-element boxes may be out of date: a style traversal ran or the
+    /// tree changed since `resolve_scroll_markers` (`layout::scroll_markers`).
+    pub(crate) scroll_markers_dirty: bool,
+    /// pyro: an element styled with a `scroll-marker-group` that names a side, or with
+    /// `scroll-target-group: auto` (sticky).
+    pub(crate) scroll_marker_groups: bool,
+    /// pyro: the elements with scroll pseudo-element boxes (`ElementData::scroll`).
+    pub(crate) scroll_pseudo_owners: std::collections::HashSet<NodeId>,
+    /// pyro: each element with `scroll-target-group: auto` and the links in its group.
+    pub(crate) scroll_target_groups: Vec<(NodeId, Vec<NodeId>)>,
+    /// pyro: each scroll container's current scroll target (CSS Overflow 5 § 2.1; the viewport's
+    /// under the root element), as the embedder tracks them (`set_scroll_targets`).
+    pub(crate) scroll_targets: std::collections::HashMap<NodeId, NodeId>,
     /// pyro: a style traversal kept a `::first-line` style for some element (sticky): inline
     /// roots look for the style of their first line (`layout::first_line`).
     pub(crate) first_line_styles: bool,
@@ -672,6 +705,7 @@ impl BaseDocument {
         let snapshots = SnapshotMap::new();
         let mut nodes = Box::new(NodeTree::new());
         nodes.xml_document = config.xml_document;
+        nodes.quirks_mode = config.quirks_mode;
         nodes.content_language = config.content_language.map(Into::into);
         // pyro: one lock for the thread's documents, so a parsed
         // sheet can serve them all (`make_stylesheet`).
@@ -724,9 +758,11 @@ impl BaseDocument {
             devtool_settings: DevtoolSettings::default(),
             url: base_url,
             nodes_to_stylesheet: BTreeMap::new(),
+            shadow_sheet_hosts: HashMap::new(),
             linked_page_css: BTreeMap::new(),
             stylesheet_generation: 0,
             font_ctx,
+            font_face_families: HashMap::new(),
             #[cfg(feature = "parallel-construct")]
             thread_font_contexts: ThreadLocal::new(),
             layout_ctx: {
@@ -773,6 +809,11 @@ impl BaseDocument {
             first_letter_styles: false,
             first_letter_changed: Vec::new(),
             marker_items_restyled: Vec::new(),
+            scroll_markers_dirty: true,
+            scroll_marker_groups: false,
+            scroll_pseudo_owners: Default::default(),
+            scroll_target_groups: Vec::new(),
+            scroll_targets: Default::default(),
             first_line_styles: false,
             first_line_changed: Vec::new(),
             dom_selection: None,
@@ -920,6 +961,22 @@ impl BaseDocument {
 
     pub fn get_node(&self, node_id: NodeId) -> Option<&Node> {
         self.nodes.get(node_id)
+    }
+
+    /// pyro: the `font-family` names that `@font-face` rules registered font file `blob_id` (a
+    /// blob id) under.
+    pub fn font_face_families(&self, blob_id: u64) -> &[String] {
+        self.font_face_families.get(&blob_id).map_or(&[], Vec::as_slice)
+    }
+
+    /// pyro: the `@font-palette-values` rules in effect, in cascade order: of two rules for the
+    /// same palette name and font family, the later one wins.
+    pub fn font_palette_values_rules(
+        &self,
+    ) -> impl Iterator<Item = &style::servo_arc::Arc<style::stylesheets::FontPaletteValuesRule>> + '_ {
+        self.stylist
+            .iter_extra_data_origins_rev()
+            .flat_map(|(data, _)| data.font_palette_values.iter().map(|(rule, _)| rule))
     }
 
     pub fn get_node_mut(&mut self, node_id: NodeId) -> Option<&mut Node> {
@@ -1310,13 +1367,37 @@ impl BaseDocument {
             if let Some(after) = node.after() {
                 crate::util::ensure_stack(|| self.drop_node_ignoring_parent_with(after, on_drop));
             }
-            // pyro: the node holding its `::first-letter` style.
-            if let Some(first_letter) = node.element_data().and_then(|element| element.first_letter) {
-                self.remove_node_from_tree(first_letter);
+            // pyro: the node holding its `::first-letter` style (with the text of an initial
+            // letter box).
+            if let Some(first_letter) = node.element_data().and_then(|element| element.first_letter)
+                && let Some(letter) = self.remove_node_from_tree(first_letter)
+            {
+                for &child in &letter.children {
+                    self.remove_node_from_tree(child);
+                }
             }
             // pyro: its `::marker` style.
             if let Some(marker_style) = node.element_data().and_then(|element| element.marker_style) {
                 self.remove_node_from_tree(marker_style);
+            }
+            // pyro: its scroll pseudo-element boxes (its group with the markers in it, its
+            // buttons), and its marker, which leaves its group.
+            if let Some(pseudos) = node.element_data().and_then(|element| element.scroll.as_deref()).cloned() {
+                for owned in pseudos.group.into_iter().chain(pseudos.buttons.iter().flatten().copied()).chain(pseudos.column) {
+                    self.drop_scroll_pseudo_node(owned);
+                }
+                if let Some(marker) = pseudos.marker
+                    && self.nodes.get(marker).is_some_and(|marker| marker.scroll_pseudo().is_some_and(|(_, origin)| origin == node_id))
+                {
+                    let group = self.nodes[marker].parent;
+                    self.drop_scroll_pseudo_node(marker);
+                    if let Some(group) = group.and_then(|group| self.nodes.get_mut(group)) {
+                        group.children.retain(|&id| id != marker);
+                        group.insert_damage(crate::layout::damage::ALL_DAMAGE);
+                        group.mark_damaged();
+                    }
+                }
+                self.scroll_markers_dirty = true;
             }
             // pyro: and its `::first-line` style.
             if let Some(first_line) = node.element_data().and_then(|element| element.first_line) {
@@ -1564,7 +1645,8 @@ impl BaseDocument {
         // `<style>` is raw text and an XML CDATA section is literal, so a `&#x46;` left in
         // either stays four characters, as in every browser (WPT css/CSS2 content-177).
         let css = self.nodes[target_id].text_content();
-        let sheet = self.make_stylesheet(&css, Origin::Author);
+        let host = self.nodes[target_id].containing_shadow_host_id();
+        let sheet = self.make_stylesheet_in(&css, Origin::Author, host);
         self.add_stylesheet_for_node(sheet, target_id);
     }
 
@@ -1610,6 +1692,12 @@ impl BaseDocument {
     }
 
     pub fn make_stylesheet(&self, css: impl AsRef<str>, origin: Origin) -> DocumentStyleSheet {
+        self.make_stylesheet_in(css, origin, None)
+    }
+
+    /// [`Self::make_stylesheet`] for an element of the shadow tree of `host` (`None`: of the
+    /// document's tree).
+    pub(crate) fn make_stylesheet_in(&self, css: impl AsRef<str>, origin: Origin, host: Option<NodeId>) -> DocumentStyleSheet {
         // pyro: an author sheet without `@import` (whose loads are
         // the document's) parses once per thread for its text and base URL:
         // every document of a test suite or a PDF template carries the same
@@ -1621,8 +1709,15 @@ impl BaseDocument {
             if let Some(sheet) = crate::util::shared_sheet(css, self.url.as_str()) {
                 // A stylist holds a sheet once: another element of this
                 // document with the same text (two `<style>`s alike, adopted
-                // sheets reordered) parses its own.
-                if !self.nodes_to_stylesheet.values().any(|s| *s == sheet) {
+                // sheets reordered) parses its own. So does a shadow root; shadow roots
+                // share theirs (a component's instances: one cascade data for all of them).
+                let taken = match host {
+                    None => self.nodes_to_stylesheet.values().any(|s| *s == sheet),
+                    Some(host) => {
+                        self.nodes.shadow_roots.get(&host).is_some_and(|r| r.sheets.values().any(|s| *s == sheet))
+                    }
+                };
+                if !taken {
                     return sheet;
                 }
                 return self.parse_stylesheet(css, origin);
@@ -1660,11 +1755,35 @@ impl BaseDocument {
 
     pub fn upsert_stylesheet_for_node(&mut self, node_id: NodeId) {
         let raw_styles = self.nodes[node_id].text_content();
-        let sheet = self.make_stylesheet(raw_styles, Origin::Author);
+        let host = self.nodes[node_id].containing_shadow_host_id();
+        let sheet = self.make_stylesheet_in(raw_styles, Origin::Author, host);
         self.add_stylesheet_for_node(sheet, node_id);
     }
 
     pub fn add_stylesheet_for_node(&mut self, stylesheet: DocumentStyleSheet, node_id: NodeId) {
+        // pyro: the sheet of an element of a shadow tree is that shadow root's (`crate::shadow`).
+        let host = self.nodes.get(node_id).and_then(|node| node.containing_shadow_host_id());
+        if let Some(old) = self.nodes_to_stylesheet.remove(&node_id) {
+            self.stylist.remove_stylesheet(old, &self.guard.read());
+            self.stylesheet_generation += 1;
+        }
+        self.remove_shadow_stylesheet(node_id);
+        if let Some(host) = host {
+            crate::net::fetch_font_face(
+                self.tx.clone(),
+                self.id,
+                Some(node_id),
+                &stylesheet.0,
+                &self.net_provider,
+                &self.shell_provider,
+                &self.guard.read(),
+                self.abort_signal.as_ref(),
+            );
+            let element = &mut self.nodes[node_id].element_data_mut().unwrap();
+            element.special_data = SpecialElementData::Stylesheet(stylesheet.clone());
+            self.add_shadow_stylesheet(host, node_id, stylesheet);
+            return;
+        }
         let old = self.nodes_to_stylesheet.insert(node_id, stylesheet.clone());
         self.stylesheet_generation += 1;
 
@@ -1895,7 +2014,7 @@ impl BaseDocument {
                 self.apply_iframe_html(node_id, res.request_id, res.resolved_url, &html);
             }
             Resource::Font(bytes, overrides) => {
-                let font = crate::util::intern_font_blob(bytes);
+                let font = crate::util::intern_font_blob(bytes, overrides.family_name.as_deref());
 
                 // Build a `FontInfoOverride` from the `@font-face` descriptors
                 // captured during stylesheet parsing. Without this, parley
@@ -1910,6 +2029,10 @@ impl BaseDocument {
                     weight: weight_override,
                     width: overrides.width.map(parley::fontique::FontWidth::from_percentage),
                     slant_range: overrides.slant_range,
+                    face_metrics: overrides.face_metrics,
+                    face_settings: overrides.face_settings,
+                    weight_range: overrides.weight_range,
+                    width_range: overrides.width_range,
                     style: overrides.style,
                     unicode_range: overrides.unicode_range.as_ref(),
                     precedence: Some(overrides.precedence),
@@ -1921,6 +2044,12 @@ impl BaseDocument {
                 global_font_ctx
                     .collection
                     .register_fonts(font.clone(), Some(info_override));
+                if let Some(family) = &overrides.family_name {
+                    let families = self.font_face_families.entry(font.id()).or_default();
+                    if !families.contains(family) {
+                        families.push(family.clone());
+                    }
+                }
 
                 #[cfg(feature = "parallel-construct")]
                 {
@@ -2380,9 +2509,36 @@ impl BaseDocument {
         Some(id)
     }
 
+    /// pyro: the shadow hosts whose shadow trees hold `id` (innermost first): they match `:focus`
+    /// while it is focused (CSS Scoping 1 § 3.1: a shadow host is focused when its shadow tree
+    /// holds the focused element; `crate::shadow`).
+    fn shadow_hosts_of(&self, id: NodeId) -> Vec<NodeId> {
+        let mut hosts = Vec::new();
+        let mut current = self.nodes.get(id).and_then(|node| node.containing_shadow_host_id());
+        while let Some(host) = current {
+            hosts.push(host);
+            current = self.nodes.get(host).and_then(|node| node.containing_shadow_host_id());
+        }
+        hosts
+    }
+
+    /// pyro: gives (or takes) the shadow hosts of the focused element `id` their `:focus`.
+    fn set_shadow_hosts_focus(&mut self, id: Option<NodeId>, focus: bool) {
+        let Some(id) = id else { return };
+        for host in self.shadow_hosts_of(id) {
+            self.snapshot_node_and(host, ElementState::FOCUS, |node| {
+                if let Some(data) = node.element_data_mut() {
+                    data.element_state.set(ElementState::FOCUS, focus);
+                }
+                node.mark_ancestors_dirty();
+            });
+        }
+    }
+
     /// Clear the focussed node
     pub fn clear_focus(&mut self) {
         if let Some(id) = self.focus_node_id {
+            self.set_shadow_hosts_focus(Some(id), false);
             let shell_provider = self.shell_provider.clone();
             self.snapshot_node_and(id, ElementState::FOCUS | ElementState::FOCUSRING, |node| {
                 node.blur(shell_provider)
@@ -2420,6 +2576,7 @@ impl BaseDocument {
 
         // Remove focus from the old node
         if let Some(id) = self.focus_node_id {
+            self.set_shadow_hosts_focus(Some(id), false);
             self.snapshot_node_and(id, ElementState::FOCUS | ElementState::FOCUSRING, |node| {
                 node.blur(shell_provider.clone())
             });
@@ -2437,6 +2594,7 @@ impl BaseDocument {
                 }
             },
         );
+        self.set_shadow_hosts_focus(Some(focus_node_id), true);
 
         // Update :focus-within on the ancestor chains (shared prefix stays)
         let old_node_path = self.maybe_node_element_ancestors(self.focus_node_id);
@@ -3002,6 +3160,8 @@ impl BaseDocument {
             self.font_ctx.clone(),
         ));
         self.scroll_viewport_by(0.0, 0.0); // Clamp scroll offset
+        // pyro: shadow roots' cascade data holds their sheets' media query results.
+        self.invalidate_shadow_styles();
 
         // Text is shaped at a specific scale factor, so cached inline layouts
         // must be invalidated when the scale changes, as must every node's

@@ -21,7 +21,7 @@ pub(in super::super) struct KnownDimensionsCacheEntry {
 }
 
 /// Represents a single grid item
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(in super::super) struct GridItem {
     /// The id of the node that this item represents
     pub node: NodeId,
@@ -120,6 +120,27 @@ pub(in super::super) struct GridItem {
     /// Out-of-flow candidates bubbled out of this item's subtree (anchors relative to the
     /// container's border box)
     pub oof_candidates: OofCandidates,
+
+    /// pyro: the axes in which the item is a subgrid of this grid (css-grid-2 §9; `width`: columns,
+    /// `height`: rows). It is stretched there, and its own items size this grid's tracks in its place.
+    pub subgrid: Size<bool>,
+    /// pyro: the axes in which the item takes no part in track sizing (`width`: columns, `height`: rows):
+    /// a subgrid's subgridded axes ("as if it was completely empty"), and the axes in which the subgrid
+    /// of a virtual item ([`Self::is_virtual`]) has tracks of its own.
+    pub excluded: Size<bool>,
+    /// pyro: an item of a descendant subgrid, here only to size this grid's tracks: it is laid out and
+    /// positioned by its subgrid.
+    pub is_virtual: bool,
+    /// pyro: a margin around a virtual item for track sizing: the margin, border and padding of the subgrids
+    /// at whose edges it lies, and half the difference of a subgrid's gap to this grid's at its other edges
+    /// (css-grid-2 §9). Zero for other items.
+    pub extra_margin: Rect<f32>,
+    /// pyro: the subgrid a virtual item belongs to, and its lines there (origin-zero)
+    pub subgrid_owner: Option<NodeId>,
+    pub owner_lines: Size<Line<OriginZeroLine>>,
+    /// pyro: a virtual item's area in an axis where its subgrid has tracks of its own (`excluded`), from
+    /// the sizes that subgrid's last layout gave them; `None` while unknown (indefinite)
+    pub standalone_size: Size<Option<f32>>,
 }
 
 impl GridItem {
@@ -169,6 +190,13 @@ impl GridItem {
             y_position: 0.0,
             height: 0.0,
             oof_candidates: OofCandidates::NONE,
+            subgrid: Size { width: false, height: false },
+            excluded: Size { width: false, height: false },
+            is_virtual: false,
+            extra_margin: Rect::ZERO,
+            subgrid_owner: None,
+            owner_lines: Size { width: UNPLACED, height: UNPLACED },
+            standalone_size: Size::NONE,
         }
     }
 
@@ -192,7 +220,10 @@ impl GridItem {
     /// See <https://www.w3.org/TR/css-align-3/#baseline-align-self>
     #[inline(always)]
     pub fn participates_in_baseline_alignment(&self) -> bool {
-        self.align_self.keyword == AlignItemsKeyword::Baseline
+        // pyro: a subgrid's items and a subgrid stretched in its rows take no part (yet).
+        !self.is_virtual
+            && !self.excluded.height
+            && self.align_self.keyword == AlignItemsKeyword::Baseline
             && !self.has_auto_block_margin()
             && !self.has_cyclic_block_size_dependency()
     }
@@ -509,6 +540,12 @@ impl GridItem {
                 .sum::<Option<f32>>(),
         );
 
+        // pyro: a subgrid's item in the axis where its subgrid has tracks of its own: its area there is
+        // what the subgrid's last layout gave it (`standalone_size`), else indefinite.
+        if self.is_virtual && self.excluded.get(axis.other()) {
+            size.set(axis.other(), self.standalone_size.get(axis.other()));
+            return size;
+        }
         size.set(
             axis.other(),
             other_axis_tracks[self.track_range_excluding_lines(axis.other())]
@@ -556,11 +593,15 @@ impl GridItem {
         tree: &impl LayoutPartialTree,
     ) -> Size<f32> {
         Rect {
-            left: self.margin.left.resolve_or_zero(Some(0.0), |val, basis| tree.calc(val, basis)),
-            right: self.margin.right.resolve_or_zero(Some(0.0), |val, basis| tree.calc(val, basis)),
+            left: self.margin.left.resolve_or_zero(Some(0.0), |val, basis| tree.calc(val, basis))
+                + self.extra_margin.left,
+            right: self.margin.right.resolve_or_zero(Some(0.0), |val, basis| tree.calc(val, basis))
+                + self.extra_margin.right,
             top: self.margin.top.resolve_or_zero(inner_node_width, |val, basis| tree.calc(val, basis))
-                + self.baseline_shim,
-            bottom: self.margin.bottom.resolve_or_zero(inner_node_width, |val, basis| tree.calc(val, basis)),
+                + self.baseline_shim
+                + self.extra_margin.top,
+            bottom: self.margin.bottom.resolve_or_zero(inner_node_width, |val, basis| tree.calc(val, basis))
+                + self.extra_margin.bottom,
         }
         .sum_axes()
     }
@@ -668,7 +709,8 @@ impl GridItem {
         if available_space.width.is_none() && available_space.height.is_none() {
             return available_space;
         }
-        let margin = self.margin.resolve_or_zero(grid_area_size.width, |val, basis| tree.calc(val, basis));
+        let margin = self.margin.resolve_or_zero(grid_area_size.width, |val, basis| tree.calc(val, basis))
+            + self.extra_margin;
         Size {
             width: available_space.width.map(|width| f32_max(width - margin.horizontal_axis_sum(), 0.0)),
             height: available_space

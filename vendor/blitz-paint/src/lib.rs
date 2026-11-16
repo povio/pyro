@@ -12,6 +12,7 @@ mod gradient;
 mod highlight;
 mod kurbo_css;
 mod layers;
+mod palette;
 mod render;
 mod sizing;
 mod text;
@@ -59,7 +60,24 @@ pub fn paint_scene(
 ) {
     // pyro: screenshots draw flat elements with a 3D transform as Chromium composites them
     // (`BlitzDomPainter::composite_3d`); printed output stays vector.
-    paint_scene_inner(scene, doc, scale, width, height, x_offset, y_offset, true, true, true)
+    paint_scene_inner(scene, doc, scale, width, height, x_offset, y_offset, true, true, true, Some(kurbo::Affine::IDENTITY))
+}
+
+/// pyro: [`paint_scene`] for a scene drawn into device pixels with `device` (a screenshot's
+/// transform of the page scene: its origin and clip scale). Knowing the pixels, painting leaves
+/// out clips that would cut nothing (`BlitzDomPainter::device_pixels`).
+#[allow(clippy::too_many_arguments)]
+pub fn paint_scene_for_device(
+    scene: &mut impl PaintScene,
+    doc: &mut BaseDocument,
+    scale: f64,
+    width: u32,
+    height: u32,
+    x_offset: u32,
+    y_offset: u32,
+    device: kurbo::Affine,
+) {
+    paint_scene_inner(scene, doc, scale, width, height, x_offset, y_offset, true, true, true, Some(device))
 }
 
 /// pyro: the top Chromium paints a line of text at, in CSS px of the document: the line's unrounded
@@ -88,7 +106,7 @@ pub fn paint_scene_with(
     y_offset: u32,
     backgrounds: bool,
 ) {
-    paint_scene_inner(scene, doc, scale, width, height, x_offset, y_offset, backgrounds, true, false)
+    paint_scene_inner(scene, doc, scale, width, height, x_offset, y_offset, backgrounds, true, false, None)
 }
 
 /// [`paint_scene_with`] for print: text at its layout-unit x.
@@ -103,7 +121,7 @@ pub fn paint_scene_for_print(
     y_offset: u32,
     backgrounds: bool,
 ) {
-    paint_scene_inner(scene, doc, scale, width, height, x_offset, y_offset, backgrounds, true, false)
+    paint_scene_inner(scene, doc, scale, width, height, x_offset, y_offset, backgrounds, true, false, None)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -118,6 +136,7 @@ fn paint_scene_inner(
     backgrounds: bool,
     fractional_text_x: bool,
     composite_3d: bool,
+    device_pixels: Option<kurbo::Affine>,
 ) {
     // Painting walks `paint_children` and the stacking contexts, which a
     // resolve only marks stale.
@@ -144,6 +163,7 @@ fn paint_scene_inner(
     generator.backgrounds = backgrounds;
     generator.fractional_text_x = fractional_text_x;
     generator.composite_3d = composite_3d;
+    generator.device_pixels = device_pixels;
     generator.paint_scene(scene);
 
     // println!(

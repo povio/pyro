@@ -55,6 +55,23 @@ impl Dom {
         }
     }
 
+    /// The not-yet-custom HTML elements named `local` among the shadow-including descendants of
+    /// `root`, in shadow-including tree order (shadow trees before children): the elements
+    /// `customElements.define` upgrades (HTML "upgrade candidates", which include the elements of
+    /// shadow trees: a component's shadow tree holds the components it uses).
+    pub fn upgrade_candidates_named(&self, root: NodeId, local: &markup5ever::LocalName) -> Vec<NodeId> {
+        let Ok(root) = self.check(root) else { return Vec::new() };
+        let mut out = Vec::new();
+        let mut i = root;
+        while i != NIL {
+            if self.upgrade_candidate(i) && self.n(i).element().is_some_and(|e| e.name.local == *local) {
+                out.push(self.id_of(i));
+            }
+            i = self.next_shadow_including(i, root);
+        }
+        out
+    }
+
     /// Whether elements wait for an upgrade attempt.
     pub fn has_upgrade_candidates(&self) -> bool {
         !self.upgrades.queued.is_empty()

@@ -154,6 +154,13 @@ impl BaseDocument {
         if let Some(after_id) = self.nodes[node_id].after() {
             damage_from_children |= crate::util::ensure_stack(|| self.propagate_damage_flags(after_id));
         }
+        // pyro: its scroll pseudo-element boxes (a group, with its markers, and buttons), which
+        // only it reaches (`scroll_markers`).
+        for pseudo_id in super::scroll_markers::owned_pseudo_nodes(&self.nodes[node_id]) {
+            if self.nodes.get(pseudo_id).is_some() {
+                damage_from_children |= crate::util::ensure_stack(|| self.propagate_damage_flags(pseudo_id));
+            }
+        }
 
         // A child's `order` changed: this container re-collects (and so re-sorts)
         // its layout children. Only the direct parent consumes the flag; like
@@ -518,6 +525,18 @@ impl BaseDocument {
     /// anonymous boxes through their owner's `anonymous_blocks`. An anonymous
     /// box's `children` are DOM nodes already reached through its owner, so
     /// they are not recursed into.
+    /// pyro: clears the flags of the boxes a pseudo-element box's content generated (images: text
+    /// has none), which no other walk reaches.
+    fn clear_generated_children_flags(&mut self, pseudo_id: NodeId) {
+        let mut index = 0;
+        while let Some(&child) = self.nodes.get(pseudo_id).and_then(|pseudo| pseudo.children.get(index)) {
+            if !self.nodes[child].is_text_node() && self.nodes[child].scroll_pseudo().is_none() {
+                self.clear_damage_and_dirty_flags(child);
+            }
+            index += 1;
+        }
+    }
+
     pub(crate) fn clear_damage_and_dirty_flags(&mut self, node_id: NodeId) {
         // Anonymous boxes can be freed during construction while still
         // listed in their owner's `anonymous_blocks`.
@@ -532,6 +551,11 @@ impl BaseDocument {
         let anonymous_blocks = std::mem::take(&mut node.anonymous_blocks);
         let children = std::mem::take(&mut node.children);
         let (before, after) = (node.before(), node.after());
+        // pyro: its scroll pseudo-element boxes, and a group's markers (`scroll_markers`).
+        let scroll_pseudos = super::scroll_markers::owned_pseudo_nodes(node);
+        let is_scroll_group = node
+            .scroll_pseudo()
+            .is_some_and(|(pseudo, _)| pseudo == style::selector_parser::PseudoElement::ScrollMarkerGroup);
 
         for anon_id in anonymous_blocks.iter() {
             crate::util::ensure_stack(|| self.clear_damage_and_dirty_flags(*anon_id));
@@ -557,6 +581,17 @@ impl BaseDocument {
                     self.clear_damage_and_dirty_flags(child);
                 }
                 index += 1;
+            }
+        }
+
+        for pseudo_id in scroll_pseudos {
+            crate::util::ensure_stack(|| self.clear_damage_and_dirty_flags(pseudo_id));
+            self.clear_generated_children_flags(pseudo_id);
+        }
+        if is_scroll_group {
+            for &marker in children.iter() {
+                crate::util::ensure_stack(|| self.clear_damage_and_dirty_flags(marker));
+                self.clear_generated_children_flags(marker);
             }
         }
 

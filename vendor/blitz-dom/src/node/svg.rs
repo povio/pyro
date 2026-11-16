@@ -112,10 +112,30 @@ impl SvgImageData {
         };
         let doc = roxmltree::Document::parse_with_options(text, xml_options)
             .map_err(usvg::Error::ParsingFailed)?;
-        let tree = usvg::Tree::from_xmltree(&doc, options)?;
+        let intrinsic_dimensions = SvgIntrinsicDimensions::from_xmltree(&doc);
+        let tree = match usvg::Tree::from_xmltree(&doc, options) {
+            Ok(tree) => tree,
+            // pyro: a root `width` or `height` of zero is a natural size of zero, not an invalid image
+            // (browsers lay it out at that size, its `viewBox` ratio kept, and draw its content in the box
+            // they give it): the content is parsed as of an SVG without a size (WPT
+            // `grid-item-aspect-ratio-stretch-3`, `grid-item-no-aspect-ratio-stretch-4..6`).
+            Err(usvg::Error::InvalidSize) => {
+                let zero = |length: Option<svgtypes::Length>| length.is_some_and(|length| length.number == 0.0);
+                if !zero(intrinsic_dimensions.width) && !zero(intrinsic_dimensions.height) {
+                    return Err(usvg::Error::InvalidSize);
+                }
+                let without =
+                    root_attrs_replaced(text, &[], &["width", "height"]).ok_or(usvg::Error::InvalidSize)?;
+                let xml_options = roxmltree::ParsingOptions { allow_dtd: true, ..Default::default() };
+                let doc = roxmltree::Document::parse_with_options(&without, xml_options)
+                    .map_err(usvg::Error::ParsingFailed)?;
+                usvg::Tree::from_xmltree(&doc, options)?
+            }
+            Err(error) => return Err(error),
+        };
         Ok(Self {
             tree: Arc::new(tree),
-            intrinsic_dimensions: SvgIntrinsicDimensions::from_xmltree(&doc),
+            intrinsic_dimensions,
             inline_source: None,
             source: None,
         })
@@ -144,6 +164,12 @@ impl SvgImageData {
             .intrinsic_dimensions
             .width
             .is_some_and(|len| len.unit != LengthUnit::Percent);
+        // pyro: an absolute length is the natural width as declared; usvg's resolved size is not
+        // it when the height is missing (it took the content's bounds: 46px for `width="20px"`
+        // with a circle sized in percentages; WPT `grid-item-no-aspect-ratio-stretch-*`).
+        if let Some(px) = self.intrinsic_dimensions.width.and_then(absolute_length_px) {
+            return Some(px);
+        }
         declared.then(|| self.tree.size().width())
     }
 
@@ -155,6 +181,10 @@ impl SvgImageData {
             .intrinsic_dimensions
             .height
             .is_some_and(|len| len.unit != LengthUnit::Percent);
+        // pyro: as for the width
+        if let Some(px) = self.intrinsic_dimensions.height.and_then(absolute_length_px) {
+            return Some(px);
+        }
         declared.then(|| self.tree.size().height())
     }
 
@@ -399,6 +429,12 @@ fn with_root_size(source: &str, width: f32, height: f32) -> Option<String> {
 /// pyro: `source` (an SVG document whose root is `<svg`) with the root's attributes named in
 /// `attrs` set to their values there (first, in that order); its other attributes are kept.
 fn with_root_attrs(source: &str, set: &[(&str, String)]) -> Option<String> {
+    root_attrs_replaced(source, set, &[])
+}
+
+/// pyro: `source` with the root's attributes named in `set` set (first, in that order) and those named in
+/// `drop` removed; its other attributes are kept.
+fn root_attrs_replaced(source: &str, set: &[(&str, String)], drop: &[&str]) -> Option<String> {
     let start = source.find("<svg")?;
     // The end of the root's start tag: the first `>` outside an attribute value.
     let mut quote = None;
@@ -427,7 +463,7 @@ fn with_root_attrs(source: &str, set: &[(&str, String)]) -> Option<String> {
                 v[1..].find(q).map(|e| name_end + 1 + 1 + e + 1)
             })
             .unwrap_or(name_end);
-        if set.iter().any(|(set_name, _)| *set_name == name) {
+        if set.iter().any(|(set_name, _)| *set_name == name) || drop.contains(&name) {
             rest = &after[value_end..];
         } else {
             attrs.push(' ');
@@ -574,4 +610,21 @@ impl SvgImageData {
         );
         crate::util::parse_svg_image(document.as_bytes()).ok()
     }
+}
+
+/// pyro: an SVG length in an absolute unit (user units are CSS px) in CSS px; `None` for percentages and
+/// font-relative units.
+fn absolute_length_px(length: svgtypes::Length) -> Option<f32> {
+    use svgtypes::LengthUnit;
+    let scale = match length.unit {
+        LengthUnit::None | LengthUnit::Px => 1.0,
+        LengthUnit::In => 96.0,
+        LengthUnit::Cm => 96.0 / 2.54,
+        LengthUnit::Mm => 96.0 / 25.4,
+        LengthUnit::Pt => 4.0 / 3.0,
+        LengthUnit::Pc => 16.0,
+        LengthUnit::Em | LengthUnit::Ex | LengthUnit::Percent => return None,
+    };
+    let px = (length.number * scale) as f32;
+    (px.is_finite() && px >= 0.0).then_some(px)
 }

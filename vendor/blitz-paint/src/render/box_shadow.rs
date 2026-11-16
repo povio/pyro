@@ -114,7 +114,9 @@ pub(super) fn overflow_clip_path(frame: &CssBox, style: &style::properties::Comp
         bottom_left: inner(frame.border_radii.bottom_left, insets.x0, insets.y1),
     };
     let radii = spread_radii(&radii, rect.size(), margin);
-    CssBox::new(rect.inflate(margin, margin), Insets::ZERO, Insets::ZERO, 0.0, radii).border_box_path()
+    CssBox::new(rect.inflate(margin, margin), Insets::ZERO, Insets::ZERO, 0.0, radii)
+        .contoured_like(frame)
+        .border_box_path()
 }
 
 /// pyro: the single radius of a shadow shape whose corners are all circular arcs of one radius
@@ -154,10 +156,120 @@ fn padding_radii(frame: &CssBox) -> NonUniformRoundedRectRadii {
 }
 
 impl ElementCx<'_, '_> {
+    /// pyro: what this element clips its overflow to ([`overflow_clip_path`]): with a
+    /// `border-shape`, the inner edge of its border.
+    pub(super) fn overflow_clip_path(&self, style: &style::properties::ComputedValues) -> kurbo::BezPath {
+        if let Some(shape) = self.border_shape() {
+            return shape.inner_path();
+        }
+        overflow_clip_path(&self.frame, style, self.scale)
+    }
+
+    /// pyro: a shadow of `path` (this element's space, device px) filled in `color`, moved by
+    /// `offset` and blurred by `blur` (the CSS blur radius, device px: a standard deviation of
+    /// half of it, as Chromium blurs), drawn through a filter layer when blurred.
+    fn fill_shadow_path(
+        &self,
+        scene: &mut impl PaintScene,
+        path: &kurbo::BezPath,
+        color: Color,
+        offset: Vec2,
+        blur: f64,
+    ) {
+        let transform = self.transform.then_translate(offset);
+        if blur <= 0.0 {
+            scene.fill(Fill::NonZero, transform, color, None, path);
+            return;
+        }
+        use kurbo::Shape as _;
+        let filter = std::sync::Arc::new(anyrender::Filter::single(anyrender::filters::FilterEffect::blur(
+            (blur / 2.0) as f32,
+        )));
+        let bounds = path.bounding_box().inflate(blur * 2.0, blur * 2.0);
+        let mut group = anyrender::Scene::new();
+        group.push_layer(Fill::NonZero, Mix::Normal, 1.0, transform, &bounds, Some(filter), None);
+        group.fill(Fill::NonZero, transform, color, None, path);
+        group.pop_layer();
+        scene.append_scene(group, kurbo::Affine::IDENTITY);
+    }
+
+    /// pyro: the shadows of an element with a `border-shape` (CSS Borders 4 §11.5.2): an outer
+    /// shadow is its outer edge grown by the spread, blurred and cut out of the outer edge
+    /// (`PaintNormalBoxShadow`); an inner one fills around the inner edge shrunk by the spread,
+    /// inside the inner edge (`PaintInsetBoxShadowForBorderShape`).
+    fn draw_border_shape_shadows(
+        &self,
+        scene: &mut impl PaintScene,
+        shape: &super::border_shape::BorderShape,
+        inset: bool,
+    ) {
+        use crate::kurbo_css::contoured::{boolean, flatten, rect_polygon};
+        use kurbo::Shape as _;
+        let current_color = self.style.clone_color();
+        let box_shadow = &self.style.get_effects().box_shadow.0;
+        let clip = if inset { shape.inner_path() } else { shape.outer_path() };
+        let mut clipped = false;
+        for shadow in box_shadow.iter().filter(|s| s.inset == inset).rev() {
+            let color = shadow.base.color.resolve_to_absolute(&current_color).as_srgb_color();
+            if color.components[3] <= 0.0 {
+                continue;
+            }
+            let offset = Vec2::new(
+                shadow.base.horizontal.px() as f64 * self.scale,
+                shadow.base.vertical.px() as f64 * self.scale,
+            );
+            let spread = shadow.spread.px() as f64 * self.scale;
+            let blur = shadow.base.blur.px() as f64 * self.scale;
+            if !clipped {
+                if inset {
+                    scene.push_clip_layer(Fill::NonZero, self.transform, &clip);
+                } else {
+                    // Everything but the outer edge's area.
+                    let far = clip.bounding_box().inflate(1e5, 1e5);
+                    let outside = boolean(
+                        &[vec![rect_polygon(far)], flatten(&clip)],
+                        |inside| inside[0] && !inside[1],
+                    );
+                    scene.push_clip_layer(Fill::NonZero, self.transform, &outside);
+                }
+                clipped = true;
+            }
+            if inset {
+                // The hole is the inner edge shrunk by the spread; the shadow is all around it.
+                let hole = if spread == 0.0 {
+                    clip.clone()
+                } else {
+                    shape.offset_path(&clip, -spread)
+                };
+                let far = clip.bounding_box().inflate(blur * 3.0 + spread.abs() + offset.hypot() + 10.0, 0.0);
+                let far = far.inflate(0.0, blur * 3.0 + spread.abs() + offset.hypot() + 10.0);
+                let around = boolean(
+                    &[vec![rect_polygon(far)], flatten(&hole)],
+                    |inside| inside[0] && !inside[1],
+                );
+                self.fill_shadow_path(scene, &around, color, offset, blur);
+            } else if let Some(circle) = shape.circle_with_offset(spread).filter(|_| blur > 0.0) {
+                // A circle's blurred shadow as a `border-radius: 50%` box's is drawn.
+                let transform = self.transform.then_translate(offset);
+                scene.draw_box_shadow(transform, circle, color, circle.width() / 2.0, blur / 2.0);
+            } else {
+                let path = shape.outer_path_with_offset(spread);
+                self.fill_shadow_path(scene, &path, color, offset, blur);
+            }
+        }
+        if clipped {
+            scene.pop_layer();
+        }
+    }
+
     pub(super) fn draw_outset_box_shadow(&self, scene: &mut impl PaintScene) {
         let box_shadow = &self.style.get_effects().box_shadow.0;
         let has_outset_shadow = box_shadow.iter().any(|s| !s.inset);
         if !has_outset_shadow {
+            return;
+        }
+        if let Some(shape) = self.border_shape() {
+            self.draw_border_shape_shadows(scene, &shape, false);
             return;
         }
 
@@ -239,7 +351,8 @@ impl ElementCx<'_, '_> {
                             self.frame.border_box.size(),
                             spread,
                         );
-                        let shape = CssBox::new(rect, Insets::ZERO, Insets::ZERO, 0.0, radii);
+                        let shape = CssBox::new(rect, Insets::ZERO, Insets::ZERO, 0.0, radii)
+                            .contoured_like(&self.frame);
 
                         // Without blur the shadow is a solid rounded rectangle: fill it as a
                         // path (antialiased edges) rather than with vello's blurred-rectangle
@@ -258,12 +371,20 @@ impl ElementCx<'_, '_> {
                         }
 
                         // pyro: Chromium blurs with a standard deviation of half the blur
-                        // radius (`BlurRadiusToStdDev`), in device px. Corners of differing radii
-                        // are drawn with their average (vello's blurred rectangle has one).
-                        let radius = uniform_radius(&shape.border_radii)
-                            .unwrap_or_else(|| shape.border_radii.average());
+                        // radius (`BlurRadiusToStdDev`), in device px. vello's blurred rectangle
+                        // has one circular radius: a shape with others (elliptical or differing
+                        // corners, shaped corners) is its path, blurred.
                         let std_dev = blur * self.scale / 2.0;
-                        scene.draw_box_shadow(transform, rect, shadow_color, radius, std_dev);
+                        match uniform_radius(&shape.border_radii).filter(|_| shape.corner_curvature.is_none()) {
+                            Some(radius) => scene.draw_box_shadow(transform, rect, shadow_color, radius, std_dev),
+                            None => {
+                                let offset = Vec2::new(
+                                    shadow.base.horizontal.px() as f64 * self.scale,
+                                    shadow.base.vertical.px() as f64 * self.scale,
+                                );
+                                self.fill_shadow_path(scene, &shape.border_box_path(), shadow_color, offset, blur * self.scale);
+                            }
+                        }
                     }
                 }
             },
@@ -275,6 +396,10 @@ impl ElementCx<'_, '_> {
         let box_shadow = &self.style.get_effects().box_shadow.0;
         let has_inset_shadow = box_shadow.iter().any(|s| s.inset);
         if !has_inset_shadow {
+            return;
+        }
+        if let Some(shape) = self.border_shape() {
+            self.draw_border_shape_shadows(scene, &shape, true);
             return;
         }
 
@@ -303,7 +428,7 @@ impl ElementCx<'_, '_> {
             let hole = self.frame.padding_box.inflate(-spread, -spread);
             let hole_shape = (hole.width() > 0.0 && hole.height() > 0.0).then(|| {
                 let radii = spread_radii(&inner_radii, self.frame.padding_box.size(), -spread);
-                CssBox::new(hole, Insets::ZERO, Insets::ZERO, 0.0, radii)
+                CssBox::new(hole, Insets::ZERO, Insets::ZERO, 0.0, radii).contoured_like(&self.frame)
             });
 
             // pyro: without blur the shadow is the padding box less the moved hole, one fill in

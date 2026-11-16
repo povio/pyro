@@ -211,6 +211,93 @@ how the colour serializes. Test: `a_colour_with_a_missing_component_makes_the_gr
 so the selectors parse (CSS Pseudo-Elements 4 § 4.1); the stylist already keeps such rules by pseudo-element
 chain. blitz-dom answers `implemented_pseudo_element` for the boxes (its README).
 
+## `initial-letter: <number> drop | raise` (WPT round 3, lane I)
+
+`values/generics/text.rs` (`GenericInitialLetter::keyword`, `InitialLetterKeyword`), `values/specified/text.rs`:
+`initial-letter` takes `drop` or `raise` before or after its size (CSS Inline 3 § 7.2, as Blink); the keyword is
+kept for serialization (`1.23 drop`) and `sink` stays 0 then. pyro turns the property on with its pref
+(`layout.css.initial-letter.enabled`); blitz-dom lays initial letters out (its README).
+## `font-palette`, `palette-mix()`, `@font-palette-values` (WPT css-fonts, round 3 lane F)
+
+- `properties/longhands.toml`: `font-palette` is parsed and computed for servo too, behind
+  `layout.css.font-palette.enabled` (upstream: gecko only). blitz-paint draws COLR glyphs in the palette it selects.
+- `values/specified/font.rs`: `FontPalette` is an enum: a name (`normal`, `light`, `dark`, `<dashed-ident>`) or
+  `palette-mix(<color-interpolation-method>, <palette> <percentage>?, <palette> <percentage>?)` (CSS Fonts 5,
+  nested mixes too; `FontPaletteMix::weights` normalizes the percentages). Its computed and resolved values are
+  the specified one, written out (deriving them recurses without end). `color/mix.rs`: `ColorInterpolationMethod`
+  and `HueInterpolationMethod` derive serde, as servo's font style struct needs.
+- `values/specified/number.rs` (`Integer::resolve_with_font_size`), `stylesheets/font_palette_values_rule.rs`:
+  an `<integer>` of `base-palette` or `override-colors` whose calc() has font-relative lengths
+  (`calc(2 + sign(100em - 1px))`) resolves at the initial font size, 16px (CSS Values 4 §6.1.1: a descriptor has
+  no element); upstream dropped the declaration. `FontPaletteOverrideColor`'s fields are public, with
+  `resolved_index` there and on `FontPaletteBase`.
+
+## Container units for servo (WPT css-images, round 3 lane F)
+
+`values/specified/length.rs` (`LengthUnit::parse_dimension`): `cqw`, `cqh`, `cqi`, `cqb`, `cqmin` and `cqmax` parse
+for servo too (upstream: gecko only, so any declaration using them was dropped). They compute against the nearest
+size container through `TElement::query_container_size`, as `@container` conditions do (Blitz answers it with
+the container's laid-out content box, see blitz-dom's README); without one, against the small viewport.
+
+## `text-spacing-trim` (WPT round 3, lane TS)
+
+`properties/longhands.toml`, `properties/data.py`, `values/specified/text.rs` (`TextSpacingTrim`), `values/specified/mod.rs`,
+`values/computed/{mod,text}.rs`: the `text-spacing-trim` longhand (CSS Text 4 § 9.2.1; `normal | space-all |
+space-first | trim-start | trim-both | trim-all | auto`), inherited, for the servo engine. blitz-dom passes it to parley,
+which trims fullwidth punctuation while shaping and at line edges (their READMEs). `text-autospace` was already there;
+pyro turns it on with its pref (`layout.css.text-autospace.enabled`); its initial value stays `no-autospace`, as in
+Chromium (whose default is not the spec's `normal`).
+## `border-shape` (WPT round 3, lane CB)
+
+`properties/longhands.toml`, `values/generics/basic_shape.rs` (`BorderShapeBox`, `GenericBorderShapeItem`,
+`GenericBorderShape`), `values/specified/basic_shape.rs`, `values/computed/basic_shape.rs`: `border-shape: none |
+[ <basic-shape> <geometry-box>? ]{1,2}` (CSS Borders 4 § 11) is parsed and computed for servo (upstream has no such
+property), boxed, not animated, in the border struct. A shape's box may also be `half-border-box`; an omitted box is
+kept as `Default` (serialized as nothing) for blitz-paint to resolve: `half-border-box` for a single shape, the border
+and padding boxes for two.
+
+`stylesheets/rule_parser.rs`: `@counter-style` rules are parsed for servo too (upstream: gecko only). blitz-dom reads
+their `system: extends` for list markers (its README).
+## Pseudo-elements after `::slotted()` (WPT round 3, lane D)
+
+`servo/selector_parser.rs`: `PseudoElement::valid_after_slotted`: `::slotted()` can be followed by `::before`,
+`::after`, `::marker` (tree-abiding, CSS Scoping 1 § 3.2.2) and, as in Blink, `::placeholder`,
+`::file-selector-button` and `::details-content`; the trait's default (servo's until now) dropped such rules
+(WPT css-shadow `slotted-with-pseudo-element`, `slotted-placeholder`). The rule collector already collects the
+slotted rules of a pseudo-element. blitz-dom keeps shadow trees' styles (its README).
+## Scroll markers and scroll buttons, `content-visibility: auto` (WPT round 3, lane SM)
+
+- `properties/longhands.toml`, `values/specified/box.rs` (`ScrollMarkerGroup`, `ScrollTargetGroup`),
+  `properties/data.py`: `scroll-marker-group` (`none | [ before | after ] || [ links | tabs ]`, rebuilds boxes) and
+  `scroll-target-group` (`none | auto`) for servo (CSS Overflow 5 § 3.1).
+- `servo/selector_parser.rs`: the lazy pseudo-elements `::scroll-marker-group`, `::scroll-marker`, `::column` and
+  `::scroll-button(<direction> | *)` (functional: one variant per argument). `::column::scroll-marker` parses
+  (`::column` lets `::scroll-marker` follow it as `::before` lets `::marker`). `:target-current` is a state
+  pseudo-class (`TARGET_CURRENT`, the Gecko-only `STYLEEDITOR_TRANSITIONING` bit, never set by servo otherwise), so
+  are `:target-before` and `:target-after` (`TARGET_BEFORE`, `TARGET_AFTER`: the Gecko-only `DEVTOOLS_HIGHLIGHTED`
+  and `REVEALED` bits); `::scroll-marker` and `::scroll-button()` accept state pseudo-classes after them
+  (`:target-current`, `:target-before`, `:target-after`, `:enabled`, `:disabled` count as user action states for
+  that). A button is element-backed (the UA's `button` rules apply to it).
+  `PSEUDO_COUNT` passed 32: `pseudo_none_array` builds its array with `array::from_fn`.
+- `stylist.rs`: every `::scroll-button()` rule is filed under `::scroll-button(*)` (`PseudoElement::rule_map_key`)
+  and its bucket never matches alone (`has_argument`): the button's node matches the argument against its direction.
+  `Stylist::compute_pseudo_node_style` styles a node that is a pseudo-element's box in normal matching mode, so state
+  pseudo-classes after the pseudo-element match the node's own state (lazy matching on the originating element
+  rejects every selector with one).
+- `style_adjuster.rs`: a `::scroll-marker-group` always has layout containment, and size containment unless it is
+  absolutely positioned (CSS Overflow 5's recommended `contain: size !important`; Chromium contains its layout too).
+  `content-visibility` is parsed for servo; `auto` adds layout, style and paint containment to the computed `contain`
+  (every element is taken as relevant to the user: no size containment), `hidden` does nothing yet.
+- `style_adjuster.rs` (`adjust_for_author_styled_button`): a button (`button`, `input` of type `button`, `submit`
+  or `reset`, `::scroll-button()`) whose border or background an author or user styles has square corners unless
+  one rounds them: pyro's UA sheet rounds buttons by 1px for Chromium's native look, which Chromium drops then
+  (appearance devolves).
+- `values/specified/align.rs` (`AlignFlags::FLOW_START`/`FLOW_END`): the `flow-start` and `flow-end` keywords
+  (css-align-3) in `<content-position>` and `<self-position>`, serialized, flipped and listed like the others;
+  stylo_taffy maps them to `flex-start`/`flex-end` (WPT `css/css-flexbox/alignment/flow-start-flow-end-*`).
+
+blitz-dom generates and lays out the boxes (its README).
+
 ## Updating or dropping the patch
 
 - When upstream has the change: delete this directory and the `[patch.crates-io]` entry.

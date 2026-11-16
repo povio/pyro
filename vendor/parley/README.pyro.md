@@ -231,8 +231,86 @@ they keep their max advance (alignment, hanging white space). blitz-dom sets it 
 `TextStyle::dictionary_breaks` (`style/mod.rs`, `StyleProperty::DictionaryBreaks`, `resolve/mod.rs`, `analysis.rs`):
 `false` asks parley_engine for no dictionary breaks in the style's text (CSS `word-break: manual`).
 
+## `@font-face` `size-adjust` and metrics overrides (WPT css-fonts, round 3 lane F)
+
+`TextStyle::font_size_adjusted` (`style/mod.rs`, `StyleProperty::FontSizeAdjusted`, `resolve/mod.rs`,
+`shape/mod.rs`): `true` where CSS `font-size-adjust` sets the size; items split on it and tell parley_engine
+(`ShapeOptions::face_size_adjust`) not to apply a face's `size-adjust`, which `font-size-adjust` cancels (it fixes
+a metric of every font). `layout/style_metrics.rs`: the strut's first available font has its `@font-face`
+metrics (`FontMetrics::from_font_instance` applies them), without `size-adjust` under `font-size-adjust`.
+
+## Automatic `opsz`, `font-language-override` (WPT css-fonts, round 3 lane F)
+
+`TextStyle::auto_optical_size` and `TextStyle::language_override` (`style/mod.rs`, `StyleProperty`,
+`resolve/mod.rs`, `shape/mod.rs`): whether the first of the style's font variations is the automatic `opsz` (CSS
+`font-optical-sizing: auto`), and the OpenType language system tag to shape with; items split on both and pass them
+to parley_engine (`ShapeOptions::auto_opsz`, `ShapeOptions::language_override`).
+
 ## Updating or dropping the patch
 
 Copy the published crate from `~/.cargo/registry/src/*/parley-<version>` and re-apply
 `UPSTREAM.patch`, or delete this directory and the `[patch.crates-io]` entry when upstream caches
 builds itself.
+
+## `text-spacing-trim` and `text-autospace` (WPT round 3, lane TS)
+
+- `style/mod.rs` (`TextSpacingTrim`, `TextAutospace`, `StyleProperty::{TextSpacingTrim, TextAutospace}`),
+  `resolve/mod.rs`, `layout/mod.rs` (`Style::text_spacing_trim`): the two CSS Text 4 properties per style.
+- `shape/mod.rs`: items split where a style's trimming changes; each item tells parley_engine how its fullwidth
+  punctuation is trimmed (`ShapeOptions::spacing_trim`) and whether an atomic inline sits before or after it
+  (`isolated_before`/`isolated_after`: no punctuation pair across it). parley_engine applies the font's `halt` where
+  punctuation meets punctuation (its README).
+- `layout/line_break.rs` (`line_start_trim`, `line_end_trim`, `LineState::{start_trim, end_trim,
+  has_inline_content}`), `layout/data.rs` (`LayoutData::edge_clusters`): a line's first atom, when it is fullwidth
+  opening punctuation, is set half-width (`trim-start`, `trim-both`, `trim-all`; `space-first` except on a block's
+  first line and after a forced break) or back full-width (`normal`, after punctuation that shaping trimmed it
+  against): the line measures it so and, when committed, moves its glyph and changes its advance
+  (`ShapedText::shift_cluster`). Closing punctuation that does not fit is set half-width when the line then fits and
+  ends with it (Blink's allow-end; `trim-both` always at a line's end); content appended after it gives the advance
+  back. Only closing brackets (`TRIM_CLOSE`: Pe, not full stops, commas or colons) and only where the line wraps after
+  them: a paragraph's or forced break's last line that fits only so overflows with the bracket full-width, as in
+  Chromium. Each line break starts from the shaped clusters (`restore_edge_clusters`); content widths are measured
+  on them too. An invisible formatting character (a bidi control, an empty inline box's strut U+2061) does not start
+  a line's content.
+- `shape/autospace.rs`, `layout/data.rs` (`LayoutData::autospace`, `trailing_autospace`): `text-autospace` adds 1/8 of
+  the style's font size between Wide characters (ideographs, kana, Hangul) and Narrow ones (letters, marks, numerals;
+  Conditional punctuation such as `!` and `#` when the block's language is Chinese), by UTR #59's East_Asian_Spacing
+  (parley_engine's `east_asian_spacing`); marks take their base's class, atomic inlines and out-of-flow boxes
+  separate. The space goes after the cluster before the pair's second character, or to the right edge of
+  right-to-left text before left-to-right text (Blink's `TextAutoSpace` and `ApplyTextAutoSpacing`). A line that
+  ends after such a cluster drops its space (it fits if it would without the space).
+
+Not done: trimming in `ContentWidthsMeasurer` (min/max-content widths count the shaped widths), vertical
+`vhal`/`vchw` (pyro shapes vertical text horizontally, so `halt` serves), `text-spacing` (the shorthand Chromium does
+not ship either). Covered by `crates/pyro-render/tests/text_spacing.rs`.
+
+## `text-justify` (WPT round 3, lane TS)
+
+- `style/mod.rs` (`TextJustify`, `StyleProperty::TextJustify`), `resolve/mod.rs`: CSS `text-justify` per style.
+- `shape/justify.rs`: each character's justification opportunities, as Blink's `ShapeResultSpacing` finds them:
+  `auto` before and after each CJK character (once between two of them, none twice after a space), `inter-character`
+  (`distribute`) between all characters, `none` none at all (a word separator under it is none either);
+  parley_engine's `CharacterFlags::{is_no_justify, expands_before, expands_after}`.
+- `layout/line_break.rs` (`append_atom_to_line`, `hanging_whitespace`, `LineState::content_start`),
+  `layout/spacing.rs` (`Justification::content_start_cluster`, `EffectiveSpacing::gaps`): a line counts them with its
+  word separators and leaves out the one before its first character and those after its last atom (justification
+  stops at that atom's start, as for word separators); justification adds its space there. Invisible formatting
+  characters (bidi controls) are passed over; cursive scripts (Arabic) get no `inter-character` space between letters. Upstream justified only at word separators, so CJK lines (no spaces) stayed
+  start-aligned. Covered by `justified_cjk_text_spreads_between_characters` in
+  `crates/pyro-render/tests/text_spacing.rs`.
+
+## Wrapping where `white-space` changes (WPT round 3, lane TS)
+
+`layout/line_break.rs` (`wraps_after`, `LineState::last_char`): whether a soft wrap opportunity between two atoms of
+different `text-wrap-mode` is taken follows Chromium: after white space by the white space's own style; after
+anything else by its own style or, where elements around it end at the opportunity, by the style of the element
+around both (`<span nowrap>国</span>国` and `<span nowrap>国</span><span nowrap>国</span>` wrap between the two in a
+block that wraps; `国<span>国</span>` in a `nowrap` block does not). The breaker used the previous atom's mode alone.
+Covered by `white_space_changes_wrap_as_in_chromium` in `crates/pyro-render/tests/text_spacing.rs`; WPT
+`white-space-wrap-after-nowrap-001`.
+## Bidi side of out-of-flow boxes (WPT css-position, round 3 lane P)
+
+`PositionedInlineBox::is_rtl` (`layout/line.rs`): whether the level the box resolved to (as U+FFFC) is right-to-left.
+blitz-dom puts an inline-level absolutely positioned box on the start side of its place in that direction (Blink's
+`InlineItem::Direction()`): Latin text in a right-to-left paragraph runs left to right, and so does the box after it
+(WPT `static-position/htb-rtl-*`, `vlr-rtl-*`, `vrl-rtl-*`).

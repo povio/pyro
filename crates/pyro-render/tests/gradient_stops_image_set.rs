@@ -72,8 +72,9 @@ fn the_colour_after_the_last_stop_is_not_interpolated() {
     let img = render(&boxed("linear-gradient(to right in hsl longer hue, red 0px, blue 50px)"), 100, 40);
     assert_eq!(pixel(&img, 60, 20), BLUE);
     assert_eq!(pixel(&img, 95, 20), BLUE);
-    // Half way from red (0deg) the long way round to blue (240deg) is -60deg: magenta.
-    assert!(near(pixel(&img, 25, 20), [255, 0, 255], 12), "{:?}", pixel(&img, 25, 20));
+    // Half way from red (0deg) the long way round to blue (240deg, the short way is down through
+    // 300deg) is 120deg: green.
+    assert!(near(pixel(&img, 25, 20), [0, 255, 0], 12), "{:?}", pixel(&img, 25, 20));
 }
 
 #[test]
@@ -128,7 +129,7 @@ fn a_colour_with_a_missing_component_makes_the_gradient_oklab() {
 fn image_set_paints_its_selected_option() {
     let img = render(
         &(boxed("image-set(linear-gradient(green, green) 1x, linear-gradient(red, red) 2x)")
-            + &boxed("image-set(linear-gradient(red, red) 1x type('image/unsupported'), linear-gradient(green, green) 1x)")),
+            + &boxed("image-set(linear-gradient(red, red) 2x, linear-gradient(green, green) 1x)")),
         100,
         80,
     );
@@ -165,4 +166,24 @@ fn a_corner_gradient_s_middle_line_joins_the_other_corners() {
     // Just inside each side of the line through (0, 50) and (200, 0).
     assert_eq!(pixel(&img, 100, 15), RED);
     assert_eq!(pixel(&img, 100, 35), BLUE);
+}
+
+/// pyro: in sRGB a missing component takes the neighbouring stop's value on each side (a stop
+/// with one splits in two), and the gradient is the renderer's own interpolation between the
+/// resolved ends: pixel for pixel the hard-stop gradient it equals (WPT
+/// css/css-images/gradient/gradient-none-interpolation).
+#[test]
+fn missing_components_in_srgb_resolve_at_the_segment_ends() {
+    let img = render(
+        &(boxed("linear-gradient(to right in srgb, color(srgb 0.5 0 0), color(srgb none 0.5 0.5), color(srgb 1 1 1))")
+            + &boxed("linear-gradient(to right in srgb, color(srgb 0.5 0 0), color(srgb 0.5 0.5 0.5) 50%, color(srgb 1 0.5 0.5) 50%, color(srgb 1 1 1))")
+            + &boxed("linear-gradient(to right in srgb, color(srgb none 0 0), color(srgb none 1 1))")
+            + &boxed("linear-gradient(to right in srgb, color(srgb 0 0 0), color(srgb 0 1 1))")),
+        100,
+        160,
+    );
+    for x in 0..100 {
+        assert_eq!(pixel(&img, x, 20), pixel(&img, x, 60), "x = {x}");
+        assert_eq!(pixel(&img, x, 100), pixel(&img, x, 140), "x = {x}");
+    }
 }

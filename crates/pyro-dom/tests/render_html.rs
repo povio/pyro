@@ -124,8 +124,12 @@ fn shadow_trees_are_flattened_with_slots() {
         }
     }
     let html = render(&dom.borrow(), d);
+    // The flat tree: each slot keeps its element (a `display: contents` box) with its assigned
+    // nodes, or its fallback content, in it.
     assert!(
-        html.contains(r#"<div id="host"><h1><span slot="title">T</span></h1><p>light</p>fallback</div>"#),
+        html.contains(
+            r#"<div id="host"><h1><slot name="title"><span slot="title">T</span></slot></h1><p><slot>light</slot></p><slot name="none">fallback</slot></div>"#
+        ),
         "{html}"
     );
 }

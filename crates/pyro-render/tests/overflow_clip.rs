@@ -92,3 +92,20 @@ fn a_z_indexed_descendant_stays_inside_the_clip_of_a_box_that_makes_no_stacking_
         <div class=child style='position:absolute;z-index:1;left:0;top:0;margin:0'></div></div>";
     assert_eq!(extent(&render(escapes)), ((0, 300), (0, 300)));
 }
+
+/// An inline `<svg>` visible on one axis is cut on the other alone, at its content box, with
+/// square corners whatever its `border-radius` (Chromium; WPT css-overflow/rounded-overflow-*,
+/// overflow-clip-*-visible-*-svg).
+#[test]
+fn inline_svg_visible_on_one_axis_is_cut_on_the_other_alone() {
+    let svg = |overflow: &str| {
+        render(&format!(
+            "<svg class=box style='overflow:{overflow};border-radius:50px'>\
+               <rect x=-100 y=-100 width=300 height=300 fill='rgb(0,128,0)'/></svg>"
+        ))
+    };
+    assert_eq!(extent(&svg("clip visible")), ((100, 200), (0, 300)));
+    assert_eq!(extent(&svg("visible clip")), ((0, 300), (100, 200)));
+    let clipped = svg("clip visible");
+    assert!(green(&clipped, 101, 101) && green(&clipped, 198, 198), "square corners");
+}

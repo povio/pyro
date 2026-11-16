@@ -513,8 +513,8 @@ pub fn compute_hidden_layout(tree: &mut (impl LayoutPartialTree + CacheTree), no
 pub mod detailed_info {
     #[cfg(feature = "grid")]
     pub use super::grid::{
-        DetailedGridInfo, DetailedGridItemsInfo, DetailedGridTracksInfo, GridLineNames, GridLineNamesIter, TableGridReuse, TableGridSplice,
-        TableGridState,
+        DetailedGridInfo, DetailedGridItemsInfo, DetailedGridTracksInfo, GridLineNames, GridLineNamesIter, SubgridAxisContext,
+        SubgridContext, TableGridReuse, TableGridSplice, TableGridState,
     };
 }
 

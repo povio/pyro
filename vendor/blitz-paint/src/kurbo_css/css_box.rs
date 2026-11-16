@@ -1,6 +1,7 @@
 use kurbo::{Arc, BezPath, Insets, PathEl, Point, Rect, Shape as _, Vec2};
 use std::{f64::consts::FRAC_PI_2, f64::consts::PI};
 
+use super::contoured::{self, ContouredRect, CornerCurvature};
 use super::non_uniform_radii::NonUniformRoundedRectRadii;
 use super::{Corner, CssBoxKind, Direction, Edge, add_insets, get_corner_insets};
 
@@ -46,6 +47,15 @@ pub struct CssBox {
     /// [`inner_radii_scale`]).
     padding_radii_scale: f64,
     content_radii_scale: f64,
+
+    /// pyro: the corners' shapes (`corner-shape`), when one is not round: each corner's
+    /// superellipse exponent ([`CssBox::with_corner_curvature`]). The box's edges are then
+    /// [`ContouredRect`]s.
+    pub corner_curvature: Option<CornerCurvature>,
+    /// pyro: the border box (with its radii) this box's edges stay parallel to, when this box
+    /// is one derived from an element's (an outline's, a shadow's, a line of a double border):
+    /// its own border box otherwise.
+    pub contour_origin: Option<(Rect, NonUniformRoundedRectRadii)>,
 }
 
 /// pyro: the scale an inner box's radii need to fit it, as Blink fits them
@@ -126,7 +136,104 @@ impl CssBox {
             border_radii,
             padding_radii_scale,
             content_radii_scale,
+            corner_curvature: None,
+            contour_origin: None,
         }
+    }
+
+    /// pyro: this box with shaped corners (`corner-shape`), `curvature` holding each corner's
+    /// superellipse exponent (`2^k` for `superellipse(k)`). A corner without a radius stays
+    /// round (Blink's `EffectiveCurvature`), and a box with a concave corner has its radii scaled
+    /// so that the hulls of opposite corners do not overlap (`ComputeContouredBorderFromStyle`).
+    /// A box whose corners are all round is left as it is.
+    pub fn with_corner_curvature(mut self, mut curvature: CornerCurvature) -> Self {
+        let radii = self.border_radii;
+        for (c, r) in [
+            (&mut curvature.top_left, radii.top_left),
+            (&mut curvature.top_right, radii.top_right),
+            (&mut curvature.bottom_right, radii.bottom_right),
+            (&mut curvature.bottom_left, radii.bottom_left),
+        ] {
+            if r.x <= 0.0 || r.y <= 0.0 {
+                *c = contoured::ROUND;
+            }
+        }
+        if curvature.is_round() {
+            self.corner_curvature = None;
+            return self;
+        }
+        self.border_radii =
+            contoured::constrain_opposite_corners(self.border_box, self.border_radii, &curvature);
+        self.corner_curvature = Some(curvature);
+        self
+    }
+
+    /// pyro: this box (an outline's, a shadow's) shaped as `element`'s corners are, its curves
+    /// parallel to `element`'s border box's.
+    pub fn contoured_like(mut self, element: &CssBox) -> Self {
+        if let Some(curvature) = element.corner_curvature {
+            self.corner_curvature = Some(curvature);
+            self.contour_origin = Some(element.contour_origin());
+        }
+        self
+    }
+
+    fn contour_origin(&self) -> (Rect, NonUniformRoundedRectRadii) {
+        self.contour_origin
+            .unwrap_or((self.border_box, self.border_radii))
+    }
+
+    /// pyro: the edge of one of this box's boxes as a [`ContouredRect`], when its corners are
+    /// shaped (Blink's `ContouredBorder` and `ContouredInnerBorder`): an inner box's radii are the
+    /// border radii less the widths between (each stopping at zero), and its curves stay
+    /// parallel to the border's.
+    pub fn contour(&self, kind: CssBoxKind) -> Option<ContouredRect> {
+        let curvature = self.corner_curvature?;
+        let (rect, insets) = match kind {
+            CssBoxKind::OutlineBox => return None,
+            CssBoxKind::BorderBox => (self.border_box, Insets::ZERO),
+            CssBoxKind::PaddingBox => (self.padding_box, self.border_width),
+            CssBoxKind::ContentBox => (
+                self.content_box,
+                add_insets(self.border_width, self.padding_width),
+            ),
+        };
+        let shrink = |r: Vec2, corner: Corner| {
+            let inset = get_corner_insets(insets, corner);
+            Vec2::new(
+                if r.x > 0.0 { (r.x - inset.x).max(0.0) } else { r.x },
+                if r.y > 0.0 { (r.y - inset.y).max(0.0) } else { r.y },
+            )
+        };
+        let r = &self.border_radii;
+        let radii = NonUniformRoundedRectRadii {
+            top_left: shrink(r.top_left, Corner::TopLeft),
+            top_right: shrink(r.top_right, Corner::TopRight),
+            bottom_right: shrink(r.bottom_right, Corner::BottomRight),
+            bottom_left: shrink(r.bottom_left, Corner::BottomLeft),
+        };
+        let origin = self.contour_origin();
+        let identity = origin == (rect, radii);
+        Some(ContouredRect {
+            rect,
+            radii,
+            curvature,
+            origin: (!identity).then_some(origin),
+        })
+    }
+
+    /// pyro: the area of the border (the border box less the padding box) of a box with shaped
+    /// corners, and with `side` the part of it that side paints.
+    fn contoured_border_area(&self, side: Option<Edge>) -> Option<BezPath> {
+        let outer = self.contour(CssBoxKind::BorderBox)?;
+        let inner = self.contour(CssBoxKind::PaddingBox)?;
+        let mut shapes = vec![contoured::flatten(&outer.path()), contoured::flatten(&inner.path())];
+        if let Some(edge) = side {
+            shapes.push(vec![side_region(self.border_box, self.border_width, edge)]);
+        }
+        Some(contoured::boolean(&shapes, |inside| {
+            inside[0] && !inside[1] && inside.get(2).copied().unwrap_or(true)
+        }))
     }
 
     /// Construct a BezPath representing one edge of a box's border.
@@ -140,6 +247,10 @@ impl CssBox {
     /// - drawing an inner arc
     pub fn border_edge_shape(&self, edge: Edge) -> BezPath {
         use {Corner::*, CssBoxKind::*, Direction::*, Edge::*};
+
+        if let Some(path) = self.contoured_border_area(Some(edge)) {
+            return path;
+        }
 
         let mut path = BezPath::new();
 
@@ -236,6 +347,7 @@ impl CssBox {
             0.0,
             slice_radii,
         )
+        .contoured_like(self)
     }
 
     /// Construct a bezpath drawing the outline
@@ -258,6 +370,21 @@ impl CssBox {
     /// Construct a bezpath of the whole border area: the border box less the
     /// padding box
     pub fn border_ring(&self) -> BezPath {
+        // pyro: with shaped corners, the border edge's curves and the padding edge (inside it)
+        // wound the other way, so that the ring fills by the nonzero rule.
+        if let (Some(outer), Some(inner)) = (
+            self.contour(CssBoxKind::BorderBox),
+            self.contour(CssBoxKind::PaddingBox),
+        ) {
+            let mut path = outer.path();
+            let inner = inner.path();
+            if (path.area() > 0.0) == (inner.area() > 0.0) {
+                path.extend(&inner.reverse_subpaths());
+            } else {
+                path.extend(&inner);
+            }
+            return path;
+        }
         // Two closed contours, each starting on its own first corner (a
         // contour started on the box's corner point would cut that corner off
         // a rounded box).
@@ -275,6 +402,9 @@ impl CssBox {
 
     /// Construct a bezpath drawing the frame border
     pub fn border_box_path(&self) -> BezPath {
+        if let Some(contour) = self.contour(CssBoxKind::BorderBox) {
+            return contour.path();
+        }
         let mut path = BezPath::new();
         self.shape(&mut path, CssBoxKind::BorderBox, Direction::Clockwise);
         path
@@ -282,6 +412,9 @@ impl CssBox {
 
     /// Construct a bezpath drawing the frame padding
     pub fn padding_box_path(&self) -> BezPath {
+        if let Some(contour) = self.contour(CssBoxKind::PaddingBox) {
+            return contour.path();
+        }
         let mut path = BezPath::new();
         self.shape(&mut path, CssBoxKind::PaddingBox, Direction::Clockwise);
         path
@@ -289,6 +422,9 @@ impl CssBox {
 
     /// Construct a bezpath drawing the frame content
     pub fn content_box_path(&self) -> BezPath {
+        if let Some(contour) = self.contour(CssBoxKind::ContentBox) {
+            return contour.path();
+        }
         let mut path = BezPath::new();
         self.shape(&mut path, CssBoxKind::ContentBox, Direction::Clockwise);
         path
@@ -316,6 +452,9 @@ impl CssBox {
     /// path (see [`Self::is_uniform_corner_border`]); this catches the true ellipses
     /// (unequal axes) that a rounded rect can't represent.
     pub fn is_elliptical_border(&self) -> bool {
+        if self.corner_curvature.is_some() {
+            return false;
+        }
         let (rx, ry) = (
             self.border_box.width() / 2.0,
             self.border_box.height() / 2.0,
@@ -338,6 +477,9 @@ impl CssBox {
     /// width/color and each radius to be 0 or ≥ the border width for the stroke to
     /// reproduce the CSS shape exactly.)
     pub fn is_uniform_corner_border(&self) -> bool {
+        if self.corner_curvature.is_some() {
+            return false;
+        }
         let is_circular = |c: Vec2| (c.x - c.y).abs() < 0.01;
         let radii = &self.border_radii;
         is_circular(radii.top_left)
@@ -365,6 +507,13 @@ impl CssBox {
 
     /// Construct a bezpath drawing the frame
     pub fn shadow_clip(&self, shadow_rect: Rect) -> BezPath {
+        if let Some(contour) = self.contour(CssBoxKind::BorderBox) {
+            let shapes = [
+                vec![contoured::rect_polygon(shadow_rect)],
+                contoured::flatten(&contour.path()),
+            ];
+            return contoured::boolean(&shapes, |inside| inside[0] && !inside[1]);
+        }
         let mut path = BezPath::new();
         self.shadow_clip_shape(&mut path, shadow_rect);
         path
@@ -674,6 +823,64 @@ impl CssBox {
         let corner_insets = get_corner_insets(self.border_width, corner);
         start_angle(corner_insets.y, corner_insets.x, radii)
     }
+}
+
+/// pyro: the part of a box (`rect`, its border `widths`) the border's side `edge` paints at
+/// shaped corners: the points nearer that side than any other, measuring each side's distance
+/// in its own width, as the miter from each outer corner to the inner one divides a border. A
+/// side without width paints nothing; the others then share its corners.
+fn side_region(rect: Rect, widths: Insets, edge: Edge) -> Vec<Point> {
+    let width = |e: Edge| match e {
+        Edge::Top => widths.y0,
+        Edge::Right => widths.x1,
+        Edge::Bottom => widths.y1,
+        Edge::Left => widths.x0,
+    };
+    // A side's distance from a point as `a·x + b·y + c`, over its width.
+    let distance = |e: Edge| -> (f64, f64, f64) {
+        match e {
+            Edge::Top => (0.0, 1.0, -rect.y0),
+            Edge::Right => (-1.0, 0.0, rect.x1),
+            Edge::Bottom => (0.0, -1.0, rect.y1),
+            Edge::Left => (1.0, 0.0, -rect.x0),
+        }
+    };
+    if width(edge) <= 0.0 {
+        return Vec::new();
+    }
+    // (A little more than the box: curves may overshoot its edge by a hair.)
+    let mut polygon = contoured::rect_polygon(rect.inflate(1.0, 1.0));
+    let (a, b, c) = distance(edge);
+    let w = width(edge);
+    for other in [Edge::Top, Edge::Right, Edge::Bottom, Edge::Left] {
+        if other == edge || width(other) <= 0.0 {
+            continue;
+        }
+        let (oa, ob, oc) = distance(other);
+        let ow = width(other);
+        // Keep d/w <= od/ow: (a·ow - oa·w)·x + (b·ow - ob·w)·y + (c·ow - oc·w) <= 0.
+        let (ka, kb, kc) = (a * ow - oa * w, b * ow - ob * w, c * ow - oc * w);
+        polygon = clip_half_plane(&polygon, |p| ka * p.x + kb * p.y + kc);
+    }
+    polygon
+}
+
+/// The part of the convex `polygon` where `f` is not positive (Sutherland–Hodgman).
+fn clip_half_plane(polygon: &[Point], f: impl Fn(Point) -> f64) -> Vec<Point> {
+    let mut out = Vec::with_capacity(polygon.len() + 1);
+    let n = polygon.len();
+    for i in 0..n {
+        let (p, q) = (polygon[i], polygon[(i + 1) % n]);
+        let (fp, fq) = (f(p), f(q));
+        if fp <= 0.0 {
+            out.push(p);
+        }
+        if (fp <= 0.0) != (fq <= 0.0) {
+            let t = fp / (fp - fq);
+            out.push(p + (q - p) * t);
+        }
+    }
+    out
 }
 
 /// Makes it easier to insert objects into a bezpath without having to do checks

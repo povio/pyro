@@ -275,6 +275,9 @@ pub struct FloatContext {
     /// The topmost y position allowed for a new float (CSS2 float rule 5), including
     /// the tops of zero-sized floats (which occupy no segment)
     float_ceiling: Option<f32>,
+    /// pyro: the bottom of the lowest initial letter (CSS Inline 3 § 7) on each side (left in
+    /// slot 0, right in slot 1). See [`Self::place_initial_letter`].
+    initial_letter_bottoms: [Option<f32>; 2],
     // Left hwm in slot 0. Right hwm in slot 1.
     // high_water_marks: [usize; 2],
     // left_float_high_water_mark: usize,
@@ -292,6 +295,7 @@ impl Default for FloatContext {
             last_placed_floats: [0..0, 0..0], // high_water_marks: [0, 0],
             clear_bottoms: [None, None],
             float_ceiling: None,
+            initial_letter_bottoms: [None, None],
         }
     }
 }
@@ -365,6 +369,73 @@ impl FloatContext {
         self.last_placed_floats[slot].end = self.last_placed_floats[slot].end.max(placement.end);
     }
 
+    /// pyro: a segment was inserted at `idx`: the segment ranges of the last placed floats
+    /// that reach past it move with the segments after it.
+    fn shift_last_placed_floats(&mut self, idx: usize) {
+        for range in &mut self.last_placed_floats {
+            if range.start > idx {
+                range.start += 1;
+            }
+            if range.end > idx {
+                range.end += 1;
+            }
+        }
+    }
+
+    /// pyro: put the margin box of an initial letter (CSS Inline 3 § 7) into the context, `x`
+    /// from the left edge of the context and `y` down, `size` big, on the `direction` side (the
+    /// start side of its line). Content and floats keep out of it as of a float, but it takes no
+    /// part in the float placement rules: the line it starts places it. Floats on its side are
+    /// placed below it; see also [`Self::initial_letter_clearance`].
+    pub fn place_initial_letter(&mut self, x: f32, y: f32, size: Size<f32>, direction: FloatDirection) {
+        let slot = direction as usize;
+        let end_y = y + size.height.max(0.0);
+        self.initial_letter_bottoms[slot] = Some(self.initial_letter_bottoms[slot].map_or(end_y, |b| b.max(end_y)));
+        if end_y <= y {
+            return;
+        }
+        self.has_floats = true;
+        let empty = |y: Range<f32>| Segment { y, insets: FloatInsets::ZERO, has_float: [false; 2], has_wide_float: [false; 2] };
+        // The segments cover the letter's extent.
+        match (self.segments.first().map(|first| first.y.start), self.segments.last().map(|last| last.y.end)) {
+            (Some(first), Some(last)) => {
+                if y < first {
+                    self.segments.insert(0, empty(y..first));
+                    self.shift_last_placed_floats(0);
+                }
+                if end_y > last {
+                    self.segments.push(empty(last..end_y));
+                }
+            }
+            _ => self.segments.push(empty(y..end_y)),
+        }
+        for at in [y, end_y] {
+            if let Some(idx) = self.segments.iter().position(|segment| segment.y.start < at && at < segment.y.end) {
+                self.subdivide_segment(idx, at);
+                self.shift_last_placed_floats(idx);
+            }
+        }
+        let edge = match direction {
+            FloatDirection::Left => x + size.width,
+            FloatDirection::Right => self.available_width - x,
+        };
+        for segment in self.segments.iter_mut().filter(|segment| segment.y.start >= y && segment.y.end <= end_y) {
+            segment.insets[direction] = segment.insets[direction].max(edge);
+            segment.has_float[slot] = true;
+            segment.has_wide_float[slot] |= size.width > 0.0;
+        }
+    }
+
+    /// pyro: the bottom of the lowest initial letter on either side: the first line of a block
+    /// that starts with an initial letter is placed below it (CSS Inline 3 § 7.6, Blink's
+    /// `InitialLetterClearanceOffset`).
+    pub fn initial_letter_clearance(&self) -> Option<f32> {
+        match self.initial_letter_bottoms {
+            [Some(left), Some(right)] => Some(left.max(right)),
+            [left, right] => left.or(right),
+        }
+    }
+
     /// Position a floated box with the context, returning the (x, y) coordinates.
     /// `id` is stored with the placed box and is not otherwise interpreted.
     pub fn place_floated_box(
@@ -413,7 +484,10 @@ impl FloatContext {
         // relevant side, regardless of their width)
         let min_y = min_y
             .max(self.float_ceiling.unwrap_or(f32::NEG_INFINITY))
-            .max(self.cleared_threshold(clear).unwrap_or(f32::NEG_INFINITY));
+            .max(self.cleared_threshold(clear).unwrap_or(f32::NEG_INFINITY))
+            // pyro: a float is placed below the initial letters on its side (Blink's
+            // `FindLayoutOpportunityForFloat`).
+            .max(self.initial_letter_bottoms[slot].unwrap_or(f32::NEG_INFINITY));
 
         // Ensure that float:
         //    - Starts at or after the last placed float in either direction (CSS2 float rule 5:

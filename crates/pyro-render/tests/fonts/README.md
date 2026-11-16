@@ -17,3 +17,21 @@ the same characters, without U+0301, and the font's variation tables: the axes `
 says: "The Ahem font belongs to the public domain. In jurisdictions that do not recognize public domain ownership of
 these files, the following Creative Commons Zero declaration applies" (http://dev.w3.org/CSS/fonts/ahem/COPYING).
 Its ascent and descent (0.8 and 0.2 em) differ from Inter's, so it stands in for a fallback font of another height.
+
+`COLR-palettes-test-font.ttf`: the COLR test font of web-platform-tests (`css/css-fonts/resources/`), Ahem's boxes
+drawn in colour, with 16 CPAL palettes of 8 entries (palette 2 is marked light, palette 3 dark). Its name table says,
+as Ahem's: "The Ahem font belongs to the public domain. In jurisdictions that do not recognize public domain
+ownership of these files, the following Creative Commons Zero declaration applies"
+(http://dev.w3.org/CSS/fonts/ahem/COPYING).
+
+`NotoSansJP-kana_test-subset.otf`: web-platform-tests' subset of Noto Sans JP (`css/css-fonts/resources/`), the kana
+`す` and `ペ` with their `palt` metrics and a kerning pair between them. Its name table says "© 2014-2020 Adobe
+(http://www.adobe.com/)"; Noto Sans JP is licensed under the SIL Open Font License, Version 1.1
+(https://openfontlicense.org).
+
+`NotoSansCJKjp-halt-subset.otf`: a subset of the Noto Sans CJK JP subset web-platform-tests keeps for
+`text-spacing-trim` (`fonts/noto/cjk/NotoSansCJKjp-Regular-subset-halt.otf`), © 2014-2021 Adobe
+(http://www.adobe.com/). Licensed under the SIL Open Font License, Version 1.1 (its LICENSE.txt there). It
+keeps ASCII, 国, 水, the ideographic space, 、。「」・（）： and every layout feature (`halt`, `vhal`, `locl` for
+Chinese and Korean, `vert`). Made with HarfBuzz 15's `hb-subset --unicodes=20-7E,3000-3002,300C-300D,30FB,56FD,6C34,
+FF08-FF09,FF1A --layout-features='*' --layout-scripts='*' --name-IDs='*' --name-languages='*' --notdef-outline`.

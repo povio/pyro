@@ -24,6 +24,8 @@ import {
   harHandler,
   initScriptSource,
   Page,
+  TimeoutError,
+  limit,
   callOwner,
   sameRoute,
   WORKER_AUTO_ATTACH,
@@ -83,6 +85,13 @@ export type BrowserContextOptions = {
   recordVideo?: RecordVideoOptions;
   /** Recorded as `routeFromHAR(path, { update: true })` does. */
   recordHar?: { path: string; content?: 'omit' | 'embed' | 'attach'; mode?: 'full' | 'minimal'; urlFilter?: string | RegExp; omitContent?: boolean };
+  /** Playwright's deprecated logger sink (its tracing replaced it); accepted and unused. */
+  logger?: Logger;
+};
+/** Playwright's deprecated `Logger`. */
+export type Logger = {
+  isEnabled(name: string, severity: 'verbose' | 'info' | 'warning' | 'error'): boolean;
+  log(name: string, severity: 'verbose' | 'info' | 'warning' | 'error', message: string | Error, args: ReadonlyArray<object>, hints: { color?: string }): void;
 };
 /** @internal */
 export type ContextOptions = BrowserContextOptions;
@@ -727,7 +736,9 @@ export class BrowserContext {
     const o = typeof optionsOrPredicate === 'function' ? { predicate: optionsOrPredicate } : optionsOrPredicate;
     this.enableFor(event);
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error(`browserContext.waitForEvent: Timeout ${o.timeout ?? 30_000}ms exceeded`)), o.timeout ?? 30_000);
+      // The context's default timeout, as in Playwright; 0 is no limit.
+      const ms = limit(o.timeout ?? this._defaultTimeout ?? 30_000);
+      const timer = setTimeout(() => reject(new TimeoutError(`browserContext.waitForEvent: Timeout ${ms}ms exceeded while waiting for event "${String(event)}"`)), ms);
       const listener = (arg: any) => {
         if (o.predicate && !o.predicate(arg)) return;
         clearTimeout(timer);
@@ -958,7 +969,7 @@ function cdpCookie(c: Cookie): Record<string, unknown> {
 /** `chromium` for scripts that launch a browser themselves (`chromium.launch()`). */
 export const chromium = {
   name: () => 'chromium',
-  async launch(o: ConnectOptions & { bin?: string; args?: string[]; boot?: BootSpec[]; stderr?: 'inherit' | 'ignore' } = {}): Promise<Browser> {
+  async launch(o: ConnectOptions & { bin?: string; args?: string[]; boot?: BootSpec[]; stderr?: 'inherit' | 'ignore'; /** Deprecated in Playwright; unused. */ logger?: Logger } = {}): Promise<Browser> {
     return new Browser(await Pyro.launch(o), true, o.boot);
   },
   /** A running pyro's CDP endpoint (`ws://…` or `http://host:port`). */

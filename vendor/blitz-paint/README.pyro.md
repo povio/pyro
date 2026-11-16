@@ -76,14 +76,32 @@ from the root of an upstream checkout at that commit) is the whole diff.
     `draw_text_input_text` ends the overflowing lines of a text control (`<input>`, `<textarea>`) with its
     `TextInputData::ellipsis` the same way while the control is not focused and not scrolled, as Chromium does.
   - `src/render/box_shadow.rs` (`overflow_clip_path`), `src/render.rs` (`render_element`, `paint_content`,
-    `draw_text_mask`, `ElementCx::draw_hoisted_child`): the overflow clip. A scroll container clips at its padding
+    `draw_text_mask`, `ElementCx::hoisted_child_clips`, `ElementCx::draw_hoisted_children`): the overflow clip. A scroll container clips at its padding
     box, as before. `overflow: clip` on both axes (and `contain: paint`) clips at the box `overflow-clip-margin`
     names, along that box's own curve, grown by the margin's length as a shadow's spread grows its shape (a
     negative length shrinks it); `clip` on one axis with `visible` on the other clips that axis only, with square
     corners. A box hoisted to a stacking context (positioned, with a `z-index`) is painted inside the clips of the
     boxes between it and that context on its containing-block chain: such a box makes no stacking context, so the
-    child was painted outside its clip layer and showed whole outside an `overflow: hidden` ancestor. Covered by
-    `crates/pyro-render/tests/overflow_clip.rs`, WPT `css-overflow/overflow-clip-margin-*`, `clip-00*`.
+    child was painted outside its clip layer and showed whole outside an `overflow: hidden` ancestor. The clip
+    layers stay pushed from one hoisted box to the next as far as their clip chains share their outer clips (only
+    the differing inner ones are popped and pushed): a clip layer costs the raster its whole area, and a stack of
+    them per box (a table's sticky cells, the buttons in its cells, all in one scroller) made a ToS table screen's
+    capture cost 50-60% more instructions. A layer the layer limit refused is not popped (popping one per clip
+    unconditionally popped the ancestors' layers past the limit). Where the device pixels are known (screenshots:
+    `paint_scene`, `paint_scene_for_device` with the capture's transform; `BlitzDomPainter::device_pixels`), each
+    hoisted box is recorded first, and when each of its clips covers in whole every pixel the box's ink touches
+    (`src/bounds.rs`, `clip_covers_pixels`: a rectangle or rounded rectangle under a scale and translation, the
+    pixels inside its box and off its corners' curves; an edge between pixels covers the pixel it cuts only in
+    part, so a box flush with such an edge keeps its clips, and its edge stays antialiased by both), none is
+    pushed: they cut nothing, and one layer per icon button in its `overflow: hidden` cell still cost a ToS
+    finances capture 9-15% more than v0.0.38 (Chromium skips a clip that contains what it clips too). A box one
+    clip cuts keeps all of them, so it is composited through the same layers as before. Left out, a box's
+    translucent pixels that its own draws overlap round as drawn directly (as before round 3), a level apart in
+    places from a clip layer's second 8-bit composite. Every clip stays in a local-raster layer or a 3D plane
+    (their own pixel grids) and around a box with a backdrop filter or a blend mode (their layers read what the
+    clips hold); printed output pushes them all. Covered by
+    `crates/pyro-render/tests/overflow_clip.rs`, `crates/pyro-render/tests/hoisted_clip_layers.rs`, the unit test
+    in `src/bounds.rs`, WPT `css-overflow/overflow-clip-margin-*`, `clip-00*`.
   - `src/render.rs` (`replaced_overflow_is_visible`, `should_clip_node`, `draw_image`, `draw_svg`): the content of
     an `<img>`, `<video>` or `<canvas>` whose author made `overflow` visible on both axes is not cut at its box
     (an SVG image only at its own viewport), as in Chromium; blitz-dom's UA sheet gives these elements
@@ -816,3 +834,122 @@ Covered by `crates/pyro-render/tests/gradient_stops_image_set.rs`.
   repeating (WPT `object-position-png-001*`/`-002*`).
 - `src/text.rs`: under `font-size-adjust` a run has the used font size; `text-decoration-thickness` and
   `text-underline-offset` percentages stay of the computed one (WPT `text-decoration-thickness-percent-001`).
+
+## Highlight colours of `::selection` (WPT round 3, lane I)
+
+- `src/highlight.rs` (`highlight_of`), `src/text.rs`: the highlight is the nearest `::selection` style that declares
+  `color` or `background-color` (`BaseDocument::style_declares`: author and user rules, a `revert` declares
+  nothing), an ancestor's when the nearer ones declare neither; with none, the system's `HighlightText` on
+  `Highlight` (CSS Pseudo-Elements 4 § 3.4, as Chromium: an empty `::selection {}`, one with other properties only
+  or invalid values still paints the selection). A style that declares a background but no `color` leaves the text
+  its own colour (`Highlight::color` is `None`). The nearest style's own decoration is drawn either way, in
+  `HighlightText` with the system's colours (`ResolvedDecoration::with_current_color`).
+
+Covered by `crates/pyro-render/tests/selection_highlight.rs`.
+
+## `font-palette` (WPT css-fonts, round 3 lane F)
+
+- `src/palette.rs`, `src/text.rs` (`draw_run`): a COLR glyph run is drawn in the palette of its element's
+  `font-palette`. The glyph painter under vello_cpu (glifo) reads palette 0 of the font's CPAL table only, so a
+  run whose palette differs is drawn from a copy of its font whose palette 0 holds the selected colours (records
+  patched in place; copies cached per font and colours, 32 at most). `light` and `dark` are the first palettes the
+  CPAL table marks so (else palette 0); a `<dashed-ident>` is the last `@font-palette-values` rule of that name
+  whose `font-family` names the run's font (the `@font-face` family it was loaded under, or an installed font's
+  own name): its `base-palette` (an index the font does not have is palette 0) with its `override-colors`;
+  `palette-mix()` mixes two palettes entry by entry in its colour space (`mix_many`). Covered by
+  `crates/pyro-render/tests/font_palette.rs`.
+
+- `src/text.rs`: decoration thickness and offset percentages are of the element's font size where a face's
+  `size-adjust` scales the run (WPT `size-adjust-text-decoration.tentative`).
+- `src/render/border_image.rs` (`unturned_raster`): under `image-orientation: none` a border image is sliced from
+  its pixels as stored, before the EXIF orientation turned them (WPT `image-orientation-border-image`). Covered by
+  `crates/pyro-render/tests/border_image_orientation.rs`.
+- `src/gradient.rs` (`srgb_filled`, `Ramp::curved`): in sRGB a segment whose stops miss a component is drawn
+  between its exact ends (each missing component the other end's, 0 where both miss it) by the renderer's own
+  interpolation, as the equivalent hard-stop gradient is; it was subdivided through the mix, off by a level here
+  and there (WPT `gradient-none-interpolation`). Covered by `crates/pyro-render/tests/gradient_stops_image_set.rs`.
+
+## Inline boxes' margins in vertical writing modes (WPT round 3, lane TS)
+
+`src/render.rs` (inline box fragments): a span's own edge leaves out its inline-start or inline-end margin as
+`blitz_dom::span_edge_margins` gives it: left and right in horizontal text, top and bottom (by the inline direction)
+in a vertical writing mode, whose lines are laid out turned (blitz-dom keeps those margins as span edges now).
+## Corner shapes and border shapes (WPT round 3, lane CB)
+
+- `src/kurbo_css/contoured.rs` (new), `src/kurbo_css/css_box.rs` (`CssBox::with_corner_curvature`, `contour`,
+  `contoured_like`), `src/render.rs` (`create_css_rect`): `corner-shape` (CSS Borders 4 § 4). Each corner is the
+  quarter of a superellipse of exponent `2^k` (`superellipse(k)`; `bevel` 0, `scoop` -1, `notch` -∞, `squircle` 2,
+  `square` ∞, which leaves the corner without a radius), drawn as Blink draws it (`ContouredRect`,
+  `PathBuilder::AddContouredRect`): a conic for `round`, a line for `bevel`, two cubics per corner otherwise
+  (`ApproximateSuperellipseHalfCornerAsBezierCurve`). A box with a concave corner has its radii scaled until the
+  hulls of opposite corners no longer overlap (`RadiiConstraintFactorForOppositeCorners`). An edge inset or outset
+  from the border edge (the padding and content edges, a shadow's spread, the outline, the bleed-avoiding
+  background) keeps its curves parallel to the border edge's: its rectangle less each corner's clip-out region
+  (`CornerClipOutPath`, `Corner::AlignedToOrigin`), taken out by a polygon boolean on flattened outlines
+  (`contoured::boolean`, in place of Skia's path ops). Corner curves are flattened to 0.02 device px (vello_cpu
+  flattens fills to 0.25px, which moved antialiased pixels by up to a quarter of their range against Chromium's).
+  The border of one colour fills the area between the edges once; sides of different colours split it by the
+  miters from each outer corner to the inner one (`side_region`). The background, borders, overflow clips,
+  `clip-path` boxes, backdrop filters, box shadows and outlines all follow the shapes. Interpolated keywords snap
+  back to their parameter (`exponent`), so a no-op animation stays round. Covered by
+  `crates/pyro-render/tests/corner_border_shape.rs` and `contoured.rs`'s unit tests.
+- `src/render/clip_path.rs` (`flattened`, `is_oval`): `path()`, `shape()` and an SVG `<clipPath>` of one path are
+  flattened to 0.02 device px too (ovals are not: `border-radius: 50%` boxes are their references), so that a
+  corner-shaped box and a `clip-path: path()` reference drawn alike cover the same pixels.
+- `src/render/border_shape.rs` (new), `src/render/border.rs`, `src/render/background.rs`,
+  `src/render/box_shadow.rs`: `border-shape` (CSS Borders 4 § 11), as Blink's `BorderShapePainter` draws it. With
+  one shape the border is a stroke along it (mitered; a polygon's miters are never cut, curves' at 4 widths) in the
+  relevant side's width and colour (the first of block-start, inline-start, block-end, inline-end whose style is not
+  `none`), its reference box `half-border-box` by default; with two, the area between the outer and the inner shape
+  (border box and padding box by default). `border-radius` and `corner-shape` are ignored. The background is
+  clipped to the inner shape (the shape, with one) and painted out to the border's outer bounds, `background-clip:
+  border-area` to the border's area, overflow to the border's inner edge; outer shadows are the outer edge grown by
+  the spread (an oval as an oval; a circle's blurred shadow is vello's blurred rounded rectangle, as a
+  `border-radius: 50%` box's), cut out of it and blurred through a filter layer; inner shadows fill around the
+  inner edge shrunk by the spread; solid and double outlines are bands of the outer edge grown by the offset. Edges
+  worked out here (stroke outlines, offsets) use vello_cpu's own tolerance, so that a clip at a stroke's inner edge
+  falls where the drawn stroke's edge does.
+- `src/render/box_shadow.rs` (`fill_shadow_path`): a blurred outer shadow whose corners are not all one circular
+  radius (elliptical, differing or shaped corners) is its shape's path blurred through a filter layer; it was vello's
+  blurred rounded rectangle at the corners' average radius (a `border-radius: 50%` ellipse's shadow came out boxy).
+- `src/render/clip_path.rs` (`ellipse_radius`): `closest-corner` and `farthest-corner` radii of `ellipse()` (CSS
+  Shapes 2, pref `layout.css.ellipse-corners.enabled`, set by pyro) are the distance to that corner, for either axis.
+- `src/render.rs` (`draw_marker`, `draw_marker_symbol`): in a right-to-left list item the outside marker is placed
+  after the border box's right edge (a disc, circle or square mirrored), not before its left edge.
+
+`src/text.rs` (`VerticalLine::run_placement`): a run stands upright or not by its first visible character; an
+empty inline box's strut (U+2061) or a bidi control at its start made the whole run sideways (WPT
+`text-spacing-trim-start-oof-001` in `vertical-rl`).
+## `display: contents` spans paint no box (WPT round 3, lane D)
+
+blitz-dom's inline build makes a `display: contents` element a style span of its text (font, spacing, colour:
+its README, "Shadow trees"), so its id is a glyph run's brush. `src/render.rs` (`paints`) gives it no inline box
+to paint (background, border, shadow, outline), and `src/render/clip_path.rs` no clip, mask, opacity or backdrop:
+it has no box (WPT css-display `display-contents-inline-001`, `-flex-001`, `-oof-*`, `-button`).
+- `src/render/background.rs` (`draw_positioned_table_part_backgrounds`), `src/render.rs`: the background of a
+  relatively positioned or sticky row group or row is painted by each of its cells, under the cell's own, in the
+  positioned layer the cells paint in (blitz-dom `paint_tree.rs`); the table's background phase leaves it out (WPT
+  `position-relative-table-*`, `position-sticky-table-*`). Covered by `crates/pyro-render/tests/table_part_positioning.rs`.
+
+## An inline `<svg>` visible on one axis (WPT round 3, lane SM)
+
+`src/render.rs` (`ElementCx::draw_svg`): an inline `<svg>` whose `overflow` is `visible` on one axis is cut on the
+other axis alone, at its content box, with square corners whatever its `border-radius` (Chromium clips such a box per
+axis and does not round the cut; it was cut on both axes along the rounded content edge). WPT
+`css/css-overflow/rounded-overflow-clip-visible`, `-visible-clip`, `overflow-clip-x-visible-y-svg`,
+`overflow-clip-y-visible-x-svg`. Covered by `crates/pyro-render/tests/overflow_clip.rs`.
+
+Tables (round 3 lane C2T), covered by `crates/pyro-render/tests/table_paint_order.rs`:
+- `src/render.rs` (`table_borders_in_phases`, `draw_children_in_phases`): a collapsed table paints its parts in phases
+  (`Node::paints_in_table_phases`) and its borders after the block backgrounds in its cells, before their floats,
+  inline content and positioned boxes, as Blink (WPT `css-tables/tentative/collapsed-borders-painting-order-*`,
+  `collapsed-border-paint-phase-001`). The phase path no longer paints the box of an element whose `visibility`
+  hides it. A collapsed table with positioned parts leaves its borders to its last cell in one of them
+  (`last_positioned_table_cell`, `draw_deferred_table_borders`), which paints them after itself, over all of them
+  (WPT `collapsed-border-positioned-tr-td`).
+- `src/render/background.rs` (`draw_table_part_background`): a row's, row group's or column's background is painted
+  over the whole cell (the canvas mode of `draw_background_layers`), its images positioned against the part: a cell
+  spanning rows shows the row's colour below the row (WPT `css-tables/tentative/paint/background-image-row`).
+  `draw_table_part_outlines`: the outlines of rows and row groups, which paint no box, after the table's content.
+- `src/gradient.rs` (`linear_gradient`): an angled linear gradient's line goes through the centre of its tile, not
+  of the element's border box (a tile larger than the box or moved off it showed the wrong part of the gradient).

@@ -24,6 +24,9 @@ pub type ClipPath = generic::GenericClipPath<BasicShape, ComputedUrl>;
 /// A computed `shape-outside` value.
 pub type ShapeOutside = generic::GenericShapeOutside<BasicShape, Image>;
 
+/// pyro: a computed value of `border-shape`.
+pub type BorderShape = generic::GenericBorderShape<BasicShape>;
+
 /// A computed basic shape.
 pub type BasicShape =
     generic::GenericBasicShape<Angle, LengthPercentage, Position, LengthPercentage, InsetRect>;

@@ -193,6 +193,13 @@ impl DocumentMutator<'_> {
         if let Some(state) = pyro_state {
             self.doc.note_lp_state(id, Some(&state));
         }
+        // pyro: a shadow host or an assigned slot (`crate::shadow`).
+        if self.doc.nodes[id]
+            .element_data()
+            .is_some_and(|e| e.attrs.iter().any(|a| crate::shadow::is_shadow_marker(&a.name)))
+        {
+            self.doc.sync_shadow_markers(id);
+        }
         id
     }
 
@@ -371,7 +378,11 @@ impl DocumentMutator<'_> {
         let change = crate::has_invalidation::AttributeChange::before(self.doc, node_id, &name);
         self.rebuild_select_for_attribute(node_id, &name);
         self.rebuild_text_input_for_attribute(node_id, &name);
+        let shadow_marker = crate::shadow::is_shadow_marker(&name);
         self.set_attribute_impl(node_id, name, value);
+        if shadow_marker {
+            self.doc.sync_shadow_markers(node_id);
+        }
         if let Some(change) = change.and_then(|c| c.after(self.doc, node_id)) {
             self.doc.invalidate_relative_attribute(node_id, change);
         }
@@ -545,7 +556,11 @@ impl DocumentMutator<'_> {
         let change = crate::has_invalidation::AttributeChange::before(self.doc, node_id, &name);
         self.rebuild_select_for_attribute(node_id, &name);
         self.rebuild_text_input_for_attribute(node_id, &name);
+        let shadow_marker = crate::shadow::is_shadow_marker(&name);
         self.clear_attribute_impl(node_id, name);
+        if shadow_marker {
+            self.doc.sync_shadow_markers(node_id);
+        }
         if let Some(change) = change.and_then(|c| c.after(self.doc, node_id)) {
             self.doc.invalidate_relative_attribute(node_id, change);
         }
@@ -844,6 +859,18 @@ impl DocumentMutator<'_> {
                 }
                 node.mark_damaged();
             }
+            // pyro: the directionality of a `dir=auto` element (its `dir=` token) is its
+            // descendants' too (`:dir()`, as a `dir` change, `restyle_for_attribute_change`).
+            let direction = |v: &str| v.split_ascii_whitespace().find(|t| t.starts_with("dir=")).map(str::to_owned);
+            let old = node
+                .element_data()
+                .and_then(|e| e.attrs.iter().find(|a| a.name == *name).and_then(|a| direction(&a.value)));
+            if old != value.and_then(direction) {
+                if let Some(mut data) = node.try_stylo_element_data_mut().and_then(|s| s.get_mut()) {
+                    data.hint |= RestyleHint::RESTYLE_DESCENDANTS;
+                }
+                node.mark_ancestors_dirty();
+            }
         }
         let Some(parent_id) = self.doc.nodes[node_id].parent else {
             return;
@@ -936,8 +963,10 @@ impl DocumentMutator<'_> {
         changed: Range<usize>,
         removed_element: bool,
     ) {
-        // pyro: an element that came or went can change counters and quotes (`layout::counters`).
+        // pyro: an element that came or went can change counters and quotes (`layout::counters`),
+        // and the scroll markers of the groups around it (`layout::scroll_markers`).
         self.doc.counters_dirty = true;
+        self.doc.scroll_markers_dirty = true;
         let parent = &self.doc.nodes[parent_id];
         let flags = parent.selector_flags().get();
         let mut hint = RestyleHint::empty();
@@ -1750,6 +1779,11 @@ impl<'doc> DocumentMutator<'doc> {
             }
         };
 
+        // pyro: a shadow tree's sheet leaves its shadow root (`crate::shadow`), which restyles the
+        // shadow tree when it is next flushed.
+        if self.doc.remove_shadow_stylesheet(node_id) {
+            return;
+        }
         let guard = self.doc.guard.read();
         self.doc.stylist.remove_stylesheet(stylesheet, &guard);
         self.doc

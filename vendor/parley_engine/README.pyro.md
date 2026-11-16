@@ -111,3 +111,65 @@ hyphen where a line ends at a soft hyphen (parley's README.pyro.md, "Soft hyphen
 `analyzer.rs` (`LineBreakConfig::no_dictionary`), `analysis.rs` (`SegmenterKey::no_dictionary`): a range of text
 that asks for no dictionary breaks (CSS `word-break: manual`) is segmented by `LineSegmenter::
 new_for_non_complex_scripts` although the `complex-scripts` feature is on.
+
+## `@font-face` `size-adjust` and metrics overrides (WPT css-fonts, round 3 lane F)
+
+`shape/shaper.rs` (`shape_run`), `shape/shaped_text.rs` (`FontMetrics::with_face_metrics`,
+`FontMetrics::from_font_instance`, `RunMetrics::new`): a font whose `@font-face` rule has `size-adjust`
+(`fontique::Synthesis::size_adjust`) is shaped, measured and drawn at the item's size times it (the run's
+`font_size` is that size), unless `ShapeOptions::face_size_adjust` is off (`font-size-adjust`); its
+`ascent-override`, `descent-override` and `line-gap-override` replace the font's ascent, descent and line gap with
+fractions of that size. WPT `size-adjust-01`..`-03`, `size-adjust.tentative`, `ascent-descent-override`,
+`line-gap-override`, `font-size-adjust-metrics-override`.
+
+## Face features and variations, automatic `opsz`, `font-language-override` (WPT css-fonts, round 3 lane F)
+
+`shape/shaper.rs` (`shape_run`): a face's `@font-face` features (`fontique::Synthesis::face_settings`) come
+before the item's, so the property's win for the same tag; its variation settings come after the automatic `opsz`
+(`ShapeOptions::auto_opsz`: the item's first variation) and before the property's (CSS Fonts 4 §7.2). The automatic
+`opsz` is the size the face is used at (times its `size-adjust`). The cache keys see the effective variations and
+features. `ShapeOptions::language_override` shapes with that OpenType language system (`x-hbot<tag>`, the
+private-use subtag harfrust maps to a tag). WPT `font-feature-settings-descriptor-*`,
+`font-variation-settings-descriptor-*`, `variations/variable-opsz-size-adjust`, `font-language-override-*`.
+
+## Hiragana and Katakana in one run (WPT css-fonts, round 3 lane F)
+
+`itemize.rs` (`kana`): Katakana is itemized as Hiragana, so kana of both scripts shape in one run (both are
+OpenType's `kana` script): the font's kerning and contextual forms reach across `すペ` (WPT
+`hiragana-katakana-kerning`). Covered by `crates/pyro-render/tests/font_face_settings.rs`
+(`kerning_reaches_across_hiragana_and_katakana`).
+## Fullwidth punctuation trimming (`text-spacing-trim`; WPT round 3, lane TS)
+
+`shape/han_kerning.rs`, `shape/shaper.rs` (`ShapeOptions::{spacing_trim, isolated_before, isolated_after}`,
+`han_font_data`), `shape/shaped_text.rs`, `shape/data.rs` (`CharacterFlags::{is_trim_open, is_trim_close,
+is_trimmed}`, now 16 bits): Blink's `HanKerning`. A run with fullwidth punctuation in a font with `halt` is shaped with
+`halt` on each opening bracket after an opening or closing bracket, a middle dot or a narrow opening bracket, and on
+each closing bracket before a closing bracket, a middle dot or a narrow closing one (`trim-all`: on all of them); the
+characters around the run count too, unless an atomic inline separates them. Full stops, commas, colons, semicolons
+and quotation marks are classed by their glyph in the run's font and language (CJK fonts' `locl` draws `。`
+centred for Traditional Chinese, `：` at the start for Simplified Chinese, quotes fullwidth for Chinese): what `halt`
+does to each, shaped alone in Han script, says where its ink is (Blink reads glyph bounds; `halt` moves the glyph by
+the same). Per font, index and language in the `Shaper`. The plan takes `halt` without its ranges, so runs with
+different ranges share it. Each character records whether its font can set it half-width as opening or closing
+punctuation and whether it was, for parley's line edges; an opening bracket's glyph is never stored inline, so that
+the line breaker can move it (`ShapedText::shift_cluster`, `unshift_cluster`).
+
+The characters around a run are classed by the font of the run they are in (Blink classes them by the run's own
+font, which leaves punctuation drawn by fallback fonts untrimmed; WPT `text-spacing-trim-fallback-001`). Only
+closing brackets (Unicode Pe, fullwidth) get `is_trim_close`: Chromium trims no full stop or comma at a line's end.
+
+`analysis.rs` (`quotation_mark_breaks`): soft wrap opportunities around curly quotation marks as Chromium's ICU has
+them, which ICU4X does not: UAX #14 LB19a (before U+2018/U+201B/U+201C/U+201F and after U+2019/U+201D when East
+Asian characters are on both sides), and in Chinese text U+201C and U+201D as opening and closing brackets (a break
+before `“` after an East Asian character even at the text's end; after `”` before anything but non-opening
+punctuation and white space). Not under `line-break: anywhere` or `word-break: keep-all`. WPT
+`line-break-quotation-double-cjk-*`, `text-spacing-trim-start-001`.
+
+`shape/east_asian_spacing.rs` (`east_asian_spacing`, `is_mark`): UTR #59's East_Asian_Spacing classes (Wide ranges
+from its data file; Conditional: Po but not `" ' * / · † ‡ …` and not wide, fullwidth or halfwidth; Narrow: letters,
+marks and numerals that are not), for parley's `text-autospace`.
+
+`shape/data.rs` (`CharacterFlags::{is_no_justify, expands_before, expands_after}`), `shape/shaped_text.rs`
+(`ShapedText::set_character_justification`): a character's justification opportunities (CSS `text-justify`), which
+parley sets and its line breaker and spacing read; `shape/east_asian_spacing.rs` (`is_format`, `is_cursive`) tells
+parley which characters justification passes over and which scripts it does not space apart.

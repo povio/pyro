@@ -805,6 +805,10 @@ struct Sheet {
     /// Bumped whenever `source` is set (a loader or CSSOM text, or the
     /// `<style>` element's sheet read again).
     revision: u64,
+    /// `CSSStyleSheet.disabled`: the sheet applies nothing (its text is empty
+    /// to the renderer). Kept when the sheet is read again (a `<style>`'s
+    /// registration can come after a script disabled its sheet) or edited.
+    disabled: bool,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -840,6 +844,10 @@ pub struct StyleEngine {
     /// ([`crate::gecko_only`]), for an observation stamp.
     /// for the [`StyleEngine::author_sheets_key`] they were parsed at.
     gecko_rules: RefCell<Option<(AuthorSheetsKey, Rc<Vec<crate::gecko_only::Rule>>)>>,
+    /// The animation and transition rules of the sheets ([`crate::timing`]),
+    /// for the [`StyleEngine::author_sheets_key`] (and the unregistered
+    /// `<style>` elements, with their text revisions) they were read at.
+    timing_rules: RefCell<Option<(AuthorSheetsKey, Vec<(NodeId, u64)>, Rc<crate::timing::TimingRules>)>>,
     /// Sheet revisions handed out so far.
     revisions: u64,
     /// Called before the layout engine computes styles anew (CSS rule
@@ -923,6 +931,7 @@ impl StyleEngine {
             external_syncing: Cell::new(false),
             active_styled: Cell::new(true),
             gecko_rules: RefCell::new(None),
+            timing_rules: RefCell::new(None),
             revisions: 0,
             track_style_changes: Cell::new(false),
             animation_source: RefCell::new(None),
@@ -1345,7 +1354,7 @@ impl StyleEngine {
             }
             s.source = source;
         } else {
-            self.sheets.push(Sheet { owner, source, revision });
+            self.sheets.push(Sheet { owner, source, revision, disabled: false });
         }
         self.sheets_added();
     }
@@ -1371,9 +1380,32 @@ impl StyleEngine {
     /// `<style>` element read from the DOM, or no sheet.
     pub fn sheet_text(&self, owner: NodeId) -> Option<&str> {
         self.sheets.iter().find(|s| s.owner == owner).and_then(|s| match &s.source {
+            _ if s.disabled => Some(""),
             SheetSource::Text(t) => Some(t.as_str()),
             SheetSource::StyleElement => None,
         })
+    }
+
+    /// `CSSStyleSheet.disabled` of the sheet `owner` (a `<style>` or `<link>`) owns.
+    pub fn sheet_disabled(&self, owner: NodeId) -> bool {
+        self.sheets.iter().any(|s| s.owner == owner && s.disabled)
+    }
+
+    /// Sets `CSSStyleSheet.disabled` of the sheet of `owner`: a disabled sheet applies nothing.
+    /// A `<style>` element not registered yet (a shadow tree's) is registered.
+    pub fn set_sheet_disabled(&mut self, owner: NodeId, disabled: bool) {
+        self.revisions += 1;
+        let revision = self.revisions;
+        match self.sheets.iter_mut().find(|s| s.owner == owner) {
+            Some(s) if s.disabled == disabled => return,
+            Some(s) => {
+                s.disabled = disabled;
+                s.revision = revision;
+            }
+            None if !disabled => return,
+            None => self.sheets.push(Sheet { owner, source: SheetSource::StyleElement, revision, disabled }),
+        }
+        self.sheets_added();
     }
 
     /// Calls `f` with the text of each author sheet whose owner is connected,
@@ -1383,7 +1415,7 @@ impl StyleEngine {
     /// element"), not the text of deeper descendants.
     pub fn for_each_author_sheet(&self, dom: &Dom, f: &mut dyn FnMut(&str)) {
         for sheet in &self.sheets {
-            if !dom.is_alive(sheet.owner) || !dom.is_connected(sheet.owner).unwrap_or(false) {
+            if sheet.disabled || !dom.is_alive(sheet.owner) || !dom.is_connected(sheet.owner).unwrap_or(false) {
                 continue;
             }
             match &sheet.source {
@@ -1397,6 +1429,30 @@ impl StyleEngine {
             }
             for text in ids.iter().filter_map(|id| self.constructed.get(id)) {
                 f(text);
+            }
+        }
+    }
+
+    /// [`StyleEngine::for_each_author_sheet`] with the root of the tree each sheet belongs to (the
+    /// document or a shadow root).
+    pub fn for_each_scoped_author_sheet(&self, dom: &Dom, f: &mut dyn FnMut(NodeId, &str)) {
+        for sheet in &self.sheets {
+            if sheet.disabled || !dom.is_alive(sheet.owner) || !dom.is_connected(sheet.owner).unwrap_or(false) {
+                continue;
+            }
+            let Ok(owner) = dom.check(sheet.owner) else { continue };
+            let scope = dom.id_of(dom.root_idx(owner));
+            match &sheet.source {
+                SheetSource::Text(text) => f(scope, text),
+                SheetSource::StyleElement => f(scope, &dom.child_text_content(sheet.owner)),
+            }
+        }
+        for (scope, ids) in &self.adopted {
+            if !dom.is_alive(*scope) || !dom.is_connected(*scope).unwrap_or(false) {
+                continue;
+            }
+            for text in ids.iter().filter_map(|id| self.constructed.get(id)) {
+                f(*scope, text);
             }
         }
     }
@@ -1496,9 +1552,13 @@ impl StyleEngine {
     /// DOM (the low bit tells the two apart). `None`: no sheet.
     pub fn sheet_revision(&self, dom: &Dom, owner: NodeId) -> Option<u64> {
         let sheet = self.sheets.iter().find(|s| s.owner == owner)?;
+        // A disabled sheet's text is empty: its own identity, its revision of the toggle.
+        if sheet.disabled {
+            return Some((sheet.revision << 2) | 2);
+        }
         Some(match &sheet.source {
-            SheetSource::Text(_) => sheet.revision << 1,
-            SheetSource::StyleElement => (dom.style_element_text_revision(owner).unwrap_or_default() << 1) | 1,
+            SheetSource::Text(_) => sheet.revision << 2,
+            SheetSource::StyleElement => (dom.style_element_text_revision(owner).unwrap_or_default() << 2) | 1,
         })
     }
 
@@ -1521,7 +1581,12 @@ impl StyleEngine {
         for n in found {
             if !self.sheets.iter().any(|s| s.owner == n) {
                 self.revisions += 1;
-                self.sheets.push(Sheet { owner: n, source: SheetSource::StyleElement, revision: self.revisions });
+                self.sheets.push(Sheet {
+                    owner: n,
+                    source: SheetSource::StyleElement,
+                    revision: self.revisions,
+                    disabled: false,
+                });
             }
         }
         self.sheets_added();
@@ -1740,6 +1805,70 @@ impl StyleEngine {
             return self.gecko_only_value(dom, el, name);
         }
         self.stylo_value(dom, el, name)
+    }
+
+    /// The animation and transition rules of the document's sheets
+    /// ([`crate::timing`]), read again only when the sheets changed.
+    pub fn timing_rules(&self, dom: &Dom) -> Rc<crate::timing::TimingRules> {
+        let key = self.author_sheets_key(dom);
+        // A `<style>` inserted in this task is registered once the loader
+        // handles the DOM's resource events (after the task); the layout
+        // engine styles with it already, so its rules count now, after the
+        // registered sheets.
+        let unregistered: Vec<(NodeId, u64)> = if dom.has_resource_events() {
+            self.unregistered_style_elements(dom)
+                .into_iter()
+                .map(|n| (n, dom.style_element_text_revision(n).unwrap_or_default()))
+                .collect()
+        } else {
+            Vec::new()
+        };
+        if let Some((at, pending, rules)) = &*self.timing_rules.borrow() {
+            if *at == key && *pending == unregistered {
+                return rules.clone();
+            }
+        }
+        // Each sheet's rules match the elements of its own tree (a shadow root's, or the document's).
+        let mut texts: Vec<(NodeId, String)> = Vec::new();
+        self.for_each_scoped_author_sheet(dom, &mut |scope, text| texts.push((scope, text.to_owned())));
+        texts.extend(unregistered.iter().filter_map(|(n, _)| {
+            let idx = dom.check(*n).ok()?;
+            Some((dom.id_of(dom.root_idx(idx)), dom.child_text_content(*n).into_owned()))
+        }));
+        let rules = Rc::new(crate::timing::TimingRules::parse_scoped(
+            texts.iter().map(|(scope, text)| (*scope, text.as_str())),
+            &self.viewport,
+        ));
+        *self.timing_rules.borrow_mut() = Some((key, unregistered, rules.clone()));
+        rules
+    }
+
+    /// The document's HTML `<style>` elements no sheet is registered for yet, in tree order.
+    fn unregistered_style_elements(&self, dom: &Dom) -> Vec<NodeId> {
+        let Ok(desc) = dom.descendants(self.doc) else { return Vec::new() };
+        desc.filter(|&n| {
+            dom.node(n)
+                .ok()
+                .and_then(|n| n.element())
+                .is_some_and(|e| e.is_html() && e.name.local == local_name!("style"))
+                && !self.sheets.iter().any(|s| s.owner == n)
+        })
+        .collect()
+    }
+
+    /// `getComputedStyle` of the transition and animation properties the
+    /// page's own timing reads ([`crate::timing::TimingRules::computed_value`]):
+    /// the layout engine's cascade has them all `none` (its animation engine
+    /// stays off). `None` for other properties.
+    pub fn timing_value(&self, dom: &Dom, el: NodeId, name: &str) -> Option<String> {
+        if !(name.contains("transition") || name.contains("animation")) {
+            return None;
+        }
+        self.owns(dom, el)?;
+        // A style flush first: it registers the `<style>` sheets inserted since.
+        self.engine_styled(dom)?;
+        let style_of = |e: NodeId| self.stylo_style(dom, e);
+        self.timing_rules(dom).computed_value(dom, el, name, &style_of)
     }
 
     /// A property the engine's Stylo does not parse ([`crate::gecko_only`]),

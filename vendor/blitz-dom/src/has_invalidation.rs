@@ -58,13 +58,16 @@ pub(crate) const PYRO_STATES: ElementState = ElementState::VALID
     .union(ElementState::INRANGE)
     .union(ElementState::OUTOFRANGE)
     .union(ElementState::USER_VALID)
-    .union(ElementState::USER_INVALID);
+    .union(ElementState::USER_INVALID)
+    .union(ElementState::DEFINED);
 
 /// The element states a [`PYRO_STATE_NS`] `state` attribute value (`None`: no
 /// such attribute) stands for. An element is `:read-only` unless the value
-/// says `read-write`.
+/// says `read-write`, and `:defined` unless it says `undefined` (a custom element
+/// not defined yet).
 pub(crate) fn pyro_state_bits(value: Option<&str>) -> ElementState {
     let mut state = ElementState::empty();
+    let mut undefined = false;
     for token in value.unwrap_or("").split_ascii_whitespace() {
         state |= match token {
             "valid" => ElementState::VALID,
@@ -82,11 +85,18 @@ pub(crate) fn pyro_state_bits(value: Option<&str>) -> ElementState {
             "out-of-range" => ElementState::OUTOFRANGE,
             "user-valid" => ElementState::USER_VALID,
             "user-invalid" => ElementState::USER_INVALID,
+            "undefined" => {
+                undefined = true;
+                ElementState::empty()
+            }
             _ => ElementState::empty(),
         };
     }
     if !state.contains(ElementState::READWRITE) {
         state |= ElementState::READONLY;
+    }
+    if !undefined {
+        state |= ElementState::DEFINED;
     }
     state
 }
@@ -232,7 +242,12 @@ impl BaseDocument {
     /// `node_id` (made already; a snapshot holds the state before it).
     pub(crate) fn invalidate_relative_state(&self, node_id: NodeId, changed: ElementState) {
         let Some(node) = self.nodes.get(node_id) else { return };
-        if changed.is_empty() || !searched(node) || !self.relative_state_dependency(changed) {
+        // pyro: a shadow tree's own sheets may depend on it (`relative_state_dependency` checks the
+        // document's).
+        if changed.is_empty()
+            || !searched(node)
+            || !(self.relative_state_dependency(changed) || node.containing_shadow_host_id().is_some())
+        {
             return;
         }
         self.run_relative_invalidation(node, changed, None);
@@ -249,6 +264,8 @@ impl BaseDocument {
         if !matches!(node.data, NodeData::Element(_)) {
             return;
         }
+        // pyro: `:host:has()` (`crate::shadow`).
+        self.invalidate_host_relative_selectors(node);
         let snapshots = Snapshots::new(&self.snapshots);
         // Given snapshots, Stylo (0.24 on) drops a dependency whose compound
         // matches the element as it did per its snapshot. That holds only

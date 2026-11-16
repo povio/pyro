@@ -58,7 +58,32 @@ pub(super) fn collect_list_item_children(
                     marker_changed(node);
                 }
             }
+            // pyro: the list items of a `display: contents` child (a slot's assigned items) are
+            // this list's, numbered on (WPT css-lists `counter-list-item-slot-order`); a list
+            // element numbers its own.
+            if doc.nodes[child].primary_styles().is_some_and(|style| style.get_box().display.is_contents()) {
+                match list_numbering(doc, child) {
+                    Some((mut own, own_reversed)) => {
+                        crate::util::ensure_stack(|| collect_list_item_children(doc, &mut own, own_reversed, child))
+                    }
+                    None => crate::util::ensure_stack(|| collect_list_item_children(doc, index, reversed, child)),
+                }
+            }
         }
+    }
+}
+
+/// pyro: the first index and direction of the numbering a list element (`ol`, `ul`, `menu`,
+/// `dir`) starts for its items; `None` for other elements, whose items continue their parent's.
+pub(super) fn list_numbering(doc: &BaseDocument, node_id: NodeId) -> Option<(usize, bool)> {
+    let el = doc.nodes[node_id].element_data()?;
+    match el.name.local {
+        local_name!("ol") => Some((
+            el.attr_parsed(local_name!("start")).map(|start: usize| start - 1).unwrap_or(0),
+            el.attr_parsed(local_name!("reversed")).unwrap_or(false),
+        )),
+        local_name!("ul") | local_name!("menu") | local_name!("dir") => Some((0, false)),
+        _ => None,
     }
 }
 
@@ -117,8 +142,24 @@ fn node_list_item_child(
     let mut marker = match (content, image) {
         (Some(text), _) => Marker::String(text),
         (None, Some(image)) => image,
-        (None, None) => marker_for_style(list_style_type, index)?,
+        (None, None) => match custom_counter_marker(doc, list_style_type, index) {
+            Some(marker) => marker,
+            None => marker_for_style(list_style_type, index)?,
+        },
     };
+    // pyro: a `::marker` rule's `text-transform` transforms the marker's string; the item's
+    // does not reach it (Blink's UA sheet has `::marker { text-transform: none }`).
+    if let (Marker::String(text), Some(style)) = (&marker, rule_style.as_ref())
+        && doc.style_declares(style, &[style::properties::LonghandId::TextTransform])
+    {
+        let transform = crate::layout::text_transform::CaseTransform::from_style(style);
+        let text = crate::layout::text_transform::TextTransformer::default().transform_alone(text, &transform);
+        marker = Marker::String(text);
+    }
+    // pyro: digits are tabular unless a `::marker` rule declares `font-variant-numeric`.
+    let tabular_nums = !rule_style
+        .as_ref()
+        .is_some_and(|style| doc.style_declares(style, &[style::properties::LonghandId::FontVariantNumeric]));
     // The marker's text has the pseudo-element's style.
     let text_style = marker_style.as_ref().unwrap_or(&styles);
     let brush = style_node.unwrap_or(child_id);
@@ -139,6 +180,11 @@ fn node_list_item_child(
             // The marker's suffix space takes room (`white-space: pre` in the UA sheet), as a
             // no-break space of a `content` string does.
             parley_style.white_space_collapse = parley::WhiteSpaceCollapse::Preserve;
+            if tabular_nums {
+                parley_style.font_features = parley::FontFeatures::List(std::borrow::Cow::Owned(
+                    stylo_to_parley::with_tabular_nums(&parley_style.font_features),
+                ));
+            }
 
             // pyro: blitz-paint paints a disc, circle or square as a shape sized from the item's
             // font (Blink's `ListMarker::RelativeSymbolMarkerRect`), so their layout is a line of
@@ -179,6 +225,7 @@ fn node_list_item_child(
         marker,
         style_node,
         position,
+        tabular_nums,
         content_box_subpixel_offset: taffy::Point::ZERO,
     })
 }
@@ -362,6 +409,48 @@ fn marker_style_node(
     Some(node_id)
 }
 
+/// pyro: the marker of an item whose `list-style-type` names an `@counter-style` rule that extends
+/// another style (`system: extends <name>`): the item's number in the extended style, with the
+/// rule's `prefix` and `suffix` (the extended style's when it gives none). It is text in the
+/// item's font, also for an extended `disc` (CSS Counter Styles 3: only the predefined bullets
+/// may be drawn otherwise). Other systems are not supported (`None`: the marker of the name).
+fn custom_counter_marker(doc: &BaseDocument, list_style_type: &ListStyleType, index: usize) -> Option<Marker> {
+    use style::counter_style::{Symbol, System};
+    let CounterStyle::Name(name) = &list_style_type.0 else {
+        return None;
+    };
+    // The styles a rule cannot redefine.
+    if matches!(
+        &*name.0,
+        "decimal" | "disc" | "circle" | "square" | "disclosure-open" | "disclosure-closed" | "none"
+    ) {
+        return None;
+    }
+    let rule = doc
+        .stylist
+        .iter_extra_data_origins_rev()
+        .find_map(|(data, _)| data.counter_styles.get(&name.0).cloned())?;
+    let guard = doc.guard.read();
+    let rule = rule.read_with(&guard);
+    let System::Extends(base) = rule.resolved_system() else {
+        return None;
+    };
+    let symbol = |symbol: &Symbol| match symbol {
+        Symbol::String(text) => text.to_string(),
+        Symbol::Ident(ident) => ident.0.to_string(),
+    };
+    let descriptors = rule.descriptors();
+    let bullet = matches!(&*base.0, "disc" | "circle" | "square" | "disclosure-open" | "disclosure-closed");
+    let prefix = descriptors.prefix.as_ref().map(symbol).unwrap_or_default();
+    let suffix = descriptors
+        .suffix
+        .as_ref()
+        .map(symbol)
+        .unwrap_or_else(|| if bullet { " ".into() } else { ". ".into() });
+    let text = super::counters::format(index as i32 + 1, &CounterStyle::Name(base.clone()));
+    Some(Marker::String(format!("{prefix}{text}{suffix}")))
+}
+
 // Determine the marker to render for a given list style type
 fn marker_for_style(list_style_type: &ListStyleType, index: usize) -> Option<Marker> {
     Some(match &list_style_type.0 {
@@ -396,7 +485,12 @@ fn marker_for_style(list_style_type: &ListStyleType, index: usize) -> Option<Mar
             "square" => Marker::Char('▪'),
             "disclosure-open" => Marker::Char('▾'),
             "disclosure-closed" => Marker::Char('▸'),
-            _ => Marker::Char('□'),
+            // pyro: the other predefined styles (`armenian`, `georgian`, `lower-greek`, ...) as
+            // `counter()` formats them, with their `. ` suffix; an unknown name is `decimal`.
+            _ => Marker::String(format!(
+                "{}. ",
+                super::counters::format(index as i32 + 1, &list_style_type.0)
+            )),
         },
         CounterStyle::String(atom_string) => Marker::String(atom_string.as_ref().to_string()),
         CounterStyle::Symbols { symbols, .. } => {

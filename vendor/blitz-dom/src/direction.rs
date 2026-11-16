@@ -1,9 +1,11 @@
 //! pyro: the directionality of an element (HTML "The dir attribute"), for `:dir()`: `dir="ltr"`
-//! or `dir="rtl"` on the element; `dir="auto"` (and a `<bdi>` without `dir`) by the first strong
-//! character of its text (a text control's value), left to right when it has none (a `<bdi>`) or
-//! its parent's (`dir="auto"`); a `tel` input without `dir` left to right; else its parent's. The
-//! root is left to right. The same rules as pyro-dom's `direction.rs`, which answers `:dir()` for
-//! script.
+//! or `dir="rtl"` on the element; `dir="auto"` (and a `<bdi>` without a valid `dir`) by its
+//! content, which pyro-dom's render tree gives as a `dir=ltr` or `dir=rtl` token of the element's
+//! state attribute (else here: the first strong character of its text, a text control's value),
+//! left to right when nothing decides; a `tel` input without `dir` left to right; else its
+//! parent's in its node tree (a shadow tree's first level: the host's; an assigned node: its
+//! host's, not its slot's, `crate::shadow`). The root is left to right. The same rules as
+//! pyro-dom's `direction.rs`, which answers `:dir()` for script.
 
 use icu_properties::props::BidiClass;
 use icu_properties::{CodePointMapData, CodePointMapDataBorrowed};
@@ -27,12 +29,10 @@ pub(crate) fn is_rtl(node: &Node) -> bool {
             }
             let bdi = html && element.name.local == local_name!("bdi");
             if dir == Some(Dir::Auto) || (bdi && dir.is_none()) {
-                if let Some(rtl) = auto_direction(current) {
+                if let Some(rtl) = state_direction(current) {
                     return rtl;
                 }
-                if bdi && dir.is_none() {
-                    return false;
-                }
+                return auto_direction(current).unwrap_or(false);
             }
             if html
                 && element.name.local == local_name!("input")
@@ -42,11 +42,29 @@ pub(crate) fn is_rtl(node: &Node) -> bool {
                 return false;
             }
         }
-        match current.parent.map(|parent| current.with(parent)) {
+        // The parent in the node tree; the host for the first level of a shadow tree.
+        let parent = if current.parent_is_shadow_root() {
+            current.parent.map(|parent| current.with(parent))
+        } else {
+            current.dom_parent_element()
+        };
+        match parent {
             Some(parent) if parent.is_element() => current = parent,
             _ => return false,
         }
     }
+}
+
+/// The directionality pyro-dom's render tree gives an element (`Some(true)`: right to left).
+fn state_direction(node: &Node) -> Option<bool> {
+    let state = node.element_data()?.attrs.iter().find(|a| {
+        &*a.name.ns == crate::PYRO_STATE_NS && &*a.name.local == "state"
+    })?;
+    state.value.split_ascii_whitespace().find_map(|token| match token {
+        "dir=rtl" => Some(true),
+        "dir=ltr" => Some(false),
+        _ => None,
+    })
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]

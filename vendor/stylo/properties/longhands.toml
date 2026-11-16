@@ -713,7 +713,8 @@ affects = "layout"
 type = "ContentVisibility"
 initial = "computed::ContentVisibility::Visible"
 struct = "box"
-engine = "gecko"
+servo_restyle_damage = "rebuild_box"
+animation_type = "discrete"
 spec = "https://drafts.csswg.org/css-contain/#content-visibility"
 affects = "layout"
 
@@ -902,7 +903,7 @@ affects = "layout"
 type = "FontPalette"
 initial = "computed::FontPalette::normal()"
 struct = "font"
-engine = "gecko"
+servo_pref = "layout.css.font-palette.enabled"
 animation_type = "discrete"
 spec = "https://drafts.csswg.org/css-fonts/#font-palette-prop"
 affects = "layout"
@@ -1881,6 +1882,26 @@ spec = "https://drafts.csswg.org/css-scroll-snap-1/#scroll-snap-stop"
 animation_type = "discrete"
 affects = "paint"
 
+[scroll-marker-group]
+type = "ScrollMarkerGroup"
+initial = "computed::ScrollMarkerGroup::NONE"
+struct = "box"
+engine = "servo"
+animation_type = "discrete"
+servo_restyle_damage = "rebuild_box"
+spec = "https://drafts.csswg.org/css-overflow-5/#scroll-marker-group-property"
+affects = "layout"
+
+[scroll-target-group]
+type = "ScrollTargetGroup"
+initial = "computed::ScrollTargetGroup::None"
+struct = "box"
+engine = "servo"
+animation_type = "discrete"
+servo_restyle_damage = "repaint"
+spec = "https://drafts.csswg.org/css-overflow-5/#scroll-target-group"
+affects = "paint"
+
 [scroll-snap-type]
 type = "ScrollSnapType"
 initial = "computed::ScrollSnapType::none()"
@@ -2622,6 +2643,17 @@ has_effect_on_gecko_scrollbars = false
 spec = "https://drafts.csswg.org/css-text-4/#text-autospace-property"
 affects = "layout"
 
+# pyro: CSS Text 4 `text-spacing-trim` (fullwidth punctuation trimming), for Servo: blitz-dom
+# passes it to parley's shaping and line breaking.
+[text-spacing-trim]
+type = "TextSpacingTrim"
+initial = "computed::TextSpacingTrim::Normal"
+struct = "inherited_text"
+engine = "servo"
+animation_type = "discrete"
+spec = "https://drafts.csswg.org/css-text-4/#text-spacing-trim-property"
+affects = "layout"
+
 [text-autospace-size]
 type = "Number"
 initial = "0.125"
@@ -3194,6 +3226,15 @@ gecko_ffi_name = "mBorderRadius.end_end"
 boxed = true
 logical_group = "border-radius"
 logical = true
+affects = "paint"
+
+[border-shape]
+type = "basic_shape::BorderShape"
+initial = "generics::basic_shape::BorderShape::None"
+struct = "border"
+animation_type = "none"
+boxed = true
+spec = "https://drafts.csswg.org/css-borders-4/#propdef-border-shape"
 affects = "paint"
 
 [corner-top-left-shape]

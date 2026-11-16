@@ -33,6 +33,7 @@ import { renderAria, type AriaNode } from './aria.js';
 import { callDeclaration, Download, ElementHandle, hasHandles, JSHandle, serializeArg, valueOf, type PageElement, type PageFunction, type PageFunctionOn, type Sender, type SmartHandle } from './handles.js';
 import { APIRequestContext, credentialsApply } from './request.js';
 import type { Video } from './video.js';
+import { checkChord, describeKey, MODIFIERS, modifierBits, type Modifier } from './us-keyboard.js';
 
 const SENT = new WeakMap<Cdp, Map<string, string>>();
 
@@ -42,8 +43,27 @@ export class TimeoutError extends Error {
 
 const notSupported = (what: string) => new Error(`pyro: ${what} is not supported yet`);
 
+/** Playwright's default action and navigation timeout. */
+const DEFAULT_TIMEOUT = 30_000;
+/**
+ * Playwright's 0, "no limit", as a step or timer timeout: the longest delay
+ * `setTimeout` takes (about 24.8 days), so the browser's step and this
+ * process's timers both wait it out. A test's own timeout ends the wait first.
+ */
+export const NO_LIMIT = 2 ** 31 - 1;
+/** A timeout to wait with: 0 is [`NO_LIMIT`], as in Playwright; a negative one is one try. */
+export function limit(ms: number): number {
+  if (ms === 0) return NO_LIMIT;
+  return ms > 0 ? Math.min(ms, NO_LIMIT) : 0;
+}
+
 type TextMatch = string | RegExp;
 type Timeout = { timeout?: number };
+/**
+ * Playwright's deprecated `noWaitAfter` (its actions no longer wait for the
+ * navigations they start); accepted, as there, and without effect.
+ */
+type NoWaitAfter = { noWaitAfter?: boolean };
 type RunReply = { reads: Record<string, any>; results: any[]; requests: LogEntry[]; ms: number };
 /** A request of the run's log; header values the log redacts (cookies, credentials) read `[REDACTED]`. */
 type LogEntry = {
@@ -351,7 +371,7 @@ export class ConsoleMessage {
 // ---- locators ----
 
 type FilterOptions = { has?: Locator; hasNot?: Locator; hasText?: TextMatch; hasNotText?: TextMatch; visible?: boolean };
-type ClickOptions = Timeout & {
+type ClickOptions = Timeout & NoWaitAfter & {
   button?: 'left' | 'right' | 'middle';
   clickCount?: number;
   delay?: number;
@@ -555,27 +575,34 @@ export class Locator extends Scope {
     ];
     await this._page._run('locator.click', checks, this._desc);
   }
-  async fill(value: string, options: Timeout & { force?: boolean } = {}): Promise<void> {
+  async fill(value: string, options: Timeout & NoWaitAfter & { force?: boolean } = {}): Promise<void> {
     return this.act('fill', 'fill', options.timeout, { value: String(value) });
   }
-  async clear(options: Timeout = {}): Promise<void> {
+  async clear(options: Timeout & NoWaitAfter & { force?: boolean } = {}): Promise<void> {
     return this.act('clear', 'fill', options.timeout, { value: '' });
   }
-  async press(key: string, options: Timeout & { delay?: number } = {}): Promise<void> {
-    return this.act('press', 'press', options.timeout, { value: key });
+  async press(key: string, options: Timeout & NoWaitAfter & { delay?: number } = {}): Promise<void> {
+    // An unknown key fails at once, as in Playwright (no element wait).
+    checkChord('press', key);
+    return this.act('press', 'press', options.timeout, { value: key, ...this.held() });
   }
-  async pressSequentially(text: string, options: Timeout & { delay?: number } = {}): Promise<void> {
-    return this.act('pressSequentially', 'type', options.timeout, { value: text });
+  async pressSequentially(text: string, options: Timeout & NoWaitAfter & { delay?: number } = {}): Promise<void> {
+    return this.act('pressSequentially', 'type', options.timeout, { value: text, ...this.held() });
   }
-  async check(options: Timeout & { force?: boolean; trial?: boolean } = {}): Promise<void> {
+  /** The modifier keys `keyboard.down()` holds, for a key action's events. */
+  private held(): { modifiers?: string[] } {
+    const modifiers = this._page.keyboard._held();
+    return modifiers.length ? { modifiers } : {};
+  }
+  async check(options: Timeout & NoWaitAfter & { force?: boolean; trial?: boolean; position?: { x: number; y: number } } = {}): Promise<void> {
     if (options.trial) return this.trial(options.timeout);
     return this.act('check', 'check', options.timeout);
   }
-  async uncheck(options: Timeout & { force?: boolean; trial?: boolean } = {}): Promise<void> {
+  async uncheck(options: Timeout & NoWaitAfter & { force?: boolean; trial?: boolean; position?: { x: number; y: number } } = {}): Promise<void> {
     if (options.trial) return this.trial(options.timeout);
     return this.act('uncheck', 'uncheck', options.timeout);
   }
-  async setChecked(checked: boolean, options: Timeout & { force?: boolean; trial?: boolean } = {}): Promise<void> {
+  async setChecked(checked: boolean, options: Timeout & NoWaitAfter & { force?: boolean; trial?: boolean; position?: { x: number; y: number } } = {}): Promise<void> {
     return checked ? this.check(options) : this.uncheck(options);
   }
   async focus(options: Timeout = {}): Promise<void> {
@@ -584,10 +611,10 @@ export class Locator extends Scope {
   async blur(options: Timeout = {}): Promise<void> {
     return this.act('blur', 'blur', options.timeout, { settle: false });
   }
-  async dragTo(target: Locator, options: Timeout = {}): Promise<void> {
+  async dragTo(target: Locator, options: Timeout & NoWaitAfter & { force?: boolean; trial?: boolean } = {}): Promise<void> {
     return this.act('dragTo', 'drag', options.timeout, { to: target._spec });
   }
-  async setInputFiles(files: string | string[] | FilePayload | FilePayload[], options: Timeout = {}): Promise<void> {
+  async setInputFiles(files: string | string[] | FilePayload | FilePayload[], options: Timeout & NoWaitAfter = {}): Promise<void> {
     const list = (Array.isArray(files) ? files : [files]) as (string | FilePayload)[];
     const wire = list.map((f) =>
       typeof f === 'string'
@@ -598,7 +625,7 @@ export class Locator extends Scope {
   }
   async selectOption(
     values: string | { value?: string; label?: string; index?: number } | (string | { value?: string; label?: string; index?: number })[] | null,
-    options: Timeout = {},
+    options: Timeout & NoWaitAfter & { force?: boolean } = {},
   ): Promise<string[]> {
     const list = values === null ? [] : Array.isArray(values) ? values : [values];
     const wanted = list.map((v) => (typeof v === 'string' ? { valueOrLabel: v } : v));
@@ -665,14 +692,18 @@ export class Locator extends Scope {
   async allInnerTexts(): Promise<string[]> {
     return this.evaluateAll((els: HTMLElement[]) => els.map((e) => e.innerText ?? e.textContent ?? ''));
   }
-  /** Like Playwright: no waiting; `false` when nothing matches. */
-  async isVisible(): Promise<boolean> {
+  /**
+   * Like Playwright: no waiting; `false` when nothing matches. `timeout` is
+   * Playwright's deprecated option, ignored as there.
+   */
+  async isVisible(_options: Timeout = {}): Promise<boolean> {
     return this._evaluateAll<boolean | 'strict'>(IS_VISIBLE).then((v) => {
       if (v === 'strict') throw new Error(`locator.isVisible: strict mode violation: ${this._desc} resolved to several elements`);
       return v as boolean;
     });
   }
-  async isHidden(): Promise<boolean> {
+  /** Like Playwright: no waiting; `timeout` (deprecated) is ignored. */
+  async isHidden(_options: Timeout = {}): Promise<boolean> {
     return !(await this.isVisible());
   }
   async isEnabled(options: Timeout = {}): Promise<boolean> {
@@ -904,7 +935,8 @@ function nativeCheck(expression: string, o: ExpectOptions): Record<string, unkno
 
 export async function expectLocator(loc: Locator, expression: string, o: ExpectOptions): Promise<ExpectResult> {
   const isNot = !!o.isNot;
-  const timeout = o.timeout ?? 5_000;
+  // 0: no limit, as in Playwright.
+  const timeout = limit(o.timeout ?? 5_000);
   const native = nativeCheck(expression, o);
   if (native) {
     const locator = expression === 'to.have.count' ? loc._spec : loc._spec;
@@ -1112,7 +1144,7 @@ export class Frame extends Scope {
     if (!this._id) return this._page.goto(url, options);
     // A child frame navigates itself; then its document loads.
     const target = resolveUrl(this._page.context()._options.baseURL ?? this._url, url);
-    const ms = this._page._timeout(options.timeout);
+    const ms = this._page._navTimeout(options.timeout);
     const navigated = this._page._frameNavigation(this, ms);
     await this.evaluate(`location.href = ${JSON.stringify(target)}`);
     await navigated;
@@ -1138,7 +1170,7 @@ export class Frame extends Scope {
   async waitForLoadState(state: 'load' | 'domcontentloaded' | 'networkidle' = 'load', options: Timeout = {}): Promise<void> {
     if (!this._id) return this._page.waitForLoadState(state, options);
     const want = state === 'domcontentloaded' ? ['interactive', 'complete'] : ['complete'];
-    const deadline = Date.now() + this._page._timeout(options.timeout);
+    const deadline = Date.now() + this._page._navTimeout(options.timeout);
     for (let i = 0; ; i++) {
       const ready = await this.evaluate(() => document.readyState).catch(() => 'loading');
       if (want.includes(ready as string)) break;
@@ -1149,7 +1181,7 @@ export class Frame extends Scope {
   }
   async waitForURL(url: UrlMatch, options: Timeout & { waitUntil?: GotoOptions['waitUntil'] } = {}): Promise<void> {
     if (!this._id) return this._page.waitForURL(url, options);
-    const ms = this._page._timeout(options.timeout);
+    const ms = this._page._navTimeout(options.timeout);
     const deadline = Date.now() + ms;
     const base = this._page.context()._options.baseURL;
     while (!(await urlMatches(base, this._url, url))) {
@@ -1213,7 +1245,7 @@ export class Frame extends Scope {
   async _expect(expression: string, o: ExpectOptions): Promise<ExpectResult> {
     const one = o.expectedText?.[0];
     const isNot = !!o.isNot;
-    const timeout = o.timeout ?? 5_000;
+    const timeout = limit(o.timeout ?? 5_000);
     const read = async () => (expression === 'to.have.url' ? this._page.url() : await this._page.title());
     if (expression !== 'to.have.url' && expression !== 'to.have.title') throw notSupported(`expect matcher ${expression} on a page`);
     const deadline = Date.now() + timeout;
@@ -1229,63 +1261,48 @@ export class Frame extends Scope {
   }
 }
 
-/** `keyboard.down/up` key definitions: `key`, `code`, key code, and the text a press types. */
-const MODIFIER_BITS: Record<string, number> = { Alt: 1, Control: 2, Meta: 4, Shift: 8 };
-function keyDefinition(key: string): { key: string; code: string; keyCode: number; text: string; location: number } {
-  const named: Record<string, [string, number, string?]> = {
-    Enter: ['Enter', 13, '\r'], Tab: ['Tab', 9, '\t'], Backspace: ['Backspace', 8], Escape: ['Escape', 27], Delete: ['Delete', 46],
-    ArrowLeft: ['ArrowLeft', 37], ArrowUp: ['ArrowUp', 38], ArrowRight: ['ArrowRight', 39], ArrowDown: ['ArrowDown', 40],
-    Home: ['Home', 36], End: ['End', 35], PageUp: ['PageUp', 33], PageDown: ['PageDown', 34], Insert: ['Insert', 45],
-    Shift: ['ShiftLeft', 16], Control: ['ControlLeft', 17], Alt: ['AltLeft', 18], Meta: ['MetaLeft', 91], ' ': ['Space', 32, ' '],
-  };
-  for (let i = 1; i <= 12; i++) named[`F${i}`] = [`F${i}`, 111 + i];
-  if (named[key]) {
-    const [code, keyCode, text] = named[key];
-    return { key, code, keyCode, text: text ?? '', location: MODIFIER_BITS[key] ? 1 : 0 };
-  }
-  if (key.length === 1) {
-    const upper = key.toUpperCase();
-    const code = /[a-z]/i.test(key) ? `Key${upper}` : /\d/.test(key) ? `Digit${key}` : '';
-    return { key, code, keyCode: upper.charCodeAt(0), text: key, location: 0 };
-  }
-  throw new Error(`Unknown key: "${key}"`);
-}
-
+/**
+ * Playwright's keyboard, on its US layout (`us-keyboard.ts`): `press` and
+ * `type` go to the focused element as one driver step (the browser keeps the
+ * same layout); `down` and `up` are key events of their own. Modifier keys
+ * held with `down()` apply to later presses and clicks.
+ */
 export class Keyboard {
-  private held = new Set<string>();
+  /** Codes of the keys down. */
+  private pressed = new Set<string>();
+  private modifiers = new Set<Modifier>();
   constructor(private _page: Page) {}
   /** Modifier keys held with `down()`: they apply to clicks and presses. */
-  _held(): string[] {
-    return [...this.held].filter((k) => k in MODIFIER_BITS);
-  }
-  private bits(): number {
-    return this._held().reduce((b, k) => b | MODIFIER_BITS[k], 0);
+  _held(): Modifier[] {
+    return MODIFIERS.filter((m) => this.modifiers.has(m));
   }
   async press(key: string, _options: { delay?: number } = {}): Promise<void> {
-    const chord = [...this._held(), key].join('+');
-    await this._page._focused('keyboard.press', 'press', chord);
+    checkChord('press', key);
+    await this._page._focused('keyboard.press', 'press', key, this._held());
   }
   async type(text: string, _options: { delay?: number } = {}): Promise<void> {
-    await this._page._focused('keyboard.type', 'type', text);
+    await this._page._focused('keyboard.type', 'type', text, this._held());
   }
   async insertText(text: string): Promise<void> {
-    await this._page._focused('keyboard.insertText', 'type', text);
+    await this._page._focused('keyboard.insertText', 'type', text, []);
   }
   async down(key: string): Promise<void> {
-    const d = keyDefinition(key);
-    const repeat = this.held.has(key);
-    this.held.add(key);
+    const d = describeKey('down', key, this.modifiers);
+    const repeat = this.pressed.has(d.code);
+    this.pressed.add(d.code);
+    if ((MODIFIERS as readonly string[]).includes(d.key)) this.modifiers.add(d.key as Modifier);
     await this._page._send('Input.dispatchKeyEvent', {
-      type: d.text && !this._held().some((k) => k !== 'Shift') ? 'keyDown' : 'rawKeyDown',
+      type: d.text ? 'keyDown' : 'rawKeyDown',
       key: d.key, code: d.code, windowsVirtualKeyCode: d.keyCode, text: d.text, unmodifiedText: d.text,
-      location: d.location, autoRepeat: repeat, modifiers: this.bits(),
+      location: d.location, autoRepeat: repeat, modifiers: modifierBits(this.modifiers),
     });
   }
   async up(key: string): Promise<void> {
-    const d = keyDefinition(key);
-    this.held.delete(key);
+    const d = describeKey('up', key, this.modifiers);
+    if ((MODIFIERS as readonly string[]).includes(d.key)) this.modifiers.delete(d.key as Modifier);
+    this.pressed.delete(d.code);
     await this._page._send('Input.dispatchKeyEvent', {
-      type: 'keyUp', key: d.key, code: d.code, windowsVirtualKeyCode: d.keyCode, location: d.location, modifiers: this.bits(),
+      type: 'keyUp', key: d.key, code: d.code, windowsVirtualKeyCode: d.keyCode, location: d.location, modifiers: modifierBits(this.modifiers),
     });
   }
 }
@@ -1719,19 +1736,30 @@ export class Page extends Scope {
     return r.reads.v;
   }
 
-  /** A key press on the focused element (the body when nothing has focus). */
-  async _focused(api: string, action: string, value: string): Promise<void> {
+  /** A key press on the focused element (the body when nothing has focus), with `modifiers` held. */
+  async _focused(api: string, action: string, value: string, modifiers: string[] = []): Promise<void> {
     const focused = await this._call<boolean>(api, '() => !!document.activeElement && document.activeElement !== document.body', {});
     const locator = focused ? { css: ':focus' } : { css: 'body' };
-    await this._run(api, [{ act: { locator, action, value, timeout: this._timeout() } }]);
+    await this._run(api, [{ act: { locator, action, value, ...(modifiers.length ? { modifiers } : {}), timeout: this._timeout() } }]);
   }
 
+  /**
+   * An action's timeout, as Playwright picks it: the call's, the page's
+   * default, the context's, else 30 s; 0 is no limit ([`NO_LIMIT`]).
+   */
   _timeout(timeout?: number): number {
-    const t = timeout ?? this._defaultTimeout ?? this._context._defaultTimeout ?? 0;
-    return t > 0 ? Math.min(t, 600_000) : 30_000;
+    return limit(timeout ?? this._defaultTimeout ?? this._context._defaultTimeout ?? DEFAULT_TIMEOUT);
   }
-  private navTimeout(timeout?: number): number {
-    return this._timeout(timeout ?? this._defaultNavigationTimeout ?? this._context._defaultNavigationTimeout ?? this._defaultTimeout);
+  /** A navigation's: the call's, the page's navigation default, its default, then the context's two, else 30 s. */
+  _navTimeout(timeout?: number): number {
+    return limit(
+      timeout ??
+        this._defaultNavigationTimeout ??
+        this._defaultTimeout ??
+        this._context._defaultNavigationTimeout ??
+        this._context._defaultTimeout ??
+        DEFAULT_TIMEOUT,
+    );
   }
   _testIdAttribute(): string {
     return this._context._testIdAttribute;
@@ -1952,7 +1980,7 @@ export class Page extends Scope {
   async goto(url: string, options: GotoOptions = {}): Promise<Response | null> {
     const target = resolveUrl(this._context._options.baseURL, url);
     const waitUntil = options.waitUntil === 'domcontentloaded' || options.waitUntil === 'commit' ? 'domcontentloaded' : 'load';
-    const timeout = this.navTimeout(options.timeout);
+    const timeout = this._navTimeout(options.timeout);
     if (!this._isAttached) {
       const a = await this._attach(target);
       if (a.pooled) {
@@ -2011,7 +2039,7 @@ export class Page extends Scope {
     return response;
   }
   async reload(options: GotoOptions = {}): Promise<Response | null> {
-    const timeout = this.navTimeout(options.timeout);
+    const timeout = this._navTimeout(options.timeout);
     const steps: Step[] = [{ reload: { timeout } }];
     if (options.waitUntil === 'networkidle') steps.push({ idle: { timeout } });
     const r = await this._run('page.reload', steps);
@@ -2024,7 +2052,7 @@ export class Page extends Scope {
     return this.history('page.goForward', 1, options);
   }
   private async history(api: string, delta: number, options: GotoOptions): Promise<null> {
-    const timeout = this.navTimeout(options.timeout);
+    const timeout = this._navTimeout(options.timeout);
     await this._run(api, [
       { eval: { expression: `(d) => history.go(d)`, call: true, arg: delta } },
       { idle: { timeout } },
@@ -2033,11 +2061,11 @@ export class Page extends Scope {
     return null;
   }
   async waitForLoadState(state: 'load' | 'domcontentloaded' | 'networkidle' = 'load', options: Timeout = {}): Promise<void> {
-    const timeout = this.navTimeout(options.timeout);
+    const timeout = this._navTimeout(options.timeout);
     await this._run('page.waitForLoadState', [state === 'networkidle' ? { idle: { timeout } } : { loaded: { timeout } }]);
   }
   async waitForURL(url: UrlMatch, options: Timeout & { waitUntil?: GotoOptions['waitUntil'] } = {}): Promise<void> {
-    const ms = this.navTimeout(options.timeout);
+    const ms = this._navTimeout(options.timeout);
     const deadline = Date.now() + ms;
     const base = this._context._options.baseURL;
     while (!(await urlMatches(base, this._url, url))) {
@@ -2216,7 +2244,7 @@ export class Page extends Scope {
     );
   }
   async setContent(html: string, options: GotoOptions = {}): Promise<void> {
-    const timeout = this.navTimeout(options.timeout);
+    const timeout = this._navTimeout(options.timeout);
     await this._run('page.setContent', [
       { eval: { expression: `(html) => { document.open(); document.write(html); document.close(); }`, call: true, arg: html } },
       { loaded: { timeout } },
@@ -2647,7 +2675,7 @@ export class Worker {
   }
   waitForEvent<K extends keyof WorkerEvents>(event: K, o: Timeout = {}): Promise<WorkerEvents[K]> {
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject(new TimeoutError(`worker.waitForEvent: Timeout exceeded waiting for "${event}"`)), o.timeout ?? 30_000);
+      const timer = setTimeout(() => reject(new TimeoutError(`worker.waitForEvent: Timeout exceeded waiting for "${event}"`)), limit(o.timeout ?? DEFAULT_TIMEOUT));
       this._events.once(event, (v) => {
         clearTimeout(timer);
         resolve(v);
@@ -2777,7 +2805,7 @@ export class FileChooser {
   isMultiple(): boolean {
     return this._multiple;
   }
-  async setFiles(files: Parameters<Locator['setInputFiles']>[0], options: Timeout = {}): Promise<void> {
+  async setFiles(files: Parameters<Locator['setInputFiles']>[0], options: Timeout & NoWaitAfter = {}): Promise<void> {
     await this._element.setInputFiles(files, options);
   }
 }

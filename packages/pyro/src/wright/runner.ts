@@ -446,7 +446,8 @@ function videoMode(video: unknown): string {
       if (o[n] === undefined || (!(n in options) && n in UNFORWARDED_DEFAULTS && o[n] === UNFORWARDED_DEFAULTS[n])) continue;
       options[n] = o[n];
     }
-    setTestDefaults({ options, timeout: o.actionTimeout || undefined, navigationTimeout: o.navigationTimeout || undefined, testIdAttribute: o.testIdAttribute || 'data-testid' });
+    // As Playwright Test: unset is 0, no limit of their own (the test's timeout bounds them).
+    setTestDefaults({ options, timeout: o.actionTimeout || 0, navigationTimeout: o.navigationTimeout || 0, testIdAttribute: o.testIdAttribute || 'data-testid' });
     await use();
     setTestDefaults(undefined);
   }`,

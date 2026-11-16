@@ -598,6 +598,92 @@ impl<S: CheapCloneStr> NamedLineResolver<S> {
         self.areas
     }
 
+    /// pyro: name the lines of a subgridded axis (css-grid-2 §9): the subgrid's own `<line-name-list>`
+    /// (`own`, one set per line) and the names its parent grid's lines give it (`inherited`). Line `i` of
+    /// each list is the subgrid's line `i + 1`. Only the own names are listed with the template's
+    /// (`detailed_line_names`).
+    pub(crate) fn add_subgrid_line_names(&mut self, axis: AbsoluteAxis, own: &[Vec<S>], inherited: &[Vec<S>]) {
+        let (lines, pairs, area_axis) = match axis {
+            AbsoluteAxis::Horizontal => (&mut self.column_lines, &mut self.column_line_name_pairs, GridAreaAxis::Column),
+            AbsoluteAxis::Vertical => (&mut self.row_lines, &mut self.row_line_name_pairs, GridAreaAxis::Row),
+        };
+        for (index, names) in own.iter().enumerate() {
+            for name in names {
+                pairs.push((index as u32 + 1, name.clone()));
+                upsert_line_name_map(lines, &mut self.areas, area_axis, name.clone(), index as u32 + 1);
+            }
+        }
+        for (index, names) in inherited.iter().enumerate() {
+            for name in names {
+                upsert_line_name_map(lines, &mut self.areas, area_axis, name.clone(), index as u32 + 1);
+            }
+        }
+        for lines in lines.values_mut() {
+            lines.sort_unstable();
+            lines.dedup();
+        }
+    }
+
+    /// pyro: the names of the lines `first..=last` (origin-zero) in `axis`, one set per line: those of the
+    /// track template or a subgrid's line lists. A line outside the explicit grid has none.
+    pub(crate) fn names_of_lines(&self, axis: AbsoluteAxis, first: i16, last: i16) -> Vec<Vec<S>> {
+        let lines = match axis {
+            AbsoluteAxis::Horizontal => &self.column_lines,
+            AbsoluteAxis::Vertical => &self.row_lines,
+        };
+        let count = (last - first).max(-1) + 1;
+        let mut names: Vec<Vec<S>> = (0..count).map(|_| Vec::new()).collect();
+        for (name, positions) in lines.iter() {
+            for &position in positions.iter() {
+                let oz = oz_line(position);
+                if oz >= first as i32 && oz <= last as i32 {
+                    names[(oz - first as i32) as usize].push(name.0.clone());
+                }
+            }
+        }
+        names
+    }
+
+    /// pyro: the implicit names the grid's named areas (`grid-template-areas`) give the lines of a subgrid
+    /// placed at `area` (origin-zero lines, both axes): for each area that overlaps it, `<name>-start` on the
+    /// first line of the overlap and `<name>-end` on its last, in `axis`, as (line of the subgrid from 0, name)
+    /// (css-grid-2 §9).
+    pub(crate) fn area_names_for_subgrid(
+        &self,
+        axis: AbsoluteAxis,
+        area: crate::geometry::InBothAbsAxis<Line<OriginZeroLine>>,
+    ) -> Vec<(u16, S)> {
+        let mut names = Vec::new();
+        for (name, lines) in self.areas.iter() {
+            if lines.row_start == 0 || lines.row_end == 0 || lines.column_start == 0 || lines.column_end == 0 {
+                continue;
+            }
+            let columns = (oz_line(lines.column_start), oz_line(lines.column_end));
+            let rows = (oz_line(lines.row_start), oz_line(lines.row_end));
+            let overlaps = |(start, end): (i32, i32), line: Line<OriginZeroLine>| {
+                start < line.end.0 as i32 && end > line.start.0 as i32
+            };
+            if !overlaps(columns, area.horizontal) || !overlaps(rows, area.vertical) {
+                continue;
+            }
+            let ((start, end), line) = match axis {
+                AbsoluteAxis::Horizontal => (columns, area.horizontal),
+                AbsoluteAxis::Vertical => (rows, area.vertical),
+            };
+            let first = start.max(line.start.0 as i32) - line.start.0 as i32;
+            let last = end.min(line.end.0 as i32) - line.start.0 as i32;
+            let name = name.0.as_ref();
+            let edge = |suffix: &str| {
+                let mut edge = crate::sys::String::from(name);
+                edge.push_str(suffix);
+                S::from(edge)
+            };
+            names.push((first as u16, edge("-start")));
+            names.push((last as u16, edge("-end")));
+        }
+        names
+    }
+
     /// Get the number of columns defined by the grid areas
     pub(crate) fn area_column_count(&self) -> u16 {
         self.area_column_count

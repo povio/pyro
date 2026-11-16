@@ -1,6 +1,7 @@
 mod background;
 mod border;
 mod border_image;
+mod border_shape;
 mod box_shadow;
 mod clip_path;
 mod form_controls;
@@ -188,6 +189,11 @@ pub struct BlitzDomPainter<'dom, 'a> {
     pub(crate) deferred_outlines: std::cell::Cell<bool>,
     /// pyro (lane H2): 3D rendering contexts being recorded (`render/three_d.rs`).
     pub(crate) three_d: three_d::State,
+    /// pyro: where the scene's coordinates land in device pixels, when that is known (a
+    /// screenshot's page scene: the capture's transform of it). A clip around a box hoisted to its
+    /// stacking context is then left out where it would cut nothing (`draw_hoisted_children`).
+    /// `None` (printed output, sub-documents): every such clip is pushed.
+    pub device_pixels: Option<Affine>,
 
     // Pre-computed `Scene`s for each CustomWidget
     pub(crate) custom_widget_scenes: &'a CustomWidgetSceneMap,
@@ -246,6 +252,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             flow_phase: std::cell::Cell::new(FlowPhase::All),
             deferred_outlines: std::cell::Cell::new(false),
             three_d: Default::default(),
+            device_pixels: None,
             custom_widget_scenes,
         }
     }
@@ -690,7 +697,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         let clip = if cx.text_input.is_some() {
             cx.frame.text_input_clip_path()
         } else {
-            box_shadow::overflow_clip_path(&cx.frame, &styles, self.scale)
+            cx.overflow_clip_path(&styles)
         };
         let pushed = self.layer_manager.maybe_push_layer(
             scene,
@@ -1005,7 +1012,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             let clip_box = if is_text_input {
                 cx.frame.text_input_clip_path()
             } else {
-                box_shadow::overflow_clip_path(&cx.frame, &styles, self.scale)
+                cx.overflow_clip_path(&styles)
             };
             source_rect.intersect(screen_transform.transform_rect_bbox(clip_box.bounding_box()))
         } else {
@@ -1017,7 +1024,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         if phase != FlowPhase::All {
             match phase {
                 FlowPhase::Background => {
-                    if !node.is_inline_with_only_block_children() && !node.is_split_inline() {
+                    if !hidden && !node.is_inline_with_only_block_children() && !node.is_split_inline() {
                         cx.draw_outset_box_shadow(scene);
                         if cx.context.backgrounds && self.canvas_background != Some(node_id) {
                             cx.draw_background(scene);
@@ -1261,6 +1268,10 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
                 }
             }
             cx.draw_outset_box_shadow(scene);
+            // pyro: a cell of a positioned row or row group paints their backgrounds first.
+            if cx.context.backgrounds && !hidden {
+                cx.draw_positioned_table_part_backgrounds(scene);
+            }
             if cx.context.backgrounds && !is_root && self.canvas_background != Some(node.id) {
                 cx.draw_background(scene);
             }
@@ -1272,9 +1283,12 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         // pyro: a collapsed table whose cells hold half of the borders around them draws the
         // borders over the cells' backgrounds, after its children (Chromium paints collapsed
         // borders after the cells' backgrounds); one with uniform gutters draws them here.
-        let borders_after_cells = matches!(&cx.element.special_data,
+        // pyro: and a collapsed table paints its parts in phases, its borders after the
+        // backgrounds of their blocks, before their inline content (`table_borders_in_phases`).
+        let borders_in_phases = cx.table_borders_in_phases();
+        let borders_after_cells = !borders_in_phases && matches!(&cx.element.special_data,
             blitz_dom::node::SpecialElementData::TableRoot(table) if table.collapsed_edges.is_some());
-        if !borders_after_cells && !hidden {
+        if !borders_after_cells && !borders_in_phases && !hidden {
             cx.draw_table_borders(scene);
         }
         if paints_own_box {
@@ -1287,7 +1301,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         let clip = if is_text_input {
             &cx.frame.text_input_clip_path()
         } else {
-            &box_shadow::overflow_clip_path(&cx.frame, &cx.style, cx.scale)
+            &cx.overflow_clip_path(&cx.style)
         };
 
         // Clip layer if box requires clipping. Opacity set to 1.0
@@ -1327,10 +1341,12 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
                 if !cx.draw_columns(scene, content_position, child_clip_rect) {
                     // pyro: floats among the paint children: in the phases of CSS 2.1 Appendix E.
                     // pyro: and so are in-flow boxes that overlap (`FLOW_BOXES_OVERLAP`).
-                    if node.flags.intersects(
-                        blitz_dom::node::NodeFlags::HAS_FLOAT_PAINT_CHILDREN
-                            | blitz_dom::node::NodeFlags::FLOW_BOXES_OVERLAP,
-                    ) {
+                    if borders_in_phases
+                        || node.flags.intersects(
+                            blitz_dom::node::NodeFlags::HAS_FLOAT_PAINT_CHILDREN
+                                | blitz_dom::node::NodeFlags::FLOW_BOXES_OVERLAP,
+                        )
+                    {
                         cx.draw_children_in_phases(
                             scene,
                             cx.transform,
@@ -1351,6 +1367,9 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             },
         );
         cx.transform = unscrolled_transform;
+        // pyro: the borders of a collapsed table with positioned parts, after its last positioned
+        // cell (`table_borders_deferred`).
+        cx.draw_deferred_table_borders(scene);
         if hidden {
             return;
         }
@@ -1363,6 +1382,8 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         #[cfg(feature = "scrollbars")]
         cx.draw_scrollbars(scene);
 
+        // pyro: and those of a table's rows and row groups, which paint no box.
+        cx.draw_table_part_outlines(scene);
         // The outline goes over the box and its contents (Chromium paints it
         // in a phase of its own after the foreground): one with a negative
         // `outline-offset` lies inside the box, over its background.
@@ -2099,9 +2120,8 @@ impl ElementCx<'_, '_> {
         let mut painted_fragments = Vec::new();
         use parley::{InlineBoxKind, PositionedLayoutItem};
         use style::computed_values::direction::T as Direction;
-        use style::values::computed::{Length, LengthPercentage, Margin};
+        use style::values::computed::{Length, LengthPercentage};
         use style::values::generics::image::GenericImage;
-        use style::values::generics::length::GenericMargin;
 
         struct Fragment {
             node: NodeId,
@@ -2139,7 +2159,11 @@ impl ElementCx<'_, '_> {
                 let Some(style) = node.primary_styles() else {
                     return false;
                 };
-                if style.get_inherited_box().visibility != StyloVisibility::Visible {
+                // pyro: a `display: contents` element is a span of its text's styles (blitz-dom's
+                // inline build) without a box.
+                if style.get_inherited_box().visibility != StyloVisibility::Visible
+                    || style.clone_display().is_contents()
+                {
                     return false;
                 }
                 let background = style.get_background();
@@ -2243,15 +2267,15 @@ impl ElementCx<'_, '_> {
                     if let Some((_, kind)) = edge.filter(|&(id, _)| id == node)
                         && let Some(style) = dom.get_node(node).and_then(|node| node.primary_styles())
                     {
-                        let margin = |v: &Margin| match v {
-                            GenericMargin::LengthPercentage(v) => length(v) * self.scale as f32,
-                            _ => 0.0,
-                        };
+                        // pyro: the inline-start and -end margins (top and bottom in a vertical
+                        // writing mode, whose lines are laid out turned).
+                        let (start, end) = blitz_dom::span_edge_margins(&style, 0.0);
                         let rtl = style.clone_direction() == Direction::Rtl;
+                        let margin = if kind == InlineBoxKind::SpanStart { start } else { end } * self.scale as f32;
                         if (kind == InlineBoxKind::SpanStart) != rtl {
-                            x0 += margin(&style.get_margin().margin_left);
+                            x0 += margin;
                         } else {
-                            x1 -= margin(&style.get_margin().margin_right);
+                            x1 -= margin;
                         }
                     }
                     // pyro: a fragment holds the items of its element that are next to each other in
@@ -3136,10 +3160,16 @@ impl ElementCx<'_, '_> {
             // Outside markers are placed outside the list item's border box
             // (`pos` is the origin of its content box)
             let item_layout = self.node.final_layout();
-            let x_offset = -(layout.full_width() / layout.scale()
-                + x_padding
-                + item_layout.padding.left
-                + item_layout.border.left);
+            // pyro: after its right edge in a right-to-left item.
+            let rtl = !self.style.writing_mode.is_bidi_ltr();
+            let x_offset = if rtl {
+                item_layout.size.width - item_layout.padding.left - item_layout.border.left + x_padding
+            } else {
+                -(layout.full_width() / layout.scale()
+                    + x_padding
+                    + item_layout.padding.left
+                    + item_layout.border.left)
+            };
 
             // Align the marker with the baseline of the first line of text in the list item
             if let Marker::Char(symbol @ ('•' | '◦' | '▪')) = marker {
@@ -3156,7 +3186,7 @@ impl ElementCx<'_, '_> {
                 .as_ref()
                 .and_then(|text_layout| Some((text_layout, text_layout.layout.lines().next()?)));
             // pyro: the marker goes with the line, which floats beside the item move.
-            let line_x = first_line.as_ref().map_or(0.0, |(text_layout, line)| {
+            let line_x = first_line.as_ref().filter(|_| !rtl).map_or(0.0, |(text_layout, line)| {
                 line.metrics().inline_min_coord / text_layout.layout.scale()
             });
             let y_offset = if let Some((text_layout, first_text_line)) = &first_line
@@ -3232,8 +3262,15 @@ impl ElementCx<'_, '_> {
         let offset = ascent * 2 / 3;
         let size = ((offset + 1) / 2) as f64;
         let subpixel = self.list_item.map_or(taffy::Point::ZERO, |item| item.content_box_subpixel_offset);
-        let x = pos.x + (subpixel.x + line_x - item_layout.padding.left - item_layout.border.left) as f64
-            - (offset + 7) as f64;
+        // pyro: mirrored after the border box's right edge in a right-to-left item.
+        let x = if self.style.writing_mode.is_bidi_ltr() {
+            pos.x + (subpixel.x + line_x - item_layout.padding.left - item_layout.border.left) as f64
+                - (offset + 7) as f64
+        } else {
+            pos.x + (subpixel.x + item_layout.size.width - item_layout.padding.left - item_layout.border.left) as f64
+                + (offset + 7) as f64
+                - size
+        };
         let y = pos.y + (subpixel.y + baseline) as f64 - (ascent - 3 * (ascent - offset) / 2) as f64;
         let (x, y) = ((x + 0.5).floor() * self.scale, (y + 0.5).floor() * self.scale);
         let rect = Rect::new(x, y, x + size * self.scale, y + size * self.scale);
@@ -3400,6 +3437,62 @@ impl ElementCx<'_, '_> {
     /// pyro: the paint level of `child`, one of this node's `paint_children` (as
     /// blitz-dom's paint tree sorts them): 0 in-flow, 1 a float, 2 a positioned box or a
     /// stacking context (a positioned float too).
+    /// pyro: whether this element is a collapsed table that paints its parts in phases
+    /// ([`Node::paints_in_table_phases`]) and its borders between them
+    /// (`draw_children_in_phases`). Not in columns or a 3D plane, which paint children their way.
+    /// pyro: whether this element is a collapsed table that paints its parts in phases
+    /// ([`Node::paints_in_table_phases`]) and its borders between them
+    /// (`draw_children_in_phases`). Not in columns, which paint children their way.
+    fn table_borders_in_phases(&self) -> bool {
+        matches!(&self.element.special_data,
+            blitz_dom::node::SpecialElementData::TableRoot(table)
+                if table.border_collapse == style::computed_values::border_collapse::T::Collapse
+                    && !table.cells.is_empty())
+            && self.node.column_fragments().is_none()
+    }
+
+    /// pyro: a collapsed table with positioned parts (rows, row groups, cells) leaves its borders to
+    /// the last cell painted in one of them (`last_positioned_table_cell`): the positioned parts
+    /// paint later, in their own layers, and Chromium paints the borders over them too (WPT
+    /// `collapsed-border-positioned-tr-td`).
+    fn table_borders_deferred(&self) -> bool {
+        let blitz_dom::node::SpecialElementData::TableRoot(table) = &self.element.special_data else {
+            return false;
+        };
+        table.border_collapse == style::computed_values::border_collapse::T::Collapse
+            && last_positioned_table_cell(self.context.dom.as_ref(), table).is_some()
+    }
+
+    /// pyro: the borders of the collapsed table this cell is the last positioned cell of
+    /// (`table_borders_deferred`), after the cell.
+    fn draw_deferred_table_borders(&self, scene: &mut impl PaintScene) {
+        if !self.node.primary_styles().is_some_and(|style| {
+            style.clone_display().inside() == style::values::specified::box_::DisplayInside::TableCell
+        }) {
+            return;
+        }
+        let dom = self.context.dom.as_ref();
+        let Some(table_node) = self.node.layout_parent.get().and_then(|id| dom.get_node(id)) else { return };
+        let Some(blitz_dom::node::SpecialElementData::TableRoot(table)) =
+            table_node.element_data().map(|element| &element.special_data)
+        else {
+            return;
+        };
+        if table.border_collapse != style::computed_values::border_collapse::T::Collapse
+            || last_positioned_table_cell(dom, table) != Some(self.node.id)
+            || table_node
+                .primary_styles()
+                .is_none_or(|style| style.get_inherited_box().visibility != StyloVisibility::Visible)
+        {
+            return;
+        }
+        let location = self.node.final_layout().location;
+        let transform = self.transform
+            * Affine::translate(Vec2::new(-location.x as f64, -location.y as f64) * self.scale);
+        let table_cx = self.context.element_cx(table_node, *table_node.final_layout(), transform, None);
+        table_cx.draw_table_borders(scene);
+    }
+
     fn paint_level(&self, child: &Node) -> u8 {
         let Some(style) = child.primary_styles() else {
             return 0;
@@ -3436,6 +3529,15 @@ impl ElementCx<'_, '_> {
             clip_rect,
             FlowPhase::Background,
         );
+        // pyro: a collapsed table's borders, over the backgrounds of the blocks in its cells
+        // (Blink paints them after its descendants' block backgrounds), under their floats and
+        // inline content.
+        if self.table_borders_in_phases()
+            && !self.table_borders_deferred()
+            && self.style.get_inherited_box().visibility == StyloVisibility::Visible
+        {
+            self.draw_table_borders(scene);
+        }
         if let Some(children) = &*self.node.paint_children.borrow() {
             let tree = self.context.dom.as_ref().tree();
             for &child_id in children {
@@ -3489,7 +3591,7 @@ impl ElementCx<'_, '_> {
             if self.paint_level(child) != 0 {
                 continue;
             }
-            let child_phase = if child.paints_in_ancestor_phases() {
+            let child_phase = if child.paints_in_ancestor_phases() || child.paints_in_table_phases() {
                 phase
             } else if phase == FlowPhase::Outline {
                 // (A box painted whole paints its outline with it.)
@@ -3505,30 +3607,26 @@ impl ElementCx<'_, '_> {
         }
     }
 
-    /// Paints a box hoisted to this stacking context (a positioned descendant with a
-    /// `z-index`) where its layout put it. pyro: inside the overflow clips of the boxes between
-    /// it and this one that are its containing-block ancestors: such a box makes no stacking
-    /// context, so the child is not painted within its clip layer, and it showed whole outside
-    /// an `overflow: hidden` ancestor.
-    fn draw_hoisted_child(
+    /// The overflow clips a box hoisted to this stacking context (a positioned descendant with a
+    /// `z-index`) is painted in, outermost first: those of the boxes between it and this one
+    /// that are its containing-block ancestors. pyro: such a box makes no stacking context, so
+    /// the child is not painted within its clip layer, and it showed whole outside an
+    /// `overflow: hidden` ancestor. Each clip is its box's node, with the box's border box origin
+    /// in this context's space (the child's, less what lies between the two).
+    fn hoisted_child_clips(
         &self,
-        scene: &mut impl PaintScene,
         hoisted_child: &blitz_dom::HoistedPaintChild,
+        position: taffy::Point<f32>,
         parent_style_transform: Affine,
-        clip_rect: Rect,
-    ) {
+    ) -> Vec<(NodeId, Affine, kurbo::BezPath)> {
         let tree = self.node.tree();
-        let position = hoisted_child.position(tree, self.node.id);
-        // The clipping boxes, innermost first, each with its border box's origin in this
-        // context's space (the child's, less what lies between the two).
-        let mut clips: Vec<(Affine, kurbo::BezPath)> = Vec::new();
+        let mut clips: Vec<(NodeId, Affine, kurbo::BezPath)> = Vec::new();
         let mut between = (0.0f32, 0.0f32);
         let mut current = tree.get(hoisted_child.node_id).and_then(|child| child.containing_block());
-        let mut reached = false;
         while let Some(id) = current {
             if id == self.node.id {
-                reached = true;
-                break;
+                clips.reverse();
+                return clips;
             }
             let Some(node) = tree.get(id) else { break };
             // (Out of a multi-column container's strip the walk is not a sum of offsets.)
@@ -3552,22 +3650,104 @@ impl ElementCx<'_, '_> {
                 } else {
                     box_shadow::overflow_clip_path(&frame, &styles, self.scale)
                 };
-                clips.push((parent_style_transform.pre_translate(origin), clip));
+                clips.push((id, parent_style_transform.pre_translate(origin), clip));
             }
             current = node.containing_block();
         }
-        if !reached {
-            clips.clear();
+        Vec::new()
+    }
+
+    /// Paints boxes hoisted to this stacking context, in order, where their layout put them,
+    /// each inside its [`Self::hoisted_child_clips`]. pyro: the clip layers stay pushed from one
+    /// child to the next as far as the two share their outer clips (the sticky cells of a table
+    /// and the buttons in its cells, all in one scroller): a clip layer costs the raster its
+    /// whole area, and one stack of them per child cost a ToS table screen's capture half as
+    /// much again. A layer the layer limit refused is not popped.
+    ///
+    /// pyro: where the device pixels are known (screenshots), each child is recorded first, and when
+    /// each of its clips covers in whole every pixel the child's ink touches
+    /// ([`crate::bounds::clip_covers_pixels`]), none is pushed: they would cut nothing, and one layer
+    /// per button inside its `overflow: hidden` table cell still cost a ToS finances capture a tenth
+    /// more (Chromium skips a clip that contains what it clips too). A child one clip cuts keeps all
+    /// of them. Every clip stays around a child rasterized on a grid of its own (a local-raster
+    /// layer, a 3D plane), and around one with a backdrop filter or a blend mode, whose layers read
+    /// what the clips hold.
+    fn draw_hoisted_children<'c>(
+        &self,
+        scene: &mut impl PaintScene,
+        children: impl Iterator<Item = &'c blitz_dom::HoistedPaintChild>,
+        parent_style_transform: Affine,
+        clip_rect: Rect,
+    ) {
+        let same_place = |a: &Affine, b: &Affine| {
+            a.as_coeffs().iter().zip(b.as_coeffs()).all(|(a, b)| (a - b).abs() <= 1e-3)
+        };
+        let device = self.context.device_pixels.filter(|_| {
+            self.context.local_raster_depth.get() == 0 && self.context.three_d.depth.get() == 0
+        });
+        // The clip layers open, outermost first: node, transform, whether the layer was pushed.
+        let mut open: Vec<(NodeId, Affine, bool)> = Vec::new();
+        for hoisted_child in children {
+            let position = hoisted_child.position(self.node.tree(), self.node.id);
+            let clips = self.hoisted_child_clips(hoisted_child, position, parent_style_transform);
+            // Culled to every clip, pushed or not: what lies outside one is cut off either way.
+            let child_clip_rect = clips.iter().fold(clip_rect, |rect, (_, transform, clip)| {
+                rect.intersect(transform.transform_rect_bbox(clip.bounding_box()))
+            });
+            let pos = kurbo::Vec2 { x: position.x as f64 * self.scale, y: position.y as f64 * self.scale };
+            let transform = parent_style_transform.pre_translate(pos);
+            let mut recorded = None;
+            let mut needed = vec![true; clips.len()];
+            if let Some(device) = device.filter(|_| !clips.is_empty()) {
+                let mut child = Scene::new();
+                self.render_node(&mut child, hoisted_child.node_id, transform, child_clip_rect);
+                if !child.commands.iter().any(reads_backdrop) {
+                    match crate::bounds::scene_bounds(&child.commands) {
+                        // All of them, or none: a box one clip cuts is painted in all of its clips, as
+                        // before, so the layers it is composited through are the same and round alike.
+                        Some(ink) => {
+                            let ink = device.transform_rect_bbox(ink);
+                            let covered = clips.iter().all(|(_, clip_transform, clip)| {
+                                crate::bounds::clip_covers_pixels(clip, device * *clip_transform, ink)
+                            });
+                            needed.fill(!covered);
+                        }
+                        // (It paints nothing.)
+                        None => needed.fill(false),
+                    }
+                }
+                recorded = Some(child);
+            }
+            let wanted: Vec<_> = clips.iter().zip(&needed).filter(|(_, needed)| **needed).map(|(clip, _)| clip).collect();
+            let keep = open
+                .iter()
+                .zip(&wanted)
+                .take_while(|(o, c)| o.0 == c.0 && same_place(&o.1, &c.1))
+                .count();
+            for &(_, _, pushed) in open[keep..].iter().rev() {
+                self.context.layer_manager.maybe_pop_layer(scene, pushed);
+            }
+            open.truncate(keep);
+            for &(id, clip_transform, ref clip) in wanted.into_iter().skip(keep) {
+                let pushed = self.context.layer_manager.maybe_push_layer(
+                    scene,
+                    true,
+                    BlendMode::default(),
+                    1.0,
+                    clip_transform,
+                    clip,
+                    None,
+                    None,
+                );
+                open.push((id, clip_transform, pushed));
+            }
+            match recorded {
+                Some(child) => scene.append_scene(child, Affine::IDENTITY),
+                None => self.render_node(scene, hoisted_child.node_id, transform, child_clip_rect),
+            }
         }
-        let mut clip_rect = clip_rect;
-        for (transform, clip) in clips.iter().rev() {
-            self.context.layer_manager.maybe_push_layer(scene, true, BlendMode::default(), 1.0, *transform, clip, None, None);
-            clip_rect = clip_rect.intersect(transform.transform_rect_bbox(clip.bounding_box()));
-        }
-        let pos = kurbo::Vec2 { x: position.x as f64 * self.scale, y: position.y as f64 * self.scale };
-        self.render_node(scene, hoisted_child.node_id, parent_style_transform.pre_translate(pos), clip_rect);
-        for _ in &clips {
-            self.context.layer_manager.maybe_pop_layer(scene, true);
+        for &(_, _, pushed) in open.iter().rev() {
+            self.context.layer_manager.maybe_pop_layer(scene, pushed);
         }
     }
 
@@ -3578,9 +3758,7 @@ impl ElementCx<'_, '_> {
         clip_rect: Rect,
     ) {
         if let Some(hoisted) = &self.node.stacking_context {
-            for hoisted_child in hoisted.neg_z_hoisted_children() {
-                self.draw_hoisted_child(scene, hoisted_child, parent_style_transform, clip_rect);
-            }
+            self.draw_hoisted_children(scene, hoisted.neg_z_hoisted_children(), parent_style_transform, clip_rect);
         }
     }
 
@@ -3592,9 +3770,7 @@ impl ElementCx<'_, '_> {
     ) {
         // Positive z_index hoisted nodes
         if let Some(hoisted) = &self.node.stacking_context {
-            for hoisted_child in hoisted.pos_z_hoisted_children() {
-                self.draw_hoisted_child(scene, hoisted_child, parent_style_transform, clip_rect);
-            }
+            self.draw_hoisted_children(scene, hoisted.pos_z_hoisted_children(), parent_style_transform, clip_rect);
         }
     }
 
@@ -3709,10 +3885,25 @@ impl ElementCx<'_, '_> {
         // show in the rest of the box (Chromium draws the image into that rect, clipped). A
         // second cut, only where the content reaches past a rect that leaves some of the box.
         let mut object_clip = None;
-        let clip = if inline && !document_root && {
+        let (visible_x, visible_y) = {
             let b = self.style.get_box();
-            matches!(b.overflow_x, Overflow::Visible) && matches!(b.overflow_y, Overflow::Visible)
-        } {
+            (matches!(b.overflow_x, Overflow::Visible), matches!(b.overflow_y, Overflow::Visible))
+        };
+        let clip = if inline && !document_root && visible_x && visible_y {
+            ReplacedClip::Never
+        } else if inline && !document_root && visible_x != visible_y {
+            // pyro: an inline `<svg>` visible on one axis is cut on the other alone, at its
+            // content box, with square corners (Chromium clips it per axis and does not round
+            // the cut; WPT css-overflow/rounded-overflow-clip-visible,
+            // overflow-clip-x-visible-y-svg).
+            let content = self.frame.content_box;
+            const FAR: f64 = 1.0e7;
+            object_clip = Some(Rect::new(
+                if visible_x { -FAR } else { content.x0 },
+                if visible_y { -FAR } else { content.y0 },
+                if visible_x { FAR } else { content.x1 },
+                if visible_y { FAR } else { content.y1 },
+            ));
             ReplacedClip::Never
         } else if !inline && replaced_overflow_is_visible(self.element, &self.style) {
             // pyro: an SVG image whose `overflow` the author made visible is cut at its own
@@ -4000,6 +4191,14 @@ impl<'dom, 'a> std::ops::Deref for ElementCx<'dom, 'a> {
     }
 }
 
+/// pyro: whether a recorded command is a layer that reads what lies under it as drawn so far: a
+/// backdrop filter's, or one with a blend mode (`mix-blend-mode`, a mask). Clips around it stay
+/// (`ElementCx::draw_hoisted_children`).
+fn reads_backdrop(command: &anyrender::recording::RenderCommand) -> bool {
+    matches!(command, anyrender::recording::RenderCommand::PushLayer(layer)
+        if layer.backdrop_filter.is_some() || layer.blend != BlendMode::default())
+}
+
 fn insets_from_taffy_rect(input: taffy::Rect<f64>) -> Insets {
     Insets {
         x0: input.left,
@@ -4030,14 +4229,40 @@ fn create_css_rect(style: &ComputedValues, layout: &Layout, scale: f64) -> CssBo
         }
     };
     let s_border = style.get_border();
+    // pyro: `border-shape` ignores `border-radius` and `corner-shape` (CSS Borders 4 §11.5.1).
+    let border_shape = !matches!(
+        s_border.border_shape,
+        style::values::generics::basic_shape::GenericBorderShape::None
+    );
+    // pyro: a corner whose shape is (nearly) square has no radius (Blink's `CalcRadiiFor`).
+    let shaped = |radius: &BorderCornerRadius, k: f32| {
+        if border_shape || crate::kurbo_css::contoured::is_degenerate(k as f64) {
+            Vec2::ZERO
+        } else {
+            resolve_radii(radius)
+        }
+    };
     let border_radii = NonUniformRoundedRectRadii {
-        top_left: resolve_radii(&s_border.border_top_left_radius),
-        top_right: resolve_radii(&s_border.border_top_right_radius),
-        bottom_right: resolve_radii(&s_border.border_bottom_right_radius),
-        bottom_left: resolve_radii(&s_border.border_bottom_left_radius),
+        top_left: shaped(&s_border.border_top_left_radius, s_border.corner_top_left_shape.k),
+        top_right: shaped(&s_border.border_top_right_radius, s_border.corner_top_right_shape.k),
+        bottom_right: shaped(&s_border.border_bottom_right_radius, s_border.corner_bottom_right_shape.k),
+        bottom_left: shaped(&s_border.border_bottom_left_radius, s_border.corner_bottom_left_shape.k),
     };
 
-    CssBox::new(border_box, border, padding, outline_width, border_radii)
+    let frame = CssBox::new(border_box, border, padding, outline_width, border_radii);
+    // pyro: `corner-shape` (CSS Borders 4).
+    let exponent = |k: f32| crate::kurbo_css::contoured::exponent(k as f64);
+    let curvature = crate::kurbo_css::CornerCurvature {
+        top_left: exponent(s_border.corner_top_left_shape.k),
+        top_right: exponent(s_border.corner_top_right_shape.k),
+        bottom_right: exponent(s_border.corner_bottom_right_shape.k),
+        bottom_left: exponent(s_border.corner_bottom_left_shape.k),
+    };
+    if curvature.is_round() || !frame.has_border_radius() {
+        frame
+    } else {
+        frame.with_corner_curvature(curvature)
+    }
 }
 
 /// pyro: what [`BlitzDomPainter::paint_element`] needs of `render_element`'s state.
@@ -4093,4 +4318,25 @@ struct InlineBoxFragment {
     reaches_above: bool,
     /// pyro: its element's style on the first line, in place of its own (`::first-line`).
     style: Option<style::servo_arc::Arc<ComputedValues>>,
+}
+
+/// pyro: the last cell (in tree order, which is the order positioned boxes paint in) of a collapsed
+/// table that is positioned or in a positioned row or row group; `None` without one.
+fn last_positioned_table_cell(dom: &BaseDocument, table: &blitz_dom::TableContext) -> Option<NodeId> {
+    let positioned = |id: NodeId| {
+        dom.get_node(id)
+            .and_then(|node| node.primary_styles())
+            .is_some_and(|style| style.clone_position() != style::computed_values::position::T::Static)
+    };
+    let row_positioned: Vec<bool> =
+        table.rows.iter().map(|row| positioned(row.node_id) || row.group.is_some_and(positioned)).collect();
+    if !row_positioned.iter().any(|p| *p) && !table.cells.iter().any(|cell| positioned(cell.node_id)) {
+        return None;
+    }
+    table
+        .cells
+        .iter()
+        .rev()
+        .find(|cell| row_positioned.get(cell.row as usize).copied().unwrap_or(false) || positioned(cell.node_id))
+        .map(|cell| cell.node_id)
 }

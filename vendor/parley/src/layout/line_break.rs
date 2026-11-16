@@ -114,6 +114,22 @@ struct LineState {
     shy: Option<(u32, u32, f32)>,
     /// pyro: the last atom appended is a soft hyphen that no line ends at (`hyphens: none`).
     no_break_after: bool,
+    /// pyro: text or an atomic inline was appended to the line: what comes next does not start
+    /// it (CSS `text-spacing-trim` at a line's start).
+    has_inline_content: bool,
+    /// pyro: the first shaped cluster of the line's content (`Justification::content_start_cluster`).
+    content_start: u32,
+    /// pyro: the style of the last character appended to the line and whether it is white space,
+    /// which decide whether the line may wrap before the next atom (`wraps_after`).
+    last_char: Option<(u16, bool)>,
+    /// pyro: the line's first atom is fullwidth opening punctuation set half-width at the line's
+    /// start, or set back full-width there: its shaped cluster, and how far its glyph moves and
+    /// its advance changes. The shaped text takes it when the line is committed.
+    start_trim: Option<(u32, f32, f32)>,
+    /// pyro: the last atom appended to the line (white space after it aside) is closing
+    /// punctuation set half-width to end the line (CSS `text-spacing-trim`): its shaped cluster
+    /// and the advance taken off it. Content appended after it gives the advance back.
+    end_trim: Option<(u32, f32)>,
 }
 
 impl LineState {
@@ -127,6 +143,11 @@ impl LineState {
         self.justify_from = 0;
         self.shy = None;
         self.no_break_after = false;
+        self.has_inline_content = false;
+        self.content_start = 0;
+        self.last_char = None;
+        self.start_trim = None;
+        self.end_trim = None;
     }
 }
 
@@ -716,9 +737,26 @@ impl BreakerState {
         self.line.clusters.end = atom.shaped_clusters_range().end;
         self.cluster_idx = atom.shaped_clusters_range().end;
         self.line.x = next_x;
-        self.line.num_word_separators += u32::from(is_word_separator);
+        // pyro: the atom's justification opportunities (`text-justify`): a word separator's, and
+        // those before and after its characters (none before the line's content).
+        let first = atom.characters()[0].flags;
+        let line_start = !self.line.has_inline_content;
+        self.line.num_word_separators += u32::from(is_word_separator && !first.is_no_justify())
+            + u32::from(first.expands_before() && !line_start)
+            + u32::from(atom.characters().last().is_some_and(|last| last.flags.expands_after()));
+        if line_start {
+            self.line.content_start = atom.shaped_clusters_range().start;
+        }
+        if let Some(last) = atom.characters().last() {
+            self.line.last_char = Some((last.style_index, last.whitespace != Whitespace::None));
+        }
         self.line.shy = None;
         self.line.no_break_after = false;
+        // pyro: an invisible formatting character (a bidi control, an empty inline box's strut)
+        // is no content that starts the line.
+        if atom.advance() != 0.0 || atom.characters()[0].whitespace != Whitespace::None {
+            self.line.has_inline_content = true;
+        }
         if let [character] = atom.characters()
             && character.flags.is_soft_hyphen()
             && atom.shaped_clusters_range().len() == 1
@@ -779,6 +817,7 @@ impl BreakerState {
     ) {
         self.line.shy = None;
         self.line.no_break_after = false;
+        self.line.has_inline_content = true;
         self.item_idx += 1;
         self.line.items.end += 1;
         self.line.x = next_x;
@@ -964,6 +1003,8 @@ impl<'a, B: Brush> BreakLines<'a, B> {
     pub(crate) fn new(layout: &'a mut Layout<B>) -> Self {
         layout.data.width = 0.;
         layout.data.height = 0.;
+        // pyro: line edges are decided again from the shaped clusters.
+        layout.data.restore_edge_clusters();
         let mut lines = LineLayout::default();
         lines.swap(&mut layout.data);
         lines.clear();
@@ -1163,6 +1204,40 @@ impl<'a, B: Brush> BreakLines<'a, B> {
         // pyro: the line's tabs take the advances that reach their stops.
         for (cluster, advance) in self.state.line.tabs.drain(..) {
             self.layout.data.shaped_text.set_cluster_advance(cluster, advance);
+        }
+        // pyro: and its edges their fullwidth punctuation trimming.
+        if let Some((cluster, dx, d_advance)) = self.state.line.start_trim.take() {
+            self.layout.data.shift_edge_cluster(cluster, dx, d_advance);
+        }
+        if let Some((cluster, removed)) = self.state.line.end_trim.take() {
+            // Only where the line wraps after it: a paragraph's (or forced break's) last line
+            // that fits only so overflows with the bracket full-width, as in Chromium.
+            let always = self.layout.data.styles[self.layout.data.shaped_text.characters()[self
+                .layout
+                .data
+                .shaped_text
+                .shaped_clusters()[cluster as usize]
+                .chars_range()
+                .start as usize]
+                .style_index as usize]
+                .text_spacing_trim
+                == crate::style::TextSpacingTrim::TrimBoth;
+            if always || matches!(reason, BreakReason::Regular | BreakReason::Emergency) {
+                self.layout.data.shift_edge_cluster(cluster, 0.0, -removed);
+            } else {
+                self.state.line.x += removed;
+            }
+        }
+        // pyro: a line ending after an ideograph or a letter drops the space `text-autospace`
+        // put after it.
+        if let Some(last) = self.state.line.clusters.end.checked_sub(1)
+            && self.state.line.clusters.start <= last
+        {
+            let space = self.layout.data.trailing_autospace(last);
+            if space != 0.0 {
+                self.layout.data.shift_edge_cluster(last, 0.0, -space);
+                self.state.line.x -= space;
+            }
         }
         commit_line(
             self.layout,
@@ -1500,7 +1575,9 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                                 max_advance,
                                 line_indent,
                             );
-                        } else if is_soft_wrap_opportunity && text_wrap_mode == TextWrapMode::Wrap {
+                        } else if is_soft_wrap_opportunity
+                            && wraps_after(&self.layout.data.styles, self.state.line.last_char, style_index, text_wrap_mode)
+                        {
                             // We don't record boundaries when the advance is 0. As we do not want overflowing content to cause extra consecutive
                             // line breaks. We should accept the overflowing fragment in that scenario.
                             // pyro: nor after a span's start edge, which the opportunity was
@@ -1560,13 +1637,49 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                             self.state.line.tabs.push((cluster, reach));
                         }
 
+                        // pyro: closing punctuation trimmed to end the line is not at its end
+                        // when more than white space follows it.
+                        if whitespace == Whitespace::None
+                            && let Some((_, removed)) = self.state.line.end_trim.take()
+                        {
+                            self.state.line.x += removed;
+                        }
+                        // pyro: fullwidth opening punctuation at the line's start (CSS
+                        // `text-spacing-trim`).
+                        if !self.state.line.has_inline_content {
+                            let start_trim = line_start_trim(
+                                &self.layout.data,
+                                &atom,
+                                self.lines.lines.last().is_none_or(|line| line.break_reason == BreakReason::Explicit),
+                            );
+                            if let Some((_, _, d_advance)) = start_trim {
+                                advance += d_advance;
+                            }
+                            self.state.line.start_trim = start_trim;
+                        }
+                        // pyro: and closing punctuation that may be set half-width to end it.
+                        let end_trim = line_end_trim(&self.layout.data, &atom);
+
                         // Compute the x position of the content being currently processed
-                        let next_x = self.state.line.x + advance;
+                        let mut next_x = self.state.line.x + advance;
+                        // pyro: `trim-both` sets every line's last closing punctuation
+                        // half-width; content appended after it gives the advance back.
+                        if let Some((cluster, removed, true)) = end_trim {
+                            next_x -= removed;
+                            self.state.line.end_trim = Some((cluster, removed));
+                        }
+
+                        // pyro: the space `text-autospace` puts after the atom goes if the line
+                        // ends there.
+                        let autospace = self
+                            .layout
+                            .data
+                            .trailing_autospace(atom.shaped_clusters_range().end.saturating_sub(1));
 
                         // If the content fits (the x position does NOT exceed max_advance)
                         //
                         // We simply append the atom to the current line
-                        if next_x <= fit_advance + FIT_TOLERANCE {
+                        if next_x - autospace <= fit_advance + FIT_TOLERANCE {
                             if max_height_exceeded {
                                 return self.max_height_break_data(line_height);
                             }
@@ -1605,6 +1718,24 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                                     &self.layout.data,
                                     is_separator,
                                 );
+                            }
+                            // pyro: closing punctuation that does not fit is set half-width
+                            // if the line then ends with it (CSS `text-spacing-trim`, not
+                            // `space-all`).
+                            else if let Some((cluster, removed, false)) = end_trim
+                                && next_x - removed <= fit_advance + FIT_TOLERANCE
+                            {
+                                if max_height_exceeded {
+                                    return self.max_height_break_data(line_height);
+                                }
+                                self.state.append_atom_to_line(
+                                    &atom,
+                                    next_x - removed,
+                                    style_index,
+                                    &self.layout.data,
+                                    is_separator,
+                                );
+                                self.state.line.end_trim = Some((cluster, removed));
                             }
                             // Case: we have previously encountered a REGULAR line-breaking opportunity in the current line
                             //
@@ -2190,11 +2321,30 @@ fn commit_line<B: Brush>(
         BreakReason::Regular | BreakReason::Emergency => f32::INFINITY,
         BreakReason::Explicit | BreakReason::None => state.x - max_advance,
     };
-    let (hanging_advance, justification_end_cluster, hanging_opportunities, collapsed_advance) = hanging_whitespace(
+    let (hanging_advance, mut justification_end_cluster, mut hanging_opportunities, collapsed_advance) = hanging_whitespace(
         layout,
         &lines.line_items[start_item_idx..end_item_idx],
         overflow,
     );
+    // pyro: no `text-justify` space after the line's last atom, also where the hanging white space
+    // logic stopped before it (a run at another bidi level ends the line).
+    if justification_end_cluster == u32::MAX
+        && let Some(item) = lines.line_items[start_item_idx..end_item_idx].last()
+        && item.kind == LayoutItemKind::TextRun
+        && !item.shaped_cluster_range.is_empty()
+        && let Some(atom) = layout
+            .data
+            .shaped_text
+            .run_slice(item.index as u32)
+            .narrow(item.shaped_cluster_range.clone())
+            .atoms_end()
+            .rev()
+            .next()
+        && atom.characters().last().is_some_and(|last| last.flags.expands_after())
+    {
+        hanging_opportunities += 1;
+        justification_end_cluster = atom.shaped_clusters_range().start;
+    }
     // The word separators counted as the line was built include the line's hanging whitespace, and
     // hanging whitespace is not stretched by justification.
     // pyro: saturating, as the separators before a tab stop are not counted while those of
@@ -2229,6 +2379,7 @@ fn commit_line<B: Brush>(
         justification: Justification {
             justification_end_cluster,
             justification_start_cluster: state.justify_from,
+            content_start_cluster: state.content_start,
             ..Justification::NONE
         },
         metrics: LineMetrics {
@@ -2382,9 +2533,14 @@ fn hanging_whitespace<B: Brush>(
                     // Justification can't stretch within an atom, so it stops at the start of the
                     // last atom that hangs in its entirety or only partially.
                     justification_end_cluster = atom.shaped_clusters_range().start;
-                    if is_word_separator(whitespace) {
+                    if is_word_separator(whitespace) && !atom.characters()[0].flags.is_no_justify() {
                         hanging_opportunities += 1;
                     }
+                    // pyro: and the `text-justify` opportunities after it (justification does
+                    // not reach past its start), and before it where it hangs entirely.
+                    hanging_opportunities += u32::from(
+                        atom.characters().last().is_some_and(|last| last.flags.expands_after()),
+                    ) + u32::from(all_hang && atom.characters()[0].flags.expands_before());
                     if !all_hang {
                         break 'items;
                     }
@@ -2403,6 +2559,92 @@ fn hanging_whitespace<B: Brush>(
         hanging_opportunities,
         collapsed_advance.min(hanging_whitespace_advance).max(0.),
     )
+}
+
+/// pyro: whether a line may wrap at a soft wrap opportunity after the last character on it (its
+/// style and whether it is white space, `last`) and before an atom of style `next`, as Chromium
+/// decides it where `white-space` changes: after white space by its own style; after anything
+/// else by its own style or, where the elements around it end there, by the style of the element
+/// around both (`<span nowrap>国</span>国` and `<span nowrap>国</span><span nowrap>国</span>` wrap
+/// between the two in a block that wraps, `国<span>国</span>` in a `nowrap` block does not).
+/// `lagged`: the wrap mode the breaker had for the previous atom, used without a last character.
+fn wraps_after<B: Brush>(styles: &[crate::layout::Style<B>], last: Option<(u16, bool)>, next: u16, lagged: TextWrapMode) -> bool {
+    let Some((last, space)) = last else {
+        return lagged == TextWrapMode::Wrap;
+    };
+    let wraps = |index: u16| styles[usize::from(index)].text_wrap_mode == TextWrapMode::Wrap;
+    if wraps(last) || space || last == next {
+        return wraps(last);
+    }
+    // The nearest style that is `last`'s or an ancestor of it and an ancestor of `next`.
+    let is_ancestor_of_next = |ancestor: u16| {
+        let mut index = next;
+        loop {
+            if index == ancestor {
+                return true;
+            }
+            let parent = styles[usize::from(index)].parent;
+            if parent == index {
+                return false;
+            }
+            index = parent;
+        }
+    };
+    let mut index = last;
+    loop {
+        if is_ancestor_of_next(index) {
+            return index != last && wraps(index);
+        }
+        let parent = styles[usize::from(index)].parent;
+        if parent == index {
+            return false;
+        }
+        index = parent;
+    }
+}
+
+/// pyro: fullwidth opening punctuation starting a line (CSS `text-spacing-trim`): the shaped
+/// cluster of `atom`, its glyph's move and its advance's change, if the line's start sets it
+/// otherwise than shaping did (half-width after punctuation). `first`: the line is a block's
+/// first or follows a forced break.
+fn line_start_trim<B: Brush>(data: &LayoutData<B>, atom: &Atom<'_>, first: bool) -> Option<(u32, f32, f32)> {
+    use crate::style::TextSpacingTrim;
+    let character = atom.characters().first()?;
+    if !character.flags.is_trim_open() || atom.shaped_clusters_range().len() != 1 {
+        return None;
+    }
+    let trimmed = match data.styles[character.style_index as usize].text_spacing_trim {
+        TextSpacingTrim::SpaceAll | TextSpacingTrim::Normal => false,
+        TextSpacingTrim::SpaceFirst => !first,
+        TextSpacingTrim::TrimStart | TextSpacingTrim::TrimBoth | TextSpacingTrim::TrimAll => true,
+    };
+    let cluster = atom.shaped_clusters_range().start;
+    let advance = atom.shaped_clusters().first()?.advance;
+    match (trimmed, character.flags.is_trimmed()) {
+        // Its ink is in the end half of its em box: the glyph moves back by the half taken off.
+        (true, false) => Some((cluster, -advance / 2.0, -advance / 2.0)),
+        (false, true) => Some((cluster, advance, advance)),
+        _ => None,
+    }
+}
+
+/// pyro: a fullwidth closing bracket that may be set half-width to end a line (CSS
+/// `text-spacing-trim`; Chromium trims no full stop or comma there): the shaped cluster of `atom`,
+/// the advance taken off, and whether every line's last such bracket is (`trim-both`) rather than
+/// only one that does not fit.
+fn line_end_trim<B: Brush>(data: &LayoutData<B>, atom: &Atom<'_>) -> Option<(u32, f32, bool)> {
+    use crate::style::TextSpacingTrim;
+    let character = atom.characters().last()?;
+    if !character.flags.is_trim_close() || character.flags.is_trimmed() || atom.shaped_clusters_range().len() != 1 {
+        return None;
+    }
+    let always = match data.styles[character.style_index as usize].text_spacing_trim {
+        TextSpacingTrim::SpaceAll | TextSpacingTrim::TrimAll => return None,
+        TextSpacingTrim::Normal | TextSpacingTrim::SpaceFirst | TextSpacingTrim::TrimStart => false,
+        TextSpacingTrim::TrimBoth => true,
+    };
+    let advance = atom.shaped_clusters().first()?.advance;
+    Some((atom.shaped_clusters_range().start, advance / 2.0, always))
 }
 
 /// pyro: UAX #9 rule L1 for a line whose items are `line_items[start..]` (logical order): its

@@ -61,6 +61,8 @@ icu_locale_core = { version = "2.3", default-features = false }
 icu_properties = { version = "2.3", default-features = false, features = ["compiled_data"] }
 icu_segmenter = { version = "2.3", default-features = false, features = ["compiled_data"] }
 writeable = { version = "0.6", default-features = false, optional = true }
+# pyro: TeX hyphenation patterns for `hyphens: auto` (`layout::hyphenate`).
+hypher = { version = "0.1.8", default-features = false, features = ["alloc", "english", "german", "french", "spanish", "italian", "portuguese", "dutch", "danish", "swedish", "norwegian", "finnish", "polish", "czech", "slovak", "slovenian", "croatian", "hungarian", "russian", "ukrainian", "bulgarian", "greek", "catalan", "turkish", "lithuanian", "estonian"] }
 slotmap = { version = "1.0.7" }
 bitflags = { version = "2.8.0" }
 tracing = { version = "0.1.40", optional = true }

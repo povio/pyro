@@ -298,6 +298,11 @@ How a run goes, as with `playwright test`:
   `n`, split as Playwright splits it, so each CI job computes the same
   parts: whole files, or single tests where they are parallel, in order,
   balanced by test count. Each shard runs the dependencies it needs.
+- **Action and navigation timeouts:** as in Playwright Test, `actionTimeout`
+  and `navigationTimeout` default to 0, no limit of their own (the test's
+  timeout bounds the call); a 0 timeout anywhere (`setDefaultTimeout(0)`,
+  `{ timeout: 0 }`, `expect`'s) is no limit, and there is no upper bound.
+  Outside a test (`chromium.launch()`) the default is Playwright's 30 s.
 - **Timeouts and screenshots:** a test that times out keeps its pages, as in
   Playwright. The call its test function waits on is cancelled in the
   browser (`Pyro.cancelRun`; a page script it runs that does not return is
@@ -486,7 +491,12 @@ Also covered:
   popup closes, as in Chrome), file choosers
   (`page.on('filechooser')`, `setFiles`), workers (`page.on('worker')`,
   `worker.evaluate`)
-- `keyboard.down/up`, click modifiers
+- the keyboard on Playwright's US layout: `press`, `type`, `down`, `up` and
+  `locator.press` take key names, `KeyboardEvent.code` names (`KeyD`,
+  `Digit1`, `Minus`, `Numpad1`...) and chords (`Alt+KeyD`, `Shift+KeyA` is
+  `A`, `Control+Shift+KeyZ`); `type` presses the keys of the layout and
+  inserts other characters; an unknown key fails at once with Playwright's
+  `Unknown key: "…"`; modifiers held with `down()` apply to presses and clicks
 - `page.frames()` and child frames (`goto`, `waitForURL`, `waitForFunction`,
   locators, handles; their `<iframe>` gets a `data-pyro-frame` attribute once
   listed)
@@ -516,9 +526,13 @@ Types are Playwright's own shapes, checked by `bun run test:types`:
 `expect()` offers Locator, Page or APIResponse matchers by what it is given
 (`toPass` only on functions), `expect.extend` matchers are typed from their
 arguments, `getByRole` takes the ARIA role union, and `evaluate`/`$eval`
-infer argument and return types. Deprecated APIs (`locator.type`,
-`elementHandle.type`, `noWaitAfter`, `page.accessibility`, FrameLocator
-`first`/`last`/`nth`) are left out, so using one is a type error.
+infer argument and return types. Deprecated methods (`locator.type`,
+`elementHandle.type`, `page.accessibility`, FrameLocator
+`first`/`last`/`nth`) are left out, so using one is a type error. Deprecated
+options compile and mean what they mean in Playwright: `noWaitAfter` and the
+`logger` launch and context option do nothing, and `isVisible()`,
+`isHidden()` and `elementHandle.inputValue()` take a `timeout` that
+`isVisible()` and `isHidden()` ignore.
 
 - `page.clock` / `context.clock`: `install`, `pauseAt`, `resume`,
   `fastForward`, `runFor`, `setFixedTime`, `setSystemTime`. Date, timers,

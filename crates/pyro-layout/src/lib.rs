@@ -394,8 +394,10 @@ impl BlitzGeometry {
             canvases: Vec::new(),
             element_scroll: None,
             sticky_offsets: None,
+            scroll_targets: None,
             animations: None,
             xml_document: dom.is_xml_document(style.document()),
+            quirks_mode: dom.is_quirks_mode(style.document()),
             content_language: dom.content_language(style.document()).map(str::to_owned),
             selection: None,
         };
@@ -665,7 +667,7 @@ impl BlitzGeometry {
 }
 
 fn external_sticky(s: pyro_render::StickyBox) -> ExternalSticky {
-    ExternalSticky { insets: s.insets, limit: s.limit }
+    ExternalSticky { insets: s.insets, limit: s.limit, cb: s.cb }
 }
 
 impl GeometrySource for BlitzGeometry {
@@ -708,6 +710,10 @@ impl GeometrySource for BlitzGeometry {
         if let Some(t) = t {
             profile::add(0, t.elapsed());
         }
+    }
+
+    fn resolved_style_value(&self, key: u64, property: &str) -> Option<String> {
+        RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.resolved_style_value(self.page, key, property))
     }
 
     fn element_box(&self, key: u64) -> Option<ExternalBox> {

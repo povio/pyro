@@ -158,3 +158,48 @@ fn unselectable_text_is_not_highlighted() {
         "<p><span style='color:HighlightText;background:Highlight'>Selected </span><span>kept</span></p>",
     );
 }
+
+/// A selection ending at the end of a span's text: the space before the span is in the span's text
+/// in the line (trailing white space belongs to the next text), and its last letter is still
+/// highlighted; one starting at the span's text leaves the space out.
+#[test]
+fn selected_span_text_after_a_space_keeps_its_ends() {
+    let style = "<style>p::selection{color:lime;background:red}</style>";
+    // The colours of row 8 at each 20px glyph cell: "Text sample".
+    let cells = |img: &RgbaImage| -> Vec<[u8; 3]> {
+        (0..11)
+            .map(|cell| {
+                let i = (8 * img.width as usize + cell * 20 + 10) * 4;
+                [img.data[i], img.data[i + 1], img.data[i + 2]]
+            })
+            .collect()
+    };
+    let (lime, red, black) = ([0, 255, 0], [255, 0, 0], [0, 0, 0]);
+    let whole = render(&format!("{style}<p id=a>Text <span id=b>sample</span></p>"), Some(("a", 0, "b", 6)));
+    // "p" (cell 7) has no ink at row 8: the highlight's background shows.
+    assert_eq!(cells(&whole), [lime, lime, lime, lime, red, lime, lime, lime, red, lime, lime]);
+    let span = render(&format!("{style}<p id=a>Text <span id=b>sample</span></p>"), Some(("b", 0, "b", 6)));
+    assert_eq!(cells(&span)[3..6], [black, [255, 255, 255], lime]);
+}
+
+/// A `::selection` style that declares neither `color` nor `background-color` (no declarations,
+/// others only, an invalid one, a `revert`) is drawn in the system's colours; one that declares a
+/// background alone leaves the text its colour; a style without colours defers to an ancestor's
+/// that has them (WPT `active-selection-05*`, `-025`, `highlight-paired-cascade-008`).
+#[test]
+fn a_selection_style_without_colours_takes_the_system_highlight() {
+    let system = "<p><span style='color:HighlightText;background:Highlight'>Sel ected</span></p>";
+    for style in ["", "padding:4px", "color:foo", "background-color:red;background-color:revert"] {
+        matches(&format!("<style>p::selection{{{style}}}</style><p id=a>Sel ected</p>"), ("a", 0, "a", 9), system);
+    }
+    matches(
+        "<style>p{color:#0a0} p::selection{background:#ff0}</style><p id=a>Sel ected</p>",
+        ("a", 0, "a", 9),
+        "<p style='color:#0a0'><span style='background:#ff0'>Sel ected</span></p>",
+    );
+    matches(
+        "<style>p::selection{background:#ff0} span::selection{--x:1}</style><p><span id=b>Sel ected</span></p>",
+        ("b", 0, "b", 9),
+        "<p><span style='background:#ff0'>Sel ected</span></p>",
+    );
+}

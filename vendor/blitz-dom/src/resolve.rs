@@ -148,11 +148,25 @@ impl BaseDocument {
             if self.resolve_sampled_animations() {
                 self.resolve_stylist(current_time_for_animations);
             }
+            // pyro: the scroll marker and scroll button boxes (`layout::scroll_markers`), before
+            // counters (markers read them) and damage propagation.
+            self.resolve_scroll_markers();
             // pyro: counters and quotes in generated content, before damage propagates.
             self.resolve_generated_content();
             timer.record_time("style");
             if !self.stylist.has_container_queries() {
-                self.nodes.container_query_sizes.lock().unwrap().clear();
+                // pyro: container units (`cqw`, ...) query container sizes too: keep those of a
+                // document that has styles using them.
+                use style::computed_value_flags::ComputedValueFlags;
+                let mut sizes = self.nodes.container_query_sizes.lock().unwrap();
+                if !sizes.is_empty()
+                    && !self.nodes.iter().any(|(_, node)| {
+                        node.primary_styles()
+                            .is_some_and(|style| style.flags.contains(ComputedValueFlags::USES_CONTAINER_UNITS))
+                    })
+                {
+                    sizes.clear();
+                }
             }
             phase_profile::mark(0, &mut phase_t);
 
@@ -188,8 +202,15 @@ impl BaseDocument {
             self.resolve_layout();
             timer.record_time("layout");
             phase_profile::mark(4, &mut phase_t);
-            if !self.refresh_container_query_sizes() || pass == 31 {
+            let container_sizes_changed = self.refresh_container_query_sizes();
+            // pyro: the active scroll markers and the scroll buttons' states follow the layout
+            // and the scroll positions (`layout::scroll_markers`): a change styles them again.
+            let scroll_states_changed = !container_sizes_changed && self.update_target_current();
+            if (!container_sizes_changed && !scroll_states_changed) || pass == 31 {
                 break;
+            }
+            if !container_sizes_changed {
+                continue;
             }
             self.nodes[root_node_id]
                 .set_restyle_hint(style::invalidation::element::restyle_hints::RestyleHint::restyle_subtree());
@@ -743,13 +764,56 @@ impl BaseDocument {
         if node.parent != Some(root.id) {
             return false;
         }
+        // pyro: only the root's first `body` child (CSS Overflow 3 § 3.3; a `frameset` before it
+        // does not count, WPT css/CSS2/visufx/overflow-propagation-001c), and only while it
+        // generates a box (WPT css-overflow/overflow-body-propagation-014..016: a second `body`
+        // keeps its `overflow`).
+        let first = root
+            .children
+            .iter()
+            .copied()
+            .find(|&id| self.nodes[id].data.is_element_with_tag_name(&crate::local_name!("body")));
+        if first != Some(node_id) {
+            return false;
+        }
         let (Some(body), Some(html)) = (node.primary_styles(), root.primary_styles()) else {
             return false;
         };
+        let display = body.clone_display();
+        if display.is_none() || display.is_contents() {
+            return false;
+        }
         html.clone_overflow_x() == Overflow::Visible
             && html.clone_overflow_y() == Overflow::Visible
             && body.clone_contain() == Contain::empty()
             && html.clone_contain() == Contain::empty()
+    }
+
+    /// pyro: flags the `<body>` whose `overflow` the viewport takes (`NodeFlags::
+    /// OVERFLOW_TO_VIEWPORT`), so that layout reads its `overflow` as `visible` (CSS Overflow 3
+    /// §3.3): `body { overflow: hidden }` made it a scroll container, a block formatting context
+    /// root whose children's margins no longer collapsed through it. A body whose flag changes
+    /// (the root's `overflow` or either's containment changed) is laid out again.
+    fn mark_viewport_body(&mut self) {
+        let Some(root) = self.try_root_element() else {
+            return;
+        };
+        let root_id = root.id;
+        let bodies: Vec<NodeId> = root
+            .children
+            .iter()
+            .copied()
+            .filter(|&child| self.nodes[child].data.is_element_with_tag_name(&crate::local_name!("body")))
+            .collect();
+        for body in bodies {
+            let goes = self.body_overflow_goes_to_viewport(body);
+            let node = &mut self.nodes[body];
+            if node.flags.contains(NodeFlags::OVERFLOW_TO_VIEWPORT) != goes {
+                node.flags.set(NodeFlags::OVERFLOW_TO_VIEWPORT, goes);
+                node.clear_layout_cache();
+                self.nodes[root_id].clear_layout_cache();
+            }
+        }
     }
 
     /// Ensure that the layout_children field is populated for all nodes
@@ -783,20 +847,7 @@ impl BaseDocument {
                 continue;
             }
             let size = font.font_size.used_size.0;
-            // The font that draws the text: the property keeps the metric of each font used
-            // (a fallback one too); a run is taken to be drawn in the font that has `x`.
-            let metrics = provider.metrics_for(font, size, 'x');
-            let (wanted, metric) = match font.font_size_adjust {
-                FontSizeAdjust::None => continue,
-                FontSizeAdjust::ExHeight(v) => (v.0, metrics.x_height),
-                FontSizeAdjust::CapHeight(v) => (v.0, metrics.cap_height.or(Some(metrics.ascent))),
-                FontSizeAdjust::ChWidth(v) => (v.0, metrics.zero_advance_measure),
-                FontSizeAdjust::IcWidth(v) | FontSizeAdjust::IcHeight(v) => (v.0, metrics.ic_width),
-            };
-            let ratio = metric.map_or(0.0, |metric| metric.px() / size.px());
-            // (A font without the metric, or a size of 0, is left as it is.)
-            let scale = if ratio > 0.0 && ratio.is_finite() && wanted.is_finite() { wanted / ratio } else { 1.0 };
-            scales.insert(key, scale);
+            scales.insert(key, provider.font_size_adjust_scale(font, size));
         }
         crate::stylo_to_parley::set_font_size_adjustments(scales);
     }
@@ -1015,6 +1066,11 @@ impl BaseDocument {
                 true => crate::layout::first_letter::split(self, task.node_id),
                 false => None,
             };
+            // pyro: an initial letter box is laid out by the root's first line: it is the first
+            // of the root's layout children, with its own inline layout.
+            if let Some(split) = layout.first_letter.as_ref().filter(|split| split.initial.is_some()) {
+                crate::layout::first_letter::build_initial_letter_box(self, task.node_id, split.style_node);
+            }
             layout.first_line = match self.first_line_styles {
                 true => crate::layout::first_line::style_node_for(self, task.node_id),
                 false => None,
@@ -1119,6 +1175,7 @@ impl BaseDocument {
         }
         self.last_layout_space = Some(available_space);
         phase_profile::laid_out();
+        self.mark_viewport_body();
 
         let root_element_id = crate::taffy_node_id(self.root_element().id);
 
@@ -1135,6 +1192,13 @@ impl BaseDocument {
             }
         };
         taffy::compute_root_layout_in(&mut state, root_element_id, available_space, initial_containing_block);
+        // pyro: inline roots that a measuring run left unlike their final layout after this pass
+        // last laid them out are laid out again, with the boxes they are in (once: what a second
+        // run leaves so the next pass lays out; `LayoutPassState::mark_final_layout_stale`).
+        if state.mark_stale_lines_up() {
+            taffy::compute_root_layout_in(&mut state, root_element_id, available_space, initial_containing_block);
+            state.mark_stale_lines_up();
+        }
         #[cfg(feature = "writing-mode")]
         state.physicalise_and_round_layout(root_element_id);
         #[cfg(not(feature = "writing-mode"))]

@@ -74,6 +74,63 @@ pub enum SoftHyphen {
     NoBreak,
 }
 
+/// pyro: which fullwidth punctuation is set half-width, flush (CSS Text 4 `text-spacing-trim`).
+/// The font's `halt` feature sets a character half-width; fonts without it are not trimmed.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum TextSpacingTrim {
+    /// None (`space-all`, or font features that set those widths themselves: `halt`, `palt`, ...).
+    SpaceAll,
+    /// Punctuation next to punctuation collapses; opening punctuation at the start of a line keeps
+    /// its width; closing punctuation at the end of a line that does not fit is trimmed (`normal`,
+    /// `auto`).
+    #[default]
+    Normal,
+    /// As [`Self::TrimStart`], except on a block's first line and after a forced break.
+    SpaceFirst,
+    /// As [`Self::Normal`], and opening punctuation at the start of every line is trimmed.
+    TrimStart,
+    /// As [`Self::TrimStart`], and closing punctuation at the end of every line is trimmed.
+    TrimBoth,
+    /// All fullwidth punctuation is trimmed.
+    TrimAll,
+}
+
+/// pyro: where justification adds space (CSS `text-justify`).
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum TextJustify {
+    /// Between words, and between the characters of CJK text (as Blink).
+    #[default]
+    Auto,
+    /// Nowhere.
+    None,
+    /// Between words.
+    InterWord,
+    /// Between all typographic character units (`distribute`).
+    InterCharacter,
+}
+
+/// pyro: where `text-autospace` adds 1/8 ic between ideographs and other characters
+/// (CSS Text 4 `text-autospace`). The default adds none.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct TextAutospace {
+    /// Between ideographs and non-ideographic letters.
+    pub ideograph_alpha: bool,
+    /// Between ideographs and non-ideographic decimal numerals.
+    pub ideograph_numeric: bool,
+}
+
+impl TextAutospace {
+    /// No space anywhere.
+    pub const NONE: Self = Self { ideograph_alpha: false, ideograph_numeric: false };
+    /// CSS `normal`: ideographs are spaced from letters and from numerals.
+    pub const NORMAL: Self = Self { ideograph_alpha: true, ideograph_numeric: true };
+
+    /// Whether no space is added.
+    pub const fn is_none(self) -> bool {
+        !self.ideograph_alpha && !self.ideograph_numeric
+    }
+}
+
 /// The height that this text takes up. The default is `MetricsRelative(1.0)`, which is the given
 /// font's preferred line height.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -336,6 +393,19 @@ pub enum StyleProperty<'a, B: Brush> {
     SoftHyphen(SoftHyphen),
     /// pyro: whether lines may break inside words where dictionaries find boundaries.
     DictionaryBreaks(bool),
+    /// pyro: whether the font size is set by `font-size-adjust` (a face's `size-adjust` is then
+    /// not applied).
+    FontSizeAdjusted(bool),
+    /// pyro: whether the first font variation is the automatic `opsz` (`font-optical-sizing`).
+    AutoOpticalSize(bool),
+    /// pyro: the OpenType language system to shape with (`font-language-override`).
+    LanguageOverride(Option<[u8; 4]>),
+    /// pyro: which fullwidth punctuation is set half-width.
+    TextSpacingTrim(TextSpacingTrim),
+    /// pyro: where space is added between ideographs and other characters.
+    TextAutospace(TextAutospace),
+    /// pyro: where justification adds space.
+    TextJustify(TextJustify),
 }
 
 /// Unresolved styles.
@@ -400,6 +470,23 @@ pub struct TextStyle<'family, 'settings, B: Brush> {
     /// pyro: whether lines may break inside words where dictionaries find boundaries (Thai, Lao,
     /// Khmer, Burmese). `false` for CSS `word-break: manual`.
     pub dictionary_breaks: bool,
+    /// pyro: whether the font size is set by CSS `font-size-adjust`: it fixes the size of the
+    /// metric it names for every font, so a face's `size-adjust` (`@font-face`) is not applied.
+    pub font_size_adjusted: bool,
+    /// pyro: whether the first of `font_variations` is the `opsz` value CSS
+    /// `font-optical-sizing: auto` gives (the font size): a face's `font-variation-settings`
+    /// descriptor overrides it, and it follows the face's `size-adjust`.
+    pub auto_optical_size: bool,
+    /// pyro: the OpenType language system tag to shape with instead of the locale's (CSS
+    /// `font-language-override`, padded with spaces).
+    pub language_override: Option<[u8; 4]>,
+    /// pyro: which fullwidth punctuation of this style is set half-width (CSS `text-spacing-trim`).
+    pub text_spacing_trim: TextSpacingTrim,
+    /// pyro: where this style's text spaces ideographs from letters and numerals (CSS
+    /// `text-autospace`).
+    pub text_autospace: TextAutospace,
+    /// pyro: where justification adds space in this style's text (CSS `text-justify`).
+    pub text_justify: TextJustify,
     /// pyro: room the span's text needs beyond its content area, over and under it, for what is
     /// drawn there (ruby annotations, emphasis marks). The line box holds the span's content area
     /// grown by it, where its line height leaves too little (CSS Ruby 1, 4.4).
@@ -484,6 +571,12 @@ impl<B: Brush> Default for TextStyle<'static, 'static, B> {
             tab_size: TabSize::default(),
             soft_hyphen: SoftHyphen::default(),
             dictionary_breaks: true,
+            font_size_adjusted: false,
+            auto_optical_size: false,
+            language_override: None,
+            text_spacing_trim: TextSpacingTrim::default(),
+            text_autospace: TextAutospace::default(),
+            text_justify: TextJustify::default(),
             annotation_space: AnnotationSpace::default(),
             text_box_trim: TextBoxTrim::default(),
         }

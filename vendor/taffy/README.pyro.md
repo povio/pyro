@@ -110,7 +110,9 @@ absolutely positioned boxes, tables. Covered by `crates/pyro-render/tests/aspect
 keyword there was `auto`; `BlockItemStyle::min_size_keyword`/`max_size_keyword` (default: none) name it, and the
 item's block parent applies it: in the inline axis the item's content width under the keyword's constraint
 (`clamp_width_by_keywords`, measured in `SizingMode::ContentSize` with the item's height kept, so percentage
-heights in it resolve as they will; `stretch` is the stretch width), also where the parent sizes itself by its
+heights in it resolve as they will; `stretch` is the stretch width; `fit-content` is the max-content width, at
+most the available width but at least the min-content width, from two measures: one measure under the definite
+width gave a grid container with `fr` columns its max-content width), also where the parent sizes itself by its
 content; in the block axis the content height at the item's width, or the stretch height. A width the preferred
 aspect ratio gives from a height counts as an intrinsic width. Out-of-flow boxes, floats, flex and grid items
 are not done. Covered by `crates/pyro-render/tests/sizing_keywords.rs`.
@@ -333,3 +335,180 @@ which pyro passes) expects the margins to collapse. Covered by `crates/pyro-rend
   `baseline-block-with-overflow-001`).
 
 Covered by `crates/pyro-render/tests/inline_leftovers.rs`.
+
+## Percentage heights in a multi-column container's strip (WPT round 3, lane SM)
+
+`src/tree/traits.rs` (`LayoutBlockContainer::block_container_percentage_height`), `src/compute/block.rs`: a
+container whose own height is not known can name the border-box height its children resolve percentage heights
+against. blitz-dom names its multi-column container's column height while it lays out the strip.
+
+## Initial letters (WPT round 3, lane I)
+
+- `src/compute/float.rs` (`FloatContext::place_initial_letter`, `initial_letter_clearance`), `src/compute/block.rs`
+  (`BlockContext::place_initial_letter`, `initial_letter_clearance`): the margin box of an initial letter
+  (`initial-letter`, CSS Inline 3 § 7) is an exclusion at the place its line gives it: content keeps out of it as
+  of a float, but the float placement rules (no float above an earlier one, `clear`) do not apply to it. Floats
+  are placed below the initial letters on their side, and the first line of a block that starts with an initial
+  letter below every earlier one (Blink's `InitialLetterClearanceOffset`). Segments inserted for it keep the
+  segment ranges of the last placed floats in step (`shift_last_placed_floats`).
+
+Covered by `crates/pyro-render/tests/initial_letter.rs`.
+
+## Subgrids (WPT round 3, lane G)
+
+`compute/grid/subgrid.rs` (new), `compute/grid/mod.rs`, `compute/grid/alignment.rs`, `compute/grid/track_sizing.rs`,
+`compute/grid/types/grid_item.rs`, `compute/grid/types/named.rs`, `style/grid.rs`, `tree/traits.rs`: css-grid-2 §9.
+A grid item is a subgrid in an axis when `GridItemStyle::is_subgrid` says so (its template there is `subgrid`, it is a
+grid container in flow with neither layout nor paint containment, in its parent's orientation). The grid then:
+
+- gives it a `SubgridContext` through the tree (`LayoutGridContainer::set_subgrid_context`; the default keeps nothing,
+  and a `subgrid` template lays out as `none`): per subgridded axis the spanned track count, the names the grid's lines
+  (and its named areas the subgrid overlaps) give the subgrid's lines, the subgrid's gap (its own, or the grid's for
+  `normal`), whether its direction is the other one, and once sized the subgrid's tracks: the spanned tracks less the
+  subgrid's margin, border and padding at its edges and half its gap's difference to the grid's gutter between them, as
+  sizes and as spans from its content box (a track can end before it starts when the gap is wider; the next track still
+  starts on the grid's line);
+- sizes its tracks with the subgrid's items in the subgrid's place ("virtual" items, `GridItem::is_virtual`, through
+  nested subgrids too), each with that margin, border and padding at the subgrid's edges and that half gap difference
+  elsewhere as an extra margin (`GridItem::extra_margin`). The subgrid itself takes no part in sizing in its subgridded
+  axes (`GridItem::excluded`); a virtual item takes none in the axes its subgrid has tracks of its own. Where no item of
+  the subgrid lies at an edge, the items at the edge-most occupied track are also given stretched to it with the edge's
+  margin, border and padding; an empty subgrid gives an item of no size spanning its tracks with them at both edges (as
+  Blink, WPT `subgrid-no-items-on-edges-001`). The virtual items are dropped before the items are positioned;
+- stretches the subgrid in its subgridded axes, whatever its alignment, size, minimum and maximum size and aspect ratio.
+
+The subgrid's own layout places its items as the grid placed them for sizing (`place_subgrid_items`): the spanned
+track count is its explicit grid in a subgridded axis, with no implicit tracks (items' definite lines are clamped to it before auto-placement, `clamp_placements`, and the rest after it), its line
+names are its `<line-name-list>` (`subgrid_line_names`, `repeat(auto-fill)` repeated to fit) plus the inherited ones,
+and a subgrid child's automatic span is the number of tracks its own list names. Its tracks there are fixed at the
+given sizes, `justify-content`/`align-content` do not apply, and after alignment they are placed at the given spans.
+A subgrid in its rows only records its own columns (`SubgridContext::own_columns`) and its parent, before sizing rows,
+lays it out at its width if needed (`resolve_standalone_widths`): its items' heights depend on its columns. The resolved
+value of a subgridded axis is `subgrid` with each line's own names (`DetailedGridTracksInfo::subgrid`).
+
+A subgrid in an orthogonal flow matches its parent's axes swapped: `GridItemStyle::subgrid_axis` names its own axis for
+each of the parent's, `subgrid_reversed` whether its tracks there run the other way (stylo_taffy compares the writing
+modes' track progressions), and the context, the virtual items and the track sizes are mapped through them (subgrids
+nested in an orthogonal one are left to it).
+
+Not done: baseline alignment across a subgrid, the subgrid's own rows for a subgrid in its columns only (its items'
+column contributions see an indefinite height). Covered by
+`crates/pyro-render/tests/subgrid.rs`; WPT `css/css-grid/subgrid`: 36 → 63 of 102 reftests.
+
+## Natural aspect ratios of flex items (WPT round 3, lane G)
+
+`style/mod.rs` (`CoreStyle::natural_aspect_ratio`, default none), `compute/flexbox.rs`: a replaced element's natural
+ratio is its preferred aspect ratio when `aspect-ratio` is `auto` (css-sizing-4 §5.1), between content boxes. The flex
+algorithm knew only the property's ratio (`aspect_ratio`, in the box-sizing box), and a replaced item's ratio was left
+to its measure function, which a min-content measurement does not transfer through. Now (`FlexItem::natural_ratio`):
+
+- a definite preferred cross size, clamped by the item's minimum and maximum cross sizes, gives its main size through
+  the ratio, so also its flex base size and its transferred size suggestion (the automatic minimum is the smaller of
+  it and the content size suggestion; css-flexbox-1 §4.5): an image with `height: 100px; max-width: 150px` and a
+  natural 200x200 size is 100px wide, not 150px (WPT `flex-aspect-ratio-img-row-012`, `flex-minimum-width-flex-items-011`);
+- a definite cross size (a stretched one) gives the flex base size (§9.2 B), and a definite cross size (preferred or
+  stretched) gives the content size suggestion through the ratio, smaller or larger than the natural size, as Blink
+  measures a replaced element's min-content size with a definite block size (`relayout-intrinsic-block-size`,
+  `flexbox-min-width-auto-002a`, `-002c`).
+
+The property's ratio and every other use of `aspect_ratio` are unchanged. Covered by
+`crates/pyro-render/tests/flex_natural_ratio.rs`.
+
+A stretched item with either ratio and no definite cross size (its container's cross size is not definite, e.g. a
+column container sized to its content) is measured for its flex base size at its fit-content cross size, the available
+space only its limit (§9.2 E): it was given the available space as its cross size, so a float or `inline-flex` column
+around an image or an `aspect-ratio` box was as wide as its containing block and the item as tall
+(WPT `flex-item-transferred-sizes-padding-*`, `inline-flex-column-image-load`).
+
+## Static positions and positioned table parts (WPT css-position, round 3 lane P)
+
+- `compute/block.rs`: an inline-level out-of-flow child of a block container (`BlockItemStyle::
+  original_display_is_inline`) has the static position of the start of a line at its place: beside the floats
+  there (`BlockContext::find_content_slot`), where `text-align` puts the line's content (`BlockContainerStyle::
+  text_align_edge`), as Blink's `HandleOutOfFlowPositioned` (WPT `inline-level-absolute-in-block-level-context-*`,
+  `position-absolute-dynamic-static-position-floats-*`).
+- `tree/traits.rs` (`LayoutContainingBlock::static_position_is_containing_block`), `compute/oof.rs`
+  (`layout_oof_box`): a box whose static-position rectangle is its whole containing block (an element in the top
+  layer, css-position-4) is aligned in it by its self-alignment (WPT `top-layer-box-uses-icb-*`).
+- `compute/block.rs`: a table child gives a block container no last baseline (an inline-block holding only tables
+  sits on its bottom margin edge, as in Chromium; WPT `position-relative-table-*`).
+## Tables: a height is a minimum; tables as flex items (WPT round 3, lane G)
+
+`compute/grid/mod.rs`: a table grid (`grid_rows_are_table_rows`) is at least as tall as its rows, whatever height it
+was given (CSS 2.1 §17.5.3): its `height`, or the height a flex or grid parent gave it. The rows were laid out taller and
+the table box kept the smaller height: `<table style="height:20px">` around a 50px row was 20px tall, and the next block
+overlapped the row.
+
+`compute/flexbox.rs`, `style/flex.rs` (`FlexboxItemStyle::is_table`, default false): a table flex item is never smaller
+than its min-content size in the main axis, as in Blink: its resolved minimum main size is at least its min-content
+width (row) or its rows' height at its width (column), whatever its `min-width`/`min-height`, and its maximum main size
+is raised to it (WPT `table-as-item-fixed-min-width-3`, `table-as-item-min-content-height-1/2`, `ortho-table-item-001`).
+Covered by `crates/pyro-render/tests/table_flex_items.rs`.
+
+## Sizing keywords in flex items' minimum and maximum sizes (WPT round 3, lane G)
+
+`compute/flexbox.rs` (`resolve_size_keyword`), `style/flex.rs` (`FlexboxItemStyle::min_size_keyword`/`max_size_keyword`,
+default `auto`): `min-content`, `max-content`, `fit-content` and `stretch` in a flex item's `min-width`, `min-height`,
+`max-width` or `max-height` (which `min_size()`/`max_size()` give as `auto`) resolve by measuring the item in that axis
+under the keyword's constraint (`fit-content` from the min-content and max-content sizes, clamped by the available size,
+as block items'), or to the stretch size: in the cross axis before the item's sizes are transferred, in the main axis
+before its minimum and hypothetical main sizes; a stretched item is clamped by its resolved maximum cross size (WPT
+`flex-item-max-width-min-content`, `flex-item-max-height-min-content`, `flex-item-min-width-min-content-max-width`,
+`flex-item-min-height-min-content-overflow`). Block items had them (lane S); grid items and out-of-flow boxes still do
+not. Covered by `crates/pyro-render/tests/flex_size_keywords.rs`.
+
+## `last baseline` in flex rows (WPT round 3, lane G)
+
+`style/alignment.rs` (`AlignItemsKeyword::LastBaseline`, `AlignItems::LAST_BASELINE`), `compute/flexbox.rs`: the items
+of a flex row with `align-self: last baseline` (no `auto` cross margin) are aligned on their last baselines from the
+line's cross end, as the first-baseline group is from its start (css-align-3 §9.3): each item's distance from its last
+baseline (synthesized at the bottom border edge without one, or for a scroll container) to its outer cross end, the
+group's largest makes room in the line's cross size, and each item sits that much above the end less its own.
+stylo_taffy mapped `last baseline` to `end` before. In columns, wrap-reverse lines, grids and for absolutely positioned
+boxes it still behaves as its fallback, `end`. Covered by `crates/pyro-render/tests/flex_last_baseline.rs`.
+
+## `visibility: collapse` on flex items (WPT round 3, lane G)
+
+`compute/flexbox.rs` (`measure_collapsed_item_struts`, `exclude_collapsed_items`), `style/flex.rs`
+(`FlexboxItemStyle::is_collapsed`, default false): step 10 of the flex layout algorithm (css-flexbox-1 §4.4, §9.4),
+a TODO before. A container with collapsed items first runs steps 5 to 9 with every item in, each collapsed item's strut
+the cross size of its line then. The layout then collects the collapsed items into lines with no main size and no gaps
+around them, takes them out of their lines (each moves to its line's end, out of the line's slice), keeps each line at
+least as tall as its struts after step 8, and lays the collapsed items out hidden as `display: none` children. Covered by
+`crates/pyro-render/tests/flex_collapse.rs`.
+
+## Percentage gaps of a column with an indefinite height (WPT round 3, lane G)
+
+`compute/flexbox.rs` (`size_container_main_axis`): a column container's percentage gaps are not resolved again against
+the height its content gives it; they stay as they resolved against its indefinite height, zero, as in Blink. Resolved
+again, they pushed the items past the container's end (WPT `css/css-flexbox/gap-percentage-wrap`). A row's are still
+resolved again against its main size, which a row's later layout knows anyway. Covered by
+`crates/pyro-render/tests/flex_gaps.rs`.
+
+## An `auto` grid height through a preferred aspect ratio (WPT round 3, lane G)
+
+`compute/grid/mod.rs`: a grid container with `aspect-ratio` and an `auto` height (none known or preferred) is as tall as
+its used width makes it through the ratio (between content boxes for `box-sizing: content-box`), and at least as tall as
+its rows unless `min-height` is set or it is a scroll container (the automatic minimum size, css-sizing-4 §5.1). It was
+as tall as its rows (WPT `css/css-grid/grid-definition/grid-auto-repeat-aspect-ratio-001`).
+- `compute/oof.rs` (`layout_oof_box`), `style/mod.rs` (`OofItemStyle::min_size_keyword`, `max_size_keyword`): sizing
+  keywords in the minimum and maximum sizes of an absolutely positioned box (`max-height: fit-content`, ...) bound it
+  as the keyword would size it, the widths first, the heights at the width (WPT `position-absolute-fit-content`).
+- `tree/traits.rs` (`LayoutBlockContainer::block_container_percentage_height`), `compute/block.rs`: a height
+  percentage heights of a container's children resolve against when the container's own is unknown as it is laid
+  out (blitz-dom's multi-column strip: the container's definite height; WPT `position-sticky-child-multicolumn`).
+- `style/mod.rs` (`Style::collapsed_rows`), `style/grid.rs` (`GridContainerStyle::collapsed_rows`),
+  `compute/grid/explicit_grid.rs` (`initialize_grid_tracks`): explicit row tracks the container marks collapsed (a
+  table's `visibility: collapse` rows, from blitz-dom) are collapsed tracks with one gutter each, the one after them
+  (before them when no open row follows), so a collapsed row takes its border spacing with it (WPT
+  `css-tables/visibility-collapse-border-spacing-001/002`).
+- `compute/block.rs` (`determine_content_based_container_width`): a table with a `width` or `max-width` contributes at
+  least its min-content width (its content measured without them): a table is never narrower than its content (WPT
+  `css-tables/table-intrinsic-size-001`).
+**Percentages in intrinsic widths and against a content width (lane S2).** Block `compute_inner` hands its definite
+percentage basis for heights (own height, the ratio's, or the passed-through one) to the children it measures for
+its content width (`determine_content_based_container_width`'s `percentage_height`): a float of `height: 100px`
+around a `height: 100%` canvas is as wide as the canvas at that height. When the container's width came from its
+content (no known width: floats, inline-blocks), the item list is generated again with that width, so the children's
+percentage sizes, min/max sizes and padding resolve against it, as at a given width. Covered by
+`crates/pyro-render/tests/intrinsic_percentages.rs`.

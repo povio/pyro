@@ -146,15 +146,36 @@ impl FontMetrics {
                         .map(|v| (skrifa::Tag::new(&v.tag.to_bytes()), v.value)),
                 ),
         );
-        Some(Self::from_skrifa_metrics(
-            &font_ref,
-            &skrifa::metrics::Metrics::new(
+        // pyro: at the size the font is used at (`size-adjust`), with the metrics its `@font-face`
+        // rule overrides.
+        let font_size = font_size * font.synthesis.size_adjust();
+        Some(
+            Self::from_skrifa_metrics(
                 &font_ref,
-                skrifa::prelude::Size::new(font_size),
-                &location,
-            ),
-            font_size,
-        ))
+                &skrifa::metrics::Metrics::new(
+                    &font_ref,
+                    skrifa::prelude::Size::new(font_size),
+                    &location,
+                ),
+                font_size,
+            )
+            .with_face_metrics(font.synthesis.face_metrics(), font_size),
+        )
+    }
+
+    /// pyro: the metrics with those a `@font-face` rule overrides (`ascent-override`,
+    /// `descent-override`, `line-gap-override`, fractions of `font_size`).
+    pub fn with_face_metrics(mut self, face: &fontique::FaceMetrics, font_size: f32) -> Self {
+        if let Some(ascent) = face.ascent {
+            self.ascent = ascent * font_size;
+        }
+        if let Some(descent) = face.descent {
+            self.descent = descent * font_size;
+        }
+        if let Some(line_gap) = face.line_gap {
+            self.leading = line_gap * font_size;
+        }
+        self
     }
 
     fn from_skrifa_metrics(
@@ -277,7 +298,10 @@ impl RunMetrics {
         };
         Self {
             units_per_em: metrics.units_per_em as f32,
-            font_metrics: FontMetrics::from_skrifa_metrics(&font_ref, &metrics, font_size),
+            // pyro: `font_size` is the size the font is used at (`size-adjust` applied by the
+            // shaper); its `@font-face` rule may override metrics.
+            font_metrics: FontMetrics::from_skrifa_metrics(&font_ref, &metrics, font_size)
+                .with_face_metrics(font.synthesis.face_metrics(), font_size),
             hyphen,
         }
     }
@@ -403,6 +427,54 @@ impl ShapedText {
         }
     }
 
+    /// pyro: moves the one glyph of the shaped cluster at `index` by `dx` and changes its
+    /// advance by `d_advance` (fullwidth punctuation set half-width or back at a line's edge,
+    /// CSS `text-spacing-trim`), and returns the glyph's x offset and the cluster's advance before.
+    /// `None`, changing nothing, for a cluster of other than one glyph, or whose glyph is stored
+    /// inline when `dx` is not 0.
+    pub fn shift_cluster(&mut self, index: u32, dx: f32, d_advance: f32) -> Option<(f32, f32)> {
+        let cluster = self.shaped_clusters.get_mut(index as usize)?;
+        if cluster.glyph_len() != 1 || (cluster.has_inline_glyph() && dx != 0.0) {
+            return None;
+        }
+        let advance = cluster.advance;
+        cluster.advance += d_advance;
+        if cluster.has_inline_glyph() {
+            return Some((0.0, advance));
+        }
+        let glyph = self.glyphs.get_mut(cluster.glyph_offset as usize)?;
+        let x = glyph.x;
+        glyph.x += dx;
+        glyph.advance += d_advance;
+        Some((x, advance))
+    }
+
+    /// pyro: sets the justification opportunities of the character at `index` (see
+    /// [`CharacterFlags::with_justification`](super::CharacterFlags)).
+    #[inline]
+    pub fn set_character_justification(&mut self, index: usize, none: bool, before: bool, after: bool) {
+        if let Some(character) = self.characters.get_mut(index) {
+            character.flags = character.flags.with_justification(none, before, after);
+        }
+    }
+
+    /// pyro: gives the one glyph of the shaped cluster at `index` back the x offset and the
+    /// cluster back the advance [`Self::shift_cluster`] returned.
+    pub fn unshift_cluster(&mut self, index: u32, x: f32, advance: f32) {
+        let Some(cluster) = self.shaped_clusters.get_mut(index as usize) else {
+            return;
+        };
+        let d_advance = advance - cluster.advance;
+        cluster.advance = advance;
+        if !cluster.has_inline_glyph()
+            && cluster.glyph_len() == 1
+            && let Some(glyph) = self.glyphs.get_mut(cluster.glyph_offset as usize)
+        {
+            glyph.x = x;
+            glyph.advance += d_advance;
+        }
+    }
+
     /// pyro: the glyph of `ch` in the font of the run at `run_index` and its advance at the run's
     /// size, if the font has the character (a `hyphenate-character` other than the font's hyphen).
     pub fn glyph_of(&self, run_index: usize, ch: char) -> Option<(u32, f32)> {
@@ -500,6 +572,7 @@ impl ShapedText {
         glyph_buffer: &harfrust::GlyphBuffer,
         normalized_coords: &[harfrust::NormalizedCoord],
         metrics: Option<RunMetrics>,
+        trim: Option<&super::han_kerning::RunTrim>,
     ) -> RunMetrics {
         debug_assert_eq!(
             range.char_range.len(),
@@ -569,20 +642,22 @@ impl ShapedText {
 
         // Push all characters.
         let characters_start = self.characters.len();
-        for (((byte_offset, ch), info), style_index) in text[range.byte_range.clone()]
+        for (index, (((byte_offset, ch), info), style_index)) in text[range.byte_range.clone()]
             .char_indices()
             .zip(&char_info[range.char_range.clone()])
             .zip(&char_style_indices[range.char_range.clone()])
+            .enumerate()
         {
+            let flags = CharacterFlags::new(ch, info.is_word_boundary(), info.is_soft_wrap_opportunity());
             self.characters.push(Character {
                 text_byte_start: (range.byte_range.start + byte_offset) as u32,
                 style_index: *style_index,
                 whitespace: Whitespace::from_char(ch),
-                flags: CharacterFlags::new(
-                    ch,
-                    info.is_word_boundary(),
-                    info.is_soft_wrap_opportunity(),
-                ),
+                // pyro: and how its fullwidth punctuation is trimmed (`han_kerning`).
+                flags: match trim.and_then(|trim| trim.flags.get(index)) {
+                    Some(&trim) if trim != 0 => flags.with_trim(trim),
+                    _ => flags,
+                },
                 grapheme_start: info.is_grapheme_start(),
             });
         }
@@ -784,7 +859,15 @@ fn process_shaped_clusters<'a>(
             y: -(glyph_pos.y_offset as f32) * scale_factor,
             advance: (glyph_pos.x_advance as f32) * scale_factor,
         };
-        if cluster.glyphs == 0 && glyph.x == 0. && glyph.y == 0. {
+        // pyro: an opening bracket that the line breaker may trim at a line's start keeps its
+        // glyph stored, to take an offset then.
+        if cluster.glyphs == 0
+            && glyph.x == 0.
+            && glyph.y == 0.
+            && !characters
+                .get(characters_start + glyph_info.cluster as usize)
+                .is_some_and(|character| character.flags.is_trim_open())
+        {
             // Defer this potential zero-offset, single glyph cluster
             cluster.inline_glyph = Some(glyph);
         } else {
@@ -901,6 +984,12 @@ mod tests {
                 language: None,
                 features: &[],
                 variations: &[],
+                face_size_adjust: true,
+                auto_opsz: false,
+                language_override: None,
+                spacing_trim: Default::default(),
+                isolated_before: false,
+                isolated_after: false,
             },
         }];
         shaper.shape_text(
@@ -1060,6 +1149,12 @@ mod tests {
                     language: None,
                     features: &[],
                     variations: &[],
+                    face_size_adjust: true,
+                    auto_opsz: false,
+                    language_override: None,
+                    spacing_trim: Default::default(),
+                    isolated_before: false,
+                    isolated_after: false,
                 },
             },
             Item {
@@ -1070,6 +1165,12 @@ mod tests {
                     language: None,
                     features: &[],
                     variations: &[],
+                    face_size_adjust: true,
+                    auto_opsz: false,
+                    language_override: None,
+                    spacing_trim: Default::default(),
+                    isolated_before: false,
+                    isolated_after: false,
                 },
             },
         ];

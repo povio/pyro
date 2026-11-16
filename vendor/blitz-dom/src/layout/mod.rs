@@ -28,12 +28,14 @@ pub(crate) mod counters;
 pub(crate) mod damage;
 pub(crate) mod first_letter;
 pub(crate) mod first_line;
+pub(crate) mod hyphenate;
 pub(crate) mod inline;
 pub(crate) mod line_clamp;
 pub(crate) mod list;
 pub mod multicol;
 pub(crate) mod paint_tree;
 pub(crate) mod replaced;
+pub(crate) mod scroll_markers;
 pub mod table;
 pub(crate) mod table_fixup;
 pub(crate) mod text_box;
@@ -119,6 +121,11 @@ pub(crate) struct LayoutPassState<'doc> {
     /// pyro: the multi-column container whose strip is being laid out and its content box width,
     /// while it has column spanners (`layout::multicol`).
     pub(crate) column_spanners: Option<(crate::NodeId, f32)>,
+    /// pyro: the multi-column container whose strip is being laid out and the border-box height
+    /// its content's percentage heights resolve against (its column height, `layout::multicol`).
+    pub(crate) multicol_percent_height: Option<(crate::NodeId, f32)>,
+    /// pyro: the inline roots this pass marked `FINAL_LAYOUT_STALE` (`mark_final_layout_stale`).
+    pub(crate) stale_lines: Vec<crate::NodeId>,
 }
 
 impl<'doc> LayoutPassState<'doc> {
@@ -159,6 +166,8 @@ impl<'doc> LayoutPassState<'doc> {
             #[cfg(feature = "writing-mode")]
             round_counts: (0, 0),
             column_spanners: None,
+            multicol_percent_height: None,
+            stale_lines: Vec::new(),
         }
     }
 }
@@ -198,7 +207,11 @@ impl LayoutPassState<'_> {
         // pyro: every algorithm lays out its children through here (Taffy's
         // `compute_child_layout` and Blitz's block contexts alike), once per tree level, so a tree
         // of any depth lays out on a stack grown on demand instead of overflowing the thread's.
-        crate::util::ensure_stack(|| {
+        // While it runs the box is `IN_LAYOUT` (see `mark_final_layout_stale`).
+        let id = dom_node_id(node_id);
+        let was_in_layout = self.nodes[id].flags.contains(NodeFlags::IN_LAYOUT);
+        self.nodes[id].flags.insert(NodeFlags::IN_LAYOUT);
+        let output = crate::util::ensure_stack(|| {
             #[cfg(feature = "writing-mode")]
             {
                 self.compute_child_layout_in_own_wm(node_id, inputs, block_ctx)
@@ -207,7 +220,9 @@ impl LayoutPassState<'_> {
             {
                 self.compute_child_layout_in_current_wm(node_id, inputs, block_ctx)
             }
-        })
+        });
+        self.nodes[id].flags.set(NodeFlags::IN_LAYOUT, was_in_layout);
+        output
     }
 
     /// Lay out `node_id` in the writing mode of the currently running algorithm (its parent's)
@@ -220,16 +235,24 @@ impl LayoutPassState<'_> {
         // pyro: this runs once per tree level of a recursive layout; what is not part
         // of the recursion stays out of its frame (see `dispatch_child_layout`).
         let mut inputs = self.adjusted_child_inputs(node_id, inputs);
-        // pyro: size containment (`Self::size_contained_size`)
-        if self.nodes[dom_node_id(node_id)].primary_styles().is_some_and(|styles| {
-            styles.get_box().contain.contains(style::values::computed::Contain::BLOCK_SIZE)
-        }) {
+        // pyro: size containment (`Self::size_contained_size`) and inline-size containment
+        // (`Self::inline_size_contained_width`)
+        let contain = self.nodes[dom_node_id(node_id)].primary_styles().map(|styles| styles.get_box().contain);
+        if contain.is_some_and(|contain| contain.contains(style::values::computed::Contain::BLOCK_SIZE)) {
             if let Some(size) = self.size_contained_size(node_id, inputs) {
                 if inputs.run_mode != RunMode::PerformLayout {
                     return taffy::tree::LayoutOutput::from_outer_size(size);
                 }
                 inputs.known_dimensions = size.map(Some);
             }
+        } else if inputs.known_dimensions.width.is_none()
+            && contain.is_some_and(|contain| contain.contains(style::values::computed::Contain::INLINE_SIZE))
+            && let Some(width) = self.inline_size_contained_width(node_id, inputs)
+        {
+            if inputs.run_mode == RunMode::ComputeSize && inputs.axis == taffy::RequestedAxis::Horizontal {
+                return taffy::tree::LayoutOutput::from_outer_size(taffy::Size { width, height: 0.0 });
+            }
+            inputs.known_dimensions.width = Some(width);
         }
         // pyro: a box that clamps its lines ends at the clamp line, which its laid-out
         // content names (`layout::line_clamp`): a measuring run lays it out too, and what
@@ -324,8 +347,90 @@ impl LayoutPassState<'_> {
         Some(output.size)
     }
 
+    /// pyro: the width of a box with inline-size containment (`contain: inline-size`,
+    /// css-contain-2 §3.2) that its parent leaves to it (a shrink-to-fit box, or one measured for
+    /// its min-content or max-content contribution): its width as an empty box whose content is
+    /// `contain-intrinsic-width` wide (`none` is zero). Its content is then laid out at that width,
+    /// and its height follows from it. A truncating `display: block` line with `contain:
+    /// inline-size` in a column flex container (Tailwind's `[contain:inline-size]`, Danex's list
+    /// cells) gives the container none of its width, as in Chrome. `None`: no inline-size
+    /// containment applies (as for `size_contained_size`), and replaced elements and vertical
+    /// writing modes are left as they were.
+    #[inline(never)]
+    fn inline_size_contained_width(&self, node_id: NodeId, inputs: taffy::tree::LayoutInput) -> Option<f32> {
+        use style::values::generics::box_::ContainIntrinsicSize;
+        use style::values::specified::box_::{DisplayInside, DisplayOutside};
+        #[cfg(feature = "writing-mode")]
+        if self.layout_wm.is_vertical() {
+            return None;
+        }
+        let node = &self.nodes[dom_node_id(node_id)];
+        if node.data.downcast_element().is_some_and(replaced::is_replaced) {
+            return None;
+        }
+        let content_width = {
+            let styles = node.primary_styles()?;
+            if styles.writing_mode.is_vertical() {
+                return None;
+            }
+            let display = styles.clone_display();
+            let contained = match display.outside() {
+                DisplayOutside::Inline => display.inside() != DisplayInside::Flow,
+                DisplayOutside::Block => true,
+                _ => false,
+            } && display.inside() != DisplayInside::Table;
+            if !contained {
+                return None;
+            }
+            match &styles.get_position().contain_intrinsic_width {
+                ContainIntrinsicSize::None | ContainIntrinsicSize::AutoNone => 0.0,
+                ContainIntrinsicSize::Length(length) | ContainIntrinsicSize::AutoLength(length) => length.0.px(),
+            }
+        };
+        let style = self.child_layout_style(node);
+        let output = taffy::compute_leaf_layout(
+            taffy::tree::LayoutInput {
+                run_mode: RunMode::ComputeSize,
+                axis: taffy::RequestedAxis::Horizontal,
+                ..inputs
+            },
+            &style,
+            resolve_calc_value,
+            |known_dimensions, _available_space| taffy::Size {
+                width: known_dimensions.width.unwrap_or(content_width),
+                height: known_dimensions.height.unwrap_or(0.0),
+            },
+        );
+        Some(output.size.width)
+    }
+
     #[inline(never)]
     fn lay_out_out_of_flow_boxes(&mut self, node_id: NodeId, output: &mut taffy::tree::LayoutOutput) {
+        let dom_id = dom_node_id(node_id);
+        // pyro: a positioned inline box split around block-level content (`NodeFlags::IS_SPLIT_INLINE`)
+        // lays out no absolutely positioned box itself: their containing block is the box its
+        // fragments bound, which the tail after its box ends, so its parent lays them out once both
+        // are laid out (`split_inline_containing_block`).
+        if self.nodes[dom_id].is_split_inline() && self.split_inline_contains_absolute(dom_id) {
+            if output.oof_candidates.iter().all(|candidate| {
+                candidate.containing_block.is_none() && candidate.position == taffy::Position::Absolute
+            }) {
+                self.clear_hoisted_children(node_id);
+                return;
+            }
+        }
+        if !output.oof_candidates.is_empty() && self.has_positioned_split_inline_child(dom_id) {
+            for index in 0..output.oof_candidates.as_mut_slice().len() {
+                let candidate = output.oof_candidates.as_mut_slice()[index];
+                if candidate.containing_block.is_some() || candidate.position != taffy::Position::Absolute {
+                    continue;
+                }
+                let Some(span) = self.split_inline_holding(dom_id, dom_node_id(candidate.node)) else { continue };
+                if let Some(cb) = self.split_inline_containing_block(dom_id, span) {
+                    output.oof_candidates.as_mut_slice()[index].containing_block = Some(cb);
+                }
+            }
+        }
         compute_oof_layout(self, node_id, output);
     }
 
@@ -1132,6 +1237,62 @@ impl LayoutPassState<'_> {
             }
         }
 
+        // pyro: a height a flex or grid parent gives a table is its wrapper box's, captions included
+        // (css-flexbox-1 §4.1): the grid gets what the captions leave. The table's own `height` is its
+        // grid's, as in block flow (WPT `css/css-flexbox/table-as-item-stretch-cross-size*`).
+        if let (Some(height), false) = (inputs.known_dimensions.height, table_wrapper.ctx.captions.is_empty()) {
+            let own = {
+                use taffy::MaybeResolve;
+                let style = &table_wrapper.ctx.style;
+                let parent = inputs.parent_size;
+                style.size.height.maybe_resolve(parent.height, resolve_calc_value).map(|own| match style.box_sizing {
+                    taffy::BoxSizing::BorderBox => own,
+                    taffy::BoxSizing::ContentBox => {
+                        own + style.padding.resolve_or_zero(parent.width, resolve_calc_value).vertical_axis_sum()
+                            + style.border.resolve_or_zero(parent.width, resolve_calc_value).vertical_axis_sum()
+                    }
+                })
+            };
+            // An inflexible item of a column flex container has its definite flex basis as its height: the
+            // table box's, as `height` is (WPT `table-as-item-inflexible-in-column-2`).
+            let inflexible_in_column = {
+                let node = &table_wrapper.doc.nodes[dom_node_id(node_id)];
+                let column_parent = node.layout_parent.get().is_some_and(|parent| {
+                    table_wrapper.doc.nodes[parent].primary_styles().is_some_and(|style| {
+                        style.clone_display().inside() == style::values::specified::box_::DisplayInside::Flex
+                            && matches!(
+                                style.get_position().flex_direction,
+                                style::computed_values::flex_direction::T::Column
+                                    | style::computed_values::flex_direction::T::ColumnReverse
+                            )
+                    })
+                });
+                column_parent
+                    && node.primary_styles().is_some_and(|style| {
+                        style.get_position().flex_grow.0 == 0.0 && style.get_position().flex_shrink.0 == 0.0
+                    })
+            };
+            if !inflexible_in_column && own.is_none_or(|own| (own - height).abs() > 0.01) {
+                let context = Arc::clone(&table_wrapper.ctx);
+                let mut scratch = output.clone();
+                let grid = scratch.size.height;
+                let measuring = taffy::tree::LayoutInput { run_mode: RunMode::ComputeSize, ..inputs };
+                table_wrapper.doc.lay_out_table_captions(&context, measuring, &mut scratch);
+                let captions = scratch.size.height - grid;
+                if captions > 0.0 {
+                    let inner = taffy::tree::LayoutInput {
+                        known_dimensions: taffy::Size {
+                            width: inputs.known_dimensions.width,
+                            height: Some((height - captions).max(0.0)),
+                        },
+                        ..inputs
+                    };
+                    table_wrapper.style = table_wrapper.auto_column_widths(&inner);
+                    output = compute_grid_layout(&mut table_wrapper, node_id, inner);
+                }
+            }
+        }
+
         // Absolutely positioned children take no part in the table grid. Their
         // static position is the top-left of the table's content box.
         let context = table_wrapper.ctx;
@@ -1167,6 +1328,20 @@ impl LayoutPassState<'_> {
             }
         }
 
+        // pyro: an absolutely positioned box whose containing block is a positioned row or row
+        // group of this table (they have no boxes of their own) is laid out here, against the
+        // part's box moved by its relative offset (`table_part_containing_block`).
+        if inputs.run_mode == RunMode::PerformLayout && !output.oof_candidates.is_empty() {
+            let table_id = dom_node_id(node_id);
+            for candidate in output.oof_candidates.as_mut_slice() {
+                if candidate.containing_block.is_some() || candidate.position != taffy::Position::Absolute {
+                    continue;
+                }
+                candidate.containing_block =
+                    self.table_part_containing_block(table_id, &context, dom_node_id(candidate.node));
+            }
+        }
+
         // HACK: Cap scrollable overflow at node size to prevent scrolling
         let overflow = output.scrollable_overflow_rect;
         output.scrollable_overflow_rect = taffy::ScrollableOverflow::new(
@@ -1184,6 +1359,69 @@ impl LayoutPassState<'_> {
 }
 
 impl LayoutPassState<'_> {
+    /// pyro: the containing block of the absolutely positioned box `box_id` when it is a
+    /// positioned row or row group of the table `table_id` (the nearest positioned ancestor of the
+    /// box below the table): the part's box (rows span every column; a row group spans its rows),
+    /// moved by the relative offsets of it and of its row group, as `(size, offset)` from the
+    /// table's border box.
+    #[inline(never)]
+    fn table_part_containing_block(
+        &self,
+        table_id: crate::NodeId,
+        context: &crate::layout::table::TableContext,
+        box_id: crate::NodeId,
+    ) -> Option<(taffy::Size<f32>, taffy::Point<f32>)> {
+        use style::computed_values::position::T as Position;
+        let mut current = self.nodes[box_id].parent;
+        let part = loop {
+            let id = current?;
+            if id == table_id {
+                return None;
+            }
+            let node = &self.nodes[id];
+            if node.primary_styles().is_some_and(|style| style.clone_position() != Position::Static) {
+                break id;
+            }
+            current = node.parent;
+        };
+        let rows: Vec<usize> = context
+            .rows
+            .iter()
+            .enumerate()
+            .filter(|(_, row)| row.node_id == part || row.group == Some(part))
+            .map(|(index, _)| index)
+            .collect();
+        let (&first, &last) = (rows.first()?, rows.last()?);
+        let grid = context.computed_grid_info.borrow();
+        let grid = grid.as_ref()?;
+        let top = context.grid_box.borrow().map_or(0.0, |(top, _)| top);
+        let row_lines = &grid.rows.positions;
+        let column_lines = &grid.columns.positions;
+        let (Some(first_row), Some(last_row)) = (row_lines.get(first), row_lines.get(last)) else { return None };
+        let x0 = column_lines.iter().map(|line| line.start.min(line.end)).fold(f32::INFINITY, f32::min);
+        let x1 = column_lines.iter().map(|line| line.start.max(line.end)).fold(f32::NEG_INFINITY, f32::max);
+        if !x0.is_finite() || !x1.is_finite() {
+            return None;
+        }
+        let (y0, y1) = (first_row.start.min(last_row.start), first_row.end.max(last_row.end));
+        // Its relative offset, and its row group's for a row.
+        let doc: &BaseDocument = self;
+        let table_parent = Some(table_id);
+        let group = context.rows[first].group.filter(|&group| group != part);
+        let mut offset = taffy::Point::ZERO;
+        let own_parent = if group.is_some() { group } else { table_parent };
+        for (id, parent) in [(Some(part), own_parent), (group, table_parent)] {
+            if let Some(own) = id.and_then(|id| crate::layout::table::table_part_relative_offset(doc, id, parent)) {
+                offset.x += own.x;
+                offset.y += own.y;
+            }
+        }
+        Some((
+            taffy::Size { width: (x1 - x0).max(0.0), height: (y1 - y0).max(0.0) },
+            taffy::Point { x: x0 + offset.x, y: top + y0 + offset.y },
+        ))
+    }
+
     /// pyro: the widest min-content width of a table's captions, with their margins.
     #[inline(never)]
     fn table_captions_min_width(
@@ -1282,9 +1520,32 @@ impl LayoutPassState<'_> {
                     candidates.translate(taffy::Point { x: margin.left, y: *y + margin.top });
                     output.oof_candidates.append(&mut candidates);
                 }
+                // pyro: a relatively positioned caption is moved by its insets (CSS 2.1 § 9.4.3;
+                // WPT `position-relative-table-caption`), percentages against the table's width
+                // and given height.
+                let relative = {
+                    let style = self.nodes[*caption].layout_style();
+                    if style.position() == taffy::Position::Relative {
+                        let inset = style.inset();
+                        let left = taffy::MaybeResolve::maybe_resolve(inset.left, Some(width), resolve_calc_value);
+                        let right = taffy::MaybeResolve::maybe_resolve(inset.right, Some(width), resolve_calc_value);
+                        let top = taffy::MaybeResolve::maybe_resolve(inset.top, inputs.known_dimensions.height, resolve_calc_value);
+                        let bottom = taffy::MaybeResolve::maybe_resolve(inset.bottom, inputs.known_dimensions.height, resolve_calc_value);
+                        let x = match context.style.direction {
+                            taffy::Direction::Rtl => right.map(|right| -right).or(left),
+                            taffy::Direction::Ltr => left.or(right.map(|right| -right)),
+                        };
+                        taffy::Point {
+                            x: x.unwrap_or(0.0),
+                            y: top.or(bottom.map(|bottom| -bottom)).unwrap_or(0.0),
+                        }
+                    } else {
+                        taffy::Point::ZERO
+                    }
+                };
                 let layout = taffy::Layout {
                     order: (context.cells.len() + context.oof_children.len() + order) as u32,
-                    location: taffy::Point { x: margin.left, y: *y + margin.top },
+                    location: taffy::Point { x: margin.left + relative.x, y: *y + margin.top + relative.y },
                     size: out.size,
                     scrollable_overflow_rect: out.scrollable_overflow_rect,
                     scrollbar_size: taffy::Size::ZERO,
@@ -1436,6 +1697,12 @@ impl LayoutContainingBlock for LayoutPassState<'_> {
         *self.node_from_id(node_id).hoisted_children.borrow_mut() = list;
     }
 
+    /// pyro: an element in the top layer (a modal dialog, a showing popover) has the initial
+    /// containing block as its static-position rectangle.
+    fn static_position_is_containing_block(&self, node_id: NodeId) -> bool {
+        self.doc.is_in_top_layer(dom_node_id(node_id))
+    }
+
     fn add_hoisted_children(&mut self, node_id: NodeId, hoisted: &[NodeId]) {
         let containing_block = dom_node_id(node_id);
         let node = self.node_from_id(node_id);
@@ -1464,6 +1731,62 @@ impl LayoutPassState<'_> {
         use taffy::CacheTree as _;
         self.cache_clear(node_id);
     }
+
+    /// pyro: a measuring run (`RunMode::ComputeSize`) left the lines of the inline root `node_id`
+    /// elsewhere than its last final layout did (`TextLayout::final_lines`): its lines, their
+    /// alignment or the places of its inline boxes are not those of that layout any more, and a
+    /// cached final layout would leave them so. The root is marked `FINAL_LAYOUT_STALE`: its next
+    /// final layout runs again (`cache_get`), and clears the mark (`cache_store`). So are the
+    /// boxes around it that are being laid out (`IN_LAYOUT`, up to one that is not): this pass may
+    /// ask one of them for a final layout it has cached, which would not lay the root out again (a
+    /// table measures a cell for its columns after an earlier step laid the cell's `inline-flex`
+    /// out). Boxes not being laid out are left alone: a box laid out alone (an absolutely
+    /// positioned box of the root) would make them run again in the next pass. A column flex item
+    /// measured at the available width and then stretched to its container's, in a table cell or a
+    /// flex item that is measured before it is laid out, had its text aligned to the available
+    /// width. A root still marked at the end of the pass is laid out again with the boxes it is in
+    /// (`mark_stale_lines_up`, `BaseDocument::resolve_layout`).
+    #[inline(never)]
+    pub(crate) fn mark_final_layout_stale(&mut self, node_id: crate::NodeId) {
+        let node = &mut self.nodes[node_id];
+        if node.flags.contains(NodeFlags::FINAL_LAYOUT_STALE) {
+            return;
+        }
+        node.flags.insert(NodeFlags::FINAL_LAYOUT_STALE);
+        self.stale_lines.push(node_id);
+        let mut id = self.nodes[node_id].layout_parent.get();
+        while let Some(current) = id {
+            let node = &mut self.nodes[current];
+            if !node.flags.contains(NodeFlags::IN_LAYOUT) || node.flags.contains(NodeFlags::FINAL_LAYOUT_STALE) {
+                break;
+            }
+            node.flags.insert(NodeFlags::FINAL_LAYOUT_STALE);
+            id = node.layout_parent.get();
+        }
+    }
+
+    /// pyro: marks the boxes that the inline roots this pass left `FINAL_LAYOUT_STALE` (see
+    /// `mark_final_layout_stale`) are laid out in, up to one marked already, so that a layout
+    /// from the root reaches those roots again; whether there were any.
+    pub(crate) fn mark_stale_lines_up(&mut self) -> bool {
+        let mut any = false;
+        for root in std::mem::take(&mut self.stale_lines) {
+            if !self.nodes[root].flags.contains(NodeFlags::FINAL_LAYOUT_STALE) {
+                continue;
+            }
+            any = true;
+            let mut id = self.nodes[root].layout_parent.get();
+            while let Some(current) = id {
+                let node = &mut self.nodes[current];
+                if node.flags.contains(NodeFlags::FINAL_LAYOUT_STALE) {
+                    break;
+                }
+                node.flags.insert(NodeFlags::FINAL_LAYOUT_STALE);
+                id = node.layout_parent.get();
+            }
+        }
+        any
+    }
 }
 
 impl taffy::CacheTree for LayoutPassState<'_> {
@@ -1473,10 +1796,12 @@ impl taffy::CacheTree for LayoutPassState<'_> {
         node_id: NodeId,
         inputs: &taffy::LayoutInput,
     ) -> Option<taffy::LayoutOutput> {
-        self.node_from_id_mut(node_id)
-            .try_layout_data_mut()?
-            .cache
-            .get(inputs)
+        let node = self.node_from_id_mut(node_id);
+        // pyro: see `mark_final_layout_stale`.
+        if inputs.run_mode == RunMode::PerformLayout && node.flags.contains(NodeFlags::FINAL_LAYOUT_STALE) {
+            return None;
+        }
+        node.try_layout_data_mut()?.cache.get(inputs)
     }
 
     #[inline]
@@ -1486,9 +1811,11 @@ impl taffy::CacheTree for LayoutPassState<'_> {
         inputs: &taffy::LayoutInput,
         layout_output: taffy::LayoutOutput,
     ) {
-        self.node_from_id_mut(node_id)
-            .cache_mut()
-            .store(inputs, layout_output);
+        let node = self.node_from_id_mut(node_id);
+        if inputs.run_mode == RunMode::PerformLayout {
+            node.flags.remove(NodeFlags::FINAL_LAYOUT_STALE);
+        }
+        node.cache_mut().store(inputs, layout_output);
     }
 
     #[inline]
@@ -1536,7 +1863,13 @@ impl taffy::LayoutBlockContainer for LayoutPassState<'_> {
 
     fn block_container_passes_percentage_height(&self, node_id: NodeId) -> bool {
         let node = self.node_from_id(node_id);
-        node.is_split_inline() || node.is_inline_with_only_block_children()
+        node.is_split_inline() || node.is_inline_with_only_block_children() || self.quirks_skips_for_percent_height(node)
+    }
+
+    fn block_container_percentage_height(&self, node_id: NodeId) -> Option<f32> {
+        self.multicol_percent_height
+            .filter(|(container, _)| *container == dom_node_id(node_id))
+            .map(|(_, height)| height)
     }
 
     fn block_container_direction(&self, node_id: NodeId) -> Option<taffy::Direction> {
@@ -1647,6 +1980,30 @@ impl taffy::LayoutGridContainer for LayoutPassState<'_> {
         if let Some(element) = node.element_data_mut() {
             element.detailed_layout_info = DetailedLayoutInfo::Grid(Box::new(detailed_grid_info));
         }
+    }
+
+    /// pyro: the context of a subgrid (`LayoutData::subgrid`), while its layout parent is a grid (one
+    /// left from when it was another grid's item is not read).
+    fn subgrid_context(&self, node_id: NodeId) -> Option<taffy::SubgridContext<Atom>> {
+        let node = self.node_from_id(node_id);
+        let parent = node.layout_parent.get()?;
+        let parent_is_grid = self.nodes[parent]
+            .primary_styles()
+            .is_some_and(|style| style.clone_display().inside() == style::values::specified::box_::DisplayInside::Grid);
+        if !parent_is_grid {
+            return None;
+        }
+        node.layout_data().subgrid.as_deref().cloned()
+    }
+
+    /// pyro: a subgrid's layout depends on its context as on its inputs: a new one drops its cached layouts.
+    fn set_subgrid_context(&mut self, node_id: NodeId, context: Option<taffy::SubgridContext<Atom>>) {
+        let node = self.node_from_id_mut(node_id);
+        if node.layout_data().subgrid.as_deref() == context.as_ref() {
+            return;
+        }
+        node.layout_data_mut().subgrid = context.map(Box::new);
+        node.clear_layout_cache();
     }
 }
 
@@ -1821,4 +2178,30 @@ fn pyro_natural_size(element: &crate::node::ElementData) -> Option<(f32, f32)> {
     let token = attr.value.split_ascii_whitespace().find_map(|t| t.strip_prefix("natural="))?;
     let (w, h) = token.split_once(',')?;
     Some((w.parse().ok()?, h.parse().ok()?))
+}
+
+impl BaseDocument {
+    /// pyro: Quirks Mode §3.5, "The percentage height calculation quirk": in quirks mode a block
+    /// container of `auto` height (the caller asks only then) that is no table cell and not out
+    /// of flow hands its own percentage basis for heights on to its children, as Chromium's
+    /// `UseParentPercentageResolutionBlockSizeForChildren` does (WPT css-sizing
+    /// `intrinsic-percent-replaced-*` in quirks mode).
+    pub(crate) fn quirks_skips_for_percent_height(&self, node: &Node) -> bool {
+        use style::values::specified::box_::DisplayInside;
+        if !self.tree().quirks_mode {
+            return false;
+        }
+        let Some(style) = node.primary_styles() else { return false };
+        let box_style = style.get_box();
+        // A table cell's children keep their own basis (WPT css-tables
+        // `percentages-grandchildren-quirks-mode-001`).
+        let parent_is_cell = node
+            .layout_parent
+            .get()
+            .and_then(|parent| self.nodes[parent].primary_styles())
+            .is_some_and(|parent| parent.get_box().display.inside() == DisplayInside::TableCell);
+        matches!(box_style.display.inside(), DisplayInside::Flow | DisplayInside::FlowRoot)
+            && !box_style.position.is_absolutely_positioned()
+            && !parent_is_cell
+    }
 }

@@ -49,6 +49,10 @@ pub struct TextLayout {
     /// same inputs again gives the same lines, so it is skipped. `None` when
     /// the layout was built again since.
     pub last_break: Option<u64>,
+    /// pyro: where the root's last final layout (`RunMode::PerformLayout`) left its lines;
+    /// `None` until one ran since the last build. A measuring run that leaves them elsewhere
+    /// makes that layout run again: see `LayoutPassState::mark_final_layout_stale`.
+    pub final_lines: Option<LaidOutLines>,
     /// Offset (in physical CSS px) of the unrounded content box origin from the rounded one in
     /// `final_layout`. Paint draws text from the unrounded origin so that it keeps its sub-pixel
     /// position while box edges stay snapped. Set by the `writing-mode` layout pass; zero otherwise.
@@ -99,8 +103,9 @@ pub struct TextLayout {
     /// the struts of empty inline boxes (U+2061), in `text`: they are no content (see
     /// [`Self::has_no_text`]).
     pub bidi_controls: bool,
-    /// pyro: some inline box (not atomic) laid out here is relatively positioned: what it holds
-    /// is painted moved (`BaseDocument::inline_span_relative_offset`). Set by each build.
+    /// pyro: some inline box (not atomic) laid out here is relatively positioned (or sticky):
+    /// what it holds is painted moved (`BaseDocument::inline_span_relative_offset`). Set by each
+    /// build.
     pub relative_spans: bool,
     /// pyro: some inline box's margin or padding at an edge is a percentage: each layout gives
     /// those edges their width (`span_edge_widths_in`).
@@ -113,14 +118,62 @@ pub struct TextLayout {
     pub br_clears: Vec<(usize, NodeId)>,
 }
 
+/// pyro: where an inline layout run left the lines of its root (see [`TextLayout::final_lines`]).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LaidOutLines {
+    /// The run's [`TextLayout::last_break`]: the same inputs broke the same lines.
+    pub last_break: Option<u64>,
+    /// The bits of the run's [`TextLayout::block_offset`] and [`TextLayout::line_box_top`].
+    pub block_offset: u32,
+    pub line_box_top: u32,
+    /// [`TextLayout::inline_box_sizes`] after the run.
+    pub inline_box_sizes: u64,
+    /// [`TextLayout::line_geometry`] of its lines, taken when a measuring run is about to break
+    /// them again (`None` until then: most lines are never broken again before the next final
+    /// layout).
+    pub geometry: Option<u64>,
+}
+
+/// pyro: Fx hashing (rustc-hash's `FxHasher`) of a few words: cheap enough to run on each layout.
+#[derive(Default)]
+struct FxMix(u64);
+
+impl FxMix {
+    fn add(&mut self, word: u64) {
+        self.0 = (self.0.rotate_left(5) ^ word).wrapping_mul(0x51_7c_c1_b7_27_22_0a_95);
+    }
+}
+
 /// pyro: where an inline layout's first letter is: the bytes of a text node's content that an
 /// element's `::first-letter` styles, with the node that holds that style (the brush of the
 /// span the build wraps them in).
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct FirstLetterSplit {
     pub text: NodeId,
     pub range: std::ops::Range<usize>,
     pub style_node: NodeId,
+    /// pyro: the `::first-letter` has an `initial-letter` (CSS Inline 3 § 7): the style node is
+    /// the initial letter box, a float-like box of the letter (its child text), laid out by the
+    /// first line it starts (`layout::first_letter::InitialLetter`). The root's text leaves the
+    /// letter out.
+    pub initial: Option<InitialLetter>,
+}
+
+/// pyro: what the first line needs to place an initial letter box (Blink's legacy initial
+/// letter positioning, `ComputeInitialLetterBoxBlockOffset`), in CSS px.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct InitialLetter {
+    /// The `initial-letter` size (the lines its cap height spans).
+    pub size: f32,
+    /// The lines it sinks: the given integer, 1 for `raise`, the size rounded up otherwise.
+    pub sink: i32,
+    /// The paragraph's line height.
+    pub line_height: f32,
+    /// The descent of the paragraph's first available font with the half-leading under it.
+    pub descent: f32,
+    /// The lines are vertical and the glyphs not sideways (`vertical-rl` or `vertical-lr`, not
+    /// `text-orientation: sideways`): the box is centred on the lines it spans.
+    pub centered: bool,
 }
 
 /// pyro: text drawn over (or under) a stretch of an inline root's text, as a ruby annotation is
@@ -180,6 +233,48 @@ impl TextLayout {
         self.text.is_empty()
             || (self.bidi_controls
                 && self.text.chars().all(|c| matches!(c, '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}' | '\u{2061}')))
+    }
+
+    /// pyro: a hash of what paint and the inline boxes' places read of the lines: each line's
+    /// text, alignment offset, start, advance and block extent. A line's end (its available width)
+    /// only counts where it places something: in right-to-left text and justified lines. Breaking
+    /// start-aligned text again at another width that keeps the same lines leaves the same hash.
+    pub fn line_geometry(&self) -> u64 {
+        let mut hash = FxMix::default();
+        let line_end_counts = self.justified || self.layout.is_rtl();
+        for line in self.layout.lines() {
+            let range = line.text_range();
+            hash.add(range.start as u64);
+            hash.add(range.end as u64);
+            let metrics = line.metrics();
+            for value in [
+                metrics.offset,
+                metrics.inline_min_coord,
+                metrics.advance,
+                metrics.baseline,
+                metrics.line_height,
+                metrics.block_min_coord,
+                metrics.block_max_coord,
+            ] {
+                hash.add(u64::from(value.to_bits()));
+            }
+            if line_end_counts {
+                hash.add(u64::from(metrics.inline_max_coord.to_bits()));
+            }
+        }
+        hash.0
+    }
+
+    /// pyro: a hash of the sizes and baselines of the inline boxes (atomic inlines and span
+    /// edges) the lines are broken with; 0 without any.
+    pub fn inline_box_sizes(&self) -> u64 {
+        let mut hash = FxMix::default();
+        for inline_box in self.layout.inline_boxes() {
+            hash.add(inline_box.id);
+            hash.add(u64::from(inline_box.width.to_bits()) << 32 | u64::from(inline_box.height.to_bits()));
+            hash.add(inline_box.baseline.map_or(u64::MAX, |baseline| u64::from(baseline.to_bits())));
+        }
+        hash.0
     }
 
     /// The layout's content widths with a text indent of `indent` set on it.

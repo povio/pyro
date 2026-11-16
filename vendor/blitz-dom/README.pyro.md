@@ -1276,6 +1276,61 @@ Tests: `generated_content`, `first_line` and `selection_highlight` in pyro-rende
 
 Tests: `direction_text` in pyro-render; `direction` unit tests here.
 
+## Shadow trees (CSS Scoping) and directionality through them (WPT reftests)
+
+pyro-dom's render tree is the flat tree: a shadow host's children are its shadow tree's (it carries the
+`urn:x-pyro:state` `shadow-host` marker), a slot of a shadow tree is an element of its own (`slot { display:
+contents }`) whose children are the nodes assigned to it (marker `assigned-slot`) or else its fallback content.
+Before, shadow styles were global and slots were left out (no `:host`, `::slotted()`, `::part()`, no slot boxes).
+
+- `src/shadow.rs` (new), `src/tree.rs`, `src/node/node.rs` (`IS_SHADOW_HOST`, `IS_ASSIGNED_SLOT`), `src/mutator.rs`
+  (markers synced on create and attribute changes): the node trees follow from the flat tree. An element whose
+  parent is a host is in that host's shadow tree; one whose parent is an assigned slot, in the tree of the slot's
+  host; else in its parent's (`Node::containing_shadow_host_id`, a walk up; `NodeTree::has_shadow_hosts` makes it
+  free on pages without shadow trees). Its parent for selectors (`Node::dom_parent_element`) is none at a shadow
+  tree's first level (the shadow root; `:host` reaches the host through Stylo's featureless path) and the host for
+  an assigned node. Siblings stay the flat tree's: an assigned node's are the nodes assigned to the same slot.
+- `src/stylo.rs`: `TShadowRoot` is the host itself (no node stands for a shadow root); `style_data` is the host's
+  shadow cascade data. `shadow_root`, `containing_shadow`, `assigned_slot`, `parent_node_is_shadow_root`,
+  `containing_shadow_host`, `is_html_slot_element`, `::part()` (`part`, `exportparts` with `inner:outer` mappings)
+  and `inheritance_parent` (the flat tree's parent, as Servo; Stylo's default is `parent_element`, now the node
+  tree's) are implemented; `implicit_scope_for_sheet_in_shadow_root` answers `None` instead of panicking.
+- `src/document.rs`, `src/shadow.rs`: the sheet of a `<style>` or `<link>` element of a shadow tree (adopted sheets
+  come as `<style>` elements) goes to its host's Stylo `AuthorStyles` (`ShadowStyles`), not the document's stylist;
+  `resolve_stylist` first rebuilds the cascade data of shadow roots whose sheets changed (Stylo's author data cache
+  shares one for the instances of a component, whose `<style>`s share their parsed sheet, `make_stylesheet_in`) and
+  restyles those hosts' subtrees. A device change marks every shadow root's sheets dirty (media queries).
+- `src/direction.rs`: `:dir()` follows the node trees (a shadow tree's first level takes the host's directionality,
+  an assigned node its host's, not its slot's), and takes the directionality of a `dir=auto` element or a `<bdi>`
+  from the `dir=ltr`/`dir=rtl` token of its state attribute (pyro-dom computes it by the HTML rules, from the light
+  tree's text, values and slots); a change of that token restyles the element's descendants. Without a token (not
+  pyro-dom's tree), from its own flat-tree text as before, left to right when nothing decides (the current HTML
+  rule; it was the parent's).
+- `assets/default.css`: the HTML bidi rules as written (`[dir]:dir(ltr), bdi:dir(ltr), input[type=tel i]:dir(ltr)`,
+  `[dir]:dir(rtl), bdi:dir(rtl)`, `[dir] { unicode-bidi: isolate }`): `dir=auto` and `<bdi>` now take their
+  content's direction.
+- `src/has_invalidation.rs`, `src/stylo.rs` (`invalidate_host_relative_selectors`): Stylo's `:has()` invalidation
+  walks a change's ancestors up to the shadow root, not to the host: a change in a shadow tree whose sheets have
+  `:has()` rules (`:host:has(.x)`) restyles the host's subtree. State changes in shadow trees run the relative
+  invalidation whatever the document's sheets depend on.
+- `src/stylo.rs`, `src/has_invalidation.rs`: `:defined` matches every element but a custom element not defined yet
+  (pyro-dom's `undefined` state token; `ElementState::DEFINED`, so the upgrade restyles it). Upstream matched none,
+  so `:not(:defined)` (a component hidden until upgraded) matched every element.
+- `src/document.rs` (`set_shadow_hosts_focus`): the shadow hosts whose shadow trees hold the focused element match
+  `:focus` too (CSS Scoping 1 § 3.1; WPT shadow-dom `focus-pseudo-on-shadow-host-*`).
+- `src/layout/inline/build.rs`: the text of a `display: contents` element (a slot's assigned text) takes the element's
+  styles: its font, spacing and white space, and through the brush its colour. In an inline formatting context the
+  element is a span (upstream took only its white space); its content hoisted into an anonymous block
+  (`collect_layout_children_with_wrap`) is wrapped in the spans of its `display: contents` ancestors
+  (`contents_ancestors`), which it lost. `display: contents` still draws no decoration (`own_decoration`).
+
+- `src/layout/list.rs`, `src/layout/construct.rs`: a list's walk numbering its items goes on through `display:
+  contents` children (`list_numbering`: a list element among them numbers its own), and such a child flattened into
+  its parent's boxes numbers none itself: items assigned to different slots of one `<ol>` are 1, 2, 3 (WPT css-lists
+  `counter-list-item-slot-order`; each slot restarted at 1 once slots were elements).
+
+Tests: `shadow_scoping` in pyro-render. Selector matching on the featureless host: `vendor/selectors/README.pyro.md`.
+
 ## List markers (WPT reftests)
 
 - `src/layout/list.rs` (`image_marker`), `src/node/element.rs` (`ElementData::list_style_images`, `Marker::Image`),
@@ -1793,10 +1848,19 @@ Covered by WPT `css/css-sizing/aspect-ratio/replaced-element-029`, `-030` and `g
   remembered): Taffy's leaf layout, with the box's own style, gives that size, and the box's algorithm then lays
   its content out with both dimensions known. A replaced element keeps its natural aspect ratio
   (`replaced::natural_ratio`): one size gives the other (WPT css-flexbox `canvas-contain-size`). `contain: size` did nothing before. Not for non-atomic inline
-  boxes, tables and internal table boxes. `contain: inline-size` alone is not done.
+  boxes, tables and internal table boxes.
+- `src/layout/mod.rs` (`inline_size_contained_width`): `contain: inline-size` alone (css-contain-2 §3.2): a box
+  whose width its parent leaves to it (shrink-to-fit, or measured for its min-content or max-content contribution)
+  is as wide as an empty box whose content is `contain-intrinsic-width` (Taffy's leaf layout with the box's own
+  style); its content is then laid out at that width and gives its height. A box given its width (a block in flow,
+  a stretched item) keeps it. Danex's list cells (Tailwind's `[contain:inline-size]` on a truncating line in a
+  column `inline-flex`, Pyro 0.0.38 fault 5) took the line's whole text width (320 px, up to `max-width`) where
+  Chrome takes none (264 px, the cell's `::after` minimum). Horizontal non-replaced boxes only: vertical writing
+  modes and replaced elements are left as they were (WPT `contain-intrinsic-size-028.html`, testharness: 4 of 48,
+  its horizontal boxes).
 
-Covered by `crates/pyro-render/tests/size_containment.rs`; WPT `css/css-sizing/contain-intrinsic-size`: 23 more
-reftests pass.
+Covered by `crates/pyro-render/tests/size_containment.rs` and `inline_size_containment.rs`; WPT
+`css/css-sizing/contain-intrinsic-size`: 23 more reftests pass.
 ## `image-set()`, images as `content`, font features and descriptors (WPT css-images and css-fonts, round 3 lane F)
 
 - `src/util.rs` (`unfiltered_image`, `image_resolution`): an `image-set()` layer loads and draws the option
@@ -1882,3 +1946,334 @@ Covered by `crates/pyro-render/tests/font_size_adjust.rs`.
   leave the line phantom.
 
 Covered by `crates/pyro-render/tests/phantom_line_boxes.rs`.
+
+## Initial letters (WPT round 3, lane I)
+
+- `src/layout/first_letter.rs`: an `initial-letter` on a `::first-letter` makes its style node the letter's box
+  (`NodeFlags::IS_INITIAL_LETTER_BOX`): a copy of the letter in a text node of its own, the `::first-letter`
+  style with the font size whose cap height spans `size` lines (the paragraph's line height and cap height,
+  Blink's `ComputeInitialLetterFont`), the line height of that font, and a float to the start of the line.
+  `FirstLetterSplit::initial` carries what the first line needs (`node::InitialLetter`: Blink's legacy sink,
+  the paragraph's line height and descent under the baseline with its half-leading). A floated `::first-letter`
+  with an `initial-letter` is one. `src/resolve.rs` builds the box's own inline layout and makes it the first of
+  its root's layout children before the root's build; dropping the style node drops the text (`src/document.rs`).
+- `src/layout/inline/build.rs`: the root's text leaves the letter out and holds the box in its place
+  (`InlineBoxKind::CustomOutOfFlow`).
+- `src/layout/inline/layout.rs`: `compute_initial_letter_box_layout`: the box is as wide as its text indent and
+  the ink of its glyphs and as tall as the ink (`glyph_ink_bounds`: outline bounding boxes, rounded out to layout
+  units), the ink's corner at its content box's. The first line places it (`initial_letter_offset`, Blink's
+  `PostPlaceInitialLetterBox`): after the line's text indent (the line's text is not indented again), beside the
+  floats along its whole height, its cap height on the line's (centred on its lines in vertical modes without
+  sideways glyphs), an exclusion from the line's top to its margin box's bottom; raised and sunken letters move
+  the line's text down (not under `text-box-trim` at the start). A block with an initial letter starts below the
+  earlier ones.
+- `src/font_metrics.rs`: `BlitzFontMetricsProvider::extents_for` (ascent, descent, line gap, cap height).
+
+Covered by `crates/pyro-render/tests/initial_letter.rs`.
+
+## Selection ends and declared highlight colours (WPT round 3, lane I)
+
+- `src/dom_selection.rs` (`produced_offset`): the white space a text node's text starts with in its inline layout
+  that the node before left to it (trailing collapsible white space belongs to the next text) has no counterpart in
+  its content: offsets skip it, so a selection ending at the end of `<span>` text after a space keeps its last
+  letter (and one starting at the span's text leaves the space out).
+- `src/dom_selection.rs` (`BaseDocument::style_declares`): whether author or user rules declare some longhands of a
+  style (the highest-priority declaration of each: `revert` declares nothing, `revert-layer` defers), read from
+  the style's rule nodes; blitz-paint's highlight asks it of `::selection` styles.
+
+Covered by `crates/pyro-render/tests/selection_highlight.rs` and the `dom_selection` unit tests.
+
+## The `<body>` whose `overflow` the viewport takes (WPT round 3, lane G)
+
+`src/resolve.rs` (`mark_viewport_body`, before each layout pass), `src/node/node.rs` (`NodeFlags::OVERFLOW_TO_VIEWPORT`,
+`Node::layout_style`): the `<body>` whose `overflow` goes to the viewport (`body_overflow_goes_to_viewport`: the root's
+is `visible`, neither has containment) is laid out with `overflow: visible` (stylo_taffy's
+`StyleFlags::OVERFLOW_TO_VIEWPORT`). `body { overflow: hidden }` made it a scroll container: a block formatting context
+root whose first child's top margin no longer collapsed with its own (8px lower than in browsers; WPT
+`css/css-grid/layout-algorithm/grid-as-flex-item-should-not-shrink-to-fit-*`). A body whose flag changes is laid out
+again with the root. Paint and scrolling already treated such a body's `overflow` as the viewport's. Covered by
+`crates/pyro-render/tests/viewport_overflow.rs`.
+Only the root's first `body` child (a `frameset` before it does not count) gives the viewport its `overflow`, and
+only while it generates a box (`body_overflow_goes_to_viewport`, lane SM: a second `body` keeps its own; WPT
+`css/css-overflow/overflow-body-propagation-014..016`).
+
+## `::marker` text-transform and tabular digits (WPT round 3, lane I)
+
+- `src/layout/list.rs`, `src/layout/text_transform.rs` (`TextTransformer::transform_alone`): a `::marker` rule's
+  `text-transform` transforms the marker's string (inside and outside); the item's own does not reach it (Blink's UA
+  sheet: `::marker { text-transform: none }`), read with `BaseDocument::style_declares`.
+- `src/layout/list.rs`, `src/layout/inline/build.rs`, `src/node/element.rs` (`ListItemLayout::tabular_nums`),
+  `src/stylo_to_parley.rs` (`with_tabular_nums`): marker digits are tabular (`tnum`, Blink's UA `::marker {
+  font-variant-numeric: tabular-nums }`) unless a `::marker` rule declares `font-variant-numeric`.
+
+Covered by `crates/pyro-render/tests/marker_pseudo.rs`.
+
+
+## Subgrids (WPT round 3, lane G)
+
+`src/document.rs`: Stylo's `layout.css.grid-template-subgrid-value.enabled` is on (and in pyro-dom's styles), so
+`grid-template-*: subgrid` parses. `src/node/element.rs` (`LayoutData::subgrid`), `src/layout/mod.rs`
+(`LayoutGridContainer::subgrid_context`/`set_subgrid_context`): the context a grid gives a subgrid child (vendor/taffy's
+README.pyro.md, "Subgrids") is kept on the child; a new one drops the child's cached layouts, and one is read only while
+the child's layout parent is a grid.
+## `font-palette` (WPT css-fonts, round 3 lane F)
+
+- `src/document.rs` (`init_stylo_prefs`): `layout.css.font-palette.enabled` (the `font-palette` property and the
+  `@font-palette-values` rule). `BaseDocument::font_palette_values_rules` gives blitz-paint the rules in cascade
+  order, `BaseDocument::font_face_families` the `@font-face` family a font file was registered under (recorded in
+  `load_resource`).
+- `src/util.rs` (`intern_font_blob`): a font file is one blob per `@font-face` family name it is loaded under, so a
+  run's font tells which family drew it (two rules loading one file under two names: WPT `font-palette-31`).
+
+## `@font-face` `size-adjust` and metrics overrides (WPT css-fonts, round 3 lane F)
+
+- `src/net.rs` (`FontFaceOverrides::face_metrics`), `src/document.rs` (`load_resource`): the descriptors are
+  registered with the face (fontique `FaceMetrics`); parley_engine draws and measures the face with them.
+- `src/stylo_to_parley.rs`: `TextStyle::font_size_adjusted` where `font-size-adjust` is set (a face's
+  `size-adjust` is then not applied). `src/font_metrics.rs` (`metrics_for`): `ex`, `ch`, `ic` and `cap` lengths
+  measure the face at its `size-adjust`, with its ascent override, except under `font-size-adjust`.
+
+Covered by `crates/pyro-render/tests/font_face_metrics.rs`.
+
+## Container units (WPT css-images, round 3 lane F)
+
+`src/resolve.rs` (`resolve`): the container sizes Stylo queried are kept, and a change of one after layout restyles
+the document, also where no `@container` rule exists but styles use container units (`cqw`, ...;
+`ComputedValueFlags::USES_CONTAINER_UNITS`): they were dropped as soon as the stylist had no container
+condition. Covered by `crates/pyro-render/tests/container_queries.rs`
+(`container_units_resolve_against_the_size_container`).
+
+## `@font-face` `font-feature-settings` and `font-variation-settings`, `font-language-override` (WPT css-fonts, round 3 lane F)
+
+- `src/net.rs` (`FontFaceOverrides::face_settings`), `src/document.rs`: the descriptors are interned
+  (`fontique::FaceSettings`) and registered with the face.
+- `src/stylo_to_parley.rs`: `TextStyle::auto_optical_size` (the automatic `opsz` leads the variations,
+  `auto_optical_size`) and `TextStyle::language_override` from `font-language-override`.
+
+Covered by `crates/pyro-render/tests/font_face_settings.rs`.
+- `src/net.rs` (`FontFaceOverrides::weight_range`, `width_range`): the `font-weight` and `font-stretch`
+  descriptors' ranges go to fontique (its README, "Font matching with `@font-face` ranges"); `weight` is the
+  lower end of a reversed range too.
+
+## `font-size-adjust` and font-relative units (WPT css-fonts, round 3 lane F)
+
+`src/font_metrics.rs` (`font_size_adjust_scale`, `query_font_metrics`), `src/resolve.rs`
+(`publish_font_size_adjustments`): under `font-size-adjust`, `ex`, `ch`, `ic` and `cap` measure the first available
+font at the adjusted size (`em` stays the computed size); a font without the named metric takes the spec's
+fallback (0.5em for `ex-height` and `ch-width`, 1em for `ic-*`, the ascent for `cap-height`): it was left
+unscaled. WPT `font-size-adjust-units-001`, `-order-001`, `-011`.
+
+## SVG images: a declared width or height is the natural one; zero sizes (WPT round 3, lane G)
+
+`src/node/svg.rs`: an SVG image's natural width and height are its root's absolute `width` and `height` as declared
+(`absolute_length_px`: px, in, cm, mm, pt, pc; em/ex and percentages as before). usvg's resolved size stood in, and
+without a `height` usvg took the content's bounds: `width="20px"` with a circle sized in percentages was 46px wide (WPT
+`grid-item-no-aspect-ratio-stretch-2/3`). A root `width` or `height` of zero is a natural size of zero, not an invalid
+image (usvg refuses it: `InvalidSize`): the image keeps its declared dimensions and `viewBox` ratio, and its content is
+parsed as of an SVG without a size, drawn in the box it is given, as in browsers (`grid-item-aspect-ratio-stretch-3`).
+Covered by `crates/pyro-render/tests/svg_image_natural_size.rs`.
+
+`src/node/node.rs` (`Node::layout_style`): a replaced element with a natural aspect ratio gives it to its layout style
+(stylo_taffy's `natural_ratio`), for Taffy's flex algorithm (vendor/taffy/README.pyro.md, "Natural aspect ratios of
+flex items").
+`src/stylo_to_parley.rs` (`is_hidden_family`), `src/font_metrics.rs`: a family name that starts with a dot (macOS's
+hidden UI fonts, `.AppleSystemUIFont`, `.SF NS Mono`) matches no font, as in Safari and Chrome (WPT
+`standard-font-family`).
+## `text-spacing-trim`, `text-autospace` (WPT round 3, lane TS)
+
+- `src/stylo_to_parley.rs` (`text_spacing_trim`, `text_autospace`): the two CSS Text 4 properties become parley's
+  `TextStyle::text_spacing_trim` and `text_autospace`. Font features that set fullwidth punctuation widths themselves
+  (`halt`, `hwid`, `palt`, `pwid`, `qwid`, `twid`, `valt`, `vhal`, `vpal`, as Blink's `IsExclusiveFeature`;
+  `font-variant-east-asian: proportional-width` is `pwid`) turn trimming off. Upright text in a vertical writing mode
+  (`text-orientation: upright`, `text-combine-upright: all`) gets no autospace, as in Blink.
+- `src/document.rs`: the `layout.css.text-autospace.enabled` and `layout.css.text-combine-upright.enabled` prefs (the
+  layout ignores `text-combine-upright`; autospace reads it).
+- `src/layout/inline/build.rs` (`span_edge_widths_in`, `span_edge_margins`), `src/layout/inline/layout.rs`: in a
+  vertical writing mode an inline box's inline-axis margins (top and bottom, by the inline direction) are span edges;
+  they were dropped with the borders and padding, which stay out (their sides are not painted in turned lines). The
+  geometry and blitz-paint's fragments take the same logical margins. WPT `text-autospace-004` (`sideways-lr`)
+  passed only while margins and autospace were both missing.
+
+Covered by `crates/pyro-render/tests/text_spacing.rs`.
+## Counter inheritance, `@counter-style` markers (WPT round 3, lane CB)
+
+- `src/layout/counters.rs` (`Walk::reset`): counters are inherited as CSS Lists 3 § 4.4.1 has it (Chromium,
+  WebKit): a `counter-reset` on an element whose parent already has a counter of that name makes a counter of the
+  element and its descendants alone; the element's following siblings keep the parent's (WPT `counter-001`,
+  `counters-001`). Without one on the parent, the following siblings inherit the new counter, as before. Counters a
+  `::before` or `::after` makes for itself end with it. The `list-item` counter an HTML list (`ol`, `ul`, `menu`,
+  `dir`) resets keeps the CSS 2.1 scope (items after a list nested in a list continue the nested one: WPT
+  `counter-list-item-2`). The children of a `display: contents` element count in its parent's scope, as boxes of the
+  parent (WPT `counter-order-display-contents`), and an increment past the integer range leaves the counter as it
+  was (Blink's `CalculateCounterValue`).
+- `src/layout/list.rs` (`custom_counter_marker`): the marker of a `list-style-type` naming an `@counter-style` rule
+  with `system: extends <style>` is the item's number in that style with the rule's `prefix` and `suffix` (the
+  extended style's when absent), as text in the item's font (WPT `marker-text-matches-*`). Other systems are not
+  supported.
+
+`src/stylo_to_parley.rs`: CSS `text-justify` becomes parley's `TextStyle::text_justify` (`distribute` parses as
+`inter-character`).
+  supported. A predefined style the marker code has no case of (`armenian`, `georgian`, `lower-greek`, ...) is the
+  text `counter()` gives with a `. ` suffix (it was a `□`); an unknown name is `decimal`.
+
+## Static positions, sticky inline boxes, positioned table parts (WPT css-position, round 3 lane P)
+
+- `src/layout/inline/layout.rs`: an inline-level absolutely positioned box is put on the start side of its place in
+  the direction of the text there (parley's `PositionedInlineBox::is_rtl`), a block-level one in the container's.
+- `src/layout/mod.rs` (`static_position_is_containing_block`): an element in the top layer has the initial
+  containing block as its static-position rectangle.
+- `src/layout/inline/relative.rs`, `build.rs`: a sticky inline box (not atomic) is painted moved by its sticky offset
+  (`Node::sticky_offset`), as a relatively positioned one is by its relative offset (`inline_span_relative_offset`).
+- `src/layout/table.rs` (`table_cell_relative_offset`, `table_part_relative_offset`): relative positioning of a row
+  and a row group moves their cells (rows and row groups have no boxes); a percentage `top`/`bottom` of a cell, row
+  or row group resolves against the length height its parent is given, else is `auto` (Chromium; WPT
+  `position-relative-010` to `-013`).
+- `src/layout/paint_tree.rs`: a cell of a relatively positioned or sticky row or row group paints as a positioned
+  box (CSS 2.1 Appendix E step 8), with the part's background under it (blitz-paint).
+- `src/layout/mod.rs` (`table_part_containing_block`): an absolutely positioned box whose containing block is a
+  positioned row or row group is laid out by the table against the part's box moved by its relative offset; a
+  relatively positioned caption moves.
+Covered by `crates/pyro-render/tests/static_position.rs` and `table_part_positioning.rs`.
+## Scroll markers and scroll buttons (WPT round 3, lane SM)
+
+CSS Overflow 5's `::scroll-marker-group`, `::scroll-marker`, `::scroll-button()` and `:target-current`, as
+Chromium generates and lays them out (`src/layout/scroll_markers.rs`; the stylo side is in its README):
+
+- The boxes are nodes outside the DOM (as `::before`), on `ElementData::scroll` (`ScrollPseudos`): a scroll
+  container's group, an element's buttons and marker, and what pseudo-element a box node is with its originating
+  element. `BaseDocument::resolve_scroll_markers` (after a style traversal or a tree change, before counters, on
+  pages that use the feature) walks the document: a scroll container whose `scroll-marker-group` names a side has a
+  group; the elements whose nearest scroll container through their containing blocks has a group, and whose
+  `::scroll-marker` has `content`, have markers, its children in tree order; an element whose `::scroll-button()`
+  has `content` has a button per direction. Styles come from `Stylist::compute_pseudo_node_style` on the box node:
+  `implemented_pseudo_element`, `match_pseudo_element` (a button matches the arguments of its direction, physical
+  ones through the element's writing mode), `pseudo_element_originating_element` and `get_attr` answer for the
+  box node (`src/stylo.rs`). A button node is a `button` element (UA rules, `IS_BUTTON` layout).
+- Box construction (`src/layout/construct.rs`, `src/layout/inline/build.rs`): children are iterated with the
+  boxes generated beside them (`with_box_siblings`): a group before or after its scroll container's box, the
+  buttons after it (before an `after` group; Chromium's order, WPT `scroll-buttons-layout-parent`); the root
+  element's are its first and last boxes. Classification, anonymous blocks, `display: contents` hoisting and inline
+  formatting contexts take them as children, once: an anonymous block wrapping a run of its container's boxes
+  (`NodeFlags::WRAPS_BOX_RUN`) places none again (they were placed by its container's walk, in it or beside it; a
+  block-level group beside an inline-block scroller was wrapped again without end). A non-replaced inline box is
+  no scroll container (no group, no buttons: `overflow` does not apply to it). A marker's or button's box holds what its `content` generates
+  (`flush_pseudo_elements`); counters see the markers in their group and the buttons, in the scope of their
+  originating element (`src/layout/counters.rs`). The damage walks visit the boxes an element owns
+  (`src/layout/damage.rs`); a dropped element drops them, and its marker leaves its group (`src/document.rs`). A
+  dropped box drops only the children still its own (a marker can move to another group in the same pass) and
+  leaves every list that holds it (its group's children, a wrapping anonymous block's children, layout and paint
+  children: `detach_from_box_lists`); a moved marker leaves its old group's list. A dangling id there panicked
+  the damage walk (WPT `scroll-marker-group-scroll-container-change-crash`, `-body-overflow-propagation-*`).
+- `::column::scroll-marker`: a multi-column scroll container with a group has a `::column` node (for selector
+  matching only) and a marker per column of its last layout; `update_target_current` builds them again when the
+  count changes.
+- After layout (`src/resolve.rs`), `update_target_current` picks each group's active marker (CSS Overflow 5
+  § 3.1.8's example algorithm as Chromium selects: the nearest scroll container the targets share, then by block
+  and inline axis, targets past the reachable range spread over the first and last eighth of a scrollport; a scroll
+  container's current scroll target, `set_scroll_targets`, decides first) and sets `:target-current` on its marker
+  (`:target-before` on the markers before it, `:target-after` on those after it),
+  on the links of `scroll-target-group: auto` elements, and `:enabled`/`:disabled` on buttons (whether the element
+  can scroll that way); a change runs another style and layout pass.
+- `src/layout/paint_tree.rs` (`restore_out_of_flow_stacking_owners`): a group's or button's box belongs to the
+  stacking contexts of its originating element's parent (`scroll_markers::box_parent`), not of the element (an
+  absolutely positioned group of a fixed scroll container was painted at the container, WPT
+  `scroll-marker-group-019`).
+- `assets/default.css`: buttons (`button`, `input` of type `button`, `submit`, `reset`) size their border box, as
+  Chromium's (`<button style="width:100px">` was 114px wide; a styled `::scroll-button()` too).
+- `src/layout/multicol.rs`, `src/layout/mod.rs` (`multicol_percent_height`): a multi-column container's content
+  resolves percentage heights against its column height (the strip was laid out with none: `height: 80%` items were
+  auto; WPT `targeted-column-scroll-marker-selection-001`).
+
+Covered by `crates/pyro-render/tests/scroll_markers.rs` and `incremental_construction.rs`
+(`scroll_markers_moving_between_groups`).
+
+## A table's `max-width` does not narrow it below its columns (WPT round 3, lane G)
+
+`src/layout/table.rs` (`raise_max_width_to_columns`): the table grid's `max-width` is raised to its columns' min-content
+widths (spacing, padding and borders in), as its `min-width` already was when its width was smaller: a width its flex or
+grid parent gave it beyond `max-width` was clamped back to it, narrower than its columns (WPT
+`table-as-item-auto-min-width`, `table-as-item-fixed-min-width`; vendor/taffy's README.pyro.md, "Tables").
+
+`src/layout/mod.rs` (`compute_table_root_layout`): a height a flex or grid parent gives a table with captions is its
+wrapper box's (css-flexbox-1 §4.1): the grid is laid out again with what the captions leave (the table's own `height`,
+recognised by its value, is its grid's as in block flow). A stretched table with captions was taller than its line by
+them (WPT `table-as-item-stretch-cross-size*`, `table-as-item-flex-cross-size`).
+
+`src/layout/table.rs` (`is_inside_a_cell`): column percentages are not allowed while a table is measured (an available
+width that is not definite) inside a flex or grid container either, not only inside a cell, as Blink's
+`TableNode::AllowColumnPercentages`: a table with a 100% column measured there was `f32::MAX / 4` wide (WPT
+`table-with-infinite-max-intrinsic-width`, `item-with-table-with-infinite-max-intrinsic-width`).
+
+## A measuring run that leaves an inline root's lines unlike its final layout (Danex triage)
+
+`src/layout/inline/layout.rs`, `src/layout/mod.rs` (`LayoutPassState::mark_final_layout_stale`, `cache_get`,
+`cache_store`), `src/node/text.rs` (`TextLayout::final_lines`, `LaidOutLines`, `line_geometry`,
+`inline_box_sizes`), `src/node/node.rs` (`NodeFlags::FINAL_LAYOUT_STALE`): an inline root has one parley layout, and
+every run that is not a horizontal measurement breaks and aligns its lines again, a vertical measurement too. Taffy
+measures a stretched column flex item at the available cross size and then lays it out at its container's, and a
+table cell or flex item is measured before it is laid out. A later final layout of the item then came from the cache
+and left the lines of the measurement: Danex's triage actions (a column `inline-flex` in a `text-align: right` cell)
+were right-aligned to the cell's width inside a 51 px item, 93 px past the table.
+
+Each final layout now notes where it left the lines (`LaidOutLines`: break key, `block_offset`, line box top, a hash
+of the inline boxes' sizes). A measuring run that leaves them elsewhere marks the root `FINAL_LAYOUT_STALE`, and
+with it the boxes around it that are being laid out (`IN_LAYOUT`, set while `compute_child_layout_internal` runs;
+up the layout parents to one that is not): a table measures a cell for its columns after an earlier step laid the
+cell's `inline-flex` out, and the cell's later final layout would get that `inline-flex` from the cache. `cache_get`
+refuses a marked box a cached final layout, and the final layout that runs again (`cache_store`) clears the mark.
+Boxes not being laid out are not marked: marking all layout parents made the ancestors of an absolutely positioned
+box laid out alone run again in the next pass, which was then no longer free of layout for a paint-only restyle
+(`mirror.rs` `paint_only_restyles_run_no_layout_and_match_fresh_builds`). Roots still marked when the root layout
+returns mark the boxes they are in, and `resolve_layout` runs the root layout once more, which reaches only them
+(`mark_stale_lines_up`). "Elsewhere": another `block_offset`
+or line box top (a cell's `vertical-align` measured in another height), other inline box sizes, or lines broken with
+other inputs whose geometry differs: their text, alignment offsets, starts, advances and block extents
+(`line_geometry`; the line's end only in right-to-left and justified text). That hash is taken lazily, of the final
+layout's lines when a measuring run is about to break them again, and Fx-mixed: hashing every final layout with
+SipHash cost 1.5% of a relayout. Start-aligned text broken again at another width into the same lines marks nothing.
+Lines broken beside floats are not compared (nor are the floats' places): a measuring run marks them. Cost, in
+instructions of 41 relayouts (minimum of 2-4 runs, JSC tiering spreads runs of one binary by up to 2%): a 400-row
+table whose 2,000 cells all hold the Danex cell +1.0%, 1,500 right-aligned column `inline-flex` flex items +1.2%, a
+1,200-row table with one changing cell +0.7%. Covered by `crates/pyro-render/tests/text_align_after_measure.rs`.
+## `visibility: collapse` on flex items relayouts (WPT round 3, lane G)
+
+`src/stylo.rs`: `visibility: collapse` coming or going on a flex item (its layout parent a flex container) gives the
+item `BOX_DAMAGE`, as on a table row or row group: a collapsed flex item leaves its line, which keeps its cross size
+(vendor/taffy's README.pyro.md, "`visibility: collapse` on flex items"), so the restyle changes layout, not only paint
+(`crates/pyro-render/tests/mirror.rs`, `review_moved_longhands_match_fresh_builds`).
+- `src/layout/inline/layout.rs` (`split_inline_containing_block`), `src/layout/mod.rs`
+  (`lay_out_out_of_flow_boxes`): the containing block of an absolutely positioned box in a positioned inline box split
+  around block-level content is the bounding box of the inline's head (at the end of the anonymous block before its
+  box) and tail (at the start of the one after), an empty one a point at its line's end or start (Chromium): the
+  split box and the inline roots around it leave such boxes to their parent, which lays them out against it (WPT
+  `position-absolute-in-inline-003`, `position-absolute-dynamic-relayout-005/006`). Covered by
+  `crates/pyro-render/tests/split_inline_containing_block.rs`.
+- `src/layout/multicol.rs`, `src/layout/mod.rs` (`multicol_percent_height`): percentage heights in a multi-column
+  container's strip resolve against the container's definite height (taffy `block_container_percentage_height`).
+Covered by `crates/pyro-render/tests/scroll_markers.rs`.
+
+## `hyphens: auto` (WPT round 3, lane TS)
+
+`src/layout/hyphenate.rs`, `src/layout/inline/build.rs` (text nodes), `Cargo.toml` (`hypher`, MIT OR Apache-2.0, TeX
+patterns of 25 languages): text in a `hyphens: auto` element of a language with patterns gets a soft hyphen at each
+hyphenation opportunity of its words, which parley shows as the font's hyphen (or `hyphenate-character`) where a line
+ends there, as for authored soft hyphens. `hyphenate-limit-chars` bounds the word and the parts around the hyphen
+(`auto`: 5, 2 and 2, as Blink); a word with an authored soft hyphen is left alone. Chromium's dictionaries derive from
+the same TeX patterns. Covered by `hyphens_auto_breaks_words_of_a_known_language` in
+`crates/pyro-render/tests/text_spacing.rs`; WPT `css-text/hyphens/hyphens-auto-*`.
+
+`src/layout/table.rs` (`clear_spanned`): the collapsed border segments inside a cell that spans rows or columns are
+cleared after conflict resolution (Blink resolves borders on cell edges only: a column's or row's border is not drawn
+through a spanning cell; WPT `css-tables/tentative/border-collapse-spanning-cells-001/002`). The table's style lists
+its collapsed rows in taffy's `Style::collapsed_rows`, so a collapsed row takes its border spacing with it.
+`src/layout/paint_tree.rs` (`Node::paints_in_table_phases`): the row groups, rows and cells blitz-paint paints in a
+collapsed table's phases (no layer root, stacking context, float or positioned box among their paint children).
+**Replaced content keywords, percentage height quirk (lane S2).** `compute_replaced_layout` resolves `min-content`,
+`max-content` and `fit-content` in min/max sizes (from `BlockItemStyle::min_size_keyword`/`max_size_keyword`; the
+style's `min_size()` says `auto` for them) to the element's content size: in an axis, the size the ratio gives from
+its definite size in the other axis (clamped there), else its natural size, as Chromium does (csswg-drafts#3973).
+`DocumentConfig::quirks_mode` (from pyro-dom's parser) turns on the percentage height quirk: an `auto`-height block
+container (flow or flow-root, in flow, not a table cell's child) hands its own percentage basis for heights to its
+children (`BaseDocument::quirks_skips_for_percent_height`, used by `block_container_passes_percentage_height` and by
+inline layout for its atomic inlines), Chromium's `UseParentPercentageResolutionBlockSizeForChildren`. Covered by
+`crates/pyro-render/tests/intrinsic_percentages.rs`.

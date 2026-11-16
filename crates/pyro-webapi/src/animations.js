@@ -1283,7 +1283,11 @@
     get transitionProperty() { return brand(animations, this, 'a CSSTransition').cssName; }
   }
   function cssRun([id, target, transition, name, start, delay, duration, iterations, direction, fill, easing, held]) {
-    const timing = { delay, duration, iterations, fill, direction, easing };
+    // The engine hands over computed easings; one it could not compute is
+    // the initial `ease`, as an easing invalid at computed-value time is.
+    let parsed;
+    try { parsed = parseEasing(easing); } catch { parsed = parseEasing('ease'); }
+    const timing = { delay, duration, iterations, fill, direction, easing: parsed.text };
     const effect = new KeyframeEffect(target, null, timing);
     const object = Reflect.construct(Animation, [effect, documentTimeline], transition ? CSSTransition : CSSAnimation);
     const a = animations.get(object);
@@ -1321,7 +1325,9 @@
     const seen = new Set();
     for (const run of runs) {
       seen.add(run[0]);
-      if (!cssRuns.has(run[0])) cssRuns.set(run[0], cssRun(run));
+      if (cssRuns.has(run[0])) continue;
+      // One run that cannot be made is left out; the others are listed.
+      try { cssRuns.set(run[0], cssRun(run)); } catch {}
     }
     for (const [id, object] of cssRuns) {
       if (seen.has(id)) continue;

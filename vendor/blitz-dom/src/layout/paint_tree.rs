@@ -339,10 +339,12 @@ impl BaseDocument {
     /// ancestor stacking contexts. Fixed descendants must not escape their
     /// modal/opacity context merely because layout positions them at the root.
     fn restore_out_of_flow_stacking_owners(&mut self, root_id: NodeId) {
+        // pyro: a scroll marker group's or scroll button's box is a box of its originating
+        // element's parent, not inside the element (`scroll_markers::box_parent`).
         let context_of = |doc: &Self, mut node: Option<NodeId>| {
             while let Some(id) = node {
                 if doc.nodes[id].stacking_context.is_some() { return id; }
-                node = doc.nodes[id].parent;
+                node = crate::layout::scroll_markers::box_parent(&doc.nodes, id);
             }
             root_id
         };
@@ -351,7 +353,7 @@ impl BaseDocument {
             let node = &self.nodes[id];
             if !node.flags.is_in_document() { return None; }
             let cb = node.oof_containing_block.get()?;
-            let target = context_of(self, node.parent);
+            let target = context_of(self, crate::layout::scroll_markers::box_parent(&self.nodes, id));
             (target != context_of(self, Some(cb))).then_some((id, target))
         }).collect();
         if moves.is_empty() { return; }
@@ -570,12 +572,17 @@ impl BaseDocument {
                     let positioned = child
                         .primary_styles()
                         .is_some_and(|style| style.clone_position() != Position::Static);
+                    // pyro: a cell of a positioned row or row group paints with it, as the
+                    // positioned box it is part of (CSS 2.1 Appendix E step 8).
+                    let part_positioned = !positioned
+                        && self.table_cell_positioned_parts(child_id).iter().any(Option::is_some);
+                    let positioned = positioned || part_positioned;
                     let z_index = if is_flex_or_grid || positioned {
                         child.z_index()
                     } else {
                         0
                     };
-                    let paint_order = node_to_paint_order(child, is_flex_or_grid);
+                    let paint_order = if part_positioned { (2, 0) } else { node_to_paint_order(child, is_flex_or_grid) };
                     // pyro: a stacking context that is not positioned (a transform, an opacity,
                     // a filter) paints as a positioned box with `z-index: 0` does (CSS 2.1
                     // Appendix E step 8; CSS Transforms 1, CSS Color 4 `opacity`): above the
@@ -717,7 +724,7 @@ impl BaseDocument {
         let Some(SpecialElementData::TableRoot(ctx)) = node.data.downcast_element().map(|e| &e.special_data) else {
             return false;
         };
-        if !crate::layout::table::keeps_cells(ctx) {
+        if !crate::layout::table::keeps_cells(ctx) || crate::layout::table::table_has_positioned_parts(self, ctx) {
             return false;
         }
         let ctx = std::sync::Arc::clone(ctx);
@@ -775,6 +782,7 @@ impl BaseDocument {
         placed.take_paint();
         let first = children.first().map(|&id| node_to_paint_order(&self.nodes[id], false));
         let plain = crate::layout::table::keeps_cells(ctx)
+            && !crate::layout::table::table_has_positioned_parts(self, ctx)
             && no_entries
             && node.before().is_none()
             && node.after().is_none()
@@ -1011,6 +1019,49 @@ impl Node {
         !self.layout_parent.get().and_then(|id| self.tree().get(id)).is_some_and(|parent| {
             parent.primary_styles().is_some_and(|parent_style| {
                 matches!(parent_style.clone_display().inside(), DisplayInside::Flex | DisplayInside::Grid)
+            })
+        })
+    }
+
+    /// pyro: whether this internal table box (row group, row, cell) paints in the phases of its
+    /// table's painter (Blink: a table's collapsed borders go after the backgrounds of the blocks
+    /// in its cells and before their inline content, floats and positioned boxes). Only a part
+    /// that is no layer root, makes no stacking context and has no float or positioned box among
+    /// its `paint_children` (those would be the phase painter's to paint; the paint tree lifts
+    /// them only out of `paints_in_ancestor_phases` boxes); any other part paints whole with the
+    /// block backgrounds.
+    pub fn paints_in_table_phases(&self) -> bool {
+        use style::values::specified::box_::DisplayInside;
+        let Some(style) = self.primary_styles() else {
+            return false;
+        };
+        if !matches!(
+            style.clone_display().inside(),
+            DisplayInside::TableRowGroup
+                | DisplayInside::TableHeaderGroup
+                | DisplayInside::TableFooterGroup
+                | DisplayInside::TableRow
+                | DisplayInside::TableCell
+        ) || style.clone_float() != Float::None
+            || self.is_paint_layer_root()
+            || self.stacking_context.is_some()
+            || self.is_stacking_context_root(false)
+            || self.plane_3d().is_some()
+            || !style.get_effects().backdrop_filter.0.is_empty()
+            || style.get_column().is_multicol()
+        {
+            return false;
+        }
+        let tree = self.tree();
+        self.paint_children.borrow().as_ref().is_none_or(|children| {
+            children.iter().all(|&id| {
+                tree.get(id).is_none_or(|child| {
+                    child.primary_styles().is_none_or(|s| {
+                        s.clone_position() == Position::Static
+                            && s.clone_float() == Float::None
+                            && !child.is_stacking_context_root(false)
+                    })
+                })
             })
         })
     }

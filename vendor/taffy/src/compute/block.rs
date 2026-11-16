@@ -6,8 +6,8 @@ use crate::style::{
 };
 use crate::style_helpers::TaffyMaxContent;
 use crate::tree::{
-    AxisStaticPosition, LayoutPartialTree, LayoutPartialTreeExt, NodeId, OofCandidate, OofCandidates,
-    OofPositioningArea,
+    AxisStaticEdge, AxisStaticPosition, LayoutPartialTree, LayoutPartialTreeExt, NodeId, OofCandidate,
+    OofCandidates, OofPositioningArea,
 };
 use crate::tree::{Baselines, CollapsibleMarginSet, Layout, LayoutInput, LayoutOutput, RunMode, SizingMode};
 use crate::util::debug::debug_log;
@@ -200,6 +200,25 @@ impl BlockContext<'_> {
         self.float_content_contribution = self.float_content_contribution.max(pos.y + floated_box.height);
 
         pos
+    }
+
+    /// pyro: put the margin box of an initial letter into the context (see
+    /// [`FloatContext::place_initial_letter`]); `location` is its top-left corner relative to
+    /// this block, as positions returned by [`Self::place_floated_box`] are.
+    pub fn place_initial_letter(&mut self, location: Point<f32>, size: Size<f32>, direction: FloatDirection) {
+        self.bfc.float_context.place_initial_letter(
+            location.x + self.insets.left,
+            location.y + self.y_offset,
+            size,
+            direction,
+        );
+        self.float_content_contribution = self.float_content_contribution.max(location.y + size.height);
+    }
+
+    /// pyro: the bottom of the lowest initial letter in the context, relative to this block
+    /// (see [`FloatContext::initial_letter_clearance`]).
+    pub fn initial_letter_clearance(&self) -> Option<f32> {
+        self.bfc.float_context.initial_letter_clearance().map(|bottom| bottom - self.y_offset)
     }
 
     /// A mark of the floats placed in the Block Formatting Context so far, for [`Self::floats_placed_since`]
@@ -417,6 +436,15 @@ struct BlockItem {
     /// The computed "static position" of this item. The static position is the position
     /// taking into account padding, border, margins, and scrollbar_gutters but not inset
     static_position: Point<f32>,
+    /// pyro: the item is a block container (no replaced element): its last baseline is its own,
+    /// none when it holds no line box.
+    is_block_container: bool,
+    /// pyro: the item is out of flow and was inline-level before `position` blockified it
+    /// (`BlockItemStyle::original_display_is_inline`).
+    is_inline_level_oof: bool,
+    /// pyro: for such an item, the inline-axis point of its static position: where the content
+    /// of a line starting at its place would sit (beside floats, by `text-align`).
+    inline_static_x: Option<f32>,
     /// Whether margins can be collapsed through this item
     can_be_collapsed_through: bool,
 
@@ -764,6 +792,8 @@ fn compute_inner(
         || border.bottom > 0.0;
 
     let text_align = style.text_align();
+    // pyro: where `text-align` puts the content of a line (`BlockContainerStyle::text_align_edge`).
+    let line_edge = style.text_align_edge();
     let align_content = style.align_content();
     let justify_items = style.justify_items();
     // pyro: `margin-trim`
@@ -776,7 +806,16 @@ fn compute_inner(
     // 2. Compute container width
     let container_outer_width = known_dimensions.width.unwrap_or_else(|| {
         let available_width = available_space.width.maybe_sub(content_box_inset.horizontal_axis_sum());
-        let intrinsic_width = determine_content_based_container_width(tree, &items, available_width)
+        // pyro: percentage heights in the children resolve against a definite height of the
+        // container in this pass too, as at final layout (a float of `height: 100px` around a
+        // `height: 100%` canvas is as wide as the canvas there; WPT css-sizing
+        // `intrinsic-percent-replaced-*`).
+        let percentage_height = percentage_basis_dimensions
+            .height
+            .or(if inputs.sizing_mode == SizingMode::InherentSize { size.height.maybe_max(min_size.height) } else { None })
+            .or(if tree.block_container_passes_percentage_height(node_id) { parent_size.height } else { None })
+            .maybe_sub(content_box_inset.vertical_axis_sum());
+        let intrinsic_width = determine_content_based_container_width(tree, &items, available_width, percentage_height)
             + content_box_inset.horizontal_axis_sum();
         intrinsic_width.maybe_clamp(min_size.width, max_size.width).maybe_max(Some(padding_border_size.width))
     });
@@ -791,6 +830,19 @@ fn compute_inner(
         return LayoutOutput::from_outer_size(Size { width: container_outer_width, height: 0.0 });
     }
 
+    // pyro: a width the content gave (a float's or an inline-block's shrink-to-fit width) is
+    // the basis of the children's percentages from here on, as a given one is: their sizes
+    // were resolved without it (`min-width: 200%` in a float did nothing; WPT css-sizing
+    // `intrinsic-percent-non-replaced-*`).
+    if container_content_box_size.width.is_none() {
+        let inner_width = (container_outer_width - content_box_inset.horizontal_axis_sum()).max(0.0);
+        items = generate_item_list(
+            tree,
+            node_id,
+            Size { width: Some(inner_width), height: container_content_box_size.height },
+        );
+    }
+
     // Under `SizingMode::ContentSize` the container's own `height`/`min-height` are ignored,
     // so they cannot serve as the percentage basis for children either
     // (https://drafts.csswg.org/css-flexbox/#min-size-auto: the content size suggestion
@@ -802,7 +854,9 @@ fn compute_inner(
         .or(if inputs.sizing_mode == SizingMode::InherentSize { size.height.maybe_max(min_size.height) } else { None })
         // pyro: a box that is no containing block (an inline box laid out around its blocks)
         // hands its own containing block's height on.
-        .or(if tree.block_container_passes_percentage_height(node_id) { parent_size.height } else { None });
+        .or(if tree.block_container_passes_percentage_height(node_id) { parent_size.height } else { None })
+        // pyro: a multi-column container's strip (the column height).
+        .or_else(|| tree.block_container_percentage_height(node_id));
 
     // 3. Perform final item layout and return content height
     //
@@ -836,6 +890,7 @@ fn compute_inner(
         #[cfg(feature = "content_size")]
         resolved_padding,
         text_align,
+        line_edge,
         justify_items,
         direction,
         own_margins_collapse_with_children,
@@ -1017,9 +1072,13 @@ fn compute_inner(
             // child's hypothetical position in the block axis. The child's self-alignment
             // properties determine how it is aligned within that rectangle.
             // <https://www.w3.org/TR/css-position-3/#staticpos-rect>
-            let inline_area = Line {
-                start: resolved_content_box_inset.left,
-                end: container_outer_width - resolved_content_box_inset.right,
+            // pyro: an inline-level one's is a point on the line at its place.
+            let inline_area = match item.inline_static_x {
+                Some(x) => Line { start: x, end: x },
+                None => Line {
+                    start: resolved_content_box_inset.left,
+                    end: container_outer_width - resolved_content_box_inset.right,
+                },
             };
             let block_area = Line { start: item.static_position.y, end: item.static_position.y };
             // A `justify_self` of `None` takes the container's `justify-items`. Block containers have
@@ -1229,6 +1288,9 @@ fn generate_item_list(
                 // Fields to be computed later (for now we initialise with dummy values)
                 computed_size: Size::zero(),
                 static_position: Point::zero(),
+                is_block_container: is_block && !child_style.is_compressible_replaced(),
+                is_inline_level_oof: position.is_out_of_flow() && child_style.original_display_is_inline(),
+                inline_static_x: None,
                 can_be_collapsed_through: false,
                 final_layout: None,
                 oof_candidates: OofCandidates::new(),
@@ -1299,8 +1361,10 @@ fn determine_content_based_container_width(
     tree: &mut impl LayoutPartialTree,
     items: &[BlockItem],
     available_width: AvailableSpace,
+    percentage_height: Option<f32>,
 ) -> f32 {
     let available_space = Size { width: available_width, height: AvailableSpace::MinContent };
+    let parent_size = Size { width: None, height: percentage_height };
 
     let mut max_child_width = 0.0;
     #[cfg(feature = "float_layout")]
@@ -1339,7 +1403,7 @@ fn determine_content_based_container_width(
             let width = tree.measure_child_size(
                 item.node_id,
                 known_dimensions,
-                Size::NONE,
+                parent_size,
                 Size { width: item_available_width, height: available_space.height },
                 SizingMode::InherentSize,
                 crate::AbsoluteAxis::Horizontal,
@@ -1357,6 +1421,22 @@ fn determine_content_based_container_width(
             }
         });
 
+        // pyro: a table is never narrower than its min-content width, whatever its `width` or
+        // `max-width` (CSS Tables 3 §3.9.2): its contribution is at least that.
+        let width = if item.is_table && (item.size.width.is_some() || item.max_size.width.is_some()) {
+            let content = tree.measure_child_size(
+                item.node_id,
+                Size::NONE,
+                Size::NONE,
+                Size { width: AvailableSpace::MinContent, height: AvailableSpace::MaxContent },
+                SizingMode::ContentSize,
+                crate::AbsoluteAxis::Horizontal,
+                if item.is_in_same_bfc { Line::TRUE } else { Line::FALSE },
+            );
+            width.max(content)
+        } else {
+            width
+        };
         let width = f32_max(width, item.padding_border_sum.width) + item_x_margin_sum;
 
         #[cfg(feature = "float_layout")]
@@ -1417,17 +1497,33 @@ fn clamp_width_by_keywords(
         Some(match resolution {
             SizingKeywordResolution::Exact(width) => width,
             SizingKeywordResolution::Measure(available_width) => {
-                let content_width = tree.measure_child_size(
-                    item.node_id,
-                    // (its height stays: percentage heights in it resolve as they will)
-                    Size { width: None, height: item.size.height.maybe_clamp(item.min_size.height, item.max_size.height) },
-                    parent_size,
-                    Size { width: available_width, height: AvailableSpace::MaxContent },
-                    // The content's width, the item's own `width` aside
-                    SizingMode::ContentSize,
-                    crate::AbsoluteAxis::Horizontal,
-                    if item.is_in_same_bfc { Line::TRUE } else { Line::FALSE },
-                );
+                let mut measure = |available_width: AvailableSpace| {
+                    tree.measure_child_size(
+                        item.node_id,
+                        // (its height stays: percentage heights in it resolve as they will)
+                        Size { width: None, height: item.size.height.maybe_clamp(item.min_size.height, item.max_size.height) },
+                        parent_size,
+                        Size { width: available_width, height: AvailableSpace::MaxContent },
+                        // The content's width, the item's own `width` aside
+                        SizingMode::ContentSize,
+                        crate::AbsoluteAxis::Horizontal,
+                        if item.is_in_same_bfc { Line::TRUE } else { Line::FALSE },
+                    )
+                };
+                let content_width = match available_width {
+                    // `fit-content` (and `fit-content(<length-percentage>)`): the max-content
+                    // width, at most the available width but at least the min-content width (CSS
+                    // Sizing 3 §5.1), from the two intrinsic widths. A measure under the definite
+                    // width is not that for every box: a grid container with `fr` columns
+                    // measured its max-content width there, and `min-width: fit-content` (BBC
+                    // News' grids) made it as wide as its `max-width`.
+                    AvailableSpace::Definite(available) => {
+                        let min_content = measure(AvailableSpace::MinContent);
+                        let max_content = measure(AvailableSpace::MaxContent);
+                        max_content.min(min_content.max(available))
+                    }
+                    intrinsic => measure(intrinsic),
+                };
                 // A width the preferred aspect ratio gives from a height is an intrinsic width
                 if item.width_from_ratio {
                     content_width.max(width)
@@ -1608,6 +1704,7 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
     resolved_border: Rect<f32>,
     #[cfg(feature = "content_size")] resolved_padding: Rect<f32>,
     text_align: TextAlign,
+    #[cfg_attr(not(feature = "float_layout"), allow(unused_variables))] line_edge: AxisStaticEdge,
     justify_items: AlignItems,
     direction: Direction,
     own_margins_collapse_with_children: Line<bool>,
@@ -1691,7 +1788,28 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
                 Direction::Ltr => resolved_content_box_inset.left,
                 Direction::Rtl => container_outer_width - resolved_content_box_inset.right,
             };
-            item.static_position = Point { x, y: y_offset_for_absolute }
+            item.static_position = Point { x, y: y_offset_for_absolute };
+            // pyro: an inline-level out-of-flow child (inline-level before `position` blockified
+            // it) has the static position of the start of a line at its place: beside the floats
+            // there, where `text-align` puts the line's content (Blink's
+            // `HandleOutOfFlowPositioned`; WPT `inline-level-absolute-in-block-level-context-*`).
+            #[cfg(feature = "float_layout")]
+            if item.is_inline_level_oof {
+                let line_start = resolved_content_box_inset.left;
+                let line_end = container_outer_width - resolved_content_box_inset.right;
+                let (left, right) = if block_ctx.has_active_floats(y_offset_for_absolute) {
+                    let slot = block_ctx.find_content_slot(y_offset_for_absolute, 0.0, Clear::None, None);
+                    (slot.x.max(line_start), (slot.x + slot.width).min(line_end))
+                } else {
+                    (line_start, line_end)
+                };
+                let right = right.max(left);
+                item.inline_static_x = Some(match line_edge {
+                    AxisStaticEdge::Start => left,
+                    AxisStaticEdge::End => right,
+                    AxisStaticEdge::Center => (left + right) / 2.0,
+                });
+            }
         } else {
             #[cfg_attr(not(feature = "float_layout"), allow(unused_mut))]
             let mut item_margin = item
@@ -2231,7 +2349,11 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
                 };
                 let align_to_end = match keyword {
                     AlignItemsKeyword::Center => None,
-                    AlignItemsKeyword::End | AlignItemsKeyword::FlexEnd | AlignItemsKeyword::SelfEnd => Some(true),
+                    // pyro: `last baseline` falls back to `end` (it aligns flex rows only)
+                    AlignItemsKeyword::End
+                    | AlignItemsKeyword::FlexEnd
+                    | AlignItemsKeyword::SelfEnd
+                    | AlignItemsKeyword::LastBaseline => Some(true),
                     _ => Some(false),
                 };
                 let offset = match align_to_end {
@@ -2270,8 +2392,16 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
             // child that has one (an inline-block's, CSS 2.1 § 10.8.1, is its last line box's).
             // A child that is a scroll container gives its bottom margin edge, whatever lines it
             // holds (as an inline-block that is one does; WPT `baseline-block-with-overflow-001`).
-            let child_last_baseline = if item.overflow.y.is_scroll_container() {
+            // A table gives none: it is skipped, as in Chromium (an inline-block holding only
+            // tables sits on its bottom margin edge whatever their rows hold; WPT
+            // `position-relative-table-*`).
+            // A block container gives its own: none when it holds no line box (but tables).
+            let child_last_baseline = if item.is_table {
+                None
+            } else if item.overflow.y.is_scroll_container() {
                 Some(item_layout.size.height + resolved_margin.bottom)
+            } else if item.is_block_container {
+                item_layout.baselines.last
             } else {
                 item_layout.baselines.last.or(item_layout.baselines.first)
             };

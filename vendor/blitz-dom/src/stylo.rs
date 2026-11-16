@@ -106,12 +106,14 @@ impl crate::document::BaseDocument {
     pub fn resolve_stylist(&mut self, now: f64) {
         let _layout_thread_scope = LayoutThreadScope::enter();
 
+        // pyro: shadow roots' sheets (`crate::shadow`).
+        self.flush_shadow_styles();
+
         let guard = &self.guard;
         let guards = StylesheetGuards {
             author: &guard.read(),
             ua_or_user: &guard.read(),
         };
-
         let root = TDocument::as_node(&&self.nodes[self.root_node_id])
             .first_element_child()
             .unwrap()
@@ -219,6 +221,11 @@ impl crate::document::BaseDocument {
             if traverser.text_box_trim_styles.into_inner() {
                 self.text_box_trim_styles = true;
             }
+            if traverser.scroll_marker_groups.into_inner() {
+                self.scroll_marker_groups = true;
+            }
+            // pyro: a restyle may change which scroll pseudo-elements generate boxes.
+            self.scroll_markers_dirty = true;
             if traverser.generated_counters.into_inner() && !self.generated_counters {
                 self.generated_counters = true;
                 self.counters_dirty = true;
@@ -518,15 +525,18 @@ impl<'a> TShadowRoot for BlitzNode<'a> {
         self
     }
 
+    // pyro: a shadow root stands for itself by its host (`crate::shadow`): the render tree has
+    // no node for it, the host's children being the shadow tree's.
     fn host(&self) -> <Self::ConcreteNode as TNode>::ConcreteElement {
-        todo!("Shadow roots not implemented")
+        self
     }
 
     fn style_data<'b>(&self) -> Option<&'b style::stylist::CascadeData>
     where
         Self: 'b,
     {
-        todo!("Shadow roots not implemented")
+        let host: &'b Node = self;
+        host.shadow_cascade_data()
     }
 }
 
@@ -621,20 +631,38 @@ impl selectors::Element for BlitzNode<'_> {
         OpaqueElement::from_ptr(non_null)
     }
 
+    // pyro: selectors walk the node trees, which are not the flat tree when there are shadow
+    // trees (`crate::shadow`).
     fn parent_element(&self) -> Option<Self> {
-        TElement::traversal_parent(self)
+        if !self.is_element() || !self.tree().has_shadow_hosts {
+            return TElement::traversal_parent(self);
+        }
+        self.dom_parent_element()
     }
 
     fn parent_node_is_shadow_root(&self) -> bool {
-        false
+        self.is_element() && self.parent_is_shadow_root()
     }
 
     fn containing_shadow_host(&self) -> Option<Self> {
-        None
+        self.containing_shadow_host_id().map(|host| self.with(host))
+    }
+
+    fn assigned_slot(&self) -> Option<Self> {
+        self.assigned_slot_id().map(|slot| self.with(slot))
     }
 
     fn is_pseudo_element(&self) -> bool {
         matches!(self.data, NodeData::AnonymousBlock(_))
+    }
+
+    // pyro: a scroll pseudo-element's box originates from the element it names, not from its
+    // parent in the tree (a marker's is its group, `layout::scroll_markers`).
+    fn pseudo_element_originating_element(&self) -> Option<Self> {
+        match self.scroll_pseudo() {
+            Some((_, origin)) => Some(self.with(origin)),
+            None => selectors::Element::parent_element(self),
+        }
     }
 
     // These methods are implemented naively since we only threaded real nodes and not fake nodes
@@ -719,7 +747,9 @@ impl selectors::Element for BlitzNode<'_> {
             NonTSPseudoClass::Checked => self.element_state().contains(ElementState::CHECKED),
             NonTSPseudoClass::Valid => self.element_state().contains(ElementState::VALID),
             NonTSPseudoClass::Invalid => self.element_state().contains(ElementState::INVALID),
-            NonTSPseudoClass::Defined => false,
+            // pyro: every element but a custom element not defined yet (pyro-dom's `undefined`
+            // state token).
+            NonTSPseudoClass::Defined => self.element_state().contains(ElementState::DEFINED),
             NonTSPseudoClass::Disabled => self.element_state().contains(ElementState::DISABLED),
             NonTSPseudoClass::Enabled => self.element_state().contains(ElementState::ENABLED),
             NonTSPseudoClass::Focus => self.element_state().contains(ElementState::FOCUS),
@@ -750,6 +780,16 @@ impl selectors::Element for BlitzNode<'_> {
             NonTSPseudoClass::ReadOnly => self.element_state().contains(ElementState::READONLY),
             NonTSPseudoClass::ServoNonZeroBorder => false,
             NonTSPseudoClass::Target => false,
+            // pyro: the active scroll marker of its group (`layout::scroll_markers`).
+            NonTSPseudoClass::TargetCurrent => {
+                self.element_state().contains(style::selector_parser::TARGET_CURRENT)
+            }
+            NonTSPseudoClass::TargetBefore => {
+                self.element_state().contains(style::selector_parser::TARGET_BEFORE)
+            }
+            NonTSPseudoClass::TargetAfter => {
+                self.element_state().contains(style::selector_parser::TARGET_AFTER)
+            }
             // pyro: links to the document itself (`ElementData::flush_link_visited`), but not
             // inside `:has()`, where Chromium takes every link as unvisited (WPT
             // `css/selectors/has-visited.html`, `invalidation/link-pseudo-in-has.html`).
@@ -786,6 +826,18 @@ impl selectors::Element for BlitzNode<'_> {
         pe: &PseudoElement,
         _context: &mut MatchingContext<Self::Impl>,
     ) -> bool {
+        // pyro: the box of a scroll pseudo-element; a button matches the arguments that select
+        // its direction (`layout::scroll_markers`).
+        if let Some((pseudo, origin)) = self.scroll_pseudo() {
+            if pseudo == PseudoElement::ScrollButtonAll {
+                let direction = self.scroll_pseudos().map_or(0, |pseudos| pseudos.direction);
+                let Some(wm) = self.tree()[origin].primary_styles().map(|style| style.writing_mode) else {
+                    return false;
+                };
+                return crate::layout::scroll_markers::scroll_button_matches(pe, direction, wm);
+            }
+            return *pe == pseudo;
+        }
         let pseudo = match self.try_stylo_element_data().and_then(|s| s.get()) {
             Some(el) => el
                 .styles
@@ -825,7 +877,8 @@ impl selectors::Element for BlitzNode<'_> {
     }
 
     fn is_html_slot_element(&self) -> bool {
-        false
+        self.element_data()
+            .is_some_and(|e| e.name.local == local_name!("slot") && e.name.ns == ns!(html))
     }
 
     fn has_id(
@@ -851,15 +904,21 @@ impl selectors::Element for BlitzNode<'_> {
         })
     }
 
+    // pyro: `exportparts` maps the host's inner part names to outer ones: the inner name an outer
+    // one stands for.
     fn imported_part(
         &self,
-        _name: &<Self::Impl as selectors::SelectorImpl>::Identifier,
+        name: &<Self::Impl as selectors::SelectorImpl>::Identifier,
     ) -> Option<<Self::Impl as selectors::SelectorImpl>::Identifier> {
-        None
+        let value = self.attr(local_name!("exportparts"))?;
+        crate::shadow::export_parts(value)
+            .find(|(_, outer)| *outer == &*name.0)
+            .map(|(inner, _)| AtomIdent::from(inner))
     }
 
-    fn is_part(&self, _name: &<Self::Impl as selectors::SelectorImpl>::Identifier) -> bool {
-        false
+    fn is_part(&self, name: &<Self::Impl as selectors::SelectorImpl>::Identifier) -> bool {
+        self.attr(local_name!("part"))
+            .is_some_and(|parts| parts.split_ascii_whitespace().any(|p| p == &*name.0))
     }
 
     fn is_empty(&self) -> bool {
@@ -906,6 +965,10 @@ impl<'a> TElement for BlitzNode<'a> {
         if !matches!(self.data, NodeData::AnonymousBlock(_)) {
             return None;
         }
+        // pyro: the box of a scroll pseudo-element (`layout::scroll_markers`).
+        if let Some((pseudo, _)) = self.scroll_pseudo() {
+            return Some(pseudo);
+        }
         let parent = &self.tree()[self.parent?];
         if parent.before() == Some(self.id) {
             Some(PseudoElement::Before)
@@ -920,15 +983,22 @@ impl<'a> TElement for BlitzNode<'a> {
         self
     }
 
+    // pyro: styles inherit through the flat tree (a slot's assigned nodes from the slot, a shadow
+    // tree's first level from the host), which `parent_element` leaves for the node trees
+    // (`crate::shadow`).
+    fn inheritance_parent(&self) -> Option<Self> {
+        TElement::traversal_parent(self)
+    }
+
     fn implicit_scope_for_sheet_in_shadow_root(
         _opaque_host: OpaqueElement,
         _sheet_index: usize,
     ) -> Option<ImplicitScopeRoot> {
         // We cannot currently implement this as we are using the NodeId as the OpaqueElement,
-        // and need a reference to the Slab to convert it back into an Element
-        //
-        // Luckily it is only needed for shadow dom.
-        todo!();
+        // and need a reference to the Slab to convert it back into an Element.
+        // pyro: a prelude-less `@scope` in a shadow tree's sheet then scopes nothing (its rules
+        // do not apply) rather than panicking.
+        None
     }
 
     fn traversal_children(&self) -> style::dom::LayoutIterator<Self::TraversalChildrenIterator> {
@@ -966,11 +1036,35 @@ impl<'a> TElement for BlitzNode<'a> {
     }
 
     fn has_part_attr(&self) -> bool {
-        false
+        self.attr(local_name!("part")).is_some()
     }
 
     fn exports_any_part(&self) -> bool {
-        false
+        self.attr(local_name!("exportparts")).is_some()
+    }
+
+    fn each_part<F>(&self, mut callback: F)
+    where
+        F: FnMut(&style::values::AtomIdent),
+    {
+        if let Some(parts) = self.attr(local_name!("part")) {
+            for part in parts.split_ascii_whitespace() {
+                callback(&AtomIdent::from(part));
+            }
+        }
+    }
+
+    fn each_exported_part<F>(&self, name: &style::values::AtomIdent, mut callback: F)
+    where
+        F: FnMut(&style::values::AtomIdent),
+    {
+        if let Some(value) = self.attr(local_name!("exportparts")) {
+            for (inner, outer) in crate::shadow::export_parts(value) {
+                if inner == &*name.0 {
+                    callback(&AtomIdent::from(outer));
+                }
+            }
+        }
     }
 
     fn id(&self) -> Option<&style::Atom> {
@@ -1151,11 +1245,11 @@ impl<'a> TElement for BlitzNode<'a> {
     }
 
     fn shadow_root(&self) -> Option<<Self::ConcreteNode as TNode>::ConcreteShadowRoot> {
-        None
+        self.is_shadow_host().then_some(*self)
     }
 
     fn containing_shadow(&self) -> Option<<Self::ConcreteNode as TNode>::ConcreteShadowRoot> {
-        None
+        self.containing_shadow_host_id().map(|host| self.with(host))
     }
 
     fn get_attr(&self, attr: &style::LocalName, ns: &style::Namespace) -> Option<String> {
@@ -1168,6 +1262,10 @@ impl<'a> TElement for BlitzNode<'a> {
         let name = lowered.as_ref().unwrap_or(&attr.0);
         // pyro: for a pseudo-element's box (the marker style of a `::before` or `::after` list
         // item is cascaded on it), the attribute of its originating element.
+        // pyro: and of a scroll pseudo-element's box, of its originating element.
+        if let Some((_, origin)) = self.scroll_pseudo() {
+            return self.with(origin).get_attr(attr, ns);
+        }
         if matches!(self.data, NodeData::AnonymousBlock(_))
             && let Some(parent) = self.parent.map(|id| &self.tree()[id])
             && (parent.before() == Some(self.id) || parent.after() == Some(self.id))
@@ -1951,6 +2049,7 @@ pub struct RecalcStyle<'a> {
     first_letter_changed: Mutex<Vec<NodeId>>,
     /// pyro: restyled list items with a `::marker` style node (`layout::list::item_restyled`).
     marker_items_restyled: Mutex<Vec<NodeId>>,
+    scroll_marker_groups: std::sync::atomic::AtomicBool,
     /// pyro: an element styled in this traversal kept a `::first-line` style, and the elements
     /// whose `::first-line` style it changed (`layout::first_line::style_changed`).
     first_line_styles: std::sync::atomic::AtomicBool,
@@ -1978,6 +2077,7 @@ impl<'a> RecalcStyle<'a> {
             first_letter_styles: std::sync::atomic::AtomicBool::new(false),
             first_letter_changed: Mutex::new(Vec::new()),
             marker_items_restyled: Mutex::new(Vec::new()),
+            scroll_marker_groups: std::sync::atomic::AtomicBool::new(false),
             first_line_styles: std::sync::atomic::AtomicBool::new(false),
             first_line_changed: Mutex::new(Vec::new()),
             generated_counters: std::sync::atomic::AtomicBool::new(false),
@@ -2065,6 +2165,8 @@ impl crate::BaseDocument {
                 sibling_traversal_map,
             }
         }
+        // pyro: `:host:has()` (`crate::shadow`).
+        self.invalidate_host_relative_selectors(node);
         let prev = node.prev_sibling_element();
         let next = node.next_sibling_element();
         invalidator(node, SiblingTraversalMap::default()).invalidate_relative_selectors_for_dom_mutation(
@@ -2224,7 +2326,8 @@ impl<'dom> DomTraversal<BlitzNode<'dom>> for RecalcStyle<'_> {
                     _ => false,
                 }
                 // pyro: as does `visibility: collapse` coming or going on a row or row group
-                // (`TableRow::collapsed`: the row's track is taken away).
+                // (`TableRow::collapsed`: the row's track is taken away), or on a flex item (it
+                // leaves its line, which keeps its cross size: Taffy's `measure_collapsed_item_struts`).
                 || match (&old_primary, new_primary) {
                     (Some(old), Some(new)) if replaced => {
                         use style::computed_values::visibility::T as Visibility;
@@ -2232,13 +2335,17 @@ impl<'dom> DomTraversal<BlitzNode<'dom>> for RecalcStyle<'_> {
                         let (was, is) = (old.get_inherited_box().visibility, new.get_inherited_box().visibility);
                         was != is
                             && (was == Visibility::Collapse || is == Visibility::Collapse)
-                            && matches!(
+                            && (matches!(
                                 new.get_display().inside(),
                                 DisplayInside::TableRow
                                     | DisplayInside::TableRowGroup
                                     | DisplayInside::TableHeaderGroup
                                     | DisplayInside::TableFooterGroup
-                            )
+                            ) || el.layout_parent.get().or(el.parent).is_some_and(|parent| {
+                                el.tree()[parent]
+                                    .primary_styles()
+                                    .is_some_and(|style| style.get_display().inside() == DisplayInside::Flex)
+                            }))
                     }
                     _ => false,
                 };
@@ -2288,6 +2395,14 @@ impl<'dom> DomTraversal<BlitzNode<'dom>> for RecalcStyle<'_> {
 
             if el.element_data().is_some_and(|element| element.marker_style.is_some()) {
                 self.marker_items_restyled.lock().unwrap().push(el.id);
+            }
+
+            // pyro: a scroll marker group or a scroll target group (`layout::scroll_markers`).
+            if data.styles.get_primary().is_some_and(|style| {
+                style.get_box().slow_clone_scroll_marker_group().generates_group()
+                    || style.get_box().slow_clone_scroll_target_group() != style::values::computed::ScrollTargetGroup::None
+            }) {
+                self.scroll_marker_groups.store(true, std::sync::atomic::Ordering::Relaxed);
             }
 
             // One empty check for an element without eager pseudo styles.

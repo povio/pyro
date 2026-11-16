@@ -279,7 +279,8 @@ impl AtRuleType {
             "font-face" => Self::FontFace,
             "font-feature-values" => Self::FontFeatureValues,
             "font-palette-values" if crate::pref!("layout.css.font-palette.enabled", gecko = true) => Self::FontPaletteValues,
-            "counter-style" if cfg!(feature = "gecko") => Self::CounterStyle,
+            // pyro: for servo too (blitz-dom reads `system: extends` for list markers).
+            "counter-style" => Self::CounterStyle,
             "media" => Self::Media,
             "custom-media" if crate::pref!("layout.css.custom-media.enabled") => Self::CustomMedia,
             "container" => Self::Container,

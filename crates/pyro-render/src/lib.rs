@@ -217,6 +217,10 @@ pub struct Snapshot {
     /// positions have it; those of other elements are reset. `None` leaves
     /// the document's.
     pub sticky_offsets: Option<Vec<(u64, (f64, f64))>>,
+    /// The current scroll targets of a [`Live`] document (CSS Overflow 5 § 2.1, scroll marker
+    /// selection): each scroll container's key (`u64::MAX` for the viewport) and its target's.
+    /// `None` leaves the document's.
+    pub scroll_targets: Option<Vec<(u64, u64)>>,
     /// Straight RGBA painted under the document where it has no background
     /// (CDP `Emulation.setDefaultBackgroundColorOverride`); `None`: white.
     pub background: Option<[u8; 4]>,
@@ -230,6 +234,9 @@ pub struct Snapshot {
     /// attribute names case-sensitively. A [`Live`] document whose value
     /// changes is built anew.
     pub xml_document: bool,
+    /// A document in quirks mode: percentage heights look through `auto`-height blocks for
+    /// their basis (Quirks Mode §3.5). A [`Live`] document whose value changes is built anew.
+    pub quirks_mode: bool,
     /// The document's HTTP `Content-Language` (one language tag), the last
     /// fallback for `:lang()`. A [`Live`] document whose value changes is
     /// built anew.
@@ -884,6 +891,7 @@ impl Renderer {
             media_type: Some(media_type(snap.print)),
             line_break_override: self.hyphen_digit_breaks.then_some(parley::HYPHEN_DIGIT_LINE_BREAK_OVERRIDE),
             xml_document: snap.xml_document,
+            quirks_mode: snap.quirks_mode,
             content_language: snap.content_language.clone(),
             ..DocumentConfig::default()
         };
@@ -905,6 +913,7 @@ impl Renderer {
                     || m.base_url != snap.base_url
                     || m.facts.0 != snap.xml_document
                     || m.facts.1 != snap.content_language
+                    || m.facts.2 != snap.quirks_mode
                     || m.doc.line_break_override().is_some() != self.hyphen_digit_breaks =>
             {
                 Some(Rebuild::Document)
@@ -986,6 +995,9 @@ impl Renderer {
                         }
                         if let Some(offsets) = &snap.sticky_offsets {
                             m.set_sticky_offsets(offsets);
+                        }
+                        if let Some(targets) = &snap.scroll_targets {
+                            m.set_scroll_targets(targets);
                         }
                         m.set_canvases(&snap.canvases);
                         // The selection's text nodes, both in the document.
@@ -1086,6 +1098,10 @@ impl Renderer {
         let (origin, scale, w, h) = match area {
             Area::Viewport => {
                 doc.set_viewport_scroll(blitz_dom::Point { x: snap.scroll_x, y: snap.scroll_y });
+                // Scroll markers and buttons follow the viewport's scroll (`:target-current`).
+                if doc.tracks_scroll_states() {
+                    doc.resolve(0.0);
+                }
                 ((0.0, 0.0), dpr, physical(vw as f64), physical(vh as f64))
             }
             Area::FullPage => {
@@ -1102,6 +1118,9 @@ impl Renderer {
                     true => (x, y),
                     false => {
                         doc.set_viewport_scroll(blitz_dom::Point { x: snap.scroll_x, y: snap.scroll_y });
+                        if doc.tracks_scroll_states() {
+                            doc.resolve(0.0);
+                        }
                         (x - snap.scroll_x, y - snap.scroll_y)
                     }
                 };
@@ -1139,9 +1158,10 @@ impl Renderer {
         let mut page = Scene::new();
         let extent_w = ((origin.0 * dpr) as u32).saturating_add((w as f64 * dpr / scale).ceil() as u32);
         let extent_h = ((origin.1 * dpr) as u32).saturating_add((h as f64 * dpr / scale).ceil() as u32);
-        blitz_paint::paint_scene(&mut page, doc, dpr, extent_w, extent_h, 0, 0);
-        doc.set_dom_selection(None);
         let transform = Affine::scale(scale / dpr) * Affine::translate((-origin.0 * dpr, -origin.1 * dpr));
+        // (Painting knows where the page lands in the image's pixels: see `paint_scene_for_device`.)
+        blitz_paint::paint_scene_for_device(&mut page, doc, dpr, extent_w, extent_h, 0, 0, transform);
+        doc.set_dom_selection(None);
         scene.append_scene(page, transform);
         let hash = scene_hash(&scene, w, h, &mut self.blob_hashes);
         timings.scene = t.elapsed();
@@ -1277,6 +1297,15 @@ impl Renderer {
             changed = true;
         }
         changed
+    }
+
+    /// The resolved value of `property` of the element keyed `key` in `page`'s persistent document as of
+    /// the last sync (Blink's `getComputedStyle` value: used track sizes, a subgrid's line names; blitz-dom's
+    /// `resolved_style_value`). `None`: not mirrored.
+    pub fn resolved_style_value(&self, page: u64, key: u64, property: &str) -> Option<String> {
+        let m = self.mirrors.get(&page)?;
+        let id = m.node(key)?;
+        Some(m.doc.resolved_style_value(id, property))
     }
 
     /// The computed style of the element keyed `key` in `page`'s persistent
@@ -1477,7 +1506,9 @@ impl Renderer {
             }
             let (Some(key), Some(b)) = (m.key_of(id), g.element_box(doc, id)) else { continue };
             if b.position == BoxPosition::Sticky {
-                sticky.push((key, g.sticky_box(doc, id)));
+                let (mut s, cb) = g.sticky_box(doc, id);
+                s.cb = cb.and_then(|cb| m.key_of(cb));
+                sticky.push((key, s));
             }
             boxes.push((key, b));
         }
@@ -1525,7 +1556,11 @@ impl Renderer {
                 }
                 let key = m.key_of(id)?;
                 let b = g.element_box(doc, id)?;
-                (b.position == BoxPosition::Sticky).then(|| (key, g.sticky_box(doc, id)))
+                (b.position == BoxPosition::Sticky).then(|| {
+                    let (mut s, cb) = g.sticky_box(doc, id);
+                    s.cb = cb.and_then(|cb| m.key_of(cb));
+                    (key, s)
+                })
             })
             .collect();
         out.sort_by_key(|(key, _)| *key);

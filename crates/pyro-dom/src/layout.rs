@@ -232,6 +232,10 @@ pub struct Layout {
     /// origin is at its end (right-to-left, `row-reverse`, `column-reverse`, ...), as CSSOM View
     /// and Blitz's scroll offsets have them.
     element_scroll: FxHashMap<NodeId, (i32, i32)>,
+    /// CSS Overflow 5 § 2.1: each scroll container's current scroll target, the element a script
+    /// scroll into view last revealed in it, until it scrolls otherwise (the viewport's under
+    /// `None`). Scroll marker selection reads it (`scroll_targets`).
+    scroll_targets: FxHashMap<Option<NodeId>, NodeId>,
     /// CSS Scroll Anchoring: the layout each vertically scrolled element
     /// was last settled in, to select its anchor in when the layout next
     /// changes.
@@ -510,6 +514,7 @@ impl Layout {
             window_scroll: (0, 0),
             scroll_generation: 0,
             element_scroll: FxHashMap::default(),
+            scroll_targets: FxHashMap::default(),
             scroll_anchors: FxHashMap::default(),
             external,
             external_synced: std::cell::Cell::new(None),
@@ -643,7 +648,21 @@ impl Layout {
     /// The `position: sticky` elements' inputs, read again when the DOM,
     /// styles, focus/hover or viewport changed; empty while the engine lays
     /// out no sticky element (one flag check: no read).
+    ///
+    /// pyro: whether any element is sticky is known from styles alone (the
+    /// engine's style traversal keeps the set, `GeometrySource::has_sticky`):
+    /// a document without one is restyled, not laid out, for the question.
+    /// Every render snapshot asks it (each screenshot and screencast frame),
+    /// and a layout of the whole document for it after each DOM change cost
+    /// a capture about half a millisecond.
     fn sticky_map(&self, dom: &Dom) -> Rc<FxHashMap<NodeId, ExternalSticky>> {
+        let styled_without_sticky = self.external.as_ref().filter(|s| s.active()).is_some_and(|source| {
+            // (`None`: no styles to tell by now; the sync below decides.)
+            self.style.engine_styled(dom).is_some() && !source.has_sticky()
+        });
+        if styled_without_sticky {
+            return Rc::default();
+        }
         let Some(source) = self.synced_geometry_source(dom).filter(|s| s.has_sticky()) else { return Rc::default() };
         let key = self.syncs.get();
         if let Some((k, m)) = self.sticky.borrow().as_ref() {
@@ -1541,16 +1560,56 @@ impl Layout {
         box_of: &dyn Fn(NodeId) -> Option<LayoutBox>,
     ) -> (f64, f64) {
         let (mut x, mut y) = (0.0, 0.0);
+        let mut memo = FxHashMap::default();
         let mut cur = Some(node);
         while let Some(n) = cur {
-            if let Some(sticky) = sticky_of(n) {
-                let (dx, dy) = self.sticky_offset(dom, n, &sticky, box_of);
+            if sticky_of(n).is_some() {
+                let (dx, dy) = self.sticky_delta(dom, n, sticky_of, box_of, &mut memo);
                 x += dx;
                 y += dy;
             }
             cur = dom.parent_element(n).ok().flatten();
         }
         (x, y)
+    }
+
+    /// The offset `el`'s own stickiness adds to its sticky ancestors' (the box moves by
+    /// all of them): computed with its box moved by theirs, and its containing block by
+    /// the ones that hold that block, as Blink's sticky constraints do (a sticky cell in
+    /// a sticky row is where the row holds it before it holds itself; WPT
+    /// `position-sticky-table-parts`). `memo` keeps the ones computed.
+    fn sticky_delta(
+        &self,
+        dom: &Dom,
+        el: NodeId,
+        sticky_of: &dyn Fn(NodeId) -> Option<ExternalSticky>,
+        box_of: &dyn Fn(NodeId) -> Option<LayoutBox>,
+        memo: &mut FxHashMap<NodeId, (f64, f64)>,
+    ) -> (f64, f64) {
+        if let Some(&delta) = memo.get(&el) {
+            return delta;
+        }
+        let Some(sticky) = sticky_of(el) else { return (0.0, 0.0) };
+        let cb = sticky.cb.and_then(|key| node_of(dom, key));
+        let (mut box_shift, mut cb_shift) = ((0.0, 0.0), (0.0, 0.0));
+        let mut holds_cb = cb.is_none();
+        let mut cur = dom.parent_element(el).ok().flatten();
+        while let Some(n) = cur {
+            holds_cb |= Some(n) == cb;
+            if sticky_of(n).is_some() {
+                let (dx, dy) = self.sticky_delta(dom, n, sticky_of, box_of, memo);
+                box_shift.0 += dx;
+                box_shift.1 += dy;
+                if holds_cb {
+                    cb_shift.0 += dx;
+                    cb_shift.1 += dy;
+                }
+            }
+            cur = dom.parent_element(n).ok().flatten();
+        }
+        let delta = self.sticky_offset(dom, el, &sticky, box_of, box_shift, cb_shift);
+        memo.insert(el, delta);
+        delta
     }
 
     /// CSS Positioned Layout 3 sticky positioning for one box laid out in
@@ -1567,6 +1626,8 @@ impl Layout {
         el: NodeId,
         sticky: &ExternalSticky,
         box_of: &dyn Fn(NodeId) -> Option<LayoutBox>,
+        box_shift: (f64, f64),
+        cb_shift: (f64, f64),
     ) -> (f64, f64) {
         let Some(b) = box_of(el) else { return (0.0, 0.0) };
         // Scrollport in document coordinates of the scrolled content.
@@ -1615,9 +1676,10 @@ impl Layout {
         let (wx, wy) = if fixed { (0.0, 0.0) } else { (self.window_scroll.0 as f64, self.window_scroll.1 as f64) };
         let port =
             port.unwrap_or(Rect { x: wx, y: wy, width: self.inner_width() as f64, height: self.inner_height() as f64 });
-        let limit = sticky.limit.map(|(x, y, width, height)| Rect { x, y, width, height });
+        let limit =
+            sticky.limit.map(|(x, y, width, height)| Rect { x: x + cb_shift.0, y: y + cb_shift.1, width, height });
         let inset = |side: usize, basis: f64| sticky.insets[side].map(|(px, fraction)| px + fraction * basis);
-        let r = b.rect;
+        let r = Rect { x: b.rect.x + box_shift.0, y: b.rect.y + box_shift.1, ..b.rect };
         // One axis: start inset pulls forward, end inset pulls back, both
         // bounded by the containing block (`lo`..`hi` along the axis).
         let axis = |start: Option<f64>,
@@ -2253,6 +2315,8 @@ impl Layout {
     /// origin whatever the document's size, so `scrollTo(0, 0)` (a router's
     /// scroll restoration on every navigation) lays nothing out.
     pub fn window_scroll_to(&mut self, dom: &Dom, left: Option<i32>, top: Option<i32>) -> bool {
+        // A scroll without a target (CSS Overflow 5 § 2.1).
+        self.scroll_targets.remove(&None);
         let (max_x, max_y) = if left.is_some_and(|l| l > 0) || top.is_some_and(|t| t > 0) {
             let (w, h) = self.document_scroll_size(dom);
             (scroll_limit(w, self.inner_width()), scroll_limit(h, self.inner_height()))
@@ -2325,6 +2389,8 @@ impl Layout {
         if self.owned(dom, el).is_none() {
             return false;
         }
+        // A scroll without a target (CSS Overflow 5 § 2.1).
+        self.scroll_targets.remove(&Some(el));
         let current = self.element_scroll.get(&el).copied().unwrap_or((0, 0));
         let mut x = current.0;
         let mut y = current.1;
@@ -2486,10 +2552,12 @@ impl Layout {
         if sticky.is_empty() {
             return Vec::new();
         }
+        let mut memo = FxHashMap::default();
         let mut out: Vec<(u64, (f64, f64))> = sticky
-            .iter()
-            .filter_map(|(&el, s)| {
-                let offset = self.sticky_offset(dom, el, s, &|n| self.layout_box(dom, n));
+            .keys()
+            .filter_map(|&el| {
+                let offset =
+                    self.sticky_delta(dom, el, &|n| sticky.get(&n).copied(), &|n| self.layout_box(dom, n), &mut memo);
                 (offset != (0.0, 0.0)).then(|| (crate::snapshot::render_key(el), offset))
             })
             .collect();
@@ -2841,10 +2909,55 @@ impl Layout {
         block: ScrollAlign,
         inline: ScrollAlign,
     ) -> Vec<ScrollTarget> {
-        if block == ScrollAlign::Start && inline == ScrollAlign::Nearest {
-            return self.scroll_into_view_targets(dom, el);
+        let moved = if block == ScrollAlign::Start && inline == ScrollAlign::Nearest {
+            self.scroll_into_view_targets(dom, el)
+        } else {
+            self.scroll_into_view_offset_targets(dom, el, inline.offset_fn(), block.offset_fn(), true)
+        };
+        self.set_scroll_target(dom, el);
+        moved
+    }
+
+    /// CSS Overflow 5 § 2.1: `el` is the current scroll target of each scroll container it was
+    /// scrolled into view in (and of the viewport).
+    fn set_scroll_target(&mut self, dom: &Dom, el: NodeId) {
+        if !self.is_visible(dom, el) {
+            return;
         }
-        self.scroll_into_view_offset_targets(dom, el, inline.offset_fn(), block.offset_fn(), true)
+        use style::values::specified::box_::Overflow as O;
+        let scroller = |o: O| matches!(o, O::Hidden | O::Scroll | O::Auto);
+        let mut cur = dom.parent_element(el).ok().flatten();
+        while let Some(node) = cur {
+            if self.is_root_container(dom, node) {
+                break;
+            }
+            let scrolls = self.style.stylo_style(dom, node).is_some_and(|s| {
+                let b = s.get_box();
+                scroller(b.overflow_x) || scroller(b.overflow_y)
+            });
+            if scrolls {
+                self.scroll_targets.insert(Some(node), el);
+            }
+            cur = dom.parent_element(node).ok().flatten();
+        }
+        self.scroll_targets.insert(None, el);
+    }
+
+    /// The current scroll targets (CSS Overflow 5 § 2.1) by render key: each scroll container's
+    /// (the viewport's under `u64::MAX`) and its target's. Elements no longer in the document drop.
+    pub fn scroll_targets(&self, dom: &Dom) -> Vec<(u64, u64)> {
+        let mut out: Vec<(u64, u64)> = self
+            .scroll_targets
+            .iter()
+            .filter(|&(scroller, &target)| {
+                dom.check(target).is_ok() && scroller.is_none_or(|scroller| dom.check(scroller).is_ok())
+            })
+            .map(|(scroller, &target)| {
+                (scroller.map_or(u64::MAX, crate::snapshot::render_key), crate::snapshot::render_key(target))
+            })
+            .collect();
+        out.sort_unstable();
+        out
     }
 
     /// Script-facing `Element.scrollIntoViewIfNeeded(centerIfNeeded)`.
@@ -2858,7 +2971,9 @@ impl Layout {
     ) -> Vec<ScrollTarget> {
         let offset: fn(f64, f64, f64, i64) -> Option<i32> =
             if center_if_needed { center_if_needed_offset } else { nearest_scroll_offset };
-        self.scroll_into_view_offset_targets(dom, el, offset, offset, true)
+        let moved = self.scroll_into_view_offset_targets(dom, el, offset, offset, true);
+        self.set_scroll_target(dom, el);
+        moved
     }
 
     /// `offset_x` aligns the horizontal axis, `offset_y` the vertical one.
@@ -3027,7 +3142,25 @@ impl Layout {
                 .computed_value(dom, el, "font-size")
                 .unwrap_or_else(|| format!("{}px", self.style.computed_font_size(dom, Some(el))));
         }
+        if let Some(v) = self.style.timing_value(dom, el, name) {
+            return v;
+        }
         let declared = self.style.computed_value(dom, el, name);
+        // pyro: a grid container's template resolves to its used tracks, each listed (css-grid-1 §7.2.6), and a
+        // subgrid's to `subgrid` with each of its lines' names (css-grid-2 §7.2.6.2): only its layout knows
+        // them (`repeat(auto-fill, …)` counts, implicit tracks, how many tracks a subgrid spans)
+        if matches!(name, "grid-template-columns" | "grid-template-rows")
+            && (declared.as_deref().is_some_and(|value| value.starts_with("subgrid"))
+                || self.style.computed_display(dom, el).is_some_and(|display| display.ends_with("grid")))
+        {
+            if let Some(value) = self
+                .synced_geometry_source(dom)
+                .and_then(|source| source.resolved_style_value(crate::snapshot::render_key(el), name))
+                .filter(|value| !value.is_empty())
+            {
+                return value;
+            }
+        }
         if name == "width" || name == "height" {
             if !self.is_visible(dom, el) {
                 return "auto".into();

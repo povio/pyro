@@ -57,6 +57,7 @@ mod iframe;
 mod layout;
 pub use layout::table::{CollapsedEdge, CollapsedEdges, TableCell, TableContext};
 pub use layout::multicol::{ColumnFragment, ColumnFragments};
+pub use layout::inline::span_edge_margins;
 mod mutator;
 mod query_selector;
 mod resolve;
@@ -75,6 +76,8 @@ mod icc;
 mod lang;
 /// pyro: the directionality of an element, for `:dir()`.
 mod direction;
+mod shadow;
+pub use shadow::{ASSIGNED_SLOT_ATTR, SHADOW_HOST_ATTR};
 /// pyro: SVG reference cycles usvg does not break.
 #[cfg(feature = "svg")]
 mod svg_refs;

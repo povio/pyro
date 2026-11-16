@@ -44,3 +44,25 @@ fn an_svg_without_a_size_is_300_by_150() {
     assert_eq!(pixel(&img, 305, 5), [255, 255, 255], "right of 300");
     assert_eq!(pixel(&img, 5, 155), [255, 255, 255], "below 150");
 }
+
+/// pyro (lane G): a declared absolute `width` is the natural width, whatever the content: usvg's
+/// resolved width of an SVG without a height took its content's bounds (46px here).
+#[test]
+fn an_svg_with_only_a_width_is_that_wide() {
+    let img = render(
+        "<img style='background:lime' src=\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20px'%3E%3Ccircle cx='50%25' cy='50%25' r='50%25' fill='%2300f'/%3E%3C/svg%3E\">",
+    );
+    assert_ne!(pixel(&img, 10, 140), [255, 255, 255], "inside 20x150");
+    assert_eq!(pixel(&img, 25, 75), [255, 255, 255], "right of 20");
+}
+
+/// pyro (lane G): a zero `width` is a natural width of zero, not an invalid image: the natural height
+/// still sizes the box.
+#[test]
+fn an_svg_with_a_zero_width_keeps_its_natural_height() {
+    let img = render(
+        "<img style='width:50px;background:lime' src=\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='0' height='20'%3E%3C/svg%3E\">",
+    );
+    assert_eq!(pixel(&img, 25, 10), [0, 255, 0], "inside 50x20");
+    assert_eq!(pixel(&img, 25, 25), [255, 255, 255], "below 20");
+}

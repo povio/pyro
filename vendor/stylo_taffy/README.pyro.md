@@ -27,3 +27,33 @@ entry) once a Blitz release carries these commits and changes.
 - `src/convert.rs`, `src/wrapper.rs`: `BlockItemStyle::min_size_keyword`/`max_size_keyword` answer the sizing
   keywords of `min-width`, `max-width`, `min-height` and `max-height` (`min_size`/`max_size` still say `auto` for
   them), for Taffy's block layout (vendor/taffy/README.pyro.md).
+- `src/wrapper.rs`: `StyleFlags::OVERFLOW_TO_VIEWPORT`, set by blitz-dom on the `<body>` whose `overflow` the viewport
+  takes (CSS Overflow 3 §3.3): `overflow()` answers `visible` in both axes, so `body { overflow: hidden }` makes no
+  scroll container (no block formatting context; its children's margins collapse through it).
+- `src/wrapper.rs`: subgrids for Taffy (vendor/taffy/README.pyro.md, "Subgrids"): `GridContainerStyle::subgrid_line_names`
+  (the `<line-name-list>` of `grid-template-*: subgrid`, `repeat(<integer>)` expanded, `repeat(auto-fill)` marked),
+  `gap_is_normal`, and `GridItemStyle::is_subgrid` (a grid container in flow, in its parent's orientation, with no
+  layout or paint containment and no size container type, whose template in the axis is `subgrid`).
+- `src/wrapper.rs`: `TaffyStyloStyle::natural_ratio`, set by blitz-dom on a replaced element with a natural aspect ratio;
+  `CoreStyle::natural_aspect_ratio` answers it (in the layout's axes) while `aspect-ratio` is `auto`, for Taffy's flex
+  algorithm (vendor/taffy/README.pyro.md, "Natural aspect ratios of flex items").
+- `src/wrapper.rs`: `BlockContainerStyle::text_align_edge` (`start`/`end` by the direction in Taffy's axes,
+  `left`/`right` by the line-left side) and `BlockItemStyle::original_display_is_inline`, for the static positions of
+  inline-level out-of-flow boxes in block containers (vendor/taffy/README.pyro.md, "Static positions and positioned
+  table parts").
+- `src/wrapper.rs`: `FlexboxItemStyle::is_table` (a table wrapper box), for Taffy's flex algorithm (vendor/taffy/README.pyro.md,
+  "Tables: a height is a minimum; tables as flex items").
+- `src/wrapper.rs`: `FlexboxItemStyle::min_size_keyword`/`max_size_keyword`, the block items' (vendor/taffy/README.pyro.md,
+  "Sizing keywords in flex items' minimum and maximum sizes").
+- `src/convert.rs` (`item_alignment`): `last baseline` is Taffy's `AlignItems::LAST_BASELINE` (it was `end`, its fallback),
+  for flex rows (vendor/taffy/README.pyro.md, "`last baseline` in flex rows").
+- `src/wrapper.rs`: `GridItemStyle::subgrid_axis`/`subgrid_reversed` for orthogonal subgrids: the parent's inline axis is
+  the child's block axis when one of them is vertical, and whether the tracks run opposite ways is found from both
+  writing modes (inline: `direction` or `is_inline_tb`; block: top to bottom, or `vertical-lr`/`-rl`).
+- `src/wrapper.rs`: `FlexboxItemStyle::is_collapsed` (`visibility: collapse`) for collapsed flex items
+  (vendor/taffy/README.pyro.md, "`visibility: collapse` on flex items").
+- `src/convert.rs` (`content_alignment`, `item_alignment`): `flow-start`/`flow-end` (vendor/stylo/README.pyro.md) are
+  Taffy's `FLEX_START`/`FLEX_END`, which are `start`/`end` outside flex layout.
+- `src/wrapper.rs`: `OofItemStyle::min_size_keyword`/`max_size_keyword` (the block item's), for the sizing
+  keywords in the minimum and maximum sizes of absolutely positioned boxes (vendor/taffy/README.pyro.md).
+- `src/convert.rs`: `collapsed_rows` (vendor/taffy/README.pyro.md) is empty; blitz-dom's table layout sets it.

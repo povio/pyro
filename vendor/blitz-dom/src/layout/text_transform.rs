@@ -135,6 +135,27 @@ impl TextTransformer {
         self.transform_nonempty(text, transform, builder)
     }
 
+    /// pyro: transforms a text that is a word of its own, with nothing before it (a list
+    /// marker's string).
+    pub(crate) fn transform_alone(&mut self, text: &str, transform: &CaseTransform) -> String {
+        if transform.text_transform.is_empty() {
+            return text.to_string();
+        }
+        let mut output = OutputSink::new(text, &mut self.output);
+        output.width = transform.text_transform & WIDTH_TRANSFORMS;
+        output.white_space_collapse = transform.white_space_collapse;
+        match transform.text_transform.case() {
+            TextTransformCase::None => output.push_str(text),
+            TextTransformCase::Uppercase => uppercase(text, &transform.lang, &mut output),
+            TextTransformCase::Lowercase => lowercase(text, &transform.lang, &mut output),
+            TextTransformCase::MathAuto => math_auto(text, &mut output),
+            TextTransformCase::Capitalize => {
+                capitalize("", text, &transform.lang, &mut self.segmentation_buffer, &mut output)
+            }
+        }
+        output.finish().to_string()
+    }
+
     fn transform_nonempty<'a, B: Brush>(
         &'a mut self,
         text: &'a str,

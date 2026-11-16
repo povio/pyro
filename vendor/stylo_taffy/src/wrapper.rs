@@ -41,6 +41,10 @@ bitflags! {
         /// pyro: the node is a replaced element with a natural aspect ratio (a loaded image, a
         /// canvas): `aspect-ratio: auto <ratio>` then means the natural one (css-sizing-4 §5.1).
         const HAS_NATURAL_RATIO = 1 << 6;
+        /// pyro: the node is the `<body>` whose `overflow` the viewport takes (CSS Overflow 3
+        /// §3.3): its used `overflow` is `visible` in both axes, so it is no scroll container
+        /// (it does not establish a block formatting context, its margins collapse).
+        const OVERFLOW_TO_VIEWPORT = 1 << 7;
     }
 }
 
@@ -65,6 +69,9 @@ pub struct TaffyStyloStyle<T: Deref<Target = ComputedValues>> {
     /// `parent_size.width`, i.e. the containing block's block size.
     #[cfg(feature = "writing-mode")]
     pub percent_basis: Option<f32>,
+    /// pyro: the natural aspect ratio of a replaced element (width over height, physical), set by the
+    /// tree; `CoreStyle::natural_aspect_ratio` answers it while `aspect-ratio` is `auto`.
+    pub natural_ratio: Option<f32>,
 }
 
 impl<T: Deref<Target = ComputedValues>> TaffyStyloStyle<T> {
@@ -93,6 +100,7 @@ impl<T: Deref<Target = ComputedValues>> TaffyStyloStyle<T> {
             align_axis_is_inline: false,
             #[cfg(feature = "writing-mode")]
             percent_basis: None,
+            natural_ratio: None,
         }
     }
 
@@ -109,6 +117,7 @@ impl<T: Deref<Target = ComputedValues>> TaffyStyloStyle<T> {
             align_axis_is_inline: false,
             #[cfg(feature = "writing-mode")]
             percent_basis: None,
+            natural_ratio: None,
         }
     }
 
@@ -217,6 +226,9 @@ impl<T: Deref<Target = ComputedValues>> taffy::CoreStyle for TaffyStyloStyle<T> 
 
     #[inline]
     fn overflow(&self) -> taffy::Point<taffy::Overflow> {
+        if self.flags.contains(StyleFlags::OVERFLOW_TO_VIEWPORT) {
+            return taffy::Point { x: taffy::Overflow::Visible, y: taffy::Overflow::Visible };
+        }
         let box_styles = self.style.get_box();
         let overflow = taffy::Point {
             x: convert::overflow(box_styles.overflow_x),
@@ -300,6 +312,14 @@ impl<T: Deref<Target = ComputedValues>> taffy::CoreStyle for TaffyStyloStyle<T> 
         }
         let ratio = convert::aspect_ratio(aspect_ratio);
         self.layout_wm().logical_aspect_ratio(ratio)
+    }
+
+    #[inline]
+    fn natural_aspect_ratio(&self) -> Option<f32> {
+        if !self.style.get_position().aspect_ratio.auto {
+            return None;
+        }
+        self.layout_wm().logical_aspect_ratio(self.natural_ratio)
     }
 
     #[inline]
@@ -393,6 +413,22 @@ impl<T: Deref<Target = ComputedValues>> taffy::BlockContainerStyle for TaffyStyl
     fn text_align(&self) -> taffy::TextAlign {
         let align = convert::text_align(self.style.clone_text_align());
         self.layout_wm().logical_text_align(align)
+    }
+
+    /// pyro: `start`/`end` by the direction in Taffy's axes, `left`/`right` by the line-left
+    /// side (the bottom in `sideways-lr`, Taffy's right there).
+    #[inline]
+    fn text_align_edge(&self) -> taffy::AxisStaticEdge {
+        use taffy::AxisStaticEdge::{Center, End, Start};
+        let (start, end) = if taffy::CoreStyle::direction(self).is_rtl() { (End, Start) } else { (Start, End) };
+        let (left, right) = if self.layout_wm().line_left_is_bottom() { (End, Start) } else { (Start, End) };
+        match self.style.clone_text_align() {
+            stylo::TextAlign::Start | stylo::TextAlign::Justify => start,
+            stylo::TextAlign::End => end,
+            stylo::TextAlign::Left | stylo::TextAlign::MozLeft => left,
+            stylo::TextAlign::Right | stylo::TextAlign::MozRight => right,
+            stylo::TextAlign::Center | stylo::TextAlign::MozCenter => Center,
+        }
     }
 
     #[inline]
@@ -549,6 +585,11 @@ impl<T: Deref<Target = ComputedValues>> taffy::BlockItemStyle for TaffyStyloStyl
     }
 
     #[inline]
+    fn original_display_is_inline(&self) -> bool {
+        self.style.get_box().original_display.outside() == stylo::DisplayOutside::Inline
+    }
+
+    #[inline]
     fn breaks_lines_in_block_axis(&self) -> bool {
         let position = self.style.get_position();
         self.effective_display().inside() == stylo::DisplayInside::Flex
@@ -680,6 +721,26 @@ impl<T: Deref<Target = ComputedValues>> taffy::FlexboxItemStyle for TaffyStyloSt
     #[inline]
     fn flex_shrink(&self) -> f32 {
         self.style.get_position().flex_shrink.0
+    }
+
+    #[inline]
+    fn is_table(&self) -> bool {
+        convert::is_table(self.effective_display())
+    }
+
+    #[inline]
+    fn is_collapsed(&self) -> bool {
+        self.style.get_inherited_box().visibility == style::computed_values::visibility::T::Collapse
+    }
+
+    #[inline]
+    fn min_size_keyword(&self) -> taffy::Size<taffy::Dimension> {
+        <Self as taffy::BlockItemStyle>::min_size_keyword(self)
+    }
+
+    #[inline]
+    fn max_size_keyword(&self) -> taffy::Size<taffy::Dimension> {
+        <Self as taffy::BlockItemStyle>::max_size_keyword(self)
     }
 
     #[inline]
@@ -961,6 +1022,48 @@ impl<T: Deref<Target = ComputedValues>> taffy::GridContainerStyle for TaffyStylo
         convert::grid_auto_flow(self.style.get_position().grid_auto_flow)
     }
 
+    /// pyro: `subgrid <line-name-list>` (css-grid-2 §7.2), `repeat(<integer>, ...)` expanded and one
+    /// repetition of `repeat(auto-fill, ...)` marked.
+    fn subgrid_line_names(&self, axis: taffy::AbsoluteAxis) -> Option<taffy::SubgridLineNames<Atom>> {
+        let source = match axis {
+            taffy::AbsoluteAxis::Horizontal => self.template_columns_source(),
+            taffy::AbsoluteAxis::Vertical => self.template_rows_source(),
+        };
+        let stylo::GenericGridTemplateComponent::Subgrid(list) = source else {
+            return None;
+        };
+        let mut names = taffy::SubgridLineNames::default();
+        let set = |idents: &OwnedSlice<CustomIdent>| idents.iter().map(|ident| ident.0.clone()).collect::<Vec<_>>();
+        for value in list.line_names.iter() {
+            match value {
+                style::values::generics::grid::LineNameListValue::LineNames(idents) => names.names.push(set(idents)),
+                style::values::generics::grid::LineNameListValue::Repeat(repeat) => match repeat.count {
+                    style::values::generics::grid::RepeatCount::Number(count) => {
+                        // (Taffy clamps a grid to 10,000 tracks)
+                        for _ in 0..count.clamp(0, 10_000) {
+                            names.names.extend(repeat.line_names.iter().map(set));
+                        }
+                    }
+                    _ => {
+                        let start = names.names.len();
+                        names.names.extend(repeat.line_names.iter().map(set));
+                        names.auto_fill = Some(start..names.names.len());
+                    }
+                },
+            }
+        }
+        Some(names)
+    }
+
+    /// pyro: a subgrid's `normal` gap is its parent's.
+    fn gap_is_normal(&self) -> taffy::Size<bool> {
+        let position = self.style.get_position();
+        taffy::Size {
+            width: matches!(position.column_gap, stylo::Gap::Normal),
+            height: matches!(position.row_gap, stylo::Gap::Normal),
+        }
+    }
+
     #[inline]
     fn gap(&self) -> taffy::Size<taffy::LengthPercentage> {
         let position_styles = self.style.get_position();
@@ -1014,6 +1117,56 @@ impl<T: Deref<Target = ComputedValues>> taffy::GridItemStyle for TaffyStyloStyle
         self.grid_row_placement()
     }
 
+    /// pyro: a grid container in flow whose template in the parent's `axis` is `subgrid` (its own other axis
+    /// in an orthogonal flow), with neither layout nor paint containment (each makes it an independent
+    /// formatting context, css-grid-2 §7.2).
+    fn is_subgrid(&self, axis: taffy::AbsoluteAxis) -> bool {
+        use style::values::computed::Contain;
+        if self.effective_display().inside() != stylo::DisplayInside::Grid {
+            return false;
+        }
+        if matches!(self.style.clone_position(), stylo::Position::Absolute | stylo::Position::Fixed) {
+            return false;
+        }
+        if self.style.get_box().contain.intersects(Contain::LAYOUT | Contain::PAINT) {
+            return false;
+        }
+        // A size container has layout containment too (css-contain-3 §2)
+        if self.style.get_box().container_type.intersects(
+            style::values::specified::box_::ContainerType::SIZE | style::values::specified::box_::ContainerType::INLINE_SIZE,
+        ) {
+            return false;
+        }
+        let source = match self.subgrid_axis(axis) {
+            taffy::AbsoluteAxis::Horizontal => self.template_columns_source(),
+            taffy::AbsoluteAxis::Vertical => self.template_rows_source(),
+        };
+        matches!(source, stylo::GenericGridTemplateComponent::Subgrid(_))
+    }
+
+    /// pyro: the parent's inline axis is this box's block axis in an orthogonal flow
+    fn subgrid_axis(&self, axis: taffy::AbsoluteAxis) -> taffy::AbsoluteAxis {
+        if self.style.writing_mode.is_vertical() != self.layout_wm().is_vertical() {
+            axis.other_axis()
+        } else {
+            axis
+        }
+    }
+
+    /// pyro: whether the parent's tracks in `axis` and this subgrid's in the matching axis of its own run
+    /// opposite ways on the screen
+    fn subgrid_reversed(&self, axis: taffy::AbsoluteAxis) -> bool {
+        // Whether the tracks along a writing mode's inline (`Horizontal`) or block axis run right to left or
+        // bottom to top
+        let reversed = |wm: WritingMode, axis: taffy::AbsoluteAxis| match (axis, wm.is_vertical()) {
+            (taffy::AbsoluteAxis::Horizontal, false) => !wm.is_bidi_ltr(),
+            (taffy::AbsoluteAxis::Horizontal, true) => !wm.is_inline_tb(),
+            (taffy::AbsoluteAxis::Vertical, false) => false,
+            (taffy::AbsoluteAxis::Vertical, true) => !wm.is_vertical_lr(),
+        };
+        reversed(self.layout_wm(), axis) != reversed(self.style.writing_mode, self.subgrid_axis(axis))
+    }
+
     #[inline]
     fn grid_column(&self) -> taffy::Line<taffy::GridPlacement<Atom>> {
         self.grid_column_placement()
@@ -1037,6 +1190,16 @@ impl<T: Deref<Target = ComputedValues>> taffy::GridItemStyle for TaffyStyloStyle
 }
 
 impl<T: Deref<Target = ComputedValues>> taffy::OofItemStyle for TaffyStyloStyle<T> {
+    #[inline]
+    fn min_size_keyword(&self) -> taffy::Size<taffy::Dimension> {
+        taffy::BlockItemStyle::min_size_keyword(self)
+    }
+
+    #[inline]
+    fn max_size_keyword(&self) -> taffy::Size<taffy::Dimension> {
+        taffy::BlockItemStyle::max_size_keyword(self)
+    }
+
     #[inline]
     fn align_self(&self) -> Option<taffy::AlignSelf> {
         self.oof_self_alignment(

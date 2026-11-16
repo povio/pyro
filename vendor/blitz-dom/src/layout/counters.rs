@@ -115,6 +115,15 @@ pub(crate) fn plain_content(style: &ComputedValues, owner: NodeId) -> Option<Vec
 struct Instance {
     value: i32,
     scope: NodeId,
+    /// pyro: whether the following siblings of the box that made it see it (its scope is then
+    /// that box's parent; otherwise the box itself).
+    sibling: bool,
+}
+
+/// pyro: the scope of counters a `::before` or `::after` makes for itself alone (an id no node
+/// has).
+fn pseudo_scope() -> NodeId {
+    NodeId::from_u64(u64::MAX)
 }
 
 #[derive(Default)]
@@ -127,46 +136,63 @@ struct Walk {
 }
 
 impl Walk {
-    /// `counter-reset` on a box whose parent (the scope its counter ends with) is `scope`: a new
-    /// counter, replacing one a previous sibling made.
-    fn reset(&mut self, name: &Atom, value: i32, scope: NodeId) {
+    /// `counter-reset` on a box whose parent is `scope` (`own`: the box itself). CSS Lists 3
+    /// §4.4.1 "inheriting counters", as Chromium and WebKit have it: the new counter replaces one
+    /// a previous sibling made; when the parent already has a counter of that name (from an
+    /// ancestor), the siblings after the box keep that one and the new counter is the box's and
+    /// its descendants' alone (it ends with the box); otherwise the siblings after it inherit it
+    /// (it ends with the parent).
+    ///
+    /// `legacy`: the `list-item` counter an HTML list (`ol`, `ul`, `menu`, `dir`) resets is scoped
+    /// as CSS 2.1 had it, its following siblings inheriting it whatever the parent has (WPT
+    /// `counter-list-item-2`: items after a list nested in a list continue the nested one).
+    fn reset(&mut self, name: &Atom, value: i32, scope: NodeId, own: NodeId, legacy: bool) {
         let stack = self.counters.entry(name.clone()).or_default();
         match stack.last_mut() {
-            Some(innermost) if innermost.scope == scope => innermost.value = value,
+            Some(innermost) if innermost.scope == scope && innermost.sibling => innermost.value = value,
+            Some(_) if !legacy => {
+                stack.push(Instance { value, scope: own, sibling: false });
+                self.made.push((own, name.clone()));
+            }
             _ => {
-                stack.push(Instance { value, scope });
+                stack.push(Instance { value, scope, sibling: true });
                 self.made.push((scope, name.clone()));
             }
         }
     }
 
     /// The innermost counter `name`, instantiated at 0 on the box when there is none.
-    fn innermost(&mut self, name: &Atom, scope: NodeId) -> &mut Instance {
+    fn innermost(&mut self, name: &Atom, scope: NodeId, own: NodeId) -> &mut Instance {
         if self.counters.get(name).is_none_or(|stack| stack.is_empty()) {
-            self.reset(name, 0, scope);
+            self.reset(name, 0, scope, own, false);
         }
         self.counters.get_mut(name).unwrap().last_mut().unwrap()
     }
 
-    /// The counter properties of a box (an element or a pseudo-element) whose parent is `scope`.
-    fn apply(&mut self, style: &ComputedValues, scope: NodeId, list_item: bool) {
+    /// The counter properties of a box (an element, `own`, or a pseudo-element) whose parent is
+    /// `scope`; `list` for an HTML list element (see [`Walk::reset`]).
+    fn apply(&mut self, style: &ComputedValues, scope: NodeId, own: NodeId, list_item: bool, list: bool) {
         let counters = style.get_counters();
-        for pair in counters.counter_reset.iter() {
-            self.reset(&pair.name.0, pair.value, scope);
-        }
         let list_item_name = Atom::from("list-item");
+        for pair in counters.counter_reset.iter() {
+            let legacy = list && pair.name.0 == list_item_name;
+            self.reset(&pair.name.0, pair.value, scope, own, legacy);
+        }
+        // pyro: an increment past the integer range leaves the counter as it was (Blink's
+        // `CalculateCounterValue`).
+        let add = |value: i32, by: i32| value.checked_add(by).unwrap_or(value);
         let mut increments_list_item = false;
         for pair in counters.counter_increment.iter() {
             increments_list_item |= pair.name.0 == list_item_name;
-            let instance = self.innermost(&pair.name.0, scope);
-            instance.value = instance.value.saturating_add(pair.value);
+            let instance = self.innermost(&pair.name.0, scope, own);
+            instance.value = add(instance.value, pair.value);
         }
         if list_item && !increments_list_item {
-            let instance = self.innermost(&list_item_name, scope);
-            instance.value = instance.value.saturating_add(1);
+            let instance = self.innermost(&list_item_name, scope, own);
+            instance.value = add(instance.value, 1);
         }
         for pair in counters.counter_set.iter() {
-            self.innermost(&pair.name.0, scope).value = pair.value;
+            self.innermost(&pair.name.0, scope, own).value = pair.value;
         }
     }
 
@@ -197,11 +223,11 @@ impl Walk {
             match item {
                 ContentItem::String(string) => push(&mut pieces, string),
                 ContentItem::Counter(name, counter_style) => {
-                    let value = self.innermost(&name.0, owner).value;
+                    let value = self.innermost(&name.0, owner, pseudo_scope()).value;
                     push(&mut pieces, &format(value, counter_style));
                 }
                 ContentItem::Counters(name, separator, counter_style) => {
-                    self.innermost(&name.0, owner);
+                    self.innermost(&name.0, owner, pseudo_scope());
                     let mut text = String::new();
                     for (index, instance) in self.counters[&name.0].iter().enumerate() {
                         if index > 0 {
@@ -346,10 +372,22 @@ fn walk_element(doc: &BaseDocument, node_id: NodeId, parent: NodeId, walk: &mut 
         return;
     }
     // A `display: contents` element generates no box: its counter properties do nothing.
+    let list = node.element_data().is_some_and(|element| {
+        matches!(
+            element.name.local,
+            markup5ever::local_name!("ol")
+                | markup5ever::local_name!("ul")
+                | markup5ever::local_name!("menu")
+                | markup5ever::local_name!("dir")
+        )
+    });
     if !display.is_contents() {
-        walk.apply(&style, parent, display.is_list_item());
+        walk.apply(&style, parent, node_id, display.is_list_item(), list);
     }
     drop(style);
+    // pyro: its children and its `::before` and `::after` are then its parent's in the box tree,
+    // which counters follow (Blink counts layout objects; WPT `counter-order-display-contents`).
+    let scope = if display.is_contents() { parent } else { node_id };
     let pseudos: [Option<Arc<ComputedValues>>; 2] = match node.try_stylo_element_data().and_then(|data| data.get()) {
         Some(data) if !data.styles.pseudos.is_empty() => [
             data.styles.pseudos.get(&PseudoElement::After).cloned(),
@@ -358,22 +396,64 @@ fn walk_element(doc: &BaseDocument, node_id: NodeId, parent: NodeId, walk: &mut 
         _ => [None, None],
     };
     let mut texts: GeneratedText = [None, None];
+    // pyro: the markers of its `::scroll-marker-group` (`scroll_markers`), as its first or last
+    // children.
+    let group = node.scroll_pseudos().and_then(|pseudos| pseudos.group.map(|group| (group, pseudos.group_before)));
+    if let Some((group, true)) = group {
+        walk_scroll_markers(doc, scope, group, walk);
+    }
     if let Some(before) = pseudos[1].as_deref().filter(|style| generates(style)) {
-        walk.apply(before, node_id, before.clone_display().is_list_item());
-        texts[1] = walk.content(before, node_id);
+        walk.apply(before, scope, pseudo_scope(), before.clone_display().is_list_item(), false);
+        texts[1] = walk.content(before, scope);
+        walk.leave(pseudo_scope());
     }
     for &child_id in node.children.iter() {
         if matches!(doc.nodes[child_id].data, NodeData::Element(_)) {
-            crate::util::ensure_stack(|| walk_element(doc, child_id, node_id, walk));
+            crate::util::ensure_stack(|| walk_element(doc, child_id, scope, walk));
         }
     }
     if let Some(after) = pseudos[0].as_deref().filter(|style| generates(style)) {
-        walk.apply(after, node_id, after.clone_display().is_list_item());
-        texts[0] = walk.content(after, node_id);
+        walk.apply(after, scope, pseudo_scope(), after.clone_display().is_list_item(), false);
+        texts[0] = walk.content(after, scope);
+        walk.leave(pseudo_scope());
+    }
+    if let Some((group, false)) = group {
+        walk_scroll_markers(doc, scope, group, walk);
+    }
+    // pyro: its `::scroll-button()`s, in the scope of the element.
+    if let Some(buttons) = node.scroll_pseudos().map(|pseudos| pseudos.buttons) {
+        for button in buttons.into_iter().flatten() {
+            walk_generated_box(doc, scope, button, walk);
+        }
     }
     walk.leave(node_id);
     if texts.iter().any(Option::is_some) {
         walk.texts.insert(node_id, texts);
+    }
+}
+
+/// pyro: the counter properties and content of the markers in a `::scroll-marker-group` `group`,
+/// in order, as pseudo-elements in `scope` (their originating element's). Their texts are keyed by
+/// the marker.
+fn walk_scroll_markers(doc: &BaseDocument, scope: NodeId, group: NodeId, walk: &mut Walk) {
+    let Some(group_node) = doc.nodes.get(group) else { return };
+    for &marker in group_node.children.iter() {
+        walk_generated_box(doc, scope, marker, walk);
+    }
+}
+
+/// pyro: the counter properties and content of a scroll marker's or button's box `node`, a
+/// pseudo-element in `scope` (its originating element's), as a `::before` (its text keyed by `node`).
+fn walk_generated_box(doc: &BaseDocument, scope: NodeId, node: NodeId, walk: &mut Walk) {
+    let Some(style) = doc.nodes.get(node).and_then(|node| node.primary_styles()) else { return };
+    if !generates(&style) {
+        return;
+    }
+    walk.apply(&style, scope, pseudo_scope(), style.clone_display().is_list_item(), false);
+    let content = walk.content(&style, scope);
+    walk.leave(pseudo_scope());
+    if content.is_some() {
+        walk.texts.insert(node, [None, content]);
     }
 }
 

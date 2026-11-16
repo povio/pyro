@@ -186,16 +186,16 @@ export class ElementHandle<T = Node> extends JSHandle<T> {
   dblclick(o?: Parameters<Locator['dblclick']>[0]) { return this.marked((l) => l.dblclick(o)); }
   tap(o?: Parameters<Locator['tap']>[0]) { return this.marked((l) => l.tap(o)); }
   hover(o?: Parameters<Locator['hover']>[0]) { return this.marked((l) => l.hover(o)); }
-  fill(value: string, o?: Timeout) { return this.marked((l) => l.fill(value, o)); }
-  press(key: string, o?: Timeout) { return this.marked((l) => l.press(key, o)); }
-  pressSequentially(text: string, o?: Timeout) { return this.marked((l) => l.pressSequentially(text, o)); }
-  check(o?: Timeout) { return this.marked((l) => l.check(o)); }
-  uncheck(o?: Timeout) { return this.marked((l) => l.uncheck(o)); }
-  setChecked(checked: boolean, o?: Timeout) { return this.marked((l) => l.setChecked(checked, o)); }
+  fill(value: string, o?: Parameters<Locator['fill']>[1]) { return this.marked((l) => l.fill(value, o)); }
+  press(key: string, o?: Parameters<Locator['press']>[1]) { return this.marked((l) => l.press(key, o)); }
+  pressSequentially(text: string, o?: Parameters<Locator['pressSequentially']>[1]) { return this.marked((l) => l.pressSequentially(text, o)); }
+  check(o?: Parameters<Locator['check']>[0]) { return this.marked((l) => l.check(o)); }
+  uncheck(o?: Parameters<Locator['uncheck']>[0]) { return this.marked((l) => l.uncheck(o)); }
+  setChecked(checked: boolean, o?: Parameters<Locator['setChecked']>[1]) { return this.marked((l) => l.setChecked(checked, o)); }
   focus() { return this.marked((l) => l.focus()); }
-  selectOption(values: Parameters<Locator['selectOption']>[0], o?: Timeout) { return this.marked((l) => l.selectOption(values, o)); }
+  selectOption(values: Parameters<Locator['selectOption']>[0], o?: Parameters<Locator['selectOption']>[1]) { return this.marked((l) => l.selectOption(values, o)); }
   selectText(o?: Timeout) { return this.marked((l) => l.selectText(o)); }
-  setInputFiles(files: Parameters<Locator['setInputFiles']>[0], o?: Timeout) { return this.marked((l) => l.setInputFiles(files, o)); }
+  setInputFiles(files: Parameters<Locator['setInputFiles']>[0], o?: Parameters<Locator['setInputFiles']>[1]) { return this.marked((l) => l.setInputFiles(files, o)); }
   dispatchEvent(type: string, init?: Record<string, unknown>) { return this.marked((l) => l.dispatchEvent(type, init)); }
   scrollIntoViewIfNeeded() { return this._eval((el: Element) => el.scrollIntoView({ block: 'nearest', inline: 'nearest' })); }
   screenshot(o?: Parameters<Locator['screenshot']>[0]) { return this.marked((l) => l.screenshot(o)); }
@@ -205,7 +205,8 @@ export class ElementHandle<T = Node> extends JSHandle<T> {
   async isDisabled() { return !(await this.isEnabled()); }
   isEditable() { return this.marked((l) => l.isEditable()); }
   isChecked() { return this.marked((l) => l.isChecked()); }
-  inputValue() { return this.marked((l) => l.inputValue()); }
+  /** `timeout`: Playwright's deprecated option. */
+  inputValue(o?: Timeout) { return this.marked((l) => l.inputValue(o)); }
 
   // ---- reads ----
 
@@ -242,7 +243,7 @@ export class ElementHandle<T = Node> extends JSHandle<T> {
     await this.marked(async (l) => {
       if (state === 'visible' || state === 'hidden') return l.waitFor({ state, timeout: o.timeout });
       if (state === 'stable') return;
-      const deadline = Date.now() + (o.timeout ?? 30_000);
+      const deadline = Date.now() + this._page._timeout(o.timeout);
       for (;;) {
         const ok = state === 'enabled' ? await l.isEnabled() : state === 'disabled' ? !(await l.isEnabled()) : await l.isEditable();
         if (ok) return;

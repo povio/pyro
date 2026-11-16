@@ -101,6 +101,10 @@ bitflags! {
         /// anonymous blocks hold its inline pieces, whose lines paint its fragments
         /// (`layout::inline::split_pieces`). Its relative offset moves the whole of it.
         const IS_SPLIT_INLINE = 1 << 11;
+        /// pyro: the box of an initial letter (`initial-letter` on a `::first-letter`, CSS
+        /// Inline 3 § 7): an inline root of the letter alone, sized by the ink of its glyphs
+        /// (`layout::first_letter`), placed by the first line of the root it starts.
+        const IS_INITIAL_LETTER_BOX = 1 << 18;
         /// pyro: an anonymous block whose last child is a split inline (`IS_SPLIT_INLINE`)
         /// standing for its head: the inline content before its first block-level box, with its
         /// start. Set by the construction of the split inline's container.
@@ -142,6 +146,28 @@ bitflags! {
         /// pyro: the box's last layout clamped its lines (`layout::line_clamp`): one of
         /// its blocks holds a clamp mark.
         const CLAMPS_LINES = 1 << 25;
+        /// pyro: the `<body>` whose `overflow` the viewport takes
+        /// (`BaseDocument::body_overflow_goes_to_viewport`): its layout style reads `overflow:
+        /// visible`. Set before each layout pass (`BaseDocument::mark_viewport_body`).
+        const OVERFLOW_TO_VIEWPORT = 1 << 26;
+        /// pyro: a shadow host: its children are its shadow tree's (pyro-dom's render tree
+        /// marks it, `crate::shadow`).
+        const IS_SHADOW_HOST = 1 << 19;
+        /// pyro: a slot of a shadow tree whose children are the nodes assigned to it, light
+        /// children of its host (`crate::shadow`).
+        const IS_ASSIGNED_SLOT = 1 << 20;
+        /// pyro: what the box's cached final layout (`RunMode::PerformLayout`) stands for is no
+        /// longer laid out so: a measuring run left its lines elsewhere (an inline root), or those
+        /// of an inline root in it. Its next final layout runs again instead of standing on the
+        /// cache (`LayoutPassState::mark_final_layout_stale`), and clears the mark.
+        const FINAL_LAYOUT_STALE = 1 << 21;
+        /// pyro: the box's layout algorithm is running (`LayoutPassState::compute_child_layout_internal`).
+        const IN_LAYOUT = 1 << 27;
+        /// pyro: an anonymous block wrapping a run of its container's inline-level boxes
+        /// (`LayoutChildren::create_anonymous_block`). The container's walk placed the scroll
+        /// pseudo-element boxes beside those boxes already (`scroll_markers`), in this block or
+        /// beside it: its own construction and inline layout do not place them again.
+        const WRAPS_BOX_RUN = 1 << 28;
     }
 }
 
@@ -2015,12 +2041,14 @@ impl Node {
         self.assert_layout_styles_are_current();
 
         let mut flags = stylo_taffy::StyleFlags::empty();
+        let mut natural_ratio = None;
         if let Some(el) = self.data.downcast_element() {
             if crate::layout::replaced::is_replaced(el) {
                 flags |= stylo_taffy::StyleFlags::IS_REPLACED;
                 // pyro
                 if styles.get_position().aspect_ratio.auto && crate::layout::replaced::has_natural_ratio(el) {
                     flags |= stylo_taffy::StyleFlags::HAS_NATURAL_RATIO;
+                    natural_ratio = crate::layout::replaced::natural_ratio(el);
                 }
             }
             if el.name.local == local_name!("button") {
@@ -2036,16 +2064,24 @@ impl Node {
         if self.flags.contains(NodeFlags::IS_SPLIT_INLINE) {
             flags |= stylo_taffy::StyleFlags::IS_SPLIT_INLINE;
         }
+        // pyro
+        if self.flags.contains(NodeFlags::OVERFLOW_TO_VIEWPORT) {
+            flags |= stylo_taffy::StyleFlags::OVERFLOW_TO_VIEWPORT;
+        }
 
         #[cfg(feature = "writing-mode")]
         {
             // Own-layout_wm by default: the node's own algorithm reads its style in its own axes
             let layout_wm = styles.writing_mode;
-            stylo_taffy::TaffyStyloStyle::new_in(styles, flags, layout_wm)
+            let mut style = stylo_taffy::TaffyStyloStyle::new_in(styles, flags, layout_wm);
+            style.natural_ratio = natural_ratio;
+            style
         }
         #[cfg(not(feature = "writing-mode"))]
         {
-            stylo_taffy::TaffyStyloStyle::new(styles, flags)
+            let mut style = stylo_taffy::TaffyStyloStyle::new(styles, flags);
+            style.natural_ratio = natural_ratio;
+            style
         }
     }
 

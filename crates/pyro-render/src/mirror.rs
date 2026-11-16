@@ -93,7 +93,7 @@ pub(crate) struct Mirror {
     pub(crate) base_url: String,
     /// The document facts it was built with ([`crate::Snapshot::xml_document`],
     /// [`crate::Snapshot::content_language`]).
-    pub(crate) facts: (bool, Option<String>),
+    pub(crate) facts: (bool, Option<String>, bool),
     pub(crate) viewport: (u32, u32, u64, bool, bool),
     sheets: HashMap<String, String>,
     tree: Arc<Tree>,
@@ -182,7 +182,7 @@ impl Mirror {
         viewport: (u32, u32, u64, bool, bool),
     ) -> Result<Mirror, Rebuild> {
         let base_url = config.base_url.clone().unwrap_or_default();
-        let facts = (config.xml_document, config.content_language.clone());
+        let facts = (config.xml_document, config.content_language.clone(), config.quirks_mode);
         let mut doc = BaseDocument::new(config);
         // Diagnostics: incremental restyle, full relayout every render (tells
         // a blitz-dom relayout difference from a mirroring one).
@@ -267,6 +267,20 @@ impl Mirror {
                 self.scrolled.push(id);
             }
         }
+    }
+
+    /// Gives the document the current scroll targets in `targets` (by key; `u64::MAX`: the
+    /// viewport's, which is the root element's), for scroll marker selection.
+    pub(crate) fn set_scroll_targets(&mut self, targets: &[(u64, u64)]) {
+        let root = self.doc.try_root_element().map(|root| root.id);
+        let targets: Vec<(NodeId, NodeId)> = targets
+            .iter()
+            .filter_map(|&(scroller, target)| {
+                let scroller = if scroller == u64::MAX { root? } else { self.node(scroller)? };
+                Some((scroller, self.node(target)?))
+            })
+            .collect();
+        self.doc.set_scroll_targets(targets);
     }
 
     /// Gives the `position: sticky` elements in `offsets` (by key) their

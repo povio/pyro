@@ -91,6 +91,100 @@ fn ceil_layout_unit(v: f32, scale: f32) -> f32 {
     ((v / scale * 64.0 - 0.01).ceil() / 64.0) * scale
 }
 
+/// pyro: the ink of the glyphs of `layout` from their outlines' bounding boxes, `[left, top,
+/// right, bottom]` in the layout's units (device px) from its origin. `None` without ink.
+fn glyph_ink_bounds(layout: &parley::Layout<crate::node::TextBrush>) -> Option<[f32; 4]> {
+    use skrifa::instance::{LocationRef, NormalizedCoord, Size as FontSize};
+    use skrifa::MetadataProvider as _;
+
+    /// The bounds of the points of an outline (its control points: a little more than its ink
+    /// where it curves), for fonts whose glyphs carry no bounding box (CFF).
+    #[derive(Default)]
+    struct BoundsPen(Option<[f32; 4]>);
+    impl BoundsPen {
+        fn add(&mut self, x: f32, y: f32) {
+            self.0 = Some(match self.0 {
+                None => [x, y, x, y],
+                Some([x0, y0, x1, y1]) => [x0.min(x), y0.min(y), x1.max(x), y1.max(y)],
+            });
+        }
+    }
+    impl skrifa::outline::OutlinePen for BoundsPen {
+        fn move_to(&mut self, x: f32, y: f32) {
+            self.add(x, y);
+        }
+        fn line_to(&mut self, x: f32, y: f32) {
+            self.add(x, y);
+        }
+        fn quad_to(&mut self, cx0: f32, cy0: f32, x: f32, y: f32) {
+            self.add(cx0, cy0);
+            self.add(x, y);
+        }
+        fn curve_to(&mut self, cx0: f32, cy0: f32, cx1: f32, cy1: f32, x: f32, y: f32) {
+            self.add(cx0, cy0);
+            self.add(cx1, cy1);
+            self.add(x, y);
+        }
+        fn close(&mut self) {}
+    }
+
+    let mut ink: Option<[f32; 4]> = None;
+    for line in layout.lines() {
+        for item in line.items() {
+            let parley::PositionedLayoutItem::GlyphRun(glyph_run) = item else { continue };
+            let run = glyph_run.run();
+            let font = run.font();
+            let Ok(font_ref) = skrifa::FontRef::from_index(font.data.as_ref(), font.index) else { continue };
+            let coords: Vec<NormalizedCoord> =
+                run.normalized_coords().iter().map(|coord| NormalizedCoord::from_bits(coord.to_bits())).collect();
+            let size = FontSize::new(run.font_size());
+            let location = LocationRef::new(&coords);
+            let metrics = font_ref.glyph_metrics(size, location);
+            let outlines = font_ref.outline_glyphs();
+            for glyph in glyph_run.positioned_glyphs() {
+                let glyph_id = skrifa::GlyphId::new(glyph.id);
+                // Font units scaled, y up from the glyph's origin.
+                let bounds = metrics.bounds(glyph_id).map(|b| [b.x_min, b.y_min, b.x_max, b.y_max]).or_else(|| {
+                    let mut pen = BoundsPen::default();
+                    outlines
+                        .get(glyph_id)?
+                        .draw(skrifa::outline::DrawSettings::unhinted(size, location), &mut pen)
+                        .ok()?;
+                    pen.0
+                });
+                let Some([x_min, y_min, x_max, y_max]) = bounds else { continue };
+                if x_max <= x_min || y_max <= y_min {
+                    continue;
+                }
+                let rect = [glyph.x + x_min, glyph.y - y_max, glyph.x + x_max, glyph.y - y_min];
+                ink = Some(match ink {
+                    None => rect,
+                    Some(i) => [i[0].min(rect[0]), i[1].min(rect[1]), i[2].max(rect[2]), i[3].max(rect[3])],
+                });
+            }
+        }
+    }
+    ink
+}
+
+/// pyro: where the border box of an initial letter box starts below the top of the first line
+/// (with `ascent`, its first baseline, and `height`, its border box's), and how far the line's
+/// text moves down (raised and sunken letters): Blink's legacy `ComputeInitialLetterBoxBlockOffset`
+/// (the size rounded up for the lines, but not for the cap height), in the lines' axes.
+fn initial_letter_offset(letter: &crate::node::InitialLetter, ascent: f32, height: f32) -> (f32, f32) {
+    let size = letter.size.ceil() as i32;
+    if size < letter.sink {
+        // Its bottom at the bottom of the sink's line.
+        return (letter.line_height * letter.sink as f32 - height, 0.0);
+    }
+    let shift = letter.line_height * (size - letter.sink) as f32;
+    if letter.centered {
+        // Vertical lines of glyphs that are not sideways: centred on the lines it spans.
+        return ((letter.line_height * size as f32 - height) / 2.0, shift);
+    }
+    (letter.line_height * letter.size - ascent - letter.descent, shift)
+}
+
 /// A float met mid-line, laid out but not yet placed in the block formatting context
 #[cfg(feature = "floats")]
 struct PendingFloat {
@@ -251,12 +345,67 @@ impl LayoutPassState<'_> {
         }
     }
 
+    /// pyro: the layout of an initial letter box (`NodeFlags::IS_INITIAL_LETTER_BOX`,
+    /// `layout::first_letter`): its letter on one line; the box as wide as its text indent and
+    /// the ink of the glyphs, and as tall as the ink (Blink's `CalculateInitialLetterBoxInlineSize`
+    /// and `AdjustInitialLetterInTextPosition`, the ink rounded out to layout units); the ink's
+    /// top-left corner at the content box's top-left corner after the indent; the first baseline
+    /// the ink's ascent below the content box's top.
+    fn compute_initial_letter_box_layout(&mut self, node_id: NodeId, inputs: LayoutInput) -> LayoutOutput {
+        let scale = self.viewport.scale();
+        let style = self.nodes[node_id].layout_style();
+        let padding = style.padding().resolve_or_zero(inputs.parent_size.width, resolve_calc_value);
+        let border = style.border().resolve_or_zero(inputs.parent_size.width, resolve_calc_value);
+        drop(style);
+        let pb = padding + border;
+        let indent = self.nodes[node_id]
+            .primary_styles()
+            .map_or(0.0, |s| s.slow_clone_text_indent().length.resolve(CSSPixelLength::new(0.0)).px());
+        let Some(mut text) = self.nodes[node_id].data.downcast_element_mut().and_then(|e| e.take_inline_layout()) else {
+            return LayoutOutput::HIDDEN;
+        };
+        let options = AlignmentOptions { align_when_overflowing: false, last_line_alignment: None };
+        text.layout.set_text_indent(0.0, IndentOptions::default());
+        text.layout.break_all_lines(None);
+        text.layout.align(parley::Alignment::Start, options);
+        let baseline = text.layout.get(0).map_or(0.0, |line| line.metrics().baseline) / scale;
+        let out = |v: f32, up: bool| {
+            let v = v * 64.0;
+            (if up { (v - 0.01).ceil() } else { (v + 0.01).floor() }) / 64.0
+        };
+        let [left, top, right, bottom] = match glyph_ink_bounds(&text.layout) {
+            Some([l, t, r, b]) => [out(l / scale, false), out(t / scale, false), out(r / scale, true), out(b / scale, true)],
+            None => [0.0, 0.0, text.layout.width() / scale, text.layout.height() / scale],
+        };
+        text.layout.set_text_indent((indent - left) * scale, IndentOptions::default());
+        text.layout.break_all_lines(None);
+        text.layout.align(parley::Alignment::Start, options);
+        text.block_offset = -top;
+        text.hit_reach = None;
+        text.line_box_top = pb.top;
+        text.counted_lines = 1;
+        let size = Size {
+            width: (indent + right - left).max(0.0) + pb.left + pb.right,
+            height: (bottom - top).max(0.0) + pb.top + pb.bottom,
+        };
+        let first = pb.top + baseline - top;
+        self.nodes[node_id].data.downcast_element_mut().unwrap().inline_layout_data = Some(text);
+        LayoutOutput::from_sizes_and_baselines(
+            size,
+            taffy::ScrollableOverflow::ZERO,
+            taffy::Baselines { first: Some(first), last: Some(first) },
+        )
+    }
+
     pub(crate) fn compute_inline_layout(
         &mut self,
         node_id: NodeId,
         inputs: taffy::tree::LayoutInput,
         block_ctx: Option<&mut BlockContext<'_>>,
     ) -> taffy::LayoutOutput {
+        if self.nodes[node_id].flags.contains(NodeFlags::IS_INITIAL_LETTER_BOX) {
+            return self.compute_initial_letter_box_layout(node_id, inputs);
+        }
         let LayoutInput {
             known_dimensions,
             parent_size,
@@ -383,7 +532,9 @@ impl LayoutPassState<'_> {
                     && display.inside() == DisplayInside::Flow
                 {
                     let claims = stylo_taffy::convert::inline_containing_block_claims(&style);
-                    if claims.absolute {
+                    // pyro: not a split inline's: its parent lays its boxes out
+                    // (`split_inline_containing_block`).
+                    if claims.absolute && !(ancestor.is_split_inline() && self.split_inline_contains_absolute(id)) {
                         flags |= StyleFlags::SPAN_ABSOLUTE_CB;
                     }
                     if claims.fixed {
@@ -589,6 +740,12 @@ impl LayoutPassState<'_> {
                 // Anonymous blocks do not establish the containing block for percentages.
                 height: if self.nodes[node_id].is_anonymous() {
                     parent_size.height
+                } else if known_dimensions.height.is_none()
+                    && node_size.height.is_none()
+                    && self.quirks_skips_for_percent_height(&self.nodes[node_id])
+                {
+                    // pyro: the percentage height quirk (`quirks_skips_for_percent_height`)
+                    parent_size.height
                 } else {
                     available_space.height.into_option()
                 },
@@ -661,6 +818,13 @@ impl LayoutPassState<'_> {
                 && !style
                     .flags
                     .intersects(StyleFlags::IS_BUTTON | StyleFlags::IS_BUTTON_INPUT);
+            // pyro: a block container's last baseline is its own: with no line box in it (a
+            // table gives none) it has none, and sits on its bottom margin edge (CSS 2.1
+            // § 10.8.1), not on its first baseline.
+            let own_last_baseline = is_flow
+                && !style
+                    .flags
+                    .intersects(StyleFlags::IS_REPLACED | StyleFlags::IS_BUTTON | StyleFlags::IS_BUTTON_INPUT);
             let contain_layout = box_style.slow_clone_contain().contains(Contain::LAYOUT);
             let exports_baseline = !(contain_layout
                 || (baseline_source == BaselineSource::Auto && is_block_axis_scroll_container));
@@ -689,7 +853,9 @@ impl LayoutPassState<'_> {
                 }
                 ibox.width = (margin.left + margin.right + output.size.width) * scale;
                 ibox.baseline = if exports_baseline {
-                    let baseline = if uses_last_baseline {
+                    let baseline = if uses_last_baseline && own_last_baseline {
+                        output.baselines.last
+                    } else if uses_last_baseline {
                         output.baselines.last.or(output.baselines.first)
                     } else {
                         output.baselines.first.or(output.baselines.last)
@@ -743,6 +909,24 @@ impl LayoutPassState<'_> {
                         .is_some_and(|children| children.first().is_some_and(|&first| first != node_id))
                 });
             if later_anonymous_block { GenericTextIndent::zero() } else { text_indent }
+        };
+        // pyro: an initial letter box (`layout::first_letter`) starts the first line, and holds
+        // the line's text indent in its width (Blink's `CalculateInitialLetterBoxInlineSize`): the
+        // text after it is not indented again.
+        let initial_letter = inline_layout
+            .first_letter
+            .as_ref()
+            .and_then(|split| Some((split.style_node, split.initial?)))
+            .filter(|&(box_id, _)| {
+                self.nodes.get(box_id).is_some_and(|node| node.flags.contains(NodeFlags::IS_INITIAL_LETTER_BOX))
+            });
+        let letter_indent = match initial_letter {
+            Some(_) if !text_indent.hanging => text_indent.length.clone(),
+            _ => GenericTextIndent::zero().length,
+        };
+        let text_indent = match initial_letter {
+            Some(_) if !text_indent.hanging && !text_indent.each_line => GenericTextIndent::zero(),
+            _ => text_indent,
         };
         let indent_options = IndentOptions {
             each_line: text_indent.each_line,
@@ -990,6 +1174,21 @@ impl LayoutPassState<'_> {
                     .inline_boxes()
                     .any(|ibox| ibox.kind == parley::InlineBoxKind::CustomOutOfFlow);
             if floats_involved || inline_layout.last_break != Some(break_key) {
+                // pyro: a measuring run breaks the lines of the last final layout again: note where
+                // they are first, to tell whether it leaves them elsewhere (see the end of this run).
+                if inputs.run_mode != RunMode::PerformLayout
+                    && !self.nodes[node_id].flags.contains(NodeFlags::FINAL_LAYOUT_STALE)
+                    && inline_layout.final_lines.is_some_and(|laid_out| {
+                        laid_out.geometry.is_none()
+                            && laid_out.last_break.is_some()
+                            && laid_out.last_break == inline_layout.last_break
+                    })
+                {
+                    let geometry = inline_layout.line_geometry();
+                    if let Some(laid_out) = inline_layout.final_lines.as_mut() {
+                        laid_out.geometry = Some(geometry);
+                    }
+                }
                 let wraps = self.nodes[node_id].primary_styles().is_none_or(|s| {
                     s.clone_text_wrap_mode() == stylo_to_parley::stylo::TextWrapMode::Wrap
                 });
@@ -1039,6 +1238,15 @@ impl LayoutPassState<'_> {
                 state.set_layout_max_advance(max_advance);
                 if let Some(limit) = balance_limit {
                     state.set_wrap_limit(limit);
+                }
+                // pyro: a block that starts with an initial letter starts below the initial
+                // letters before it (CSS Inline 3 § 7.6, Blink's `InitialLetterClearanceOffset`).
+                if initial_letter.is_some()
+                    && let Some(clear) = block_ctx.initial_letter_clearance().filter(|&clear| clear > 0.0)
+                {
+                    state.set_line_y(f64::from(clear * scale));
+                    line_slot = block_ctx.find_content_slot(clear, 0.0, Clear::None, None);
+                    has_active_floats = line_slot.segment_id.is_some();
                 }
                 set_line_slot(state, &line_slot, scale, slack);
                 // Without floats every line after the first gets the same geometry, so breaking
@@ -1175,6 +1383,81 @@ impl LayoutPassState<'_> {
                                     f32::NEG_INFINITY,
                                     f32::NEG_INFINITY,
                                 );
+                                continue;
+                            }
+
+                            // pyro: the initial letter box (`layout::first_letter`) is placed by
+                            // the first line, which it starts: at the line's start (after the
+                            // text indent, beside the floats along its whole height), its cap
+                            // height on the line's, its baseline on the sink's line (Blink's
+                            // `PostPlaceInitialLetterBox`), an exclusion from the line's top to
+                            // its margin box's bottom. Raised and sunken letters move the
+                            // line's text down.
+                            if let Some((_, letter)) = initial_letter.filter(|&(box_id, _)| box_id == node_id) {
+                                let line_top = state.line_y() as f32 / scale;
+                                let (margin, rtl) = {
+                                    let style = self.child_layout_style(&self.nodes[node_id]);
+                                    (
+                                        style.margin().resolve_or_zero(inputs.parent_size, resolve_calc_value),
+                                        style.float() == Float::Right,
+                                    )
+                                };
+                                let output = self.compute_child_layout(crate::taffy_node_id(node_id), float_child_inputs);
+                                let size = output.size;
+                                let ascent = output.baselines.first.unwrap_or(size.height);
+                                let (offset, mut shift) = initial_letter_offset(&letter, ascent, size.height);
+                                let border_top = offset + margin.top;
+                                // `text-box-trim` at the start of the first line cancels the text's
+                                // move (Blink's `ApplyTextBoxTrim`): the box stays where it is drawn
+                                // over the moved text, its exclusion where it would be.
+                                let mut drawn_top = border_top;
+                                if shift > 0.0 && crate::layout::text_box::block_trim(self.doc, root_id).0.is_some() {
+                                    drawn_top -= shift;
+                                    shift = 0.0;
+                                }
+                                let extent_top = offset.min(0.0);
+                                let extent_bottom = border_top + size.height + margin.bottom;
+                                let slot = block_ctx.find_content_slot(
+                                    line_top,
+                                    extent_bottom.max(letter.line_height),
+                                    Clear::None,
+                                    None,
+                                );
+                                let indent = letter_indent.resolve(CSSPixelLength::new((width / scale).max(0.0))).px();
+                                let margin_box_width = (margin.left + size.width + margin.right).max(0.0);
+                                let (x, border_x) = if rtl {
+                                    let right = slot.x + slot.width - indent;
+                                    (right - margin_box_width, right - margin.right - size.width)
+                                } else {
+                                    let left = slot.x + indent;
+                                    (left, left + margin.left)
+                                };
+                                block_ctx.place_initial_letter(
+                                    Point { x, y: line_top + extent_top },
+                                    Size { width: margin_box_width, height: (extent_bottom - extent_top).max(0.0) },
+                                    if rtl { taffy::FloatDirection::Right } else { taffy::FloatDirection::Left },
+                                );
+                                let location = Point {
+                                    x: border_x + container_pb.left,
+                                    y: line_top + drawn_top + container_pb.top,
+                                };
+                                self.nodes[node_id].update_unrounded_layout(|layout| {
+                                    layout.size = size;
+                                    layout.location = location;
+                                    layout.margin = margin;
+                                });
+                                placed_through = placed_through.max(Some(item));
+                                let line_y = line_top + shift;
+                                state.set_line_y(f64::from(line_y * scale));
+                                line_slot = block_ctx.find_content_slot(line_y, 0.0, Clear::None, None);
+                                has_active_floats = line_slot.segment_id.is_some();
+                                set_line_slot(state, &line_slot, scale, slack);
+                                state.append_inline_box_to_line(
+                                    box_break_data.advance,
+                                    f32::NEG_INFINITY,
+                                    f32::NEG_INFINITY,
+                                );
+                                line_start_state = has_active_floats.then(|| breaker.state().clone());
                                 continue;
                             }
 
@@ -1602,6 +1885,21 @@ impl LayoutPassState<'_> {
                             )
                         };
 
+                        // pyro: an inline-level box is put on the start side of its place in
+                        // the direction of the text there (the bidi level it resolved to), not
+                        // in the container's: Latin text in a right-to-left paragraph runs left
+                        // to right, and so does the box after it (Blink's `InlineItem::Direction()`;
+                        // WPT `static-position/htb-rtl-*`). A block-level box takes the container's.
+                        let static_direction = if is_inline_level
+                            && ibox.is_rtl != inline_layout.layout.is_rtl()
+                        {
+                            match container_direction {
+                                Direction::Ltr => Direction::Rtl,
+                                Direction::Rtl => Direction::Ltr,
+                            }
+                        } else {
+                            container_direction
+                        };
                         oof_candidates.push(OofCandidate { containing_block: None,
                             node: taffy::NodeId::from(ibox.id),
                             order,
@@ -1610,11 +1908,11 @@ impl LayoutPassState<'_> {
                                 x: AxisStaticPosition::from_alignment(
                                     justify_self.resolve_self_relative(
                                         item_direction,
-                                        container_direction,
+                                        static_direction,
                                         true,
                                     ),
                                     inline_area,
-                                    container_direction.is_rtl(),
+                                    static_direction.is_rtl(),
                                 ),
                                 y: AxisStaticPosition::from_alignment(
                                     align_self.resolve_self_relative(
@@ -1710,6 +2008,11 @@ impl LayoutPassState<'_> {
                 else {
                     continue;
                 };
+                // pyro: a split inline's box spans its head, its block-level content and its tail:
+                // its parent lays the box out (`split_inline_containing_block`).
+                if self.nodes[span].is_split_inline() && self.split_inline_contains_absolute(span) {
+                    continue;
+                }
                 let Some((x, y, width, height)) = span_padding_box(&self.nodes, &inline_layout, span, scale) else {
                     continue;
                 };
@@ -1736,6 +2039,40 @@ impl LayoutPassState<'_> {
             .then(|| last_line_index.and_then(|i| inline_layout.layout.get(i)))
             .flatten()
             .map(line_baseline);
+
+        // pyro: the lines and where they start are what paint draws and the inline boxes are
+        // placed on. A measuring run that broke them with other inputs than the last final layout
+        // (the available width of a stretched column flex item, a table cell measured at another
+        // width) and left them elsewhere, or moved them (a cell's `vertical-align` in another
+        // height), leaves them unlike that layout, which a cached final layout of this root, or
+        // of a box it is laid out in, stands for: those lay out again. Lines broken beside floats
+        // are not compared (nor are the floats' places): a measuring run leaves them stale.
+        let (block_offset_bits, line_box_top_bits) = (inline_layout.block_offset.to_bits(), line_box_top.to_bits());
+        if inputs.run_mode == RunMode::PerformLayout {
+            inline_layout.final_lines = Some(crate::node::LaidOutLines {
+                last_break: inline_layout.last_break,
+                block_offset: block_offset_bits,
+                line_box_top: line_box_top_bits,
+                inline_box_sizes: inline_layout.inline_box_sizes(),
+                geometry: None,
+            });
+        } else if let Some(laid_out) = inline_layout.final_lines
+            && !self.nodes[node_id].flags.contains(NodeFlags::FINAL_LAYOUT_STALE)
+        {
+            let stale = match (laid_out.last_break, inline_layout.last_break) {
+                (Some(final_break), Some(last_break)) => {
+                    laid_out.block_offset != block_offset_bits
+                        || laid_out.line_box_top != line_box_top_bits
+                        || (final_break != last_break
+                            && (laid_out.inline_box_sizes != inline_layout.inline_box_sizes()
+                                || laid_out.geometry != Some(inline_layout.line_geometry())))
+                }
+                _ => true,
+            };
+            if stale {
+                self.mark_final_layout_stale(node_id);
+            }
+        }
 
         if inputs.run_mode == RunMode::PerformLayout {
             inline_layout.span_cb_flags = span_cb_flags;
@@ -1891,6 +2228,9 @@ fn span_padding_box(
         }
         found
     };
+    let rtl_of = |style: &style::properties::ComputedValues| {
+        style.clone_direction() == style::computed_values::direction::T::Rtl
+    };
     let style = nodes[span].primary_styles()?;
     let length = |v: &LengthPercentage| v.resolve(Length::new(0.0)).px() * scale;
     let margin = |v: &Margin| match v {
@@ -1901,10 +2241,18 @@ fn span_padding_box(
     let border = |width: &style::values::computed::BorderSideWidth, style: style::values::computed::BorderStyle| {
         if style.none_or_hidden() { 0.0 } else { width.0.to_f32_px() * scale }
     };
-    let outer_left = margin(&m.margin_left) + border(&b.border_left_width, b.border_left_style);
-    let outer_right = margin(&m.margin_right) + border(&b.border_right_width, b.border_right_style);
+    // pyro: in a vertical writing mode a span edge is its margin only (`span_edge_widths_in`).
+    let (outer_left, outer_right) = if style.writing_mode.is_vertical() {
+        let (start, end) = crate::layout::inline::span_edge_margins(&style, 0.0);
+        if rtl_of(&style) { (end * scale, start * scale) } else { (start * scale, end * scale) }
+    } else {
+        (
+            margin(&m.margin_left) + border(&b.border_left_width, b.border_left_style),
+            margin(&m.margin_right) + border(&b.border_right_width, b.border_right_style),
+        )
+    };
     let (padding_top, padding_bottom) = (length(&p.padding_top.0), length(&p.padding_bottom.0));
-    let rtl = style.clone_direction() == style::computed_values::direction::T::Rtl;
+    let rtl = rtl_of(&style);
     drop(style);
 
     // (x0, x1, top, bottom) of the first and the last fragment.
@@ -1963,4 +2311,125 @@ fn span_padding_box(
     let (left, right) = if rtl { (last.0, first.1) } else { (first.0, last.1) };
     let (top, bottom) = (first.2, last.3);
     Some((left / scale, top / scale, (right - left).max(0.0) / scale, (bottom - top).max(0.0) / scale))
+}
+
+impl LayoutPassState<'_> {
+    /// pyro: whether the split inline `span` is the containing block of absolutely positioned
+    /// boxes (it is positioned) in a horizontal writing mode (`split_inline_containing_block`).
+    pub(crate) fn split_inline_contains_absolute(&self, span: NodeId) -> bool {
+        use style::computed_values::position::T as Position;
+        self.nodes[span].primary_styles().is_some_and(|style| {
+            style.clone_position() != Position::Static && !style.writing_mode.is_vertical()
+        })
+    }
+
+    /// pyro: whether a layout child of `parent` is a split inline that is a containing block
+    /// ([`Self::split_inline_contains_absolute`]).
+    pub(crate) fn has_positioned_split_inline_child(&self, parent: NodeId) -> bool {
+        self.nodes[parent].layout_children.borrow().as_ref().is_some_and(|children| {
+            children
+                .iter()
+                .any(|&child| self.nodes[child].is_split_inline() && self.split_inline_contains_absolute(child))
+        })
+    }
+
+    /// pyro: the split inline that is the containing block of the absolutely positioned box
+    /// `box_id`, when it is a layout child of `parent`: the box's nearest positioned ancestor.
+    pub(crate) fn split_inline_holding(&self, parent: NodeId, box_id: NodeId) -> Option<NodeId> {
+        use style::computed_values::position::T as Position;
+        let mut current = self.nodes[box_id].parent;
+        while let Some(id) = current {
+            if id == parent {
+                return None;
+            }
+            let node = &self.nodes[id];
+            if node.primary_styles().is_some_and(|style| style.clone_position() != Position::Static) {
+                return (node.is_split_inline()
+                    && node.layout_parent.get() == Some(parent)
+                    && self.split_inline_contains_absolute(id))
+                .then_some(id);
+            }
+            current = node.parent;
+        }
+        None
+    }
+
+    /// pyro: the containing block of the absolutely positioned boxes in the split inline `span`
+    /// (a positioned inline box split around block-level content), a layout child of `parent`: the
+    /// bounding box of the padding boxes of its first and last fragments (CSS 2.1 § 10.1 4.1), its
+    /// head at the end of the anonymous block before its box and its tail at the start of the one
+    /// after, moved by its relative offset; as `(size, offset)` from `parent`'s border box. A piece
+    /// with no fragment there (an empty head or tail) is a point: the end of the last line before,
+    /// the start of the first line after, or the top or the bottom of its box without such a line
+    /// (as Chromium places an empty fragment; WPT `position-absolute-in-inline-003`,
+    /// `position-absolute-dynamic-relayout-*`).
+    pub(crate) fn split_inline_containing_block(
+        &self,
+        parent: NodeId,
+        span: NodeId,
+    ) -> Option<(taffy::Size<f32>, taffy::Point<f32>)> {
+        let scale = self.viewport.scale();
+        let children = self.nodes[parent].layout_children.borrow();
+        let children = children.as_ref()?;
+        let at = children.iter().position(|&child| child == span)?;
+        let style = self.nodes[span].primary_styles()?;
+        let rtl = style.clone_direction() == style::computed_values::direction::T::Rtl;
+        let parent_layout = self.nodes[parent].unrounded_layout();
+        let cb_size = taffy::Size {
+            width: parent_layout.size.width - parent_layout.border.left - parent_layout.border.right
+                - parent_layout.padding.left - parent_layout.padding.right,
+            height: parent_layout.size.height - parent_layout.border.top - parent_layout.border.bottom
+                - parent_layout.padding.top - parent_layout.padding.bottom,
+        };
+        let parent_rtl = self.nodes[parent]
+            .primary_styles()
+            .is_some_and(|style| style.clone_direction() == style::computed_values::direction::T::Rtl);
+        let relative = if style.clone_position() == style::computed_values::position::T::Relative {
+            crate::layout::inline::relative::relative_offset(&style, cb_size, parent_rtl)
+        } else {
+            taffy::Point::ZERO
+        };
+        drop(style);
+        // The box laid out for the span's block-level content, without its relative offset.
+        let own = self.nodes[span].unrounded_layout();
+        let own_x = own.location.x - relative.x;
+        let own_y = own.location.y - relative.y;
+        // (x0, y0, x1, y1) of a piece, from the parent's border box.
+        // (An anonymous block next to the box holds the head or the tail; when the span starts or
+        // ends with a block-level box, its empty fragment is on that block's line all the same.)
+        let piece = |anonymous: NodeId, last: bool| -> Option<(f32, f32, f32, f32)> {
+            let node = &self.nodes[anonymous];
+            if !node.is_anonymous() {
+                return None;
+            }
+            let text_layout = node.data.downcast_element()?.inline_layout_data.as_deref()?;
+            let location = node.unrounded_layout().location;
+            let origin = (location.x, location.y + text_layout.line_box_top);
+            if let Some((x, y, width, height)) = span_padding_box(&self.nodes, text_layout, span, scale) {
+                return Some((origin.0 + x, origin.1 + y, origin.0 + x + width, origin.1 + y + height));
+            }
+            let line = if last { text_layout.layout.lines().last() } else { text_layout.layout.lines().next() };
+            let metrics = *line?.metrics();
+            let start = metrics.offset / scale;
+            let end = (metrics.offset + metrics.advance - metrics.collapsed_advance) / scale;
+            // The end of the last line (in the line's direction), the start of the first.
+            let x = if last != rtl { end } else { start };
+            let (top, bottom) = (metrics.block_min_coord / scale, metrics.block_max_coord / scale);
+            Some((origin.0 + x, origin.1 + top, origin.0 + x, origin.1 + bottom))
+        };
+        let head = at
+            .checked_sub(1)
+            .and_then(|before| piece(children[before], true))
+            .unwrap_or((own_x, own_y, own_x, own_y));
+        let tail = children
+            .get(at + 1)
+            .and_then(|&after| piece(after, false))
+            .unwrap_or((own_x, own_y + own.size.height, own_x, own_y + own.size.height));
+        let (x0, y0) = (head.0.min(tail.0), head.1.min(tail.1));
+        let (x1, y1) = (head.2.max(tail.2), head.3.max(tail.3));
+        Some((
+            taffy::Size { width: (x1 - x0).max(0.0), height: (y1 - y0).max(0.0) },
+            taffy::Point { x: x0 + relative.x, y: y0 + relative.y },
+        ))
+    }
 }

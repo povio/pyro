@@ -15,25 +15,26 @@
 
 /* bidi
  *
- * The dir attribute mapping uses the attribute-selector form from the HTML
- * spec's bidi rendering section rather than Gecko's internal pseudo-classes
- * (:-moz-dir-attr-rtl and friends), which this engine's selector parser
- * does not know: it dropped these rules, and the dir attribute did nothing.
- * dir=auto keeps its isolation but not the content-based direction, which
- * needs bidi analysis no selector can express.
+ * The dir attribute mapping is the HTML spec's bidi rendering section rather
+ * than Gecko's internal pseudo-classes (:-moz-dir-attr-rtl and friends),
+ * which this engine's selector parser does not know. pyro: :dir() is the
+ * element's directionality (`direction.rs`), which for dir=auto and <bdi>
+ * comes from their content (pyro-dom's render tree carries it), and follows
+ * the node tree, not the flat tree (a slot's dir is not its assigned nodes').
  */
 
-[dir="ltr" i] {
+[dir]:dir(ltr),
+bdi:dir(ltr),
+input[type=tel i]:dir(ltr) {
     direction: ltr;
-    unicode-bidi: isolate;
 }
 
-[dir="rtl" i] {
+[dir]:dir(rtl),
+bdi:dir(rtl) {
     direction: rtl;
-    unicode-bidi: isolate;
 }
 
-[dir="auto" i] {
+[dir] {
     unicode-bidi: isolate;
 }
 
@@ -49,11 +50,21 @@ a[href] {
     cursor: pointer;
 }
 
-/* https://html.spec.whatwg.org/#bidi-rendering */
-input[type=tel]:dir(ltr) {
-    direction: ltr;
+/* pyro: CSS Overflow 5 scroll markers, as Chromium styles them: a group is a block box (its
+   layout and size containment are forced, `StyleAdjuster`), a marker is styled as a link
+   (`a[href]` above). A `::scroll-button()` takes the rules for `button`. */
+::scroll-marker-group {
+    display: block;
 }
 
+::scroll-marker,
+::column::scroll-marker {
+    color: rgb(0, 0, 238);
+    text-decoration: underline;
+    cursor: pointer;
+}
+
+/* https://html.spec.whatwg.org/#bidi-rendering */
 input {
     display: inline-block;
 }
@@ -189,6 +200,8 @@ input[type="button"] {
     background-color: #EFEFEF;
     text-align: center;
     display: inline-block;
+    /* pyro: Chromium's buttons size their border box. */
+    box-sizing: border-box;
 }
 
 /* Button-flavored inputs clip their contents to the border box and never

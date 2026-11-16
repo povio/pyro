@@ -398,26 +398,37 @@ macro_rules! qual_name {
 /// font then register the same blob (same id), so shaping caches keyed by
 /// the font's blob id serve every document; each document still registers
 /// it in its own font collection. Bounded at 64 files.
-pub(crate) fn intern_font_blob(bytes: blitz_traits::net::Bytes) -> linebender_resource_handle::Blob<u8> {
+///
+/// A file is one blob per `@font-face` family name it is loaded under: a run's
+/// font then tells which family drew it (`@font-palette-values` rules apply
+/// to the fonts of the families they name).
+pub(crate) fn intern_font_blob(
+    bytes: blitz_traits::net::Bytes,
+    family: Option<&str>,
+) -> linebender_resource_handle::Blob<u8> {
     use std::hash::{Hash, Hasher};
     std::thread_local! {
-        static FONTS: std::cell::RefCell<std::collections::HashMap<u64, Vec<linebender_resource_handle::Blob<u8>>>> =
+        static FONTS: std::cell::RefCell<std::collections::HashMap<u64, Vec<(Option<String>, linebender_resource_handle::Blob<u8>)>>> =
             Default::default();
     }
     const MAX_FILES: usize = 64;
     let mut h = std::collections::hash_map::DefaultHasher::new();
     bytes.hash(&mut h);
+    family.hash(&mut h);
     let key = h.finish();
     FONTS.with(|fonts| {
         let mut fonts = fonts.borrow_mut();
-        if let Some(blob) = fonts.get(&key).and_then(|v| v.iter().find(|b| b.data() == &bytes[..])) {
+        if let Some((_, blob)) = fonts
+            .get(&key)
+            .and_then(|v| v.iter().find(|(f, b)| f.as_deref() == family && b.data() == &bytes[..]))
+        {
             return blob.clone();
         }
         if fonts.values().map(Vec::len).sum::<usize>() >= MAX_FILES {
             fonts.clear();
         }
         let blob = linebender_resource_handle::Blob::new(Arc::new(bytes));
-        fonts.entry(key).or_default().push(blob.clone());
+        fonts.entry(key).or_default().push((family.map(str::to_owned), blob.clone()));
         blob
     })
 }

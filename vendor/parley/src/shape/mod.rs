@@ -4,6 +4,9 @@
 //! Text shaping implementation using `harfrust`for shaping
 //! and `icu` for text analysis.
 
+mod autospace;
+mod justify;
+
 use alloc::vec::Vec;
 use parley_engine::shape::{CharCluster, Coverage};
 use parley_engine::{
@@ -118,6 +121,8 @@ pub(crate) fn shape_text<'a, B: Brush>(
 
         // Positioned at `item_start_char`, i.e., the first character not yet covered by an item.
         let mut chars = text.char_indices().enumerate().peekable();
+        // pyro: whether the item being built follows an atomic inline box.
+        let mut after_atomic_box = false;
         core::iter::from_fn(move || {
             if item_start_char == char_count {
                 return None;
@@ -130,22 +135,24 @@ pub(crate) fn shape_text<'a, B: Brush>(
             // never a split point.
             chars.next();
 
-            let char_end = loop {
+            let char_end = 'item: loop {
                 let Some(&(char_index, (byte_index, _))) = chars.peek() else {
                     // End of text.
-                    break char_count;
+                    break (char_count, false);
                 };
 
                 // Split at inlines boxes, so each box falls on a shaping boundary.
                 //
                 // We loop because there may be multiple boxes at this index.
                 let mut split = false;
+                let mut atomic = false;
                 while let Some(inline_box) = inline_box_iter.peek() {
                     if inline_box.index < byte_index {
                         // Inline boxes *before* this index are popped (this occurs if the itemizer
                         // split a run and we were not called, such as at a bidi boundary).
                         inline_box_iter.next();
                     } else if inline_box.index == byte_index {
+                        atomic |= inline_box.kind == InlineBoxKind::InFlow;
                         inline_box_iter.next();
                         split = true;
                     } else {
@@ -154,28 +161,34 @@ pub(crate) fn shape_text<'a, B: Brush>(
                 }
 
                 if split {
-                    break char_index;
+                    break 'item (char_index, atomic);
                 }
 
                 let style_index = char_style_indices[char_index];
                 if style_index != item_style_index {
                     let style = &styles[usize::from(style_index)];
                     split = !nearly_eq(style.font_size, item_style.font_size)
+                        || style.font_size_adjusted != item_style.font_size_adjusted
+                        || style.auto_optical_size != item_style.auto_optical_size
+                        || style.language_override != item_style.language_override
                         || style.locale != item_style.locale
                         || style.font_variations != item_style.font_variations
                         || style.font_features != item_style.font_features
                         || !nearly_eq(style.letter_spacing, item_style.letter_spacing)
-                        || !nearly_eq(style.word_spacing, item_style.word_spacing);
+                        || !nearly_eq(style.word_spacing, item_style.word_spacing)
+                        || spacing_trim(style) != spacing_trim(item_style);
                 }
 
                 if split {
-                    break char_index;
+                    break 'item (char_index, false);
                 }
 
                 chars.next();
             };
+            let (char_end, isolated_after) = char_end;
 
             item_start_char = char_end;
+            let isolated_before = core::mem::replace(&mut after_atomic_box, isolated_after);
             Some(parley_engine::itemize::Item {
                 char_end: char_end as u32,
                 options: ShapeOptions {
@@ -185,6 +198,12 @@ pub(crate) fn shape_text<'a, B: Brush>(
                     point_size: if scale > 0.0 { item_style.font_size / scale } else { item_style.font_size },
                     features: &style_features[item_style_index as usize],
                     variations: rcx.variations(item_style.font_variations).unwrap_or(&[]),
+                    face_size_adjust: !item_style.font_size_adjusted,
+                    auto_opsz: item_style.auto_optical_size,
+                    language_override: item_style.language_override,
+                    spacing_trim: spacing_trim(item_style),
+                    isolated_before,
+                    isolated_after,
                 },
             })
         })
@@ -241,6 +260,26 @@ pub(crate) fn shape_text<'a, B: Brush>(
     // Process any remaining inline boxes whose index is greater than the length of the text
     for (box_idx, _inline_box) in inline_box_iter {
         layout.data.push_inline_box(box_idx, box_levels[box_idx]);
+    }
+
+    // pyro: CSS `text-autospace`.
+    autospace::apply(layout, text, styles, inline_boxes);
+    // pyro: CSS `text-justify`.
+    justify::apply(layout, text, styles);
+}
+
+/// pyro: how the shaper trims a style's fullwidth punctuation (CSS `text-spacing-trim`): the
+/// line edges are the line breaker's.
+fn spacing_trim<B: Brush>(style: &ResolvedStyle<B>) -> parley_engine::shape::SpacingTrim {
+    use crate::style::TextSpacingTrim;
+    use parley_engine::shape::SpacingTrim;
+    match style.text_spacing_trim {
+        TextSpacingTrim::SpaceAll => SpacingTrim::None,
+        TextSpacingTrim::TrimAll => SpacingTrim::All,
+        TextSpacingTrim::Normal
+        | TextSpacingTrim::SpaceFirst
+        | TextSpacingTrim::TrimStart
+        | TextSpacingTrim::TrimBoth => SpacingTrim::Adjacent,
     }
 }
 

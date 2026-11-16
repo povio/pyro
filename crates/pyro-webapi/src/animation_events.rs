@@ -122,7 +122,7 @@ impl Timeline {
 #[derive(Default)]
 pub(crate) struct State {
     /// The sheets' key and the rules read from them.
-    rules: RefCell<Option<(pyro_dom::style::AuthorSheetsKey, Rc<TimingRules>)>>,
+    rules: RefCell<Option<Rc<TimingRules>>>,
     /// The style stamp the rules' key was last computed at.
     rules_stamp: Cell<Option<Stamp>>,
     /// The style stamp of the last frame update.
@@ -237,24 +237,17 @@ impl State {
         style.set_animation_source(Some(crate::animation_frame::source(page)));
     }
 
-    /// The rules of the document's sheets, read again only when the sheets changed.
+    /// The rules of the document's sheets (the style engine's, read again
+    /// only when the sheets changed), looked up once per observation stamp.
     fn rules(&self, dom: &pyro_dom::Dom, style: &pyro_dom::style::StyleEngine) -> Rc<TimingRules> {
         let stamp = style.observation_stamp(dom);
         if self.rules_stamp.replace(Some(stamp)) == Some(stamp) {
-            if let Some((_, rules)) = &*self.rules.borrow() {
+            if let Some(rules) = &*self.rules.borrow() {
                 return rules.clone();
             }
         }
-        let key = style.author_sheets_key(dom);
-        if let Some((at, rules)) = &*self.rules.borrow() {
-            if *at == key {
-                return rules.clone();
-            }
-        }
-        let mut texts = Vec::new();
-        style.for_each_author_sheet(dom, &mut |text| texts.push(text.to_owned()));
-        let rules = Rc::new(TimingRules::parse(texts.iter().map(String::as_str), style.viewport()));
-        *self.rules.borrow_mut() = Some((key, rules.clone()));
+        let rules = style.timing_rules(dom);
+        *self.rules.borrow_mut() = Some(rules.clone());
         rules
     }
 }
@@ -328,9 +321,10 @@ fn update(page: &Rc<PageDom>, defer: bool) {
         state.stamp.set(Some(style.observation_stamp(&dom)));
         // Animations the styles ask for now.
         let mut wanted = Vec::new();
+        let style_of = |e: NodeId| style.stylo_style(&dom, e);
         for el in rules.animation_candidates(&dom, page.document()) {
             if dom.is_connected(el).unwrap_or(false) {
-                wanted.extend(rules.element(&dom, el).animations.into_iter().map(|a| (el, a)));
+                wanted.extend(rules.element(&dom, el, &style_of).animations.into_iter().map(|a| (el, a)));
             }
         }
         let now_ms = crate::event::page_now_ms(page);
@@ -639,7 +633,7 @@ fn transitions_from_changes(
         }
         let (was_none, is_none) = (displays_none(&before), displays_none(&now));
         if !was_none && !is_none {
-            start_transitions(state, dom, &rules, el, &before, &now, now_ms, &mut starting);
+            start_transitions(state, dom, style, &rules, el, &before, &now, now_ms, &mut starting);
             continue;
         }
         // `display: none` at either style change event: not rendered then, so
@@ -658,7 +652,7 @@ fn transitions_from_changes(
             reveal_hidden_content(state, dom, style, &rules, el, now_ms, &mut starting);
         }
         if (content || !is_none) && (was_content || content || !was_none) {
-            start_transitions(state, dom, &rules, el, &before, &now, now_ms, &mut starting);
+            start_transitions(state, dom, style, &rules, el, &before, &now, now_ms, &mut starting);
         }
     }
     starting.commit(state, planned);
@@ -706,7 +700,8 @@ fn keep_hidden_content(
     let Ok(descendants) = dom.descendants(root) else { return };
     let mut kept = state.hidden_content.borrow_mut();
     for d in descendants.filter(|d| *d != root) {
-        if kept.contains_key(&d) || dom.element(d).is_err() || rules.element(dom, d).transitions.is_empty() {
+        let style_of = |e: NodeId| style.stylo_style(dom, e);
+        if kept.contains_key(&d) || dom.element(d).is_err() || rules.element(dom, d, &style_of).transitions.is_empty() {
             continue;
         }
         if let Some(snapshot) = style.stylo_style(dom, d) {
@@ -742,7 +737,11 @@ fn style_read_hidden_content(state: &State, dom: &pyro_dom::Dom, style: &pyro_do
         keep_hidden_content(state, dom, style, &rules, top);
         return;
     }
-    if el == top || state.hidden_content.borrow().contains_key(&el) || rules.element(dom, el).transitions.is_empty() {
+    let style_of = |e: NodeId| style.stylo_style(dom, e);
+    if el == top
+        || state.hidden_content.borrow().contains_key(&el)
+        || rules.element(dom, el, &style_of).transitions.is_empty()
+    {
         return;
     }
     if let Some(snapshot) = style.stylo_style(dom, el) {
@@ -835,7 +834,7 @@ fn reveal_hidden_content(
             continue;
         }
         if let Some(now) = style.stylo_style(dom, d).filter(|now| !displays_none(now)) {
-            start_transitions(state, dom, rules, d, &before, &now, now_ms, starting);
+            start_transitions(state, dom, style, rules, d, &before, &now, now_ms, starting);
         }
     }
 }
@@ -909,6 +908,7 @@ impl Starting {
 fn start_transitions(
     state: &State,
     dom: &pyro_dom::Dom,
+    style: &pyro_dom::style::StyleEngine,
     rules: &TimingRules,
     el: NodeId,
     before: &StyleSnapshot,
@@ -919,7 +919,9 @@ fn start_transitions(
     if StyleSnapshot::ptr_eq(before, now) {
         return;
     }
-    let ElementTiming { transitions, .. } = rules.element(dom, el);
+    // The after-change style's custom properties resolve `var()`.
+    let style_of = |e: NodeId| if e == el { Some(now.clone()) } else { style.stylo_style(dom, e) };
+    let ElementTiming { transitions, .. } = rules.element(dom, el, &style_of);
     let mut started: Vec<&'static str> = Vec::new();
     for transition in &transitions {
         let changed =

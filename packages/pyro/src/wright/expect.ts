@@ -10,7 +10,7 @@ import { ScreenshotStep, type ScreenshotOptions } from '../steps.js';
 import { mismatch, prepare, rewrite, settle } from '../screenshots.js';
 import type { ExpectedText } from './match.js';
 import { resolveUrl, urlMatches } from './match.js';
-import { expectLocator, Frame, Locator, Page, type ExpectOptions, type ExpectResult } from './page.js';
+import { expectLocator, Frame, limit, Locator, Page, type ExpectOptions, type ExpectResult } from './page.js';
 import { APIResponse } from './request.js';
 import { currentTest } from './context.js';
 import { anonymousName, sanitize, trimLongString, ariaSnapshotFile, lineDiff, matchFile, missingWritten, snapshotPath, updateSnapshots, type SnapshotOptions, type UpdateMode } from './snapshot.js';
@@ -165,7 +165,7 @@ function webFirst(actual: unknown, isNot: boolean, cfg: ExpectConfig): Record<st
       toHaveURL: async (expected: string | RegExp | ((url: URL) => boolean), o?: Opts & { ignoreCase?: boolean }) => {
         const timeout = t(o) ?? cfg.timeout ?? defaults.timeout;
         if (typeof expected === 'function') {
-          const deadline = Date.now() + timeout;
+          const deadline = Date.now() + limit(timeout);
           for (;;) {
             if ((await urlMatches(undefined, actual.url(), expected)) !== isNot) return;
             if (Date.now() > deadline) throw failure('toHaveURL', isNot, 'page', 'predicate to succeed', actual.url(), { matches: isNot, timedOut: true }, timeout, cfg.message);
@@ -243,7 +243,7 @@ async function ariaMatcher(loc: Locator, isNot: boolean, cfg: ExpectConfig, expe
       throw new ExpectError(`${label}: the template is not valid: ${(e as Error).message}`);
     }
   }
-  const deadline = Date.now() + timeout;
+  const deadline = Date.now() + limit(timeout);
   let tree: AriaNode | undefined;
   let pass = false;
   for (let i = 0; ; i++) {
@@ -460,12 +460,14 @@ function poll(fn: () => unknown, cfg: ExpectConfig, o: { timeout?: number; inter
         if (prop === 'not') return poll(fn, cfg, o, !isNot);
         if (prop === 'then' || typeof prop !== 'string') return undefined;
         return async (...args: any[]) => {
-          const deadline = Date.now() + timeout;
+          // 0: no limit, as in Playwright.
+          const deadline = Date.now() + limit(timeout);
           let last: unknown;
           for (let i = 0; ; i++) {
             try {
               const value = await fn();
-              const m = matchers(value, { ...cfg, soft: false, timeout: 0, message: undefined }, isNot);
+              // One check per poll (0 would be no limit).
+              const m = matchers(value, { ...cfg, soft: false, timeout: 1, message: undefined }, isNot);
               await m[prop](...args);
               return;
             } catch (e) {

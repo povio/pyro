@@ -152,11 +152,26 @@ impl Parse for InitialLetter {
         {
             return Ok(Self::normal());
         }
+        // pyro: `<number> && [ drop | raise ]?` besides `<number> <integer>?` (CSS Inline 3 § 7.2).
+        use crate::values::generics::text::InitialLetterKeyword;
+        let keyword = |i: &mut Parser<'_>| -> Result<InitialLetterKeyword, ParseError> {
+            try_match_ident_ignore_ascii_case! { i,
+                "drop" => Ok(InitialLetterKeyword::Drop),
+                "raise" => Ok(InitialLetterKeyword::Raise),
+            }
+        };
+        if let Ok(keyword) = input.try_parse(keyword) {
+            let size = Number::parse_at_least_one(context, input)?;
+            return Ok(Self { size, sink: crate::Zero::zero(), keyword });
+        }
         let size = Number::parse_at_least_one(context, input)?;
+        if let Ok(keyword) = input.try_parse(keyword) {
+            return Ok(Self { size, sink: crate::Zero::zero(), keyword });
+        }
         let sink = input
             .try_parse(|i| Integer::parse_positive(context, i))
             .unwrap_or_else(|_| crate::Zero::zero());
-        Ok(Self { size, sink })
+        Ok(Self { size, sink, keyword: InitialLetterKeyword::None })
     }
 }
 
@@ -1339,6 +1354,38 @@ bitflags! {
         const REPLACE = 1 << 6;
         */
     }
+}
+
+/// pyro: the `text-spacing-trim` property: which fullwidth punctuation is set half-width.
+///
+/// https://drafts.csswg.org/css-text-4/#text-spacing-trim-property
+#[allow(missing_docs)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    FromPrimitive,
+    Hash,
+    MallocSizeOf,
+    Parse,
+    PartialEq,
+    SpecifiedValueInfo,
+    ToComputedValue,
+    ToCss,
+    ToResolvedValue,
+    ToShmem,
+    ToTyped,
+)]
+#[repr(u8)]
+pub enum TextSpacingTrim {
+    Normal,
+    SpaceAll,
+    SpaceFirst,
+    TrimStart,
+    TrimBoth,
+    TrimAll,
+    Auto,
 }
 
 /* Bug 1980111: Uncomment the following to support 'replace' value.

@@ -323,3 +323,30 @@ fn properties_stylo_does_not_parse_still_cascade() {
     assert_eq!(v("c", "line-clamp"), "3", "only matching @media apply");
     assert_eq!(v("cc", "line-clamp"), "none", "not inherited");
 }
+
+/// pyro (lane G): a subgrid's `grid-template-columns` resolves to `subgrid` with the names of each of
+/// the lines it spans (its own), which only its layout knows (css-grid-2 §7.2.6.2).
+#[test]
+fn a_subgrids_template_resolves_to_its_lines() {
+    let p = Page::new(
+        r#"<!doctype html><div style="display:grid;grid-template-columns:10px 20px 30px">
+        <div id=s style="display:grid;grid-template-columns:subgrid [a];grid-column:span 3"></div></div>"#,
+    );
+    let el = p.find("#s");
+    assert_eq!(p.layout.computed_style_value(&p.dom.borrow(), el, "grid-template-columns"), "subgrid [a] [] [] []");
+}
+
+/// pyro (lane G): a grid container's `grid-template-columns`/`-rows` resolve to its used tracks, each
+/// listed (css-grid-1 §7.2.6): `repeat(auto-fill, …)` in an absolutely positioned 100px square grid
+/// is four 25px columns and five 20px rows (WPT `grid-auto-repeat-positioned-container-001`).
+#[test]
+fn a_grid_containers_template_resolves_to_its_used_tracks() {
+    let p = Page::new(
+        r#"<!doctype html><div style="position:relative;width:100px;height:100px">
+        <div id=g style="display:grid;position:absolute;inset:0;grid:repeat(auto-fill, 20px) / repeat(auto-fill, 25px)"></div></div>"#,
+    );
+    let el = p.find("#g");
+    let dom = p.dom.borrow();
+    assert_eq!(p.layout.computed_style_value(&dom, el, "grid-template-columns"), "25px 25px 25px 25px");
+    assert_eq!(p.layout.computed_style_value(&dom, el, "grid-template-rows"), "20px 20px 20px 20px 20px");
+}

@@ -172,6 +172,12 @@ impl ResolveContext {
             StyleProperty::TabSize(value) => TabSize(scale_tab_size(*value, scale)),
             StyleProperty::SoftHyphen(value) => SoftHyphen(*value),
             StyleProperty::DictionaryBreaks(value) => DictionaryBreaks(*value),
+            StyleProperty::FontSizeAdjusted(value) => FontSizeAdjusted(*value),
+            StyleProperty::AutoOpticalSize(value) => AutoOpticalSize(*value),
+            StyleProperty::LanguageOverride(value) => LanguageOverride(*value),
+            StyleProperty::TextSpacingTrim(value) => TextSpacingTrim(*value),
+            StyleProperty::TextAutospace(value) => TextAutospace(*value),
+            StyleProperty::TextJustify(value) => TextJustify(*value),
         }
     }
 
@@ -216,6 +222,12 @@ impl ResolveContext {
             tab_size: scale_tab_size(raw_style.tab_size, scale),
             soft_hyphen: raw_style.soft_hyphen,
             dictionary_breaks: raw_style.dictionary_breaks,
+            font_size_adjusted: raw_style.font_size_adjusted,
+            auto_optical_size: raw_style.auto_optical_size,
+            language_override: raw_style.language_override,
+            text_spacing_trim: raw_style.text_spacing_trim,
+            text_autospace: raw_style.text_autospace,
+            text_justify: raw_style.text_justify,
             annotation_space: raw_style.annotation_space.scale(scale),
             text_box_trim: raw_style.text_box_trim,
         }
@@ -414,6 +426,18 @@ pub(crate) enum ResolvedProperty<B: Brush> {
     SoftHyphen(crate::style::SoftHyphen),
     /// pyro: whether lines may break where dictionaries find word boundaries.
     DictionaryBreaks(bool),
+    /// pyro: whether the font size is set by `font-size-adjust`.
+    FontSizeAdjusted(bool),
+    /// pyro: whether the first font variation is the automatic `opsz`.
+    AutoOpticalSize(bool),
+    /// pyro: the OpenType language system to shape with.
+    LanguageOverride(Option<[u8; 4]>),
+    /// pyro: which fullwidth punctuation is set half-width.
+    TextSpacingTrim(crate::style::TextSpacingTrim),
+    /// pyro: where space is added between ideographs and other characters.
+    TextAutospace(crate::style::TextAutospace),
+    /// pyro: where justification adds space.
+    TextJustify(crate::style::TextJustify),
 }
 
 /// pyro: `tab_size` with a length in layout units.
@@ -476,6 +500,19 @@ pub(crate) struct ResolvedStyle<B: Brush> {
     pub(crate) soft_hyphen: crate::style::SoftHyphen,
     /// pyro: whether lines may break where dictionaries find word boundaries.
     pub(crate) dictionary_breaks: bool,
+    /// pyro: whether the font size is set by `font-size-adjust` ([`TextStyle::font_size_adjusted`]).
+    pub(crate) font_size_adjusted: bool,
+    /// pyro: whether the first font variation is the automatic `opsz`
+    /// ([`TextStyle::auto_optical_size`]).
+    pub(crate) auto_optical_size: bool,
+    /// pyro: the OpenType language system to shape with ([`TextStyle::language_override`]).
+    pub(crate) language_override: Option<[u8; 4]>,
+    /// pyro: which fullwidth punctuation is set half-width.
+    pub(crate) text_spacing_trim: crate::style::TextSpacingTrim,
+    /// pyro: where space is added between ideographs and other characters.
+    pub(crate) text_autospace: crate::style::TextAutospace,
+    /// pyro: where justification adds space.
+    pub(crate) text_justify: crate::style::TextJustify,
     /// pyro: room beyond the content area ([`TextStyle::annotation_space`]), scaled.
     pub(crate) annotation_space: AnnotationSpace,
     /// pyro: the edges the content area is trimmed to ([`TextStyle::text_box_trim`]).
@@ -516,6 +553,12 @@ impl<B: Brush> ResolvedStyle<B> {
             TabSize(value) => self.tab_size = value,
             SoftHyphen(value) => self.soft_hyphen = value,
             DictionaryBreaks(value) => self.dictionary_breaks = value,
+            FontSizeAdjusted(value) => self.font_size_adjusted = value,
+            AutoOpticalSize(value) => self.auto_optical_size = value,
+            LanguageOverride(value) => self.language_override = value,
+            TextSpacingTrim(value) => self.text_spacing_trim = value,
+            TextAutospace(value) => self.text_autospace = value,
+            TextJustify(value) => self.text_justify = value,
         }
     }
 
@@ -551,6 +594,12 @@ impl<B: Brush> ResolvedStyle<B> {
             TabSize(value) => self.tab_size == *value,
             SoftHyphen(value) => self.soft_hyphen == *value,
             DictionaryBreaks(value) => self.dictionary_breaks == *value,
+            FontSizeAdjusted(value) => self.font_size_adjusted == *value,
+            AutoOpticalSize(value) => self.auto_optical_size == *value,
+            LanguageOverride(value) => self.language_override == *value,
+            TextSpacingTrim(value) => self.text_spacing_trim == *value,
+            TextAutospace(value) => self.text_autospace == *value,
+            TextJustify(value) => self.text_justify == *value,
         }
     }
 
@@ -567,6 +616,7 @@ impl<B: Brush> ResolvedStyle<B> {
             white_space_collapse: self.white_space_collapse,
             tab_size: self.tab_size,
             soft_hyphen: self.soft_hyphen,
+            text_spacing_trim: self.text_spacing_trim,
             locale: self.locale,
         }
     }

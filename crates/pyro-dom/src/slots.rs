@@ -6,6 +6,7 @@
 use rustc_hash::FxHashMap;
 
 use crate::dom::Dom;
+use crate::error::DomResult;
 use crate::node::{NodeId, NodeKind, NIL};
 
 #[derive(Default)]
@@ -14,6 +15,10 @@ pub(crate) struct SlotState {
     assignments: FxHashMap<u32, Vec<u32>>,
     /// Slots to fire `slotchange` at, in signal order.
     signaled: Vec<u32>,
+    /// DOM "manually assigned nodes" of each slot `HTMLSlotElement.assign()` was called on
+    /// (a node is in one slot's list at most), in the order given. They are its assigned nodes
+    /// while the slot is in a shadow tree that assigns manually and they are children of its host.
+    pub(crate) manual: FxHashMap<NodeId, Vec<NodeId>>,
 }
 
 impl Dom {
@@ -50,18 +55,57 @@ impl Dom {
         }
     }
 
-    /// The shadow root `host` hosts, when it has one that assigns by name.
+    /// The shadow root `host` hosts (by name or manually assigning: a child of the host that
+    /// comes or goes changes either's assignment).
     fn named_shadow_root(&self, host: u32) -> Option<u32> {
         let sr = self.n(host).element()?.shadow_root;
         if sr == NIL {
             return None;
         }
         match &self.n(sr).kind {
-            NodeKind::Fragment(f) if f.shadow.is_some() && f.flags & crate::node::shadow_flags::MANUAL_SLOTS == 0 => {
-                Some(sr)
-            }
+            NodeKind::Fragment(f) if f.shadow.is_some() => Some(sr),
             _ => None,
         }
+    }
+
+    /// `HTMLSlotElement.assign(...nodes)` (DOM "manually assigned nodes"): `slot` takes `nodes`
+    /// (each once, in order) from the slots they were assigned to, its old nodes are unassigned,
+    /// and the slots of the trees concerned are checked for `slotchange`.
+    pub fn slot_assign(&mut self, slot: NodeId, nodes: &[NodeId]) -> DomResult<()> {
+        let s = self.check(slot)?;
+        let mut touched = vec![slot];
+        self.slot_state.manual.remove(&slot);
+        let mut set: Vec<NodeId> = Vec::with_capacity(nodes.len());
+        for &node in nodes {
+            if set.contains(&node) {
+                continue;
+            }
+            for (other, list) in self.slot_state.manual.iter_mut() {
+                if list.contains(&node) {
+                    list.retain(|n| *n != node);
+                    touched.push(*other);
+                }
+            }
+            set.push(node);
+        }
+        self.slot_state.manual.insert(slot, set);
+        self.slot_state.manual.retain(|_, list| !list.is_empty());
+        // DOM "assign slottables for a tree" for the roots of the slots concerned.
+        let mut roots: Vec<u32> = Vec::new();
+        for id in touched {
+            let Ok(i) = self.check(id) else { continue };
+            if self.in_shadow_tree(i) {
+                let root = self.root_idx(i);
+                if !roots.contains(&root) {
+                    roots.push(root);
+                }
+            }
+        }
+        for root in roots {
+            self.check_slots_in_root(root);
+        }
+        let _ = s;
+        Ok(())
     }
 
     /// Whether `node`'s subtree holds a slot element.

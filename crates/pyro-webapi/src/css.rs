@@ -1308,12 +1308,21 @@ impl JsClass for CssStyleSheet {
         });
         def.accessor(
             "disabled",
-            |s, sh| Ok(s.boolean(matches!(&sh.owner, SheetOwner::Constructed(c) if c.disabled.get()))),
+            |s, sh| {
+                Ok(s.boolean(match &sh.owner {
+                    SheetOwner::Constructed(c) => c.disabled.get(),
+                    SheetOwner::Node(h) => h.page.layout.borrow().style().sheet_disabled(h.id),
+                }))
+            },
             |_s, sh, v| {
-                if let SheetOwner::Constructed(c) = &sh.owner {
-                    if c.disabled.replace(v.to_bool()) != v.to_bool() {
-                        c.push();
+                match &sh.owner {
+                    SheetOwner::Constructed(c) => {
+                        if c.disabled.replace(v.to_bool()) != v.to_bool() {
+                            c.push();
+                        }
                     }
+                    // A `<style>`'s or `<link>`'s sheet: it applies nothing while disabled.
+                    SheetOwner::Node(h) => h.page.layout.borrow_mut().style_mut().set_sheet_disabled(h.id, v.to_bool()),
                 }
                 Ok(())
             },

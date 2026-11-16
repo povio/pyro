@@ -2833,6 +2833,28 @@ fn sticky_boxes_follow_their_containing_block_chain_to_a_scroll_container() {
 }
 
 #[test]
+fn sticky_offsets_lay_out_only_a_document_with_a_sticky_box() {
+    // Every render snapshot asks for the sticky offsets (each screenshot and screencast frame). A
+    // document without a sticky box answers from a restyle after a DOM change, without a layout
+    // (Taffy runs no pass for it); a box a change makes sticky is found by that restyle.
+    let html = "<!doctype html><style>body{margin:0}.s{position:sticky;top:0}</style>\
+         <div id=sc style=\"height:100px;overflow:auto\"><div style=\"height:40px\"></div>\
+         <div id=t style=\"height:20px\"></div><div style=\"height:500px\"></div></div>";
+    let mut p = page(html);
+    let (sc, t) = (p.id("sc"), p.id("t"));
+    p.layout.set_scroll_top(&p.dom, sc, 100);
+    assert!(p.layout.sticky_offsets(&p.dom).is_empty());
+    p.dom.set_attribute(t, "style", "height:30px").unwrap();
+    let passes = pyro_render::blitz_passes().1;
+    assert!(p.layout.sticky_offsets(&p.dom).is_empty());
+    assert_eq!(pyro_render::blitz_passes().1, passes, "no layout for a document without a sticky box");
+    assert!((p.layout.bounding_client_rect(&p.dom, t).height - 30.0).abs() < 0.5, "a layout query lays it out");
+    p.dom.set_attribute(t, "class", "s").unwrap();
+    let offsets = p.layout.sticky_offsets(&p.dom);
+    assert!(offsets.iter().any(|&(_, o)| o == (0.0, 60.0)), "held at the scrollport's top: {offsets:?}");
+}
+
+#[test]
 fn sticky_boxes_stay_in_their_scrollport_like_chromium() {
     // TOS finance tables (TP-4230 master charges header, TS-88 pinned Profit /
     // rightSticky columns, sticky totals footer): `position: sticky` was laid
@@ -2882,6 +2904,46 @@ fn sticky_boxes_stay_in_their_scrollport_like_chromium() {
     assert_eq!(at(&p, 5.0, 190.0), Some(p.id("tf")), "and the sticky footer");
     p.layout.window_scroll_to(&p.dom, None, Some(400));
     near(rect(&p, "vp").y, 10.0, "viewport sticky sticks below the top inset");
+}
+
+#[test]
+fn nested_reversed_and_split_inline_sticky_boxes_like_chromium() {
+    // WPT css-position sticky: every table part sticky (`position-sticky-table-parts`): a cell
+    // in a sticky row is where the row holds it, it adds no offset of its own (each sticky box
+    // is held after its sticky ancestors, its containing block moved by the ones holding that);
+    // a sticky child of a `column-reverse` scroller is bounded by content above the scrollport
+    // (`position-sticky-column-reverse-flex`); a sticky block in an inline box has the scroller,
+    // not the inline, as its containing block (`position-sticky-large-top-2`). Chromium
+    // (2026-11-16), before and after scrolling 150, -400 and 50: td 5 / 5, column-reverse
+    // child 300 / 300, large-top 555 / 505.
+    let rows: String = (0..7)
+        .map(|i| if i == 0 { "<tr><td id=td1></td></tr>".to_string() } else { "<tr><td></td></tr>".to_string() })
+        .collect();
+    let html = format!(
+        "<!doctype html><style>*{{margin:0}}body{{margin:0}}\
+         #t{{overflow:auto;height:250px;width:100px;position:relative}}\
+         table{{border-collapse:collapse}}td{{padding:0;height:50px;width:50px}}#t table *{{position:sticky;top:5px}}\
+         #c{{overflow:auto;height:100px;width:100px;display:flex;flex-direction:column-reverse;scrollbar-width:none}}\
+         #cs{{position:sticky;bottom:0;min-height:50px;width:50px}}\
+         #l{{overflow:auto;height:200px;width:200px;padding:5px 3px 0 8px}}#ls{{position:sticky;top:200px;width:50px;height:50px}}\
+         </style><body><div id=t><div style=\"height:700px\"><table><tbody>{rows}</tbody></table></div></div>\
+         <div id=c><div id=cs></div><div style=\"min-height:400px\"></div></div>\
+         <div id=l><span><div id=ls></div></span><div style=\"height:200px;width:150px\"></div></div></body>"
+    );
+    let mut p = page(&html);
+    p.layout.set_viewport(Viewport::new(800, 600));
+    let y = |p: &Page, id: &str| p.layout.bounding_client_rect(&p.dom, p.id(id)).y;
+    let near = |a: f64, b: f64, what: &str| assert!((a - b).abs() < 0.5, "{what}: {a} vs {b}");
+    near(y(&p, "td1"), 5.0, "the cell at rest, held 5px down by its row");
+    near(y(&p, "cs"), 300.0, "the column-reverse child at rest");
+    near(y(&p, "ls"), 555.0, "the large-top block at rest");
+    let (t, c, l) = (p.id("t"), p.id("c"), p.id("l"));
+    p.layout.set_scroll_top(&p.dom, t, 150);
+    p.layout.set_scroll_top(&p.dom, c, -400);
+    p.layout.set_scroll_top(&p.dom, l, 50);
+    near(y(&p, "td1"), 5.0, "the cell stays with its row");
+    near(y(&p, "cs"), 300.0, "the column-reverse child stays at the scrollport's bottom");
+    near(y(&p, "ls"), 505.0, "the large-top block reaches its containing block's end");
 }
 
 #[test]

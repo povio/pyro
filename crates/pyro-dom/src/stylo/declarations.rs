@@ -12,6 +12,13 @@ use style_traits::ParsingMode;
 
 use super::{property_id, url_data};
 
+/// The declarations of `text` as the cascade parses a `style` attribute
+/// (invalid ones dropped).
+pub(crate) fn parse_block(text: &str) -> PropertyDeclarationBlock {
+    super::enable_features();
+    style::properties::parse_style_attribute(text, &url_data(), None, QuirksMode::NoQuirks, CssRuleType::Style)
+}
+
 /// One declaration block, parsed from its text.
 pub struct DeclarationBlock(PropertyDeclarationBlock);
 

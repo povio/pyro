@@ -36,6 +36,20 @@ test('types', async ({ page, request }) => {
   await l.type('x');
   // @ts-expect-error deprecated, removed
   page.accessibility;
+  // Deprecated options compile, with Playwright's meaning (none, for these).
+  await l.isVisible({ timeout: 1500 });
+  await l.isHidden({ timeout: 1500 });
+  await l.click({ noWaitAfter: true });
+  await l.fill('x', { noWaitAfter: true });
+  await l.press('Enter', { noWaitAfter: true });
+  await l.check({ noWaitAfter: true });
+  await l.selectOption('a', { noWaitAfter: true });
+  await l.setInputFiles([], { noWaitAfter: true });
+  await l.dragTo(l, { noWaitAfter: true });
+  const h = await l.elementHandle();
+  await h?.inputValue({ timeout: 10 });
+  await h?.press('Enter', { noWaitAfter: true });
+  await page.context().browser()?.newPage({ logger: { isEnabled: () => false, log: () => {} } });
   await page.clock.install({ time: new Date('2024-01-01') });
   await page.clock.runFor('01:00');
   // @ts-expect-error ticks are a number or "hh:mm:ss"

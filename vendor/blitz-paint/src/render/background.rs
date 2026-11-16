@@ -210,6 +210,15 @@ impl ElementCx<'_, '_> {
                 .filter(|_| attachment == StyloBackgroundAttachment::Local)
         };
 
+        // pyro: with a `border-shape`, the background is clipped to its inner shape (to the shape,
+        // with one) instead of the rounded box (CSS Borders 4 §11).
+        let border_shape = canvas.is_none().then(|| self.border_shape()).flatten();
+        let shape_clip = border_shape.as_ref().map(|shape| shape.background_clip());
+        let shape_bounds = border_shape.as_ref().map(|shape| {
+            use kurbo::Shape as _;
+            shape.outer_path().bounding_box()
+        });
+
         // The background color is clipped by the clip of the last layer in the list
         let last_clip = *get_cyclic(&bg_styles.background_clip.0, layer_count - 1);
         let last_attachment = *get_cyclic(&bg_styles.background_attachment.0, layer_count - 1);
@@ -224,6 +233,18 @@ impl ElementCx<'_, '_> {
                 (Some(canvas), _) => canvas.to_path(0.1),
                 (None, Some(local)) => local.box_path(clip),
                 (None, None) if border_area => self.border_area_path(),
+                (None, None) if shape_clip.is_some() => {
+                    let shape = shape_clip.clone().unwrap();
+                    match clip {
+                        BoxModelBox::BorderBox => shape,
+                        BoxModelBox::NoClip => self.box_path(clip),
+                        _ => {
+                            use crate::kurbo_css::contoured::{boolean, flatten, rect_polygon};
+                            let shapes = [flatten(&shape), vec![rect_polygon(self.box_rect(clip))]];
+                            boolean(&shapes, |inside| inside[0] && inside[1])
+                        }
+                    }
+                }
                 (None, None) => match clip {
                     BoxModelBox::BorderBox => shrunk_border_box
                         .get_or_init(|| self.bleed_avoiding_border_box(style))
@@ -307,6 +328,11 @@ impl ElementCx<'_, '_> {
             let local = local_cx(layer.attachment);
             let cx = local.unwrap_or(self);
             let area = canvas.unwrap_or_else(|| cx.box_rect(layer.clip));
+            // pyro: a `border-shape` reaching out of the box takes the painting area with it.
+            let area = match &shape_bounds {
+                Some(bounds) if canvas.is_none() => area.union(*bounds),
+                _ => area,
+            };
 
             if local.is_some() {
                 scene.push_clip_layer(
@@ -425,7 +451,8 @@ impl ElementCx<'_, '_> {
             kurbo::Insets::ZERO,
             0.0,
             radii,
-        );
+        )
+        .contoured_like(&self.frame);
         Some(shrunk.border_box_path())
     }
 
@@ -633,7 +660,18 @@ impl ElementCx<'_, '_> {
             return;
         };
 
+        // pyro: a positioned row group or row paints its background with its cells, in the
+        // positioned layer (`draw_positioned_table_part_backgrounds`), not here.
+        let positioned = |node_id: NodeId| -> bool {
+            self.context.dom.get_node(node_id).and_then(|node| node.primary_styles()).is_some_and(|style| {
+                use style::computed_values::position::T as Position;
+                matches!(style.clone_position(), Position::Relative | Position::Sticky)
+            })
+        };
         let background_color = |node_id: NodeId| -> Option<Color> {
+            if positioned(node_id) {
+                return None;
+            }
             let node = self.context.dom.get_node(node_id)?;
             let style = node.primary_styles()?;
             let current_color = style.clone_color();
@@ -669,7 +707,7 @@ impl ElementCx<'_, '_> {
         // pyro: a part with a background image paints it (with its colour) cell by cell too,
         // positioned against the part's own box (CSS 2.1 §17.5.1).
         let has_image = |node_id: NodeId| -> bool {
-            self.context.dom.get_node(node_id).and_then(|node| node.primary_styles()).is_some_and(|style| {
+            !positioned(node_id) && self.context.dom.get_node(node_id).and_then(|node| node.primary_styles()).is_some_and(|style| {
                 style
                     .get_background()
                     .background_image
@@ -691,9 +729,10 @@ impl ElementCx<'_, '_> {
             .rows
             .iter()
             .map(|row| {
-                self.context.dom.get_node(row.node_id).and_then(|node| node.primary_styles()).is_some_and(|style| {
-                    style.get_effects().box_shadow.0.iter().any(|shadow| !shadow.inset)
-                })
+                !positioned(row.node_id)
+                    && self.context.dom.get_node(row.node_id).and_then(|node| node.primary_styles()).is_some_and(|style| {
+                        style.get_effects().box_shadow.0.iter().any(|shadow| !shadow.inset)
+                    })
             })
             .collect();
         let any_shadow = row_shadows.iter().any(|shadow| *shadow);
@@ -824,6 +863,101 @@ impl ElementCx<'_, '_> {
         }
     }
 
+    /// pyro: the backgrounds of the positioned row group and row of the table cell this is (see
+    /// `BaseDocument::table_cell_positioned_parts`), group first, in the cell's border box: a
+    /// positioned part paints with its cells, in the positioned layer, under each cell's own
+    /// background (WPT `position-relative-table-*`, `position-sticky-table-*`).
+    pub(super) fn draw_positioned_table_part_backgrounds(&self, scene: &mut impl PaintScene) {
+        let dom = self.context.dom;
+        let parts = dom.table_cell_positioned_parts(self.node.id);
+        if parts.iter().all(Option::is_none) {
+            return;
+        }
+        let Some(table_node) = self.node.layout_parent.get().and_then(|id| dom.get_node(id)) else { return };
+        let Some(SpecialElementData::TableRoot(table)) = table_node.element_data().map(|e| &e.special_data) else {
+            return;
+        };
+        let index = self.node.layout_data().table_cell_index as usize;
+        let Some(cell) = table.cells.get(index).filter(|cell| cell.node_id == self.node.id) else { return };
+        let layout = self.node.final_layout();
+        let shape = Rect::new(0.0, 0.0, layout.size.width as f64, layout.size.height as f64).scale_from_origin(self.scale);
+        let mut part_rects = None;
+        for (part, kind) in parts.into_iter().zip([PartKind::RowGroup, PartKind::Row]) {
+            let Some(part) = part else { continue };
+            let Some(node) = dom.get_node(part) else { continue };
+            let Some(style) = node.primary_styles() else { continue };
+            let current_color = style.clone_color();
+            let background = style.get_background();
+            let color = background.background_color.resolve_to_absolute(&current_color).as_srgb_color();
+            let image = background.background_image.0.iter().any(|image| !matches!(image, ComputedImage::None));
+            if image {
+                let rects = part_rects.get_or_insert_with(|| self.table_part_rects(table));
+                if let Some(rects) = rects.as_ref() {
+                    // The part's box in the cell's space.
+                    let location = layout.location;
+                    let rect = rects.rect(table, part, kind, cell) - Vec2::new(location.x as f64, location.y as f64);
+                    self.draw_table_part_background(scene, part, rect, &shape, self.transform);
+                    continue;
+                }
+            }
+            if color != Color::TRANSPARENT {
+                scene.fill(Fill::NonZero, self.transform, color, None, &shape);
+            }
+        }
+    }
+
+    /// pyro: the outlines of a table's row groups and rows (they paint no box of their own: the
+    /// cells paint their backgrounds), each around the tracks it spans, groups first. A row with
+    /// `visibility` other than `visible` (a collapsed one) has none.
+    pub(crate) fn draw_table_part_outlines(&self, scene: &mut impl PaintScene) {
+        let SpecialElementData::TableRoot(table) = &self.element.special_data else {
+            return;
+        };
+        let dom = self.context.dom;
+        let has_outline = |id: NodeId| {
+            dom.get_node(id).and_then(|node| node.primary_styles()).is_some_and(|style| {
+                let outline = style.get_outline();
+                outline.outline_style != style::values::computed::OutlineStyle::none()
+                    && outline.outline_width.0.to_f32_px() > 0.0
+                    && style.get_inherited_box().visibility == style::computed_values::visibility::T::Visible
+                    // (A positioned part paints as a layer of its own, its outline with it.)
+                    && style.clone_position() == style::computed_values::position::T::Static
+            })
+        };
+        let mut parts: Vec<(NodeId, Vec<usize>)> = Vec::new();
+        for (at, row) in table.rows.iter().enumerate() {
+            if let Some(group) = row.group.filter(|group| has_outline(*group)) {
+                match parts.iter_mut().find(|(id, _)| *id == group) {
+                    Some((_, rows)) => rows.push(at),
+                    None => parts.push((group, vec![at])),
+                }
+            }
+        }
+        for (at, row) in table.rows.iter().enumerate() {
+            if !row.collapsed && has_outline(row.node_id) {
+                parts.push((row.node_id, vec![at]));
+            }
+        }
+        if parts.is_empty() {
+            return;
+        }
+        let Some(rects) = self.table_part_rects(table) else { return };
+        let (x0, x1) = (rects.columns[0].0, rects.columns[rects.columns.len() - 1].1);
+        for (id, rows) in parts {
+            let open: Vec<usize> = rows.iter().copied().filter(|&at| !table.rows[at].collapsed).collect();
+            let (Some(&first), Some(&last)) = (open.first(), open.last()) else { continue };
+            let (Some(top), Some(bottom)) = (rects.rows.get(first), rects.rows.get(last)) else { continue };
+            let Some(node) = dom.get_node(id) else { continue };
+            if node.element_data().is_none() {
+                continue;
+            }
+            let mut layout = taffy::Layout::new();
+            layout.size = taffy::Size { width: (x1 - x0) as f32, height: (bottom.1 - top.0) as f32 };
+            let transform = self.transform * Affine::translate(Vec2::new(x0, top.0) * self.scale);
+            self.context.element_cx(node, layout, transform, None).draw_outline(scene);
+        }
+    }
+
     /// pyro: where a table's rows and columns are (CSS px, the table's space), for the boxes of its
     /// parts whose backgrounds are positioned against them.
     fn table_part_rects(&self, table: &blitz_dom::TableContext) -> Option<TablePartRects> {
@@ -860,7 +994,14 @@ impl ElementCx<'_, '_> {
         let transform = base * Affine::translate(Vec2::new(part.x0, part.y0) * self.scale);
         let part_cx = self.context.element_cx(node, layout, transform, None);
         scene.push_clip_layer(Fill::NonZero, base, clip);
-        part_cx.draw_background(scene);
+        // pyro: over the whole cell (`clip`, which a cell spanning rows or columns makes larger
+        // than the part's box): the colour and the tiles cover it, the images positioned against
+        // the part's box (Blink paints a part's background in the cell's rect).
+        let canvas = *clip - Vec2::new(part.x0, part.y0) * self.scale;
+        if let (Some(style), Some(element)) = (node.primary_styles(), node.element_data()) {
+            let style = (*style).clone();
+            part_cx.draw_background_layers(scene, &style, &element.background_images, Some(canvas));
+        }
         scene.pop_layer();
     }
 

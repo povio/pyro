@@ -496,6 +496,10 @@ pub fn content_alignment(
         stylo::AlignFlags::FLEX_START => taffy::AlignContent::FLEX_START,
         stylo::AlignFlags::STRETCH => taffy::AlignContent::STRETCH,
         stylo::AlignFlags::FLEX_END => taffy::AlignContent::FLEX_END,
+        // pyro: `flow-start`/`flow-end` are `flex-start`/`flex-end` in a flex container and `start`/`end`
+        // elsewhere, as Taffy's `FLEX_START`/`FLEX_END` are outside flex layout
+        stylo::AlignFlags::FLOW_START => taffy::AlignContent::FLEX_START,
+        stylo::AlignFlags::FLOW_END => taffy::AlignContent::FLEX_END,
         stylo::AlignFlags::CENTER => taffy::AlignContent::CENTER,
         stylo::AlignFlags::SPACE_BETWEEN => taffy::AlignContent::SPACE_BETWEEN,
         stylo::AlignFlags::SPACE_AROUND => taffy::AlignContent::SPACE_AROUND,
@@ -605,6 +609,9 @@ pub fn item_alignment(input: stylo::AlignFlags, is_horiz_rtl: bool) -> Option<ta
         stylo::AlignFlags::STRETCH => taffy::AlignItems::STRETCH,
         stylo::AlignFlags::FLEX_START => taffy::AlignItems::FLEX_START,
         stylo::AlignFlags::FLEX_END => taffy::AlignItems::FLEX_END,
+        // pyro: as `flex-start`/`flex-end` (see `content_alignment`)
+        stylo::AlignFlags::FLOW_START => taffy::AlignItems::FLEX_START,
+        stylo::AlignFlags::FLOW_END => taffy::AlignItems::FLEX_END,
         stylo::AlignFlags::SELF_START => taffy::AlignItems::SELF_START,
         stylo::AlignFlags::SELF_END => taffy::AlignItems::SELF_END,
         stylo::AlignFlags::START => taffy::AlignItems::START,
@@ -615,9 +622,9 @@ pub fn item_alignment(input: stylo::AlignFlags, is_horiz_rtl: bool) -> Option<ta
         stylo::AlignFlags::RIGHT => taffy::AlignItems::END,
         stylo::AlignFlags::CENTER => taffy::AlignItems::CENTER,
         stylo::AlignFlags::BASELINE => taffy::AlignItems::BASELINE,
-        // Taffy does not support last-baseline alignment, so map it to its
-        // fallback alignment of `self-end` (https://www.w3.org/TR/css-align-3/#baseline-values)
-        stylo::AlignFlags::LAST_BASELINE => taffy::AlignItems::END,
+        // pyro: Taffy aligns flex rows by last baselines; elsewhere it behaves as its fallback
+        // alignment, `safe end` (https://www.w3.org/TR/css-align-3/#baseline-values)
+        stylo::AlignFlags::LAST_BASELINE => taffy::AlignItems::LAST_BASELINE,
         // Should never be hit. But no real reason to panic here.
         _ => return None,
     };
@@ -990,6 +997,7 @@ pub fn to_taffy_style(style: &stylo::ComputedValues) -> taffy::Style<Atom> {
         display: self::display(display),
         box_sizing: self::box_sizing(style.clone_box_sizing()),
         item_is_table: display.inside() == stylo::DisplayInside::Table,
+        collapsed_rows: Default::default(),
         item_is_replaced: false,
         item_is_compressible_replaced: false,
         position: self::position(style.clone_position()),

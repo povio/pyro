@@ -24,11 +24,44 @@ use crate::{
     stylo_to_parley,
 };
 
+/// pyro: the text style a `display: contents` element gives its text: its own, but the box
+/// properties it has none for (`vertical-align` applies to inline boxes: a `display: contents`
+/// table cell's inherited `middle` must not shift its text, WPT css-display
+/// `display-contents-td-001`).
+fn contents_style(id: NodeId, style: &style::properties::ComputedValues) -> parley::TextStyle<'static, 'static, TextBrush> {
+    let mut text_style = stylo_to_parley::style(id, style);
+    text_style.vertical_align = Default::default();
+    text_style
+}
+
+/// pyro: the `display: contents` elements between `child_id`, a node an anonymous inline root
+/// holds, and the root's `container`, outermost first: their content was hoisted into the root
+/// (`collect_layout_children_with_wrap`), and their text styles apply to it.
+fn contents_ancestors(nodes: &crate::NodeTree, child_id: NodeId, container: Option<NodeId>) -> Vec<NodeId> {
+    let mut chain = Vec::new();
+    let mut current = nodes[child_id].parent;
+    while let Some(id) = current {
+        if Some(id) == container {
+            break;
+        }
+        let node = &nodes[id];
+        if !node.primary_styles().is_some_and(|style| style.clone_display().is_contents()) {
+            break;
+        }
+        chain.push(id);
+        current = node.parent;
+    }
+    chain.reverse();
+    chain
+}
+
 /// pyro: the inline-axis space the start and the end side of an inline (non-atomic) box take:
 /// margin, border and padding, in CSS pixels; `None` for a side with none of them. A side whose
 /// margin, border and padding add up to nothing (a border and a negative margin as wide) still
 /// is an edge: it paints, and its line is no empty line (CSS 2.1 § 9.4.2). Percentages resolve
-/// against zero and `auto` margins are zero. A vertical writing mode keeps the box edgeless.
+/// against zero and `auto` margins are zero. In a vertical writing mode only the margins are
+/// edges (top and bottom, by the inline direction): borders and padding stay out, as their sides
+/// are not painted there.
 pub(crate) fn span_edge_widths(style: &style::properties::ComputedValues) -> (Option<f32>, Option<f32>) {
     let (start, end, _) = span_edge_widths_in(style, 0.0);
     (start, end)
@@ -44,9 +77,6 @@ pub(crate) fn span_edge_widths_in(
 ) -> (Option<f32>, Option<f32>, bool) {
     use style::values::computed::{Length, LengthPercentage, Margin};
     use style::values::generics::length::GenericMargin;
-    if style.writing_mode.is_vertical() {
-        return (None, None, false);
-    }
     let length = |v: &LengthPercentage| v.resolve(Length::new(basis)).px();
     let margin = |v: &Margin| match v {
         GenericMargin::LengthPercentage(v) => length(v),
@@ -57,6 +87,15 @@ pub(crate) fn span_edge_widths_in(
         _ => false,
     };
     let (b, p, m) = (style.get_border(), style.get_padding(), style.get_margin());
+    if style.writing_mode.is_vertical() {
+        let edge = |v: &Margin| {
+            let (width, percent) = (margin(v), margin_percent(v));
+            ((width != 0.0 || percent).then_some(width), percent)
+        };
+        let ((top, top_percent), (bottom, bottom_percent)) = (edge(&m.margin_top), edge(&m.margin_bottom));
+        let percent = top_percent || bottom_percent;
+        return if style.writing_mode.is_inline_tb() { (top, bottom, percent) } else { (bottom, top, percent) };
+    }
     // The used width: none where the side has no border style.
     let border = |width: &style::values::computed::BorderSideWidth, style: style::values::computed::BorderStyle| {
         if style.none_or_hidden() { 0.0 } else { width.0.to_f32_px() }
@@ -83,6 +122,28 @@ pub(crate) fn span_edge_widths_in(
         (right, left, percent)
     } else {
         (left, right, percent)
+    }
+}
+
+/// pyro: the margins of an inline box on its inline-start and inline-end sides (CSS px,
+/// percentages against `basis`, `auto` 0): left and right (right and left when right-to-left), or
+/// in a vertical writing mode top and bottom (bottom and top when the inline direction is reversed).
+/// The part of a span edge ([`span_edge_widths`]) outside its box.
+pub fn span_edge_margins(style: &style::properties::ComputedValues, basis: f32) -> (f32, f32) {
+    use style::values::computed::{Length, Margin};
+    use style::values::generics::length::GenericMargin;
+    let margin = |v: &Margin| match v {
+        GenericMargin::LengthPercentage(v) => v.resolve(Length::new(basis)).px(),
+        _ => 0.0,
+    };
+    let m = style.get_margin();
+    let wm = style.writing_mode;
+    if wm.is_vertical() {
+        let (top, bottom) = (margin(&m.margin_top), margin(&m.margin_bottom));
+        if wm.is_inline_tb() { (top, bottom) } else { (bottom, top) }
+    } else {
+        let (left, right) = (margin(&m.margin_left), margin(&m.margin_right));
+        if style.clone_direction() == style::computed_values::direction::T::Rtl { (right, left) } else { (left, right) }
     }
 }
 
@@ -136,7 +197,7 @@ struct BidiScan {
     controls: bool,
     /// Such a box, or the root, is right-to-left.
     rtl: bool,
-    /// Some inline box (not atomic, not split) is relatively positioned.
+    /// Some inline box (not atomic, not split) is relatively positioned (or sticky).
     relative: bool,
     /// Some inline box's margin or padding at an edge is a percentage (`span_edge_widths_in`).
     percent_edges: bool,
@@ -248,7 +309,8 @@ fn open_span(
     let mut parley_style = stylo_to_parley::style(node_id, style);
     parley_style.text_box_trim = crate::layout::text_box::span_trim(style);
     builder.push_style_span(parley_style);
-    bidi_scan.relative |= style.clone_position() == PositionProperty::Relative;
+    // (A sticky one is painted moved too: `BaseDocument::inline_span_relative_offset`.)
+    bidi_scan.relative |= matches!(style.clone_position(), PositionProperty::Relative | PositionProperty::Sticky);
     let rtl = style.clone_direction() == style::computed_values::direction::T::Rtl;
     let controls = bidi_controls(style);
     if let Some((start_controls, _)) = controls {
@@ -411,6 +473,7 @@ fn build_inline_layout_with(
         marker,
         style_node,
         position: ListItemLayoutPosition::Inside,
+        tabular_nums,
         ..
     }) = root_node
         .element_data()
@@ -434,6 +497,15 @@ fn build_inline_layout_with(
                 marker_style.font_family = BULLET_FONT_FAMILY.into();
                 builder.push_style_span(marker_style);
                 builder.push_text(&format!("{char} "));
+                builder.pop_style_span();
+            }
+            // pyro: with tabular digits (`ListItemLayout::tabular_nums`).
+            Marker::String(str) if *tabular_nums => {
+                let features = stylo_to_parley::with_tabular_nums(&parley_style.font_features);
+                builder.push_style_modification_span(&[parley::StyleProperty::FontFeatures(
+                    parley::FontFeatures::List(std::borrow::Cow::Owned(features)),
+                )]);
+                builder.push_text(str);
                 builder.pop_style_span();
             }
             Marker::String(str) => builder.push_text(str),
@@ -503,7 +575,7 @@ fn build_inline_layout_with(
         build_inline_layout_recursive(
             &mut builder,
             &mut text_transformer,
-            nodes,
+            nodes, inline_context_root_node_id,
             before_id,
             &text_transform,
             text_nodes,
@@ -515,7 +587,26 @@ fn build_inline_layout_with(
         );
     }
     let child_count = root_node.children.len();
+    // pyro: the `display: contents` elements whose content an anonymous root holds, open as spans
+    // (outermost first): their text takes their styles (`contents_ancestors`).
+    let container = root_node.is_anonymous().then_some(root_node.parent).flatten();
+    let mut open_contents: Vec<NodeId> = Vec::new();
     for (index, child_id) in root_node.children.iter().copied().enumerate() {
+        if container.is_some() {
+            let chain = contents_ancestors(nodes, child_id, container);
+            let common = open_contents.iter().zip(&chain).take_while(|(a, b)| a == b).count();
+            for _ in common..open_contents.len() {
+                builder.pop_style_span();
+            }
+            open_contents.truncate(common);
+            for &id in &chain[common..] {
+                match nodes[id].primary_styles() {
+                    Some(style) => builder.push_style_span(contents_style(id, &style)),
+                    None => builder.push_style_modification_span(&[]),
+                }
+                open_contents.push(id);
+            }
+        }
         // pyro: the head or the tail of a split inline.
         if let Some(tail) = root_node.split_ref_at(index, child_count) {
             build_split_part(
@@ -536,7 +627,7 @@ fn build_inline_layout_with(
         build_inline_layout_recursive(
             &mut builder,
             &mut text_transformer,
-            nodes,
+            nodes, inline_context_root_node_id,
             child_id,
             &text_transform,
             text_nodes,
@@ -547,11 +638,14 @@ fn build_inline_layout_with(
             &mut bidi_scan,
         );
     }
+    for _ in open_contents.drain(..) {
+        builder.pop_style_span();
+    }
     if let Some(after_id) = root_node.after() {
         build_inline_layout_recursive(
             &mut builder,
             &mut text_transformer,
-            nodes,
+            nodes, inline_context_root_node_id,
             after_id,
             &text_transform,
             text_nodes,
@@ -701,7 +795,7 @@ fn build_inline_layout_with(
                     build_inline_layout_recursive(
                         &mut builder,
                         &mut text_transformer,
-                        nodes,
+                        nodes, node_id,
                         child_id,
                         &text_transform,
                         &mut Vec::new(),
@@ -778,7 +872,7 @@ fn build_inline_layout_with(
         }
         for child_id in part {
             crate::util::ensure_stack(|| build_inline_layout_recursive(
-                builder, text_transformer, nodes, child_id, &text_transform, text_nodes, strut, first_letter, annotations,
+                builder, text_transformer, nodes, node_id, child_id, &text_transform, text_nodes, strut, first_letter, annotations,
                 bidi, bidi_scan,
             ));
         }
@@ -792,7 +886,42 @@ fn build_inline_layout_with(
     }
 
     #[allow(clippy::too_many_arguments)]
+    /// pyro: builds `node_id`'s inline content, with the scroll pseudo-element boxes generated
+    /// beside it (`scroll_markers`) before and after it, unless `container` (whose box list holds
+    /// `node_id`'s box) placed them already (`scroll_markers::siblings_of`).
+    #[allow(clippy::too_many_arguments)]
     fn build_inline_layout_recursive(
+        builder: &mut TreeBuilder<TextBrush>,
+        text_transformer: &mut TextTransformer,
+        nodes: &crate::NodeTree,
+        container: NodeId,
+        node_id: NodeId,
+        parent_text_transform: &CaseTransform,
+        text_nodes: &mut Vec<(NodeId, std::ops::Range<usize>)>,
+        strut: &mut bool,
+        first_letter: Option<&FirstLetterSplit>,
+        annotations: &mut FoundAnnotations,
+        bidi: bool,
+        bidi_scan: &mut BidiScan,
+    ) {
+        match crate::layout::scroll_markers::siblings_of(nodes, container, &nodes[node_id]) {
+            None => build_inline_layout_node(
+                builder, text_transformer, nodes, node_id, parent_text_transform, text_nodes, strut, first_letter,
+                annotations, bidi, bidi_scan,
+            ),
+            Some((before, after)) => {
+                for id in before.into_iter().chain(std::iter::once(node_id)).chain(after) {
+                    build_inline_layout_node(
+                        builder, text_transformer, nodes, id, parent_text_transform, text_nodes, strut, first_letter,
+                        annotations, bidi, bidi_scan,
+                    );
+                }
+            }
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn build_inline_layout_node(
         builder: &mut TreeBuilder<TextBrush>,
         text_transformer: &mut TextTransformer,
         nodes: &crate::NodeTree,
@@ -861,29 +990,20 @@ fn build_inline_layout_with(
                         // node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
                     }
                     (DisplayOutside::None, DisplayInside::Contents) => {
-                        let whitespace = style.map(|s| {
-                            [
-                                parley::StyleProperty::WhiteSpaceCollapse(
-                                    stylo_to_parley::white_space_collapse(
-                                        s.clone_white_space_collapse(),
-                                    ),
-                                ),
-                                parley::StyleProperty::TextWrapMode(
-                                    stylo_to_parley::text_wrap_mode(s.clone_text_wrap_mode()),
-                                ),
-                            ]
-                        });
-                        builder.push_style_modification_span(
-                            whitespace
-                                .as_ref()
-                                .map_or(&[][..], |styles| styles.as_slice()),
-                        );
+                        // pyro: the element has no box, but its text takes its styles (font, spacing,
+                        // white space, and through the brush its colour), as in Blink (WPT css-display
+                        // `display-contents-text-inherit`, `-line-height`, a slot's text,
+                        // css-shadow `reslot-text-inheritance`). Upstream took only its white space.
+                        match style {
+                            Some(s) => builder.push_style_span(contents_style(node.id, s)),
+                            None => builder.push_style_modification_span(&[]),
+                        }
                         for child_id in node.children.iter().copied() {
                             // node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
                             crate::util::ensure_stack(|| build_inline_layout_recursive(
                                 builder,
                                 text_transformer,
-                                nodes,
+                                nodes, node_id,
                                 child_id,
                                 &text_transform,
                                 text_nodes,
@@ -953,9 +1073,9 @@ fn build_inline_layout_with(
                                 annotations.ruby = Some(node_id);
                             }
 
-                            bidi_scan.relative |= node
-                                .primary_styles()
-                                .is_some_and(|style| style.clone_position() == PositionProperty::Relative);
+                            bidi_scan.relative |= node.primary_styles().is_some_and(|style| {
+                                matches!(style.clone_position(), PositionProperty::Relative | PositionProperty::Sticky)
+                            });
                             bidi_scan.block_edges |= node.primary_styles().is_some_and(|style| has_block_edges(&style));
                             // pyro: the bidi formatting characters its `unicode-bidi` stands for,
                             // around its edges, as Blink places them.
@@ -1009,7 +1129,7 @@ fn build_inline_layout_with(
                                 crate::util::ensure_stack(|| build_inline_layout_recursive(
                                     builder,
                                     text_transformer,
-                                    nodes,
+                                    nodes, node_id,
                                     before_id,
                                     &text_transform,
                                     text_nodes,
@@ -1025,7 +1145,7 @@ fn build_inline_layout_with(
                                 crate::util::ensure_stack(|| build_inline_layout_recursive(
                                     builder,
                                     text_transformer,
-                                    nodes,
+                                    nodes, node_id,
                                     child_id,
                                     &text_transform,
                                     text_nodes,
@@ -1040,7 +1160,7 @@ fn build_inline_layout_with(
                                 crate::util::ensure_stack(|| build_inline_layout_recursive(
                                     builder,
                                     text_transformer,
-                                    nodes,
+                                    nodes, node_id,
                                     after_id,
                                     &text_transform,
                                     text_nodes,
@@ -1107,16 +1227,52 @@ fn build_inline_layout_with(
                 }
 
                 let start = builder.text().len();
+                // pyro: `hyphens: auto` adds soft hyphens (`layout::hyphenate`), by the style of
+                // the text's parent, to words that may go on in the text before and after.
+                let parent_style = node.parent.and_then(|parent| nodes.get(parent)?.primary_styles());
+                let hyphenates = parent_style.as_ref().is_some_and(|style| {
+                    style.get_inherited_text().hyphens == style::values::computed::text::Hyphens::Auto
+                });
+                let after = if hyphenates { word_after(nodes, node_id) } else { String::new() };
+                let hyphenate = |before: &str, text: &str| match &parent_style {
+                    Some(style) if hyphenates => {
+                        crate::layout::hyphenate::hyphenate(before, text, &after, style).into_owned()
+                    }
+                    _ => text.to_owned(),
+                };
                 // pyro: the first letter in a span of the `::first-letter` style.
                 let letter = first_letter
                     .filter(|split| split.text == node_id && data.content.get(split.range.clone()).is_some())
                     .and_then(|split| Some((split, nodes.get(split.style_node)?.primary_styles()?.clone())));
                 match letter {
+                    // pyro: an initial letter is a box of its own (`layout::first_letter`): the
+                    // root's text leaves the letter out and holds the box in its place.
+                    Some((split, _)) if split.initial.is_some() => {
+                        let content = &data.content;
+                        let head = &content[..split.range.start];
+                        let text = text_transformer.transform(head, parent_text_transform, builder);
+                        { let before = word_before(builder.text()); builder.push_text(&hyphenate(&before, text)); }
+                        builder.push_inline_box(InlineBox {
+                            id: split.style_node.as_u64(),
+                            kind: InlineBoxKind::CustomOutOfFlow,
+                            // Overridden by push_inline_box method
+                            index: 0,
+                            // Placed by the first line
+                            width: 0.0,
+                            height: 0.0,
+                            baseline: None,
+                            vertical_align: Default::default(),
+                            rtl: false,
+                        });
+                        let tail = &content[split.range.end..];
+                        let text = text_transformer.transform(tail, parent_text_transform, builder);
+                        { let before = word_before(builder.text()); builder.push_text(&hyphenate(&before, text)); }
+                    }
                     Some((split, letter_style)) => {
                         let content = &data.content;
                         let head = &content[..split.range.start];
                         let text = text_transformer.transform(head, parent_text_transform, builder);
-                        builder.push_text(text);
+                        { let before = word_before(builder.text()); builder.push_text(&hyphenate(&before, text)); }
                         builder.push_style_span(stylo_to_parley::style(split.style_node, &letter_style));
                         let letter = &content[split.range.clone()];
                         let text = text_transformer.transform(letter, &CaseTransform::from_style(&letter_style), builder);
@@ -1124,12 +1280,13 @@ fn build_inline_layout_with(
                         builder.pop_style_span();
                         let tail = &content[split.range.end..];
                         let text = text_transformer.transform(tail, parent_text_transform, builder);
-                        builder.push_text(text);
+                        { let before = word_before(builder.text()); builder.push_text(&hyphenate(&before, text)); }
                     }
                     None => {
                         let text =
                             text_transformer.transform(&data.content, parent_text_transform, builder);
-                        builder.push_text(text);
+                        let before = if hyphenates { word_before(builder.text()) } else { String::new() };
+                        builder.push_text(&hyphenate(&before, text));
                     }
                 }
                 text_nodes.push((node_id, start..builder.text().len()));
@@ -1294,4 +1451,97 @@ pub(crate) fn line_end_ellipsis(style: &style::properties::ComputedValues, clips
             Some(text)
         }
     }
+}
+
+/// pyro: the end of the word that the built text ends in (its letters, marks and soft hyphens,
+/// across invisible formatting), for `hyphens: auto`.
+fn word_before(text: &str) -> String {
+    use crate::layout::hyphenate::{is_invisible, is_word_char};
+    let mut chars: Vec<char> = Vec::new();
+    for c in text.chars().rev() {
+        if is_invisible(c) {
+            continue;
+        }
+        if !is_word_char(c) || chars.len() >= 64 {
+            break;
+        }
+        chars.push(c);
+    }
+    chars.iter().rev().collect()
+}
+
+/// pyro: the start of the word that goes on after the text node `node_id`, in the text of the
+/// inline content that follows it (out-of-flow boxes and hidden elements passed over, atomic
+/// inlines, `<br>` and blocks ending it), for `hyphens: auto`.
+fn word_after(nodes: &crate::NodeTree, node_id: NodeId) -> String {
+    use crate::layout::hyphenate::{is_invisible, is_word_char};
+    use style::values::specified::box_::{DisplayInside, DisplayOutside};
+    let mut out = String::new();
+    // Whether an element's content continues the inline content: an inline or contents element.
+    let continues = |id: NodeId| {
+        nodes.get(id).and_then(|node| node.primary_styles()).is_some_and(|style| {
+            let display = style.get_box().display;
+            matches!(
+                (display.outside(), display.inside()),
+                (DisplayOutside::Inline, DisplayInside::Flow) | (DisplayOutside::None, DisplayInside::Contents)
+            ) && !style.clone_position().is_absolutely_positioned()
+                && !style.clone_float().is_floating()
+        })
+    };
+    let passed_over = |id: NodeId| {
+        nodes.get(id).and_then(|node| node.primary_styles()).is_some_and(|style| {
+            let display = style.get_box().display;
+            display.is_none()
+                || style.clone_position().is_absolutely_positioned()
+                || style.clone_float().is_floating()
+        })
+    };
+    // The next node after `id` and its subtree, inside inline content.
+    let next = |mut id: NodeId| -> Option<NodeId> {
+        loop {
+            let node = nodes.get(id)?;
+            let parent = node.parent?;
+            let siblings = &nodes.get(parent)?.children;
+            let index = siblings.iter().position(|&child| child == id)?;
+            if let Some(&sibling) = siblings.get(index + 1) {
+                return Some(sibling);
+            }
+            if !continues(parent) {
+                return None;
+            }
+            id = parent;
+        }
+    };
+    let mut current = next(node_id);
+    while let Some(id) = current {
+        let node = &nodes[id];
+        match &node.data {
+            crate::node::NodeData::Text(data) => {
+                for c in data.content.chars() {
+                    if is_invisible(c) {
+                        continue;
+                    }
+                    if !is_word_char(c) || out.len() >= 64 {
+                        return out;
+                    }
+                    out.push(c);
+                }
+                current = next(id);
+            }
+            crate::node::NodeData::Element(element) => {
+                if passed_over(id) {
+                    current = next(id);
+                } else if continues(id) && !element.name.local.eq_str_ignore_ascii_case("br") {
+                    current = match node.children.first() {
+                        Some(&child) => Some(child),
+                        None => next(id),
+                    };
+                } else {
+                    return out;
+                }
+            }
+            _ => current = next(id),
+        }
+    }
+    out
 }

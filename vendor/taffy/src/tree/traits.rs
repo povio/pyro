@@ -239,6 +239,16 @@ pub trait LayoutContainingBlock: LayoutPartialTree {
     /// implementing paint/hit-testing traversals.
     fn add_hoisted_children(&mut self, node_id: NodeId, hoisted: &[NodeId]);
 
+    /// pyro: whether the static-position rectangle of the out-of-flow box `node_id` is its whole
+    /// containing block (its inset-resolution area) rather than its place in the flow: an
+    /// element in the top layer's is the initial containing block (css-position-4 § 3.3; WPT
+    /// `top-layer-box-uses-icb-*`), the box being aligned in it by its self-alignment.
+    #[inline(always)]
+    fn static_position_is_containing_block(&self, node_id: NodeId) -> bool {
+        let _ = node_id;
+        false
+    }
+
     /// Read back the detailed layout information most recently recorded for `node_id`
     /// (as stored by [`LayoutGridContainer::set_detailed_grid_info`]).
     ///
@@ -431,6 +441,22 @@ pub trait LayoutGridContainer: LayoutPartialTree {
     fn set_detailed_grid_info(&mut self, _node_id: NodeId, _detailed_grid_info: DetailedGridInfo<Self::CustomIdent>) {
         debug_log!("LayoutGridContainer::set_detailed_grid_info called");
     }
+
+    /// pyro: what the parent grid of `node_id` last gave it as a subgrid ([`Self::set_subgrid_context`]).
+    /// The default keeps nothing, and a grid whose template is `subgrid` then lays out as with `none`.
+    fn subgrid_context(&self, _node_id: NodeId) -> Option<crate::compute::grid::SubgridContext<Self::CustomIdent>> {
+        None
+    }
+
+    /// pyro: keep what a grid gives its child `node_id`, a subgrid (css-grid-2 §9): the tracks it spans, the
+    /// names of their lines and, once the grid sized them, their sizes. The child's layout depends on it as on
+    /// its inputs: a tree that keeps it must drop the child's cached layouts when it changes.
+    fn set_subgrid_context(
+        &mut self,
+        _node_id: NodeId,
+        _context: Option<crate::compute::grid::SubgridContext<Self::CustomIdent>>,
+    ) {
+    }
 }
 
 #[cfg(feature = "block_layout")]
@@ -475,6 +501,14 @@ pub trait LayoutBlockContainer: LayoutPartialTree {
     fn block_container_passes_percentage_height(&self, node_id: NodeId) -> bool {
         let _ = node_id;
         false
+    }
+
+    /// pyro: the border-box height the container's children resolve percentage heights against
+    /// when its own height is not known: a multi-column container's strip, laid out as tall as its
+    /// content, whose children's percentages resolve against the column height.
+    fn block_container_percentage_height(&self, node_id: NodeId) -> Option<f32> {
+        let _ = node_id;
+        None
     }
 
     /// pyro: the direction of the containing block of the container's children when that is not
