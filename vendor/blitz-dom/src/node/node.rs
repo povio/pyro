@@ -101,6 +101,10 @@ bitflags! {
         /// anonymous blocks hold its inline pieces, whose lines paint its fragments
         /// (`layout::inline::split_pieces`). Its relative offset moves the whole of it.
         const IS_SPLIT_INLINE = 1 << 11;
+        /// pyro: the box of an initial letter (`initial-letter` on a `::first-letter`, CSS
+        /// Inline 3 § 7): an inline root of the letter alone, sized by the ink of its glyphs
+        /// (`layout::first_letter`), placed by the first line of the root it starts.
+        const IS_INITIAL_LETTER_BOX = 1 << 18;
         /// pyro: an anonymous block whose last child is a split inline (`IS_SPLIT_INLINE`)
         /// standing for its head: the inline content before its first block-level box, with its
         /// start. Set by the construction of the split inline's container.

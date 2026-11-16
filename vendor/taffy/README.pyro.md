@@ -333,3 +333,15 @@ which pyro passes) expects the margins to collapse. Covered by `crates/pyro-rend
   `baseline-block-with-overflow-001`).
 
 Covered by `crates/pyro-render/tests/inline_leftovers.rs`.
+
+## Initial letters (WPT round 3, lane I)
+
+- `src/compute/float.rs` (`FloatContext::place_initial_letter`, `initial_letter_clearance`), `src/compute/block.rs`
+  (`BlockContext::place_initial_letter`, `initial_letter_clearance`): the margin box of an initial letter
+  (`initial-letter`, CSS Inline 3 § 7) is an exclusion at the place its line gives it: content keeps out of it as
+  of a float, but the float placement rules (no float above an earlier one, `clear`) do not apply to it. Floats
+  are placed below the initial letters on their side, and the first line of a block that starts with an initial
+  letter below every earlier one (Blink's `InitialLetterClearanceOffset`). Segments inserted for it keep the
+  segment ranges of the last placed floats in step (`shift_last_placed_floats`).
+
+Covered by `crates/pyro-render/tests/initial_letter.rs`.

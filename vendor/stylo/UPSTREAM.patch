@@ -1300,6 +1300,64 @@ diff -ruN a/values/generics/mod.rs b/values/generics/mod.rs
  )]
  #[repr(transparent)]
  pub struct GreaterThanOrEqualToOne<T>(pub T);
+diff -ruN a/values/generics/text.rs b/values/generics/text.rs
+--- a/values/generics/text.rs	2026-11-11 19:55:57
++++ b/values/generics/text.rs	2026-11-16 08:17:18
+@@ -103,6 +103,34 @@
+     pub size: Number,
+     /// The sink, >=1, if specified, 0 otherwise.
+     pub sink: Integer,
++    /// pyro: the `drop` or `raise` keyword given instead of a sink (CSS Inline 3 § 7.2), kept
++    /// as written: `sink` is 0 then.
++    #[css(skip)]
++    pub keyword: InitialLetterKeyword,
++}
++
++/// pyro: the keyword of `initial-letter` that stands for its sink: `drop` (the size rounded
++/// down) or `raise` (1).
++#[derive(
++    Clone,
++    Copy,
++    Debug,
++    Eq,
++    MallocSizeOf,
++    PartialEq,
++    SpecifiedValueInfo,
++    ToComputedValue,
++    ToResolvedValue,
++    ToShmem,
++)]
++#[repr(u8)]
++pub enum InitialLetterKeyword {
++    /// No keyword: the sink, if any, is a number.
++    None,
++    /// `drop`
++    Drop,
++    /// `raise`
++    Raise,
+ }
+ 
+ pub use self::GenericInitialLetter as InitialLetter;
+@@ -113,6 +141,7 @@
+         InitialLetter {
+             size: N::zero(),
+             sink: I::zero(),
++            keyword: InitialLetterKeyword::None,
+         }
+     }
+ }
+@@ -126,6 +155,11 @@
+             return dest.write_str("normal");
+         }
+         self.size.to_css(dest)?;
++        match self.keyword {
++            InitialLetterKeyword::Drop => return dest.write_str(" drop"),
++            InitialLetterKeyword::Raise => return dest.write_str(" raise"),
++            InitialLetterKeyword::None => {},
++        }
+         if !self.sink.is_zero() {
+             dest.write_char(' ')?;
+             self.sink.to_css(dest)?;
 diff -ruN a/values/specified/background.rs b/values/specified/background.rs
 --- a/values/specified/background.rs	2026-11-11 19:55:57
 +++ b/values/specified/background.rs	2026-11-14 15:14:02
@@ -1798,8 +1856,36 @@ diff -ruN a/values/specified/image.rs b/values/specified/image.rs
          context: &ParserContext,
 diff -ruN a/values/specified/text.rs b/values/specified/text.rs
 --- a/values/specified/text.rs	2026-11-11 19:55:57
-+++ b/values/specified/text.rs	2026-11-15 22:41:50
-@@ -824,6 +824,10 @@
++++ b/values/specified/text.rs	2026-11-16 08:28:42
+@@ -152,11 +152,26 @@
+         {
+             return Ok(Self::normal());
+         }
++        // pyro: `<number> && [ drop | raise ]?` besides `<number> <integer>?` (CSS Inline 3 § 7.2).
++        use crate::values::generics::text::InitialLetterKeyword;
++        let keyword = |i: &mut Parser<'_>| -> Result<InitialLetterKeyword, ParseError> {
++            try_match_ident_ignore_ascii_case! { i,
++                "drop" => Ok(InitialLetterKeyword::Drop),
++                "raise" => Ok(InitialLetterKeyword::Raise),
++            }
++        };
++        if let Ok(keyword) = input.try_parse(keyword) {
++            let size = Number::parse_at_least_one(context, input)?;
++            return Ok(Self { size, sink: crate::Zero::zero(), keyword });
++        }
+         let size = Number::parse_at_least_one(context, input)?;
++        if let Ok(keyword) = input.try_parse(keyword) {
++            return Ok(Self { size, sink: crate::Zero::zero(), keyword });
++        }
+         let sink = input
+             .try_parse(|i| Integer::parse_positive(context, i))
+             .unwrap_or_else(|_| crate::Zero::zero());
+-        Ok(Self { size, sink })
++        Ok(Self { size, sink, keyword: InitialLetterKeyword::None })
+     }
+ }
+ 
+@@ -824,6 +839,10 @@
          self.remove(Self::RIGHT); // Right is the default
          true
      }
@@ -1810,7 +1896,7 @@ diff -ruN a/values/specified/text.rs b/values/specified/text.rs
  }
  
  fn word_break_break_word_enabled(_: &ParserContext) -> bool {
-@@ -858,6 +862,10 @@
+@@ -858,6 +877,10 @@
      /// `anywhere`, and `word-break` behave like `normal`.
      #[parse(condition = "word_break_break_word_enabled")]
      BreakWord,

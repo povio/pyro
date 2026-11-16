@@ -91,6 +91,100 @@ fn ceil_layout_unit(v: f32, scale: f32) -> f32 {
     ((v / scale * 64.0 - 0.01).ceil() / 64.0) * scale
 }
 
+/// pyro: the ink of the glyphs of `layout` from their outlines' bounding boxes, `[left, top,
+/// right, bottom]` in the layout's units (device px) from its origin. `None` without ink.
+fn glyph_ink_bounds(layout: &parley::Layout<crate::node::TextBrush>) -> Option<[f32; 4]> {
+    use skrifa::instance::{LocationRef, NormalizedCoord, Size as FontSize};
+    use skrifa::MetadataProvider as _;
+
+    /// The bounds of the points of an outline (its control points: a little more than its ink
+    /// where it curves), for fonts whose glyphs carry no bounding box (CFF).
+    #[derive(Default)]
+    struct BoundsPen(Option<[f32; 4]>);
+    impl BoundsPen {
+        fn add(&mut self, x: f32, y: f32) {
+            self.0 = Some(match self.0 {
+                None => [x, y, x, y],
+                Some([x0, y0, x1, y1]) => [x0.min(x), y0.min(y), x1.max(x), y1.max(y)],
+            });
+        }
+    }
+    impl skrifa::outline::OutlinePen for BoundsPen {
+        fn move_to(&mut self, x: f32, y: f32) {
+            self.add(x, y);
+        }
+        fn line_to(&mut self, x: f32, y: f32) {
+            self.add(x, y);
+        }
+        fn quad_to(&mut self, cx0: f32, cy0: f32, x: f32, y: f32) {
+            self.add(cx0, cy0);
+            self.add(x, y);
+        }
+        fn curve_to(&mut self, cx0: f32, cy0: f32, cx1: f32, cy1: f32, x: f32, y: f32) {
+            self.add(cx0, cy0);
+            self.add(cx1, cy1);
+            self.add(x, y);
+        }
+        fn close(&mut self) {}
+    }
+
+    let mut ink: Option<[f32; 4]> = None;
+    for line in layout.lines() {
+        for item in line.items() {
+            let parley::PositionedLayoutItem::GlyphRun(glyph_run) = item else { continue };
+            let run = glyph_run.run();
+            let font = run.font();
+            let Ok(font_ref) = skrifa::FontRef::from_index(font.data.as_ref(), font.index) else { continue };
+            let coords: Vec<NormalizedCoord> =
+                run.normalized_coords().iter().map(|coord| NormalizedCoord::from_bits(coord.to_bits())).collect();
+            let size = FontSize::new(run.font_size());
+            let location = LocationRef::new(&coords);
+            let metrics = font_ref.glyph_metrics(size, location);
+            let outlines = font_ref.outline_glyphs();
+            for glyph in glyph_run.positioned_glyphs() {
+                let glyph_id = skrifa::GlyphId::new(glyph.id);
+                // Font units scaled, y up from the glyph's origin.
+                let bounds = metrics.bounds(glyph_id).map(|b| [b.x_min, b.y_min, b.x_max, b.y_max]).or_else(|| {
+                    let mut pen = BoundsPen::default();
+                    outlines
+                        .get(glyph_id)?
+                        .draw(skrifa::outline::DrawSettings::unhinted(size, location), &mut pen)
+                        .ok()?;
+                    pen.0
+                });
+                let Some([x_min, y_min, x_max, y_max]) = bounds else { continue };
+                if x_max <= x_min || y_max <= y_min {
+                    continue;
+                }
+                let rect = [glyph.x + x_min, glyph.y - y_max, glyph.x + x_max, glyph.y - y_min];
+                ink = Some(match ink {
+                    None => rect,
+                    Some(i) => [i[0].min(rect[0]), i[1].min(rect[1]), i[2].max(rect[2]), i[3].max(rect[3])],
+                });
+            }
+        }
+    }
+    ink
+}
+
+/// pyro: where the border box of an initial letter box starts below the top of the first line
+/// (with `ascent`, its first baseline, and `height`, its border box's), and how far the line's
+/// text moves down (raised and sunken letters): Blink's legacy `ComputeInitialLetterBoxBlockOffset`
+/// (the size rounded up for the lines, but not for the cap height), in the lines' axes.
+fn initial_letter_offset(letter: &crate::node::InitialLetter, ascent: f32, height: f32) -> (f32, f32) {
+    let size = letter.size.ceil() as i32;
+    if size < letter.sink {
+        // Its bottom at the bottom of the sink's line.
+        return (letter.line_height * letter.sink as f32 - height, 0.0);
+    }
+    let shift = letter.line_height * (size - letter.sink) as f32;
+    if letter.centered {
+        // Vertical lines of glyphs that are not sideways: centred on the lines it spans.
+        return ((letter.line_height * size as f32 - height) / 2.0, shift);
+    }
+    (letter.line_height * letter.size - ascent - letter.descent, shift)
+}
+
 /// A float met mid-line, laid out but not yet placed in the block formatting context
 #[cfg(feature = "floats")]
 struct PendingFloat {
@@ -251,12 +345,67 @@ impl LayoutPassState<'_> {
         }
     }
 
+    /// pyro: the layout of an initial letter box (`NodeFlags::IS_INITIAL_LETTER_BOX`,
+    /// `layout::first_letter`): its letter on one line; the box as wide as its text indent and
+    /// the ink of the glyphs, and as tall as the ink (Blink's `CalculateInitialLetterBoxInlineSize`
+    /// and `AdjustInitialLetterInTextPosition`, the ink rounded out to layout units); the ink's
+    /// top-left corner at the content box's top-left corner after the indent; the first baseline
+    /// the ink's ascent below the content box's top.
+    fn compute_initial_letter_box_layout(&mut self, node_id: NodeId, inputs: LayoutInput) -> LayoutOutput {
+        let scale = self.viewport.scale();
+        let style = self.nodes[node_id].layout_style();
+        let padding = style.padding().resolve_or_zero(inputs.parent_size.width, resolve_calc_value);
+        let border = style.border().resolve_or_zero(inputs.parent_size.width, resolve_calc_value);
+        drop(style);
+        let pb = padding + border;
+        let indent = self.nodes[node_id]
+            .primary_styles()
+            .map_or(0.0, |s| s.slow_clone_text_indent().length.resolve(CSSPixelLength::new(0.0)).px());
+        let Some(mut text) = self.nodes[node_id].data.downcast_element_mut().and_then(|e| e.take_inline_layout()) else {
+            return LayoutOutput::HIDDEN;
+        };
+        let options = AlignmentOptions { align_when_overflowing: false, last_line_alignment: None };
+        text.layout.set_text_indent(0.0, IndentOptions::default());
+        text.layout.break_all_lines(None);
+        text.layout.align(parley::Alignment::Start, options);
+        let baseline = text.layout.get(0).map_or(0.0, |line| line.metrics().baseline) / scale;
+        let out = |v: f32, up: bool| {
+            let v = v * 64.0;
+            (if up { (v - 0.01).ceil() } else { (v + 0.01).floor() }) / 64.0
+        };
+        let [left, top, right, bottom] = match glyph_ink_bounds(&text.layout) {
+            Some([l, t, r, b]) => [out(l / scale, false), out(t / scale, false), out(r / scale, true), out(b / scale, true)],
+            None => [0.0, 0.0, text.layout.width() / scale, text.layout.height() / scale],
+        };
+        text.layout.set_text_indent((indent - left) * scale, IndentOptions::default());
+        text.layout.break_all_lines(None);
+        text.layout.align(parley::Alignment::Start, options);
+        text.block_offset = -top;
+        text.hit_reach = None;
+        text.line_box_top = pb.top;
+        text.counted_lines = 1;
+        let size = Size {
+            width: (indent + right - left).max(0.0) + pb.left + pb.right,
+            height: (bottom - top).max(0.0) + pb.top + pb.bottom,
+        };
+        let first = pb.top + baseline - top;
+        self.nodes[node_id].data.downcast_element_mut().unwrap().inline_layout_data = Some(text);
+        LayoutOutput::from_sizes_and_baselines(
+            size,
+            taffy::ScrollableOverflow::ZERO,
+            taffy::Baselines { first: Some(first), last: Some(first) },
+        )
+    }
+
     pub(crate) fn compute_inline_layout(
         &mut self,
         node_id: NodeId,
         inputs: taffy::tree::LayoutInput,
         block_ctx: Option<&mut BlockContext<'_>>,
     ) -> taffy::LayoutOutput {
+        if self.nodes[node_id].flags.contains(NodeFlags::IS_INITIAL_LETTER_BOX) {
+            return self.compute_initial_letter_box_layout(node_id, inputs);
+        }
         let LayoutInput {
             known_dimensions,
             parent_size,
@@ -744,6 +893,24 @@ impl LayoutPassState<'_> {
                 });
             if later_anonymous_block { GenericTextIndent::zero() } else { text_indent }
         };
+        // pyro: an initial letter box (`layout::first_letter`) starts the first line, and holds
+        // the line's text indent in its width (Blink's `CalculateInitialLetterBoxInlineSize`): the
+        // text after it is not indented again.
+        let initial_letter = inline_layout
+            .first_letter
+            .as_ref()
+            .and_then(|split| Some((split.style_node, split.initial?)))
+            .filter(|&(box_id, _)| {
+                self.nodes.get(box_id).is_some_and(|node| node.flags.contains(NodeFlags::IS_INITIAL_LETTER_BOX))
+            });
+        let letter_indent = match initial_letter {
+            Some(_) if !text_indent.hanging => text_indent.length.clone(),
+            _ => GenericTextIndent::zero().length,
+        };
+        let text_indent = match initial_letter {
+            Some(_) if !text_indent.hanging && !text_indent.each_line => GenericTextIndent::zero(),
+            _ => text_indent,
+        };
         let indent_options = IndentOptions {
             each_line: text_indent.each_line,
             hanging: text_indent.hanging,
@@ -1040,6 +1207,15 @@ impl LayoutPassState<'_> {
                 if let Some(limit) = balance_limit {
                     state.set_wrap_limit(limit);
                 }
+                // pyro: a block that starts with an initial letter starts below the initial
+                // letters before it (CSS Inline 3 § 7.6, Blink's `InitialLetterClearanceOffset`).
+                if initial_letter.is_some()
+                    && let Some(clear) = block_ctx.initial_letter_clearance().filter(|&clear| clear > 0.0)
+                {
+                    state.set_line_y(f64::from(clear * scale));
+                    line_slot = block_ctx.find_content_slot(clear, 0.0, Clear::None, None);
+                    has_active_floats = line_slot.segment_id.is_some();
+                }
                 set_line_slot(state, &line_slot, scale, slack);
                 // Without floats every line after the first gets the same geometry, so breaking
                 // can continue after the lines kept from the last build, when the text changed
@@ -1175,6 +1351,81 @@ impl LayoutPassState<'_> {
                                     f32::NEG_INFINITY,
                                     f32::NEG_INFINITY,
                                 );
+                                continue;
+                            }
+
+                            // pyro: the initial letter box (`layout::first_letter`) is placed by
+                            // the first line, which it starts: at the line's start (after the
+                            // text indent, beside the floats along its whole height), its cap
+                            // height on the line's, its baseline on the sink's line (Blink's
+                            // `PostPlaceInitialLetterBox`), an exclusion from the line's top to
+                            // its margin box's bottom. Raised and sunken letters move the
+                            // line's text down.
+                            if let Some((_, letter)) = initial_letter.filter(|&(box_id, _)| box_id == node_id) {
+                                let line_top = state.line_y() as f32 / scale;
+                                let (margin, rtl) = {
+                                    let style = self.child_layout_style(&self.nodes[node_id]);
+                                    (
+                                        style.margin().resolve_or_zero(inputs.parent_size, resolve_calc_value),
+                                        style.float() == Float::Right,
+                                    )
+                                };
+                                let output = self.compute_child_layout(crate::taffy_node_id(node_id), float_child_inputs);
+                                let size = output.size;
+                                let ascent = output.baselines.first.unwrap_or(size.height);
+                                let (offset, mut shift) = initial_letter_offset(&letter, ascent, size.height);
+                                let border_top = offset + margin.top;
+                                // `text-box-trim` at the start of the first line cancels the text's
+                                // move (Blink's `ApplyTextBoxTrim`): the box stays where it is drawn
+                                // over the moved text, its exclusion where it would be.
+                                let mut drawn_top = border_top;
+                                if shift > 0.0 && crate::layout::text_box::block_trim(self.doc, root_id).0.is_some() {
+                                    drawn_top -= shift;
+                                    shift = 0.0;
+                                }
+                                let extent_top = offset.min(0.0);
+                                let extent_bottom = border_top + size.height + margin.bottom;
+                                let slot = block_ctx.find_content_slot(
+                                    line_top,
+                                    extent_bottom.max(letter.line_height),
+                                    Clear::None,
+                                    None,
+                                );
+                                let indent = letter_indent.resolve(CSSPixelLength::new((width / scale).max(0.0))).px();
+                                let margin_box_width = (margin.left + size.width + margin.right).max(0.0);
+                                let (x, border_x) = if rtl {
+                                    let right = slot.x + slot.width - indent;
+                                    (right - margin_box_width, right - margin.right - size.width)
+                                } else {
+                                    let left = slot.x + indent;
+                                    (left, left + margin.left)
+                                };
+                                block_ctx.place_initial_letter(
+                                    Point { x, y: line_top + extent_top },
+                                    Size { width: margin_box_width, height: (extent_bottom - extent_top).max(0.0) },
+                                    if rtl { taffy::FloatDirection::Right } else { taffy::FloatDirection::Left },
+                                );
+                                let location = Point {
+                                    x: border_x + container_pb.left,
+                                    y: line_top + drawn_top + container_pb.top,
+                                };
+                                self.nodes[node_id].update_unrounded_layout(|layout| {
+                                    layout.size = size;
+                                    layout.location = location;
+                                    layout.margin = margin;
+                                });
+                                placed_through = placed_through.max(Some(item));
+                                let line_y = line_top + shift;
+                                state.set_line_y(f64::from(line_y * scale));
+                                line_slot = block_ctx.find_content_slot(line_y, 0.0, Clear::None, None);
+                                has_active_floats = line_slot.segment_id.is_some();
+                                set_line_slot(state, &line_slot, scale, slack);
+                                state.append_inline_box_to_line(
+                                    box_break_data.advance,
+                                    f32::NEG_INFINITY,
+                                    f32::NEG_INFINITY,
+                                );
+                                line_start_state = has_active_floats.then(|| breaker.state().clone());
                                 continue;
                             }
 

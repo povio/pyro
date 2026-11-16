@@ -202,6 +202,25 @@ impl BlockContext<'_> {
         pos
     }
 
+    /// pyro: put the margin box of an initial letter into the context (see
+    /// [`FloatContext::place_initial_letter`]); `location` is its top-left corner relative to
+    /// this block, as positions returned by [`Self::place_floated_box`] are.
+    pub fn place_initial_letter(&mut self, location: Point<f32>, size: Size<f32>, direction: FloatDirection) {
+        self.bfc.float_context.place_initial_letter(
+            location.x + self.insets.left,
+            location.y + self.y_offset,
+            size,
+            direction,
+        );
+        self.float_content_contribution = self.float_content_contribution.max(location.y + size.height);
+    }
+
+    /// pyro: the bottom of the lowest initial letter in the context, relative to this block
+    /// (see [`FloatContext::initial_letter_clearance`]).
+    pub fn initial_letter_clearance(&self) -> Option<f32> {
+        self.bfc.float_context.initial_letter_clearance().map(|bottom| bottom - self.y_offset)
+    }
+
     /// A mark of the floats placed in the Block Formatting Context so far, for [`Self::floats_placed_since`]
     pub fn float_mark(&self) -> FloatMark {
         let float_context = &self.bfc.float_context;

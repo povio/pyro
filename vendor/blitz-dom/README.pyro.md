@@ -1882,3 +1882,27 @@ Covered by `crates/pyro-render/tests/font_size_adjust.rs`.
   leave the line phantom.
 
 Covered by `crates/pyro-render/tests/phantom_line_boxes.rs`.
+
+## Initial letters (WPT round 3, lane I)
+
+- `src/layout/first_letter.rs`: an `initial-letter` on a `::first-letter` makes its style node the letter's box
+  (`NodeFlags::IS_INITIAL_LETTER_BOX`): a copy of the letter in a text node of its own, the `::first-letter`
+  style with the font size whose cap height spans `size` lines (the paragraph's line height and cap height,
+  Blink's `ComputeInitialLetterFont`), the line height of that font, and a float to the start of the line.
+  `FirstLetterSplit::initial` carries what the first line needs (`node::InitialLetter`: Blink's legacy sink,
+  the paragraph's line height and descent under the baseline with its half-leading). A floated `::first-letter`
+  with an `initial-letter` is one. `src/resolve.rs` builds the box's own inline layout and makes it the first of
+  its root's layout children before the root's build; dropping the style node drops the text (`src/document.rs`).
+- `src/layout/inline/build.rs`: the root's text leaves the letter out and holds the box in its place
+  (`InlineBoxKind::CustomOutOfFlow`).
+- `src/layout/inline/layout.rs`: `compute_initial_letter_box_layout`: the box is as wide as its text indent and
+  the ink of its glyphs and as tall as the ink (`glyph_ink_bounds`: outline bounding boxes, rounded out to layout
+  units), the ink's corner at its content box's. The first line places it (`initial_letter_offset`, Blink's
+  `PostPlaceInitialLetterBox`): after the line's text indent (the line's text is not indented again), beside the
+  floats along its whole height, its cap height on the line's (centred on its lines in vertical modes without
+  sideways glyphs), an exclusion from the line's top to its margin box's bottom; raised and sunken letters move
+  the line's text down (not under `text-box-trim` at the start). A block with an initial letter starts below the
+  earlier ones.
+- `src/font_metrics.rs`: `BlitzFontMetricsProvider::extents_for` (ascent, descent, line gap, cap height).
+
+Covered by `crates/pyro-render/tests/initial_letter.rs`.

@@ -72,6 +72,49 @@ impl FontMetricsProvider for BlitzFontMetricsProvider {
 }
 
 impl BlitzFontMetricsProvider {
+    /// pyro: the ascent, descent (below the baseline, positive), line gap and cap height (CSS
+    /// px, `font_size` big) of the first font of `font_styles`' list that draws `text_char` (in
+    /// its `unicode-range` and character map), as parley measures them.
+    pub(crate) fn extents_for(
+        &self,
+        font_styles: &FontStyles,
+        font_size: f32,
+        text_char: char,
+    ) -> Option<(f32, f32, f32, f32)> {
+        use parley::fontique::{QueryFont, QueryStatus};
+        use skrifa::instance::{LocationRef, Size};
+        use skrifa::metrics::Metrics;
+
+        let mut font_ctx = self.font_ctx.lock().unwrap();
+        let font_ctx = &mut *font_ctx;
+        let mut query = query_for_font_styles(font_ctx, font_styles);
+        let variations = stylo_to_parley::font_variations(font_styles, font_size);
+        let mut found = None;
+        query.matches_with(|q_font: &QueryFont| {
+            if !q_font.unicode_range.contains(text_char.into()) {
+                return QueryStatus::Continue;
+            }
+            let Ok(font_ref) = skrifa::FontRef::from_index(q_font.blob.as_ref(), q_font.index) else {
+                return QueryStatus::Continue;
+            };
+            if font_ref.charmap().map(text_char).is_none() {
+                return QueryStatus::Continue;
+            }
+            found = Some(q_font.clone());
+            QueryStatus::Stop
+        });
+        let font = found?;
+        let font_ref = skrifa::FontRef::from_index(font.blob.as_ref(), font.index).ok()?;
+        let location = font_ref.axes().location(
+            variations
+                .iter()
+                .map(|v| (skrifa::Tag::from_be_bytes(v.tag.to_bytes()), v.value)),
+        );
+        let metrics = Metrics::new(&font_ref, Size::new(font_size), LocationRef::from(&location));
+        let cap_height = metrics.cap_height.unwrap_or(metrics.ascent);
+        Some((metrics.ascent, -metrics.descent, metrics.leading, cap_height))
+    }
+
     /// pyro: the metrics of the first font of `font_styles`' list that draws `text_char` (in its
     /// `unicode-range` and character map): `' '` is CSS's first available font, a letter the
     /// font a run of Latin text is drawn in (`font-size-adjust` scales by that one).

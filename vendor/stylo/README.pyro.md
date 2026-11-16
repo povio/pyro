@@ -211,6 +211,13 @@ how the colour serializes. Test: `a_colour_with_a_missing_component_makes_the_gr
 so the selectors parse (CSS Pseudo-Elements 4 § 4.1); the stylist already keeps such rules by pseudo-element
 chain. blitz-dom answers `implemented_pseudo_element` for the boxes (its README).
 
+## `initial-letter: <number> drop | raise` (WPT round 3, lane I)
+
+`values/generics/text.rs` (`GenericInitialLetter::keyword`, `InitialLetterKeyword`), `values/specified/text.rs`:
+`initial-letter` takes `drop` or `raise` before or after its size (CSS Inline 3 § 7.2, as Blink); the keyword is
+kept for serialization (`1.23 drop`) and `sink` stays 0 then. pyro turns the property on with its pref
+(`layout.css.initial-letter.enabled`); blitz-dom lays initial letters out (its README).
+
 ## Updating or dropping the patch
 
 - When upstream has the change: delete this directory and the `[patch.crates-io]` entry.

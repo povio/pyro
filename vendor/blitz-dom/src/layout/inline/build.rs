@@ -1112,6 +1112,29 @@ fn build_inline_layout_with(
                     .filter(|split| split.text == node_id && data.content.get(split.range.clone()).is_some())
                     .and_then(|split| Some((split, nodes.get(split.style_node)?.primary_styles()?.clone())));
                 match letter {
+                    // pyro: an initial letter is a box of its own (`layout::first_letter`): the
+                    // root's text leaves the letter out and holds the box in its place.
+                    Some((split, _)) if split.initial.is_some() => {
+                        let content = &data.content;
+                        let head = &content[..split.range.start];
+                        let text = text_transformer.transform(head, parent_text_transform, builder);
+                        builder.push_text(text);
+                        builder.push_inline_box(InlineBox {
+                            id: split.style_node.as_u64(),
+                            kind: InlineBoxKind::CustomOutOfFlow,
+                            // Overridden by push_inline_box method
+                            index: 0,
+                            // Placed by the first line
+                            width: 0.0,
+                            height: 0.0,
+                            baseline: None,
+                            vertical_align: Default::default(),
+                            rtl: false,
+                        });
+                        let tail = &content[split.range.end..];
+                        let text = text_transformer.transform(tail, parent_text_transform, builder);
+                        builder.push_text(text);
+                    }
                     Some((split, letter_style)) => {
                         let content = &data.content;
                         let head = &content[..split.range.start];

@@ -88,6 +88,8 @@ pub(crate) fn init_stylo_prefs() {
     INIT.call_once(|| {
         style_config::set_pref!("layout.css.flexbox-balance.enabled", true);
         style_config::set_pref!("layout.css.text-box.enabled", true);
+        // pyro: `initial-letter` on `::first-letter` (`layout::first_letter`).
+        style_config::set_pref!("layout.css.initial-letter.enabled", true);
         // pyro: `light-dark()` of images (the computed value is the image of the used scheme).
         style_config::set_pref!("layout.css.light-dark.images.enabled", true);
         style_config::set_pref!("layout.css.background-clip.text.enabled", true);
@@ -1310,9 +1312,14 @@ impl BaseDocument {
             if let Some(after) = node.after() {
                 crate::util::ensure_stack(|| self.drop_node_ignoring_parent_with(after, on_drop));
             }
-            // pyro: the node holding its `::first-letter` style.
-            if let Some(first_letter) = node.element_data().and_then(|element| element.first_letter) {
-                self.remove_node_from_tree(first_letter);
+            // pyro: the node holding its `::first-letter` style (with the text of an initial
+            // letter box).
+            if let Some(first_letter) = node.element_data().and_then(|element| element.first_letter)
+                && let Some(letter) = self.remove_node_from_tree(first_letter)
+            {
+                for &child in &letter.children {
+                    self.remove_node_from_tree(child);
+                }
             }
             // pyro: its `::marker` style.
             if let Some(marker_style) = node.element_data().and_then(|element| element.marker_style) {

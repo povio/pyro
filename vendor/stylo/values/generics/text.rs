@@ -103,6 +103,34 @@ pub struct GenericInitialLetter<Number, Integer> {
     pub size: Number,
     /// The sink, >=1, if specified, 0 otherwise.
     pub sink: Integer,
+    /// pyro: the `drop` or `raise` keyword given instead of a sink (CSS Inline 3 § 7.2), kept
+    /// as written: `sink` is 0 then.
+    #[css(skip)]
+    pub keyword: InitialLetterKeyword,
+}
+
+/// pyro: the keyword of `initial-letter` that stands for its sink: `drop` (the size rounded
+/// down) or `raise` (1).
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    MallocSizeOf,
+    PartialEq,
+    SpecifiedValueInfo,
+    ToComputedValue,
+    ToResolvedValue,
+    ToShmem,
+)]
+#[repr(u8)]
+pub enum InitialLetterKeyword {
+    /// No keyword: the sink, if any, is a number.
+    None,
+    /// `drop`
+    Drop,
+    /// `raise`
+    Raise,
 }
 
 pub use self::GenericInitialLetter as InitialLetter;
@@ -113,6 +141,7 @@ impl<N: Zero, I: Zero> InitialLetter<N, I> {
         InitialLetter {
             size: N::zero(),
             sink: I::zero(),
+            keyword: InitialLetterKeyword::None,
         }
     }
 }
@@ -126,6 +155,11 @@ impl<N: ToCss + Zero, I: ToCss + Zero> ToCss for InitialLetter<N, I> {
             return dest.write_str("normal");
         }
         self.size.to_css(dest)?;
+        match self.keyword {
+            InitialLetterKeyword::Drop => return dest.write_str(" drop"),
+            InitialLetterKeyword::Raise => return dest.write_str(" raise"),
+            InitialLetterKeyword::None => {},
+        }
         if !self.sink.is_zero() {
             dest.write_char(' ')?;
             self.sink.to_css(dest)?;

@@ -116,11 +116,33 @@ pub struct TextLayout {
 /// pyro: where an inline layout's first letter is: the bytes of a text node's content that an
 /// element's `::first-letter` styles, with the node that holds that style (the brush of the
 /// span the build wraps them in).
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct FirstLetterSplit {
     pub text: NodeId,
     pub range: std::ops::Range<usize>,
     pub style_node: NodeId,
+    /// pyro: the `::first-letter` has an `initial-letter` (CSS Inline 3 § 7): the style node is
+    /// the initial letter box, a float-like box of the letter (its child text), laid out by the
+    /// first line it starts (`layout::first_letter::InitialLetter`). The root's text leaves the
+    /// letter out.
+    pub initial: Option<InitialLetter>,
+}
+
+/// pyro: what the first line needs to place an initial letter box (Blink's legacy initial
+/// letter positioning, `ComputeInitialLetterBoxBlockOffset`), in CSS px.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct InitialLetter {
+    /// The `initial-letter` size (the lines its cap height spans).
+    pub size: f32,
+    /// The lines it sinks: the given integer, 1 for `raise`, the size rounded up otherwise.
+    pub sink: i32,
+    /// The paragraph's line height.
+    pub line_height: f32,
+    /// The descent of the paragraph's first available font with the half-leading under it.
+    pub descent: f32,
+    /// The lines are vertical and the glyphs not sideways (`vertical-rl` or `vertical-lr`, not
+    /// `text-orientation: sideways`): the box is centred on the lines it spans.
+    pub centered: bool,
 }
 
 /// pyro: text drawn over (or under) a stretch of an inline root's text, as a ruby annotation is

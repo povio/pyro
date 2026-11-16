@@ -17,6 +17,13 @@
 //! text's parent, from which the style inherits (the fictional tag sequence of CSS 2.1 nests the
 //! pseudo-element in the innermost element holding the letter). A floated first letter (a drop
 //! cap) is not supported: it is left unstyled.
+//!
+//! An `initial-letter` (CSS Inline 3 § 7, as Blink lays it out) makes the style node the letter's
+//! box: a block of its own holding a copy of the letter's text, whose font size makes the
+//! letter's cap height span `size` lines of the paragraph. The root's text leaves the letter out
+//! and holds the box instead, as a float-like inline box at the letter's place; the first line
+//! places it (`inline::layout`): at the line's start, aligned to its lines, sized by the ink of
+//! its glyphs, an exclusion that the lines beside it and later floats keep out of.
 
 use blitz_traits::node_id::NodeId;
 use icu_properties::props::GeneralCategory;
@@ -34,7 +41,10 @@ use style::{
 use stylo_taffy::CopyStyleGetters;
 
 use super::replaced::is_inline_box;
-use crate::{node::FirstLetterSplit, BaseDocument, ElementData, Node, NodeData};
+use crate::{
+    node::{FirstLetterSplit, InitialLetter, NodeFlags},
+    BaseDocument, ElementData, Node, NodeData,
+};
 
 const GENERAL_CATEGORY: CodePointMapDataBorrowed<'static, GeneralCategory> = CodePointMapData::<GeneralCategory>::new();
 
@@ -143,9 +153,12 @@ pub(super) fn origin(
         // anonymous blocks of its pieces in the block it is in: its first line is that block's.
         let split = node.is_split_inline();
         if let Some(style) = eager_pseudo(node, pseudo).filter(|_| !split) {
-            // A floated first letter is not supported.
+            // A floated first letter is not supported. pyro: an initial letter is (its
+            // `float` does not apply).
             let applies = is_block_container(display)
-                && (!pseudo.is_first_letter() || CopyStyleGetters::clone_float(&*style) == Float::None);
+                && (!pseudo.is_first_letter()
+                    || CopyStyleGetters::clone_float(&*style) == Float::None
+                    || style.slow_clone_initial_letter().size > 0.0);
             return applies.then_some((current, style));
         }
         // Only an in-flow block box passes its first line on to its container. pyro: an
@@ -266,8 +279,202 @@ pub(crate) fn split(doc: &mut BaseDocument, root: NodeId) -> Option<FirstLetterS
             Some(&doc.nodes[origin_id]),
         )
     };
-    let style_node = style_node(doc, origin_id, text_parent, style);
-    Some(FirstLetterSplit { text, range, style_node })
+    let letter_text = match &doc.nodes[text].data {
+        NodeData::Text(data) => data.content.get(range.clone()).unwrap_or_default().to_string(),
+        _ => String::new(),
+    };
+    let initial = initial_letter(doc, root, &style).filter(|_| !letter_text.is_empty());
+    let style_node = match initial {
+        Some((_, font_size, text_line_height)) => {
+            let rtl = doc.nodes[root]
+                .primary_styles()
+                .is_some_and(|root_style| root_style.clone_direction() == style::computed_values::direction::T::Rtl);
+            let box_style = initial_letter_box_style(doc, &style, font_size, text_line_height, rtl);
+            let box_id = style_node(doc, origin_id, text_parent, box_style);
+            set_letter_text(doc, root, box_id, &letter_text);
+            box_id
+        }
+        None => {
+            let style_node = style_node(doc, origin_id, text_parent, style);
+            clear_letter_text(doc, style_node);
+            style_node
+        }
+    };
+    Some(FirstLetterSplit { text, range, style_node, initial: initial.map(|(initial, _, _)| initial) })
+}
+
+/// pyro: whether the `::first-letter` style `letter` of the inline root `root` makes an initial
+/// letter (CSS Inline 3 § 7): with what the first line needs to place it, the font size of its
+/// text (its cap height spans `size` lines, Blink's `ComputeInitialLetterFont`) and the text's
+/// line height (the font's height).
+fn initial_letter(doc: &BaseDocument, root: NodeId, letter: &ComputedValues) -> Option<(InitialLetter, f32, f32)> {
+    use style::values::computed::font::LineHeight;
+    use style::values::generics::text::InitialLetterKeyword;
+    let value = letter.slow_clone_initial_letter();
+    if !(value.size > 0.0) {
+        return None;
+    }
+    let root_style = doc.nodes[root].primary_styles()?;
+    let centered = root_style.writing_mode.is_vertical() && !root_style.writing_mode.is_sideways();
+    let provider = crate::font_metrics::BlitzFontMetricsProvider { font_ctx: doc.font_ctx.clone() };
+    // The paragraph's first available font, its ascent and descent whole pixels as Blink's.
+    let paragraph_font = root_style.get_font();
+    let paragraph_size = paragraph_font.font_size.computed_size().px();
+    let (ascent, descent, gap, paragraph_cap) = provider.extents_for(paragraph_font, paragraph_size, ' ')?;
+    let (ascent, descent) = (ascent.round(), descent.round());
+    let line_height = match root_style.clone_line_height() {
+        LineHeight::Normal => ascent + descent + gap.max(0.0).round(),
+        LineHeight::Number(number) => number.0 * paragraph_size,
+        LineHeight::Length(length) => length.px(),
+    };
+    // Blink's `CalculateLeadingSpace`: the half-leading over the text floored, the rest under it.
+    let leading = line_height - (ascent + descent);
+    let descent = descent + (leading - (leading / 2.0).floor());
+    // The letter's font size: its cap height is `size - 1` lines and the paragraph's cap height.
+    let letter_font = letter.get_font();
+    let letter_size = letter_font.font_size.computed_size().px();
+    let (_, _, _, letter_cap) = provider.extents_for(letter_font, letter_size, ' ')?;
+    if !(letter_cap > 0.0) {
+        return None;
+    }
+    let desired_cap = line_height * (value.size - 1.0) + paragraph_cap;
+    let mut font_size = desired_cap * letter_size / letter_cap;
+    while font_size > 1.0 {
+        let (_, _, _, cap) = provider.extents_for(letter_font, font_size, ' ')?;
+        if cap <= desired_cap + 0.001 {
+            break;
+        }
+        font_size -= 1.0;
+    }
+    let (text_ascent, text_descent, _, _) = provider.extents_for(letter_font, font_size, ' ')?;
+    // The sink of Blink's legacy positioning: `drop` and no sink are the size rounded up.
+    let sink = match value.keyword {
+        InitialLetterKeyword::Raise => 1,
+        InitialLetterKeyword::None if value.sink > 0 => value.sink,
+        _ => value.size.ceil() as i32,
+    };
+    Some((
+        InitialLetter { size: value.size, sink, line_height, descent, centered },
+        font_size,
+        text_ascent.round() + text_descent.round(),
+    ))
+}
+
+/// pyro: the style of an initial letter box: its `::first-letter` style with the text's font
+/// size and line height (Blink's `StyleForInitialLetterText`), a block floated to the start of
+/// the line (the float placement rules do not apply to it: the first line places it).
+fn initial_letter_box_style(
+    doc: &BaseDocument,
+    letter: &Arc<ComputedValues>,
+    font_size: f32,
+    line_height: f32,
+    rtl: bool,
+) -> Arc<ComputedValues> {
+    use style::values::computed::font::{FontSize, LineHeight};
+    use style::values::computed::NonNegativeLength;
+    use style::values::specified::font::KeywordInfo;
+    let mut builder =
+        style::properties::StyleBuilder::for_derived_style(doc.stylist.device(), Some(&doc.stylist), letter, None);
+    let size = NonNegativeLength::new(font_size);
+    builder.set_font_size(FontSize { computed_size: size, used_size: size, keyword_info: KeywordInfo::none() });
+    builder.set_line_height(LineHeight::Length(NonNegativeLength::new(line_height)));
+    builder.set_display(Display::Block);
+    builder.set_float(if rtl { Float::Right } else { Float::Left });
+    builder.build()
+}
+
+/// pyro: the initial letter box `box_id` of the inline root `root` holds `letter` in a text node of
+/// its own, and is an inline root of it.
+fn set_letter_text(doc: &mut BaseDocument, root: NodeId, box_id: NodeId, letter: &str) {
+    let existing = doc.nodes[box_id]
+        .children
+        .first()
+        .copied()
+        .filter(|&id| matches!(doc.nodes.get(id).map(|node| &node.data), Some(NodeData::Text(_))));
+    let text_id = match existing {
+        Some(text_id) => {
+            if let NodeData::Text(data) = &mut doc.nodes[text_id].data
+                && data.content != letter
+            {
+                data.content = letter.to_string();
+            }
+            text_id
+        }
+        None => {
+            clear_letter_text(doc, box_id);
+            let text_id = doc.create_text_node(letter);
+            doc.nodes[text_id].parent = Some(box_id);
+            doc.nodes[box_id].children.push(text_id);
+            text_id
+        }
+    };
+    let in_document = doc.nodes[root].flags.is_in_document();
+    for id in [box_id, text_id] {
+        doc.nodes[id].flags.set(NodeFlags::IS_IN_DOCUMENT, in_document);
+    }
+    let node = &mut doc.nodes[box_id];
+    node.flags.insert(NodeFlags::IS_INLINE_ROOT | NodeFlags::IS_INITIAL_LETTER_BOX);
+    *node.layout_children.borrow_mut() = Some(Default::default());
+    node.layout_parent.set(Some(root));
+}
+
+/// pyro: a first-letter style node that is no initial letter box (any more) holds no text, is no
+/// inline root and no layout child of its root.
+fn clear_letter_text(doc: &mut BaseDocument, style_node: NodeId) {
+    for child in std::mem::take(&mut doc.nodes[style_node].children) {
+        doc.remove_node_from_tree(child);
+    }
+    if !doc.nodes[style_node].flags.contains(NodeFlags::IS_INITIAL_LETTER_BOX) {
+        return;
+    }
+    leave_layout_parent(doc, style_node);
+    let node = &mut doc.nodes[style_node];
+    node.flags.remove(NodeFlags::IS_INLINE_ROOT | NodeFlags::IS_INITIAL_LETTER_BOX);
+    if let Some(element) = node.element_data_mut() {
+        element.inline_layout_data = None;
+    }
+    *node.layout_children.borrow_mut() = None;
+}
+
+/// pyro: an initial letter box is no longer among the layout children of the root it started.
+fn leave_layout_parent(doc: &mut BaseDocument, box_id: NodeId) {
+    if let Some(parent) = doc.nodes[box_id].layout_parent.take()
+        && let Some(parent) = doc.nodes.get(parent)
+        && let Some(children) = parent.layout_children.borrow_mut().as_mut()
+    {
+        children.retain(|&id| id != box_id);
+    }
+}
+
+/// pyro: the inline root `root` starts with the initial letter box `box_id`: the box is the first
+/// of the root's layout children (the boxes its lines place), and its own inline layout (the
+/// letter alone) is built now, before the root's (`BaseDocument::resolve_deferred_tasks`).
+pub(crate) fn build_initial_letter_box(doc: &mut BaseDocument, root: NodeId, box_id: NodeId) {
+    {
+        let mut children = doc.nodes[root].layout_children.borrow_mut();
+        let children = children.get_or_insert_with(Default::default);
+        if children.first() != Some(&box_id) {
+            children.retain(|&id| id != box_id);
+            children.insert(0, box_id);
+        }
+    }
+    let scale = doc.viewport.scale();
+    let mut layout = doc.nodes[box_id]
+        .element_data_mut()
+        .and_then(|element| element.inline_layout_data.take())
+        .map(|layout| *layout)
+        .unwrap_or_else(crate::node::TextLayout::new);
+    layout = crate::node::TextLayout { layout: std::mem::take(&mut layout.layout), ..crate::node::TextLayout::new() };
+    {
+        let BaseDocument { nodes, layout_ctx, font_ctx, .. } = doc;
+        let mut font_ctx = font_ctx.lock().unwrap();
+        super::inline::build_inline_layout_into(nodes, layout_ctx, &mut font_ctx, &mut layout, scale, box_id);
+    }
+    let node = &mut doc.nodes[box_id];
+    node.clear_layout_cache();
+    if let Some(element) = node.element_data_mut() {
+        element.inline_layout_data = Some(Box::new(layout));
+    }
 }
 
 /// The originating element's first-letter node, created when it has none, with `style` and the
@@ -360,6 +567,13 @@ pub(crate) fn drop_style_node(doc: &mut BaseDocument, origin_id: NodeId) {
         return;
     };
     if doc.nodes.contains_key(node_id) {
+        // pyro: with the text of an initial letter box, out of its root's layout children.
+        for child in std::mem::take(&mut doc.nodes[node_id].children) {
+            doc.remove_node_from_tree(child);
+        }
+        if doc.nodes[node_id].flags.contains(NodeFlags::IS_INITIAL_LETTER_BOX) {
+            leave_layout_parent(doc, node_id);
+        }
         doc.remove_node_from_tree(node_id);
     }
 }
