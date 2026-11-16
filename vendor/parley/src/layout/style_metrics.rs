@@ -138,6 +138,18 @@ pub(crate) fn resolve_style_metrics<B: Brush>(
                 queried.as_ref()
             }
         };
+        // pyro: a face's `size-adjust` is not applied where `font-size-adjust` sets the size.
+        let unadjusted;
+        let font = match font {
+            Some(font) if style.font_size_adjusted && font.synthesis.size_adjust() != 1.0 => {
+                unadjusted = FontInstance {
+                    font: font.font.clone(),
+                    synthesis: font.synthesis.without_size_adjust(),
+                };
+                Some(&unadjusted)
+            }
+            font => font,
+        };
         let font_metrics = font
             .and_then(|font| {
                 let variations = rcx.variations(style.font_variations).unwrap_or(&[]);

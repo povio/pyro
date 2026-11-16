@@ -840,3 +840,6 @@ Covered by `crates/pyro-render/tests/selection_highlight.rs`.
   own name): its `base-palette` (an index the font does not have is palette 0) with its `override-colors`;
   `palette-mix()` mixes two palettes entry by entry in its colour space (`mix_many`). Covered by
   `crates/pyro-render/tests/font_palette.rs`.
+
+- `src/text.rs`: decoration thickness and offset percentages are of the element's font size where a face's
+  `size-adjust` scales the run (WPT `size-adjust-text-decoration.tentative`).

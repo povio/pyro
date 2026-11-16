@@ -303,7 +303,7 @@ index edfcc08..98a8963 100644
              if let Entry::Ok(font) = status {
                  Some(font)
 diff --git a/src/font.rs b/src/font.rs
-index 33d6669..05bb351 100644
+index 33d6669..bf252f8 100644
 --- a/src/font.rs
 +++ b/src/font.rs
 @@ -7,7 +7,7 @@ use crate::CharmapIndex;
@@ -315,7 +315,7 @@ index 33d6669..05bb351 100644
  use core::fmt;
  use read_fonts::{FontRef, TableProvider as _, types::Tag};
  use smallvec::SmallVec;
-@@ -25,6 +25,12 @@ pub struct FontInfo {
+@@ -25,6 +25,14 @@ pub struct FontInfo {
      axes: AxisVec,
      attr_axes: u8,
      charmap_index: CharmapIndex,
@@ -325,10 +325,12 @@ index 33d6669..05bb351 100644
 +    /// `font-style` descriptor allows the font: `(0, 0)` for `normal`, the range of `oblique
 +    /// <angle> <angle>`. `None` without a descriptor: the font's own `slnt` axis decides.
 +    slant_range: Option<(f32, f32)>,
++    /// pyro: the size and metrics a `@font-face` rule's descriptors give the font.
++    face_metrics: FaceMetrics,
  }
  
  impl FontInfo {
-@@ -108,19 +114,25 @@ impl FontInfo {
+@@ -108,19 +116,25 @@ impl FontInfo {
                  synth.vars[len] = (Tag::new(b"wght"), weight.value());
                  len += 1;
              }
@@ -358,7 +360,7 @@ index 33d6669..05bb351 100644
                              len += 1;
                          } else {
                              synth.skew = 14;
-@@ -130,10 +142,10 @@ impl FontInfo {
+@@ -130,10 +144,10 @@ impl FontInfo {
                  FontStyle::Oblique(angle) => {
                      if self.style == FontStyle::Normal {
                          let degrees = angle.unwrap_or(14.0);
@@ -372,7 +374,15 @@ index 33d6669..05bb351 100644
                              synth.vars[len] = (Tag::new(b"ital"), 1.0);
                              len += 1;
                          } else {
-@@ -210,6 +222,19 @@ impl FontInfo {
+@@ -144,6 +158,7 @@ impl FontInfo {
+             }
+         }
+         synth.len = len as u8;
++        synth.face_metrics = self.face_metrics;
+         synth
+     }
+ 
+@@ -210,6 +225,19 @@ impl FontInfo {
      pub fn charmap_index(&self) -> CharmapIndex {
          self.charmap_index
      }
@@ -392,17 +402,18 @@ index 33d6669..05bb351 100644
  }
  
  impl FontInfo {
-@@ -255,6 +280,9 @@ impl FontInfo {
+@@ -255,6 +283,10 @@ impl FontInfo {
              axes,
              attr_axes,
              charmap_index,
 +            unicode_range: UnicodeRange::default(),
 +            precedence: 0,
 +            slant_range: None,
++            face_metrics: FaceMetrics::default(),
          })
      }
  
-@@ -276,6 +304,19 @@ impl FontInfo {
+@@ -276,6 +308,19 @@ impl FontInfo {
          }
      }
  
@@ -422,7 +433,7 @@ index 33d6669..05bb351 100644
      pub(crate) fn apply_override(&mut self, info_override: &FontInfoOverride<'_>) {
          if let Some(width) = info_override.width {
              self.width = width;
-@@ -295,9 +336,23 @@ impl FontInfo {
+@@ -295,9 +340,26 @@ impl FontInfo {
                  }
              }
          }
@@ -435,6 +446,9 @@ index 33d6669..05bb351 100644
 +        if let Some(slant_range) = info_override.slant_range {
 +            self.slant_range = Some(slant_range);
 +        }
++        if let Some(face_metrics) = info_override.face_metrics {
++            self.face_metrics = face_metrics;
++        }
      }
  }
  
@@ -446,7 +460,53 @@ index 33d6669..05bb351 100644
  const WEIGHT_AXIS: u8 = 0x01;
  const WIDTH_AXIS: u8 = 0x02;
  const SLANT_AXIS: u8 = 0x04;
-@@ -486,6 +541,22 @@ pub struct FontInfoOverride<'a> {
+@@ -348,9 +410,45 @@ pub struct Synthesis {
+     len: u8,
+     embolden: bool,
+     skew: i8,
++    /// pyro: the font's `@font-face` size and metrics descriptors (they travel with the font
++    /// a query selects, as its synthesis does).
++    face_metrics: FaceMetrics,
++}
++
++/// pyro: what a `@font-face` rule's `size-adjust`, `ascent-override`, `descent-override` and
++/// `line-gap-override` descriptors (CSS Fonts 5 §4.9-§4.11) make of a font: a factor of the
++/// size it is used at (glyphs, advances and metrics), and metrics as fractions of that
++/// (adjusted) size. `None` is the font's own (`normal`).
++#[derive(Copy, Clone, Debug, Default, PartialEq)]
++pub struct FaceMetrics {
++    /// `size-adjust` as a factor (`150%` is 1.5).
++    pub size_adjust: Option<f32>,
++    /// `ascent-override` as a fraction of the font size.
++    pub ascent: Option<f32>,
++    /// `descent-override` as a fraction of the font size.
++    pub descent: Option<f32>,
++    /// `line-gap-override` as a fraction of the font size.
++    pub line_gap: Option<f32>,
+ }
+ 
+ impl Synthesis {
++    /// pyro: the font's `@font-face` size and metrics descriptors.
++    pub fn face_metrics(&self) -> &FaceMetrics {
++        &self.face_metrics
++    }
++
++    /// pyro: the factor of the font size the font is used at (`size-adjust`), 1 without one.
++    pub fn size_adjust(&self) -> f32 {
++        self.face_metrics.size_adjust.unwrap_or(1.0)
++    }
++
++    /// pyro: the same synthesis with the font used at the size asked for (`size-adjust` left
++    /// out, as CSS `font-size-adjust` has it).
++    pub fn without_size_adjust(mut self) -> Self {
++        self.face_metrics.size_adjust = None;
++        self
++    }
++
+     /// Returns `true` if any synthesis suggestions are available.
+     pub fn any(&self) -> bool {
+         self.len != 0 || self.embolden || self.skew != 0
+@@ -486,6 +584,24 @@ pub struct FontInfoOverride<'a> {
      /// Default values for the font's variation axes. Axes not included within
      /// the font will be ignored.
      pub axes: Option<&'a [(Tag, f32)]>,
@@ -466,10 +526,12 @@ index 33d6669..05bb351 100644
 +    /// pyro: the slant angles the font is allowed (`FontInfo`'s `slant_range`): CSS's
 +    /// `font-style` descriptor, `(0.0, 0.0)` for `normal`.
 +    pub slant_range: Option<(f32, f32)>,
++    /// pyro: the size and metrics `@font-face` descriptors give the font.
++    pub face_metrics: Option<FaceMetrics>,
  }
  
  #[cfg(test)]
-@@ -541,22 +612,44 @@ mod tests {
+@@ -541,22 +657,44 @@ mod tests {
      }
  
      #[test]
@@ -530,7 +592,7 @@ index 33d6669..05bb351 100644
      }
  }
 diff --git a/src/lib.rs b/src/lib.rs
-index 9d41c42..e87ae8e 100644
+index 9d41c42..4849396 100644
 --- a/src/lib.rs
 +++ b/src/lib.rs
 @@ -53,6 +53,7 @@ mod script;
@@ -541,7 +603,12 @@ index 9d41c42..e87ae8e 100644
  
  pub use linebender_resource_handle::Blob;
  pub use script::ScriptExt;
-@@ -66,6 +67,7 @@ pub use font::{AxisInfo, FontInfo, FontInfoOverride, Synthesis};
+@@ -62,10 +63,11 @@ pub use charmap::{Charmap, CharmapIndex};
+ pub use collection::{Collection, CollectionOptions, Query, QueryFamily, QueryFont, QueryStatus};
+ pub use fallback::FallbackKey;
+ pub use family::{FamilyId, FamilyInfo};
+-pub use font::{AxisInfo, FontInfo, FontInfoOverride, Synthesis};
++pub use font::{AxisInfo, FaceMetrics, FontInfo, FontInfoOverride, Synthesis};
  pub use impl_fontconfig::FromFontconfig;
  pub use parlance::{FontStyle, FontWeight, FontWidth, GenericFamily, Language, Script};
  pub use source::{SourceId, SourceInfo, SourceKind};

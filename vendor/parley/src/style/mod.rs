@@ -336,6 +336,9 @@ pub enum StyleProperty<'a, B: Brush> {
     SoftHyphen(SoftHyphen),
     /// pyro: whether lines may break inside words where dictionaries find boundaries.
     DictionaryBreaks(bool),
+    /// pyro: whether the font size is set by `font-size-adjust` (a face's `size-adjust` is then
+    /// not applied).
+    FontSizeAdjusted(bool),
 }
 
 /// Unresolved styles.
@@ -400,6 +403,9 @@ pub struct TextStyle<'family, 'settings, B: Brush> {
     /// pyro: whether lines may break inside words where dictionaries find boundaries (Thai, Lao,
     /// Khmer, Burmese). `false` for CSS `word-break: manual`.
     pub dictionary_breaks: bool,
+    /// pyro: whether the font size is set by CSS `font-size-adjust`: it fixes the size of the
+    /// metric it names for every font, so a face's `size-adjust` (`@font-face`) is not applied.
+    pub font_size_adjusted: bool,
     /// pyro: room the span's text needs beyond its content area, over and under it, for what is
     /// drawn there (ruby annotations, emphasis marks). The line box holds the span's content area
     /// grown by it, where its line height leaves too little (CSS Ruby 1, 4.4).
@@ -484,6 +490,7 @@ impl<B: Brush> Default for TextStyle<'static, 'static, B> {
             tab_size: TabSize::default(),
             soft_hyphen: SoftHyphen::default(),
             dictionary_breaks: true,
+            font_size_adjusted: false,
             annotation_space: AnnotationSpace::default(),
             text_box_trim: TextBoxTrim::default(),
         }

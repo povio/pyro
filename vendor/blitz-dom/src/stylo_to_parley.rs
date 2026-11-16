@@ -719,6 +719,8 @@ pub(crate) fn style(
         text_wrap_mode,
         white_space_collapse: white_space_collapse(itext_styles.white_space_collapse),
         dictionary_breaks,
+        // pyro: `font-size-adjust` sets the size (a face's `size-adjust` is then not applied).
+        font_size_adjusted: font_styles.font_size_adjust != style::values::computed::font::FontSizeAdjust::None,
         soft_hyphen: match (itext_styles.hyphens, &itext_styles.hyphenate_character) {
             (style::computed_values::hyphens::T::None, _) => parley::SoftHyphen::NoBreak,
             (_, style::values::computed::HyphenateCharacter::Auto) => parley::SoftHyphen::Auto,

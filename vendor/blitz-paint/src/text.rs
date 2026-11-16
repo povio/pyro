@@ -1744,7 +1744,9 @@ pub(crate) fn stroke_text<'a, S: PaintScene>(
             let font_size = run.font_size();
             let metrics = run.font_metrics();
             let style = glyph_run.style();
-            let css_font_size = font_size as f64 / scale;
+            // pyro: a face's `size-adjust` scales the run's size; decoration thickness and offset
+            // percentages are of the element's font size.
+            let css_font_size = font_size as f64 / scale / f64::from(run.synthesis().size_adjust());
             // pyro: under `font-size-adjust` the run's size is the used one; decoration
             // thickness and offset percentages are of the computed font size.
             let css_font_size = doc

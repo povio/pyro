@@ -205,19 +205,50 @@
  impl FontMetrics {
      /// Metrics to use when no font is available at all.
      ///
-@@ -93,6 +147,7 @@
+@@ -92,17 +146,43 @@
+                         .map(|v| (skrifa::Tag::new(&v.tag.to_bytes()), v.value)),
                  ),
          );
-         Some(Self::from_skrifa_metrics(
-+            &font_ref,
-             &skrifa::metrics::Metrics::new(
+-        Some(Self::from_skrifa_metrics(
+-            &skrifa::metrics::Metrics::new(
++        // pyro: at the size the font is used at (`size-adjust`), with the metrics its `@font-face`
++        // rule overrides.
++        let font_size = font_size * font.synthesis.size_adjust();
++        Some(
++            Self::from_skrifa_metrics(
                  &font_ref,
-                 skrifa::prelude::Size::new(font_size),
-@@ -102,7 +157,11 @@
-         ))
+-                skrifa::prelude::Size::new(font_size),
+-                &location,
+-            ),
+-            font_size,
+-        ))
++                &skrifa::metrics::Metrics::new(
++                    &font_ref,
++                    skrifa::prelude::Size::new(font_size),
++                    &location,
++                ),
++                font_size,
++            )
++            .with_face_metrics(font.synthesis.face_metrics(), font_size),
++        )
      }
  
 -    fn from_skrifa_metrics(metrics: &skrifa::metrics::Metrics, font_size: f32) -> Self {
++    /// pyro: the metrics with those a `@font-face` rule overrides (`ascent-override`,
++    /// `descent-override`, `line-gap-override`, fractions of `font_size`).
++    pub fn with_face_metrics(mut self, face: &fontique::FaceMetrics, font_size: f32) -> Self {
++        if let Some(ascent) = face.ascent {
++            self.ascent = ascent * font_size;
++        }
++        if let Some(descent) = face.descent {
++            self.descent = descent * font_size;
++        }
++        if let Some(line_gap) = face.line_gap {
++            self.leading = line_gap * font_size;
++        }
++        self
++    }
++
 +    fn from_skrifa_metrics(
 +        font_ref: &skrifa::FontRef<'_>,
 +        metrics: &skrifa::metrics::Metrics,
@@ -226,7 +257,7 @@
          // Default values from HarfBuzz: https://github.com/harfbuzz/harfbuzz/blob/12ee77ee00514c442bcd28f9aa9d56b708c37382/src/hb-ot-metrics.cc#L355-L372
          let fallback_decoration_size = font_size / 18.0;
  
-@@ -119,7 +178,7 @@
+@@ -119,7 +199,7 @@
          };
  
          Self {
@@ -235,10 +266,14 @@
              descent: -metrics.descent,
              leading: metrics.leading,
              underline_offset,
-@@ -132,6 +191,110 @@
-     }
- }
- 
+@@ -128,10 +208,117 @@
+             strikethrough_size,
+             x_height: metrics.x_height,
+             cap_height: metrics.cap_height,
++        }
++    }
++}
++
 +/// pyro: WebKit's and Chromium's (macOS) extra ascent for Times,
 +/// Helvetica and Courier, "to closely match the vertical metrics of their
 +/// Microsoft counterparts": 15% of the rounded ascent plus descent, rounded
@@ -325,12 +360,15 @@
 +        };
 +        Self {
 +            units_per_em: metrics.units_per_em as f32,
-+            font_metrics: FontMetrics::from_skrifa_metrics(&font_ref, &metrics, font_size),
++            // pyro: `font_size` is the size the font is used at (`size-adjust` applied by the
++            // shaper); its `@font-face` rule may override metrics.
++            font_metrics: FontMetrics::from_skrifa_metrics(&font_ref, &metrics, font_size)
++                .with_face_metrics(font.synthesis.face_metrics(), font_size),
 +            hyphen,
-+        }
-+    }
-+}
-+
+         }
+     }
+ }
+ 
 +/// The metrics of the runs of one font at one size and variation location in a [`ShapedText`].
 +#[derive(Clone, Debug, PartialEq)]
 +struct RunMetricsEntry {
@@ -346,7 +384,7 @@
  /// The result of shaping.
  ///
  /// After [analyzing][crate::Analysis] your text, [shape the text][crate::Shaper::shape_text],
-@@ -152,6 +315,9 @@
+@@ -152,6 +339,9 @@
      glyphs: Vec<Glyph>,
      fonts: Vec<FontInstance>,
      normalized_coords: Vec<NormalizedCoord>,
@@ -356,7 +394,7 @@
  }
  
  impl ShapedText {
-@@ -179,6 +345,7 @@
+@@ -179,6 +369,7 @@
          self.glyphs.clear();
          self.fonts.clear();
          self.normalized_coords.clear();
@@ -364,7 +402,7 @@
      }
  
      /// Get a [`ShapedSlice`] of the run at `run_index`.
-@@ -215,7 +382,66 @@
+@@ -215,7 +406,66 @@
          }
          for shaped_cluster in self.shaped_clusters.iter_mut() {
              shaped_cluster.style_index = remap[shaped_cluster.style_index as usize];
@@ -431,7 +469,7 @@
      }
  
      /// The character data of the text, in logical order.
-@@ -273,7 +499,8 @@
+@@ -273,7 +523,8 @@
          font: &FontInstance,
          glyph_buffer: &harfrust::GlyphBuffer,
          normalized_coords: &[harfrust::NormalizedCoord],
@@ -441,7 +479,7 @@
          debug_assert_eq!(
              range.char_range.len(),
              text[range.byte_range.clone()].chars().count(),
-@@ -302,18 +529,36 @@
+@@ -302,18 +553,36 @@
                  index
              });
  
@@ -488,7 +526,7 @@
  
          // `HarfRust` returns glyphs in visual order, so we need to process them as such while
          // maintaining logical ordering of clusters.
-@@ -395,7 +640,9 @@
+@@ -395,7 +664,9 @@
              bidi_level: segment.bidi_level,
              advance: run_advance,
              font_metrics,
@@ -498,7 +536,7 @@
      }
  }
  
-@@ -423,6 +670,9 @@
+@@ -423,6 +694,9 @@
      pub bidi_level: BidiLevel,
      /// Total advance of the run.
      pub advance: f32,
@@ -508,7 +546,7 @@
      /// The font metrics of this run.
      pub font_metrics: FontMetrics,
  }
-@@ -647,6 +897,7 @@
+@@ -647,9 +921,11 @@
              char_end: text.chars().count().try_into().unwrap(),
              options: ShapeOptions {
                  font_size: 32.0,
@@ -516,7 +554,11 @@
                  language: None,
                  features: &[],
                  variations: &[],
-@@ -805,6 +1056,7 @@
++                face_size_adjust: true,
+             },
+         }];
+         shaper.shape_text(
+@@ -805,18 +1081,22 @@
                  char_end: 1,
                  options: ShapeOptions {
                      font_size: 32.0,
@@ -524,7 +566,10 @@
                      language: None,
                      features: &[],
                      variations: &[],
-@@ -814,6 +1066,7 @@
++                    face_size_adjust: true,
+                 },
+             },
+             Item {
                  char_end: text.chars().count().try_into().unwrap(),
                  options: ShapeOptions {
                      font_size: 32.0,
@@ -532,6 +577,10 @@
                      language: None,
                      features: &[],
                      variations: &[],
++                    face_size_adjust: true,
+                 },
+             },
+         ];
 --- a/src/shape/shaper.rs
 +++ b/src/shape/shaper.rs
 @@ -16,6 +16,29 @@
@@ -576,7 +625,17 @@
      /// The language to shape the item with.
      pub language: Option<Language>,
      /// The font features to shape the item with.
-@@ -85,6 +113,10 @@
+@@ -34,6 +62,9 @@
+     pub features: &'a [FontFeature],
+     /// The font variations that are constant over an item.
+     pub variations: &'a [FontVariation],
++    /// pyro: whether a font is used at its `size-adjust` (`fontique::Synthesis::size_adjust`):
++    /// not when CSS `font-size-adjust` sets the size, which fixes a metric of every font.
++    pub face_size_adjust: bool,
+ }
+ 
+ /// The font instance to shape an item with.
+@@ -85,6 +116,10 @@
  
  /// Reusable scratch to shape text using [`Self::shape_text`].
  pub struct Shaper {
@@ -587,7 +646,7 @@
      shape_data_cache: LruCache<cache::ShapeDataKey, harfrust::ShaperData>,
      shape_instance_cache: LruCache<cache::ShapeInstanceId, harfrust::ShaperInstance>,
      shape_plan_cache: LruCache<cache::ShapePlanId, harfrust::ShapePlan>,
-@@ -97,6 +129,8 @@
+@@ -97,6 +132,8 @@
      fn default() -> Self {
          const MAX_ENTRIES: usize = 16;
          Self {
@@ -596,10 +655,27 @@
              shape_data_cache: LruCache::new(MAX_ENTRIES),
              shape_instance_cache: LruCache::new(MAX_ENTRIES),
              shape_plan_cache: LruCache::new(MAX_ENTRIES),
-@@ -273,14 +307,17 @@
+@@ -273,14 +310,34 @@
  
      // Shape a run of the segment with a single font, appending it to `shaped_text`.
      let mut shape_run = |font: &FontInstance, range: TextRange| {
++        // pyro: a font its `@font-face` rule sizes (`size-adjust`) is shaped, measured and drawn
++        // at the item's size times that factor.
++        let adjusted;
++        let options = match font.synthesis.size_adjust() {
++            adjust if adjust != 1.0 && options.face_size_adjust => {
++                adjusted = ShapeOptions {
++                    font_size: options.font_size * adjust,
++                    point_size: options.point_size * adjust,
++                    language: options.language.clone(),
++                    features: options.features,
++                    variations: options.variations,
++                    face_size_adjust: true,
++                };
++                &adjusted
++            }
++            _ => options,
++        };
 +        // pyro: the font is parsed only when something has to be built from it (shaper
 +        // data, instance, or the shaper of a run the glyph cache does not hold); a cached run needs
 +        // none of them, and its variation coords are the instance's.
@@ -616,7 +692,7 @@
          );
          let instance = scx.shape_instance_cache.entry(
              cache::ShapeInstanceKey::new(
-@@ -291,12 +328,51 @@
+@@ -291,12 +348,51 @@
              ),
              || {
                  harfrust::ShaperInstance::from_variations(
@@ -669,7 +745,7 @@
          let harf_shaper = shaper_data
              .shaper(&font_ref)
              .instance(Some(instance))
-@@ -328,8 +404,6 @@
+@@ -328,8 +424,6 @@
          buffer.clear();
          buffer.set_cluster_level(harfrust::BufferClusterLevel::MonotoneCharacters);
  
@@ -678,7 +754,7 @@
          buffer.reserve(run_text.len());
          #[expect(clippy::cast_possible_truncation, reason = "Deferred")]
          for (i, ch) in run_text.chars().enumerate() {
-@@ -340,7 +414,9 @@
+@@ -340,7 +434,9 @@
              // with `char_indices`, push each char individually via `.chars` with a cluster index
              // that matches its `infos` counterpart. This allows us to lookup `infos` via cluster
              // index in `data.rs`.
@@ -689,7 +765,7 @@
          }
  
          buffer.set_pre_context(&text[..range.byte_range.start]);
-@@ -357,10 +433,10 @@
+@@ -357,10 +453,10 @@
              HarfShapeOptions::new()
                  .plan(Some(shaper_plan))
                  .features(&scx.features)
@@ -702,7 +778,7 @@
              text,
              range,
              segment,
-@@ -370,10 +446,16 @@
+@@ -370,10 +466,16 @@
              font,
              &glyph_buffer,
              harf_shaper.coords(),
@@ -721,7 +797,7 @@
      };
  
      // This is the run being accumulated, i.e., consecutive graphemes for which `select_font`
-@@ -429,6 +511,18 @@
+@@ -429,6 +531,18 @@
      Ok(())
  }
  
@@ -806,7 +882,7 @@
      #[test]
 --- a/src/lib.rs
 +++ b/src/lib.rs
-@@ -52,6 +52,7 @@
+@@ -52,9 +52,11 @@
  //!         char_end: char_count.try_into().unwrap(),
  //!         options: ShapeOptions {
  //!             font_size: 16.0,
@@ -814,7 +890,11 @@
  //!             language: None,
  //!             features: &[],
  //!             variations: &[],
-@@ -122,5 +123,5 @@
++//!             face_size_adjust: true,
+ //!         },
+ //!      }],
+ //!      select_font, // Selects fonts covering each cluster.
+@@ -122,5 +124,5 @@
  pub use analyzer::{AnalysisOptions, Analyzer, LineBreakConfig};
  pub use glyph::Glyph;
  pub use shape::atom::{Atom, Atoms, Grapheme, Graphemes, ShapedClusterGlyphs, ShapedSlice};
@@ -823,7 +903,7 @@
  pub use shape::shaper::{FontInstance, FontInstanceRef, FontSelector, ShapeOptions, Shaper};
 --- a/src/shape/atom.rs
 +++ b/src/shape/atom.rs
-@@ -917,6 +917,7 @@
+@@ -917,9 +917,11 @@
              char_end: text.chars().count().try_into().unwrap(),
              options: ShapeOptions {
                  font_size: 32.0,
@@ -831,6 +911,10 @@
                  language: None,
                  features: &[],
                  variations: &[],
++                face_size_adjust: true,
+             },
+         }];
+         shaper.shape_text(
 --- a/src/analysis.rs
 +++ b/src/analysis.rs
 @@ -14,7 +14,7 @@

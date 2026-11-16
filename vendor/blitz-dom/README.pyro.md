@@ -1956,3 +1956,13 @@ the child's layout parent is a grid.
   `load_resource`).
 - `src/util.rs` (`intern_font_blob`): a font file is one blob per `@font-face` family name it is loaded under, so a
   run's font tells which family drew it (two rules loading one file under two names: WPT `font-palette-31`).
+
+## `@font-face` `size-adjust` and metrics overrides (WPT css-fonts, round 3 lane F)
+
+- `src/net.rs` (`FontFaceOverrides::face_metrics`), `src/document.rs` (`load_resource`): the descriptors are
+  registered with the face (fontique `FaceMetrics`); parley_engine draws and measures the face with them.
+- `src/stylo_to_parley.rs`: `TextStyle::font_size_adjusted` where `font-size-adjust` is set (a face's
+  `size-adjust` is then not applied). `src/font_metrics.rs` (`metrics_for`): `ex`, `ch`, `ic` and `cap` lengths
+  measure the face at its `size-adjust`, with its ascent override, except under `font-size-adjust`.
+
+Covered by `crates/pyro-render/tests/font_face_metrics.rs`.

@@ -31,6 +31,8 @@ pub struct FontInfo {
     /// `font-style` descriptor allows the font: `(0, 0)` for `normal`, the range of `oblique
     /// <angle> <angle>`. `None` without a descriptor: the font's own `slnt` axis decides.
     slant_range: Option<(f32, f32)>,
+    /// pyro: the size and metrics a `@font-face` rule's descriptors give the font.
+    face_metrics: FaceMetrics,
 }
 
 impl FontInfo {
@@ -156,6 +158,7 @@ impl FontInfo {
             }
         }
         synth.len = len as u8;
+        synth.face_metrics = self.face_metrics;
         synth
     }
 
@@ -283,6 +286,7 @@ impl FontInfo {
             unicode_range: UnicodeRange::default(),
             precedence: 0,
             slant_range: None,
+            face_metrics: FaceMetrics::default(),
         })
     }
 
@@ -345,6 +349,9 @@ impl FontInfo {
         if let Some(slant_range) = info_override.slant_range {
             self.slant_range = Some(slant_range);
         }
+        if let Some(face_metrics) = info_override.face_metrics {
+            self.face_metrics = face_metrics;
+        }
     }
 }
 
@@ -403,9 +410,45 @@ pub struct Synthesis {
     len: u8,
     embolden: bool,
     skew: i8,
+    /// pyro: the font's `@font-face` size and metrics descriptors (they travel with the font
+    /// a query selects, as its synthesis does).
+    face_metrics: FaceMetrics,
+}
+
+/// pyro: what a `@font-face` rule's `size-adjust`, `ascent-override`, `descent-override` and
+/// `line-gap-override` descriptors (CSS Fonts 5 §4.9-§4.11) make of a font: a factor of the
+/// size it is used at (glyphs, advances and metrics), and metrics as fractions of that
+/// (adjusted) size. `None` is the font's own (`normal`).
+#[derive(Copy, Clone, Debug, Default, PartialEq)]
+pub struct FaceMetrics {
+    /// `size-adjust` as a factor (`150%` is 1.5).
+    pub size_adjust: Option<f32>,
+    /// `ascent-override` as a fraction of the font size.
+    pub ascent: Option<f32>,
+    /// `descent-override` as a fraction of the font size.
+    pub descent: Option<f32>,
+    /// `line-gap-override` as a fraction of the font size.
+    pub line_gap: Option<f32>,
 }
 
 impl Synthesis {
+    /// pyro: the font's `@font-face` size and metrics descriptors.
+    pub fn face_metrics(&self) -> &FaceMetrics {
+        &self.face_metrics
+    }
+
+    /// pyro: the factor of the font size the font is used at (`size-adjust`), 1 without one.
+    pub fn size_adjust(&self) -> f32 {
+        self.face_metrics.size_adjust.unwrap_or(1.0)
+    }
+
+    /// pyro: the same synthesis with the font used at the size asked for (`size-adjust` left
+    /// out, as CSS `font-size-adjust` has it).
+    pub fn without_size_adjust(mut self) -> Self {
+        self.face_metrics.size_adjust = None;
+        self
+    }
+
     /// Returns `true` if any synthesis suggestions are available.
     pub fn any(&self) -> bool {
         self.len != 0 || self.embolden || self.skew != 0
@@ -557,6 +600,8 @@ pub struct FontInfoOverride<'a> {
     /// pyro: the slant angles the font is allowed (`FontInfo`'s `slant_range`): CSS's
     /// `font-style` descriptor, `(0.0, 0.0)` for `normal`.
     pub slant_range: Option<(f32, f32)>,
+    /// pyro: the size and metrics `@font-face` descriptors give the font.
+    pub face_metrics: Option<FaceMetrics>,
 }
 
 #[cfg(test)]

@@ -172,6 +172,7 @@ impl ResolveContext {
             StyleProperty::TabSize(value) => TabSize(scale_tab_size(*value, scale)),
             StyleProperty::SoftHyphen(value) => SoftHyphen(*value),
             StyleProperty::DictionaryBreaks(value) => DictionaryBreaks(*value),
+            StyleProperty::FontSizeAdjusted(value) => FontSizeAdjusted(*value),
         }
     }
 
@@ -216,6 +217,7 @@ impl ResolveContext {
             tab_size: scale_tab_size(raw_style.tab_size, scale),
             soft_hyphen: raw_style.soft_hyphen,
             dictionary_breaks: raw_style.dictionary_breaks,
+            font_size_adjusted: raw_style.font_size_adjusted,
             annotation_space: raw_style.annotation_space.scale(scale),
             text_box_trim: raw_style.text_box_trim,
         }
@@ -414,6 +416,8 @@ pub(crate) enum ResolvedProperty<B: Brush> {
     SoftHyphen(crate::style::SoftHyphen),
     /// pyro: whether lines may break where dictionaries find word boundaries.
     DictionaryBreaks(bool),
+    /// pyro: whether the font size is set by `font-size-adjust`.
+    FontSizeAdjusted(bool),
 }
 
 /// pyro: `tab_size` with a length in layout units.
@@ -476,6 +480,8 @@ pub(crate) struct ResolvedStyle<B: Brush> {
     pub(crate) soft_hyphen: crate::style::SoftHyphen,
     /// pyro: whether lines may break where dictionaries find word boundaries.
     pub(crate) dictionary_breaks: bool,
+    /// pyro: whether the font size is set by `font-size-adjust` ([`TextStyle::font_size_adjusted`]).
+    pub(crate) font_size_adjusted: bool,
     /// pyro: room beyond the content area ([`TextStyle::annotation_space`]), scaled.
     pub(crate) annotation_space: AnnotationSpace,
     /// pyro: the edges the content area is trimmed to ([`TextStyle::text_box_trim`]).
@@ -516,6 +522,7 @@ impl<B: Brush> ResolvedStyle<B> {
             TabSize(value) => self.tab_size = value,
             SoftHyphen(value) => self.soft_hyphen = value,
             DictionaryBreaks(value) => self.dictionary_breaks = value,
+            FontSizeAdjusted(value) => self.font_size_adjusted = value,
         }
     }
 
@@ -551,6 +558,7 @@ impl<B: Brush> ResolvedStyle<B> {
             TabSize(value) => self.tab_size == *value,
             SoftHyphen(value) => self.soft_hyphen == *value,
             DictionaryBreaks(value) => self.dictionary_breaks == *value,
+            FontSizeAdjusted(value) => self.font_size_adjusted == *value,
         }
     }
 

@@ -81,3 +81,10 @@ Without a descriptor the font's own axis is used as before. Test:
 `src/collection/mod.rs` (`register_scanned_font`): a face registered under an override family name `""` is kept
 (CSS Fonts 4: a quoted family name may be empty, `font-family: ""`); a font file without a name of its own is still
 left out (WPT `font-palette-empty-font-family`).
+
+## `@font-face` `size-adjust` and metrics overrides (WPT css-fonts, round 3 lane F)
+
+`src/font.rs` (`FaceMetrics`, `FontInfoOverride::face_metrics`, `Synthesis::face_metrics`, `size_adjust`,
+`without_size_adjust`): a face registered with `size-adjust`, `ascent-override`, `descent-override` or
+`line-gap-override` keeps them, and the synthesis a query gives for it carries them to the shaper (parley_engine
+applies them), as it carries the variation settings.

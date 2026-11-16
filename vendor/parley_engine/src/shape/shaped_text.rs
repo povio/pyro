@@ -146,15 +146,36 @@ impl FontMetrics {
                         .map(|v| (skrifa::Tag::new(&v.tag.to_bytes()), v.value)),
                 ),
         );
-        Some(Self::from_skrifa_metrics(
-            &font_ref,
-            &skrifa::metrics::Metrics::new(
+        // pyro: at the size the font is used at (`size-adjust`), with the metrics its `@font-face`
+        // rule overrides.
+        let font_size = font_size * font.synthesis.size_adjust();
+        Some(
+            Self::from_skrifa_metrics(
                 &font_ref,
-                skrifa::prelude::Size::new(font_size),
-                &location,
-            ),
-            font_size,
-        ))
+                &skrifa::metrics::Metrics::new(
+                    &font_ref,
+                    skrifa::prelude::Size::new(font_size),
+                    &location,
+                ),
+                font_size,
+            )
+            .with_face_metrics(font.synthesis.face_metrics(), font_size),
+        )
+    }
+
+    /// pyro: the metrics with those a `@font-face` rule overrides (`ascent-override`,
+    /// `descent-override`, `line-gap-override`, fractions of `font_size`).
+    pub fn with_face_metrics(mut self, face: &fontique::FaceMetrics, font_size: f32) -> Self {
+        if let Some(ascent) = face.ascent {
+            self.ascent = ascent * font_size;
+        }
+        if let Some(descent) = face.descent {
+            self.descent = descent * font_size;
+        }
+        if let Some(line_gap) = face.line_gap {
+            self.leading = line_gap * font_size;
+        }
+        self
     }
 
     fn from_skrifa_metrics(
@@ -277,7 +298,10 @@ impl RunMetrics {
         };
         Self {
             units_per_em: metrics.units_per_em as f32,
-            font_metrics: FontMetrics::from_skrifa_metrics(&font_ref, &metrics, font_size),
+            // pyro: `font_size` is the size the font is used at (`size-adjust` applied by the
+            // shaper); its `@font-face` rule may override metrics.
+            font_metrics: FontMetrics::from_skrifa_metrics(&font_ref, &metrics, font_size)
+                .with_face_metrics(font.synthesis.face_metrics(), font_size),
             hyphen,
         }
     }
@@ -901,6 +925,7 @@ mod tests {
                 language: None,
                 features: &[],
                 variations: &[],
+                face_size_adjust: true,
             },
         }];
         shaper.shape_text(
@@ -1060,6 +1085,7 @@ mod tests {
                     language: None,
                     features: &[],
                     variations: &[],
+                    face_size_adjust: true,
                 },
             },
             Item {
@@ -1070,6 +1096,7 @@ mod tests {
                     language: None,
                     features: &[],
                     variations: &[],
+                    face_size_adjust: true,
                 },
             },
         ];

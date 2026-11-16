@@ -1943,6 +1943,7 @@ impl BaseDocument {
                     weight: weight_override,
                     width: overrides.width.map(parley::fontique::FontWidth::from_percentage),
                     slant_range: overrides.slant_range,
+                    face_metrics: overrides.face_metrics,
                     style: overrides.style,
                     unicode_range: overrides.unicode_range.as_ref(),
                     precedence: Some(overrides.precedence),

@@ -61,6 +61,9 @@ pub struct FontFaceOverrides {
     /// pyro: the slant angles the `font-style` descriptor allows a variable font's `slnt`
     /// axis: `(0, 0)` for `normal`, the range of `oblique <angle> <angle>`.
     pub slant_range: Option<(f32, f32)>,
+    /// pyro: the `size-adjust`, `ascent-override`, `descent-override` and `line-gap-override`
+    /// descriptors, `None` when the rule has none of them.
+    pub face_metrics: Option<parley::fontique::FaceMetrics>,
     /// `unicode-range` descriptor: the code points the face is used for.
     /// `None` (no descriptor) is every code point.
     pub unicode_range: Option<parley::fontique::UnicodeRange>,
@@ -472,6 +475,24 @@ pub(crate) fn fetch_font_face_rules<'a>(
                     }),
                     unicode_range: descriptor.unicode_range.as_deref().map(unicode_range),
                     precedence: RULE_ORDER.fetch_add(1, Ao::Relaxed),
+                    face_metrics: {
+                        // `normal` (no override) computes to -1.
+                        let metric = |value: &Option<style::values::specified::font::MetricsOverride>| {
+                            value.as_ref().and_then(|value| value.compute()).map(|p| p.0).filter(|v| *v >= 0.0)
+                        };
+                        let face = parley::fontique::FaceMetrics {
+                            size_adjust: descriptor
+                                .size_adjust
+                                .as_ref()
+                                .and_then(|value| value.compute())
+                                .map(|p| p.0)
+                                .filter(|v| *v >= 0.0 && *v != 1.0),
+                            ascent: metric(&descriptor.ascent_override),
+                            descent: metric(&descriptor.descent_override),
+                            line_gap: metric(&descriptor.line_gap_override),
+                        };
+                        (face != parley::fontique::FaceMetrics::default()).then_some(face)
+                    },
                 };
                 Some((src, overrides))
             }

@@ -231,6 +231,14 @@ they keep their max advance (alignment, hanging white space). blitz-dom sets it 
 `TextStyle::dictionary_breaks` (`style/mod.rs`, `StyleProperty::DictionaryBreaks`, `resolve/mod.rs`, `analysis.rs`):
 `false` asks parley_engine for no dictionary breaks in the style's text (CSS `word-break: manual`).
 
+## `@font-face` `size-adjust` and metrics overrides (WPT css-fonts, round 3 lane F)
+
+`TextStyle::font_size_adjusted` (`style/mod.rs`, `StyleProperty::FontSizeAdjusted`, `resolve/mod.rs`,
+`shape/mod.rs`): `true` where CSS `font-size-adjust` sets the size; items split on it and tell parley_engine
+(`ShapeOptions::face_size_adjust`) not to apply a face's `size-adjust`, which `font-size-adjust` cancels (it fixes
+a metric of every font). `layout/style_metrics.rs`: the strut's first available font has its `@font-face`
+metrics (`FontMetrics::from_font_instance` applies them), without `size-adjust` under `font-size-adjust`.
+
 ## Updating or dropping the patch
 
 Copy the published crate from `~/.cargo/registry/src/*/parley-<version>` and re-apply

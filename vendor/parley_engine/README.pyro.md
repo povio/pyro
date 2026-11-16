@@ -111,3 +111,13 @@ hyphen where a line ends at a soft hyphen (parley's README.pyro.md, "Soft hyphen
 `analyzer.rs` (`LineBreakConfig::no_dictionary`), `analysis.rs` (`SegmenterKey::no_dictionary`): a range of text
 that asks for no dictionary breaks (CSS `word-break: manual`) is segmented by `LineSegmenter::
 new_for_non_complex_scripts` although the `complex-scripts` feature is on.
+
+## `@font-face` `size-adjust` and metrics overrides (WPT css-fonts, round 3 lane F)
+
+`shape/shaper.rs` (`shape_run`), `shape/shaped_text.rs` (`FontMetrics::with_face_metrics`,
+`FontMetrics::from_font_instance`, `RunMetrics::new`): a font whose `@font-face` rule has `size-adjust`
+(`fontique::Synthesis::size_adjust`) is shaped, measured and drawn at the item's size times it (the run's
+`font_size` is that size), unless `ShapeOptions::face_size_adjust` is off (`font-size-adjust`); its
+`ascent-override`, `descent-override` and `line-gap-override` replace the font's ascent, descent and line gap with
+fractions of that size. WPT `size-adjust-01`..`-03`, `size-adjust.tentative`, `ascent-descent-override`,
+`line-gap-override`, `font-size-adjust-metrics-override`.

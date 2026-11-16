@@ -139,6 +139,9 @@ impl BlitzFontMetricsProvider {
         // query.set_fallbacks(fontique::FallbackKey::new(fb_script, fb_language.as_ref()));
 
         let variations = stylo_to_parley::font_variations(font_styles, font_size.px());
+        // pyro: a face's `size-adjust` scales its metrics, but not where `font-size-adjust` sets
+        // the size (the text is then drawn without it).
+        let size_adjust = font_styles.font_size_adjust == style::values::computed::font::FontSizeAdjust::None;
         // let features = self.rcx.features(style.font_features).unwrap_or(&[]);
 
         // fn name_of(font_ref: &skrifa::FontRef) -> String {
@@ -184,8 +187,11 @@ impl BlitzFontMetricsProvider {
             ch: char,
             font_size: f32,
             variations: &[FontVariation],
+            size_adjust: bool,
         ) -> Option<f32> {
             let font = find_font_for(query, ch)?;
+            // pyro: at the size the font is used at (`size-adjust`).
+            let font_size = if size_adjust { font_size * font.synthesis.size_adjust() } else { font_size };
             let font_ref = skrifa::FontRef::from_index(font.blob.as_ref(), font.index).ok()?;
             let location = font_ref.axes().location(
                 variations
@@ -207,10 +213,14 @@ impl BlitzFontMetricsProvider {
         fn metrics_of(
             query: &mut Query,
             ch: char,
-            font_size: Size,
+            font_size: f32,
             variations: &[FontVariation],
+            size_adjust: bool,
         ) -> Option<(f32, Option<f32>, Option<f32>)> {
             let font = find_font_for(query, ch)?;
+            // pyro: at the size the font is used at (`size-adjust`), with the ascent its
+            // `@font-face` rule may override.
+            let font_size = if size_adjust { font_size * font.synthesis.size_adjust() } else { font_size };
             let font_ref = skrifa::FontRef::from_index(font.blob.as_ref(), font.index).ok()?;
             let location = font_ref.axes().location(
                 variations
@@ -218,14 +228,15 @@ impl BlitzFontMetricsProvider {
                     .map(|v| (skrifa::Tag::from_be_bytes(v.tag.to_bytes()), v.value)),
             );
             let location_ref = LocationRef::from(&location);
-            let metrics = Metrics::new(&font_ref, font_size, location_ref);
-            Some((metrics.ascent, metrics.x_height, metrics.cap_height))
+            let metrics = Metrics::new(&font_ref, Size::new(font_size), location_ref);
+            let ascent = font.synthesis.face_metrics().ascent.map_or(metrics.ascent, |a| a * font_size);
+            Some((ascent, metrics.x_height, metrics.cap_height))
         }
 
-        let zero_advance = advance_of(&mut query, '0', font_size.px(), &variations);
-        let ic_advance = advance_of(&mut query, '\u{6C34}', font_size.px(), &variations);
+        let zero_advance = advance_of(&mut query, '0', font_size.px(), &variations, size_adjust);
+        let ic_advance = advance_of(&mut query, '\u{6C34}', font_size.px(), &variations, size_adjust);
         let (ascent, x_height, cap_height) =
-            metrics_of(&mut query, text_char, Size::new(font_size.px()), &variations)
+            metrics_of(&mut query, text_char, font_size.px(), &variations, size_adjust)
                 .unwrap_or((0.0, None, None));
 
         FontMetrics {

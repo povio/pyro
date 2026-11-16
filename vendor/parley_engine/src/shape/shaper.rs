@@ -62,6 +62,9 @@ pub struct ShapeOptions<'a> {
     pub features: &'a [FontFeature],
     /// The font variations that are constant over an item.
     pub variations: &'a [FontVariation],
+    /// pyro: whether a font is used at its `size-adjust` (`fontique::Synthesis::size_adjust`):
+    /// not when CSS `font-size-adjust` sets the size, which fixes a metric of every font.
+    pub face_size_adjust: bool,
 }
 
 /// The font instance to shape an item with.
@@ -307,6 +310,23 @@ fn shape_segment(
 
     // Shape a run of the segment with a single font, appending it to `shaped_text`.
     let mut shape_run = |font: &FontInstance, range: TextRange| {
+        // pyro: a font its `@font-face` rule sizes (`size-adjust`) is shaped, measured and drawn
+        // at the item's size times that factor.
+        let adjusted;
+        let options = match font.synthesis.size_adjust() {
+            adjust if adjust != 1.0 && options.face_size_adjust => {
+                adjusted = ShapeOptions {
+                    font_size: options.font_size * adjust,
+                    point_size: options.point_size * adjust,
+                    language: options.language.clone(),
+                    features: options.features,
+                    variations: options.variations,
+                    face_size_adjust: true,
+                };
+                &adjusted
+            }
+            _ => options,
+        };
         // pyro: the font is parsed only when something has to be built from it (shaper
         // data, instance, or the shaper of a run the glyph cache does not hold); a cached run needs
         // none of them, and its variation coords are the instance's.
