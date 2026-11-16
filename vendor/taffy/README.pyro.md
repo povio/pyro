@@ -488,3 +488,6 @@ as tall as its rows (WPT `css/css-grid/grid-definition/grid-auto-repeat-aspect-r
 - `compute/oof.rs` (`layout_oof_box`), `style/mod.rs` (`OofItemStyle::min_size_keyword`, `max_size_keyword`): sizing
   keywords in the minimum and maximum sizes of an absolutely positioned box (`max-height: fit-content`, ...) bound it
   as the keyword would size it, the widths first, the heights at the width (WPT `position-absolute-fit-content`).
+- `tree/traits.rs` (`LayoutBlockContainer::block_container_percentage_height`), `compute/block.rs`: a height
+  percentage heights of a container's children resolve against when the container's own is unknown as it is laid
+  out (blitz-dom's multi-column strip: the container's definite height; WPT `position-sticky-child-multicolumn`).

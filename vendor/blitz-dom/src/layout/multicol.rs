@@ -484,12 +484,21 @@ impl LayoutPassState<'_> {
         // Column spanners (`column-span: all` children) are laid out as wide as the container.
         let spanning = (!inline_root).then(|| (dom_id, content_width)).filter(|_| self.doc.has_column_spanners(dom_id));
         let outer_spanners = std::mem::replace(&mut self.column_spanners, spanning);
+        // pyro: percentage heights in the strip resolve against the container's definite height
+        // (WPT `position-sticky-child-multicolumn`).
+        let percent_height = inputs
+            .known_dimensions
+            .height
+            .or(size.height.maybe_clamp(min_size.height, max_size.height))
+            .map(|height| (dom_id, height));
+        let outer_percent_height = std::mem::replace(&mut self.multicol_percent_height, percent_height);
         let strip = if inline_root {
             self.compute_inline_layout(dom_id, strip_inputs, None)
         } else {
             compute_block_layout(self, node_id, strip_inputs, None)
         };
         self.column_spanners = outer_spanners;
+        self.multicol_percent_height = outer_percent_height;
         if inputs.run_mode == RunMode::ComputeSize {
             // The strip wrote its boxes' layouts at this width: a cached final layout of the
             // container at another width would leave them there.

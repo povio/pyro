@@ -121,6 +121,9 @@ pub(crate) struct LayoutPassState<'doc> {
     pub(crate) column_spanners: Option<(crate::NodeId, f32)>,
     /// pyro: the inline roots this pass marked `FINAL_LAYOUT_STALE` (`mark_final_layout_stale`).
     pub(crate) stale_lines: Vec<crate::NodeId>,
+    /// pyro: the multi-column container whose strip is being laid out and its definite height
+    /// (border box), which percentage heights in it resolve against (`layout::multicol`).
+    pub(crate) multicol_percent_height: Option<(crate::NodeId, f32)>,
 }
 
 impl<'doc> LayoutPassState<'doc> {
@@ -162,6 +165,7 @@ impl<'doc> LayoutPassState<'doc> {
             round_counts: (0, 0),
             column_spanners: None,
             stale_lines: Vec::new(),
+            multicol_percent_height: None,
         }
     }
 }
@@ -1858,6 +1862,12 @@ impl taffy::LayoutBlockContainer for LayoutPassState<'_> {
     fn block_container_passes_percentage_height(&self, node_id: NodeId) -> bool {
         let node = self.node_from_id(node_id);
         node.is_split_inline() || node.is_inline_with_only_block_children()
+    }
+
+    fn block_container_percentage_height(&self, node_id: NodeId) -> Option<f32> {
+        self.multicol_percent_height
+            .filter(|(container, _)| *container == dom_node_id(node_id))
+            .map(|(_, height)| height)
     }
 
     fn block_container_direction(&self, node_id: NodeId) -> Option<taffy::Direction> {

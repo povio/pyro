@@ -480,6 +480,26 @@ impl Geometry {
             while let Some(c) = cb.filter(|&c| inline(c)) {
                 cb = doc.get_node(c).and_then(|n| n.parent);
             }
+            // A table row or row group has no box: the box's containing block is the anonymous
+            // cell it is laid out in (WPT `position-sticky-contained-by-display-table`).
+            let row_or_group = |c: NodeId| {
+                use style::values::specified::box_::DisplayInside;
+                doc.get_node(c).and_then(|n| n.primary_styles()).is_some_and(|s| {
+                    matches!(
+                        s.clone_display().inside(),
+                        DisplayInside::TableRow
+                            | DisplayInside::TableRowGroup
+                            | DisplayInside::TableHeaderGroup
+                            | DisplayInside::TableFooterGroup
+                    )
+                })
+            };
+            if cb.is_some_and(|c| row_or_group(c) && !self.in_layout_tree(doc, c)) {
+                let layout_parent = doc.get_node(id).and_then(|n| n.layout_parent.get());
+                if layout_parent.is_some_and(|p| doc.get_node(p).is_some_and(|p| p.is_anonymous())) {
+                    cb = layout_parent;
+                }
+            }
         }
         let limit = cb.and_then(|c| {
             let b = self.element_box(doc, c)?;

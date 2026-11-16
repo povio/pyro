@@ -2196,3 +2196,5 @@ item `BOX_DAMAGE`, as on a table row or row group: a collapsed flex item leaves 
   split box and the inline roots around it leave such boxes to their parent, which lays them out against it (WPT
   `position-absolute-in-inline-003`, `position-absolute-dynamic-relayout-005/006`). Covered by
   `crates/pyro-render/tests/split_inline_containing_block.rs`.
+- `src/layout/multicol.rs`, `src/layout/mod.rs` (`multicol_percent_height`): percentage heights in a multi-column
+  container's strip resolve against the container's definite height (taffy `block_container_percentage_height`).
