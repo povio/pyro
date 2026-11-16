@@ -76,14 +76,20 @@ from the root of an upstream checkout at that commit) is the whole diff.
     `draw_text_input_text` ends the overflowing lines of a text control (`<input>`, `<textarea>`) with its
     `TextInputData::ellipsis` the same way while the control is not focused and not scrolled, as Chromium does.
   - `src/render/box_shadow.rs` (`overflow_clip_path`), `src/render.rs` (`render_element`, `paint_content`,
-    `draw_text_mask`, `ElementCx::draw_hoisted_child`): the overflow clip. A scroll container clips at its padding
+    `draw_text_mask`, `ElementCx::hoisted_child_clips`, `ElementCx::draw_hoisted_children`): the overflow clip. A scroll container clips at its padding
     box, as before. `overflow: clip` on both axes (and `contain: paint`) clips at the box `overflow-clip-margin`
     names, along that box's own curve, grown by the margin's length as a shadow's spread grows its shape (a
     negative length shrinks it); `clip` on one axis with `visible` on the other clips that axis only, with square
     corners. A box hoisted to a stacking context (positioned, with a `z-index`) is painted inside the clips of the
     boxes between it and that context on its containing-block chain: such a box makes no stacking context, so the
-    child was painted outside its clip layer and showed whole outside an `overflow: hidden` ancestor. Covered by
-    `crates/pyro-render/tests/overflow_clip.rs`, WPT `css-overflow/overflow-clip-margin-*`, `clip-00*`.
+    child was painted outside its clip layer and showed whole outside an `overflow: hidden` ancestor. The clip
+    layers stay pushed from one hoisted box to the next as far as their clip chains share their outer clips (only
+    the differing inner ones are popped and pushed): a clip layer costs the raster its whole area, and a stack of
+    them per box (a table's sticky cells, the buttons in its cells, all in one scroller) made a ToS table screen's
+    capture cost 50-60% more instructions. A layer the layer limit refused is not popped (popping one per clip
+    unconditionally popped the ancestors' layers past the limit). Covered by
+    `crates/pyro-render/tests/overflow_clip.rs`, `crates/pyro-render/tests/hoisted_clip_layers.rs`, WPT
+    `css-overflow/overflow-clip-margin-*`, `clip-00*`.
   - `src/render.rs` (`replaced_overflow_is_visible`, `should_clip_node`, `draw_image`, `draw_svg`): the content of
     an `<img>`, `<video>` or `<canvas>` whose author made `overflow` visible on both axes is not cut at its box
     (an SVG image only at its own viewport), as in Chromium; blitz-dom's UA sheet gives these elements

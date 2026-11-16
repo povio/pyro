@@ -3505,30 +3505,26 @@ impl ElementCx<'_, '_> {
         }
     }
 
-    /// Paints a box hoisted to this stacking context (a positioned descendant with a
-    /// `z-index`) where its layout put it. pyro: inside the overflow clips of the boxes between
-    /// it and this one that are its containing-block ancestors: such a box makes no stacking
-    /// context, so the child is not painted within its clip layer, and it showed whole outside
-    /// an `overflow: hidden` ancestor.
-    fn draw_hoisted_child(
+    /// The overflow clips a box hoisted to this stacking context (a positioned descendant with a
+    /// `z-index`) is painted in, outermost first: those of the boxes between it and this one
+    /// that are its containing-block ancestors. pyro: such a box makes no stacking context, so
+    /// the child is not painted within its clip layer, and it showed whole outside an
+    /// `overflow: hidden` ancestor. Each clip is its box's node, with the box's border box origin
+    /// in this context's space (the child's, less what lies between the two).
+    fn hoisted_child_clips(
         &self,
-        scene: &mut impl PaintScene,
         hoisted_child: &blitz_dom::HoistedPaintChild,
+        position: taffy::Point<f32>,
         parent_style_transform: Affine,
-        clip_rect: Rect,
-    ) {
+    ) -> Vec<(NodeId, Affine, kurbo::BezPath)> {
         let tree = self.node.tree();
-        let position = hoisted_child.position(tree, self.node.id);
-        // The clipping boxes, innermost first, each with its border box's origin in this
-        // context's space (the child's, less what lies between the two).
-        let mut clips: Vec<(Affine, kurbo::BezPath)> = Vec::new();
+        let mut clips: Vec<(NodeId, Affine, kurbo::BezPath)> = Vec::new();
         let mut between = (0.0f32, 0.0f32);
         let mut current = tree.get(hoisted_child.node_id).and_then(|child| child.containing_block());
-        let mut reached = false;
         while let Some(id) = current {
             if id == self.node.id {
-                reached = true;
-                break;
+                clips.reverse();
+                return clips;
             }
             let Some(node) = tree.get(id) else { break };
             // (Out of a multi-column container's strip the walk is not a sum of offsets.)
@@ -3552,22 +3548,64 @@ impl ElementCx<'_, '_> {
                 } else {
                     box_shadow::overflow_clip_path(&frame, &styles, self.scale)
                 };
-                clips.push((parent_style_transform.pre_translate(origin), clip));
+                clips.push((id, parent_style_transform.pre_translate(origin), clip));
             }
             current = node.containing_block();
         }
-        if !reached {
-            clips.clear();
+        Vec::new()
+    }
+
+    /// Paints boxes hoisted to this stacking context, in order, where their layout put them,
+    /// each inside its [`Self::hoisted_child_clips`]. pyro: the clip layers stay pushed from one
+    /// child to the next as far as the two share their outer clips (the sticky cells of a table
+    /// and the buttons in its cells, all in one scroller): a clip layer costs the raster its
+    /// whole area, and one stack of them per child cost a ToS table screen's capture half as
+    /// much again. A layer the layer limit refused is not popped.
+    fn draw_hoisted_children<'c>(
+        &self,
+        scene: &mut impl PaintScene,
+        children: impl Iterator<Item = &'c blitz_dom::HoistedPaintChild>,
+        parent_style_transform: Affine,
+        clip_rect: Rect,
+    ) {
+        let same_place = |a: &Affine, b: &Affine| {
+            a.as_coeffs().iter().zip(b.as_coeffs()).all(|(a, b)| (a - b).abs() <= 1e-3)
+        };
+        // The clip layers open, outermost first: node, transform, whether the layer was pushed,
+        // and the culling rectangle inside it.
+        let mut open: Vec<(NodeId, Affine, bool, Rect)> = Vec::new();
+        for hoisted_child in children {
+            let position = hoisted_child.position(self.node.tree(), self.node.id);
+            let clips = self.hoisted_child_clips(hoisted_child, position, parent_style_transform);
+            let keep = open
+                .iter()
+                .zip(&clips)
+                .take_while(|(o, c)| o.0 == c.0 && same_place(&o.1, &c.1))
+                .count();
+            for &(_, _, pushed, _) in open[keep..].iter().rev() {
+                self.context.layer_manager.maybe_pop_layer(scene, pushed);
+            }
+            open.truncate(keep);
+            for (id, transform, clip) in clips.into_iter().skip(keep) {
+                let pushed = self.context.layer_manager.maybe_push_layer(
+                    scene,
+                    true,
+                    BlendMode::default(),
+                    1.0,
+                    transform,
+                    &clip,
+                    None,
+                    None,
+                );
+                let outer = open.last().map_or(clip_rect, |o| o.3);
+                open.push((id, transform, pushed, outer.intersect(transform.transform_rect_bbox(clip.bounding_box()))));
+            }
+            let child_clip_rect = open.last().map_or(clip_rect, |o| o.3);
+            let pos = kurbo::Vec2 { x: position.x as f64 * self.scale, y: position.y as f64 * self.scale };
+            self.render_node(scene, hoisted_child.node_id, parent_style_transform.pre_translate(pos), child_clip_rect);
         }
-        let mut clip_rect = clip_rect;
-        for (transform, clip) in clips.iter().rev() {
-            self.context.layer_manager.maybe_push_layer(scene, true, BlendMode::default(), 1.0, *transform, clip, None, None);
-            clip_rect = clip_rect.intersect(transform.transform_rect_bbox(clip.bounding_box()));
-        }
-        let pos = kurbo::Vec2 { x: position.x as f64 * self.scale, y: position.y as f64 * self.scale };
-        self.render_node(scene, hoisted_child.node_id, parent_style_transform.pre_translate(pos), clip_rect);
-        for _ in &clips {
-            self.context.layer_manager.maybe_pop_layer(scene, true);
+        for &(_, _, pushed, _) in open.iter().rev() {
+            self.context.layer_manager.maybe_pop_layer(scene, pushed);
         }
     }
 
@@ -3578,9 +3616,7 @@ impl ElementCx<'_, '_> {
         clip_rect: Rect,
     ) {
         if let Some(hoisted) = &self.node.stacking_context {
-            for hoisted_child in hoisted.neg_z_hoisted_children() {
-                self.draw_hoisted_child(scene, hoisted_child, parent_style_transform, clip_rect);
-            }
+            self.draw_hoisted_children(scene, hoisted.neg_z_hoisted_children(), parent_style_transform, clip_rect);
         }
     }
 
@@ -3592,9 +3628,7 @@ impl ElementCx<'_, '_> {
     ) {
         // Positive z_index hoisted nodes
         if let Some(hoisted) = &self.node.stacking_context {
-            for hoisted_child in hoisted.pos_z_hoisted_children() {
-                self.draw_hoisted_child(scene, hoisted_child, parent_style_transform, clip_rect);
-            }
+            self.draw_hoisted_children(scene, hoisted.pos_z_hoisted_children(), parent_style_transform, clip_rect);
         }
     }
 
