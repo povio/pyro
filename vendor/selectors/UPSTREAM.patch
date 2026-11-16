@@ -1,0 +1,292 @@
+diff --git a/builder.rs b/builder.rs
+index bbcd0d2..340dbb7 100644
+--- a/builder.rs
++++ b/builder.rs
+@@ -337,6 +337,13 @@ where
+                     flags.insert(selector.flags());
+                 }
+             },
++            // pyro: as `:host()`.
++            Component::HostContext(ref selector) => {
++                flags.insert(SelectorFlags::HAS_HOST);
++                specificity.class_like_selectors += 1;
++                *specificity += Specificity::from(selector.specificity());
++                flags.insert(selector.flags());
++            },
+             Component::ID(..) => {
+                 specificity.id_selectors += 1;
+             },
+diff --git a/matching.rs b/matching.rs
+index 475e776..103d140 100644
+--- a/matching.rs
++++ b/matching.rs
+@@ -620,6 +620,7 @@ fn match_relative_selectors<E: Element>(
+     element: E,
+     context: &mut MatchingContext<E::Impl>,
+     rightmost: SubjectOrPseudoElement,
++    descendants_only: bool,
+ ) -> KleeneValue {
+     if context.relative_selector_anchor().is_some() {
+         // FIXME(emilio): This currently can happen with nesting, and it's not fully
+@@ -641,7 +642,7 @@ fn match_relative_selectors<E: Element>(
+     }
+     context
+         .nest_for_relative_selector(element.opaque(), |context| {
+-            do_match_relative_selectors(selectors, element, context, rightmost)
++            do_match_relative_selectors(selectors, element, context, rightmost, descendants_only)
+         })
+         .into()
+ }
+@@ -652,6 +653,7 @@ fn do_match_relative_selectors<E: Element>(
+     element: E,
+     context: &mut MatchingContext<E::Impl>,
+     rightmost: SubjectOrPseudoElement,
++    descendants_only: bool,
+ ) -> bool {
+     // Due to style sharing implications (See style sharing code), we mark the current styling context
+     // to mark elements considered for :has matching. Additionally, we want to mark the elements themselves,
+@@ -668,6 +670,10 @@ fn do_match_relative_selectors<E: Element>(
+     }
+ 
+     for relative_selector in selectors.iter() {
++        // pyro: the featureless host's `:has()` (see `Component::Has`).
++        if descendants_only && !relative_selector.match_hint.is_descendant_direction() {
++            continue;
++        }
+         if let Some(result) = relative_selector_match_early(relative_selector, element, context) {
+             if result {
+                 return true;
+@@ -1071,6 +1077,41 @@ where
+     })
+ }
+ 
++/// pyro: `:host-context(<compound>)`: the shadow host of the rules' tree, when it or one of its
++/// shadow-including ancestors (a shadow tree's first level steps to its host) matches the compound.
++fn matches_host_context<E>(
++    element: E,
++    selector: &Selector<E::Impl>,
++    context: &mut MatchingContext<E::Impl>,
++    rightmost: SubjectOrPseudoElement,
++) -> KleeneValue
++where
++    E: Element,
++{
++    if context.shadow_host() != Some(element.opaque()) {
++        return KleeneValue::False;
++    }
++    context.nest(|context| {
++        context.with_featureless(false, |context| {
++            let mut current = Some(element);
++            while let Some(candidate) = current {
++                let matched = matches_complex_selector(selector.iter(), candidate, context, rightmost);
++                if matched != KleeneValue::False {
++                    return matched;
++                }
++                current = candidate.parent_element().or_else(|| {
++                    if candidate.parent_node_is_shadow_root() {
++                        candidate.containing_shadow_host()
++                    } else {
++                        None
++                    }
++                });
++            }
++            KleeneValue::False
++        })
++    })
++}
++
+ fn matches_slotted<E>(
+     element: E,
+     selector: &Selector<E::Impl>,
+@@ -1128,13 +1169,23 @@ pub(crate) fn compound_matches_featureless_host<Impl: SelectorImpl>(
+     scope_matches_featureless_host: bool,
+ ) -> MatchesFeaturelessHost {
+     let mut matches = MatchesFeaturelessHost::Only;
++    // pyro: `:has()` may be on the host when something else in the compound matches it
++    // (`:host:has(.inner)`, `:has(.inner):host`), not alone (`:has(.inner)`), as in Blink.
++    let mut has = false;
++    let mut hosted = false;
+     for component in iter {
+         match component {
+-            Component::Scope | Component::ImplicitScope if scope_matches_featureless_host => {},
++            Component::Scope | Component::ImplicitScope if scope_matches_featureless_host => {
++                hosted = true;
++            },
+             // :host only matches featureless elements.
+-            Component::Host(..) => {},
++            Component::Host(..) | Component::HostContext(..) => hosted = true,
+             // Pseudo-elements are allowed to match as well.
+             Component::PseudoElement(..) => {},
++            Component::Has(..) => has = true,
++            // pyro: the anchor of a `:has()` on the host, reached from its shadow tree (whose
++            // first level has the shadow root, standing for the host, as parent).
++            Component::RelativeSelectorAnchor => hosted = true,
+             // We allow logical pseudo-classes, but we'll fail matching of the inner selectors if
+             // necessary.
+             Component::Is(l) | Component::Where(l) => {
+@@ -1161,23 +1212,32 @@ pub(crate) fn compound_matches_featureless_host<Impl: SelectorImpl>(
+                     // Potentially downgrade since we might match non-featureless elements too.
+                     matches = MatchesFeaturelessHost::Yes;
+                 }
++                hosted = true;
+             },
+             Component::Negation(l) => {
+-                // For now preserving behavior, see
+-                // https://github.com/w3c/csswg-drafts/issues/10179 for existing resolutions that
+-                // tweak this behavior.
+-                for selector in l.slice() {
+-                    if selector.matches_featureless_host(scope_matches_featureless_host)
+-                        != MatchesFeaturelessHost::Only
+-                    {
+-                        return MatchesFeaturelessHost::Never;
+-                    }
++                // pyro: as Blink (https://github.com/w3c/csswg-drafts/issues/10179): a `:not()`
++                // can match the host when one of its selectors can (`:not(div, :not(:host))`
++                // does: `div` does not match the featureless host). With none (`:not(div)`,
++                // `:not(:host.host)`), it does not. It may match other elements too
++                // (`:not(:host)` matches every element of the shadow tree). Upstream needed every
++                // one of them to be one that matches only the host, and then took the compound
++                // to match only the host.
++                if !l.slice().iter().any(|selector| {
++                    selector.matches_featureless_host(scope_matches_featureless_host)
++                        != MatchesFeaturelessHost::Never
++                }) {
++                    return MatchesFeaturelessHost::Never;
+                 }
++                matches = MatchesFeaturelessHost::Yes;
++                hosted = true;
+             },
+             // Other components don't match the host scope.
+             _ => return MatchesFeaturelessHost::Never,
+         }
+     }
++    if has && !hosted {
++        return MatchesFeaturelessHost::Never;
++    }
+     matches
+ }
+ 
+@@ -1290,6 +1350,9 @@ where
+         Component::Host(ref selector) => {
+             return matches_host(element, selector.as_ref(), context.shared, rightmost);
+         },
++        Component::HostContext(ref selector) => {
++            return matches_host_context(element, selector, context.shared, rightmost);
++        },
+         Component::ParentSelector => match context.shared.scope_element {
+             Some(ref scope_element) => element.opaque() == *scope_element,
+             None => element.is_root(),
+@@ -1334,18 +1397,27 @@ where
+             });
+         },
+         Component::Has(ref relative_selectors) => {
+-            return match_relative_selectors(
+-                relative_selectors,
+-                element,
+-                context.shared,
+-                rightmost,
+-            );
++            // pyro: on the featureless host, `:has()` looks into the shadow tree, the host's
++            // children there: its arguments that look at siblings match nothing (the host's
++            // siblings are not in the tree), and the elements it looks at are not featureless
++            // (only the host is, when reached again as the anchor).
++            if context.shared.featureless() {
++                return context.shared.with_featureless(false, |shared| {
++                    match_relative_selectors(relative_selectors, element, shared, rightmost, true)
++                });
++            }
++            return match_relative_selectors(relative_selectors, element, context.shared, rightmost, false);
+         },
+         Component::Combinator(_) => unsafe {
+             debug_unreachable!("Shouldn't try to selector-match combinators")
+         },
+         Component::RelativeSelectorAnchor => {
+             let anchor = context.shared.relative_selector_anchor();
++            // pyro: the featureless host is the anchor only for the `:has()` of its own shadow
++            // tree's rules: a `:has()` of an outer tree does not see into the shadow tree.
++            if context.shared.featureless() && context.shared.current_host != Some(element.opaque()) {
++                return KleeneValue::False;
++            }
+             // We may match inner relative selectors, in which case we want to always match.
+             anchor.is_none_or(|a| a == element.opaque())
+         },
+diff --git a/parser.rs b/parser.rs
+index cac3c1d..b054236 100644
+--- a/parser.rs
++++ b/parser.rs
+@@ -1331,6 +1331,13 @@ impl<Impl: SelectorImpl> Selector<Impl> {
+                     &mut flags,
+                     forbidden_flags,
+                 ))),
++                HostContext(ref selector) => HostContext(replace_parent_on_selector(
++                    selector,
++                    parent,
++                    &mut specificity,
++                    &mut flags,
++                    forbidden_flags,
++                )),
+                 NthOf(ref data) => {
+                     let selectors = replace_parent_on_selector_list(
+                         data.selectors(),
+@@ -2144,6 +2151,9 @@ pub enum Component<Impl: SelectorImpl> {
+     ///
+     /// See https://github.com/w3c/csswg-drafts/issues/2158
+     Host(Option<Selector<Impl>>),
++    /// pyro: the `:host-context(<compound>)` pseudo-class (Blink's, CSS Scoping 1): the shadow host
++    /// when it or one of its shadow-including ancestors matches the compound.
++    HostContext(Selector<Impl>),
+     /// The `:where` pseudo-class.
+     ///
+     /// https://drafts.csswg.org/selectors/#zero-matches
+@@ -2187,7 +2197,7 @@ impl<Impl: SelectorImpl> Component<Impl> {
+     /// Returns true if this is a :host() selector.
+     #[inline]
+     pub fn is_host(&self) -> bool {
+-        matches!(*self, Component::Host(..))
++        matches!(*self, Component::Host(..) | Component::HostContext(..))
+     }
+ 
+     /// Returns the value as a combinator if applicable, None otherwise.
+@@ -2234,7 +2244,7 @@ impl<Impl: SelectorImpl> Component<Impl> {
+                     return false;
+                 }
+             },
+-            Host(Some(ref selector)) => {
++            Host(Some(ref selector)) | HostContext(ref selector) => {
+                 if !selector.visit(visitor) {
+                     return false;
+                 }
+@@ -2664,6 +2674,11 @@ impl<Impl: SelectorImpl> ToCss for Component<Impl> {
+                 }
+                 Ok(())
+             },
++            HostContext(ref selector) => {
++                dest.write_str(":host-context(")?;
++                selector.to_css(dest)?;
++                dest.write_char(')')
++            },
+             Nth(ref nth_data) => {
+                 nth_data.write_start(dest)?;
+                 if nth_data.is_function {
+@@ -3375,7 +3390,7 @@ where
+             let ignore_default_ns = state.intersects(SelectorParsingState::SKIP_DEFAULT_NAMESPACE)
+                 || matches!(
+                     result,
+-                    SimpleSelectorParseResult::SimpleSelector(Component::Host(..))
++                    SimpleSelectorParseResult::SimpleSelector(Component::Host(..) | Component::HostContext(..))
+                 );
+             if !ignore_default_ns {
+                 builder.push_simple_selector(Component::DefaultNamespace(url));
+@@ -3505,6 +3520,12 @@ where
+             }
+             return Ok(Component::Host(Some(parse_inner_compound_selector(parser, input, state)?)));
+         },
++        "host-context" => {
++            if !state.allows_tree_structural_pseudo_classes() {
++                return Err(ParseError::custom(SelectorParseErrorKind::InvalidState));
++            }
++            return Ok(Component::HostContext(parse_inner_compound_selector(parser, input, state)?));
++        },
+         "not" => {
+             return parse_negation(parser, input, state)
+         },

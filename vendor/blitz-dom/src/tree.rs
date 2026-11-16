@@ -56,6 +56,11 @@ pub struct NodeTree {
     pub(crate) xml_document: bool,
     /// pyro: [`crate::DocumentConfig::content_language`].
     pub(crate) content_language: Option<Box<str>>,
+    /// pyro: the styles of each shadow root, by host (`crate::shadow`).
+    pub(crate) shadow_roots: HashMap<NodeId, crate::shadow::ShadowStyles>,
+    /// pyro: an element of this tree has been a shadow host (`crate::shadow`): until then,
+    /// every node is in the document's tree and its DOM parent is its parent.
+    pub(crate) has_shadow_hosts: bool,
 }
 
 impl NodeTree {
@@ -67,6 +72,8 @@ impl NodeTree {
             viewport_scroll: crate::Point::ZERO,
             xml_document: false,
             content_language: None,
+            shadow_roots: HashMap::new(),
+            has_shadow_hosts: false,
         }
     }
 

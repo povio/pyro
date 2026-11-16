@@ -480,6 +480,9 @@ pub struct BaseDocument {
     pub(crate) nodes_to_id: HashMap<String, SmallVec<[NodeId; 1]>>,
     /// Map of `<style>` and `<link>` node IDs to their associated stylesheet
     pub(crate) nodes_to_stylesheet: BTreeMap<NodeId, DocumentStyleSheet>,
+    /// pyro: the host whose shadow root holds the sheet of a `<style>` or `<link>` element of a
+    /// shadow tree (not in `nodes_to_stylesheet`: `crate::shadow`).
+    pub(crate) shadow_sheet_hosts: HashMap<NodeId, NodeId>,
     /// pyro: the text of `<link>` sheets with `@page` rules, by node. Parsing drops what
     /// printing needs of them: the servo build of Stylo has no `size` and no `page`.
     pub(crate) linked_page_css: BTreeMap<NodeId, String>,
@@ -741,6 +744,7 @@ impl BaseDocument {
             devtool_settings: DevtoolSettings::default(),
             url: base_url,
             nodes_to_stylesheet: BTreeMap::new(),
+            shadow_sheet_hosts: HashMap::new(),
             linked_page_css: BTreeMap::new(),
             stylesheet_generation: 0,
             font_ctx,
@@ -1603,7 +1607,8 @@ impl BaseDocument {
         // `<style>` is raw text and an XML CDATA section is literal, so a `&#x46;` left in
         // either stays four characters, as in every browser (WPT css/CSS2 content-177).
         let css = self.nodes[target_id].text_content();
-        let sheet = self.make_stylesheet(&css, Origin::Author);
+        let host = self.nodes[target_id].containing_shadow_host_id();
+        let sheet = self.make_stylesheet_in(&css, Origin::Author, host);
         self.add_stylesheet_for_node(sheet, target_id);
     }
 
@@ -1649,6 +1654,12 @@ impl BaseDocument {
     }
 
     pub fn make_stylesheet(&self, css: impl AsRef<str>, origin: Origin) -> DocumentStyleSheet {
+        self.make_stylesheet_in(css, origin, None)
+    }
+
+    /// [`Self::make_stylesheet`] for an element of the shadow tree of `host` (`None`: of the
+    /// document's tree).
+    pub(crate) fn make_stylesheet_in(&self, css: impl AsRef<str>, origin: Origin, host: Option<NodeId>) -> DocumentStyleSheet {
         // pyro: an author sheet without `@import` (whose loads are
         // the document's) parses once per thread for its text and base URL:
         // every document of a test suite or a PDF template carries the same
@@ -1660,8 +1671,15 @@ impl BaseDocument {
             if let Some(sheet) = crate::util::shared_sheet(css, self.url.as_str()) {
                 // A stylist holds a sheet once: another element of this
                 // document with the same text (two `<style>`s alike, adopted
-                // sheets reordered) parses its own.
-                if !self.nodes_to_stylesheet.values().any(|s| *s == sheet) {
+                // sheets reordered) parses its own. So does a shadow root; shadow roots
+                // share theirs (a component's instances: one cascade data for all of them).
+                let taken = match host {
+                    None => self.nodes_to_stylesheet.values().any(|s| *s == sheet),
+                    Some(host) => {
+                        self.nodes.shadow_roots.get(&host).is_some_and(|r| r.sheets.values().any(|s| *s == sheet))
+                    }
+                };
+                if !taken {
                     return sheet;
                 }
                 return self.parse_stylesheet(css, origin);
@@ -1699,11 +1717,35 @@ impl BaseDocument {
 
     pub fn upsert_stylesheet_for_node(&mut self, node_id: NodeId) {
         let raw_styles = self.nodes[node_id].text_content();
-        let sheet = self.make_stylesheet(raw_styles, Origin::Author);
+        let host = self.nodes[node_id].containing_shadow_host_id();
+        let sheet = self.make_stylesheet_in(raw_styles, Origin::Author, host);
         self.add_stylesheet_for_node(sheet, node_id);
     }
 
     pub fn add_stylesheet_for_node(&mut self, stylesheet: DocumentStyleSheet, node_id: NodeId) {
+        // pyro: the sheet of an element of a shadow tree is that shadow root's (`crate::shadow`).
+        let host = self.nodes.get(node_id).and_then(|node| node.containing_shadow_host_id());
+        if let Some(old) = self.nodes_to_stylesheet.remove(&node_id) {
+            self.stylist.remove_stylesheet(old, &self.guard.read());
+            self.stylesheet_generation += 1;
+        }
+        self.remove_shadow_stylesheet(node_id);
+        if let Some(host) = host {
+            crate::net::fetch_font_face(
+                self.tx.clone(),
+                self.id,
+                Some(node_id),
+                &stylesheet.0,
+                &self.net_provider,
+                &self.shell_provider,
+                &self.guard.read(),
+                self.abort_signal.as_ref(),
+            );
+            let element = &mut self.nodes[node_id].element_data_mut().unwrap();
+            element.special_data = SpecialElementData::Stylesheet(stylesheet.clone());
+            self.add_shadow_stylesheet(host, node_id, stylesheet);
+            return;
+        }
         let old = self.nodes_to_stylesheet.insert(node_id, stylesheet.clone());
         self.stylesheet_generation += 1;
 
@@ -2429,9 +2471,36 @@ impl BaseDocument {
         Some(id)
     }
 
+    /// pyro: the shadow hosts whose shadow trees hold `id` (innermost first): they match `:focus`
+    /// while it is focused (CSS Scoping 1 § 3.1: a shadow host is focused when its shadow tree
+    /// holds the focused element; `crate::shadow`).
+    fn shadow_hosts_of(&self, id: NodeId) -> Vec<NodeId> {
+        let mut hosts = Vec::new();
+        let mut current = self.nodes.get(id).and_then(|node| node.containing_shadow_host_id());
+        while let Some(host) = current {
+            hosts.push(host);
+            current = self.nodes.get(host).and_then(|node| node.containing_shadow_host_id());
+        }
+        hosts
+    }
+
+    /// pyro: gives (or takes) the shadow hosts of the focused element `id` their `:focus`.
+    fn set_shadow_hosts_focus(&mut self, id: Option<NodeId>, focus: bool) {
+        let Some(id) = id else { return };
+        for host in self.shadow_hosts_of(id) {
+            self.snapshot_node_and(host, ElementState::FOCUS, |node| {
+                if let Some(data) = node.element_data_mut() {
+                    data.element_state.set(ElementState::FOCUS, focus);
+                }
+                node.mark_ancestors_dirty();
+            });
+        }
+    }
+
     /// Clear the focussed node
     pub fn clear_focus(&mut self) {
         if let Some(id) = self.focus_node_id {
+            self.set_shadow_hosts_focus(Some(id), false);
             let shell_provider = self.shell_provider.clone();
             self.snapshot_node_and(id, ElementState::FOCUS | ElementState::FOCUSRING, |node| {
                 node.blur(shell_provider)
@@ -2469,6 +2538,7 @@ impl BaseDocument {
 
         // Remove focus from the old node
         if let Some(id) = self.focus_node_id {
+            self.set_shadow_hosts_focus(Some(id), false);
             self.snapshot_node_and(id, ElementState::FOCUS | ElementState::FOCUSRING, |node| {
                 node.blur(shell_provider.clone())
             });
@@ -2486,6 +2556,7 @@ impl BaseDocument {
                 }
             },
         );
+        self.set_shadow_hosts_focus(Some(focus_node_id), true);
 
         // Update :focus-within on the ancestor chains (shared prefix stays)
         let old_node_path = self.maybe_node_element_ancestors(self.focus_node_id);
@@ -3051,6 +3122,8 @@ impl BaseDocument {
             self.font_ctx.clone(),
         ));
         self.scroll_viewport_by(0.0, 0.0); // Clamp scroll offset
+        // pyro: shadow roots' cascade data holds their sheets' media query results.
+        self.invalidate_shadow_styles();
 
         // Text is shaped at a specific scale factor, so cached inline layouts
         // must be invalidated when the scale changes, as must every node's

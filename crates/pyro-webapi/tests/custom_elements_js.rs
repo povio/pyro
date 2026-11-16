@@ -325,3 +325,22 @@ fn custom_states_match_state_pseudo_class() {
     e.engine.collect_garbage_now();
     assert_eq!(eval(r, "[[...el2.i.states].join(' '), el2.i.states.size].join()"), "x y,2");
 }
+
+#[test]
+fn define_upgrades_the_elements_of_shadow_trees() {
+    // A component's shadow tree holds a component defined after it (HTML "upgrade candidates" are
+    // the document's shadow-including descendants).
+    let e = env(PAGE);
+    let r = &e.main;
+    assert_eq!(
+        eval(
+            r,
+            "document.body.innerHTML = '<x-a></x-a>'; \
+             customElements.define('x-a', class extends HTMLElement { constructor() { super(); this.attachShadow({mode: 'open'}).innerHTML = '<x-b></x-b>'; } }); \
+             customElements.define('x-b', class extends HTMLElement { constructor() { super(); this.attachShadow({mode: 'open'}).innerHTML = '<i>b</i>'; } }); \
+             const b = document.querySelector('x-a').shadowRoot.querySelector('x-b'); \
+             String(b.shadowRoot !== null) + ':' + b.matches(':defined')"
+        ),
+        "true:true"
+    );
+}

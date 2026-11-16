@@ -60,28 +60,38 @@ impl Dom {
         }
     }
 
+    /// Whether element `idx`'s directionality comes from its content (HTML "auto
+    /// directionality"): `dir=auto`, or a `<bdi>` without a valid `dir`. The
+    /// render tree carries these elements' directionality (`snapshot.rs`): the
+    /// others' follows from their `dir` and their parent's.
+    pub(crate) fn has_auto_directionality(&self, idx: u32) -> bool {
+        let Some(e) = self.n(idx).element() else { return false };
+        match self.dir_attr(idx) {
+            Some("auto") => true,
+            Some(_) => false,
+            None => e.is_html() && e.name.local == local_name!("bdi"),
+        }
+    }
+
     pub(crate) fn directionality_idx(&self, idx: u32) -> Direction {
         let Some(e) = self.n(idx).element() else { return Direction::Ltr };
-        let dir = self.dir_attr(idx);
-        match dir {
+        match self.dir_attr(idx) {
             Some("ltr") => return Direction::Ltr,
             Some("rtl") => return Direction::Rtl,
-            _ => {}
+            // HTML: `auto` (and a `<bdi>` without a valid `dir`) is left to right
+            // when its content has no strong character, whatever its parent's.
+            Some(_) => return self.auto_directionality(idx).unwrap_or(Direction::Ltr),
+            None => {}
         }
-        let html = e.is_html();
-        let local = &e.name.local;
-        let is_bdi = html && *local == local_name!("bdi");
-        if dir == Some("auto") || (is_bdi && dir.is_none()) {
-            if let Some(d) = self.auto_directionality(idx) {
-                return d;
+        if e.is_html() {
+            let local = &e.name.local;
+            if *local == local_name!("bdi") {
+                return self.auto_directionality(idx).unwrap_or(Direction::Ltr);
             }
-            if is_bdi && dir.is_none() {
-                return Direction::Ltr;
-            }
-        }
-        if html && *local == local_name!("input") && dir.is_none() {
-            if let Ok(InputType::Tel) = self.input_type(self.id_of(idx)) {
-                return Direction::Ltr;
+            if *local == local_name!("input") {
+                if let Ok(InputType::Tel) = self.input_type(self.id_of(idx)) {
+                    return Direction::Ltr;
+                }
             }
         }
         match self.dir_parent(idx) {
@@ -90,56 +100,81 @@ impl Dom {
         }
     }
 
-    /// HTML "auto directionality": from the value of a text control, or the
-    /// first strong character of the contained text.
-    fn auto_directionality(&self, idx: u32) -> Option<Direction> {
-        let e = self.n(idx).element()?;
-        if e.is_html() {
-            let local = &e.name.local;
-            if *local == local_name!("textarea") {
-                return text_direction(&self.control_value_idx(idx));
-            }
-            if *local == local_name!("input") {
-                return match self.input_type(self.id_of(idx)).ok()? {
-                    InputType::Text | InputType::Search | InputType::Tel | InputType::Url | InputType::Email => {
-                        text_direction(&self.control_value_idx(idx))
-                    }
-                    _ => None,
-                };
-            }
-            if *local == local_name!("slot") {
-                if let Some(d) = self.slot_assigned_direction(idx) {
-                    return Some(d);
-                }
-            }
+    /// Whether `idx` is an HTML "auto-directionality form-associated element",
+    /// whose auto directionality is its value's.
+    fn auto_directionality_control(&self, idx: u32) -> bool {
+        let Some(e) = self.n(idx).element() else { return false };
+        if !e.is_html() {
+            return false;
         }
-        self.contained_text_direction(idx)
+        match &*e.name.local {
+            "textarea" => true,
+            "input" => matches!(
+                self.input_type(self.id_of(idx)),
+                Ok(InputType::Hidden
+                    | InputType::Text
+                    | InputType::Search
+                    | InputType::Tel
+                    | InputType::Url
+                    | InputType::Email
+                    | InputType::Password
+                    | InputType::Submit
+                    | InputType::Reset
+                    | InputType::Button)
+            ),
+            _ => false,
+        }
     }
 
-    /// Direction of the first strong character among the nodes assigned to
-    /// slot `idx`; `None` when none is assigned.
-    fn slot_assigned_direction(&self, idx: u32) -> Option<Direction> {
-        let assigned = self.slot_assigned(idx);
-        if assigned.is_empty() {
+    /// HTML "auto directionality": a text control's value's, a slot's assigned
+    /// nodes', or else the contained text's; `None` when nothing decides.
+    fn auto_directionality(&self, idx: u32) -> Option<Direction> {
+        if self.auto_directionality_control(idx) {
+            let value = self.control_value_idx(idx);
+            // Right to left when an R or AL character comes before any L one.
+            return match text_direction(&value) {
+                Some(d) => Some(d),
+                None if value.is_empty() => None,
+                None => Some(Direction::Ltr),
+            };
+        }
+        if self.is_slot(idx) && self.in_shadow_tree(idx) {
+            let assigned = self.slot_assigned(idx);
+            if !assigned.is_empty() {
+                for n in assigned {
+                    let d = match &self.n(n).kind {
+                        NodeKind::Text(t) | NodeKind::CData(t) => text_direction(t),
+                        NodeKind::Element(_) => self.contained_text_direction(n, true),
+                        _ => None,
+                    };
+                    if d.is_some() {
+                        return d;
+                    }
+                }
+                return None;
+            }
+        }
+        self.contained_text_direction(idx, false)
+    }
+
+    /// Whether the contained text of an auto element skips element `n` and
+    /// its subtree: `bdi`, `script`, `style` and `textarea` elements and
+    /// elements with a valid `dir`.
+    fn skipped_by_auto(&self, n: u32) -> bool {
+        let Some(e) = self.n(n).element() else { return false };
+        (e.is_html() && matches!(&*e.name.local, "bdi" | "script" | "style" | "textarea" | "template"))
+            || self.dir_attr(n).is_some()
+    }
+
+    /// HTML "contained text auto directionality" of `root`: the first strong
+    /// character of the text of its descendants in tree order, leaving out the
+    /// subtrees `skipped_by_auto` names (and `root`'s whole content when
+    /// `can_exclude_root` and `root` itself is one); a slot in a shadow tree
+    /// gives its host's directionality.
+    fn contained_text_direction(&self, root: u32, can_exclude_root: bool) -> Option<Direction> {
+        if can_exclude_root && self.skipped_by_auto(root) {
             return None;
         }
-        for n in assigned {
-            let d = match &self.n(n).kind {
-                NodeKind::Text(t) | NodeKind::CData(t) => text_direction(t),
-                NodeKind::Element(_) => self.contained_text_direction(n),
-                _ => None,
-            };
-            if d.is_some() {
-                return d;
-            }
-        }
-        None
-    }
-
-    /// HTML "contained text auto directionality": descendants' text in tree
-    /// order, skipping `bdi`, `script`, `style`, `textarea` and elements
-    /// with a `dir` attribute.
-    fn contained_text_direction(&self, root: u32) -> Option<Direction> {
         let mut stack: Vec<u32> = self.child_idx_iter(root).collect::<Vec<_>>();
         stack.reverse();
         while let Some(n) = stack.pop() {
@@ -149,22 +184,17 @@ impl Dom {
                         return Some(d);
                     }
                 }
-                NodeKind::Element(e) => {
-                    let skip = (e.is_html()
-                        && matches!(
-                            &*e.name.local,
-                            "bdi" | "script" | "style" | "textarea" | "input" | "select" | "template"
-                        ))
-                        || self.dir_attr(n).is_some();
-                    if skip {
+                NodeKind::Element(_) => {
+                    if self.skipped_by_auto(n) {
                         continue;
                     }
-                    if e.is_html() && e.name.local == local_name!("slot") {
-                        if let Some(d) = self.slot_assigned_direction(n) {
-                            return Some(d);
-                        }
-                        if !self.slot_assigned(n).is_empty() {
-                            continue;
+                    if self.is_slot(n) && self.in_shadow_tree(n) {
+                        let host = match &self.n(self.root_idx(n)).kind {
+                            NodeKind::Fragment(f) => f.host,
+                            _ => NIL,
+                        };
+                        if host != NIL {
+                            return Some(self.directionality_idx(host));
                         }
                     }
                     let children: Vec<u32> = self.child_idx_iter(n).collect();

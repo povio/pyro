@@ -3367,8 +3367,6 @@ dependencies = [
 [[package]]
 name = "selectors"
 version = "0.43.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "474a2075f58859e8482495e1a2ae9634754ee383ad09a3c4093b8d9a51910fa3"
 dependencies = [
  "bitflags",
  "cssparser",
@@ -3811,8 +3809,6 @@ dependencies = [
 [[package]]
 name = "stylo_malloc_size_of"
 version = "0.24.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d346459a462f869a5b0a80170b0f84e89011e5f60f1cdab42248979c6b229931"
 dependencies = [
  "app_units",
  "cssparser",

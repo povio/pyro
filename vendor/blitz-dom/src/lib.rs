@@ -76,6 +76,8 @@ mod icc;
 mod lang;
 /// pyro: the directionality of an element, for `:dir()`.
 mod direction;
+mod shadow;
+pub use shadow::{ASSIGNED_SLOT_ATTR, SHADOW_HOST_ATTR};
 /// pyro: SVG reference cycles usvg does not break.
 #[cfg(feature = "svg")]
 mod svg_refs;

@@ -1173,6 +1173,8 @@ impl ElementCx<'_, '_> {
             dom.get_node(id)
                 .filter(|node| node.element_data().is_some())
                 .and_then(|node| node.primary_styles())
+                // pyro: a `display: contents` element has no box to clip, mask or fade.
+                .filter(|style| !style.clone_display().is_contents())
                 .is_some_and(|style| {
                     !matches!(style.get_clip_path(), StyloClipPath::None)
                         || style

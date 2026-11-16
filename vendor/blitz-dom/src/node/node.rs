@@ -150,6 +150,12 @@ bitflags! {
         /// (`BaseDocument::body_overflow_goes_to_viewport`): its layout style reads `overflow:
         /// visible`. Set before each layout pass (`BaseDocument::mark_viewport_body`).
         const OVERFLOW_TO_VIEWPORT = 1 << 26;
+        /// pyro: a shadow host: its children are its shadow tree's (pyro-dom's render tree
+        /// marks it, `crate::shadow`).
+        const IS_SHADOW_HOST = 1 << 19;
+        /// pyro: a slot of a shadow tree whose children are the nodes assigned to it, light
+        /// children of its host (`crate::shadow`).
+        const IS_ASSIGNED_SLOT = 1 << 20;
     }
 }
 

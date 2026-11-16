@@ -1276,6 +1276,56 @@ Tests: `generated_content`, `first_line` and `selection_highlight` in pyro-rende
 
 Tests: `direction_text` in pyro-render; `direction` unit tests here.
 
+## Shadow trees (CSS Scoping) and directionality through them (WPT reftests)
+
+pyro-dom's render tree is the flat tree: a shadow host's children are its shadow tree's (it carries the
+`urn:x-pyro:state` `shadow-host` marker), a slot of a shadow tree is an element of its own (`slot { display:
+contents }`) whose children are the nodes assigned to it (marker `assigned-slot`) or else its fallback content.
+Before, shadow styles were global and slots were left out (no `:host`, `::slotted()`, `::part()`, no slot boxes).
+
+- `src/shadow.rs` (new), `src/tree.rs`, `src/node/node.rs` (`IS_SHADOW_HOST`, `IS_ASSIGNED_SLOT`), `src/mutator.rs`
+  (markers synced on create and attribute changes): the node trees follow from the flat tree. An element whose
+  parent is a host is in that host's shadow tree; one whose parent is an assigned slot, in the tree of the slot's
+  host; else in its parent's (`Node::containing_shadow_host_id`, a walk up; `NodeTree::has_shadow_hosts` makes it
+  free on pages without shadow trees). Its parent for selectors (`Node::dom_parent_element`) is none at a shadow
+  tree's first level (the shadow root; `:host` reaches the host through Stylo's featureless path) and the host for
+  an assigned node. Siblings stay the flat tree's: an assigned node's are the nodes assigned to the same slot.
+- `src/stylo.rs`: `TShadowRoot` is the host itself (no node stands for a shadow root); `style_data` is the host's
+  shadow cascade data. `shadow_root`, `containing_shadow`, `assigned_slot`, `parent_node_is_shadow_root`,
+  `containing_shadow_host`, `is_html_slot_element`, `::part()` (`part`, `exportparts` with `inner:outer` mappings)
+  and `inheritance_parent` (the flat tree's parent, as Servo; Stylo's default is `parent_element`, now the node
+  tree's) are implemented; `implicit_scope_for_sheet_in_shadow_root` answers `None` instead of panicking.
+- `src/document.rs`, `src/shadow.rs`: the sheet of a `<style>` or `<link>` element of a shadow tree (adopted sheets
+  come as `<style>` elements) goes to its host's Stylo `AuthorStyles` (`ShadowStyles`), not the document's stylist;
+  `resolve_stylist` first rebuilds the cascade data of shadow roots whose sheets changed (Stylo's author data cache
+  shares one for the instances of a component, whose `<style>`s share their parsed sheet, `make_stylesheet_in`) and
+  restyles those hosts' subtrees. A device change marks every shadow root's sheets dirty (media queries).
+- `src/direction.rs`: `:dir()` follows the node trees (a shadow tree's first level takes the host's directionality,
+  an assigned node its host's, not its slot's), and takes the directionality of a `dir=auto` element or a `<bdi>`
+  from the `dir=ltr`/`dir=rtl` token of its state attribute (pyro-dom computes it by the HTML rules, from the light
+  tree's text, values and slots); a change of that token restyles the element's descendants. Without a token (not
+  pyro-dom's tree), from its own flat-tree text as before, left to right when nothing decides (the current HTML
+  rule; it was the parent's).
+- `assets/default.css`: the HTML bidi rules as written (`[dir]:dir(ltr), bdi:dir(ltr), input[type=tel i]:dir(ltr)`,
+  `[dir]:dir(rtl), bdi:dir(rtl)`, `[dir] { unicode-bidi: isolate }`): `dir=auto` and `<bdi>` now take their
+  content's direction.
+- `src/has_invalidation.rs`, `src/stylo.rs` (`invalidate_host_relative_selectors`): Stylo's `:has()` invalidation
+  walks a change's ancestors up to the shadow root, not to the host: a change in a shadow tree whose sheets have
+  `:has()` rules (`:host:has(.x)`) restyles the host's subtree. State changes in shadow trees run the relative
+  invalidation whatever the document's sheets depend on.
+- `src/stylo.rs`, `src/has_invalidation.rs`: `:defined` matches every element but a custom element not defined yet
+  (pyro-dom's `undefined` state token; `ElementState::DEFINED`, so the upgrade restyles it). Upstream matched none,
+  so `:not(:defined)` (a component hidden until upgraded) matched every element.
+- `src/document.rs` (`set_shadow_hosts_focus`): the shadow hosts whose shadow trees hold the focused element match
+  `:focus` too (CSS Scoping 1 § 3.1; WPT shadow-dom `focus-pseudo-on-shadow-host-*`).
+- `src/layout/inline/build.rs`: the text of a `display: contents` element (a slot's assigned text) takes the element's
+  styles: its font, spacing and white space, and through the brush its colour. In an inline formatting context the
+  element is a span (upstream took only its white space); its content hoisted into an anonymous block
+  (`collect_layout_children_with_wrap`) is wrapped in the spans of its `display: contents` ancestors
+  (`contents_ancestors`), which it lost. `display: contents` still draws no decoration (`own_decoration`).
+
+Tests: `shadow_scoping` in pyro-render. Selector matching on the featureless host: `vendor/selectors/README.pyro.md`.
+
 ## List markers (WPT reftests)
 
 - `src/layout/list.rs` (`image_marker`), `src/node/element.rs` (`ElementData::list_style_images`, `Marker::Image`),

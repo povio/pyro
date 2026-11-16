@@ -729,20 +729,10 @@ impl JsClass for CustomElementRegistry {
                     dom.set_parser_custom_elements(page.document(), Some(hooks));
                 }
             }
-            // Upgrade existing elements of the document, in tree order.
-            let existing: Vec<NodeId> = {
-                let dom = page.dom.borrow();
-                let doc = page.document();
-                let undefined = pyro_dom::node::element_flags::CUSTOM_DEFINED | pyro_dom::node::element_flags::CUSTOM_FAILED;
-                dom.descendants(doc)
-                    .map(|d| {
-                        d.filter(|&n| {
-                            dom.element(n).is_ok_and(|e| e.is_html() && *e.local_name() == key.1 && e.flags & undefined == 0)
-                        })
-                        .collect()
-                    })
-                    .unwrap_or_default()
-            };
+            // Upgrade existing elements of the document and its shadow trees, in shadow-including
+            // tree order (a component's shadow tree holds the components it uses, which may be
+            // defined after it).
+            let existing: Vec<NodeId> = page.dom.borrow().upgrade_candidates_named(page.document(), &key.1);
             for el in existing {
                 if let Err(e) = upgrade(s, page, el, ctor) {
                     s.report_exception(&e);

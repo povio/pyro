@@ -106,12 +106,14 @@ impl crate::document::BaseDocument {
     pub fn resolve_stylist(&mut self, now: f64) {
         let _layout_thread_scope = LayoutThreadScope::enter();
 
+        // pyro: shadow roots' sheets (`crate::shadow`).
+        self.flush_shadow_styles();
+
         let guard = &self.guard;
         let guards = StylesheetGuards {
             author: &guard.read(),
             ua_or_user: &guard.read(),
         };
-
         let root = TDocument::as_node(&&self.nodes[self.root_node_id])
             .first_element_child()
             .unwrap()
@@ -518,15 +520,18 @@ impl<'a> TShadowRoot for BlitzNode<'a> {
         self
     }
 
+    // pyro: a shadow root stands for itself by its host (`crate::shadow`): the render tree has
+    // no node for it, the host's children being the shadow tree's.
     fn host(&self) -> <Self::ConcreteNode as TNode>::ConcreteElement {
-        todo!("Shadow roots not implemented")
+        self
     }
 
     fn style_data<'b>(&self) -> Option<&'b style::stylist::CascadeData>
     where
         Self: 'b,
     {
-        todo!("Shadow roots not implemented")
+        let host: &'b Node = self;
+        host.shadow_cascade_data()
     }
 }
 
@@ -621,16 +626,25 @@ impl selectors::Element for BlitzNode<'_> {
         OpaqueElement::from_ptr(non_null)
     }
 
+    // pyro: selectors walk the node trees, which are not the flat tree when there are shadow
+    // trees (`crate::shadow`).
     fn parent_element(&self) -> Option<Self> {
-        TElement::traversal_parent(self)
+        if !self.is_element() || !self.tree().has_shadow_hosts {
+            return TElement::traversal_parent(self);
+        }
+        self.dom_parent_element()
     }
 
     fn parent_node_is_shadow_root(&self) -> bool {
-        false
+        self.is_element() && self.parent_is_shadow_root()
     }
 
     fn containing_shadow_host(&self) -> Option<Self> {
-        None
+        self.containing_shadow_host_id().map(|host| self.with(host))
+    }
+
+    fn assigned_slot(&self) -> Option<Self> {
+        self.assigned_slot_id().map(|slot| self.with(slot))
     }
 
     fn is_pseudo_element(&self) -> bool {
@@ -719,7 +733,9 @@ impl selectors::Element for BlitzNode<'_> {
             NonTSPseudoClass::Checked => self.element_state().contains(ElementState::CHECKED),
             NonTSPseudoClass::Valid => self.element_state().contains(ElementState::VALID),
             NonTSPseudoClass::Invalid => self.element_state().contains(ElementState::INVALID),
-            NonTSPseudoClass::Defined => false,
+            // pyro: every element but a custom element not defined yet (pyro-dom's `undefined`
+            // state token).
+            NonTSPseudoClass::Defined => self.element_state().contains(ElementState::DEFINED),
             NonTSPseudoClass::Disabled => self.element_state().contains(ElementState::DISABLED),
             NonTSPseudoClass::Enabled => self.element_state().contains(ElementState::ENABLED),
             NonTSPseudoClass::Focus => self.element_state().contains(ElementState::FOCUS),
@@ -825,7 +841,8 @@ impl selectors::Element for BlitzNode<'_> {
     }
 
     fn is_html_slot_element(&self) -> bool {
-        false
+        self.element_data()
+            .is_some_and(|e| e.name.local == local_name!("slot") && e.name.ns == ns!(html))
     }
 
     fn has_id(
@@ -851,15 +868,21 @@ impl selectors::Element for BlitzNode<'_> {
         })
     }
 
+    // pyro: `exportparts` maps the host's inner part names to outer ones: the inner name an outer
+    // one stands for.
     fn imported_part(
         &self,
-        _name: &<Self::Impl as selectors::SelectorImpl>::Identifier,
+        name: &<Self::Impl as selectors::SelectorImpl>::Identifier,
     ) -> Option<<Self::Impl as selectors::SelectorImpl>::Identifier> {
-        None
+        let value = self.attr(local_name!("exportparts"))?;
+        crate::shadow::export_parts(value)
+            .find(|(_, outer)| *outer == &*name.0)
+            .map(|(inner, _)| AtomIdent::from(inner))
     }
 
-    fn is_part(&self, _name: &<Self::Impl as selectors::SelectorImpl>::Identifier) -> bool {
-        false
+    fn is_part(&self, name: &<Self::Impl as selectors::SelectorImpl>::Identifier) -> bool {
+        self.attr(local_name!("part"))
+            .is_some_and(|parts| parts.split_ascii_whitespace().any(|p| p == &*name.0))
     }
 
     fn is_empty(&self) -> bool {
@@ -920,15 +943,22 @@ impl<'a> TElement for BlitzNode<'a> {
         self
     }
 
+    // pyro: styles inherit through the flat tree (a slot's assigned nodes from the slot, a shadow
+    // tree's first level from the host), which `parent_element` leaves for the node trees
+    // (`crate::shadow`).
+    fn inheritance_parent(&self) -> Option<Self> {
+        TElement::traversal_parent(self)
+    }
+
     fn implicit_scope_for_sheet_in_shadow_root(
         _opaque_host: OpaqueElement,
         _sheet_index: usize,
     ) -> Option<ImplicitScopeRoot> {
         // We cannot currently implement this as we are using the NodeId as the OpaqueElement,
-        // and need a reference to the Slab to convert it back into an Element
-        //
-        // Luckily it is only needed for shadow dom.
-        todo!();
+        // and need a reference to the Slab to convert it back into an Element.
+        // pyro: a prelude-less `@scope` in a shadow tree's sheet then scopes nothing (its rules
+        // do not apply) rather than panicking.
+        None
     }
 
     fn traversal_children(&self) -> style::dom::LayoutIterator<Self::TraversalChildrenIterator> {
@@ -966,11 +996,35 @@ impl<'a> TElement for BlitzNode<'a> {
     }
 
     fn has_part_attr(&self) -> bool {
-        false
+        self.attr(local_name!("part")).is_some()
     }
 
     fn exports_any_part(&self) -> bool {
-        false
+        self.attr(local_name!("exportparts")).is_some()
+    }
+
+    fn each_part<F>(&self, mut callback: F)
+    where
+        F: FnMut(&style::values::AtomIdent),
+    {
+        if let Some(parts) = self.attr(local_name!("part")) {
+            for part in parts.split_ascii_whitespace() {
+                callback(&AtomIdent::from(part));
+            }
+        }
+    }
+
+    fn each_exported_part<F>(&self, name: &style::values::AtomIdent, mut callback: F)
+    where
+        F: FnMut(&style::values::AtomIdent),
+    {
+        if let Some(value) = self.attr(local_name!("exportparts")) {
+            for (inner, outer) in crate::shadow::export_parts(value) {
+                if inner == &*name.0 {
+                    callback(&AtomIdent::from(outer));
+                }
+            }
+        }
     }
 
     fn id(&self) -> Option<&style::Atom> {
@@ -1151,11 +1205,11 @@ impl<'a> TElement for BlitzNode<'a> {
     }
 
     fn shadow_root(&self) -> Option<<Self::ConcreteNode as TNode>::ConcreteShadowRoot> {
-        None
+        self.is_shadow_host().then_some(*self)
     }
 
     fn containing_shadow(&self) -> Option<<Self::ConcreteNode as TNode>::ConcreteShadowRoot> {
-        None
+        self.containing_shadow_host_id().map(|host| self.with(host))
     }
 
     fn get_attr(&self, attr: &style::LocalName, ns: &style::Namespace) -> Option<String> {
@@ -2065,6 +2119,8 @@ impl crate::BaseDocument {
                 sibling_traversal_map,
             }
         }
+        // pyro: `:host:has()` (`crate::shadow`).
+        self.invalidate_host_relative_selectors(node);
         let prev = node.prev_sibling_element();
         let next = node.next_sibling_element();
         invalidator(node, SiblingTraversalMap::default()).invalidate_relative_selectors_for_dom_mutation(

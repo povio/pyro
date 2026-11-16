@@ -24,6 +24,37 @@ use crate::{
     stylo_to_parley,
 };
 
+/// pyro: the text style a `display: contents` element gives its text: its own, but the box
+/// properties it has none for (`vertical-align` applies to inline boxes: a `display: contents`
+/// table cell's inherited `middle` must not shift its text, WPT css-display
+/// `display-contents-td-001`).
+fn contents_style(id: NodeId, style: &style::properties::ComputedValues) -> parley::TextStyle<'static, 'static, TextBrush> {
+    let mut text_style = stylo_to_parley::style(id, style);
+    text_style.vertical_align = Default::default();
+    text_style
+}
+
+/// pyro: the `display: contents` elements between `child_id`, a node an anonymous inline root
+/// holds, and the root's `container`, outermost first: their content was hoisted into the root
+/// (`collect_layout_children_with_wrap`), and their text styles apply to it.
+fn contents_ancestors(nodes: &crate::NodeTree, child_id: NodeId, container: Option<NodeId>) -> Vec<NodeId> {
+    let mut chain = Vec::new();
+    let mut current = nodes[child_id].parent;
+    while let Some(id) = current {
+        if Some(id) == container {
+            break;
+        }
+        let node = &nodes[id];
+        if !node.primary_styles().is_some_and(|style| style.clone_display().is_contents()) {
+            break;
+        }
+        chain.push(id);
+        current = node.parent;
+    }
+    chain.reverse();
+    chain
+}
+
 /// pyro: the inline-axis space the start and the end side of an inline (non-atomic) box take:
 /// margin, border and padding, in CSS pixels; `None` for a side with none of them. A side whose
 /// margin, border and padding add up to nothing (a border and a negative margin as wide) still
@@ -555,7 +586,26 @@ fn build_inline_layout_with(
         );
     }
     let child_count = root_node.children.len();
+    // pyro: the `display: contents` elements whose content an anonymous root holds, open as spans
+    // (outermost first): their text takes their styles (`contents_ancestors`).
+    let container = root_node.is_anonymous().then_some(root_node.parent).flatten();
+    let mut open_contents: Vec<NodeId> = Vec::new();
     for (index, child_id) in root_node.children.iter().copied().enumerate() {
+        if container.is_some() {
+            let chain = contents_ancestors(nodes, child_id, container);
+            let common = open_contents.iter().zip(&chain).take_while(|(a, b)| a == b).count();
+            for _ in common..open_contents.len() {
+                builder.pop_style_span();
+            }
+            open_contents.truncate(common);
+            for &id in &chain[common..] {
+                match nodes[id].primary_styles() {
+                    Some(style) => builder.push_style_span(contents_style(id, &style)),
+                    None => builder.push_style_modification_span(&[]),
+                }
+                open_contents.push(id);
+            }
+        }
         // pyro: the head or the tail of a split inline.
         if let Some(tail) = root_node.split_ref_at(index, child_count) {
             build_split_part(
@@ -586,6 +636,9 @@ fn build_inline_layout_with(
             bidi,
             &mut bidi_scan,
         );
+    }
+    for _ in open_contents.drain(..) {
+        builder.pop_style_span();
     }
     if let Some(after_id) = root_node.after() {
         build_inline_layout_recursive(
@@ -901,23 +954,14 @@ fn build_inline_layout_with(
                         // node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
                     }
                     (DisplayOutside::None, DisplayInside::Contents) => {
-                        let whitespace = style.map(|s| {
-                            [
-                                parley::StyleProperty::WhiteSpaceCollapse(
-                                    stylo_to_parley::white_space_collapse(
-                                        s.clone_white_space_collapse(),
-                                    ),
-                                ),
-                                parley::StyleProperty::TextWrapMode(
-                                    stylo_to_parley::text_wrap_mode(s.clone_text_wrap_mode()),
-                                ),
-                            ]
-                        });
-                        builder.push_style_modification_span(
-                            whitespace
-                                .as_ref()
-                                .map_or(&[][..], |styles| styles.as_slice()),
-                        );
+                        // pyro: the element has no box, but its text takes its styles (font, spacing,
+                        // white space, and through the brush its colour), as in Blink (WPT css-display
+                        // `display-contents-text-inherit`, `-line-height`, a slot's text,
+                        // css-shadow `reslot-text-inheritance`). Upstream took only its white space.
+                        match style {
+                            Some(s) => builder.push_style_span(contents_style(node.id, s)),
+                            None => builder.push_style_modification_span(&[]),
+                        }
                         for child_id in node.children.iter().copied() {
                             // node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
                             crate::util::ensure_stack(|| build_inline_layout_recursive(

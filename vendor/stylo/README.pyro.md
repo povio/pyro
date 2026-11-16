@@ -258,6 +258,13 @@ and padding boxes for two.
 
 `stylesheets/rule_parser.rs`: `@counter-style` rules are parsed for servo too (upstream: gecko only). blitz-dom reads
 their `system: extends` for list markers (its README).
+## Pseudo-elements after `::slotted()` (WPT round 3, lane D)
+
+`servo/selector_parser.rs`: `PseudoElement::valid_after_slotted`: `::slotted()` can be followed by `::before`,
+`::after`, `::marker` (tree-abiding, CSS Scoping 1 § 3.2.2) and, as in Blink, `::placeholder`,
+`::file-selector-button` and `::details-content`; the trait's default (servo's until now) dropped such rules
+(WPT css-shadow `slotted-with-pseudo-element`, `slotted-placeholder`). The rule collector already collects the
+slotted rules of a pseudo-element. blitz-dom keeps shadow trees' styles (its README).
 
 ## Updating or dropping the patch
 

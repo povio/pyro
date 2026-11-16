@@ -10,7 +10,45 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  
  @font-face {
      font-family: -moz-bullet-font;
-@@ -43,6 +45,8 @@
+@@ -13,25 +15,26 @@
+ 
+ /* bidi
+  *
+- * The dir attribute mapping uses the attribute-selector form from the HTML
+- * spec's bidi rendering section rather than Gecko's internal pseudo-classes
+- * (:-moz-dir-attr-rtl and friends), which this engine's selector parser
+- * does not know: it dropped these rules, and the dir attribute did nothing.
+- * dir=auto keeps its isolation but not the content-based direction, which
+- * needs bidi analysis no selector can express.
++ * The dir attribute mapping is the HTML spec's bidi rendering section rather
++ * than Gecko's internal pseudo-classes (:-moz-dir-attr-rtl and friends),
++ * which this engine's selector parser does not know. pyro: :dir() is the
++ * element's directionality (`direction.rs`), which for dir=auto and <bdi>
++ * comes from their content (pyro-dom's render tree carries it), and follows
++ * the node tree, not the flat tree (a slot's dir is not its assigned nodes').
+  */
+ 
+-[dir="ltr" i] {
++[dir]:dir(ltr),
++bdi:dir(ltr),
++input[type=tel i]:dir(ltr) {
+     direction: ltr;
+-    unicode-bidi: isolate;
+ }
+ 
+-[dir="rtl" i] {
++[dir]:dir(rtl),
++bdi:dir(rtl) {
+     direction: rtl;
+-    unicode-bidi: isolate;
+ }
+ 
+-[dir="auto" i] {
++[dir] {
+     unicode-bidi: isolate;
+ }
+ 
+@@ -43,13 +46,11 @@
  a[href] {
      color: rgb(0, 0, 238);
      text-decoration: underline;
@@ -19,7 +57,14 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  }
  
  /* https://html.spec.whatwg.org/#bidi-rendering */
-@@ -59,37 +63,78 @@
+-input[type=tel]:dir(ltr) {
+-    direction: ltr;
+-}
+-
+ input {
+     display: inline-block;
+ }
+@@ -59,37 +60,78 @@
      display: none !important;
  }
  
@@ -105,7 +150,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  /* https://html.spec.whatwg.org/multipage/rendering.html#form-controls */
  input,
  button,
-@@ -121,6 +166,18 @@
+@@ -121,6 +163,18 @@
      outline: 2px solid #4D90FE;
  }
  
@@ -124,7 +169,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  button,
  input[type="submit"],
  input[type="reset"],
-@@ -150,6 +207,15 @@
+@@ -150,6 +204,15 @@
      background-color: transparent;
  }
  
@@ -140,7 +185,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  /* https://html.spec.whatwg.org/#the-fieldset-and-legend-elements */
  fieldset {
      display: block;
-@@ -169,8 +235,40 @@
+@@ -169,8 +232,40 @@
      padding-inline-end: 2px;
  }
  
@@ -182,7 +227,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  }
  
  source {
-@@ -249,15 +347,16 @@
+@@ -249,15 +344,16 @@
      unicode-bidi: isolate;
  }
  
@@ -204,7 +249,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
      unicode-bidi: plaintext;
  }
  
-@@ -569,6 +668,19 @@
+@@ -569,6 +665,19 @@
      text-align: center;
  }
  
@@ -224,7 +269,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  table[align="center"]>caption {
      margin-inline-start: auto;
      margin-inline-end: auto;
-@@ -838,6 +950,23 @@
+@@ -838,6 +947,23 @@
      border-radius: 0 ! important;
  }
  
@@ -248,7 +293,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  iframe {
      border: 2px inset;
  }
-@@ -851,6 +980,10 @@
+@@ -851,6 +977,10 @@
      user-select: none;
  }
  
@@ -259,7 +304,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  iframe:focus-visible,
  body:focus-visible,
  html:focus-visible {
-@@ -886,9 +1019,10 @@
+@@ -886,9 +1016,10 @@
      display: none;
  }
  
@@ -272,7 +317,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  }
  
  iframe:fullscreen {
-@@ -1128,37 +1262,35 @@
+@@ -1128,37 +1259,35 @@
  }
  
  /* Popover UA style, https://html.spec.whatwg.org/#flow-content-3 */
@@ -1312,13 +1357,15 @@ diff --git a/packages/blitz-dom/src/direction.rs b/packages/blitz-dom/src/direct
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/direction.rs
-@@ -0,0 +1,122 @@
+@@ -0,0 +1,140 @@
 +//! pyro: the directionality of an element (HTML "The dir attribute"), for `:dir()`: `dir="ltr"`
-+//! or `dir="rtl"` on the element; `dir="auto"` (and a `<bdi>` without `dir`) by the first strong
-+//! character of its text (a text control's value), left to right when it has none (a `<bdi>`) or
-+//! its parent's (`dir="auto"`); a `tel` input without `dir` left to right; else its parent's. The
-+//! root is left to right. The same rules as pyro-dom's `direction.rs`, which answers `:dir()` for
-+//! script.
++//! or `dir="rtl"` on the element; `dir="auto"` (and a `<bdi>` without a valid `dir`) by its
++//! content, which pyro-dom's render tree gives as a `dir=ltr` or `dir=rtl` token of the element's
++//! state attribute (else here: the first strong character of its text, a text control's value),
++//! left to right when nothing decides; a `tel` input without `dir` left to right; else its
++//! parent's in its node tree (a shadow tree's first level: the host's; an assigned node: its
++//! host's, not its slot's, `crate::shadow`). The root is left to right. The same rules as
++//! pyro-dom's `direction.rs`, which answers `:dir()` for script.
 +
 +use icu_properties::props::BidiClass;
 +use icu_properties::{CodePointMapData, CodePointMapDataBorrowed};
@@ -1342,12 +1389,10 @@ new file mode 100644
 +            }
 +            let bdi = html && element.name.local == local_name!("bdi");
 +            if dir == Some(Dir::Auto) || (bdi && dir.is_none()) {
-+                if let Some(rtl) = auto_direction(current) {
++                if let Some(rtl) = state_direction(current) {
 +                    return rtl;
 +                }
-+                if bdi && dir.is_none() {
-+                    return false;
-+                }
++                return auto_direction(current).unwrap_or(false);
 +            }
 +            if html
 +                && element.name.local == local_name!("input")
@@ -1357,11 +1402,29 @@ new file mode 100644
 +                return false;
 +            }
 +        }
-+        match current.parent.map(|parent| current.with(parent)) {
++        // The parent in the node tree; the host for the first level of a shadow tree.
++        let parent = if current.parent_is_shadow_root() {
++            current.parent.map(|parent| current.with(parent))
++        } else {
++            current.dom_parent_element()
++        };
++        match parent {
 +            Some(parent) if parent.is_element() => current = parent,
 +            _ => return false,
 +        }
 +    }
++}
++
++/// The directionality pyro-dom's render tree gives an element (`Some(true)`: right to left).
++fn state_direction(node: &Node) -> Option<bool> {
++    let state = node.element_data()?.attrs.iter().find(|a| {
++        &*a.name.ns == crate::PYRO_STATE_NS && &*a.name.local == "state"
++    })?;
++    state.value.split_ascii_whitespace().find_map(|token| match token {
++        "dir=rtl" => Some(true),
++        "dir=ltr" => Some(false),
++        _ => None,
++    })
 +}
 +
 +#[derive(Clone, Copy, PartialEq, Eq)]
@@ -1605,17 +1668,20 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      /// Whether there is a `<canvas>` element in the DOM (so we should re-render every frame)
      pub(crate) has_canvas: bool,
      /// Whether there are subdocuments that are animating (so we should re-render every frame)
-@@ -389,6 +480,9 @@
+@@ -389,6 +480,12 @@
      pub(crate) nodes_to_id: HashMap<String, SmallVec<[NodeId; 1]>>,
      /// Map of `<style>` and `<link>` node IDs to their associated stylesheet
      pub(crate) nodes_to_stylesheet: BTreeMap<NodeId, DocumentStyleSheet>,
++    /// pyro: the host whose shadow root holds the sheet of a `<style>` or `<link>` element of a
++    /// shadow tree (not in `nodes_to_stylesheet`: `crate::shadow`).
++    pub(crate) shadow_sheet_hosts: HashMap<NodeId, NodeId>,
 +    /// pyro: the text of `<link>` sheets with `@page` rules, by node. Parsing drops what
 +    /// printing needs of them: the servo build of Stylo has no `size` and no `page`.
 +    pub(crate) linked_page_css: BTreeMap<NodeId, String>,
      /// Incremented whenever `nodes_to_stylesheet` changes (a stylesheet is
      /// added, replaced or removed), so that CSSOM wrappers can detect that
      /// their cached rule data is stale.
-@@ -404,6 +498,37 @@
+@@ -404,6 +501,37 @@
      pub(crate) has_changes: bool,
      /// Set of changed nodes for updating the accessibility tree
      pub(crate) deferred_construction_nodes: Vec<ConstructionTask>,
@@ -1653,7 +1719,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
  
      /// Nodes that contain custom widgets
      #[cfg(feature = "custom-widget")]
-@@ -426,6 +551,51 @@
+@@ -426,6 +554,51 @@
      /// the style traversal and by pseudo-element box construction).
      pub(crate) pending_style_image_nodes: Vec<NodeId>,
  
@@ -1705,7 +1771,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      // Tracks in-flight "critical" resources (e.g. stylesheets linked from the `<head>`),
      // keyed by request id
      pub(crate) pending_critical_resources: HashSet<usize>,
-@@ -514,11 +684,15 @@
+@@ -514,11 +687,15 @@
  
          let viewport = config.viewport.unwrap_or_default();
          let media_type = config.media_type.unwrap_or_else(MediaType::screen);
@@ -1724,7 +1790,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          let nodes_to_id = HashMap::new();
  
          let base_url = config
-@@ -555,7 +729,11 @@
+@@ -555,7 +732,11 @@
              nodes_to_id,
              viewport,
              media_type,
@@ -1736,10 +1802,11 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
              flags: DocumentFlags::empty(),
              style_threading: config.style_threading,
              incremental_layout: config.incremental.unwrap_or(true),
-@@ -563,11 +741,17 @@
+@@ -563,11 +744,18 @@
              devtool_settings: DevtoolSettings::default(),
              url: base_url,
              nodes_to_stylesheet: BTreeMap::new(),
++            shadow_sheet_hosts: HashMap::new(),
 +            linked_page_css: BTreeMap::new(),
              stylesheet_generation: 0,
              font_ctx,
@@ -1755,7 +1822,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
  
              hover_node_id: None,
              hover_hit_node_id: None,
-@@ -575,8 +759,10 @@
+@@ -575,8 +763,10 @@
              last_client_pointer_position: None,
              focus_node_id: None,
              active_node_id: None,
@@ -1766,7 +1833,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
              subdoc_is_animating: false,
              has_canvas: false,
              sub_document_nodes: HashSet::new(),
-@@ -589,9 +775,31 @@
+@@ -589,9 +779,31 @@
  
              has_changes: false,
              deferred_construction_nodes: Vec::new(),
@@ -1798,7 +1865,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
              pending_critical_resources: HashSet::new(),
              controls_to_form: HashMap::new(),
              net_provider,
-@@ -732,6 +940,22 @@
+@@ -732,6 +944,22 @@
          self.nodes.get(node_id)
      }
  
@@ -1821,7 +1888,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      pub fn get_node_mut(&mut self, node_id: NodeId) -> Option<&mut Node> {
          self.nodes.get_mut(node_id)
      }
-@@ -741,6 +965,12 @@
+@@ -741,6 +969,12 @@
              .or(self.try_root_element().map(|el| el.id))
      }
  
@@ -1834,7 +1901,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      pub fn mutate<'doc>(&'doc mut self) -> DocumentMutator<'doc> {
          DocumentMutator::new(self)
      }
-@@ -991,6 +1221,10 @@
+@@ -991,6 +1225,10 @@
      /// it so that stale NodeIds are never dereferenced after the slot is freed.
      pub(crate) fn remove_node_from_tree(&mut self, node_id: NodeId) -> Option<Node> {
          self.clear_interaction_state_for_removed_node(node_id);
@@ -1845,7 +1912,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          self.nodes.remove(node_id)
      }
  
-@@ -1105,14 +1339,31 @@
+@@ -1105,14 +1343,31 @@
          if let Some(node) = &mut node {
              on_drop(node_id);
              if let Some(before) = node.before() {
@@ -1880,7 +1947,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
              }
  
              // Anonymous blocks live only in the slab, so deallocate the ones this
-@@ -1136,12 +1387,93 @@
+@@ -1136,12 +1391,93 @@
          // Free any anonymous blocks that this block owns before removing it.
          let nested = std::mem::take(&mut self.nodes[anon_id].anonymous_blocks);
          for nested_id in nested {
@@ -1975,7 +2042,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      /// Whether the DOM or focus changed since the last [`Self::clear_changes`]
      /// (i.e. whether the accessibility tree is out of date)
      pub fn has_changes(&self) -> bool {
-@@ -1198,7 +1530,7 @@
+@@ -1198,7 +1534,7 @@
              let mut node = doc.remove_node_from_tree(node_id);
              if let Some(node) = &mut node {
                  for &child in &node.children {
@@ -1984,7 +2051,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
                  }
                  for &anon_id in &node.anonymous_blocks {
                      doc.deallocate_anonymous_block(anon_id);
-@@ -1266,8 +1598,11 @@
+@@ -1266,9 +1602,13 @@
      }
  
      pub fn process_style_element(&mut self, target_id: NodeId) {
@@ -1994,10 +2061,13 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
 +        // either stays four characters, as in every browser (WPT css/CSS2 content-177).
          let css = self.nodes[target_id].text_content();
 -        let css = html_escape::decode_html_entities(&css);
-         let sheet = self.make_stylesheet(&css, Origin::Author);
+-        let sheet = self.make_stylesheet(&css, Origin::Author);
++        let host = self.nodes[target_id].containing_shadow_host_id();
++        let sheet = self.make_stylesheet_in(&css, Origin::Author, host);
          self.add_stylesheet_for_node(sheet, target_id);
      }
-@@ -1284,6 +1619,15 @@
+ 
+@@ -1284,6 +1624,15 @@
          &self.url
      }
  
@@ -2013,10 +2083,16 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      /// Iterate over the author stylesheets (from `<style>` and `<link>` nodes)
      /// currently associated with this document
      pub fn author_stylesheets(&self) -> impl Iterator<Item = &DocumentStyleSheet> {
-@@ -1305,6 +1649,32 @@
+@@ -1305,6 +1654,45 @@
      }
  
      pub fn make_stylesheet(&self, css: impl AsRef<str>, origin: Origin) -> DocumentStyleSheet {
++        self.make_stylesheet_in(css, origin, None)
++    }
++
++    /// [`Self::make_stylesheet`] for an element of the shadow tree of `host` (`None`: of the
++    /// document's tree).
++    pub(crate) fn make_stylesheet_in(&self, css: impl AsRef<str>, origin: Origin, host: Option<NodeId>) -> DocumentStyleSheet {
 +        // pyro: an author sheet without `@import` (whose loads are
 +        // the document's) parses once per thread for its text and base URL:
 +        // every document of a test suite or a PDF template carries the same
@@ -2028,8 +2104,15 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
 +            if let Some(sheet) = crate::util::shared_sheet(css, self.url.as_str()) {
 +                // A stylist holds a sheet once: another element of this
 +                // document with the same text (two `<style>`s alike, adopted
-+                // sheets reordered) parses its own.
-+                if !self.nodes_to_stylesheet.values().any(|s| *s == sheet) {
++                // sheets reordered) parses its own. So does a shadow root; shadow roots
++                // share theirs (a component's instances: one cascade data for all of them).
++                let taken = match host {
++                    None => self.nodes_to_stylesheet.values().any(|s| *s == sheet),
++                    Some(host) => {
++                        self.nodes.shadow_roots.get(&host).is_some_and(|r| r.sheets.values().any(|s| *s == sheet))
++                    }
++                };
++                if !taken {
 +                    return sheet;
 +                }
 +                return self.parse_stylesheet(css, origin);
@@ -2046,7 +2129,44 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          let data = Stylesheet::from_str(
              css.as_ref(),
              self.url.url_extra_data(),
-@@ -1396,6 +1766,81 @@
+@@ -1329,11 +1717,35 @@
+ 
+     pub fn upsert_stylesheet_for_node(&mut self, node_id: NodeId) {
+         let raw_styles = self.nodes[node_id].text_content();
+-        let sheet = self.make_stylesheet(raw_styles, Origin::Author);
++        let host = self.nodes[node_id].containing_shadow_host_id();
++        let sheet = self.make_stylesheet_in(raw_styles, Origin::Author, host);
+         self.add_stylesheet_for_node(sheet, node_id);
+     }
+ 
+     pub fn add_stylesheet_for_node(&mut self, stylesheet: DocumentStyleSheet, node_id: NodeId) {
++        // pyro: the sheet of an element of a shadow tree is that shadow root's (`crate::shadow`).
++        let host = self.nodes.get(node_id).and_then(|node| node.containing_shadow_host_id());
++        if let Some(old) = self.nodes_to_stylesheet.remove(&node_id) {
++            self.stylist.remove_stylesheet(old, &self.guard.read());
++            self.stylesheet_generation += 1;
++        }
++        self.remove_shadow_stylesheet(node_id);
++        if let Some(host) = host {
++            crate::net::fetch_font_face(
++                self.tx.clone(),
++                self.id,
++                Some(node_id),
++                &stylesheet.0,
++                &self.net_provider,
++                &self.shell_provider,
++                &self.guard.read(),
++                self.abort_signal.as_ref(),
++            );
++            let element = &mut self.nodes[node_id].element_data_mut().unwrap();
++            element.special_data = SpecialElementData::Stylesheet(stylesheet.clone());
++            self.add_shadow_stylesheet(host, node_id, stylesheet);
++            return;
++        }
+         let old = self.nodes_to_stylesheet.insert(node_id, stylesheet.clone());
+         self.stylesheet_generation += 1;
+ 
+@@ -1396,6 +1808,81 @@
          }
      }
  
@@ -2128,7 +2248,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      /// Whether the Document has pending requests for "critical" resources (that should block rendering)
      pub fn has_pending_critical_resources(&self) -> bool {
          !self.pending_critical_resources.is_empty()
-@@ -1409,6 +1854,16 @@
+@@ -1409,6 +1896,16 @@
              Err(err) => {
                  if let Some(url) = res.resolved_url.as_ref() {
                      let waiting_nodes = self.pending_images.remove(url).unwrap_or_default();
@@ -2145,7 +2265,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
                      #[cfg(feature = "tracing")]
                      tracing::warn!(
                          url = url.as_str(),
-@@ -1429,9 +1884,17 @@
+@@ -1429,9 +1926,17 @@
          };
  
          match resource {
@@ -2164,7 +2284,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
              }
              Resource::ImportedCss(import_rule, sheet) => {
                  let mut guard = self.guard.write();
-@@ -1441,9 +1904,11 @@
+@@ -1441,9 +1946,11 @@
                  self.stylist
                      .force_stylesheet_origins_dirty(style::stylesheets::OriginSet::all());
              }
@@ -2178,7 +2298,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
  
                  let Some(url) = res.resolved_url.as_ref() else {
                      return;
-@@ -1469,18 +1934,28 @@
+@@ -1469,18 +1976,28 @@
                  self.apply_iframe_html(node_id, res.request_id, res.resolved_url, &html);
              }
              Resource::Font(bytes, overrides) => {
@@ -2208,7 +2328,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
                      ..Default::default()
                  };
  
-@@ -1489,6 +1964,12 @@
+@@ -1489,6 +2006,12 @@
                  global_font_ctx
                      .collection
                      .register_fonts(font.clone(), Some(info_override));
@@ -2221,7 +2341,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
  
                  #[cfg(feature = "parallel-construct")]
                  {
-@@ -1513,6 +1994,29 @@
+@@ -1513,6 +2036,29 @@
          }
      }
  
@@ -2251,7 +2371,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      /// Cache a loaded image and apply it to all nodes waiting on it
      /// (`<img>` elements, `background-image` layers and `mask-image` layers).
      fn apply_loaded_image(&mut self, url: &str, image: ImageData) {
-@@ -1541,18 +2045,41 @@
+@@ -1541,18 +2087,41 @@
                      if element.custom_widget_data().is_some() {
                          continue;
                      }
@@ -2295,7 +2415,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
                          };
                          images.get_mut(idx)
                      });
-@@ -1560,6 +2087,17 @@
+@@ -1560,6 +2129,17 @@
                          layer_image.status = Status::Ok;
                          layer_image.image = image.clone();
                      }
@@ -2313,7 +2433,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
                  }
              }
          }
-@@ -1580,7 +2118,75 @@
+@@ -1580,7 +2160,75 @@
          self.snapshot_node_impl(node_id, None)
      }
  
@@ -2389,7 +2509,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          let node = &mut self.nodes[node_id];
  
          // Do not snapshot nodes that have never been styled. A snapshot records an element's
-@@ -1700,14 +2306,24 @@
+@@ -1700,14 +2348,24 @@
          state: ElementState,
          cb: impl FnOnce(&mut Node),
      ) {
@@ -2417,7 +2537,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          self.hit_with_scrollbar(x, y).0
      }
  
-@@ -1718,7 +2334,7 @@
+@@ -1718,7 +2376,7 @@
      /// This implements the hit-testing semantics of `document.elementFromPoint()`.
      /// Hit testing consults layout, so [`resolve`](Self::resolve) should be called
      /// before this method to ensure layout is up to date.
@@ -2426,7 +2546,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          let viewport = self.viewport();
          let scale = viewport.scale();
          let (viewport_width, viewport_height) = (
-@@ -1753,7 +2369,7 @@
+@@ -1753,7 +2411,7 @@
      /// by its ancestor elements (which is correct for non-overlapping content).
      /// As with [`element_from_point`](Self::element_from_point), layout should be
      /// resolved before calling this method.
@@ -2435,7 +2555,51 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          let mut element_ids = Vec::new();
          let mut current = self.element_from_point(x, y);
          while let Some(node_id) = current {
-@@ -1859,10 +2475,16 @@
+@@ -1813,9 +2471,36 @@
+         Some(id)
+     }
+ 
++    /// pyro: the shadow hosts whose shadow trees hold `id` (innermost first): they match `:focus`
++    /// while it is focused (CSS Scoping 1 § 3.1: a shadow host is focused when its shadow tree
++    /// holds the focused element; `crate::shadow`).
++    fn shadow_hosts_of(&self, id: NodeId) -> Vec<NodeId> {
++        let mut hosts = Vec::new();
++        let mut current = self.nodes.get(id).and_then(|node| node.containing_shadow_host_id());
++        while let Some(host) = current {
++            hosts.push(host);
++            current = self.nodes.get(host).and_then(|node| node.containing_shadow_host_id());
++        }
++        hosts
++    }
++
++    /// pyro: gives (or takes) the shadow hosts of the focused element `id` their `:focus`.
++    fn set_shadow_hosts_focus(&mut self, id: Option<NodeId>, focus: bool) {
++        let Some(id) = id else { return };
++        for host in self.shadow_hosts_of(id) {
++            self.snapshot_node_and(host, ElementState::FOCUS, |node| {
++                if let Some(data) = node.element_data_mut() {
++                    data.element_state.set(ElementState::FOCUS, focus);
++                }
++                node.mark_ancestors_dirty();
++            });
++        }
++    }
++
+     /// Clear the focussed node
+     pub fn clear_focus(&mut self) {
+         if let Some(id) = self.focus_node_id {
++            self.set_shadow_hosts_focus(Some(id), false);
+             let shell_provider = self.shell_provider.clone();
+             self.snapshot_node_and(id, ElementState::FOCUS | ElementState::FOCUSRING, |node| {
+                 node.blur(shell_provider)
+@@ -1853,17 +2538,25 @@
+ 
+         // Remove focus from the old node
+         if let Some(id) = self.focus_node_id {
++            self.set_shadow_hosts_focus(Some(id), false);
+             self.snapshot_node_and(id, ElementState::FOCUS | ElementState::FOCUSRING, |node| {
+                 node.blur(shell_provider.clone())
+             });
          }
  
          // Focus the new node
@@ -2451,9 +2615,11 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
 +                }
 +            },
          );
++        self.set_shadow_hosts_focus(Some(focus_node_id), true);
  
          // Update :focus-within on the ancestor chains (shared prefix stays)
-@@ -1895,6 +2517,38 @@
+         let old_node_path = self.maybe_node_element_ancestors(self.focus_node_id);
+@@ -1895,6 +2588,38 @@
          true
      }
  
@@ -2492,7 +2658,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      pub fn active_node(&mut self) -> bool {
          let Some(hover_node_id) = self.get_hover_node_id() else {
              return false;
-@@ -1991,10 +2645,12 @@
+@@ -1991,10 +2716,12 @@
      /// thumb under the point (shares the traversal, so it costs nothing
      /// extra).
      pub(crate) fn hit_with_scrollbar(
@@ -2506,7 +2672,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          if TDocument::as_node(&self.root_node())
              .first_element_child()
              .is_none()
-@@ -2078,6 +2734,28 @@
+@@ -2078,6 +2805,28 @@
          true
      }
  
@@ -2535,7 +2701,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      pub fn clear_hover(&mut self) -> bool {
          // The pointer is no longer over the document, so stop re-resolving
          // hover state against it.
-@@ -2147,12 +2825,108 @@
+@@ -2147,12 +2896,108 @@
          self.mousedown_node_id
      }
  
@@ -2644,7 +2810,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      /// Returns the current CSS media type used to evaluate `@media` rules.
      pub fn media_type(&self) -> &MediaType {
          &self.media_type
-@@ -2188,6 +2962,12 @@
+@@ -2188,6 +3033,12 @@
          self.viewport.clone()
      }
  
@@ -2657,7 +2823,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      /// Returns whether incremental layout is currently enabled for this document.
      ///
      /// Both modes run the same style → damage → box construction → layout
-@@ -2266,6 +3046,7 @@
+@@ -2266,10 +3117,13 @@
  
          self.set_stylist_device(make_device(
              &self.viewport,
@@ -2665,7 +2831,13 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
              self.media_type.clone(),
              self.font_ctx.clone(),
          ));
-@@ -2317,6 +3098,15 @@
+         self.scroll_viewport_by(0.0, 0.0); // Clamp scroll offset
++        // pyro: shadow roots' cascade data holds their sheets' media query results.
++        self.invalidate_shadow_styles();
+ 
+         // Text is shaped at a specific scale factor, so cached inline layouts
+         // must be invalidated when the scale changes, as must every node's
+@@ -2317,6 +3171,15 @@
          let viewport_size_changed = old_device.au_viewport_size() != device.au_viewport_size();
          let styles_use_viewport_units = old_device.used_viewport_size();
  
@@ -2681,7 +2853,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          let origins = {
              let guard = &self.guard;
              let guards = StylesheetGuards {
-@@ -2460,10 +3250,19 @@
+@@ -2460,10 +3323,19 @@
              pos.x += node.unrounded_layout().location.x - node.scroll_offset().x as f32;
              pos.y += node.unrounded_layout().location.y - node.scroll_offset().y as f32;
              current = node.containing_block();
@@ -2701,7 +2873,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      /// Computes the size and position of the `Node` relative to the viewport
      pub fn get_client_bounding_rect(&self, node_id: NodeId) -> Option<BoundingRect> {
          // Non-atomic inline elements have no layout box of their own: return
-@@ -2677,7 +3476,7 @@
+@@ -2677,7 +3549,7 @@
      /// Find the text position (inline_root_id, byte_offset) at a given point.
      /// Uses hit() for proper coordinate transformation, then finds the inline root
      /// and byte offset.
@@ -2710,7 +2882,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          let hit = self.hit(x, y)?;
          let hit_node = self.get_node(hit.node_id)?;
          let inline_root = hit_node.inline_root_ancestor()?;
-@@ -2835,6 +3634,10 @@
+@@ -2835,6 +3707,10 @@
      /// Get all selection ranges as Vec<(node_id, start_offset, end_offset)>.
      /// Returns empty vec if no selection.
      pub fn get_text_selection_ranges(&self) -> Vec<(NodeId, usize, usize)> {
@@ -2721,7 +2893,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          let lookup = |parent_id, idx| self.find_anonymous_block_by_index(parent_id, idx);
  
          let anchor_node = match self.text_selection.anchor.resolve_node_id(lookup) {
-@@ -3782,6 +4585,7 @@
+@@ -3782,6 +4658,7 @@
                      family_name: Some(String::from(ALIAS)),
                      weight: Some(800.0),
                      style: Some(parley::fontique::FontStyle::Italic),
@@ -2729,7 +2901,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
                  },
              )),
          };
-@@ -3804,6 +4608,52 @@
+@@ -3804,6 +4681,52 @@
               not the font file's internal `name` table entry",
          );
      }
@@ -3192,7 +3364,7 @@ diff --git a/packages/blitz-dom/src/has_invalidation.rs b/packages/blitz-dom/src
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/has_invalidation.rs
-@@ -0,0 +1,309 @@
+@@ -0,0 +1,326 @@
 +//! pyro: `:has()` invalidation through Stylo's relative selector
 +//! invalidation, as Gecko runs it on every state and attribute change.
 +//!
@@ -3253,13 +3425,16 @@ new file mode 100644
 +    .union(ElementState::INRANGE)
 +    .union(ElementState::OUTOFRANGE)
 +    .union(ElementState::USER_VALID)
-+    .union(ElementState::USER_INVALID);
++    .union(ElementState::USER_INVALID)
++    .union(ElementState::DEFINED);
 +
 +/// The element states a [`PYRO_STATE_NS`] `state` attribute value (`None`: no
 +/// such attribute) stands for. An element is `:read-only` unless the value
-+/// says `read-write`.
++/// says `read-write`, and `:defined` unless it says `undefined` (a custom element
++/// not defined yet).
 +pub(crate) fn pyro_state_bits(value: Option<&str>) -> ElementState {
 +    let mut state = ElementState::empty();
++    let mut undefined = false;
 +    for token in value.unwrap_or("").split_ascii_whitespace() {
 +        state |= match token {
 +            "valid" => ElementState::VALID,
@@ -3277,11 +3452,18 @@ new file mode 100644
 +            "out-of-range" => ElementState::OUTOFRANGE,
 +            "user-valid" => ElementState::USER_VALID,
 +            "user-invalid" => ElementState::USER_INVALID,
++            "undefined" => {
++                undefined = true;
++                ElementState::empty()
++            }
 +            _ => ElementState::empty(),
 +        };
 +    }
 +    if !state.contains(ElementState::READWRITE) {
 +        state |= ElementState::READONLY;
++    }
++    if !undefined {
++        state |= ElementState::DEFINED;
 +    }
 +    state
 +}
@@ -3427,7 +3609,12 @@ new file mode 100644
 +    /// `node_id` (made already; a snapshot holds the state before it).
 +    pub(crate) fn invalidate_relative_state(&self, node_id: NodeId, changed: ElementState) {
 +        let Some(node) = self.nodes.get(node_id) else { return };
-+        if changed.is_empty() || !searched(node) || !self.relative_state_dependency(changed) {
++        // pyro: a shadow tree's own sheets may depend on it (`relative_state_dependency` checks the
++        // document's).
++        if changed.is_empty()
++            || !searched(node)
++            || !(self.relative_state_dependency(changed) || node.containing_shadow_host_id().is_some())
++        {
 +            return;
 +        }
 +        self.run_relative_invalidation(node, changed, None);
@@ -3444,6 +3631,8 @@ new file mode 100644
 +        if !matches!(node.data, NodeData::Element(_)) {
 +            return;
 +        }
++        // pyro: `:host:has()` (`crate::shadow`).
++        self.invalidate_host_relative_selectors(node);
 +        let snapshots = Snapshots::new(&self.snapshots);
 +        // Given snapshots, Stylo (0.24 on) drops a dependency whose compound
 +        // matches the element as it did per its snapshot. That holds only
@@ -7544,7 +7733,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
  };
  use style::{
      computed_values::position::T as PositionProperty,
-@@ -15,12 +15,322 @@
+@@ -15,12 +15,353 @@
  use crate::{
      NodeData,
      layout::list::BULLET_FONT_FAMILY,
@@ -7559,6 +7748,37 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
      stylo_to_parley,
  };
  
++/// pyro: the text style a `display: contents` element gives its text: its own, but the box
++/// properties it has none for (`vertical-align` applies to inline boxes: a `display: contents`
++/// table cell's inherited `middle` must not shift its text, WPT css-display
++/// `display-contents-td-001`).
++fn contents_style(id: NodeId, style: &style::properties::ComputedValues) -> parley::TextStyle<'static, 'static, TextBrush> {
++    let mut text_style = stylo_to_parley::style(id, style);
++    text_style.vertical_align = Default::default();
++    text_style
++}
++
++/// pyro: the `display: contents` elements between `child_id`, a node an anonymous inline root
++/// holds, and the root's `container`, outermost first: their content was hoisted into the root
++/// (`collect_layout_children_with_wrap`), and their text styles apply to it.
++fn contents_ancestors(nodes: &crate::NodeTree, child_id: NodeId, container: Option<NodeId>) -> Vec<NodeId> {
++    let mut chain = Vec::new();
++    let mut current = nodes[child_id].parent;
++    while let Some(id) = current {
++        if Some(id) == container {
++            break;
++        }
++        let node = &nodes[id];
++        if !node.primary_styles().is_some_and(|style| style.clone_display().is_contents()) {
++            break;
++        }
++        chain.push(id);
++        current = node.parent;
++    }
++    chain.reverse();
++    chain
++}
++
 +/// pyro: the inline-axis space the start and the end side of an inline (non-atomic) box take:
 +/// margin, border and padding, in CSS pixels; `None` for a side with none of them. A side whose
 +/// margin, border and padding add up to nothing (a border and a negative margin as wide) still
@@ -7869,7 +8089,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
  pub(crate) fn build_inline_layout_into(
      nodes: &crate::NodeTree,
      layout_ctx: &mut LayoutContext<TextBrush>,
-@@ -29,6 +339,49 @@
+@@ -29,6 +370,49 @@
      scale: f32,
      inline_context_root_node_id: NodeId,
  ) {
@@ -7919,7 +8139,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
      // Get the inline context's root node's text styles
      let root_node = &nodes[inline_context_root_node_id];
      let root_node_style = root_node.primary_styles().or_else(|| {
-@@ -37,7 +390,7 @@
+@@ -37,7 +421,7 @@
              .and_then(|parent_id| nodes[parent_id].primary_styles())
      });
  
@@ -7928,7 +8148,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
          .as_ref()
          .map(|s| stylo_to_parley::style(inline_context_root_node_id, s))
          .unwrap_or_else(|| parley::TextStyle {
-@@ -45,6 +398,13 @@
+@@ -45,6 +429,13 @@
              ..Default::default()
          });
  
@@ -7942,7 +8162,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
      // Create a parley tree builder
      let mut builder = layout_ctx.tree_builder(font_ctx, scale, true, &parley_style);
      if let Some(style) = root_node_style.as_deref() {
-@@ -59,15 +419,42 @@
+@@ -59,15 +450,42 @@
          .map(|s| CaseTransform::from_style(s))
          .unwrap_or(CaseTransform::NONE);
  
@@ -7985,7 +8205,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
          match marker {
              // Bullet glyphs live in the bundled bullet font. The position-outside
              // path already asks for it; without the same span here a marker like
-@@ -80,12 +467,77 @@
+@@ -80,12 +498,77 @@
                  builder.push_text(&format!("{char} "));
                  builder.pop_style_span();
              }
@@ -8063,7 +8283,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
  
      if let Some(before_id) = root_node.before() {
          build_inline_layout_recursive(
-@@ -94,15 +546,45 @@
+@@ -94,17 +577,69 @@
              nodes,
              before_id,
              &text_transform,
@@ -8077,7 +8297,26 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
      }
 -    for child_id in root_node.children.iter().copied() {
 +    let child_count = root_node.children.len();
++    // pyro: the `display: contents` elements whose content an anonymous root holds, open as spans
++    // (outermost first): their text takes their styles (`contents_ancestors`).
++    let container = root_node.is_anonymous().then_some(root_node.parent).flatten();
++    let mut open_contents: Vec<NodeId> = Vec::new();
 +    for (index, child_id) in root_node.children.iter().copied().enumerate() {
++        if container.is_some() {
++            let chain = contents_ancestors(nodes, child_id, container);
++            let common = open_contents.iter().zip(&chain).take_while(|(a, b)| a == b).count();
++            for _ in common..open_contents.len() {
++                builder.pop_style_span();
++            }
++            open_contents.truncate(common);
++            for &id in &chain[common..] {
++                match nodes[id].primary_styles() {
++                    Some(style) => builder.push_style_span(contents_style(id, &style)),
++                    None => builder.push_style_modification_span(&[]),
++                }
++                open_contents.push(id);
++            }
++        }
 +        // pyro: the head or the tail of a split inline.
 +        if let Some(tail) = root_node.split_ref_at(index, child_count) {
 +            build_split_part(
@@ -8109,8 +8348,13 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
 +            &mut bidi_scan,
          );
      }
++    for _ in open_contents.drain(..) {
++        builder.pop_style_span();
++    }
      if let Some(after_id) = root_node.after() {
-@@ -112,18 +594,256 @@
+         build_inline_layout_recursive(
+             &mut builder,
+@@ -112,18 +647,256 @@
              nodes,
              after_id,
              &text_transform,
@@ -8120,9 +8364,11 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
 +            annotations,
 +            bidi,
 +            &mut bidi_scan,
-+        );
-+    }
-+
+         );
+     }
+ 
+-    text_layout.text = builder.build_into(&mut text_layout.layout);
+-    return;
 +    for end in piece_ends.into_iter().rev().flatten() {
 +        close_span(&mut builder, end, bidi, &mut bidi_scan);
 +    }
@@ -8137,7 +8383,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
 +    {
 +        return false;
 +    }
-+
+ 
 +    // The first build keeps the lines of the layout's last break over the text that did not
 +    // change, for `BreakLines::resume`. The strut build follows a build of the same content.
 +    text_layout.text = if strut_build {
@@ -8167,8 +8413,8 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
 +            strut_build,
 +            &space,
 +            bidi,
-         );
-     }
++        );
++    }
 +    // pyro: the "…" (or the string of `text-overflow: "<string>"`) that `text-overflow` ends an
 +    // overflowing line with, in the root's own style (its first available font, as in Chromium).
 +    // (An anonymous block holds lines of its parent: `overflow` and `text-overflow` are the
@@ -8233,9 +8479,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
 +    text_layout.percent_span_edges = bidi_scan.percent_edges;
 +    text_layout.span_block_edges = bidi_scan.block_edges;
 +    return true;
- 
--    text_layout.text = builder.build_into(&mut text_layout.layout);
--    return;
++
 +    /// pyro: lays out on one line what an annotation draws: a ruby annotation's content in its
 +    /// style, or the emphasis mark of an element in its font at half its size (as an `<rt>` has it).
 +    fn build_annotation(
@@ -8306,7 +8550,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
 +        layout.break_all_lines(None);
 +        Some(TextAnnotation { node_id, kind, under, layout: Box::new(layout) })
 +    }
- 
++
 +    /// pyro: the head (`tail: false`) or the tail of the split inline `node_id`, in its span:
 +    /// a head has its start, a tail its end (`construct::split_inline_part`).
 +    #[allow(clippy::too_many_arguments)]
@@ -8369,7 +8613,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
      ) {
          let node = &nodes[node_id];
  
-@@ -143,6 +863,26 @@
+@@ -143,6 +916,26 @@
                      }
                  }
  
@@ -8396,8 +8640,35 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
                  let display = node.display_style().unwrap_or(Display::inline());
                  let position = style
                      .map(|s| s.clone_position())
-@@ -180,22 +920,32 @@
-                         );
+@@ -161,41 +954,42 @@
+                         // node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
+                     }
+                     (DisplayOutside::None, DisplayInside::Contents) => {
+-                        let whitespace = style.map(|s| {
+-                            [
+-                                parley::StyleProperty::WhiteSpaceCollapse(
+-                                    stylo_to_parley::white_space_collapse(
+-                                        s.clone_white_space_collapse(),
+-                                    ),
+-                                ),
+-                                parley::StyleProperty::TextWrapMode(
+-                                    stylo_to_parley::text_wrap_mode(s.clone_text_wrap_mode()),
+-                                ),
+-                            ]
+-                        });
+-                        builder.push_style_modification_span(
+-                            whitespace
+-                                .as_ref()
+-                                .map_or(&[][..], |styles| styles.as_slice()),
+-                        );
++                        // pyro: the element has no box, but its text takes its styles (font, spacing,
++                        // white space, and through the brush its colour), as in Blink (WPT css-display
++                        // `display-contents-text-inherit`, `-line-height`, a slot's text,
++                        // css-shadow `reslot-text-inheritance`). Upstream took only its white space.
++                        match style {
++                            Some(s) => builder.push_style_span(contents_style(node.id, s)),
++                            None => builder.push_style_modification_span(&[]),
++                        }
                          for child_id in node.children.iter().copied() {
                              // node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
 -                            build_inline_layout_recursive(
@@ -8432,7 +8703,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
                              }
                              builder.push_inline_box(InlineBox {
                                  id: node_id.as_u64(),
-@@ -210,66 +960,165 @@
+@@ -210,66 +1004,165 @@
                                      .primary_styles()
                                      .map(|s| stylo_to_parley::vertical_align(&s))
                                      .unwrap_or_default(),
@@ -8616,7 +8887,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
                          }
                          builder.push_inline_box(InlineBox {
                              id: node_id.as_u64(),
-@@ -284,6 +1133,7 @@
+@@ -284,6 +1177,7 @@
                                  .primary_styles()
                                  .map(|s| stylo_to_parley::vertical_align(&s))
                                  .unwrap_or_default(),
@@ -8624,7 +8895,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
                          });
                      }
                  };
-@@ -291,10 +1141,61 @@
+@@ -291,10 +1185,61 @@
              NodeData::Text(data) => {
                  // node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
                  // dbg!(&data.content);
@@ -8689,7 +8960,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
              }
              NodeData::Comment { .. } => {
                  // node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
-@@ -303,3 +1204,157 @@
+@@ -303,3 +1248,157 @@
          }
      }
  }
@@ -19589,7 +19860,7 @@ diff --git a/packages/blitz-dom/src/lib.rs b/packages/blitz-dom/src/lib.rs
  
  /// The nodes themsleves, and their data.
  pub mod node;
-@@ -46,19 +48,37 @@
+@@ -46,19 +48,39 @@
  mod events;
  mod font_metrics;
  mod form;
@@ -19621,13 +19892,15 @@ diff --git a/packages/blitz-dom/src/lib.rs b/packages/blitz-dom/src/lib.rs
 +mod lang;
 +/// pyro: the directionality of an element, for `:dir()`.
 +mod direction;
++mod shadow;
++pub use shadow::{ASSIGNED_SLOT_ATTR, SHADOW_HOST_ATTR};
 +/// pyro: SVG reference cycles usvg does not break.
 +#[cfg(feature = "svg")]
 +mod svg_refs;
  /// Implementations that interact with servo's style engine
  mod stylo;
  mod stylo_device;
-@@ -76,7 +96,7 @@
+@@ -76,7 +98,7 @@
      css_property_is_supported, parse_transform_matrix, resolved_style_property_names,
  };
  pub use stylo_taffy::CopyStyleGetters;
@@ -19636,7 +19909,7 @@ diff --git a/packages/blitz-dom/src/lib.rs b/packages/blitz-dom/src/lib.rs
  
  pub mod net;
  pub mod util;
-@@ -95,6 +115,7 @@
+@@ -95,6 +117,7 @@
  // `Node::final_layout`)
  pub use config::{DocumentConfig, StyleThreading};
  pub use document::{
@@ -19683,17 +19956,24 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
  
          let id = self.doc.create_node(NodeData::Element(Box::new(data)));
          let node = self.doc.get_node_mut(id).unwrap();
-@@ -179,6 +190,9 @@
+@@ -179,6 +190,16 @@
              ..Default::default()
          };
  
 +        if let Some(state) = pyro_state {
 +            self.doc.note_lp_state(id, Some(&state));
 +        }
++        // pyro: a shadow host or an assigned slot (`crate::shadow`).
++        if self.doc.nodes[id]
++            .element_data()
++            .is_some_and(|e| e.attrs.iter().any(|a| crate::shadow::is_shadow_marker(&a.name)))
++        {
++            self.doc.sync_shadow_markers(id);
++        }
          id
      }
  
-@@ -265,7 +279,7 @@
+@@ -265,7 +286,7 @@
              // affect the parent's layout (text may wrap differently, change size, etc.)
              if let Some(parent_id) = parent_id {
                  let parent = &mut self.doc.nodes[parent_id];
@@ -19702,7 +19982,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
              }
  
              self.maybe_record_node(parent_id);
-@@ -293,7 +307,7 @@
+@@ -293,7 +314,7 @@
                      );
                  }
                  if let Some(parent_id) = parent_id {
@@ -19711,7 +19991,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
                  }
                  Ok(())
              }
-@@ -320,12 +334,59 @@
+@@ -320,12 +341,63 @@
          }
      }
  
@@ -19752,7 +20032,11 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
 +        let change = crate::has_invalidation::AttributeChange::before(self.doc, node_id, &name);
 +        self.rebuild_select_for_attribute(node_id, &name);
 +        self.rebuild_text_input_for_attribute(node_id, &name);
++        let shadow_marker = crate::shadow::is_shadow_marker(&name);
 +        self.set_attribute_impl(node_id, name, value);
++        if shadow_marker {
++            self.doc.sync_shadow_markers(node_id);
++        }
 +        if let Some(change) = change.and_then(|c| c.after(self.doc, node_id)) {
 +            self.doc.invalidate_relative_attribute(node_id, change);
 +        }
@@ -19771,7 +20055,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
          }
  
          if name.local == local_name!("id") && node_is_in_document {
-@@ -357,6 +418,9 @@
+@@ -357,6 +429,9 @@
          }
  
          element.attrs.set(name.clone(), value);
@@ -19781,7 +20065,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
          if node_is_in_document {
              devtools!(
                  self,
-@@ -380,6 +444,9 @@
+@@ -380,6 +455,9 @@
  
          if name.local == local_name!("href") {
              element.flush_link_state();
@@ -19791,7 +20075,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
          }
  
          if name.local == local_name!("open") {
-@@ -440,7 +507,22 @@
+@@ -440,7 +518,22 @@
  
          if (tag, attr) == tag_and_attr!("input", "checked") {
              set_input_checked_state(element, value.to_string());
@@ -19815,7 +20099,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
              self.load_image(node_id);
          } else if (tag, attr) == tag_and_attr!("canvas", "src") {
              self.load_custom_paint_src(node_id);
-@@ -456,11 +538,29 @@
+@@ -456,11 +549,33 @@
      }
  
      pub fn clear_attribute(&mut self, node_id: NodeId, name: QualName) {
@@ -19826,7 +20110,11 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
 +        let change = crate::has_invalidation::AttributeChange::before(self.doc, node_id, &name);
 +        self.rebuild_select_for_attribute(node_id, &name);
 +        self.rebuild_text_input_for_attribute(node_id, &name);
++        let shadow_marker = crate::shadow::is_shadow_marker(&name);
 +        self.clear_attribute_impl(node_id, name);
++        if shadow_marker {
++            self.doc.sync_shadow_markers(node_id);
++        }
 +        if let Some(change) = change.and_then(|c| c.after(self.doc, node_id)) {
 +            self.doc.invalidate_relative_attribute(node_id, change);
 +        }
@@ -19845,7 +20133,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
          }
  
          if name.local == local_name!("id") && node_is_in_document {
-@@ -483,6 +583,9 @@
+@@ -483,6 +598,9 @@
          if !had_attr {
              return;
          }
@@ -19855,7 +20143,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
          self.mutations_occurred |= node_is_in_document;
          if node_is_in_document {
              devtools!(
-@@ -522,6 +625,9 @@
+@@ -522,6 +640,9 @@
  
          if name.local == local_name!("href") {
              element.flush_link_state();
@@ -19865,7 +20153,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
          }
  
          if name.local == local_name!("open") {
-@@ -559,6 +665,9 @@
+@@ -559,6 +680,9 @@
          } else if (tag, attr) == tag_and_attr!("iframe", "srcdoc") && node_is_in_document {
              // Fall back to loading from the `src` attribute (if any)
              self.load_iframe(node_id);
@@ -19875,7 +20163,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
          }
      }
  
-@@ -602,6 +711,8 @@
+@@ -602,6 +726,8 @@
  
      /// Remove the node from it's parent but don't drop it
      pub fn remove_node(&mut self, node_id: NodeId) {
@@ -19884,7 +20172,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
          let node_is_in_document = self.doc.nodes[node_id].flags.is_in_document();
          // Process the subtree *before* severing the parent link so that
          // interaction state referencing removed nodes can retarget to the
-@@ -614,11 +725,12 @@
+@@ -614,11 +740,12 @@
          if let Some(parent_id) = node.parent.take() {
              self.mutations_occurred |= node_is_in_document;
              let parent = &mut self.doc.nodes[parent_id];
@@ -19899,7 +20187,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
                  devtools!(
                      self,
                      MutationRecord::NodeRemoved(NodeRemoved { parent_id, node_id })
-@@ -639,6 +751,9 @@
+@@ -639,6 +766,9 @@
          node_id: NodeId,
          on_drop: &mut dyn FnMut(NodeId),
      ) -> Option<Node> {
@@ -19909,7 +20197,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
          let node_is_in_document = self.doc.nodes[node_id].flags.is_in_document();
          self.process_removed_subtree(node_id);
  
-@@ -648,13 +763,14 @@
+@@ -648,13 +778,14 @@
          // Update child_idx values
          if let Some(parent_id) = node.as_ref().and_then(|node| node.parent) {
              let parent = &mut self.doc.nodes[parent_id];
@@ -19926,7 +20214,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
                  devtools!(
                      self,
                      MutationRecord::NodeRemoved(NodeRemoved { parent_id, node_id })
-@@ -668,13 +784,19 @@
+@@ -668,13 +799,19 @@
      }
  
      pub fn remove_and_drop_all_children(&mut self, node_id: NodeId) {
@@ -19947,7 +20235,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
          }
  
          for child_id in children {
-@@ -697,6 +819,52 @@
+@@ -697,6 +834,64 @@
      /// is hinted: its snapshot lets Stylo's invalidator find the siblings and descendants
      /// whose selectors depend on the attribute. `style`, `class` and `id` reach layout only
      /// through the computed style (whose diff yields the damage); other attributes may not.
@@ -19976,6 +20264,18 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
 +                }
 +                node.mark_damaged();
 +            }
++            // pyro: the directionality of a `dir=auto` element (its `dir=` token) is its
++            // descendants' too (`:dir()`, as a `dir` change, `restyle_for_attribute_change`).
++            let direction = |v: &str| v.split_ascii_whitespace().find(|t| t.starts_with("dir=")).map(str::to_owned);
++            let old = node
++                .element_data()
++                .and_then(|e| e.attrs.iter().find(|a| a.name == *name).and_then(|a| direction(&a.value)));
++            if old != value.and_then(direction) {
++                if let Some(mut data) = node.try_stylo_element_data_mut().and_then(|s| s.get_mut()) {
++                    data.hint |= RestyleHint::RESTYLE_DESCENDANTS;
++                }
++                node.mark_ancestors_dirty();
++            }
 +        }
 +        let Some(parent_id) = self.doc.nodes[node_id].parent else {
 +            return;
@@ -20000,7 +20300,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
      fn restyle_for_attribute_change(&mut self, node_id: NodeId, attr: &LocalName) {
          let node = &mut self.doc.nodes[node_id];
          let is_style = *attr == local_name!("style");
-@@ -727,6 +895,8 @@
+@@ -727,6 +922,8 @@
          // A table's `cellpadding` is a presentational hint on its cells, not on the table.
          let restyles_cells = *attr == local_name!("cellpadding")
              && node.data.is_element_with_tag_name(&local_name!("table"));
@@ -20009,7 +20309,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
          if let Some(mut data) = node.try_stylo_element_data_mut().and_then(|s| s.get_mut()) {
              data.hint |= if is_style {
                  RestyleHint::RESTYLE_STYLE_ATTRIBUTE
-@@ -748,27 +918,47 @@
+@@ -748,27 +945,47 @@
      }
  
      /// Restyle an in-document element whose child list changed, `changed` being the position
@@ -20070,7 +20370,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
              || flags.intersects(
                  ElementSelectorFlags::HAS_SLOW_SELECTOR
                      | ElementSelectorFlags::HAS_SLOW_SELECTOR_NTH_OF
-@@ -776,18 +966,43 @@
+@@ -776,18 +993,43 @@
              )
          {
              hint |= RestyleHint::RESTYLE_DESCENDANTS;
@@ -20117,7 +20417,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
                  if !children[..changed.start].iter().any(is_element) {
                      edge[0] = children[changed.end..].iter().copied().find(is_element);
                  }
-@@ -799,10 +1014,30 @@
+@@ -799,10 +1041,30 @@
                          .find(is_element);
                  }
              }
@@ -20149,7 +20449,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
          }
  
          let parent = &mut self.doc.nodes[parent_id];
-@@ -878,7 +1113,24 @@
+@@ -878,7 +1140,24 @@
          // would remove both the old and the newly-inserted entries from the
          // parent's child list, and anchor indices would be computed against a
          // child list that still contains the moved nodes.
@@ -20174,7 +20474,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
              let child = &self.doc.nodes[child_id];
              if child.contains_focus() {
                  focus_within_old_chain = Some(self.doc.maybe_node_element_ancestors(child.parent));
-@@ -892,12 +1144,13 @@
+@@ -892,12 +1171,13 @@
              };
  
              let old_parent = &mut self.doc.nodes[old_parent_id];
@@ -20190,7 +20490,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
                  devtools!(
                      self,
                      MutationRecord::NodeRemoved(NodeRemoved {
-@@ -911,19 +1164,29 @@
+@@ -911,19 +1191,29 @@
          }
  
          let new_parent = &mut self.doc.nodes[parent_id];
@@ -20223,7 +20523,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
                  child.set_restyle_hint(RestyleHint::restyle_subtree());
              }
  
-@@ -938,12 +1201,46 @@
+@@ -938,12 +1228,46 @@
                  );
              }
  
@@ -20270,7 +20570,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
  
          // Transfer :focus-within from the old ancestor chain to the new one (the
          // shared prefix stays). If the subtree left the document, the focus was
-@@ -975,6 +1272,23 @@
+@@ -975,6 +1299,23 @@
          self.maybe_record_node(parent_id);
      }
  
@@ -20294,7 +20594,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
      /// The nearest preceding sibling of `node_id` in `parent_id`'s children
      /// that devtools show (not a whitespace-only text node or anonymous block)
      #[cfg(feature = "devtools")]
-@@ -1223,11 +1537,34 @@
+@@ -1223,11 +1564,34 @@
                  _ if has_custom_widget => {}
                  "link" => self.eager_op_queue.push(SpecialOp::LoadStylesheet(node_id)),
                  "img" => self.eager_op_queue.push(SpecialOp::LoadImage(node_id)),
@@ -20330,7 +20630,19 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
                      self.eager_op_queue
                          .push(SpecialOp::ProcessButtonInput(node_id));
                      self.form_nodes.insert(node_id);
-@@ -1420,21 +1757,75 @@
+@@ -1413,6 +1777,11 @@
+             }
+         };
+ 
++        // pyro: a shadow tree's sheet leaves its shadow root (`crate::shadow`), which restyles the
++        // shadow tree when it is next flushed.
++        if self.doc.remove_shadow_stylesheet(node_id) {
++            return;
++        }
+         let guard = self.doc.guard.read();
+         self.doc.stylist.remove_stylesheet(stylesheet, &guard);
+         self.doc
+@@ -1420,21 +1789,75 @@
              .force_stylesheet_origins_dirty(OriginSet::all());
  
          self.doc.nodes_to_stylesheet.remove(&node_id);
@@ -20410,7 +20722,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
                      let node = &mut self.doc.nodes[target_id];
                      node.element_data_mut().unwrap().special_data =
                          SpecialElementData::Image(Box::new(cached_image.clone()));
-@@ -1579,6 +1970,20 @@
+@@ -1579,6 +2002,20 @@
      }
  }
  
@@ -20431,7 +20743,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
  /// Set 'checked' state on an input based on given attributevalue
  fn set_input_checked_state(element: &mut ElementData, value: String) {
      let Ok(checked) = value.parse() else {
-@@ -2377,6 +2782,50 @@
+@@ -2377,6 +2814,50 @@
          }
      }
  
@@ -20482,7 +20794,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
      fn qual_name(name: &str) -> crate::QualName {
          crate::QualName::new(None, crate::ns!(), crate::LocalName::from(name))
      }
-@@ -3088,3 +3537,254 @@
+@@ -3088,3 +3569,254 @@
          );
      }
  }
@@ -21589,7 +21901,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
  use super::{Attribute, DocumentData, ElementData, LayoutData};
  
  #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-@@ -60,9 +60,266 @@
+@@ -60,9 +60,272 @@
          const IS_IN_DOCUMENT = 0b00000100;
          /// Whether the node is an inline box whose in-flow content is block-level only
          const IS_INLINE_WITH_ONLY_BLOCK_CHILDREN = 0b00001000;
@@ -21683,6 +21995,12 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
 +        /// (`BaseDocument::body_overflow_goes_to_viewport`): its layout style reads `overflow:
 +        /// visible`. Set before each layout pass (`BaseDocument::mark_viewport_body`).
 +        const OVERFLOW_TO_VIEWPORT = 1 << 26;
++        /// pyro: a shadow host: its children are its shadow tree's (pyro-dom's render tree
++        /// marks it, `crate::shadow`).
++        const IS_SHADOW_HOST = 1 << 19;
++        /// pyro: a slot of a shadow tree whose children are the nodes assigned to it, light
++        /// children of its host (`crate::shadow`).
++        const IS_ASSIGNED_SLOT = 1 << 20;
      }
  }
  
@@ -21856,7 +22174,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
  impl NodeFlags {
      #[inline(always)]
      pub fn is_inline_root(&self) -> bool {
-@@ -84,6 +341,7 @@
+@@ -84,6 +347,7 @@
          self.remove(Self::IS_INLINE_ROOT);
          self.remove(Self::IS_TABLE_ROOT);
          self.remove(Self::IS_INLINE_WITH_ONLY_BLOCK_CHILDREN);
@@ -21864,7 +22182,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      }
  }
  
-@@ -101,6 +359,11 @@
+@@ -101,6 +365,11 @@
      pub layout_parent: Cell<Option<NodeId>>,
      /// A separate child list that includes anonymous collections of inline elements
      pub layout_children: RefCell<Option<ThinVec<NodeId>>>,
@@ -21876,7 +22194,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      /// Out-of-flow (absolutely/fixed positioned) boxes for which this node is the
      /// containing block. Recorded by Taffy's out-of-flow positioning pass. The
      /// `Layout.location` of these boxes is relative to this node's border box.
-@@ -239,19 +502,6 @@
+@@ -239,19 +508,6 @@
          }
      }
  
@@ -21896,7 +22214,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      #[inline]
      pub fn cache(&self) -> &Cache {
          &self.layout_data().cache
-@@ -267,9 +517,23 @@
+@@ -267,9 +523,23 @@
          &self.layout_data().unrounded_layout
      }
  
@@ -21923,7 +22241,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      }
  
      #[inline]
-@@ -292,6 +556,21 @@
+@@ -292,6 +562,21 @@
          &mut self.layout_data_mut().scroll_offset
      }
  
@@ -21945,7 +22263,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      #[inline]
      pub fn scrollable_overflow(&self) -> &KurboRect {
          &self.layout_data().scrollable_overflow
-@@ -302,6 +581,17 @@
+@@ -302,6 +587,17 @@
          &mut self.layout_data_mut().scrollable_overflow
      }
  
@@ -21963,7 +22281,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      /// Style data from stylo, if this node kind carries it (element or document
      /// nodes). Returns `None` for text/comment nodes.
      #[inline]
-@@ -417,6 +707,7 @@
+@@ -417,6 +713,7 @@
              parent: None,
              children: ThinVec::new(),
              layout_parent: Cell::new(None),
@@ -21971,7 +22289,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
              oof_containing_block: Cell::new(None),
              layout_children: RefCell::new(None),
              hoisted_children: RefCell::new(ThinVec::new()),
-@@ -425,30 +716,423 @@
+@@ -425,30 +722,423 @@
              stacking_context: None,
              sc_contribution_cache: RefCell::new(ThinVec::new()),
  
@@ -22411,7 +22729,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
  
          let slot = self.transform_mut();
          match (slot.as_deref_mut(), transform) {
-@@ -456,7 +1140,7 @@
+@@ -456,7 +1146,7 @@
              (None, Some(new)) => *slot = Some(Box::new(new)),
              (_, None) => *slot = None,
          }
@@ -22420,7 +22738,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      }
  
      pub fn pe_by_index(&self, index: usize) -> Option<NodeId> {
-@@ -489,7 +1173,39 @@
+@@ -489,7 +1179,39 @@
          )
      }
  
@@ -22460,7 +22778,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
          let style = self.primary_styles();
          let style = style.as_ref();
  
-@@ -517,11 +1233,21 @@
+@@ -517,11 +1239,21 @@
              DisplayOutside::None => false,
              DisplayOutside::Block => true,
              _ => {
@@ -22486,7 +22804,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                  } else {
                      false
                  }
-@@ -537,6 +1263,26 @@
+@@ -537,6 +1269,26 @@
              .contains(NodeFlags::IS_INLINE_WITH_ONLY_BLOCK_CHILDREN)
      }
  
@@ -22513,7 +22831,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      pub fn is_whitespace_node(&self) -> bool {
          match &self.data {
              NodeData::Text(data) => data.content.chars().all(|c| c.is_ascii_whitespace()),
-@@ -633,6 +1379,56 @@
+@@ -633,6 +1385,56 @@
              .is_some_and(|flag| flag.load(Ordering::Relaxed))
      }
  
@@ -22570,7 +22888,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      /// Clears the damaged_descendants flag on this node.
      pub fn unset_damaged_descendants(&self) {
          if let Some(flag) = self.damaged_descendants_flag() {
-@@ -649,6 +1445,8 @@
+@@ -649,6 +1451,8 @@
      pub fn mark_damaged(&self) {
          if let Some(flag) = self.damaged_descendants_flag() {
              if flag.swap(true, Ordering::Relaxed) {
@@ -22579,7 +22897,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                  return;
              }
          }
-@@ -659,6 +1457,8 @@
+@@ -659,6 +1463,8 @@
              // because all further ancestors must also have it set
              if let Some(flag) = parent.damaged_descendants_flag() {
                  if flag.swap(true, Ordering::Relaxed) {
@@ -22588,7 +22906,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                      break;
                  }
              }
-@@ -666,6 +1466,55 @@
+@@ -666,6 +1472,55 @@
          }
      }
  
@@ -22644,7 +22962,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      // pub fn damage_mut(&mut self) -> Option<&mut RestyleDamage> {
      //     self.stylo_element_data
      //         .get_mut()
-@@ -761,8 +1610,8 @@
+@@ -761,8 +1616,8 @@
  
      pub fn focus(&mut self, shell_provider: Arc<dyn ShellProvider>) {
          if let Some(data) = self.element_data_mut() {
@@ -22655,7 +22973,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
          }
          self.mark_ancestors_dirty();
  
-@@ -864,7 +1713,9 @@
+@@ -864,7 +1719,9 @@
              .and_then(|el| el.text_input_data())
          {
              if !input_data.is_multiline {
@@ -22666,7 +22984,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                  let input_height = input_data.editor.try_layout().unwrap().height() / scale as f32;
                  let y_offset = ((content_box_height - input_height) / 2.0).max(0.0);
  
-@@ -1061,6 +1912,11 @@
+@@ -1061,6 +1918,11 @@
          matches!(self.data, NodeData::Element { .. })
      }
  
@@ -22678,7 +22996,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      pub fn is_anonymous(&self) -> bool {
          matches!(self.data, NodeData::AnonymousBlock { .. })
      }
-@@ -1161,13 +2017,21 @@
+@@ -1161,13 +2023,21 @@
      pub fn layout_style(&self) -> stylo_taffy::TaffyStyloStyle<ComputedStyleRef<'_>> {
          let styles = self
              .try_stylo_element_data()
@@ -22702,7 +23020,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
              }
              if el.name.local == local_name!("button") {
                  flags |= stylo_taffy::StyleFlags::IS_BUTTON;
-@@ -1179,17 +2043,96 @@
+@@ -1179,17 +2049,96 @@
                  flags |= inline_layout.span_cb_flags;
              }
          }
@@ -22801,7 +23119,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      }
  
      /// The node's style for Taffy, expressed in the axes of the writing mode `layout_wm` (the writing
-@@ -1234,6 +2177,19 @@
+@@ -1234,6 +2183,19 @@
              .unwrap_or(stylo_taffy::WritingMode::empty())
      }
  
@@ -22821,7 +23139,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      /// The node's `display` as a [`taffy::Display`]. Returns [`taffy::Display::Block`]
      /// for nodes without computed styles (e.g. text nodes).
      pub fn taffy_display(&self) -> taffy::Display {
-@@ -1290,7 +2246,7 @@
+@@ -1290,7 +2252,7 @@
              }
              NodeData::Element(..) | NodeData::AnonymousBlock(..) => {
                  for child_id in self.children.iter() {
@@ -22830,7 +23148,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                  }
              }
              _ => {}
-@@ -1358,10 +2314,27 @@
+@@ -1358,10 +2320,27 @@
              return true;
          }
  
@@ -22858,7 +23176,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
          if style.get_box().isolation == Isolation::Isolate {
              return true;
          }
-@@ -1369,6 +2342,20 @@
+@@ -1369,6 +2348,20 @@
          if style.get_effects().mix_blend_mode != style::computed_values::mix_blend_mode::T::Normal {
              return true;
          }
@@ -22879,7 +23197,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
          // TODO: contain
  
          false
-@@ -1500,11 +2487,15 @@
+@@ -1500,11 +2493,15 @@
              || y < overflow_rect.top() + client_y
              || y > overflow_rect.bottom() + client_y);
  
@@ -22895,7 +23213,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                  x >= bbox.left && x <= bbox.right && y >= bbox.top && y <= bbox.bottom
              }
              None => false,
-@@ -1533,6 +2524,7 @@
+@@ -1533,6 +2530,7 @@
          {
              *scrollbar = Some(sb);
          }
@@ -22903,7 +23221,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
  
          // Text clusters and callers of the returned coordinates work in the
          // inline root's content box, but embedded boxes store border-box
-@@ -1559,7 +2551,7 @@
+@@ -1559,7 +2557,7 @@
                      let pos = hoisted_child.position(self.tree(), self.id);
                      let x = x - pos.x;
                      let y = y - pos.y;
@@ -22912,7 +23230,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                          return Some(hit);
                      }
                  }
-@@ -1574,12 +2566,18 @@
+@@ -1574,12 +2572,18 @@
              let child_position = child.taffy_position();
              let mut child_x = x;
              let mut child_y = y;
@@ -22933,7 +23251,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                      child_x -= self.scroll_offset().x as f32;
                      child_y -= self.scroll_offset().y as f32;
                      let viewport_scroll = self.tree().viewport_scroll();
-@@ -1590,7 +2588,7 @@
+@@ -1590,7 +2594,7 @@
                  child_x -= offset.x;
                  child_y -= offset.y;
              }
@@ -22942,7 +23260,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                  return Some(hit);
              }
          }
-@@ -1605,7 +2603,7 @@
+@@ -1605,7 +2609,7 @@
                      let pos = hoisted_child.position(self.tree(), self.id);
                      let x = x - pos.x;
                      let y = y - pos.y;
@@ -22951,7 +23269,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                          return Some(hit);
                      }
                  }
-@@ -1716,7 +2714,7 @@
+@@ -1716,7 +2720,7 @@
              return false;
          };
          if self.flags.is_inline_root()
@@ -22960,7 +23278,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
          {
              return false;
          }
-@@ -1741,8 +2739,13 @@
+@@ -1741,8 +2745,13 @@
          let y = y + self.final_layout().location.y - self.scroll_offset().y as f32;
  
          // Recurse up the positioning hierarchy
@@ -22975,7 +23293,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
              .unwrap_or(crate::util::Point { x, y })
      }
  
-@@ -1818,8 +2821,28 @@
+@@ -1818,8 +2827,28 @@
  
          let root_layout = inline_root.unrounded_layout();
          let content_box_inset = root_layout.padding + root_layout.border;
@@ -23006,7 +23324,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
  
          fn union(acc: &mut Option<taffy::Rect<f32>>, left: f32, top: f32, right: f32, bottom: f32) {
              *acc = Some(match *acc {
-@@ -1877,11 +2900,36 @@
+@@ -1877,11 +2906,36 @@
                  }
              }
  
@@ -28223,6 +28541,271 @@ diff --git a/packages/blitz-dom/src/scrolling.rs b/packages/blitz-dom/src/scroll
  
                  let scroll_width = node.scroll_width();
                  let scroll_height = node.scroll_height();
+diff --git a/packages/blitz-dom/src/shadow.rs b/packages/blitz-dom/src/shadow.rs
+new file mode 100644
+--- /dev/null
++++ b/packages/blitz-dom/src/shadow.rs
+@@ -0,0 +1,260 @@
++//! pyro: shadow trees (CSS Scoping 1) in the flat tree pyro-dom's render tree gives Blitz.
++//!
++//! The render tree is the flat tree: a shadow host's children are its shadow tree's nodes (the
++//! host carries the [`SHADOW_HOST_ATTR`] marker), and a slot of a shadow tree with nodes
++//! assigned to it has those, light children of its host, as its children (it carries the
++//! [`ASSIGNED_SLOT_ATTR`] marker); a slot without has its fallback content. Layout and
++//! inheritance follow that tree as before. Selector matching and the cascade need the node trees
++//! the elements belong to, which follow from it:
++//!
++//! - the tree of an element whose parent is a host is that host's shadow tree; of one whose
++//!   parent is an assigned slot, the tree of the slot's host; else its parent's
++//!   ([`Node::containing_shadow_host_id`]);
++//! - its parent in that tree ([`Node::dom_parent_element`], selector combinators) is none for the
++//!   first level of a shadow tree (its parent is the shadow root: `:host` reaches the host), the
++//!   host for an assigned node, else its parent. Its siblings are its parent's other children:
++//!   an assigned node's are the nodes assigned to the same slot (not the host's other light
++//!   children, which the render tree leaves out when unassigned);
++//! - each host keeps the sheets of its shadow tree's `<style>` and `<link>` elements (adopted
++//!   sheets come as `<style>` elements) in a Stylo [`AuthorStyles`], whose cascade data Stylo's
++//!   rule collector applies to the shadow tree, `:host`, `::slotted()` and `::part()`
++//!   ([`ShadowStyles`]), instead of the document's stylist.
++
++use std::collections::BTreeMap;
++
++use blitz_traits::node_id::NodeId;
++use style::author_styles::AuthorStyles;
++use style::invalidation::element::restyle_hints::RestyleHint;
++use style::stylesheets::DocumentStyleSheet;
++
++use crate::BaseDocument;
++use crate::node::{Node, NodeFlags};
++
++/// Name (in pyro-dom's state namespace, [`crate::PYRO_STATE_NS`]) of the marker attribute of a
++/// shadow host.
++pub const SHADOW_HOST_ATTR: &str = "shadow-host";
++/// Name (in [`crate::PYRO_STATE_NS`]) of the marker attribute of a slot whose children are the
++/// nodes assigned to it.
++pub const ASSIGNED_SLOT_ATTR: &str = "assigned-slot";
++
++/// The styles of a shadow root: the sheets of its tree's `<style>` and `<link>` elements, in
++/// node order, and Stylo's cascade data of them.
++pub(crate) struct ShadowStyles {
++    pub(crate) styles: AuthorStyles<DocumentStyleSheet>,
++    pub(crate) sheets: BTreeMap<NodeId, DocumentStyleSheet>,
++}
++
++impl ShadowStyles {
++    fn new() -> Self {
++        ShadowStyles { styles: AuthorStyles::new(), sheets: BTreeMap::new() }
++    }
++}
++
++impl Node {
++    /// Whether the element is a shadow host (its children are its shadow tree's).
++    #[inline]
++    pub fn is_shadow_host(&self) -> bool {
++        self.flags.contains(NodeFlags::IS_SHADOW_HOST)
++    }
++
++    /// Whether the element is a slot whose children are the nodes assigned to it.
++    #[inline]
++    pub fn is_assigned_slot(&self) -> bool {
++        self.flags.contains(NodeFlags::IS_ASSIGNED_SLOT)
++    }
++
++    /// The host of the shadow tree the node is in; `None` in the document's tree.
++    pub fn containing_shadow_host_id(&self) -> Option<NodeId> {
++        if !self.tree().has_shadow_hosts {
++            return None;
++        }
++        let mut child = self;
++        loop {
++            let parent = self.with(child.parent?);
++            if parent.is_shadow_host() {
++                return Some(parent.id);
++            }
++            if parent.is_assigned_slot() {
++                // An assigned node is in the tree of the host whose shadow tree has the slot.
++                let host = parent.containing_shadow_host_id()?;
++                return crate::util::ensure_stack(|| self.with(host).containing_shadow_host_id());
++            }
++            child = parent;
++        }
++    }
++
++    /// The element's parent in its node tree, for selector matching: `None` at the first level of
++    /// a shadow tree (its parent is the shadow root) and at the top of the document; the host
++    /// for a node assigned to a slot.
++    pub fn dom_parent_element(&self) -> Option<&Node> {
++        let parent = self.with(self.parent?);
++        if self.tree().has_shadow_hosts {
++            if parent.is_shadow_host() {
++                return None;
++            }
++            if parent.is_assigned_slot() {
++                return parent.containing_shadow_host_id().map(|host| self.with(host));
++            }
++        }
++        parent.is_element().then_some(parent)
++    }
++
++    /// Whether the node's parent in its node tree is a shadow root.
++    #[inline]
++    pub fn parent_is_shadow_root(&self) -> bool {
++        self.tree().has_shadow_hosts && self.parent.is_some_and(|p| self.with(p).is_shadow_host())
++    }
++
++    /// The slot the node is assigned to.
++    #[inline]
++    pub fn assigned_slot_id(&self) -> Option<NodeId> {
++        if !self.tree().has_shadow_hosts {
++            return None;
++        }
++        self.parent.filter(|&p| self.with(p).is_assigned_slot())
++    }
++
++    /// The cascade data of the shadow root of this host.
++    pub(crate) fn shadow_cascade_data(&self) -> Option<&style::stylist::CascadeData> {
++        if !self.is_shadow_host() {
++            return None;
++        }
++        self.tree().shadow_roots.get(&self.id).map(|root| &*root.styles.data)
++    }
++}
++
++/// The `inner:outer` mappings of an `exportparts` value (`name` alone maps a name to itself);
++/// invalid entries are left out.
++pub(crate) fn export_parts(value: &str) -> impl Iterator<Item = (&str, &str)> {
++    value.split(',').filter_map(|entry| {
++        let mut sides = entry.split(':');
++        let inner = sides.next()?.trim_matches(|c: char| c.is_ascii_whitespace());
++        let outer = match sides.next() {
++            Some(outer) => outer.trim_matches(|c: char| c.is_ascii_whitespace()),
++            None => inner,
++        };
++        let valid = |s: &str| !s.is_empty() && !s.contains(|c: char| c.is_ascii_whitespace());
++        (sides.next().is_none() && valid(inner) && valid(outer)).then_some((inner, outer))
++    })
++}
++
++/// Whether `name` is one of the shadow markers of the render tree.
++pub(crate) fn is_shadow_marker(name: &markup5ever::QualName) -> bool {
++    &*name.ns == crate::PYRO_STATE_NS && matches!(&*name.local, SHADOW_HOST_ATTR | ASSIGNED_SLOT_ATTR)
++}
++
++impl BaseDocument {
++    /// `:host:has()`: Stylo's relative selector invalidation walks a change's ancestors up to
++    /// the shadow root, not on to the host, the anchor of a `:has()` on the featureless host. A
++    /// change in a shadow tree whose sheets have `:has()` rules restyles the host and its subtree.
++    pub(crate) fn invalidate_host_relative_selectors(&self, node: &Node) {
++        let Some(host) = node.containing_shadow_host_id() else { return };
++        let Some(host) = self.nodes.get(host) else { return };
++        if !host.shadow_cascade_data().is_some_and(|data| data.relative_invalidation_map_attributes().used) {
++            return;
++        }
++        if let Some(mut data) = style::dom::TElement::mutate_data(&host) {
++            data.hint.insert(RestyleHint::restyle_subtree());
++        }
++        host.set_dirty_descendants();
++        host.mark_ancestors_dirty();
++    }
++
++    /// Sets the element's shadow flags from its marker attributes.
++    pub(crate) fn sync_shadow_markers(&mut self, node_id: NodeId) {
++        let Some(node) = self.nodes.get_mut(node_id) else { return };
++        let Some(element) = node.element_data() else { return };
++        let mut host = false;
++        let mut slot = false;
++        for attr in element.attrs.iter() {
++            if &*attr.name.ns == crate::PYRO_STATE_NS {
++                match &*attr.name.local {
++                    SHADOW_HOST_ATTR => host = true,
++                    ASSIGNED_SLOT_ATTR => slot = true,
++                    _ => {}
++                }
++            }
++        }
++        node.flags.set(NodeFlags::IS_SHADOW_HOST, host);
++        node.flags.set(NodeFlags::IS_ASSIGNED_SLOT, slot);
++        if host || slot {
++            self.nodes.has_shadow_hosts = true;
++        }
++    }
++
++    /// Adds `sheet`, the sheet of the `<style>` or `<link>` element `node_id` in the shadow tree
++    /// of `host`, to that shadow root's styles (in node order).
++    pub(crate) fn add_shadow_stylesheet(&mut self, host: NodeId, node_id: NodeId, sheet: DocumentStyleSheet) {
++        let guard = self.guard.read();
++        let root = self.nodes.shadow_roots.entry(host).or_insert_with(ShadowStyles::new);
++        if let Some(old) = root.sheets.insert(node_id, sheet.clone()) {
++            let custom_media = root.styles.data.custom_media_map();
++            root.styles.stylesheets.remove_stylesheet(None, custom_media, old, &guard);
++        }
++        let before = root.sheets.range((std::ops::Bound::Excluded(node_id), std::ops::Bound::Unbounded)).next();
++        match before.map(|(_, s)| s.clone()) {
++            Some(before) => root.styles.stylesheets.insert_stylesheet_before(sheet, before, &guard),
++            None => root.styles.stylesheets.append_stylesheet(sheet, &guard),
++        }
++        self.shadow_sheet_hosts.insert(node_id, host);
++    }
++
++    /// Removes the sheet of element `node_id` from the shadow root that holds it; whether one did.
++    pub(crate) fn remove_shadow_stylesheet(&mut self, node_id: NodeId) -> bool {
++        let Some(host) = self.shadow_sheet_hosts.remove(&node_id) else { return false };
++        let guard = self.guard.read();
++        if let Some(root) = self.nodes.shadow_roots.get_mut(&host)
++            && let Some(sheet) = root.sheets.remove(&node_id)
++        {
++            let custom_media = root.styles.data.custom_media_map();
++            root.styles.stylesheets.remove_stylesheet(None, custom_media, sheet, &guard);
++        }
++        true
++    }
++
++    /// Rebuilds the cascade data of the shadow roots whose sheets changed (the shadow trees,
++    /// hosts and assigned nodes are restyled), and drops the styles of hosts no longer in the
++    /// document.
++    pub(crate) fn flush_shadow_styles(&mut self) {
++        if self.nodes.shadow_roots.is_empty() {
++            return;
++        }
++        let gone: Vec<NodeId> = self
++            .nodes
++            .shadow_roots
++            .keys()
++            .copied()
++            .filter(|&host| {
++                !self.nodes.get(host).is_some_and(|node| node.is_shadow_host() && node.flags.is_in_document())
++            })
++            .collect();
++        for host in gone {
++            if let Some(root) = self.nodes.shadow_roots.remove(&host) {
++                for node_id in root.sheets.keys() {
++                    self.shadow_sheet_hosts.remove(node_id);
++                }
++            }
++        }
++        let guard = self.guard.read();
++        let mut restyle = Vec::new();
++        for (&host, root) in self.nodes.shadow_roots.iter_mut() {
++            if root.styles.stylesheets.dirty() {
++                root.styles.flush(&mut self.stylist, &guard);
++                restyle.push(host);
++            }
++        }
++        drop(guard);
++        for host in restyle {
++            // `:host` rules, the shadow tree and `::slotted()` (the assigned nodes are in the
++            // host's flat subtree).
++            self.nodes[host].set_restyle_hint(RestyleHint::restyle_subtree());
++        }
++    }
++
++    /// Marks every shadow root's sheets for a rebuild (the device changed: media queries).
++    pub(crate) fn invalidate_shadow_styles(&mut self) {
++        for root in self.nodes.shadow_roots.values_mut() {
++            root.styles.stylesheets.force_dirty();
++        }
++    }
++}
 diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
 --- a/packages/blitz-dom/src/stylo.rs
 +++ b/packages/blitz-dom/src/stylo.rs
@@ -28261,7 +28844,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  use style::selector_parser::PseudoElement;
  use style::selector_parser::RestyleDamage;
  use style::stylesheets::layer_rule::LayerOrder;
-@@ -66,9 +73,38 @@
+@@ -66,16 +73,47 @@
  
  use style::values::computed::text::TextAlign as StyloTextAlign;
  
@@ -28298,10 +28881,20 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
      pub fn resolve_stylist(&mut self, now: f64) {
 -        style::thread_state::enter(ThreadState::LAYOUT);
 +        let _layout_thread_scope = LayoutThreadScope::enter();
++
++        // pyro: shadow roots' sheets (`crate::shadow`).
++        self.flush_shadow_styles();
  
          let guard = &self.guard;
          let guards = StylesheetGuards {
-@@ -150,9 +186,12 @@
+             author: &guard.read(),
+             ua_or_user: &guard.read(),
+         };
+-
+         let root = TDocument::as_node(&&self.nodes[self.root_node_id])
+             .first_element_child()
+             .unwrap()
+@@ -150,9 +188,12 @@
          let token = RecalcStyle::pre_traverse(root, &context);
  
          let mut nodes_needing_style_image_flush = Vec::new();
@@ -28314,7 +28907,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
              // `Sequential` bypasses Stylo's global pool. See `StyleThreading`.
              let parallel = matches!(self.style_threading, StyleThreading::Parallel);
              let _traversal_lock = parallel.then(|| {
-@@ -165,9 +204,49 @@
+@@ -165,9 +206,49 @@
              style::driver::traverse_dom(&traverser, token, rayon_pool);
              nodes_needing_style_image_flush =
                  std::mem::take(traverser.nodes_needing_style_image_flush.get_mut().unwrap());
@@ -28364,7 +28957,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  
          for opaque in self.snapshots.keys() {
              let id = NodeId::from_u64(opaque.id() as u64);
-@@ -210,8 +289,6 @@
+@@ -210,8 +291,6 @@
  
          // Maybe run garbage collection. Stylo has internal to determine whether to run or not.
          self.stylist.rule_tree().maybe_gc();
@@ -28373,7 +28966,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
      }
  
      /// Compute the style of an element which the regular style traversal
-@@ -223,12 +300,149 @@
+@@ -223,12 +302,149 @@
      /// (styling any unstyled ancestors along the way) without storing it on the
      /// node. Returns `None` for non-elements and elements outside the document.
      pub fn resolve_undisplayed_style(&self, node_id: NodeId) -> Option<Arc<ComputedValues>> {
@@ -28524,7 +29117,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  
          let guard = &self.guard;
          let guards = StylesheetGuards {
-@@ -256,9 +470,7 @@
+@@ -256,9 +472,7 @@
              resolve_style(&mut context, node, RuleInclusion::All, None, None)
          };
  
@@ -28535,7 +29128,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
      }
  }
  
-@@ -276,7 +488,8 @@
+@@ -276,7 +490,8 @@
      }
  
      fn is_html_document(&self) -> bool {
@@ -28545,7 +29138,57 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
      }
  
      fn quirks_mode(&self) -> QuirksMode {
-@@ -456,7 +669,10 @@
+@@ -305,15 +520,18 @@
+         self
+     }
+ 
++    // pyro: a shadow root stands for itself by its host (`crate::shadow`): the render tree has
++    // no node for it, the host's children being the shadow tree's.
+     fn host(&self) -> <Self::ConcreteNode as TNode>::ConcreteElement {
+-        todo!("Shadow roots not implemented")
++        self
+     }
+ 
+     fn style_data<'b>(&self) -> Option<&'b style::stylist::CascadeData>
+     where
+         Self: 'b,
+     {
+-        todo!("Shadow roots not implemented")
++        let host: &'b Node = self;
++        host.shadow_cascade_data()
+     }
+ }
+ 
+@@ -408,16 +626,25 @@
+         OpaqueElement::from_ptr(non_null)
+     }
+ 
++    // pyro: selectors walk the node trees, which are not the flat tree when there are shadow
++    // trees (`crate::shadow`).
+     fn parent_element(&self) -> Option<Self> {
+-        TElement::traversal_parent(self)
++        if !self.is_element() || !self.tree().has_shadow_hosts {
++            return TElement::traversal_parent(self);
++        }
++        self.dom_parent_element()
+     }
+ 
+     fn parent_node_is_shadow_root(&self) -> bool {
+-        false
++        self.is_element() && self.parent_is_shadow_root()
+     }
+ 
+     fn containing_shadow_host(&self) -> Option<Self> {
+-        None
++        self.containing_shadow_host_id().map(|host| self.with(host))
++    }
++
++    fn assigned_slot(&self) -> Option<Self> {
++        self.assigned_slot_id().map(|slot| self.with(slot))
+     }
+ 
+     fn is_pseudo_element(&self) -> bool {
+@@ -456,7 +683,10 @@
      }
  
      fn is_html_element_in_html_document(&self) -> bool {
@@ -28557,7 +29200,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
      }
  
      fn has_local_name(&self, local_name: &LocalName) -> bool {
-@@ -493,7 +709,7 @@
+@@ -493,7 +723,7 @@
      fn match_non_ts_pseudo_class(
          &self,
          pseudo_class: &<Self::Impl as selectors::SelectorImpl>::NonTSPseudoClass,
@@ -28566,15 +29209,18 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
      ) -> bool {
          match *pseudo_class {
              NonTSPseudoClass::Active => self.element_state().contains(ElementState::ACTIVE),
-@@ -501,44 +717,67 @@
+@@ -501,44 +731,69 @@
                  .element_state()
                  .intersects(ElementState::VISITED_OR_UNVISITED),
              NonTSPseudoClass::Checked => self.element_state().contains(ElementState::CHECKED),
 -            NonTSPseudoClass::Valid => false,
 -            NonTSPseudoClass::Invalid => false,
+-            NonTSPseudoClass::Defined => false,
 +            NonTSPseudoClass::Valid => self.element_state().contains(ElementState::VALID),
 +            NonTSPseudoClass::Invalid => self.element_state().contains(ElementState::INVALID),
-             NonTSPseudoClass::Defined => false,
++            // pyro: every element but a custom element not defined yet (pyro-dom's `undefined`
++            // state token).
++            NonTSPseudoClass::Defined => self.element_state().contains(ElementState::DEFINED),
              NonTSPseudoClass::Disabled => self.element_state().contains(ElementState::DISABLED),
              NonTSPseudoClass::Enabled => self.element_state().contains(ElementState::ENABLED),
              NonTSPseudoClass::Focus => self.element_state().contains(ElementState::FOCUS),
@@ -28657,7 +29303,43 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
          }
      }
  
-@@ -641,6 +880,16 @@
+@@ -586,7 +841,8 @@
+     }
+ 
+     fn is_html_slot_element(&self) -> bool {
+-        false
++        self.element_data()
++            .is_some_and(|e| e.name.local == local_name!("slot") && e.name.ns == ns!(html))
+     }
+ 
+     fn has_id(
+@@ -612,15 +868,21 @@
+         })
+     }
+ 
++    // pyro: `exportparts` maps the host's inner part names to outer ones: the inner name an outer
++    // one stands for.
+     fn imported_part(
+         &self,
+-        _name: &<Self::Impl as selectors::SelectorImpl>::Identifier,
++        name: &<Self::Impl as selectors::SelectorImpl>::Identifier,
+     ) -> Option<<Self::Impl as selectors::SelectorImpl>::Identifier> {
+-        None
++        let value = self.attr(local_name!("exportparts"))?;
++        crate::shadow::export_parts(value)
++            .find(|(_, outer)| *outer == &*name.0)
++            .map(|(inner, _)| AtomIdent::from(inner))
+     }
+ 
+-    fn is_part(&self, _name: &<Self::Impl as selectors::SelectorImpl>::Identifier) -> bool {
+-        false
++    fn is_part(&self, name: &<Self::Impl as selectors::SelectorImpl>::Identifier) -> bool {
++        self.attr(local_name!("part"))
++            .is_some_and(|parts| parts.split_ascii_whitespace().any(|p| p == &*name.0))
+     }
+ 
+     fn is_empty(&self) -> bool {
+@@ -641,6 +903,16 @@
      }
  
      fn add_element_unique_hashes(&self, filter: &mut selectors::bloom::BloomFilter) -> bool {
@@ -28674,7 +29356,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
          each_relevant_element_hash(*self, |hash| filter.insert_hash(hash & BLOOM_HASH_MASK));
          true
      }
-@@ -651,6 +900,22 @@
+@@ -651,19 +923,42 @@
  
      type TraversalChildrenIterator = Traverser<'a>;
  
@@ -28697,7 +29379,69 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
      fn as_node(&self) -> Self::ConcreteNode {
          self
      }
-@@ -806,6 +1071,8 @@
+ 
++    // pyro: styles inherit through the flat tree (a slot's assigned nodes from the slot, a shadow
++    // tree's first level from the host), which `parent_element` leaves for the node trees
++    // (`crate::shadow`).
++    fn inheritance_parent(&self) -> Option<Self> {
++        TElement::traversal_parent(self)
++    }
++
+     fn implicit_scope_for_sheet_in_shadow_root(
+         _opaque_host: OpaqueElement,
+         _sheet_index: usize,
+     ) -> Option<ImplicitScopeRoot> {
+         // We cannot currently implement this as we are using the NodeId as the OpaqueElement,
+-        // and need a reference to the Slab to convert it back into an Element
+-        //
+-        // Luckily it is only needed for shadow dom.
+-        todo!();
++        // and need a reference to the Slab to convert it back into an Element.
++        // pyro: a prelude-less `@scope` in a shadow tree's sheet then scopes nothing (its rules
++        // do not apply) rather than panicking.
++        None
+     }
+ 
+     fn traversal_children(&self) -> style::dom::LayoutIterator<Self::TraversalChildrenIterator> {
+@@ -701,11 +996,35 @@
+     }
+ 
+     fn has_part_attr(&self) -> bool {
+-        false
++        self.attr(local_name!("part")).is_some()
+     }
+ 
+     fn exports_any_part(&self) -> bool {
+-        false
++        self.attr(local_name!("exportparts")).is_some()
++    }
++
++    fn each_part<F>(&self, mut callback: F)
++    where
++        F: FnMut(&style::values::AtomIdent),
++    {
++        if let Some(parts) = self.attr(local_name!("part")) {
++            for part in parts.split_ascii_whitespace() {
++                callback(&AtomIdent::from(part));
++            }
++        }
++    }
++
++    fn each_exported_part<F>(&self, name: &style::values::AtomIdent, mut callback: F)
++    where
++        F: FnMut(&style::values::AtomIdent),
++    {
++        if let Some(value) = self.attr(local_name!("exportparts")) {
++            for (inner, outer) in crate::shadow::export_parts(value) {
++                if inner == &*name.0 {
++                    callback(&AtomIdent::from(outer));
++                }
++            }
++        }
+     }
+ 
+     fn id(&self) -> Option<&style::Atom> {
+@@ -806,6 +1125,8 @@
      fn may_have_animations(&self) -> bool {
          self.element_data()
              .is_some_and(|data| data.may_have_animations.load(Ordering::Relaxed))
@@ -28706,7 +29450,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
      }
  
      fn set_may_have_animations(&self) {
-@@ -818,6 +1085,10 @@
+@@ -818,6 +1139,10 @@
          if !self.may_have_animations() {
              return false;
          }
@@ -28717,7 +29461,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
          let key = AnimationSetKey::new_for_non_pseudo(TNode::opaque(&TElement::as_node(self)));
          context
              .animations
-@@ -852,6 +1123,10 @@
+@@ -852,6 +1177,10 @@
          &self,
          context: &SharedStyleContext,
      ) -> Option<Arc<Locked<PropertyDeclarationBlock>>> {
@@ -28728,7 +29472,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
          let opaque = TNode::opaque(&TElement::as_node(self));
          context.animations.get_animation_declarations(
              &AnimationSetKey::new_for_non_pseudo(opaque),
-@@ -864,6 +1139,9 @@
+@@ -864,6 +1193,9 @@
          &self,
          context: &SharedStyleContext,
      ) -> Option<Arc<Locked<PropertyDeclarationBlock>>> {
@@ -28738,7 +29482,17 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
          let opaque = TNode::opaque(&TElement::as_node(self));
          context.animations.get_transition_declarations(
              &AnimationSetKey::new_for_non_pseudo(opaque),
-@@ -881,23 +1159,43 @@
+@@ -873,31 +1205,51 @@
+     }
+ 
+     fn shadow_root(&self) -> Option<<Self::ConcreteNode as TNode>::ConcreteShadowRoot> {
+-        None
++        self.is_shadow_host().then_some(*self)
+     }
+ 
+     fn containing_shadow(&self) -> Option<<Self::ConcreteNode as TNode>::ConcreteShadowRoot> {
+-        None
++        self.containing_shadow_host_id().map(|host| self.with(host))
      }
  
      fn get_attr(&self, attr: &style::LocalName, ns: &style::Namespace) -> Option<String> {
@@ -28788,7 +29542,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
      }
  
      fn is_html_document_body_element(&self) -> bool {
-@@ -917,27 +1215,168 @@
+@@ -917,27 +1269,168 @@
          root_element.children.contains(&self.id)
      }
  
@@ -28835,7 +29589,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
 +    fn namespace(&self) -> &Namespace {
 +        &self.element_data().expect("Not an element").name.ns
 +    }
- 
++
 +    fn query_container_size(
 +        &self,
 +        display: &style::values::specified::Display,
@@ -28923,7 +29677,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
 +    fn next(&mut self) -> Option<Self::Item> {
 +        let node_id = self.parent.children.get(self.child_index)?;
 +        let node = self.parent.with(*node_id);
-+
+ 
 +        self.child_index += 1;
 +
 +        Some(node)
@@ -28967,7 +29721,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
              ));
          };
  
-@@ -1083,6 +1522,37 @@
+@@ -1083,6 +1576,37 @@
                  .find(|declaration| matches!(declaration, PropertyDeclaration::FontFamily(_)))
          }
  
@@ -29005,7 +29759,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
          // `<input type=image>` is the only input type that is replaced
          // content, and it is the only one that takes the embedded-content
          // presentational attributes. The type attribute is matched ASCII
-@@ -1100,6 +1570,23 @@
+@@ -1100,6 +1624,23 @@
              let name = &attr.name.local;
              let value = attr.value.as_str();
  
@@ -29029,7 +29783,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
              if *name == local_name!("lang") {
                  if attr.name.ns == ns!(xml) {
                      lang = Some(value);
-@@ -1358,6 +1845,15 @@
+@@ -1358,6 +1899,15 @@
                  }
              }
  
@@ -29045,7 +29799,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
              if *name == local_name!("bgcolor") {
                  use style::values::specified::Color;
                  if let Some((r, g, b, a)) = parse_color_attr(value) {
-@@ -1373,148 +1869,59 @@
+@@ -1373,148 +1923,59 @@
              }
          }
  
@@ -29233,7 +29987,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
          None
      }
  }
-@@ -1527,6 +1934,36 @@
+@@ -1527,6 +1988,36 @@
      /// dedicated storage on the node (see `flush_image_layers_from_style`)
      /// because their style changed during this traversal.
      nodes_needing_style_image_flush: Mutex<Vec<NodeId>>,
@@ -29270,7 +30024,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  }
  
  impl<'a> RecalcStyle<'a> {
-@@ -1534,11 +1971,184 @@
+@@ -1534,11 +2025,186 @@
          RecalcStyle {
              context,
              nodes_needing_style_image_flush: Mutex::new(Vec::new()),
@@ -29368,6 +30122,8 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
 +                sibling_traversal_map,
 +            }
 +        }
++        // pyro: `:host:has()` (`crate::shadow`).
++        self.invalidate_host_relative_selectors(node);
 +        let prev = node.prev_sibling_element();
 +        let next = node.next_sibling_element();
 +        invalidator(node, SiblingTraversalMap::default()).invalidate_relative_selectors_for_dom_mutation(
@@ -29455,7 +30211,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  impl<'dom> DomTraversal<BlitzNode<'dom>> for RecalcStyle<'_> {
      fn process_preorder<F: FnMut(BlitzNode<'dom>)>(
          &self,
-@@ -1546,14 +2156,200 @@
+@@ -1546,14 +2212,200 @@
          node: BlitzNode<'dom>,
          note_child: F,
      ) {
@@ -29656,7 +30412,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
              }
  
              if !data.damage.is_empty() {
-@@ -1597,6 +2393,12 @@
+@@ -1597,6 +2449,12 @@
      }
  }
  
@@ -29669,7 +30425,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  /// Flush updated pseudo-element (`::before`/`::after`) styles from the owning
  /// element's freshly-computed stylo data to the pseudo-element's anonymous node.
  ///
-@@ -1669,12 +2471,41 @@
+@@ -1669,12 +2527,41 @@
                      .push(pe_node_id);
              }
          }
@@ -29711,7 +30467,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  /// Whether a node's `background-image`/`mask-image` layers need flushing to
  /// dedicated storage on the node: the URLs referenced by the new style differ
  /// from the image data currently stored on the node.
-@@ -1689,11 +2520,12 @@
+@@ -1689,11 +2576,12 @@
              // (a style list of `none` layers and empty storage are in sync).
              return style_images
                  .iter()
@@ -29726,7 +30482,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
                  (Image::Url(ComputedUrl::Valid(url)), Some(data)) => **url != *data.url,
                  (Image::Url(ComputedUrl::Valid(_)), None) => true,
                  (_, Some(_)) => true,
-@@ -1707,6 +2539,26 @@
+@@ -1707,6 +2595,26 @@
              &style.get_background().background_image.0,
              &el.background_images,
          ) || out_of_sync(&style.get_svg().mask_image.0, &el.mask_images)
@@ -29753,7 +30509,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
      })
  }
  
-@@ -1737,3 +2589,734 @@
+@@ -1737,3 +2645,734 @@
  
      // let val = CSSInlineStyleDeclaration();
  }
@@ -31962,7 +32718,7 @@ diff --git a/packages/blitz-dom/src/tree.rs b/packages/blitz-dom/src/tree.rs
      /// Bumped whenever box geometry may have moved (layout ran or a scroll
      /// offset changed). Values derived from `final_layout()` (e.g. hoisted
      /// paint child offsets) are memoised against it. Starts at 1 so that a
-@@ -41,14 +52,21 @@
+@@ -41,14 +52,28 @@
      /// Scroll offset of the viewport (the root element scrolls the viewport,
      /// so its offset lives here rather than on the node).
      viewport_scroll: crate::Point<f64>,
@@ -31970,6 +32726,11 @@ diff --git a/packages/blitz-dom/src/tree.rs b/packages/blitz-dom/src/tree.rs
 +    pub(crate) xml_document: bool,
 +    /// pyro: [`crate::DocumentConfig::content_language`].
 +    pub(crate) content_language: Option<Box<str>>,
++    /// pyro: the styles of each shadow root, by host (`crate::shadow`).
++    pub(crate) shadow_roots: HashMap<NodeId, crate::shadow::ShadowStyles>,
++    /// pyro: an element of this tree has been a shadow host (`crate::shadow`): until then,
++    /// every node is in the document's tree and its DOM parent is its parent.
++    pub(crate) has_shadow_hosts: bool,
  }
  
  impl NodeTree {
@@ -31981,10 +32742,12 @@ diff --git a/packages/blitz-dom/src/tree.rs b/packages/blitz-dom/src/tree.rs
              viewport_scroll: crate::Point::ZERO,
 +            xml_document: false,
 +            content_language: None,
++            shadow_roots: HashMap::new(),
++            has_shadow_hosts: false,
          }
      }
  
-@@ -103,6 +121,7 @@
+@@ -103,6 +128,7 @@
  
      /// Remove the node with the given id, returning it if it was still live.
      pub(crate) fn remove(&mut self, id: NodeId) -> Option<Node> {

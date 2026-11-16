@@ -2139,7 +2139,11 @@ impl ElementCx<'_, '_> {
                 let Some(style) = node.primary_styles() else {
                     return false;
                 };
-                if style.get_inherited_box().visibility != StyloVisibility::Visible {
+                // pyro: a `display: contents` element is a span of its text's styles (blitz-dom's
+                // inline build) without a box.
+                if style.get_inherited_box().visibility != StyloVisibility::Visible
+                    || style.clone_display().is_contents()
+                {
                     return false;
                 }
                 let background = style.get_background();

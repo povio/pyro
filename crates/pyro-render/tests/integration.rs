@@ -70,6 +70,7 @@ mod profiling_timers;
 mod render;
 mod sampled_animations;
 mod selection_highlight;
+mod shadow_scoping;
 mod size_containment;
 mod sizing_keywords;
 mod soft_hyphens;

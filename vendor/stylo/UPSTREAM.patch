@@ -734,8 +734,8 @@ diff -ruN a/servo/restyle_damage.rs b/servo/restyle_damage.rs
  fn compute_damage(old: &ComputedValues, new: &ComputedValues) -> ServoRestyleDamage {
 diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
 --- a/servo/selector_parser.rs	2026-11-11 19:55:57
-+++ b/servo/selector_parser.rs	2026-11-15 23:53:06
-@@ -116,6 +116,16 @@
++++ b/servo/selector_parser.rs	2026-11-16 14:03:14
+@@ -116,6 +116,32 @@
      fn parses_as_element_backed(&self) -> bool {
          matches!(self, Self::DetailsContent)
      }
@@ -749,10 +749,26 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
 +    fn is_before_or_after(&self) -> bool {
 +        matches!(self, Self::Before | Self::After)
 +    }
++
++    // pyro: `::slotted()` can be followed by a tree-abiding pseudo-element (CSS Scoping 1 § 3.2.2),
++    // and, as in Blink, by the pseudo-elements of form controls and `<details>`
++    // (`::slotted(span)::before`, `::slotted(*)::placeholder`). Upstream (the trait's default)
++    // dropped such rules.
++    fn valid_after_slotted(&self) -> bool {
++        matches!(
++            self,
++            Self::Before
++                | Self::After
++                | Self::Marker
++                | Self::Placeholder
++                | Self::FileSelectorButton
++                | Self::DetailsContent
++        )
++    }
  }
  
  /// The number of eager pseudo-elements. Keep this in sync with cascade_type.
-@@ -376,6 +386,9 @@
+@@ -376,6 +402,9 @@
      /// The :state` pseudo-class.
      CustomState(CustomState),
      Default,
@@ -762,19 +778,19 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
      Defined,
      Disabled,
      Enabled,
-@@ -441,6 +454,11 @@
+@@ -439,6 +468,11 @@
+         if let Lang(ref lang) = *self {
+             dest.write_str(":lang(")?;
              serialize_identifier(lang, dest)?;
-             return dest.write_char(')');
-         }
++            return dest.write_char(')');
++        }
 +        if let Dir(ref dir) = *self {
 +            dest.write_str(":dir(")?;
 +            serialize_identifier(dir, dest)?;
-+            return dest.write_char(')');
-+        }
+             return dest.write_char(')');
+         }
  
-         dest.write_str(match *self {
-             Self::Active => ":active",
-@@ -485,7 +503,7 @@
+@@ -485,7 +519,7 @@
              Self::UserValid => ":user-valid",
              Self::Valid => ":valid",
              Self::Visited => ":visited",
@@ -783,7 +799,7 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
          })
      }
  }
-@@ -531,7 +549,7 @@
+@@ -531,7 +565,7 @@
              Self::UserValid => ElementState::USER_VALID,
              Self::Valid => ElementState::VALID,
              Self::Visited => ElementState::VISITED,
@@ -792,16 +808,16 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
                  ElementState::empty()
              },
          }
-@@ -697,6 +715,9 @@
+@@ -696,6 +730,9 @@
+             "state" => {
                  let result = AtomIdent::from(parser.expect_ident()?.as_ref());
                  NonTSPseudoClass::CustomState(CustomState(result))
-             },
++            },
 +            "dir" if !after_part => {
 +                NonTSPseudoClass::Dir(parser.expect_ident()?.to_ascii_lowercase().into())
-+            },
+             },
              _ => return Err(ParseError::custom(SelectorParseErrorKind::UnexpectedIdent)),
          };
- 
 diff -ruN a/style_adjuster.rs b/style_adjuster.rs
 --- a/style_adjuster.rs	2026-11-11 19:55:57
 +++ b/style_adjuster.rs	2026-11-15 20:15:35

@@ -227,6 +227,10 @@ vello_cpu = { path = "vendor/vello_cpu" }
 anyrender_svg = { path = "vendor/anyrender_svg" }
 # Style sharing; see vendor/stylo/README.pyro.md.
 stylo = { path = "vendor/stylo" }
+# `:has()` and `:not()` on the featureless shadow host, `:host-context()`; see vendor/selectors/README.pyro.md.
+selectors = { path = "vendor/selectors" }
+# Sizes `:host-context()` selectors; see vendor/stylo_malloc_size_of/README.pyro.md.
+stylo_malloc_size_of = { path = "vendor/stylo_malloc_size_of" }
 # ASCII hosts with invalid xn-- labels pass through; see vendor/idna/README.pyro.md.
 idna = { path = "vendor/idna" }
 # WHATWG URL Standard fixes over url 2.5.8; see vendor/url/README.pyro.md.

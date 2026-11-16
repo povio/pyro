@@ -908,3 +908,9 @@ in a vertical writing mode, whose lines are laid out turned (blitz-dom keeps tho
 `src/text.rs` (`VerticalLine::run_placement`): a run stands upright or not by its first visible character; an
 empty inline box's strut (U+2061) or a bidi control at its start made the whole run sideways (WPT
 `text-spacing-trim-start-oof-001` in `vertical-rl`).
+## `display: contents` spans paint no box (WPT round 3, lane D)
+
+blitz-dom's inline build makes a `display: contents` element a style span of its text (font, spacing, colour:
+its README, "Shadow trees"), so its id is a glyph run's brush. `src/render.rs` (`paints`) gives it no inline box
+to paint (background, border, shadow, outline), and `src/render/clip_path.rs` no clip, mask, opacity or backdrop:
+it has no box (WPT css-display `display-contents-inline-001`, `-flex-001`, `-oof-*`, `-button`).

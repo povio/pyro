@@ -126,6 +126,22 @@ impl ::selectors::parser::PseudoElement for PseudoElement {
     fn is_before_or_after(&self) -> bool {
         matches!(self, Self::Before | Self::After)
     }
+
+    // pyro: `::slotted()` can be followed by a tree-abiding pseudo-element (CSS Scoping 1 § 3.2.2),
+    // and, as in Blink, by the pseudo-elements of form controls and `<details>`
+    // (`::slotted(span)::before`, `::slotted(*)::placeholder`). Upstream (the trait's default)
+    // dropped such rules.
+    fn valid_after_slotted(&self) -> bool {
+        matches!(
+            self,
+            Self::Before
+                | Self::After
+                | Self::Marker
+                | Self::Placeholder
+                | Self::FileSelectorButton
+                | Self::DetailsContent
+        )
+    }
 }
 
 /// The number of eager pseudo-elements. Keep this in sync with cascade_type.
