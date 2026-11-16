@@ -2046,6 +2046,22 @@ diff -ruN a/values/computed/image.rs b/values/computed/image.rs
              Image::LightDark(_) => unreachable!("Shouldn't have computed image-set values"),
          }
      }
+diff -ruN a/values/computed/length.rs b/values/computed/length.rs
+--- a/values/computed/length.rs	2026-11-11 19:55:57
++++ b/values/computed/length.rs	2026-11-16 23:22:52
+@@ -548,7 +548,11 @@
+             | Self::MinContent
+             | Self::FitContent
+             | Self::WebkitFillAvailable
+-            | Self::Stretch => {},
++            | Self::Stretch
++            | Self::CalcSizeAuto(_)
++            | Self::CalcSizeFitContent(_)
++            | Self::CalcSizeMinContent(_)
++            | Self::CalcSizeMaxContent(_) => {},
+             #[cfg(feature = "gecko")]
+             Self::MozAvailable => {},
+         }
 diff -ruN a/values/computed/mod.rs b/values/computed/mod.rs
 --- a/values/computed/mod.rs	2026-11-11 19:55:57
 +++ b/values/computed/mod.rs	2026-11-16 17:29:45
@@ -2290,6 +2306,33 @@ diff -ruN a/values/generics/image.rs b/values/generics/image.rs
          }
      }
  }
+diff -ruN a/values/generics/length.rs b/values/generics/length.rs
+--- a/values/generics/length.rs	2026-11-11 19:55:57
++++ b/values/generics/length.rs	2026-11-16 23:22:52
+@@ -174,6 +174,23 @@
+     FitContentFunction(LengthPercent),
+     AnchorSizeFunction(Box<GenericAnchorSizeFunction<Self>>),
+     AnchorContainingCalcFunction(LengthPercent),
++    /// pyro: `calc-size(auto, <calculation>)`, the calculation with its `size` as `100%`
++    /// (a percentage of the size the basis gives).
++    #[animation(error)]
++    #[css(function = "calc-size")]
++    CalcSizeAuto(LengthPercent),
++    /// pyro: `calc-size(fit-content, <calculation>)`, as `CalcSizeAuto`.
++    #[animation(error)]
++    #[css(function = "calc-size")]
++    CalcSizeFitContent(LengthPercent),
++    /// pyro: `calc-size(min-content, <calculation>)`, as `CalcSizeAuto`.
++    #[animation(error)]
++    #[css(function = "calc-size")]
++    CalcSizeMinContent(LengthPercent),
++    /// pyro: `calc-size(max-content, <calculation>)`, as `CalcSizeAuto`.
++    #[animation(error)]
++    #[css(function = "calc-size")]
++    CalcSizeMaxContent(LengthPercent),
+ }
+ 
+ impl<LengthPercent> SpecifiedValueInfo for GenericSize<LengthPercent>
 diff -ruN a/values/generics/mod.rs b/values/generics/mod.rs
 --- a/values/generics/mod.rs	2026-11-11 19:55:57
 +++ b/values/generics/mod.rs	2026-11-11 19:55:57
@@ -2947,6 +2990,70 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
 +    None,
 +    Auto,
 +}
+diff -ruN a/values/specified/calc.rs b/values/specified/calc.rs
+--- a/values/specified/calc.rs	2026-11-11 19:55:57
++++ b/values/specified/calc.rs	2026-11-16 23:22:52
+@@ -305,6 +305,9 @@
+         const ANCHOR = 1 << 0;
+         /// `anchor-size()` function.
+         const ANCHOR_SIZE = 1 << 1;
++        /// pyro: the `size` keyword of a `calc-size()` calculation, parsed as `100%` (whose
++        /// basis is then the size of the `calc-size()` basis); other percentages are invalid.
++        const CALC_SIZE = 1 << 2;
+     }
+ }
+ 
+@@ -927,6 +930,11 @@
+                 if let Ok(t) = NoCalcResolution::parse_dimension(value, unit) {
+                     return Ok(CalcNode::Leaf(Leaf::Resolution(t)));
+                 }
++                Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError))
++            },
++            &Token::Percentage { .. }
++                if flags.additional_functions.intersects(AdditionalFunctions::CALC_SIZE) =>
++            {
+                 Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError))
+             },
+             &Token::Percentage { unit_value, .. } => {
+@@ -970,6 +978,15 @@
+                 let function = CalcNode::math_function(context, name)?;
+                 CalcNode::parse(context, input, function, flags)
+             },
++            Token::Ident(ident)
++                if flags.additional_functions.intersects(AdditionalFunctions::CALC_SIZE)
++                    && ident.eq_ignore_ascii_case("size") =>
++            {
++                Ok(CalcNode::Leaf(Leaf::Percentage(CalcPercentageLeaf::new(
++                    1.0,
++                    Optional::Some(NumericBaseType::Length),
++                ))))
++            },
+             Token::Ident(ident) => {
+                 let leaf = match_ignore_ascii_case! { &**ident,
+                     "e" => Leaf::Number(NoCalcNumber::new(std::f32::consts::E)),
+@@ -1631,6 +1648,22 @@
+             .map_err(|()| ParseError::custom(StyleParseErrorKind::UnspecifiedError))
+     }
+ 
++    /// pyro: the calculation of a `calc-size()`, its `size` keyword as `100%`.
++    pub fn parse_calc_size_calculation(
++        context: &ParserContext,
++        input: &mut Parser,
++        clamping_mode: AllowedNumericType,
++    ) -> Result<CalcLengthPercentage, ParseError> {
++        let flags = CalcParseFlags {
++            additional_functions: AdditionalFunctions::CALC_SIZE,
++            percentage_context: PercentageContext::allowed_with_hint(NumericBaseType::Length),
++            ..Default::default()
++        };
++        Self::parse_argument(context, input, flags)?
++            .into_length_or_percentage(clamping_mode)
++            .map_err(|()| ParseError::custom(StyleParseErrorKind::UnspecifiedError))
++    }
++
+     /// Convenience parsing function for percentages.
+     pub fn parse_percentage(
+         context: &ParserContext,
 diff -ruN a/values/specified/counters.rs b/values/specified/counters.rs
 --- a/values/specified/counters.rs	2026-11-11 19:55:57
 +++ b/values/specified/counters.rs	2026-11-15 09:17:37
@@ -3373,7 +3480,7 @@ diff -ruN a/values/specified/image.rs b/values/specified/image.rs
          context: &ParserContext,
 diff -ruN a/values/specified/length.rs b/values/specified/length.rs
 --- a/values/specified/length.rs	2026-11-11 19:55:57
-+++ b/values/specified/length.rs	2026-11-16 15:05:29
++++ b/values/specified/length.rs	2026-11-16 23:22:52
 @@ -187,13 +187,14 @@
              "lvi" if !in_page_rule => Self::Lvi,
              "dvi" if !in_page_rule => Self::Dvi,
@@ -3396,6 +3503,45 @@ diff -ruN a/values/specified/length.rs b/values/specified/length.rs
              _ => return Err(()),
          })
      }
+@@ -1875,6 +1876,10 @@
+         parse_size_non_length!(Size, input, allow_webkit_fill_available,
+                                "auto" => Auto);
+         parse_fit_content_function!(Size, input, context, allow_quirks);
++        // pyro: `calc-size(<intrinsic keyword>, <calculation>)`.
++        if let Ok(size) = input.try_parse(|input| Self::parse_calc_size(context, input)) {
++            return Ok(size);
++        }
+ 
+         let allow_anchor = allow_anchor_functions == ParseAnchorFunctions::Yes
+             && crate::pref!("layout.css.anchor-positioning.enabled", gecko = true);
+@@ -1942,6 +1947,27 @@
+     #[inline]
+     pub fn zero_percent() -> Self {
+         GenericSize::LengthPercentage(NonNegativeLengthPercentage::zero_percent())
++    }
++    /// pyro: `calc-size(auto | fit-content | min-content | max-content, <calculation>)`.
++    fn parse_calc_size(context: &ParserContext, input: &mut Parser) -> Result<Self, ParseError> {
++        input.expect_function_matching("calc-size")?;
++        input.parse_nested_block(|input| {
++            let basis = try_match_ident_ignore_ascii_case! { input,
++                "auto" => 0u8,
++                "fit-content" => 1u8,
++                "min-content" => 2u8,
++                "max-content" => 3u8,
++            };
++            input.expect_comma()?;
++            let calc = CalcNode::parse_calc_size_calculation(context, input, AllowedNumericType::NonNegative)?;
++            let length = NonNegative(LengthPercentage::Calc(Box::new(calc)));
++            Ok(match basis {
++                0 => GenericSize::CalcSizeAuto(length),
++                1 => GenericSize::CalcSizeFitContent(length),
++                2 => GenericSize::CalcSizeMinContent(length),
++                _ => GenericSize::CalcSizeMaxContent(length),
++            })
++        })
+     }
+ }
+ 
 diff -ruN a/values/specified/mod.rs b/values/specified/mod.rs
 --- a/values/specified/mod.rs	2026-11-11 19:55:57
 +++ b/values/specified/mod.rs	2026-11-16 17:29:45

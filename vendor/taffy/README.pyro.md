@@ -569,3 +569,8 @@ hypothetical main size with the minimum winning over a smaller maximum; a column
 size is one line's (`collect_flex_lines`); `fit-content` in a min/max with nothing to fit into is max-content;
 percentage row gaps resolve only against a definite height; an overflowing `space-between` (not explicitly safe)
 falls back to plain `flex-start` (csswg-drafts#11937). Covered by `crates/pyro-render/tests/flex_content_sizes.rs`.
+
+`style/mod.rs` (`CalcSizeFunction`, `CoreStyle::calc_size_min`), `compute/flexbox.rs` (automatic minimum main size),
+`compute/block.rs` (`ratio_min_content_width`, `BlockItem::calc_size_min_width`, the content minimum of a box whose
+height follows its ratio): `min-width`/`min-height: calc-size(auto, <calculation>)` is the calculation of the
+automatic minimum size those compute (WPT css-values `calc-size-flex-*`, `calc-size-aspect-ratio-003..005`).

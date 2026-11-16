@@ -1532,6 +1532,14 @@ fn determine_flex_base_size(
                 .maybe_max(if content_ratio_item { transferred_min_size.main(dir) } else { None });
             clamped_min_content_size.maybe_max(padding_border_axes_sums.main(dir))
         });
+        // pyro: `min-width`/`min-height: calc-size(auto, ...)` is its calculation of the automatic
+        // minimum size (WPT css-values `calc-size-flex-*`).
+        if style_min_main_size.is_none() {
+            if let Some(function) = tree.get_flexbox_child_style(child.node).calc_size_min().main(dir) {
+                child.resolved_minimum_main_size =
+                    function.apply(child.resolved_minimum_main_size, |val, basis| tree.calc(val, basis));
+            }
+        }
 
         // pyro: a table is never smaller than its min-content size (Blink): its width in a row, its content
         // height at its width in a column, whatever its `min-width`/`min-height`.

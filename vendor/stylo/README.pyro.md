@@ -325,6 +325,16 @@ blitz-dom passes it to parley, which scales the lines (their READMEs).
 `StyleAdjuster::adjust_for_overflow` keeps `clip` when the other axis is `hidden` (Blink): that axis neither scrolls
 nor keeps a scroll offset. Other mixes still turn `visible` into `auto` and `clip` into `hidden` (WPT css-overflow
 `single-axis-overflow-scroll-to-clip`).
+## `calc-size()` (WPT round 3, lane LT)
+
+- `values/generics/length.rs` (`GenericSize::CalcSizeAuto`, `CalcSizeFitContent`, `CalcSizeMinContent`,
+  `CalcSizeMaxContent`), `values/specified/length.rs` (`Size::parse_calc_size`), `values/specified/calc.rs`
+  (`AdditionalFunctions::CALC_SIZE`, `CalcNode::parse_calc_size_calculation`), `values/computed/length.rs`:
+  `calc-size(auto | fit-content | min-content | max-content, <calculation>)` in the `Size` properties (`width`,
+  `height`, their logical and min forms). The calculation is kept as a length-percentage whose `size` keyword is
+  `100%` (other percentages are rejected), so its percentage basis is the size of the basis: layout resolves it
+  against that size (stylo_taffy, blitz-dom). A `<length-percentage>` or `calc-size()` basis, `any`, `max-*` and
+  interpolation are not supported; the value serializes as `calc-size(<calculation>)` with `size` as `100%`.
 
 ## Updating or dropping the patch
 

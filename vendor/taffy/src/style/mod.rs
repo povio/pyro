@@ -69,6 +69,31 @@ impl<T> CheapCloneStr for T where
 {
 }
 
+/// pyro: the calculation of a `calc-size()` (CSS Values 5 §6.1), a function of the size its
+/// basis gives.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub enum CalcSizeFunction {
+    /// `size` times this factor
+    Scale(f32),
+    /// This length, whatever the size
+    Length(f32),
+    /// A `calc()` whose percentage basis is the size (an opaque handle, as `CompactLength::calc`)
+    Calc(*const ()),
+}
+
+impl CalcSizeFunction {
+    /// The calculation applied to `size`, never negative.
+    #[inline]
+    pub fn apply(self, size: f32, calc_resolver: impl Fn(*const (), f32) -> f32) -> f32 {
+        let value = match self {
+            Self::Scale(factor) => size * factor,
+            Self::Length(length) => length,
+            Self::Calc(calc) => calc_resolver(calc, size),
+        };
+        value.max(0.0)
+    }
+}
+
 /// The core set of styles that are shared between all CSS layout nodes
 ///
 /// Note that all methods come with a default implementation which simply returns the default value for that style property
@@ -180,6 +205,12 @@ pub trait CoreStyle {
     #[inline(always)]
     fn aspect_ratio(&self) -> Option<f32> {
         Style::<Self::CustomIdent>::DEFAULT.aspect_ratio
+    }
+    /// pyro: `min-width`/`min-height` of the form `calc-size(auto, <calculation>)`: the
+    /// calculation, applied to the automatic minimum size the axis would have with `auto`.
+    #[inline(always)]
+    fn calc_size_min(&self) -> Size<Option<CalcSizeFunction>> {
+        Size { width: None, height: None }
     }
     /// pyro: the natural aspect ratio of a replaced element whose `aspect-ratio` is `auto` (its
     /// preferred aspect ratio, css-sizing-4 §5.1), width over height in the layout's axes. Read by

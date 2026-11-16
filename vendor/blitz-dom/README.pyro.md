@@ -2363,3 +2363,9 @@ whose text is a `::marker` `content` string keep the marker's font (not the bund
 
 A single-line text input's line is centred in its content box also when it is taller than the box (it overflows
 both edges, as in Blink; WPT css-overflow `input-scrollable-region-001`).
+- `src/layout/mod.rs` (`LayoutPassState::calc_size_inputs`, `has_calc_size`): a box whose `width` or `height` is
+  `calc-size()` is laid out as its basis first (Taffy, through stylo_taffy) and then with a known size: the
+  calculation of the size its parent gave it, else of its own measured size, in its `box-sizing` box, between
+  `min-*` and `max-*`. Measured in definite space, an `auto`/`fit-content` basis gives the space between the
+  calculations of its min-content and max-content widths (Blink's fit-content of the result). A size it measured
+  and its parent hands back is not calculated again (`calc_size_results`, per pass). Horizontal writing modes only.

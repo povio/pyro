@@ -284,6 +284,15 @@ impl<T: Deref<Target = ComputedValues>> taffy::CoreStyle for TaffyStyloStyle<T> 
     }
 
     #[inline]
+    fn calc_size_min(&self) -> taffy::Size<Option<taffy::CalcSizeFunction>> {
+        let position_styles = self.style.get_position();
+        self.size(taffy::Size {
+            width: convert::calc_size_auto(&position_styles.min_width),
+            height: convert::calc_size_auto(&position_styles.min_height),
+        })
+    }
+
+    #[inline]
     fn min_size(&self) -> taffy::Size<taffy::LengthPercentageAuto> {
         if self.flags.contains(StyleFlags::IS_SPLIT_INLINE) {
             return taffy::Size::auto();

@@ -388,6 +388,8 @@ struct BlockItem {
     /// pyro: the item's width is its height's through its preferred aspect ratio, with an
     /// automatic minimum: its min-content width, no larger than its `max-width` (css-sizing-4 §5.1).
     min_width_is_content: bool,
+    /// pyro: `min-width: calc-size(auto, ...)`, applied to that automatic minimum.
+    calc_size_min_width: Option<crate::style::CalcSizeFunction>,
     /// pyro: the item's width is its height's through its preferred aspect ratio.
     width_from_ratio: bool,
     /// pyro: `min-width`/`min-height` and `max-width`/`max-height` that are sizing keywords
@@ -729,6 +731,7 @@ fn compute_inner(
     };
     // pyro: the automatic minimum size in the block axis of a box whose height follows its ratio is
     // its content height (css-sizing-4 §5.1), unless it is a scroll container.
+    let calc_size_min_height = style.calc_size_min().height;
     let min_height_is_content = height_follows_ratio
         && style.min_size().height.is_auto()
         && !style.overflow().y.is_scroll_container()
@@ -933,7 +936,12 @@ fn compute_inner(
             // pyro: the ratio's height, or the content's when that is taller and `min-height` is
             // `auto` (never past `max-height`).
             Some(height) if min_height_is_content => {
-                height.max(intrinsic_outer_height.maybe_min(max_size.height))
+                // pyro: `min-height: calc-size(auto, ...)` is its calculation of the content height
+                let content = match calc_size_min_height {
+                    Some(function) => function.apply(intrinsic_outer_height, |val, basis| tree.calc(val, basis)),
+                    None => intrinsic_outer_height,
+                };
+                height.max(content.maybe_min(max_size.height))
             }
             Some(height) => height,
             None if inputs.sizing_mode == SizingMode::ContentSize => intrinsic_outer_height,
@@ -1285,6 +1293,7 @@ fn generate_item_list(
                 min_size: sizes.min_size,
                 max_size: sizes.max_size,
                 min_width_is_content,
+                calc_size_min_width: child_style.calc_size_min().width,
                 width_from_ratio: sizes.width_from_ratio,
                 min_size_keyword: child_style.min_size_keyword(),
                 max_size_keyword: child_style.max_size_keyword(),
@@ -1508,6 +1517,11 @@ fn ratio_min_content_width(
         crate::AbsoluteAxis::Horizontal,
         if item.is_in_same_bfc { Line::TRUE } else { Line::FALSE },
     );
+    // pyro: `min-width: calc-size(auto, ...)` is its calculation of it.
+    let width = match item.calc_size_min_width {
+        Some(function) => function.apply(width, |val, basis| tree.calc(val, basis)),
+        None => width,
+    };
     width.maybe_min(item.max_size.width)
 }
 
