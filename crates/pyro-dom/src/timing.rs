@@ -12,6 +12,16 @@
 //! `style` attributes, shorthands expanded, in cascade order (`!important`
 //! first, then inline, specificity, source order), plus the names of the
 //! `@keyframes` rules. None of these properties inherit.
+//!
+//! Values are parsed as the cascade parses them (Stylo: an invalid one is
+//! dropped, CSS-wide keywords apply) and kept as their computed values
+//! serialize (`0.15s`, `cubic-bezier(0.4, 0, 0.2, 1)`). A declaration with
+//! `var()` is resolved per element, with the element's custom properties,
+//! as at computed-value time ([`TimingRules::lists`]). `getComputedStyle`
+//! reports these properties from here too ([`TimingRules::computed_value`]),
+//! so what it says and what runs agree.
+
+use std::rc::Rc;
 
 use cssparser::{ParseError, Parser, Token};
 use rustc_hash::FxHashSet;
@@ -40,9 +50,112 @@ enum Longhand {
     TransitionBehavior,
 }
 
-/// One declaration: the longhand's comma-separated list, lowercased except
-/// for animation names.
-type Declared = (Longhand, Vec<String>, bool);
+impl Longhand {
+    const ALL: [Longhand; 14] = [
+        Longhand::AnimationName,
+        Longhand::AnimationDuration,
+        Longhand::AnimationDelay,
+        Longhand::AnimationIterationCount,
+        Longhand::AnimationTimingFunction,
+        Longhand::AnimationDirection,
+        Longhand::AnimationFillMode,
+        Longhand::AnimationPlayState,
+        Longhand::AnimationComposition,
+        Longhand::TransitionProperty,
+        Longhand::TransitionDuration,
+        Longhand::TransitionDelay,
+        Longhand::TransitionTimingFunction,
+        Longhand::TransitionBehavior,
+    ];
+
+    fn name(self) -> &'static str {
+        match self {
+            Longhand::AnimationName => "animation-name",
+            Longhand::AnimationDuration => "animation-duration",
+            Longhand::AnimationDelay => "animation-delay",
+            Longhand::AnimationIterationCount => "animation-iteration-count",
+            Longhand::AnimationTimingFunction => "animation-timing-function",
+            Longhand::AnimationDirection => "animation-direction",
+            Longhand::AnimationFillMode => "animation-fill-mode",
+            Longhand::AnimationPlayState => "animation-play-state",
+            Longhand::AnimationComposition => "animation-composition",
+            Longhand::TransitionProperty => "transition-property",
+            Longhand::TransitionDuration => "transition-duration",
+            Longhand::TransitionDelay => "transition-delay",
+            Longhand::TransitionTimingFunction => "transition-timing-function",
+            Longhand::TransitionBehavior => "transition-behavior",
+        }
+    }
+
+    fn by_name(name: &str) -> Option<Longhand> {
+        Longhand::ALL.into_iter().find(|l| l.name() == name)
+    }
+
+    /// The computed value of its initial value, as one item.
+    fn initial(self) -> &'static str {
+        match self {
+            Longhand::AnimationName => "none",
+            Longhand::AnimationDuration
+            | Longhand::AnimationDelay
+            | Longhand::TransitionDuration
+            | Longhand::TransitionDelay => "0s",
+            Longhand::AnimationIterationCount => "1",
+            Longhand::AnimationTimingFunction | Longhand::TransitionTimingFunction => "ease",
+            Longhand::AnimationDirection | Longhand::TransitionBehavior => "normal",
+            Longhand::AnimationFillMode => "none",
+            Longhand::AnimationPlayState => "running",
+            Longhand::AnimationComposition => "replace",
+            Longhand::TransitionProperty => "all",
+        }
+    }
+}
+
+/// The longhands a property this module reads sets (`-webkit-` names
+/// stripped first). The `animation` shorthand also resets the timeline and
+/// range longhands, which nothing here reads.
+fn longhands_of(property: &str) -> Option<&'static [Longhand]> {
+    use Longhand::*;
+    const ANIMATION: [Longhand; 8] = [
+        AnimationName,
+        AnimationDuration,
+        AnimationTimingFunction,
+        AnimationDelay,
+        AnimationIterationCount,
+        AnimationDirection,
+        AnimationFillMode,
+        AnimationPlayState,
+    ];
+    const TRANSITION: [Longhand; 5] =
+        [TransitionProperty, TransitionDuration, TransitionTimingFunction, TransitionDelay, TransitionBehavior];
+    Some(match property {
+        "animation" => &ANIMATION,
+        "transition" => &TRANSITION,
+        name => {
+            let i = Longhand::ALL.iter().position(|l| l.name() == name)?;
+            std::slice::from_ref(&Longhand::ALL[i])
+        }
+    })
+}
+
+/// A declared value of one longhand.
+#[derive(Clone, Debug, PartialEq)]
+enum Value {
+    /// Its list, each item as its computed value serializes (`0.15s`,
+    /// `cubic-bezier(0.4, 0, 0.2, 1)`, `opacity`; animation names unquoted;
+    /// times in full precision).
+    List(Vec<String>),
+    /// `initial`, `unset`, `revert`, `revert-layer`: the initial value (none
+    /// of these properties inherit).
+    Initial,
+    /// `inherit`: the parent's value.
+    Inherit,
+    /// A declaration with `var()` (of `property`, the longhand or a
+    /// shorthand setting it): its text, substituted and parsed per element.
+    Pending { property: &'static str, text: Rc<str> },
+}
+
+/// One declaration: the longhand, its value, `!important`.
+type Declared = (Longhand, Value, bool);
 
 struct Rule {
     selectors: List,
@@ -117,7 +230,37 @@ pub struct TimingRules {
     keyframes: FxHashSet<String>,
     /// The longhands each `@keyframes` rule declares, by name.
     keyframe_longhands: rustc_hash::FxHashMap<String, FxHashSet<&'static str>>,
+    /// `var()` declarations as substituted, parsed: by property and text
+    /// (`None`: invalid at computed-value time).
+    substituted: std::cell::RefCell<rustc_hash::FxHashMap<(&'static str, String), Option<Rc<Vec<(Longhand, Value)>>>>>,
 }
+
+/// The cascaded value of each longhand for one element ([`TimingRules::lists`]):
+/// `None` is the initial value.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct TimingLists([Option<Vec<String>>; 14]);
+
+impl TimingLists {
+    fn get(&self, longhand: Longhand) -> Option<&Vec<String>> {
+        self.0[longhand as usize].as_ref().filter(|l| !l.is_empty())
+    }
+
+    /// The `i`th item of a longhand's list, repeated as lists repeat
+    /// (css-animations-1 §4.2), else its initial value.
+    fn item(&self, longhand: Longhand, i: usize) -> &str {
+        match self.get(longhand) {
+            Some(list) => list[i % list.len()].as_str(),
+            None => longhand.initial(),
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.0.iter().all(Option::is_none)
+    }
+}
+
+/// An element's computed style, for `var()` and `inherit` (`None`: unstyled).
+pub type StyleOf<'a> = &'a dyn Fn(NodeId) -> Option<StyleSnapshot>;
 
 impl TimingRules {
     /// Reads `sheets` (texts in cascade order).
@@ -186,9 +329,11 @@ impl TimingRules {
         out
     }
 
-    /// What `el`'s style asks for.
-    pub fn element(&self, dom: &Dom, el: NodeId) -> ElementTiming {
-        let mut out = ElementTiming::default();
+    /// The cascaded value of each longhand for `el`: its winning
+    /// declaration (inline or rule), `var()` substituted with the custom
+    /// properties of `style_of(el)`, `inherit` taken from the parent element.
+    pub fn lists(&self, dom: &Dom, el: NodeId, style_of: StyleOf<'_>) -> TimingLists {
+        let mut out = TimingLists::default();
         let Ok(idx) = dom.check(el) else { return out };
         if !dom.n(idx).is_element() {
             return out;
@@ -217,13 +362,13 @@ impl TimingRules {
         if inline.is_empty() && matching.is_empty() {
             return out;
         }
-        let cascaded = |longhand: Longhand| -> Option<&Vec<String>> {
+        let cascaded = |longhand: Longhand| -> Option<&Value> {
             let own = inline.iter().rev().find(|d| d.0 == longhand);
             if let Some((_, value, true)) = own {
                 return Some(value);
             }
             // (important, specificity, order) of the best rule declaration so far.
-            let mut best: Option<((bool, u32, usize), &Vec<String>)> = None;
+            let mut best: Option<((bool, u32, usize), &Value)> = None;
             for (specificity, order, rule) in &matching {
                 let Some((_, value, important)) = rule.declarations.iter().rev().find(|d| d.0 == longhand) else {
                     continue;
@@ -240,72 +385,251 @@ impl TimingRules {
                 (None, None) => None,
             }
         };
-        // A list shorter than the names' repeats (css-animations-1 §4.2).
-        fn nth<'a>(list: Option<&'a Vec<String>>, i: usize) -> Option<&'a str> {
-            let list = list.filter(|l| !l.is_empty())?;
-            Some(list[i % list.len()].as_str())
-        }
-        if let Some(names) = cascaded(Longhand::AnimationName) {
-            let durations = cascaded(Longhand::AnimationDuration);
-            let delays = cascaded(Longhand::AnimationDelay);
-            let counts = cascaded(Longhand::AnimationIterationCount);
-            let easings = cascaded(Longhand::AnimationTimingFunction);
-            let directions = cascaded(Longhand::AnimationDirection);
-            let fills = cascaded(Longhand::AnimationFillMode);
-            let plays = cascaded(Longhand::AnimationPlayState);
-            let compositions = cascaded(Longhand::AnimationComposition);
-            let keyword = |list: Option<&Vec<String>>, i: usize, allowed: &[&str], initial: &str| {
-                nth(list, i).filter(|v| allowed.contains(v)).unwrap_or(initial).to_owned()
+        let mut style = None;
+        for longhand in Longhand::ALL {
+            out.0[longhand as usize] = match cascaded(longhand) {
+                None | Some(Value::Initial) => None,
+                Some(Value::List(list)) => Some(list.clone()),
+                Some(Value::Inherit) => dom
+                    .parent_element(el)
+                    .ok()
+                    .flatten()
+                    .and_then(|parent| self.lists(dom, parent, style_of).0[longhand as usize].clone()),
+                Some(Value::Pending { property, text }) => {
+                    let style = style.get_or_insert_with(|| style_of(el));
+                    match self.substitute(property, text, style.as_ref()) {
+                        Some(values) => match values.iter().find(|(l, _)| *l == longhand) {
+                            Some((_, Value::List(list))) => Some(list.clone()),
+                            Some((_, Value::Inherit)) => dom
+                                .parent_element(el)
+                                .ok()
+                                .flatten()
+                                .and_then(|parent| self.lists(dom, parent, style_of).0[longhand as usize].clone()),
+                            _ => None,
+                        },
+                        None => None,
+                    }
+                }
             };
+        }
+        out
+    }
+
+    /// A `var()` declaration of `property` substituted with the custom
+    /// properties of `style` and parsed (cached by its substituted text);
+    /// `None`: invalid at computed-value time (the longhands take their
+    /// initial values).
+    fn substitute(
+        &self,
+        property: &'static str,
+        text: &str,
+        style: Option<&StyleSnapshot>,
+    ) -> Option<Rc<Vec<(Longhand, Value)>>> {
+        let mut lookup = |name: &str| {
+            let style = style?;
+            crate::stylo::serialize(style, name).filter(|v| !v.trim().is_empty())
+        };
+        let text = crate::computed::substitute_vars(text, &mut lookup, 0)?;
+        let key = (property, text);
+        if let Some(parsed) = self.substituted.borrow().get(&key) {
+            return parsed.clone();
+        }
+        let parsed = parse_property(property, &key.1).map(Rc::new);
+        let mut cache = self.substituted.borrow_mut();
+        if cache.len() >= 4096 {
+            cache.clear();
+        }
+        cache.insert(key, parsed.clone());
+        parsed
+    }
+
+    /// What `el`'s style asks for (`style_of` as for [`Self::lists`]).
+    pub fn element(&self, dom: &Dom, el: NodeId, style_of: StyleOf<'_>) -> ElementTiming {
+        let mut out = ElementTiming::default();
+        let lists = self.lists(dom, el, style_of);
+        if lists.is_empty() {
+            return out;
+        }
+        let keyword = |longhand: Longhand, i: usize, allowed: &[&str]| {
+            let v = lists.item(longhand, i);
+            if allowed.contains(&v) { v } else { longhand.initial() }.to_owned()
+        };
+        if let Some(names) = lists.get(Longhand::AnimationName) {
             for (i, name) in names.iter().enumerate() {
                 if name == "none" || !self.has_keyframes(name) {
                     continue;
                 }
+                let easing = lists.item(Longhand::AnimationTimingFunction, i);
                 out.animations.push(AnimationTiming {
                     name: name.clone(),
-                    duration_ms: nth(durations, i).and_then(time_ms).unwrap_or(0.0).max(0.0),
-                    delay_ms: nth(delays, i).and_then(time_ms).unwrap_or(0.0),
-                    iterations: match nth(counts, i) {
-                        Some("infinite") => f64::INFINITY,
-                        Some(n) => n.parse::<f64>().ok().filter(|n| *n >= 0.0).unwrap_or(1.0),
-                        None => 1.0,
+                    duration_ms: time_ms(lists.item(Longhand::AnimationDuration, i)).unwrap_or(0.0).max(0.0),
+                    delay_ms: time_ms(lists.item(Longhand::AnimationDelay, i)).unwrap_or(0.0),
+                    iterations: match lists.item(Longhand::AnimationIterationCount, i) {
+                        "infinite" => f64::INFINITY,
+                        n => n.parse::<f64>().ok().filter(|n| *n >= 0.0).unwrap_or(1.0),
                     },
                     style: AnimationStyle {
-                        easing: nth(easings, i).filter(|e| *e != "ease").map(str::to_owned),
-                        direction: keyword(directions, i, &DIRECTIONS, "normal"),
-                        fill: keyword(fills, i, &FILLS, "none"),
-                        paused: nth(plays, i) == Some("paused"),
-                        composition: keyword(compositions, i, &COMPOSITIONS, "replace"),
+                        easing: (easing != "ease").then(|| easing.to_owned()),
+                        direction: keyword(Longhand::AnimationDirection, i, &DIRECTIONS),
+                        fill: keyword(Longhand::AnimationFillMode, i, &FILLS),
+                        paused: lists.item(Longhand::AnimationPlayState, i) == "paused",
+                        composition: keyword(Longhand::AnimationComposition, i, &COMPOSITIONS),
                     },
                 });
             }
         }
-        let durations = cascaded(Longhand::TransitionDuration);
-        if durations.is_some() {
+        if lists.get(Longhand::TransitionDuration).is_some() {
             let all = vec!["all".to_owned()];
-            let properties = cascaded(Longhand::TransitionProperty).unwrap_or(&all);
-            let delays = cascaded(Longhand::TransitionDelay);
-            let easings = cascaded(Longhand::TransitionTimingFunction);
-            let behaviors = cascaded(Longhand::TransitionBehavior);
+            let properties = lists.get(Longhand::TransitionProperty).unwrap_or(&all);
             for (i, property) in properties.iter().enumerate() {
-                let duration_ms = nth(durations, i).and_then(time_ms).unwrap_or(0.0).max(0.0);
-                let delay_ms = nth(delays, i).and_then(time_ms).unwrap_or(0.0);
+                let duration_ms = time_ms(lists.item(Longhand::TransitionDuration, i)).unwrap_or(0.0).max(0.0);
+                let delay_ms = time_ms(lists.item(Longhand::TransitionDelay, i)).unwrap_or(0.0);
                 if property == "none" || duration_ms + delay_ms <= 0.0 {
                     continue;
                 }
-                let easing = nth(easings, i).filter(|e| *e != "ease").map(str::to_owned);
-                let allow_discrete = nth(behaviors, i) == Some("allow-discrete");
+                let easing = lists.item(Longhand::TransitionTimingFunction, i);
                 out.transitions.push(TransitionTiming {
                     property: property.clone(),
                     duration_ms,
                     delay_ms,
-                    easing,
-                    allow_discrete,
+                    easing: (easing != "ease").then(|| easing.to_owned()),
+                    allow_discrete: lists.item(Longhand::TransitionBehavior, i) == "allow-discrete",
                 });
             }
         }
         out
     }
+
+    /// `getComputedStyle(el)`'s value of `name` (lowercase; `-webkit-`
+    /// aliases too) for the transition and animation longhands this module
+    /// cascades and the `transition` and `animation` shorthands, as Chromium
+    /// serializes them; `None` for other properties.
+    pub fn computed_value(&self, dom: &Dom, el: NodeId, name: &str, style_of: StyleOf<'_>) -> Option<String> {
+        let name = name.strip_prefix("-webkit-").unwrap_or(name);
+        if name != "transition" && name != "animation" && Longhand::by_name(name).is_none() {
+            return None;
+        }
+        let lists = self.lists(dom, el, style_of);
+        Some(match name {
+            "transition" => transition_shorthand(&lists),
+            "animation" => animation_shorthand(&lists),
+            longhand => {
+                let longhand = Longhand::by_name(longhand)?;
+                match lists.get(longhand) {
+                    Some(list) => list.iter().map(|v| shown(longhand, v)).collect::<Vec<_>>().join(", "),
+                    None => longhand.initial().to_owned(),
+                }
+            }
+        })
+    }
+}
+
+/// A longhand's item as `getComputedStyle` shows it: times in seconds with
+/// six significant digits, animation names as identifiers (quoted when they
+/// are not one).
+fn shown(longhand: Longhand, item: &str) -> String {
+    match longhand {
+        Longhand::AnimationDuration
+        | Longhand::AnimationDelay
+        | Longhand::TransitionDuration
+        | Longhand::TransitionDelay => match time_ms(item) {
+            Some(ms) => format!("{}s", crate::computed::fmt_num(ms / 1000.0)),
+            None => item.to_owned(),
+        },
+        Longhand::AnimationName if item != "none" && !is_ident(item) => {
+            let mut out = String::new();
+            let _ = cssparser::serialize_string(item, &mut out);
+            out
+        }
+        _ => item.to_owned(),
+    }
+}
+
+/// Whether `text` is one CSS identifier (and not a word the shorthand would read otherwise).
+fn is_ident(text: &str) -> bool {
+    let mut p = Parser::new(text);
+    matches!(p.next(), Ok(Token::Ident(_))) && p.is_exhausted()
+}
+
+/// Chromium's computed `transition`: an item per `transition-property`
+/// entry, other lists repeated to match, each giving only what is not its
+/// initial value (the duration also when a delay follows), `all` when nothing is.
+fn transition_shorthand(lists: &TimingLists) -> String {
+    use Longhand::*;
+    let count = lists.get(TransitionProperty).map_or(1, Vec::len);
+    let items: Vec<String> = (0..count)
+        .map(|i| {
+            let mut parts = Vec::new();
+            let property = lists.item(TransitionProperty, i);
+            if property != "all" {
+                parts.push(property.to_owned());
+            }
+            let duration = shown(TransitionDuration, lists.item(TransitionDuration, i));
+            let delay = shown(TransitionDelay, lists.item(TransitionDelay, i));
+            if duration != "0s" || delay != "0s" {
+                parts.push(duration);
+            }
+            let easing = lists.item(TransitionTimingFunction, i);
+            if easing != "ease" {
+                parts.push(easing.to_owned());
+            }
+            if delay != "0s" {
+                parts.push(delay);
+            }
+            let behavior = lists.item(TransitionBehavior, i);
+            if behavior != "normal" {
+                parts.push(behavior.to_owned());
+            }
+            if parts.is_empty() {
+                parts.push("all".to_owned());
+            }
+            parts.join(" ")
+        })
+        .collect();
+    items.join(", ")
+}
+
+/// Chromium's computed `animation`: an item per `animation-name` entry,
+/// each giving what is not its initial value (duration, easing, delay,
+/// iteration count, direction, fill mode, play state, then the name), `none`
+/// when nothing is.
+fn animation_shorthand(lists: &TimingLists) -> String {
+    use Longhand::*;
+    let count = lists.get(AnimationName).map_or(1, Vec::len);
+    let items: Vec<String> = (0..count)
+        .map(|i| {
+            let mut parts = Vec::new();
+            let duration = shown(AnimationDuration, lists.item(AnimationDuration, i));
+            let delay = shown(AnimationDelay, lists.item(AnimationDelay, i));
+            if duration != "0s" || delay != "0s" {
+                parts.push(duration);
+            }
+            for (longhand, value) in [(AnimationTimingFunction, "ease")] {
+                let v = lists.item(longhand, i);
+                if v != value {
+                    parts.push(v.to_owned());
+                }
+            }
+            if delay != "0s" {
+                parts.push(delay);
+            }
+            for longhand in [AnimationIterationCount, AnimationDirection, AnimationFillMode, AnimationPlayState] {
+                let v = lists.item(longhand, i);
+                if v != longhand.initial() {
+                    parts.push(v.to_owned());
+                }
+            }
+            let name = lists.item(AnimationName, i);
+            if name != "none" {
+                parts.push(shown(AnimationName, name));
+            }
+            if parts.is_empty() {
+                parts.push("none".to_owned());
+            }
+            parts.join(" ")
+        })
+        .collect();
+    items.join(", ")
 }
 
 /// An element's computed style at a style change, kept to tell which
@@ -510,91 +834,102 @@ fn keyframe_longhands(p: &mut Parser<'_>, src: &str) -> Vec<&'static str> {
 }
 
 /// The animation and transition declarations of a declaration block, as
-/// longhands in source order.
+/// longhands in source order. Invalid ones are dropped; one with `var()`
+/// waits for an element to be resolved for ([`Value::Pending`]).
 fn declarations(body: &str) -> Vec<Declared> {
     let mut out = Vec::new();
     for d in crate::style::parse_declarations(body) {
         let name = d.name.to_ascii_lowercase();
         let name = name.strip_prefix("-webkit-").unwrap_or(&name);
+        let Some(longhands) = longhands_of(name) else { continue };
         let value = d.value.trim();
-        let list = |keep_case: bool| -> Vec<String> {
-            split_commas(value)
-                .into_iter()
-                .map(|item| if keep_case { unquote(item.trim()) } else { item.trim().to_ascii_lowercase() })
-                .collect()
-        };
-        match name {
-            "animation" => {
-                let mut items: [Vec<String>; 8] = Default::default();
-                for item in split_commas(value) {
-                    let item = animation_item(item);
-                    for (list, v) in items.iter_mut().zip([
-                        item.name,
-                        item.duration,
-                        item.delay,
-                        item.count,
-                        item.easing,
-                        item.direction,
-                        item.fill,
-                        item.play,
-                    ]) {
-                        list.push(v);
-                    }
-                }
-                let [names, durations, delays, counts, easings, directions, fills, plays] = items;
-                out.push((Longhand::AnimationName, names, d.important));
-                out.push((Longhand::AnimationDuration, durations, d.important));
-                out.push((Longhand::AnimationDelay, delays, d.important));
-                out.push((Longhand::AnimationIterationCount, counts, d.important));
-                out.push((Longhand::AnimationTimingFunction, easings, d.important));
-                out.push((Longhand::AnimationDirection, directions, d.important));
-                out.push((Longhand::AnimationFillMode, fills, d.important));
-                out.push((Longhand::AnimationPlayState, plays, d.important));
-            }
-            "transition" => {
-                let (mut properties, mut durations, mut delays, mut easings, mut behaviors) =
-                    (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
-                for item in split_commas(value) {
-                    let item = transition_item(item);
-                    properties.push(item.name);
-                    durations.push(item.duration);
-                    delays.push(item.delay);
-                    easings.push(item.easing);
-                    behaviors.push(item.play);
-                }
-                out.push((Longhand::TransitionProperty, properties, d.important));
-                out.push((Longhand::TransitionDuration, durations, d.important));
-                out.push((Longhand::TransitionDelay, delays, d.important));
-                out.push((Longhand::TransitionTimingFunction, easings, d.important));
-                out.push((Longhand::TransitionBehavior, behaviors, d.important));
-            }
-            "animation-name" => out.push((Longhand::AnimationName, list(true), d.important)),
-            "animation-duration" => out.push((Longhand::AnimationDuration, list(false), d.important)),
-            "animation-delay" => out.push((Longhand::AnimationDelay, list(false), d.important)),
-            "animation-iteration-count" => out.push((Longhand::AnimationIterationCount, list(false), d.important)),
-            "animation-timing-function" => out.push((Longhand::AnimationTimingFunction, list(false), d.important)),
-            "animation-direction" => out.push((Longhand::AnimationDirection, list(false), d.important)),
-            "animation-fill-mode" => out.push((Longhand::AnimationFillMode, list(false), d.important)),
-            "animation-play-state" => out.push((Longhand::AnimationPlayState, list(false), d.important)),
-            "animation-composition" => out.push((Longhand::AnimationComposition, list(false), d.important)),
-            "transition-property" => out.push((Longhand::TransitionProperty, list(false), d.important)),
-            "transition-duration" => out.push((Longhand::TransitionDuration, list(false), d.important)),
-            "transition-delay" => out.push((Longhand::TransitionDelay, list(false), d.important)),
-            "transition-timing-function" => out.push((Longhand::TransitionTimingFunction, list(false), d.important)),
-            "transition-behavior" => out.push((Longhand::TransitionBehavior, list(false), d.important)),
-            _ => {}
+        if has_var(value) {
+            let property = longhands[0].name();
+            let property = if longhands.len() > 1 { shorthand_name(longhands) } else { property };
+            let text: Rc<str> = Rc::from(value);
+            out.extend(longhands.iter().map(|l| (*l, Value::Pending { property, text: text.clone() }, d.important)));
+            continue;
+        }
+        if let Some(values) = parse_property(name, value) {
+            out.extend(values.into_iter().map(|(l, v)| (l, v, d.important)));
         }
     }
     out
 }
 
-/// A string's contents, or the text as written.
-fn unquote(text: &str) -> String {
-    let inner = text
-        .strip_prefix('"')
-        .and_then(|t| t.strip_suffix('"'))
-        .or_else(|| text.strip_prefix('\'').and_then(|t| t.strip_suffix('\'')));
-    inner.unwrap_or(text).to_owned()
+fn shorthand_name(longhands: &[Longhand]) -> &'static str {
+    if longhands[0] == Longhand::AnimationName {
+        "animation"
+    } else {
+        "transition"
+    }
+}
+
+/// Whether a value needs substituting first (`var()`, ASCII case-insensitive).
+fn has_var(value: &str) -> bool {
+    value.as_bytes().windows(4).any(|w| w.eq_ignore_ascii_case(b"var("))
+}
+
+/// `property: value` parsed as the cascade parses it: each longhand it sets
+/// with its value; `None` when Stylo rejects it.
+fn parse_property(property: &str, value: &str) -> Option<Vec<(Longhand, Value)>> {
+    use style::properties::{CSSWideKeyword, PropertyDeclaration};
+    let longhands = longhands_of(property)?;
+    let block = crate::stylo::declarations::parse_block(&format!("{property}: {value}"));
+    let mut out = Vec::with_capacity(longhands.len());
+    for longhand in longhands {
+        let decl = block.declarations().iter().find(|d| d.id().name() == longhand.name())?;
+        let value = match decl {
+            PropertyDeclaration::CSSWideKeyword(w) => match w.keyword {
+                CSSWideKeyword::Inherit => Value::Inherit,
+                _ => Value::Initial,
+            },
+            PropertyDeclaration::WithVariables(_) => Value::Initial,
+            PropertyDeclaration::AnimationName(list) => Value::List(
+                list.0.iter().map(|n| n.as_atom().map_or_else(|| "none".to_owned(), |a| a.to_string())).collect(),
+            ),
+            PropertyDeclaration::AnimationTimingFunction(list) => Value::List(list.0.iter().map(easing_text).collect()),
+            PropertyDeclaration::TransitionTimingFunction(list) => {
+                Value::List(list.0.iter().map(easing_text).collect())
+            }
+            other => {
+                let mut css = String::new();
+                other.to_css(&mut css).ok()?;
+                Value::List(split_commas(&css).into_iter().map(|item| computed_item(*longhand, item.trim())).collect())
+            }
+        };
+        out.push((*longhand, value));
+    }
+    Some(out)
+}
+
+/// A specified easing as its computed value serializes (`step-start` is
+/// `steps(1, start)`, `steps(4, end)` is `steps(4)`).
+fn easing_text(easing: &style::values::specified::TimingFunction) -> String {
+    use style_traits::ToCss;
+    easing.to_computed_value_without_context().to_css_string()
+}
+
+/// One specified item (Stylo's serialization) as its computed value: times
+/// in seconds (full precision), `calc()` of one value unwrapped, an
+/// `auto` animation duration `0s`.
+fn computed_item(longhand: Longhand, item: &str) -> String {
+    let lower = item.to_ascii_lowercase();
+    let inner = lower.strip_prefix("calc(").and_then(|v| v.strip_suffix(')')).map(str::trim).unwrap_or(&lower);
+    match longhand {
+        Longhand::AnimationDuration if inner == "auto" => "0s".to_owned(),
+        Longhand::AnimationDuration
+        | Longhand::AnimationDelay
+        | Longhand::TransitionDuration
+        | Longhand::TransitionDelay => match time_ms(inner) {
+            Some(ms) => format!("{}s", ms / 1000.0),
+            None => inner.to_owned(),
+        },
+        Longhand::AnimationIterationCount => inner.to_owned(),
+        // Custom property names and unknown properties keep their case.
+        Longhand::TransitionProperty => item.to_owned(),
+        _ => lower,
+    }
 }
 
 /// Splits a value at its top-level commas.
@@ -617,151 +952,9 @@ fn split_commas(value: &str) -> Vec<&str> {
     out
 }
 
-/// One item of a shorthand, with the initial value of what it leaves out.
-struct ShorthandItem {
-    name: String,
-    duration: String,
-    delay: String,
-    count: String,
-    easing: String,
-    direction: String,
-    fill: String,
-    play: String,
-}
-
-impl ShorthandItem {
-    fn new(name: &str) -> ShorthandItem {
-        ShorthandItem {
-            name: name.into(),
-            duration: "0s".into(),
-            delay: "0s".into(),
-            count: "1".into(),
-            easing: "ease".into(),
-            direction: "normal".into(),
-            fill: "none".into(),
-            play: "running".into(),
-        }
-    }
-}
-
-const EASING: [&str; 7] = ["ease", "linear", "ease-in", "ease-out", "ease-in-out", "step-start", "step-end"];
-/// Functions a `<easing-function>` is written with.
-const EASING_FUNCTIONS: [&str; 3] = ["cubic-bezier(", "steps(", "linear("];
 const DIRECTIONS: [&str; 4] = ["normal", "reverse", "alternate", "alternate-reverse"];
 const FILLS: [&str; 4] = ["none", "forwards", "backwards", "both"];
 const COMPOSITIONS: [&str; 3] = ["replace", "add", "accumulate"];
-
-/// The tokens of one shorthand item: `(text, is_time, is_number, is_ident_or_string)`.
-fn item_tokens(item: &str) -> Vec<(String, u8)> {
-    const TIME: u8 = 0;
-    const NUMBER: u8 = 1;
-    const WORD: u8 = 2;
-    const OTHER: u8 = 3;
-    let mut out = Vec::new();
-    let mut p = Parser::new(item);
-    loop {
-        let before = p.position().byte_index();
-        let Some(token) = next_tok(&mut p) else { break };
-        let kind = match &token {
-            Token::WhiteSpace(_) | Token::Comment(_) => continue,
-            Token::Dimension { unit, .. } if unit.eq_ignore_ascii_case("s") || unit.eq_ignore_ascii_case("ms") => TIME,
-            Token::Number { .. } => NUMBER,
-            Token::Ident(_) | Token::QuotedString(_) => WORD,
-            _ => OTHER,
-        };
-        skip_block(&mut p, &token);
-        let text = &item[before..p.position().byte_index()];
-        out.push((if kind == WORD { unquote(text) } else { text.to_ascii_lowercase() }, kind));
-    }
-    out
-}
-
-/// `<single-animation>`: the first time is the duration, the second the
-/// delay; a keyword valid for another longhand not given yet goes to that
-/// longhand, any other word is the name.
-fn animation_item(item: &str) -> ShorthandItem {
-    let mut out = ShorthandItem::new("none");
-    let (mut times, mut easing, mut direction, mut fill, mut play, mut count) = (0, false, false, false, false, false);
-    for (text, kind) in item_tokens(item) {
-        let lower = text.to_ascii_lowercase();
-        match kind {
-            0 => {
-                match times {
-                    0 => out.duration = lower,
-                    _ => out.delay = lower,
-                }
-                times += 1;
-            }
-            1 if !count => {
-                out.count = lower;
-                count = true;
-            }
-            2 => match lower.as_str() {
-                "infinite" if !count => {
-                    out.count = lower;
-                    count = true;
-                }
-                w if EASING.contains(&w) && !easing => {
-                    out.easing = lower;
-                    easing = true;
-                }
-                w if DIRECTIONS.contains(&w) && !direction => {
-                    out.direction = lower;
-                    direction = true;
-                }
-                w if FILLS.contains(&w) && !fill => {
-                    out.fill = lower;
-                    fill = true;
-                }
-                "running" | "paused" if !play => {
-                    out.play = lower;
-                    play = true;
-                }
-                _ => out.name = text,
-            },
-            3 if !easing && EASING_FUNCTIONS.iter().any(|f| lower.starts_with(f)) => {
-                out.easing = lower;
-                easing = true;
-            }
-            _ => {}
-        }
-    }
-    out
-}
-
-/// `<single-transition>`: times as in an animation, an easing, a behavior
-/// keyword (kept in `play`), any other word is the property.
-fn transition_item(item: &str) -> ShorthandItem {
-    let mut out = ShorthandItem::new("all");
-    out.play = "normal".into();
-    let (mut times, mut easing) = (0, false);
-    for (text, kind) in item_tokens(item) {
-        let lower = text.to_ascii_lowercase();
-        match kind {
-            0 => {
-                match times {
-                    0 => out.duration = lower,
-                    _ => out.delay = lower,
-                }
-                times += 1;
-            }
-            2 => match lower.as_str() {
-                w if EASING.contains(&w) && !easing => {
-                    out.easing = lower;
-                    easing = true;
-                }
-                "allow-discrete" | "normal" => out.play = lower,
-                _ => out.name = lower,
-            },
-            3 if !easing && EASING_FUNCTIONS.iter().any(|f| lower.starts_with(f)) => {
-                out.easing = lower;
-                easing = true;
-            }
-            _ => {}
-        }
-    }
-    out
-}
 
 /// A `<time>` in milliseconds.
 fn time_ms(text: &str) -> Option<f64> {
@@ -776,35 +969,124 @@ fn time_ms(text: &str) -> Option<f64> {
 mod tests {
     use super::*;
 
+    /// The lists `property: value` declares, by longhand name.
+    fn declared(property: &str, value: &str) -> Vec<(&'static str, Vec<String>)> {
+        parse_property(property, value)
+            .unwrap()
+            .into_iter()
+            .map(|(l, v)| match v {
+                Value::List(list) => (l.name(), list),
+                other => panic!("{} is {other:?}", l.name()),
+            })
+            .collect()
+    }
+
+    fn one<'a>(lists: &'a [(&'static str, Vec<String>)], name: &str) -> &'a str {
+        let (_, list) = lists.iter().find(|(n, _)| *n == name).unwrap();
+        assert_eq!(list.len(), 1, "{name}");
+        &list[0]
+    }
+
     #[test]
-    fn shorthands_expand_to_their_longhands() {
-        let item = animation_item("anim 100s -99.9s 2");
+    fn declarations_parse_as_the_cascade_parses_them() {
+        let a = declared("animation", "anim 100s -99.9s 2");
         assert_eq!(
-            (item.name.as_str(), item.duration.as_str(), item.delay.as_str(), item.count.as_str()),
-            ("anim", "100s", "-99.9s", "2")
+            [
+                one(&a, "animation-name"),
+                one(&a, "animation-duration"),
+                one(&a, "animation-delay"),
+                one(&a, "animation-iteration-count")
+            ],
+            ["anim", "100s", "-99.9s", "2"]
         );
-        let item = animation_item("1ms ease-in infinite alternate both spin");
-        assert_eq!((item.name.as_str(), item.duration.as_str(), item.count.as_str()), ("spin", "1ms", "infinite"));
-        // A keyword already given names the animation.
-        assert_eq!(animation_item("ease ease 1s").name, "ease");
-        assert_eq!(animation_item("none").name, "none");
-        let item = transition_item("width 1ms cubic-bezier(0, 0, 1, 1) 2s");
-        assert_eq!((item.name.as_str(), item.duration.as_str(), item.delay.as_str()), ("width", "1ms", "2s"));
-        assert_eq!(item.easing, "cubic-bezier(0, 0, 1, 1)");
-        let item = animation_item("spin 1s steps(2, jump-end) -0.5s 3 reverse both paused");
+        let a = declared("animation", "1ms ease-in infinite alternate both spin");
         assert_eq!(
-            (item.easing.as_str(), item.direction.as_str(), item.fill.as_str(), item.play.as_str()),
-            ("steps(2, jump-end)", "reverse", "both", "paused")
+            [one(&a, "animation-name"), one(&a, "animation-duration"), one(&a, "animation-iteration-count")],
+            ["spin", "0.001s", "infinite"]
         );
-        let item = animation_item("spin 1s");
-        assert_eq!((item.easing.as_str(), item.fill.as_str(), item.play.as_str()), ("ease", "none", "running"));
-        // A transition's behavior keyword is kept where an animation's play state is.
-        assert_eq!(transition_item("clip-path 20s allow-discrete").play, "allow-discrete");
-        assert_eq!(transition_item("clip-path 20s").play, "normal");
-        assert_eq!(transition_item(".3s").name, "all");
+        // A keyword given already names the animation.
+        assert_eq!(one(&declared("animation", "ease ease 1s"), "animation-name"), "ease");
+        let a = declared("animation", "spin 1s steps(2, jump-end) -0.5s 3 reverse both paused");
+        assert_eq!(
+            [
+                one(&a, "animation-timing-function"),
+                one(&a, "animation-direction"),
+                one(&a, "animation-fill-mode"),
+                one(&a, "animation-play-state")
+            ],
+            ["steps(2)", "reverse", "both", "paused"]
+        );
+        let t = declared("transition", "width 1ms cubic-bezier(0, 0, 1, 1) 2s");
+        assert_eq!(
+            [
+                one(&t, "transition-property"),
+                one(&t, "transition-duration"),
+                one(&t, "transition-timing-function"),
+                one(&t, "transition-delay")
+            ],
+            ["width", "0.001s", "cubic-bezier(0, 0, 1, 1)", "2s"]
+        );
+        assert_eq!(
+            one(&declared("transition", "clip-path 20s allow-discrete"), "transition-behavior"),
+            "allow-discrete"
+        );
+        assert_eq!(one(&declared("transition", ".3s"), "transition-property"), "all");
+        // Computed easings and times; names keep their case, quoted ones lose the quotes.
+        let e = declared("transition-timing-function", "step-start, step-end, cubic-bezier(.4,0,.2,1), EASE-IN");
+        assert_eq!(e[0].1, ["steps(1, start)", "steps(1)", "cubic-bezier(0.4, 0, 0.2, 1)", "ease-in"]);
+        assert_eq!(declared("transition-duration", "calc(1s + 100ms), 150ms")[0].1, ["1.1s", "0.15s"]);
+        assert_eq!(declared("animation-name", "Spin, \"a b\", none")[0].1, ["Spin", "a b", "none"]);
+        assert_eq!(declared("transition-property", "OPACITY, --Foo")[0].1, ["opacity", "--Foo"]);
+        // Invalid declarations are dropped; CSS-wide keywords apply.
+        assert!(parse_property("transition-duration", "-1s").is_none());
+        assert!(parse_property("animation-iteration-count", "-1").is_none());
+        let inherit = parse_property("transition", "inherit").unwrap();
+        assert_eq!(inherit.len(), 5);
+        assert!(inherit.iter().all(|(_, v)| *v == Value::Inherit));
+        assert!(parse_property("transition-delay", "unset").unwrap().iter().all(|(_, v)| *v == Value::Initial));
         assert_eq!(split_commas("a 1s, b steps(2, end) 2s"), ["a 1s", " b steps(2, end) 2s"]);
         assert_eq!(time_ms("-99.9s"), Some(-99900.0));
         assert_eq!(time_ms("30ms"), Some(30.0));
         assert_eq!(time_ms("auto"), None);
+    }
+
+    #[test]
+    fn var_declarations_wait_for_an_element() {
+        let d = declarations("transition: opacity var(--d); transition-timing-function: var(--e, ease-in); color: red");
+        assert_eq!(d.len(), 6);
+        assert!(matches!(&d[0].1, Value::Pending { property: "transition", .. }));
+        assert!(matches!(&d[5].1, Value::Pending { property: "transition-timing-function", .. }));
+        let rules = TimingRules::default();
+        let resolved = rules.substitute("transition-timing-function", "var(--e, ease-in)", None).unwrap();
+        assert_eq!(resolved[0].1, Value::List(vec!["ease-in".into()]));
+        // Invalid at computed-value time: no value, no fallback.
+        assert!(rules.substitute("transition-duration", "var(--d)", None).is_none());
+    }
+
+    #[test]
+    fn shorthands_serialize_as_chromium_computes_them() {
+        let mut lists = TimingLists::default();
+        assert_eq!(transition_shorthand(&lists), "all");
+        assert_eq!(animation_shorthand(&lists), "none");
+        let set = |lists: &mut TimingLists, l: Longhand, v: &[&str]| {
+            lists.0[l as usize] = Some(v.iter().map(|s| s.to_string()).collect());
+        };
+        set(&mut lists, Longhand::TransitionProperty, &["opacity", "transform", "color"]);
+        set(&mut lists, Longhand::TransitionDuration, &["1s", "2s"]);
+        assert_eq!(transition_shorthand(&lists), "opacity 1s, transform 2s, color 1s");
+        let mut lists = TimingLists::default();
+        set(&mut lists, Longhand::TransitionDelay, &["-0.5s"]);
+        assert_eq!(transition_shorthand(&lists), "0s -0.5s");
+        set(&mut lists, Longhand::TransitionTimingFunction, &["cubic-bezier(0.4, 0, 0.2, 1)"]);
+        set(&mut lists, Longhand::TransitionBehavior, &["allow-discrete"]);
+        assert_eq!(transition_shorthand(&lists), "0s cubic-bezier(0.4, 0, 0.2, 1) -0.5s allow-discrete");
+        let mut lists = TimingLists::default();
+        set(&mut lists, Longhand::AnimationName, &["a", "b"]);
+        set(&mut lists, Longhand::AnimationDuration, &["1s", "2s"]);
+        set(&mut lists, Longhand::AnimationDelay, &["0s", "0.5s"]);
+        set(&mut lists, Longhand::AnimationIterationCount, &["infinite"]);
+        assert_eq!(animation_shorthand(&lists), "1s infinite a, 2s 0.5s infinite b");
+        assert_eq!(shown(Longhand::TransitionDuration, "0.150000001s"), "0.15s");
+        assert_eq!(shown(Longhand::AnimationName, "a b"), "\"a b\"");
     }
 }

@@ -96,7 +96,7 @@ fn animation_and_transition_declarations_cascade_from_rules_and_the_style_attrib
     let dm = dom.borrow();
     let el = |id: &str| dm.get_element_by_id(d, id).unwrap().unwrap();
 
-    let a = rules.element(&dm, el("a"));
+    let a = rules.element(&dm, el("a"), &|_| None);
     assert_eq!(a.animations.len(), 1);
     let spin = &a.animations[0];
     assert_eq!((spin.name.as_str(), spin.duration_ms, spin.delay_ms), ("spin", 100_000.0, -99_900.0));
@@ -105,14 +105,14 @@ fn animation_and_transition_declarations_cascade_from_rules_and_the_style_attrib
     assert_eq!(transitions, [("width", 1.0, 0.0), ("height", 500.0, 1000.0)]);
 
     // The style attribute's shorthand; an animation without `@keyframes` does not run.
-    let b = rules.element(&dm, el("b"));
+    let b = rules.element(&dm, el("b"), &|_| None);
     let animations: Vec<_> = b.animations.iter().map(|x| (x.name.as_str(), x.duration_ms, x.iterations)).collect();
     assert_eq!(animations, [("fade", 2000.0, 3.0)]);
 
     // `!important` beats the more specific rule: no transition.
-    assert!(rules.element(&dm, el("c")).transitions.is_empty());
+    assert!(rules.element(&dm, el("c"), &|_| None).transitions.is_empty());
 
-    let p = rules.element(&dm, el("d"));
+    let p = rules.element(&dm, el("d"), &|_| None);
     assert_eq!(p.transitions.len(), 1);
     assert_eq!((p.transitions[0].property.as_str(), p.transitions[0].duration_ms), ("color", 30.0));
 

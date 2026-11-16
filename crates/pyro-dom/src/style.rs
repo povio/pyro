@@ -844,6 +844,10 @@ pub struct StyleEngine {
     /// ([`crate::gecko_only`]), for an observation stamp.
     /// for the [`StyleEngine::author_sheets_key`] they were parsed at.
     gecko_rules: RefCell<Option<(AuthorSheetsKey, Rc<Vec<crate::gecko_only::Rule>>)>>,
+    /// The animation and transition rules of the sheets ([`crate::timing`]),
+    /// for the [`StyleEngine::author_sheets_key`] (and the unregistered
+    /// `<style>` elements, with their text revisions) they were read at.
+    timing_rules: RefCell<Option<(AuthorSheetsKey, Vec<(NodeId, u64)>, Rc<crate::timing::TimingRules>)>>,
     /// Sheet revisions handed out so far.
     revisions: u64,
     /// Called before the layout engine computes styles anew (CSS rule
@@ -927,6 +931,7 @@ impl StyleEngine {
             external_syncing: Cell::new(false),
             active_styled: Cell::new(true),
             gecko_rules: RefCell::new(None),
+            timing_rules: RefCell::new(None),
             revisions: 0,
             track_style_changes: Cell::new(false),
             animation_source: RefCell::new(None),
@@ -1776,6 +1781,63 @@ impl StyleEngine {
             return self.gecko_only_value(dom, el, name);
         }
         self.stylo_value(dom, el, name)
+    }
+
+    /// The animation and transition rules of the document's sheets
+    /// ([`crate::timing`]), read again only when the sheets changed.
+    pub fn timing_rules(&self, dom: &Dom) -> Rc<crate::timing::TimingRules> {
+        let key = self.author_sheets_key(dom);
+        // A `<style>` inserted in this task is registered once the loader
+        // handles the DOM's resource events (after the task); the layout
+        // engine styles with it already, so its rules count now, after the
+        // registered sheets.
+        let unregistered: Vec<(NodeId, u64)> = if dom.has_resource_events() {
+            self.unregistered_style_elements(dom)
+                .into_iter()
+                .map(|n| (n, dom.style_element_text_revision(n).unwrap_or_default()))
+                .collect()
+        } else {
+            Vec::new()
+        };
+        if let Some((at, pending, rules)) = &*self.timing_rules.borrow() {
+            if *at == key && *pending == unregistered {
+                return rules.clone();
+            }
+        }
+        let mut texts = Vec::new();
+        self.for_each_author_sheet(dom, &mut |text| texts.push(text.to_owned()));
+        texts.extend(unregistered.iter().map(|(n, _)| dom.child_text_content(*n).into_owned()));
+        let rules = Rc::new(crate::timing::TimingRules::parse(texts.iter().map(String::as_str), &self.viewport));
+        *self.timing_rules.borrow_mut() = Some((key, unregistered, rules.clone()));
+        rules
+    }
+
+    /// The document's HTML `<style>` elements no sheet is registered for yet, in tree order.
+    fn unregistered_style_elements(&self, dom: &Dom) -> Vec<NodeId> {
+        let Ok(desc) = dom.descendants(self.doc) else { return Vec::new() };
+        desc.filter(|&n| {
+            dom.node(n)
+                .ok()
+                .and_then(|n| n.element())
+                .is_some_and(|e| e.is_html() && e.name.local == local_name!("style"))
+                && !self.sheets.iter().any(|s| s.owner == n)
+        })
+        .collect()
+    }
+
+    /// `getComputedStyle` of the transition and animation properties the
+    /// page's own timing reads ([`crate::timing::TimingRules::computed_value`]):
+    /// the layout engine's cascade has them all `none` (its animation engine
+    /// stays off). `None` for other properties.
+    pub fn timing_value(&self, dom: &Dom, el: NodeId, name: &str) -> Option<String> {
+        if !(name.contains("transition") || name.contains("animation")) {
+            return None;
+        }
+        self.owns(dom, el)?;
+        // A style flush first: it registers the `<style>` sheets inserted since.
+        self.engine_styled(dom)?;
+        let style_of = |e: NodeId| self.stylo_style(dom, e);
+        self.timing_rules(dom).computed_value(dom, el, name, &style_of)
     }
 
     /// A property the engine's Stylo does not parse ([`crate::gecko_only`]),

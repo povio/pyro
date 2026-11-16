@@ -3142,6 +3142,9 @@ impl Layout {
                 .computed_value(dom, el, "font-size")
                 .unwrap_or_else(|| format!("{}px", self.style.computed_font_size(dom, Some(el))));
         }
+        if let Some(v) = self.style.timing_value(dom, el, name) {
+            return v;
+        }
         let declared = self.style.computed_value(dom, el, name);
         // pyro: a subgrid's template resolves to `subgrid` with each of its lines' names, which only its
         // layout knows (how many tracks it spans; css-grid-2 §7.2.6.2)
