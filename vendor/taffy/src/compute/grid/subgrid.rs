@@ -49,6 +49,9 @@ pub struct SubgridContext<S> {
     /// The subgrid's own columns (when only its rows are subgridded) as its last layout of a definite width sized
     /// them: the parent sizes its rows with the subgrid's items, whose widths are the columns they span
     pub own_columns: Option<OwnTracks>,
+    /// pyro: the subgrid's own rows (when only its columns are subgridded) as its last layout sized them: the
+    /// parent sizes its columns with the subgrid's items, whose heights are the rows they span
+    pub own_rows: Option<OwnTracks>,
 }
 
 /// pyro: the tracks of a subgrid's own (standalone) axis as its last layout sized them ([`SubgridContext`])
@@ -429,6 +432,7 @@ fn child_context<Tree: LayoutGridContainer>(
     let previous = tree.subgrid_context(node);
     let mut context = SubgridContext {
         own_columns: previous.as_ref().and_then(|previous| previous.own_columns.clone()),
+        own_rows: previous.as_ref().and_then(|previous| previous.own_rows.clone()),
         ..SubgridContext::default()
     };
     for axis in [AbsoluteAxis::Horizontal, AbsoluteAxis::Vertical] {
@@ -767,6 +771,74 @@ pub(super) fn record_own_columns<Tree: LayoutGridContainer>(
     if context.own_columns.as_ref() != Some(&own) {
         context.own_columns = Some(own);
         tree.set_subgrid_context(node, Some(context));
+    }
+}
+
+/// pyro: record the own rows of a subgrid in its columns only (`SubgridContext::own_rows`)
+pub(super) fn record_own_rows<Tree: LayoutGridContainer>(tree: &mut Tree, node: NodeId, rows: &[GridTrack], inner_height: f32) {
+    let Some(mut context) = tree.subgrid_context(node) else { return };
+    let sizes: Vec<f32> = rows.iter().skip(1).step_by(2).map(|track| track.base_size).collect();
+    let gap = rows.get(2).filter(|_| rows.len() > 3).map_or(0.0, |gutter| gutter.base_size);
+    let own = OwnTracks { inner_size: inner_height, sizes, gap };
+    if context.own_rows.as_ref() != Some(&own) {
+        context.own_rows = Some(own);
+        tree.set_subgrid_context(node, Some(context));
+    }
+}
+
+/// pyro: before the grid sizes its columns: the heights of the items of its subgrid children whose rows are their
+/// own (only their columns are subgridded), from those rows as the subgrid sizes them provisionally (laid out at
+/// its definite height, else at its max-content height; css-grid-2 §9 "standalone axis")
+pub(super) fn resolve_standalone_heights<Tree: LayoutGridContainer>(
+    tree: &mut Tree,
+    items: &mut [GridItem],
+    own_item_count: usize,
+) {
+    if !items[own_item_count..].iter().any(|item| item.excluded.height && item.subgrid_owner.is_some()) {
+        return;
+    }
+    // The subgrid children in their columns only: laid out, each sizes its own rows and those of the subgrids
+    // nested in it (`record_own_rows`)
+    let owners: Vec<NodeId> =
+        items[..own_item_count].iter().filter(|item| item.subgrid.width && !item.subgrid.height).map(|item| item.node).collect();
+    for owner in owners {
+        let style = tree.get_grid_child_style(owner);
+        // (an orthogonal subgrid's own columns are this grid's rows: not handled)
+        if style.subgrid_axis(AbsoluteAxis::Vertical) != AbsoluteAxis::Vertical {
+            continue;
+        }
+        let calc = |val, basis| tree.calc(val, basis);
+        let height = crate::util::MaybeResolve::maybe_resolve(style.size().height, None::<f32>, calc).map(|height: f32| {
+            if style.box_sizing() == crate::style::BoxSizing::ContentBox {
+                let padding = style.padding().map(|padding| padding.resolve_or_zero(None, calc));
+                let border = style.border().map(|border| border.resolve_or_zero(None, calc));
+                height + padding.vertical_axis_sum() + border.vertical_axis_sum()
+            } else {
+                height
+            }
+        });
+        drop(style);
+        tree.measure_child_size(
+            owner,
+            Size { width: None, height },
+            Size::NONE,
+            Size {
+                width: AvailableSpace::MaxContent,
+                height: height.map_or(AvailableSpace::MaxContent, AvailableSpace::Definite),
+            },
+            SizingMode::InherentSize,
+            AbsoluteAxis::Vertical,
+            Line::FALSE,
+        );
+    }
+    for item in items[own_item_count..].iter_mut().filter(|item| item.excluded.height) {
+        let Some(owner) = item.subgrid_owner else { continue };
+        if tree.get_grid_child_style(owner).subgrid_axis(AbsoluteAxis::Vertical) != AbsoluteAxis::Vertical {
+            continue;
+        }
+        if let Some(own) = tree.subgrid_context(owner).and_then(|context| context.own_rows) {
+            item.standalone_size.height = own.area(item.owner_lines.height);
+        }
     }
 }
 

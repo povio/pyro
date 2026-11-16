@@ -647,6 +647,11 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
         })
     };
 
+    // pyro: the heights of the items of subgrids in their columns only, in their own rows.
+    if has_subgrid_items && replay.is_none() {
+        subgrid::resolve_standalone_heights(tree, &mut items, own_item_count);
+    }
+
     // Run track sizing algorithm for Inline axis
     // (A table laid out again keeps its columns: they depend on no item.)
     let inner_width_is_definite = inner_node_size.width.is_some();
@@ -739,6 +744,10 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
         subgrid::update_subgrid_track_sizes(tree, &items[..own_item_count], AbsoluteAxis::Vertical, &rows, false, &subgrid_parent);
     }
     let initial_row_sum = rows.iter().map(|track| track.base_size).sum::<f32>();
+    // pyro: a subgrid in its columns only keeps its rows for its parent's column sizing.
+    if own_subgrid.as_ref().is_some_and(|c| c.columns.is_some() && c.rows.is_none()) {
+        subgrid::record_own_rows(tree, node, &rows, inner_node_size.height.unwrap_or(initial_row_sum));
+    }
 
     debug_log!("initial_column_sum", dbg:initial_column_sum);
     debug_log!(dbg: columns.iter().map(|track| track.base_size).collect::<Vec<_>>());

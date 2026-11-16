@@ -554,3 +554,8 @@ the subgrid each line's group baseline and the parent's `baseline_synthesis` (`S
 `compute/grid/types/named.rs` (`add_subgrid_line_names`): in a subgridded axis, the edges of the subgrid's own named
 areas past its last line are on its last line, and the parent's area names reach a subgrid that spans the area in
 that axis whatever rows (columns) it is in (`area_names_for_subgrid`), as Blink (WPT `subgrid/line-names-*`).
+Column-only subgrids (css-grid-2 §9 standalone axis): a subgrid in its columns only records its own rows
+(`SubgridContext::own_rows`, `subgrid::record_own_rows`); before sizing its columns the parent lays out its
+column-only subgrid children at their definite (else max-content) height and gives their items the rows they span
+(`resolve_standalone_heights`, `GridItem::standalone_size.height`), so an orthogonal item's width follows its row
+(WPT `subgrid/standalone-axis-size-010`). Nested ones still see the rows of their last measure.
