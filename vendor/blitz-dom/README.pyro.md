@@ -2045,3 +2045,5 @@ Covered by `crates/pyro-render/tests/text_spacing.rs`.
 
 `src/stylo_to_parley.rs`: CSS `text-justify` becomes parley's `TextStyle::text_justify` (`distribute` parses as
 `inter-character`).
+  supported. A predefined style the marker code has no case of (`armenian`, `georgian`, `lower-greek`, ...) is the
+  text `counter()` gives with a `. ` suffix (it was a `□`); an unknown name is `decimal`.

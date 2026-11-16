@@ -11053,7 +11053,7 @@ diff --git a/packages/blitz-dom/src/layout/list.rs b/packages/blitz-dom/src/layo
  // Determine the marker to render for a given list style type
  fn marker_for_style(list_style_type: &ListStyleType, index: usize) -> Option<Marker> {
      Some(match &list_style_type.0 {
-@@ -133,6 +442,19 @@
+@@ -133,12 +442,30 @@
                  Marker::String(format!("{}. ", marker.to_ascii_uppercase()))
              }
              "decimal" => Marker::String(format!("{}. ", index + 1)),
@@ -11073,7 +11073,19 @@ diff --git a/packages/blitz-dom/src/layout/list.rs b/packages/blitz-dom/src/layo
              "disc" => Marker::Char('•'),
              "circle" => Marker::Char('◦'),
              "square" => Marker::Char('▪'),
-@@ -171,6 +493,36 @@
+             "disclosure-open" => Marker::Char('▾'),
+             "disclosure-closed" => Marker::Char('▸'),
+-            _ => Marker::Char('□'),
++            // pyro: the other predefined styles (`armenian`, `georgian`, `lower-greek`, ...) as
++            // `counter()` formats them, with their `. ` suffix; an unknown name is `decimal`.
++            _ => Marker::String(format!(
++                "{}. ",
++                super::counters::format(index as i32 + 1, &list_style_type.0)
++            )),
+         },
+         CounterStyle::String(atom_string) => Marker::String(atom_string.as_ref().to_string()),
+         CounterStyle::Symbols { symbols, .. } => {
+@@ -171,6 +498,36 @@
      None
  }
  

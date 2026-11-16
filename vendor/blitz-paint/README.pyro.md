@@ -892,7 +892,8 @@ in a vertical writing mode, whose lines are laid out turned (blitz-dom keeps tho
   (border box and padding box by default). `border-radius` and `corner-shape` are ignored. The background is
   clipped to the inner shape (the shape, with one) and painted out to the border's outer bounds, `background-clip:
   border-area` to the border's area, overflow to the border's inner edge; outer shadows are the outer edge grown by
-  the spread (an oval as an oval), cut out of it and blurred through a filter layer; inner shadows fill around the
+  the spread (an oval as an oval; a circle's blurred shadow is vello's blurred rounded rectangle, as a
+  `border-radius: 50%` box's), cut out of it and blurred through a filter layer; inner shadows fill around the
   inner edge shrunk by the spread; solid and double outlines are bands of the outer edge grown by the offset. Edges
   worked out here (stroke outlines, offsets) use vello_cpu's own tolerance, so that a clip at a stroke's inner edge
   falls where the drawn stroke's edge does.

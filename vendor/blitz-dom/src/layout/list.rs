@@ -460,7 +460,12 @@ fn marker_for_style(list_style_type: &ListStyleType, index: usize) -> Option<Mar
             "square" => Marker::Char('▪'),
             "disclosure-open" => Marker::Char('▾'),
             "disclosure-closed" => Marker::Char('▸'),
-            _ => Marker::Char('□'),
+            // pyro: the other predefined styles (`armenian`, `georgian`, `lower-greek`, ...) as
+            // `counter()` formats them, with their `. ` suffix; an unknown name is `decimal`.
+            _ => Marker::String(format!(
+                "{}. ",
+                super::counters::format(index as i32 + 1, &list_style_type.0)
+            )),
         },
         CounterStyle::String(atom_string) => Marker::String(atom_string.as_ref().to_string()),
         CounterStyle::Symbols { symbols, .. } => {

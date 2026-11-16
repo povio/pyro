@@ -248,6 +248,10 @@ impl ElementCx<'_, '_> {
                     |inside| inside[0] && !inside[1],
                 );
                 self.fill_shadow_path(scene, &around, color, offset, blur);
+            } else if let Some(circle) = shape.circle_with_offset(spread).filter(|_| blur > 0.0) {
+                // A circle's blurred shadow as a `border-radius: 50%` box's is drawn.
+                let transform = self.transform.then_translate(offset);
+                scene.draw_box_shadow(transform, circle, color, circle.width() / 2.0, blur / 2.0);
             } else {
                 let path = shape.outer_path_with_offset(spread);
                 self.fill_shadow_path(scene, &path, color, offset, blur);

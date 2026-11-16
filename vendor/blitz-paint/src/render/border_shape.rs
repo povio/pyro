@@ -150,6 +150,14 @@ impl BorderShape {
         }
     }
 
+    /// The box of the outer edge moved out by `offset` when it is a circle: vello's blurred
+    /// rounded rectangle draws its shadow as a `border-radius: 50%` box's.
+    pub(super) fn circle_with_offset(&self, offset: f64) -> Option<Rect> {
+        let total = offset + if self.inner.is_none() { self.width / 2.0 } else { 0.0 };
+        let grown = self.oval?.inflate(total, total);
+        ((grown.width() - grown.height()).abs() < 1e-6 && grown.width() > 0.0).then_some(grown)
+    }
+
     /// `path` moved out by `offset` (in, when negative) along its normals: united with its
     /// stroke of twice the offset, or less it, mitered at 4 widths (Blink's default
     /// `StrokeData`, as an inner shadow's spread is applied).

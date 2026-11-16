@@ -11977,7 +11977,7 @@ diff --git a/packages/blitz-paint/src/render/border_shape.rs b/packages/blitz-pa
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-paint/src/render/border_shape.rs
-@@ -0,0 +1,320 @@
+@@ -0,0 +1,328 @@
 +//! pyro: `border-shape` (CSS Borders 4 §11), as Blink's `BorderShapePainter` draws it.
 +//!
 +//! With one shape the border is a stroke along it, as wide as the relevant side's border and in
@@ -12128,6 +12128,14 @@ new file mode 100644
 +        } else {
 +            boolean(&shapes, |inside| inside[0] && !inside[1])
 +        }
++    }
++
++    /// The box of the outer edge moved out by `offset` when it is a circle: vello's blurred
++    /// rounded rectangle draws its shadow as a `border-radius: 50%` box's.
++    pub(super) fn circle_with_offset(&self, offset: f64) -> Option<Rect> {
++        let total = offset + if self.inner.is_none() { self.width / 2.0 } else { 0.0 };
++        let grown = self.oval?.inflate(total, total);
++        ((grown.width() - grown.height()).abs() < 1e-6 && grown.width() > 0.0).then_some(grown)
 +    }
 +
 +    /// `path` moved out by `offset` (in, when negative) along its normals: united with its
@@ -12301,7 +12309,7 @@ new file mode 100644
 diff --git a/packages/blitz-paint/src/render/box_shadow.rs b/packages/blitz-paint/src/render/box_shadow.rs
 --- a/packages/blitz-paint/src/render/box_shadow.rs
 +++ b/packages/blitz-paint/src/render/box_shadow.rs
-@@ -1,17 +1,273 @@
+@@ -1,17 +1,277 @@
  use super::ElementCx;
  use crate::color::{Color, ToColorColor as _};
 +use crate::kurbo_css::{CssBox, NonUniformRoundedRectRadii};
@@ -12553,6 +12561,10 @@ diff --git a/packages/blitz-paint/src/render/box_shadow.rs b/packages/blitz-pain
 +                    |inside| inside[0] && !inside[1],
 +                );
 +                self.fill_shadow_path(scene, &around, color, offset, blur);
++            } else if let Some(circle) = shape.circle_with_offset(spread).filter(|_| blur > 0.0) {
++                // A circle's blurred shadow as a `border-radius: 50%` box's is drawn.
++                let transform = self.transform.then_translate(offset);
++                scene.draw_box_shadow(transform, circle, color, circle.width() / 2.0, blur / 2.0);
 +            } else {
 +                let path = shape.outer_path_with_offset(spread);
 +                self.fill_shadow_path(scene, &path, color, offset, blur);
@@ -12576,7 +12588,7 @@ diff --git a/packages/blitz-paint/src/render/box_shadow.rs b/packages/blitz-pain
  
          let current_color = self.style.clone_color();
          let opacity = self.style.get_effects().opacity;
-@@ -21,7 +277,11 @@
+@@ -21,7 +281,11 @@
              .background_color
              .resolve_to_absolute(&current_color)
              .as_srgb_color();
@@ -12589,7 +12601,7 @@ diff --git a/packages/blitz-paint/src/render/box_shadow.rs b/packages/blitz-pain
          let needs_clip = opacity < 1.0 || !bg_is_opaque;
  
          let max_shadow_rect = box_shadow.iter().fold(Rect::ZERO, |prev, shadow| {
-@@ -76,12 +336,51 @@
+@@ -76,12 +340,51 @@
                              continue;
                          }
  
@@ -12645,7 +12657,7 @@ diff --git a/packages/blitz-paint/src/render/box_shadow.rs b/packages/blitz-pain
                      }
                  }
              },
-@@ -95,8 +394,13 @@
+@@ -95,8 +398,13 @@
          if !has_inset_shadow {
              return;
          }
@@ -12659,7 +12671,7 @@ diff --git a/packages/blitz-paint/src/render/box_shadow.rs b/packages/blitz-pain
  
          for shadow in box_shadow.iter().filter(|s| s.inset) {
              let shadow_color = shadow
-@@ -104,17 +408,40 @@
+@@ -104,17 +412,40 @@
                  .color
                  .resolve_to_absolute(&current_color)
                  .as_srgb_color();
@@ -12707,7 +12719,7 @@ diff --git a/packages/blitz-paint/src/render/box_shadow.rs b/packages/blitz-pain
              scene.push_layer(
                  Fill::NonZero,
                  Mix::Normal,
-@@ -141,19 +468,35 @@
+@@ -141,19 +472,35 @@
                  None,
                  None,
              );
