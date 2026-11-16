@@ -996,13 +996,12 @@ mod tests {
     /// 100.000 25.000`.
     #[test]
     fn squircle_corner_matches_blink() {
-        let contour = ContouredRect {
-            rect: Rect::new(0.0, 0.0, 100.0, 100.0),
-            radii: uniform(25.0),
-            curvature: all(exponent(2.0)),
-            origin: None,
-        };
-        let path = contour.path();
+        // The top right corner of a 100px box with 25px radii (the contour itself is drawn
+        // flattened).
+        let corner = Corner::from_rect(Rect::new(75.0, 0.0, 100.0, 25.0), 0, exponent(2.0));
+        let mut path = BezPath::new();
+        path.move_to(corner.start());
+        add_curved_corner(&mut path, &corner);
         let curves: Vec<_> = path
             .elements()
             .iter()
