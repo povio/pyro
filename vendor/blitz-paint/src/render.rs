@@ -189,6 +189,11 @@ pub struct BlitzDomPainter<'dom, 'a> {
     pub(crate) deferred_outlines: std::cell::Cell<bool>,
     /// pyro (lane H2): 3D rendering contexts being recorded (`render/three_d.rs`).
     pub(crate) three_d: three_d::State,
+    /// pyro: where the scene's coordinates land in device pixels, when that is known (a
+    /// screenshot's page scene: the capture's transform of it). A clip around a box hoisted to its
+    /// stacking context is then left out where it would cut nothing (`draw_hoisted_children`).
+    /// `None` (printed output, sub-documents): every such clip is pushed.
+    pub device_pixels: Option<Affine>,
 
     // Pre-computed `Scene`s for each CustomWidget
     pub(crate) custom_widget_scenes: &'a CustomWidgetSceneMap,
@@ -247,6 +252,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             flow_phase: std::cell::Cell::new(FlowPhase::All),
             deferred_outlines: std::cell::Cell::new(false),
             three_d: Default::default(),
+            device_pixels: None,
             custom_widget_scenes,
         }
     }
@@ -3578,6 +3584,15 @@ impl ElementCx<'_, '_> {
     /// and the buttons in its cells, all in one scroller): a clip layer costs the raster its
     /// whole area, and one stack of them per child cost a ToS table screen's capture half as
     /// much again. A layer the layer limit refused is not popped.
+    ///
+    /// pyro: where the device pixels are known (screenshots), each child is recorded first, and when
+    /// each of its clips covers in whole every pixel the child's ink touches
+    /// ([`crate::bounds::clip_covers_pixels`]), none is pushed: they would cut nothing, and one layer
+    /// per button inside its `overflow: hidden` table cell still cost a ToS finances capture a tenth
+    /// more (Chromium skips a clip that contains what it clips too). A child one clip cuts keeps all
+    /// of them. Every clip stays around a child rasterized on a grid of its own (a local-raster
+    /// layer, a 3D plane), and around one with a backdrop filter or a blend mode, whose layers read
+    /// what the clips hold.
     fn draw_hoisted_children<'c>(
         &self,
         scene: &mut impl PaintScene,
@@ -3588,40 +3603,71 @@ impl ElementCx<'_, '_> {
         let same_place = |a: &Affine, b: &Affine| {
             a.as_coeffs().iter().zip(b.as_coeffs()).all(|(a, b)| (a - b).abs() <= 1e-3)
         };
-        // The clip layers open, outermost first: node, transform, whether the layer was pushed,
-        // and the culling rectangle inside it.
-        let mut open: Vec<(NodeId, Affine, bool, Rect)> = Vec::new();
+        let device = self.context.device_pixels.filter(|_| {
+            self.context.local_raster_depth.get() == 0 && self.context.three_d.depth.get() == 0
+        });
+        // The clip layers open, outermost first: node, transform, whether the layer was pushed.
+        let mut open: Vec<(NodeId, Affine, bool)> = Vec::new();
         for hoisted_child in children {
             let position = hoisted_child.position(self.node.tree(), self.node.id);
             let clips = self.hoisted_child_clips(hoisted_child, position, parent_style_transform);
+            // Culled to every clip, pushed or not: what lies outside one is cut off either way.
+            let child_clip_rect = clips.iter().fold(clip_rect, |rect, (_, transform, clip)| {
+                rect.intersect(transform.transform_rect_bbox(clip.bounding_box()))
+            });
+            let pos = kurbo::Vec2 { x: position.x as f64 * self.scale, y: position.y as f64 * self.scale };
+            let transform = parent_style_transform.pre_translate(pos);
+            let mut recorded = None;
+            let mut needed = vec![true; clips.len()];
+            if let Some(device) = device.filter(|_| !clips.is_empty()) {
+                let mut child = Scene::new();
+                self.render_node(&mut child, hoisted_child.node_id, transform, child_clip_rect);
+                if !child.commands.iter().any(reads_backdrop) {
+                    match crate::bounds::scene_bounds(&child.commands) {
+                        // All of them, or none: a box one clip cuts is painted in all of its clips, as
+                        // before, so the layers it is composited through are the same and round alike.
+                        Some(ink) => {
+                            let ink = device.transform_rect_bbox(ink);
+                            let covered = clips.iter().all(|(_, clip_transform, clip)| {
+                                crate::bounds::clip_covers_pixels(clip, device * *clip_transform, ink)
+                            });
+                            needed.fill(!covered);
+                        }
+                        // (It paints nothing.)
+                        None => needed.fill(false),
+                    }
+                }
+                recorded = Some(child);
+            }
+            let wanted: Vec<_> = clips.iter().zip(&needed).filter(|(_, needed)| **needed).map(|(clip, _)| clip).collect();
             let keep = open
                 .iter()
-                .zip(&clips)
+                .zip(&wanted)
                 .take_while(|(o, c)| o.0 == c.0 && same_place(&o.1, &c.1))
                 .count();
-            for &(_, _, pushed, _) in open[keep..].iter().rev() {
+            for &(_, _, pushed) in open[keep..].iter().rev() {
                 self.context.layer_manager.maybe_pop_layer(scene, pushed);
             }
             open.truncate(keep);
-            for (id, transform, clip) in clips.into_iter().skip(keep) {
+            for &(id, clip_transform, ref clip) in wanted.into_iter().skip(keep) {
                 let pushed = self.context.layer_manager.maybe_push_layer(
                     scene,
                     true,
                     BlendMode::default(),
                     1.0,
-                    transform,
-                    &clip,
+                    clip_transform,
+                    clip,
                     None,
                     None,
                 );
-                let outer = open.last().map_or(clip_rect, |o| o.3);
-                open.push((id, transform, pushed, outer.intersect(transform.transform_rect_bbox(clip.bounding_box()))));
+                open.push((id, clip_transform, pushed));
             }
-            let child_clip_rect = open.last().map_or(clip_rect, |o| o.3);
-            let pos = kurbo::Vec2 { x: position.x as f64 * self.scale, y: position.y as f64 * self.scale };
-            self.render_node(scene, hoisted_child.node_id, parent_style_transform.pre_translate(pos), child_clip_rect);
+            match recorded {
+                Some(child) => scene.append_scene(child, Affine::IDENTITY),
+                None => self.render_node(scene, hoisted_child.node_id, transform, child_clip_rect),
+            }
         }
-        for &(_, _, pushed, _) in open.iter().rev() {
+        for &(_, _, pushed) in open.iter().rev() {
             self.context.layer_manager.maybe_pop_layer(scene, pushed);
         }
     }
@@ -4049,6 +4095,14 @@ impl<'dom, 'a> std::ops::Deref for ElementCx<'dom, 'a> {
     fn deref(&self) -> &Self::Target {
         self.context
     }
+}
+
+/// pyro: whether a recorded command is a layer that reads what lies under it as drawn so far: a
+/// backdrop filter's, or one with a blend mode (`mix-blend-mode`, a mask). Clips around it stay
+/// (`ElementCx::draw_hoisted_children`).
+fn reads_backdrop(command: &anyrender::recording::RenderCommand) -> bool {
+    matches!(command, anyrender::recording::RenderCommand::PushLayer(layer)
+        if layer.backdrop_filter.is_some() || layer.blend != BlendMode::default())
 }
 
 fn insets_from_taffy_rect(input: taffy::Rect<f64>) -> Insets {

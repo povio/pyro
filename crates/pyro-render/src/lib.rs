@@ -1139,9 +1139,10 @@ impl Renderer {
         let mut page = Scene::new();
         let extent_w = ((origin.0 * dpr) as u32).saturating_add((w as f64 * dpr / scale).ceil() as u32);
         let extent_h = ((origin.1 * dpr) as u32).saturating_add((h as f64 * dpr / scale).ceil() as u32);
-        blitz_paint::paint_scene(&mut page, doc, dpr, extent_w, extent_h, 0, 0);
-        doc.set_dom_selection(None);
         let transform = Affine::scale(scale / dpr) * Affine::translate((-origin.0 * dpr, -origin.1 * dpr));
+        // (Painting knows where the page lands in the image's pixels: see `paint_scene_for_device`.)
+        blitz_paint::paint_scene_for_device(&mut page, doc, dpr, extent_w, extent_h, 0, 0, transform);
+        doc.set_dom_selection(None);
         scene.append_scene(page, transform);
         let hash = scene_hash(&scene, w, h, &mut self.blob_hashes);
         timings.scene = t.elapsed();

@@ -87,9 +87,21 @@ from the root of an upstream checkout at that commit) is the whole diff.
     the differing inner ones are popped and pushed): a clip layer costs the raster its whole area, and a stack of
     them per box (a table's sticky cells, the buttons in its cells, all in one scroller) made a ToS table screen's
     capture cost 50-60% more instructions. A layer the layer limit refused is not popped (popping one per clip
-    unconditionally popped the ancestors' layers past the limit). Covered by
-    `crates/pyro-render/tests/overflow_clip.rs`, `crates/pyro-render/tests/hoisted_clip_layers.rs`, WPT
-    `css-overflow/overflow-clip-margin-*`, `clip-00*`.
+    unconditionally popped the ancestors' layers past the limit). Where the device pixels are known (screenshots:
+    `paint_scene`, `paint_scene_for_device` with the capture's transform; `BlitzDomPainter::device_pixels`), each
+    hoisted box is recorded first, and when each of its clips covers in whole every pixel the box's ink touches
+    (`src/bounds.rs`, `clip_covers_pixels`: a rectangle or rounded rectangle under a scale and translation, the
+    pixels inside its box and off its corners' curves; an edge between pixels covers the pixel it cuts only in
+    part, so a box flush with such an edge keeps its clips, and its edge stays antialiased by both), none is
+    pushed: they cut nothing, and one layer per icon button in its `overflow: hidden` cell still cost a ToS
+    finances capture 9-15% more than v0.0.38 (Chromium skips a clip that contains what it clips too). A box one
+    clip cuts keeps all of them, so it is composited through the same layers as before. Left out, a box's
+    translucent pixels that its own draws overlap round as drawn directly (as before round 3), a level apart in
+    places from a clip layer's second 8-bit composite. Every clip stays in a local-raster layer or a 3D plane
+    (their own pixel grids) and around a box with a backdrop filter or a blend mode (their layers read what the
+    clips hold); printed output pushes them all. Covered by
+    `crates/pyro-render/tests/overflow_clip.rs`, `crates/pyro-render/tests/hoisted_clip_layers.rs`, the unit test
+    in `src/bounds.rs`, WPT `css-overflow/overflow-clip-margin-*`, `clip-00*`.
   - `src/render.rs` (`replaced_overflow_is_visible`, `should_clip_node`, `draw_image`, `draw_svg`): the content of
     an `<img>`, `<video>` or `<canvas>` whose author made `overflow` visible on both axes is not cut at its box
     (an SVG image only at its own viewport), as in Chromium; blitz-dom's UA sheet gives these elements
