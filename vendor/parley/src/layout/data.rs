@@ -242,6 +242,15 @@ pub(crate) struct LayoutData<B: Brush> {
     pub(crate) indent_amount: f32,
     /// Options controlling text-indent behavior (each-line, hanging).
     pub(crate) indent_options: IndentOptions,
+    /// pyro: the advance of a space that `tab-size` counts in (the root style's space with its
+    /// letter and word spacing), in layout units; negative while tabs keep their shaped advance.
+    pub(crate) tab_space: f32,
+    /// pyro: the least advance of a tab (0.5ch of the root style): a tab closer than this to its
+    /// stop goes on to the next one.
+    pub(crate) tab_min_advance: f32,
+    /// pyro: the soft hyphens that show a hyphen (their lines end at them): each one's shaped
+    /// cluster with the glyph and advance it was shaped with.
+    pub(crate) shown_hyphens: Vec<(u32, u32, f32)>,
 }
 
 impl<B: Brush> Default for LayoutData<B> {
@@ -269,6 +278,9 @@ impl<B: Brush> Default for LayoutData<B> {
             layout_max_advance: 0.0,
             indent_amount: 0.0,
             indent_options: IndentOptions::default(),
+            tab_space: -1.0,
+            tab_min_advance: 0.0,
+            shown_hyphens: Vec::new(),
         }
     }
 }
@@ -291,6 +303,9 @@ impl<B: Brush> LayoutData<B> {
         self.layout_max_advance = 0.0;
         self.indent_amount = 0.0;
         self.indent_options = IndentOptions::default();
+        self.tab_space = -1.0;
+        self.tab_min_advance = 0.0;
+        self.shown_hyphens.clear();
         self.styles.clear();
         self.style_metrics.clear();
         self.inline_boxes.clear();
@@ -413,7 +428,55 @@ impl<B: Brush> LayoutData<B> {
     /// - min-content width: any conditionally-hanging suffix hangs in full, so all hanging
     ///   whitespace hangs in full.
     pub(crate) fn calculate_content_widths(&self) -> ContentWidths {
-        ContentWidthsMeasurer::new(self.indent_amount, self.indent_options).measure(self)
+        let mut measurer = ContentWidthsMeasurer::new(self.indent_amount, self.indent_options);
+        measurer.tabs = self.tab_stops();
+        measurer.measure(self)
+    }
+
+    /// pyro: the layout's tab stops, if tabs go to stops.
+    #[inline(always)]
+    pub(crate) fn tab_stops(&self) -> Option<TabStops> {
+        (self.tab_space >= 0.0).then_some(TabStops {
+            space: self.tab_space,
+            min_advance: self.tab_min_advance,
+        })
+    }
+}
+
+/// pyro: tab stops from the start edge of the lines' container, one every `tab-size` of the
+/// tab's style.
+#[derive(Copy, Clone, Debug)]
+pub(crate) struct TabStops {
+    space: f32,
+    min_advance: f32,
+}
+
+impl TabStops {
+    /// The advance of a preserved tab of `style` that starts at `position` (Blink's
+    /// `Font::TabWidth`): to the next stop, or to the one after it when that is closer than the
+    /// least advance. A tab size of zero leaves the tab no advance.
+    #[inline]
+    pub(crate) fn advance<B: Brush>(self, style: &Style<B>, position: f32) -> f32 {
+        let interval = match style.tab_size {
+            crate::style::TabSize::Spaces(spaces) => spaces * self.space,
+            crate::style::TabSize::Length(length) => length,
+        };
+        if !(interval > 0.0) || !interval.is_finite() {
+            return 0.0;
+        }
+        let distance = interval - position.rem_euclid(interval);
+        if distance < self.min_advance { distance + interval } else { distance }
+    }
+
+    /// Whether a cluster is a tab that goes to a stop: a tab whose white space is preserved
+    /// (collapsed tabs are spaces before they get here).
+    #[inline(always)]
+    pub(crate) fn applies<B: Brush>(whitespace: Whitespace, style: &Style<B>) -> bool {
+        whitespace == Whitespace::Tab
+            && !matches!(
+                style.white_space_collapse,
+                WhiteSpaceCollapse::Collapse | WhiteSpaceCollapse::PreserveBreaks
+            )
     }
 }
 
@@ -445,6 +508,9 @@ struct ContentWidthsMeasurer {
     /// Indents for lines following a soft/hard wrap.
     soft_indent: f32,
     hard_indent: f32,
+
+    /// pyro: the layout's tab stops.
+    tabs: Option<TabStops>,
 
     /// pyro: the last item measured is a span's start edge ([`InlineBoxKind::SpanStart`]): the
     /// soft wrap opportunity before the content that follows was taken before the edge.
@@ -491,6 +557,7 @@ impl ContentWidthsMeasurer {
             text_wrap_mode: TextWrapMode::Wrap,
             soft_indent: indent_options.indent_following_soft_wrap_break(indent_amount),
             hard_indent: indent_options.indent_following_forced_line_break(indent_amount),
+            tabs: None,
             line_has_content: false,
             after_span_start: false,
         }
@@ -700,6 +767,15 @@ impl ContentWidthsMeasurer {
             }
 
             let mut advance = cluster.advance;
+            // pyro: a preserved tab reaches its stop from where its line would have it: the
+            // widest line for the max-content width, the line since the last break for the other.
+            let mut min_advance = None;
+            if let Some(tabs) = self.tabs
+                && TabStops::applies(whitespace, style)
+            {
+                advance = tabs.advance(style, self.running_max_width);
+                min_advance = Some(tabs.advance(style, self.running_min_width));
+            }
             if SPACED {
                 let owns_gap = if is_rtl {
                     is_atom_start
@@ -710,9 +786,10 @@ impl ContentWidthsMeasurer {
                 };
                 if owns_gap {
                     advance += gap;
+                    min_advance = min_advance.map(|min| min + gap);
                 }
             }
-            self.running_min_width += advance;
+            self.running_min_width += min_advance.unwrap_or(advance);
             self.running_max_width += advance;
 
             // A cluster hangs if all of its characters hang. Its first character is checked via the

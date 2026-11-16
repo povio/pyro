@@ -29,6 +29,8 @@ pub(crate) struct VerticalLine {
     central: Option<f32>,
     /// `text-orientation: upright`: every glyph stands upright.
     all_upright: bool,
+    /// pyro: the line is turned a quarter counterclockwise (`sideways-lr`).
+    counterclockwise: bool,
 }
 
 impl VerticalLine {
@@ -52,7 +54,18 @@ impl VerticalLine {
                     })
             })
             .flatten();
-        Self { central, all_upright }
+        Self { central, all_upright, counterclockwise: false }
+    }
+
+    /// pyro: for a line turned a quarter counterclockwise (`sideways-lr`).
+    pub(crate) fn counterclockwise(mut self, counterclockwise: bool) -> Self {
+        self.counterclockwise = counterclockwise;
+        self
+    }
+
+    /// pyro: a physical offset (a relatively positioned inline box's) in the turned line's space.
+    fn turned_offset(self, (dx, dy): (f32, f32)) -> (f32, f32) {
+        if self.counterclockwise { (-dy, dx) } else { (dy, -dx) }
     }
 
     /// pyro: how far [`Self::fragment_shift`] moves a run along the block axis (layout px).
@@ -305,8 +318,13 @@ pub(crate) fn draw_inline_backgrounds<'a>(
             let x = glyph_run.offset() as f64;
             let w = glyph_run.advance() as f64;
             let baseline = glyph_run.baseline() as f64;
-            let y0 = baseline - metrics.ascent as f64;
-            let y1 = baseline + metrics.descent as f64;
+            // pyro: less what `text-box-trim` trims off the box's content area.
+            let (content, trimmed) = (
+                line.span_content_area(glyph_run.style_index()),
+                line.span_box_area(glyph_run.style_index()),
+            );
+            let y0 = baseline - metrics.ascent as f64 + f64::from(trimmed.0 - content.0);
+            let y1 = baseline + metrics.descent as f64 + f64::from(trimmed.1 - content.1);
             let rect = Rect::new(x, y0, x + w, y1);
 
             for color in backgrounds.into_iter().rev() {
@@ -444,6 +462,22 @@ fn draw_shadow<S: PaintScene>(
 }
 
 /// pyro: the colour a node's text is filled with.
+/// pyro: whether the element's `font-synthesis-weight` lets a bold face be faked, and its
+/// `font-synthesis-style` a slanted one (`oblique-only`: for `font-style: oblique`).
+fn synthesis_allowed(doc: &BaseDocument, node_id: NodeId) -> (bool, bool) {
+    use style::values::computed::font::{FontStyle, FontSynthesis, FontSynthesisStyle};
+    let Some(styles) = doc.get_node(node_id).and_then(|node| node.primary_styles()) else {
+        return (true, true);
+    };
+    let font = styles.get_font();
+    let slant = match font.font_synthesis_style {
+        FontSynthesisStyle::Auto => true,
+        FontSynthesisStyle::None => false,
+        FontSynthesisStyle::ObliqueOnly => font.font_style != FontStyle::ITALIC,
+    };
+    (font.font_synthesis_weight != FontSynthesis::None, slant)
+}
+
 pub(crate) fn text_fill_color(doc: &BaseDocument, node_id: NodeId) -> Color {
     resolve_decoration_entry(doc, node_id).fill_color
 }
@@ -877,6 +911,23 @@ impl TextCut {
             index += count;
         }
         (range.unwrap_or(0..0), extent)
+    }
+
+    /// The x extent of the first atom of `run` in visual order, or of its last one (`last`).
+    pub(crate) fn end_atom(run: &parley::GlyphRun<'_, TextBrush>, last: bool) -> Option<(f32, f32)> {
+        let advances: Vec<f32> = run.glyphs().map(|g| g.advance).collect();
+        let (mut pen, mut index) = (run.offset(), 0);
+        let mut found = None;
+        for (_, count) in run.atom_texts() {
+            let advance: f32 = advances.get(index..index + count)?.iter().sum();
+            found = Some((pen, pen + advance));
+            if !last {
+                break;
+            }
+            pen += advance;
+            index += count;
+        }
+        found
     }
 }
 
@@ -1596,7 +1647,12 @@ pub(crate) fn stroke_text<'a, S: PaintScene>(
     }
     let line_tops = line_tops.filter(|_| vertical.is_none());
     // pyro: the text of relatively positioned inline boxes is painted moved.
-    let relative = vertical.is_none() && doc.inline_root_has_relative_spans(inline_root_id);
+    // (In a vertical line, which is drawn turned, the offset turns with it.)
+    let relative = doc.inline_root_has_relative_spans(inline_root_id);
+    let relative_offset = |node_id| {
+        let offset = doc.inline_span_relative_offset(node_id, inline_root_id);
+        vertical.map_or(offset, |vertical| vertical.turned_offset(offset))
+    };
     let run_filter = run_filter.as_ref().filter(|filter| filter.root == inline_root_id);
     // pyro: the decorations of the root's ancestors that propagate into it.
     let outer = propagated_decorations(doc, inline_root_id, propagated, path_scratch);
@@ -1679,6 +1735,15 @@ pub(crate) fn stroke_text<'a, S: PaintScene>(
             let metrics = run.font_metrics();
             let style = glyph_run.style();
             let css_font_size = font_size as f64 / scale;
+            // pyro: under `font-size-adjust` the run's size is the used one; decoration
+            // thickness and offset percentages are of the computed font size.
+            let css_font_size = doc
+                .get_node(style.brush.id)
+                .and_then(|node| node.primary_styles())
+                .filter(|styles| {
+                    styles.get_font().font_size_adjust != style::values::computed::font::FontSizeAdjust::None
+                })
+                .map_or(css_font_size, |styles| f64::from(styles.get_font().font_size.computed_size().px()));
 
             // Reconcile the stack with this run's ancestor path. Build the path
             // (inline root -> run node), keep the shared prefix already on the stack,
@@ -1846,7 +1911,7 @@ pub(crate) fn stroke_text<'a, S: PaintScene>(
                             own: None,
                             first: None,
                             shift: (relative && !is_outer && node_id != inline_root_id)
-                                .then(|| doc.inline_span_relative_offset(node_id, inline_root_id))
+                                .then(|| relative_offset(node_id))
                                 .filter(|&(dx, dy)| dx != 0.0 || dy != 0.0)
                                 .map(|(dx, dy)| Vec2::new(f64::from(dx) * scale, f64::from(dy) * scale)),
                         });
@@ -1934,8 +1999,12 @@ pub(crate) fn stroke_text<'a, S: PaintScene>(
             let font_size = run.font_size();
             let metrics = run.font_metrics();
             let synthesis = run.synthesis();
+            // pyro: `font-synthesis-weight` and `font-synthesis-style` of the run's element
+            // decide whether a missing bold or slanted face is faked.
+            let (fake_bold, fake_slant) = synthesis_allowed(doc, glyph_run.style().brush.id);
             let glyph_xform = synthesis
                 .skew()
+                .filter(|_| fake_slant)
                 .map(|angle| Affine::skew(angle.to_radians().tan() as f64, 0.0));
             let (transform, glyph_xform) = match vertical {
                 Some(vertical) => {
@@ -1950,7 +2019,7 @@ pub(crate) fn stroke_text<'a, S: PaintScene>(
                 None => (transform, glyph_xform),
             };
             let transform = if relative {
-                let (dx, dy) = doc.inline_span_relative_offset(glyph_run.style().brush.id, inline_root_id);
+                let (dx, dy) = relative_offset(glyph_run.style().brush.id);
                 transform * Affine::translate((dx as f64 * scale, dy as f64 * scale))
             } else {
                 transform
@@ -1961,7 +2030,7 @@ pub(crate) fn stroke_text<'a, S: PaintScene>(
                 font_embolden(font_size as f64, fill_color, transform)
             } else {
                 kurbo::Vec2::default()
-            } + if synthesis.embolden() {
+            } + if synthesis.embolden() && fake_bold {
                 synthetic_bold(font_size as f64, scale, fill_color, transform)
             } else {
                 kurbo::Vec2::default()
@@ -2096,6 +2165,7 @@ pub(crate) fn draw_text_annotations<S: PaintScene>(
     recording: bool,
     vertical: Option<VerticalLine>,
     brush_override: Option<Color>,
+    cut: Option<TextCut>,
 ) {
     // Glyphs snap to quarter pixels as the text's do (`stroke_text`).
     let snap = !recording && vertical.is_none();
@@ -2131,7 +2201,15 @@ pub(crate) fn draw_text_annotations<S: PaintScene>(
                     for (range, count, extent) in atoms() {
                         let marked = count > 0
                             && text.get(range).and_then(|t| t.chars().next()).is_some_and(can_take_emphasis_mark);
-                        if marked {
+                        // No mark over an atom `text-overflow` cut from the line.
+                        let kept = cut.is_none_or(|cut| {
+                            if cut.keep_left {
+                                extent.1 <= f64::from(cut.edge) + 1.0 / 128.0
+                            } else {
+                                extent.0 >= f64::from(cut.edge) - 1.0 / 128.0
+                            }
+                        });
+                        if marked && kept {
                             marks.push((index, extent, content));
                         }
                     }

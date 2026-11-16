@@ -160,6 +160,8 @@ jobs:
           name: patched-jsc
           path: patched-jsc
       - uses: actions/cache/restore@v4
+        env:
+          PATH: /usr/bin:/bin:/usr/sbin:/sbin
         if: needs.jsc.result != 'success'
         with:
           path: ~/Library/Caches/pyro/jsc/${{ needs.prepare.outputs.jsc-dir }}
@@ -198,6 +200,8 @@ jobs:
           tar -czf browser.tgz browser
       # For later runs with the same inputs (pull requests restore their own entries and main's).
       - uses: actions/cache/save@v4
+        env:
+          PATH: /usr/bin:/bin:/usr/sbin:/sbin
         with:
           path: browser.tgz
           key: ${{ needs.prepare.outputs.browser-key }}
@@ -233,6 +237,8 @@ jobs:
         run: bun install --frozen-lockfile
       # The pinned WPT revision, only the directories bench/wpt/wpt-paths.txt lists (about 290 MB).
       - uses: actions/cache@v4
+        env:
+          PATH: /usr/bin:/bin:/usr/sbin:/sbin
         id: wpt-cache
         with:
           path: wpt
@@ -246,12 +252,16 @@ jobs:
         with:
           name: wpt-browser
       - uses: actions/cache/restore@v4
+        env:
+          PATH: /usr/bin:/bin:/usr/sbin:/sbin
         if: needs.build.result != 'success'
         with:
           path: browser.tgz
           key: ${{ needs.prepare.outputs.browser-key }}
           fail-on-cache-miss: true
       - run: tar -xzf browser.tgz
+      - name: Server tests
+        run: bun test bench/wpt/pipes.test.mjs
       - name: Run shard ${{ strategy.job-index }} of ${{ strategy.job-total }}
         env:
           SHARD: ${{ strategy.job-index }}/${{ strategy.job-total }}
@@ -298,6 +308,8 @@ jobs:
           name: wpt-browser
           path: ${{ github.workspace }}
       - uses: actions/cache/restore@v4
+        env:
+          PATH: /usr/bin:/bin:/usr/sbin:/sbin
         if: needs.build.result != 'success'
         with:
           path: browser.tgz
@@ -420,8 +432,8 @@ jobs:
       - name: Install the runner's dependencies
         working-directory: bench
         run: bun install --frozen-lockfile
-      # A PATH without zstd: lp-m1 has none, so its cache entries are gzip, and a runner with zstd (GitHub's macOS
-      # images) would look for another cache version and miss them.
+      # A PATH without zstd on every cache step: the first lp-m1 machine has none, so its cache entries are gzip, and a
+      # machine with zstd (the second lp-m1 runner, GitHub's macOS images) would look for another cache version and miss them.
       - uses: actions/cache@v4
         id: wpt-cache
         env:

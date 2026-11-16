@@ -895,6 +895,48 @@ impl BaseDocument {
         }
     }
 
+    /// pyro: an element whose own `content` is one image (`content: url(a.png)`, or an
+    /// `image-set()`) shows that image in place of its children, laid out as an `<img>` of it
+    /// (CSS Content 3 §2: the element is replaced). Elements that are something else already
+    /// (an `<img>`, a canvas, an input) keep being that; when the style no longer says so, the
+    /// element is built from its children again.
+    fn flush_content_image(&mut self, node_id: NodeId) {
+        use crate::node::SpecialElementData;
+        use style::values::computed::{Content, ContentItem};
+        let node = &self.nodes[node_id];
+        if node.is_anonymous() {
+            return;
+        }
+        let Some(element) = node.element_data() else { return };
+        let wanted = node.primary_styles().and_then(|style| {
+            let Content::Items(items) = &style.get_counters().content else { return None };
+            let [ContentItem::Image(image)] = &items.items[..] else { return None };
+            match crate::util::unfiltered_image(image) {
+                StyloImage::Url(ComputedUrl::Valid(url)) => {
+                    Some((url.as_str().to_string(), crate::util::image_resolution(image)))
+                }
+                _ => None,
+            }
+        });
+        if element.content_image == wanted {
+            return;
+        }
+        let had = element.content_image.is_some();
+        if !had && !matches!(element.special_data, SpecialElementData::None) {
+            return;
+        }
+        let node = &mut self.nodes[node_id];
+        let element = node.element_data_mut().unwrap();
+        element.special_data = SpecialElementData::None;
+        element.content_image = wanted.clone();
+        node.clear_layout_cache();
+        node.insert_damage(ALL_DAMAGE);
+        node.mark_damaged();
+        if let Some((url, _)) = wanted {
+            self.load_generated_image(node_id, &url);
+        }
+    }
+
     /// Flush the image layers of nodes whose style changed during the last
     /// style traversal (or whose pseudo-element boxes were (re)constructed).
     pub(crate) fn flush_pending_style_images(&mut self) {
@@ -911,6 +953,7 @@ impl BaseDocument {
             self.flush_image_layers_from_style(node_id, ImageLayerKind::Mask);
             self.flush_image_layers_from_style(node_id, ImageLayerKind::BorderImage);
             self.flush_image_layers_from_style(node_id, ImageLayerKind::ListStyle);
+            self.flush_content_image(node_id);
             #[cfg(feature = "svg")]
             self.flush_svg_references_from_style(node_id);
         }

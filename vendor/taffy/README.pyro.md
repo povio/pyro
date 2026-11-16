@@ -66,6 +66,59 @@ Upstream's generated tests expect exact fractions and are not run against this c
 `grid_parity_tailwind_columns` and `grid_parity_calendar_fr_rows_with_min_height` in
 `crates/pyro-layout/tests/flow.rs` cover it.
 
+`style/block.rs` and `compute/block.rs`: `BlockContainerStyle::margin_trim` (default: neither edge) is
+`margin-trim` in the block axis (css-box-4 §3.3; stylo_taffy answers from the computed value). With `start`,
+the top margins of the in-flow children at the container's top edge are truncated to zero together with every
+margin that collapses with them: the margins their descendants collapse through them, and both margins of a
+child that is collapsed through, after which the next child is at the edge. With `end`, the same for the
+bottom margin of the last in-flow child and the collapsed-through children after the last one with a height
+(they move to its bottom edge); when every child is collapsed through, all their margins go. Floats and
+out-of-flow boxes keep their margins. The container's own margins are not trimmed. The trimmed margins are
+reported as zero in the children's `Layout::margin`. Covered by `crates/pyro-render/tests/margin_trim.rs` and
+WPT `css/css-box/margin-trim` (42 of 42 reftests).
+
+`compute/block.rs`, `compute/grid/alignment.rs`, `style/mod.rs`, `style/block.rs`: `aspect-ratio` as
+css-sizing-4 §5 has it, in block layout (`RatioSizes`, `resolve_sizes_with_aspect_ratio`). Upstream applied
+the ratio to `size`, `min-size` and `max-size` each on its own, so a limit in one axis overrode a size given in
+the other (`width: 100px; aspect-ratio: 2/1; min-height: 100px` was 200px wide), and a box was never taller or
+wider than its ratio made it.
+
+- The axis the ratio gives follows the other one after that one's own minimum and maximum. Limits are
+  transferred through the ratio only when both sizes are `auto` (block axis to inline axis: the minimum no
+  larger than `max-width`, the maximum no smaller than `min-width`).
+- The automatic minimum size. A block container whose height follows its ratio (`height_follows_ratio`:
+  the height is then not handed down as known; `compute_inner` derives it from the used width, so a float's
+  or an inline-block's shrink-to-fit width counts) is as tall as its content when that is taller, up to
+  `max-height`, unless `min-height` is set or it is a scroll container. A flex or grid container gets the same
+  from its block parent, which measures its content height (`BlockItem::content_min_height_ratio`); not a
+  wrapping column flex container, whose lines break at the ratio's height
+  (`BlockItemStyle::breaks_lines_in_block_axis`, default false). A box whose width follows its ratio is as
+  wide as its min-content width, up to `max-width` (`BlockItem::min_width_is_content`, measured in
+  `SizingMode::ContentSize`).
+- `CoreStyle::aspect_ratio_of_content_box` (default false): `aspect-ratio: auto <ratio>` on a non-replaced
+  box is the ratio of its content box whatever `box-sizing` says (`aspect_ratio_inset`).
+- Grid items (`align_and_position_item`): with a ratio, an explicit `stretch` in an axis with an `auto` size
+  fills the grid area whatever the ratio gives that axis; the other axis, when `auto` and not stretched,
+  follows through the ratio.
+
+Not done: the flex algorithm's own rules for items with a ratio (content size suggestion, flex base size),
+absolutely positioned boxes, tables. Covered by `crates/pyro-render/tests/aspect_ratio.rs`; WPT
+`css/css-sizing`: 50 more reftests pass.
+
+`compute/block.rs`, `style/block.rs`: sizing keywords in `min-width`, `max-width`, `min-height` and
+`max-height` of block-level items. `CoreStyle::min_size`/`max_size` are lengths, percentages or `auto`, so a
+keyword there was `auto`; `BlockItemStyle::min_size_keyword`/`max_size_keyword` (default: none) name it, and the
+item's block parent applies it: in the inline axis the item's content width under the keyword's constraint
+(`clamp_width_by_keywords`, measured in `SizingMode::ContentSize` with the item's height kept, so percentage
+heights in it resolve as they will; `stretch` is the stretch width), also where the parent sizes itself by its
+content; in the block axis the content height at the item's width, or the stretch height. A width the preferred
+aspect ratio gives from a height counts as an intrinsic width. Out-of-flow boxes, floats, flex and grid items
+are not done. Covered by `crates/pyro-render/tests/sizing_keywords.rs`.
+
+`compute/block.rs`, `determine_content_based_container_width`: a percentage in an item's margin resolves against
+zero in an intrinsic size, also inside `calc()`: `margin-left: calc(10% + 100px)` counts 100px (the whole
+margin was dropped). Same test file.
+
 ## Incremental rounding
 
 These hooks went unused for a while. blitz-dom's `writing-mode` feature (#199) replaced `round_layout` with

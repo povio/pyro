@@ -52,6 +52,71 @@ fn spread_radii(
     }
 }
 
+/// pyro: what a box that clips its overflow (`style`'s `overflow` is not `visible` on some
+/// axis; `frame` is its box) clips its content to, as Chromium does:
+/// - a scroll container (`hidden`, `scroll`, `auto`): its padding box, along the padding edge's
+///   curve;
+/// - `overflow: clip` on both axes (or `contain: paint`): the box `overflow-clip-margin` names (the padding box
+///   unless it says otherwise) along its edge's curve, grown by the margin's length as a
+///   shadow shape is by its spread;
+/// - `clip` on one axis and `visible` on the other: that box's extent (and margin) on the
+///   clipped axis only, with square corners (CSS Overflow 3 §3.1: no rounding when one axis
+///   does not clip).
+pub(super) fn overflow_clip_path(frame: &CssBox, style: &style::properties::ComputedValues, scale: f64) -> kurbo::BezPath {
+    use kurbo::Shape as _;
+    use style::values::computed::Overflow;
+    use style::values::generics::box_::OverflowClipMarginBox;
+    let box_style = style.get_box();
+    let (visible_x, visible_y) = (box_style.overflow_x == Overflow::Visible, box_style.overflow_y == Overflow::Visible);
+    // Paint containment clips as `overflow: clip` does, on both axes.
+    let contains = box_style.contain.contains(style::values::computed::Contain::PAINT);
+    let (clip_x, clip_y) = (
+        box_style.overflow_x == Overflow::Clip || contains && visible_x,
+        box_style.overflow_y == Overflow::Clip || contains && visible_y,
+    );
+    if !(clip_x || clip_y) || !(clip_x || visible_x) || !(clip_y || visible_y) {
+        return frame.padding_box_path();
+    }
+    let clip_margin = &style.get_margin().overflow_clip_margin;
+    // (A negative margin moves the edge inwards, to the box's middle at most.)
+    let margin = f64::from(clip_margin.offset.px()) * scale;
+    let (rect, insets) = match clip_margin.visual_box {
+        OverflowClipMarginBox::BorderBox => (frame.border_box, Insets::ZERO),
+        OverflowClipMarginBox::PaddingBox => (frame.padding_box, frame.border_width),
+        OverflowClipMarginBox::ContentBox => {
+            let (b, p) = (frame.border_width, frame.padding_width);
+            (frame.content_box, Insets::new(b.x0 + p.x0, b.y0 + p.y0, b.x1 + p.x1, b.y1 + p.y1))
+        }
+    };
+    let margin = margin.max(-rect.width() / 2.0).max(-rect.height() / 2.0);
+    if !(clip_x && clip_y) {
+        const FAR: f64 = 1e7;
+        let (x0, x1) = if clip_x { (rect.x0 - margin, rect.x1 + margin) } else { (-FAR, FAR) };
+        let (y0, y1) = if clip_y { (rect.y0 - margin, rect.y1 + margin) } else { (-FAR, FAR) };
+        return Rect::new(x0, y0, x1, y1).to_path(0.1);
+    }
+    if margin == 0.0 {
+        return match clip_margin.visual_box {
+            OverflowClipMarginBox::BorderBox => frame.border_box_path(),
+            OverflowClipMarginBox::PaddingBox => frame.padding_box_path(),
+            OverflowClipMarginBox::ContentBox => frame.content_box_path(),
+        };
+    }
+    // The box's own radii: the border radii less the widths between the border edge and it.
+    let inner = |r: Vec2, dx: f64, dy: f64| {
+        let r = Vec2::new(r.x - dx, r.y - dy);
+        if r.x <= 0.0 || r.y <= 0.0 { Vec2::ZERO } else { r }
+    };
+    let radii = NonUniformRoundedRectRadii {
+        top_left: inner(frame.border_radii.top_left, insets.x0, insets.y0),
+        top_right: inner(frame.border_radii.top_right, insets.x1, insets.y0),
+        bottom_right: inner(frame.border_radii.bottom_right, insets.x1, insets.y1),
+        bottom_left: inner(frame.border_radii.bottom_left, insets.x0, insets.y1),
+    };
+    let radii = spread_radii(&radii, rect.size(), margin);
+    CssBox::new(rect.inflate(margin, margin), Insets::ZERO, Insets::ZERO, 0.0, radii).border_box_path()
+}
+
 /// pyro: the single radius of a shadow shape whose corners are all circular arcs of one radius
 /// (a rectangle, or a rounded rectangle), which vello's blurred rounded rectangle can draw.
 fn uniform_radius(radii: &NonUniformRoundedRectRadii) -> Option<f64> {

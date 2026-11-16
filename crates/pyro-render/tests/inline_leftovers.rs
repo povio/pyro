@@ -299,12 +299,12 @@ fn display_math_computes_to_flow() {
 #[test]
 fn a_static_position_in_vertical_lines_is_on_its_line() {
     // WPT css-position `static-position/vlr-ltr-ltr`: in a vertical writing mode the box stays
-    // where its line puts it, also in a relatively positioned span (which the turned lines do
-    // not move): 3 + 2 characters of 20px down the line.
+    // where its line puts it, moved with a relatively positioned span around it as the span's
+    // text is: 3 + 2 characters of 20px down the line, and the span's 2px each way.
     let r = rects(
         "<div style='writing-mode:vertical-lr;height:300px;font:20px/20px monospace'>XXX<span style='position:relative;inset-block-start:2px;inset-inline-start:2px'>XX\
          <i id=x style='position:absolute;width:5px;height:5px'></i>XX</span></div>",
         &["x"],
     );
-    assert_eq!(r[0][1], 60.0, "{r:?}");
+    assert_eq!((r[0][0], r[0][1]), (2.0, 62.0), "{r:?}");
 }

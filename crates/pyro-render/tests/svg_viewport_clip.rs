@@ -290,3 +290,20 @@ fn an_inner_svg_of_an_svg_document_keeps_visible_overflow() {
     assert_eq!(pixel(&img, 205, 50), WHITE, "right of the root");
     assert_eq!(pixel(&img, 100, 105), WHITE, "below the root");
 }
+
+/// An image whose author made its `overflow` visible shows its content past its box, as in
+/// Chromium (the UA sheet's `overflow: clip` with `overflow-clip-margin: content-box` is the
+/// default cut): `object-fit: none` then shows the whole image in a smaller box.
+#[test]
+fn an_image_with_overflow_visible_shows_its_content_past_its_box() {
+    let image = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100' height='100'%3E\
+                 %3Crect width='100' height='100' fill='blue'/%3E%3C/svg%3E";
+    let style = "width:40px;height:40px;object-fit:none;object-position:0 0";
+    let cut = render(&format!("<img style='{style}' src=\"{image}\">"));
+    assert_eq!(pixel(&cut, 20, 20), BLUE, "in the box");
+    assert_eq!(pixel(&cut, 80, 80), WHITE, "cut at the box");
+    let shown = render(&format!("<img style='{style};overflow:visible' src=\"{image}\">"));
+    assert_eq!(pixel(&shown, 20, 20), BLUE, "in the box");
+    assert_eq!(pixel(&shown, 80, 80), BLUE, "past it");
+    assert_eq!(pixel(&shown, 120, 80), WHITE, "the image ends at its own size");
+}

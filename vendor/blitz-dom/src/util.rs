@@ -135,15 +135,70 @@ impl Point<f64> {
     pub const ZERO: Self = Point { x: 0.0, y: 0.0 };
 }
 
-/// pyro: the image a `filter()` image filters (through nested ones), else `image` itself: the
-/// image whose resource an image layer loads and draws.
+/// pyro: the image a `filter()` image filters (through nested ones) or an `image-set()` selected,
+/// else `image` itself: the image whose resource an image layer loads and draws.
 pub fn unfiltered_image(image: &style::values::computed::Image) -> &style::values::computed::Image {
+    use style::values::generics::image::GenericImage;
     match image {
-        style::values::generics::image::GenericImage::Filter(filtered) => {
-            unfiltered_image(&filtered.image)
-        }
+        GenericImage::Filter(filtered) => unfiltered_image(&filtered.image),
+        GenericImage::ImageSet(set) => match set.items.get(set.selected_index) {
+            Some(item) => unfiltered_image(&item.image),
+            None => image,
+        },
         image => image,
     }
+}
+
+/// pyro: the image pixels per CSS px of `image`: the `<resolution>` of the `image-set()` option
+/// selected (through nested ones), 1 for any other image. A raster image's natural size is its
+/// pixel size divided by it.
+pub fn image_resolution(image: &style::values::computed::Image) -> f32 {
+    use style::values::generics::image::GenericImage;
+    match image {
+        GenericImage::Filter(filtered) => image_resolution(&filtered.image),
+        GenericImage::ImageSet(set) => match set.items.get(set.selected_index) {
+            Some(item) => {
+                let own = item.resolution.dppx();
+                (if own > 0.0 { own } else { 1.0 }) * image_resolution(&item.image)
+            }
+            None => 1.0,
+        },
+        _ => 1.0,
+    }
+}
+
+/// pyro: the view box `object-view-box` gives replaced content of the natural size
+/// `natural_width` x `natural_height` (CSS px): its left, top, width and height in the content's
+/// own space. `None` without the property, and for a box without an area (the property is then
+/// ignored, as in Chromium). The view box stands for the content where it is sized and placed:
+/// it is the natural size, and what `object-fit` and `object-position` fit to the content box.
+pub fn object_view_box(
+    style: &style::properties::ComputedValues,
+    natural_width: f32,
+    natural_height: f32,
+) -> Option<(f32, f32, f32, f32)> {
+    use style::values::computed::CSSPixelLength;
+    use style::values::generics::basic_shape::{GenericBasicShape, GenericClipPath};
+    let GenericClipPath::Shape(shape, _) = &style.get_position().object_view_box else {
+        return None;
+    };
+    let GenericBasicShape::Rect(inset) = &**shape else {
+        return None;
+    };
+    let (w, h) = (CSSPixelLength::new(natural_width), CSSPixelLength::new(natural_height));
+    let top = inset.rect.0.resolve(h).px();
+    let right = inset.rect.1.resolve(w).px();
+    let bottom = inset.rect.2.resolve(h).px();
+    let left = inset.rect.3.resolve(w).px();
+    let (width, height) = (natural_width - left - right, natural_height - top - bottom);
+    (width > 0.0 && height > 0.0 && [left, top, width, height].iter().all(|v| v.is_finite()))
+        .then_some((left, top, width, height))
+}
+
+/// pyro: whether `style` shows images as stored, not as their EXIF orientation says
+/// (`image-orientation: none`).
+pub fn image_unoriented(style: &style::properties::ComputedValues) -> bool {
+    style.get_inherited_box().image_orientation == style::values::computed::ImageOrientation::None
 }
 
 // Debug print an RcDom

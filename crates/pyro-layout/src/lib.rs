@@ -274,6 +274,7 @@ pub fn animation_frame(frame: &pyro_dom::animation::AnimationFrame) -> pyro_rend
                     transitions: el.transitions.iter().map(effect).collect(),
                     animations: el.animations.iter().map(effect).collect(),
                     current: el.current.iter().map(effect).collect(),
+                    marker: el.marker.iter().map(effect).collect(),
                 },
             )
         })
@@ -392,6 +393,7 @@ impl BlitzGeometry {
             background: None,
             canvases: Vec::new(),
             element_scroll: None,
+            sticky_offsets: None,
             animations: None,
             xml_document: dom.is_xml_document(style.document()),
             content_language: dom.content_language(style.document()).map(str::to_owned),

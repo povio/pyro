@@ -137,3 +137,60 @@ fn a_printed_ellipsis_and_the_text_it_keeps_map_to_their_characters() {
     assert!(out.stats.runs_with_source >= 2, "the line's run and the ellipsis: {:?}", out.stats);
     assert_eq!(out.stats.glyphs_without_text, 0, "{:?}", out.stats);
 }
+
+#[test]
+fn a_string_value_ends_the_line_as_the_ellipsis_does() {
+    let ellipsis = render(&format!("<div class=t>{LONG}</div>"));
+    let string = render(&format!("<div class=t style='text-overflow:\"\\2026\"'>{LONG}</div>"));
+    assert_eq!(ellipsis.data, string.data, "the string \"…\" is drawn as `ellipsis` is");
+    // Line-breaking controls in the string are white space, collapsed: one line.
+    let spaced = render(&format!("<div class=t style='text-overflow:\"I I\"'>{LONG}</div>"));
+    let broken = render(&format!("<div class=t style='text-overflow:\"I\\A\\A\\2028 I\"'>{LONG}</div>"));
+    assert_eq!(spaced.data, broken.data, "controls collapse to one space");
+    assert_ne!(spaced.data, ellipsis.data, "the string is drawn");
+    let (below, _, _) = ink(&broken, 0, 400, 40, 300, dark);
+    assert_eq!(below, 0, "on the line it ends: {below} dark pixels below it");
+}
+
+#[test]
+fn a_line_too_narrow_for_the_ellipsis_keeps_its_first_atom() {
+    // 20px: an I (about 9px) fits, the ellipsis (32px) beside it does not.
+    let img = render(&format!("<div class=t style='width:20px'>{LONG}</div>"));
+    let (stem, _, last) = ink(&img, 0, 400, 8, 20, dark);
+    assert!(stem > 0, "the first I is drawn");
+    assert!(last < 10, "and only it: stems to {last}");
+    let (dots, _, end) = ink(&img, last + 2, 400, 24, 34, dark);
+    assert!(dots > 0 && end < 20, "the ellipsis follows it, clipped by the box: {dots} dark pixels to {end}");
+}
+
+#[test]
+fn a_text_control_that_is_not_focused_ends_its_overflowing_lines_with_the_ellipsis() {
+    let control = |style: &str, text: &str| {
+        render(&format!(
+            "<textarea style='font:inherit;width:150px;height:40px;padding:0;border:0;white-space:nowrap;{style}'>{text}</textarea>"
+        ))
+    };
+    let clipped = control("", LONG);
+    let ellipsis = control("text-overflow:ellipsis", LONG);
+    assert_ne!(clipped.data, ellipsis.data, "the overflowing line is cut for the ellipsis");
+    let (_, _, stems) = ink(&ellipsis, 0, 400, 8, 20, dark);
+    assert!(stems < 130, "no stem where the ellipsis goes: {stems}");
+    let (dots, _, last) = ink(&ellipsis, stems + 1, 400, 24, 34, dark);
+    assert!(dots > 10 && last < 150, "the ellipsis, within the box: {dots} dark pixels to {last}");
+    let string = control("text-overflow:\"--\"", LONG);
+    assert_ne!(string.data, ellipsis.data, "a string value is drawn in its place");
+    assert_eq!(control("", "III").data, control("text-overflow:ellipsis", "III").data, "a line that fits is kept");
+    let input = |style: &str| {
+        render(&format!("<input style='font:inherit;width:150px;padding:0;border:0;{style}' value='{LONG}'>"))
+    };
+    assert_ne!(input("").data, input("text-overflow:ellipsis").data, "a single-line input too");
+}
+
+#[test]
+fn lines_in_an_anonymous_block_end_with_their_parents_ellipsis() {
+    // The text sits in an anonymous block beside the block child: `overflow` and
+    // `text-overflow` are the parent's.
+    let img = render(&format!("<div class=t>{LONG}<div style='height:0'></div></div>"));
+    let plain = render(&format!("<div class=t>{LONG}</div>"));
+    assert_eq!(img.data, plain.data, "cut as the block's own line is");
+}

@@ -137,6 +137,20 @@ diff -ruN a/invalidation/viewport_units.rs b/invalidation/viewport_units.rs
      let usage = data.styles.viewport_unit_usage();
      let uses_viewport_units = usage != ViewportUnitUsage::None;
      if uses_viewport_units {
+diff -ruN a/properties/computed_value_flags.rs b/properties/computed_value_flags.rs
+--- a/properties/computed_value_flags.rs	2026-11-11 19:55:57
++++ b/properties/computed_value_flags.rs	2026-11-15 20:15:35
+@@ -143,6 +143,10 @@
+ 
+         /// Whether this style uses an element-scoped `random()`.
+         const USES_ELEMENT_SCOPED_RANDOM = 1 << 29;
++
++        /// pyro: the legacy line clamp applies to this box: it had `display: -webkit-box` (or
++        /// `-webkit-inline-box`), `-webkit-box-orient: vertical` and a `-webkit-line-clamp`.
++        const WEBKIT_LINE_CLAMP_APPLIES = 1 << 30;
+     }
+ }
+ 
 diff -ruN a/properties/counted_unknown_properties.py b/properties/counted_unknown_properties.py
 --- a/properties/counted_unknown_properties.py	2026-11-11 19:55:57
 +++ b/properties/counted_unknown_properties.py	2026-11-11 19:55:57
@@ -204,7 +218,7 @@ diff -ruN a/properties/helpers.mako.rs b/properties/helpers.mako.rs
                              if !context.builder.effective_zoom_for_inheritance.is_one() {
 diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 --- a/properties/longhands.toml	2026-11-11 19:55:57
-+++ b/properties/longhands.toml	2026-11-15 11:27:53
++++ b/properties/longhands.toml	2026-11-15 23:37:46
 @@ -473,7 +473,6 @@
  type = "BreakBetween"
  initial = "computed::BreakBetween::Auto"
@@ -221,12 +235,13 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/css-break/#propdef-break-before"
  animation_type = "discrete"
  affects = "layout"
-@@ -491,9 +489,26 @@
+@@ -491,11 +489,28 @@
  type = "BreakWithin"
  initial = "computed::BreakWithin::Auto"
  struct = "box"
 -engine = "gecko"
- spec = "https://drafts.csswg.org/css-break/#propdef-break-inside"
+-spec = "https://drafts.csswg.org/css-break/#propdef-break-inside"
++spec = "https://drafts.csswg.org/css-break/#propdef-break-inside"
 +animation_type = "discrete"
 +affects = "layout"
 +
@@ -235,20 +250,22 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +initial = "From::from(2)"
 +struct = "inherited_text"
 +spec = "https://drafts.csswg.org/css-break/#propdef-orphans"
-+animation_type = "discrete"
+ animation_type = "discrete"
 +servo_restyle_damage = "repaint"
-+affects = "layout"
-+
+ affects = "layout"
+ 
 +[widows]
 +type = "PositiveInteger"
 +initial = "From::from(2)"
 +struct = "inherited_text"
 +spec = "https://drafts.csswg.org/css-break/#propdef-widows"
- animation_type = "discrete"
++animation_type = "discrete"
 +servo_restyle_damage = "repaint"
- affects = "layout"
- 
++affects = "layout"
++
  [caption-side]
+ type = "table::CaptionSide"
+ initial = "computed::table::CaptionSide::Top"
 @@ -591,7 +606,6 @@
  type = "Color"
  initial = "computed_value::T::currentcolor()"
@@ -273,6 +290,50 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  initial_specified_value = "specified::BorderSideWidth::medium()"
  spec = "https://drafts.csswg.org/css-multicol/#propdef-column-rule-width"
  affects = "layout"
+@@ -636,39 +648,39 @@
+ type = "ContainIntrinsicSize"
+ initial = "computed::ContainIntrinsicSize::None"
+ struct = "position"
+-engine = "gecko"
+ logical_group = "contain-intrinsic-size"
+ logical = true
+ spec = "https://drafts.csswg.org/css-sizing-4/#intrinsic-size-override"
+ affects = "layout"
++servo_restyle_damage = "rebuild_box"
+ 
+ [contain-intrinsic-height]
+ type = "ContainIntrinsicSize"
+ initial = "computed::ContainIntrinsicSize::None"
+ struct = "position"
+-engine = "gecko"
+ logical_group = "contain-intrinsic-size"
+ spec = "https://drafts.csswg.org/css-sizing-4/#intrinsic-size-override"
+ affects = "layout"
++servo_restyle_damage = "rebuild_box"
+ 
+ [contain-intrinsic-inline-size]
+ type = "ContainIntrinsicSize"
+ initial = "computed::ContainIntrinsicSize::None"
+ struct = "position"
+-engine = "gecko"
+ logical_group = "contain-intrinsic-size"
+ logical = true
+ spec = "https://drafts.csswg.org/css-sizing-4/#intrinsic-size-override"
+ affects = "layout"
++servo_restyle_damage = "rebuild_box"
+ 
+ [contain-intrinsic-width]
+ type = "ContainIntrinsicSize"
+ initial = "computed::ContainIntrinsicSize::None"
+ struct = "position"
+-engine = "gecko"
+ logical_group = "contain-intrinsic-size"
+ spec = "https://drafts.csswg.org/css-sizing-4/#intrinsic-size-override"
+ affects = "layout"
++servo_restyle_damage = "rebuild_box"
+ 
+ [container-name]
+ type = "ContainerName"
 @@ -1281,6 +1293,7 @@
  [list-style-image]
  type = "Image"
@@ -281,7 +342,25 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  struct = "list"
  animation_type = "discrete"
  spec = "https://drafts.csswg.org/css-lists/#propdef-list-style-image"
-@@ -2117,7 +2130,6 @@
+@@ -1427,6 +1440,17 @@
+ spec = "https://drafts.csswg.org/css-images-3/#the-object-position"
+ affects = "layout"
+ 
++# pyro: `object-view-box: none | <basic-shape-rect>` (CSS Images 5): the part of a replaced
++# element's content that is its view, as a `clip-path` value of `none` or one rectangle.
++[object-view-box]
++type = "basic_shape::ClipPath"
++initial = "generics::basic_shape::ClipPath::None"
++struct = "position"
++parse_method = "parse_object_view_box"
++animation_type = "discrete"
++spec = "https://drafts.csswg.org/css-images-5/#the-object-view-box"
++affects = "layout"
++
+ [offset-anchor]
+ type = "PositionOrAuto"
+ initial = "computed::PositionOrAuto::auto()"
+@@ -2117,7 +2141,6 @@
  type = "TransformBox"
  initial = "computed::TransformBox::ViewBox"
  struct = "box"
@@ -289,7 +368,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/css-transforms/#transform-box"
  animation_type = "discrete"
  affects = "overflow"
-@@ -2635,7 +2647,6 @@
+@@ -2635,7 +2658,6 @@
  type = "TextDecorationSkipInk"
  initial = "computed::TextDecorationSkipInk::Auto"
  struct = "inherited_text"
@@ -297,7 +376,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  animation_type = "discrete"
  spec = "https://drafts.csswg.org/css-text-decor-4/#text-decoration-skip-ink-property"
  affects = "overflow"
-@@ -2665,6 +2676,7 @@
+@@ -2665,6 +2687,7 @@
  servo_pref = "layout.css.text-emphasis.enabled"
  animation_type = "discrete"
  spec = "https://drafts.csswg.org/css-text-decor/#propdef-text-emphasis-style"
@@ -305,7 +384,18 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  affects = "overflow"
  
  [text-underline-offset]
-@@ -3694,6 +3706,7 @@
+@@ -3383,9 +3406,9 @@
+ type = "MarginTrim"
+ initial = "computed::MarginTrim::empty()"
+ struct = "margin"
+-engine = "gecko"
+ gecko_pref = "layout.css.margin-trim.enabled"
+ animation_type = "none"
++servo_restyle_damage = "rebuild_box"
+ spec = "https://drafts.csswg.org/css-box-4/#propdef-margin-trim"
+ affects = "layout"
+ 
+@@ -3694,6 +3717,7 @@
  [box-decoration-break]
  struct = "border"
  spec = "https://drafts.csswg.org/css-break/#propdef-box-decoration-break"
@@ -313,7 +403,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  animation_type = "discrete"
  affects = "layout"
  type = "BoxDecorationBreak"
-@@ -3770,7 +3783,6 @@
+@@ -3770,7 +3794,6 @@
  
  [column-fill]
  struct = "column"
@@ -321,6 +411,37 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/css-multicol/#propdef-column-fill"
  animation_type = "discrete"
  affects = "layout"
+@@ -3901,9 +3924,9 @@
+ type = "TextOrientation"
+ initial = "computed::TextOrientation::Mixed"
+ 
++# pyro: for Servo too (blitz-dom and blitz-paint show an image turned back under `none`).
+ [image-orientation]
+ struct = "inherited_box"
+-engine = "gecko"
+ spec = "https://drafts.csswg.org/css-images/#propdef-image-orientation"
+ animation_type = "discrete"
+ affects = "layout"
+@@ -4287,6 +4310,19 @@
+ affects = "layout"
+ gecko_ffi_name = "mBoxOrient"
+ aliases = ["-webkit-box-orient"]
++type = "BoxOrient"
++initial = "computed::BoxOrient::Horizontal"
++
++# pyro: `-webkit-box-orient` for the servo engine (the gecko one is `-moz-box-orient`'s alias):
++# with `display: -webkit-box` and `-webkit-line-clamp` it makes the legacy line clamp apply
++# (`StyleAdjuster::adjust_for_webkit_box`).
++[-webkit-box-orient]
++struct = "box"
++engine = "servo"
++spec = "Nonstandard (https://developer.mozilla.org/en-US/docs/Web/CSS/box-orient)"
++animation_type = "discrete"
++affects = "layout"
++servo_restyle_damage = "rebuild_box"
+ type = "BoxOrient"
+ initial = "computed::BoxOrient::Horizontal"
+ 
 diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
 --- a/properties/shorthands.rs	2026-11-11 19:55:57
 +++ b/properties/shorthands.rs	2026-11-14 13:56:06
@@ -365,7 +486,7 @@ diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
                  if has_clip && *clip != From::from(*origin) {
 diff -ruN a/properties/shorthands.toml b/properties/shorthands.toml
 --- a/properties/shorthands.toml	2026-11-11 19:55:57
-+++ b/properties/shorthands.toml	2026-11-11 20:10:18
++++ b/properties/shorthands.toml	2026-11-15 21:50:40
 @@ -209,7 +209,7 @@
  kind = "two_properties"
  
@@ -395,7 +516,15 @@ diff -ruN a/properties/shorthands.toml b/properties/shorthands.toml
  flags = "IS_LEGACY_SHORTHAND"
  sub_properties = ["break-inside"]
  spec = "https://drafts.csswg.org/css-break-3/#page-break-properties"
-@@ -476,7 +473,6 @@
+@@ -285,7 +282,6 @@
+ kind = "two_properties"
+ 
+ [contain-intrinsic-size]
+-engine = "gecko"
+ sub_properties = ["contain-intrinsic-width", "contain-intrinsic-height"]
+ spec = "https://drafts.csswg.org/css-sizing-4/#intrinsic-size-override"
+ kind = "two_properties"
+@@ -476,7 +472,6 @@
  servo_pref = "layout.css.columns.enabled"
  
  [column-rule]
@@ -403,6 +532,14 @@ diff -ruN a/properties/shorthands.toml b/properties/shorthands.toml
  sub_properties = ["column-rule-width", "column-rule-style", "column-rule-color"]
  spec = "https://drafts.csswg.org/css-multicol/#propdef-column-rule"
  derive_serialize = true
+@@ -556,7 +551,6 @@
+ derive_serialize = true
+ 
+ [-webkit-line-clamp]
+-engine = "gecko"
+ flags = "IS_LEGACY_SHORTHAND ALLOWS_DISABLED_SUBPROPERTIES"
+ sub_properties = ["line-clamp"]
+ spec = "https://drafts.csswg.org/css-overflow-4/#webkit-line-clamp"
 diff -ruN a/rule_cache.rs b/rule_cache.rs
 --- a/rule_cache.rs	2026-11-11 19:55:57
 +++ b/rule_cache.rs	2026-11-11 19:55:57
@@ -521,8 +658,25 @@ diff -ruN a/servo/restyle_damage.rs b/servo/restyle_damage.rs
  fn compute_damage(old: &ComputedValues, new: &ComputedValues) -> ServoRestyleDamage {
 diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
 --- a/servo/selector_parser.rs	2026-11-11 19:55:57
-+++ b/servo/selector_parser.rs	2026-11-15 15:12:22
-@@ -376,6 +376,9 @@
++++ b/servo/selector_parser.rs	2026-11-15 23:53:06
+@@ -116,6 +116,16 @@
+     fn parses_as_element_backed(&self) -> bool {
+         matches!(self, Self::DetailsContent)
+     }
++
++    // pyro: `::before::marker` and `::after::marker` (CSS Pseudo-Elements 4 § 4.1): the marker
++    // of a `::before` or `::after` box that is a list item.
++    fn valid_after_before_or_after(&self) -> bool {
++        matches!(self, Self::Marker)
++    }
++
++    fn is_before_or_after(&self) -> bool {
++        matches!(self, Self::Before | Self::After)
++    }
+ }
+ 
+ /// The number of eager pseudo-elements. Keep this in sync with cascade_type.
+@@ -376,6 +386,9 @@
      /// The :state` pseudo-class.
      CustomState(CustomState),
      Default,
@@ -532,19 +686,19 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
      Defined,
      Disabled,
      Enabled,
-@@ -439,6 +442,11 @@
-         if let Lang(ref lang) = *self {
-             dest.write_str(":lang(")?;
+@@ -441,6 +454,11 @@
              serialize_identifier(lang, dest)?;
-+            return dest.write_char(')');
-+        }
+             return dest.write_char(')');
+         }
 +        if let Dir(ref dir) = *self {
 +            dest.write_str(":dir(")?;
 +            serialize_identifier(dir, dest)?;
-             return dest.write_char(')');
-         }
++            return dest.write_char(')');
++        }
  
-@@ -485,7 +493,7 @@
+         dest.write_str(match *self {
+             Self::Active => ":active",
+@@ -485,7 +503,7 @@
              Self::UserValid => ":user-valid",
              Self::Valid => ":valid",
              Self::Visited => ":visited",
@@ -553,7 +707,7 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
          })
      }
  }
-@@ -531,7 +539,7 @@
+@@ -531,7 +549,7 @@
              Self::UserValid => ElementState::USER_VALID,
              Self::Valid => ElementState::VALID,
              Self::Visited => ElementState::VISITED,
@@ -562,7 +716,7 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
                  ElementState::empty()
              },
          }
-@@ -697,6 +705,9 @@
+@@ -697,6 +715,9 @@
                  let result = AtomIdent::from(parser.expect_ident()?.as_ref());
                  NonTSPseudoClass::CustomState(CustomState(result))
              },
@@ -572,6 +726,55 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
              _ => return Err(ParseError::custom(SelectorParseErrorKind::UnexpectedIdent)),
          };
  
+diff -ruN a/style_adjuster.rs b/style_adjuster.rs
+--- a/style_adjuster.rs	2026-11-11 19:55:57
++++ b/style_adjuster.rs	2026-11-15 20:15:35
+@@ -184,6 +184,36 @@
+         self.style
+             .mutate_box()
+             .set_adjusted_display(new_display, false);
++    }
++
++    /// pyro: `display: -webkit-box` in the servo engine, which has no legacy box layout. With
++    /// `-webkit-box-orient: vertical` and a line clamp the box is a block container whose lines
++    /// are clamped, as in Blink and Gecko (above); the style keeps that in
++    /// `WEBKIT_LINE_CLAMP_APPLIES`, since the display that made it apply is gone. Any other
++    /// vertical box is a block container too (its children stack), a horizontal one a flex
++    /// container (they sit in a row). Runs before every other display fixup, so none sees
++    /// `-webkit-box`.
++    #[cfg(feature = "servo")]
++    fn adjust_for_webkit_box(&mut self) {
++        use crate::values::specified::box_::{BoxOrient, DisplayInside, DisplayOutside};
++        let box_style = self.style.get_box();
++        let disp = box_style.slow_clone_display();
++        if disp.inside() != DisplayInside::WebkitBox {
++            return;
++        }
++        let block = disp.outside() == DisplayOutside::Block;
++        let vertical = box_style.slow_clone__webkit_box_orient() == BoxOrient::Vertical;
++        let clamps = vertical && !box_style.slow_clone_line_clamp().is_none();
++        let new_display = match (vertical, block) {
++            (true, true) => Display::FlowRoot,
++            (true, false) => Display::InlineBlock,
++            (false, true) => Display::Flex,
++            (false, false) => Display::InlineFlex,
++        };
++        self.style.mutate_box().set_adjusted_display(new_display, true);
++        if clamps {
++            self.style.add_flags(ComputedValueFlags::WEBKIT_LINE_CLAMP_APPLIES);
++        }
+     }
+ 
+     /// CSS 2.1 section 9.7:
+@@ -1064,6 +1094,8 @@
+         //     "Should always have an element around for non-pseudo styles"
+         // );
+ 
++        #[cfg(feature = "servo")]
++        self.adjust_for_webkit_box();
+         self.adjust_for_links(element);
+         self.adjust_for_prohibited_display_contents(element);
+         #[cfg(feature = "gecko")]
 diff -ruN a/style_resolver.rs b/style_resolver.rs
 --- a/style_resolver.rs	2026-11-11 19:55:57
 +++ b/style_resolver.rs	2026-11-11 20:10:18
@@ -924,6 +1127,18 @@ diff -ruN a/values/animated/effects.rs b/values/animated/effects.rs
 -/// An animated value for a single `filter`.
 -#[cfg(not(feature = "gecko"))]
 -pub type AnimatedFilter = GenericFilter<Angle, Number, Length, AnimatedSimpleShadow, Impossible>;
+diff -ruN a/values/computed/box.rs b/values/computed/box.rs
+--- a/values/computed/box.rs	2026-11-11 19:55:57
++++ b/values/computed/box.rs	2026-11-15 21:31:51
+@@ -31,7 +31,7 @@
+ pub type BaselineShift = GenericBaselineShift<LengthPercentage>;
+ 
+ /// A computed value for the `overflow-clip-margin` property.
+-pub type OverflowClipMargin = GenericOverflowClipMargin<NonNegativeLength>;
++pub type OverflowClipMargin = GenericOverflowClipMargin<crate::values::computed::Length>;
+ 
+ /// A computed value for the `-moz-scrollbar-inset-block` / `-inline` properties.
+ pub type ScrollbarInset = GenericScrollbarInset<NonNegativeLength>;
 diff -ruN a/values/computed/effects.rs b/values/computed/effects.rs
 --- a/values/computed/effects.rs	2026-11-11 19:55:57
 +++ b/values/computed/effects.rs	2026-11-14 18:55:29
@@ -1160,10 +1375,112 @@ diff -ruN a/values/specified/background.rs b/values/specified/background.rs
 -    #[cfg(feature = "gecko")]
      Local,
  }
+diff -ruN a/values/specified/basic_shape.rs b/values/specified/basic_shape.rs
+--- a/values/specified/basic_shape.rs	2026-11-11 19:55:57
++++ b/values/specified/basic_shape.rs	2026-11-15 23:27:24
+@@ -37,6 +37,25 @@
+ /// A specified `clip-path` value.
+ pub type ClipPath = generic::GenericClipPath<BasicShape, SpecifiedUrl>;
+ 
++impl ClipPath {
++    /// pyro: `object-view-box`: `none`, or `inset()`, `rect()` or `xywh()`.
++    pub fn parse_object_view_box(
++        context: &ParserContext,
++        input: &mut Parser,
++    ) -> Result<Self, ParseError> {
++        if input.try_parse(|i| i.expect_ident_matching("none")).is_ok() {
++            return Ok(Self::None);
++        }
++        let shape = BasicShape::parse(
++            context,
++            input,
++            AllowedBasicShapes::INSET | AllowedBasicShapes::XYWH | AllowedBasicShapes::RECT,
++            ShapeType::Filled,
++        )?;
++        Ok(Self::Shape(Box::new(shape), generic::ShapeGeometryBox::ElementDependent))
++    }
++}
++
+ /// A specified `shape-outside` value.
+ pub type ShapeOutside = generic::GenericShapeOutside<BasicShape, Image>;
+ 
 diff -ruN a/values/specified/box.rs b/values/specified/box.rs
 --- a/values/specified/box.rs	2026-11-11 19:55:57
-+++ b/values/specified/box.rs	2026-11-15 16:55:00
-@@ -495,6 +495,10 @@
++++ b/values/specified/box.rs	2026-11-15 21:32:07
+@@ -15,7 +15,7 @@
+     GenericLineClamp, GenericOverflowClipMargin, GenericPerspective, GenericScrollbarInset,
+     MaxLines, OverflowClipMarginBox,
+ };
+-use crate::values::specified::length::{LengthPercentage, NonNegativeLength};
++use crate::values::specified::length::{Length, LengthPercentage, NonNegativeLength};
+ use crate::values::specified::{AllowQuirks, NonNegativeNumberOrPercentage, PositiveInteger};
+ use cssparser::Parser;
+ use num_traits::FromPrimitive;
+@@ -75,19 +75,19 @@
+ }
+ 
+ /// The specified value of `overflow-clip-margin`.
+-pub type OverflowClipMargin = GenericOverflowClipMargin<NonNegativeLength>;
++/// pyro: any length, as Blink takes it (a negative one moves the clip edge inwards; WPT
++/// `overflow-clip-margin-016`, `-017`), where the specification has `<length [0,∞]>`.
++pub type OverflowClipMargin = GenericOverflowClipMargin<Length>;
+ 
+ impl Parse for OverflowClipMargin {
+-    // <visual-box> || <length [0,∞]>
++    // <visual-box> || <length>
+     fn parse(context: &ParserContext, input: &mut Parser) -> Result<Self, ParseError> {
+         use crate::Zero;
+         let mut offset = None;
+         let mut visual_box = None;
+         loop {
+             if offset.is_none() {
+-                offset = input
+-                    .try_parse(|i| NonNegativeLength::parse(context, i))
+-                    .ok();
++                offset = input.try_parse(|i| Length::parse(context, i)).ok();
+             }
+             if visual_box.is_none() {
+                 visual_box = input.try_parse(OverflowClipMarginBox::parse).ok();
+@@ -101,7 +101,7 @@
+             return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError));
+         }
+         Ok(Self {
+-            offset: offset.unwrap_or_else(NonNegativeLength::zero),
++            offset: offset.unwrap_or_else(Length::zero),
+             visual_box: visual_box.unwrap_or(OverflowClipMarginBox::PaddingBox),
+         })
+     }
+@@ -171,7 +171,8 @@
+     RubyText,
+     #[cfg(feature = "gecko")]
+     RubyTextContainer,
+-    #[cfg(feature = "gecko")]
++    /// pyro: parsed by the servo engine too; never a computed value there
++    /// (`StyleAdjuster::adjust_for_webkit_box`).
+     WebkitBox,
+ }
+ 
+@@ -239,7 +240,6 @@
+     );
+     pub const Block: Self =
+         Self(((DisplayOutside::Block as u16) << Self::OUTSIDE_SHIFT) | DisplayInside::Flow as u16);
+-    #[cfg(feature = "gecko")]
+     pub const FlowRoot: Self = Self(
+         ((DisplayOutside::Block as u16) << Self::OUTSIDE_SHIFT) | DisplayInside::FlowRoot as u16,
+     );
+@@ -268,11 +268,9 @@
+     #[cfg(feature = "gecko")]
+     pub const Ruby: Self =
+         Self(((DisplayOutside::Inline as u16) << Self::OUTSIDE_SHIFT) | DisplayInside::Ruby as u16);
+-    #[cfg(feature = "gecko")]
+     pub const WebkitBox: Self = Self(
+         ((DisplayOutside::Block as u16) << Self::OUTSIDE_SHIFT) | DisplayInside::WebkitBox as u16,
+     );
+-    #[cfg(feature = "gecko")]
+     pub const WebkitInlineBox: Self = Self(
+         ((DisplayOutside::Inline as u16) << Self::OUTSIDE_SHIFT) | DisplayInside::WebkitBox as u16,
+     );
+@@ -495,6 +493,10 @@
      Inside(DisplayInside),
      Outside(DisplayOutside),
      ListItem,
@@ -1174,7 +1491,17 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
  }
  
  impl DisplayKeyword {
-@@ -540,6 +544,7 @@
+@@ -525,9 +527,7 @@
+             "ruby-text" => Full(Display::RubyText),
+             #[cfg(feature = "gecko")]
+             "ruby-text-container" => Full(Display::RubyTextContainer),
+-            #[cfg(feature = "gecko")]
+             "-webkit-box" => Full(Display::WebkitBox),
+-            #[cfg(feature = "gecko")]
+             "-webkit-inline-box" => Full(Display::WebkitInlineBox),
+ 
+             /// <display-outside> = block | inline | run-in
+@@ -540,6 +540,7 @@
              /// <display-inside> = flow | flow-root | table | flex | grid | ruby
              /// https://drafts.csswg.org/css-display/#typedef-display-inside
              "flow" => Inside(DisplayInside::Flow),
@@ -1182,7 +1509,15 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
              "flex" => Inside(DisplayInside::Flex),
              "flow-root" => Inside(DisplayInside::FlowRoot),
              "table" => Inside(DisplayInside::Table),
-@@ -626,10 +631,15 @@
+@@ -561,7 +562,6 @@
+         match *self {
+             Display::Block | Display::Inline => outside.to_css(dest),
+             Display::InlineBlock => dest.write_str("inline-block"),
+-            #[cfg(feature = "gecko")]
+             Display::WebkitInlineBox => dest.write_str("-webkit-inline-box"),
+             Display::TableCaption => dest.write_str("table-caption"),
+             _ => match (outside, inside) {
+@@ -626,10 +626,15 @@
  impl Parse for Display {
      fn parse(_: &ParserContext, input: &mut Parser) -> Result<Display, ParseError> {
          let mut got_list_item = false;
@@ -1198,15 +1533,14 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
              DisplayKeyword::Outside(o) => {
                  outside = Some(o);
              },
-@@ -651,14 +661,20 @@
-                 },
+@@ -652,13 +657,19 @@
                  DisplayKeyword::Inside(i) if inside.is_none() => {
                      inside = Some(i);
-+                },
+                 },
 +                DisplayKeyword::Math if inside.is_none() => {
 +                    got_math = true;
 +                    inside = Some(DisplayInside::Flow);
-                 },
++                },
                  _ => return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError)),
              }
          }
@@ -1221,7 +1555,7 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
              return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError));
          }
  
-@@ -2013,6 +2029,8 @@
+@@ -2013,6 +2024,8 @@
      Auto,
      Page,
      Avoid,
@@ -1230,7 +1564,7 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
      Left,
      Right,
  }
-@@ -2030,7 +2048,9 @@
+@@ -2030,7 +2043,9 @@
              BreakBetween::Auto | BreakBetween::Avoid | BreakBetween::Left | BreakBetween::Right => {
                  Ok(break_value)
              },
@@ -1241,7 +1575,7 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
          }
      }
  
-@@ -2047,7 +2067,7 @@
+@@ -2047,7 +2062,7 @@
                  self.to_css(dest)
              },
              BreakBetween::Page => dest.write_str("always"),
@@ -1314,7 +1648,7 @@ diff -ruN a/values/specified/effects.rs b/values/specified/effects.rs
              let f = input.expect_function()?;
 diff -ruN a/values/specified/image.rs b/values/specified/image.rs
 --- a/values/specified/image.rs	2026-11-11 19:55:57
-+++ b/values/specified/image.rs	2026-11-15 10:11:12
++++ b/values/specified/image.rs	2026-11-15 19:35:19
 @@ -38,7 +38,8 @@
  
  /// Specified values for an image according to CSS-IMAGES.
@@ -1325,7 +1659,24 @@ diff -ruN a/values/specified/image.rs b/values/specified/image.rs
  
  impl ToTyped for Image {
      fn to_typed(&self, dest: &mut ThinVec<TypedValue>) -> Result<(), ()> {
-@@ -196,6 +197,8 @@
+@@ -91,7 +92,15 @@
+ impl Color {
+     fn has_modern_syntax(&self) -> bool {
+         match self {
+-            Self::Absolute(absolute) => !absolute.color.is_legacy_syntax(),
++            // pyro: a missing component (`rgb(none 255 0)`) is modern syntax too, as in
++            // Chromium: Stylo's legacy flag is about the function, which serializes that way.
++            Self::Absolute(absolute) => {
++                use crate::color::ColorFlags as F;
++                !absolute.color.is_legacy_syntax()
++                    || absolute.color.flags.intersects(
++                        F::C0_IS_NONE | F::C1_IS_NONE | F::C2_IS_NONE | F::ALPHA_IS_NONE,
++                    )
++            },
+             Self::ColorMix(mix) => {
+                 if mix.flags.contains(ColorMixFlags::RESULT_IN_MODERN_SYNTAX) {
+                     true
+@@ -196,6 +205,8 @@
          const FORBID_NONE = 1 << 0;
          const FORBID_IMAGE_SET = 1 << 1;
          const FORBID_NON_URL = 1 << 2;
@@ -1334,7 +1685,7 @@ diff -ruN a/values/specified/image.rs b/values/specified/image.rs
      }
  }
  
-@@ -245,6 +248,10 @@
+@@ -245,6 +256,10 @@
              "paint" => Self::PaintWorklet(Box::new(<PaintWorklet>::parse_args(context, input)?)),
              "cross-fade" if cross_fade_enabled() => Self::CrossFade(Box::new(CrossFade::parse_args(context, input, cors_mode, flags)?)),
              "image" => Self::Image(Box::new(Color::parse(context, input)?)),
@@ -1345,7 +1696,7 @@ diff -ruN a/values/specified/image.rs b/values/specified/image.rs
              "light-dark" if crate::pref!("layout.css.light-dark.images.enabled", gecko = true) => {
                  Self::LightDark(Box::new(GenericLightDark::parse_args_with(input, |input| {
                      // `none` in `light-dark()` has a special meaning.
-@@ -261,6 +268,41 @@
+@@ -261,6 +276,41 @@
  }
  
  impl Image {
@@ -1387,7 +1738,7 @@ diff -ruN a/values/specified/image.rs b/values/specified/image.rs
      /// Creates an already specified image value from an already resolved URL
      /// for insertion in the cascade.
      #[cfg(feature = "servo")]
-@@ -280,6 +322,11 @@
+@@ -280,6 +330,11 @@
  
      /// Provides an alternate method for parsing that associates the URL with
      /// anonymous CORS headers.
@@ -1399,7 +1750,7 @@ diff -ruN a/values/specified/image.rs b/values/specified/image.rs
      pub fn parse_with_cors_anonymous(
          context: &ParserContext,
          input: &mut Parser,
-@@ -288,7 +335,7 @@
+@@ -288,7 +343,7 @@
              context,
              input,
              CorsMode::Anonymous,
@@ -1408,12 +1759,10 @@ diff -ruN a/values/specified/image.rs b/values/specified/image.rs
          )
      }
  
-@@ -298,8 +345,38 @@
-         input: &mut Parser,
-     ) -> Result<Image, ParseError> {
+@@ -300,6 +355,36 @@
          Self::parse_with_cors_mode(context, input, CorsMode::None, ParseImageFlags::FORBID_NONE)
-+    }
-+
+     }
+ 
 +    /// pyro: [`Self::parse_forbid_none`] without `filter()` images (`content`), which blitz-dom
 +    /// does not generate. Registered custom properties of `<image>` syntax keep `filter()`, as
 +    /// `background-image` does.
@@ -1427,8 +1776,8 @@ diff -ruN a/values/specified/image.rs b/values/specified/image.rs
 +            CorsMode::None,
 +            ParseImageFlags::FORBID_NONE | ParseImageFlags::FORBID_FILTER,
 +        )
-     }
- 
++    }
++
 +    /// pyro: without `filter()` images (`list-style-image`, also through `list-style`), as
 +    /// Chromium and Gecko parse them (neither has `filter()`): blitz-dom draws a marker image
 +    /// as it is, so a `filter()` marker would draw its image unfiltered.
@@ -1447,6 +1796,31 @@ diff -ruN a/values/specified/image.rs b/values/specified/image.rs
      /// Provides an alternate method for parsing, but only for urls.
      pub fn parse_only_url(
          context: &ParserContext,
+diff -ruN a/values/specified/text.rs b/values/specified/text.rs
+--- a/values/specified/text.rs	2026-11-11 19:55:57
++++ b/values/specified/text.rs	2026-11-15 22:41:50
+@@ -824,6 +824,10 @@
+         self.remove(Self::RIGHT); // Right is the default
+         true
+     }
++}
++
++fn word_break_manual_enabled(_: &ParserContext) -> bool {
++    cfg!(feature = "servo")
+ }
+ 
+ fn word_break_break_word_enabled(_: &ParserContext) -> bool {
+@@ -858,6 +862,10 @@
+     /// `anywhere`, and `word-break` behave like `normal`.
+     #[parse(condition = "word_break_break_word_enabled")]
+     BreakWord,
++    /// pyro: `manual` (CSS Text 4): as `normal`, without the breaks inside words that
++    /// dictionaries find in Southeast Asian scripts.
++    #[parse(condition = "word_break_manual_enabled")]
++    Manual,
+ }
+ 
+ /// Values for the `text-justify` CSS property.
 diff -ruN a/values/specified/transform.rs b/values/specified/transform.rs
 --- a/values/specified/transform.rs	2026-11-11 19:55:57
 +++ b/values/specified/transform.rs	2026-11-14 18:55:29

@@ -266,6 +266,8 @@ impl CharacterFlags {
     const WORD_BOUNDARY: u8 = 1 << 3;
     /// Whether there is a soft wrap opportunity before the character.
     const SOFT_WRAP_OPPORTUNITY: u8 = 1 << 4;
+    /// pyro: whether the source character is U+00AD SOFT HYPHEN.
+    const SOFT_HYPHEN: u8 = 1 << 5;
 
     #[inline(always)]
     pub fn new(source_char: char, is_word_boundary: bool, is_soft_wrap_opportunity: bool) -> Self {
@@ -288,8 +290,19 @@ impl CharacterFlags {
                     Self::SOFT_WRAP_OPPORTUNITY
                 } else {
                     0
+                }
+                | if source_char == '\u{ad}' {
+                    Self::SOFT_HYPHEN
+                } else {
+                    0
                 },
         )
+    }
+
+    /// pyro: whether the character is U+00AD SOFT HYPHEN.
+    #[inline(always)]
+    pub fn is_soft_hyphen(self) -> bool {
+        self.0 & Self::SOFT_HYPHEN != 0
     }
 
     /// Whether there is a soft wrap opportunity before this character ([UAX #14][line-breaking]).

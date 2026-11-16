@@ -523,9 +523,25 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
 
     fn node_transform(&self, node: &Node, parent: Affine) -> Affine {
         let location = node.final_layout().location;
+        // pyro: a `position: sticky` box is painted where its scroll container holds it
+        // (`Node::sticky_offset`), with its descendants.
+        // The offset is snapped to device pixels: the box keeps the pixel alignment it was laid
+        // out with (WPT `position-sticky-fractional-offset`).
+        let sticky = node.sticky_offset();
+        let sticky = if sticky == blitz_dom::Point::ZERO {
+            Vec2::ZERO
+        } else {
+            // From the box's unrounded place, so that a box laid out at 10.5 (painted at 11) and
+            // held 9.5 further is painted at 20.
+            let unrounded = node.unrounded_layout().location;
+            let snap = |offset: f64, unrounded: f32, rounded: f32| {
+                ((unrounded as f64 + offset) * self.scale).round() - rounded as f64 * self.scale
+            };
+            Vec2::new(snap(sticky.x, unrounded.x, location.x), snap(sticky.y, unrounded.y, location.y))
+        };
         parent
             * self.table_part_transform(node)
-            * Affine::translate(Vec2::new(location.x as f64, location.y as f64) * self.scale)
+            * Affine::translate(Vec2::new(location.x as f64, location.y as f64) * self.scale + sticky)
             * node.transform().as_deref().copied().unwrap_or_default()
     }
 
@@ -559,8 +575,17 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             })
         };
         let parts = [row.group, Some(row.node_id)];
+        // pyro: the sticky offsets of the cell's row group and row move their cells.
+        let mut sticky = Vec2::ZERO;
+        for id in parts.iter().flatten() {
+            if let Some(part) = self.dom.get_node(*id) {
+                let offset = part.sticky_offset();
+                sticky += Vec2::new(offset.x, offset.y);
+            }
+        }
+        let sticky = Affine::translate(Vec2::new((sticky.x * self.scale).round(), (sticky.y * self.scale).round()));
         if !parts.iter().flatten().any(|&id| transformed(id)) {
-            return Affine::IDENTITY;
+            return sticky;
         }
         let grid = ctx.computed_grid_info.borrow();
         let Some(grid) = grid.as_ref() else { return Affine::IDENTITY };
@@ -595,7 +620,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             let origin = Vec2::new(first.start as f64, (y0 + top) as f64) * self.scale;
             out *= Affine::translate(origin) * t * Affine::translate(-origin);
         }
-        out
+        sticky * out
     }
 
     fn scrolled_transform(&self, node: &Node, transform: Affine) -> Affine {
@@ -618,8 +643,11 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         // pyro: an SVG clips its content at its viewport itself, at its content box and only
         // where the content reaches past it (`ElementCx::draw_svg`).
         let svg = element.is_some_and(|e| matches!(e.image_data(), Some(blitz_dom::node::ImageData::Svg(_))));
+        // pyro: an image whose author made its `overflow` visible shows its content past its
+        // box (the UA sheet's `overflow: clip` is the default; `ElementCx::draw_image`).
+        let overflows_visibly = element.is_some_and(|e| replaced_overflow_is_visible(e, styles));
         self.root_element_id != Some(node.id)
-            && (element.and_then(|e| e.raster_image_data()).is_some()
+            && (element.and_then(|e| e.raster_image_data()).is_some() && !overflows_visibly
                 || element.and_then(|e| e.sub_doc_data()).is_some()
                 || element.and_then(|e| e.text_input_data()).is_some()
                 || contain_paint
@@ -627,6 +655,10 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
                 || ((!matches!(box_style.overflow_x, Overflow::Visible)
                     || !matches!(box_style.overflow_y, Overflow::Visible))
                     && !svg
+                    // pyro: the UA sheet's `overflow: clip` of an `<img>`, `<video>` or
+                    // `<canvas>` cuts its replaced content (`draw_image`), not its box: one
+                    // without an image (a canvas, a broken image) is clipped as before it.
+                    && !element.is_some_and(is_ua_clipped_replaced)
                     && !self.dom.as_ref().body_overflow_goes_to_viewport(node.id)))
     }
 
@@ -658,7 +690,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         let clip = if cx.text_input.is_some() {
             cx.frame.text_input_clip_path()
         } else {
-            cx.frame.padding_box_path()
+            box_shadow::overflow_clip_path(&cx.frame, &styles, self.scale)
         };
         let pushed = self.layer_manager.maybe_push_layer(
             scene,
@@ -718,6 +750,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
                         recording,
                         None,
                         Some(Color::BLACK),
+                        None,
                     );
                 }
             }
@@ -972,7 +1005,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             let clip_box = if is_text_input {
                 cx.frame.text_input_clip_path()
             } else {
-                cx.frame.padding_box_path()
+                box_shadow::overflow_clip_path(&cx.frame, &styles, self.scale)
             };
             source_rect.intersect(screen_transform.transform_rect_bbox(clip_box.bounding_box()))
         } else {
@@ -1254,7 +1287,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         let clip = if is_text_input {
             &cx.frame.text_input_clip_path()
         } else {
-            &cx.frame.padding_box_path()
+            &box_shadow::overflow_clip_path(&cx.frame, &cx.style, cx.scale)
         };
 
         // Clip layer if box requires clipping. Opacity set to 1.0
@@ -1306,11 +1339,14 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
                         );
                         return;
                     }
+                    // pyro: the stacking contexts with a negative z-index go under the box's own
+                    // inline content (CSS 2.1 Appendix E, step 3 before step 7).
+                    cx.draw_neg_z_children(scene, cx.transform, child_clip_rect);
                     cx.draw_inline_layout(scene, content_position);
                     if !hidden {
                         cx.draw_marker(scene, content_position);
                     }
-                    cx.draw_children(scene, cx.transform, child_clip_rect);
+                    cx.draw_children_above(scene, cx.transform, child_clip_rect);
                 }
             },
         );
@@ -1686,6 +1722,22 @@ fn to_peniko_image(image: &RasterImageData, quality: peniko::ImageQuality) -> pe
     }
 }
 
+/// pyro: an `<img>`, `<video>` or `<canvas>`: the elements the UA sheet gives `overflow: clip`.
+fn is_ua_clipped_replaced(element: &ElementData) -> bool {
+    let name = &element.name.local;
+    *name == local_name!("img") || *name == local_name!("video") || *name == local_name!("canvas")
+}
+
+/// pyro: whether the replaced content of `element` (an `<img>`, `<video>` or `<canvas>`, which
+/// the UA sheet gives `overflow: clip`) is not cut at its box: its `overflow` is `visible` on
+/// both axes.
+fn replaced_overflow_is_visible(element: &ElementData, style: &ComputedValues) -> bool {
+    let box_style = style.get_box();
+    is_ua_clipped_replaced(element)
+        && matches!(box_style.overflow_x, Overflow::Visible)
+        && matches!(box_style.overflow_y, Overflow::Visible)
+}
+
 /// pyro: when replaced content is cut at its content box (`ElementCx::with_replaced_content_clip`).
 #[derive(Clone, Copy)]
 #[cfg_attr(not(feature = "svg"), allow(dead_code))]
@@ -1733,7 +1785,8 @@ fn stroke_inline_text(
     tops: Option<crate::text::LineTops>,
     scale: f64,
 ) {
-    let Some(ellipsis) = text_layout.ellipsis.as_deref() else {
+    let clamp = text_layout.clamp.as_ref();
+    if text_layout.ellipsis.is_none() && clamp.is_none() {
         crate::text::stroke_text(
             scene,
             text_layout.layout.lines(),
@@ -1747,13 +1800,14 @@ fn stroke_inline_text(
             Some(&text_layout.layout),
         );
         return;
-    };
-    // The lines were broken in the unrounded box: a line as wide as the box (a
-    // box sized to its text) must not count as overflowing it by a rounding.
-    let width = node.unrounded_layout().content_box_width() * scale as f32;
-    for line in text_layout.layout.lines() {
-        let truncation = truncate_line(&line, ellipsis, width, scale as f32, text_layout.layout.is_rtl());
-        context.cut = truncation.map(|(cut, _)| cut);
+    }
+    for (index, line) in text_layout.layout.lines().enumerate() {
+        // pyro: the lines after a line clamp's are not painted.
+        if clamp.is_some_and(|clamp| index >= clamp.lines as usize) {
+            break;
+        }
+        let truncation = line_truncation(node, text_layout, &line, index, scale as f32);
+        context.cut = truncation.as_ref().map(|truncation| truncation.cut);
         crate::text::stroke_text(
             scene,
             std::iter::once(line.clone()),
@@ -1768,7 +1822,7 @@ fn stroke_inline_text(
         );
         context.cut = None;
         // The ellipsis on the line's baseline, next to the last atom kept.
-        if let Some((_, x)) = truncation {
+        if let Some(LineTruncation { x, ellipsis, text, .. }) = truncation {
             // pyro: in every pass of `draw_inline_effects` (its runs are not where
             // the layout's are, which `RunFilter` looks at).
             let filter = context.run_filter.take();
@@ -1783,7 +1837,7 @@ fn stroke_inline_text(
                 transform * Affine::translate(offset),
                 options,
                 node.id,
-                Some("\u{2026}"),
+                Some(text),
                 context,
                 None,
                 None,
@@ -1792,6 +1846,37 @@ fn stroke_inline_text(
             context.run_filter = filter;
         }
     }
+}
+
+/// pyro: what ends a line short: the atoms cut from it, and the ellipsis drawn at `x` (layout
+/// coordinates) after those kept.
+struct LineTruncation<'a> {
+    cut: crate::text::TextCut,
+    x: f32,
+    ellipsis: &'a parley::Layout<blitz_dom::node::TextBrush>,
+    text: &'a str,
+}
+
+/// pyro: how line `index` of the inline root `node` ends short, if it does: the line a line
+/// clamp ends at (`TextLayout::clamp`) always ends with "…"; any other line that overflows the
+/// content box ends with the `text-overflow` ellipsis (`TextLayout::ellipsis`).
+fn line_truncation<'a>(
+    node: &Node,
+    text_layout: &'a blitz_dom::node::TextLayout,
+    line: &parley::Line<'_, blitz_dom::node::TextBrush>,
+    index: usize,
+    scale: f32,
+) -> Option<LineTruncation<'a>> {
+    // The lines were broken in the unrounded box: a line as wide as the box (a
+    // box sized to its text) must not count as overflowing it by a rounding.
+    let width = node.unrounded_layout().content_box_width() * scale;
+    let rtl = text_layout.layout.is_rtl();
+    let (ellipsis, text, forced) = match text_layout.clamp.as_ref().filter(|clamp| index + 1 == clamp.lines as usize) {
+        Some(clamp) => (&*clamp.ellipsis, "\u{2026}", true),
+        None => (text_layout.ellipsis.as_deref()?, text_layout.ellipsis_text.as_str(), false),
+    };
+    let (cut, x) = truncate_line(line, ellipsis, width, scale, rtl, forced)?;
+    Some(LineTruncation { cut, x, ellipsis, text })
 }
 
 /// pyro: `text-overflow: ellipsis` on one line, as Chromium applies it: a line whose content
@@ -1806,10 +1891,24 @@ fn truncate_line(
     width: f32,
     scale: f32,
     rtl: bool,
+    forced: bool,
 ) -> Option<(crate::text::TextCut, f32)> {
     let epsilon = scale / 64.0;
     let metrics = line.metrics();
     let ellipsis_width = ellipsis.full_width();
+    // A line that ends with the ellipsis whether it overflows or not (`forced`: a line
+    // clamp's) keeps all of its atoms when the ellipsis fits after them.
+    if forced {
+        let (start, end) = (metrics.offset, metrics.offset + metrics.advance);
+        if !rtl && end - metrics.hanging_advance + ellipsis_width <= width + epsilon {
+            let cut = crate::text::TextCut { edge: f32::INFINITY, keep_left: true };
+            return Some((cut, end - metrics.hanging_advance));
+        }
+        if rtl && start + metrics.hanging_advance - ellipsis_width >= -epsilon {
+            let cut = crate::text::TextCut { edge: f32::NEG_INFINITY, keep_left: false };
+            return Some((cut, start + metrics.hanging_advance - ellipsis_width));
+        }
+    }
     let runs = || {
         line.items().filter_map(|item| match item {
             parley::PositionedLayoutItem::GlyphRun(run) => Some(run),
@@ -1817,19 +1916,35 @@ fn truncate_line(
         })
     };
     if !rtl {
-        if metrics.offset + metrics.advance - metrics.hanging_advance <= width + epsilon {
+        if !forced && metrics.offset + metrics.advance - metrics.hanging_advance <= width + epsilon {
             return None;
         }
         let cut = crate::text::TextCut { edge: width - ellipsis_width, keep_left: true };
         let end = runs().filter_map(|run| cut.kept(&run).1).map(|(_, x1)| x1).fold(None, |a: Option<f32>, x| Some(a.map_or(x, |a| a.max(x))));
-        Some((cut, end.unwrap_or(metrics.offset)))
+        if let Some(end) = end {
+            return Some((cut, end));
+        }
+        // Nothing fits beside the ellipsis: the line keeps its first atom (Blink's
+        // `LineTruncator` never hides the first child whole).
+        let first = runs().min_by(|a, b| a.offset().total_cmp(&b.offset()));
+        let Some(edge) = first.and_then(|run| crate::text::TextCut::end_atom(&run, false)).map(|(_, x1)| x1) else {
+            return Some((cut, metrics.offset));
+        };
+        Some((crate::text::TextCut { edge, keep_left: true }, edge))
     } else {
-        if metrics.offset + metrics.hanging_advance >= -epsilon {
+        if !forced && metrics.offset + metrics.hanging_advance >= -epsilon {
             return None;
         }
         let cut = crate::text::TextCut { edge: ellipsis_width, keep_left: false };
         let start = runs().filter_map(|run| cut.kept(&run).1).map(|(x0, _)| x0).fold(None, |a: Option<f32>, x| Some(a.map_or(x, |a| a.min(x))));
-        Some((cut, start.unwrap_or(metrics.offset + metrics.advance) - ellipsis_width))
+        if let Some(start) = start {
+            return Some((cut, start - ellipsis_width));
+        }
+        let last = runs().max_by(|a, b| (a.offset() + a.advance()).total_cmp(&(b.offset() + b.advance())));
+        let Some(edge) = last.and_then(|run| crate::text::TextCut::end_atom(&run, true)).map(|(x0, _)| x0) else {
+            return Some((cut, metrics.offset + metrics.advance - ellipsis_width));
+        };
+        Some((crate::text::TextCut { edge, keep_left: false }, edge - ellipsis_width))
     }
 }
 
@@ -2075,11 +2190,12 @@ impl ElementCx<'_, '_> {
         for (line_index, line) in layout.lines().enumerate() {
             let first = fragments.len();
             let metrics = line.metrics();
-            // White space hanging at the line's end is in no box. pyro: the line starts at its
+            // Collapsible white space hanging at the line's end is in no box (preserved and
+            // ideographic spaces that hang are: `LineMetrics::collapsed_advance`). pyro: the line starts at its
             // `inline_min_coord`, past the floats before it (its items are placed from there): without
             // it every box on a line beside a float was cut to nothing (WPT `clear-inline-001`).
             let content_end =
-                metrics.inline_min_coord + metrics.offset + metrics.advance - metrics.hanging_advance;
+                metrics.inline_min_coord + metrics.offset + metrics.advance - metrics.collapsed_advance;
             for item in line.items() {
                 let (style_index, x0, x1, edge) = match &item {
                     PositionedLayoutItem::GlyphRun(run) => {
@@ -2147,7 +2263,7 @@ impl ElementCx<'_, '_> {
                             fragment.last_item = item_index;
                         }
                         _ => {
-                            let (top, bottom) = line.span_content_area(style_index);
+                            let (top, bottom) = line.span_box_area(style_index);
                             let shift = tops.map_or(0.0, |tops| tops.shift(metrics)) as f32;
                             let style = on_first_line
                                 .filter(|&first_line| first_line != node)
@@ -2405,10 +2521,8 @@ impl ElementCx<'_, '_> {
                 // either (`stroke_inline_text`).
                 let scale = self.scale as f32;
                 let cut = self.element.inline_layout_data.as_ref().and_then(|text_layout| {
-                    let ellipsis = text_layout.ellipsis.as_deref()?;
                     let line = text_layout.layout.get(fragment.line)?;
-                    let width = self.node.unrounded_layout().content_box_width() * scale;
-                    truncate_line(&line, ellipsis, width, scale, text_layout.layout.is_rtl()).map(|(cut, _)| cut)
+                    line_truncation(self.node, text_layout, &line, fragment.line, scale).map(|truncation| truncation.cut)
                 });
                 self.context.draw_text_context.borrow_mut().inline_mask = Some(crate::text::InlineTextMask {
                     element: fragment.node,
@@ -2484,6 +2598,7 @@ impl ElementCx<'_, '_> {
             let selection = self.context.selection_ranges.get(&self.node.id).copied();
             let by_line = selection.is_none()
                 && text_layout.ellipsis.is_none()
+                && text_layout.clamp.is_none()
                 && text_layout.annotations.is_empty()
                 && fragments.iter().any(|fragment| fragment.line > 0 && fragment.reaches_above);
             if by_line {
@@ -2529,7 +2644,11 @@ impl ElementCx<'_, '_> {
             // pyro: highlighted as Chromium paints selected text (`highlight`), but in lines cut
             // by an ellipsis; a recording paint (the PDF's) draws no selection.
             let highlight = selection
-                .filter(|_| text_layout.ellipsis.is_none() && self.context.draw_text_context.borrow().runs.is_none());
+                .filter(|_| {
+                    text_layout.ellipsis.is_none()
+                        && text_layout.clamp.is_none()
+                        && self.context.draw_text_context.borrow().runs.is_none()
+                });
             if let (Some((sel_start, sel_end)), None) = (selection, highlight) {
                 crate::text::draw_text_selection(
                     scene,
@@ -2581,11 +2700,16 @@ impl ElementCx<'_, '_> {
             // pyro: ruby annotations and emphasis marks, over the text of each line.
             if !text_layout.annotations.is_empty() {
                 let recording = draw_text_context.runs.is_some();
-                for line in text_layout.layout.lines() {
+                for (index, line) in text_layout.layout.lines().enumerate() {
+                    if text_layout.clamp.as_ref().is_some_and(|clamp| index >= clamp.lines as usize) {
+                        break;
+                    }
                     let line_transform = match tops {
                         Some(tops) => transform * Affine::translate((0.0, tops.shift(line.metrics()))),
                         None => transform,
                     } * Affine::translate((text_shift, 0.0));
+                    let cut = line_truncation(self.node, text_layout, &line, index, self.scale as f32)
+                        .map(|truncation| truncation.cut);
                     crate::text::draw_text_annotations(
                         scene,
                         &line,
@@ -2597,6 +2721,7 @@ impl ElementCx<'_, '_> {
                         recording,
                         None,
                         None,
+                        cut,
                     );
                 }
             }
@@ -2697,7 +2822,10 @@ impl ElementCx<'_, '_> {
         let sideways = wm.intersects(WritingMode::TEXT_SIDEWAYS | WritingMode::VERTICAL_SIDEWAYS);
         let all_upright = wm.contains(WritingMode::UPRIGHT);
         let vertical = |line: &parley::Line<'_, blitz_dom::node::TextBrush>| {
-            Some(crate::text::VerticalLine::new(line, sideways, all_upright))
+            Some(
+                crate::text::VerticalLine::new(line, sideways, all_upright)
+                    .counterclockwise(wm.contains(WritingMode::WRITING_MODE_SIDEWAYS_LR)),
+            )
         };
 
         if self.context.backgrounds {
@@ -2756,6 +2884,7 @@ impl ElementCx<'_, '_> {
                         self.scale,
                         recording,
                         vertical,
+                        None,
                         None,
                     );
                 }
@@ -2883,31 +3012,120 @@ impl ElementCx<'_, '_> {
             // Render text
             let mut draw_text_context = self.context.draw_text_context.borrow_mut();
             draw_text_context.line_tops = tops;
-            crate::text::stroke_text(
-                scene,
-                input_data.editor.try_layout().unwrap().lines(),
-                self.context.dom,
-                transform,
-                TextPaintOptions {
-                    scale: self.scale,
-                    brush_override: None,
-                    shadows: true,
-                },
-                self.node.id,
-                None,
-                &mut draw_text_context,
-                None,
-                None,
-            );
+            let options = TextPaintOptions { scale: self.scale, brush_override: None, shadows: true };
+            let layout = input_data.editor.try_layout().unwrap();
+            // pyro: `text-overflow` in a text control, as Chromium has it: while the control
+            // is not focused and not scrolled, each line that overflows its content box ends
+            // with the ellipsis (a focused control shows its text clipped, to edit it).
+            let ellipsis = input_data
+                .ellipsis
+                .as_ref()
+                .filter(|_| {
+                    let scroll = self.node.scroll_offset();
+                    !self.node.is_focussed() && input_data.scroll_offset == 0.0 && scroll.x == 0.0 && scroll.y == 0.0
+                });
+            match ellipsis {
+                None => crate::text::stroke_text(
+                    scene,
+                    layout.lines(),
+                    self.context.dom,
+                    transform,
+                    options,
+                    self.node.id,
+                    None,
+                    &mut draw_text_context,
+                    None,
+                    None,
+                ),
+                Some((ellipsis, text)) => {
+                    let width = self.node.unrounded_layout().content_box_width() * self.scale as f32;
+                    for line in layout.lines() {
+                        let truncation = truncate_line(&line, ellipsis, width, self.scale as f32, layout.is_rtl(), false);
+                        draw_text_context.cut = truncation.map(|(cut, _)| cut);
+                        crate::text::stroke_text(
+                            scene,
+                            std::iter::once(line.clone()),
+                            self.context.dom,
+                            transform,
+                            options,
+                            self.node.id,
+                            None,
+                            &mut draw_text_context,
+                            None,
+                            None,
+                        );
+                        draw_text_context.cut = None;
+                        if let Some((_, x)) = truncation {
+                            let baseline = ellipsis.lines().next().map_or(0.0, |l| l.metrics().baseline);
+                            let shift = tops.map_or(0.0, |tops| tops.shift(line.metrics()));
+                            let offset = (x as f64, (line.metrics().baseline - baseline) as f64 + shift);
+                            draw_text_context.line_tops = None;
+                            crate::text::stroke_text(
+                                scene,
+                                ellipsis.lines(),
+                                self.context.dom,
+                                transform * Affine::translate(offset),
+                                options,
+                                self.node.id,
+                                Some(text),
+                                &mut draw_text_context,
+                                None,
+                                None,
+                            );
+                            draw_text_context.line_tops = tops;
+                        }
+                    }
+                }
+            }
             draw_text_context.line_tops = None;
+        }
+    }
+
+    /// pyro: an inside marker that is an image (`list-style-image`): at the start of the
+    /// item's first line, its bottom on the baseline (the inline layout left room for it).
+    fn draw_inside_marker_image(&self, scene: &mut impl PaintScene, pos: Point, width: f32, height: f32) {
+        let Some(image) = self.element.list_style_images.first().and_then(Option::as_ref) else { return };
+        let Some(text_layout) = self.element.inline_layout_data.as_ref() else { return };
+        let Some(line) = text_layout.layout.lines().next() else { return };
+        let metrics = line.metrics();
+        let layout_scale = text_layout.layout.scale();
+        let rtl = text_layout.layout.is_rtl();
+        let line_x = if rtl { metrics.inline_max_coord / layout_scale - width } else { metrics.inline_min_coord / layout_scale };
+        let x = pos.x + f64::from(line_x);
+        let y = pos.y + f64::from(text_layout.block_offset + metrics.baseline / layout_scale - height);
+        let origin = Affine::translate(((x * self.scale).round(), (y * self.scale).round()));
+        match &image.image {
+            blitz_dom::node::ImageData::Raster(raster) if raster.width > 0 && raster.height > 0 => {
+                let quality = to_image_quality(self.style.clone_image_rendering());
+                let size = Affine::scale_non_uniform(
+                    f64::from(width) * self.scale / f64::from(raster.width),
+                    f64::from(height) * self.scale / f64::from(raster.height),
+                );
+                scene.draw_image(to_peniko_image(raster, quality).as_ref(), self.transform * origin * size);
+            }
+            #[cfg(feature = "svg")]
+            blitz_dom::node::ImageData::Svg(svg) => {
+                anyrender_svg::render_svg_tree(scene, &svg.tree, self.transform * origin * Affine::scale(self.scale));
+            }
+            _ => {}
         }
     }
 
     fn draw_marker(&self, scene: &mut impl PaintScene, pos: Point) {
         if let Some(ListItemLayout {
+            marker: Marker::Image { width, height },
+            position: ListItemLayoutPosition::Inside,
+            ..
+        }) = self.list_item
+        {
+            self.draw_inside_marker_image(scene, pos, *width, *height);
+            return;
+        }
+        if let Some(ListItemLayout {
             marker,
             position: ListItemLayoutPosition::Outside(layout),
             content_box_subpixel_offset,
+            ..
         }) = self.list_item
         {
             // Right align and pad the bullet when rendering outside
@@ -3019,7 +3237,9 @@ impl ElementCx<'_, '_> {
         let y = pos.y + (subpixel.y + baseline) as f64 - (ascent - 3 * (ascent - offset) / 2) as f64;
         let (x, y) = ((x + 0.5).floor() * self.scale, (y + 0.5).floor() * self.scale);
         let rect = Rect::new(x, y, x + size * self.scale, y + size * self.scale);
-        let paint = anyrender::Paint::from(crate::text::text_fill_color(self.context.dom, self.node.id));
+        // pyro: in the colour of the item's `::marker` style, when a rule styles the marker.
+        let styled = self.list_item.and_then(|item| item.style_node).unwrap_or(self.node.id);
+        let paint = anyrender::Paint::from(crate::text::text_fill_color(self.context.dom, styled));
         match symbol {
             '•' => scene.fill(Fill::NonZero, self.transform, &paint, None, &kurbo::Ellipse::from_rect(rect)),
             '◦' => {
@@ -3121,7 +3341,16 @@ impl ElementCx<'_, '_> {
     ) {
         // Negative z_index hoisted nodes
         self.draw_neg_z_children(scene, parent_style_transform, clip_rect);
+        self.draw_children_above(scene, parent_style_transform, clip_rect);
+    }
 
+    /// pyro: [`Self::draw_children`] without the stacking contexts of negative z-index.
+    fn draw_children_above(
+        &self,
+        scene: &mut impl PaintScene,
+        parent_style_transform: Affine,
+        clip_rect: Rect,
+    ) {
         // Regular children
         if let Some(children) = &*self.node.paint_children.borrow() {
             for child_id in children {
@@ -3276,6 +3505,72 @@ impl ElementCx<'_, '_> {
         }
     }
 
+    /// Paints a box hoisted to this stacking context (a positioned descendant with a
+    /// `z-index`) where its layout put it. pyro: inside the overflow clips of the boxes between
+    /// it and this one that are its containing-block ancestors: such a box makes no stacking
+    /// context, so the child is not painted within its clip layer, and it showed whole outside
+    /// an `overflow: hidden` ancestor.
+    fn draw_hoisted_child(
+        &self,
+        scene: &mut impl PaintScene,
+        hoisted_child: &blitz_dom::HoistedPaintChild,
+        parent_style_transform: Affine,
+        clip_rect: Rect,
+    ) {
+        let tree = self.node.tree();
+        let position = hoisted_child.position(tree, self.node.id);
+        // The clipping boxes, innermost first, each with its border box's origin in this
+        // context's space (the child's, less what lies between the two).
+        let mut clips: Vec<(Affine, kurbo::BezPath)> = Vec::new();
+        let mut between = (0.0f32, 0.0f32);
+        let mut current = tree.get(hoisted_child.node_id).and_then(|child| child.containing_block());
+        let mut reached = false;
+        while let Some(id) = current {
+            if id == self.node.id {
+                reached = true;
+                break;
+            }
+            let Some(node) = tree.get(id) else { break };
+            // (Out of a multi-column container's strip the walk is not a sum of offsets.)
+            if node.column_fragments().is_some() {
+                break;
+            }
+            let location = node.final_layout().location;
+            let scroll = *node.scroll_offset();
+            between.0 += location.x - scroll.x as f32;
+            between.1 += location.y - scroll.y as f32;
+            if let Some(styles) = node.primary_styles().filter(|_| node.element_data().is_some())
+                && self.context.should_clip_node(node, &styles)
+            {
+                let origin = Vec2::new(
+                    f64::from(position.x - between.0 + location.x) * self.scale,
+                    f64::from(position.y - between.1 + location.y) * self.scale,
+                );
+                let frame = create_css_rect(&styles, node.final_layout(), self.scale);
+                let clip = if node.element_data().is_some_and(|el| el.text_input_data().is_some()) {
+                    frame.text_input_clip_path()
+                } else {
+                    box_shadow::overflow_clip_path(&frame, &styles, self.scale)
+                };
+                clips.push((parent_style_transform.pre_translate(origin), clip));
+            }
+            current = node.containing_block();
+        }
+        if !reached {
+            clips.clear();
+        }
+        let mut clip_rect = clip_rect;
+        for (transform, clip) in clips.iter().rev() {
+            self.context.layer_manager.maybe_push_layer(scene, true, BlendMode::default(), 1.0, *transform, clip, None, None);
+            clip_rect = clip_rect.intersect(transform.transform_rect_bbox(clip.bounding_box()));
+        }
+        let pos = kurbo::Vec2 { x: position.x as f64 * self.scale, y: position.y as f64 * self.scale };
+        self.render_node(scene, hoisted_child.node_id, parent_style_transform.pre_translate(pos), clip_rect);
+        for _ in &clips {
+            self.context.layer_manager.maybe_pop_layer(scene, true);
+        }
+    }
+
     fn draw_neg_z_children(
         &self,
         scene: &mut impl PaintScene,
@@ -3284,17 +3579,7 @@ impl ElementCx<'_, '_> {
     ) {
         if let Some(hoisted) = &self.node.stacking_context {
             for hoisted_child in hoisted.neg_z_hoisted_children() {
-                let position = hoisted_child.position(self.node.tree(), self.node.id);
-                let pos = kurbo::Vec2 {
-                    x: position.x as f64 * self.scale,
-                    y: position.y as f64 * self.scale,
-                };
-                self.render_node(
-                    scene,
-                    hoisted_child.node_id,
-                    parent_style_transform.pre_translate(pos),
-                    clip_rect,
-                );
+                self.draw_hoisted_child(scene, hoisted_child, parent_style_transform, clip_rect);
             }
         }
     }
@@ -3308,17 +3593,7 @@ impl ElementCx<'_, '_> {
         // Positive z_index hoisted nodes
         if let Some(hoisted) = &self.node.stacking_context {
             for hoisted_child in hoisted.pos_z_hoisted_children() {
-                let position = hoisted_child.position(self.node.tree(), self.node.id);
-                let pos = kurbo::Vec2 {
-                    x: position.x as f64 * self.scale,
-                    y: position.y as f64 * self.scale,
-                };
-                self.render_node(
-                    scene,
-                    hoisted_child.node_id,
-                    parent_style_transform.pre_translate(pos),
-                    clip_rect,
-                );
+                self.draw_hoisted_child(scene, hoisted_child, parent_style_transform, clip_rect);
             }
         }
     }
@@ -3359,9 +3634,20 @@ impl ElementCx<'_, '_> {
 
         // Apply object-fit algorithm
         let container_size = taffy::Size { width, height };
-        let object_size = taffy::Size {
-            width: svg_size.width(),
-            height: svg_size.height(),
+        // pyro: `object-view-box` (see `draw_image`): the view box is fitted and positioned,
+        // the SVG around it drawn at the view box's scale.
+        // (An SVG without a natural size has no view box: there is nothing to take a part of.)
+        let view = self
+            .svg
+            .is_some_and(|natural| natural.intrinsic_width().is_some() && natural.intrinsic_height().is_some())
+            .then(|| blitz_dom::util::object_view_box(&self.style, svg_size.width(), svg_size.height()))
+            .flatten();
+        let object_size = match view {
+            Some((_, _, width, height)) => taffy::Size { width, height },
+            None => taffy::Size {
+                width: svg_size.width(),
+                height: svg_size.height(),
+            },
         };
         let paint_size = compute_object_fit(container_size, Some(object_size), object_fit);
 
@@ -3372,6 +3658,20 @@ impl ElementCx<'_, '_> {
         let y_offset = object_position.vertical.resolve(
             CSSPixelLength::new(container_size.height - paint_size.height) / self.scale as f32,
         ) * self.scale as f32;
+        let (x_offset, y_offset, paint_size) = match view {
+            Some((left, top, width, height)) => {
+                let (x_scale, y_scale) = (paint_size.width / width, paint_size.height / height);
+                (
+                    CSSPixelLength::new(x_offset.px() - left * x_scale),
+                    CSSPixelLength::new(y_offset.px() - top * y_scale),
+                    taffy::Size {
+                        width: svg_size.width() * x_scale,
+                        height: svg_size.height() * y_scale,
+                    },
+                )
+            }
+            None => (x_offset, y_offset, paint_size),
+        };
         let x = x + x_offset.px() as f64;
         let y = y + y_offset.px() as f64;
 
@@ -3413,6 +3713,14 @@ impl ElementCx<'_, '_> {
             let b = self.style.get_box();
             matches!(b.overflow_x, Overflow::Visible) && matches!(b.overflow_y, Overflow::Visible)
         } {
+            ReplacedClip::Never
+        } else if !inline && replaced_overflow_is_visible(self.element, &self.style) {
+            // pyro: an SVG image whose `overflow` the author made visible is cut at its own
+            // viewport (the object rect) only, not at the box.
+            let object = Rect::new(x, y, x + paint_size.width as f64, y + paint_size.height as f64);
+            if reaches_past(ink(), object) {
+                object_clip = Some(object);
+            }
             ReplacedClip::Never
         } else {
             let content = self.frame.content_box;
@@ -3548,9 +3856,22 @@ impl ElementCx<'_, '_> {
                 width: width as f32,
                 height: height as f32,
             };
-            let object_size = taffy::Size {
-                width: image.width as f32,
-                height: image.height as f32,
+            // pyro: `object-view-box`: the view box is what is fitted and positioned; the image
+            // around it is drawn at the view box's scale, where the content box has room.
+            // pyro: `image-orientation: none`: the pixels were turned by the EXIF orientation
+            // when decoded and are drawn turned back (`unturn`, from the image as stored to the
+            // decoded pixels' space).
+            let unoriented = blitz_dom::util::image_unoriented(&self.style) && image.orientation != 1;
+            let (shown_width, shown_height) = image.shown_size(unoriented);
+            let (shown_width, shown_height) = (shown_width as f32, shown_height as f32);
+            let unturn = unoriented.then(|| Affine::new(image.unturn()));
+            let view = blitz_dom::util::object_view_box(&self.style, shown_width, shown_height);
+            let object_size = match view {
+                Some((_, _, width, height)) => taffy::Size { width, height },
+                None => taffy::Size {
+                    width: shown_width,
+                    height: shown_height,
+                },
             };
             let paint_size = compute_object_fit(container_size, Some(object_size), object_fit);
 
@@ -3566,10 +3887,28 @@ impl ElementCx<'_, '_> {
 
             let x_scale = paint_size.width as f64 / object_size.width as f64;
             let y_scale = paint_size.height as f64 / object_size.height as f64;
+            // The whole image's place (its part outside the view box too).
+            let (view_x, view_y) = view.map_or((0.0, 0.0), |(left, top, _, _)| (left as f64, top as f64));
+            let (x, y) = (x - view_x * x_scale, y - view_y * y_scale);
+            let (x_offset, y_offset, paint_size) = match view {
+                Some(_) => (
+                    CSSPixelLength::new(x_offset.px() - (view_x * x_scale) as f32),
+                    CSSPixelLength::new(y_offset.px() - (view_y * y_scale) as f32),
+                    taffy::Size {
+                        width: (shown_width as f64 * x_scale) as f32,
+                        height: (shown_height as f64 * y_scale) as f32,
+                    },
+                ),
+                None => (x_offset, y_offset, paint_size),
+            };
             let transform = self
                 .transform
                 .pre_translate(Vec2 { x, y })
                 .pre_scale_non_uniform(x_scale, y_scale);
+            let transform = match unturn {
+                Some(unturn) => transform * unturn,
+                None => transform,
+            };
 
             self.with_replaced_content_clip(
                 scene,
@@ -3577,9 +3916,23 @@ impl ElementCx<'_, '_> {
                 paint_size,
                 x_offset.px(),
                 y_offset.px(),
-                ReplacedClip::Fit,
+                match replaced_overflow_is_visible(self.element, &self.style) {
+                    true => ReplacedClip::Never,
+                    false => ReplacedClip::Fit,
+                },
                 |scene| {
-                    scene.draw_image(to_peniko_image(image, quality).as_ref(), transform);
+                    // pyro: a pixelated image stops at its edge: a partly covered edge row or
+                    // column (`object-position: 50% 13%` puts the image 1.3px down) sampled the
+                    // opposite edge's pixels (the brush repeated). A smoothed image keeps
+                    // blending its edge with the opposite one, as a repeating background's
+                    // tiles do across their seams (WPT `background-repeat-round`,
+                    // `background-size-cover`, whose references are scaled `<img>`s).
+                    let mut brush = to_peniko_image(image, quality);
+                    if quality == peniko::ImageQuality::Low {
+                        brush.sampler.x_extend = peniko::Extend::Pad;
+                        brush.sampler.y_extend = peniko::Extend::Pad;
+                    }
+                    scene.draw_image(brush.as_ref(), transform);
                 },
             );
         }

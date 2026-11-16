@@ -414,7 +414,9 @@ fn shape_segment(
             // with `char_indices`, push each char individually via `.chars` with a cluster index
             // that matches its `infos` counterpart. This allows us to lookup `infos` via cluster
             // index in `data.rs`.
-            buffer.add(ch, i as u32);
+            // pyro: a tab is shaped as a space, as in browsers: it draws nothing, and its advance
+            // is the line breaker's to set (the tab stop it reaches).
+            buffer.add(if ch == '\t' { ' ' } else { ch }, i as u32);
         }
 
         buffer.set_pre_context(&text[..range.byte_range.start]);

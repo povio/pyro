@@ -671,6 +671,13 @@ fn run_animation_frame(scope: &Scope<'_>) {
         return;
     }
     pyro_webapi::layout_api::flush_pending_scrolls(&w.target.page);
+    // The style update of the frame before this one, when the document changed since and none
+    // ran yet (the first frame after a load, whose update is a task of its own that this
+    // frame's timer can beat): the styles a callback of this frame changes then have their
+    // before-change values, and the change starts its transitions. A browser has rendered
+    // the document before its first animation frame callback runs. One flag and stamp check
+    // for a document that neither animates nor transitions, or did not change.
+    w.target.page.update_animations();
     let (handles, native): (Vec<u32>, _) = {
         let mut frame = w.animation.borrow_mut();
         frame.timer = None;

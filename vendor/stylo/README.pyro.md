@@ -23,6 +23,15 @@ crate (`diff -ruN`).
   (upstream: gecko only). pyro-render's PDF output reads them to place page cuts of paper-cut
   documents. Nothing else reads them; computed values of other properties are unchanged.
 
+- `properties/longhands.toml`: `margin-trim` is parsed and computed for servo too (upstream: gecko
+  only), with `rebuild_box` restyle damage. Taffy's block layout reads it through stylo_taffy
+  (vendor/taffy/README.pyro.md).
+
+- `properties/longhands.toml`, `properties/shorthands.toml`: `contain-intrinsic-width`, `-height`,
+  `-inline-size`, `-block-size` and the `contain-intrinsic-size` shorthand are parsed and computed for servo
+  too (upstream: gecko only), with `rebuild_box` restyle damage. blitz-dom's layout reads them for boxes
+  with size containment (vendor/blitz-dom/README.pyro.md).
+
 - `values/specified/box.rs`: `break-before` and `break-after` also take `avoid-page` and
   `avoid-column`, as the spec has them (upstream has only `avoid`, and drops the declaration).
   `page-break-*` still rejects them.
@@ -166,6 +175,41 @@ how it is kept (pyro lays no MathML out); alone it is inline-level. The declarat
 `display: block math` left a `::before` inline (WPT `display-math-on-pseudo-elements-002`, whose reference a
 block-level `::before` in an inline box now renders as a block). Test: `display_math_computes_to_flow` in
 `crates/pyro-render/tests/inline_leftovers.rs`.
+
+`values/specified/box.rs` (`DisplayInside::WebkitBox`, `Display::WebkitBox`, `WebkitInlineBox`, `FlowRoot`),
+`properties/longhands.toml` (`-webkit-box-orient`, servo only), `properties/shorthands.toml`
+(`-webkit-line-clamp`), `style_adjuster.rs` (`adjust_for_webkit_box`), `properties/computed_value_flags.rs`
+(`WEBKIT_LINE_CLAMP_APPLIES`): the legacy line clamp in the servo engine. `display: -webkit-box` and
+`-webkit-inline-box`, `-webkit-box-orient` and the `-webkit-line-clamp` shorthand were gecko-only, so their
+declarations were dropped and `-webkit-line-clamp` never applied. The servo engine has no legacy box layout:
+the adjuster turns the display, before any other fixup, into `flow-root`/`inline-block` for a vertical box (as
+Gecko and Blink do for one that clamps) and `flex`/`inline-flex` for a horizontal one, and flags the style when
+the box is vertical and has a line clamp; blitz-dom's `layout::line_clamp` clamps the lines of flagged boxes
+only. `-webkit-box` is never a computed value. Tests: `crates/pyro-render/tests/line_clamp.rs`, WPT
+`css/css-overflow/line-clamp/webkit-line-clamp-*`.
+
+`values/specified/box.rs`, `values/computed/box.rs` (`OverflowClipMargin`): the length of `overflow-clip-margin`
+may be negative, as Blink takes it (the clip edge moves inwards; WPT `css-overflow/overflow-clip-margin-016`,
+`-017`), where the specification and upstream have a non-negative length. Test:
+`crates/pyro-render/tests/overflow_clip.rs`.
+- `values/specified/text.rs` (`WordBreak::Manual`): `word-break: manual` (CSS Text 4) is parsed for the servo engine.
+  blitz-dom lays it out as `normal` without dictionary breaks in Southeast Asian scripts (its README.pyro.md).
+`values/specified/image.rs` (`Color::has_modern_syntax`): a colour with a missing component
+(`rgb(none 255 0)`) is modern syntax, so a gradient with one interpolates in Oklab by default, as in
+Chromium (WPT `gradient-eval-004`, `gradient-analogous-missing-components-*`). Stylo's legacy flag says
+how the colour serializes. Test: `a_colour_with_a_missing_component_makes_the_gradient_oklab` in
+`crates/pyro-render/tests/gradient_stops_image_set.rs`.
+
+`properties/longhands.toml`, `values/specified/basic_shape.rs` (`ClipPath::parse_object_view_box`): the
+`object-view-box` longhand (CSS Images 5; `none | inset() | rect() | xywh()`), kept as a `clip-path` value of
+`none` or one rectangle, animated discretely. blitz-dom reads it (`util::object_view_box`). Tests:
+`crates/pyro-render/tests/object_view_box_embed.rs`.
+
+## `::before::marker`, `::after::marker` (WPT round 3, lane I)
+
+`servo/selector_parser.rs`: `PseudoElement::valid_after_before_or_after` (`::marker`) and `is_before_or_after`,
+so the selectors parse (CSS Pseudo-Elements 4 § 4.1); the stylist already keeps such rules by pseudo-element
+chain. blitz-dom answers `implemented_pseudo_element` for the boxes (its README).
 
 ## Updating or dropping the patch
 

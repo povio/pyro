@@ -202,9 +202,11 @@ elsewhere the regenerated sections can align differently (they still apply).
 
 ## Before making it a required check
 
-The gate's false failures come from pages whose results depend on load. `flaky.json` starts with the six such pages
+The gate's false failures come from pages whose results depend on load. `flaky.json` started with the six such pages
 found in four full local runs and isolated reruns, plus two from the first CI runs (three runs without a baseline,
-each running every page twice). Three more pages the CI runs flagged were not flakes of the page and are not listed:
+each running every page twice). Six of the eight, all in `html/dom/render-blocking`, were not flakes of the page
+and are no longer listed: their scripts and stylesheets ask for `?pipe=trickle(d1)`, which `serve.mjs` ignored
+(below). Three more pages the CI runs flagged were not flakes of the page and were never listed:
 `dom/nodes/Node-isEqualNode-xhtml.xhtml` (a browser bug: an XML document's content was attached before its scripts
 ran, fixed), `xhr/abort-during-navigation.window.html` (`delay.py` answered at once, below) and a long XHR page the
 runner recorded as timed out when the browser was replaced under it (below). To find the rest on the CI runners:
@@ -251,6 +253,16 @@ the shard split. Results do not depend on the WPT checkout's own `testharnessrep
 cannot see a handler that only a page's support file requests, and a handler served as a file answers at once with
 its source. The one such handler in the subset is answered as wptserve answers it (`HANDLERS` in `serve.mjs`):
 `xhr/resources/delay.py`, which the XHR timeout pages and `xhr/abort-during-navigation.window.html` wait on.
+
+Static files take wptserve's pipes (`?pipe=`, `pipes.mjs`; `bun test bench/wpt/pipes.test.mjs`): `trickle`,
+`header`, `status`, `slice` and `gzip`, not `sub`. `trickle` is the one pages in the subset depend on:
+`html/dom/render-blocking` loads its scripts and stylesheets with `trickle(d1)` (headers at once, the body a second
+later), so that they are still loading when the page looks; `xhr/abort-after-timeout.any.html` needs a response
+that outlasts its timeout. Until 2026-11-16 the pipe was ignored and the file sent at once: whether such a load had
+finished when the page looked was a race with the page's frames (six pages were in `flaky.json` for it, and
+`remove-attr-unblocks-rendering.optional.html` failed three CI runs in a row). The `header` pages in the subset
+also need another origin (`get-host-info.sub.js`), and the one `gzip` page fails either way. Reftest and crashtest
+discovery still leaves out every page that names a `pipe=`.
 
 A page that spins the browser's main thread is recorded as `hang` 15 s after its timeout, and the browser is
 replaced (`css/selectors/invalidation/has-complexity.html` in every full run; pull requests skip it). The pages

@@ -1138,7 +1138,7 @@ impl ElementCx<'_, '_> {
             let metrics = line.metrics();
             // pyro: from the line's start, past the floats before it (`inline_box_fragments`).
             let content_end =
-                metrics.inline_min_coord + metrics.offset + metrics.advance - metrics.hanging_advance;
+                metrics.inline_min_coord + metrics.offset + metrics.advance - metrics.collapsed_advance;
             let shift = tops.map_or(0.0, |tops| tops.shift(metrics));
             // Per element: its x range on the line and its own style.
             let mut spans: Vec<Option<(f32, f32, u16)>> = vec![None; effects.len()];
@@ -1224,7 +1224,7 @@ impl ElementCx<'_, '_> {
                 let below = border.border_bottom_width.0.to_f32_px()
                     * f32::from(!border.border_bottom_style.none_or_hidden())
                     + length(&padding.padding_bottom.0);
-                let (top, bottom) = line.span_content_area(own_style);
+                let (top, bottom) = line.span_box_area(own_style);
                 let border_box = Rect::new(
                     (x0 as f64) + text_shift,
                     ((top - above * scale) as f64) + shift,

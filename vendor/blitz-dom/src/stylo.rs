@@ -216,6 +216,9 @@ impl crate::document::BaseDocument {
             if traverser.first_letter_styles.into_inner() {
                 self.first_letter_styles = true;
             }
+            if traverser.text_box_trim_styles.into_inner() {
+                self.text_box_trim_styles = true;
+            }
             if traverser.generated_counters.into_inner() && !self.generated_counters {
                 self.generated_counters = true;
                 self.counters_dirty = true;
@@ -225,6 +228,8 @@ impl crate::document::BaseDocument {
             }
             self.first_letter_changed
                 .extend(std::mem::take(traverser.first_letter_changed.get_mut().unwrap()));
+            self.marker_items_restyled
+                .extend(std::mem::take(traverser.marker_items_restyled.get_mut().unwrap()));
             if traverser.first_line_styles.into_inner() {
                 self.first_line_styles = true;
             }
@@ -895,6 +900,22 @@ impl<'a> TElement for BlitzNode<'a> {
 
     type TraversalChildrenIterator = Traverser<'a>;
 
+    // pyro: the box of an element's `::before` or `::after` is that pseudo-element: the rules of
+    // `::before::marker` / `::after::marker` are looked up for it (`layout::list`).
+    fn implemented_pseudo_element(&self) -> Option<PseudoElement> {
+        if !matches!(self.data, NodeData::AnonymousBlock(_)) {
+            return None;
+        }
+        let parent = &self.tree()[self.parent?];
+        if parent.before() == Some(self.id) {
+            Some(PseudoElement::Before)
+        } else if parent.after() == Some(self.id) {
+            Some(PseudoElement::After)
+        } else {
+            None
+        }
+    }
+
     fn as_node(&self) -> Self::ConcreteNode {
         self
     }
@@ -1145,6 +1166,14 @@ impl<'a> TElement for BlitzNode<'a> {
             && attr.0.bytes().any(|b| b.is_ascii_uppercase()))
         .then(|| markup5ever::LocalName::from(attr.0.to_ascii_lowercase()));
         let name = lowered.as_ref().unwrap_or(&attr.0);
+        // pyro: for a pseudo-element's box (the marker style of a `::before` or `::after` list
+        // item is cascaded on it), the attribute of its originating element.
+        if matches!(self.data, NodeData::AnonymousBlock(_))
+            && let Some(parent) = self.parent.map(|id| &self.tree()[id])
+            && (parent.before() == Some(self.id) || parent.after() == Some(self.id))
+        {
+            return parent.get_attr(attr, ns);
+        }
         self.attrs()?
             .iter()
             .find(|a| a.name.local == *name && a.name.ns == ns.0)
@@ -1920,6 +1949,8 @@ pub struct RecalcStyle<'a> {
     /// pyro: the elements whose `::first-letter` style this traversal changed
     /// (`layout::first_letter::style_changed`).
     first_letter_changed: Mutex<Vec<NodeId>>,
+    /// pyro: restyled list items with a `::marker` style node (`layout::list::item_restyled`).
+    marker_items_restyled: Mutex<Vec<NodeId>>,
     /// pyro: an element styled in this traversal kept a `::first-line` style, and the elements
     /// whose `::first-line` style it changed (`layout::first_line::style_changed`).
     first_line_styles: std::sync::atomic::AtomicBool,
@@ -1927,6 +1958,8 @@ pub struct RecalcStyle<'a> {
     /// pyro: an element styled in this traversal has a `::before` / `::after` whose content
     /// reads counters or quotes (`layout::counters`).
     generated_counters: std::sync::atomic::AtomicBool,
+    /// pyro: an element was styled with `text-box-trim` (`layout::text_box`).
+    text_box_trim_styles: std::sync::atomic::AtomicBool,
     /// pyro: the document evaluates counters and quotes: restyles note whether they changed
     /// any (`counters_changed`).
     track_counters: bool,
@@ -1944,9 +1977,11 @@ impl<'a> RecalcStyle<'a> {
             track_style_changes: false,
             first_letter_styles: std::sync::atomic::AtomicBool::new(false),
             first_letter_changed: Mutex::new(Vec::new()),
+            marker_items_restyled: Mutex::new(Vec::new()),
             first_line_styles: std::sync::atomic::AtomicBool::new(false),
             first_line_changed: Mutex::new(Vec::new()),
             generated_counters: std::sync::atomic::AtomicBool::new(false),
+            text_box_trim_styles: std::sync::atomic::AtomicBool::new(false),
             track_counters: false,
             counters_changed: std::sync::atomic::AtomicBool::new(false),
         }
@@ -2240,12 +2275,19 @@ impl<'dom> DomTraversal<BlitzNode<'dom>> for RecalcStyle<'_> {
             sync_pseudo_element_styles(el, &data, &self.nodes_needing_style_image_flush);
             if let Some(style) = data.styles.get_primary() {
                 el.record_out_of_flow(style);
+                if !style.slow_clone_text_box_trim().is_empty() {
+                    self.text_box_trim_styles.store(true, std::sync::atomic::Ordering::Relaxed);
+                }
             }
 
             if data.styles.get_primary().is_some_and(|style| {
                 style.clone_position() == style::computed_values::position::T::Sticky
             }) {
                 self.sticky_nodes.lock().unwrap().push(el.id);
+            }
+
+            if el.element_data().is_some_and(|element| element.marker_style.is_some()) {
+                self.marker_items_restyled.lock().unwrap().push(el.id);
             }
 
             // One empty check for an element without eager pseudo styles.
@@ -2502,6 +2544,13 @@ fn needs_style_image_flush(node: &Node, style: &ComputedValues) -> bool {
                 &el.border_images,
             )
             || out_of_sync(std::slice::from_ref(&style.get_list().list_style_image), &el.list_style_images)
+            // pyro: an element whose `content` is one image shows it (`flush_content_image`).
+            || {
+                use style::values::computed::{Content, ContentItem};
+                let wants = matches!(&style.get_counters().content,
+                    Content::Items(items) if matches!(&items.items[..], [ContentItem::Image(_)]));
+                (wants || el.content_image.is_some()) && !node.is_anonymous()
+            }
             // pyro: the SVG documents its `clip-path`, `filter` and `mask` reference.
             || {
                 #[cfg(feature = "svg")]

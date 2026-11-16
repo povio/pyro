@@ -54,10 +54,30 @@ against the upstream commit above); they are covered by pyro-render's rendering 
   breaks); `opacity` goes into the colour. blitz-paint paints it while the value is empty. A textarea's wraps at
   its width (layout); a change of the attribute builds the box again; a new scale or font set shapes it again.
   Repro `bench/fidelity/repros/input-placeholder.html`, tests `crates/pyro-render/tests/input_placeholder.rs`.
-- `layout/inline/build.rs` (`ends_lines_with_ellipsis`), `node/text.rs` (`TextLayout::ellipsis`): an inline root
-  that clips its inline overflow and has `text-overflow: ellipsis` on its end side (Stylo keeps a single value as
-  `second`) gets "…" shaped in its own style; blitz-paint ends each overflowing line with it. Repro
-  `bench/fidelity/repros/text-overflow-ellipsis.html`.
+- `layout/inline/build.rs` (`line_end_ellipsis`), `node/text.rs` (`TextLayout::ellipsis`, `ellipsis_text`): an
+  inline root that clips its inline overflow and has `text-overflow: ellipsis` on its end side (Stylo keeps a single
+  value as `second`) gets "…" shaped in its own style; blitz-paint ends each overflowing line with it. Repro
+  `bench/fidelity/repros/text-overflow-ellipsis.html`. `text-overflow: "<string>"` shapes the string instead, on
+  one line (white space collapsed; U+000A to U+000D, U+0085, U+2028 and U+2029 count as spaces), in the base
+  direction of the root's lines (WPT `css-overflow/text-overflow-string-*`). A text control (`layout/construct.rs`
+  `create_text_editor`, `TextInputData::ellipsis`) gets the ellipsis of its own `text-overflow` too, whatever its
+  `overflow` (it always clips); blitz-paint draws it while the control is neither focused nor scrolled. A
+  `<textarea>`'s lines that do not wrap are its scrollable overflow (`layout/mod.rs`, the textarea leaf), so
+  script can scroll to them (pyro-dom `scroll_extent` lets a textarea scroll). An anonymous block (lines beside a
+  block-level sibling) takes the ellipsis of its parent's style, which its own does not inherit.
+- `layout/line_clamp.rs`, `layout/mod.rs` (`compute_child_layout_in_current_wm`), `layout/inline/layout.rs`,
+  `node/text.rs` (`TextLayout::clamp`, `line_box_top`, `counted_lines`, `LineClamp`), `node/node.rs`
+  (`NodeFlags::CLAMPS_LINES`): the legacy line clamp (`-webkit-line-clamp` on a vertical `-webkit-box`; Stylo's
+  `WEBKIT_LINE_CLAMP_APPLIES`). After the box's own layout its line boxes are counted in tree order: its own and
+  those of in-flow block descendants in its formatting context (not floats, positioned boxes, scroll containers,
+  fieldsets, flex/grid/table boxes). With more lines than the clamp, the block holding the clamp line gets a
+  `LineClamp` (lines kept, "…" shaped in its style) and an auto-height box ends at that line's bottom (within
+  `min-`/`max-height`). A measuring run of such a box runs as a full layout and drops the box's layout cache,
+  since the count reads laid-out content. A box that stops clamping clears the mark (`CLAMPS_LINES`). Lines in
+  later blocks are left to the box's `overflow`. Tests `crates/pyro-render/tests/line_clamp.rs`.
+- `assets/default.css`: `img, video, canvas { overflow: clip }`, as Chromium's
+  UA sheet: replaced content is cut at its content box unless the author's `overflow: visible` says otherwise
+  (blitz-paint `replaced_overflow_is_visible`). Layout ignores a replaced element's overflow.
 - `node/svg.rs` (`SvgImageData::sized`, `inline_source`), `layout/construct.rs`: an inline `<svg>` without a
   `viewBox` keeps its source, and is parsed again (cached) with the root's `width`/`height` set to its CSS
   content box for painting: its viewport is the box, as in Chromium, so user units are CSS px and percentages (a
@@ -1696,3 +1716,169 @@ element is now the document's layout child, as every other root element. Covered
   (WPT `content-attr-case-001`).
 
 Covered by `crates/pyro-render/tests/inline_leftovers.rs`.
+
+## `text-box-trim`, `<br>` clearance (WPT round 3, lane I)
+
+- `src/layout/text_box.rs` (new), `src/layout/inline/layout.rs`: `text-box-trim` / `text-box-edge` on block
+  containers. The inline root holding a block's first or last formatted line (found up the chain of first / last
+  in-flow children, stopped by a child with a border or padding on that side, as in Chromium) moves its lines up
+  by what the first line loses (`TextLayout::block_offset`) and is shorter by both trims; the metric is the
+  `text-box-edge` of the line's own root inline box. `vertical-lr` lines are inverted: their under side is at
+  the block start. On inline boxes the trim goes to parley (`TextStyle::text_box_trim`). Gated by the sticky
+  `BaseDocument::text_box_trim_styles` (set by the style traversal), so other documents pay nothing.
+  `layout.css.text-box.enabled` is set in `init_stylo_prefs` (and in pyro-dom's list).
+- `src/layout/inline/build.rs`, `layout.rs`: a `<br>` with `clear` (`TextLayout::br_clears`) starts the next
+  line below the floats it clears, and a block ending with it ends there; a trimmed last line does not end the
+  block above the float beside it (WPT `text-box-trim-float-clear-br-*`).
+- `src/layout/inline/build.rs`, `layout.rs`: an inline box with a border or padding over or under it
+  (`TextLayout::span_block_edges`), and trimmed lines, set `FLOW_CONTENT_OVERFLOWS`: the box reaches over the
+  next block, whose background is painted before it (Appendix E phases).
+- `src/layout/inline/relative.rs` (`inline_span_flow_offset`): the relative offset of inline boxes in the axes of
+  the layout, so static positions and span containing blocks move with them in vertical writing modes too (paint
+  moves the text there since this change). Not in a multi-column container of a vertical writing mode, which is
+  laid out as one column: `css-position/multicol/static-position/v*-in-multicol` would show what the offset moves
+  out of a column.
+
+Covered by `crates/pyro-render/tests/text_box_trim.rs`.
+## Sticky offsets (WPT reftests, round 3 lane S)
+
+- `src/node/element.rs`, `src/node/node.rs`: `LayoutData::sticky_offset` with `Node::sticky_offset` and
+  `Node::set_sticky_offset`: how far a `position: sticky` box is from where it is laid out (CSS px). The layout
+  places a sticky box as if static; the embedder knows the scroll positions, computes the offset (pyro-dom
+  `Layout::sticky_offsets`) and sets it through pyro-render's mirror (`Snapshot::sticky_offsets`). blitz-paint
+  moves the box by it (its README.pyro.md).
+
+Covered by `crates/pyro-render/tests/sticky_paint.rs`.
+
+## `aspect-ratio: auto <ratio>` on replaced elements (round 3 lane S)
+
+- `src/layout/replaced.rs` (`has_natural_ratio`), `src/node/node.rs` (`layout_style`): a replaced element with a
+  natural aspect ratio (a loaded raster image, an SVG image with a natural size or a `viewBox`, a canvas) and
+  `aspect-ratio: auto <ratio>` is flagged `StyleFlags::HAS_NATURAL_RATIO`, and stylo_taffy then reports no
+  preferred ratio: the natural one applies, as css-sizing-4 §5.1 has it (the `<ratio>` applied before, so a
+  1x1 image with `width: 100px; aspect-ratio: auto 10/1` was 10px tall). Without a natural ratio (an image not
+  loaded yet) the `<ratio>` still applies.
+
+Covered by WPT `css/css-sizing/aspect-ratio/replaced-element-029`, `-030` and `grid-aspect-ratio-005`, `-006`.
+- `src/layout/inline/build.rs` (`build_inline_layout_with`), `src/stylo_to_parley.rs`: preserved tabs go to tab stops
+  (parley's README.pyro.md, "Tab stops"). Each style carries its `tab-size`; an inline root whose text has a tab sets
+  the stops' unit, the advance of a space in the root's first available font plus the root's letter and word
+  spacing, and the least tab advance, 0.5ch of that font, before its content widths are measured. Covered by
+  `crates/pyro-render/tests/tab_stops.rs`.
+
+- `src/stylo_to_parley.rs`, `src/document.rs` (`init_stylo_prefs`: `layout.css.hyphens.enabled`): `hyphens` and
+  `hyphenate-character` are parsed and reach parley as each style's `SoftHyphen` (parley's README.pyro.md, "Soft
+  hyphens"): `hyphens: none` lets no line end at a soft hyphen, `hyphenate-character` names what a line ending at one
+  shows (the empty string nothing, one character that character, `auto` and longer strings the font's hyphen).
+  `hyphens: auto` breaks only at soft hyphens, as `manual`. Covered by `crates/pyro-render/tests/soft_hyphens.rs`.
+
+- `src/layout/inline/layout.rs` (`balanced_wrap_limit`), `src/document.rs` (the `text-wrap-style: balance` pref):
+  `text-wrap-style: balance`. A block of two to six lines (Blink's limit; fewer when `line-clamp` cuts it) with no
+  float beside it and no `max-height` (a block-size clamp, which nothing applies yet, would cut it) wraps at the least advance that keeps its line count, found by bisection over trial breaks; a
+  trial with more emergency breaks (`overflow-wrap`) or more overflowing lines than the unbalanced break is no
+  balance. The lines keep the container's width for alignment (parley's `BreakerState::set_wrap_limit`).
+  Covered by `crates/pyro-render/tests/text_wrap_balance.rs`.
+
+
+- `Cargo.toml` (parley's `complex-scripts` feature), `src/stylo_to_parley.rs`: lines break inside Thai, Lao, Khmer and
+  Burmese text where ICU4X's dictionaries find word boundaries (`LineSegmenter::new_dictionary`; +3.8 MB of data in
+  the binary); they broke only at spaces. `word-break: manual` (stylo parses it for this engine) turns that off for
+  its text (parley's `TextStyle::dictionary_breaks`, parley_engine's `LineBreakConfig::no_dictionary`). WPT css-text
+  `line-breaking-024..027`, `word-break-normal-{th,km,lo,my}-*`, `word-break-manual-001`.
+## Size containment and `contain-intrinsic-size` (round 3 lane S)
+
+- `src/layout/mod.rs` (`compute_child_layout_in_current_wm`, `size_contained_size`): a box with size containment
+  (`contain: size` or `strict`; css-contain-2 §3.1) is sized as an empty box whose content is its
+  `contain-intrinsic-size` (css-sizing-4 §4.1: `none` is zero, `auto <length>` the length, as no size is
+  remembered): Taffy's leaf layout, with the box's own style, gives that size, and the box's algorithm then lays
+  its content out with both dimensions known. A replaced element keeps its natural aspect ratio
+  (`replaced::natural_ratio`): one size gives the other (WPT css-flexbox `canvas-contain-size`). `contain: size` did nothing before. Not for non-atomic inline
+  boxes, tables and internal table boxes. `contain: inline-size` alone is not done.
+
+Covered by `crates/pyro-render/tests/size_containment.rs`; WPT `css/css-sizing/contain-intrinsic-size`: 23 more
+reftests pass.
+## `image-set()`, images as `content`, font features and descriptors (WPT css-images and css-fonts, round 3 lane F)
+
+- `src/util.rs` (`unfiltered_image`, `image_resolution`): an `image-set()` layer loads and draws the option
+  Stylo selected (backgrounds, masks, border images, list markers, `content`), at that option's resolution.
+- `src/layout/damage.rs` (`flush_content_image`), `src/layout/replaced.rs` (`is_content_image`),
+  `src/node/element.rs` (`ElementData::content_image`): an element whose own `content` is one image is laid out
+  as an `<img>` of it once the image has loaded (CSS Content 3 §2). A generated `img` box (`content: url()` of
+  `::before`/`::after`) carries the resolution too (`Piece::Image`), and `layout/mod.rs` divides the raster's
+  pixel size by it.
+- `src/layout/mod.rs`: the `natural=W,H` token (pyro-dom's density-corrected natural size: a `srcset`
+  candidate's `0.5x`) sizes a loaded raster `<img>` too; it was only used until Blitz had the image.
+- `src/layout/list.rs`, `src/layout/inline/build.rs`, `src/layout/construct.rs`: an image marker inside the
+  item (`list-style-position: inside`) has room at the start of the first line: a run of no size of its own, as
+  tall as the image above the baseline and as wide as it plus Blink's 7px (blitz-paint draws the image). An
+  item with nothing but that marker has the line.
+- `src/stylo_to_parley.rs` (`font_kerning`, `font_variant_alternates`, `set_font_feature_values`),
+  `src/resolve.rs` (`publish_font_feature_values`): `font-kerning: none | normal` is the `kern` feature;
+  `font-variant-alternates` maps to `hist`, `salt`, `ssNN`, `cvNN`, `swsh`/`cswh`, `ornm` and `nalt` through the
+  `@font-feature-values` rules for a family of the element's `font-family` (a thread-local the layout sets: the
+  style conversions have no document). In `font_features` the last setting of a tag wins
+  (`font-feature-settings` over `font-variant-*`); `dedup_by_key` kept the first.
+- `src/net.rs` (`FontFaceOverrides::width`), `src/document.rs`: the `font-stretch` descriptor of `@font-face`
+  reaches font matching (the faces of a family that differ in it only were all `normal`).
+- `src/document.rs` (`init_stylo_prefs`): `light-dark()` of images and the `font-synthesis-*` longhands parse.
+
+Covered by `crates/pyro-render/tests/gradient_stops_image_set.rs` and the WPT pages named in the commit.
+
+- `src/util.rs` (`object_view_box`), `src/layout/mod.rs`: `object-view-box` (a rectangle of the content's natural
+  size, `inset()`, `rect()` or `xywh()`): the view box is the content's natural size; one without an area is
+  ignored.
+- `src/net.rs`: a decoded raster image is turned as its EXIF orientation says (`image-orientation: from-image`,
+  the initial value), in JPEG, WebP and PNG (`eXIf`); pyro-dom's header parser exchanges the sides to match.
+- `src/mutator.rs`: an `<embed>` loads the image its `src` names, as an `<img>` does.
+
+Covered by `crates/pyro-render/tests/object_view_box_embed.rs`.
+
+## `::marker` (WPT round 3, lane I)
+
+- `src/layout/list.rs`: a list item's marker takes its `::marker` style. The style (lazily cascaded, only when
+  a rule matches) is kept on a node of its own (`ElementData::marker_style`, `ListItemLayout::style_node`), the
+  brush of the marker's text, so paint reads its colour, font and shadows; inside markers are a span of it
+  (`inline/build.rs`). `content`: `none` leaves no marker, strings, `counter(list-item)` and quotes replace it
+  (other counters and images keep the `list-style` marker). The outside marker's line preserves its white space
+  (the suffix space of `1. ` takes room, as `white-space: pre` in the UA sheet gives it).
+- `src/stylo.rs`, `src/layout/list.rs` (`item_restyled`), `src/layout/counters.rs`: a restyled list item with
+  a marker style node refreshes it (the marker inherits from the item); a changed `content` rebuilds the list's
+  markers.
+- `src/stylo.rs` (`implemented_pseudo_element`, `get_attr`): the box of a `::before` / `::after` is that
+  pseudo-element for selector matching, so `::after::marker` rules reach the marker of a pseudo-element's list
+  item, and `attr()` there reads the originating element.
+- `src/animation.rs`, `src/node/element.rs`: `ElementEffects::marker`: the animations in effect on an element's
+  `::marker` (`Element.animate` with `pseudoElement: '::marker'`) are sampled like the element's own and
+  cascaded onto the marker's style (`ElementData::sampled_marker`, `Stylist::compute_for_declarations`).
+
+Covered by `crates/pyro-render/tests/marker_pseudo.rs`.
+## `font-size-adjust` (WPT css-fonts, round 3 lane F)
+
+- `src/resolve.rs` (`publish_font_size_adjustments`), `src/stylo_to_parley.rs` (`font_size_adjustment`),
+  `src/font_metrics.rs` (`metrics_for`): the used font size of a style with `font-size-adjust` is its font size
+  times the value over the font's own ratio of the named metric (`ex-height`, `cap-height`, `ch-width`,
+  `ic-width`, `ic-height`) to its size. The font is the one of the list that draws `x` (its `unicode-range` and
+  character map), taken to draw the run; a fallback font used for other characters is not scaled on its own
+  (parley sizes a run by its style, not by its font). The factors are computed before layout for every style
+  with the property (one walk over the nodes, a pointer comparison each where the property is unset), by font
+  style struct, into a thread-local the style conversions read: they have no document, and the layout holds
+  the font context's lock. A `line-height` number keeps multiplying the unscaled size.
+
+Covered by `crates/pyro-render/tests/font_size_adjust.rs`.
+
+## `font-variant-caps` values, the `font-style` descriptor's range (WPT css-fonts, round 3 lane F)
+
+- `src/document.rs` (`init_stylo_prefs`): `font-variant-caps: all-small-caps | petite-caps | all-petite-caps |
+  unicase | titling-caps` parse (`stylo_to_parley::font_variant_caps` already mapped them to features).
+- `src/net.rs` (`FontFaceOverrides::slant_range`, `stylo_to_fontique_style`): a `font-style` descriptor range
+  that has 0deg in it (`oblique 0deg 15deg`, `oblique -15deg 15deg`) is an upright face whose `slnt` axis may
+  go that far (vendored fontique clamps to it); `normal` forbids the axis.
+
+## Phantom line boxes (WPT round 3, lane I)
+
+- `src/layout/inline/layout.rs`: a line holding an inline box's inline-axis margin, border or padding (a span
+  edge, also of zero width, as `span_edge_widths` makes them) is no phantom line box (CSS Inline 3 § 2.1,
+  csswg-drafts#9344): margins do not collapse through its block, whatever its height. Block-axis sides alone
+  leave the line phantom.
+
+Covered by `crates/pyro-render/tests/phantom_line_boxes.rs`.

@@ -89,6 +89,10 @@ pub struct ElementData {
     pub reference_images: ThinVec<Option<ImageResourceData>>,
     /// pyro: the `list-style-image` image of a list item (a list of one), its marker once loaded.
     pub list_style_images: ThinVec<Option<ImageResourceData>>,
+    /// pyro: the image this box shows in place of content and its pixels per CSS px: the URL
+    /// of a generated `img` box (`content: url()` of `::before`/`::after`), or of an element
+    /// whose own `content` is one image (it is laid out as an `<img>` of it).
+    pub content_image: Option<(String, f32)>,
 
     /// Parley text layout (elements with inline inner display mode only)
     pub inline_layout_data: Option<Box<TextLayout>>,
@@ -128,6 +132,9 @@ pub struct ElementData {
     /// pyro: the animated values the embedder samples into this element's
     /// cascade at the animations and transitions levels (`animation.rs`).
     pub sampled_animations: Option<ServoArc<Locked<PropertyDeclarationBlock>>>,
+    /// pyro: the sampled values of the animations on the element's `::marker`
+    /// (`ElementEffects::marker`): cascaded onto the marker's style (`layout::list`).
+    pub sampled_marker: Option<ServoArc<Locked<PropertyDeclarationBlock>>>,
     pub sampled_transitions: Option<ServoArc<Locked<PropertyDeclarationBlock>>>,
     /// pyro: an animation of this element that is current or in effect animates a property that
     /// makes a stacking context, which makes the element one (`animation.rs`).
@@ -143,6 +150,9 @@ pub struct ElementData {
     /// pyro: the node holding this element's `::first-line` style, whose parent is the inline
     /// root holding the first line it styles (`layout::first_line`). Not in the tree.
     pub first_line: Option<NodeId>,
+    /// pyro: the node holding this list item's `::marker` style, the brush of its marker's text
+    /// (`layout::list`). Not in the tree; its parent is the item.
+    pub marker_style: Option<NodeId>,
 
     /// Detailed layout information from the most recent layout (currently
     /// grid track sizing information for grid containers only). Used by
@@ -170,6 +180,10 @@ pub struct LayoutData {
     pub unrounded_layout: Layout,
     pub final_layout: Layout,
     pub scroll_offset: crate::Point<f64>,
+    /// pyro: how far a `position: sticky` box is moved from where it is laid out (CSS px), with
+    /// its descendants: the layout places it as if static, its embedder knows the scroll
+    /// positions and sets this (`Node::set_sticky_offset`). Painting applies it.
+    pub sticky_offset: crate::Point<f64>,
     pub scrollable_overflow: KurboRect,
     /// pyro: a bound of what hit testing finds in this box's subtree
     /// (device px, its own coordinates, like `scrollable_overflow`): the
@@ -210,6 +224,7 @@ impl LayoutData {
             unrounded_layout: Layout::new(),
             final_layout: Layout::new(),
             scroll_offset: crate::Point::ZERO,
+            sticky_offset: crate::Point::ZERO,
             scrollable_overflow: KurboRect::ZERO,
             hit_overflow: KurboRect::ZERO,
             hit_stale: true,
@@ -387,6 +402,7 @@ impl Clone for ElementData {
             mask_images: self.mask_images.clone(),
             border_images: self.border_images.clone(),
             list_style_images: self.list_style_images.clone(),
+            content_image: self.content_image.clone(),
             reference_images: self.reference_images.clone(),
             inline_layout_data: self.inline_layout_data.clone(),
             list_item_data: self.list_item_data.clone(),
@@ -403,12 +419,14 @@ impl Clone for ElementData {
             damaged_descendants: AtomicBool::new(true),
             may_have_animations: AtomicBool::new(false),
             sampled_animations: None,
+            sampled_marker: None,
             sampled_transitions: None,
             animation_stacking_context: false,
             before: None,
             after: None,
             first_letter: None,
             first_line: None,
+            marker_style: None,
             detailed_layout_info: taffy::DetailedLayoutInfo::None,
             display_constructed_as: StyloDisplay::Block,
             layout_data: None,
@@ -514,6 +532,7 @@ impl ElementData {
             mask_images: ThinVec::new(),
             border_images: ThinVec::new(),
             list_style_images: ThinVec::new(),
+            content_image: None,
             reference_images: ThinVec::new(),
 
             stylo_element_data: Default::default(),
@@ -526,12 +545,14 @@ impl ElementData {
             damaged_descendants: AtomicBool::new(true),
             may_have_animations: AtomicBool::new(false),
             sampled_animations: None,
+            sampled_marker: None,
             sampled_transitions: None,
             animation_stacking_context: false,
             before: None,
             after: None,
             first_letter: None,
             first_line: None,
+            marker_style: None,
             detailed_layout_info: taffy::DetailedLayoutInfo::None,
             display_constructed_as: StyloDisplay::Block,
             layout_data: None,
@@ -998,6 +1019,9 @@ pub struct RasterImageData {
     pub height: u32,
     /// The raw image data in RGBA8 format
     pub data: Blob<u8>,
+    /// pyro: the EXIF orientation (1 to 8; 1 is none) the pixels were turned by when decoded
+    /// (`image-orientation: from-image`). `image-orientation: none` shows them turned back.
+    pub orientation: u8,
 }
 impl RasterImageData {
     pub fn new(width: u32, height: u32, data: Arc<Vec<u8>>) -> Self {
@@ -1005,6 +1029,35 @@ impl RasterImageData {
             width,
             height,
             data: Blob::new(data),
+            orientation: 1,
+        }
+    }
+
+    /// pyro: for `image-orientation: none`: the affine coefficients (as kurbo's `Affine::new`)
+    /// that take the decoded pixels' space to the image's as stored, which is `width` x
+    /// `height` of `shown_size(true)`.
+    pub fn unturn(&self) -> [f64; 6] {
+        let (w, h) = self.shown_size(true);
+        let (w, h) = (w as f64, h as f64);
+        match self.orientation {
+            2 => [-1.0, 0.0, 0.0, 1.0, w, 0.0],
+            3 => [-1.0, 0.0, 0.0, -1.0, w, h],
+            4 => [1.0, 0.0, 0.0, -1.0, 0.0, h],
+            5 => [0.0, 1.0, 1.0, 0.0, 0.0, 0.0],
+            6 => [0.0, -1.0, 1.0, 0.0, 0.0, h],
+            7 => [0.0, -1.0, -1.0, 0.0, w, h],
+            8 => [0.0, 1.0, -1.0, 0.0, w, 0.0],
+            _ => [1.0, 0.0, 0.0, 1.0, 0.0, 0.0],
+        }
+    }
+
+    /// pyro: the image's size as `image-orientation: none` shows it (`unoriented`), else as
+    /// decoded.
+    pub fn shown_size(&self, unoriented: bool) -> (u32, u32) {
+        if unoriented && (5..=8).contains(&self.orientation) {
+            (self.height, self.width)
+        } else {
+            (self.width, self.height)
         }
     }
 }
@@ -1076,6 +1129,9 @@ impl std::fmt::Debug for SpecialElementData {
 #[derive(Clone)]
 pub struct ListItemLayout {
     pub marker: Marker,
+    /// pyro: the node holding the item's `::marker` style (`ElementData::marker_style`), when a
+    /// rule styles the marker: its text is that node's (colour, font, shadows).
+    pub style_node: Option<NodeId>,
     pub position: ListItemLayoutPosition,
     /// Offset (in physical CSS px) of the unrounded content box origin from the rounded one in
     /// `final_layout`. Paint draws text from the unrounded origin so that it keeps its sub-pixel

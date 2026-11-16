@@ -175,6 +175,62 @@ preserved segment break is kept (the box is content of the new line): the spaces
 in the text, which keeps the level before it) is no content an edge goes beside: a span starting with U+202E had
 its start edge left at that character, away from the content the override reordered (WPT `bidi-011`).
 
+## `text-box-trim` (WPT round 3, lane I)
+
+- `src/style/mod.rs`, `src/resolve/mod.rs`: `TextStyle::text_box_trim` (`TextBoxTrim`, `TextEdge`): the font
+  metric each side of a span box's content area is trimmed to.
+- `src/layout/style_metrics.rs`: `StyleMetrics` keeps the cap height, the ideographic em box and character face
+  (the font's `BASE` table through `parley_engine::IdeographicBaselines`, else derived from the em box) and the
+  trimmed content edges (`content_over`, `content_under`); `StyleMetrics::text_edge`.
+- `src/layout/line.rs`: `Line::span_box_area` (the content area as the span's box has it, trimmed) next to
+  `span_content_area` (the font's, which text decorations go by), and `Line::span_text_edge` (a metric edge of a
+  span box on the line: what a block's `text-box-trim` trims its first and last lines to).
+- `src/layout/line_break.rs`: `LineBreakData::text_end`, by which the inline layout finds the `<br>` that ended a
+  line (its `clear`).
+
+Covered by `crates/pyro-render/tests/text_box_trim.rs`.
+Tab stops (CSS Text 3 § 4.2). `Layout::set_tab_stops(space, min_advance)` (`layout/layout.rs`, `LayoutData::tab_space`
+/ `tab_min_advance`, `TabStops` in `layout/data.rs`) makes preserved tabs (white space not collapsed) reach tab stops,
+counted from the start edge of the lines' container: the line's offset from it (a float beside the line, from
+`line_x` and the two max advances), its indent and the advance so far. The interval is the tab's own style's
+`TabSize` (`style/mod.rs`, `StyleProperty::TabSize`, resolved into `ResolvedStyle` and the layout `Style`): a number
+of `space`s, or a length; a tab closer than `min_advance` to its stop goes to the next (Blink's `Font::TabWidth`
+with the spec's 0.5ch); a size of 0 leaves no advance. The breaker (`break_next_inner`) records each line's tabs in
+`LineState::tabs` and the shaped text takes them when the line is committed (`ShapedText::set_cluster_advance`),
+so painting, hit testing and alignment read a tab as any other cluster; nothing reads a tab's advance before its
+line is broken (`ContentWidthsMeasurer` computes it the same way, from the widest line for the max-content width
+and from the last break for the min-content one). A tab has no letter or word spacing gap (`Spacing::gaps`).
+A justified line keeps what is before its last tab in place (CSS Text 4 § 6.1): `Justification::
+justification_start_cluster`, and the separators before the tab are not counted. Upstream gave a tab its glyph's
+advance. Covered by `crates/pyro-render/tests/tab_stops.rs`; WPT css-text `tab-size/*`, `white-space/*tab*`,
+`text-align-justify-tabs-*`.
+
+Soft hyphens (CSS Text 3 § 5.4). A line that wraps right after U+00AD shows a hyphen there: the breaker keeps the
+last atom appended when it is a soft hyphen (`LineState::shy`, with the glyph and advance to show), and
+`start_new_line` gives its shaped cluster that glyph (`ShapedText::set_cluster_glyph`) and the line its advance. The
+glyph is the font's hyphen (`ShapedRun::hyphen`: U+2010, else U+002D) or what the style's `SoftHyphen`
+(`style/mod.rs`, `StyleProperty::SoftHyphen`) names: a character of the run's font (`ShapedText::glyph_of`), nothing
+(`Hidden`), or no break at all (`NoBreak`: the opportunity after the soft hyphen is not marked). The opportunity is
+not marked either when the hyphen would not fit and the line can end earlier. `LayoutData::shown_hyphens` remembers
+the clusters changed, with what they were shaped as: a soft hyphen that a later break leaves inside a line gets its
+own glyph back when that line is committed. Upstream ended the line there and showed nothing. Not done: the hyphen
+in min-content widths, `hyphens: auto` (no dictionaries), a `hyphenate-character` of several characters (the font's
+hyphen is shown). Covered by `crates/pyro-render/tests/soft_hyphens.rs`; WPT css-text `hyphens/*`.
+
+`LineMetrics::collapsed_advance` (`layout/line.rs`, `hanging_whitespace` in `layout/line_break.rs`): the part of a
+line's hanging advance that is collapsible white space at its very end (spaces, tabs and segment breaks of a
+collapsing `white-space`). Browsers remove that, so it is in no box; preserved white space and ideographic spaces
+(U+3000, never collapsed) that hang stay content of their inline boxes. blitz-paint and pyro-render cut boxes by it
+where they cut by the whole hanging advance before: a span around a hanging U+3000 or around `pre-wrap` spaces at a
+line's end had no width and no background (WPT `trailing-ideographic-space-*`). Covered by
+`crates/pyro-render/tests/hanging_spaces.rs`.
+
+`BreakerState::set_wrap_limit` (`layout/line_break.rs`): lines wrap where their content passes the limit while
+they keep their max advance (alignment, hanging white space). blitz-dom sets it for `text-wrap-style: balance`.
+
+`TextStyle::dictionary_breaks` (`style/mod.rs`, `StyleProperty::DictionaryBreaks`, `resolve/mod.rs`, `analysis.rs`):
+`false` asks parley_engine for no dictionary breaks in the style's text (CSS `word-break: manual`).
+
 ## Updating or dropping the patch
 
 Copy the published crate from `~/.cargo/registry/src/*/parley-<version>` and re-apply

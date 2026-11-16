@@ -146,6 +146,29 @@ pub fn min_size(val: &stylo::Size) -> taffy::LengthPercentageAuto {
     }
 }
 
+/// pyro: `min-width`/`min-height` as a sizing keyword (`auto` when it is none): what
+/// [`min_size`] drops.
+#[inline]
+pub fn min_size_keyword(val: &stylo::Size) -> taffy::Dimension {
+    match val {
+        stylo::Size::LengthPercentage(_) | stylo::Size::Auto => taffy::Dimension::AUTO,
+        keyword => dimension(keyword),
+    }
+}
+
+/// pyro: `max-width`/`max-height` as a sizing keyword (`auto` when it is none): what
+/// [`max_size`] drops.
+#[inline]
+pub fn max_size_keyword(val: &stylo::MaxSize) -> taffy::Dimension {
+    match val {
+        stylo::MaxSize::MaxContent => taffy::Dimension::max_content(),
+        stylo::MaxSize::MinContent => taffy::Dimension::min_content(),
+        stylo::MaxSize::FitContent => taffy::Dimension::fit_content(),
+        stylo::MaxSize::Stretch | stylo::MaxSize::WebkitFillAvailable => taffy::Dimension::stretch(),
+        _ => taffy::Dimension::AUTO,
+    }
+}
+
 #[inline]
 pub fn max_size(val: &stylo::MaxSize) -> taffy::LengthPercentageAuto {
     match val {

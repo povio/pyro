@@ -140,6 +140,11 @@ struct BidiScan {
     relative: bool,
     /// Some inline box's margin or padding at an edge is a percentage (`span_edge_widths_in`).
     percent_edges: bool,
+    /// Some inline box has a border or padding on a block-axis side: its box reaches out of its
+    /// line (`TextLayout::span_block_edges`).
+    block_edges: bool,
+    /// The `<br>`s with `clear`, each with the offset of its newline (`TextLayout::br_clears`).
+    br_clears: Vec<(usize, NodeId)>,
     /// How many in-flow atomic inline boxes were pushed.
     atomic_boxes: usize,
     /// Some inline box held nothing and pushed an empty-box strut.
@@ -195,6 +200,41 @@ struct SpanEnd {
 /// characters of its `unicode-bidi` (with `bidi`), its start edge with `start`, and the strut
 /// when it has an edge. With `end`, its end edge goes in the returned [`SpanEnd`].
 #[allow(clippy::too_many_arguments)]
+/// pyro: whether the inline root `root_id` is in a multi-column container of a vertical writing
+/// mode.
+fn in_vertical_multicol(nodes: &crate::NodeTree, root_id: NodeId) -> bool {
+    let mut current = Some(root_id);
+    while let Some(id) = current {
+        let node = &nodes[id];
+        if let Some(style) = node.primary_styles() {
+            if !style.writing_mode.is_vertical() {
+                return false;
+            }
+            if style.get_column().is_multicol() {
+                return true;
+            }
+        }
+        current = node.parent;
+    }
+    false
+}
+
+/// pyro: whether an inline box with `style` has a border or padding over or under it.
+fn has_block_edges(style: &style::properties::ComputedValues) -> bool {
+    use style::values::computed::Length;
+    let (b, p) = (style.get_border(), style.get_padding());
+    let border = |width: &style::values::computed::BorderSideWidth, style: style::values::computed::BorderStyle| {
+        !style.none_or_hidden() && width.0.to_f32_px() != 0.0
+    };
+    let padding = |v: &style::values::computed::NonNegativeLengthPercentage| {
+        v.0.resolve(Length::new(0.0)).px() != 0.0 || v.0.has_percentage()
+    };
+    border(&b.border_top_width, b.border_top_style)
+        || border(&b.border_bottom_width, b.border_bottom_style)
+        || padding(&p.padding_top)
+        || padding(&p.padding_bottom)
+}
+
 fn open_span(
     builder: &mut TreeBuilder<TextBrush>,
     node_id: NodeId,
@@ -205,7 +245,9 @@ fn open_span(
     bidi_scan: &mut BidiScan,
     strut: &mut bool,
 ) -> SpanEnd {
-    builder.push_style_span(stylo_to_parley::style(node_id, style));
+    let mut parley_style = stylo_to_parley::style(node_id, style);
+    parley_style.text_box_trim = crate::layout::text_box::span_trim(style);
+    builder.push_style_span(parley_style);
     bidi_scan.relative |= style.clone_position() == PositionProperty::Relative;
     let rtl = style.clone_direction() == style::computed_values::direction::T::Rtl;
     let controls = bidi_controls(style);
@@ -219,6 +261,7 @@ fn open_span(
     }
     let (start_edge, end_edge, percent) = span_edge_widths_in(style, 0.0);
     bidi_scan.percent_edges |= percent;
+    bidi_scan.block_edges |= has_block_edges(style);
     let (start_edge, end_edge) = (start_edge.filter(|_| start), end_edge.filter(|_| end));
     let scale = builder.scale();
     let edge = |kind, width: f32| InlineBox {
@@ -366,12 +409,21 @@ fn build_inline_layout_with(
     // Render position-inside list items
     if let Some(ListItemLayout {
         marker,
+        style_node,
         position: ListItemLayoutPosition::Inside,
         ..
     }) = root_node
         .element_data()
         .and_then(|el| el.list_item_data.as_deref())
     {
+        // pyro: in the item's `::marker` style, when a rule styles the marker.
+        let styled = style_node
+            .and_then(|id| nodes.get(id).and_then(|node| node.primary_styles().map(|style| (id, style))))
+            .map(|(id, style)| stylo_to_parley::style(id, &style));
+        if let Some(style) = &styled {
+            builder.push_style_span(style.clone());
+        }
+        let parley_style = styled.as_ref().unwrap_or(&parley_style);
         match marker {
             // Bullet glyphs live in the bundled bullet font. The position-outside
             // path already asks for it; without the same span here a marker like
@@ -385,8 +437,26 @@ fn build_inline_layout_with(
                 builder.pop_style_span();
             }
             Marker::String(str) => builder.push_text(str),
-            // (Image markers are outside only: `layout::list`.)
-            Marker::Image { .. } => {}
+            // pyro: an image marker inside the item: room for it at the start of the first
+            // line, as a run of no size of its own that is as tall as the image above the
+            // baseline and as wide as it plus Blink's 7px after a marker (blitz-paint draws
+            // the image there, `draw_inside_marker_image`).
+            Marker::Image { width, height } => {
+                let mut marker_style = parley_style.clone();
+                marker_style.font_size = 0.01;
+                marker_style.line_height = parley::LineHeight::Absolute(*height);
+                marker_style.letter_spacing = *width + 7.0;
+                marker_style.vertical_align = parley::VerticalAlign {
+                    alignment: parley::AlignmentBaseline::Baseline,
+                    shift: parley::BaselineShift::Length(*height / 2.0),
+                };
+                builder.push_style_span(marker_style);
+                builder.push_text("\u{a0}");
+                builder.pop_style_span();
+            }
+        }
+        if styled.is_some() {
+            builder.pop_style_span();
         }
     };
     // The marker is a separate box, so words in the content don't continue from it.
@@ -497,6 +567,7 @@ fn build_inline_layout_with(
         close_span(&mut builder, end, bidi, &mut bidi_scan);
     }
     text_layout.split_pieces = std::mem::take(&mut bidi_scan.split_pieces);
+    text_layout.br_clears = std::mem::take(&mut bidi_scan.br_clears);
 
     // pyro: the bidi formatting characters change the levels only when some are needed and the
     // paragraph has right-to-left content (see `build_inline_layout_with`).
@@ -538,18 +609,51 @@ fn build_inline_layout_with(
             bidi,
         );
     }
-    // pyro: the "…" that `text-overflow: ellipsis` ends an overflowing line with, in the root's
-    // own style (its first available font, as in Chromium).
-    text_layout.ellipsis = root_node_style
-        .as_deref()
-        .filter(|style| ends_lines_with_ellipsis(style))
-        .map(|_| {
-            let mut builder = layout_ctx.tree_builder(font_ctx, scale, true, &parley_style);
-            builder.push_text("\u{2026}");
+    // pyro: the "…" (or the string of `text-overflow: "<string>"`) that `text-overflow` ends an
+    // overflowing line with, in the root's own style (its first available font, as in Chromium).
+    // (An anonymous block holds lines of its parent: `overflow` and `text-overflow` are the
+    // parent's, which the anonymous box's own style does not inherit. A pseudo-element's box
+    // is anonymous too and has its own.)
+    let ellipsis = root_node_style.as_deref().and_then(|style| line_end_ellipsis(style, false)).or_else(|| {
+        let parent = root_node.parent.filter(|_| root_node.is_anonymous())?;
+        line_end_ellipsis(&*nodes[parent].primary_styles()?, false)
+    });
+    let rtl_lines = text_layout.layout.is_rtl();
+    text_layout.ellipsis = ellipsis.as_deref().map(|text| {
+        let mut builder = layout_ctx.tree_builder(font_ctx, scale, true, &parley_style);
+        // Its base direction is that of the root's lines (under `unicode-bidi: plaintext`, the
+        // one the root's text resolved to).
+        builder.set_base_direction(if rtl_lines {
+            parley::BaseDirection::Rtl
+        } else {
+            parley::BaseDirection::Ltr
+        });
+        builder.push_text(text);
+        let mut layout = builder.build().0;
+        layout.break_all_lines(None);
+        Box::new(layout)
+    });
+    text_layout.ellipsis_text = ellipsis.unwrap_or_default();
+    // pyro: the tab stops of preserved tabs (CSS Text 3 § 4.2). The tab's own style has the
+    // `tab-size`; a number counts in the advance of a space in the root's first available font
+    // (the block container's, not the tab's inline box) plus the root's letter and word spacing.
+    // A tab closer than 0.5ch to its stop goes on to the next. Set before the content widths are
+    // measured, as each layout of this text has the same stops.
+    if text_layout.text.contains('\t') {
+        let mut space_style = parley_style.clone();
+        space_style.letter_spacing = 0.0;
+        space_style.word_spacing = 0.0;
+        let mut advance_of = |text: &str| {
+            let mut builder = layout_ctx.tree_builder(font_ctx, scale, true, &space_style);
+            builder.push_text(text);
             let mut layout = builder.build().0;
             layout.break_all_lines(None);
-            Box::new(layout)
-        });
+            layout.full_width()
+        };
+        let space = advance_of("\u{a0}") + (parley_style.letter_spacing + parley_style.word_spacing) * scale;
+        let ch = advance_of("0");
+        text_layout.layout.set_tab_stops(space, ch / 2.0);
+    }
     // pyro: the shaped text's content widths, for every layout of it (`TextLayout::
     // content_widths`): a function of the shaped clusters alone while no in-flow inline box, whose
     // size each layout sets, takes part in them. Measured with no text indent; the layout sets its
@@ -562,29 +666,13 @@ fn build_inline_layout_with(
         text_layout.layout.calculate_content_widths()
     });
     text_layout.bidi_controls = bidi || bidi_scan.empty_box_struts;
-    text_layout.relative_spans = bidi_scan.relative;
+    // (Not in a multi-column container of a vertical writing mode, which is laid out as one
+    // column (`layout::multicol`): what the offset moves out of its column would show there,
+    // where the next column covers it.)
+    text_layout.relative_spans = bidi_scan.relative && !in_vertical_multicol(nodes, inline_context_root_node_id);
     text_layout.percent_span_edges = bidi_scan.percent_edges;
+    text_layout.span_block_edges = bidi_scan.block_edges;
     return true;
-
-    /// pyro: whether `text-overflow` puts an ellipsis at the end of the lines of a box with this
-    /// style: the box clips its inline overflow, and the end side's value is `ellipsis`. Stylo
-    /// keeps a single value as `second` (the end side); of two, `first` is the line-left side's,
-    /// where right-to-left lines end.
-    fn ends_lines_with_ellipsis(style: &style::properties::ComputedValues) -> bool {
-        use style::computed_values::direction::T as Direction;
-        use style::values::computed::Overflow;
-        use style::values::specified::text::TextOverflowSide;
-        if style.get_box().overflow_x == Overflow::Visible {
-            return false;
-        }
-        let overflow = &style.get_text().text_overflow;
-        let end = if !overflow.sides_are_logical && style.clone_direction() == Direction::Rtl {
-            &overflow.first
-        } else {
-            &overflow.second
-        };
-        matches!(end, TextOverflowSide::Ellipsis)
-    }
 
     /// pyro: lays out on one line what an annotation draws: a ruby annotation's content in its
     /// style, or the emphasis mark of an element in its font at half its size (as an `<rt>` has it).
@@ -741,6 +829,11 @@ fn build_inline_layout_with(
                     builder.push_style_modification_span(&[
                         parley::StyleProperty::WhiteSpaceCollapse(WhiteSpaceCollapse::Preserve),
                     ]);
+                    if node.primary_styles().is_some_and(|style| {
+                        style.clone_clear() != style::computed_values::clear::T::None
+                    }) {
+                        bidi_scan.br_clears.push((builder.text().len(), node_id));
+                    }
                     builder.push_text("\n");
                     builder.pop_style_span();
                     if bidi {
@@ -843,6 +936,9 @@ fn build_inline_layout_with(
                                     ..Default::default()
                                 });
                             style.annotation_space = space_of(&annotations.space, node_id);
+                            if let Some(computed) = node.primary_styles() {
+                                style.text_box_trim = crate::layout::text_box::span_trim(&computed);
+                            }
 
                             builder.push_style_span(style);
                             // pyro: emphasis marks over the span's own text; a `<ruby>`'s first
@@ -860,6 +956,7 @@ fn build_inline_layout_with(
                             bidi_scan.relative |= node
                                 .primary_styles()
                                 .is_some_and(|style| style.clone_position() == PositionProperty::Relative);
+                            bidi_scan.block_edges |= node.primary_styles().is_some_and(|style| has_block_edges(&style));
                             // pyro: the bidi formatting characters its `unicode-bidi` stands for,
                             // around its edges, as Blink places them.
                             let controls = node.primary_styles().and_then(|style| {
@@ -1159,5 +1256,42 @@ fn bases_overlap(a: &TextAnnotationKind, b: &TextAnnotationKind) -> bool {
             a.start < b.end && b.start < a.end
         }
         _ => false,
+    }
+}
+
+/// pyro: what `text-overflow` puts at the end of the overflowing lines of a box with this
+/// style: "…" for `ellipsis`, the string of a `<string>` value (one line: its white space
+/// collapsed, with every line-breaking control character (U+000A to U+000D, U+0085, U+2028,
+/// U+2029) as a space, as Chromium draws it), `None` when the box does not clip its inline overflow
+/// or the end side's value is `clip`. Stylo keeps a single value as `second` (the end
+/// side); of two, `first` is the line-left side's, where right-to-left lines end.
+pub(crate) fn line_end_ellipsis(style: &style::properties::ComputedValues, clips: bool) -> Option<String> {
+    use style::computed_values::direction::T as Direction;
+    use style::values::computed::Overflow;
+    use style::values::specified::text::TextOverflowSide;
+    if !clips && style.get_box().overflow_x == Overflow::Visible {
+        return None;
+    }
+    let overflow = &style.get_text().text_overflow;
+    let end = if !overflow.sides_are_logical && style.clone_direction() == Direction::Rtl {
+        &overflow.first
+    } else {
+        &overflow.second
+    };
+    match end {
+        TextOverflowSide::Clip => None,
+        TextOverflowSide::Ellipsis => Some("\u{2026}".to_string()),
+        TextOverflowSide::String(string) => {
+            let is_space = |c: char| matches!(c, ' ' | '\t' | '\n' | '\u{b}' | '\u{c}' | '\r' | '\u{85}' | '\u{2028}' | '\u{2029}');
+            let mut text = String::new();
+            for c in AsRef::<str>::as_ref(string).chars() {
+                if !is_space(c) {
+                    text.push(c);
+                } else if !text.ends_with(' ') {
+                    text.push(' ');
+                }
+            }
+            Some(text)
+        }
     }
 }

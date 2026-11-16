@@ -72,7 +72,9 @@ impl PartialEq for CounterInputs {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Piece {
     Text(String),
-    Image(String),
+    /// An image's URL and its pixels per CSS px (an `image-set()` option's resolution, as the
+    /// bits of an `f32`: pieces are compared).
+    Image(String, u32),
 }
 
 /// The generated content of an element's `::after` (0) and `::before` (1), the pseudo-element
@@ -231,8 +233,9 @@ impl Walk {
                     push(&mut pieces, "");
                 }
                 ContentItem::Image(image) => {
-                    if let Image::Url(ComputedUrl::Valid(url)) = image {
-                        pieces.push(Piece::Image(url.as_str().to_string()));
+                    // pyro: an `image-set()` is the option it selected.
+                    if let Image::Url(ComputedUrl::Valid(url)) = crate::util::unfiltered_image(image) {
+                        pieces.push(Piece::Image(url.as_str().to_string(), crate::util::image_resolution(image).to_bits()));
                     }
                 }
             }
@@ -243,7 +246,7 @@ impl Walk {
 
 /// The quotes at `depth` (the last pair beyond the list's end; none for `quotes: none`). `auto`
 /// is English's (Chromium's default).
-fn quote(style: &ComputedValues, depth: usize) -> Option<(String, String)> {
+pub(super) fn quote(style: &ComputedValues, depth: usize) -> Option<(String, String)> {
     match &style.get_list().quotes {
         Quotes::QuoteList(list) => {
             let pairs = &list.0;
@@ -264,6 +267,9 @@ impl BaseDocument {
     pub(crate) fn resolve_generated_content(&mut self) {
         for node_id in std::mem::take(&mut self.first_letter_changed) {
             super::first_letter::style_changed(self, node_id);
+        }
+        for node_id in std::mem::take(&mut self.marker_items_restyled) {
+            super::list::item_restyled(self, node_id);
         }
         for node_id in std::mem::take(&mut self.first_line_changed) {
             super::first_line::style_changed(self, node_id);

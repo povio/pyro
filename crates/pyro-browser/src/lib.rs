@@ -642,6 +642,13 @@ impl Browser {
     pub fn checkpoint(&mut self) {
         let n = self.engine.drain_finalized();
         *self.released_payloads.borrow_mut() += n as u64;
+        // The task is over for every page, idle ones too (skipped below): their document
+        // timelines read the clock again in the next task.
+        for page in &self.pages {
+            if let Some(dom) = page.main_frame.page_dom.as_ref() {
+                dom.end_task_time();
+            }
+        }
         let pages: Vec<_> = self.pages.iter().filter(|p| !Self::page_idle(p)).map(|p| p.id).collect();
         for id in pages {
             let Some(host) = self.page(id).map(|p| p.frames.clone()) else { continue };

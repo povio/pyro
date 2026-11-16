@@ -282,7 +282,6 @@ rule_types_allowed = ["style", "keyframe", "position-try"]
 kind = "two_properties"
 
 [contain-intrinsic-size]
-engine = "gecko"
 sub_properties = ["contain-intrinsic-width", "contain-intrinsic-height"]
 spec = "https://drafts.csswg.org/css-sizing-4/#intrinsic-size-override"
 kind = "two_properties"
@@ -552,7 +551,6 @@ spec = "https://compat.spec.whatwg.org/#the-webkit-text-stroke"
 derive_serialize = true
 
 [-webkit-line-clamp]
-engine = "gecko"
 flags = "IS_LEGACY_SHORTHAND ALLOWS_DISABLED_SUBPROPERTIES"
 sub_properties = ["line-clamp"]
 spec = "https://drafts.csswg.org/css-overflow-4/#webkit-line-clamp"

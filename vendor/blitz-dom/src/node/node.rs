@@ -139,6 +139,9 @@ bitflags! {
         /// pyro: its in-flow content is taller than its box (a `height` or `max-height` shorter
         /// than its lines or blocks). Set by its layout.
         const FLOW_CONTENT_OVERFLOWS = 1 << 17;
+        /// pyro: the box's last layout clamped its lines (`layout::line_clamp`): one of
+        /// its blocks holds a clamp mark.
+        const CLAMPS_LINES = 1 << 25;
     }
 }
 
@@ -543,6 +546,21 @@ impl Node {
     #[inline]
     pub fn scroll_offset_mut(&mut self) -> &mut crate::Point<f64> {
         &mut self.layout_data_mut().scroll_offset
+    }
+
+    /// pyro: the offset of a `position: sticky` box from its laid-out place
+    /// (`LayoutData::sticky_offset`).
+    #[inline]
+    pub fn sticky_offset(&self) -> crate::Point<f64> {
+        self.layout_data().sticky_offset
+    }
+
+    /// pyro: sets [`Self::sticky_offset`].
+    #[inline]
+    pub fn set_sticky_offset(&mut self, offset: crate::Point<f64>) {
+        if self.layout_data().sticky_offset != offset {
+            self.layout_data_mut().sticky_offset = offset;
+        }
     }
 
     #[inline]
@@ -2000,6 +2018,10 @@ impl Node {
         if let Some(el) = self.data.downcast_element() {
             if crate::layout::replaced::is_replaced(el) {
                 flags |= stylo_taffy::StyleFlags::IS_REPLACED;
+                // pyro
+                if styles.get_position().aspect_ratio.auto && crate::layout::replaced::has_natural_ratio(el) {
+                    flags |= stylo_taffy::StyleFlags::HAS_NATURAL_RATIO;
+                }
             }
             if el.name.local == local_name!("button") {
                 flags |= stylo_taffy::StyleFlags::IS_BUTTON;

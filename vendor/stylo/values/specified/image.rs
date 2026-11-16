@@ -92,7 +92,15 @@ type LengthPercentageItemList = crate::OwnedSlice<generic::GradientItem<Color, L
 impl Color {
     fn has_modern_syntax(&self) -> bool {
         match self {
-            Self::Absolute(absolute) => !absolute.color.is_legacy_syntax(),
+            // pyro: a missing component (`rgb(none 255 0)`) is modern syntax too, as in
+            // Chromium: Stylo's legacy flag is about the function, which serializes that way.
+            Self::Absolute(absolute) => {
+                use crate::color::ColorFlags as F;
+                !absolute.color.is_legacy_syntax()
+                    || absolute.color.flags.intersects(
+                        F::C0_IS_NONE | F::C1_IS_NONE | F::C2_IS_NONE | F::ALPHA_IS_NONE,
+                    )
+            },
             Self::ColorMix(mix) => {
                 if mix.flags.contains(ColorMixFlags::RESULT_IN_MODERN_SYNTAX) {
                     true

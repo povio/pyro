@@ -65,3 +65,13 @@ Copy the published crate from `~/.cargo/registry/src/*/fontique-<version>` and r
 (`git apply` from the crate root), or delete this directory and the `[patch.crates-io]` entry when upstream
 matches fonts by `unicode-range` itself (the scan change is speed only; the bold rule is one condition in
 `FontInfo::synthesis`).
+
+## Slant of variable fonts (WPT css-fonts, round 3 lane F)
+
+`src/font.rs` (`FontInfo::synthesis`, `slant_axis_value`, `FontInfoOverride::slant_range`): the `slnt` axis counts
+counter-clockwise and CSS angles clockwise, so `font-style: oblique 10deg` is `slnt -10` (upstream set `slnt 14`
+for italic, a backslant). A `@font-face` rule's `font-style` descriptor says how far the axis may go: a range
+(`oblique 0deg 10deg`) clamps the angle, `normal` leaves the axis alone and the slant is faked, as for a font
+without the axis (WPT `variations/font-slant-1`, `-2c`, `-3`, `slnt-variable`, `slnt-backslant-variable`).
+Without a descriptor the font's own axis is used as before. Test:
+`slant_synthesis_follows_the_axis_direction_and_the_allowed_range`.

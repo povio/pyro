@@ -99,10 +99,11 @@ fn call<'s>(module: Object<'s>, name: &str, args: &[Value<'s>]) -> JsResult<Valu
 
 fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
     let natives = s.object();
-    // The document's clock: what `performance.now()` reads.
+    // The document timeline's clock: what `performance.now()` read when the running task
+    // first asked (a timeline's time holds still within a task).
     let now = s.function("now", |s, _this, _a| {
         let page = page_of(s)?;
-        Ok(s.number(crate::event::page_now_ms(&page)))
+        Ok(s.number(page.timeline_now_ms()))
     })?;
     natives.set_atom("now", now.value())?;
     // `fn` as a task of the page's event loop, `ms` from now.
@@ -226,6 +227,7 @@ fn reported(s: &Scope<'_>, o: Object<'_>) -> JsResult<crate::animation_frame::Re
         easing: text(at(14)?)?.map(|e| std::sync::Arc::from(e.as_str())),
         composite: pyro_dom::animation::Composite::parse(&at(15)?.to_string()?).unwrap_or_default(),
         gone: num(16)? != 0.0,
+        marker: num(17)? != 0.0,
     })
 }
 

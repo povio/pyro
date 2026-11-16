@@ -1936,7 +1936,10 @@ impl JsClass for Document {
         def.method("close", 0, |s, n, _a| crate::html::document_close(s, n));
         def.method("write", 0, |s, n, a| crate::html::document_write(s, n, a, false));
         def.method("writeln", 0, |s, n, a| crate::html::document_write(s, n, a, true));
-        def.getter("fonts", |s, _n| s.eval("({ready: Promise.resolve(), check(){return true}, load(){return Promise.resolve([])}, addEventListener(){}, removeEventListener(){}, status: 'loaded', forEach(){}, size: 0})", None, 1));
+        // A stand-in for the FontFaceSet: a set-like of one entry per `@font-face` rule of the
+        // document's sheets, each loaded (pages wait on `[...document.fonts][0].load()`; the
+        // set was not iterable). Fonts load in the renderer, which screenshots wait for.
+        def.getter("fonts", |s, _n| s.eval(DOCUMENT_FONTS, None, 1));
     }
 }
 
@@ -1980,3 +1983,52 @@ pub(crate) fn thread_leftover() -> Option<&'static str> {
     FOUND.set(found);
     None
 }
+
+/// `document.fonts` (see the getter).
+const DOCUMENT_FONTS: &str = r#"(() => {
+  const faces = [];
+  const face = (family) => {
+    const f = { family, style: 'normal', weight: 'normal', stretch: 'normal', unicodeRange: 'U+0-10FFFF',
+      variant: 'normal', featureSettings: 'normal', display: 'auto', status: 'loaded',
+      load() { return Promise.resolve(f); } };
+    f.loaded = Promise.resolve(f);
+    faces.push(f);
+  };
+  try {
+    for (const sheet of document.styleSheets) {
+      let rules;
+      try { rules = sheet.cssRules; } catch (e) { continue; }
+      for (const rule of rules) {
+        const text = String(rule.cssText || '');
+        if (rule.type === 5 || /^\s*@font-face\b/i.test(text)) {
+          const m = /font-family\s*:\s*([^;}]+)/i.exec(text);
+          face(m ? m[1].trim() : '');
+        }
+      }
+    }
+  } catch (e) {}
+  if (!faces.length) {
+    try {
+      for (const style of document.querySelectorAll('style')) {
+        const re = /@font-face\s*\{[^}]*?font-family\s*:\s*([^;}]+)/gi;
+        let m;
+        while ((m = re.exec(style.textContent))) face(m[1].trim());
+      }
+    } catch (e) {}
+  }
+  const set = {
+    ready: Promise.resolve(), status: 'loaded', size: faces.length,
+    check() { return true; },
+    load() { return Promise.resolve(faces.slice()); },
+    addEventListener() {}, removeEventListener() {}, dispatchEvent() { return true; },
+    forEach(callback, self) { faces.forEach((f) => callback.call(self, f, f, set)); },
+    has(f) { return faces.includes(f); },
+    add() { return set; }, delete() { return false; }, clear() {},
+    values() { return faces[Symbol.iterator](); },
+    keys() { return faces[Symbol.iterator](); },
+    entries() { return faces.map((f) => [f, f])[Symbol.iterator](); },
+    [Symbol.iterator]() { return faces[Symbol.iterator](); },
+  };
+  set.ready = Promise.resolve(set);
+  return set;
+})()"#;

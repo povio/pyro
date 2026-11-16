@@ -71,6 +71,17 @@ pub(crate) struct StyleMetrics {
     pub(crate) descent: f32,
     /// x-height of the first available font, used by `vertical-align: middle`.
     pub(crate) x_height: f32,
+    /// pyro: cap height of the first available font (the ascent for a font without one).
+    pub(crate) cap_height: f32,
+    /// pyro: the ideographic em box and character face box of the first available font, as
+    /// distances over and under the baseline (`[em over, em under, face over, face under]`).
+    pub(crate) ideographic: [f32; 4],
+    /// pyro: distance from the baseline to the top of the content area: the ascent, or the edge
+    /// `text-box-trim` trims it to.
+    pub(crate) content_over: f32,
+    /// pyro: distance from the baseline to the bottom of the content area: the descent, or the
+    /// edge `text-box-trim` trims it to.
+    pub(crate) content_under: f32,
     /// Distance from the baseline to the top of the line-height expanded span box.
     pub(crate) over: f32,
     /// Distance from the baseline to the bottom of the line-height expanded span box.
@@ -141,6 +152,25 @@ pub(crate) fn resolve_style_metrics<B: Brush>(
 
         let mut metrics = StyleMetrics::from_font(&font_metrics, line_height, quantum);
         metrics.font_size = style.font_size;
+        // pyro: the ideographic boxes: the font's `BASE` table, else derived from the em box as
+        // Blink derives them (the em box sits on the descent; the face box is 5% of the em in).
+        {
+            let em = style.font_size;
+            let base = font
+                .and_then(|font| parley_engine::IdeographicBaselines::from_font_instance(font, em))
+                .unwrap_or_default();
+            let under = base.ideographic_under.map_or(metrics.descent, |v| -v);
+            let over = base.ideographic_over.unwrap_or(em - under);
+            let face_under = base.face_under.map_or(under - em * 0.05, |v| -v);
+            let face_over = base.face_over.unwrap_or(over - em * 0.05);
+            metrics.ideographic = [over, under, face_over, face_under];
+        }
+        if let Some(edge) = style.text_box_trim.over {
+            metrics.content_over = metrics.text_edge(edge, true);
+        }
+        if let Some(edge) = style.text_box_trim.under {
+            metrics.content_under = metrics.text_edge(edge, false);
+        }
         // pyro: what is drawn over or under the span's text (ruby annotations, emphasis marks)
         // takes room beyond its content area; the span box grows to hold it where its line height
         // leaves too little (CSS Ruby 1, 4.4).
@@ -286,6 +316,10 @@ impl StyleMetrics {
             ascent: box_metrics.ascent,
             descent: box_metrics.descent,
             x_height: if quantize { x_height.round() } else { x_height },
+            cap_height: font.cap_height.unwrap_or(box_metrics.ascent),
+            ideographic: [0.; 4],
+            content_over: box_metrics.ascent,
+            content_under: box_metrics.descent,
             over: box_metrics.over,
             under: box_metrics.under,
             baseline_offset: 0.,
@@ -293,6 +327,28 @@ impl StyleMetrics {
             aligned_subtree_root: 0,
             parent: 0,
             font_size: 0.,
+        }
+    }
+}
+
+impl StyleMetrics {
+    /// pyro: the distance from the baseline to a font metric edge (CSS Inline 3 `<text-edge>`):
+    /// upwards for an over edge, downwards for an under edge.
+    pub(crate) fn text_edge(&self, edge: crate::TextEdge, over: bool) -> f32 {
+        use crate::TextEdge::*;
+        match (edge, over) {
+            (Text, true) => self.ascent,
+            (Text, false) => self.descent,
+            (Cap, true) => self.cap_height,
+            (Ex, true) => self.x_height,
+            (Alphabetic, false) => 0.,
+            (Ideographic, true) => self.ideographic[0],
+            (Ideographic, false) => self.ideographic[1],
+            (IdeographicInk, true) => self.ideographic[2],
+            (IdeographicInk, false) => self.ideographic[3],
+            // Not edges of that side: the text edge.
+            (Cap | Ex, false) => self.descent,
+            (Alphabetic, true) => self.ascent,
         }
     }
 }

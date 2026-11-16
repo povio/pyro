@@ -29,12 +29,14 @@ pub(crate) mod damage;
 pub(crate) mod first_letter;
 pub(crate) mod first_line;
 pub(crate) mod inline;
+pub(crate) mod line_clamp;
 pub(crate) mod list;
 pub mod multicol;
 pub(crate) mod paint_tree;
 pub(crate) mod replaced;
 pub mod table;
 pub(crate) mod table_fixup;
+pub(crate) mod text_box;
 pub(crate) mod text_transform;
 #[cfg(feature = "writing-mode")]
 pub(crate) mod writing_mode;
@@ -217,8 +219,38 @@ impl LayoutPassState<'_> {
     ) -> taffy::tree::LayoutOutput {
         // pyro: this runs once per tree level of a recursive layout; what is not part
         // of the recursion stays out of its frame (see `dispatch_child_layout`).
-        let inputs = self.adjusted_child_inputs(node_id, inputs);
-        let mut output = self.dispatch_child_layout(node_id, inputs, block_ctx);
+        let mut inputs = self.adjusted_child_inputs(node_id, inputs);
+        // pyro: size containment (`Self::size_contained_size`)
+        if self.nodes[dom_node_id(node_id)].primary_styles().is_some_and(|styles| {
+            styles.get_box().contain.contains(style::values::computed::Contain::BLOCK_SIZE)
+        }) {
+            if let Some(size) = self.size_contained_size(node_id, inputs) {
+                if inputs.run_mode != RunMode::PerformLayout {
+                    return taffy::tree::LayoutOutput::from_outer_size(size);
+                }
+                inputs.known_dimensions = size.map(Some);
+            }
+        }
+        // pyro: a box that clamps its lines ends at the clamp line, which its laid-out
+        // content names (`layout::line_clamp`): a measuring run lays it out too, and what
+        // that leaves on its content is not the layout a cached final run stands for.
+        let line_clamp = self.line_clamp_of(dom_node_id(node_id));
+        let mut output = match line_clamp {
+            Some(_) if inputs.run_mode == RunMode::ComputeSize => {
+                let performed = taffy::tree::LayoutInput { run_mode: RunMode::PerformLayout, ..inputs };
+                let output = self.dispatch_child_layout(node_id, performed, block_ctx);
+                self.nodes[dom_node_id(node_id)].clear_layout_cache();
+                output
+            }
+            _ => self.dispatch_child_layout(node_id, inputs, block_ctx),
+        };
+        match line_clamp {
+            Some(max_lines) => self.clamp_lines(dom_node_id(node_id), max_lines, inputs, &mut output),
+            None if self.nodes[dom_node_id(node_id)].flags.contains(NodeFlags::CLAMPS_LINES) => {
+                self.unclamp_lines(dom_node_id(node_id))
+            }
+            None => {}
+        }
         if inputs.run_mode == RunMode::PerformLayout {
             // pyro: a table cell aligned on its row's baseline has its content lower in its box.
             if self.nodes[dom_node_id(node_id)].flags.contains(crate::node::NodeFlags::HAS_TABLE_BASELINE_OFFSET) {
@@ -227,6 +259,69 @@ impl LayoutPassState<'_> {
             self.lay_out_out_of_flow_boxes(node_id, &mut output);
         }
         output
+    }
+
+    /// pyro: the size of a box with size containment (`contain: size`, css-contain-2 §3.1): the
+    /// size it has as an empty box whose content is `contain-intrinsic-size` (css-sizing-4 §4.1;
+    /// `none` is zero, `auto <length>` the length: no size is remembered). Its content is then
+    /// laid out in a box of that size and never changes it. `None`: the box has no size
+    /// containment (a non-atomic inline box, a table, an internal table box).
+    #[inline(never)]
+    fn size_contained_size(&self, node_id: NodeId, inputs: taffy::tree::LayoutInput) -> Option<taffy::Size<f32>> {
+        use style::values::computed::Contain;
+        use style::values::generics::box_::ContainIntrinsicSize;
+        use style::values::specified::box_::{DisplayInside, DisplayOutside};
+        let node = &self.nodes[dom_node_id(node_id)];
+        let content = {
+            let styles = node.primary_styles()?;
+            if !styles.get_box().contain.contains(Contain::INLINE_SIZE | Contain::BLOCK_SIZE) {
+                return None;
+            }
+            let display = styles.clone_display();
+            let contained = match display.outside() {
+                DisplayOutside::Inline => display.inside() != DisplayInside::Flow,
+                DisplayOutside::Block => true,
+                _ => false,
+            } && display.inside() != DisplayInside::Table;
+            if !contained {
+                return None;
+            }
+            let length = |size: &style::values::computed::ContainIntrinsicSize| match size {
+                ContainIntrinsicSize::None | ContainIntrinsicSize::AutoNone => 0.0,
+                ContainIntrinsicSize::Length(length) | ContainIntrinsicSize::AutoLength(length) => length.0.px(),
+            };
+            let position = styles.get_position();
+            let (width, height) = (length(&position.contain_intrinsic_width), length(&position.contain_intrinsic_height));
+            #[cfg(feature = "writing-mode")]
+            let vertical = self.layout_wm.is_vertical();
+            #[cfg(not(feature = "writing-mode"))]
+            let vertical = false;
+            if vertical { taffy::Size { width: height, height: width } } else { taffy::Size { width, height } }
+        };
+        let style = self.child_layout_style(node);
+        // A replaced element keeps its natural aspect ratio (its natural sizes are gone): a size
+        // in one axis gives the other (WPT css-flexbox `canvas-contain-size`).
+        let natural_ratio = node.data.downcast_element().and_then(replaced::natural_ratio).map(|ratio| {
+            #[cfg(feature = "writing-mode")]
+            let vertical = self.layout_wm.is_vertical();
+            #[cfg(not(feature = "writing-mode"))]
+            let vertical = false;
+            if vertical { 1.0 / ratio } else { ratio }
+        });
+        let output = taffy::compute_leaf_layout(
+            taffy::tree::LayoutInput { run_mode: RunMode::ComputeSize, ..inputs },
+            &style,
+            resolve_calc_value,
+            |known_dimensions, _available_space| match (known_dimensions.width, known_dimensions.height, natural_ratio) {
+                (Some(width), None, Some(ratio)) => taffy::Size { width, height: width / ratio },
+                (None, Some(height), Some(ratio)) => taffy::Size { width: height * ratio, height },
+                (width, height, _) => taffy::Size {
+                    width: width.unwrap_or(content.width),
+                    height: height.unwrap_or(content.height),
+                },
+            },
+        );
+        Some(output.size)
     }
 
     #[inline(never)]
@@ -580,6 +675,18 @@ impl LayoutPassState<'_> {
                             if let Some(placeholder) = input.placeholder.as_deref_mut() {
                                 placeholder.break_lines(Some(content_width * scale));
                             }
+                            // pyro: lines that do not wrap (`white-space: nowrap`, `wrap=off`)
+                            // are the control's scrollable overflow: it scrolls to them.
+                            let text_width = input.editor.try_layout().map_or(0.0, |layout| layout.width() / scale);
+                            if text_width > content_width {
+                                let mut output = output;
+                                let overflow = output.scrollable_overflow_rect;
+                                let mut rect = overflow.rect();
+                                rect.right = rect.right.max(pb.left + text_width + pb.right);
+                                output.scrollable_overflow_rect =
+                                    taffy::ScrollableOverflow::new(rect, overflow.is_reversed());
+                                return ChildLayout::Done(output);
+                            }
                         }
                     }
                     return ChildLayout::Done(output);
@@ -845,8 +952,11 @@ impl LayoutPassState<'_> {
                     // A `<video>` with known metadata is sized by its video
                     // track, whatever its poster's size.
                     let is_video = element_data.name.local == local_name!("video");
+                    // The token is the density-corrected natural size (a `srcset` candidate's `2x`),
+                    // which a loaded raster image's pixel size is not.
+                    let raster = matches!(&element_data.special_data, SpecialElementData::Image(d) if matches!(&**d, ImageData::Raster(_)));
                     let (intrinsic_sizes, default_object_size) = match pyro_natural_size(element_data) {
-                        Some((width, height)) if is_video || (!loaded && is_image) => (
+                        Some((width, height)) if is_video || (is_image && (!loaded || raster)) => (
                             IntrinsicSizes {
                                 width: Some(width),
                                 height: Some(height),
@@ -855,6 +965,49 @@ impl LayoutPassState<'_> {
                             DEFAULT_OBJECT_SIZE,
                         ),
                         _ => (intrinsic_sizes, default_object_size),
+                    };
+
+                    // pyro: an image of generated content or of the element's `content` at the
+                    // resolution of its `image-set()` option.
+                    let intrinsic_sizes = match &element_data.content_image {
+                        Some((_, density)) if raster && *density > 0.0 && *density != 1.0 => IntrinsicSizes {
+                            width: intrinsic_sizes.width.map(|w| w / density),
+                            height: intrinsic_sizes.height.map(|h| h / density),
+                            ratio: intrinsic_sizes.ratio,
+                        },
+                        _ => intrinsic_sizes,
+                    };
+
+                    // pyro: `image-orientation: none`: a raster image whose EXIF orientation turned
+                    // it a quarter has its sides as stored.
+                    let quarter_turned = matches!(&element_data.special_data,
+                        SpecialElementData::Image(image) if matches!(&**image,
+                            ImageData::Raster(raster) if (5..=8).contains(&raster.orientation)));
+                    let intrinsic_sizes = if quarter_turned
+                        && node.primary_styles().is_some_and(|style| crate::util::image_unoriented(&style))
+                    {
+                        IntrinsicSizes {
+                            width: intrinsic_sizes.height,
+                            height: intrinsic_sizes.width,
+                            ratio: intrinsic_sizes.ratio.map(|ratio| 1.0 / ratio),
+                        }
+                    } else {
+                        intrinsic_sizes
+                    };
+
+                    // pyro: `object-view-box`: the view box is the content's natural size.
+                    let intrinsic_sizes = match (intrinsic_sizes.width, intrinsic_sizes.height, node.primary_styles()) {
+                        (Some(width), Some(height), Some(style)) => {
+                            match crate::util::object_view_box(&style, width, height) {
+                                Some((_, _, view_width, view_height)) => IntrinsicSizes {
+                                    width: Some(view_width),
+                                    height: Some(view_height),
+                                    ratio: Some(view_width / view_height),
+                                },
+                                None => intrinsic_sizes,
+                            }
+                        }
+                        _ => intrinsic_sizes,
                     };
 
                     #[cfg(feature = "writing-mode")]

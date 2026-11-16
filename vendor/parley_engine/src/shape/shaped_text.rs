@@ -51,6 +51,60 @@ pub struct FontMetrics {
     pub x_height: Option<f32>,
 }
 
+/// pyro: the ideographic baselines of a font's `BASE` table (horizontal axis), scaled to a font
+/// size, as coordinates above the alphabetic baseline: `ideo`, `idtp`, `icfb` and `icft`.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct IdeographicBaselines {
+    /// `ideo`: the bottom of the ideographic em box.
+    pub ideographic_under: Option<f32>,
+    /// `idtp`: the top of the ideographic em box.
+    pub ideographic_over: Option<f32>,
+    /// `icfb`: the bottom of the ideographic character face.
+    pub face_under: Option<f32>,
+    /// `icft`: the top of the ideographic character face.
+    pub face_over: Option<f32>,
+}
+
+impl IdeographicBaselines {
+    /// Reads them from `font`; `None` for a font without a horizontal `BASE` axis.
+    pub fn from_font_instance(font: &FontInstance, font_size: f32) -> Option<Self> {
+        use skrifa::raw::TableProvider;
+        use skrifa::raw::tables::base::BaseCoord;
+        let font_ref =
+            skrifa::FontRef::from_index(font.font.data.as_ref(), font.font.index).ok()?;
+        let units_per_em = f32::from(font_ref.head().ok()?.units_per_em());
+        let axis = font_ref.base().ok()?.horiz_axis()?.ok()?;
+        let tags = axis.base_tag_list()?.ok()?;
+        let scripts = axis.base_script_list().ok()?;
+        let records = scripts.base_script_records();
+        // The default script's values, else the first script's.
+        let record = records
+            .iter()
+            .find(|record| record.base_script_tag() == skrifa::Tag::new(b"DFLT"))
+            .or_else(|| records.first())?;
+        let values = record.base_script(scripts.offset_data()).ok()?.base_values()?.ok()?;
+        let coords = values.base_coords();
+        let mut out = Self::default();
+        for (index, tag) in tags.baseline_tags().iter().enumerate() {
+            let Ok(coord) = coords.get(index) else { continue };
+            let coord = match coord {
+                BaseCoord::Format1(c) => c.coordinate(),
+                BaseCoord::Format2(c) => c.coordinate(),
+                BaseCoord::Format3(c) => c.coordinate(),
+            };
+            let value = Some(f32::from(coord) * font_size / units_per_em);
+            match &tag.get().to_be_bytes() {
+                b"ideo" => out.ideographic_under = value,
+                b"idtp" => out.ideographic_over = value,
+                b"icfb" => out.face_under = value,
+                b"icft" => out.face_over = value,
+                _ => {}
+            }
+        }
+        Some(out)
+    }
+}
+
 impl FontMetrics {
     /// Metrics to use when no font is available at all.
     ///
@@ -181,6 +235,8 @@ pub(crate) struct RunMetrics {
     /// The font's units per em, which scale glyph advances to the font size.
     pub(crate) units_per_em: f32,
     pub(crate) font_metrics: FontMetrics,
+    /// pyro: the font's hyphen (U+2010, else U+002D): its glyph and advance at the font size.
+    pub(crate) hyphen: Option<(u32, f32)>,
 }
 
 impl RunMetrics {
@@ -201,9 +257,28 @@ impl RunMetrics {
             skrifa::prelude::Size::new(font_size),
             coords,
         );
+        let hyphen = {
+            use skrifa::MetadataProvider as _;
+            let charmap = font_ref.charmap();
+            let glyph_metrics = skrifa::metrics::GlyphMetrics::new(
+                &font_ref,
+                skrifa::prelude::Size::unscaled(),
+                coords,
+            );
+            charmap
+                .map('\u{2010}')
+                .or_else(|| charmap.map('-'))
+                .and_then(|glyph| {
+                    let advance = glyph_metrics.advance_width(glyph)?;
+                    (metrics.units_per_em != 0).then(|| {
+                        (glyph.to_u32(), advance * (font_size / metrics.units_per_em as f32))
+                    })
+                })
+        };
         Self {
             units_per_em: metrics.units_per_em as f32,
             font_metrics: FontMetrics::from_skrifa_metrics(&font_ref, &metrics, font_size),
+            hyphen,
         }
     }
 }
@@ -307,6 +382,65 @@ impl ShapedText {
         }
         for shaped_cluster in self.shaped_clusters.iter_mut() {
             shaped_cluster.style_index = remap[shaped_cluster.style_index as usize];
+        }
+    }
+
+    /// pyro: sets the advance of the shaped cluster at `index` (a tab, once the line breaker knows
+    /// the tab stop it reaches). A cluster whose glyphs are stored takes the difference on its
+    /// last glyph; an inline glyph's advance is its cluster's.
+    #[inline]
+    pub fn set_cluster_advance(&mut self, index: u32, advance: f32) {
+        let Some(cluster) = self.shaped_clusters.get_mut(index as usize) else {
+            return;
+        };
+        let delta = advance - cluster.advance;
+        cluster.advance = advance;
+        if !cluster.has_inline_glyph() && cluster.glyph_len() > 0 {
+            let last = cluster.glyph_offset as usize + usize::from(cluster.glyph_len()) - 1;
+            if let Some(glyph) = self.glyphs.get_mut(last) {
+                glyph.advance += delta;
+            }
+        }
+    }
+
+    /// pyro: the glyph of `ch` in the font of the run at `run_index` and its advance at the run's
+    /// size, if the font has the character (a `hyphenate-character` other than the font's hyphen).
+    pub fn glyph_of(&self, run_index: usize, ch: char) -> Option<(u32, f32)> {
+        use skrifa::MetadataProvider as _;
+        let run = self.runs.get(run_index)?;
+        let font = self.fonts.get(run.font_index)?;
+        let font_ref = skrifa::FontRef::from_index(font.font.data.as_ref(), font.font.index).ok()?;
+        let glyph = font_ref.charmap().map(ch)?;
+        // The same coords, in skrifa's type.
+        let coords: alloc::vec::Vec<skrifa::instance::NormalizedCoord> = self.normalized_coords
+            [run.normalized_coords_range.clone()]
+        .iter()
+        .map(|coord| skrifa::instance::NormalizedCoord::from_bits(coord.to_bits()))
+        .collect();
+        let metrics =
+            skrifa::metrics::GlyphMetrics::new(&font_ref, skrifa::prelude::Size::unscaled(), coords.as_slice());
+        let units_per_em = { use skrifa::raw::TableProvider as _; font_ref.head().ok()?.units_per_em() };
+        (units_per_em != 0).then_some(())?;
+        Some((glyph.to_u32(), metrics.advance_width(glyph)? * (run.font_size / f32::from(units_per_em))))
+    }
+
+    /// pyro: gives the one-glyph shaped cluster at `index` the glyph `id` with `advance`, and
+    /// returns what it had (a soft hyphen at the end of a line shows a hyphen; one inside a line
+    /// gets its own glyph back).
+    #[inline]
+    pub fn set_cluster_glyph(&mut self, index: u32, id: u32, advance: f32) -> Option<(u32, f32)> {
+        let cluster = self.shaped_clusters.get_mut(index as usize)?;
+        if cluster.glyph_len() != 1 {
+            return None;
+        }
+        let before_advance = cluster.advance;
+        cluster.advance = advance;
+        if cluster.has_inline_glyph() {
+            Some((core::mem::replace(&mut cluster.glyph_offset, id), before_advance))
+        } else {
+            let glyph = self.glyphs.get_mut(cluster.glyph_offset as usize)?;
+            glyph.advance = advance;
+            Some((core::mem::replace(&mut glyph.id, id), before_advance))
         }
     }
 
@@ -506,6 +640,7 @@ impl ShapedText {
             bidi_level: segment.bidi_level,
             advance: run_advance,
             font_metrics,
+            hyphen: metrics.hyphen,
         });
         metrics
     }
@@ -535,6 +670,9 @@ pub struct ShapedRun {
     pub bidi_level: BidiLevel,
     /// Total advance of the run.
     pub advance: f32,
+    /// pyro: the hyphen of the run's font (U+2010, else U+002D): its glyph and its advance at
+    /// the run's size. The line breaker shows it where a line ends at a soft hyphen.
+    pub hyphen: Option<(u32, f32)>,
     /// The font metrics of this run.
     pub font_metrics: FontMetrics,
 }

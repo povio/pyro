@@ -96,7 +96,7 @@ fn text(frames: &[(f64, &str)], progress: f64, easing: Option<&str>) -> Effect {
 }
 
 fn frame(key: u64, transitions: Vec<Effect>, animations: Vec<Effect>) -> AnimationFrame {
-    vec![(key, ElementEffects { transitions, animations, current: Vec::new() })]
+    vec![(key, ElementEffects { transitions, animations, ..Default::default() })]
 }
 
 const BOX: &str = "<!doctype html><style>body{margin:0;background:#fff} #target{width:100px;height:100px;background-color:rgb(0,200,0)}\
@@ -230,7 +230,7 @@ fn an_animation_in_its_delay_makes_a_stacking_context() {
     let img = render(&mut r, &snap, Vec::new());
     assert_near(pixel(&img, 50, 75), [0, 128, 0], "no animation: under the fixed box");
     let current = |name: &str| {
-        vec![(key, ElementEffects { transitions: vec![], animations: vec![], current: vec![css(name, None, 0.0)] })]
+        vec![(key, ElementEffects { current: vec![css(name, None, 0.0)], ..Default::default() })]
     };
     let img = render(&mut r, &snap, current("scale"));
     assert_near(pixel(&img, 50, 75), [0, 0, 255], "a `scale` animation in its delay: over it");

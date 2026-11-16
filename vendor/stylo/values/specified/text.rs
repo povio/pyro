@@ -826,6 +826,10 @@ impl TextEmphasisPosition {
     }
 }
 
+fn word_break_manual_enabled(_: &ParserContext) -> bool {
+    cfg!(feature = "servo")
+}
+
 fn word_break_break_word_enabled(_: &ParserContext) -> bool {
     crate::pref!("layout.css.word-break.break-word.enabled", gecko = true)
 }
@@ -858,6 +862,10 @@ pub enum WordBreak {
     /// `anywhere`, and `word-break` behave like `normal`.
     #[parse(condition = "word_break_break_word_enabled")]
     BreakWord,
+    /// pyro: `manual` (CSS Text 4): as `normal`, without the breaks inside words that
+    /// dictionaries find in Southeast Asian scripts.
+    #[parse(condition = "word_break_manual_enabled")]
+    Manual,
 }
 
 /// Values for the `text-justify` CSS property.

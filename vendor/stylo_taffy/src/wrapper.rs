@@ -38,6 +38,9 @@ bitflags! {
         /// § 9.2.1.1), laid out as a block box that wraps its pieces: its margins, borders,
         /// padding and sizes belong to its inline pieces, so as a box it has none.
         const IS_SPLIT_INLINE = 1 << 5;
+        /// pyro: the node is a replaced element with a natural aspect ratio (a loaded image, a
+        /// canvas): `aspect-ratio: auto <ratio>` then means the natural one (css-sizing-4 §5.1).
+        const HAS_NATURAL_RATIO = 1 << 6;
     }
 }
 
@@ -289,8 +292,19 @@ impl<T: Deref<Target = ComputedValues>> taffy::CoreStyle for TaffyStyloStyle<T> 
 
     #[inline]
     fn aspect_ratio(&self) -> Option<f32> {
-        let ratio = convert::aspect_ratio(self.style.get_position().aspect_ratio);
+        let aspect_ratio = self.style.get_position().aspect_ratio;
+        // pyro: `auto <ratio>` on a replaced element with a natural aspect ratio is `auto`: the
+        // natural ratio, which its measure function applies.
+        if aspect_ratio.auto && self.flags.contains(StyleFlags::HAS_NATURAL_RATIO) {
+            return None;
+        }
+        let ratio = convert::aspect_ratio(aspect_ratio);
         self.layout_wm().logical_aspect_ratio(ratio)
+    }
+
+    #[inline]
+    fn aspect_ratio_of_content_box(&self) -> bool {
+        self.style.get_position().aspect_ratio.auto && !self.flags.contains(StyleFlags::IS_REPLACED)
     }
 
     #[inline]
@@ -365,6 +379,16 @@ impl<T: Deref<Target = ComputedValues>> taffy::CoreStyle for TaffyStyloStyle<T> 
 // BlockContainerStyle impl
 #[cfg(feature = "block")]
 impl<T: Deref<Target = ComputedValues>> taffy::BlockContainerStyle for TaffyStyloStyle<T> {
+    #[inline]
+    fn margin_trim(&self) -> taffy::Line<bool> {
+        use style::values::computed::MarginTrim;
+        let trim = *self.style.get_margin().get_margin_trim();
+        taffy::Line {
+            start: trim.contains(MarginTrim::BLOCK_START),
+            end: trim.contains(MarginTrim::BLOCK_END),
+        }
+    }
+
     #[inline]
     fn text_align(&self) -> taffy::TextAlign {
         let align = convert::text_align(self.style.clone_text_align());
@@ -507,6 +531,35 @@ impl<T: Deref<Target = ComputedValues>> taffy::BlockItemStyle for TaffyStyloStyl
     }
 
     #[inline]
+    fn min_size_keyword(&self) -> taffy::Size<taffy::Dimension> {
+        let position = self.style.get_position();
+        self.size(taffy::Size {
+            width: convert::min_size_keyword(&position.min_width),
+            height: convert::min_size_keyword(&position.min_height),
+        })
+    }
+
+    #[inline]
+    fn max_size_keyword(&self) -> taffy::Size<taffy::Dimension> {
+        let position = self.style.get_position();
+        self.size(taffy::Size {
+            width: convert::max_size_keyword(&position.max_width),
+            height: convert::max_size_keyword(&position.max_height),
+        })
+    }
+
+    #[inline]
+    fn breaks_lines_in_block_axis(&self) -> bool {
+        let position = self.style.get_position();
+        self.effective_display().inside() == stylo::DisplayInside::Flex
+            && matches!(
+                convert::flex_direction(position.flex_direction),
+                taffy::FlexDirection::Column | taffy::FlexDirection::ColumnReverse
+            )
+            && convert::flex_wrap(position.flex_wrap) != taffy::FlexWrap::NoWrap
+    }
+
+    #[inline]
     fn align_self(&self) -> Option<taffy::AlignSelf> {
         self.oof_self_alignment(
             self.style.get_position().align_self.0,
@@ -530,14 +583,26 @@ impl<T: Deref<Target = ComputedValues>> taffy::BlockItemStyle for TaffyStyloStyl
     #[cfg(feature = "floats")]
     #[inline]
     fn float(&self) -> taffy::Float {
-        let float = convert::float(self.style.clone_float());
+        // pyro: `inline-start` and `inline-end` are sides of the containing block's inline axis:
+        // in a right-to-left one (the box's inherited direction stands in for it) they trade.
+        let value = self.style.clone_float();
+        let float = match (value, self.style.writing_mode.is_bidi_ltr()) {
+            (stylo::Float::InlineStart, false) => taffy::Float::Right,
+            (stylo::Float::InlineEnd, false) => taffy::Float::Left,
+            _ => convert::float(value),
+        };
         self.layout_wm().logical_float(float)
     }
 
     #[cfg(feature = "floats")]
     #[inline]
     fn clear(&self) -> taffy::Clear {
-        let clear = convert::clear(self.style.clone_clear());
+        let value = self.style.clone_clear();
+        let clear = match (value, self.style.writing_mode.is_bidi_ltr()) {
+            (stylo::Clear::InlineStart, false) => taffy::Clear::Right,
+            (stylo::Clear::InlineEnd, false) => taffy::Clear::Left,
+            _ => convert::clear(value),
+        };
         self.layout_wm().logical_clear(clear)
     }
 }

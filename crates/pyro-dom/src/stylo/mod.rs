@@ -25,6 +25,9 @@ pub(crate) fn enable_features() {
     static ONCE: std::sync::Once = std::sync::Once::new();
     ONCE.call_once(|| {
         style_config::set_pref!("layout.css.flexbox-balance.enabled", true);
+        style_config::set_pref!("layout.css.text-box.enabled", true);
+        // pyro: `light-dark()` of images (the computed value is the image of the used scheme).
+        style_config::set_pref!("layout.css.light-dark.images.enabled", true);
         style_config::set_pref!("layout.css.background-clip.text.enabled", true);
         style_config::set_pref!("layout.css.webkit-text-fill-color.enabled", true);
         style_config::set_pref!("layout.css.columns.enabled", true);
@@ -45,6 +48,11 @@ pub(crate) fn enable_features() {
         style_config::set_pref!("layout.css.corner-shape.enabled", true);
         style_config::set_pref!("layout.css.counters.enabled", true);
         style_config::set_pref!("layout.css.font-size-adjust.enabled", true);
+        // pyro: `font-synthesis-style`, `-small-caps` and `-position` (and the shorthand).
+        style_config::set_pref!("layout.css.font-synthesis.enabled", true);
+        // pyro: `font-variant-caps: all-small-caps | petite-caps | all-petite-caps | unicase |
+        // titling-caps` (blitz-dom maps each to its OpenType features).
+        style_config::set_pref!("layout.css.font-variant-caps.all-values.enabled", true);
         style_config::set_pref!("layout.css.forced-color-adjust.enabled", true);
         style_config::set_pref!("layout.css.masking.enabled", true);
         style_config::set_pref!("layout.css.math-properties.enabled", true);

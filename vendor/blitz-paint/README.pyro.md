@@ -66,7 +66,30 @@ from the root of an upstream checkout at that commit) is the whole diff.
     boundary where blitz-dom's shaped "…" still fits at the end edge (the left one for right-to-left lines),
     and the ellipsis is drawn next to the last atom kept, on the line's baseline, with the inline root as its
     brush. `stroke_text` leaves out the cut glyphs, decorations span what is kept, and a recording paint
-    records the kept glyphs with their source text. Covered by `crates/pyro-render/tests/text_overflow_ellipsis.rs`.
+    records the kept glyphs with their source text. A line too narrow for any atom beside the ellipsis keeps
+    its first atom (Blink's `LineTruncator`; `TextCut::end_atom`), and emphasis marks skip the atoms cut
+    (`draw_text_annotations`' `cut`). Covered by `crates/pyro-render/tests/text_overflow_ellipsis.rs`.
+    A line clamp (`TextLayout::clamp`, blitz-dom's `layout::line_clamp`) ends its line with "…" whether the line
+    overflows or not (`line_truncation`, `truncate_line`'s `forced`: after the whole line when the ellipsis
+    fits there), whatever `text-overflow` says, and the root's later lines, their annotations and their part
+    of a text mask are not painted. Covered by `crates/pyro-render/tests/line_clamp.rs`.
+    `draw_text_input_text` ends the overflowing lines of a text control (`<input>`, `<textarea>`) with its
+    `TextInputData::ellipsis` the same way while the control is not focused and not scrolled, as Chromium does.
+  - `src/render/box_shadow.rs` (`overflow_clip_path`), `src/render.rs` (`render_element`, `paint_content`,
+    `draw_text_mask`, `ElementCx::draw_hoisted_child`): the overflow clip. A scroll container clips at its padding
+    box, as before. `overflow: clip` on both axes (and `contain: paint`) clips at the box `overflow-clip-margin`
+    names, along that box's own curve, grown by the margin's length as a shadow's spread grows its shape (a
+    negative length shrinks it); `clip` on one axis with `visible` on the other clips that axis only, with square
+    corners. A box hoisted to a stacking context (positioned, with a `z-index`) is painted inside the clips of the
+    boxes between it and that context on its containing-block chain: such a box makes no stacking context, so the
+    child was painted outside its clip layer and showed whole outside an `overflow: hidden` ancestor. Covered by
+    `crates/pyro-render/tests/overflow_clip.rs`, WPT `css-overflow/overflow-clip-margin-*`, `clip-00*`.
+  - `src/render.rs` (`replaced_overflow_is_visible`, `should_clip_node`, `draw_image`, `draw_svg`): the content of
+    an `<img>`, `<video>` or `<canvas>` whose author made `overflow` visible on both axes is not cut at its box
+    (an SVG image only at its own viewport), as in Chromium; blitz-dom's UA sheet gives these elements
+    `overflow: clip`, the default, which cuts their replaced content only (the box itself is clipped as before:
+    at its padding box when it holds a raster image, not at all otherwise). WPT `css-overflow/overflow-img*`,
+    `overflow-canvas`, `overflow-video`.
   - `src/render.rs` (`draw_svg`): an inline `<svg>` without a `viewBox` is drawn from blitz-dom's
     `SvgImageData::sized` tree for its content box, in user units of a CSS px times its `zoom` (its content
     was drawn at zoom 1 in a zoomed box: WPT `clip-path-path-with-zoom-002`). An SVG image (`<img>`, not an
@@ -721,3 +744,75 @@ Covered by `crates/pyro-render/tests/svg_viewport_clip.rs` and `svg_external_ref
   inline box's fragment (WPT `bidi-011`).
 
 Covered by `crates/pyro-render/tests/inline_leftovers.rs`.
+
+## Lane I of WPT round 3 (`text-box-trim`)
+
+- `src/render.rs` (`render_node`): the stacking contexts of negative z-index are painted before the box's own
+  inline content (Appendix E step 3 before step 7); they were painted over its text.
+- `src/render.rs`, `src/render/clip_path.rs`, `src/text.rs` (`draw_inline_backgrounds`): the boxes of inline
+  fragments use `Line::span_box_area` (the content area less `text-box-trim`); decorations keep the font's.
+- `src/text.rs` (`VerticalLine::turned_offset`), `src/render.rs`: relatively positioned inline boxes move their
+  text and decorations in vertical lines too, the offset turned with the line.
+
+Covered by `crates/pyro-render/tests/text_box_trim.rs`.
+## Sticky boxes painted where they are held (WPT reftests, round 3 lane S)
+
+- `src/render.rs` (`node_transform`): a box is painted at its layout position plus its `Node::sticky_offset`, so a
+  `position: sticky` box and its descendants are where their scroll container holds them (they were painted at
+  their static position whatever the scroll positions, while geometry and hit testing already followed them).
+  The offset is snapped to device pixels from the box's unrounded position, so a box laid out at 10.5 and held
+  9.5 further is painted at 20 (WPT `position-sticky-fractional-offset`).
+- `src/render.rs` (`table_part_transform`), `src/render/background.rs` (`draw_table_row_backgrounds`,
+  `draw_table_part_background`): the offsets of a sticky row group and row move their cells and the backgrounds
+  painted behind them, as rows and row groups are no boxes of their own.
+
+Not done: a sticky (or relatively positioned) row or row group is not painted as a positioned layer, so boxes
+painted after the table's backgrounds can cover its background (WPT `position-sticky-table-tr-top` and the like).
+
+Covered by `crates/pyro-render/tests/sticky_paint.rs`; WPT `css/css-position/sticky`: 33 more reftests pass.
+- `src/render.rs` (`inline_box_fragments`), `src/render/clip_path.rs`: an inline box's fragment is cut by the
+  collapsible white space hanging at its line's end (`LineMetrics::collapsed_advance`), not by all that hangs:
+  preserved spaces and ideographic spaces that hang keep their background (WPT `trailing-ideographic-space-*`;
+  `crates/pyro-render/tests/hanging_spaces.rs`).
+## Gradient colour stops, `image-set()`, `image(<color>)` (WPT css-images, round 3 lane F)
+
+- `src/gradient.rs` (`Ramp`): a gradient's colour stops are fixed up (CSS Images 3 §3.4.3: a stop before its
+  predecessor moves up to it, stops without positions are spaced evenly) and interpolated here, and the renderer
+  gets sRGB samples it interpolates premultiplied. In sRGB without hints those are the stops themselves, cut at
+  the ends of the gradient box; in another colour space (`in oklch`, `in hsl longer hue`, the Oklab default of a
+  modern colour) or under a transition hint each segment is cut in halves until the renderer's line is within a
+  quarter level of the curve (`subdivide`). The colours are mixed by Stylo's `mix_many` (premultiplied, missing
+  and powerless components, hue fix-up). Before, the stops went to the renderer as written with the colour space
+  as a setting: stops outside the box were not cut where it ends (`linear-gradient(green -50%, blue -50%)` drew
+  green), the padding stops the old code added were interpolated with their neighbour (`longer hue` after the
+  last stop went once round the hue circle), and a gradient 131,070,000px long was sampled in `f32`.
+  A repeating gradient without a period is its last stop's colour, as is a radial one whose ending shape has no
+  area or whose stops are all before the centre; a radial one ending in a hard stop keeps room after it for the
+  colour that follows; a radial centre or radius beyond 1e9 px is one colour over the box; a repeating radial or
+  conic gradient is sampled as one period from 0 (`sample_period_from_zero`: the first stop's position was
+  ignored). `to <corner>` uses the corner-to-corner rule of §3.1.1 (the line's 50% joins the two other corners;
+  it was the diagonal, which is right for a square only).
+- `src/render/background.rs` (`draw_image_layer_in`, `draw_generated_layer`): `image-set()` paints the option
+  Stylo selected, a raster one at its `<resolution>` (`ImageLayerStyles::resolution`); `image(<color>)` is an
+  image of one colour without a natural size, sized, positioned and tiled as a gradient is.
+- `src/render.rs` (`draw_inside_marker_image`): a `list-style-image` marker inside the item, at the start of
+  its first line with its bottom on the baseline.
+- `src/text.rs` (`synthesis_allowed`): `font-synthesis-weight: none` and `font-synthesis-style: none`
+  (`oblique-only` for italic) stop the faked bold and slant of a run.
+
+Covered by `crates/pyro-render/tests/gradient_stops_image_set.rs`.
+
+- `src/gradient.rs` (`has_missing`): a stop with a missing component (`color(srgb none 0.5 0.5)`) takes it from
+  its neighbour across the whole segment, the segment's ends included, in sRGB too (WPT
+  `gradient-none-interpolation`).
+- `src/render.rs` (`draw_image`, `draw_svg`): `object-view-box`: the view box is what `object-fit` and
+  `object-position` fit and place; the content around it is drawn at the view box's scale where the content box
+  has room. Covered by `crates/pyro-render/tests/object_view_box_embed.rs`.
+
+- `src/render.rs` (`draw_marker_symbol`): a disc, circle or square marker is drawn in the colour of the item's
+  `::marker` style (`ListItemLayout::style_node`).
+- `src/render.rs` (`draw_image`): a pixelated replaced raster image is sampled clamped to its edge (a smoothed one keeps blending with the opposite edge, as background tiles do across seams). At a fractional
+  position (`object-position: 50% 13%`) the partly covered edge row took the opposite edge's pixels, the brush
+  repeating (WPT `object-position-png-001*`/`-002*`).
+- `src/text.rs`: under `font-size-adjust` a run has the used font size; `text-decoration-thickness` and
+  `text-underline-offset` percentages stay of the computed one (WPT `text-decoration-thickness-percent-001`).

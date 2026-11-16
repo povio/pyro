@@ -212,6 +212,11 @@ pub struct Snapshot {
     /// Scroll offsets (CSS px) of elements of a [`Live`] document by key;
     /// those of other elements are reset. `None` leaves the document's.
     pub element_scroll: Option<Vec<(u64, (f64, f64))>>,
+    /// How far each `position: sticky` element of a [`Live`] document is
+    /// moved from its laid-out place (CSS px, by key), as the page's scroll
+    /// positions have it; those of other elements are reset. `None` leaves
+    /// the document's.
+    pub sticky_offsets: Option<Vec<(u64, (f64, f64))>>,
     /// Straight RGBA painted under the document where it has no background
     /// (CDP `Emulation.setDefaultBackgroundColorOverride`); `None`: white.
     pub background: Option<[u8; 4]>,
@@ -978,6 +983,9 @@ impl Renderer {
                     Some(m) => {
                         if let Some(offsets) = &snap.element_scroll {
                             m.set_element_scroll(offsets);
+                        }
+                        if let Some(offsets) = &snap.sticky_offsets {
+                            m.set_sticky_offsets(offsets);
                         }
                         m.set_canvases(&snap.canvases);
                         // The selection's text nodes, both in the document.

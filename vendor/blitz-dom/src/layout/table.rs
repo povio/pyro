@@ -3336,7 +3336,9 @@ fn collect_table_cells(
         | DisplayInside::FlowRoot
         | DisplayInside::Flex
         | DisplayInside::Grid
-        | DisplayInside::GridLanes => {
+        | DisplayInside::GridLanes
+        // pyro: never computed (Stylo's `adjust_for_webkit_box`).
+        | DisplayInside::WebkitBox => {
             node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
             // Probably a table caption: ignore
             // println!(

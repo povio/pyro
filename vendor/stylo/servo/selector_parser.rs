@@ -116,6 +116,16 @@ impl ::selectors::parser::PseudoElement for PseudoElement {
     fn parses_as_element_backed(&self) -> bool {
         matches!(self, Self::DetailsContent)
     }
+
+    // pyro: `::before::marker` and `::after::marker` (CSS Pseudo-Elements 4 § 4.1): the marker
+    // of a `::before` or `::after` box that is a list item.
+    fn valid_after_before_or_after(&self) -> bool {
+        matches!(self, Self::Marker)
+    }
+
+    fn is_before_or_after(&self) -> bool {
+        matches!(self, Self::Before | Self::After)
+    }
 }
 
 /// The number of eager pseudo-elements. Keep this in sync with cascade_type.

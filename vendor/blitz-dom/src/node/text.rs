@@ -21,6 +21,14 @@ impl TextBrush {
     }
 }
 
+/// pyro: see [`TextLayout::clamp`].
+#[derive(Clone)]
+pub struct LineClamp {
+    pub lines: u32,
+    /// "…" shaped in the root's style.
+    pub ellipsis: Box<parley::layout::Layout<TextBrush>>,
+}
+
 #[derive(Clone, Default)]
 pub struct TextLayout {
     pub text: String,
@@ -62,6 +70,17 @@ pub struct TextLayout {
     /// `text-overflow: ellipsis` at the end of its lines: paint ends each line that overflows
     /// the content box with it.
     pub ellipsis: Option<Box<parley::layout::Layout<TextBrush>>>,
+    /// pyro: the text of `ellipsis` ("…", or the string of `text-overflow: "<string>"`).
+    pub ellipsis_text: String,
+    /// pyro: where the line boxes start below the top of the root's border box (CSS px), and how
+    /// many of them count as lines (none of a root without inline content; not the empty line
+    /// after a final forced break). Set by each layout, for `layout::line_clamp`.
+    pub line_box_top: f32,
+    pub counted_lines: u32,
+    /// pyro: a line clamp ends in this root (`layout::line_clamp`): paint draws its first
+    /// `lines` lines and ends the last of them with the ellipsis. Reset by each layout of the
+    /// root; set by the layout of the box that clamps.
+    pub clamp: Option<LineClamp>,
     /// pyro: text drawn over or under stretches of this text (ruby annotations, emphasis marks).
     /// Empty for almost every inline root.
     pub annotations: Vec<TextAnnotation>,
@@ -86,6 +105,12 @@ pub struct TextLayout {
     /// pyro: some inline box's margin or padding at an edge is a percentage: each layout gives
     /// those edges their width (`span_edge_widths_in`).
     pub percent_span_edges: bool,
+    /// pyro: some inline box has a border or padding over or under it: its box reaches out of
+    /// its line, over what comes before or after the root (`NodeFlags::FLOW_CONTENT_OVERFLOWS`).
+    pub span_block_edges: bool,
+    /// pyro: the `<br>`s with `clear`, each with the offset in `text` of its newline: the line
+    /// after it starts below the floats it clears (CSS 2.1 § 9.5.2). Set by each build.
+    pub br_clears: Vec<(usize, NodeId)>,
 }
 
 /// pyro: where an inline layout's first letter is: the bytes of a text node's content that an
@@ -210,6 +235,10 @@ pub struct TextInputData {
     /// pyro: the `placeholder` attribute laid out in the element's `::placeholder` style
     /// (`None` without one); paint shows it while the value is empty.
     pub placeholder: Option<Box<InputPlaceholder>>,
+    /// pyro: what `text-overflow` ends the control's overflowing lines with while it is not
+    /// focused ("…" or the property's string, shaped in the control's style) and its text;
+    /// `None` for `clip`. Built with the editor.
+    pub ellipsis: Option<(Box<parley::layout::Layout<TextBrush>>, String)>,
 }
 
 /// pyro: the placeholder text of an `<input>` or `<textarea>`, laid out in its
@@ -291,6 +320,7 @@ impl TextInputData {
             scroll_offset: 0.0,
             content_box_subpixel_offset: taffy::Point::ZERO,
             placeholder: None,
+            ellipsis: None,
         }
     }
 

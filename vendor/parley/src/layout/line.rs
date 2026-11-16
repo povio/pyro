@@ -93,6 +93,28 @@ impl<'a, B: Brush> Line<'a, B> {
         }
     }
 
+    /// pyro: the content area as the span's box has it, which its backgrounds, borders and
+    /// padding go by: [`Self::span_content_area`] with the sides `text-box-trim` trims at their
+    /// `text-box-edge` metric ([`crate::TextStyle::text_box_trim`]).
+    pub fn span_box_area(&self, style_index: u16) -> (f32, f32) {
+        let baseline = self.style_baseline(style_index);
+        match self.layout.data.style_metrics.get(usize::from(style_index)) {
+            Some(metrics) => (baseline - metrics.content_over, baseline + metrics.content_under),
+            None => (baseline, baseline),
+        }
+    }
+
+    /// pyro: the block-axis coordinate of a font metric edge of the span box that style
+    /// `style_index` generates on this line ([`crate::TextEdge`]; `over` picks the side).
+    pub fn span_text_edge(&self, style_index: u16, edge: crate::TextEdge, over: bool) -> f32 {
+        let baseline = self.style_baseline(style_index);
+        match self.layout.data.style_metrics.get(usize::from(style_index)) {
+            Some(metrics) if over => baseline - metrics.text_edge(edge, true),
+            Some(metrics) => baseline + metrics.text_edge(edge, false),
+            None => baseline,
+        }
+    }
+
     /// Block-axis coordinate of the top edge of the layout's inline box `index`.
     pub(crate) fn inline_box_top(&self, index: usize) -> f32 {
         let layout_box = &self.layout.data.inline_boxes[index];
@@ -198,6 +220,12 @@ pub struct LineMetrics {
     // content could hang past both the start and end edge. That would likely require splitting this
     // into two fields.
     pub hanging_advance: f32,
+
+    /// pyro: the part of [`Self::hanging_advance`] that is collapsible white space (spaces, tabs
+    /// and segment breaks of a collapsing `white-space`) at the line's very end. It is in no box,
+    /// as browsers remove it; preserved white space and ideographic spaces that hang are content
+    /// of their boxes (a background shows behind them).
+    pub collapsed_advance: f32,
 
     /// The minimum inline-axis coordinate of the line.
     ///

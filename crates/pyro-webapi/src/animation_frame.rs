@@ -198,6 +198,8 @@ pub(crate) struct Scripted {
     /// It shows nothing (a CSS animation's or transition's object canceled,
     /// finished without fill, or without a target).
     gone: bool,
+    /// Its effect's target is the element's `::marker`.
+    marker: bool,
 }
 
 impl Scripted {
@@ -241,6 +243,7 @@ pub(crate) fn report(page: &Rc<PageDom>, seq: u64, state: Option<ReportedState>)
                         composite: s.composite,
                         seq,
                         gone: s.gone,
+                        marker: s.marker,
                     },
                 );
             }
@@ -268,6 +271,7 @@ pub(crate) struct ReportedState {
     pub easing: Option<Arc<str>>,
     pub composite: Composite,
     pub gone: bool,
+    pub marker: bool,
 }
 
 impl ReportedState {
@@ -376,6 +380,7 @@ impl Builder {
             Level::Transition => e.transitions.push(effect),
             Level::Animation => e.animations.push(effect),
             Level::Current => e.current.push(effect),
+            Level::Marker => e.marker.push(effect),
         }
     }
 }
@@ -387,6 +392,8 @@ enum Level {
     Animation,
     /// pyro: current but not in effect (`ElementAnimations::current`).
     Current,
+    /// pyro: in effect on the element's `::marker` (`ElementAnimations::marker`).
+    Marker,
 }
 
 /// When the effects are sampled.
@@ -523,6 +530,12 @@ fn walk_at(page: &PageDom, clock: Clock, transitions: bool, visit: &mut dyn FnMu
             before: p.before,
             easing: s.easing.clone(),
             composite: s.composite,
+        };
+        // An effect on the element's `::marker`: its values in effect only.
+        let level = match (s.marker, level) {
+            (false, level) => level,
+            (true, Level::Animation) => Level::Marker,
+            (true, _) => continue,
         };
         visit(el, level, effect);
     }

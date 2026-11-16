@@ -37,9 +37,13 @@ pub(super) fn collect_list_item_children(
             let node = &mut doc.nodes[child];
             let element_data = node.element_data_mut().unwrap();
             let inside = matches!(layout.position, ListItemLayoutPosition::Inside);
-            let same = element_data.list_item_data.as_ref().is_some_and(|old| {
-                old.marker == layout.marker && matches!(old.position, ListItemLayoutPosition::Inside) == inside
-            });
+            // (A marker styled by `::marker` is built again: its style may have changed.)
+            let same = layout.style_node.is_none()
+                && element_data.list_item_data.as_ref().is_some_and(|old| {
+                    old.style_node.is_none()
+                        && old.marker == layout.marker
+                        && matches!(old.position, ListItemLayoutPosition::Inside) == inside
+                });
             element_data.list_item_data = Some(Box::new(layout));
             if !same {
                 marker_changed(node);
@@ -96,33 +100,45 @@ fn node_list_item_child(
         return None;
     };
 
-    let styles = node.primary_styles().unwrap();
+    let styles = style::servo_arc::Arc::clone(&*node.primary_styles().unwrap());
     let list_style_type = styles.get_list_style_type();
     let list_style_position = styles.clone_list_style_position();
     // pyro: an outside item's loaded `list-style-image` is its marker; while it loads, when it
     // fails and inside the item (not supported), the `list-style-type` marker is.
-    let image = match list_style_position {
-        ListStylePosition::Outside => node.element_data().and_then(image_marker),
-        ListStylePosition::Inside => None,
+    // pyro: inside the item too (a box at the start of its first line, `inline::build`), and
+    // at the resolution of an `image-set()` option.
+    let resolution = crate::util::image_resolution(&styles.get_list().list_style_image);
+    let image = node.element_data().and_then(|element| image_marker(element, resolution));
+    // pyro: the item's `::marker` style, on a node of its own (the marker text's brush), and
+    // the marker's `content`: `none` leaves no marker, strings replace it (CSS Lists 3 § 3.2).
+    let (marker_style, rule_style) = item_marker_style(doc, child_id, &styles);
+    let content = rule_style.as_ref().and_then(|style| marker_content(style, index));
+    let style_node = marker_style_node(doc, child_id, marker_style.clone());
+    let mut marker = match (content, image) {
+        (Some(text), _) => Marker::String(text),
+        (None, Some(image)) => image,
+        (None, None) => marker_for_style(list_style_type, index)?,
     };
-    let mut marker = match image {
-        Some(image) => image,
-        None => marker_for_style(list_style_type, index)?,
-    };
+    // The marker's text has the pseudo-element's style.
+    let text_style = marker_style.as_ref().unwrap_or(&styles);
+    let brush = style_node.unwrap_or(child_id);
 
     let position = match list_style_position {
         ListStylePosition::Inside => {
             // pyro: a symbol marker inside the item is drawn from the bundled bullet font, unless
             // the page styles `::marker`: then it is text in the item's font, as Gecko draws it.
             if let Marker::Char(symbol) = marker {
-                if styles_marker(doc, child_id, &styles) {
+                if marker_style.is_some() {
                     marker = Marker::String(format!("{symbol} "));
                 }
             }
             ListItemLayoutPosition::Inside
         }
         ListStylePosition::Outside => {
-            let mut parley_style = stylo_to_parley::style(child_id, &styles);
+            let mut parley_style = stylo_to_parley::style(brush, text_style);
+            // The marker's suffix space takes room (`white-space: pre` in the UA sheet), as a
+            // no-break space of a `content` string does.
+            parley_style.white_space_collapse = parley::WhiteSpaceCollapse::Preserve;
 
             // pyro: blitz-paint paints a disc, circle or square as a shape sized from the item's
             // font (Blink's `ListMarker::RelativeSymbolMarkerRect`), so their layout is a line of
@@ -161,20 +177,21 @@ fn node_list_item_child(
 
     Some(ListItemLayout {
         marker,
+        style_node,
         position,
         content_box_subpixel_offset: taffy::Point::ZERO,
     })
 }
 
 /// pyro: the marker an item's `list-style-image` makes once it has loaded: its natural size.
-fn image_marker(element: &crate::node::ElementData) -> Option<Marker> {
+fn image_marker(element: &crate::node::ElementData, resolution: f32) -> Option<Marker> {
     use crate::node::{ImageData, Status};
     let image = element.list_style_images.first()?.as_ref()?;
     if !matches!(image.status, Status::Ok) {
         return None;
     }
     let (width, height) = match &image.image {
-        ImageData::Raster(raster) => (raster.width as f32, raster.height as f32),
+        ImageData::Raster(raster) => (raster.width as f32 / resolution, raster.height as f32 / resolution),
         #[cfg(feature = "svg")]
         ImageData::Svg(svg) => (svg.tree.size().width(), svg.tree.size().height()),
         _ => return None,
@@ -182,24 +199,167 @@ fn image_marker(element: &crate::node::ElementData) -> Option<Marker> {
     Some(Marker::Image { width, height })
 }
 
-/// pyro: whether a `::marker` rule matches the list item `node_id`.
-fn styles_marker(doc: &BaseDocument, node_id: NodeId, item_style: &style::properties::ComputedValues) -> bool {
+/// pyro: the style of the marker of the list item `node_id` (style `item_style`): its `::marker`
+/// style with the values of the animations on the marker (`Element.animate` with `pseudoElement:
+/// '::marker'`, `ElementData::sampled_marker`) cascaded on it, none without either; and the
+/// `::marker` style alone.
+fn item_marker_style(
+    doc: &BaseDocument,
+    node_id: NodeId,
+    item_style: &style::servo_arc::Arc<style::properties::ComputedValues>,
+) -> (
+    Option<style::servo_arc::Arc<style::properties::ComputedValues>>,
+    Option<style::servo_arc::Arc<style::properties::ComputedValues>>,
+) {
+    let rule_style = marker_pseudo_style(doc, node_id, item_style);
+    let style = match doc.nodes[node_id].element_data().and_then(|element| element.sampled_marker.clone()) {
+        Some(block) => {
+            let read_guard = doc.guard.read();
+            let guards = style::shared_lock::StylesheetGuards::same(&read_guard);
+            let base = rule_style.as_ref().unwrap_or(item_style);
+            Some(doc.stylist.compute_for_declarations::<&crate::Node>(&guards, base, block))
+        }
+        None => rule_style.clone(),
+    };
+    (style, rule_style)
+}
+
+/// pyro: a list item with a `::marker` style node was restyled: the node takes the marker's
+/// style as it is now (it inherits from the item's), so paint reads the new colours; a marker
+/// that lost its style, or whose `content` changed, is built again with its list.
+pub(crate) fn item_restyled(doc: &mut BaseDocument, item: NodeId) {
+    let Some(node) = doc.nodes.get(item) else { return };
+    let Some(style_node) = node.element_data().and_then(|element| element.marker_style) else { return };
+    let Some(styles) = node.primary_styles().map(|style| style::servo_arc::Arc::clone(&*style)) else { return };
+    let (style, _) = item_marker_style(doc, item, &styles);
+    let content = |style: Option<&style::servo_arc::Arc<style::properties::ComputedValues>>| {
+        style.map(|style| style.get_counters().content.clone())
+    };
+    let old = doc.nodes.get(style_node).and_then(|node| node.primary_styles().map(|style| style::servo_arc::Arc::clone(&*style)));
+    let rebuild = style.is_none() || content(old.as_ref()) != content(style.as_ref());
+    if style.is_some() {
+        marker_style_node(doc, item, style);
+    }
+    if rebuild {
+        let list = doc.nodes[item].parent.unwrap_or(item);
+        for target in [item, list] {
+            if let Some(node) = doc.nodes.get_mut(target) {
+                node.insert_damage(super::damage::ALL_DAMAGE);
+                node.mark_damaged();
+            }
+        }
+    }
+}
+
+/// pyro: the `::marker` style of the list item `node_id`, when a rule matches its marker.
+fn marker_pseudo_style(
+    doc: &BaseDocument,
+    node_id: NodeId,
+    item_style: &style::servo_arc::Arc<style::properties::ComputedValues>,
+) -> Option<style::servo_arc::Arc<style::properties::ComputedValues>> {
     use style::selector_parser::PseudoElement;
     use style::shared_lock::StylesheetGuards;
     use style::stylist::RuleInclusion;
+    // (Of an element, or of its `::before` or `::after` box: `::after::marker`.)
+    let node = &doc.nodes[node_id];
+    let pseudo_box = node.parent.is_some_and(|parent| {
+        let parent = &doc.nodes[parent];
+        parent.before() == Some(node_id) || parent.after() == Some(node_id)
+    });
+    if !matches!(node.data, crate::NodeData::Element(_)) && !pseudo_box {
+        return None;
+    }
     let read_guard = doc.guard.read();
     let guards = StylesheetGuards::same(&read_guard);
-    doc.stylist
-        .lazily_compute_pseudo_element_style::<&crate::Node>(
-            &guards,
-            &doc.nodes[node_id],
-            &PseudoElement::Marker,
-            RuleInclusion::All,
-            item_style,
-            true,
-            None,
-        )
-        .is_some()
+    doc.stylist.lazily_compute_pseudo_element_style::<&crate::Node>(
+        &guards,
+        &doc.nodes[node_id],
+        &PseudoElement::Marker,
+        RuleInclusion::All,
+        item_style,
+        true,
+        None,
+    )
+}
+
+/// pyro: the text a `::marker` style's `content` gives the marker of the item at `index`: none
+/// for `normal` (the marker of `list-style`), empty for `none`, else its strings, the item's
+/// number for `counter(list-item)` and the quotes of the style's `quotes`. Other counters and
+/// images are not supported: with one, the marker stays that of `list-style`.
+fn marker_content(style: &style::servo_arc::Arc<style::properties::ComputedValues>, index: usize) -> Option<String> {
+    use style::values::generics::counters::{Content, ContentItem};
+    match &style.get_counters().content {
+        Content::Normal => None,
+        Content::None => Some(String::new()),
+        Content::Items(items) => {
+            let mut text = String::new();
+            let mut depth = 0usize;
+            for item in items.items.iter() {
+                match item {
+                    ContentItem::String(string) => text.push_str(string),
+                    ContentItem::Counter(name, counter_style) if &*name.0 == "list-item" => {
+                        text.push_str(&super::counters::format(index as i32 + 1, counter_style));
+                    }
+                    ContentItem::OpenQuote => {
+                        if let Some((open, _)) = super::counters::quote(style, depth) {
+                            text.push_str(&open);
+                        }
+                        depth += 1;
+                    }
+                    ContentItem::CloseQuote => {
+                        depth = depth.saturating_sub(1);
+                        if let Some((_, close)) = super::counters::quote(style, depth) {
+                            text.push_str(&close);
+                        }
+                    }
+                    ContentItem::NoOpenQuote => depth += 1,
+                    ContentItem::NoCloseQuote => depth = depth.saturating_sub(1),
+                    _ => return None,
+                }
+            }
+            Some(text)
+        }
+    }
+}
+
+/// pyro: the node holding the list item's `::marker` style `style` (created when the item has
+/// none, with the item as its parent), or none, the item's node dropped, without a style.
+fn marker_style_node(
+    doc: &mut BaseDocument,
+    item: NodeId,
+    style: Option<style::servo_arc::Arc<style::properties::ComputedValues>>,
+) -> Option<NodeId> {
+    use markup5ever::{QualName, ns};
+    const NAME: QualName = QualName { prefix: None, ns: ns!(html), local: local_name!("span") };
+    let existing = doc.nodes[item]
+        .element_data()
+        .and_then(|element| element.marker_style)
+        .filter(|&id| doc.nodes.contains_key(id));
+    let Some(style) = style else {
+        if let Some(element) = doc.nodes[item].element_data_mut() {
+            element.marker_style = None;
+        }
+        if let Some(id) = existing {
+            doc.remove_node_from_tree(id);
+        }
+        return None;
+    };
+    let node_id = match existing {
+        Some(node_id) => node_id,
+        None => {
+            let node_id = doc.create_node(crate::NodeData::AnonymousBlock(Box::new(crate::ElementData::new(NAME, Vec::new()))));
+            doc.nodes[item].element_data_mut()?.marker_style = Some(node_id);
+            node_id
+        }
+    };
+    let node = &mut doc.nodes[node_id];
+    node.parent = Some(item);
+    let mut data = style::data::ElementData::default();
+    data.styles.primary = Some(style);
+    data.set_restyled();
+    *node.stylo_element_data_mut().ensure_init_mut() = data;
+    node.update_layout_styles();
+    Some(node_id)
 }
 
 // Determine the marker to render for a given list style type

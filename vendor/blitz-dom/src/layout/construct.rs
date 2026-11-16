@@ -645,7 +645,7 @@ fn collect_layout_children_with_wrap(
         .and_then(|element| element.list_item_data.as_deref())
         .is_some_and(|item| match item.position {
             crate::node::ListItemLayoutPosition::Inside => {
-                matches!(item.marker, crate::node::Marker::String(_))
+                matches!(item.marker, crate::node::Marker::String(_) | crate::node::Marker::Image { .. })
                     || doc.nodes[container_node_id].is_anonymous()
             }
             crate::node::ListItemLayoutPosition::Outside(_) => true,
@@ -986,8 +986,10 @@ fn sync_generated_children(
                 let child = &doc.nodes[child];
                 match piece {
                     Piece::Text(text) => child.text_data().is_some_and(|data| data.content == *text),
-                    Piece::Image(url) => child.element_data().is_some_and(|element| {
-                        element.name.local == local_name!("img") && element.attr(local_name!("src")) == Some(url.as_str())
+                    Piece::Image(url, density) => child.element_data().is_some_and(|element| {
+                        element.name.local == local_name!("img")
+                            && element.attr(local_name!("src")) == Some(url.as_str())
+                            && element.content_image.as_ref().is_some_and(|(_, d)| d.to_bits() == *density)
                     }),
                 }
             })
@@ -1013,7 +1015,7 @@ fn sync_generated_children(
     for piece in pieces {
         let child = match piece {
             Piece::Text(text) => doc.create_text_node(text),
-            Piece::Image(url) => {
+            Piece::Image(url, density) => {
                 let src = crate::node::Attribute {
                     name: QualName::new(None, ns!(), local_name!("src")),
                     value: url.clone(),
@@ -1035,6 +1037,9 @@ fn sync_generated_children(
                 doc.nodes[child].update_layout_styles();
                 if in_document {
                     doc.nodes[child].flags.insert(NodeFlags::IS_IN_DOCUMENT);
+                }
+                if let Some(element) = doc.nodes[child].element_data_mut() {
+                    element.content_image = Some((url.clone(), f32::from_bits(*density)));
                 }
                 doc.load_generated_image(child, url);
                 child
@@ -1411,6 +1416,20 @@ fn create_text_editor(doc: &mut BaseDocument, input_element_id: NodeId, is_multi
         node.attr(local_name!("value")).unwrap_or("").to_string()
     };
     let placeholder = input_placeholder(doc, input_element_id, is_multiline);
+    // pyro: the `text-overflow` ellipsis of the control's lines, in its own style.
+    let ellipsis = doc.nodes[input_element_id]
+        .primary_styles()
+        .and_then(|style| super::inline::build::line_end_ellipsis(&style, true))
+        .map(|text| {
+            let mut font_ctx = doc.font_ctx.lock().unwrap();
+            let mut builder =
+                doc.layout_ctx.tree_builder(&mut font_ctx, doc.viewport.scale(), true, &parley_style);
+            builder.set_base_direction(base_direction);
+            builder.push_text(&text);
+            let mut layout = builder.build().0;
+            layout.break_all_lines(None);
+            (Box::new(layout), text)
+        });
     let node = &mut doc.nodes[input_element_id];
     let is_focussed = node.is_focussed();
     let element = &mut node.data.downcast_element_mut().unwrap();
@@ -1433,6 +1452,7 @@ fn create_text_editor(doc: &mut BaseDocument, input_element_id: NodeId, is_multi
 
     // pyro: a textarea's placeholder is broken into lines at its width by layout.
     text_input_data.placeholder = placeholder;
+    text_input_data.ellipsis = ellipsis;
     let editor = &mut text_input_data.editor;
     editor.set_scale(doc.viewport.scale_f64() as f32);
     editor.set_width(None);

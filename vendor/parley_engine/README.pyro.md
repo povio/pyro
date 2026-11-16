@@ -86,3 +86,28 @@ names the indices of its objects (atomic inline boxes), which are resolved as U+
 around a box resolved as if it were not there. Each paragraph, up to and including a paragraph separator (class B:
 a preserved line feed, U+2029), is resolved on its own (UAX #9 P1); the whole text was one paragraph. The layout's
 paragraph level is the first paragraph's. Covered by `crates/pyro-render/tests/unicode_bidi.rs`.
+
+## Ideographic baselines (WPT round 3, lane I)
+
+`src/shape/shaped_text.rs`: `IdeographicBaselines::from_font_instance` reads `ideo`, `idtp`, `icfb` and `icft` of
+a font's `BASE` table (horizontal axis, the default script's values), for `text-box-edge: ideographic` and
+`ideographic-ink` (WPT `css-inline/text-box-trim`, the BaselineDiagnostic fonts).
+## Tabs
+
+`shape/shaper.rs`: a tab is shaped as a space (browsers do the same): a font without a glyph for U+0009 (Ahem) drew
+its missing-glyph box. `shape/shaped_text.rs` (`ShapedText::set_cluster_advance`): parley's line breaker sets a
+tab's advance to the tab stop it reaches (parley's README.pyro.md, "Tab stops"). Covered by
+`crates/pyro-render/tests/tab_stops.rs`.
+
+## Soft hyphens
+
+`shape/shaped_text.rs`: `RunMetrics::hyphen` / `ShapedRun::hyphen` (the glyph and advance of the font's U+2010, else
+U+002D, kept with the run's cached metrics), `ShapedText::glyph_of` (any other character of a run's font) and
+`ShapedText::set_cluster_glyph`; `shape/data.rs`: `CharacterFlags::is_soft_hyphen`. parley's line breaker shows a
+hyphen where a line ends at a soft hyphen (parley's README.pyro.md, "Soft hyphens").
+
+## Dictionary line breaks
+
+`analyzer.rs` (`LineBreakConfig::no_dictionary`), `analysis.rs` (`SegmenterKey::no_dictionary`): a range of text
+that asks for no dictionary breaks (CSS `word-break: manual`) is segmented by `LineSegmenter::
+new_for_non_complex_scripts` although the `complex-scripts` feature is on.

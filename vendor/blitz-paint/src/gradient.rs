@@ -1,8 +1,9 @@
-use crate::color::{Color, ToColorColor};
+use crate::color::Color;
 use color::DynamicColor;
 use kurbo::{self, Affine, Point, Rect, Vec2};
 use peniko::{self, ColorStop, Gradient, LinearGradientPosition, SweepGradientPosition};
-use style::color::mix::HueInterpolationMethod;
+use style::color::mix::{ColorInterpolationMethod, ColorMixItem};
+use style::values::generics::color::ColorMixFlags;
 use style::color::{AbsoluteColor, ColorSpace as StyloColorSpace};
 use style::{
     OwnedSlice,
@@ -53,76 +54,20 @@ pub(crate) fn to_peniko_gradient(
     scale: f64,
     current_color: &AbsoluteColor,
 ) -> (peniko::Gradient, Option<Affine>) {
-    let (mut peniko_gradient, transform) =
-        to_peniko_gradient_srgb(gradient, origin_rect, bounding_box, scale, current_color);
-    // pyro: the gradient's colour interpolation method (`in hsl`, `in oklch longer hue`; Stylo
-    // makes Oklab the default when a stop uses a modern colour syntax). Stops were interpolated in
-    // sRGB whatever it said.
-    let method = match gradient {
-        GenericGradient::Linear {
-            color_interpolation_method,
-            ..
-        }
-        | GenericGradient::Radial {
-            color_interpolation_method,
-            ..
-        }
-        | GenericGradient::Conic {
-            color_interpolation_method,
-            ..
-        } => color_interpolation_method,
-    };
-    peniko_gradient.interpolation_cs = interpolation_space(method.space);
-    peniko_gradient.hue_direction = match method.hue {
-        HueInterpolationMethod::Longer => color::HueDirection::Longer,
-        HueInterpolationMethod::Increasing => color::HueDirection::Increasing,
-        HueInterpolationMethod::Decreasing => color::HueDirection::Decreasing,
-        HueInterpolationMethod::Shorter | HueInterpolationMethod::Specified => {
-            color::HueDirection::Shorter
-        }
-    };
-    (peniko_gradient, transform)
-}
-
-/// pyro: the colour space of `color`'s crate for a CSS one.
-fn interpolation_space(space: StyloColorSpace) -> color::ColorSpaceTag {
-    use color::ColorSpaceTag as Tag;
-    match space {
-        StyloColorSpace::Srgb => Tag::Srgb,
-        StyloColorSpace::Hsl => Tag::Hsl,
-        StyloColorSpace::Hwb => Tag::Hwb,
-        StyloColorSpace::Lab => Tag::Lab,
-        StyloColorSpace::Lch => Tag::Lch,
-        StyloColorSpace::Oklab => Tag::Oklab,
-        StyloColorSpace::Oklch => Tag::Oklch,
-        StyloColorSpace::SrgbLinear => Tag::LinearSrgb,
-        // `color` has no linear Display P3: the gamma-encoded one is the nearest.
-        StyloColorSpace::DisplayP3 | StyloColorSpace::DisplayP3Linear => Tag::DisplayP3,
-        StyloColorSpace::A98Rgb => Tag::A98Rgb,
-        StyloColorSpace::ProphotoRgb => Tag::ProphotoRgb,
-        StyloColorSpace::Rec2020 => Tag::Rec2020,
-        StyloColorSpace::XyzD50 => Tag::XyzD50,
-        StyloColorSpace::XyzD65 => Tag::XyzD65,
-    }
-}
-
-fn to_peniko_gradient_srgb(
-    gradient: &StyloGradient,
-    origin_rect: Rect,
-    bounding_box: Rect,
-    scale: f64,
-    current_color: &AbsoluteColor,
-) -> (peniko::Gradient, Option<Affine>) {
+    // pyro: the colour interpolation method (`in hsl`, `in oklch longer hue`; Stylo makes Oklab
+    // the default when a stop uses a modern colour syntax) is applied by `Ramp`, which hands
+    // the renderer sRGB samples.
     match gradient {
         // https://developer.mozilla.org/en-US/docs/Web/CSS/gradient/linear-gradient
         GenericGradient::Linear {
             direction,
             items,
             flags,
-            // compat_mode,
+            color_interpolation_method,
             ..
         } => linear_gradient(
             (direction, items, *flags),
+            *color_interpolation_method,
             origin_rect,
             bounding_box,
             scale,
@@ -133,21 +78,53 @@ fn to_peniko_gradient_srgb(
             position,
             items,
             flags,
-            // compat_mode,
+            color_interpolation_method,
             ..
-        } => radial_gradient((shape, position, items, *flags), origin_rect, current_color),
+        } => radial_gradient(
+            (shape, position, items, *flags),
+            *color_interpolation_method,
+            origin_rect,
+            scale,
+            current_color,
+        ),
         GenericGradient::Conic {
             angle,
             position,
             items,
             flags,
+            color_interpolation_method,
             ..
-        } => conic_gradient((angle, position, items, *flags), origin_rect, current_color),
+        } => conic_gradient(
+            (angle, position, items, *flags),
+            *color_interpolation_method,
+            origin_rect,
+            current_color,
+        ),
+    }
+}
+
+/// A stop's position along a gradient line of `length` device px, in units of the line.
+fn length_position(position: &LengthPercentage, length: f64, scale: f64) -> f64 {
+    let css_length = (length / scale) as f32;
+    if css_length > 0.0 && css_length.is_finite() {
+        // Infinite positions (`calc(infinity * 1%)`) stay at their end of the line.
+        let px = position.resolve(CSSPixelLength::new(css_length)).px();
+        (px.clamp(f32::MIN, f32::MAX) as f64 / css_length as f64).clamp(-1e30, 1e30)
+    } else if css_length > 0.0 {
+        // A line without an end: only an infinite position is not at its start.
+        let px = position.resolve(CSSPixelLength::new(f32::MAX)).px();
+        if px >= f32::MAX { 1.0 } else { 0.0 }
+    } else {
+        // No line to measure along: everything is past its end.
+        position
+            .to_percentage_of(CSSPixelLength::new(0.0))
+            .map_or(0.0, |percentage| percentage.to_percentage().unwrap_or(0.0) as f64)
     }
 }
 
 fn linear_gradient(
     gradient: LinearGradient,
+    method: ColorInterpolationMethod,
     rect: Rect,
     bounding_box: Rect,
     scale: f64,
@@ -181,39 +158,60 @@ fn linear_gradient(
             }
         }
         LineDirection::Corner(horizontal, vertical) => {
-            let (start_x, end_x) = match horizontal {
-                HorizontalPositionKeyword::Right => (rect.x0, rect.x1),
-                HorizontalPositionKeyword::Left => (rect.x1, rect.x0),
+            // pyro: "to <corner>" (CSS Images 3 §3.1.1): the line through the centre whose
+            // perpendicular at the midpoint joins the two neighbouring corners, long enough
+            // that the 0% and 100% lines pass through the corners. It was the diagonal itself,
+            // which only a square's is.
+            let (w, h) = (rect.width(), rect.height());
+            let sign_x = match horizontal {
+                HorizontalPositionKeyword::Right => 1.0,
+                HorizontalPositionKeyword::Left => -1.0,
             };
-            let (start_y, end_y) = match vertical {
-                VerticalPositionKeyword::Top => (rect.y1, rect.y0),
-                VerticalPositionKeyword::Bottom => (rect.y0, rect.y1),
+            let sign_y = match vertical {
+                VerticalPositionKeyword::Top => -1.0,
+                VerticalPositionKeyword::Bottom => 1.0,
             };
-            (Point::new(start_x, start_y), Point::new(end_x, end_y))
+            let norm = w.hypot(h);
+            if norm > 0.0 {
+                // Unit direction, perpendicular to the other diagonal.
+                let dir = Vec2::new(sign_x * h / norm, sign_y * w / norm);
+                let half = (w / 2.0) * dir.x.abs() + (h / 2.0) * dir.y.abs();
+                let mid = rect.center();
+                (mid - dir * half, mid + dir * half)
+            } else {
+                (rect.center(), rect.center())
+            }
         }
     };
 
-    let gradient_length = CSSPixelLength::new((start.distance(end) / scale) as f32);
+    let length = start.distance(end);
     let repeating = flags.contains(GradientFlags::REPEATING);
+    let ramp = Ramp::new(items, method, current_color, |position| {
+        length_position(position, length, scale)
+    });
 
     let mut gradient = peniko::Gradient::new_linear(start, end).with_extend(if repeating {
         peniko::Extend::Repeat
     } else {
         peniko::Extend::Pad
     });
-
-    let (first_offset, last_offset) = resolve_length_color_stops(
-        current_color,
-        items,
-        gradient_length,
-        &mut gradient,
-        repeating,
-    );
-    if repeating && gradient.stops.len() > 1 {
-        gradient.kind = peniko::GradientKind::Linear(LinearGradientPosition {
-            start: start + (end - start) * first_offset as f64,
-            end: end + (start - end) * (1.0 - last_offset) as f64,
-        });
+    let mut samples = Vec::new();
+    if repeating {
+        let (first, last) = (ramp.first_offset(), ramp.last_offset());
+        // A period of no length paints the last stop's colour (as Chromium does).
+        if last - first > 0.0 && (last - first) * length >= 1e-3 {
+            ramp.sample(first, last, |t| (t - first) / (last - first), &mut samples);
+            push_samples(&mut gradient, &samples);
+            gradient.kind = peniko::GradientKind::Linear(LinearGradientPosition {
+                start: start + (end - start) * first,
+                end: start + (end - start) * last,
+            });
+        } else {
+            push_solid(&mut gradient, ramp.last_color());
+        }
+    } else {
+        ramp.sample(0.0, 1.0, |t| t, &mut samples);
+        push_samples(&mut gradient, &samples);
     }
 
     (gradient, None)
@@ -221,7 +219,9 @@ fn linear_gradient(
 
 fn radial_gradient(
     gradient: RadialGradient,
+    method: ColorInterpolationMethod,
     rect: Rect,
+    scale: f64,
     current_color: &AbsoluteColor,
 ) -> (peniko::Gradient, Option<Affine>) {
     let (shape, position, items, flags) = gradient;
@@ -295,61 +295,108 @@ fn radial_gradient(
         },
     };
 
-    let gradient_transform = {
-        // If the gradient has no valid scale, we don't need to calculate the color stops
-        if let Some(gradient_scale) = gradient_scale {
-            let (first_offset, last_offset) = resolve_length_color_stops(
-                current_color,
-                items,
-                CSSPixelLength::new(gradient_scale.x as f32),
-                &mut gradient,
-                repeating,
-            );
-            let scale = if repeating && gradient.stops.len() >= 2 {
-                (last_offset - first_offset) as f64
-            } else {
-                1.0
-            };
-            Some(
-                Affine::scale_non_uniform(gradient_scale.x * scale, gradient_scale.y * scale)
-                    .then_translate(get_translation(position, rect)),
-            )
-        } else {
-            None
-        }
+    // If the gradient has no valid scale, we don't need to calculate the color stops
+    let Some(gradient_scale) = gradient_scale else {
+        return (gradient, None);
     };
-
-    (gradient, gradient_transform)
+    let ramp = Ramp::new(items, method, current_color, |position| {
+        length_position(position, gradient_scale.x, scale)
+    });
+    let translation = get_translation(position, rect);
+    // pyro: an ending shape without a width or a height (CSS Images 3 §3.2.3 has it paint as a
+    // shape too small to see), and a gradient whose stops are all before its centre, are the
+    // last stop's colour; so is a repeating one without a period.
+    let (first, last) = (ramp.first_offset(), ramp.last_offset());
+    let degenerate = !(gradient_scale.x > 0.0 && gradient_scale.y > 0.0)
+        || if repeating {
+            !((last - first) * gradient_scale.x.min(gradient_scale.y) >= 1e-3)
+        } else {
+            !(last > 0.0)
+        };
+    if degenerate {
+        push_solid(&mut gradient, ramp.last_color());
+        return (gradient, Some(Affine::translate(translation)));
+    }
+    // A centre or a radius far beyond what the renderer's numbers hold (`at 0% calc(infinity *
+    // 1px)`): the box is a point at that scale, of the one colour at its distance.
+    const FAR: f64 = 1e9;
+    if translation.x.abs() > FAR
+        || translation.y.abs() > FAR
+        || gradient_scale.x > FAR
+        || gradient_scale.y > FAR
+    {
+        let center = rect.center();
+        let t = ((center.x - translation.x) / gradient_scale.x)
+            .hypot((center.y - translation.y) / gradient_scale.y);
+        let t = if t.is_finite() { t } else { 0.0 };
+        push_solid(&mut gradient, Some(ramp.color_at(t)));
+        return (gradient, None);
+    }
+    let mut samples = Vec::new();
+    // The renderer's unit radius is where the last sample is: the last stop, or one period.
+    let reach = if repeating {
+        sample_period_from_zero(&ramp, &mut samples);
+        last - first
+    } else {
+        // A hard stop at the last position ends there: the renderer needs room after it for
+        // the colour that follows.
+        let count = ramp.stops.len();
+        let reach = if count > 1 && ramp.stops[count - 2].offset == last { last * 1.01 } else { last };
+        let reach = reach.min(1e12);
+        ramp.sample(0.0, reach, |t| t / reach, &mut samples);
+        reach
+    };
+    push_samples(&mut gradient, &samples);
+    let transform = Affine::scale_non_uniform(gradient_scale.x * reach, gradient_scale.y * reach)
+        .then_translate(translation);
+    (gradient, Some(transform))
 }
 
 fn conic_gradient(
     gradient: ConicGradient,
+    method: ColorInterpolationMethod,
     rect: Rect,
     current_color: &AbsoluteColor,
 ) -> (peniko::Gradient, Option<Affine>) {
     let (angle, position, items, flags) = gradient;
+    const TURN: f32 = std::f32::consts::PI * 2.0;
 
     let repeating = flags.contains(GradientFlags::REPEATING);
-    let mut gradient = peniko::Gradient::new_sweep((0.0, 0.0), 0.0, std::f32::consts::PI * 2.0)
-        .with_extend(if repeating {
-            peniko::Extend::Repeat
-        } else {
-            peniko::Extend::Pad
-        });
-
-    let (first_offset, last_offset) = resolve_angle_color_stops(
-        current_color,
-        items,
-        CSSPixelLength::new(1.0),
-        &mut gradient,
-        repeating,
-    );
-    if repeating && gradient.stops.len() >= 2 {
+    let mut gradient = peniko::Gradient::new_sweep((0.0, 0.0), 0.0, TURN);
+    let ramp = Ramp::new(items, method, current_color, |position| match position {
+        AngleOrPercentage::Angle(angle) => angle.radians64() / (std::f64::consts::PI * 2.0),
+        AngleOrPercentage::Percentage(percentage) => {
+            percentage.to_percentage().unwrap_or(0.0) as f64
+        }
+    });
+    let mut samples = Vec::new();
+    let period = ramp.last_offset() - ramp.first_offset();
+    if !repeating {
+        ramp.sample(0.0, 1.0, |t| t, &mut samples);
+        push_samples(&mut gradient, &samples);
+    } else if period >= 1e-5 && period < 1.0 {
+        sample_period_from_zero(&ramp, &mut samples);
+        push_samples(&mut gradient, &samples);
+        gradient = gradient.with_extend(peniko::Extend::Repeat);
         gradient.kind = peniko::GradientKind::Sweep(SweepGradientPosition {
             center: Point::new(0.0, 0.0),
-            start_angle: std::f32::consts::PI * 2.0 * first_offset,
-            end_angle: std::f32::consts::PI * 2.0 * last_offset,
+            start_angle: 0.0,
+            end_angle: TURN * period as f32,
         });
+    } else if period >= 1.0 {
+        // The turn is within one period: the part of it from 0, cut at the turn's end.
+        let first = ramp.first_offset();
+        let into = (-first).rem_euclid(period);
+        let room = period - into;
+        if room >= 1.0 {
+            ramp.sample(first + into, first + into + 1.0, |t| t - first - into, &mut samples);
+        } else {
+            ramp.sample(first + into, first + period, |t| t - first - into, &mut samples);
+            ramp.sample(first, first + 1.0 - room, |t| t - first + room, &mut samples);
+        }
+        push_samples(&mut gradient, &samples);
+    } else {
+        push_solid(&mut gradient, ramp.last_color());
     }
 
     let gradient_transform = Some(
@@ -360,199 +407,345 @@ fn conic_gradient(
     (gradient, gradient_transform)
 }
 
-#[inline]
-fn resolve_length_color_stops(
-    current_color: &AbsoluteColor,
-    items: &[GradientItem<LengthPercentage>],
-    gradient_length: CSSPixelLength,
-    gradient: &mut Gradient,
-    repeating: bool,
-) -> (f32, f32) {
-    resolve_color_stops(
-        current_color,
-        items,
-        gradient_length,
-        gradient,
-        repeating,
-        |gradient_length: CSSPixelLength, position: &LengthPercentage| -> Option<f32> {
-            position
-                .to_percentage_of(gradient_length)
-                .map(|percentage| percentage.to_percentage().unwrap_or(0.0))
-        },
-    )
+/// pyro: a gradient's colour stops after the fix-up of CSS Images 3 §3.4.3, evaluated here
+/// rather than by the renderer: positions in units of the gradient line (0 its start, 1 its
+/// end; turns for a conic gradient), in order, with the colours as specified. The renderer gets
+/// sRGB samples of it (`sample`), which it interpolates premultiplied: the stops the stylesheet
+/// gave where that is all the interpolation there is (sRGB, no hints), and as many more as the
+/// curve needs in another colour space (`in oklch longer hue`) or under a transition hint.
+///
+/// Before, the stops went to the renderer as they were, with the colour space as a setting: a
+/// stop before 0 or past 1 was not cut where the gradient box ends, the padding stops the old
+/// code added were interpolated with the neighbour (`longer hue` between the last stop and its
+/// own copy went once round the hue circle), and stops in decreasing order were not fixed up.
+struct Ramp {
+    stops: Vec<RampStop>,
+    method: ColorInterpolationMethod,
 }
 
-#[inline]
-fn resolve_color_stops<T>(
-    current_color: &AbsoluteColor,
-    items: &[GradientItem<T>],
-    gradient_length: CSSPixelLength,
-    gradient: &mut Gradient,
-    repeating: bool,
-    item_resolver: impl Fn(CSSPixelLength, &T) -> Option<f32>,
-) -> (f32, f32) {
-    let mut hint: Option<f32> = None;
+struct RampStop {
+    offset: f64,
+    color: AbsoluteColor,
+    /// A transition hint between the previous stop and this one: where the midpoint colour is,
+    /// as a fraction of the way from that stop to this one.
+    hint: Option<f64>,
+}
 
-    for (idx, item) in items.iter().enumerate() {
-        let (color, offset) = match item {
-            GenericGradientItem::SimpleColorStop(color) => {
-                let step = 1.0 / (items.len() as f32 - 1.0);
-                (
-                    color.resolve_to_absolute(current_color).as_dynamic_color(),
-                    step * idx as f32,
-                )
-            }
-            GenericGradientItem::ComplexColorStop { color, position } => {
-                let offset = item_resolver(gradient_length, position);
-                if let Some(offset) = offset {
-                    (
-                        color.resolve_to_absolute(current_color).as_dynamic_color(),
-                        offset,
-                    )
-                } else {
-                    continue;
+/// Premultiplied sRGB.
+type Sample = [f32; 4];
+
+impl Ramp {
+    fn new<T>(
+        items: &[GradientItem<T>],
+        method: ColorInterpolationMethod,
+        current_color: &AbsoluteColor,
+        position_of: impl Fn(&T) -> f64,
+    ) -> Self {
+        // Colour stops with their positions, and the hint before each.
+        let mut stops: Vec<(Option<f64>, AbsoluteColor, Option<f64>)> = Vec::new();
+        let mut hint = None;
+        for item in items {
+            match item {
+                GenericGradientItem::SimpleColorStop(color) => {
+                    stops.push((None, color.resolve_to_absolute(current_color), hint.take()));
+                }
+                GenericGradientItem::ComplexColorStop { color, position } => {
+                    let position = position_of(position);
+                    let position = if position.is_finite() { position } else { 0.0 };
+                    stops.push((
+                        Some(position),
+                        color.resolve_to_absolute(current_color),
+                        hint.take(),
+                    ));
+                }
+                GenericGradientItem::InterpolationHint(position) => {
+                    let position = position_of(position);
+                    hint = position.is_finite().then_some(position);
                 }
             }
-            GenericGradientItem::InterpolationHint(position) => {
-                hint = item_resolver(gradient_length, position);
+        }
+        let count = stops.len();
+        if count == 0 {
+            return Self { stops: Vec::new(), method };
+        }
+        // 1. The first stop is at 0 and the last at 1 unless they say where they are.
+        stops[0].0.get_or_insert(0.0);
+        stops[count - 1].0.get_or_insert(1.0);
+        // 2. A stop or hint before one that precedes it moves up to it.
+        let mut furthest = f64::NEG_INFINITY;
+        for (position, _, hint) in &mut stops {
+            if let Some(hint) = hint {
+                *hint = hint.max(furthest);
+                furthest = *hint;
+            }
+            if let Some(position) = position {
+                *position = position.max(furthest);
+                furthest = *position;
+            }
+        }
+        // 3. A run of stops without positions is spaced evenly between its neighbours.
+        let mut i = 1;
+        while i < count {
+            if stops[i].0.is_some() {
+                i += 1;
                 continue;
             }
-        };
-
-        if idx == 0 && !repeating && offset != 0.0 {
-            gradient
-                .stops
-                .push(peniko::ColorStop { color, offset: 0.0 });
-        }
-
-        match hint {
-            None => gradient.stops.push(peniko::ColorStop { color, offset }),
-            Some(hint) => {
-                let &last_stop = gradient.stops.last().unwrap();
-
-                if hint <= last_stop.offset {
-                    // Upstream code has a bug here, so we're going to do something different
-                    match gradient.stops.len() {
-                        0 => (),
-                        1 => {
-                            gradient.stops.pop();
-                        }
-                        _ => {
-                            let prev_stop = gradient.stops[gradient.stops.len() - 2];
-                            if prev_stop.offset == hint {
-                                gradient.stops.pop();
-                            }
-                        }
-                    }
-                    gradient.stops.push(peniko::ColorStop {
-                        color,
-                        offset: hint,
-                    });
-                } else if hint >= offset {
-                    gradient.stops.push(peniko::ColorStop {
-                        color: last_stop.color,
-                        offset: hint,
-                    });
-                    gradient.stops.push(peniko::ColorStop {
-                        color,
-                        offset: last_stop.offset,
-                    });
-                } else if hint == (last_stop.offset + offset) / 2.0 {
-                    gradient.stops.push(peniko::ColorStop { color, offset });
-                } else {
-                    let mid_point = (hint - last_stop.offset) / (offset - last_stop.offset);
-                    let mut interpolate_stop = |cur_offset: f32| {
-                        let relative_offset =
-                            (cur_offset - last_stop.offset) / (offset - last_stop.offset);
-                        let multiplier = relative_offset.powf(0.5f32.log(mid_point));
-                        let [last_r, last_g, last_b, last_a] = last_stop.color.components;
-                        let [r, g, b, a] = color.components;
-
-                        let color = Color::new([
-                            (last_r + multiplier * (r - last_r)),
-                            (last_g + multiplier * (g - last_g)),
-                            (last_b + multiplier * (b - last_b)),
-                            (last_a + multiplier * (a - last_a)),
-                        ]);
-                        gradient.stops.push(peniko::ColorStop {
-                            color: DynamicColor::from_alpha_color(color),
-                            offset: cur_offset,
-                        });
-                    };
-                    if mid_point > 0.5 {
-                        for i in 0..7 {
-                            interpolate_stop(
-                                last_stop.offset
-                                    + (hint - last_stop.offset) * (7.0 + i as f32) / 13.0,
-                            );
-                        }
-                        interpolate_stop(hint + (offset - hint) / 3.0);
-                        interpolate_stop(hint + (offset - hint) * 2.0 / 3.0);
-                    } else {
-                        interpolate_stop(last_stop.offset + (hint - last_stop.offset) / 3.0);
-                        interpolate_stop(last_stop.offset + (hint - last_stop.offset) * 2.0 / 3.0);
-                        for i in 0..7 {
-                            interpolate_stop(hint + (offset - hint) * (i as f32) / 13.0);
-                        }
-                    }
-                    gradient.stops.push(peniko::ColorStop { color, offset });
-                }
+            let run_end = (i..count).find(|&j| stops[j].0.is_some()).unwrap_or(count - 1);
+            let from = stops[i - 1].0.unwrap_or(0.0);
+            let to = stops[run_end].0.unwrap_or(from);
+            let steps = (run_end - (i - 1)) as f64;
+            for j in i..run_end {
+                stops[j].0 = Some(from + (to - from) * (j - (i - 1)) as f64 / steps);
             }
+            i = run_end + 1;
+        }
+        let mut ramp = Vec::with_capacity(count);
+        for (idx, (position, color, hint)) in stops.iter().enumerate() {
+            let offset = position.unwrap_or(0.0);
+            let previous = if idx == 0 { offset } else { ramp_offset(&ramp, idx - 1) };
+            let hint = hint.and_then(|hint| {
+                let span = offset - previous;
+                (span > 0.0).then(|| ((hint - previous) / span).clamp(0.0, 1.0))
+            });
+            // The midpoint is where the hint puts it without one.
+            let hint = hint.filter(|fraction| (*fraction - 0.5).abs() > 1e-9);
+            ramp.push(RampStop { offset, color: *color, hint });
+        }
+        Self { stops: ramp, method }
+    }
+
+    fn first_offset(&self) -> f64 {
+        self.stops.first().map_or(0.0, |stop| stop.offset)
+    }
+
+    fn last_offset(&self) -> f64 {
+        self.stops.last().map_or(0.0, |stop| stop.offset)
+    }
+
+    fn last_color(&self) -> Option<Sample> {
+        self.stops.last().map(|stop| srgb_sample(&stop.color))
+    }
+
+    /// The colour at `t` inside segment `segment` (between stops `segment` and `segment + 1`;
+    /// -1 is before the first stop, the last index after the last one).
+    fn color_in(&self, segment: isize, t: f64) -> Sample {
+        let last = self.stops.len() as isize - 1;
+        if segment < 0 {
+            return srgb_sample(&self.stops[0].color);
+        }
+        if segment >= last {
+            return srgb_sample(&self.stops[last as usize].color);
+        }
+        let from = &self.stops[segment as usize];
+        let to = &self.stops[segment as usize + 1];
+        let span = to.offset - from.offset;
+        let mut fraction = if span > 0.0 { ((t - from.offset) / span).clamp(0.0, 1.0) } else { 1.0 };
+        if let Some(hint) = to.hint {
+            // CSS Images 4 §3.5.3: the hint's position H gets the midpoint colour.
+            fraction = if hint <= 0.0 {
+                1.0
+            } else if hint >= 1.0 {
+                0.0
+            } else {
+                fraction.powf(0.5f64.ln() / hint.ln())
+            };
+        }
+        // A missing component is the other stop's across the whole segment, its ends too
+        // (`color(srgb none 0.5 0.5)` after a red stop is red there): those go through the mix.
+        let missing = has_missing(&from.color) || has_missing(&to.color);
+        if fraction <= 0.0 && !missing {
+            return srgb_sample(&from.color);
+        }
+        if fraction >= 1.0 && !missing {
+            return srgb_sample(&to.color);
+        }
+        let fraction = fraction.clamp(0.0, 1.0) as f32;
+        let mixed = style::color::mix::mix_many(
+            self.method,
+            [
+                ColorMixItem::new(from.color, 1.0 - fraction),
+                ColorMixItem::new(to.color, fraction),
+            ],
+            ColorMixFlags::empty(),
+        );
+        // `mix_many` rounds the alpha to thousandths: take the exact one (a missing alpha is
+        // the other side's, which the mix has).
+        let alpha = from.color.alpha + (to.color.alpha - from.color.alpha) * fraction;
+        let mut sample = srgb_sample(&mixed);
+        let old_alpha = sample[3];
+        let missing = style::color::ColorFlags::ALPHA_IS_NONE;
+        if old_alpha > 0.0 && !from.color.flags.contains(missing) && !to.color.flags.contains(missing) {
+            let alpha = alpha.clamp(0.0, 1.0);
+            for channel in &mut sample[..3] {
+                *channel = *channel / old_alpha * alpha;
+            }
+            sample[3] = alpha;
+        }
+        sample
+    }
+
+    /// The colour at `t` (past a hard stop at `t`).
+    fn color_at(&self, t: f64) -> Sample {
+        if self.stops.is_empty() {
+            return [0.0; 4];
+        }
+        let segment = self.stops.iter().filter(|stop| stop.offset <= t).count() as isize - 1;
+        self.color_in(segment, t)
+    }
+
+    /// Whether the renderer's premultiplied sRGB interpolation between the ends of `segment` is
+    /// not the gradient's.
+    fn curved(&self, segment: isize) -> bool {
+        if segment < 0 || segment >= self.stops.len() as isize - 1 {
+            return false;
+        }
+        let to = &self.stops[segment as usize + 1];
+        let from = &self.stops[segment as usize];
+        to.hint.is_some()
+            || self.method.space != StyloColorSpace::Srgb
+            || has_missing(&from.color)
+            || has_missing(&to.color)
+    }
+
+    /// Samples of `[from, to]` (`from < to`), appended to `out` with `at(t)` as their offsets.
+    fn sample(&self, from: f64, to: f64, at: impl Fn(f64) -> f64, out: &mut Vec<(f64, Sample)>) {
+        if self.stops.is_empty() {
+            return;
+        }
+        let mut breaks = vec![from];
+        for stop in &self.stops {
+            if stop.offset > from && stop.offset < to && breaks.last() != Some(&stop.offset) {
+                breaks.push(stop.offset);
+            }
+        }
+        breaks.push(to);
+        // How finely a curved segment may be cut: 2^depth pieces.
+        let depth = if breaks.len() > 9 { 6 } else { 9 };
+        for pair in breaks.windows(2) {
+            let (p, q) = (pair[0], pair[1]);
+            let middle = p + (q - p) / 2.0;
+            let segment = self.stops.iter().filter(|stop| stop.offset <= middle).count() as isize - 1;
+            let start = self.color_in(segment, p);
+            let end = self.color_in(segment, q);
+            out.push((at(p), start));
+            if self.curved(segment) && start != end {
+                self.subdivide(segment, (p, start), (q, end), depth, 3, &at, out);
+            } else if self.curved(segment) {
+                // Equal ends are not a constant colour: a full turn of hue ends where it began.
+                self.subdivide(segment, (p, start), (q, end), depth, 4, &at, out);
+            }
+            out.push((at(q), end));
         }
     }
 
-    // Post-process the stops for repeating gradients
-    if repeating && gradient.stops.len() > 1 {
-        let first_offset = gradient.stops.first().unwrap().offset;
-        let last_offset = gradient.stops.last().unwrap().offset;
-        if first_offset != 0.0 || last_offset != 1.0 {
-            let scale_inv = 1e-7_f32.max(1.0 / (last_offset - first_offset));
-            for stop in &mut *gradient.stops {
-                stop.offset = (stop.offset - first_offset) * scale_inv;
-            }
+    /// The samples strictly between two of a curved segment: its halves, until the renderer's
+    /// line between two samples is within a quarter level of the curve's middle (`forced`
+    /// levels are cut regardless: a curve can cross its chord at the middle).
+    #[allow(clippy::too_many_arguments)]
+    fn subdivide(
+        &self,
+        segment: isize,
+        (p, start): (f64, Sample),
+        (q, end): (f64, Sample),
+        depth: u32,
+        forced: u32,
+        at: &impl Fn(f64) -> f64,
+        out: &mut Vec<(f64, Sample)>,
+    ) {
+        if depth == 0 {
+            return;
         }
-        (first_offset, last_offset)
-    } else {
-        // Ensure that the gradient ends at offset 1.0
-        if gradient.stops.len() > 1 {
-            let last_stop = &gradient.stops.last().unwrap();
-            if last_stop.offset < 1.0 {
-                let last_stop = ColorStop {
-                    offset: 1.0,
-                    ..(**last_stop)
-                };
-                gradient.stops.push(last_stop);
-            }
+        let middle = p + (q - p) / 2.0;
+        if !(middle > p && middle < q) {
+            return;
         }
-        (0.0, 1.0)
+        let color = self.color_in(segment, middle);
+        let off = (0..4)
+            .map(|i| (color[i] - (start[i] + end[i]) / 2.0).abs())
+            .fold(0.0f32, f32::max);
+        if forced == 0 && off <= 0.25 / 255.0 {
+            return;
+        }
+        let forced = forced.saturating_sub(1);
+        self.subdivide(segment, (p, start), (middle, color), depth - 1, forced, at, out);
+        out.push((at(middle), color));
+        self.subdivide(segment, (middle, color), (q, end), depth - 1, forced, at, out);
     }
 }
 
-#[inline]
-fn resolve_angle_color_stops(
-    current_color: &AbsoluteColor,
-    items: &[GradientItem<AngleOrPercentage>],
-    gradient_length: CSSPixelLength,
-    gradient: &mut Gradient,
-    repeating: bool,
-) -> (f32, f32) {
-    resolve_color_stops(
-        current_color,
-        items,
-        gradient_length,
-        gradient,
-        repeating,
-        |_gradient_length: CSSPixelLength, position: &AngleOrPercentage| -> Option<f32> {
-            match position {
-                AngleOrPercentage::Angle(angle) => {
-                    Some(angle.radians() / (std::f64::consts::PI * 2.0) as f32)
-                }
-                AngleOrPercentage::Percentage(percentage) => {
-                    Some(percentage.to_percentage().unwrap_or(0.0))
-                }
+/// Whether a component of `color` is `none`.
+fn has_missing(color: &AbsoluteColor) -> bool {
+    use style::color::ColorFlags as F;
+    color.flags.intersects(F::C0_IS_NONE | F::C1_IS_NONE | F::C2_IS_NONE | F::ALPHA_IS_NONE)
+}
+
+fn ramp_offset(ramp: &[RampStop], idx: usize) -> f64 {
+    ramp[idx].offset
+}
+
+/// `color` in premultiplied sRGB, clipped to the gamut.
+fn srgb_sample(color: &AbsoluteColor) -> Sample {
+    let srgb = color.to_color_space(StyloColorSpace::Srgb);
+    let [r, g, b, a] = *srgb.raw_components();
+    let fix = |c: f32| if c.is_finite() { c.clamp(0.0, 1.0) } else { 0.0 };
+    let a = fix(a);
+    [fix(r) * a, fix(g) * a, fix(b) * a, a]
+}
+
+/// The renderer's stops for samples (offsets in 0..=1, in order).
+fn push_samples(gradient: &mut Gradient, samples: &[(f64, Sample)]) {
+    let mut last: Option<(f32, Sample)> = None;
+    let mut run = 0;
+    for &(offset, sample) in samples {
+        let offset = (offset as f32).clamp(0.0, 1.0);
+        // At one offset the first and the last sample count (a hard stop): drop those between.
+        if let Some((last_offset, last_sample)) = last {
+            if last_offset == offset && last_sample == sample {
+                continue;
             }
-        },
-    )
+            if last_offset == offset {
+                run += 1;
+                if run > 1 {
+                    gradient.stops.pop();
+                }
+            } else {
+                run = 0;
+            }
+        }
+        last = Some((offset, sample));
+        let [r, g, b, a] = sample;
+        let color = if a > 0.0 { [r / a, g / a, b / a, a] } else { [0.0, 0.0, 0.0, 0.0] };
+        gradient.stops.push(ColorStop {
+            offset,
+            color: DynamicColor::from_alpha_color(Color::new(color)),
+        });
+    }
+    // The renderer needs two stops.
+    if gradient.stops.len() == 1 {
+        let stop = gradient.stops[0];
+        gradient.stops.push(ColorStop { offset: 1.0, ..stop });
+    }
+}
+
+/// A gradient of one colour.
+fn push_solid(gradient: &mut Gradient, sample: Option<Sample>) {
+    if let Some(sample) = sample {
+        push_samples(gradient, &[(0.0, sample), (1.0, sample)]);
+    }
+}
+
+/// One period of a repeating ramp as it lies from 0 (the centre of a radial gradient, the start
+/// angle of a conic one): the part of the period that 0 falls in, then the period's start.
+fn sample_period_from_zero(ramp: &Ramp, out: &mut Vec<(f64, Sample)>) {
+    let first = ramp.first_offset();
+    let period = ramp.last_offset() - first;
+    let into = (-first).rem_euclid(period);
+    if into > 0.0 && into < period {
+        ramp.sample(first + into, first + period, |t| (t - first - into) / period, out);
+        ramp.sample(first, first + into, |t| (t - first + period - into) / period, out);
+    } else {
+        ramp.sample(first, first + period, |t| (t - first) / period, out);
+    }
 }
 
 #[inline]

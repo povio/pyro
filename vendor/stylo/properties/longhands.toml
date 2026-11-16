@@ -648,39 +648,39 @@ affects = "layout"
 type = "ContainIntrinsicSize"
 initial = "computed::ContainIntrinsicSize::None"
 struct = "position"
-engine = "gecko"
 logical_group = "contain-intrinsic-size"
 logical = true
 spec = "https://drafts.csswg.org/css-sizing-4/#intrinsic-size-override"
 affects = "layout"
+servo_restyle_damage = "rebuild_box"
 
 [contain-intrinsic-height]
 type = "ContainIntrinsicSize"
 initial = "computed::ContainIntrinsicSize::None"
 struct = "position"
-engine = "gecko"
 logical_group = "contain-intrinsic-size"
 spec = "https://drafts.csswg.org/css-sizing-4/#intrinsic-size-override"
 affects = "layout"
+servo_restyle_damage = "rebuild_box"
 
 [contain-intrinsic-inline-size]
 type = "ContainIntrinsicSize"
 initial = "computed::ContainIntrinsicSize::None"
 struct = "position"
-engine = "gecko"
 logical_group = "contain-intrinsic-size"
 logical = true
 spec = "https://drafts.csswg.org/css-sizing-4/#intrinsic-size-override"
 affects = "layout"
+servo_restyle_damage = "rebuild_box"
 
 [contain-intrinsic-width]
 type = "ContainIntrinsicSize"
 initial = "computed::ContainIntrinsicSize::None"
 struct = "position"
-engine = "gecko"
 logical_group = "contain-intrinsic-size"
 spec = "https://drafts.csswg.org/css-sizing-4/#intrinsic-size-override"
 affects = "layout"
+servo_restyle_damage = "rebuild_box"
 
 [container-name]
 type = "ContainerName"
@@ -1438,6 +1438,17 @@ initial = "computed::Position::center()"
 struct = "position"
 boxed = true
 spec = "https://drafts.csswg.org/css-images-3/#the-object-position"
+affects = "layout"
+
+# pyro: `object-view-box: none | <basic-shape-rect>` (CSS Images 5): the part of a replaced
+# element's content that is its view, as a `clip-path` value of `none` or one rectangle.
+[object-view-box]
+type = "basic_shape::ClipPath"
+initial = "generics::basic_shape::ClipPath::None"
+struct = "position"
+parse_method = "parse_object_view_box"
+animation_type = "discrete"
+spec = "https://drafts.csswg.org/css-images-5/#the-object-view-box"
 affects = "layout"
 
 [offset-anchor]
@@ -3395,9 +3406,9 @@ affects = "layout"
 type = "MarginTrim"
 initial = "computed::MarginTrim::empty()"
 struct = "margin"
-engine = "gecko"
 gecko_pref = "layout.css.margin-trim.enabled"
 animation_type = "none"
+servo_restyle_damage = "rebuild_box"
 spec = "https://drafts.csswg.org/css-box-4/#propdef-margin-trim"
 affects = "layout"
 
@@ -3913,9 +3924,9 @@ affects = "layout"
 type = "TextOrientation"
 initial = "computed::TextOrientation::Mixed"
 
+# pyro: for Servo too (blitz-dom and blitz-paint show an image turned back under `none`).
 [image-orientation]
 struct = "inherited_box"
-engine = "gecko"
 spec = "https://drafts.csswg.org/css-images/#propdef-image-orientation"
 animation_type = "discrete"
 affects = "layout"
@@ -4299,6 +4310,19 @@ animation_type = "discrete"
 affects = "layout"
 gecko_ffi_name = "mBoxOrient"
 aliases = ["-webkit-box-orient"]
+type = "BoxOrient"
+initial = "computed::BoxOrient::Horizontal"
+
+# pyro: `-webkit-box-orient` for the servo engine (the gecko one is `-moz-box-orient`'s alias):
+# with `display: -webkit-box` and `-webkit-line-clamp` it makes the legacy line clamp apply
+# (`StyleAdjuster::adjust_for_webkit_box`).
+[-webkit-box-orient]
+struct = "box"
+engine = "servo"
+spec = "Nonstandard (https://developer.mozilla.org/en-US/docs/Web/CSS/box-orient)"
+animation_type = "discrete"
+affects = "layout"
+servo_restyle_damage = "rebuild_box"
 type = "BoxOrient"
 initial = "computed::BoxOrient::Horizontal"
 

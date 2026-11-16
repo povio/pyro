@@ -122,7 +122,7 @@ fn is_block_container(display: Display) -> bool {
     }
 }
 
-fn is_out_of_flow(style: &ComputedValues) -> bool {
+pub(super) fn is_out_of_flow(style: &ComputedValues) -> bool {
     CopyStyleGetters::clone_float(style) != Float::None
         || CopyStyleGetters::clone_position(style).is_absolutely_positioned()
 }

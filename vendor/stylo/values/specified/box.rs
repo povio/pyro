@@ -15,7 +15,7 @@ use crate::values::generics::box_::{
     GenericLineClamp, GenericOverflowClipMargin, GenericPerspective, GenericScrollbarInset,
     MaxLines, OverflowClipMarginBox,
 };
-use crate::values::specified::length::{LengthPercentage, NonNegativeLength};
+use crate::values::specified::length::{Length, LengthPercentage, NonNegativeLength};
 use crate::values::specified::{AllowQuirks, NonNegativeNumberOrPercentage, PositiveInteger};
 use cssparser::Parser;
 use num_traits::FromPrimitive;
@@ -75,19 +75,19 @@ bitflags! {
 }
 
 /// The specified value of `overflow-clip-margin`.
-pub type OverflowClipMargin = GenericOverflowClipMargin<NonNegativeLength>;
+/// pyro: any length, as Blink takes it (a negative one moves the clip edge inwards; WPT
+/// `overflow-clip-margin-016`, `-017`), where the specification has `<length [0,∞]>`.
+pub type OverflowClipMargin = GenericOverflowClipMargin<Length>;
 
 impl Parse for OverflowClipMargin {
-    // <visual-box> || <length [0,∞]>
+    // <visual-box> || <length>
     fn parse(context: &ParserContext, input: &mut Parser) -> Result<Self, ParseError> {
         use crate::Zero;
         let mut offset = None;
         let mut visual_box = None;
         loop {
             if offset.is_none() {
-                offset = input
-                    .try_parse(|i| NonNegativeLength::parse(context, i))
-                    .ok();
+                offset = input.try_parse(|i| Length::parse(context, i)).ok();
             }
             if visual_box.is_none() {
                 visual_box = input.try_parse(OverflowClipMarginBox::parse).ok();
@@ -101,7 +101,7 @@ impl Parse for OverflowClipMargin {
             return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError));
         }
         Ok(Self {
-            offset: offset.unwrap_or_else(NonNegativeLength::zero),
+            offset: offset.unwrap_or_else(Length::zero),
             visual_box: visual_box.unwrap_or(OverflowClipMarginBox::PaddingBox),
         })
     }
@@ -171,7 +171,8 @@ pub enum DisplayInside {
     RubyText,
     #[cfg(feature = "gecko")]
     RubyTextContainer,
-    #[cfg(feature = "gecko")]
+    /// pyro: parsed by the servo engine too; never a computed value there
+    /// (`StyleAdjuster::adjust_for_webkit_box`).
     WebkitBox,
 }
 
@@ -239,7 +240,6 @@ impl Display {
     );
     pub const Block: Self =
         Self(((DisplayOutside::Block as u16) << Self::OUTSIDE_SHIFT) | DisplayInside::Flow as u16);
-    #[cfg(feature = "gecko")]
     pub const FlowRoot: Self = Self(
         ((DisplayOutside::Block as u16) << Self::OUTSIDE_SHIFT) | DisplayInside::FlowRoot as u16,
     );
@@ -268,11 +268,9 @@ impl Display {
     #[cfg(feature = "gecko")]
     pub const Ruby: Self =
         Self(((DisplayOutside::Inline as u16) << Self::OUTSIDE_SHIFT) | DisplayInside::Ruby as u16);
-    #[cfg(feature = "gecko")]
     pub const WebkitBox: Self = Self(
         ((DisplayOutside::Block as u16) << Self::OUTSIDE_SHIFT) | DisplayInside::WebkitBox as u16,
     );
-    #[cfg(feature = "gecko")]
     pub const WebkitInlineBox: Self = Self(
         ((DisplayOutside::Inline as u16) << Self::OUTSIDE_SHIFT) | DisplayInside::WebkitBox as u16,
     );
@@ -529,9 +527,7 @@ impl DisplayKeyword {
             "ruby-text" => Full(Display::RubyText),
             #[cfg(feature = "gecko")]
             "ruby-text-container" => Full(Display::RubyTextContainer),
-            #[cfg(feature = "gecko")]
             "-webkit-box" => Full(Display::WebkitBox),
-            #[cfg(feature = "gecko")]
             "-webkit-inline-box" => Full(Display::WebkitInlineBox),
 
             /// <display-outside> = block | inline | run-in
@@ -566,7 +562,6 @@ impl ToCss for Display {
         match *self {
             Display::Block | Display::Inline => outside.to_css(dest),
             Display::InlineBlock => dest.write_str("inline-block"),
-            #[cfg(feature = "gecko")]
             Display::WebkitInlineBox => dest.write_str("-webkit-inline-box"),
             Display::TableCaption => dest.write_str("table-caption"),
             _ => match (outside, inside) {

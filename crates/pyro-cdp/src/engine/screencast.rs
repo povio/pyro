@@ -136,6 +136,7 @@ struct Look {
     view: (u32, u32, u64, bool, bool),
     scroll: (u64, u64),
     element_scroll: Vec<(u64, (f64, f64))>,
+    sticky_offsets: Vec<(u64, (f64, f64))>,
     hovered: Option<u64>,
     focused: Option<u64>,
     /// Canvas and video bitmaps: a changed one is a new `Arc` (held here,
@@ -152,6 +153,7 @@ impl PartialEq for Look {
             && self.view == other.view
             && self.scroll == other.scroll
             && self.element_scroll == other.element_scroll
+            && self.sticky_offsets == other.sticky_offsets
             && self.hovered == other.hovered
             && self.focused == other.focused
             && self.bitmaps.len() == other.bitmaps.len()
@@ -169,6 +171,7 @@ fn look(browser: &Browser, pid: PageId) -> Option<Look> {
         view: (v.width, v.height, v.device_scale_factor.to_bits(), v.dark, v.print),
         scroll: (v.scroll_x.to_bits(), v.scroll_y.to_bits()),
         element_scroll: v.element_scroll,
+        sticky_offsets: v.sticky_offsets,
         hovered: v.hovered,
         focused: v.focused,
         bitmaps: v.canvases.into_iter().map(|(node, _, _, rgba)| (node, rgba)).collect(),
