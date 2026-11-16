@@ -294,3 +294,15 @@ fn a_shadow_host_matches_focus_while_its_shadow_tree_holds_the_focused_element()
     renderer.set_interaction(1, None, None, false);
     assert_eq!(background(&renderer.element_style(1, host).unwrap()), RED);
 }
+
+#[test]
+fn part_rules_of_an_outer_shadow_tree() {
+    // `display-el::part(icon)` in the shadow tree that holds `display-el` styles its part.
+    let r = styled(
+        "<wrapper-el><template shadowrootmode=open><style>display-el::part(icon){background:green}</style>\
+         <display-el><template shadowrootmode=open><style>div{width:16px;height:16px;background:red}</style>\
+         <div id=icon part=icon></div></template></display-el></template></wrapper-el>",
+        &["icon"],
+    );
+    assert_eq!(background(&r[0].1), GREEN);
+}
