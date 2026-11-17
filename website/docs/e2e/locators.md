@@ -103,7 +103,7 @@ These rules apply to role names, `text`, `label` and `placeholder`:
 - **`{ exact: true }`** makes it a whole, case-sensitive match after normalization. `text('domestic', { exact: true })` does not match "Domestic".
 - **A `RegExp`** is tested against the normalized text and ignores `exact`. Flags `i`, `m` and `s` are kept; `g`, `y` and `u` are dropped by the builder. The browser runs it with JavaScript semantics: look-ahead, look-behind, backreferences and named groups work.
 
-`text()` finds the **smallest** elements whose text matches: an element matches when its text matches and none of its child elements' text does. `<script>`, `<style>`, `<noscript>`, `<template>`, `<head>` and `<title>` are skipped. With an exact string, an element also matches when one run of its own text nodes equals the string, so `text('TS-1', { exact: true })` finds `<span><span>|</span>TS-1</span>`.
+`text()` follows Playwright's `getByText`: an element matches when its whole text matches and none of its child elements' text does. With `{ exact: true }` the whole text must equal the string, so for `<span>Charges difference <span>+37.86 USD</span></span>` `text('Charges difference', { exact: true })` does not match (its text is "Charges difference +37.86 USD"). The text of `<script>`, `<style>`, `<noscript>` and everything in `<head>` does not count; an `<input type=submit|button|reset>` counts its value. (Wright's `locator('text="…"')`, Playwright's legacy text selector, also matches an element one of whose own text-node runs equals the string, so `text="TS-1"` finds `<span><span>|</span>TS-1</span>`.)
 
 ## Hidden elements
 

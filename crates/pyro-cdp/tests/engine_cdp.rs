@@ -5800,9 +5800,10 @@ fn driver_run_eval_awaits_promises_and_route_can_skip_settling() {
 
 /// `text` locators follow Playwright's text engine: the scope element
 /// itself is a candidate (`css('td').text('Domestic', exact)` matches
-/// `<td>Domestic</td>`), and an exact string also matches an element one of
-/// whose own text-node runs equals it, child elements aside
-/// (`<span><span>|</span>TS-106-POSITION</span>`).
+/// `<td>Domestic</td>`). With `legacyText` (Playwright's `text="…"`) an
+/// exact string also matches an element one of whose own text-node runs
+/// equals it, child elements aside (`<span><span>|</span>TS-106-POSITION</span>`);
+/// `getByText` exact compares the whole text only.
 #[test]
 fn driver_text_locators_match_the_scope_root_and_own_text_nodes() {
     let mut h = Harness::new();
@@ -5821,10 +5822,12 @@ fn driver_text_locators_match_the_scope_root_and_own_text_nodes() {
     assert_eq!(r["result"]["value"], "Domestic", "{r}");
     let r = h.page("Pyro.query", json!({"locator": {"text": "Domestic"}, "read": "count"}));
     assert_eq!(r["result"]["value"], 2, "{r}");
-    let r = q(&mut h, json!({"text": "TS-106-POSITION", "exact": true}));
+    let r = q(&mut h, json!({"text": "TS-106-POSITION", "exact": true, "legacyText": true}));
     assert_eq!(r["result"]["value"], "|TS-106-POSITION", "{r}");
-    let r = q(&mut h, json!({"text": "TS-106-POSITION", "exact": true, "within": {"css": "#pos"}}));
+    let r = q(&mut h, json!({"text": "TS-106-POSITION", "exact": true, "legacyText": true, "within": {"css": "#pos"}}));
     assert_eq!(r["result"]["value"], "|TS-106-POSITION", "{r}");
+    let r = h.page("Pyro.query", json!({"locator": {"text": "TS-106-POSITION", "exact": true}, "read": "count"}));
+    assert_eq!(r["result"]["value"], 0, "{r}");
     // The whole text still wins, and own text nodes do not match substrings.
     let r = q(&mut h, json!({"text": "bold and plain", "exact": true}));
     assert_eq!(r["result"]["value"], "bold and plain", "{r}");
@@ -6059,6 +6062,38 @@ fn driver_within_row_in_frame_scopes_inner_locator() {
     );
     assert!(r.get("error").is_none(), "{r}");
     assert_eq!(r["result"]["reads"], json!({"second": 2, "first": 1, "has": 2}), "{r}");
+}
+
+/// Danex 6: exact `text` is Playwright's `getByText(…, { exact: true })`:
+/// the element's whole text, and only where no child element's text
+/// matches too. `<span>Charges difference <span>+37.86 USD</span></span>`
+/// does not match "Charges difference"; the `<dt>`'s inner span does.
+/// Script and style text does not count; `<input type=submit>` counts its value.
+#[test]
+fn driver_exact_text_compares_the_whole_text() {
+    let mut h = Harness::new();
+    load_html(
+        &mut h,
+        r#"<!doctype html><body>
+<span id="a">Charges difference <span>+37.86 USD</span></span>
+<dl><dt><span id="b">Charges difference</span></dt></dl>
+<p id="c">Total<script>var x = 1;</script></p>
+<div id="d"><input type="submit" value="Go"></div>
+<div id="e">X<p>Z<b>X</b></p></div>"#,
+    );
+    let count = |h: &mut Harness, locator: Value| {
+        h.page("Pyro.query", json!({"locator": locator, "read": "count"}))["result"]["value"].clone()
+    };
+    assert_eq!(count(&mut h, json!({"text": "Charges difference", "exact": true})), 1);
+    let r = h.page("Pyro.query", json!({"locator": {"text": "Charges difference", "exact": true}, "read": "box"}));
+    assert!(r.get("error").is_none(), "{r}");
+    assert_eq!(count(&mut h, json!({"text": "Charges difference", "exact": true, "within": {"css": "dt"}})), 1);
+    assert_eq!(count(&mut h, json!({"text": "Charges difference"})), 2);
+    assert_eq!(count(&mut h, json!({"text": "Total", "exact": true})), 1);
+    assert_eq!(count(&mut h, json!({"text": "Go", "exact": true})), 1);
+    // A regex: `<div id=e>` ("XZX") matches /^X/ while its child <p> ("ZX")
+    // does not, so it is a match, and so is the <b>.
+    assert_eq!(count(&mut h, json!({"text": {"regex": "^X"}, "within": {"css": "#e"}})), 2);
 }
 
 /// Danex 2: `press` and `type` do not check that the element is enabled

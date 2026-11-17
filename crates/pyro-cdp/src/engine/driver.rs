@@ -45,7 +45,7 @@
 //! owes as well, so a step's own `scroll` event (a `focus` that revealed its
 //! element) does not arrive a frame interval later, inside another step.
 use std::cell::{Cell, RefCell};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::rc::{Rc, Weak};
 use std::time::{Duration, Instant};
 
@@ -126,6 +126,11 @@ pub(super) struct Locator {
     /// case-insensitive substring. A `{"regex"}` pattern ignores it.
     #[serde(default)]
     exact: bool,
+    /// `text` follows Playwright's legacy `text="…"` selector engine rather
+    /// than `getByText`: an exact string also matches an element one of whose
+    /// own text-node runs equals it, and an element whose child matches too.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    legacy_text: bool,
     within: Option<Box<Locator>>,
     filter: Option<Filter>,
     /// Index into the matches (negative counts from the end).
@@ -2827,67 +2832,181 @@ pub(super) fn accessible_name_in(
     normalize(&names.alternative(id, NameOpts { target: Target::Own, ..NameOpts::default() }))
 }
 
+/// Playwright's `shouldSkipForTextMatching`: script, noscript and style
+/// elements and everything in `<head>` have no text for text matching.
 fn skipped_for_text(dom: &Dom, id: NodeId) -> bool {
-    matches!(local(dom, id), Some("script" | "style" | "noscript" | "template" | "head" | "title"))
+    matches!(local(dom, id), Some("script" | "noscript" | "style"))
+        || self_and_ancestors(dom, id).any(|a| local(dom, a) == Some("head"))
 }
 
-/// Runs of the element's own text nodes (Playwright's `immediate` text):
-/// `<span><span>|</span>TS-1</span>` has `["TS-1"]`.
-fn immediate_texts(dom: &Dom, id: NodeId) -> Vec<String> {
-    let mut runs = Vec::new();
-    let mut run = String::new();
-    for c in dom.children(id).into_iter().flatten() {
-        match dom.node(c).map(|n| &n.kind) {
-            Ok(NodeKind::Text(t) | NodeKind::CData(t)) => run.push_str(t),
-            Ok(NodeKind::Comment(_)) => {}
-            _ => {
+/// Playwright's `elementText`: the element's full text (its text nodes and
+/// its child elements' texts, skipped elements contributing nothing; an open
+/// shadow root's text after the children; the value of an `<input>` button)
+/// and the runs of its own text nodes (`immediate`:
+/// `<span><span>|</span>TS-1</span>` has `["TS-1"]`).
+#[derive(Clone, Default)]
+struct ElementText {
+    full: String,
+    normalized: String,
+    immediate: Vec<String>,
+}
+
+#[derive(Default)]
+struct TextCache(HashMap<NodeId, Rc<ElementText>>);
+
+impl TextCache {
+    fn get(&mut self, dom: &Dom, id: NodeId) -> Rc<ElementText> {
+        if let Some(t) = self.0.get(&id) {
+            return t.clone();
+        }
+        let mut value = ElementText::default();
+        let is_element = dom.element(id).is_ok();
+        if !(is_element && skipped_for_text(dom, id)) {
+            let input_button = local(dom, id) == Some("input")
+                && matches!(
+                    dom.input_type(id),
+                    Ok(pyro_dom::forms::InputType::Submit
+                        | pyro_dom::forms::InputType::Button
+                        | pyro_dom::forms::InputType::Reset)
+                );
+            if input_button {
+                let v = dom.value(id).unwrap_or_default();
+                value.immediate = vec![v.clone()];
+                value.full = v;
+            } else {
+                let mut run = String::new();
+                for c in dom.children(id).into_iter().flatten() {
+                    match dom.node(c).map(|n| &n.kind) {
+                        Ok(NodeKind::Text(t) | NodeKind::CData(t)) => {
+                            value.full.push_str(t);
+                            run.push_str(t);
+                        }
+                        Ok(NodeKind::Comment(_)) => {}
+                        Ok(kind) => {
+                            let element = matches!(kind, NodeKind::Element(_));
+                            if !run.is_empty() {
+                                value.immediate.push(std::mem::take(&mut run));
+                            }
+                            if element {
+                                let child = self.get(dom, c);
+                                value.full.push_str(&child.full);
+                            }
+                        }
+                        Err(_) => {}
+                    }
+                }
                 if !run.is_empty() {
-                    runs.push(std::mem::take(&mut run));
+                    value.immediate.push(run);
+                }
+                if is_element {
+                    if let Some(sr) = open_shadow_root(dom, id) {
+                        let shadow = self.get(dom, sr);
+                        value.full.push_str(&shadow.full);
+                    }
                 }
             }
+            value.normalized = normalize(&value.full);
+        }
+        let value = Rc::new(value);
+        self.0.insert(id, value.clone());
+        value
+    }
+}
+
+fn open_shadow_root(dom: &Dom, host: NodeId) -> Option<NodeId> {
+    let sr = dom.shadow_root(host).ok().flatten()?;
+    (dom.shadow_root_mode(sr).ok().flatten() == Some(pyro_dom::ShadowRootMode::Open)).then_some(sr)
+}
+
+/// A text locator's matcher, as Playwright's `createTextMatcher`: a regex
+/// (tested against the normalized text), `strict` (an exact string: the
+/// whole normalized text, or for the legacy `text="…"` engine one run of
+/// the element's own text nodes) or `lax` (a case-insensitive substring).
+struct TextMatcher<'a> {
+    want: &'a Pattern,
+    strict: bool,
+    legacy: bool,
+    normalized_want: String,
+}
+
+impl<'a> TextMatcher<'a> {
+    fn new(want: &'a Pattern, exact: bool, legacy: bool) -> Self {
+        let strict = exact && want.regex.is_none();
+        let n = normalize(&want.text);
+        TextMatcher {
+            want,
+            strict,
+            legacy,
+            normalized_want: if strict || want.regex.is_some() { n } else { n.to_lowercase() },
         }
     }
-    if !run.is_empty() {
-        runs.push(run);
+
+    fn lax(&self) -> bool {
+        !self.strict && self.want.regex.is_none()
     }
-    runs
+
+    fn matches(&self, t: &ElementText) -> bool {
+        if let Some(re) = &self.want.regex {
+            return re.find(&t.normalized).is_some();
+        }
+        if !self.strict {
+            return t.normalized.to_lowercase().contains(&self.normalized_want);
+        }
+        if !self.legacy {
+            return t.normalized == self.normalized_want;
+        }
+        if self.normalized_want.is_empty() && t.immediate.is_empty() {
+            return true;
+        }
+        t.immediate.iter().any(|run| normalize(run) == self.normalized_want)
+    }
 }
 
-/// Whether an element's text matches: its whole text, or, for an exact
-/// string, one run of its own text nodes (Playwright's `text="..."`, so
-/// exact `TS-1` matches `<span><span>|</span>TS-1</span>`).
-fn element_text_matches(dom: &Dom, id: NodeId, want: &Pattern, exact: bool) -> bool {
-    if want.matches(&text_of(dom, id), exact) {
-        return true;
-    }
-    exact && want.regex.is_none() && immediate_texts(dom, id).iter().any(|run| normalize(run) == normalize(&want.text))
+#[derive(PartialEq, Eq)]
+enum TextHit {
+    None,
+    OnlySelf,
+    SelfAndChildren,
 }
 
-/// The smallest elements whose text matches: an element whose text matches
-/// and none of whose child elements' text does. `root` itself is a candidate.
-fn by_text(dom: &Dom, root: NodeId, want: &Pattern, exact: bool, out: &mut Vec<NodeId>) -> bool {
-    let children: Vec<NodeId> = dom
-        .children(root)
-        .into_iter()
-        .flatten()
-        .filter(|c| dom.element(*c).is_ok() && !skipped_for_text(dom, *c))
-        .collect();
-    let here = element_text_matches(dom, root, want, exact);
-    // A substring match in a child implies one here: prune subtrees that
-    // cannot match. Exact and regex matches need the whole walk.
-    if !here && !exact && want.regex.is_none() {
-        return false;
+/// Playwright's `elementMatchesText`.
+fn element_matches_text(dom: &Dom, cache: &mut TextCache, id: NodeId, m: &TextMatcher<'_>) -> TextHit {
+    if skipped_for_text(dom, id) || !m.matches(&cache.get(dom, id)) {
+        return TextHit::None;
     }
-    let before = out.len();
-    let mut child_matched = false;
-    for c in children {
-        child_matched |= by_text(dom, c, want, exact, out);
+    for c in dom.children(id).into_iter().flatten() {
+        if dom.element(c).is_ok() && m.matches(&cache.get(dom, c)) {
+            return TextHit::SelfAndChildren;
+        }
     }
-    if here && !child_matched && out.len() == before {
-        out.push(root);
-        return true;
+    if let Some(sr) = open_shadow_root(dom, id) {
+        if m.matches(&cache.get(dom, sr)) {
+            return TextHit::SelfAndChildren;
+        }
     }
-    child_matched || here
+    TextHit::OnlySelf
+}
+
+/// Playwright's text engine over `root` (a candidate itself) and the
+/// elements inside it: an element matches when its text does and no child
+/// element's text does (the legacy `text="…"` engine also keeps strict
+/// matches whose children match too). Lax matching skips the subtrees of
+/// elements that do not match.
+fn by_text(dom: &Dom, root: NodeId, want: &Pattern, exact: bool, legacy: bool, out: &mut Vec<NodeId>) {
+    let m = TextMatcher::new(want, exact, legacy);
+    let mut cache = TextCache::default();
+    let mut last_miss: Option<NodeId> = None;
+    for el in std::iter::once(root).chain(elements(dom, root).filter(|n| *n != root)) {
+        if m.lax() && last_miss.is_some_and(|miss| contains(dom, miss, el)) {
+            continue;
+        }
+        match element_matches_text(dom, &mut cache, el, &m) {
+            TextHit::None => last_miss = Some(el),
+            TextHit::OnlySelf => out.push(el),
+            TextHit::SelfAndChildren if m.strict && legacy => out.push(el),
+            TextHit::SelfAndChildren => {}
+        }
+    }
 }
 
 /// Drops nulls and `false` from a serialized locator, for messages.
@@ -3024,10 +3143,10 @@ impl Locator {
             // candidate: `css('td').text('Domestic', exact)` matches the cell.
             if root == doc {
                 if let Ok(Some(html)) = dom.document_element(doc) {
-                    by_text(&dom, html, text, self.exact, &mut found);
+                    by_text(&dom, html, text, self.exact, self.legacy_text, &mut found);
                 }
-            } else if dom.element(root).is_ok() && !skipped_for_text(&dom, root) {
-                by_text(&dom, root, text, self.exact, &mut found);
+            } else if dom.element(root).is_ok() {
+                by_text(&dom, root, text, self.exact, self.legacy_text, &mut found);
             }
         } else if let Some(role) = &self.role {
             let role = role.to_ascii_lowercase();

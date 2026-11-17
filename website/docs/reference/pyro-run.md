@@ -96,7 +96,8 @@ A locator names elements. It needs **exactly one** base kind, can be scoped and 
 | `placeholder` | pattern | *Base.* Inputs by placeholder. |
 | `ariaRef` | string | *Base.* Playwright's `aria-ref=e5`: the element that the document's last AI-mode ARIA snapshot gave this ref (`f1e5` for a child frame). |
 | `of` | locator | *Base.* Another locator's matches as the base set, so a `filter` or `nth` can follow an `nth`. |
-| `exact` | boolean | Whole-string, case-sensitive match for `text`, `name`, `label` and `placeholder` (after whitespace normalization). Otherwise matching is a case-insensitive substring. Ignored by regex patterns. |
+| `exact` | boolean | Whole-string, case-sensitive match for `text`, `name`, `label` and `placeholder` (after whitespace normalization). Otherwise matching is a case-insensitive substring. Ignored by regex patterns. `text` follows Playwright's `getByText`: an element matches when its whole text does and no child element's text does. |
+| `legacyText` | boolean | `text` as Playwright's legacy `text="…"` selector: an exact string also matches an element one of whose own text-node runs equals it, and an element whose child matches too. |
 | `within` | locator | Search inside each match of this locator. |
 | `frame` | locator | Search inside the document of the `<iframe>` this locator matches (in the parent document; it can have its own `frame`). |
 | `or` | locator[] | Add these locators' matches, in document order. |

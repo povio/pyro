@@ -45,6 +45,12 @@ export type LocatorSpec = {
   or?: LocatorSpec[];
   /** Kept only where each of these matches too (Playwright's `and`). */
   and?: LocatorSpec[];
+  /**
+   * `text` follows Playwright's legacy `text="…"` selector rather than
+   * `getByText`: an exact string also matches an element one of whose own
+   * text-node runs equals it.
+   */
+  legacyText?: boolean;
   /** `role` states (Playwright's `getByRole` options). */
   checked?: boolean | 'mixed';
   pressed?: boolean | 'mixed';

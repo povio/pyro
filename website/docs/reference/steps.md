@@ -39,7 +39,7 @@ type TextMatch = string | RegExp;
 | `'Save', { exact: true }` | Whole string, case-sensitive, after whitespace normalization |
 | `/^Save( all)?$/i` | ECMAScript regular expression. Flags `i`, `m` and `s` are sent; `g`, `y` and `u` are dropped. Any other flag is rejected by the browser. `exact` is ignored |
 
-`exact` applies to `text`, `name` (role locators), `label` and `placeholder`.
+`exact` applies to `text`, `name` (role locators), `label` and `placeholder`. For `text` it is Playwright's `getByText(…, { exact: true })`: the element's whole text, and only where no child element's text matches too.
 
 ## Top-level locators {#locators}
 

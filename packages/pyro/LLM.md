@@ -188,8 +188,8 @@ reuse them.
   use `.first()` only when any match will do.
 - `text()` follows Playwright's `getByText`: the scope element itself can match
   (`css('td').text('Domestic', { exact: true })` finds the cell), and an exact
-  string also matches an element one of whose own text runs equals it
-  (`<span><span>|</span>TS-1</span>` for `text('TS-1', { exact: true })`).
+  string compares the element's whole text, matching only where no child
+  element matches too.
 - Prefer role + name, then label / placeholder / text, then test id, then CSS.
 - Hidden elements (`display: none`, `aria-hidden`) have no role: `button('X')`
   does not match a hidden button. Add `.visible()` to `text()` / `css()`
