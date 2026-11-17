@@ -224,6 +224,8 @@ impl Scripted {
 /// after a change (`state` `None`: it has no effect any more).
 pub(crate) fn report(page: &Rc<PageDom>, seq: u64, state: Option<ReportedState>) {
     let events = &page.animation_events;
+    // A CSS animation's object: its events follow the object's state.
+    let css_state = state.as_ref().and_then(|s| Some((s.css?, s.start, s.hold, s.rate, s.origin)));
     {
         let Ok(mut scripted) = events.scripted.try_borrow_mut() else { return };
         match state {
@@ -255,6 +257,9 @@ pub(crate) fn report(page: &Rc<PageDom>, seq: u64, state: Option<ReportedState>)
     events.generation.set(events.generation.get().wrapping_add(1));
     if let Some(layout) = page.try_layout() {
         events.install_source(page, layout.style());
+    }
+    if let Some((id, start, hold, rate, origin)) = css_state {
+        crate::animation_events::scripted_state(page, id, start, hold, rate, origin);
     }
 }
 
