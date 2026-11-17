@@ -626,3 +626,9 @@ out-of-flow boxes; block items get them from their parent too).
   size definite for its flex base and automatic minimum whatever `align-self` (css-sizing
   `stretch/flexbox-auto-minimum-002`); a replaced item with a natural ratio in a row measures with the container's
   width as its main parent size, so a ratio-only one stretch-fits it (css-flexbox `svg-root-as-flex-item-003`).
+- Round 4 lane B (3): `compute/flexbox.rs` `determine_container_main_size`, single-line row under a definite available
+  width (shrink-to-fit): an item's min-content contribution is its min-content size, at least its flex base size under a
+  min-content constraint (a content basis is the min-content size, §9.2.3 C) when it cannot shrink, at most that basis
+  when it cannot grow, then at least its resolved minimum (Blink's row algorithm; WPT css-flexbox
+  `intrinsic-size/row-001`, `row-004`). Before, inflexible items counted their max-content basis and shrinkable ones only
+  their resolved minimum.

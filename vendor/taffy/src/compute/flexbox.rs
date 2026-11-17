@@ -1964,11 +1964,30 @@ fn determine_container_main_size(
                                 .map(|child| {
                                     let padding_border_sum =
                                         (child.padding + child.border).main_axis_sum(constants.dir);
-                                    let min = if child.flex_shrink == 0.0 {
-                                        child.flex_basis.max(child.resolved_minimum_main_size)
-                                    } else {
-                                        child.resolved_minimum_main_size
-                                    };
+                                    // pyro: the item's min-content contribution (Blink's row algorithm,
+                                    // css-flexbox-1 §9.9.1): its min-content size, at least its flex base size
+                                    // under a min-content constraint (§9.2.3 C: a content basis is the
+                                    // min-content size) when it cannot shrink, at most that basis when it
+                                    // cannot grow, and at least its minimum (WPT css-flexbox
+                                    // `intrinsic-size/row-001`, `row-004`)
+                                    let min_content = tree.measure_child_size(
+                                        child.node,
+                                        Size::NONE,
+                                        Size::NONE,
+                                        Size::MIN_CONTENT,
+                                        SizingMode::ContentSize,
+                                        dir.main_axis(),
+                                        Line::FALSE,
+                                    );
+                                    let basis = if child.flex_basis_is_definite { child.flex_basis } else { min_content.max(padding_border_sum) };
+                                    let mut size = min_content;
+                                    if child.flex_grow == 0.0 {
+                                        size = size.min(basis);
+                                    }
+                                    if child.flex_shrink == 0.0 {
+                                        size = size.max(basis);
+                                    }
+                                    let min = size.maybe_min(child.max_size.main(dir)).max(child.resolved_minimum_main_size);
                                     (min + child.margin.main_axis_sum(constants.dir)).max(padding_border_sum)
                                 })
                                 .sum::<f32>();

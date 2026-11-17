@@ -116,3 +116,23 @@ fn view_box_percentages_use_the_laid_out_root_size() {
     );
     check(&img, &[(5, 5, GREEN), (195, 195, GREEN), (205, 100, WHITE)]);
 }
+
+/// A float around a row flex container with an inflexible `flex: 0 0 auto` item (min-content 100px, max-content
+/// 200px) in no width is 100px wide: the item's flex base size under a min-content constraint is its min-content
+/// size (css-flexbox-1 §9.2.3 C). One with `flex: 0 1 100px; min-width: 0` around 200px content is 100px too: an
+/// item that cannot grow contributes at most its flex base size (WPT css-flexbox `intrinsic-size/row-001`, `-004`).
+#[test]
+fn min_content_contributions_of_inflexible_items() {
+    let img = render(
+        "<div style='width:0'><div style='display:flex;float:left;height:50px;background:green'>\
+           <div style='flex:0 0 auto'><div style='float:left;width:100px'></div><div style='float:left;width:100px'></div></div>\
+         </div></div>",
+    );
+    check(&img, &[(95, 25, GREEN), (105, 25, WHITE)]);
+    let img = render(
+        "<div style='width:0'><div style='display:flex;float:left;height:50px;background:green'>\
+           <div style='flex:0 1 100px;min-width:0'><div style='width:200px'></div></div>\
+         </div></div>",
+    );
+    check(&img, &[(95, 25, GREEN), (105, 25, WHITE)]);
+}
