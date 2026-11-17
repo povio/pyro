@@ -401,10 +401,10 @@ pub(crate) struct PageState {
     /// reported through Input.dragIntercepted.
     pub(crate) intercept_drags: bool,
     /// Input.dispatchTouchEvent: the touches down, and the frame document
-    /// the sequence's first touch landed in with its offset in the page's
+    /// the sequence's first touch landed in with its transforms to the page's
     /// viewport (all touches of a sequence go to that document).
     pub(crate) touches: pyro_webapi::input::TouchSequence,
-    pub(crate) touch_document: Option<(Rc<pyro_webapi::PageDom>, f64, f64)>,
+    touch_document: Option<(Rc<pyro_webapi::PageDom>, Vec<dom::FrameTransform>)>,
     network: network::NetworkPage,
     dom_nodes: dom::BackendNodes,
     /// Downloads the page started, newest last (`Pyro.run` `download` steps).
