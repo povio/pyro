@@ -984,6 +984,7 @@ impl Node {
             // pyro: a multi-column container paints its positioned descendants in its columns
             // (`layout::multicol`).
             || self.column_fragments().is_some()
+            || self.vertical_column_fragments().is_some()
     }
 
     /// pyro: whether this box paints in the paint phases of an ancestor (CSS 2.1 Appendix E): a

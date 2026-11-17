@@ -56,8 +56,9 @@ const MAX_COLUMNS: usize = 1000;
 const EPSILON: f32 = 1.0 / 128.0;
 
 /// Whether `style` makes its box a multi-column container: a `column-count` or `column-width`
-/// other than `auto` on a block container (`block`, `flow-root`, `inline-block`, `list-item`) in a
-/// horizontal writing mode.
+/// other than `auto` on a block container (`block`, `flow-root`, `inline-block`, `list-item`). In
+/// a vertical writing mode the container is laid out in its logical axes and its columns are shown
+/// only by paint (`Node::vertical_column_fragments`); geometry queries and hit tests see the strip.
 #[inline]
 pub(crate) fn is_multicol_style(style: &ComputedValues) -> bool {
     if !style.get_column().is_multicol() {
@@ -69,7 +70,7 @@ pub(crate) fn is_multicol_style(style: &ComputedValues) -> bool {
         DisplayInside::Flow => display.outside() == DisplayOutside::Block,
         _ => false,
     };
-    block_container && !style.writing_mode.is_vertical()
+    block_container
 }
 
 /// The columns of a multi-column container, in its border-box coordinates (CSS px, rounded to
@@ -449,7 +450,8 @@ impl LayoutPassState<'_> {
                 return LayoutOutput::HIDDEN;
             };
             let multicol = Multicol::of(&style);
-            let ls = node.layout_style();
+            // (In the container's own writing mode: its algorithm runs in its logical axes.)
+            let ls = node.layout_style_in(self.layout_wm);
             let clamps_block_size = !ls.min_size().height.is_auto() || !ls.max_size().height.is_auto();
             let parent_width = inputs.parent_size.width;
             let padding = ls.padding().resolve_or_zero(parent_width, resolve_calc_value);
@@ -768,7 +770,18 @@ impl Node {
     #[inline]
     pub fn column_fragments(&self) -> Option<&ColumnFragments> {
         let columns = self.element_data()?.layout_data.as_deref()?.columns.as_deref()?;
-        is_multicol_node(self).then_some(columns)
+        let style = self.primary_styles()?;
+        (is_multicol_style(&style) && !style.writing_mode.is_vertical()).then_some(columns)
+    }
+
+    /// pyro: the columns of this multi-column container of a vertical writing mode, in its logical
+    /// axes (inline = x, block = y), and whether its block axis runs right to left: paint shows
+    /// them (see [`is_multicol_style`]).
+    pub fn vertical_column_fragments(&self) -> Option<(&ColumnFragments, bool)> {
+        let columns = self.element_data()?.layout_data.as_deref()?.columns.as_deref()?;
+        let style = self.primary_styles()?;
+        let wm = style.writing_mode;
+        (is_multicol_style(&style) && wm.is_vertical()).then_some((columns, !wm.is_vertical_lr()))
     }
 
     /// `(x, y)` in this box's coordinates, moved from its columns into its strip when it is a

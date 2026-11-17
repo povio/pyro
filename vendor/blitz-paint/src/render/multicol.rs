@@ -23,22 +23,51 @@ impl ElementCx<'_, '_> {
     /// Paints the content of a multi-column container, once per column. `false` (and nothing
     /// painted) when the element is no multi-column container.
     pub(super) fn draw_columns(&mut self, scene: &mut impl PaintScene, pos: Point, clip_rect: Rect) -> bool {
-        let Some(columns) = self.context.dom.column_fragments(self.node.id) else {
-            return false;
+        // pyro: a vertical writing mode's columns are in its logical axes (block = y): its block
+        // axis is physical x, running right to left in `vertical-rl` from the border box's width.
+        let (columns, vertical) = match self.context.dom.column_fragments(self.node.id) {
+            Some(columns) => (columns, None),
+            None => match self.node.vertical_column_fragments() {
+                Some((columns, rl)) => (columns, Some((rl, self.node.final_layout().size.width as f64))),
+                None => return false,
+            },
         };
         let base = self.transform;
         let screen = Affine::translate((-self.context.initial_x, -self.context.initial_y));
         let scale = self.scale;
         let single = columns.fragments.len() == 1;
         for fragment in &columns.fragments {
-            let offset = Vec2::new(fragment.offset.x as f64 * scale, fragment.offset.y as f64 * scale);
+            let (start, end) = (fragment.start as f64, fragment.end as f64);
+            let (offset, range) = match vertical {
+                None => (
+                    Vec2::new(fragment.offset.x as f64 * scale, fragment.offset.y as f64 * scale),
+                    Rect::new(
+                        -UNBOUNDED,
+                        (start * scale).max(-UNBOUNDED),
+                        UNBOUNDED,
+                        (end * scale).min(UNBOUNDED),
+                    ),
+                ),
+                Some((false, _)) => (
+                    Vec2::new(fragment.offset.y as f64 * scale, fragment.offset.x as f64 * scale),
+                    Rect::new(
+                        (start * scale).max(-UNBOUNDED),
+                        -UNBOUNDED,
+                        (end * scale).min(UNBOUNDED),
+                        UNBOUNDED,
+                    ),
+                ),
+                Some((true, width)) => (
+                    Vec2::new(-fragment.offset.y as f64 * scale, fragment.offset.x as f64 * scale),
+                    Rect::new(
+                        ((width - end) * scale).max(-UNBOUNDED),
+                        -UNBOUNDED,
+                        ((width - start) * scale).min(UNBOUNDED),
+                        UNBOUNDED,
+                    ),
+                ),
+            };
             let transform = base.pre_translate(offset);
-            let range = Rect::new(
-                -UNBOUNDED,
-                (fragment.start as f64 * scale).max(-UNBOUNDED),
-                UNBOUNDED,
-                (fragment.end as f64 * scale).min(UNBOUNDED),
-            );
             // The column's part of what is visible, for culling its content; a column out of
             // sight is not painted (`Rect::intersect` never gives a negative size: overlap it is).
             let shown = (screen * transform).transform_rect_bbox(range);

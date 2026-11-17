@@ -1064,3 +1064,5 @@ frame's whole transform, clipped to the content box (upstream applied the transl
 `transform-iframe-002`, `transform-iframe-scroll-position`.
 - Round 4 lane F: the first line's ellipsis takes the colour of the `::first-line` style (`TextLayout::first_line`; WPT
   css-overflow `text-overflow-ellipsis-multiline-001`).
+- `render/multicol.rs` `draw_columns`: a vertical writing mode's logical columns (`vertical_column_fragments`) are
+  mapped to physical axes per column: the block range on x (from the right edge in `vertical-rl`), the offset swapped.

@@ -2595,3 +2595,7 @@ Round 4 lane G:
   css-overflow `line-clamp-037`).
 - Round 4 lane F: `::first-letter` passes over the anonymous block that holds only an item's inside marker
   (`first_letter::is_first_in_flow_child`; WPT css-pseudo `first-letter-exclude-block-child-marker`).
+- Vertical multicol (round 4 lane G, step 3): `layout/multicol.rs` lays a vertical container out in its own logical
+  axes (`layout_style_in(self.layout_wm)`); `Node::column_fragments` leaves it out (geometry and hit tests see the
+  strip) and `Node::vertical_column_fragments` gives paint the logical columns. It is a paint-layer root like a
+  horizontal one (`paint_tree.rs`). WPT css-position `position-absolute-in-inline-008a/010/012`.

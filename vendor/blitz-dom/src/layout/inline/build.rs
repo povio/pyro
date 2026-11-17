@@ -261,25 +261,6 @@ struct SpanEnd {
 /// characters of its `unicode-bidi` (with `bidi`), its start edge with `start`, and the strut
 /// when it has an edge. With `end`, its end edge goes in the returned [`SpanEnd`].
 #[allow(clippy::too_many_arguments)]
-/// pyro: whether the inline root `root_id` is in a multi-column container of a vertical writing
-/// mode.
-fn in_vertical_multicol(nodes: &crate::NodeTree, root_id: NodeId) -> bool {
-    let mut current = Some(root_id);
-    while let Some(id) = current {
-        let node = &nodes[id];
-        if let Some(style) = node.primary_styles() {
-            if !style.writing_mode.is_vertical() {
-                return false;
-            }
-            if style.get_column().is_multicol() {
-                return true;
-            }
-        }
-        current = node.parent;
-    }
-    false
-}
-
 /// pyro: whether an inline box with `style` has a border or padding over or under it (left or
 /// right of it in a vertical writing mode).
 fn has_block_edges(style: &style::properties::ComputedValues) -> bool {
@@ -879,7 +860,7 @@ fn build_inline_layout_with(
     // (Not in a multi-column container of a vertical writing mode, which is laid out as one
     // column (`layout::multicol`): what the offset moves out of its column would show there,
     // where the next column covers it.)
-    text_layout.relative_spans = bidi_scan.relative && !in_vertical_multicol(nodes, inline_context_root_node_id);
+    text_layout.relative_spans = bidi_scan.relative;
     text_layout.percent_span_edges = bidi_scan.percent_edges;
     text_layout.span_block_edges = bidi_scan.block_edges;
     return true;
