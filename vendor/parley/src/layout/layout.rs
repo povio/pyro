@@ -234,6 +234,17 @@ impl<B: Brush> Layout<B> {
         self.data.line_height_quirk = quirk;
     }
 
+    /// pyro: the lines align on a central dominant baseline (vertical writing modes whose text is
+    /// not sideways; Blink's `FontBaseline::kCentralBaseline`): an in-flow inline box's
+    /// [`InlineBox::baseline`](crate::InlineBox::baseline) is its central baseline, which a
+    /// baseline-aligned box puts on the central baseline of the span around it (the middle of that
+    /// span's content area), not on its alphabetic baseline.
+    /// Text keeps its alphabetic geometry: the strut's line-height box is the same around either
+    /// baseline. Set before the lines are broken.
+    pub fn set_central_baseline(&mut self, central: bool) {
+        self.data.central_baseline = central;
+    }
+
     /// pyro: makes the layout's lines scale their text to fill them (CSS `text-fit`); `scale` is
     /// the factor of every line for [`TextFitTarget::Consistent`](crate::TextFitTarget), which
     /// [`Self::text_fit_block_scale`] measures on the lines broken without it.

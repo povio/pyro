@@ -413,3 +413,12 @@ Covered by `crates/pyro-render/tests/text_inline_round4.rs` and `soft_hyphens.rs
 - `layout/alignment.rs` (`align`, round 4 lane D): right-, end- and centre-aligned lines take their content width rounded
   up to a layout unit (1/64 CSS px), as Blink's snapped text item widths: such a line starts where a shrink-to-fit box
   of the same text does (WPT CSS2 `positioning-float-002`, `float-applies-to-008`).
+- `layout/layout.rs` `Layout::set_central_baseline`, `layout/style_metrics.rs` `inline_box_placement`, `layout/line.rs`
+  `inline_box_top` (round 4 lane F): lines of vertical writing modes whose text is not sideways align on the central
+  baseline (Blink's `kCentralBaseline`). An in-flow box marked `InlineBox::central` (a new field) has its central baseline
+  in `baseline`: baseline alignment puts it on the middle of the parent span's content area (half of its ascent minus
+  descent over its alphabetic baseline, added after the quantized offset: where a zero line height's strut and the line's
+  dominant baseline are); other alignments take the box's synthesized alphabetic baseline (its under edge), as before.
+  Boxes not marked keep their alphabetic baseline. Text keeps its
+  alphabetic geometry (the strut's line-height box is the same around both). WPT css-inline
+  `initial-letter-raise-initial-vlr/-vrl`, `initial-letter-sunk-initial-vlr`; `crates/pyro-render/tests/vertical_lines_and_controls.rs`.

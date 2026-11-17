@@ -194,6 +194,13 @@ fn initial_letter_offset(letter: &crate::node::InitialLetter, ascent: f32, heigh
     (letter.line_height * letter.size - ascent - letter.descent, shift)
 }
 
+/// pyro: whether the lines of a root in writing mode `wm` align on a central baseline (vertical,
+/// text not sideways), and whether they are inverted (`vertical-lr`: line-over at block-end).
+fn vertical_line_kind(wm: stylo_taffy::WritingMode) -> (bool, bool) {
+    let central = wm.is_vertical() && !wm.is_sideways();
+    (central, central && wm.intersects(stylo_taffy::WritingMode::LINE_INVERTED))
+}
+
 /// A float met mid-line, laid out but not yet placed in the block formatting context
 #[cfg(feature = "floats")]
 struct PendingFloat {
@@ -866,6 +873,8 @@ impl LayoutPassState<'_> {
 
         // Update inline boxes
         let percent_span_edges = inline_layout.percent_span_edges;
+        // pyro: an in-flow atomic inline on a central baseline keeps its alphabetic baseline.
+        let mut alphabetic_atomics = false;
         for ibox in inline_layout.layout.inline_boxes_mut() {
             // pyro: a span's edge has its width from the build, unless its margin or padding
             // is a percentage: of the containing block's width (CSS 2.1 § 8.3, 8.4), zero for
@@ -964,7 +973,7 @@ impl LayoutPassState<'_> {
                     );
                 }
                 ibox.width = (margin.left + margin.right + output.size.width) * scale;
-                ibox.baseline = if exports_baseline {
+                let alphabetic = if exports_baseline {
                     let baseline = if uses_last_baseline && own_last_baseline {
                         output.baselines.last
                     } else if uses_last_baseline {
@@ -982,6 +991,33 @@ impl LayoutPassState<'_> {
                     })
                 } else {
                     None
+                };
+                let (central_line, inverted_line) = vertical_line_kind(self.nodes[node_id].writing_mode());
+                // pyro: on a central baseline (Blink's `PhysicalBoxFragment::BaselineMetrics` with
+                // `kCentralBaseline`): the box's own central baseline, from its line-over side
+                // (block-end in `vertical-lr`, whose lines are inverted), or one synthesized in the
+                // middle of its margin box when it has no baseline at all (replaced, orthogonal,
+                // scroll-container and empty boxes). A box with only an alphabetic baseline (flex,
+                // grid, table, form controls) keeps it, and the lines holding one export no central
+                // baseline (`alphabetic_atomics`).
+                let dominant = if !central_line || !exports_baseline {
+                    None
+                } else if uses_last_baseline {
+                    output.baselines.dominant_last.or(output.baselines.dominant_first)
+                } else {
+                    output.baselines.dominant_first.or(output.baselines.dominant_last)
+                };
+                ibox.central = central_line && (dominant.is_some() || alphabetic.is_none());
+                alphabetic_atomics |= central_line && !ibox.central;
+                ibox.baseline = if ibox.central {
+                    let over = match dominant {
+                        Some(baseline) if inverted_line => margin.bottom + output.size.height - baseline,
+                        Some(baseline) => margin.top + baseline,
+                        None => (margin.top + margin.bottom + output.size.height) / 2.0,
+                    };
+                    Some(over * scale)
+                } else {
+                    alphabetic
                 };
                 // Vertical margins adjust the space the box reserves in the line. A box with a
                 // baseline splits that space into ascent (`margin.top + baseline`) and descent
@@ -2127,6 +2163,7 @@ impl LayoutPassState<'_> {
                             }
                             _ => taffy::Point::ZERO,
                         };
+                        let wm = self.nodes[node_id].writing_mode();
                         let node = &mut self.nodes[NodeId::from_u64(ibox.id)];
 
                         let is_relative = position == taffy::Position::Relative;
@@ -2144,11 +2181,30 @@ impl LayoutPassState<'_> {
                         };
 
                         let overflow = output.scrollable_overflow_rect;
+                        // pyro: the lines of `vertical-lr` are inverted (line-over at block-end):
+                        // the box goes to the other side of its line's slot. The lines of
+                        // `sideways-lr` run from the bottom: it goes to the other end of its line.
+                        let mut ibox_y = ibox.y;
+                        let mut ibox_x = ibox.x;
+                        // (A box that keeps its alphabetic baseline keeps its place too.)
+                        let central_box = || {
+                            inline_layout
+                                .layout
+                                .inline_boxes()
+                                .find(|candidate| candidate.id == ibox.id && candidate.kind == parley::InlineBoxKind::InFlow)
+                                .is_some_and(|candidate| candidate.central)
+                        };
+                        if vertical_line_kind(wm).1 && central_box() {
+                            let metrics = line.metrics();
+                            ibox_y = metrics.block_min_coord + metrics.block_max_coord - ibox.y - ibox.height;
+                        } else if wm.contains(stylo_taffy::WritingMode::WRITING_MODE_SIDEWAYS_LR) {
+                            ibox_x = container_content_size.width * scale - ibox.x - ibox.width;
+                        }
                         let location = taffy::Point {
-                            x: (ibox.x / scale) + margin.left + container_pb.left + inset_offset.x + span_offset.x,
+                            x: (ibox_x / scale) + margin.left + container_pb.left + inset_offset.x + span_offset.x,
                             // Parley positions the margin box; offset to the border box even
                             // when a negative top margin makes it extend above the margin box.
-                            y: (ibox.y / scale) + margin.top + line_box_top + inset_offset.y + span_offset.y,
+                            y: (ibox_y / scale) + margin.top + line_box_top + inset_offset.y + span_offset.y,
                         };
                         node.update_unrounded_layout(|layout| {
                             layout.size = size;
@@ -2226,7 +2282,7 @@ impl LayoutPassState<'_> {
         // (Sideways text keeps `first_baseline`/`last_baseline`, which inline-block alignment agrees with.)
         let (dominant_first, dominant_last) = {
             let wm = self.nodes[node_id].writing_mode();
-            if wm.is_vertical() && !wm.is_sideways() && exports_baseline {
+            if wm.is_vertical() && !wm.is_sideways() && exports_baseline && !alphabetic_atomics {
                 let dominant = |line: parley::Line<'_, _>| {
                     let m = line.metrics();
                     let central = (m.content_block_min_coord + m.content_block_max_coord) / 2.0;

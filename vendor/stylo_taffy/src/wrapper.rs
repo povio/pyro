@@ -729,6 +729,12 @@ impl<T: Deref<Target = ComputedValues>> taffy::BlockItemStyle for TaffyStyloStyl
 // FlexboxContainerStyle impl
 #[cfg(feature = "flexbox")]
 impl<T: Deref<Target = ComputedValues>> taffy::FlexboxContainerStyle for TaffyStyloStyle<T> {
+    /// pyro: see `GridContainerStyle::baseline_synthesis` (only the central case differs).
+    #[inline]
+    fn block_baseline_synthesis(&self) -> f32 {
+        let wm = self.style.writing_mode;
+        if wm.is_vertical() && !wm.is_sideways() { 0.5 } else { 1.0 }
+    }
     #[inline]
     fn flex_direction(&self) -> taffy::FlexDirection {
         convert::flex_direction(self.style.get_position().flex_direction)

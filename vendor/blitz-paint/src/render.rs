@@ -844,6 +844,11 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         if matches!(node.taffy_display(), taffy::Display::None) {
             return;
         }
+        // pyro: an atomic inline that does not fit before a line's ellipsis is hidden whole
+        // (Blink's `LineTruncator::HideChild`).
+        if hidden_by_ellipsis(self.dom.as_ref(), node) {
+            return;
+        }
 
         // pyro: a top-layer element paints above the document
         // (`paint_top_layer`), not here.
@@ -1939,6 +1944,16 @@ fn stroke_inline_text(
             let shift = tops.map_or(0.0, |tops| tops.shift(line.metrics()));
             let offset = (x as f64, (line.metrics().baseline - baseline) as f64 + shift);
             context.line_tops = None;
+            // pyro: on the first line, in the `::first-line` colour (the line's root style).
+            let mut options = options;
+            if line.root_style() != 0 && options.brush_override.is_none() {
+                options.brush_override = text_layout
+                    .layout
+                    .styles()
+                    .get(usize::from(line.root_style()))
+                    .and_then(|style| dom.get_node(style.brush.id))
+                    .and_then(|node| node.primary_styles().map(|style| style.clone_color().as_srgb_color()));
+            }
             crate::text::stroke_text(
                 scene,
                 ellipsis.lines(),
@@ -1955,6 +1970,40 @@ fn stroke_inline_text(
             context.run_filter = filter;
         }
     }
+}
+
+/// pyro: whether `node` is an in-flow atomic inline of an inline root whose line ends with an
+/// ellipsis before the box's end edge (its start edge in right-to-left lines).
+fn hidden_by_ellipsis(dom: &BaseDocument, node: &Node) -> bool {
+    let tree = dom.tree();
+    let mut root = node.layout_parent.get();
+    let mut text_layout = None;
+    for _ in 0..8 {
+        let Some(id) = root else { return false };
+        let Some(candidate) = tree.get(id) else { return false };
+        if let Some(layout) = candidate.element_data().and_then(|el| el.inline_layout_data.as_deref()) {
+            text_layout = Some((candidate, layout));
+            break;
+        }
+        root = candidate.layout_parent.get();
+    }
+    let Some((root, text_layout)) = text_layout else { return false };
+    if text_layout.ellipsis.is_none() && text_layout.clamp.is_none() {
+        return false;
+    }
+    let id = node.id.as_u64();
+    let scale = dom.viewport().scale();
+    for (index, line) in text_layout.layout.lines().enumerate() {
+        let ibox = line.items().find_map(|item| match item {
+            parley::PositionedLayoutItem::InlineBox(ibox) if ibox.id == id && ibox.kind == parley::InlineBoxKind::InFlow => Some(ibox),
+            _ => None,
+        });
+        let Some(ibox) = ibox else { continue };
+        let Some(truncation) = line_truncation(root, text_layout, &line, index, scale) else { return false };
+        let cut = truncation.cut;
+        return if cut.keep_left { ibox.x + ibox.width > cut.edge + scale / 64.0 } else { ibox.x < cut.edge - scale / 64.0 };
+    }
+    false
 }
 
 /// pyro: what ends a line short: the atoms cut from it, and the ellipsis drawn at `x` (layout
@@ -1979,6 +2028,17 @@ fn line_truncation<'a>(
     // The lines were broken in the unrounded box: a line as wide as the box (a
     // box sized to its text) must not count as overflowing it by a rounding.
     let width = node.unrounded_layout().content_box_width() * scale;
+    line_truncation_at(text_layout, line, index, scale, width)
+}
+
+/// pyro: [`line_truncation`] at an inline size `width` (device px).
+fn line_truncation_at<'a>(
+    text_layout: &'a blitz_dom::node::TextLayout,
+    line: &parley::Line<'_, blitz_dom::node::TextBrush>,
+    index: usize,
+    scale: f32,
+    width: f32,
+) -> Option<LineTruncation<'a>> {
     let rtl = text_layout.layout.is_rtl();
     let (ellipsis, text, forced) = match text_layout.clamp.as_ref().filter(|clamp| index + 1 == clamp.lines as usize) {
         Some(clamp) => (&*clamp.ellipsis, "\u{2026}", true),
@@ -2005,6 +2065,9 @@ fn truncate_line(
     let epsilon = scale / 64.0;
     let metrics = line.metrics();
     let ellipsis_width = ellipsis.full_width();
+    // pyro: the line's own edges where floats shorten it (Blink truncates at the line box's end).
+    let width = if metrics.inline_max_coord > 0.0 { width.min(metrics.inline_max_coord) } else { width };
+    let start = metrics.inline_min_coord.clamp(0.0, width);
     // A line that ends with the ellipsis whether it overflows or not (`forced`: a line
     // clamp's) keeps all of its atoms when the ellipsis fits after them.
     if forced {
@@ -2041,10 +2104,10 @@ fn truncate_line(
         };
         Some((crate::text::TextCut { edge, keep_left: true }, edge))
     } else {
-        if !forced && metrics.offset + metrics.hanging_advance >= -epsilon {
+        if !forced && metrics.offset + metrics.hanging_advance >= start - epsilon {
             return None;
         }
-        let cut = crate::text::TextCut { edge: ellipsis_width, keep_left: false };
+        let cut = crate::text::TextCut { edge: start + ellipsis_width, keep_left: false };
         let start = runs().filter_map(|run| cut.kept(&run).1).map(|(x0, _)| x0).fold(None, |a: Option<f32>, x| Some(a.map_or(x, |a| a.min(x))));
         if let Some(start) = start {
             return Some((cut, start - ellipsis_width));
@@ -3087,11 +3150,26 @@ impl ElementCx<'_, '_> {
             );
         }
         let mut draw_text_context = self.context.draw_text_context.borrow_mut();
+        // pyro: `text-overflow` and line clamps cut the lines at the content box's inline size
+        // (its physical height), as on horizontal lines (`stroke_inline_text`).
+        let truncates = text_layout.ellipsis.is_some() || text_layout.clamp.is_some();
+        let inline_size = truncates.then(|| {
+            let layout = self.context.dom.physical_unrounded_layout(self.node.id);
+            let inset = layout.border.top + layout.border.bottom + layout.padding.top + layout.padding.bottom;
+            (layout.size.height - inset).max(0.0) * self.scale as f32
+        });
         for (index, line) in text_layout.layout.lines().enumerate() {
+            if text_layout.clamp.as_ref().is_some_and(|clamp| index >= clamp.lines as usize) {
+                break;
+            }
             let vertical = vertical(&line);
+            let truncation = inline_size.and_then(|width| {
+                line_truncation_at(text_layout, &line, index, self.scale as f32, width)
+            });
+            draw_text_context.cut = truncation.as_ref().map(|truncation| truncation.cut);
             crate::text::stroke_text(
                 scene,
-                std::iter::once(line),
+                std::iter::once(line.clone()),
                 self.context.dom,
                 line_transform(index),
                 TextPaintOptions {
@@ -3105,6 +3183,39 @@ impl ElementCx<'_, '_> {
                 vertical,
                 Some(&text_layout.layout),
             );
+            draw_text_context.cut = None;
+            if let Some(LineTruncation { x, ellipsis, text, .. }) = truncation {
+                let filter = draw_text_context.run_filter.take();
+                let baseline = ellipsis.lines().next().map_or(0.0, |l| l.metrics().baseline);
+                let offset = (x as f64, (line.metrics().baseline - baseline) as f64);
+                for ellipsis_line in ellipsis.lines() {
+                    let ellipsis_vertical = vertical.map(|_| {
+                        crate::text::VerticalLine::new(
+                            &ellipsis_line,
+                            self.style.writing_mode.intersects(WritingMode::TEXT_SIDEWAYS | WritingMode::VERTICAL_SIDEWAYS),
+                            self.style.writing_mode.contains(WritingMode::UPRIGHT),
+                        )
+                        .counterclockwise(self.style.writing_mode.contains(WritingMode::WRITING_MODE_SIDEWAYS_LR))
+                    });
+                    crate::text::stroke_text(
+                        scene,
+                        std::iter::once(ellipsis_line),
+                        self.context.dom,
+                        line_transform(index) * Affine::translate(offset),
+                        TextPaintOptions {
+                            scale: self.scale,
+                            brush_override: None,
+                            shadows: true,
+                        },
+                        self.node.id,
+                        Some(text),
+                        &mut draw_text_context,
+                        ellipsis_vertical,
+                        None,
+                    );
+                }
+                draw_text_context.run_filter = filter;
+            }
             // pyro: ruby annotations and emphasis marks, turned with their line.
             if !text_layout.annotations.is_empty() {
                 let recording = draw_text_context.runs.is_some();

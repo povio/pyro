@@ -1253,6 +1253,7 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                 layout_box.parent_style_index,
                 &self.layout.data.style_metrics,
                 quantize,
+                self.layout.data.central_baseline,
             );
             layout_box.baseline_offset = placement.baseline_offset;
             // pyro: the box counts as a character of the span around it (`wraps_after`).
@@ -1395,7 +1396,7 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                         continue;
                     }
                     let placement =
-                        inline_box_placement(inline_box, layout_box.parent_style_index, table, quantize);
+                        inline_box_placement(inline_box, layout_box.parent_style_index, table, quantize, data.central_baseline);
                     placements.push((item.index, placement.baseline_offset));
                     if inline_box.vertical_align.is_line_relative() {
                         state.line.box_metrics.add_line_relative_inline_box(

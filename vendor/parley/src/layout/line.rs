@@ -155,7 +155,15 @@ impl<'a, B: Brush> Line<'a, B> {
                     .style_metrics()
                     .get(usize::from(layout_box.parent_style_index))
                     .map_or(0, |m| m.aligned_subtree_root);
-                let ascent = inline_box.baseline.unwrap_or(inline_box.height);
+                // pyro: as `inline_box_placement` takes it (central baselines).
+                let ascent = if self.layout.data.central_baseline
+                    && inline_box.central
+                    && inline_box.vertical_align.alignment != crate::AlignmentBaseline::Baseline
+                {
+                    inline_box.height
+                } else {
+                    inline_box.baseline.unwrap_or(inline_box.height)
+                };
                 self.data.metrics.baseline
                     - self.data.aligned_subtree_offset(
                         &self.layout.data.aligned_subtree_offsets,

@@ -630,6 +630,14 @@ pub struct BaseDocument {
     /// pyro: a style change or a child list change since the last evaluation can have changed
     /// counters or quotes (`layout::counters`).
     pub(crate) counters_dirty: bool,
+    /// pyro: a list item's `::marker` `content` reads a counter other than its number (sticky):
+    /// the counter walk evaluates marker contents too (`layout::counters`, `marker_texts`).
+    pub(crate) marker_counters: bool,
+    /// pyro: `marker_counters` was just set: the resolve runs one more pass, which evaluates them.
+    pub(crate) marker_counters_pending: bool,
+    /// pyro: the text of each list item's `::marker` `content` that reads counters, evaluated in
+    /// tree order (`layout::counters`).
+    pub(crate) marker_texts: HashMap<NodeId, String>,
     /// pyro: the number of each list item's marker, its `list-item` counter value
     /// (`layout::counters`): elements, and `::before` (true) / `::after` list items by their
     /// originating element.
@@ -860,6 +868,9 @@ impl BaseDocument {
             text_box_trim_styles: false,
             generated_text: HashMap::new(),
             counters_dirty: true,
+            marker_counters: false,
+            marker_counters_pending: false,
+            marker_texts: HashMap::new(),
             list_item_numbers: Default::default(),
             top_layer: Default::default(),
             pending_critical_resources: HashSet::new(),

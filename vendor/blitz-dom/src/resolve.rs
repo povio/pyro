@@ -206,7 +206,9 @@ impl BaseDocument {
             // pyro: the active scroll markers and the scroll buttons' states follow the layout
             // and the scroll positions (`layout::scroll_markers`): a change styles them again.
             let scroll_states_changed = !container_sizes_changed && self.update_target_current();
-            if (!container_sizes_changed && !scroll_states_changed) || pass == 31 {
+            // pyro: a marker's content that reads counters was met: they are evaluated now.
+            let marker_counters = std::mem::take(&mut self.marker_counters_pending);
+            if (!container_sizes_changed && !scroll_states_changed && !marker_counters) || pass == 31 {
                 break;
             }
             if !container_sizes_changed {

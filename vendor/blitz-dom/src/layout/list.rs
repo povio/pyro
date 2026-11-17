@@ -159,7 +159,24 @@ fn node_list_item_child(
     // pyro: the item's `::marker` style, on a node of its own (the marker text's brush), and
     // the marker's `content`: `none` leaves no marker, strings replace it (CSS Lists 3 § 3.2).
     let (marker_style, rule_style) = item_marker_style(doc, child_id, &styles);
-    let content = rule_style.as_ref().and_then(|style| marker_content(style, number));
+    // pyro: content that reads other counters is evaluated with the document's counters
+    // (`layout::counters`); the first such marker turns that evaluation on.
+    let content = match rule_style.as_ref() {
+        Some(style) if marker_reads_counters(style) => match doc.marker_texts.get(&child_id) {
+            Some(text) => Some(text.clone()),
+            None => {
+                if !doc.marker_counters {
+                    doc.marker_counters = true;
+                    doc.marker_counters_pending = true;
+                    doc.generated_counters = true;
+                    doc.counters_dirty = true;
+                }
+                None
+            }
+        },
+        Some(style) => marker_content(style, number),
+        None => None,
+    };
     let from_content = content.is_some();
     let style_node = marker_style_node(doc, child_id, marker_style.clone());
     let mut marker = match (content, image) {
@@ -338,7 +355,7 @@ pub(crate) fn item_restyled(doc: &mut BaseDocument, item: NodeId) {
 }
 
 /// pyro: the `::marker` style of the list item `node_id`, when a rule matches its marker.
-fn marker_pseudo_style(
+pub(super) fn marker_pseudo_style(
     doc: &BaseDocument,
     node_id: NodeId,
     item_style: &style::servo_arc::Arc<style::properties::ComputedValues>,
@@ -366,6 +383,20 @@ fn marker_pseudo_style(
         true,
         None,
     )
+}
+
+/// pyro: whether a `::marker` style's `content` reads a counter other than `counter(list-item)`
+/// (`marker_content` evaluates that one alone).
+pub(super) fn marker_reads_counters(style: &style::servo_arc::Arc<style::properties::ComputedValues>) -> bool {
+    use style::values::generics::counters::{Content, ContentItem};
+    match &style.get_counters().content {
+        Content::Items(items) => items.items.iter().any(|item| match item {
+            ContentItem::Counter(name, _) => &*name.0 != "list-item",
+            ContentItem::Counters(..) => true,
+            _ => false,
+        }),
+        _ => false,
+    }
 }
 
 /// pyro: the text a `::marker` style's `content` gives the marker of the item at `index`: none

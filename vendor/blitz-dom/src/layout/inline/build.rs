@@ -342,6 +342,7 @@ fn open_span(
         baseline: None,
         vertical_align: Default::default(),
         rtl,
+        central: false,
     };
     // pyro: a right-to-left span with one edge has the other too, empty (see
     // `build_inline_layout_recursive`).
@@ -432,6 +433,10 @@ fn build_inline_layout_with(
             .parent
             .and_then(|parent_id| nodes[parent_id].primary_styles())
     });
+    // pyro: vertical lines of text that is not sideways align on the central baseline.
+    let central_baseline = root_node_style
+        .as_deref()
+        .is_some_and(|s| s.writing_mode.is_vertical() && !s.writing_mode.is_sideways());
 
     let mut parley_style = root_node_style
         .as_ref()
@@ -858,6 +863,7 @@ fn build_inline_layout_with(
         text_layout.layout.set_tab_stops(space, ch / 2.0);
     }
     text_layout.layout.set_line_height_quirk(nodes.line_height_quirk);
+    text_layout.layout.set_central_baseline(central_baseline);
     // pyro: the shaped text's content widths, for every layout of it (`TextLayout::
     // content_widths`): a function of the shaped clusters alone while no in-flow inline box, whose
     // size each layout sets, takes part in them. Measured with no text indent; the layout sets its
@@ -1176,6 +1182,7 @@ fn build_inline_layout_with(
                                     .map(|s| stylo_to_parley::vertical_align(&s))
                                     .unwrap_or_default(),
                                 rtl: false,
+                                central: false,
                             });
                         } else if annotations.is_ruby_annotation(tag_name) {
                             // pyro: a ruby annotation of the text since its base started, drawn
@@ -1249,6 +1256,7 @@ fn build_inline_layout_with(
                                 baseline: None,
                                 vertical_align: Default::default(),
                                 rtl,
+                                central: false,
                             };
                             // pyro: a right-to-left span's edges trade sides on the line (its end
                             // edge goes left of its content): the line needs the span's content
@@ -1353,6 +1361,7 @@ fn build_inline_layout_with(
                                 .map(|s| stylo_to_parley::vertical_align(&s))
                                 .unwrap_or_default(),
                             rtl: false,
+                            central: false,
                         });
                     }
                 };
@@ -1402,6 +1411,7 @@ fn build_inline_layout_with(
                             baseline: None,
                             vertical_align: Default::default(),
                             rtl: false,
+                            central: false,
                         });
                         let tail = &content[split.range.end..];
                         let text = text_transformer.transform(tail, parent_text_transform, builder);

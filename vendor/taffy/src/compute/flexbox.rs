@@ -123,6 +123,10 @@ struct FlexItem {
 
     /// The position of the bottom edge of this item
     baseline: f32,
+    /// pyro: on a central baseline (`AlgoConstants::block_baseline_synthesis` 0.5, rows), the
+    /// position of this item's central baseline (synthesized in its middle without one), for the
+    /// container's `Baselines::dominant_first`.
+    dominant_baseline: Option<f32>,
     /// pyro: the distance from this item's last baseline to its outer cross-end edge, for `last baseline`
     last_baseline_descent: f32,
 
@@ -198,6 +202,9 @@ struct FlexLine<'a> {
 /// Values that can be cached during the flexbox algorithm
 #[derive(Clone)]
 struct AlgoConstants {
+    /// pyro: where items without a baseline synthesize one in the block axis
+    /// (`FlexboxContainerStyle::block_baseline_synthesis`): 0.5 on a central baseline.
+    block_baseline_synthesis: f32,
     /// The direction of the current segment being laid out
     dir: FlexDirection,
     /// The layout direction of the current segment being laid out
@@ -615,6 +622,15 @@ fn compute_preliminary(tree: &mut impl LayoutFlexboxContainer, node: NodeId, inp
         }
     });
 
+    // pyro: and its central baseline, from the same item (rows on a central baseline).
+    let first_dominant_baseline = first_line.filter(|_| !constants.is_column).and_then(|line| {
+        line.items
+            .iter()
+            .find(|item| item.participates_in_baseline_alignment(constants.dir))
+            .or_else(|| line.items.iter().next())
+            .and_then(|child| child.dominant_baseline)
+    });
+
     let mut output = LayoutOutput::from_sizes_and_baselines(
         constants.container_size,
         {
@@ -635,7 +651,7 @@ fn compute_preliminary(tree: &mut impl LayoutFlexboxContainer, node: NodeId, inp
                 crate::tree::ScrollableOverflow::ZERO
             }
         },
-        Baselines::from_first(first_vertical_baseline),
+        Baselines { dominant_first: first_dominant_baseline, ..Baselines::from_first(first_vertical_baseline) },
     );
     output.oof_candidates = candidates;
     output.oof_positioning_area =
@@ -814,6 +830,7 @@ fn compute_constants(
     available_space: Size<AvailableSpace>,
 ) -> AlgoConstants {
     let dir = style.flex_direction();
+    let block_baseline_synthesis = style.block_baseline_synthesis();
     let is_row = dir.is_row();
     let is_column = dir.is_column();
     let flex_wrap = style.flex_wrap();
@@ -903,6 +920,7 @@ fn compute_constants(
     let inner_container_size = Size::zero();
 
     AlgoConstants {
+        block_baseline_synthesis,
         dir,
         layout_direction,
         is_row,
@@ -1104,6 +1122,7 @@ fn generate_anonymous_flex_items(
                 content_flex_fraction: 0.0,
 
                 baseline: 0.0,
+                dominant_baseline: None,
                 last_baseline_descent: 0.0,
 
                 offset_main: 0.0,
@@ -2660,8 +2679,15 @@ fn calculate_children_base_lines(
                 child.last_baseline_descent = height - last_baseline + child.margin.bottom;
                 continue;
             }
-            let baseline = child_first_baseline(measured_size_and_baselines.baselines.first, height, child.overflow.y)
-                .unwrap_or(height);
+            // pyro: on a central baseline (vertical writing modes, text not sideways), an item's
+            // central baseline, else its baseline, else one synthesized in its middle (Blink).
+            let baselines = &measured_size_and_baselines.baselines;
+            let baseline = if constants.block_baseline_synthesis == 0.5 {
+                child_first_baseline(baselines.dominant_first.or(baselines.first), height, child.overflow.y)
+                    .unwrap_or(height * 0.5)
+            } else {
+                child_first_baseline(baselines.first, height, child.overflow.y).unwrap_or(height)
+            };
 
             child.baseline = baseline + child.margin.top;
         }
@@ -3243,6 +3269,12 @@ fn calculate_flex_item(
         let baseline_offset_cross =
             total_offset_cross + item.offset_cross + effective_line_offset_cross + item.margin.cross_start(direction);
         item.baseline = baseline_offset_cross + inner_baseline;
+        item.dominant_baseline = (constants.block_baseline_synthesis == 0.5).then(|| {
+            let baselines = &layout_output.baselines;
+            baseline_offset_cross
+                + child_first_baseline(baselines.dominant_first.or(baselines.first), size.height, item.overflow.y)
+                    .unwrap_or(size.height * 0.5)
+        });
     } else {
         let baseline_offset_main = *total_offset_main + item.offset_main + item.margin.main_start(direction);
         item.baseline = baseline_offset_main + inner_baseline;

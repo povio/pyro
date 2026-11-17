@@ -1987,6 +1987,18 @@ impl<'doc> DocumentMutator<'doc> {
             return;
         }
 
+        // pyro: a file input's label (Chromium's "No file chosen"); its button is the box of its
+        // `::file-selector-button` (`layout::construct::file_selector_button`).
+        #[cfg(not(feature = "file-input"))]
+        if tagname == "input"
+            && type_attr.is_some_and(|t| t.eq_ignore_ascii_case("file"))
+            && self.doc.nodes[target_id].children.is_empty()
+        {
+            let id = self.create_text_node("No file chosen");
+            self.append_children(target_id, &[id]);
+            return;
+        }
+
         // Add content of "value" attribute as a text node child if:
         //   - Tag name is
         if let ("input", Some("button" | "submit" | "reset"), Some(value)) =

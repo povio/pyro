@@ -1053,3 +1053,8 @@ in the element's user space (`backdrop_clip` carries the space; filter-effects
 (`InlineBoxFragment::reaches_back`) paints after the text before it on its line: the line is painted by line, its
 text cut at the box (`TextCut`), as Appendix E orders a line's boxes and text (css-backgrounds
 `box-shadow-overlapping-001`).
+- Round 4 lane F (`render.rs`): `text-overflow` and line clamps cut vertical lines too (`draw_turned_lines`, at the
+  content box's physical height); the ellipsis of a line stops at the line's own end where floats shorten it
+  (`truncate_line`, parley `inline_min_coord`/`inline_max_coord`); an atomic inline that does not fit before its line's
+  ellipsis is not painted (`hidden_by_ellipsis`, Blink's `LineTruncator`). WPT css-overflow `text-overflow-006`, `-010`,
+  `text-overflow-ellipsis-vertical-001`, `-vertical-rtl-001`.

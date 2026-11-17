@@ -646,3 +646,11 @@ of height 0, then clamped (css-tables `percentage-sizing-of-table-cell-007`). `t
   (transferred) limits and the ratio's height from it; a size the ratio gives from the other axis is at least the
   content's when `min-*` is `auto` (css-sizing `aspect-ratio/abspos-008/012/013`; `abspos-017`'s `min-width: 0` keeps
   the ratio).
+- Round 4 lane F: `compute/block.rs` `perform_final_layout_on_in_flow_children`: a block container's
+  `Baselines::dominant_first`/`dominant_last` come from the children that give its first and last baselines (none from a
+  scroll container or a child without one), so an inline-block whose lines sit in a nested block still has a central
+  baseline in a vertical line. `compute/flexbox.rs` `calculate_children_base_lines`: in a container on a central baseline
+  (`FlexboxContainerStyle::block_baseline_synthesis` 0.5: vertical writing modes, text not sideways) an item's baseline is
+  its central one (`dominant_first`), else its baseline, else synthesized in its middle (WPT css-flexbox
+  `baseline-synthesis-004` with vertical lines that centre their atomic inlines). Such a row container exports the same
+  item's central baseline as its `dominant_first` (`FlexItem::dominant_baseline`; WPT `synthesize-vrl-baseline`).

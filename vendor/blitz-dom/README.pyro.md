@@ -2554,3 +2554,18 @@ does not let margins collapse through it, even when its lines have no height (CS
   css-transforms `view-box-mutation-003`).
 - `layout/table.rs`, `node/stylo_data.rs` (round 4 lane E): `max-height` does not apply to a table cell, as in
   Chromium (css-tables `table-cell-overflow-explicit-height-002`).
+- Round 4 lane F, vertical lines (`layout/inline/layout.rs`, `layout/inline/build.rs`): a vertical, not sideways inline
+  root sets parley's central baseline; an atomic inline's baseline there is its dominant (central) baseline from its
+  line-over side (block-end in `vertical-lr`), or the middle of its margin box when it has no baseline at all (Blink's
+  `BaselineMetrics` with `kCentralBaseline`; parley `InlineBox::central`). A box with only an alphabetic baseline (flex,
+  grid, table, form controls: none exports a central one) keeps its alphabetic placement, and a root with such a box
+  exports no dominant baseline (`alphabetic_atomics`), so that an inline-block wrapping one aligns as the box would.
+  The lines of `vertical-lr` are inverted (line-over at block-end): central boxes go to the other side of their line's
+  slot (paint already turned the text that way); in `sideways-lr`, whose lines run from the bottom, boxes go to the other
+  end of the line. `::file-selector-button` (`layout/construct.rs`
+  `file_selector_button`, `mutator.rs`): with the `file-input` feature off, a file input gets the label text "No file
+  chosen" as a child and the box of its `::file-selector-button` ("Choose file", UA rules in `assets/default.css` after
+  Chromium) in its `::before` slot, as the optgroup label. Marker counters (`layout/list.rs`, `layout/counters.rs`,
+  `resolve.rs`): a `::marker` `content` that reads counters other than `counter(list-item)` is evaluated by the
+  counter walk in tree order (`BaseDocument::marker_texts`); the first one met turns the walk on and the resolve runs
+  one more pass (`marker_counters_pending`).
