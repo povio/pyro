@@ -511,6 +511,15 @@ pub trait LayoutBlockContainer: LayoutPartialTree {
         None
     }
 
+    /// pyro: whether a percentage-height scroll container among the container's children whose
+    /// percentage cannot resolve is sized as if its height were 0 (then clamped by `min-height`)
+    /// rather than `auto`: CSS Tables 3 §row-layout and Blink's restricted block size table cell
+    /// children (a table cell's).
+    fn block_container_restricts_percent_scrollers(&self, node_id: NodeId) -> bool {
+        let _ = node_id;
+        false
+    }
+
     /// pyro: the border-box height a container of `auto` height fills at least, and that its children's
     /// `stretch` and percentage heights resolve against: Quirks Mode §3.6/§3.7 (the html element fills the
     /// viewport, the body fills the html element). `parent_size`: the container's containing block.

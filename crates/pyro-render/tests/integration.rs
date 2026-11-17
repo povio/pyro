@@ -32,6 +32,7 @@ mod quirky_body_and_ratio_keywords;
 mod grid_flex_round4;
 mod flex_content_sizes;
 mod table_part_containing_blocks;
+mod table_cell_percent_heights;
 mod flex_gaps;
 mod flex_last_baseline;
 mod flex_natural_ratio;

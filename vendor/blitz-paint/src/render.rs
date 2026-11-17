@@ -1112,14 +1112,40 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             return;
         }
 
-        let backdrop_filter =
-            convert_filters(&effects.backdrop_filter.0, self.scale, &current_color, self.dom).map(Arc::new);
+        // pyro: a `url()` naming an SVG filter graph (one that is no colour chain) is the backdrop
+        // filter as that graph, in the element's user space (CSS px from its border box's corner),
+        // which the backdrop markers are pushed in (WPT filter-effects
+        // `backdrop-filter-svg-displacement`, `backdrop-filter-reference-filter-mutated`).
+        #[cfg(feature = "svg")]
+        let backdrop_graph = match crate::filters::filter_steps(
+            &effects.backdrop_filter.0,
+            self.scale,
+            &current_color,
+            self.dom,
+            ((cx.frame.border_box.width() / self.scale) as f32, (cx.frame.border_box.height() / self.scale) as f32),
+            node.element_data().map_or(&[][..], |element| &element.reference_images[..]),
+        )
+        .as_deref()
+        {
+            Some([crate::filters::FilterStep::Graph(graph)]) => Some(graph.filter.clone()),
+            _ => None,
+        };
+        #[cfg(not(feature = "svg"))]
+        let backdrop_graph: Option<Arc<anyrender::Filter>> = None;
+        let backdrop_space = match backdrop_graph {
+            Some(_) => Affine::translate(cx.frame.border_box.origin().to_vec2()) * Affine::scale(self.scale),
+            None => Affine::IDENTITY,
+        };
+        let backdrop_filter = backdrop_graph.or_else(|| {
+            convert_filters(&effects.backdrop_filter.0, self.scale, &current_color, self.dom).map(Arc::new)
+        });
         // pyro: `backdrop-filter`: the backdrop is captured here, before the element's own layers
         // (its clip-path, mask and blend mode are no backdrop root for it), and drawn first in its
         // effect group (`paint_effect_group`). See anyrender_vello_cpu's `backdrop`.
-        let backdrop_clip = backdrop_filter.as_ref().map(|_| cx.frame.border_box_path());
-        if let (Some(backdrop), Some(clip)) = (&backdrop_filter, &backdrop_clip) {
-            scene.push_layer(Fill::NonZero, BlendMode::default(), 0.0, cx.transform, clip, None, Some(backdrop.clone()));
+        // (The clip in the filter's space, which the markers' transform maps on: `backdrop_space`.)
+        let backdrop_clip = backdrop_filter.as_ref().map(|_| (backdrop_space.inverse() * cx.frame.border_box_path(), backdrop_space));
+        if let (Some(backdrop), Some((clip, space))) = (&backdrop_filter, &backdrop_clip) {
+            scene.push_layer(Fill::NonZero, BlendMode::default(), 0.0, cx.transform * *space, clip, None, Some(backdrop.clone()));
             scene.pop_layer();
         }
         let css_clip_layer_pushed = self.layer_manager.maybe_push_layer(
@@ -1528,8 +1554,8 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         );
         // pyro: the backdrop filter's draw, first in the group: under the element's content, and
         // inside its opacity and filter (see `render_element`).
-        if let (Some(backdrop), Some(clip)) = (backdrop_filter, &backdrop_clip) {
-            scene.push_layer(Fill::NonZero, BlendMode::default(), 1.0, transform, clip, None, Some(backdrop));
+        if let (Some(backdrop), Some((clip, space))) = (backdrop_filter, &backdrop_clip) {
+            scene.push_layer(Fill::NonZero, BlendMode::default(), 1.0, transform * *space, clip, None, Some(backdrop));
             scene.pop_layer();
         }
         scene.append_scene(group, Affine::IDENTITY);
@@ -1589,8 +1615,8 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             None,
             backdrop_filter.clone(),
         );
-        if let (Some(backdrop), Some(clip)) = (backdrop_filter, &backdrop_clip) {
-            scene.push_layer(Fill::NonZero, BlendMode::default(), 1.0, transform, clip, None, Some(backdrop));
+        if let (Some(backdrop), Some((clip, space))) = (backdrop_filter, &backdrop_clip) {
+            scene.push_layer(Fill::NonZero, BlendMode::default(), 1.0, transform * *space, clip, None, Some(backdrop));
             scene.pop_layer();
         }
         for step in steps.iter().rev() {
@@ -2454,6 +2480,14 @@ impl ElementCx<'_, '_> {
             // and right (device px). Only where that shows: a box of one colour paints the same
             // either way.
             let effects = style.get_effects();
+            // pyro: an outer shadow reaching left of the box, over the text before it on its line
+            // (`InlineBoxFragment::reaches_back`).
+            let reaches_back = !rtl
+                && effects
+                    .box_shadow
+                    .0
+                    .iter()
+                    .any(|shadow| !shadow.inset && shadow.base.horizontal.px() - shadow.spread.px() - shadow.base.blur.px() < 0.0);
             let stitch = (!(first == index && last == index)
                 && style.get_border().box_decoration_break == style::values::computed::BoxDecorationBreak::Slice
                 && (!effects.box_shadow.0.is_empty()
@@ -2545,6 +2579,8 @@ impl ElementCx<'_, '_> {
                     left,
                     right,
                     reaches_above: false,
+                    reaches_back: false,
+                    x0: fragment.x0,
                     style: fragment.style.clone(),
                     turned: true,
                 });
@@ -2605,6 +2641,8 @@ impl ElementCx<'_, '_> {
                 left,
                 right,
                 reaches_above: (rect.y0 as f32) < fragment.line_top,
+                reaches_back: reaches_back && left,
+                x0: fragment.x0,
                 style: fragment.style.clone(),
                 turned: false,
             });
@@ -2773,39 +2811,57 @@ impl ElementCx<'_, '_> {
                 && text_layout.ellipsis.is_none()
                 && text_layout.clamp.is_none()
                 && text_layout.annotations.is_empty()
-                && fragments.iter().any(|fragment| fragment.line > 0 && fragment.reaches_above);
+                && fragments
+                    .iter()
+                    .any(|fragment| (fragment.line > 0 && fragment.reaches_above) || fragment.reaches_back);
             if by_line {
                 let options = TextPaintOptions {
                     scale: self.scale,
                     brush_override: None,
                     shadows: true,
                 };
-                let mut next = 0;
                 for (index, line) in text_layout.layout.lines().enumerate() {
-                    // (A fragment's `background-clip: text` mask borrows the text context.)
-                    while let Some(fragment) = fragments.get(next).filter(|fragment| fragment.line == index) {
-                        self.paint_inline_box_fragment(scene, fragment, transform, tops);
-                        next += 1;
+                    let on_line = || fragments.iter().filter(move |fragment| fragment.line == index);
+                    // pyro: the text before the first box whose shadow reaches back over it, the
+                    // boxes before that box, then the rest (`InlineBoxFragment::reaches_back`).
+                    let edge = on_line().filter(|fragment| fragment.reaches_back).map(|fragment| fragment.x0).reduce(f32::min);
+                    let passes: &[Option<crate::text::TextCut>] = match edge {
+                        Some(edge) => &[
+                            Some(crate::text::TextCut { edge, keep_left: true }),
+                            Some(crate::text::TextCut { edge, keep_left: false }),
+                        ],
+                        None => &[None],
+                    };
+                    for (pass, cut) in passes.iter().enumerate() {
+                        // (A fragment's `background-clip: text` mask borrows the text context.)
+                        for fragment in on_line() {
+                            let before = edge.is_some_and(|edge| fragment.x0 < edge);
+                            if edge.is_none() || (pass == 0) == before {
+                                self.paint_inline_box_fragment(scene, fragment, transform, tops);
+                            }
+                        }
+                        let mut draw_text_context = self.context.draw_text_context.borrow_mut();
+                        let outer_cut = std::mem::replace(&mut draw_text_context.cut, *cut);
+                        draw_text_context.text_shift = text_shift;
+                        draw_text_context.line_tops = tops;
+                        draw_text_context.first_line = text_layout.first_line;
+                        crate::text::stroke_text(
+                            scene,
+                            std::iter::once(line),
+                            self.context.dom,
+                            transform,
+                            options,
+                            self.node.id,
+                            Some(&text_layout.text),
+                            &mut draw_text_context,
+                            None,
+                            Some(&text_layout.layout),
+                        );
+                        draw_text_context.text_shift = 0.0;
+                        draw_text_context.line_tops = None;
+                        draw_text_context.first_line = None;
+                        draw_text_context.cut = outer_cut;
                     }
-                    let mut draw_text_context = self.context.draw_text_context.borrow_mut();
-                    draw_text_context.text_shift = text_shift;
-                    draw_text_context.line_tops = tops;
-                    draw_text_context.first_line = text_layout.first_line;
-                    crate::text::stroke_text(
-                        scene,
-                        std::iter::once(line),
-                        self.context.dom,
-                        transform,
-                        options,
-                        self.node.id,
-                        Some(&text_layout.text),
-                        &mut draw_text_context,
-                        None,
-                        Some(&text_layout.layout),
-                    );
-                    draw_text_context.text_shift = 0.0;
-                    draw_text_context.line_tops = None;
-                    draw_text_context.first_line = None;
                 }
                 return;
             }
@@ -4618,7 +4674,8 @@ struct EffectLayer {
     filter: Option<Arc<anyrender::Filter>>,
     backdrop_filter: Option<Arc<anyrender::Filter>>,
     /// pyro: the element's border box with its radii, in its space: what its backdrop shows in.
-    backdrop_clip: Option<kurbo::BezPath>,
+    /// (With the space it is in: the filter's, in the element's.)
+    backdrop_clip: Option<(kurbo::BezPath, Affine)>,
     /// pyro: the `filter` list as layers when an SVG filter in it is a graph (`filter` is then
     /// `None`): see `filters::filter_steps`.
     #[cfg(feature = "svg")]
@@ -4644,6 +4701,12 @@ struct InlineBoxFragment {
     right: bool,
     /// Whether its box reaches above its line box, over the line before.
     reaches_above: bool,
+    /// pyro: whether an outer shadow of its box reaches left of it, over the text before it on its
+    /// line: that text is painted first, as CSS 2.1 Appendix E paints a line's boxes and text in tree
+    /// order (WPT css-backgrounds `box-shadow-overlapping-001`).
+    reaches_back: bool,
+    /// pyro: its left edge in the line's coordinates (the text's).
+    x0: f32,
     /// pyro: its element's style on the first line, in place of its own (`::first-line`).
     style: Option<style::servo_arc::Arc<ComputedValues>>,
     /// pyro: a fragment of a vertical writing mode's turned line: `left` and `right` are its top

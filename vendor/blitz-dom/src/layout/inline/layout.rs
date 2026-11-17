@@ -684,6 +684,9 @@ impl LayoutPassState<'_> {
             let (min, max) = taffy::BlockContainerStyle::own_height_keywords(&style);
             (sizing_mode == SizingMode::InherentSize && content(min), sizing_mode == SizingMode::InherentSize && content(max))
         };
+        // pyro: the box's own height (`height` clamped), for a known height that is no basis for
+        // percentages (`LayoutInput::known_dimensions_are_definite`: a table cell's stretched height).
+        let mut own_height: Option<f32> = None;
         let (node_size, node_min_size, node_max_size, aspect_ratio) = match sizing_mode {
             SizingMode::ContentSize => {
                 let node_size = known_dimensions;
@@ -717,6 +720,7 @@ impl LayoutPassState<'_> {
                 }
                 let node_size =
                     known_dimensions.or(style_size.maybe_clamp(style_min_size, style_max_size));
+                own_height = style_size.height.maybe_clamp(style_min_size.height, style_max_size.height);
                 (node_size, style_min_size, style_max_size, aspect_ratio)
             }
         };
@@ -827,6 +831,24 @@ impl LayoutPassState<'_> {
                 {
                     // pyro: the percentage height quirk (`quirks_skips_for_percent_height`)
                     parent_size.height
+                } else if known_dimensions.height.is_some()
+                    && !inputs.known_dimensions_are_definite.height
+                    && self.nodes[node_id].primary_styles().is_some_and(|style| {
+                        style.get_box().display.inside() == style::values::specified::box_::DisplayInside::TableCell
+                    })
+                {
+                    // pyro: a table cell's stretched height that is no basis
+                    // (`table::TableTreeWrapper::definite_height`): its own length `height` is.
+                    own_height
+                        .or(self.cell_percent_height.filter(|(cell, _)| *cell == node_id).map(|(_, height)| height))
+                        .map(|height| (height - content_box_inset.vertical_axis_sum()).max(0.0))
+                } else if known_dimensions.height.is_none() && node_size.height.is_none() {
+                    // pyro: a table cell measured for its row: its own length `height`
+                    // (`LayoutPassState::cell_percent_height`).
+                    match self.cell_percent_height.filter(|(cell, _)| *cell == node_id) {
+                        Some((_, height)) => Some((height - content_box_inset.vertical_axis_sum()).max(0.0)),
+                        None => available_space.height.into_option(),
+                    }
                 } else {
                     available_space.height.into_option()
                 },

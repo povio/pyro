@@ -632,3 +632,10 @@ out-of-flow boxes; block items get them from their parent too).
   when it cannot grow, then at least its resolved minimum (Blink's row algorithm; WPT css-flexbox
   `intrinsic-size/row-001`, `row-004`). Before, inflexible items counted their max-content basis and shrinkable ones only
   their resolved minimum.
+
+Round 4 lane E: `compute/block.rs`: a known height that is no percentage basis (`known_dimensions_are_definite`
+false: a table cell's stretched height) leaves the box's own clamped `height` as the basis
+(`block_container_restricts_percent_scrollers` boxes only); the intrinsic-width pass reads
+`block_container_percentage_height` too; a percentage-height scroll container whose percentage does not resolve in
+a container that `block_container_restricts_percent_scrollers` (a cell of a table of non-`auto` height) is sized as
+of height 0, then clamped (css-tables `percentage-sizing-of-table-cell-007`). `tree/traits.rs`: the new hook.

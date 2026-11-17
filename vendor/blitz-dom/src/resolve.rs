@@ -1274,7 +1274,12 @@ impl BaseDocument {
             {
                 state.layout_wm = state.layout_wm_of(crate::dom_node_id(fo));
             }
-            taffy::compute_root_layout_in(&mut state, fo, initial_containing_block, initial_containing_block);
+            // pyro: its percentage `width`/`height` resolve against the nearest `<svg>` viewport (WPT
+            // css-transforms `view-box-mutation-003`).
+            let viewport = state.foreign_object_viewport(crate::dom_node_id(fo)).map_or(initial_containing_block, |(w, h)| {
+                taffy::Size { width: taffy::AvailableSpace::Definite(w), height: taffy::AvailableSpace::Definite(h) }
+            });
+            taffy::compute_root_layout_in(&mut state, fo, viewport, viewport);
             #[cfg(feature = "writing-mode")]
             state.physicalise_and_round_layout(fo);
             #[cfg(not(feature = "writing-mode"))]

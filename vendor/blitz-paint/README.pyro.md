@@ -1044,3 +1044,12 @@ element's style on the first line (seeded from blitz-dom's `TextLayout::first_li
 widths follow the first-line font). `text.rs`: the strut of the first line is its root style's; the root's text on
 the first line takes `font-synthesis-*` from the `::first-line` style. An outside string marker of an item without a
 line of its own sits on `marker_baseline` (WPT css-inline `text-box-trim-list-001`).
+
+## Backdrop SVG filter graphs, inline shadows over earlier text (WPT round 4, lane E)
+
+`render.rs`: a `backdrop-filter: url()` naming an SVG filter graph (no colour chain) is that graph, its markers pushed
+in the element's user space (`backdrop_clip` carries the space; filter-effects
+`backdrop-filter-reference-filter-mutated`). An inline box whose outer shadow reaches left of it
+(`InlineBoxFragment::reaches_back`) paints after the text before it on its line: the line is painted by line, its
+text cut at the box (`TextCut`), as Appendix E orders a line's boxes and text (css-backgrounds
+`box-shadow-overlapping-001`).

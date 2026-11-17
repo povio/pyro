@@ -818,7 +818,10 @@ impl Writer<'_> {
         let foreign_object = is_svg && !is_root && tag == "foreignObject";
         let mut unsized_foreign_object = false;
         if foreign_object {
-            let size = |name: markup5ever::LocalName| data.attr(name).and_then(|v| v.trim().trim_end_matches("px").parse::<f64>().ok());
+            // pyro: a percentage too (of the viewport; WPT css-transforms `view-box-mutation-003`)
+            let size = |name: markup5ever::LocalName| {
+                data.attr(name).and_then(|v| v.trim().trim_end_matches(['%']).trim_end_matches("px").parse::<f64>().ok())
+            };
             let sized = |name: markup5ever::LocalName, id: LonghandId| {
                 author.contains(&id) || size(name).is_some_and(|v| v > 0.0)
             };

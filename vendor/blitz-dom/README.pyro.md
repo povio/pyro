@@ -2542,3 +2542,13 @@ does not let margins collapse through it, even when its lines have no height (CS
   `content-block-size`) whose render tree element carries `data-pyro-frame-content-height` (pyro-dom's snapshot, from
   the embedded document's root element height when that document opted in to responsive embedded sizing) has that
   natural height (WPT css-sizing `responsive-iframe/*`).
+- `layout/table.rs`, `layout/mod.rs`, `layout/inline/layout.rs` (round 4 lane E): percentage heights of a table cell's
+  children follow CSS Tables 3 / Blink: unless the table's height (or the row's) is definite, the cell's stretched
+  height is no basis (`TableTreeWrapper::definite_height`); the cell's own length `height` is
+  (`LayoutPassState::cell_percent_height`, also in the baseline and intrinsic passes), else they are indefinite; in a
+  table of non-`auto` height a percentage-height scroll container counts as 0 (`restricted_cell`). css-tables
+  `percent-height-replaced-in-percent-cell-002..004`, `percent-height-table-cell-child`,
+  `table-cell-child-overflow-measure`, `percentage-sizing-of-table-cell-007`, `-children-006`.
+- `node/svg_css.rs`, `resolve.rs` (round 4 lane E): a `<foreignObject>` with a percentage `width`/`height` is drawn,
+  and its root is laid out against the nearest `<svg>`'s viewport (`LayoutPassState::foreign_object_viewport`;
+  css-transforms `view-box-mutation-003`).

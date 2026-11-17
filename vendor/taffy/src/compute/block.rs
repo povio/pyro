@@ -786,6 +786,16 @@ fn compute_inner(
         height: known_dimensions
             .height
             .filter(|_| inputs.known_dimensions_are_definite.height)
+            // pyro: a known height that is no basis (a table cell's stretched height): the box's own
+            // `height` is (`LayoutInput::known_dimensions_are_definite`).
+            .or_else(|| {
+                (known_dimensions.height.is_some()
+                    && !inputs.known_dimensions_are_definite.height
+                    && inputs.sizing_mode == SizingMode::InherentSize
+                    && tree.block_container_restricts_percent_scrollers(node_id))
+                    .then(|| size.height.maybe_clamp(min_size.height, max_size.height))
+                    .flatten()
+            })
             // pyro: percentages resolve against the height the ratio gives
             .or_else(|| known_dimensions.width.and_then(ratio_height)),
     };
@@ -851,6 +861,8 @@ fn compute_inner(
             // pyro: the quirky html and body (their filled height)
             .or(fill_height)
             .or(if tree.block_container_passes_percentage_height(node_id) { parent_size.height } else { None })
+            // pyro: a multi-column strip's or a table cell's (`block_container_percentage_height`)
+            .or_else(|| tree.block_container_percentage_height(node_id))
             .maybe_sub(content_box_inset.vertical_axis_sum());
         let intrinsic_width = determine_content_based_container_width(tree, &items, available_width, percentage_height)
             + content_box_inset.horizontal_axis_sum();
@@ -1260,9 +1272,21 @@ fn generate_item_list(
             #[cfg(not(feature = "float_layout"))]
             let is_not_floated = true;
 
+            // pyro: a percentage-height scroll container in a table cell whose height is indefinite
+            // is sized as if its height were 0 (`block_container_restricts_percent_scrollers`).
+            let mut own_size = child_style.size().maybe_resolve(node_inner_size, |val, basis| tree.calc(val, basis));
+            if own_size.height.is_none()
+                && node_inner_size.height.is_none()
+                && child_style.size().height.into_raw().uses_percentage()
+                && (overflow.x.is_scroll_container() || overflow.y.is_scroll_container())
+                && tree.block_container_restricts_percent_scrollers(node)
+                && tree.block_container_percentage_height(node).is_none()
+            {
+                own_size.height = child_style.size().height.maybe_resolve(Some(0.0), |val, basis| tree.calc(val, basis));
+            }
             // pyro: css-sizing-4 §5 ([`RatioSizes`])
             let sizes = resolve_sizes_with_aspect_ratio(
-                child_style.size().maybe_resolve(node_inner_size, |val, basis| tree.calc(val, basis)),
+                own_size,
                 crate::util::maybe_resolve_min_size(child_style.min_size(), node_inner_size, |val, basis| tree.calc(val, basis)),
                 child_style.max_size().maybe_resolve(node_inner_size, |val, basis| tree.calc(val, basis)),
                 aspect_ratio,

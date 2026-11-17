@@ -2883,6 +2883,8 @@ impl JsClass for SvgElement {
     }
 }
 simple_class!(SvgGraphicsElement, "SVGGraphicsElement", SvgElement, |def| {
+    // pyro: `transform` (SVG 2 `SVGAnimatedTransformList`, the attribute's list).
+    def.getter("transform", |s, n| Ok(collections::animated_transform_list(s, n.page(), n.id, "transform")?.value()));
     // No rasterizer, but geometry is attribute-defined: the user-space box
     // of shapes, paths, text and containers (pyro_dom::svg_geometry).
     def.method("getBBox", 0, |s, n, _a| {

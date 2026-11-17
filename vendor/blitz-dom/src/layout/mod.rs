@@ -142,6 +142,13 @@ pub(crate) struct LayoutPassState<'doc> {
     /// pyro: the multi-column container whose strip is being laid out and the border-box height
     /// its content's percentage heights resolve against (its column height, `layout::multicol`).
     pub(crate) multicol_percent_height: Option<(crate::NodeId, f32)>,
+    /// pyro: a table cell being laid out and the border-box height its children's percentage
+    /// heights resolve against: its own length `height` (`table::TableTreeWrapper::definite_height`).
+    pub(crate) cell_percent_height: Option<(crate::NodeId, f32)>,
+    /// pyro: a table cell being laid out in a table of non-`auto` `height` (Blink's restricted block
+    /// size table): its percentage-height scroll containers count as 0 when their percentage does not
+    /// resolve (`block_container_restricts_percent_scrollers`).
+    pub(crate) restricted_cell: Option<crate::NodeId>,
     /// pyro: the inline roots this pass marked `FINAL_LAYOUT_STALE` (`mark_final_layout_stale`).
     pub(crate) stale_lines: Vec<crate::NodeId>,
 }
@@ -186,6 +193,8 @@ impl<'doc> LayoutPassState<'doc> {
             column_spanners: None,
             calc_size_results: Vec::new(),
             multicol_percent_height: None,
+            cell_percent_height: None,
+            restricted_cell: None,
             stale_lines: Vec::new(),
         }
     }
@@ -1427,10 +1436,19 @@ impl LayoutPassState<'_> {
             Some(self.table_captions_min_width(&context, inputs))
         };
 
+        // pyro: whether the table's height is definite: then its cells' percentage-height children
+        // resolve against the cells' stretched heights (`TableTreeWrapper::definite_height`).
+        let restricted = !context.style.size.height.is_auto();
+        let definite_height = inputs.known_dimensions.height.is_some() || {
+            use taffy::MaybeResolve as _;
+            context.style.size.height.maybe_resolve(inputs.parent_size.height, resolve_calc_value).is_some()
+        };
         let mut table_wrapper = TableTreeWrapper {
             doc: self,
             ctx: context,
             style: None,
+            definite_height,
+            restricted,
         };
         table_wrapper.style = table_wrapper.auto_column_widths(&inputs);
         // pyro: a table's content size (a flex item's flex base size) is the width its columns give
@@ -2165,6 +2183,12 @@ impl taffy::LayoutBlockContainer for LayoutPassState<'_> {
         node.is_split_inline() || node.is_inline_with_only_block_children() || self.quirks_skips_for_percent_height(node)
     }
 
+    fn block_container_restricts_percent_scrollers(&self, node_id: NodeId) -> bool {
+        // pyro: a table cell's in a table of non-`auto` height (`LayoutPassState::restricted_cell`;
+        // WPT css-tables `percentage-sizing-of-table-cell-007` against `-children-005`).
+        self.restricted_cell == Some(dom_node_id(node_id))
+    }
+
     fn block_container_fill_height(&self, node_id: NodeId, parent_size: Size<Option<f32>>) -> Option<f32> {
         self.quirky_fill_height(dom_node_id(node_id), parent_size)
     }
@@ -2172,6 +2196,7 @@ impl taffy::LayoutBlockContainer for LayoutPassState<'_> {
     fn block_container_percentage_height(&self, node_id: NodeId) -> Option<f32> {
         self.multicol_percent_height
             .filter(|(container, _)| *container == dom_node_id(node_id))
+            .or(self.cell_percent_height.filter(|(cell, _)| *cell == dom_node_id(node_id)))
             .map(|(_, height)| height)
     }
 
@@ -2523,4 +2548,42 @@ pub(crate) fn effective_size_containment(styles: &style::properties::ComputedVal
         contain |= Contain::INLINE_SIZE;
     }
     contain
+}
+
+impl LayoutPassState<'_> {
+    /// pyro: the viewport of the `<svg>` nearest a `<foreignObject>` (CSS px): its `viewBox` size,
+    /// else its `width` and `height` when they are numbers, else (the root) its laid-out content box.
+    pub(crate) fn foreign_object_viewport(&self, fo: crate::NodeId) -> Option<(f32, f32)> {
+        let mut at = self.nodes[fo].parent;
+        while let Some(id) = at {
+            let node = &self.nodes[id];
+            let data = node.element_data()?;
+            if data.name.local == local_name!("svg") {
+                if let Some(view_box) = data.attr(local_name!("viewBox")) {
+                    let n: Vec<f32> = view_box
+                        .split(|c: char| c == ',' || c.is_ascii_whitespace())
+                        .filter_map(|v| v.parse().ok())
+                        .collect();
+                    if let [_, _, w, h] = n[..] {
+                        if w > 0.0 && h > 0.0 {
+                            return Some((w, h));
+                        }
+                    }
+                }
+                let number = |name| data.attr(name).and_then(|v: &str| v.trim().trim_end_matches("px").parse::<f32>().ok());
+                if let (Some(w), Some(h)) = (number(local_name!("width")), number(local_name!("height"))) {
+                    return Some((w, h));
+                }
+                let parent_is_svg = node.parent.and_then(|p| self.nodes[p].element_data()).is_some_and(|d| d.name.ns == markup5ever::ns!(svg));
+                if !parent_is_svg {
+                    let layout = node.unrounded_layout();
+                    let w = layout.size.width - layout.padding.left - layout.padding.right - layout.border.left - layout.border.right;
+                    let h = layout.size.height - layout.padding.top - layout.padding.bottom - layout.border.top - layout.border.bottom;
+                    return (w > 0.0 && h > 0.0).then_some((w, h));
+                }
+            }
+            at = node.parent;
+        }
+        None
+    }
 }
