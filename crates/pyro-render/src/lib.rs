@@ -3252,6 +3252,30 @@ mod settle_resolution_tests {
         assert_eq!(advances, 0, "a color-only style read must not perform a full layout");
     }
 
+    /// Danex lab canvas: the containing block of an absolutely positioned chain turned
+    /// `display: none` in the sync that removed the innermost box. Laid out hidden, the block kept
+    /// its hoisted list, rounding walked it to the removed (dropped) box: `invalid SlotMap key`.
+    #[test]
+    fn hidden_containing_block_drops_its_hoisted_boxes() {
+        let source = "<!doctype html><div id=box style='position:relative;width:200px;height:200px'><div style='position:absolute;top:0;left:0;width:100px;height:100px'><div style='position:absolute;top:5px;left:5px;width:10px;height:10px'></div></div></div>";
+        let (snap, key) = fixture(source);
+        let tree = &snap.live.as_ref().unwrap().tree;
+        let index = tree.nodes.iter().position(|n| n.key == key).unwrap() as u32;
+        let inner = tree.nodes.iter().find(|n| n.parent == index && matches!(n.kind, TreeKind::Element { .. })).unwrap().key;
+        let (hidden, _) = fixture(&source.replace("position:relative;", "position:relative;display:none;"));
+        let kind = hidden.live.as_ref().unwrap().tree.nodes.iter().find(|n| n.key == key).unwrap().kind.clone();
+        let fetcher: Arc<dyn Fetcher> = Arc::new(NoFetch);
+        let mut renderer = Renderer::new();
+        renderer.sync_layout(&snap, &fetcher).unwrap();
+        let cb = renderer.mirrors[&1].node(key).unwrap();
+        assert_eq!(renderer.mirrors[&1].doc.get_node(cb).unwrap().hoisted_children.borrow().len(), 1);
+        let ops = [DeltaOp::Children { parent: Some(inner), kids: Vec::new(), nodes: Vec::new() }, DeltaOp::Node { key, kind }];
+        renderer.sync_delta(1, &ops, (200, 100, 1.0, false, false), false).unwrap();
+        let doc = &renderer.mirrors[&1].doc;
+        let hoisted = doc.get_node(cb).unwrap().hoisted_children.borrow().clone();
+        assert!(hoisted.is_empty(), "a display: none block keeps hoisted boxes {hoisted:?}");
+    }
+
     #[test]
     fn style_only_width_delta_keeps_dirty_geometry_for_the_next_full_sync() {
         let source = "<!doctype html><div id=box style='width:50px;height:20px'></div>";

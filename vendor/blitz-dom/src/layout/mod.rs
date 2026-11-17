@@ -550,6 +550,16 @@ impl LayoutPassState<'_> {
     #[inline(never)]
     fn lay_out_out_of_flow_boxes(&mut self, node_id: NodeId, output: &mut taffy::tree::LayoutOutput) {
         let dom_id = dom_node_id(node_id);
+        // pyro: a box laid out hidden (`display: none`) has no positioning area, so Taffy's pass
+        // returns without touching its hoisted list: the boxes it laid out before it was hidden
+        // stayed listed, and rounding walked them, down to ones since dropped (`invalid SlotMap
+        // key`, Danex lab canvas: the canvas stage hidden in the sync that removed a sheet's child).
+        if output.oof_positioning_area.is_none()
+            && self.nodes[dom_id].primary_styles().is_none_or(|style| style.get_box().display.is_none())
+        {
+            self.clear_hoisted_children(node_id);
+            return;
+        }
         // pyro: a positioned inline box split around block-level content (`NodeFlags::IS_SPLIT_INLINE`)
         // lays out no absolutely positioned box itself: their containing block is the box its
         // fragments bound, which the tail after its box ends, so its parent lays them out once both

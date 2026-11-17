@@ -2628,3 +2628,8 @@ Round 4 lane G:
   style) and keeps the thread-local `SelectorCaches` (`:has()` filter map and results) between reads. The embedder
   clears them whenever the document changes (pyro: every sync and interaction-state change). axe-core over ~10,000
   hidden canvas elements went from more than 40 s to well under a second.
+- `src/layout/mod.rs` (`lay_out_out_of_flow_boxes`): a box laid out hidden (`display: none`) clears its hoisted
+  list. Its output has no positioning area, so Taffy's out-of-flow pass returned without touching the list, and
+  rounding kept walking the boxes it held before it was hidden, down to ones dropped since (Danex lab canvas: the
+  canvas stage hidden in the sync that removed a sheet's child; pyro-render test
+  `hidden_containing_block_drops_its_hoisted_boxes`).
