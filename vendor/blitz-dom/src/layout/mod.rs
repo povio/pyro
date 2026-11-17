@@ -824,6 +824,9 @@ impl LayoutPassState<'_> {
 
         // pyro: the root `<svg>` of an SVG document keeps usvg's size (see the `Svg` arm below).
         let is_root_element = node.is_root_element();
+        let content_sized = node.primary_styles().is_some_and(|style| {
+            style.get_ui().field_sizing == style::values::computed::FieldSizing::Content
+        });
         match &mut node.data {
             NodeData::Text(data) => {
                 // With the new "inline context" architecture all text nodes should be wrapped in an "inline layout context"
@@ -870,17 +873,47 @@ impl LayoutPassState<'_> {
                         .attr(local_name!("cols"))
                         .and_then(|val| val.parse::<f32>().ok());
 
+                    // `field-sizing: content` measures the editor's shaped text (or its
+                    // placeholder), not the HTML rows/cols hints. Use a private layout for
+                    // intrinsic measurement: a min-content probe must not change the editor
+                    // that paint and caret geometry share.
+                    let mut content_layout = content_sized
+                        .then(|| {
+                            element_data.text_input_data().and_then(|input| {
+                                input.shown_placeholder().map(|p| p.layout.clone())
+                                    .or_else(|| input.editor.try_layout().cloned())
+                            })
+                        })
+                        .flatten();
                     let output = compute_leaf_layout(
                         inputs,
                         &node.layout_style(),
                         resolve_calc_value,
-                        |_known_size, _available_space| taffy::Size {
-                            width: if compressible_min_content {
-                                0.0
-                            } else {
-                                cols.map(|cols| cols * font_size.unwrap_or(16.0) * 0.6).unwrap_or(300.0)
-                            },
-                            height: resolved_line_height.unwrap_or(16.0) * rows,
+                        |_known_size, available_space| {
+                            if content_sized {
+                                let line_height = resolved_line_height.unwrap_or(16.0);
+                                if let Some(layout) = content_layout.as_mut() {
+                                    let width = match available_space.width {
+                                        taffy::AvailableSpace::Definite(width) => Some(width.max(0.0) * scale),
+                                        taffy::AvailableSpace::MinContent => Some(0.0),
+                                        taffy::AvailableSpace::MaxContent => None,
+                                    };
+                                    layout.break_all_lines(width);
+                                    return taffy::Size {
+                                        width: (layout.width() / scale).max(1.0),
+                                        height: (layout.height() / scale).max(line_height),
+                                    };
+                                }
+                                return taffy::Size { width: 1.0, height: line_height };
+                            }
+                            taffy::Size {
+                                width: if compressible_min_content {
+                                    0.0
+                                } else {
+                                    cols.map(|cols| cols * font_size.unwrap_or(16.0) * 0.6).unwrap_or(300.0)
+                                },
+                                height: resolved_line_height.unwrap_or(16.0) * rows,
+                            }
                         },
                     );
                     if inputs.run_mode == RunMode::PerformLayout {

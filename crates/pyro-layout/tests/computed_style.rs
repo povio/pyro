@@ -350,3 +350,30 @@ fn a_grid_containers_template_resolves_to_its_used_tracks() {
     assert_eq!(p.layout.computed_style_value(&dom, el, "grid-template-columns"), "25px 25px 25px 25px");
     assert_eq!(p.layout.computed_style_value(&dom, el, "grid-template-rows"), "20px 20px 20px 20px 20px");
 }
+
+#[test]
+fn svg_presentation_attributes_participate_in_the_cascade() {
+    let p = Page::new(
+        r#"<!doctype html><style>
+        :root { --weight: 400 } body { color: white; font-weight: 700 }
+        #override { stroke: red; font-weight: 500 }
+        </style><svg id=svg stroke=currentColor fill=none>
+        <text id=variable font-weight="var(--weight)">word</text>
+        <text id=literal font-weight=400>word</text>
+        <text id=override font-weight=400 stroke=blue>word</text>
+        <path id=path d="M0 0L10 10"/></svg>"#,
+    );
+    assert_eq!(p.value("#variable", "font-weight"), "400");
+    assert_eq!(p.value("#literal", "font-weight"), "400");
+    assert_eq!(p.value("#override", "font-weight"), "500");
+    assert_eq!(p.value("#override", "stroke"), "rgb(255, 0, 0)");
+    assert_eq!(p.value("#svg", "stroke"), "rgb(255, 255, 255)");
+    assert_eq!(p.value("#path", "stroke"), "rgb(255, 255, 255)");
+    assert_eq!(p.value("#path", "fill"), "none");
+    let svg = p.find("#svg");
+    p.dom.borrow_mut().set_attribute(svg, "stroke", "blue").unwrap();
+    assert_eq!(p.value("#path", "stroke"), "rgb(0, 0, 255)");
+    let literal = p.find("#literal");
+    p.dom.borrow_mut().remove_attribute(literal, "font-weight").unwrap();
+    assert_eq!(p.value("#literal", "font-weight"), "700");
+}

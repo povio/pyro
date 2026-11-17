@@ -245,3 +245,23 @@ fn an_invalid_transform_origin_attribute_is_ignored() {
     );
     assert_eq!(px(&img, 90, 90), WHITE);
 }
+
+#[test]
+fn svg_presentation_variables_reach_painted_content() {
+    let img = render(
+        r#"<style>:root { --paint: blue; --weight: 400 } body { font-weight: 700 }</style>
+        <svg width="200" height="100" fill="none" stroke="var(--paint)" stroke-width="8">
+          <path d="M10 20H80"/>
+          <text x="10" y="70" stroke="none" fill="black" font-size="32" font-weight="var(--weight)">word</text>
+        </svg>"#,
+    );
+    assert_eq!(px(&img, 40, 20), BLUE, "computed presentation paint reaches usvg");
+    let literal = render(
+        r#"<style>body { font-weight: 700 }</style>
+        <svg width="200" height="100" fill="none" stroke="blue" stroke-width="8">
+          <path d="M10 20H80"/>
+          <text x="10" y="70" stroke="none" fill="black" font-size="32" style="font-weight:400">word</text>
+        </svg>"#,
+    );
+    assert_eq!(img.data, literal.data, "variable font weight paints like its resolved value");
+}

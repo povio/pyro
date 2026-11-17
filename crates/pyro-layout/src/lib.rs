@@ -173,7 +173,7 @@ pub fn release_thread() {
 /// The Blitz document of one page document.
 /// DOM version, style generation, viewport (width, height, device pixel
 /// ratio bits, dark) and style invalidations.
-type SyncedAt = (u64, u64, (u32, u32, u64, bool, bool), u64);
+type SyncedAt = (u64, u64, (u32, u32, u64, bool, bool, pyro_render::InputCapabilities), u64);
 
 /// A document's base URL as given, and parsed once when it is set: links
 /// resolve against the parsed form on every sync, while the snapshot keeps
@@ -386,6 +386,14 @@ impl BlitzGeometry {
             device_scale_factor: v.device_scale_factor,
             dark: v.color_scheme == pyro_dom::media::ColorScheme::Dark,
             print: v.print,
+            input: pyro_render::InputCapabilities {
+                pointer: match v.pointer {
+                    pyro_dom::media::Pointer::None => pyro_render::Pointer::None,
+                    pyro_dom::media::Pointer::Fine => pyro_render::Pointer::Fine,
+                    pyro_dom::media::Pointer::Coarse => pyro_render::Pointer::Coarse,
+                },
+                hover: v.hover,
+            },
             scroll_x: 0.0,
             scroll_y: 0.0,
             resource_scope: format!("geometry-{}", self.page),
@@ -433,6 +441,14 @@ impl BlitzGeometry {
             v.device_scale_factor.to_bits(),
             v.color_scheme == pyro_dom::media::ColorScheme::Dark,
             v.print,
+            pyro_render::InputCapabilities {
+                pointer: match v.pointer {
+                    pyro_dom::media::Pointer::None => pyro_render::Pointer::None,
+                    pyro_dom::media::Pointer::Fine => pyro_render::Pointer::Fine,
+                    pyro_dom::media::Pointer::Coarse => pyro_render::Pointer::Coarse,
+                },
+                hover: v.hover,
+            },
         );
         let now = (dom.version(), style.observation_stamp(dom).1, viewport, style.invalidations());
         let last = self.synced.replace(Some(now));

@@ -4853,3 +4853,72 @@ fn deep_nesting_of_each_algorithm_lays_out_on_any_stack() {
         .join()
         .expect("no stack overflow");
 }
+
+#[test]
+fn content_sized_textarea_tracks_text_wrapping_and_placeholder() {
+    let mut p = page(
+        r#"<!doctype html><style>
+        textarea { font: 16px/24px monospace; padding: 0; border: 0; width: 100px; field-sizing: content }
+        #fixed { field-sizing: fixed }
+        #min { min-height: 72px } #max { max-height: 48px }
+        </style><textarea id=empty rows=5></textarea><textarea id=one rows=5>word</textarea>
+        <textarea id=lines>a
+b
+c</textarea><textarea id=wrap>one two three four five six seven</textarea>
+        <textarea id=placeholder placeholder="a&#10;b&#10;c"></textarea>
+        <textarea id=fixed>word</textarea><textarea id=min>word</textarea>
+        <textarea id=auto style="width:auto" cols=80>word</textarea>
+        <textarea id=explicit style="height:36px">a
+b
+c</textarea>
+        <textarea id=max>a
+b
+c</textarea>"#,
+    );
+    for (id, height) in [
+        ("empty", 24.0),
+        ("one", 24.0),
+        ("lines", 72.0),
+        ("wrap", 96.0),
+        ("placeholder", 72.0),
+        ("fixed", 48.0),
+        ("min", 72.0),
+        ("max", 48.0),
+        ("explicit", 36.0),
+    ] {
+        assert_eq!(p.metrics(id)[3], height, "#{id}");
+    }
+    assert!(p.metrics("auto")[2] > 20.0 && p.metrics("auto")[2] < 60.0, "auto width follows text, ignoring cols");
+    p.dom.set_value(p.id("one"), "a\nb\nc").unwrap();
+    assert_eq!(p.metrics("one")[3], 72.0);
+    p.dom.set_value(p.id("one"), "a").unwrap();
+    assert_eq!(p.metrics("one")[3], 24.0);
+    p.dom.set_value(p.id("placeholder"), "value").unwrap();
+    assert_eq!(p.metrics("placeholder")[3], 24.0);
+    assert_eq!(p.layout.style().stylo_value(&p.dom, p.id("one"), "field-sizing").as_deref(), Some("content"));
+}
+
+#[test]
+fn touch_media_rules_change_geometry_in_existing_documents() {
+    use pyro_dom::media::Pointer;
+    let mut p = page(
+        r#"<!doctype html><style>
+        #box { width: 42px; height: 10px }
+        @media (pointer: coarse) and (hover: none) and (any-pointer: coarse) and (any-hover: none) { #box { width: 91px } }
+        @media (pointer: none) { #box { width: 17px } }
+        </style><div id=box></div>"#,
+    );
+    assert_eq!(p.metrics("box")[2], 42.0);
+    let mut viewport = p.layout.style().viewport().clone();
+    viewport.pointer = Pointer::Coarse;
+    viewport.hover = false;
+    p.layout.set_viewport(viewport.clone());
+    assert_eq!(p.metrics("box")[2], 91.0);
+    viewport.pointer = Pointer::None;
+    p.layout.set_viewport(viewport.clone());
+    assert_eq!(p.metrics("box")[2], 17.0);
+    viewport.pointer = Pointer::Fine;
+    viewport.hover = true;
+    p.layout.set_viewport(viewport);
+    assert_eq!(p.metrics("box")[2], 42.0);
+}

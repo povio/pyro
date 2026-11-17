@@ -4324,7 +4324,7 @@ initial = "computed::WindowShadow::Auto"
 
 [field-sizing]
 struct = "ui"
-engine = "gecko"
+servo_restyle_damage = "rebuild_box"
 spec = "https://drafts.csswg.org/css-ui/#field-sizing"
 animation_type = "discrete"
 affects = "layout"
