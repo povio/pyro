@@ -8023,7 +8023,7 @@ diff --git a/packages/blitz-dom/src/layout/first_letter.rs b/packages/blitz-dom/
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/layout/first_letter.rs
-@@ -0,0 +1,739 @@
+@@ -0,0 +1,745 @@
 +//! pyro: `::first-letter` (CSS 2.1 5.12.2, CSS Pseudo-Elements 4 2.2).
 +//!
 +//! The first letter of a block container's first formatted line takes the style of the
@@ -8277,6 +8277,12 @@ new file mode 100644
 +            let node = &doc.nodes[id];
 +            node.display_style().is_none_or(|display| display != Display::None)
 +                && !node.primary_styles().is_some_and(|style| is_out_of_flow(&style))
++                // pyro: nor the anonymous block holding only an item's inside marker
++                // (`construct::place_inside_marker`): markers are no first letter (WPT css-pseudo
++                // `first-letter-exclude-block-child-marker`).
++                && !(node.is_anonymous()
++                    && node.children.is_empty()
++                    && node.element_data().is_some_and(|element| element.list_item_data.is_some()))
 +        })
 +    });
 +    first == Some(child)

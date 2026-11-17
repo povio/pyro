@@ -2593,3 +2593,5 @@ Round 4 lane G:
   `initial-letter-sunk-initial-slr`).
 - Round 4 lane F: trailing invisible line boxes (phantom lines) do not count for `line-clamp` (`counted_lines`; WPT
   css-overflow `line-clamp-037`).
+- Round 4 lane F: `::first-letter` passes over the anonymous block that holds only an item's inside marker
+  (`first_letter::is_first_in_flow_child`; WPT css-pseudo `first-letter-exclude-block-child-marker`).
