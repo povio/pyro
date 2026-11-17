@@ -26,7 +26,7 @@ import net from 'node:net';
 import path from 'node:path';
 import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
-import { DEFAULT_DIRS, REFTEST_DIRS, allDirs, discover, discoverReftests, plan, shard, readJson } from './lib.mjs';
+import { DEFAULT_DIRS, REFTEST_DIRS, allDirs, discover, discoverReftests, plan, shard, readBaselineAt, readJson } from './lib.mjs';
 import { REFTEST_CONTEXT, ahemEnv, reftestEnv, runReftest } from './reftest.mjs';
 import { CRASHTEST_DIRS, discoverCrashtests, runCrashtest } from './crashtest.mjs';
 import { startProxy, startWptserve } from './wptserve.mjs';
@@ -59,7 +59,7 @@ const WPTSERVE = SERVER === 'wptserve';
 // runner (testdriver.mjs). README "testdriver".
 const TESTDRIVER = argv.includes('--testdriver');
 if (TESTDRIVER && !WPTSERVE) throw new Error('--testdriver needs --server wptserve');
-const BASELINE = opt('--baseline') && readJson(opt('--baseline'));
+const BASELINE = opt('--baseline') && readBaselineAt(opt('--baseline'));
 const [SHARD, SHARDS] = (opt('--shard', '0/1')).split('/').map(Number);
 const REUSE = argv.includes('--reuse-context');
 const REPEAT = Number(opt('--repeat', 1));

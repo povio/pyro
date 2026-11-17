@@ -328,6 +328,46 @@ export function formatBaseline(head, tests) {
   return s;
 }
 
+// A baseline is one file, or a directory of them, one per top-level WPT directory (`<dir>/<top>.json`, each in the
+// format above with the same head), for the whole suite's ~70,000 pages: each file stays small enough to diff and
+// to merge page by page (merge-baseline.mjs), and a change touches only its directories' files.
+export const topOf = (url) => url.split('/')[0];
+export function readBaselineAt(p) {
+  if (!fs.existsSync(p)) return null;
+  if (!fs.statSync(p).isDirectory()) return readJson(p);
+  const files = fs.readdirSync(p).filter((f) => f.endsWith('.json')).sort();
+  if (!files.length) return null;
+  let head = null;
+  const tests = {};
+  for (const f of files) {
+    const j = readJson(path.join(p, f));
+    if (!head) head = { ...j, tests: undefined };
+    else if (j.wpt?.revision !== head.wpt?.revision) throw new Error(`${path.join(p, f)} is for WPT ${j.wpt?.revision}, ${files[0]} for ${head.wpt?.revision}`);
+    for (const [u, e] of Object.entries(j.tests)) {
+      if (topOf(u) + '.json' !== f) throw new Error(`${path.join(p, f)} holds ${u}, which belongs in ${topOf(u)}.json`);
+      tests[u] = e;
+    }
+  }
+  delete head.tests;
+  return { ...head, tests };
+}
+// Writes `tests` to `p`: a directory (an existing one, or a path ending in '/') gets one file per top-level
+// directory, and loses the files of directories no page is in any more; anything else is one file.
+export function writeBaselineAt(p, head, tests) {
+  const dir = p.endsWith('/') || (fs.existsSync(p) && fs.statSync(p).isDirectory());
+  if (!dir) { fs.writeFileSync(p, formatBaseline(head, tests)); return; }
+  fs.mkdirSync(p, { recursive: true });
+  const groups = {};
+  for (const [u, e] of Object.entries(tests)) (groups[topOf(u)] ??= {})[u] = e;
+  for (const f of fs.readdirSync(p)) if (f.endsWith('.json') && !groups[f.slice(0, -5)]) fs.unlinkSync(path.join(p, f));
+  for (const [top, t] of Object.entries(groups)) {
+    const file = path.join(p, `${top}.json`);
+    const s = formatBaseline(head, t);
+    // A file whose pages did not change is left as it was.
+    if (!fs.existsSync(file) || fs.readFileSync(file, 'utf8') !== s) fs.writeFileSync(file, s);
+  }
+}
+
 // What every run of a page agrees on (a run and its reruns): it completed only if every run did, a subtest passed
 // only if it passed in every run, and `all` is its set of names when every run completed with the same one.
 // ms: the first completed run's duration (a timed-out run's says nothing about the page).

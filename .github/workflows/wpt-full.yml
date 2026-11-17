@@ -225,3 +225,19 @@ jobs:
           path: wpt-full-results.tgz
           retention-days: 30
           compression-level: 0
+      # With reruns (every page ran twice), the whole suite's first baselines: one directory per kind, one file per
+      # top-level WPT directory (lib.mjs readBaselineAt). Not committed by CI: commit them from the artifact.
+      - name: Baselines
+        if: ${{ inputs.reruns }}
+        run: |
+          for k in testharness reftest crashtest; do
+            ls shards/wpt-full-$k-*.json >/dev/null 2>&1 || continue
+            bun bench/wpt/gate.mjs update --kind $k --baseline full-baselines/$k/ --out full-baselines/$k/ shards/wpt-full-$k-*.json
+          done
+          du -sh full-baselines/* || true
+      - uses: actions/upload-artifact@v4
+        if: ${{ inputs.reruns }}
+        with:
+          name: wpt-full-baselines
+          path: full-baselines
+          retention-days: 30

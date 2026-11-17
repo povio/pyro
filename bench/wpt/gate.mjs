@@ -32,7 +32,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  MAX_IGNORED_INCOMPLETE, consensus, differs, entryOf, formatBaseline, isImprovement, isRegression, judge, lostCount,
+  MAX_IGNORED_INCOMPLETE, consensus, differs, entryOf, formatBaseline, readBaselineAt, writeBaselineAt, isImprovement, isRegression, judge, lostCount,
   mergeEntry, newMs, passCount, passing, readFlaky, readJson, roundMs, skippable, weakening, wholePage,
 } from './lib.mjs';
 
@@ -63,7 +63,8 @@ const LABEL = 'wpt-accept-loss';
 const RERUNS = 2, PAD_MAX = 100;
 const GH = !!process.env.GITHUB_ACTIONS;
 const RUN_URL = process.env.GITHUB_RUN_ID && `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`;
-const readBaseline = () => (fs.existsSync(BASELINE_FILE) ? readJson(BASELINE_FILE) : null);
+// A file, or a directory of per-directory files (lib.mjs readBaselineAt).
+const readBaseline = () => readBaselineAt(BASELINE_FILE);
 const rel = (f) => { const r = path.relative(process.cwd(), f); return r.startsWith('..') ? f : r; };
 const writeJson = (f, j) => fs.writeFileSync(f, JSON.stringify(j));
 
@@ -177,7 +178,7 @@ function check(files) {
   const L = load(files);
   const { baseline, why } = baselineFor(L.revision);
   const flaky = readFlaky(FLAKY_FILE);
-  const base = opt('--base-baseline') ? readJson(opt('--base-baseline')) : null;
+  const base = opt('--base-baseline') ? readBaselineAt(opt('--base-baseline')) : null;
   const problems = [...L.problems];
   if (baseline && !L.restricted) {
     // The plan's skip rule, applied here again: a shard may skip only what the rule skips.
@@ -331,7 +332,8 @@ function update(files) {
   }
   // A run that changes nothing writes the file as it was, so CI can tell that nothing changed.
   const head = { wpt: { repo: WPT_REPO, revision: baseline.wpt.revision }, dirs: L.restricted ? baseline.dirs ?? L.runs[0].dirs : L.runs[0].dirs };
-  const outFile = path.resolve(opt('--out', BASELINE_FILE));
+  // path.resolve drops a trailing '/', which asks for a directory of files.
+  const outFile = path.resolve(opt('--out', BASELINE_FILE)) + (opt('--out', '').endsWith('/') ? '/' : '');
   writeBaseline(outFile, head, tests);
   const total = Object.values(tests).reduce((a, e) => a + passCount(e), 0);
   console.log(`baseline ${rel(outFile)}: ${changed} page entr${changed === 1 ? 'y' : 'ies'} changed${replaced ? ` (${replaced} replaced)` : ''}, +${gained} −${lost} passing subtests; ${Object.keys(tests).length} pages, ${total} passing subtests`);
@@ -349,7 +351,7 @@ function delta(old, e) {
 }
 
 function writeBaseline(file, head, tests) {
-  fs.writeFileSync(file, formatBaseline(head, tests));
+  writeBaselineAt(file, head, tests);
 }
 
 // ---------- diff ----------
