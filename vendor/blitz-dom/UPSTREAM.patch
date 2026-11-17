@@ -4503,7 +4503,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
              ) {
                  create_text_editor(doc, container_node_id, false);
                  return;
-@@ -444,9 +606,43 @@
+@@ -444,9 +606,46 @@
              }
          }
  
@@ -4528,9 +4528,12 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
 +
 +        // pyro: an `<object>` showing an image is replaced content (`replaced::is_image_object`):
 +        // its children, the fallback, generate no boxes. Nor do those of an element its
-+        // `content: url()` replaces (`ElementData::content_image`; the root's were painted),
-+        // also while the image loads or when it fails (WPT css-content `element-replacement-alt`).
-+        if crate::layout::replaced::is_image_object(el) || el.content_image.is_some() {
++        // `content` image replaces (`util::content_replaces`; the root's were painted), also
++        // while the image loads or when it fails (WPT css-content `element-replacement-alt`).
++        if crate::layout::replaced::is_image_object(el)
++            || (!doc.nodes[container_node_id].is_anonymous()
++                && doc.nodes[container_node_id].primary_styles().is_some_and(|style| crate::util::content_replaces(&style)))
++        {
 +            doc.iter_subtree_mut(container_node_id, |id: NodeId, doc: &mut BaseDocument| {
 +                doc.nodes[id].remove_damage(CONSTRUCT_BOX | CONSTRUCT_DESCENDENT | CONSTRUCT_FC);
 +            });
@@ -4548,7 +4551,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
  
              // Remove contruction damage from subtree
              doc.iter_subtree_mut(container_node_id, |id: NodeId, doc: &mut BaseDocument| {
-@@ -454,7 +650,12 @@
+@@ -454,7 +653,12 @@
              });
  
              match crate::util::parse_svg_image(outer_html.as_bytes()) {
@@ -4562,7 +4565,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
                      doc.get_node_mut(container_node_id)
                          .unwrap()
                          .element_data_mut()
-@@ -488,13 +689,37 @@
+@@ -488,13 +692,37 @@
          } else {
              (0, false)
          };
@@ -4602,7 +4605,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
              return;
          }
      }
-@@ -530,7 +755,9 @@
+@@ -530,7 +758,9 @@
                  .any(|child| {
                      let display = child.display_style().unwrap_or(Display::inline());
                      let node_kind = child.data.kind();
@@ -4613,7 +4616,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
                  });
  
              if !has_text_node_or_contents {
-@@ -553,9 +780,9 @@
+@@ -553,9 +783,9 @@
          }
  
          DisplayInside::Table => {
@@ -4625,7 +4628,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
              doc.nodes[container_node_id]
                  .flags
                  .insert(NodeFlags::IS_TABLE_ROOT);
-@@ -564,13 +791,10 @@
+@@ -564,13 +794,10 @@
                  .downcast_element_mut()
                  .unwrap()
                  .special_data = data;
@@ -4643,7 +4646,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
          }
  
          // Flow, FlowRoot and TableCell, plus internal table displays (row,
-@@ -581,9 +805,25 @@
+@@ -581,9 +808,25 @@
          // layout children (text nodes carry no style and cannot be laid out
          // as block/flex/grid items).
          _ => {
@@ -4669,7 +4672,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
              // Inline box whose in-flow content is block-level only: it is laid out as block
              // boxes, so paint must not draw its own box over them.
              if doc.nodes[container_node_id]
-@@ -597,7 +837,10 @@
+@@ -597,7 +840,10 @@
                      .insert(NodeFlags::IS_INLINE_WITH_ONLY_BLOCK_CHILDREN);
              }
  
@@ -4681,7 +4684,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
                  // Contents-transparent: a display:contents child may be
                  // holding the out-of-flow elements (otherwise the contents
                  // node itself would be pushed as a layout box).
-@@ -609,18 +852,39 @@
+@@ -609,18 +855,39 @@
              }
  
              // TODO: fix display:contents
@@ -4733,7 +4736,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
                  doc.nodes[container_node_id]
                      .flags
                      .insert(NodeFlags::IS_INLINE_ROOT);
-@@ -629,6 +893,14 @@
+@@ -629,6 +896,14 @@
                  return;
              }
  
@@ -4748,7 +4751,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
              // If the children are either all inline or all block then simply return the regular children
              // as the layout children
              if classification.all_block & !classification.has_contents {
-@@ -651,29 +923,224 @@
+@@ -651,29 +926,234 @@
      }
  }
  
@@ -4896,6 +4899,16 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
 +    pe_style: &style::servo_arc::Arc<style::properties::ComputedValues>,
 +    pieces: &[Piece],
 +) -> bool {
++    // pyro: a `content` that is one gradient makes the pseudo-element's box replaced by it.
++    let gradient = crate::util::content_gradient(pe_style).is_some();
++    let gradient_changed = doc.nodes[pe_node_id].element_data_mut().is_some_and(|element| {
++        let changed = element.content_gradient != gradient;
++        element.content_gradient = gradient;
++        changed
++    });
++    if gradient_changed {
++        doc.nodes[pe_node_id].clear_layout_cache();
++    }
 +    let same = {
 +        let children = &doc.nodes[pe_node_id].children;
 +        children.len() == pieces.len()
@@ -4912,7 +4925,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
 +            })
 +    };
 +    if same {
-+        return false;
++        return gradient_changed;
 +    }
 +    // A single text that changed (a counter's value) is edited in place.
 +    let single = match (pieces, &doc.nodes[pe_node_id].children[..]) {
@@ -4990,7 +5003,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
      let (before_style, after_style, before_node_id, after_node_id) = {
          let node = &doc.nodes[node_id];
  
-@@ -689,8 +1156,23 @@
+@@ -689,8 +1169,23 @@
              .as_ref()
              .and_then(|d| d.styles.pseudos.as_array()[0].clone());
  
@@ -5014,7 +5027,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
  
      // Sync pseudo element
      // TODO: Make incremental
-@@ -719,11 +1201,11 @@
+@@ -719,11 +1214,11 @@
                      .insert(NodeFlags::IS_IN_DOCUMENT);
              }
  
@@ -5031,7 +5044,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
  
              doc.nodes[new_node_id].record_out_of_flow(pe_style);
              let mut element_data = StyloElementData::default();
-@@ -733,6 +1215,11 @@
+@@ -733,6 +1228,11 @@
              *doc.nodes[new_node_id]
                  .stylo_element_data_mut()
                  .ensure_init_mut() = element_data;
@@ -5043,7 +5056,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
  
              let node = &mut doc.nodes[node_id];
              node.set_pe_by_index(idx, Some(new_node_id));
-@@ -750,53 +1237,77 @@
+@@ -750,53 +1250,77 @@
              // the style-pointer comparison below, as the pseudo-element's style may
              // already have been updated by `sync_pseudo_element_styles` during the
              // style traversal without the text having been updated.
@@ -5159,7 +5172,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
  /// Handles the cases where there are text nodes or inline nodes that need to be wrapped in an anonymous block node
  fn collect_complex_layout_children(
      doc: &mut BaseDocument,
-@@ -805,9 +1316,86 @@
+@@ -805,9 +1329,86 @@
      hide_whitespace: bool,
      needs_wrap: fn(NodeKind, DisplayOutside) -> bool,
  ) {
@@ -5248,7 +5261,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
  
          // Get Display style. Default to inline because nodes without styles are probably text nodes
          let contains_block = doc.nodes[child_id].is_or_contains_block();
-@@ -827,9 +1415,24 @@
+@@ -827,9 +1428,24 @@
          // Taffy knows how to deal with `Display::None` children.
          //
          // Also hide all-whitespace flexbox children as these should be ignored
@@ -5274,7 +5287,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
          // Recurse into `Display::Contents` nodes, wrapping hoisted text and
          // inline children as if they were direct children of this container
          else if display_inside == DisplayInside::Contents {
-@@ -844,23 +1447,95 @@
+@@ -844,23 +1460,95 @@
          else if needs_wrap(child_node_kind, display_outside) {
              out.push_wrapped(container_node_id, child_id, doc);
          }
@@ -5374,7 +5387,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
      let alignment = node
          .primary_styles()
          .map(|s| stylo_to_parley::text_align(s.clone_text_align()))
-@@ -875,6 +1550,22 @@
+@@ -875,6 +1563,22 @@
      } else {
          node.attr(local_name!("value")).unwrap_or("").to_string()
      };
@@ -5397,7 +5410,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
      let is_focussed = node.is_focussed();
      let element = &mut node.data.downcast_element_mut().unwrap();
      if !matches!(element.special_data, SpecialElementData::TextInput(_)) {
-@@ -894,6 +1585,9 @@
+@@ -894,6 +1598,9 @@
          unreachable!();
      };
  
@@ -5407,7 +5420,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
      let editor = &mut text_input_data.editor;
      editor.set_scale(doc.viewport.scale_f64() as f32);
      editor.set_width(None);
-@@ -923,6 +1617,65 @@
+@@ -923,6 +1630,65 @@
      editor.refresh_layout(&mut doc.font_ctx.lock().unwrap(), &mut doc.layout_ctx);
  }
  
@@ -5473,7 +5486,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
  fn create_checkbox_input(doc: &mut BaseDocument, input_element_id: NodeId) {
      let node = &mut doc.nodes[input_element_id];
  
-@@ -944,6 +1697,25 @@
+@@ -944,6 +1710,25 @@
  ) {
      flush_inline_pseudos_recursive(doc, inline_context_root_node_id);
  
@@ -5499,7 +5512,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
      iter_children_and_pseudos!(doc.nodes[inline_context_root_node_id], |child_id| {
          find_inline_layout_embedded_boxes_recursive(
              &mut doc.nodes,
-@@ -953,10 +1725,41 @@
+@@ -953,10 +1738,41 @@
          );
      });
  
@@ -5542,7 +5555,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
                  .display_style()
                  .unwrap_or(Display::inline());
              let do_recurse = match (display.outside(), display.inside()) {
-@@ -965,16 +1768,33 @@
+@@ -965,16 +1781,33 @@
                  (_, _) => false,
              };
              if do_recurse {
@@ -5577,7 +5590,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
      ) {
          let node = &mut nodes[node_id];
  
-@@ -992,50 +1812,89 @@
+@@ -992,50 +1825,89 @@
  
                  let display = node.display_style().unwrap_or(Display::inline());
  
@@ -7405,7 +7418,7 @@ diff --git a/packages/blitz-dom/src/layout/damage.rs b/packages/blitz-dom/src/la
                  node.insert_damage(ONLY_RELAYOUT);
              }
          }
-@@ -538,6 +930,53 @@
+@@ -538,6 +930,66 @@
          }
      }
  
@@ -7432,6 +7445,19 @@ diff --git a/packages/blitz-dom/src/layout/damage.rs b/packages/blitz-dom/src/la
 +                _ => None,
 +            }
 +        });
++        // pyro: one gradient: the element shows it, as an image without a natural size.
++        let gradient = node.primary_styles().is_some_and(|style| crate::util::content_gradient(&style).is_some())
++            && matches!(element.special_data, SpecialElementData::None)
++            && !crate::layout::replaced::is_replaced_element(&element.name.local);
++        if element.content_gradient != gradient {
++            let node = &mut self.nodes[node_id];
++            let element = node.element_data_mut().unwrap();
++            element.content_gradient = gradient;
++            node.clear_layout_cache();
++            node.insert_damage(ALL_DAMAGE);
++            node.mark_damaged();
++            return;
++        }
 +        if element.content_image == wanted {
 +            return;
 +        }
@@ -7459,7 +7485,7 @@ diff --git a/packages/blitz-dom/src/layout/damage.rs b/packages/blitz-dom/src/la
      /// Flush the image layers of nodes whose style changed during the last
      /// style traversal (or whose pseudo-element boxes were (re)constructed).
      pub(crate) fn flush_pending_style_images(&mut self) {
-@@ -552,6 +991,99 @@
+@@ -552,6 +1004,99 @@
              }
              self.flush_image_layers_from_style(node_id, ImageLayerKind::Background);
              self.flush_image_layers_from_style(node_id, ImageLayerKind::Mask);
@@ -7559,7 +7585,7 @@ diff --git a/packages/blitz-dom/src/layout/damage.rs b/packages/blitz-dom/src/la
          }
      }
  
-@@ -577,19 +1109,28 @@
+@@ -577,19 +1122,28 @@
              return;
          };
  
@@ -17396,7 +17422,7 @@ diff --git a/packages/blitz-dom/src/layout/replaced.rs b/packages/blitz-dom/src/
  use markup5ever::{LocalName, local_name};
  use taffy::{
      AvailableSpace, BoxSizing, CoreStyle, LayoutInput, LayoutOutput, MaybeMath, MaybeResolve,
-@@ -16,6 +17,130 @@
+@@ -16,6 +17,131 @@
          || *tag_name == local_name!("iframe")
  }
  
@@ -17425,7 +17451,8 @@ diff --git a/packages/blitz-dom/src/layout/replaced.rs b/packages/blitz-dom/src/
 +/// (`BaseDocument::flush_content_image`) in place of its children: replaced content laid out
 +/// and painted like `<img>`, once the image has loaded.
 +pub(crate) fn is_content_image(element: &ElementData) -> bool {
-+    element.content_image.is_some()
++    element.content_gradient
++        || element.content_image.is_some()
 +        && matches!(&element.special_data, crate::node::SpecialElementData::Image(image)
 +            if !matches!(**image, crate::node::ImageData::None))
 +}
@@ -17527,7 +17554,7 @@ diff --git a/packages/blitz-dom/src/layout/replaced.rs b/packages/blitz-dom/src/
  /// The intrinsic dimensions of a replaced element per CSS Images 3
  /// (https://drafts.csswg.org/css-images/#intrinsic-dimensions): an intrinsic
  /// width, an intrinsic height, and an intrinsic aspect ratio, each of which
-@@ -35,6 +160,10 @@
+@@ -35,6 +161,10 @@
      /// used to fill in dimensions the intrinsic sizes leave unresolved. 300x150
      /// for most replaced elements; zero for an image with no loaded resource.
      pub default_object_size: taffy::Size<f32>,
@@ -17538,7 +17565,7 @@ diff --git a/packages/blitz-dom/src/layout/replaced.rs b/packages/blitz-dom/src/
  }
  
  /// Whether a height/width value is violating it's min- and max- constraints
-@@ -51,7 +180,7 @@
+@@ -51,7 +181,7 @@
  
  pub fn compute_replaced_layout(
      inputs: LayoutInput,
@@ -17547,7 +17574,7 @@ diff --git a/packages/blitz-dom/src/layout/replaced.rs b/packages/blitz-dom/src/
      resolve_calc_value: impl Fn(*const (), f32) -> f32,
      context: &ReplacedContext,
  ) -> LayoutOutput {
-@@ -154,6 +283,19 @@
+@@ -154,6 +284,19 @@
      let intrinsic = context.intrinsic_sizes;
      let style_aspect_ratio = style.aspect_ratio().filter(is_usable_ratio);
      let aspect_ratio: Option<f32> = style_aspect_ratio.or(intrinsic.ratio.filter(is_usable_ratio));
@@ -17567,7 +17594,7 @@ diff --git a/packages/blitz-dom/src/layout/replaced.rs b/packages/blitz-dom/src/
  
      // Concrete object size per the CSS default sizing algorithm with no
      // specified size (https://drafts.csswg.org/css-images/#default-sizing):
-@@ -187,11 +329,22 @@
+@@ -187,11 +330,22 @@
                  // A ratio-only replaced element stretches to fit the width it is laid out
                  // in: the available width if definite, else (under a max-content constraint)
                  // its containing block, per CSS2 §10.3.2.
@@ -17592,7 +17619,7 @@ diff --git a/packages/blitz-dom/src/layout/replaced.rs b/packages/blitz-dom/src/
                  if let Some(width) = stretch_fit_width {
                      Size {
                          width,
-@@ -276,6 +429,45 @@
+@@ -276,6 +430,45 @@
          .maybe_max(min_size)
          .maybe_sub(box_sizing_adjustment);
  
@@ -17638,7 +17665,7 @@ diff --git a/packages/blitz-dom/src/layout/replaced.rs b/packages/blitz-dom/src/
      // For ContentSize mode, ignore preferred/min size styles in the axis being measured: the
      // parent layout algorithm applies them itself, and content-based measurement should return
      // the content size (the intrinsic size for replaced elements). Constraints in the opposite
-@@ -286,6 +478,13 @@
+@@ -286,6 +479,13 @@
              RequestedAxis::Horizontal => {
                  style_size.width = None;
                  min_size.width = None;
@@ -17652,7 +17679,7 @@ diff --git a/packages/blitz-dom/src/layout/replaced.rs b/packages/blitz-dom/src/
              }
              RequestedAxis::Vertical => {
                  style_size.height = None;
-@@ -295,6 +494,18 @@
+@@ -295,6 +495,18 @@
          }
      }
  
@@ -17671,7 +17698,7 @@ diff --git a/packages/blitz-dom/src/layout/replaced.rs b/packages/blitz-dom/src/
      // Known dimensions are the parent's current sizing inputs. Clamp them before transferring
      // an aspect ratio so provisional cross-axis sizes do not bypass replaced-element limits.
      if known_dimensions.width.is_some() | known_dimensions.height.is_some() {
-@@ -308,9 +519,8 @@
+@@ -308,9 +520,8 @@
  
          let content_box_known_dimensions = known_dimensions.maybe_sub(pb_sum);
          let transferred = content_box_known_dimensions
@@ -17683,7 +17710,7 @@ diff --git a/packages/blitz-dom/src/layout/replaced.rs b/packages/blitz-dom/src/
  
          // Known axes are authoritative (already resolved by the parent); only the axis
          // derived via aspect-ratio transfer (or falling back to the intrinsic size) is
-@@ -323,9 +533,7 @@
+@@ -323,9 +534,7 @@
      }
  
      let unclamped_size = if style_size.width.is_some() | style_size.height.is_some() {
@@ -25819,7 +25846,7 @@ diff --git a/packages/blitz-dom/src/node/attributes.rs b/packages/blitz-dom/src/
 diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/node/element.rs
 --- a/packages/blitz-dom/src/node/element.rs
 +++ b/packages/blitz-dom/src/node/element.rs
-@@ -79,6 +79,21 @@
+@@ -79,6 +79,24 @@
  
      pub mask_images: ThinVec<Option<ImageResourceData>>,
  
@@ -25837,11 +25864,14 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
 +    /// of a generated `img` box (`content: url()` of `::before`/`::after`), or of an element
 +    /// whose own `content` is one image (it is laid out as an `<img>` of it).
 +    pub content_image: Option<(String, f32)>,
++    /// pyro: this box (an element or a `::before`/`::after`) shows the gradient its `content` is
++    /// in place of content, as an image without a natural size (`util::content_gradient`).
++    pub content_gradient: bool,
 +
      /// Parley text layout (elements with inline inner display mode only)
      pub inline_layout_data: Option<Box<TextLayout>>,
  
-@@ -114,10 +129,34 @@
+@@ -114,10 +132,34 @@
      /// element (or its pseudo-elements). Lets Stylo skip the animation lookups
      /// for elements that have never animated.
      pub may_have_animations: AtomicBool,
@@ -25876,7 +25906,7 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
  
      /// Detailed layout information from the most recent layout (currently
      /// grid track sizing information for grid containers only). Used by
-@@ -129,6 +168,9 @@
+@@ -129,6 +171,9 @@
      /// Layout output state (`None` until layout first writes to this node).
      pub layout_data: Option<Box<LayoutData>>,
      pub transform: Option<Box<Affine>>,
@@ -25886,7 +25916,7 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
  }
  
  /// Taffy layout output state (cache, layouts, scroll offset and overflow).
-@@ -142,7 +184,40 @@
+@@ -142,7 +187,40 @@
      pub unrounded_layout: Layout,
      pub final_layout: Layout,
      pub scroll_offset: crate::Point<f64>,
@@ -25927,7 +25957,7 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
      /// The writing mode this node's layout algorithm ran in (the root takes it from `<body>`),
      /// recorded by the layout pass for CSSOM geometry lookups.
      #[cfg(feature = "writing-mode")]
-@@ -156,7 +231,16 @@
+@@ -156,7 +234,16 @@
              unrounded_layout: Layout::new(),
              final_layout: Layout::new(),
              scroll_offset: crate::Point::ZERO,
@@ -25944,7 +25974,7 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
              #[cfg(feature = "writing-mode")]
              writing_mode: stylo_taffy::WritingMode::empty(),
          }
-@@ -295,6 +379,9 @@
+@@ -295,6 +382,9 @@
              .field("special_data", &self.special_data)
              .field("background_images", &self.background_images)
              .field("mask_images", &self.mask_images)
@@ -25954,18 +25984,19 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
              .field("inline_layout_data", &self.inline_layout_data)
              .field("list_item_data", &self.list_item_data)
              .field("template_contents", &self.template_contents)
-@@ -321,6 +408,10 @@
+@@ -321,6 +411,11 @@
              special_data: self.special_data.clone(),
              background_images: self.background_images.clone(),
              mask_images: self.mask_images.clone(),
 +            border_images: self.border_images.clone(),
 +            list_style_images: self.list_style_images.clone(),
 +            content_image: self.content_image.clone(),
++            content_gradient: self.content_gradient,
 +            reference_images: self.reference_images.clone(),
              inline_layout_data: self.inline_layout_data.clone(),
              list_item_data: self.list_item_data.clone(),
              template_contents: self.template_contents,
-@@ -335,12 +426,21 @@
+@@ -335,12 +430,21 @@
              dirty_descendants: AtomicBool::new(true),
              damaged_descendants: AtomicBool::new(true),
              may_have_animations: AtomicBool::new(false),
@@ -25987,18 +26018,19 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
          }
      }
  }
-@@ -439,6 +539,10 @@
+@@ -439,6 +543,11 @@
              template_contents: None,
              background_images: ThinVec::new(),
              mask_images: ThinVec::new(),
 +            border_images: ThinVec::new(),
 +            list_style_images: ThinVec::new(),
 +            content_image: None,
++            content_gradient: false,
 +            reference_images: ThinVec::new(),
  
              stylo_element_data: Default::default(),
              selector_flags: Cell::new(ElementSelectorFlags::empty()),
-@@ -449,12 +553,21 @@
+@@ -449,12 +558,21 @@
              dirty_descendants: AtomicBool::new(true),
              damaged_descendants: AtomicBool::new(true),
              may_have_animations: AtomicBool::new(false),
@@ -26020,7 +26052,7 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
          };
          data.flush_is_focussable();
          data.flush_link_state();
-@@ -470,6 +583,12 @@
+@@ -470,6 +588,12 @@
          {
              data.element_state.insert(ElementState::CHECKED);
          }
@@ -26033,7 +26065,7 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
  
          // The element state needs to be modified if the element can be disabled.
          if data.can_be_disabled() {
-@@ -529,6 +648,23 @@
+@@ -529,6 +653,23 @@
          }
      }
  
@@ -26057,7 +26089,7 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
      pub fn flush_open_state(&mut self) {
          let is_open = matches!(
              self.name.local,
-@@ -648,6 +784,24 @@
+@@ -648,6 +789,24 @@
          self.element_state.set(ElementState::CHECKED, checked);
      }
  
@@ -26082,7 +26114,7 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
      #[cfg(feature = "file-input")]
      pub fn file_data(&self) -> Option<&FileData> {
          match &self.special_data {
-@@ -875,6 +1029,9 @@
+@@ -875,6 +1034,9 @@
      pub height: u32,
      /// The raw image data in RGBA8 format
      pub data: Blob<u8>,
@@ -26092,7 +26124,7 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
  }
  impl RasterImageData {
      pub fn new(width: u32, height: u32, data: Arc<Vec<u8>>) -> Self {
-@@ -882,6 +1039,35 @@
+@@ -882,6 +1044,35 @@
              width,
              height,
              data: Blob::new(data),
@@ -26128,7 +26160,7 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
          }
      }
  }
-@@ -953,7 +1139,17 @@
+@@ -953,7 +1144,17 @@
  #[derive(Clone)]
  pub struct ListItemLayout {
      pub marker: Marker,
@@ -26146,7 +26178,7 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
      /// Offset (in physical CSS px) of the unrounded content box origin from the rounded one in
      /// `final_layout`. Paint draws text from the unrounded origin so that it keeps its sub-pixel
      /// position while box edges stay snapped. Set by the `writing-mode` layout pass; zero otherwise.
-@@ -966,6 +1162,9 @@
+@@ -966,6 +1167,9 @@
  pub enum Marker {
      Char(char),
      String(String),
@@ -35092,7 +35124,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
 +                use style::values::computed::{Content, ContentItem};
 +                let wants = matches!(&style.get_counters().content,
 +                    Content::Items(items) if matches!(&items.items[..], [ContentItem::Image(_)]));
-+                (wants || el.content_image.is_some()) && !node.is_anonymous()
++                (wants || el.content_image.is_some() || el.content_gradient) && !node.is_anonymous()
 +            }
 +            // pyro: the SVG documents its `clip-path`, `filter` and `mask` reference.
 +            || {
@@ -37480,7 +37512,7 @@ diff --git a/packages/blitz-dom/src/util.rs b/packages/blitz-dom/src/util.rs
  }
  
  /// A point
-@@ -87,6 +135,72 @@
+@@ -87,6 +135,97 @@
      pub const ZERO: Self = Point { x: 0.0, y: 0.0 };
  }
  
@@ -37495,6 +37527,31 @@ diff --git a/packages/blitz-dom/src/util.rs b/packages/blitz-dom/src/util.rs
 +            None => image,
 +        },
 +        image => image,
++    }
++}
++
++/// pyro: whether `style`'s `content` is one image, which replaces the element's content (CSS
++/// Content 3 §2; `BaseDocument::flush_content_image`), unless the element is `display: contents`
++/// (WPT css-display `display-contents-replaced-content`).
++pub fn content_replaces(style: &style::properties::ComputedValues) -> bool {
++    use style::values::computed::{Content, ContentItem};
++    !style.get_box().display.is_contents()
++        && matches!(&style.get_counters().content, Content::Items(items) if matches!(&items.items[..], [ContentItem::Image(_)]))
++}
++
++/// pyro: the gradient `style`'s `content` is when it is one gradient image (through `image-set()`
++/// and `filter()`): the box shows it in place of content (CSS Content 3 §2).
++pub fn content_gradient(style: &style::properties::ComputedValues) -> Option<&style::values::computed::Gradient> {
++    use style::values::computed::{Content, ContentItem};
++    use style::values::generics::image::GenericImage;
++    if style.get_box().display.is_contents() {
++        return None;
++    }
++    let Content::Items(items) = &style.get_counters().content else { return None };
++    let [ContentItem::Image(image)] = &items.items[..] else { return None };
++    match unfiltered_image(image) {
++        GenericImage::Gradient(gradient) => Some(gradient),
++        _ => None,
 +    }
 +}
 +
@@ -37553,7 +37610,7 @@ diff --git a/packages/blitz-dom/src/util.rs b/packages/blitz-dom/src/util.rs
  // Debug print an RcDom
  pub fn walk_tree(indent: usize, node: &Node) {
      // Skip all-whitespace text nodes entirely
-@@ -156,11 +270,35 @@
+@@ -156,11 +295,35 @@
  /// Parse an SVG image.
  #[cfg(feature = "svg")]
  pub(crate) fn parse_svg_image(source: &[u8]) -> Result<crate::node::SvgImageData, usvg::Error> {
@@ -37590,7 +37647,7 @@ diff --git a/packages/blitz-dom/src/util.rs b/packages/blitz-dom/src/util.rs
  }
  
  pub trait ToColorColor {
-@@ -254,3 +392,93 @@
+@@ -254,3 +417,93 @@
          }
      };
  }

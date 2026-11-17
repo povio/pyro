@@ -627,9 +627,12 @@ fn collect_layout_children_with_wrap(
 
         // pyro: an `<object>` showing an image is replaced content (`replaced::is_image_object`):
         // its children, the fallback, generate no boxes. Nor do those of an element its
-        // `content: url()` replaces (`ElementData::content_image`; the root's were painted),
-        // also while the image loads or when it fails (WPT css-content `element-replacement-alt`).
-        if crate::layout::replaced::is_image_object(el) || el.content_image.is_some() {
+        // `content` image replaces (`util::content_replaces`; the root's were painted), also
+        // while the image loads or when it fails (WPT css-content `element-replacement-alt`).
+        if crate::layout::replaced::is_image_object(el)
+            || (!doc.nodes[container_node_id].is_anonymous()
+                && doc.nodes[container_node_id].primary_styles().is_some_and(|style| crate::util::content_replaces(&style)))
+        {
             doc.iter_subtree_mut(container_node_id, |id: NodeId, doc: &mut BaseDocument| {
                 doc.nodes[id].remove_damage(CONSTRUCT_BOX | CONSTRUCT_DESCENDENT | CONSTRUCT_FC);
             });
@@ -1051,6 +1054,16 @@ fn sync_generated_children(
     pe_style: &style::servo_arc::Arc<style::properties::ComputedValues>,
     pieces: &[Piece],
 ) -> bool {
+    // pyro: a `content` that is one gradient makes the pseudo-element's box replaced by it.
+    let gradient = crate::util::content_gradient(pe_style).is_some();
+    let gradient_changed = doc.nodes[pe_node_id].element_data_mut().is_some_and(|element| {
+        let changed = element.content_gradient != gradient;
+        element.content_gradient = gradient;
+        changed
+    });
+    if gradient_changed {
+        doc.nodes[pe_node_id].clear_layout_cache();
+    }
     let same = {
         let children = &doc.nodes[pe_node_id].children;
         children.len() == pieces.len()
@@ -1067,7 +1080,7 @@ fn sync_generated_children(
             })
     };
     if same {
-        return false;
+        return gradient_changed;
     }
     // A single text that changed (a counter's value) is edited in place.
     let single = match (pieces, &doc.nodes[pe_node_id].children[..]) {

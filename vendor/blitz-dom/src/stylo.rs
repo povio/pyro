@@ -2690,7 +2690,7 @@ fn needs_style_image_flush(node: &Node, style: &ComputedValues) -> bool {
                 use style::values::computed::{Content, ContentItem};
                 let wants = matches!(&style.get_counters().content,
                     Content::Items(items) if matches!(&items.items[..], [ContentItem::Image(_)]));
-                (wants || el.content_image.is_some()) && !node.is_anonymous()
+                (wants || el.content_image.is_some() || el.content_gradient) && !node.is_anonymous()
             }
             // pyro: the SVG documents its `clip-path`, `filter` and `mask` reference.
             || {

@@ -2424,3 +2424,10 @@ A block-level absolutely positioned box in an inline formatting context (`layout
 static-position rectangle with no inline extent at the line start and the block extent of the line box, one line
 down when content precedes it (Blink; WPT css-align `abspos/align-self-static-position-003/004/007`). Collapsed rows
 keep their tracks (`row_tracks`); Taffy collapses them once sized.
+- `src/util.rs` (`content_replaces`, `content_gradient`), `src/layout/construct.rs`, `src/layout/damage.rs`,
+  `src/layout/replaced.rs`, `src/node/element.rs` (`ElementData::content_gradient`): an element whose `content` is
+  one image builds no boxes for its children from the computed value on (while the image loads, and when it fails:
+  WPT `element-replacement-alt`); a `content` gradient (also through `image-set()`) replaces an element or a
+  `::before`/`::after` box as an image without a natural size (default object size, or its `width`/`height`),
+  which blitz-paint fills with the gradient (`element-replacement-gradient`, `pseudo-element-gradient`,
+  `pseudo-element-image-set`).

@@ -1354,6 +1354,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
                 cx.transform = self.scrolled_transform(node, cx.transform);
                 if !hidden {
                     cx.draw_image(scene);
+                    cx.draw_content_gradient(scene);
                     #[cfg(feature = "svg")]
                     cx.draw_svg(scene);
                     #[cfg(feature = "custom-widget")]
@@ -4166,6 +4167,30 @@ impl ElementCx<'_, '_> {
             None,
             paint,
         );
+    }
+
+    /// pyro: the gradient a box's `content` replaces it with (`ElementData::content_gradient`): an
+    /// image without a natural size, so it fills the content box.
+    fn draw_content_gradient(&self, scene: &mut impl PaintScene) {
+        if !self.element.content_gradient {
+            return;
+        }
+        let Some(gradient) = blitz_dom::util::content_gradient(&self.style) else { return };
+        let content = self.frame.content_box;
+        if content.width() <= 0.0 || content.height() <= 0.0 {
+            return;
+        }
+        let tile = Rect::new(0.0, 0.0, content.width(), content.height());
+        let current_color = self.style.clone_color();
+        let (gradient, gradient_transform) = crate::gradient::to_peniko_gradient(
+            gradient,
+            tile,
+            self.frame.border_box.bounding_box(),
+            self.scale,
+            &current_color,
+        );
+        let transform = self.transform * Affine::translate(content.origin().to_vec2());
+        scene.fill(Fill::NonZero, transform, anyrender::Paint::Gradient(&gradient), gradient_transform, &tile);
     }
 
     fn draw_image(&self, scene: &mut impl PaintScene) {

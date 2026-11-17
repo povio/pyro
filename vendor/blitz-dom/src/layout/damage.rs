@@ -953,6 +953,19 @@ impl BaseDocument {
                 _ => None,
             }
         });
+        // pyro: one gradient: the element shows it, as an image without a natural size.
+        let gradient = node.primary_styles().is_some_and(|style| crate::util::content_gradient(&style).is_some())
+            && matches!(element.special_data, SpecialElementData::None)
+            && !crate::layout::replaced::is_replaced_element(&element.name.local);
+        if element.content_gradient != gradient {
+            let node = &mut self.nodes[node_id];
+            let element = node.element_data_mut().unwrap();
+            element.content_gradient = gradient;
+            node.clear_layout_cache();
+            node.insert_damage(ALL_DAMAGE);
+            node.mark_damaged();
+            return;
+        }
         if element.content_image == wanted {
             return;
         }
