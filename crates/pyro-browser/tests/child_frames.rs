@@ -566,3 +566,47 @@ fn sibling_wrappers_stay_inside_their_script_world_and_origin() {
     assert_eq!(eval(&inner, "document.getElementById('a').mark"), "utility");
     assert_eq!(eval(&root, "nodes[0].mark"), "main");
 }
+
+#[test]
+fn content_window_is_one_window_proxy_that_follows_the_frame_to_its_next_document() {
+    // JSC patch 0033 (JSGlobalContextAdoptGlobalProxy); an older build keeps a Window per document.
+    if !Realm::can_adopt_global_proxy() {
+        eprintln!("skipped: this JavaScriptCore lacks JSGlobalContextAdoptGlobalProxy (patch 0033)");
+        return;
+    }
+    let mut t = crate::browser_thread().unwrap();
+    let page = t.browser.create_page().unwrap();
+    let root = main_realm(&t, page);
+    eval(&root, "globalThis.f=document.createElement('iframe');f.srcdoc='<p>one</p><script>globalThis.which=\"one\"</script>';document.body.appendChild(f)");
+    settle(&mut t);
+    let child = t.browser.frames(page).into_iter().find(|f| f.parent.is_some()).unwrap();
+    let old = t.browser.frame(page, &child.id).unwrap().main_realm().unwrap().clone();
+    assert_eq!(
+        eval(&root, "globalThis.held=f.contentWindow;globalThis.heard=[];globalThis.listener=()=>heard.push('old');held.addEventListener('ping',listener);held.which"),
+        "one"
+    );
+    eval(&root, "f.srcdoc='<p>two</p><script>globalThis.which=\"two\";globalThis.me=window</script>'");
+    settle(&mut t);
+    let new = t.browser.frame(page, &child.id).unwrap().main_realm().unwrap().clone();
+    assert!(old.is_disposed());
+    // The reference kept from the first document reaches the second one's global, as the same object.
+    assert_eq!(
+        eval(&root, "[held===f.contentWindow, held.which, held.document.querySelector('p').textContent, held.me===held, frames[0]===held, held.self===held, held.window===held, held.parent===window].join()"),
+        "true,two,two,true,true,true,true,true"
+    );
+    // Its methods are the new Window's; a listener the old document's Window had is gone with it.
+    assert_eq!(
+        eval(&root, "held.removeEventListener('ping',listener);held.dispatchEvent(new Event('ping'));held.addEventListener('ping',()=>heard.push('new'));held.dispatchEvent(new Event('ping'));heard.join()+':'+held.location.href"),
+        "new:about:srcdoc"
+    );
+    assert_eq!(
+        eval(&new, "[window===parent.f.contentWindow, globalThis===window, this===window, self===window].join()"),
+        "true,true,true,true"
+    );
+    t.browser.engine.collect_garbage_now();
+    assert_eq!(eval(&root, "held.which"), "two");
+    // Another frame is another browsing context, with a WindowProxy of its own.
+    eval(&root, "globalThis.g=document.createElement('iframe');document.body.appendChild(g)");
+    settle(&mut t);
+    assert_eq!(eval(&root, "g.contentWindow!==held && g.contentWindow===frames[1]"), "true");
+}

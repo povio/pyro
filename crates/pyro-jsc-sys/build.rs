@@ -43,6 +43,7 @@ fn main() {
     println!("cargo:rustc-env=PYRO_JSC_INPUTS_HASH={:016x}", inputs_hash(&inputs));
     println!("cargo::rustc-check-cfg=cfg(pyro_jsc_source)");
     println!("cargo::rustc-check-cfg=cfg(pyro_jsc_static)");
+    println!("cargo::rustc-check-cfg=cfg(pyro_jsc_adopt_global_proxy)");
 
     if target_os == "linux" {
         let Some(dir) = source_jsc(&inputs, &["libJavaScriptCore.a"], &linux_cache, false) else {
@@ -115,6 +116,11 @@ fn link_static(lib: &Path) {
     println!("cargo:rustc-cfg=pyro_jsc_source");
     println!("cargo:rustc-cfg=pyro_jsc_static");
     println!("cargo:jsc=source");
+    // Patch 0033 (JSGlobalContextAdoptGlobalProxy), linked by name: only when the
+    // archive was built with it, so a PYRO_JSC_DIR of an older patch set still links.
+    if lib.parent().is_some_and(|dir| dir.join("inputs/patches/0033-adopt-global-proxy.patch").is_file()) {
+        println!("cargo:rustc-cfg=pyro_jsc_adopt_global_proxy");
+    }
 }
 
 fn macos_cache() -> Option<PathBuf> {

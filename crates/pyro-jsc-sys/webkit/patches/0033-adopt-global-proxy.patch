@@ -1,0 +1,62 @@
+Pyro patch 0033: a new context's global object adopts another context's global proxy.
+
+JSGlobalContextAdoptGlobalProxy (API/JSForkPrivate.h): what WebCore's JSWindowProxy::setWindow
+does for a frame that navigates. The proxy targets the new global (JSGlobalProxy::setTarget, whose
+structure transition moves the proxy's realm along) and becomes that global's globalThis (and the
+value of its reified `globalThis` property), so a script that kept `iframe.contentWindow` reaches
+the frame's next document, and the frame's WindowProxy stays one object across navigations, as in
+the HTML standard.
+
+diff --git a/Source/JavaScriptCore/API/JSFork.cpp b/Source/JavaScriptCore/API/JSFork.cpp
+index 4d96f154a5..0fa971c494 100644
+--- a/Source/JavaScriptCore/API/JSFork.cpp
++++ b/Source/JavaScriptCore/API/JSFork.cpp
+@@ -788,6 +788,27 @@ const ClassInfo JSNamedPropertiesObject::s_info = { "WindowProperties"_s, &Base:
+ 
+ } // namespace
+ 
++bool JSGlobalContextAdoptGlobalProxy(JSGlobalContextRef ctx, JSObjectRef proxyRef)
++{
++    JSGlobalObject* globalObject = toJS(ctx);
++    VM& vm = globalObject->vm();
++    JSLockHolder locker(vm);
++    auto* proxy = proxyRef ? dynamicDowncast<JSGlobalProxy>(toJS(proxyRef)) : nullptr;
++    if (!proxy || !proxy->target() || &proxy->target()->vm() != &vm)
++        return false;
++    if (proxy->target() == globalObject)
++        return true;
++    // What WebCore's JSWindowProxy::setWindow does: the proxy's prototype and structure
++    // follow the new target (Structure::changeGlobalProxyTargetTransition).
++    proxy->setTarget(vm, globalObject);
++    // JSGlobalObject::setGlobalThis is private; its one store, with the barrier.
++    globalObject->addressOfGlobalThis()->set(vm, globalObject, proxy);
++    // The `globalThis` property (a static one, reified when the global was made) still
++    // holds the proxy the global was made with.
++    globalObject->putDirect(vm, Identifier::fromString(vm, "globalThis"_s), proxy, static_cast<unsigned>(PropertyAttribute::DontEnum));
++    return true;
++}
++
+ void JSGlobalContextInstallNamedProperties(JSGlobalContextRef ctx, JSNamedPropertyFilter filter, JSObjectGetPropertyCallback getter)
+ {
+     JSGlobalObject* globalObject = toJS(ctx);
+diff --git a/Source/JavaScriptCore/API/JSForkPrivate.h b/Source/JavaScriptCore/API/JSForkPrivate.h
+index 3494b01619..e4df01d2fe 100644
+--- a/Source/JavaScriptCore/API/JSForkPrivate.h
++++ b/Source/JavaScriptCore/API/JSForkPrivate.h
+@@ -63,6 +63,16 @@ typedef bool (*JSNamedPropertyFilter)(JSContextRef ctx, const void* characters,
+    anything holds `globalThis`; JSContextGetGlobalObject returns the new proxy. */
+ JS_EXPORT void JSGlobalContextInstallNamedProperties(JSGlobalContextRef ctx, JSNamedPropertyFilter filter, JSObjectGetPropertyCallback getter);
+ 
++/* Makes the global object of `ctx` the target of `proxy`, the global proxy of another
++   context of the same group (what JSContextGetGlobalObject returned there): a WindowProxy
++   that follows its browsing context to the next document. From then on `proxy` is the
++   `this`, `globalThis` and JSContextGetGlobalObject of `ctx`, and every reference to it,
++   also in the other context, reaches the global object of `ctx`. Call on a new context,
++   after JSGlobalContextInstallNamedProperties and before any of its code is compiled
++   (optimized code may hold the proxy a global had). Returns false, changing nothing,
++   when `proxy` is not a global proxy of this VM. */
++JS_EXPORT bool JSGlobalContextAdoptGlobalProxy(JSGlobalContextRef ctx, JSObjectRef proxy);
++
+ /* Makes `timeZoneID` the time zone of Date, Intl and Temporal in the VM of `group`
+    alone, from its next outermost entry on; other VMs in the process keep theirs.
+    NULL or "" returns to the host's zone. Returns false, changing nothing, for an ID
