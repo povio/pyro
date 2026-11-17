@@ -2397,6 +2397,11 @@ fn dispatch_mouse_inner(
                     }
                 }
             }
+            // Releasing capture can expose another hit target without a DOM
+            // mutation, so the ordinary after-task dirty check may skip it.
+            if captured.is_some() {
+                update_hover_after_task(page);
+            }
         }
         MouseKind::Wheel => {
             // Default action of an uncanceled wheel (frame/user_input.zig:
