@@ -2023,13 +2023,11 @@ fn dispatch_boundary_events(
 /// static-to-live handoff in TOS needs this onMouseEnter).
 const HOVER_UPDATE_DELAY: std::time::Duration = std::time::Duration::from_millis(100);
 
-/// After a task removed the hovered element, the element then under the
-/// stationary pointer gets boundary events (no out/leave to the removed
-/// node, relatedTarget = the removed node, no move events) once
-/// [`HOVER_UPDATE_DELAY`] has passed, as Chromium's hover update does.
-/// Layout-only changes under the pointer are not tracked.
+/// After a task changes the document, re-hit-test the stationary pointer.
+/// An overlay can cover a still-connected trigger just as removal can expose
+/// another element. Boundary events run after passive effects, without a move.
 pub(crate) fn update_hover_after_task(page: &Rc<PageDom>) {
-    if page.hover_update_queued.get() || !hovered_was_removed(page) || page.pointer.borrow().is_none() {
+    if page.hover_update_queued.get() || page.hovered_raw().is_none() || page.pointer.borrow().is_none() {
         return;
     }
     let Some(hooks) = page.hooks() else { return };
@@ -2046,18 +2044,18 @@ pub(crate) fn update_hover_after_task(page: &Rc<PageDom>) {
     );
 }
 
-fn hovered_was_removed(page: &PageDom) -> bool {
-    page.hovered_raw().is_some_and(|h| !page.dom.borrow().is_connected(h).unwrap_or(false))
-}
-
 fn update_hover_now(page: &Rc<PageDom>) {
-    // A real mouse move in the meantime already updated hover.
-    if !hovered_was_removed(page) {
+    // Pointer capture owns the target until release, even if layout changes.
+    let capture = page.mouse_capture.get();
+    if capture.current.is_some() || capture.pending.is_some() {
         return;
     }
     let Some(prev) = page.hovered_raw() else { return };
     let Some(m) = page.pointer.borrow().clone() else { return };
     let Some(target) = pointer_target(page, m.x, m.y, true) else { return };
+    if target == prev {
+        return;
+    }
     let Some(tkey) = key_of(page, target) else { return };
     dispatch_boundary_events(page, Some(prev), target, tkey, &m, None);
 }
@@ -2247,13 +2245,18 @@ fn dispatch_mouse_inner(
     };
     let target = captured.unwrap_or(hit);
     let Some(tkey) = key_of(page, target) else { return Err("stale target".into()) };
+    // A press handler may open an overlay beneath a stationary pointer.
+    // Reconcile boundaries before the next pointer event, including release:
+    // otherwise the old trigger stays hovered and can open a stale tooltip.
+    if matches!(kind, MouseKind::Moved | MouseKind::Pressed | MouseKind::Released) {
+        *page.pointer.borrow_mut() = Some(m.clone());
+        let prev = page.hovered();
+        if prev != Some(target) {
+            dispatch_boundary_events(page, prev, target, tkey, m, touch);
+        }
+    }
     match kind {
         MouseKind::Moved => {
-            *page.pointer.borrow_mut() = Some(m.clone());
-            let prev = page.hovered();
-            if prev != Some(target) {
-                dispatch_boundary_events(page, prev, target, tkey, m, touch);
-            }
             if touch.is_none() {
                 fire_mouse(page, tkey, EventInterface::PointerEvent, "pointermove", m, true);
             }
@@ -2393,6 +2396,11 @@ fn dispatch_mouse_inner(
                         fire_mouse(page, k, EventInterface::MouseEvent, "dblclick", m, true);
                     }
                 }
+            }
+            // Releasing capture can expose another hit target without a DOM
+            // mutation, so the ordinary after-task dirty check may skip it.
+            if captured.is_some() {
+                update_hover_after_task(page);
             }
         }
         MouseKind::Wheel => {
