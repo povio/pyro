@@ -1013,13 +1013,23 @@ impl LayoutPassState<'_> {
                         }
                         // pyro: a checkbox or radio is 13x13 by nature (Blink's theme size), not by
                         // the UA sheet's `width`/`height`: a flex parent stretches it and a percentage
-                        // sizes it (WPT css-flexbox `stretch-flex-item-checkbox-input`)
+                        // sizes it (WPT css-flexbox `stretch-flex-item-checkbox-input`). The 13x13 is the
+                        // border box: the content is what padding and border leave of it (the UA sheet's
+                        // `input` padding and border would otherwise make a checkbox 21x19 and a radio 17x15).
                         Some("checkbox" | "radio") => {
+                            let style = node.layout_style();
+                            let parent = inputs.parent_size.width;
+                            let padding = style.padding().resolve_or_zero(parent, resolve_calc_value);
+                            let border = style.border().resolve_or_zero(parent, resolve_calc_value);
+                            let natural = taffy::Size {
+                                width: (13.0 - padding.horizontal_axis_sum() - border.horizontal_axis_sum()).max(0.0),
+                                height: (13.0 - padding.vertical_axis_sum() - border.vertical_axis_sum()).max(0.0),
+                            };
                             return ChildLayout::Done(compute_leaf_layout(
                                 inputs,
-                                &node.layout_style(),
+                                &style,
                                 resolve_calc_value,
-                                |_known_size, _available_space| taffy::Size { width: 13.0, height: 13.0 },
+                                |_known_size, _available_space| natural,
                             ));
                         }
                         // pyro: a number field too (it was laid out as an empty box; WPT css-pseudo

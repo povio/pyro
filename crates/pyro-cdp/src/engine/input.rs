@@ -378,8 +378,7 @@ impl EngineHost {
             return Err(CdpError::invalid_params("TouchCancel must not have any touch points."));
         }
         let state = self.pages.get(&cmd.page).ok_or_else(|| CdpError::server("page is gone"))?;
-        let active =
-            state.touches.is_active() && state.touch_document.as_ref().is_some_and(|(d, _, _)| !d.is_disposed());
+        let active = state.touches.is_active() && state.touch_document.as_ref().is_some_and(|(d, _)| !d.is_disposed());
         if kind != TouchKind::Start && !active {
             return Err(CdpError::invalid_params("Must send a TouchStart first to start a new touch."));
         }
@@ -444,26 +443,33 @@ impl EngineHost {
                 return Err(CdpError::server("Exceeded maximum touch points limit of 16"));
             }
         }
-        let (document, dx, dy) = match state.touch_document.clone().filter(|_| active) {
+        let (document, transforms) = match state.touch_document.clone().filter(|_| active) {
             Some(found) => found,
             None => {
                 // Touches left down in a document since navigated away from.
                 state.touches.clear();
                 let first = &points[0];
-                let (document, x, y) = self.descend_into_frames(native_id, main, first.x, first.y);
-                (document, first.x - x, first.y - y)
+                let (document, _, _) = self.descend_into_frames(native_id, main, first.x, first.y);
+                let frame = self
+                    .with_frame_of_document(cmd.page, &document, |f| (f.parent.clone(), f.owner))
+                    .ok_or_else(|| CdpError::server("Touch frame is gone"))?;
+                let transforms = self.frame_transforms(cmd.page, &frame)?;
+                (document, transforms)
             }
         };
         for t in &mut points {
-            t.x -= dx;
-            t.y -= dy;
+            for transform in transforms.iter().rev() {
+                (t.x, t.y) = transform
+                    .inverse_point(t.x, t.y)
+                    .ok_or_else(|| CdpError::server("Touch frame transform is not invertible"))?;
+            }
         }
         let state = self.pages.get_mut(&cmd.page).ok_or_else(|| CdpError::server("page is gone"))?;
         let mut touches = std::mem::take(&mut state.touches);
         let result =
             input::dispatch_touch(&document, &mut touches, kind, &points, Modifiers::from_cdp(p.modifiers & 15));
         if let Some(state) = self.pages.get_mut(&cmd.page) {
-            state.touch_document = touches.is_active().then_some((document, dx, dy));
+            state.touch_document = touches.is_active().then_some((document, transforms));
             state.touches = touches;
         }
         result.map_err(CdpError::server)
@@ -490,14 +496,9 @@ impl EngineHost {
                 break;
             };
             // The child viewport starts at the iframe's content box.
-            let (r, inset) = {
-                let layout = page.layout();
-                let dom = page.dom.borrow();
-                let Some(r) = layout.client_rect(&dom, node) else { break };
-                (r, layout.content_offset(&dom, node).unwrap_or_default())
-            };
-            x -= r.x + inset.0;
-            y -= r.y + inset.1;
+            let Some(transform) = super::dom::FrameTransform::of_owner(&page, node) else { break };
+            let Some(local) = transform.inverse_point(x, y) else { break };
+            (x, y) = local;
             page = child;
         }
         (page, x, y)

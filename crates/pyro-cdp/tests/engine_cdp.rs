@@ -10260,3 +10260,76 @@ fn review_closing_a_target_while_its_deferred_world_waits() {
     }
     assert_eq!(h.pending_replies(), 0, "no reply is left waiting on the closed page's world");
 }
+
+/// Danex E2E (v0.0.40 check): a side sheet that slides in with a keyframe
+/// animation a task after the click that opens it. A hover waits until the
+/// target's box is stable over a frame before its first move (the page places
+/// a marker where the hovered text is then, as Danex's dev-mode targets), and a
+/// click whose target is still outside the viewport tries again on a timer: no
+/// DOM change brings the sheet in. Before: the hover landed at the animation's
+/// start (marker off-screen) and the click waited for a DOM change until its
+/// deadline.
+#[test]
+fn driver_pointer_actions_wait_for_a_sheet_sliding_in() {
+    let mut h = Harness::new();
+    load_html(
+        &mut h,
+        r#"<!doctype html><style>
+  #sheet{position:fixed;top:0;right:0;width:300px;height:100vh;background:#fff;transform:translateX(100%)}
+  @keyframes slide{from{transform:translateX(100%)}to{transform:none}}
+  #sheet.in{transform:none;animation:slide 300ms ease-out}
+  #marker{position:fixed;width:12px;height:12px}
+</style><button id=show>Open</button><div id=sheet><p style="margin:40px"><span id=who>Blake Baker</span></p><button id=ok style="margin:40px">Approve</button></div><i id=marker></i>
+<script>
+  window.log = [];
+  document.getElementById('show').onclick = () => setTimeout(() => document.getElementById('sheet').classList.add('in'));
+  document.getElementById('who').addEventListener('mouseover', () => { const r = document.getElementById('who').getBoundingClientRect(); marker.style.left = r.right + 'px'; marker.style.top = (r.top - 12) + 'px'; });
+  for (const t of ['mousemove', 'click']) document.getElementById('ok').addEventListener(t, () => log.push(t));
+</script>"#,
+    );
+    let r = h.page(
+        "Pyro.run",
+        json!({"timeout": 3000, "steps": [
+            {"act": {"locator": {"css": "#show"}, "action": "click"}},
+            {"act": {"locator": {"css": "#who"}, "action": "hover"}},
+            {"eval": {"expression": "Math.round(marker.getBoundingClientRect().left) === Math.round(document.getElementById('who').getBoundingClientRect().right)", "as": "settled"}},
+            {"eval": {"expression": "document.getElementById('sheet').classList.remove('in'); void document.body.offsetWidth; document.getElementById('show').click(); 1"}},
+            {"act": {"locator": {"css": "#ok"}, "action": "click"}},
+            {"eval": {"expression": "log.join(',')", "as": "log"}},
+        ]}),
+    );
+    assert!(r.get("error").is_none(), "{r}");
+    assert_eq!(r["result"]["reads"]["settled"], json!(true), "{r}");
+    assert_eq!(r["result"]["reads"]["log"], json!("mousemove,click"), "{r}");
+}
+
+#[test]
+fn animation_frames_advance_moving_geometry_after_client_activity() {
+    for scripted in [false, true] {
+        let mut h = Harness::new();
+        let animation = if scripted {
+            "target.animate([{transform:'translateX(0px)'},{transform:'translateX(1000px)'}],
+                {duration:10000,iterations:Infinity});"
+        } else {
+            "document.head.innerHTML = '<style>@keyframes move {from {transform:translateX(0px)} to {transform:translateX(1000px)}} #target {animation:move 10s linear infinite}</style>';"
+        };
+        let expression = format!("new Promise(resolve => {{
+            document.body.innerHTML = '<div id=target>moving</div>';
+            const target = document.getElementById('target');
+            {animation}
+            const xs = [];
+            const step = () => {{
+                xs.push(target.getBoundingClientRect().x);
+                if (xs.length < 6) requestAnimationFrame(step);
+                else resolve(xs);
+            }};
+            requestAnimationFrame(step);
+        }})");
+        let r = h.page("Runtime.evaluate",
+            json!({"expression": expression, "awaitPromise": true, "returnByValue": true}));
+        let xs = r["result"]["result"]["value"].as_array().expect("six frame positions");
+        assert_eq!(xs.len(), 6, "{r}");
+        assert!(xs.windows(2).all(|pair| pair[1].as_f64().unwrap() > pair[0].as_f64().unwrap()),
+            "scripted={scripted}: {xs:?}");
+    }
+}

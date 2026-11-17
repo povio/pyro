@@ -242,3 +242,20 @@ fn no_wrap_after_an_overflowing_inline_block_under_pre() {
     // The second box is on the first line, cut off at the right; nothing below the first line
     check(&img, &[(50, 25, GREEN), (10, 60, WHITE), (10, 70, WHITE)]);
 }
+
+/// The natural 13x13 of a checkbox or radio is its border box, as Chromium's: the UA `input`
+/// padding and border do not grow it (a checkbox was 21x19 and a radio 17x15, so a force click at
+/// the centre of a react-aria hidden checkbox missed the label drawn over it; Danex D5 B-05).
+#[test]
+fn checkboxes_and_radios_keep_a_13px_border_box() {
+    for kind in ["checkbox", "radio"] {
+        let img = render(&format!(
+            "<div style='font-size:0;line-height:0'><input type={kind} style='margin:0;vertical-align:top'>\
+             <span style='display:inline-block;width:20px;height:20px;background:green'></span></div>"
+        ));
+        // The green box starts right after a 13px control (a wider one covered x = 14 and 15).
+        check(&img, &[(14, 5, GREEN), (15, 10, GREEN), (32, 10, GREEN), (34, 10, WHITE)]);
+        // Nothing below the 13px row but the page (a 19px or 15px tall control reached y = 14).
+        check(&img, &[(5, 14, WHITE)]);
+    }
+}
