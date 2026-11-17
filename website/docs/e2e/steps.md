@@ -69,7 +69,7 @@ All actions take `{ settle?: boolean; timeout?: number }`.
 |---|---|---|
 | `button` | `'left'` | `'left'`, `'right'` or `'middle'` (`click` and `dblclick`). A right click fires `contextmenu` after the press and `auxclick` after the release, never `click`, as Chromium does |
 | `position` | center of the element's visible part | `{ x, y }` offset from the element's top-left corner |
-| `force` | `false` | Skip the covered check and the enabled check; act at the point whatever is there |
+| `force` | `false` | Skip the covered check and the enabled check; act at the point whatever is there. Without `position` the point is the center of the element's box where it meets the viewport, whatever clips it (a visually hidden control with `clip: rect(0 0 0 0)`), as Playwright's `force` does |
 
 The default point is the center of the part of the element that is visible inside the viewport and its scroll containers, as in Playwright, so an element wider than its container is clicked where it can be seen.
 

@@ -6110,6 +6110,26 @@ fn driver_escape_clears_a_search_field() {
     assert_eq!(r["result"]["reads"]["after"], json!(["", "input:abc,input:,search:"]), "{r}");
 }
 
+/// Danex 9: `click({ force: true })` on a visually hidden checkbox (react-aria:
+/// absolutely positioned, 1px, `clip: rect(0 0 0 0)`, `clip-path: inset(50%)`)
+/// clicks the center of its box, as Playwright's force does.
+#[test]
+fn driver_force_click_on_a_visually_hidden_checkbox() {
+    let mut h = Harness::new();
+    load_html(
+        &mut h,
+        r#"<!doctype html><label id=l style="display:inline-flex;gap:8px;margin:40px"><span style="position:absolute;overflow:hidden;clip:rect(0 0 0 0);clip-path:inset(50%);width:1px;height:1px;white-space:nowrap"><input type=checkbox id=c aria-label="Grant"></span><span>Grant</span></label>"#,
+    );
+    let r = h.page(
+        "Pyro.run",
+        json!({"timeout": 2000, "steps": [
+            {"act": {"locator": {"css": "#c"}, "action": "click", "force": true}},
+            {"check": {"locator": {"css": "#c"}, "assert": "checked"}},
+        ]}),
+    );
+    assert!(r.get("error").is_none(), "{r}");
+}
+
 const DRIVER_POINTER_PAGE: &str = r#"<!doctype html><body>
 <style>#scroller{overflow:auto;width:1000px} #wide{width:2500px;height:26px} #tall{height:300px;width:200px;overflow:auto}</style>
 <div id="target">Target</div><div id="target-out"></div>

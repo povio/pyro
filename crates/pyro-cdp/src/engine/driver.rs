@@ -3387,6 +3387,21 @@ fn clipped_box(page: &PageDom, id: NodeId, rect: pyro_dom::layout::Rect) -> Opti
     page.layout().visible_client_rect(&page.dom.borrow(), id, rect)
 }
 
+/// The part of `rect` inside the viewport, when it covers at least about a
+/// pixel (Playwright's quads with an area above 0.99).
+fn in_viewport(page: &PageDom, rect: pyro_dom::layout::Rect) -> Option<pyro_dom::layout::Rect> {
+    let layout = page.layout();
+    let (w, h) = (layout.inner_width() as f64, layout.inner_height() as f64);
+    let (x0, y0) = (rect.x.max(0.0), rect.y.max(0.0));
+    let (x1, y1) = ((rect.x + rect.width).min(w), (rect.y + rect.height).min(h));
+    (x1 > x0 && y1 > y0 && (x1 - x0) * (y1 - y0) > 0.99).then(|| pyro_dom::layout::Rect {
+        x: x0,
+        y: y0,
+        width: x1 - x0,
+        height: y1 - y0,
+    })
+}
+
 /// Where a pointer action lands, once the element is revealed: `position`
 /// from its top-left, else the center of its visible part; checked to
 /// receive pointer events there unless `force`.
@@ -3396,7 +3411,11 @@ fn pointer_target(page: &Rc<PageDom>, id: NodeId, opts: PointerOpts) -> Result<(
     let (x, y) = match opts.position {
         Some((dx, dy)) => (rect.x + dx, rect.y + dy),
         None => {
-            let Some(shown) = clipped_box(page, id, rect) else {
+            // As Playwright with `force`: the center of the element's box
+            // where it meets the viewport, whatever clips it (a visually
+            // hidden control's `clip: rect(0 0 0 0)` or `clip-path`).
+            let shown = if opts.force { in_viewport(page, rect) } else { clipped_box(page, id, rect) };
+            let Some(shown) = shown else {
                 let layout = page.layout();
                 return Err(Attempt::Retry(format!(
                     "element is outside the viewport (box {:.1},{:.1} {:.1}x{:.1}; viewport {}x{})",
