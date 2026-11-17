@@ -2649,3 +2649,4 @@ Round 4 lane G:
   it, ancestors' layout caches cleared); before, any change restyled the whole document, cleared every layout cache
   and damaged every node. Danex's lab canvas page view: elements restyled over 250 syncs 18,997 → 10,963, matched
   8,860 → 4,226.
+- Round 4 lane F, `document.rs`: `set_text_input_selection` (UTF-16 range of a text input's value, as the page DOM has it: pyro-render applies the focused control's selection once laid out).

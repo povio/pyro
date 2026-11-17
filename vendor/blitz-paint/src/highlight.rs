@@ -280,6 +280,20 @@ fn selection_style(doc: &BaseDocument, node_id: NodeId) -> Option<LayerStyle> {
     Some(resolve_layer(doc, node_id, style_of, Some((HIGHLIGHT, HIGHLIGHT_TEXT))))
 }
 
+/// pyro: the colours a text control's selection is painted in (its `::selection` style, as on
+/// page text): the background, and the selected text's colour (`None`: its own). `text` is the
+/// control's text colour, for a `currentcolor` background.
+pub(crate) fn control_selection_colors(doc: &BaseDocument, node_id: NodeId, text: Color) -> (Color, Option<Color>) {
+    let Some(layer) = selection_style(doc, node_id) else {
+        return (Color::TRANSPARENT, None);
+    };
+    let background = match layer.background {
+        Background::Color(color) => color,
+        Background::Current => layer.color.unwrap_or(text),
+    };
+    (background, layer.color)
+}
+
 /// A custom highlight's or the target text's highlight of the text of `node_id`. The target text
 /// has the UA's `Mark` on `MarkText` unless a style declares its colours; a custom highlight
 /// draws nothing of its own then.

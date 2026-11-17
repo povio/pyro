@@ -251,6 +251,9 @@ pub struct Snapshot {
     /// The page's custom highlights and target text, bottom first, painted under the selection
     /// in screenshots of a [`Live`] document.
     pub highlights: Vec<TextHighlight>,
+    /// The focused text control's selection: its node key and start and end in UTF-16 code
+    /// units of its value, painted in screenshots of a [`Live`] document.
+    pub control_selection: Option<(u64, u32, u32)>,
 }
 
 /// A highlight of a page ([`Snapshot::highlights`]): a custom highlight's name (`None`: the
@@ -986,6 +989,8 @@ impl Renderer {
         selection: bool,
     ) -> Result<(&'a mut blitz_dom::BaseDocument, Option<blitz_dom::NodeId>), RenderError> {
         let started = Instant::now();
+        // The focused text control's selection, set once laid out (its editor is made then).
+        let mut control = None;
         let (doc, bridge, clip) = match &snap.live {
             Some(live) => {
                 let stats = self.mirror(snap, live, fetcher);
@@ -1043,6 +1048,11 @@ impl Renderer {
                             })
                         });
                         m.doc.set_dom_selection(selection);
+                        // The focused text control's selection.
+                        control = snap
+                            .control_selection
+                            .filter(|_| selection_paint)
+                            .and_then(|(key, start, end)| Some((m.node(key)?, start, end)));
                         let highlights = snap
                             .highlights
                             .iter()
@@ -1116,6 +1126,9 @@ impl Renderer {
         let resolving = profiling.then(Instant::now);
         if !resolved_latest {
             doc.resolve(0.0);
+        }
+        if let Some((id, start, end)) = control {
+            doc.set_text_input_selection(id, start, end);
         }
         if let (Some(mirrored), Some(resolving)) = (mirrored, resolving) {
             let resolved = resolving.elapsed();

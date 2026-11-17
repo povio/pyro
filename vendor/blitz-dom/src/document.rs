@@ -3729,6 +3729,32 @@ impl BaseDocument {
         self.find_element_by_tag_name(&local_name!("title"))
     }
 
+    /// pyro: selects `start..end` (UTF-16 code units of its value) in the text input at
+    /// `node_id`, as the page's DOM has it (the focused control's selection, painted).
+    pub fn set_text_input_selection(&mut self, node_id: NodeId, start: u32, end: u32) {
+        let Some(text) = self
+            .nodes
+            .get(node_id)
+            .and_then(|node| node.element_data())
+            .and_then(|el| el.text_input_data())
+            .map(|input| input.editor.raw_text().to_owned())
+        else {
+            return;
+        };
+        let byte_of = |utf16: u32| {
+            let mut units = 0u32;
+            for (index, ch) in text.char_indices() {
+                if units >= utf16 {
+                    return index;
+                }
+                units += ch.len_utf16() as u32;
+            }
+            text.len()
+        };
+        let (start, end) = (byte_of(start), byte_of(end));
+        self.with_text_input(node_id, |mut driver| driver.select_byte_range(start, end));
+    }
+
     pub fn with_text_input(
         &mut self,
         node_id: NodeId,

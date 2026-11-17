@@ -70,6 +70,9 @@ pub struct RenderSnapshot {
     /// (`CSS.highlights`, by priority, then registration) by name, then the target text (`None`),
     /// each with its ranges as [`RenderSnapshot::selection`]'s.
     pub highlights: Vec<(Option<String>, Vec<((u64, u32), (u64, u32))>)>,
+    /// The focused text control's selection, in every form: its render key and the selection's
+    /// start and end in UTF-16 code units of its value.
+    pub control_selection: Option<(u64, u32, u32)>,
 }
 
 /// How a snapshot carries the document.
@@ -140,11 +143,17 @@ impl PageDom {
                 highlights.push((None, target));
             }
         }
+        // The focused text control's selection (painted with its `::selection` style).
+        let control_selection = dom.focused(self.document()).ok().flatten().and_then(|id| {
+            let (start, end) = dom.selection(id).ok()?;
+            Some((pyro_dom::snapshot::render_key(id), start, end))
+        });
         let layout = self.layout();
         RenderSnapshot {
             canvases,
             selection,
             highlights,
+            control_selection,
             ..snapshot_of(&dom, &layout, self.document(), base_url, mark, form)
         }
     }
@@ -212,6 +221,7 @@ fn snapshot_of(
             content_language: dom.content_language(document).map(str::to_owned),
             selection: None,
             highlights: Vec::new(),
+            control_selection: None,
         }
     }
 }

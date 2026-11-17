@@ -3259,7 +3259,40 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      /// Computes the size and position of the `Node` relative to the viewport
      pub fn get_client_bounding_rect(&self, node_id: NodeId) -> Option<BoundingRect> {
          // Non-atomic inline elements have no layout box of their own: return
-@@ -2677,7 +3786,7 @@
+@@ -2620,6 +3729,32 @@
+         self.find_element_by_tag_name(&local_name!("title"))
+     }
+ 
++    /// pyro: selects `start..end` (UTF-16 code units of its value) in the text input at
++    /// `node_id`, as the page's DOM has it (the focused control's selection, painted).
++    pub fn set_text_input_selection(&mut self, node_id: NodeId, start: u32, end: u32) {
++        let Some(text) = self
++            .nodes
++            .get(node_id)
++            .and_then(|node| node.element_data())
++            .and_then(|el| el.text_input_data())
++            .map(|input| input.editor.raw_text().to_owned())
++        else {
++            return;
++        };
++        let byte_of = |utf16: u32| {
++            let mut units = 0u32;
++            for (index, ch) in text.char_indices() {
++                if units >= utf16 {
++                    return index;
++                }
++                units += ch.len_utf16() as u32;
++            }
++            text.len()
++        };
++        let (start, end) = (byte_of(start), byte_of(end));
++        self.with_text_input(node_id, |mut driver| driver.select_byte_range(start, end));
++    }
++
+     pub fn with_text_input(
+         &mut self,
+         node_id: NodeId,
+@@ -2677,7 +3812,7 @@
      /// Find the text position (inline_root_id, byte_offset) at a given point.
      /// Uses hit() for proper coordinate transformation, then finds the inline root
      /// and byte offset.
@@ -3268,7 +3301,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          let hit = self.hit(x, y)?;
          let hit_node = self.get_node(hit.node_id)?;
          let inline_root = hit_node.inline_root_ancestor()?;
-@@ -2835,6 +3944,10 @@
+@@ -2835,6 +3970,10 @@
      /// Get all selection ranges as Vec<(node_id, start_offset, end_offset)>.
      /// Returns empty vec if no selection.
      pub fn get_text_selection_ranges(&self) -> Vec<(NodeId, usize, usize)> {
@@ -3279,7 +3312,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          let lookup = |parent_id, idx| self.find_anonymous_block_by_index(parent_id, idx);
  
          let anchor_node = match self.text_selection.anchor.resolve_node_id(lookup) {
-@@ -3782,6 +4895,7 @@
+@@ -3782,6 +4921,7 @@
                      family_name: Some(String::from(ALIAS)),
                      weight: Some(800.0),
                      style: Some(parley::fontique::FontStyle::Italic),
@@ -3287,7 +3320,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
                  },
              )),
          };
-@@ -3804,6 +4918,52 @@
+@@ -3804,6 +4944,52 @@
               not the font file's internal `name` table entry",
          );
      }
@@ -3340,7 +3373,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
  }
  
  #[cfg(test)]
-@@ -3846,3 +5006,79 @@
+@@ -3846,3 +5032,79 @@
          assert!(doc.has_changes());
      }
  }

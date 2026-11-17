@@ -85,6 +85,7 @@ fn render_highlighted(body: &str, selection: Option<Ends>, highlights: &[(Option
         live: Some(Live { page: 1, tree: Arc::new(tree), clip: None, interaction: None }),
         selection,
         highlights,
+        control_selection: None,
         ..Default::default()
     };
     let fetcher: Arc<dyn Fetcher> = Arc::new(AhemFetch);

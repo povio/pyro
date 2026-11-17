@@ -26,7 +26,7 @@ use crate::kurbo_css::NonUniformRoundedRectRadii;
 use crate::layers::LayerManager;
 use crate::sizing::compute_object_fit;
 use crate::text::{DrawTextContext, TextPaintOptions};
-use crate::{CustomWidgetSceneMap, SELECTION_COLOR};
+use crate::CustomWidgetSceneMap;
 use anyrender::{PaintScene, Scene};
 use blitz_dom::node::{
     ListItemLayout, ListItemLayoutPosition, Marker, NodeData, RasterImageData, TextInputData,
@@ -3470,11 +3470,15 @@ impl ElementCx<'_, '_> {
 
             if self.node.is_focussed() {
                 // Render selection/caret
+                // pyro: in the control's `::selection` colours (`control_selection_colors`).
+                let text_color = self.style.get_inherited_text().color.as_srgb_color();
+                let (selection_background, _) =
+                    crate::highlight::control_selection_colors(self.context.dom, self.node.id, text_color);
                 for (rect, _line_idx) in input_data.editor.selection_geometry().iter() {
                     scene.fill(
                         Fill::NonZero,
                         transform,
-                        SELECTION_COLOR,
+                        selection_background,
                         None,
                         &convert_rect(rect),
                     );
@@ -3511,6 +3515,31 @@ impl ElementCx<'_, '_> {
                     let scroll = self.node.scroll_offset();
                     !self.node.is_focussed() && input_data.scroll_offset == 0.0 && scroll.x == 0.0 && scroll.y == 0.0
                 });
+            // pyro: selected text in the `::selection` colour: the text outside the selection
+            // first, then inside it (`control_selection_colors`).
+            let selected = self
+                .node
+                .is_focussed()
+                .then(|| {
+                    let text_color = self.style.get_inherited_text().color.as_srgb_color();
+                    crate::highlight::control_selection_colors(self.context.dom, self.node.id, text_color).1
+                })
+                .flatten()
+                .map(|color| {
+                    let rects: Vec<Rect> =
+                        input_data.editor.selection_geometry().iter().map(|(rect, _)| convert_rect(rect)).collect();
+                    (color, rects)
+                })
+                .filter(|(_, rects)| !rects.is_empty());
+            if let Some((_, rects)) = &selected {
+                const FAR: f64 = 1e6;
+                let mut outside = kurbo::BezPath::new();
+                outside.extend(Rect::new(-FAR, -FAR, FAR, FAR).path_elements(0.1));
+                for rect in rects {
+                    outside.extend(rect.path_elements(0.1));
+                }
+                scene.push_clip_layer(Fill::EvenOdd, transform, &outside);
+            }
             match ellipsis {
                 None => crate::text::stroke_text(
                     scene,
@@ -3563,6 +3592,27 @@ impl ElementCx<'_, '_> {
                         }
                     }
                 }
+            }
+            if let Some((color, rects)) = selected {
+                scene.pop_layer();
+                let mut inside = kurbo::BezPath::new();
+                for rect in &rects {
+                    inside.extend(rect.path_elements(0.1));
+                }
+                scene.push_clip_layer(Fill::NonZero, transform, &inside);
+                crate::text::stroke_text(
+                    scene,
+                    layout.lines(),
+                    self.context.dom,
+                    transform,
+                    TextPaintOptions { scale: self.scale, brush_override: Some(color), shadows: false },
+                    self.node.id,
+                    None,
+                    &mut draw_text_context,
+                    None,
+                    None,
+                );
+                scene.pop_layer();
             }
             draw_text_context.line_tops = None;
         }

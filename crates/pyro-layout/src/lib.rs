@@ -410,6 +410,7 @@ impl BlitzGeometry {
             content_language: dom.content_language(style.document()).map(str::to_owned),
             selection: None,
             highlights: Vec::new(),
+            control_selection: None,
         };
         if let Some(t) = t {
             SNAPSHOT_NS.fetch_add(t.elapsed().as_nanos() as u64, Ordering::Relaxed);

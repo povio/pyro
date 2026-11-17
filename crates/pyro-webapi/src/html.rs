@@ -1598,6 +1598,15 @@ fn define_text_selection<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
             let len = pyro_dom::dom::utf16_len(&dom.value(n.id).js()?);
             dom.set_selection_range(n.id, 0, len).js()?;
             drop(dom);
+            // Blink's `TextControlElement::select()` then focuses the control (without restoring
+            // a cached selection or scrolling to it): the selection shows, with the focus ring.
+            let page = n.page();
+            let doc = page.document();
+            if page.dom.borrow().focused(doc).ok().flatten() != Some(n.id) {
+                crate::input::focus_element_with_options(page, n.id, true);
+                let mut dom = page.dom.borrow_mut();
+                dom.set_selection_range(n.id, 0, len).js()?;
+            }
             crate::editing::queue_control_selectionchange(n.page(), n.id);
             crate::input::fire_simple(n.page(), n.id, "select", true, false);
         }
