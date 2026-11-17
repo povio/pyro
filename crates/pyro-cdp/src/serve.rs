@@ -1492,9 +1492,15 @@ pub(crate) fn serve_browser(
     // While JavaScript runs nothing else reads the socket: the watchdog asks
     // the connection whether the client left (or stalled, or cancelled the
     // run whose script it is) and stops the script.
+    // It also answers the runs whose step timed out meanwhile: a step never
+    // outlives its timeout because page JavaScript holds the thread.
     let check = conn.clone();
     let running = browser.host().running_command();
+    let early = outbox.clone();
     browser.host().thread.browser.engine.set_interrupt_check(Some(Rc::new(move || {
+        for (session, id, message) in running.expired(std::time::Instant::now()) {
+            early.push(crate::msg::error_frame(Some(id), &crate::msg::CdpError::server(message), Some(&session)));
+        }
         check.try_borrow_mut().is_ok_and(|mut c| c.check_during_script(&running))
     })));
     // A JavaScript dialog suspends its script while this connection is

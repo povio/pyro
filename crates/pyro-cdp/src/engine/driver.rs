@@ -1559,7 +1559,18 @@ pub(crate) struct RunningCommand {
     /// The command whose script a `Pyro.cancelRun` stopped, until that
     /// cancel is handled.
     stopped: RefCell<Option<(String, u64)>>,
+    /// Parked runs: session, command id, when the current step times out,
+    /// and the error it then fails with ([`EngineHost::publish_deadlines`]).
+    deadlines: RefCell<Vec<(String, u64, Instant, String)>>,
+    /// Runs answered with their step's timeout while page JavaScript held
+    /// the thread ([`RunningCommand::expired`]): dropped, unanswered again,
+    /// once the engine gets to them.
+    answered: RefCell<Vec<(String, u64)>>,
 }
+
+/// How long past a step's deadline page JavaScript may hold the thread
+/// before the watchdog answers the run itself.
+const BUSY_DEADLINE_GRACE: Duration = Duration::from_millis(100);
 
 /// Restores the command that was running before ([`RunningCommand::enter`]).
 pub(super) struct RunningGuard {
@@ -1602,6 +1613,37 @@ impl RunningCommand {
         }
         *self.stopped.borrow_mut() = Some(now);
         true
+    }
+
+    /// The runs whose step timed out (with the grace) while JavaScript runs:
+    /// polled by the connection's watchdog (conn.rs `check_during_script`),
+    /// which sends these errors at once, as Playwright's client-side
+    /// timeout does while the page is busy. The engine drops the runs when
+    /// it next serves its waiters.
+    pub(crate) fn expired(&self, now: Instant) -> Vec<(String, u64, String)> {
+        let mut deadlines = self.deadlines.borrow_mut();
+        if deadlines.iter().all(|(_, _, at, _)| now < *at + BUSY_DEADLINE_GRACE) {
+            return Vec::new();
+        }
+        let mut out = Vec::new();
+        deadlines.retain(|(session, id, at, message)| {
+            if now < *at + BUSY_DEADLINE_GRACE {
+                return true;
+            }
+            out.push((session.clone(), *id, message.clone()));
+            false
+        });
+        self.answered.borrow_mut().extend(out.iter().map(|(s, id, _)| (s.clone(), *id)));
+        out
+    }
+
+    /// Whether the watchdog answered `session`'s run `id` already.
+    fn was_answered(&self, session: &str, id: u64) -> bool {
+        self.answered.borrow().iter().any(|(s, i)| s == session && *i == id)
+    }
+
+    fn forget_answered(&self, session: &str, id: u64) {
+        self.answered.borrow_mut().retain(|(s, i)| !(s == session && *i == id));
     }
 
     /// Whether a cancel stopped the script of the command running now.
@@ -5178,6 +5220,7 @@ impl EngineHost {
                 }
                 w.trace_wait(&self.thread.browser, Instant::now());
                 self.waiters.list.push(*w);
+                self.publish_deadlines();
                 // Replied by `service_waiters`.
                 Ok(None)
             }
@@ -6214,7 +6257,14 @@ impl EngineHost {
         }
         let now = Instant::now();
         let sessions = &self.sessions;
-        self.waiters.list.retain(|w| sessions.contains_key(&w.job.session));
+        let running = self.running.clone();
+        self.waiters.list.retain(|w| {
+            let answered = running.was_answered(&w.job.session, w.job.id);
+            if answered {
+                running.forget_answered(&w.job.session, w.job.id);
+            }
+            sessions.contains_key(&w.job.session) && !answered
+        });
         let browser = &self.thread.browser;
         let log_changed = std::mem::take(&mut self.waiters.log_changed);
         let (ready, waiting): (Vec<_>, Vec<_>) = std::mem::take(&mut self.waiters.list)
@@ -6234,9 +6284,40 @@ impl EngineHost {
                 Ok(Drive::Done(value)) => msg::result_frame(id, &value, Some(&session)),
                 Err(error) => msg::error_frame(Some(id), &error, Some(&session)),
             };
+            // Answered by the watchdog while a script held the thread.
+            if self.running.was_answered(&session, id) {
+                self.running.forget_answered(&session, id);
+                continue;
+            }
             self.collector.push(Queued::Frame(frame));
         }
         self.collector.dialogs.driver_busy.set(!self.waiters.list.is_empty());
+        self.publish_deadlines();
+    }
+
+    /// Tells the connection's watchdog when each parked run's current step
+    /// times out ([`RunningCommand::expired`]).
+    pub(super) fn publish_deadlines(&self) {
+        let deadlines = self
+            .waiters
+            .list
+            .iter()
+            .filter_map(|w| {
+                let (step, timeout) = w.job.steps.get(w.job.index)?;
+                let what = step.describe();
+                let message = if w.job.single {
+                    format!("timed out after {} ms: {what}: page JavaScript kept the browser busy", timeout.as_millis())
+                } else {
+                    format!(
+                        "step {} ({what}): timed out after {} ms: {what}: page JavaScript kept the browser busy",
+                        w.job.index,
+                        timeout.as_millis()
+                    )
+                };
+                Some((w.job.session.clone(), w.job.id, w.step_deadline, message))
+            })
+            .collect();
+        *self.running.deadlines.borrow_mut() = deadlines;
     }
 }
 
