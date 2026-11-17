@@ -804,7 +804,10 @@ impl ModuleFetcher for PageModuleFetcher {
                 };
                 let r = match res {
                     Ok(text) => pyro_webapi::module_script::complete(&scope, request, &text),
-                    Err(e) => request.reject(&scope, &JsError::type_error(e)),
+                    Err(e) => request.reject(
+                        &scope,
+                        &JsError::type_error(format!("Failed to fetch dynamically imported module: {traced} ({e})")),
+                    ),
                 };
                 match &r {
                     Ok(()) => module_trace!("handed to engine {traced}"),

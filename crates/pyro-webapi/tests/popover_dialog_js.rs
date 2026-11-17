@@ -539,3 +539,31 @@ fn dialog_show_hides_popovers_that_do_not_contain_it() {
     );
     e.page.dispose();
 }
+
+#[test]
+fn details_summary_keyboard_activation_and_cancellation() {
+    let e = env("<body><details id=d><summary id=s>Toggle</summary><summary id=other tabindex=0>Other</summary></details><summary id=orphan tabindex=0>Orphan</summary></body>");
+    e.eval("window.clicks = []; s.addEventListener('click', e => clicks.push([e.isTrusted, e.detail, e.pointerId].join(':'))); s.focus()");
+    e.key("Enter");
+    assert_eq!(e.eval("[d.open, clicks.join()].join()"), "true,true:0:-1");
+    let space = input::KeyInput { key: " ".into(), code: "Space".into(), ..Default::default() };
+    input::dispatch_key(&e.page, input::KeyKind::RawKeyDown, &space);
+    assert_eq!(e.eval("d.open"), "true");
+    input::dispatch_key(&e.page, input::KeyKind::KeyUp, &space);
+    assert_eq!(e.eval("d.open"), "false");
+    for event in ["keydown", "click"] {
+        e.eval(&format!("s.addEventListener('{event}', e => e.preventDefault(), {{once:true}})"));
+        e.key("Enter");
+        assert_eq!(e.eval("d.open"), "false");
+    }
+    e.eval("s.addEventListener('keyup', e => e.preventDefault(), {once:true})");
+    e.key(" ");
+    assert_eq!(e.eval("d.open"), "false");
+    for id in ["other", "orphan"] {
+        e.eval(&format!("document.getElementById('{id}').focus()"));
+        e.key("Enter");
+        e.key(" ");
+        assert_eq!(e.eval("d.open"), "false");
+    }
+    e.page.dispose();
+}
