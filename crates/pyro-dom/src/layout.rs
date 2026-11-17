@@ -881,7 +881,11 @@ impl Layout {
     pub fn content_size(&self, dom: &Dom, el: NodeId) -> Option<(f64, f64)> {
         let b = self.layout_box(dom, el)?;
         let edges = |a: usize, b2: usize| b.border[a] + b.border[b2] + b.padding[a] + b.padding[b2];
-        Some(((b.rect.width - edges(LEFT, RIGHT)).max(0.0), (b.rect.height - edges(TOP, BOTTOM)).max(0.0)))
+        // The visual bounding rect includes CSS transforms. A child browsing
+        // context keeps its layout viewport regardless of its owner's scale
+        // or rotation; use the untransformed border-box dimensions.
+        let (width, height) = self.box_quads(dom, el).map_or((b.rect.width, b.rect.height), |q| (q.width, q.height));
+        Some(((width - edges(LEFT, RIGHT)).max(0.0), (height - edges(TOP, BOTTOM)).max(0.0)))
     }
 
     /// The content box's offset inside `el`'s border box (left and top

@@ -18,8 +18,8 @@ mod idle;
 /// animation frame callback 5 ms out (`Window.requestAnimationFrame`).
 const FRAME_MS: u64 = 5;
 /// Frames run as soon as the thread has nothing else ready (an idle timer)
-/// this many times after each client command. Nothing renders, so a frame
-/// only paces script: clients that wait for frames (e.g. Bun.WebView's
+/// this many times after each client command when no animation moves.
+/// Clients that wait for frames (e.g. Bun.WebView's
 /// "stable for two frames" click check) get them as soon as the page's work
 /// is done instead of on a clock, while a page with a perpetual
 /// `requestAnimationFrame` loop falls back to the 5 ms cadence after a few
@@ -618,10 +618,13 @@ fn schedule_animation_frame(s: &Scope<'_>, w: &WindowData, frame: &mut Animation
             let Ok(scope) = realm.scope() else { return };
             run_animation_frame(&scope);
         };
-        frame.timer = Some(if take_eager_frame() {
+        // Moving animations must advance their layout sample between callbacks,
+        // including after a client command replenishes the eager-frame budget.
+        let animation_interval = w.target.page.moving_animation_frame_interval();
+        frame.timer = Some(if animation_interval.is_none() && take_eager_frame() {
             w.sched.set_idle_timer(true, run)
         } else {
-            w.sched.set_timer(Duration::from_millis(FRAME_MS), false, true, run)
+            w.sched.set_timer(animation_interval.unwrap_or(Duration::from_millis(FRAME_MS)), false, true, run)
         });
     }
 }

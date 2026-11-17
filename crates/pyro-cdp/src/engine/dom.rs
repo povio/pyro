@@ -212,7 +212,8 @@ impl EngineHost {
                 }
                 let p: P = cmd.command.params()?;
                 let state = self.pages.get(&cmd.page).ok_or_else(stale)?;
-                let frame = self.thread.browser.frame(state.id, &pyro_browser::FrameId(p.frame_id)).ok_or_else(stale)?;
+                let frame =
+                    self.thread.browser.frame(state.id, &pyro_browser::FrameId(p.frame_id)).ok_or_else(stale)?;
                 let owner = frame.owner.ok_or_else(stale)?;
                 let parent = self
                     .thread
@@ -302,7 +303,13 @@ impl EngineHost {
                 let frame = frame.ok_or_else(stale)?;
                 // Child frames report main-frame viewport coordinates, as Chrome
                 // does for same-process iframes.
-                let (ox, oy) = if action == "focus" { (0.0, 0.0) } else { self.frame_offset(cmd.page, &frame)? };
+                let transforms = if action == "focus" { Vec::new() } else { self.frame_transforms(cmd.page, &frame)? };
+                let to_root = |mut q| {
+                    for transform in &transforms {
+                        q = transform.quad(q);
+                    }
+                    q
+                };
                 let (rect, quads) = {
                     let dom = page.dom.borrow();
                     if dom.root_node(node, true).map_err(dom_error)? != page.document() {
@@ -320,31 +327,29 @@ impl EngineHost {
                         .flatten();
                     (rect, quads)
                 };
-                // In layout units, as Chromium reports untransformed geometry:
-                // the frame's offset and the element's rect each quantized,
-                // so the quad's edges give back the width exactly
-                // (Playwright's boundingBox).
+                // Quantize local layout geometry before projecting it through
+                // iframe owners. Transformed root coordinates retain fractions.
                 let rect = rect.layout_units();
-                let (ox, oy) = (pyro_dom::layout::layout_unit(ox), pyro_dom::layout::layout_unit(oy));
-                let (rx, ry) = (rect.x + ox, rect.y + oy);
-                let quad = [rx, ry, rx + rect.width, ry, rx + rect.width, ry + rect.height, rx, ry + rect.height];
+                let (rx, ry) = (rect.x, rect.y);
+                let quad =
+                    to_root([rx, ry, rx + rect.width, ry, rx + rect.width, ry + rect.height, rx, ry + rect.height]);
                 match (action, quads) {
                     ("getBoxModel", Some(q)) => {
-                        let border = offset_quad(q.border, ox, oy, !q.transformed);
+                        let border = offset_quad(q.border, 0.0, 0.0, !q.transformed);
                         let unit = |v: [f64; 4]| if q.transformed { v } else { v.map(pyro_dom::layout::layout_unit) };
                         let (b, p, m) = (unit(q.border_widths), unit(q.padding), unit(q.margin));
                         let inset = |by: [f64; 4]| inset_quad(&border, q.width, q.height, by, q.transformed);
                         let padding = inset(b);
                         let content = inset([b[0] + p[0], b[1] + p[1], b[2] + p[2], b[3] + p[3]]);
                         let margin = inset(m.map(|v| -v));
-                        json!({"model":{"content":content,"padding":padding,"border":border,"margin":margin,
+                        json!({"model":{"content":to_root(content),"padding":to_root(padding),"border":to_root(border),"margin":to_root(margin),
                             "width":q.width.round() as i64,"height":q.height.round() as i64}})
                     }
                     ("getContentQuads", Some(q)) => {
                         let quads: Vec<[f64; 8]> = if q.fragments.is_empty() {
-                            vec![offset_quad(q.border, ox, oy, !q.transformed)]
+                            vec![to_root(offset_quad(q.border, 0.0, 0.0, !q.transformed))]
                         } else {
-                            q.fragments.iter().map(|f| offset_quad(*f, ox, oy, true)).collect()
+                            q.fragments.iter().map(|f| to_root(offset_quad(*f, 0.0, 0.0, true))).collect()
                         };
                         json!({ "quads": quads })
                     }
@@ -400,6 +405,64 @@ impl EngineHost {
             }
         };
         Ok(Some(result))
+    }
+}
+
+/// The affine map from an iframe's content coordinates to its parent's
+/// viewport. Border quads include transforms on the owner and its ancestors;
+/// the content inset is measured along the owner's local axes.
+#[derive(Clone)]
+pub(super) struct FrameTransform {
+    origin: (f64, f64),
+    x_axis: (f64, f64),
+    y_axis: (f64, f64),
+}
+
+impl FrameTransform {
+    pub(super) fn of_owner(page: &PageDom, owner: NodeId) -> Option<Self> {
+        let layout = page.layout();
+        let dom = page.dom.borrow();
+        let rect = layout.client_rect(&dom, owner)?;
+        let inset = layout.content_offset(&dom, owner).unwrap_or_default();
+        if let Some(q) = layout.box_quads(&dom, owner).filter(|q| q.transformed && q.width > 0.0 && q.height > 0.0) {
+            let x_axis = ((q.border[2] - q.border[0]) / q.width, (q.border[3] - q.border[1]) / q.width);
+            let y_axis = ((q.border[6] - q.border[0]) / q.height, (q.border[7] - q.border[1]) / q.height);
+            Some(Self {
+                origin: (
+                    q.border[0] + inset.0 * x_axis.0 + inset.1 * y_axis.0,
+                    q.border[1] + inset.0 * x_axis.1 + inset.1 * y_axis.1,
+                ),
+                x_axis,
+                y_axis,
+            })
+        } else {
+            Some(Self {
+                origin: (
+                    pyro_dom::layout::layout_unit(rect.x + inset.0),
+                    pyro_dom::layout::layout_unit(rect.y + inset.1),
+                ),
+                x_axis: (1.0, 0.0),
+                y_axis: (0.0, 1.0),
+            })
+        }
+    }
+
+    fn quad(&self, mut q: [f64; 8]) -> [f64; 8] {
+        for point in q.chunks_exact_mut(2) {
+            let (x, y) = (point[0], point[1]);
+            point[0] = self.origin.0 + x * self.x_axis.0 + y * self.y_axis.0;
+            point[1] = self.origin.1 + x * self.x_axis.1 + y * self.y_axis.1;
+        }
+        q
+    }
+
+    pub(super) fn inverse_point(&self, x: f64, y: f64) -> Option<(f64, f64)> {
+        let det = self.x_axis.0 * self.y_axis.1 - self.x_axis.1 * self.y_axis.0;
+        if !det.is_finite() || det.abs() < 1e-12 {
+            return None;
+        }
+        let (x, y) = (x - self.origin.0, y - self.origin.1);
+        Some(((x * self.y_axis.1 - y * self.y_axis.0) / det, (y * self.x_axis.0 - x * self.x_axis.1) / det))
     }
 }
 
@@ -493,12 +556,12 @@ fn reveal_area(page: &Rc<PageDom>, node: NodeId, x: f64, y: f64, width: f64, hei
 }
 
 impl EngineHost {
-    /// The viewport origin of `frame`'s document in main-frame viewport
-    /// coordinates: the sum of its owning iframes' content box origins.
+    /// Child-to-parent content-box transforms, innermost first. Geometry
+    /// must cross every frame boundary, including transformed ancestors.
     /// `frame` is the frame's parent id and owner element.
-    pub(super) fn frame_offset(&self, page: PageKey, frame: &FrameLink) -> CdpResult<(f64, f64)> {
+    pub(super) fn frame_transforms(&self, page: PageKey, frame: &FrameLink) -> CdpResult<Vec<FrameTransform>> {
         let page_id = self.pages.get(&page).ok_or_else(stale)?.id;
-        let (mut x, mut y) = (0.0, 0.0);
+        let mut transforms = Vec::new();
         let mut cur = frame.clone();
         while let (Some(parent_id), Some(owner)) = cur {
             let parent = self
@@ -507,20 +570,13 @@ impl EngineHost {
                 .with_frame(page_id, &parent_id, |f| (f.parent.clone(), f.owner, f.page_dom.clone()));
             let (parent, parent_owner, dom) = parent.ok_or_else(stale)?;
             let dom = dom.ok_or_else(stale)?;
-            let (r, inset) = {
-                let layout = dom.layout();
-                let tree = dom.dom.borrow();
-                let r = layout
-                    .client_rect(&tree, owner)
-                    .ok_or_else(|| CdpError::server("Frame owner does not have a layout object"))?;
-                (r, layout.content_offset(&tree, owner).unwrap_or_default())
-            };
-            // Each frame's offset in layout units (Chromium sums them).
-            x += pyro_dom::layout::layout_unit(r.x + inset.0);
-            y += pyro_dom::layout::layout_unit(r.y + inset.1);
+            transforms.push(
+                FrameTransform::of_owner(&dom, owner)
+                    .ok_or_else(|| CdpError::server("Frame owner does not have a layout object"))?,
+            );
             cur = (parent, parent_owner);
         }
-        Ok((x, y))
+        Ok(transforms)
     }
 
     /// Page.fileChooserOpened to the sessions intercepting file choosers, with

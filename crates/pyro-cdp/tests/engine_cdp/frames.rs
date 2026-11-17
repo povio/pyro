@@ -816,3 +816,51 @@ fn child_window_gets_resize_when_its_iframe_box_changes() {
     h.run_for(100);
     assert_eq!(eval_in(&mut h, context, "seen"), json!([[500, 150], [442, 150], [392, 150]]));
 }
+
+#[test]
+fn transformed_frame_quads_and_input_share_content_coordinates() {
+    // A mobile Vitest viewport is an iframe inside a scaled wrapper. A CDP
+    // locator must report root coordinates; Input must invert the same map.
+    for (transform, expected) in [
+        ("none", [348.0, 138.0, 408.0, 138.0, 408.0, 168.0, 348.0, 168.0]),
+        ("scale(.8,.6)", [286.4, 94.8, 334.4, 94.8, 334.4, 112.8, 286.4, 112.8]),
+        ("translateX(250px) rotate(90deg)", [182.0, 338.0, 182.0, 398.0, 152.0, 398.0, 152.0, 338.0]),
+    ] {
+        let mut h = Harness::new();
+        enable(&mut h);
+        let events = add_srcdoc(&mut h, "scaled", "child", None);
+        let frame = child(&mut h, "scaled")["frame"]["id"].as_str().unwrap().to_owned();
+        let context = default_context(&events, &frame);
+        eval_value(&mut h, &format!(
+            "document.body.style.cssText='margin:0;position:absolute;left:40px;top:30px;transform-origin:0 0;transform:{}'; \
+             const f=document.getElementById('scaled'); f.style.cssText='width:400px;height:200px;border:5px solid;padding:3px'; \
+             0", transform));
+        assert_eq!(eval_in(&mut h, context, "[innerWidth,innerHeight]"), json!([400, 200]), "{transform}");
+        eval_in(&mut h, context,
+            "document.body.innerHTML='<button id=target style=\"position:absolute;left:300px;top:100px;width:60px;height:30px\">Next</button>'; \
+             window.hits=[];document.getElementById('target').onclick=e=>hits.push([Math.round(e.clientX),Math.round(e.clientY),e.isTrusted]);0");
+        let object =
+            h.page("Runtime.evaluate", json!({"contextId":context,"expression":"document.getElementById('target')"}));
+        let object = object["result"]["result"]["objectId"].as_str().unwrap();
+        for method in ["DOM.getContentQuads", "DOM.getBoxModel"] {
+            let result = h.page(method, json!({"objectId":object}));
+            let quad = if method == "DOM.getContentQuads" {
+                &result["result"]["quads"][0]
+            } else {
+                &result["result"]["model"]["border"]
+            };
+            for (actual, expected) in quad.as_array().expect("quad").iter().zip(expected) {
+                assert!((actual.as_f64().unwrap() - expected).abs() < 0.05, "{transform}: {result}");
+            }
+        }
+        let (x, y) = ((expected[0] + expected[4]) / 2.0, (expected[1] + expected[5]) / 2.0);
+        for (kind, buttons) in [("mousePressed", 1), ("mouseReleased", 0)] {
+            let result = h.page(
+                "Input.dispatchMouseEvent",
+                json!({"type":kind,"x":x,"y":y,"button":"left","buttons":buttons,"clickCount":1}),
+            );
+            assert_eq!(result["result"], json!({}), "{result}");
+        }
+        assert_eq!(eval_in(&mut h, context, "hits"), json!([[330, 115, true]]), "{transform}");
+    }
+}
