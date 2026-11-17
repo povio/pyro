@@ -666,3 +666,5 @@ item without its content-based height (no definite basis or height, no growing) 
   vertical-lr, the line-under side); a column table item's flex base size from its `height` is measured at that
   height (captions added); grid `baseline.rs` synthesizes an orthogonal item's missing inline-axis baseline at its
   physical left (line-under).
+- Flexbox: `baseline` items in an rtl column share a baseline at their line-left edges, their group at the cross
+  start (`max_baseline_cross` in `align_flex_items_along_cross_axis`; WPT `flexbox-align-self-vert-rtl-001..003,005`).
