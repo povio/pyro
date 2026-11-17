@@ -4503,7 +4503,15 @@ impl ElementCx<'_, '_> {
         let units = self.scale as f32 * self.style.effective_zoom.value();
         // pyro: a source that depends on the laid-out size, serialized again at it (blitz-dom
         // `inline_svg_at_viewport`; WPT css-transforms `transform-percent-010`)
-        let at_viewport = if svg.viewport_dependent {
+        // pyro: and one with selected text, serialized again with its `::selection` paint
+        // (`inline_svg_with_selection`; WPT css-pseudo `svg-text-selection-*`).
+        let with_selection = match self.context.draw_text_context.borrow().runs.is_none() {
+            true => self.context.dom.as_ref().inline_svg_with_selection(self.node.id, width / units, height / units),
+            false => None,
+        };
+        let at_viewport = if with_selection.is_some() {
+            with_selection
+        } else if svg.viewport_dependent {
             self.context.dom.as_ref().inline_svg_at_viewport(self.node.id, width / units, height / units)
         } else {
             None

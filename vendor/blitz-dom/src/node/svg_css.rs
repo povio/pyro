@@ -222,6 +222,9 @@ thread_local! {
     /// pyro: set while serializing when a `view-box` reference box was the root's CSS box guessed before
     /// layout: the source then depends on the root's laid-out size ([`svg_source_for_viewport`]).
     static VIEWPORT_DEPENDENT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// pyro: the selected text nodes to write in their `::selection` paint, with the UTF-16 range
+    /// selected and the attributes (`BaseDocument::inline_svg_with_selection`).
+    pub(crate) static SELECTED_SVG_TEXT: std::cell::RefCell<std::collections::HashMap<NodeId, (usize, Option<usize>, String)>> = std::cell::RefCell::new(std::collections::HashMap::new());
     /// pyro: the root's laid-out content box size to serialize with ([`svg_source_for_viewport`]).
     static ROOT_VIEWPORT: std::cell::Cell<Option<(f64, f64)>> = const { std::cell::Cell::new(None) };
 }
@@ -385,6 +388,11 @@ fn author_longhands(style: &ComputedValues, guard: &SharedRwLockReadGuard) -> Ve
 
 /// A computed value as CSS, with `url(...)` references reduced to their
 /// fragment (`url(#id)`), the only form usvg follows.
+/// pyro: a paint property's computed value as an SVG attribute value.
+pub(crate) fn paint_value(style: &ComputedValues, id: LonghandId) -> String {
+    computed_value(style, id)
+}
+
 fn computed_value(style: &ComputedValues, id: LonghandId) -> String {
     let value = style.computed_value_to_string(PropertyDeclarationId::Longhand(id));
     local_urls(&value)
@@ -717,7 +725,32 @@ impl Writer<'_> {
     fn write_node(&mut self, node: &Node, nesting: usize) {
         match &node.data {
             NodeData::Text(data) => {
-                encode_text_to_string(data.content.as_str(), &mut self.out);
+                // pyro: selected text in its `::selection` paint (`inline_svg_with_selection`).
+                let selected = SELECTED_SVG_TEXT.with(|cell| cell.borrow().get(&node.id).cloned());
+                match selected.filter(|_| in_text(node) && self.shadow_copy.is_none()) {
+                    Some((from, to, attrs)) => {
+                        let content = data.content.as_str();
+                        let byte = |utf16: usize| {
+                            let mut units = 0;
+                            for (index, c) in content.char_indices() {
+                                if units >= utf16 {
+                                    return index;
+                                }
+                                units += c.len_utf16();
+                            }
+                            content.len()
+                        };
+                        let (from, to) = (byte(from), to.map_or(content.len(), byte));
+                        encode_text_to_string(&content[..from], &mut self.out);
+                        let _ = write!(self.out, "<tspan{attrs}>");
+                        encode_text_to_string(&content[from..to.max(from)], &mut self.out);
+                        self.out.push_str("</tspan>");
+                        let _ = encode_text_to_string(&content[to.max(from)..], &mut self.out);
+                    }
+                    None => {
+                        let _ = encode_text_to_string(data.content.as_str(), &mut self.out);
+                    }
+                }
             }
             NodeData::Element(data) => self.write_element(node, data, nesting),
             _ => {}

@@ -5968,7 +5968,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              |scene| {
                  // If the element has a CSS `mask`, then push an isolation layer for the
                  // masked content. The mask is applied when the layer is popped below.
-@@ -608,630 +1271,3246 @@
+@@ -608,630 +1271,3254 @@
                  // Save it so that the mask can be drawn untransformed by scroll offsets.
                  let unscrolled_transform = cx.transform;
  
@@ -6398,6 +6398,8 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 -                    None,
 -                    &stroke_rect.to_rounded_rect(radius - stroke_width / 2.0),
 -                );
+-            }
+-        }
 +        if cx.context.backgrounds && !hidden {
 +            cx.draw_table_row_backgrounds(scene);
 +        }
@@ -9217,8 +9219,8 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                if self.paint_level(&tree[child_id]) == 2 {
 +                    self.draw_paint_child(scene, child_id, parent_style_transform, clip_rect);
 +                }
-             }
-         }
++            }
++        }
 +        self.draw_pos_z_children(scene, parent_style_transform, clip_rect);
      }
  
@@ -9769,7 +9771,15 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +        let units = self.scale as f32 * self.style.effective_zoom.value();
 +        // pyro: a source that depends on the laid-out size, serialized again at it (blitz-dom
 +        // `inline_svg_at_viewport`; WPT css-transforms `transform-percent-010`)
-+        let at_viewport = if svg.viewport_dependent {
++        // pyro: and one with selected text, serialized again with its `::selection` paint
++        // (`inline_svg_with_selection`; WPT css-pseudo `svg-text-selection-*`).
++        let with_selection = match self.context.draw_text_context.borrow().runs.is_none() {
++            true => self.context.dom.as_ref().inline_svg_with_selection(self.node.id, width / units, height / units),
++            false => None,
++        };
++        let at_viewport = if with_selection.is_some() {
++            with_selection
++        } else if svg.viewport_dependent {
 +            self.context.dom.as_ref().inline_svg_at_viewport(self.node.id, width / units, height / units)
 +        } else {
 +            None
@@ -9780,7 +9790,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          let svg_size = svg.tree.size();
  
          let x = self.frame.content_box.origin().x;
-@@ -1253,9 +4532,20 @@
+@@ -1253,9 +4540,20 @@
  
          // Apply object-fit algorithm
          let container_size = taffy::Size { width, height };
@@ -9804,7 +9814,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          };
          let paint_size = compute_object_fit(container_size, Some(object_size), object_fit);
  
-@@ -1266,26 +4556,192 @@
+@@ -1266,26 +4564,192 @@
          let y_offset = object_position.vertical.resolve(
              CSSPixelLength::new(container_size.height - paint_size.height) / self.scale as f32,
          ) * self.scale as f32;
@@ -9999,7 +10009,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
      fn with_replaced_content_clip<S: PaintScene>(
          &self,
          scene: &mut S,
-@@ -1293,15 +4749,27 @@
+@@ -1293,15 +4757,27 @@
          paint_size: taffy::Size<f32>,
          x_offset: f32,
          y_offset: f32,
@@ -10028,7 +10038,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              BlendMode::default(),
              1.0,
              self.transform,
-@@ -1312,6 +4780,30 @@
+@@ -1312,6 +4788,30 @@
          );
      }
  
@@ -10059,7 +10069,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
      fn draw_image(&self, scene: &mut impl PaintScene) {
          if let Some(image) = self.element.raster_image_data() {
              let width = self.frame.content_box.width() as u32;
-@@ -1329,9 +4821,22 @@
+@@ -1329,9 +4829,22 @@
                  width: width as f32,
                  height: height as f32,
              };
@@ -10085,7 +10095,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              };
              let paint_size = compute_object_fit(container_size, Some(object_size), object_fit);
  
-@@ -1347,10 +4852,28 @@
+@@ -1347,10 +4860,28 @@
  
              let x_scale = paint_size.width as f64 / object_size.width as f64;
              let y_scale = paint_size.height as f64 / object_size.height as f64;
@@ -10114,7 +10124,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
  
              self.with_replaced_content_clip(
                  scene,
-@@ -1358,8 +4881,23 @@
+@@ -1358,8 +4889,23 @@
                  paint_size,
                  x_offset.px(),
                  y_offset.px(),
@@ -10139,7 +10149,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
                  },
              );
          }
-@@ -1383,22 +4921,27 @@
+@@ -1383,22 +4929,27 @@
              let width = self.frame.content_box.width() as u32;
              let height = self.frame.content_box.height() as u32;
  
@@ -10176,7 +10186,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          }
      }
  
-@@ -1427,6 +4970,14 @@
+@@ -1427,6 +4978,14 @@
      }
  }
  
@@ -10191,7 +10201,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
  fn insets_from_taffy_rect(input: taffy::Rect<f64>) -> Insets {
      Insets {
          x0: input.left,
-@@ -1438,6 +4989,13 @@
+@@ -1438,6 +4997,13 @@
  
  /// Convert Stylo and Taffy types into Kurbo types
  fn create_css_rect(style: &ComputedValues, layout: &Layout, scale: f64) -> CssBox {
@@ -10205,7 +10215,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
      // Resolve and rescale
      // We have to scale since document pixels are not same same as rendered pixels
      let width: f64 = layout.size.width as f64;
-@@ -1457,12 +5015,166 @@
+@@ -1457,12 +5023,166 @@
          }
      };
      let s_border = style.get_border();

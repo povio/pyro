@@ -156,6 +156,35 @@ impl BaseDocument {
         false
     }
 
+    /// pyro: the CSS text of the author or user declaration of `longhand` that `style`'s rules
+    /// give (the highest priority one), `None` without one or for a CSS-wide keyword.
+    pub(crate) fn declared_css(
+        &self,
+        style: &style::properties::ComputedValues,
+        longhand: style::properties::LonghandId,
+    ) -> Option<String> {
+        use style::properties::{PropertyDeclaration, PropertyDeclarationId};
+        use style::stylesheets::Origin;
+        use style_traits::ToCss;
+        let guard = self.guard.read();
+        for node in style.rules().self_and_ancestors() {
+            if node.cascade_level().origin().origin() == Origin::UserAgent {
+                continue;
+            }
+            let Some(source) = node.style_source() else { continue };
+            let Some((declaration, _)) = source.read(&guard).get(PropertyDeclarationId::Longhand(longhand)) else {
+                continue;
+            };
+            if matches!(declaration, PropertyDeclaration::CSSWideKeyword(_)) {
+                return None;
+            }
+            let mut css = String::new();
+            declaration.to_css(&mut css).ok()?;
+            return Some(css);
+        }
+        None
+    }
+
     /// pyro: whether author or user rules (style sheets, style attributes, animations) give
     /// `style` a declaration of some of `longhands`. A `revert` at the highest priority declares
     /// nothing (it rolls back to the user agent's, which declares none of these for a highlight
@@ -200,32 +229,7 @@ impl BaseDocument {
     /// pyro: the inline roots holding text of `selection`, each with the bytes of its text
     /// (`TextLayout::text`) the selection covers.
     pub(crate) fn dom_selection_ranges(&self, selection: DomSelection) -> Vec<(NodeId, usize, usize)> {
-        // The text nodes from the start to the end, in tree order, each with the UTF-16 range of
-        // its data selected (`None`: to its end).
-        let mut selected: HashMap<NodeId, (usize, Option<usize>)> = HashMap::new();
-        let mut stack = vec![self.root_node().id];
-        let mut inside = false;
-        while let Some(id) = stack.pop() {
-            let Some(node) = self.nodes.get(id) else { continue };
-            if let NodeData::Text(_) = node.data {
-                let start = if id == selection.start.0 {
-                    inside = true;
-                    selection.start.1
-                } else {
-                    0
-                };
-                if !inside {
-                    continue;
-                }
-                if id == selection.end.0 {
-                    selected.insert(id, (start, Some(selection.end.1)));
-                    break;
-                }
-                selected.insert(id, (start, None));
-                continue;
-            }
-            stack.extend(node.children.iter().rev().copied());
-        }
+        let selected = self.selected_text_nodes(selection);
         if selected.is_empty() {
             return Vec::new();
         }
@@ -254,6 +258,89 @@ impl BaseDocument {
             }
         }
         ranges
+    }
+
+    /// pyro: the text nodes from the start of `selection` to its end, in tree order, each with the
+    /// UTF-16 range of its data selected (`None`: to its end).
+    pub(crate) fn selected_text_nodes(&self, selection: DomSelection) -> HashMap<NodeId, (usize, Option<usize>)> {
+        let mut selected: HashMap<NodeId, (usize, Option<usize>)> = HashMap::new();
+        let mut stack = vec![self.root_node().id];
+        let mut inside = false;
+        while let Some(id) = stack.pop() {
+            let Some(node) = self.nodes.get(id) else { continue };
+            if let NodeData::Text(_) = node.data {
+                let start = if id == selection.start.0 {
+                    inside = true;
+                    selection.start.1
+                } else {
+                    0
+                };
+                if !inside {
+                    continue;
+                }
+                if id == selection.end.0 {
+                    selected.insert(id, (start, Some(selection.end.1)));
+                    break;
+                }
+                selected.insert(id, (start, None));
+                continue;
+            }
+            stack.extend(node.children.iter().rev().copied());
+        }
+        selected
+    }
+
+    /// pyro: an inline `<svg>` serialized again with its selected text in its `::selection` fill and
+    /// stroke (CSS Pseudo 4 § 3.2: `fill`, `stroke-color`, `stroke-width` apply to selected SVG
+    /// text), for a content box of `width` x `height` CSS px; `None` with no selected text that
+    /// such a style restyles. Not kept: made for each paint with a selection.
+    #[cfg(feature = "svg")]
+    pub fn inline_svg_with_selection(&self, node_id: NodeId, width: f32, height: f32) -> Option<std::sync::Arc<crate::node::SvgImageData>> {
+        use style::properties::LonghandId;
+        let selection = self.dom_selection?;
+        let selected = self.selected_text_nodes(selection);
+        let mut overrides: HashMap<NodeId, (usize, Option<usize>, String)> = HashMap::new();
+        let mut stack = vec![node_id];
+        while let Some(id) = stack.pop() {
+            let Some(node) = self.nodes.get(id) else { continue };
+            if let (NodeData::Text(_), Some(&(from, to))) = (&node.data, selected.get(&id)) {
+                let Some(parent) = node.parent else { continue };
+                let Some(style) = self.selection_pseudo_style(parent) else { continue };
+                // (Stylo's cascade keeps only the colours of a highlight pseudo-element: the
+                // declared values are read from its rules.)
+                let mut attrs = String::new();
+                for (longhand, name) in [
+                    (LonghandId::Fill, "fill"),
+                    (LonghandId::Stroke, "stroke"),
+                    (LonghandId::StrokeWidth, "stroke-width"),
+                ] {
+                    if let Some(value) = self.declared_css(&style, longhand) {
+                        let mut escaped = String::new();
+                        let _ = html_escape::encode_double_quoted_attribute_to_string(&value, &mut escaped);
+                        attrs.push_str(&format!(" {name}=\"{escaped}\""));
+                    }
+                }
+                if !attrs.is_empty() {
+                    overrides.insert(id, (from, to, attrs));
+                }
+                continue;
+            }
+            stack.extend(node.children.iter().copied());
+        }
+        if overrides.is_empty() {
+            return None;
+        }
+        let node = self.get_node(node_id)?;
+        crate::node::svg_css::SELECTED_SVG_TEXT.with(|cell| *cell.borrow_mut() = overrides);
+        let (source, _) = node.svg_source_for_viewport(Some((width as f64, height as f64)));
+        crate::node::svg_css::SELECTED_SVG_TEXT.with(|cell| cell.borrow_mut().clear());
+        let source = self.with_cross_svg_references(self.with_svg_sprites(self.with_svg_images(source, node_id)));
+        crate::util::parse_svg_image(source.as_bytes()).ok().map(|mut svg| {
+            if svg.intrinsic_dimensions.view_box.is_none() {
+                svg.inline_source = Some(source.as_str().into());
+            }
+            std::sync::Arc::new(svg)
+        })
     }
 }
 

@@ -2650,3 +2650,4 @@ Round 4 lane G:
   and damaged every node. Danex's lab canvas page view: elements restyled over 250 syncs 18,997 → 10,963, matched
   8,860 → 4,226.
 - Round 4 lane F, `document.rs`: `set_text_input_selection` (UTF-16 range of a text input's value, as the page DOM has it: pyro-render applies the focused control's selection once laid out).
+- Round 4 lane F, `dom_selection.rs`/`node/svg_css.rs`: `inline_svg_with_selection` serializes an inline `<svg>` again with its selected text wrapped in `<tspan>`s carrying the `::selection` `fill`/`stroke`/`stroke-width`, read from the declarations (`declared_css`: stylo's cascade keeps only colours for highlight pseudo-elements) (WPT css-pseudo `textpath-selection-011`). `svg_css` is `pub(crate)` for it.
