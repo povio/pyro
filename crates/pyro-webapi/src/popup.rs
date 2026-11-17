@@ -48,6 +48,9 @@ pub struct PopupState {
     session: StorageNamespace,
     /// The popup's current document, once the embedder created the page.
     page: RefCell<Weak<PageDom>>,
+    /// The opener set the popup's `opener` to null (`popup.opener = null`,
+    /// before the popup's page existed or since): it reads null on both sides.
+    opener_cleared: Cell<bool>,
 }
 
 impl std::fmt::Debug for PopupState {
@@ -83,6 +86,7 @@ impl PopupTicket {
             name,
             session,
             page: RefCell::new(Weak::new()),
+            opener_cleared: Cell::new(false),
         });
         (Rc::new(Self(state.clone())), state)
     }
@@ -104,6 +108,12 @@ impl PopupTicket {
     /// The session storage namespace the popup page must use.
     pub fn session_storage(&self) -> StorageNamespace {
         self.0.session.clone()
+    }
+
+    /// Whether the opener set `popup.opener = null`: the popup's own
+    /// `window.opener` reads null too.
+    pub fn opener_cleared(&self) -> bool {
+        self.0.opener_cleared.get()
     }
 
     /// The popup page's current document (each navigation attaches the new
@@ -349,7 +359,28 @@ impl JsClass for PopupWindow {
         for name in ["window", "self", "frames", "top", "parent"] {
             def.getter(name, |s, d| wrap_popup(s, &d.page, &d.popup));
         }
-        def.getter("opener", |s, _d| Ok(s.global().value()));
+        // [Replaceable]: `popup.opener = null` (a common way to cut the
+        // popup off from its opener before navigating it) must not throw in
+        // strict code, and the popup's `opener` reads null from then on.
+        def.accessor(
+            "opener",
+            |s, d| {
+                if d.popup.opener_cleared.get() {
+                    return Ok(s.null());
+                }
+                Ok(d.forward(s, "opener")?.unwrap_or_else(|| s.global().value()))
+            },
+            |_s, d, v| {
+                if v.is_null() {
+                    d.popup.opener_cleared.set(true);
+                }
+                if let Some((_, realm)) = d.reachable_page()? {
+                    let scope = realm.scope()?;
+                    scope.global().set("opener", scope.rehome(v))?;
+                }
+                Ok(())
+            },
+        );
         def.getter("length", |s, d| Ok(d.forward(s, "length")?.unwrap_or_else(|| s.number(0.0))));
         def.getter("name", |s, d| Ok(d.forward(s, "name")?.unwrap_or_else(|| s.string(&d.popup.name))));
         def.getter("document", |s, d| Ok(d.forward(s, "document")?.unwrap_or_else(|| s.undefined())));

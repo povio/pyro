@@ -851,7 +851,8 @@ impl FrameHost {
         s: &pyro_js::Scope<'s>,
         key: FrameKey,
     ) -> pyro_js::JsResult<pyro_js::Value<'s>> {
-        if key.child.is_some() {
+        // A popup whose opener set `popup.opener = null` before it existed.
+        if key.child.is_some() || self.popup.borrow().as_ref().is_some_and(|t| t.opener_cleared()) {
             return Ok(s.null());
         }
         let Some(opener) = self.opener.borrow().as_ref().and_then(std::rc::Weak::upgrade) else { return Ok(s.null()) };
