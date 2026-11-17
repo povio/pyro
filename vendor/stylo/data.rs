@@ -48,6 +48,12 @@ bitflags! {
         /// The former gives us stronger transitive guarantees that allows us to
         /// apply the style sharing cache to cousins.
         const PRIMARY_STYLE_REUSED_VIA_RULE_NODE = 1 << 2;
+
+        /// pyro: this restyle changed the element's custom properties and no
+        /// other inherited value: a child that neither declares custom
+        /// properties nor uses `var()` takes its old style with the new
+        /// inherited custom properties instead of cascading again.
+        const CUSTOM_PROPERTIES_ONLY_CHANGED = 1 << 3;
     }
 }
 

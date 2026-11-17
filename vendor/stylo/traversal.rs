@@ -333,6 +333,71 @@ where
     styles
 }
 
+/// pyro: whether [`custom_properties_only_recascade`] may stand for this
+/// element's cascade: none of its rules declares a custom property or uses
+/// `var()`/`env()`, and it has no eager pseudo-elements, visited style,
+/// `attr()` references or `display: contents`.
+#[cfg(feature = "servo")]
+fn custom_properties_only_recascade_possible<E: TElement>(context: &StyleContext<E>, data: &ElementData) -> bool {
+    use crate::properties::PropertyDeclaration;
+    let Some(old) = data.styles.get_primary() else { return false };
+    if !data.styles.pseudos.is_empty() || old.has_visited_or_attr_references() || old.is_display_contents() {
+        return false;
+    }
+    let Some(rules) = old.rules.as_ref() else { return false };
+    let guards = &context.shared.guards;
+    rules.self_and_ancestors().all(|node| {
+        let Some(source) = node.style_source() else { return true };
+        let guard = node.cascade_level().guard(guards);
+        !source.read(guard).declarations().iter().any(|d| {
+            matches!(d, PropertyDeclaration::Custom(..) | PropertyDeclaration::WithVariables(..))
+        })
+    })
+}
+
+#[cfg(not(feature = "servo"))]
+fn custom_properties_only_recascade_possible<E: TElement>(_context: &StyleContext<E>, _data: &ElementData) -> bool {
+    false
+}
+
+/// pyro: the new styles of an element recascaded only because its parent's
+/// custom properties changed and nothing else it inherits
+/// (`ElementDataFlags::CUSTOM_PROPERTIES_ONLY_CHANGED`): when none of its rules
+/// declares a custom property or uses `var()`/`env()`, and it has no eager
+/// pseudo-elements, visited style or `attr()` references, its old style with the
+/// parent's inherited custom properties is what a cascade would compute.
+#[cfg(feature = "servo")]
+fn custom_properties_only_recascade<E: TElement>(
+    context: &StyleContext<E>,
+    element: E,
+    data: &ElementData,
+) -> Option<crate::style_resolver::ResolvedElementStyles> {
+    let parent = element.traversal_parent()?;
+    let parent_data = parent.borrow_data()?;
+    if !parent_data.flags.contains(crate::data::ElementDataFlags::CUSTOM_PROPERTIES_ONLY_CHANGED) {
+        return None;
+    }
+    let parent_style = parent_data.styles.get_primary()?;
+    let old = data.styles.get_primary()?;
+    let _ = context;
+    Some(crate::style_resolver::ResolvedElementStyles {
+        primary: crate::style_resolver::PrimaryStyle {
+            style: crate::style_resolver::ResolvedStyle(old.with_inherited_custom_properties_of(parent_style)),
+            reused_via_rule_node: false,
+        },
+        pseudos: Default::default(),
+    })
+}
+
+#[cfg(not(feature = "servo"))]
+fn custom_properties_only_recascade<E: TElement>(
+    _context: &StyleContext<E>,
+    _element: E,
+    _data: &ElementData,
+) -> Option<crate::style_resolver::ResolvedElementStyles> {
+    None
+}
+
 /// Calculates the style for a single node.
 #[inline]
 #[allow(unsafe_code)]
@@ -567,6 +632,11 @@ where
             );
 
             resolver.cascade_styles_with_default_parents(cascade_inputs)
+        },
+        CascadeOnly if data.has_styles() && element.traversal_parent().is_some_and(|p| {
+            p.borrow_data().is_some_and(|d| d.flags.contains(crate::data::ElementDataFlags::CUSTOM_PROPERTIES_ONLY_CHANGED))
+        }) && custom_properties_only_recascade_possible(context, data) => {
+            custom_properties_only_recascade(context, element, data).expect("checked")
         },
         CascadeOnly => {
             // Skipping full matching, load cascade inputs from previous values.

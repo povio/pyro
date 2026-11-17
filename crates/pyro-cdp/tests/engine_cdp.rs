@@ -10625,3 +10625,36 @@ fn animations_start_after_text_only_changes_from_a_class_or_inline_style() {
     assert!(r.get("error").is_none(), "{r}");
     assert_eq!(r["result"]["reads"]["started"], json!(["b", "i"]), "{r}");
 }
+
+#[test]
+fn custom_property_changes_reach_descendants_that_skip_the_cascade() {
+    // A custom property set on a container: descendants that use no var() take
+    // the new value without cascading again, yet read it, and var() users and
+    // children that declare their own custom properties still compute from it
+    // (Chromium: the same reads, before and after).
+    let mut h = Harness::new();
+    load_html(
+        &mut h,
+        r#"<!doctype html><style>.w{width:var(--w, 10px)} .own{--o: calc(var(--w, 0px) * 2)} .use-o{width:var(--o, 1px)}</style>
+<div id=sc><p id=plain><span id=deep>x</span></p><div id=w class=w></div><div class=own><div id=o class=use-o></div></div><p id=after style="color:rgb(1, 2, 3)"><b id=b>b</b></p></div>"#,
+    );
+    let read = "(() => { const v = id => getComputedStyle(document.getElementById(id)); return [v('deep').getPropertyValue('--w'), v('w').width, v('o').width, v('b').color, v('b').getPropertyValue('--w')]; })()";
+    let r = h.page(
+        "Pyro.run",
+        json!({"steps": [
+            {"eval": {"expression": read, "as": "before"}},
+            {"eval": {"expression": "sc.style.setProperty('--w', '30px'); document.getElementById('w').getBoundingClientRect(); null"}},
+            {"eval": {"expression": read, "as": "a"}},
+            {"eval": {"expression": "sc.style.setProperty('--w', '40px'); null"}},
+            {"eval": {"expression": read, "as": "b"}},
+            {"eval": {"expression": "sc.style.removeProperty('--w'); null"}},
+            {"eval": {"expression": read, "as": "c"}}
+        ]}),
+    );
+    assert!(r.get("error").is_none(), "{r}");
+    let reads = &r["result"]["reads"];
+    assert_eq!(reads["before"], json!(["", "10px", "0px", "rgb(1, 2, 3)", ""]), "{r}");
+    assert_eq!(reads["a"], json!(["30px", "30px", "60px", "rgb(1, 2, 3)", "30px"]), "{r}");
+    assert_eq!(reads["b"], json!(["40px", "40px", "80px", "rgb(1, 2, 3)", "40px"]), "{r}");
+    assert_eq!(reads["c"], json!(["", "10px", "0px", "rgb(1, 2, 3)", ""]), "{r}");
+}
