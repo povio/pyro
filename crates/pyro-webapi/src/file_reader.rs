@@ -10,7 +10,9 @@ use std::{
 use base64::Engine as _;
 use bytes::Bytes;
 use pyro_dom::events::TargetKey;
-use pyro_js::{ClassDef, IdentityKey, JsClass, JsError, JsResult, Object, Persistent, RealmId, Scope, Value, WeakRealm};
+use pyro_js::{
+    ClassDef, IdentityKey, JsClass, JsError, JsResult, Object, Persistent, RealmId, Scope, Value, WeakRealm,
+};
 use rustc_hash::FxHashMap;
 
 use crate::{

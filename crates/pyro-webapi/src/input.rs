@@ -1415,7 +1415,8 @@ fn step_by_key(page: &Rc<PageDom>, el: NodeId, f: impl FnOnce(&mut Dom) -> pyro_
 /// A range slider key: one step for an arrow, a tenth of the range (at
 /// least a step) for PageUp/PageDown, the ends for Home/End.
 fn range_key(dom: &mut Dom, el: NodeId, key: &str) -> pyro_dom::DomResult<()> {
-    let attr = |dom: &Dom, name: &str| dom.get_attribute(el, name).ok().flatten().and_then(pyro_dom::forms::parse_float);
+    let attr =
+        |dom: &Dom, name: &str| dom.get_attribute(el, name).ok().flatten().and_then(pyro_dom::forms::parse_float);
     let min = attr(dom, "min").unwrap_or(0.0);
     let max = attr(dom, "max").unwrap_or(100.0).max(min);
     match key {
@@ -2305,8 +2306,7 @@ fn dispatch_mouse_inner(
             if m.button == MouseButton::Left {
                 set_active(page, page.document(), Some(target));
             }
-            let pd = touch.is_some()
-                || fire_mouse(page, tkey, EventInterface::PointerEvent, "pointerdown", m, true);
+            let pd = touch.is_some() || fire_mouse(page, tkey, EventInterface::PointerEvent, "pointerdown", m, true);
             let md = !pd || fire_mouse(page, tkey, EventInterface::MouseEvent, "mousedown", m, true);
             page.compat_mouse_suppressed.set(!pd);
             page.set_press_target(Some(target));

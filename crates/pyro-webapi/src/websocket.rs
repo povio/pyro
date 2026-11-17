@@ -27,8 +27,16 @@ const KEY: &str = "lpWebSocket";
 
 macro_rules! lazy_globals {
     ($def:ident) => {
-        $def.global_value_accessor("WebSocket", |s, _| global(s, "WebSocket"), |s, _, value| replace(s, "WebSocket", value));
-        $def.global_value_accessor("CloseEvent", |s, _| global(s, "CloseEvent"), |s, _, value| replace(s, "CloseEvent", value));
+        $def.global_value_accessor(
+            "WebSocket",
+            |s, _| global(s, "WebSocket"),
+            |s, _, value| replace(s, "WebSocket", value),
+        );
+        $def.global_value_accessor(
+            "CloseEvent",
+            |s, _| global(s, "CloseEvent"),
+            |s, _, value| replace(s, "CloseEvent", value),
+        );
     };
 }
 
@@ -143,7 +151,8 @@ fn syntax_error(message: String) -> JsError {
 /// The URL steps of `new WebSocket(url)`: the resolved `ws:`/`wss:` URL.
 fn parse_url(page: &PageDom, input: &str) -> JsResult<pyro_net::Url> {
     let resolved = crate::html::resolve_url_utf8(&page.dom.borrow(), page.document(), input);
-    let mut url = pyro_net::Url::parse(&resolved).map_err(|_| syntax_error(format!("The URL '{input}' is invalid.")))?;
+    let mut url =
+        pyro_net::Url::parse(&resolved).map_err(|_| syntax_error(format!("The URL '{input}' is invalid.")))?;
     match url.scheme() {
         "ws" | "wss" => {}
         "http" => {

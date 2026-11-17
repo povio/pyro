@@ -190,10 +190,9 @@ fn is_submit_button(dom: &pyro_dom::Dom, id: pyro_dom::NodeId) -> bool {
         return false;
     }
     match &**e.local_name() {
-        "input" => matches!(
-            dom.input_type(id),
-            Ok(pyro_dom::forms::InputType::Submit | pyro_dom::forms::InputType::Image)
-        ),
+        "input" => {
+            matches!(dom.input_type(id), Ok(pyro_dom::forms::InputType::Submit | pyro_dom::forms::InputType::Image))
+        }
         "button" => dom.button_is_submit(id),
         _ => false,
     }

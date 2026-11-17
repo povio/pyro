@@ -82,8 +82,11 @@ fn env(html: &str) -> Env {
         .create_realm(RealmOptions { name: String::new(), global_class: Some(window_class), origin: None })
         .expect("realm");
     let key = page.window_target().unwrap_or_else(|| page.create_window_target(page.document()));
-    main.set_global_data::<TestWindow>(TestWindowData { page: page.clone(), target: EventTargetData::window(&page, key) })
-        .unwrap();
+    main.set_global_data::<TestWindow>(TestWindowData {
+        page: page.clone(),
+        target: EventTargetData::window(&page, key),
+    })
+    .unwrap();
     install(&main.scope().unwrap(), page.clone()).unwrap();
     main.set_exception_reporter(Some(lifecycle::report_exception));
     Env { engine, page, main, hooks }

@@ -460,7 +460,11 @@ fn xhr_upload_hears_errors_and_aborts_before_the_request_object() {
 /// Never answers: the decision would be read by the blocked browser thread.
 struct SilentInterceptor;
 impl pyro_net::Interceptor for SilentInterceptor {
-    fn paused(&self, request: pyro_net::PausedRequest, reply: tokio::sync::oneshot::Sender<pyro_net::InterceptDecision>) {
+    fn paused(
+        &self,
+        request: pyro_net::PausedRequest,
+        reply: tokio::sync::oneshot::Sender<pyro_net::InterceptDecision>,
+    ) {
         std::mem::forget((request, reply));
     }
 }

@@ -487,7 +487,11 @@ impl JsClass for Node {
             let doc = dom.node_document(n.id).js()?;
             Ok(s.string(dom.document_base_url(doc).js()?))
         });
-        def.pure_method("hasChildNodes", 0, |s, n, _a| Ok(s.boolean(n.page().dom.borrow().child_count(n.id).js()? > 0)));
+        def.pure_method(
+            "hasChildNodes",
+            0,
+            |s, n, _a| Ok(s.boolean(n.page().dom.borrow().child_count(n.id).js()? > 0)),
+        );
         def.method("getRootNode", 0, |s, n, a| {
             let composed = match a.get(0).as_object() {
                 Some(o) => o.get_atom("composed")?.to_bool(),
@@ -1456,9 +1460,9 @@ impl JsClass for Element {
                 "open" => ShadowRootMode::Open,
                 "closed" => ShadowRootMode::Closed,
                 _ => {
-                    return Err(JsError::Type(format!(
-                        "The provided value '{mode}' is not a valid enum value of type ShadowRootMode."
-                    ).into()))
+                    return Err(JsError::Type(
+                        format!("The provided value '{mode}' is not a valid enum value of type ShadowRootMode.").into(),
+                    ))
                 }
             };
             if o.get_atom("serializable")?.to_bool() {
@@ -1470,9 +1474,12 @@ impl JsClass for Element {
                     "named" => {}
                     "manual" => flags |= pyro_dom::shadow_flags::MANUAL_SLOTS,
                     other => {
-                        return Err(JsError::Type(format!(
-                            "The provided value '{other}' is not a valid enum value of type SlotAssignmentMode."
-                        ).into()))
+                        return Err(JsError::Type(
+                            format!(
+                                "The provided value '{other}' is not a valid enum value of type SlotAssignmentMode."
+                            )
+                            .into(),
+                        ))
                     }
                 }
             }
@@ -1855,8 +1862,9 @@ impl JsClass for Document {
             a.require(2, "Document.createAttributeNS")?;
             let ns = opt_dom_string(a.get(0))?;
             let qualified = dom_string(a.get(1))?;
-            let qn = pyro_dom::dom::validate_and_extract(ns.as_deref(), &qualified, pyro_dom::dom::NameContext::Attribute)
-                .js()?;
+            let qn =
+                pyro_dom::dom::validate_and_extract(ns.as_deref(), &qualified, pyro_dom::dom::NameContext::Attribute)
+                    .js()?;
             collections::make_detached_attr(s, n.page(), n.id, qn)
         });
         def.method("createCDATASection", 1, |s, n, a| {

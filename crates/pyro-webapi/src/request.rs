@@ -311,7 +311,8 @@ fn construct<'s>(
             .map_err(|e| JsError::Type(format!("Failed to construct 'Request': {e}").into()))?;
     }
     if let Some(policy) = string_option(s, init, "referrerPolicy")? {
-        check_referrer_policy(&policy).map_err(|e| JsError::Type(format!("Failed to construct 'Request': {e}").into()))?;
+        check_referrer_policy(&policy)
+            .map_err(|e| JsError::Type(format!("Failed to construct 'Request': {e}").into()))?;
         fields.referrer_policy = policy;
     }
     if let Some(mode) = string_option(s, init, "mode")? {
@@ -364,15 +365,15 @@ fn construct<'s>(
     }
     if let Some(method) = string_option(s, init, "method")? {
         if !is_token(&method) {
-            return Err(JsError::Type(format!(
-                "Failed to construct 'Request': '{method}' is not a valid HTTP method."
-            ).into()));
+            return Err(JsError::Type(
+                format!("Failed to construct 'Request': '{method}' is not a valid HTTP method.").into(),
+            ));
         }
         let upper = method.to_ascii_uppercase();
         if matches!(upper.as_str(), "CONNECT" | "TRACE" | "TRACK") {
-            return Err(JsError::Type(format!(
-                "Failed to construct 'Request': '{method}' HTTP method is unsupported."
-            ).into()));
+            return Err(JsError::Type(
+                format!("Failed to construct 'Request': '{method}' HTTP method is unsupported.").into(),
+            ));
         }
         fields.method = if METHODS.contains(&upper.as_str()) { upper } else { method };
     }

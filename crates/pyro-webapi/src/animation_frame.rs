@@ -25,6 +25,7 @@
 //! moves), and a screenshot or screencast frame asks at the moment it is
 //! taken.
 
+use std::cell::Cell;
 use std::rc::{Rc, Weak};
 use std::sync::Arc;
 
@@ -589,24 +590,46 @@ pub(crate) fn animates(
 /// The page's [`pyro_dom::animation::AnimationSource`]: what the layout
 /// engine samples at each sync (no transitions).
 pub(crate) fn source(page: &Rc<PageDom>) -> pyro_dom::animation::SharedAnimationSource {
-    Rc::new(Source { page: Rc::downgrade(page) })
+    Rc::new(Source { page: Rc::downgrade(page), clock: Cell::new(None) })
 }
 
 struct Source {
     page: Weak<PageDom>,
+    /// The time layout samples the animations at during the current task
+    /// (`pyro_runtime::task_seq`): read once per task, as a browser
+    /// samples its timelines once per frame. Read at each query instead, a
+    /// task asking for geometry again and again (a range over a large
+    /// `display: contents` subtree, one rect per text node) synced the
+    /// whole layout again every 16 ms while an infinite animation ran,
+    /// minutes for a large page.
+    clock: Cell<Option<(u64, f64)>>,
+}
+
+impl Source {
+    fn now(&self, page: &PageDom) -> f64 {
+        let Some(seq) = pyro_runtime::task_seq() else { return crate::event::page_now_ms(page) };
+        match self.clock.get() {
+            Some((at, now)) if at == seq => now,
+            _ => {
+                let now = crate::event::page_now_ms(page);
+                self.clock.set(Some((seq, now)));
+                now
+            }
+        }
+    }
 }
 
 impl pyro_dom::animation::AnimationSource for Source {
     fn stamp(&self) -> u64 {
         match self.page.upgrade() {
-            Some(page) if !page.is_disposed() => stamp(&page, crate::event::page_now_ms(&page)),
+            Some(page) if !page.is_disposed() => stamp(&page, self.now(&page)),
             _ => 0,
         }
     }
 
     fn frame(&self) -> AnimationFrame {
         match self.page.upgrade() {
-            Some(page) if !page.is_disposed() => frame(&page, crate::event::page_now_ms(&page), false),
+            Some(page) if !page.is_disposed() => frame(&page, self.now(&page), false),
             _ => AnimationFrame::default(),
         }
     }

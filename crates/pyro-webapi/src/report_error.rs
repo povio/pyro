@@ -15,9 +15,10 @@ pub fn report_error<'s>(
     window: bool,
 ) -> JsResult<Value<'s>> {
     if a.len() == 0 {
-        return Err(JsError::Type(format!(
-            "Failed to execute 'reportError' on '{interface}': 1 argument required, but only 0 present."
-        ).into()));
+        return Err(JsError::Type(
+            format!("Failed to execute 'reportError' on '{interface}': 1 argument required, but only 0 present.")
+                .into(),
+        ));
     }
     let value = a.get(0);
     // `this`'s relevant global: `otherWindow.reportError` called with a

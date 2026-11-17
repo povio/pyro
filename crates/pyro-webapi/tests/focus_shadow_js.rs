@@ -406,7 +406,8 @@ const CLICK_PAGE: &str = "<!DOCTYPE html><style>button{position:absolute;width:5
 
 /// `log` and a listener that notes each event it hears (the test page runs no
 /// `<script>`).
-const NOTE: &str = "window.log = []; window.note = (e) => log.push(e.type + '@' + (e.currentTarget === window ? 'window' : \
+const NOTE: &str =
+    "window.log = []; window.note = (e) => log.push(e.type + '@' + (e.currentTarget === window ? 'window' : \
      e.currentTarget === document ? 'document' : e.currentTarget.id) + (e.isTrusted ? '' : '!'));";
 
 /// The click page with `NOTE` evaluated and layout done.
@@ -506,12 +507,10 @@ fn a_listener_on_the_window_only_hears_each_event_of_a_click() {
 
 #[test]
 fn an_event_handler_attribute_or_property_set_later_hears_the_click() {
-    let e = env(
-        "<!DOCTYPE html><style>button{position:absolute;width:50px;height:30px;border:0}</style>\
+    let e = env("<!DOCTYPE html><style>button{position:absolute;width:50px;height:30px;border:0}</style>\
          <body style='margin:0' onpointerup=\"log.push('pointerup:body-attr')\">\
          <button id=b style='left:0;top:0' onmousedown=\"log.push('mousedown:parsed-attr')\">b</button>\
-         </body>",
-    );
+         </body>");
     let r = &e.main;
     eval(r, "window.log = []; b.getBoundingClientRect()");
     // Attributes the parser saw, never touched by script before the click.

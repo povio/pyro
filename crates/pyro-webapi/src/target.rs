@@ -55,7 +55,13 @@ impl ListenerFns {
 /// Writes slot `slot` of `holder`'s listener array `array`, and of the
 /// mirror in `holder`'s payload (the Window has no such payload: its array
 /// is read directly). Every write of a listener array goes through here.
-fn set_listener_slot(s: &Scope<'_>, holder: Object<'_>, array: Object<'_>, slot: u32, value: Value<'_>) -> JsResult<()> {
+fn set_listener_slot(
+    s: &Scope<'_>,
+    holder: Object<'_>,
+    array: Object<'_>,
+    slot: u32,
+    value: Value<'_>,
+) -> JsResult<()> {
     array.set_index(slot, value)?;
     // SAFETY: `holder` is the receiver or a wrapper found live by the
     // caller, which keeps it for this call.

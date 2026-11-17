@@ -425,8 +425,7 @@ fn wire_functions<'s>(s: &Scope<'s>) -> JsResult<(pyro_js::Object<'s>, pyro_js::
             let host = s.function("wireHost", |s, _, args| wire_host(s, &args))?;
             let host_root = Persistent::new(s, host.value());
             let dom_exception = s.dom_exception().ok_or(JsError::ContextDestroyed)?;
-            let factory =
-                s.eval(include_str!("worker_wire.js"), Some("pyro://internal/worker-wire.js"), 1)?;
+            let factory = s.eval(include_str!("worker_wire.js"), Some("pyro://internal/worker-wire.js"), 1)?;
             let pair = factory
                 .as_object()
                 .expect("wire factory")
@@ -446,7 +445,11 @@ pub(crate) fn prepare_wire(s: &Scope<'_>) -> JsResult<()> {
 
 /// StructuredSerialize for another VM. `options` is `postMessage`'s second
 /// argument (a transfer list or `{transfer}`); listed ArrayBuffers are detached.
-pub fn encode_message<'s>(s: &Scope<'s>, value: pyro_js::Value<'s>, options: pyro_js::Value<'s>) -> JsResult<WireMessage> {
+pub fn encode_message<'s>(
+    s: &Scope<'s>,
+    value: pyro_js::Value<'s>,
+    options: pyro_js::Value<'s>,
+) -> JsResult<WireMessage> {
     let page = crate::target::page_of(s)?;
     let clone = page.structured_clones.borrow().get(&s.realm_id()).map(|p| p.get(s));
     let clone = clone.ok_or_else(|| JsError::dom("NotSupportedError", "structured clone is unavailable"))?;

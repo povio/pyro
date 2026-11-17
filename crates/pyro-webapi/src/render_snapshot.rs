@@ -178,13 +178,11 @@ fn snapshot_of(
             adopted: style.has_adopted().then_some(&adopted as _),
         };
         let (html, tree) = match form {
-            Form::Html => {
-                (
+            Form::Html => (
                 dom.render_html_positioned(document, &opts, &layout.scrolled_elements(), &layout.sticky_offsets(dom))
                     .unwrap_or_default(),
                 None,
-            )
-            }
+            ),
             Form::Tree => (String::new(), Some(dom.render_tree(document, &opts).unwrap_or_default())),
             Form::None => (String::new(), None),
         };

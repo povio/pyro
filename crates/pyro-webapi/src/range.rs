@@ -672,9 +672,9 @@ fn static_point(
     let id = boundary_node(s, page, init.get(node)?, "StaticRange")?;
     let off = init.get(offset)?;
     if off.is_undefined() {
-        return Err(JsError::Type(format!(
-            "Failed to construct 'StaticRange': required member {offset} is undefined."
-        ).into()));
+        return Err(JsError::Type(
+            format!("Failed to construct 'StaticRange': required member {offset} is undefined.").into(),
+        ));
     }
     if matches!(page.dom.borrow().node_type(id).js()?, NodeType::DocumentType | NodeType::Attribute) {
         return Err(JsError::dom("InvalidNodeTypeError", "The node provided is a doctype or an attribute."));

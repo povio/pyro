@@ -260,9 +260,9 @@ impl JsClass for ResizeObserver {
                         "border-box" => ObservedBox::Border,
                         "device-pixel-content-box" => ObservedBox::DevicePixelContent,
                         _ => {
-                            return Err(JsError::Type(format!(
-                                "The provided value '{b}' is not a valid ResizeObserverBoxOptions"
-                            ).into()))
+                            return Err(JsError::Type(
+                                format!("The provided value '{b}' is not a valid ResizeObserverBoxOptions").into(),
+                            ))
                         }
                     };
                 }

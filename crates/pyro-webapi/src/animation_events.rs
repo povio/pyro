@@ -765,7 +765,9 @@ fn finish_overlay_exits(page: &Rc<PageDom>) {
         let transitions = page.animation_events.transitions.borrow();
         leaving
             .into_iter()
-            .filter(|&el| !transitions.iter().any(|t| t.el == el && t.name == "overlay" && t.live.get() && !t.ended.get()))
+            .filter(|&el| {
+                !transitions.iter().any(|t| t.el == el && t.name == "overlay" && t.live.get() && !t.ended.get())
+            })
             .collect()
     };
     if let Ok(mut dom) = page.dom.try_borrow_mut() {
