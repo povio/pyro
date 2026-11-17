@@ -3445,11 +3445,15 @@ impl ElementCx<'_, '_> {
         match &image.image {
             blitz_dom::node::ImageData::Raster(raster) if raster.width > 0 && raster.height > 0 => {
                 let quality = to_image_quality(self.style.clone_image_rendering());
+                // pyro: `image-orientation: none` turns the decoded pixels back (as `<img>`).
+                let unoriented = blitz_dom::util::image_unoriented(&self.style) && raster.orientation != 1;
+                let (shown_width, shown_height) = raster.shown_size(unoriented);
                 let size = Affine::scale_non_uniform(
-                    f64::from(width) * self.scale / f64::from(raster.width),
-                    f64::from(height) * self.scale / f64::from(raster.height),
+                    f64::from(width) * self.scale / f64::from(shown_width),
+                    f64::from(height) * self.scale / f64::from(shown_height),
                 );
-                scene.draw_image(to_peniko_image(raster, quality).as_ref(), self.transform * origin * size);
+                let unturn = if unoriented { Affine::new(raster.unturn()) } else { Affine::IDENTITY };
+                scene.draw_image(to_peniko_image(raster, quality).as_ref(), self.transform * origin * size * unturn);
             }
             #[cfg(feature = "svg")]
             blitz_dom::node::ImageData::Svg(svg) => {
@@ -3710,11 +3714,15 @@ impl ElementCx<'_, '_> {
         match &image.image {
             blitz_dom::node::ImageData::Raster(raster) if raster.width > 0 && raster.height > 0 => {
                 let quality = to_image_quality(self.style.clone_image_rendering());
+                // pyro: `image-orientation: none` turns the decoded pixels back (as `<img>`).
+                let unoriented = blitz_dom::util::image_unoriented(&self.style) && raster.orientation != 1;
+                let (shown_width, shown_height) = raster.shown_size(unoriented);
                 let size = Affine::scale_non_uniform(
-                    f64::from(width) * self.scale / f64::from(raster.width),
-                    f64::from(height) * self.scale / f64::from(raster.height),
+                    f64::from(width) * self.scale / f64::from(shown_width),
+                    f64::from(height) * self.scale / f64::from(shown_height),
                 );
-                scene.draw_image(to_peniko_image(raster, quality).as_ref(), self.transform * origin * size);
+                let unturn = if unoriented { Affine::new(raster.unturn()) } else { Affine::IDENTITY };
+                scene.draw_image(to_peniko_image(raster, quality).as_ref(), self.transform * origin * size * unturn);
             }
             #[cfg(feature = "svg")]
             blitz_dom::node::ImageData::Svg(svg) => {

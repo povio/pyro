@@ -1068,3 +1068,5 @@ frame's whole transform, clipped to the content box (upstream applied the transl
   mapped to physical axes per column: the block range on x (from the right edge in `vertical-rl`), the offset swapped.
 - Round 4 lane F: `highlight.rs` recomputes a `::selection` style that uses container units
   (`selection_pseudo_style`); `draw_marker` draws an outside marker's emphasis marks (`draw_text_annotations`).
+- Round 4 lane F: list marker images honour `image-orientation: none` (`unturn`, as `<img>`; WPT css-images
+  `image-orientation-list-style-image`).
