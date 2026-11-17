@@ -188,6 +188,54 @@ impl LayoutChildren {
     }
 }
 
+/// pyro: an `<input>`'s `type` attribute as the keyword of its state, lowercase: `None` for the
+/// Text state of a missing, empty or unknown value (HTML: the invalid value default).
+pub(crate) fn input_type_keyword(attr: Option<&str>) -> Option<&'static str> {
+    const KEYWORDS: [&str; 22] = [
+        "hidden", "text", "search", "tel", "url", "email", "password", "date", "month", "week", "time",
+        "datetime-local", "number", "range", "color", "checkbox", "radio", "file", "submit", "image", "reset",
+        "button",
+    ];
+    let attr = attr?;
+    KEYWORDS.into_iter().find(|keyword| attr.eq_ignore_ascii_case(keyword))
+}
+
+/// pyro: whether `node` is an SVG `<foreignObject>` element.
+pub(crate) fn is_foreign_object(node: &Node) -> bool {
+    node.data
+        .downcast_element()
+        .is_some_and(|el| el.name.ns == ns!(svg) && &*el.name.local == "foreignObject")
+}
+
+/// pyro: the `<foreignObject>` elements in the `<svg>` at `svg` (not those in one of them: they
+/// are in its HTML content, which another `<svg>` there draws), in tree order.
+fn svg_foreign_objects(doc: &BaseDocument, svg: NodeId) -> Vec<NodeId> {
+    let mut out = Vec::new();
+    let mut stack: Vec<NodeId> = doc.nodes[svg].children.iter().rev().copied().collect();
+    while let Some(id) = stack.pop() {
+        let node = &doc.nodes[id];
+        if is_foreign_object(node) {
+            out.push(id);
+            continue;
+        }
+        stack.extend(node.children.iter().rev().copied());
+    }
+    out
+}
+
+/// pyro: removes the construction damage of the `<svg>` at `svg` and its subtree, but for the
+/// subtrees of its `<foreignObject>`s ([`svg_foreign_objects`]).
+fn clear_svg_construct_damage(doc: &mut BaseDocument, svg: NodeId) {
+    let mut stack = vec![svg];
+    while let Some(id) = stack.pop() {
+        if id != svg && is_foreign_object(&doc.nodes[id]) {
+            continue;
+        }
+        doc.nodes[id].remove_damage(CONSTRUCT_BOX | CONSTRUCT_DESCENDENT | CONSTRUCT_FC);
+        stack.extend(doc.nodes[id].children.iter().copied());
+    }
+}
+
 fn push_children_and_pseudos(layout_children: &mut ThinVec<NodeId>, node: &Node) {
     if let Some(before) = node.before() {
         layout_children.push(before);
@@ -587,10 +635,9 @@ fn collect_layout_children_with_wrap(
         // Handle text inputs
         let tag_name = el.name.local.as_ref();
         if matches!(tag_name, "input" | "textarea") {
-            let type_attr: Option<&str> = doc.nodes[container_node_id]
-                .data
-                .downcast_element()
-                .and_then(|el| el.attr(local_name!("type")));
+            let type_attr = input_type_keyword(
+                doc.nodes[container_node_id].data.downcast_element().and_then(|el| el.attr(local_name!("type"))),
+            );
             if tag_name == "textarea" {
                 create_text_editor(doc, container_node_id, true);
                 return;
@@ -648,9 +695,19 @@ fn collect_layout_children_with_wrap(
             let outer_html = doc.with_cross_svg_references(outer_html);
 
             // Remove contruction damage from subtree
-            doc.iter_subtree_mut(container_node_id, |id: NodeId, doc: &mut BaseDocument| {
-                doc.nodes[id].remove_damage(CONSTRUCT_BOX | CONSTRUCT_DESCENDENT | CONSTRUCT_FC);
-            });
+            // pyro: but for the content of its `<foreignObject>`s, which are boxes of their own:
+            // each is a root, built by `resolve_layout_children` after the `<svg>`
+            // (`BaseDocument::svg_foreign_objects`).
+            let foreign_objects = svg_foreign_objects(doc, container_node_id);
+            clear_svg_construct_damage(doc, container_node_id);
+            for &fo in &foreign_objects {
+                doc.nodes[fo].insert_damage(CONSTRUCT_BOX);
+            }
+            if foreign_objects.is_empty() {
+                doc.svg_foreign_objects.remove(&container_node_id);
+            } else {
+                doc.svg_foreign_objects.insert(container_node_id, foreign_objects);
+            }
 
             match crate::util::parse_svg_image(outer_html.as_bytes()) {
                 Ok(mut svg) => {

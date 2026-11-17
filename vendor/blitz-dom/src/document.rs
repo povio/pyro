@@ -527,6 +527,11 @@ pub struct BaseDocument {
     /// `resolve_layout_children`; those no container collected again by its end leave the layout
     /// tree with their subtrees (`BaseDocument::leave_layout_tree`). Empty between passes.
     pub(crate) left_layout_lists: Vec<NodeId>,
+    /// pyro: the `<foreignObject>` elements of each inline `<svg>` (by the `<svg>`'s id), set when
+    /// the `<svg>`'s box is built. Each is a root of its own: its HTML content is laid out in a box
+    /// of its `width` and `height` and painted where usvg draws its stand-in image
+    /// (`svg_css`, blitz-paint `draw_svg`). See [`BaseDocument::foreign_object_roots`].
+    pub(crate) svg_foreign_objects: HashMap<NodeId, Vec<NodeId>>,
     /// A resolve ran since the paint tree was last built: `ensure_paint_tree`
     /// rebuilds the nodes flagged `PAINT_TREE_DIRTY` before the next paint or
     /// hit test.
@@ -814,6 +819,7 @@ impl BaseDocument {
             style_change_index: HashMap::new(),
             track_style_changes: false,
             left_layout_lists: Vec::new(),
+            svg_foreign_objects: HashMap::new(),
             paint_tree_dirty: true,
             hit_overflow_dirty: true,
             has_multicol: false,

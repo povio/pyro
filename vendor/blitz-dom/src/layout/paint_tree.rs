@@ -262,6 +262,11 @@ impl BaseDocument {
             && let Some(root_id) = self.try_root_element().map(|root| root.id)
         {
             self.build_paint_tree(root_id);
+            // pyro: each `<foreignObject>` is a stacking context of its own, painted where its
+            // `<svg>` draws it (`BaseDocument::svg_foreign_objects`).
+            for fo in self.foreign_object_roots() {
+                self.build_paint_tree_impl(fo, None);
+            }
             debug_assert!(
                 self.paint_tree_matches_fresh_build(),
                 "the incrementally built paint tree differs from a fresh build"

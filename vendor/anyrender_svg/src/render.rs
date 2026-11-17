@@ -124,6 +124,21 @@ pub(crate) fn render_group<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
                 if !img.is_visible() {
                     continue;
                 }
+                // pyro: a `<foreignObject>`'s stand-in (blitz-dom `svg_css`): its painter draws
+                // its content in the image's place, through the error handler.
+                if let Some(id) = crate::foreign_object_id(img.kind()) {
+                    let size = img.size();
+                    crate::FOREIGN_OBJECT.with(|f| {
+                        f.set(Some(crate::ForeignObject {
+                            id,
+                            transform: global_transform * transform,
+                            size: (size.width() as f64, size.height() as f64),
+                        }))
+                    });
+                    error_handler(scene, node);
+                    crate::FOREIGN_OBJECT.with(|f| f.set(None));
+                    continue;
+                }
                 match img.kind() {
                     usvg::ImageKind::JPEG(_)
                     | usvg::ImageKind::PNG(_)

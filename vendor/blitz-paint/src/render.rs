@@ -3917,6 +3917,55 @@ impl ElementCx<'_, '_> {
         }
     }
 
+    /// pyro: the content of an inline `<svg>`'s `<foreignObject>` (a root laid out in a box of
+    /// its size, `BaseDocument::svg_foreign_objects`), in the place usvg draws its stand-in
+    /// image: its box `0..size` mapped onto the image's `0..fo.size`. usvg applied the element's
+    /// own transform, clip path, mask, filter and opacity to the image; its box is cut at its
+    /// edges unless its `overflow` is visible (the UA sheet's is hidden, as Chromium's).
+    #[cfg(feature = "svg")]
+    fn draw_foreign_object<S: PaintScene>(&self, scene: &mut S, fo: anyrender_svg::ForeignObject) {
+        let id = NodeId::from_u64(fo.id);
+        let Some(node) = self.context.dom.get_node(id) else { return };
+        if node.element_data().is_none() || node.layout_parent.get() != Some(self.node.id) {
+            return;
+        }
+        let Some(style) = node.primary_styles() else { return };
+        let layout = *node.final_layout();
+        let (width, height) = (f64::from(layout.size.width), f64::from(layout.size.height));
+        if width <= 0.0 || height <= 0.0 {
+            return;
+        }
+        let scale = self.scale;
+        let transform = fo.transform * Affine::scale_non_uniform(fo.size.0 / (width * scale), fo.size.1 / (height * scale));
+        let cx = self.context.element_cx(node, layout, transform, None);
+        let overflow = style.get_box();
+        let clips = overflow.overflow_x != style::values::computed::Overflow::Visible
+            || overflow.overflow_y != style::values::computed::Overflow::Visible;
+        drop(style);
+        if clips {
+            scene.push_clip_layer(Fill::NonZero, transform, &Rect::new(0.0, 0.0, width * scale, height * scale));
+        }
+        let clip_rect = Rect::new(-1e9, -1e9, 1e9, 1e9);
+        let pb = (layout.padding + layout.border).map(f64::from);
+        let content_position = Point { x: pb.left * scale, y: pb.top * scale };
+        if cx.style.get_inherited_box().visibility == StyloVisibility::Visible {
+            cx.draw_background(scene);
+            cx.draw_border(scene);
+        }
+        if node.flags.intersects(
+            blitz_dom::node::NodeFlags::HAS_FLOAT_PAINT_CHILDREN | blitz_dom::node::NodeFlags::FLOW_BOXES_OVERLAP,
+        ) {
+            cx.draw_children_in_phases(scene, transform, clip_rect, content_position);
+        } else {
+            cx.draw_neg_z_children(scene, transform, clip_rect);
+            cx.draw_inline_layout(scene, content_position);
+            cx.draw_children_above(scene, transform, clip_rect);
+        }
+        if clips {
+            scene.pop_layer();
+        }
+    }
+
     #[cfg(feature = "svg")]
     fn draw_svg(&self, scene: &mut impl PaintScene) {
         use style::properties::generated::longhands::object_fit::computed_value::T as ObjectFit;
@@ -4141,12 +4190,17 @@ impl ElementCx<'_, '_> {
                     let color = peniko::Color::from_rgba8(color.red, color.green, color.blue, color.alpha);
                     scene.fill(Fill::EvenOdd, self.transform, color, None, &bands);
                 }
-                // pyro: with what the document knows of its filters (tainted primitives).
+                // pyro: with what the document knows of its filters (tainted primitives), and its
+                // `<foreignObject>`s' content painted where usvg draws their images.
+                let mut handler = |scene: &mut _, node: &anyrender_svg::usvg::Node| match anyrender_svg::foreign_object() {
+                    Some(fo) => self.draw_foreign_object(scene, fo),
+                    None => anyrender_svg::draw_error_box(scene, node),
+                };
                 match crate::filters::svg_filter_notes(self.context.dom, self.node, &svg.tree) {
                     Some(notes) => {
-                        anyrender_svg::render_svg_tree_with_notes(scene, &svg.tree, transform, notes)
+                        anyrender_svg::render_svg_tree_with_notes_and(scene, &svg.tree, transform, notes, &mut handler)
                     }
-                    None => anyrender_svg::render_svg_tree(scene, &svg.tree, transform),
+                    None => anyrender_svg::render_svg_tree_with(scene, &svg.tree, transform, &mut handler),
                 }
                 if isolate {
                     scene.pop_layer();

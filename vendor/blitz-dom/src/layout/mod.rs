@@ -980,7 +980,7 @@ impl LayoutPassState<'_> {
                 }
 
                 if *element_data.name.local == *"input" {
-                    match element_data.attr(local_name!("type")) {
+                    match construct::input_type_keyword(element_data.attr(local_name!("type"))) {
                         // if the input type is hidden, hide it
                         Some("hidden") => {
                             return ChildLayout::Done(taffy::LayoutOutput::HIDDEN);

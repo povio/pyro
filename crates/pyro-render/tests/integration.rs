@@ -102,6 +102,7 @@ mod svg_content;
 mod svg_css_effects;
 mod svg_external_images;
 mod svg_external_references;
+mod svg_foreign_object;
 mod svg_filter_primitives;
 mod svg_filters;
 mod svg_image_natural_size;

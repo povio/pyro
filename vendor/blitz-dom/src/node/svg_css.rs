@@ -175,6 +175,45 @@ struct Writer<'a> {
     typed_masks: Vec<(String, &'static str, String)>,
 }
 
+/// The side, in pixels, of the stand-in image a `<foreignObject>` is drawn as (see
+/// [`foreign_object_href`]); it is stretched to the element's box (`preserveAspectRatio="none"`).
+pub const FOREIGN_OBJECT_IMAGE_SIZE: u32 = 1024;
+
+/// A `data:` URL of the stand-in image of the `<foreignObject>` `id`: a PNG header (signature
+/// and `IHDR`, all usvg reads of it) of a [`FOREIGN_OBJECT_IMAGE_SIZE`] square, then a `pyFo`
+/// chunk holding the id (8 bytes, big-endian) and `IEND`. anyrender_svg's
+/// `foreign_object_id` reads it back; nothing decodes its pixels.
+pub fn foreign_object_href(id: NodeId) -> String {
+    fn chunk(out: &mut Vec<u8>, kind: &[u8; 4], data: &[u8]) {
+        out.extend_from_slice(&(data.len() as u32).to_be_bytes());
+        out.extend_from_slice(kind);
+        out.extend_from_slice(data);
+        out.extend_from_slice(&[0; 4]);
+    }
+    let mut png = vec![0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
+    let mut header = Vec::with_capacity(13);
+    header.extend_from_slice(&FOREIGN_OBJECT_IMAGE_SIZE.to_be_bytes());
+    header.extend_from_slice(&FOREIGN_OBJECT_IMAGE_SIZE.to_be_bytes());
+    header.extend_from_slice(&[8, 6, 0, 0, 0]);
+    chunk(&mut png, b"IHDR", &header);
+    chunk(&mut png, b"pyFo", &id.as_u64().to_be_bytes());
+    chunk(&mut png, b"IEND", &[]);
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::from("data:image/png;base64,");
+    for group in png.chunks(3) {
+        let b = [group[0], *group.get(1).unwrap_or(&0), *group.get(2).unwrap_or(&0)];
+        let n = (u32::from(b[0]) << 16) | (u32::from(b[1]) << 8) | u32::from(b[2]);
+        for i in 0..4 {
+            if i <= group.len() {
+                out.push(ALPHABET[(n >> (18 - 6 * i) & 63) as usize] as char);
+            } else {
+                out.push('=');
+            }
+        }
+    }
+    out
+}
+
 /// The source of the `<svg>` subtree at `root` for usvg (see the module docs).
 pub(crate) fn svg_source(root: &Node) -> String {
     let guard = root.element_data().and_then(|data| data.guard.as_ref()).map(|lock| lock.read());
@@ -639,6 +678,20 @@ impl Writer<'_> {
         };
         let current_color = styles.as_ref().map(|style| style.clone_color().to_css_string());
 
+        // A `<foreignObject>` is written as an `<image>` of its geometry whose data names it
+        // ([`foreign_object_href`]): usvg applies its transform, clip path, mask, filter and
+        // opacity, and anyrender_svg has blitz-paint paint its HTML content where the image is
+        // (a box of the element's `width` and `height`, laid out as a root). Without a width
+        // or a height it renders nothing (`auto` is 0, SVG 2).
+        let foreign_object = is_svg && !is_root && tag == "foreignObject";
+        if foreign_object {
+            let sized = |name: markup5ever::LocalName, id: LonghandId| data.attr(name).is_some() || author.contains(&id);
+            if !sized(local_name!("width"), LonghandId::Width) || !sized(local_name!("height"), LonghandId::Height) {
+                return;
+            }
+        }
+        let tag = if foreign_object { "image" } else { tag };
+
         // Viewports for `transform-box: view-box`.
         let pushed_viewport = is_svg && tag == "svg";
         if pushed_viewport {
@@ -802,6 +855,11 @@ impl Writer<'_> {
                 self.out.push('"');
             }
         }
+        if foreign_object {
+            self.out.push_str(" preserveAspectRatio=\"none\" href=\"");
+            self.out.push_str(&foreign_object_href(node.id));
+            self.out.push('"');
+        }
         if let (Some(id), None) = (&temp_id, self.shadow_copy) {
             self.out.push_str(" id=\"");
             encode_quoted_attribute_to_string(id, &mut self.out);
@@ -826,7 +884,7 @@ impl Writer<'_> {
             }
         }
 
-        if node.children.is_empty() {
+        if node.children.is_empty() || foreign_object {
             self.out.push_str(" />");
         } else {
             self.out.push('>');

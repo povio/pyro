@@ -701,9 +701,10 @@ impl selectors::Element for BlitzNode<'_> {
 
     fn is_html_element_in_html_document(&self) -> bool {
         // pyro: in an XML document, type and attribute selectors match case-sensitively (an
-        // XHTML `DIV` selector does not match `div`). HTML documents keep upstream's answer for
-        // every element.
-        !self.tree().xml_document // && self.has_namespace(ns!(html))
+        // XHTML `DIV` selector does not match `div`), and so they do for an element of another
+        // namespace in an HTML document (Selectors 4 §6.1: `foreignObject` and `linearGradient`
+        // match SVG elements by their mixed-case names, `foreignobject` does not).
+        !self.tree().xml_document && self.has_namespace(&ns!(html))
     }
 
     fn has_local_name(&self, local_name: &LocalName) -> bool {
@@ -1876,7 +1877,9 @@ impl Node {
             // presentation attributes that map to the CSS `width`/`height`
             // properties, so e.g. `width="1em"` must resolve against the
             // element's font-size like any other CSS length.
-            if *tag == local_name!("svg")
+            // pyro: so are those of a `<foreignObject>` (SVG 2 geometry properties), whose
+            // HTML content is laid out in a box of that size (`BaseDocument::svg_foreign_objects`).
+            if (*tag == local_name!("svg") || (*tag == local_name!("foreignObject") && elem.name.ns == ns!(svg)))
                 && (*name == local_name!("width") || *name == local_name!("height"))
             {
                 if let Some(size) = parse_svg_size_attr(value) {

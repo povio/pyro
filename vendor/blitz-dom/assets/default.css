@@ -967,6 +967,14 @@ svg|svg:not(:root) {
     overflow: hidden;
 }
 
+/* pyro: so does a <foreignObject> at its box (Chromium's svg.css), which holds its HTML
+ * content (blitz-dom `svg_foreign_objects`): a block box of its `width` and `height`, as
+ * Chromium's LayoutSVGForeignObject. */
+svg|foreignObject {
+    display: block;
+    overflow: hidden;
+}
+
 /* pyro: replaced content is cut at its content box unless the author makes its
  * overflow visible, as Chromium's UA sheet has it (html.css, which also says
  * `overflow-clip-margin: content-box`: here the cut at the content box is

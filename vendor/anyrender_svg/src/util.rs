@@ -239,6 +239,10 @@ fn to_extend(spread_method: usvg::SpreadMethod) -> peniko::Extend {
 /// Error handler function for [`super::append_tree_with`] which draws a transparent red box
 /// instead of unsupported SVG features
 pub(crate) fn default_error_handler<S: PaintScene>(scene: &mut S, node: &usvg::Node) {
+    // pyro: a `<foreignObject>` this renderer cannot draw draws nothing.
+    if crate::foreign_object().is_some() {
+        return;
+    }
     let bb = node.bounding_box();
     let rect = Rect {
         x0: bb.left() as f64,

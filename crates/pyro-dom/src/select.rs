@@ -861,8 +861,8 @@ impl Dom {
             Disabled => self.is_disabled_idx(idx),
             Enabled => (self.is_form_control_idx(idx) || self.is_face_idx(idx)) && !self.is_disabled_idx(idx),
             State(s) => self.has_custom_state_idx(idx, s),
-            Required => self.is_form_control_idx(idx) && e.attr_local(&local_name!("required")).is_some(),
-            Optional => self.is_form_control_idx(idx) && e.attr_local(&local_name!("required")).is_none(),
+            Required => self.required_applies_idx(idx) && e.attr_local(&local_name!("required")).is_some(),
+            Optional => self.required_applies_idx(idx) && e.attr_local(&local_name!("required")).is_none(),
             ReadWrite => self.is_mutable_text_idx(idx),
             ReadOnly => !self.is_mutable_text_idx(idx),
             PlaceholderShown => {

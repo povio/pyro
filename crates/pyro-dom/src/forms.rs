@@ -365,6 +365,26 @@ impl Dom {
         )
     }
 
+    /// Whether `required` applies to element `idx`, which `:required` and `:optional` match
+    /// (HTML §4.16.3): a `select`, a `textarea`, or an `input` of a type it applies to (not
+    /// Hidden, Range, Color or the buttons).
+    pub(crate) fn required_applies_idx(&self, idx: u32) -> bool {
+        match self.html_local(idx).map(|l| &**l) {
+            Some("select" | "textarea") => true,
+            Some("input") => !matches!(
+                self.input_type_idx(idx),
+                InputType::Hidden
+                    | InputType::Range
+                    | InputType::Color
+                    | InputType::Submit
+                    | InputType::Image
+                    | InputType::Reset
+                    | InputType::Button
+            ),
+            _ => false,
+        }
+    }
+
     pub(crate) fn is_disabled_idx(&self, idx: u32) -> bool {
         let Some(local) = self.html_local(idx) else { return false };
         let e = self.n(idx).element().unwrap();

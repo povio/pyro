@@ -1009,3 +1009,6 @@ in that part's transform. `draw_svg`: an SVG image is drawn at its unsnapped con
 box (css-sizing `image-fractional-height-with-wide-aspect-ratio`). `render/background.rs`: a table part's
 `background-clip: text` layers are masked by the cell's text (`draw_background_layers` `text_mask`; css-backgrounds
 `background-multiple-layers-table-cell`, `clip-text-background-table-cell`).
+`render.rs` (`draw_foreign_object`): an inline `<svg>`'s `<foreignObject>` content (blitz-dom
+`svg_foreign_objects`) is painted where usvg draws its stand-in image, its box mapped onto the image, cut at its box
+unless its `overflow` is visible.

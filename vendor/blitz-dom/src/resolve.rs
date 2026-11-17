@@ -225,6 +225,9 @@ impl BaseDocument {
         let resolve_all = self.flags.contains(DocumentFlags::RESOLVE_ALL_TRANSFORMS);
         self.flags.remove(DocumentFlags::RESOLVE_ALL_TRANSFORMS);
         self.resolve_transforms(root_node_id, resolve_all, ContainingTransform::default());
+        for fo in self.foreign_object_roots() {
+            self.resolve_transforms(fo, resolve_all, ContainingTransform::default());
+        }
         timer.record_time("transform");
         phase_profile::mark(5, &mut phase_t);
 
@@ -1000,6 +1003,21 @@ impl BaseDocument {
                 // damage.insert(RestyleDamage::RELAYOUT | RestyleDamage::REPAINT);
             }
 
+            // pyro: an inline `<svg>`'s `<foreignObject>`s are roots of their own, built here
+            // (`BaseDocument::svg_foreign_objects`).
+            if let Some(foreign_objects) = doc.svg_foreign_objects.get(&node_id).cloned() {
+                for fo in foreign_objects {
+                    if !doc.nodes.get(fo).is_some_and(crate::layout::construct::is_foreign_object) {
+                        continue;
+                    }
+                    crate::util::ensure_stack(|| resolve_layout_children_recursive(doc, fo));
+                    doc.nodes[fo].layout_parent.set(Some(node_id));
+                    if let Some(mut data) = doc.nodes[fo].try_stylo_element_data_mut().and_then(|s| s.get_mut()) {
+                        data.damage.remove(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
+                    }
+                }
+            }
+
             doc.nodes[node_id].set_damage(damage);
         }
     }
@@ -1147,6 +1165,33 @@ impl BaseDocument {
         self.deferred_construction_nodes.clear();
     }
 
+    /// pyro: the `<foreignObject>`s of the inline `<svg>`s in the document
+    /// ([`BaseDocument::svg_foreign_objects`]) that are roots now: in the document, under an
+    /// `<svg>` that has a box.
+    pub(crate) fn foreign_object_roots(&self) -> Vec<NodeId> {
+        if self.svg_foreign_objects.is_empty() {
+            return Vec::new();
+        }
+        let mut out = Vec::new();
+        for (&svg, foreign_objects) in &self.svg_foreign_objects {
+            let Some(svg_node) = self.nodes.get(svg) else { continue };
+            if !svg_node.flags.is_in_document() || svg_node.layout_parent.get().is_none() {
+                continue;
+            }
+            for &fo in foreign_objects {
+                if self.nodes.get(fo).is_some_and(|node| {
+                    node.flags.is_in_document()
+                        && crate::layout::construct::is_foreign_object(node)
+                        && node.layout_parent.get() == Some(svg)
+                }) {
+                    out.push(fo);
+                }
+            }
+        }
+        out.sort_unstable_by_key(|id| id.as_u64());
+        out
+    }
+
     /// Walk the nodes now that they're properly styled and transfer their styles to the taffy style system
     ///
     /// TODO: update taffy to use an associated type instead of slab key
@@ -1181,6 +1226,7 @@ impl BaseDocument {
 
         // println!("\n\nRESOLVE LAYOUT\n===========\n");
 
+        let foreign_objects = self.foreign_object_roots();
         let mut state = LayoutPassState::new(self);
         #[cfg(feature = "writing-mode")]
         let (available_space, initial_containing_block) = {
@@ -1203,6 +1249,22 @@ impl BaseDocument {
         state.physicalise_and_round_layout(root_element_id);
         #[cfg(not(feature = "writing-mode"))]
         taffy::round_layout(&mut state, root_element_id);
+
+        // pyro: each `<foreignObject>` is laid out as a root in a box of its `width` and
+        // `height` (presentation attributes, `stylo.rs`), placed at its origin; blitz-paint draws
+        // it in the `<svg>`'s user space (`draw_svg`).
+        for fo in foreign_objects {
+            let fo = crate::taffy_node_id(fo);
+            #[cfg(feature = "writing-mode")]
+            {
+                state.layout_wm = state.layout_wm_of(crate::dom_node_id(fo));
+            }
+            taffy::compute_root_layout_in(&mut state, fo, initial_containing_block, initial_containing_block);
+            #[cfg(feature = "writing-mode")]
+            state.physicalise_and_round_layout(fo);
+            #[cfg(not(feature = "writing-mode"))]
+            taffy::round_layout(&mut state, fo);
+        }
 
         // println!("\n\n");
         // taffy::print_tree(self, root_node_id)

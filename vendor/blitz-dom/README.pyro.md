@@ -2453,3 +2453,13 @@ keep their tracks (`row_tracks`); Taffy collapses them once sized.
 An inline formatting context whose text has anything but collapsible white space (a no-break space counts as text)
 does not let margins collapse through it, even when its lines have no height (CSS 2.1 §9.4.2; WPT css-fonts
 `font-size-zero-1`, css-color `t32-opacity-offscreen-multiple-boxes-2-c`, whose reference is `&nbsp;` text).
+- SVG `<foreignObject>` (`layout/construct.rs` `svg_foreign_objects`, `document.rs` `svg_foreign_objects`,
+  `resolve.rs` `foreign_object_roots`, `layout/paint_tree.rs`, `node/svg_css.rs` `foreign_object_href`, UA sheet):
+  each `<foreignObject>` of an inline `<svg>` keeps its construction damage, is built, laid out (a root block of its
+  `width`/`height`, mapped as presentation hints in `stylo.rs`, `overflow: hidden`), transformed and given a paint
+  tree as a root of its own; the `<svg>` source writes it as an `<image>` whose data names it, so usvg applies its
+  transform, clip path, mask, filter and opacity. Without a width or height it renders nothing.
+- `stylo.rs` (`is_html_element_in_html_document`): only HTML elements of an HTML document match type selectors
+  case-insensitively (`svg|foreignObject` matches, `foreignobject` does not match an SVG element).
+- `layout/construct.rs` (`input_type_keyword`), `layout/mod.rs`: an `<input>`'s `type` is read case-insensitively
+  and an empty or unknown value is the Text state (a text field), also after a change from `hidden`.
