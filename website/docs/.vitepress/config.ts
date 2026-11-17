@@ -170,6 +170,7 @@ export default defineConfig({
       { text: 'Scraping', link: '/scraping/overview', activeMatch: '^/scraping/' },
       { text: 'Recipes', link: '/recipes/overview', activeMatch: '^/recipes/' },
       { text: 'Reference', link: '/reference/cli', activeMatch: '^/reference/' },
+      { text: 'Status', link: '/status/wpt.html', activeMatch: '^/status/' },
     ],
     sidebar: {
       '/guide/': guide,
