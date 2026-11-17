@@ -874,6 +874,11 @@ Covered by `crates/pyro-render/tests/selection_highlight.rs`.
 `src/render.rs` (inline box fragments): a span's own edge leaves out its inline-start or inline-end margin as
 `blitz_dom::span_edge_margins` gives it: left and right in horizontal text, top and bottom (by the inline direction)
 in a vertical writing mode, whose lines are laid out turned (blitz-dom keeps those margins as span edges now).
+## Annotations on `text-fit` lines (WPT round 3, lane TS)
+
+`src/text.rs` (`draw_text_annotations`, `draw_annotation`): emphasis marks and ruby annotations over a line that
+parley scales with CSS `text-fit` are drawn at the line's scale, as the text they mark.
+
 ## Corner shapes and border shapes (WPT round 3, lane CB)
 
 - `src/kurbo_css/contoured.rs` (new), `src/kurbo_css/css_box.rs` (`CssBox::with_corner_curvature`, `contour`,
@@ -953,3 +958,31 @@ Tables (round 3 lane C2T), covered by `crates/pyro-render/tests/table_paint_orde
   `draw_table_part_outlines`: the outlines of rows and row groups, which paint no box, after the table's content.
 - `src/gradient.rs` (`linear_gradient`): an angled linear gradient's line goes through the centre of its tile, not
   of the element's border box (a tile larger than the box or moved off it showed the wrong part of the gradient).
+- `src/render.rs` (`marker_line_x`): an outside marker moves with its line past floats outside the item only; a
+  line that holds one of the item's own floats keeps the marker before the item's border box, as Blink (WPT
+  css-display `display-flow-root-list-item-001`, css-lists `outside-marker-with-float-in-content`).
+
+- `src/render.rs` (`inline_box_fragments` with `turned`, `InlineBoxFragment::turned`, `draw_turned_lines`): the boxes of
+  inline elements on a vertical writing mode's lines are painted as on horizontal ones (background, images, border,
+  radii, shadows, outline), each fragment its turned line's logical box mapped to the page: its top and bottom are the
+  inline sides (open between lines), its right and left the over and under sides, with the element's physical border
+  and padding there. Only `sideways-lr` lines (turned the other way) keep the background colours alone. WPT css-inline
+  `text-box-trim-inline-box-004/005` and `-text-decoration-002` (vertical variants). Covered by
+  `a_vertical_spans_block_sides_are_painted_over_the_next_block` in `crates/pyro-render/tests/inline_box_decorations.rs`.
+
+**SVG image root background bands (lane S2).** `draw_svg` paints an SVG image's root `background-color` over its
+viewport outside the area usvg painted it in (the tree's size, its `viewBox`), with an even-odd fill of the object
+rect and that area: a browser paints the root's background over the whole viewport (WPT css-sizing
+`aspect-ratio/replaced-element-004/006`).
+## Highlight overlays (WPT round 3, lane PX)
+
+`highlight.rs` paints custom highlights and the target text under the selection (CSS Pseudo-Elements 4 § 3.5), the
+selection's painter generalised to layers: each atom of a line has the set of highlights over it; the stretches get
+the originating text's shadows (under the backgrounds), each highlight's background bottom first, then the text in
+each set's colours with the top highlight's `text-shadow`. A highlight's `color` that is not declared or is
+`currentcolor` is the colour of the highlight below (or the text's), its `currentcolor` background and decorations
+that colour; each property comes from the nearest element whose highlight style declares it (`cascade-highlight-005`).
+The target text defaults to `Mark` on `MarkText` unless a style declares either colour; custom highlights draw nothing
+of their own then. Covered by `highlights_paint_under_the_selection` in `crates/pyro-render/tests/selection_highlight.rs`.
+- `src/render.rs` (`inline_box_fragments`): a line's content ends where its items end, so a justified line's inline
+  boxes take the justification (the line's `advance` does not; WPT css-text `text-justify-and-trailing-spaces-*`).

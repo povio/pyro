@@ -222,6 +222,55 @@ impl<B: Brush> Layout<B> {
         self.data.tab_min_advance = min_advance.max(0.0);
     }
 
+    /// pyro: makes the layout's lines scale their text to fill them (CSS `text-fit`); `scale` is
+    /// the factor of every line for [`TextFitTarget::Consistent`](crate::TextFitTarget), which
+    /// [`Self::text_fit_block_scale`] measures on the lines broken without it.
+    ///
+    /// Like the indent, this must be set before the lines are broken.
+    pub fn set_text_fit(&mut self, fit: crate::TextFit, scale: Option<f32>) {
+        self.data.text_fit = fit;
+        self.data.text_fit_scale = scale.filter(|scale| scale.is_finite() && *scale > 0.0);
+    }
+
+    /// pyro: the factor `text-fit: grow consistent` or `shrink consistent` scales every line of
+    /// this layout by, measured on its lines as broken without one (Blink's
+    /// `MeasurePerBlockScale`): the smallest that makes a line fill its width, of the lines with
+    /// text that do not already (within two pixels). `None` when it would not grow (shrink) the
+    /// text.
+    pub fn text_fit_block_scale(&self) -> Option<f32> {
+        use crate::{TextFitKind, TextFitTarget};
+        let fit = self.data.text_fit;
+        if fit.kind == TextFitKind::None || fit.target != TextFitTarget::Consistent {
+            return None;
+        }
+        let epsilon = 2.0 * self.data.scale;
+        let mut minimum = f32::INFINITY;
+        for line in &self.data.lines {
+            let items = self.data.line_items.get(line.item_range.clone()).unwrap_or_default();
+            let fixed = self.data.line_fixed_advance(items);
+            let content = line.metrics.advance - line.metrics.hanging_advance;
+            let remaining = line.max_advance - content;
+            if !remaining.is_finite() || remaining.abs() < epsilon {
+                continue;
+            }
+            let flexible = content - fixed;
+            if flexible <= 0.0 || remaining + flexible <= 0.0 {
+                continue;
+            }
+            minimum = minimum.min((remaining + flexible) / flexible);
+        }
+        if !minimum.is_finite() {
+            return None;
+        }
+        let scale = fit.restrict(minimum);
+        let applies = match fit.kind {
+            TextFitKind::Grow => scale > 1.0,
+            TextFitKind::Shrink => scale < 1.0,
+            TextFitKind::None => false,
+        };
+        applies.then_some(scale)
+    }
+
     /// Returns line breaker to compute lines for the layout.
     pub fn break_lines(&mut self) -> BreakLines<'_, B> {
         BreakLines::new(self)

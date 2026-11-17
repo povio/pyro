@@ -298,6 +298,52 @@ slotted rules of a pseudo-element. blitz-dom keeps shadow trees' styles (its REA
 
 blitz-dom generates and lays out the boxes (its README).
 
+## `flow-root list-item` for servo (WPT round 3, lane ID)
+
+`values/specified/box.rs` (`DisplayInside::is_valid_for_list_item`): `flow-root` with `list-item` parses in servo too
+(upstream only with the gecko feature), as in Blink: `display: flow-root list-item` is a list item that establishes a
+block formatting context (WPT css-display `display-flow-root-list-item-001`).
+## `text-fit` (WPT round 3, lane TS)
+
+`properties/longhands.toml`, `values/generics/text.rs` (`GenericTextFit`, `TextFitKind`, `TextFitTarget`),
+`values/specified/text.rs`, `values/computed/text.rs`: CSS Text 5 `text-fit`
+(`[none | grow | shrink] [consistent | per-line | per-line-all]? <percentage>?`, inherited as in Blink) for servo.
+blitz-dom passes it to parley, which scales the lines (their READMEs).
+
+## `::highlight()` and `::target-text` (WPT round 3, lane PX)
+
+- `servo/selector_parser.rs`: the lazy pseudo-elements `::target-text` and `::highlight(<custom-ident>)`. A
+  highlight's name is a process-wide id (`highlight_name_id`, `highlight_name`), so `PseudoElement` stays `Copy`:
+  `Highlight(u16)` makes the enum carry data, so `index()`/`eager_index()` read the `#[repr(u8)]` tag
+  (`discriminant()`) and `from_eager_index` matches instead of transmuting. Every `::highlight()` rule is filed under
+  `Highlight(ANY_HIGHLIGHT)` (`rule_map_key`, `has_argument()`); a style for one name is computed lazily with a
+  `matching_fn` that compares the name (blitz-dom `BaseDocument::highlight_pseudo_style`). Both apply
+  `APPLIES_TO_HIGHLIGHT` properties only.
+
+## `overflow: clip` beside `hidden` (WPT round 3, lane FO)
+
+`StyleAdjuster::adjust_for_overflow` keeps `clip` when the other axis is `hidden` (Blink): that axis neither scrolls
+nor keeps a scroll offset. Other mixes still turn `visible` into `auto` and `clip` into `hidden` (WPT css-overflow
+`single-axis-overflow-scroll-to-clip`).
+## `calc-size()` (WPT round 3, lane LT)
+
+- `values/generics/length.rs` (`GenericSize::CalcSizeAuto`, `CalcSizeFitContent`, `CalcSizeMinContent`,
+  `CalcSizeMaxContent`), `values/specified/length.rs` (`Size::parse_calc_size`), `values/specified/calc.rs`
+  (`AdditionalFunctions::CALC_SIZE`, `CalcNode::parse_calc_size_calculation`), `values/computed/length.rs`:
+  `calc-size(auto | fit-content | min-content | max-content, <calculation>)` in the `Size` properties (`width`,
+  `height`, their logical and min forms). The calculation is kept as a length-percentage whose `size` keyword is
+  `100%` (other percentages are rejected), so its percentage basis is the size of the basis: layout resolves it
+  against that size (stylo_taffy, blitz-dom). A `<length-percentage>` or `calc-size()` basis, `any`, `max-*` and
+  interpolation are not supported; the value serializes as `calc-size(<calculation>)` with `size` as `100%`.
+
+## Legacy `-webkit-box` alignment and flexing for servo (WPT round 3, lane FO)
+
+`-webkit-box-align`, `-webkit-box-pack`, `-webkit-box-direction` and `-webkit-box-flex` parse for servo.
+`adjust_for_webkit_box` makes a horizontal box a single-line flex row (`flex-wrap: nowrap`) aligned by them and sets
+`ComputedValueFlags::IS_WEBKIT_BOX`; `adjust_for_webkit_box_child` gives its children `-webkit-box-flex` as flex-grow
+and flex-shrink and `align-self: auto` (Blink's `LayoutDeprecatedFlexibleBox`; WPT css-flexbox
+`flexbox-safe-overflow-position-006`, `balance/webkit-box-no-balance`).
+
 ## Updating or dropping the patch
 
 - When upstream has the change: delete this directory and the `[patch.crates-io]` entry.

@@ -512,3 +512,65 @@ around a `height: 100%` canvas is as wide as the canvas at that height. When the
 content (no known width: floats, inline-blocks), the item list is generated again with that width, so the children's
 percentage sizes, min/max sizes and padding resolve against it, as at a given width. Covered by
 `crates/pyro-render/tests/intrinsic_percentages.rs`.
+
+**Flex items with a preferred aspect ratio (lane S2).** A preferred cross size gives the main size through the ratio
+at item generation, but a preferred main size gives no cross size: the cross size follows the flexed main size.
+A non-replaced ratio item's content size suggestion is the larger of its measure with the definite cross size (the
+ratio's) and its content's min-content size measured without it (the cross size as available space); the specified
+size suggestion is the preferred main size only (no transferred one for non-replaced items), and min cross sizes
+bound it through the ratio. A replaced item's `aspect-ratio` converts a definite cross size like a natural ratio.
+`FlexItem::ratio_inset` makes transfers between the boxes the ratio is between (content box for `content-box` or
+`auto <ratio>`). Block layout follows the ratio in content-size measures too (`height_follows_ratio` without the
+sizing-mode condition: a max-content flex base size of `min-width: 100px; aspect-ratio: 1` is 100px tall), and
+derives a known axis through the ratio's box. Covered by `crates/pyro-render/tests/aspect_ratio.rs`.
+- `src/compute/block.rs` (`set_block_flow_overlap`): a container whose last in-flow child's content overflows it
+  records that its own content overflows too, so the overflow reaches past nested blocks to the container that paints
+  them in Appendix E phases (WPT css-inline `text-box-trim-accumulation-002/003/004`: trimmed glyphs over the next
+  block). Covered by `a_spans_border_nested_in_blocks_is_painted_over_the_next_blocks_background` in
+  `crates/pyro-render/tests/text_box_trim.rs`.
+
+**Grid baseline alignment in both axes (lane GB).** `compute/grid/baseline.rs` (new) replaces
+`track_sizing::resolve_item_baselines`: items with `align-self` or `justify-self` `baseline` / `last baseline` form
+baseline-sharing groups per track and side (css-align-3 §9.1): the start side for a first baseline, the end side for
+a last one, swapped when the item's block flow runs the other way (`GridItem::baseline_flow`, from
+`GridItemStyle::subgrid_axis`/`subgrid_reversed`: `vertical-rl` in `vertical-lr`, or an orthogonal item whose
+block-start is the grid's inline-end). Items whose block axis is perpendicular to the alignment axis, or without a
+baseline, get one synthesized at `GridContainerStyle::baseline_synthesis` (line-under edge, middle for central
+baselines). Orthogonal items' baselines survive `LayoutOutput::transpose` as `Baselines::orthogonal_first/last`.
+Shims sit on the group's side in both axes (`baseline_shim`, `baseline_shim_block_end`, `baseline_shim_inline`), count
+in contributions and are computed per axis as it is sized (with the other axis' sizes when known), then again with
+the final sizes before `align_and_position_item`, which aligns the item to its group's side
+(`ItemBaselineAlignment`). A grid container reports a last baseline (its last row: a last-baseline group, else its
+last item).
+**Stretch beside floats and for absolutely positioned boxes (lane S2).** Tables and compressible replaced elements
+resolve `stretch` in `width`, `min-width` or `max-width` through the block parent (`block_item_known_dimensions`),
+and the float-slot search clamps a given width by the keyword limits (`clamp_width_by_keywords`), so `stretch` is
+the slot's width. `resolve_absolute_sizing_keywords` takes the stretch-fit size of the inset-modified containing
+block, which an auto inset bounds at the static position.
+Subgrids (css-grid-2 §9): a subgrid's items (virtual items) join the parent's baseline groups, orthogonal subgrids'
+with their alignment axes swapped (nested, reversed: fallback alignment). `subgrid::record_subgrid_baselines` gives
+the subgrid each line's group baseline and the parent's `baseline_synthesis` (`SubgridAxisContext::baselines`,
+`baseline_synthesis`), which its own final shims take.
+`compute/grid/types/named.rs` (`add_subgrid_line_names`): in a subgridded axis, the edges of the subgrid's own named
+areas past its last line are on its last line, and the parent's area names reach a subgrid that spans the area in
+that axis whatever rows (columns) it is in (`area_names_for_subgrid`), as Blink (WPT `subgrid/line-names-*`).
+Column-only subgrids (css-grid-2 §9 standalone axis): a subgrid in its columns only records its own rows
+(`SubgridContext::own_rows`, `subgrid::record_own_rows`); before sizing its columns the parent lays out its
+column-only subgrid children at their definite (else max-content) height and gives their items the rows they span
+(`resolve_standalone_heights`, `GridItem::standalone_size.height`), so an orthogonal item's width follows its row
+(WPT `subgrid/standalone-axis-size-010`). Nested ones still see the rows of their last measure.
+
+
+**Flex content sizes (lane FO).** A block's content size (`SizingMode::ContentSize`) ignores its own `min-width`,
+`max-width`, `min-height` and `max-height`, as inline layout's does, unless the box has a ratio (its height follows
+the width they give): a flex base size is the content's. Keyword `min-width`/`max-width` (`clamp_width_by_keywords`)
+bound an automatic width's intrinsic contribution too. In flex: a column's automatic size counts each item's
+hypothetical main size with the minimum winning over a smaller maximum; a column's min-content size under no max
+size is one line's (`collect_flex_lines`); `fit-content` in a min/max with nothing to fit into is max-content;
+percentage row gaps resolve only against a definite height; an overflowing `space-between` (not explicitly safe)
+falls back to plain `flex-start` (csswg-drafts#11937). Covered by `crates/pyro-render/tests/flex_content_sizes.rs`.
+
+`style/mod.rs` (`CalcSizeFunction`, `CoreStyle::calc_size_min`), `compute/flexbox.rs` (automatic minimum main size),
+`compute/block.rs` (`ratio_min_content_width`, `BlockItem::calc_size_min_width`, the content minimum of a box whose
+height follows its ratio): `min-width`/`min-height: calc-size(auto, <calculation>)` is the calculation of the
+automatic minimum size those compute (WPT css-values `calc-size-flex-*`, `calc-size-aspect-ratio-003..005`).

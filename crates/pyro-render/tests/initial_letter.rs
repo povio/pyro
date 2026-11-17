@@ -143,3 +143,19 @@ fn a_vertical_initial_is_centred_on_its_lines() {
     assert_eq!(letter[1], 0);
     assert_eq!(block[2], 500 - 2);
 }
+
+/// A floated `::first-letter` (a drop cap, no `initial-letter`) is a float: the letter in its own
+/// style, the first lines beside it, the next below it (WPT css-pseudo `first-letter-002`).
+#[test]
+fn a_floated_first_letter_is_a_float() {
+    let img = render(
+        ".p::first-letter { float: left; font-size: 40px; line-height: 40px }",
+        "<div class=p>Xaaa bbbb cccc dddd eeee ffff gggg</div>",
+    );
+    assert_eq!(bbox(&img, [0, 255, 0], [0, 0, 300, 200]), Some([0, 0, 40, 40]));
+    // The first two lines start after the letter, the third at the left edge.
+    let black = |top: usize| bbox(&img, [0, 0, 0], [0, top, 300, top + 24]).map(|b| b[0]);
+    assert_eq!(black(0), Some(40));
+    assert_eq!(black(24), Some(40));
+    assert_eq!(black(48), Some(0));
+}

@@ -118,6 +118,9 @@ struct Instance {
     /// pyro: whether the following siblings of the box that made it see it (its scope is then
     /// that box's parent; otherwise the box itself).
     sibling: bool,
+    /// pyro: the `list-item` counter of a reversed `ol` (`reversed` attribute): its list items
+    /// count down (an implicit `list-item` increment of -1; HTML § 4.4.5, CSS Lists 3 § 4.5).
+    reversed: bool,
 }
 
 /// pyro: the scope of counters a `::before` or `::after` makes for itself alone (an id no node
@@ -133,6 +136,14 @@ struct Walk {
     made: Vec<(NodeId, Atom)>,
     quote_depth: usize,
     texts: HashMap<NodeId, GeneratedText>,
+    /// pyro: the language `quotes: auto` takes its quotes from: the language of the parent of
+    /// the originating element (WPT `quotes-030`: a `<q lang>` quotes as its parent does).
+    quote_lang: Option<String>,
+    /// pyro: the `list-item` counter value of each list item box after its counter properties,
+    /// its marker's number (`layout::list`): elements by id, `::before` (true) and `::after`
+    /// boxes by their originating element.
+    items: HashMap<NodeId, i32>,
+    pseudo_items: HashMap<(NodeId, bool), i32>,
 }
 
 impl Walk {
@@ -149,13 +160,16 @@ impl Walk {
     fn reset(&mut self, name: &Atom, value: i32, scope: NodeId, own: NodeId, legacy: bool) {
         let stack = self.counters.entry(name.clone()).or_default();
         match stack.last_mut() {
-            Some(innermost) if innermost.scope == scope && innermost.sibling => innermost.value = value,
+            Some(innermost) if innermost.scope == scope && innermost.sibling => {
+                innermost.value = value;
+                innermost.reversed = false;
+            }
             Some(_) if !legacy => {
-                stack.push(Instance { value, scope: own, sibling: false });
+                stack.push(Instance { value, scope: own, sibling: false, reversed: false });
                 self.made.push((own, name.clone()));
             }
             _ => {
-                stack.push(Instance { value, scope, sibling: true });
+                stack.push(Instance { value, scope, sibling: true, reversed: false });
                 self.made.push((scope, name.clone()));
             }
         }
@@ -189,11 +203,17 @@ impl Walk {
         }
         if list_item && !increments_list_item {
             let instance = self.innermost(&list_item_name, scope, own);
-            instance.value = add(instance.value, 1);
+            let by = if instance.reversed { -1 } else { 1 };
+            instance.value = add(instance.value, by);
         }
         for pair in counters.counter_set.iter() {
             self.innermost(&pair.name.0, scope, own).value = pair.value;
         }
+    }
+
+    /// pyro: the value of the innermost `list-item` counter.
+    fn list_item(&mut self, scope: NodeId, own: NodeId) -> i32 {
+        self.innermost(&Atom::from("list-item"), scope, own).value
     }
 
     /// The counters the children of `parent` made end with it.
@@ -238,7 +258,7 @@ impl Walk {
                     push(&mut pieces, &text);
                 }
                 ContentItem::OpenQuote => {
-                    let open = quote(style, self.quote_depth).map(|(open, _)| open).unwrap_or_default();
+                    let open = quote(style, self.quote_depth, self.quote_lang.as_deref()).map(|(open, _)| open).unwrap_or_default();
                     push(&mut pieces, &open);
                     self.quote_depth += 1;
                 }
@@ -246,7 +266,7 @@ impl Walk {
                     let mut close = String::new();
                     if self.quote_depth > 0 {
                         self.quote_depth -= 1;
-                        close = quote(style, self.quote_depth).map(|(_, close)| close).unwrap_or_default();
+                        close = quote(style, self.quote_depth, self.quote_lang.as_deref()).map(|(_, close)| close).unwrap_or_default();
                     }
                     push(&mut pieces, &close);
                 }
@@ -271,18 +291,37 @@ impl Walk {
 }
 
 /// The quotes at `depth` (the last pair beyond the list's end; none for `quotes: none`). `auto`
-/// is English's (Chromium's default).
-pub(super) fn quote(style: &ComputedValues, depth: usize) -> Option<(String, String)> {
+/// is those of language `lang` as Chromium finds them (`LayoutLocale::GetQuotesData`): the
+/// CLDR quotes of the tag, else of the tag without its last subtag, and so on; English's when
+/// none is known.
+pub(super) fn quote(style: &ComputedValues, depth: usize, lang: Option<&str>) -> Option<(String, String)> {
     match &style.get_list().quotes {
         Quotes::QuoteList(list) => {
             let pairs = &list.0;
             let pair = pairs.get(depth).or(pairs.last())?;
             Some((pair.opening.to_string(), pair.closing.to_string()))
         }
-        Quotes::Auto => Some(match depth {
-            0 => ("\u{201C}".into(), "\u{201D}".into()),
-            _ => ("\u{2018}".into(), "\u{2019}".into()),
-        }),
+        Quotes::Auto => {
+            let [open1, close1, open2, close2] = auto_quotes(lang.unwrap_or(""));
+            Some(match depth {
+                0 => (open1.into(), close1.into()),
+                _ => (open2.into(), close2.into()),
+            })
+        }
+    }
+}
+
+/// pyro: the `quotes: auto` of language tag `lang`: open, close, nested open, nested close.
+fn auto_quotes(lang: &str) -> [char; 4] {
+    let mut tag = lang.trim().to_ascii_lowercase().replace('_', "-");
+    loop {
+        if let Ok(index) = super::quotes_table::QUOTES.binary_search_by(|(key, _)| (*key).cmp(tag.as_str())) {
+            return super::quotes_table::QUOTES[index].1;
+        }
+        match tag.rfind('-') {
+            Some(end) => tag.truncate(end),
+            None => return ['\u{201C}', '\u{201D}', '\u{2018}', '\u{2019}'],
+        }
     }
 }
 
@@ -309,6 +348,33 @@ impl BaseDocument {
         let mut walk = Walk::default();
         walk_element(self, root_id, document_id, &mut walk);
         let texts = walk.texts;
+
+        // pyro: an item whose number changed has its marker built again by its list
+        // (`list::collect_list_item_children`, run by its parent's construction).
+        let numbers = (walk.items, walk.pseudo_items);
+        let mut renumbered: Vec<NodeId> = Vec::new();
+        for (id, value) in &numbers.0 {
+            if self.list_item_numbers.0.get(id) != Some(value) {
+                renumbered.push(*id);
+            }
+        }
+        for (key, value) in &numbers.1 {
+            if self.list_item_numbers.1.get(key) != Some(value) {
+                renumbered.push(key.0);
+            }
+        }
+        self.list_item_numbers = numbers;
+        for item in renumbered {
+            let parent = self.nodes.get(item).and_then(|node| node.parent);
+            for target in [Some(item), parent].into_iter().flatten() {
+                if let Some(node) = self.nodes.get_mut(target) {
+                    if node.flags.is_in_document() {
+                        node.insert_damage(super::damage::ALL_DAMAGE);
+                        node.mark_damaged();
+                    }
+                }
+            }
+        }
 
         // An owner whose texts changed builds its box again (`flush_pseudo_elements`).
         let old = std::mem::take(&mut self.generated_text);
@@ -383,6 +449,12 @@ fn walk_element(doc: &BaseDocument, node_id: NodeId, parent: NodeId, walk: &mut 
     });
     if !display.is_contents() {
         walk.apply(&style, parent, node_id, display.is_list_item(), list);
+        list_attributes(doc, node_id, &style, list, walk);
+        if display.is_list_item() {
+            item_value(doc, node_id, &style, parent, walk);
+            let value = walk.list_item(parent, node_id);
+            walk.items.insert(node_id, value);
+        }
     }
     drop(style);
     // pyro: its children and its `::before` and `::after` are then its parent's in the box tree,
@@ -404,6 +476,11 @@ fn walk_element(doc: &BaseDocument, node_id: NodeId, parent: NodeId, walk: &mut 
     }
     if let Some(before) = pseudos[1].as_deref().filter(|style| generates(style)) {
         walk.apply(before, scope, pseudo_scope(), before.clone_display().is_list_item(), false);
+        if before.clone_display().is_list_item() {
+            let value = walk.list_item(scope, pseudo_scope());
+            walk.pseudo_items.insert((node_id, true), value);
+        }
+        walk.quote_lang = parent_language(doc, node_id);
         texts[1] = walk.content(before, scope);
         walk.leave(pseudo_scope());
     }
@@ -414,6 +491,11 @@ fn walk_element(doc: &BaseDocument, node_id: NodeId, parent: NodeId, walk: &mut 
     }
     if let Some(after) = pseudos[0].as_deref().filter(|style| generates(style)) {
         walk.apply(after, scope, pseudo_scope(), after.clone_display().is_list_item(), false);
+        if after.clone_display().is_list_item() {
+            let value = walk.list_item(scope, pseudo_scope());
+            walk.pseudo_items.insert((node_id, false), value);
+        }
+        walk.quote_lang = parent_language(doc, node_id);
         texts[0] = walk.content(after, scope);
         walk.leave(pseudo_scope());
     }
@@ -430,6 +512,135 @@ fn walk_element(doc: &BaseDocument, node_id: NodeId, parent: NodeId, walk: &mut 
     if texts.iter().any(Option::is_some) {
         walk.texts.insert(node_id, texts);
     }
+}
+
+/// pyro: the `start` and `reversed` attributes of an `ol` (`node`, style `style`), presentational
+/// hints on the `list-item` counter its UA style resets (HTML § 15.3.8: `start` is the first
+/// item's number, `reversed` is `counter-reset: reversed(list-item)`), unless an author
+/// `counter-reset` wins; and the reversed counters (`reversed(name)`) its style resets.
+fn list_attributes(doc: &BaseDocument, node: NodeId, style: &ComputedValues, list: bool, walk: &mut Walk) {
+    for pair in style.get_counters().counter_reset.iter().filter(|pair| pair.is_reversed) {
+        let value = if pair.value == i32::MIN { reversed_initial(doc, node, &pair.name.0) } else { pair.value };
+        if let Some(instance) = walk.counters.get_mut(&pair.name.0).and_then(|stack| stack.last_mut()) {
+            instance.value = value;
+            instance.reversed = true;
+        }
+    }
+    if !list {
+        return;
+    }
+    let Some(element) = doc.nodes[node].element_data() else { return };
+    if element.name.local != markup5ever::local_name!("ol")
+        || doc.style_declares(style, &[style::properties::LonghandId::CounterReset])
+    {
+        return;
+    }
+    let start: Option<i32> = element.attr(markup5ever::local_name!("start")).and_then(parse_integer);
+    let reversed = element.attr(markup5ever::local_name!("reversed")).is_some();
+    if start.is_none() && !reversed {
+        return;
+    }
+    let name = Atom::from("list-item");
+    let value = match (reversed, start) {
+        (true, Some(start)) => start.saturating_add(1),
+        (true, None) => reversed_initial(doc, node, &name),
+        (false, Some(start)) => start.saturating_sub(1),
+        (false, None) => return,
+    };
+    if let Some(instance) = walk.counters.get_mut(&name).and_then(|stack| stack.last_mut()) {
+        instance.value = value;
+        instance.reversed = reversed;
+    }
+}
+
+/// pyro: the initial value of the reversed counter `name` that `node` instantiates without one
+/// (CSS Lists 3 § 4.4.2): over the boxes in its scope (its descendants, not those of a box that
+/// resets the counter again) that increment or set it, in tree order, the negated increments
+/// (list items -1 each unless they increment it themselves) up to the first that sets it, plus
+/// that value, plus the last non-zero negated increment.
+fn reversed_initial(doc: &BaseDocument, node: NodeId, name: &Atom) -> i32 {
+    let (mut num, mut last) = (0i32, 0i32);
+    scan_reversed_scope(doc, node, name, &mut num, &mut last);
+    num.saturating_add(last)
+}
+
+/// `true` when a box that sets the counter ended the scan.
+fn scan_reversed_scope(doc: &BaseDocument, node: NodeId, name: &Atom, num: &mut i32, last: &mut i32) -> bool {
+    let list_item = &**name == "list-item";
+    for &child in doc.nodes[node].children.iter() {
+        let Some(style) = doc.nodes[child].primary_styles() else { continue };
+        let display = style.clone_display();
+        if display == Display::None {
+            continue;
+        }
+        let counters = style.get_counters();
+        if counters.counter_reset.iter().any(|pair| pair.name.0 == *name) {
+            continue;
+        }
+        if !display.is_contents() {
+            let mut increments = counters.counter_increment.iter().filter(|pair| pair.name.0 == *name).peekable();
+            let increment = match increments.peek() {
+                Some(_) => increments.fold(0i32, |sum, pair| sum.saturating_add(pair.value)),
+                None if list_item && display.is_list_item() => -1,
+                None => 0,
+            };
+            let negated = increment.saturating_neg();
+            if negated != 0 {
+                *last = negated;
+            }
+            let mut set = counters.counter_set.iter().filter(|pair| pair.name.0 == *name).map(|pair| pair.value).last();
+            if set.is_none() && list_item {
+                set = doc.nodes[child]
+                    .element_data()
+                    .filter(|element| element.name.local == markup5ever::local_name!("li"))
+                    .and_then(|element| element.attr(markup5ever::local_name!("value")))
+                    .and_then(parse_integer)
+                    .filter(|_| !doc.style_declares(&style, &[style::properties::LonghandId::CounterSet]));
+            }
+            if let Some(set) = set {
+                *num = num.saturating_add(set);
+                return true;
+            }
+            *num = num.saturating_add(negated);
+        }
+        drop(style);
+        if crate::util::ensure_stack(|| scan_reversed_scope(doc, child, name, num, last)) {
+            return true;
+        }
+    }
+    false
+}
+
+/// pyro: the `value` attribute of an `li` (`node`, style `style`), a presentational hint
+/// `counter-set: list-item <value>` (HTML § 15.3.8), unless an author `counter-set` wins.
+fn item_value(doc: &BaseDocument, node: NodeId, style: &ComputedValues, parent: NodeId, walk: &mut Walk) {
+    let Some(element) = doc.nodes[node].element_data() else { return };
+    if element.name.local != markup5ever::local_name!("li") {
+        return;
+    }
+    let Some(value) = element.attr(markup5ever::local_name!("value")).and_then(parse_integer) else { return };
+    if doc.style_declares(style, &[style::properties::LonghandId::CounterSet]) {
+        return;
+    }
+    walk.innermost(&Atom::from("list-item"), parent, node).value = value;
+}
+
+/// pyro: HTML's rules for parsing integers (leading white space, a sign, digits; trailing
+/// garbage ignored).
+fn parse_integer(text: &str) -> Option<i32> {
+    let text = text.trim_start_matches([' ', '\t', '\n', '\x0c', '\r']);
+    let (negative, rest) = match text.as_bytes().first() {
+        Some(b'-') => (true, &text[1..]),
+        Some(b'+') => (false, &text[1..]),
+        _ => (false, text),
+    };
+    let digits = rest.bytes().take_while(u8::is_ascii_digit).count();
+    if digits == 0 {
+        return None;
+    }
+    let value: i64 = rest[..digits].parse().ok().unwrap_or(i64::MAX);
+    let value = if negative { -value } else { value };
+    i32::try_from(value).ok()
 }
 
 /// pyro: the counter properties and content of the markers in a `::scroll-marker-group` `group`,
@@ -450,11 +661,18 @@ fn walk_generated_box(doc: &BaseDocument, scope: NodeId, node: NodeId, walk: &mu
         return;
     }
     walk.apply(&style, scope, pseudo_scope(), style.clone_display().is_list_item(), false);
+    walk.quote_lang = parent_language(doc, scope);
     let content = walk.content(&style, scope);
     walk.leave(pseudo_scope());
     if content.is_some() {
         walk.texts.insert(node, [None, content]);
     }
+}
+
+/// pyro: the language of the parent of element `node`, for its pseudo-elements' quotes.
+fn parent_language(doc: &BaseDocument, node: NodeId) -> Option<String> {
+    let parent = doc.nodes.get(node)?.parent?;
+    crate::lang::language(&doc.nodes[parent]).map(str::to_string)
 }
 
 /// `value` in a counter style (CSS Counter Styles 3: the predefined styles; an unknown name is

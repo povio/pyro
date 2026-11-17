@@ -96,7 +96,22 @@ impl<'a, B: Brush> Run<'a, B> {
 
     /// Returns the font size for the run.
     pub fn font_size(&self) -> f32 {
-        self.shaped.font_size
+        self.shaped.font_size * self.text_fit_scale()
+    }
+
+    /// pyro: the factor CSS `text-fit` scales this run's text by on its line (1 for none): its
+    /// font size, metrics, advances and glyphs are at that scale.
+    #[inline]
+    pub fn text_fit_scale(&self) -> f32 {
+        match self.line_data {
+            Some(_) => self
+                .layout
+                .data
+                .lines
+                .get(self.line_index as usize)
+                .map_or(1.0, |line| line.text_fit_scale()),
+            None => 1.0,
+        }
     }
 
     /// Returns the font attributes for the run.
@@ -121,8 +136,15 @@ impl<'a, B: Brush> Run<'a, B> {
     }
 
     /// Returns metrics for the run.
-    pub fn font_metrics(&self) -> &FontMetrics {
-        &self.shaped.font_metrics
+    ///
+    /// pyro: at the run's `text-fit` scale ([`Self::text_fit_scale`]).
+    pub fn font_metrics(&self) -> FontMetrics {
+        let scale = self.text_fit_scale();
+        if scale == 1.0 {
+            self.shaped.font_metrics
+        } else {
+            self.shaped.font_metrics.scaled(scale)
+        }
     }
 
     #[inline]
@@ -132,7 +154,7 @@ impl<'a, B: Brush> Run<'a, B> {
         } else {
             Justification::NONE
         };
-        EffectiveSpacing::new(self.data.spacing, justification)
+        EffectiveSpacing::new(self.data.spacing.fit(self.text_fit_scale()), justification)
     }
 
     /// Returns the advance for the run.
@@ -142,7 +164,14 @@ impl<'a, B: Brush> Run<'a, B> {
     /// justification.
     pub fn advance(&self) -> f32 {
         let spacing = self.line_spacing();
-        spacing.slice_advance(self.line_slice())
+        let advance = spacing.slice_advance(self.line_slice());
+        // pyro: with `text-fit`, the glyphs at the line's scale (the spacing already is).
+        let scale = self.text_fit_scale();
+        if scale == 1.0 {
+            return advance;
+        }
+        let glyphs = EffectiveSpacing::ZERO.slice_advance(self.line_slice());
+        glyphs * scale + (advance - glyphs)
     }
 
     /// Returns the original text range for the run.
@@ -255,6 +284,7 @@ impl<'a, B: Brush> Run<'a, B> {
             self.full_slice().narrow(shaped_clusters),
             self.is_rtl(),
             self.line_spacing(),
+            self.text_fit_scale(),
         )
     }
 }
@@ -281,10 +311,12 @@ pub(crate) struct Glyphs<'a> {
     atom_glyph: usize,
     /// The number of glyphs of the current atom. The last one gets `gaps.after`.
     atom_glyph_count: usize,
+    /// pyro: the `text-fit` scale of the glyphs ([`Run::text_fit_scale`]).
+    scale: f32,
 }
 
 impl<'a> Glyphs<'a> {
-    fn new(slice: ShapedSlice<'a>, is_rtl: bool, spacing: EffectiveSpacing) -> Self {
+    fn new(slice: ShapedSlice<'a>, is_rtl: bool, spacing: EffectiveSpacing, scale: f32) -> Self {
         let clusters = slice.shaped_clusters_range();
         Self {
             slice,
@@ -305,6 +337,7 @@ impl<'a> Glyphs<'a> {
             gaps: Gaps::ZERO,
             atom_glyph: 0,
             atom_glyph_count: 0,
+            scale,
         }
     }
 }
@@ -316,6 +349,12 @@ impl Iterator for Glyphs<'_> {
     fn next(&mut self) -> Option<Glyph> {
         loop {
             if let Some(mut glyph) = self.glyphs.next() {
+                // pyro: the glyph at the `text-fit` scale; the spacing is already at it.
+                if self.scale != 1.0 {
+                    glyph.x *= self.scale;
+                    glyph.y *= self.scale;
+                    glyph.advance *= self.scale;
+                }
                 if self.spacing.is_some() {
                     if self.atom_glyph == 0 {
                         glyph.x += self.gaps.before;

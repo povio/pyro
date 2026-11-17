@@ -160,6 +160,10 @@ pub struct ReplacedContext {
     /// used to fill in dimensions the intrinsic sizes leave unresolved. 300x150
     /// for most replaced elements; zero for an image with no loaded resource.
     pub default_object_size: taffy::Size<f32>,
+    /// pyro: `aspect-ratio` is a `<ratio>` without `auto`: the ratio is between `box-sizing`
+    /// boxes (a border box under `box-sizing: border-box`), not content boxes (css-sizing-4 §5.1;
+    /// WPT css-sizing `aspect-ratio/replaced-element-031..033`)
+    pub ratio_in_box_sizing_box: bool,
 }
 
 /// Whether a height/width value is violating it's min- and max- constraints
@@ -279,6 +283,19 @@ pub fn compute_replaced_layout(
     let intrinsic = context.intrinsic_sizes;
     let style_aspect_ratio = style.aspect_ratio().filter(is_usable_ratio);
     let aspect_ratio: Option<f32> = style_aspect_ratio.or(intrinsic.ratio.filter(is_usable_ratio));
+    // pyro: what the box the ratio is between is larger than the content box by
+    // (`ReplacedContext::ratio_in_box_sizing_box`)
+    let ratio_outset = if style_aspect_ratio.is_some() && context.ratio_in_box_sizing_box {
+        box_sizing_adjustment
+    } else {
+        Size::ZERO
+    };
+    let apply_ratio = |size: Size<Option<f32>>| {
+        size.maybe_add(ratio_outset)
+            .maybe_apply_aspect_ratio(aspect_ratio)
+            .maybe_sub(ratio_outset)
+            .map(|size| size.map(|size| size.max(0.0)))
+    };
 
     // Concrete object size per the CSS default sizing algorithm with no
     // specified size (https://drafts.csswg.org/css-images/#default-sizing):
@@ -502,9 +519,8 @@ pub fn compute_replaced_layout(
 
         let content_box_known_dimensions = known_dimensions.maybe_sub(pb_sum);
         let transferred = content_box_known_dimensions
-            .maybe_clamp(min_size, style_max_size)
-            .maybe_apply_aspect_ratio(aspect_ratio)
-            .unwrap_or(inherent_size);
+            .maybe_clamp(min_size, style_max_size);
+        let transferred = apply_ratio(transferred).unwrap_or(inherent_size);
 
         // Known axes are authoritative (already resolved by the parent); only the axis
         // derived via aspect-ratio transfer (or falling back to the intrinsic size) is
@@ -517,9 +533,7 @@ pub fn compute_replaced_layout(
     }
 
     let unclamped_size = if style_size.width.is_some() | style_size.height.is_some() {
-        style_size
-            .maybe_apply_aspect_ratio(aspect_ratio)
-            .unwrap_or(inherent_size)
+        apply_ratio(style_size).unwrap_or(inherent_size)
     } else {
         inherent_size
     };

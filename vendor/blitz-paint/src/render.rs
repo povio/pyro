@@ -172,6 +172,11 @@ pub struct BlitzDomPainter<'dom, 'a> {
     pub(crate) draw_text_context: RefCell<DrawTextContext>,
     /// Cached selection ranges for O(1) lookup: node_id -> (start_offset, end_offset)
     pub(crate) selection_ranges: HashMap<NodeId, (usize, usize)>,
+    /// pyro: the highlights painted (custom highlights and the target text, then the selection),
+    /// bottom first, and each inline root's highlighted bytes: (index in `highlight_layers`,
+    /// start, end).
+    pub(crate) highlight_layers: Vec<crate::highlight::Layer>,
+    pub(crate) highlight_ranges: HashMap<NodeId, Vec<(usize, usize, usize)>>,
     /// Paint background colors and images (false: printing without them).
     pub backgrounds: bool,
     /// Print: text at its layout-unit x, not its box's whole-pixel x (Chromium keeps the fraction in the
@@ -216,6 +221,22 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             .map(|(node_id, start, end)| (node_id, (start, end)))
             .collect();
 
+        // pyro: at most 31 highlights below the selection (bits of a mask).
+        let mut highlight_layers = Vec::new();
+        let mut highlight_ranges: HashMap<NodeId, Vec<(usize, usize, usize)>> = HashMap::new();
+        for (name, ranges) in dom.highlight_layer_ranges().into_iter().take(31) {
+            let layer = highlight_layers.len();
+            highlight_layers.push(crate::highlight::Layer::Named(name));
+            for (node_id, start, end) in ranges {
+                highlight_ranges.entry(node_id).or_default().push((layer, start, end));
+            }
+        }
+        let selection_layer = highlight_layers.len();
+        highlight_layers.push(crate::highlight::Layer::Selection);
+        for (&node_id, &(start, end)) in &selection_ranges {
+            highlight_ranges.entry(node_id).or_default().push((selection_layer, start, end));
+        }
+
         let layer_manager = LayerManager::default();
         let effects = crate::layers::document_effects(dom);
         let root_element_id = dom.try_root_element().map(|el| el.id);
@@ -245,6 +266,8 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             backdrop_ancestors: effects.backdrop_ancestors,
             draw_text_context: RefCell::new(DrawTextContext::default()),
             selection_ranges,
+            highlight_layers,
+            highlight_ranges,
             backgrounds: true,
             fractional_text_x: false,
             composite_3d: false,
@@ -2115,6 +2138,7 @@ impl ElementCx<'_, '_> {
         text_layout: &blitz_dom::node::TextLayout,
         transform: Affine,
         tops: Option<crate::text::LineTops>,
+        turned: Option<&dyn Fn(usize) -> Affine>,
     ) -> Vec<InlineBoxFragment> {
         let layout = &text_layout.layout;
         let mut painted_fragments = Vec::new();
@@ -2218,8 +2242,16 @@ impl ElementCx<'_, '_> {
             // ideographic spaces that hang are: `LineMetrics::collapsed_advance`). pyro: the line starts at its
             // `inline_min_coord`, past the floats before it (its items are placed from there): without
             // it every box on a line beside a float was cut to nothing (WPT `clear-inline-001`).
-            let content_end =
-                metrics.inline_min_coord + metrics.offset + metrics.advance - metrics.collapsed_advance;
+            // pyro: from where its items end, which counts justification (a justified line's
+            // `advance` does not: WPT css-text `text-justify-and-trailing-spaces-001`).
+            let items_end = line
+                .items()
+                .map(|item| match &item {
+                    PositionedLayoutItem::GlyphRun(run) => run.offset() + run.advance(),
+                    PositionedLayoutItem::InlineBox(ibox) => ibox.x + ibox.width,
+                })
+                .fold(metrics.inline_min_coord + metrics.offset + metrics.advance, f32::max);
+            let content_end = items_end - metrics.collapsed_advance;
             for item in line.items() {
                 let (style_index, x0, x1, edge) = match &item {
                     PositionedLayoutItem::GlyphRun(run) => {
@@ -2414,6 +2446,58 @@ impl ElementCx<'_, '_> {
                 top: length(&padding.padding_top.0),
                 bottom: length(&padding.padding_bottom.0),
             };
+            // pyro: a vertical writing mode's lines are laid out turned (`draw_vertical_inline_layout`):
+            // a line's left (inline start) is the box's top, its over side (where y is least) its
+            // right, in `vertical-rl` and `vertical-lr` alike. The fragment is the box's physical
+            // piece: its top and bottom sides are the open ones, its right and left reach over and
+            // under the line.
+            if let Some(turned) = turned {
+                drop(style);
+                let border = taffy::Rect {
+                    top: side(!left, whole_border.top),
+                    bottom: side(!right, whole_border.bottom),
+                    ..whole_border
+                };
+                let padding = taffy::Rect {
+                    top: side(!left, whole_padding.top),
+                    bottom: side(!right, whole_padding.bottom),
+                    ..whole_padding
+                };
+                let rect = Rect::new(
+                    fragment.x0 as f64,
+                    (fragment.top - (border.right + padding.right) * scale) as f64,
+                    fragment.x1 as f64,
+                    (fragment.bottom + (border.left + padding.left) * scale) as f64,
+                );
+                let line_transform = turned(fragment.line);
+                let [a, b, c, d, tx, ty] = self.transform.as_coeffs();
+                let (transform, size) = if a == 1.0 && b == 0.0 && c == 0.0 && d == 1.0 {
+                    // To whole CSS pixels, as horizontal fragments.
+                    let bounds = (self.transform.inverse() * line_transform).transform_rect_bbox(rect);
+                    let snap = |v: f64| (v / self.scale).round() * self.scale;
+                    let (x0, y0) = (snap(tx + bounds.x0), snap(ty + bounds.y0));
+                    let (x1, y1) = (snap(tx + bounds.x1), snap(ty + bounds.y1));
+                    (Affine::translate((x0, y0)), Size::new(x1 - x0, y1 - y0))
+                } else {
+                    let bounds = (self.transform.inverse() * line_transform).transform_rect_bbox(rect);
+                    (self.transform * Affine::translate((bounds.x0, bounds.y0)), bounds.size())
+                };
+                painted_fragments.push(InlineBoxFragment {
+                    node: fragment.node,
+                    line: fragment.line,
+                    transform,
+                    size,
+                    border,
+                    padding,
+                    whole: None,
+                    left,
+                    right,
+                    reaches_above: false,
+                    style: fragment.style.clone(),
+                    turned: true,
+                });
+                continue;
+            }
             let border = taffy::Rect {
                 left: side(!left, whole_border.left),
                 right: side(!right, whole_border.right),
@@ -2470,6 +2554,7 @@ impl ElementCx<'_, '_> {
                 right,
                 reaches_above: (rect.y0 as f32) < fragment.line_top,
                 style: fragment.style.clone(),
+                turned: false,
             });
         }
         painted_fragments
@@ -2506,13 +2591,25 @@ impl ElementCx<'_, '_> {
         if let Some(style) = &fragment.style {
             cx.style = style.clone();
         }
-        if !left {
-            cx.frame.border_radii.top_left = Vec2::ZERO;
-            cx.frame.border_radii.bottom_left = Vec2::ZERO;
-        }
-        if !right {
-            cx.frame.border_radii.top_right = Vec2::ZERO;
-            cx.frame.border_radii.bottom_right = Vec2::ZERO;
+        // pyro: a turned (vertical) fragment's open sides are its top and bottom.
+        if fragment.turned {
+            if !left {
+                cx.frame.border_radii.top_left = Vec2::ZERO;
+                cx.frame.border_radii.top_right = Vec2::ZERO;
+            }
+            if !right {
+                cx.frame.border_radii.bottom_left = Vec2::ZERO;
+                cx.frame.border_radii.bottom_right = Vec2::ZERO;
+            }
+        } else {
+            if !left {
+                cx.frame.border_radii.top_left = Vec2::ZERO;
+                cx.frame.border_radii.bottom_left = Vec2::ZERO;
+            }
+            if !right {
+                cx.frame.border_radii.top_right = Vec2::ZERO;
+                cx.frame.border_radii.bottom_right = Vec2::ZERO;
+            }
         }
         // The whole box, for a sliced box's shadows and background images, and the fragment's
         // piece of it: its border box, and for the outer shadows the space past its closed
@@ -2526,7 +2623,11 @@ impl ElementCx<'_, '_> {
         });
         let piece = Rect::from_origin_size(Point::ZERO, size);
         let far = 1e6;
-        let outside = Rect::new(if left { -far } else { 0.0 }, -far, if right { far } else { size.width }, far);
+        let outside = if fragment.turned {
+            Rect::new(-far, if left { -far } else { 0.0 }, far, if right { far } else { size.height })
+        } else {
+            Rect::new(if left { -far } else { 0.0 }, -far, if right { far } else { size.width }, far)
+        };
         match &whole {
             Some(whole) => {
                 scene.push_clip_layer(Fill::NonZero, transform, &outside);
@@ -2618,9 +2719,10 @@ impl ElementCx<'_, '_> {
             // paints over the text of the line above where it reaches into it), when a box after
             // the first line reaches above its line and no selection, ellipsis or annotation
             // interleaves.
-            let fragments = self.inline_box_fragments(text_layout, transform, tops);
+            let fragments = self.inline_box_fragments(text_layout, transform, tops, None);
             let selection = self.context.selection_ranges.get(&self.node.id).copied();
-            let by_line = selection.is_none()
+            let highlighted = self.context.highlight_ranges.get(&self.node.id);
+            let by_line = highlighted.is_none()
                 && text_layout.ellipsis.is_none()
                 && text_layout.clamp.is_none()
                 && text_layout.annotations.is_empty()
@@ -2667,7 +2769,7 @@ impl ElementCx<'_, '_> {
             // Render text selection highlight (if any) using cached selection ranges
             // pyro: highlighted as Chromium paints selected text (`highlight`), but in lines cut
             // by an ellipsis; a recording paint (the PDF's) draws no selection.
-            let highlight = selection
+            let highlight = highlighted
                 .filter(|_| {
                     text_layout.ellipsis.is_none()
                         && text_layout.clamp.is_none()
@@ -2697,7 +2799,7 @@ impl ElementCx<'_, '_> {
                 shadows: true,
             };
             match highlight {
-                Some(selection) => crate::highlight::stroke_highlighted_text(
+                Some(ranges) => crate::highlight::stroke_highlighted_text(
                     scene,
                     self.context.dom,
                     self.node.id,
@@ -2706,7 +2808,8 @@ impl ElementCx<'_, '_> {
                     transform,
                     tops,
                     options,
-                    selection,
+                    &self.context.highlight_layers,
+                    ranges,
                     &mut draw_text_context,
                 ),
                 None => stroke_inline_text(
@@ -2852,7 +2955,13 @@ impl ElementCx<'_, '_> {
             )
         };
 
-        if self.context.backgrounds {
+        // pyro: the boxes of inline elements, as on horizontal lines (`inline_box_fragments`), but
+        // for `sideways-lr`, whose lines turn the other way (it keeps their background colours).
+        if !wm.contains(WritingMode::WRITING_MODE_SIDEWAYS_LR) {
+            for fragment in self.inline_box_fragments(text_layout, Affine::IDENTITY, None, Some(&line_transform)) {
+                self.paint_inline_box_fragment(scene, &fragment, line_transform(fragment.line), None);
+            }
+        } else if self.context.backgrounds {
             for (index, line) in text_layout.layout.lines().enumerate() {
                 let vertical = vertical(&line);
                 crate::text::draw_inline_backgrounds(
@@ -3187,7 +3296,7 @@ impl ElementCx<'_, '_> {
                 .and_then(|text_layout| Some((text_layout, text_layout.layout.lines().next()?)));
             // pyro: the marker goes with the line, which floats beside the item move.
             let line_x = first_line.as_ref().filter(|_| !rtl).map_or(0.0, |(text_layout, line)| {
-                line.metrics().inline_min_coord / text_layout.layout.scale()
+                marker_line_x(line) / text_layout.layout.scale()
             });
             let y_offset = if let Some((text_layout, first_text_line)) = &first_line
             {
@@ -3326,7 +3435,7 @@ impl ElementCx<'_, '_> {
                 let line_scale = text.layout.scale();
                 (
                     content_top + (line.metrics().baseline + shift as f32) / layout_scale + text.block_offset,
-                    line.metrics().inline_min_coord / line_scale,
+                    marker_line_x(line) / line_scale,
                 )
             }
             None => (marker_layout.lines().next().map_or(0.0, |line| line.metrics().baseline / layout_scale), 0.0),
@@ -3960,6 +4069,24 @@ impl ElementCx<'_, '_> {
                         None,
                     );
                 }
+                // pyro: an SVG image's root background covers its whole viewport (the object
+                // rect), not just the `viewBox` usvg paints it in: the bands of a letterboxed
+                // image are painted here (WPT css-sizing `aspect-ratio/replaced-element-004`).
+                if let (false, Some(color)) = (inline, svg.intrinsic_dimensions.root_background) {
+                    let size = svg.tree.size();
+                    let painted = (Affine::translate((x, y)) * viewport).transform_rect_bbox(Rect::new(
+                        0.0,
+                        0.0,
+                        size.width().into(),
+                        size.height().into(),
+                    ));
+                    let object = Rect::new(x, y, x + paint_size.width as f64, y + paint_size.height as f64);
+                    let mut bands = kurbo::BezPath::new();
+                    bands.extend(object.path_elements(0.1));
+                    bands.extend(painted.path_elements(0.1));
+                    let color = peniko::Color::from_rgba8(color.red, color.green, color.blue, color.alpha);
+                    scene.fill(Fill::EvenOdd, self.transform, color, None, &bands);
+                }
                 // pyro: with what the document knows of its filters (tainted primitives).
                 match crate::filters::svg_filter_notes(self.context.dom, self.node, &svg.tree) {
                     Some(notes) => {
@@ -4318,6 +4445,9 @@ struct InlineBoxFragment {
     reaches_above: bool,
     /// pyro: its element's style on the first line, in place of its own (`::first-line`).
     style: Option<style::servo_arc::Arc<ComputedValues>>,
+    /// pyro: a fragment of a vertical writing mode's turned line: `left` and `right` are its top
+    /// and bottom sides.
+    turned: bool,
 }
 
 /// pyro: the last cell (in tree order, which is the order positioned boxes paint in) of a collapsed
@@ -4339,4 +4469,16 @@ fn last_positioned_table_cell(dom: &BaseDocument, table: &blitz_dom::TableContex
         .rev()
         .find(|cell| row_positioned.get(cell.row as usize).copied().unwrap_or(false) || positioned(cell.node_id))
         .map(|cell| cell.node_id)
+}
+
+/// pyro: where an outside marker's line starts: floats beside the item move the line and its
+/// marker (WPT CSS2 `list-style-applies-to-017`), but the item's own floats on the line (in its
+/// content, also with text after them) come after the marker: it stays before the item's border
+/// box (WPT css-display `display-flow-root-list-item-001`, css-lists
+/// `outside-marker-with-float-in-content`).
+fn marker_line_x(line: &parley::Line<'_, blitz_dom::node::TextBrush>) -> f32 {
+    let own_float = line.items().any(|item| {
+        matches!(item, parley::PositionedLayoutItem::InlineBox(ibox) if ibox.kind == parley::InlineBoxKind::CustomOutOfFlow)
+    });
+    if own_float { 0.0 } else { line.metrics().inline_min_coord }
 }

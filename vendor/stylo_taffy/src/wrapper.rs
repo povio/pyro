@@ -21,7 +21,7 @@ bitflags! {
     /// Flags for style information that Taffy needs but which is not part of the
     /// stylo [`ComputedValues`]
     #[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
-    pub struct StyleFlags: u8 {
+    pub struct StyleFlags: u16 {
         /// Whether the node is a replaced element (e.g. an image or form control)
         const IS_REPLACED = 1 << 0;
         /// Whether an inline span laid out by the node (an inline root) is a containing block
@@ -45,6 +45,9 @@ bitflags! {
         /// §3.3): its used `overflow` is `visible` in both axes, so it is no scroll container
         /// (it does not establish a block formatting context, its margins collapse).
         const OVERFLOW_TO_VIEWPORT = 1 << 7;
+        /// pyro: the node is a `<fieldset>`: an inline one is an inline-block and a table-type one a
+        /// block (HTML § 15.3.13).
+        const IS_FIELDSET = 1 << 8;
     }
 }
 
@@ -81,6 +84,8 @@ impl<T: Deref<Target = ComputedValues>> TaffyStyloStyle<T> {
         let display = self.style.clone_display();
         if self.flags.contains(StyleFlags::IS_BUTTON_INPUT) {
             convert::button_input_display(display)
+        } else if self.flags.contains(StyleFlags::IS_FIELDSET) {
+            convert::fieldset_display(display)
         } else {
             display
         }
@@ -275,6 +280,15 @@ impl<T: Deref<Target = ComputedValues>> taffy::CoreStyle for TaffyStyloStyle<T> 
         self.size(taffy::Size {
             width: convert::dimension(&position_styles.width),
             height: convert::dimension(&position_styles.height),
+        })
+    }
+
+    #[inline]
+    fn calc_size_min(&self) -> taffy::Size<Option<taffy::CalcSizeFunction>> {
+        let position_styles = self.style.get_position();
+        self.size(taffy::Size {
+            width: convert::calc_size_auto(&position_styles.min_width),
+            height: convert::calc_size_auto(&position_styles.min_height),
         })
     }
 
@@ -1053,6 +1067,24 @@ impl<T: Deref<Target = ComputedValues>> taffy::GridContainerStyle for TaffyStylo
             }
         }
         Some(names)
+    }
+
+    /// pyro: synthesized baselines sit on the line-under edge (alphabetic) or in the middle (central:
+    /// vertical writing modes with upright or mixed text orientation), as Blink's
+    /// `LogicalBoxFragment::FirstBaselineOrSynthesize`.
+    fn baseline_synthesis(&self) -> taffy::Size<f32> {
+        let wm = self.style.writing_mode;
+        let block = if !wm.is_vertical() {
+            1.0
+        } else if !wm.is_sideways() {
+            0.5
+        } else if wm.intersects(WritingMode::LINE_INVERTED) {
+            // `vertical-lr`: the line-under side is the block-start side
+            0.0
+        } else {
+            1.0
+        };
+        taffy::Size { width: 1.0, height: block }
     }
 
     /// pyro: a subgrid's `normal` gap is its parent's.

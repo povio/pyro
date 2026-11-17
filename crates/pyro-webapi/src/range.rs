@@ -58,6 +58,10 @@ impl RangeData {
     pub(crate) fn from_owner(owner: Rc<RangeOwner>) -> RangeData {
         RangeData { page: owner.page.clone(), live: owner.live.clone(), owner }
     }
+    /// The live range, as a custom highlight keeps it (`crate::highlights`).
+    pub(crate) fn owner(&self) -> Rc<RangeOwner> {
+        self.owner.clone()
+    }
 }
 
 fn node_length_in(dom: &Dom, n: NodeId) -> JsResult<u32> {
@@ -676,6 +680,13 @@ fn static_point(
         return Err(JsError::dom("InvalidNodeTypeError", "The node provided is a doctype or an attribute."));
     }
     Ok((NodeHold::new(page, id)?, to_u32(off)?))
+}
+
+impl StaticRangeData {
+    /// Its boundary points.
+    pub(crate) fn points(&self) -> ((NodeId, u32), (NodeId, u32)) {
+        ((self.start.id, self.start_offset), (self.end.id, self.end_offset))
+    }
 }
 
 pub struct StaticRange;

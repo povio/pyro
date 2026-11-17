@@ -2654,6 +2654,17 @@ animation_type = "discrete"
 spec = "https://drafts.csswg.org/css-text-4/#text-spacing-trim-property"
 affects = "layout"
 
+# pyro: CSS Text 5 `text-fit` (scale a block's text to fill its lines), for Servo: blitz-dom
+# passes it to parley's line breaking. Inherited, as in Blink.
+[text-fit]
+type = "TextFit"
+initial = "computed::TextFit::none()"
+struct = "inherited_text"
+engine = "servo"
+animation_type = "discrete"
+spec = "https://drafts.csswg.org/css-text-5/#text-fit-property"
+affects = "layout"
+
 [text-autospace-size]
 type = "Number"
 initial = "0.125"
@@ -4366,6 +4377,48 @@ affects = "layout"
 servo_restyle_damage = "rebuild_box"
 type = "BoxOrient"
 initial = "computed::BoxOrient::Horizontal"
+
+# pyro: the other legacy `-webkit-box` properties for the servo engine (the gecko ones are the
+# `-moz-box-*` aliases): `StyleAdjuster::adjust_for_webkit_box` maps them onto flex layout.
+[-webkit-box-align]
+struct = "box"
+engine = "servo"
+spec = "Nonstandard (https://developer.mozilla.org/en-US/docs/Web/CSS/box-align)"
+animation_type = "discrete"
+affects = "layout"
+servo_restyle_damage = "rebuild_box"
+type = "BoxAlign"
+initial = "computed::BoxAlign::Stretch"
+
+[-webkit-box-pack]
+struct = "box"
+engine = "servo"
+spec = "Nonstandard (https://developer.mozilla.org/en-US/docs/Web/CSS/box-pack)"
+animation_type = "discrete"
+affects = "layout"
+servo_restyle_damage = "rebuild_box"
+type = "BoxPack"
+initial = "computed::BoxPack::Start"
+
+[-webkit-box-direction]
+struct = "box"
+engine = "servo"
+spec = "Nonstandard (https://developer.mozilla.org/en-US/docs/Web/CSS/box-direction)"
+animation_type = "discrete"
+affects = "layout"
+servo_restyle_damage = "rebuild_box"
+type = "BoxDirection"
+initial = "computed::BoxDirection::Normal"
+
+[-webkit-box-flex]
+struct = "box"
+engine = "servo"
+spec = "Nonstandard (https://developer.mozilla.org/en-US/docs/Web/CSS/box-flex)"
+animation_type = "discrete"
+affects = "layout"
+servo_restyle_damage = "rebuild_box"
+type = "NonNegativeNumber"
+initial = "From::from(0.)"
 
 [-moz-box-pack]
 struct = "xul"

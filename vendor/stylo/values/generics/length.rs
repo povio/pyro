@@ -174,6 +174,23 @@ pub enum GenericSize<LengthPercent> {
     FitContentFunction(LengthPercent),
     AnchorSizeFunction(Box<GenericAnchorSizeFunction<Self>>),
     AnchorContainingCalcFunction(LengthPercent),
+    /// pyro: `calc-size(auto, <calculation>)`, the calculation with its `size` as `100%`
+    /// (a percentage of the size the basis gives).
+    #[animation(error)]
+    #[css(function = "calc-size")]
+    CalcSizeAuto(LengthPercent),
+    /// pyro: `calc-size(fit-content, <calculation>)`, as `CalcSizeAuto`.
+    #[animation(error)]
+    #[css(function = "calc-size")]
+    CalcSizeFitContent(LengthPercent),
+    /// pyro: `calc-size(min-content, <calculation>)`, as `CalcSizeAuto`.
+    #[animation(error)]
+    #[css(function = "calc-size")]
+    CalcSizeMinContent(LengthPercent),
+    /// pyro: `calc-size(max-content, <calculation>)`, as `CalcSizeAuto`.
+    #[animation(error)]
+    #[css(function = "calc-size")]
+    CalcSizeMaxContent(LengthPercent),
 }
 
 impl<LengthPercent> SpecifiedValueInfo for GenericSize<LengthPercent>

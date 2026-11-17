@@ -38,6 +38,15 @@ const STYLE: &str = "<!doctype html><style>@font-face{font-family:Ahem;src:url(a
 /// Renders `body` as a live page, the text of the element with id `start` selected from UTF-16
 /// offset `from` and that of `end` up to `to` (their first text children).
 fn render(body: &str, selection: Option<(&str, u32, &str, u32)>) -> RgbaImage {
+    render_highlighted(body, selection, &[])
+}
+
+/// A page's range: the text of the element with id `.0` from UTF-16 offset `.1` to that of `.2`
+/// up to `.3`.
+type Ends<'a> = (&'a str, u32, &'a str, u32);
+
+/// As `render`, with custom highlights (by name) or the target text (`None`) under the selection.
+fn render_highlighted(body: &str, selection: Option<Ends>, highlights: &[(Option<&str>, Ends)]) -> RgbaImage {
     let dom: DomRef = Rc::new(RefCell::new(pyro_dom::Dom::new()));
     let doc = parse_document(&dom, "http://test/", &format!("{STYLE}{body}"));
     let d = dom.borrow();
@@ -45,8 +54,12 @@ fn render(body: &str, selection: Option<(&str, u32, &str, u32)>) -> RgbaImage {
         let element = d.get_element_by_id(doc, id).unwrap().unwrap();
         render_key(d.first_child(element).unwrap().unwrap())
     };
-    let selection =
-        selection.map(|(start, from, end, to)| TextSelection { start: (text(start), from), end: (text(end), to) });
+    let ends = |(start, from, end, to): Ends| TextSelection { start: (text(start), from), end: (text(end), to) };
+    let selection = selection.map(ends);
+    let highlights: Vec<TextHighlight> = highlights
+        .iter()
+        .map(|&(name, range)| TextHighlight { name: name.map(str::to_owned), ranges: vec![ends(range)] })
+        .collect();
     let tree = d
         .render_tree(doc, &RenderHtml { style_text: &|_| None, stylesheet_href: &|_| None, mark: None, adopted: None })
         .unwrap();
@@ -71,6 +84,7 @@ fn render(body: &str, selection: Option<(&str, u32, &str, u32)>) -> RgbaImage {
         device_scale_factor: 1.0,
         live: Some(Live { page: 1, tree: Arc::new(tree), clip: None, interaction: None }),
         selection,
+        highlights,
         ..Default::default()
     };
     let fetcher: Arc<dyn Fetcher> = Arc::new(AhemFetch);
@@ -201,5 +215,47 @@ fn a_selection_style_without_colours_takes_the_system_highlight() {
         "<style>p::selection{background:#ff0} span::selection{--x:1}</style><p><span id=b>Sel ected</span></p>",
         ("b", 0, "b", 9),
         "<p><span style='background:#ff0'>Sel ected</span></p>",
+    );
+}
+
+/// Custom highlights and the target text are painted as the selection is, under it: a
+/// highlight's `currentcolor` text colour is that of the highlight below (WPT
+/// `highlight-painting-currentcolor-*`), and each property comes from the nearest style that
+/// declares it (WPT `cascade-highlight-005`).
+#[test]
+fn highlights_paint_under_the_selection() {
+    let highlighted = |test: &str, highlights: &[(Option<&str>, Ends)], selection: Option<Ends>, reference: &str| {
+        let (t, r) = (render_highlighted(test, selection, highlights), render(reference, None));
+        assert_eq!(differing(&t, &r), 0, "{test} with {highlights:?}\n  differs from the reference\n{reference}");
+    };
+    highlighted(
+        "<style>::highlight(h){color:#0a0;background:#00f}</style><p id=a>Some text</p>",
+        &[(Some("h"), ("a", 2, "a", 7))],
+        None,
+        "<p>So<span style='color:#0a0;background:#00f'>me te</span>xt</p>",
+    );
+    // The selection's `currentcolor` is the highlight's colour where they overlap.
+    highlighted(
+        "<style>::highlight(h){color:#0a0;background:#00f}::selection{color:currentcolor;background:#000}</style>\
+         <p id=a>Some text</p>",
+        &[(Some("h"), ("a", 0, "a", 4))],
+        Some(("a", 2, "a", 9)),
+        "<p><span style='color:#0a0;background:#00f'>So</span><span style='color:#0a0;background:#000'>me</span>\
+         <span style='background:#000'> text</span></p>",
+    );
+    // The target text: `Mark` on `MarkText` without a style of its own.
+    highlighted(
+        "<p id=a>Some text</p>",
+        &[(None, ("a", 5, "a", 9))],
+        None,
+        "<p>Some <span style='color:#000;background:#ff0'>text</span></p>",
+    );
+    // Colour from the span's style, background from the paragraph's.
+    highlighted(
+        "<style>p::selection{color:#ff0;background:#0a0}.s::selection{color:#f80}</style>\
+         <p id=a>Te<span id=b class=s>xt se</span>lected</p>",
+        &[],
+        Some(("a", 0, "b", 5)),
+        "<p><span style='color:#ff0;background:#0a0'>Te</span><span style='color:#f80;background:#0a0'>xt se</span>lected</p>",
     );
 }

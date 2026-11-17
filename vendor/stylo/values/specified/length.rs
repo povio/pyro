@@ -1876,6 +1876,10 @@ impl Size {
         parse_size_non_length!(Size, input, allow_webkit_fill_available,
                                "auto" => Auto);
         parse_fit_content_function!(Size, input, context, allow_quirks);
+        // pyro: `calc-size(<intrinsic keyword>, <calculation>)`.
+        if let Ok(size) = input.try_parse(|input| Self::parse_calc_size(context, input)) {
+            return Ok(size);
+        }
 
         let allow_anchor = allow_anchor_functions == ParseAnchorFunctions::Yes
             && crate::pref!("layout.css.anchor-positioning.enabled", gecko = true);
@@ -1943,6 +1947,27 @@ impl Size {
     #[inline]
     pub fn zero_percent() -> Self {
         GenericSize::LengthPercentage(NonNegativeLengthPercentage::zero_percent())
+    }
+    /// pyro: `calc-size(auto | fit-content | min-content | max-content, <calculation>)`.
+    fn parse_calc_size(context: &ParserContext, input: &mut Parser) -> Result<Self, ParseError> {
+        input.expect_function_matching("calc-size")?;
+        input.parse_nested_block(|input| {
+            let basis = try_match_ident_ignore_ascii_case! { input,
+                "auto" => 0u8,
+                "fit-content" => 1u8,
+                "min-content" => 2u8,
+                "max-content" => 3u8,
+            };
+            input.expect_comma()?;
+            let calc = CalcNode::parse_calc_size_calculation(context, input, AllowedNumericType::NonNegative)?;
+            let length = NonNegative(LengthPercentage::Calc(Box::new(calc)));
+            Ok(match basis {
+                0 => GenericSize::CalcSizeAuto(length),
+                1 => GenericSize::CalcSizeFitContent(length),
+                2 => GenericSize::CalcSizeMinContent(length),
+                _ => GenericSize::CalcSizeMaxContent(length),
+            })
+        })
     }
 }
 

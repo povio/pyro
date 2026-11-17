@@ -167,8 +167,8 @@ diff -ruN a/invalidation/viewport_units.rs b/invalidation/viewport_units.rs
      if uses_viewport_units {
 diff -ruN a/properties/computed_value_flags.rs b/properties/computed_value_flags.rs
 --- a/properties/computed_value_flags.rs	2026-11-11 19:55:57
-+++ b/properties/computed_value_flags.rs	2026-11-15 20:15:35
-@@ -143,6 +143,10 @@
++++ b/properties/computed_value_flags.rs	2026-11-17 00:11:39
+@@ -143,6 +143,14 @@
  
          /// Whether this style uses an element-scoped `random()`.
          const USES_ELEMENT_SCOPED_RANDOM = 1 << 29;
@@ -176,6 +176,10 @@ diff -ruN a/properties/computed_value_flags.rs b/properties/computed_value_flags
 +        /// pyro: the legacy line clamp applies to this box: it had `display: -webkit-box` (or
 +        /// `-webkit-inline-box`), `-webkit-box-orient: vertical` and a `-webkit-line-clamp`.
 +        const WEBKIT_LINE_CLAMP_APPLIES = 1 << 30;
++
++        /// pyro: a legacy horizontal `-webkit-box` laid out as flex: its children take
++        /// `-webkit-box-flex` as their flex factors and ignore `align-self`.
++        const IS_WEBKIT_BOX = 1 << 31;
      }
  }
  
@@ -263,7 +267,7 @@ diff -ruN a/properties/helpers.mako.rs b/properties/helpers.mako.rs
                              if !context.builder.effective_zoom_for_inheritance.is_one() {
 diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 --- a/properties/longhands.toml	2026-11-11 19:55:57
-+++ b/properties/longhands.toml	2026-11-16 18:58:01
++++ b/properties/longhands.toml	2026-11-17 00:11:39
 @@ -473,7 +473,6 @@
  type = "BreakBetween"
  initial = "computed::BreakBetween::Auto"
@@ -280,15 +284,15 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/css-break/#propdef-break-before"
  animation_type = "discrete"
  affects = "layout"
-@@ -491,9 +489,26 @@
+@@ -491,11 +489,28 @@
  type = "BreakWithin"
  initial = "computed::BreakWithin::Auto"
  struct = "box"
 -engine = "gecko"
  spec = "https://drafts.csswg.org/css-break/#propdef-break-inside"
-+animation_type = "discrete"
-+affects = "layout"
-+
+ animation_type = "discrete"
+ affects = "layout"
+ 
 +[orphans]
 +type = "PositiveInteger"
 +initial = "From::from(2)"
@@ -303,11 +307,13 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +initial = "From::from(2)"
 +struct = "inherited_text"
 +spec = "https://drafts.csswg.org/css-break/#propdef-widows"
- animation_type = "discrete"
++animation_type = "discrete"
 +servo_restyle_damage = "repaint"
- affects = "layout"
- 
++affects = "layout"
++
  [caption-side]
+ type = "table::CaptionSide"
+ initial = "computed::table::CaptionSide::Top"
 @@ -591,7 +606,6 @@
  type = "Color"
  initial = "computed_value::T::currentcolor()"
@@ -403,10 +409,12 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  struct = "list"
  animation_type = "discrete"
  spec = "https://drafts.csswg.org/css-lists/#propdef-list-style-image"
-@@ -1427,6 +1441,17 @@
+@@ -1425,6 +1439,17 @@
+ struct = "position"
+ boxed = true
  spec = "https://drafts.csswg.org/css-images-3/#the-object-position"
- affects = "layout"
- 
++affects = "layout"
++
 +# pyro: `object-view-box: none | <basic-shape-rect>` (CSS Images 5): the part of a replaced
 +# element's content that is its view, as a `clip-path` value of `none` or one rectangle.
 +[object-view-box]
@@ -416,15 +424,16 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +parse_method = "parse_object_view_box"
 +animation_type = "discrete"
 +spec = "https://drafts.csswg.org/css-images-5/#the-object-view-box"
-+affects = "layout"
-+
- [offset-anchor]
- type = "PositionOrAuto"
- initial = "computed::PositionOrAuto::auto()"
-@@ -1857,6 +1882,26 @@
- animation_type = "discrete"
- affects = "paint"
+ affects = "layout"
  
+ [offset-anchor]
+@@ -1854,7 +1879,27 @@
+ struct = "box"
+ engine = "gecko"
+ spec = "https://drafts.csswg.org/css-scroll-snap-1/#scroll-snap-stop"
++animation_type = "discrete"
++affects = "paint"
++
 +[scroll-marker-group]
 +type = "ScrollMarkerGroup"
 +initial = "computed::ScrollMarkerGroup::NONE"
@@ -440,14 +449,12 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +initial = "computed::ScrollTargetGroup::None"
 +struct = "box"
 +engine = "servo"
-+animation_type = "discrete"
+ animation_type = "discrete"
 +servo_restyle_damage = "repaint"
 +spec = "https://drafts.csswg.org/css-overflow-5/#scroll-target-group"
-+affects = "paint"
-+
+ affects = "paint"
+ 
  [scroll-snap-type]
- type = "ScrollSnapType"
- initial = "computed::ScrollSnapType::none()"
 @@ -2117,7 +2162,6 @@
  type = "TransformBox"
  initial = "computed::TransformBox::ViewBox"
@@ -456,10 +463,12 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/css-transforms/#transform-box"
  animation_type = "discrete"
  affects = "overflow"
-@@ -2599,6 +2643,17 @@
+@@ -2597,6 +2641,28 @@
+ gecko_pref = "layout.css.text-autospace.enabled"
+ has_effect_on_gecko_scrollbars = false
  spec = "https://drafts.csswg.org/css-text-4/#text-autospace-property"
- affects = "layout"
- 
++affects = "layout"
++
 +# pyro: CSS Text 4 `text-spacing-trim` (fullwidth punctuation trimming), for Servo: blitz-dom
 +# passes it to parley's shaping and line breaking.
 +[text-spacing-trim]
@@ -471,10 +480,19 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +spec = "https://drafts.csswg.org/css-text-4/#text-spacing-trim-property"
 +affects = "layout"
 +
++# pyro: CSS Text 5 `text-fit` (scale a block's text to fill its lines), for Servo: blitz-dom
++# passes it to parley's line breaking. Inherited, as in Blink.
++[text-fit]
++type = "TextFit"
++initial = "computed::TextFit::none()"
++struct = "inherited_text"
++engine = "servo"
++animation_type = "discrete"
++spec = "https://drafts.csswg.org/css-text-5/#text-fit-property"
+ affects = "layout"
+ 
  [text-autospace-size]
- type = "Number"
- initial = "0.125"
-@@ -2635,7 +2690,6 @@
+@@ -2635,7 +2701,6 @@
  type = "TextDecorationSkipInk"
  initial = "computed::TextDecorationSkipInk::Auto"
  struct = "inherited_text"
@@ -482,7 +500,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  animation_type = "discrete"
  spec = "https://drafts.csswg.org/css-text-decor-4/#text-decoration-skip-ink-property"
  affects = "overflow"
-@@ -2665,6 +2719,7 @@
+@@ -2665,6 +2730,7 @@
  servo_pref = "layout.css.text-emphasis.enabled"
  animation_type = "discrete"
  spec = "https://drafts.csswg.org/css-text-decor/#propdef-text-emphasis-style"
@@ -490,10 +508,12 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  affects = "overflow"
  
  [text-underline-offset]
-@@ -3173,6 +3228,15 @@
+@@ -3171,6 +3237,15 @@
+ boxed = true
+ logical_group = "border-radius"
  logical = true
- affects = "paint"
- 
++affects = "paint"
++
 +[border-shape]
 +type = "basic_shape::BorderShape"
 +initial = "generics::basic_shape::BorderShape::None"
@@ -501,12 +521,10 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +animation_type = "none"
 +boxed = true
 +spec = "https://drafts.csswg.org/css-borders-4/#propdef-border-shape"
-+affects = "paint"
-+
+ affects = "paint"
+ 
  [corner-top-left-shape]
- type = "CornerShape"
- initial = "computed::CornerShape::round()"
-@@ -3383,9 +3447,9 @@
+@@ -3383,9 +3458,9 @@
  type = "MarginTrim"
  initial = "computed::MarginTrim::empty()"
  struct = "margin"
@@ -517,7 +535,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/css-box-4/#propdef-margin-trim"
  affects = "layout"
  
-@@ -3694,6 +3758,7 @@
+@@ -3694,6 +3769,7 @@
  [box-decoration-break]
  struct = "border"
  spec = "https://drafts.csswg.org/css-break/#propdef-box-decoration-break"
@@ -525,7 +543,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  animation_type = "discrete"
  affects = "layout"
  type = "BoxDecorationBreak"
-@@ -3770,7 +3835,6 @@
+@@ -3770,7 +3846,6 @@
  
  [column-fill]
  struct = "column"
@@ -533,7 +551,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/css-multicol/#propdef-column-fill"
  animation_type = "discrete"
  affects = "layout"
-@@ -3901,9 +3965,9 @@
+@@ -3901,9 +3976,9 @@
  type = "TextOrientation"
  initial = "computed::TextOrientation::Mixed"
  
@@ -544,10 +562,13 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/css-images/#propdef-image-orientation"
  animation_type = "discrete"
  affects = "layout"
-@@ -4290,6 +4354,19 @@
- type = "BoxOrient"
- initial = "computed::BoxOrient::Horizontal"
- 
+@@ -4287,9 +4362,64 @@
+ affects = "layout"
+ gecko_ffi_name = "mBoxOrient"
+ aliases = ["-webkit-box-orient"]
++type = "BoxOrient"
++initial = "computed::BoxOrient::Horizontal"
++
 +# pyro: `-webkit-box-orient` for the servo engine (the gecko one is `-moz-box-orient`'s alias):
 +# with `display: -webkit-box` and `-webkit-line-clamp` it makes the legacy line clamp apply
 +# (`StyleAdjuster::adjust_for_webkit_box`).
@@ -558,8 +579,50 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +animation_type = "discrete"
 +affects = "layout"
 +servo_restyle_damage = "rebuild_box"
-+type = "BoxOrient"
-+initial = "computed::BoxOrient::Horizontal"
+ type = "BoxOrient"
+ initial = "computed::BoxOrient::Horizontal"
+ 
++# pyro: the other legacy `-webkit-box` properties for the servo engine (the gecko ones are the
++# `-moz-box-*` aliases): `StyleAdjuster::adjust_for_webkit_box` maps them onto flex layout.
++[-webkit-box-align]
++struct = "box"
++engine = "servo"
++spec = "Nonstandard (https://developer.mozilla.org/en-US/docs/Web/CSS/box-align)"
++animation_type = "discrete"
++affects = "layout"
++servo_restyle_damage = "rebuild_box"
++type = "BoxAlign"
++initial = "computed::BoxAlign::Stretch"
++
++[-webkit-box-pack]
++struct = "box"
++engine = "servo"
++spec = "Nonstandard (https://developer.mozilla.org/en-US/docs/Web/CSS/box-pack)"
++animation_type = "discrete"
++affects = "layout"
++servo_restyle_damage = "rebuild_box"
++type = "BoxPack"
++initial = "computed::BoxPack::Start"
++
++[-webkit-box-direction]
++struct = "box"
++engine = "servo"
++spec = "Nonstandard (https://developer.mozilla.org/en-US/docs/Web/CSS/box-direction)"
++animation_type = "discrete"
++affects = "layout"
++servo_restyle_damage = "rebuild_box"
++type = "BoxDirection"
++initial = "computed::BoxDirection::Normal"
++
++[-webkit-box-flex]
++struct = "box"
++engine = "servo"
++spec = "Nonstandard (https://developer.mozilla.org/en-US/docs/Web/CSS/box-flex)"
++animation_type = "discrete"
++affects = "layout"
++servo_restyle_damage = "rebuild_box"
++type = "NonNegativeNumber"
++initial = "From::from(0.)"
 +
  [-moz-box-pack]
  struct = "xul"
@@ -780,8 +843,16 @@ diff -ruN a/servo/restyle_damage.rs b/servo/restyle_damage.rs
  fn compute_damage(old: &ComputedValues, new: &ComputedValues) -> ServoRestyleDamage {
 diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
 --- a/servo/selector_parser.rs	2026-11-11 19:55:57
-+++ b/servo/selector_parser.rs	2026-11-16 18:59:05
-@@ -50,6 +50,21 @@
++++ b/servo/selector_parser.rs	2026-11-16 21:15:31
+@@ -24,7 +24,6 @@
+ use selectors::attr::{AttrSelectorOperation, CaseSensitivity, NamespaceConstraint};
+ use selectors::parser::SelectorParseErrorKind;
+ use std::fmt;
+-use std::mem;
+ use std::ops::{Deref, DerefMut};
+ use style_traits::{ParseError, StyleParseErrorKind};
+ 
+@@ -50,6 +49,27 @@
      Backdrop,
      DetailsContent,
      Marker,
@@ -800,10 +871,54 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
 +    ScrollButtonDown,
 +    ScrollButtonLeft,
 +    ScrollButtonRight,
++    // pyro: CSS Pseudo-Elements 4's `::target-text`, and the Custom Highlight API's
++    // `::highlight(<name>)`, its name by `highlight_name_id` (every rule is filed under
++    // `Highlight(ANY_HIGHLIGHT)`, `rule_map_key`; a lazy style for one name matches it with a
++    // `matching_fn`). Both are styled lazily, when highlights are painted.
++    TargetText,
++    Highlight(u16),
  
      // Implemented pseudos. These pseudo elements are representing the
      // elements within an UA shadow DOM, and matching the elements with
-@@ -93,6 +108,18 @@
+@@ -76,8 +96,36 @@
+ }
+ 
+ /// The count of all pseudo-elements.
+-pub const PSEUDO_COUNT: usize = PseudoElement::ServoTableWrapper as usize + 1;
++pub const PSEUDO_COUNT: usize = PseudoElement::ServoTableWrapper.discriminant() as usize + 1;
+ 
++/// pyro: the `Highlight` argument rules for any `::highlight()` are filed under; names get ids
++/// from 1 (`highlight_name_id`).
++pub const ANY_HIGHLIGHT: u16 = 0;
++
++static HIGHLIGHT_NAMES: std::sync::RwLock<Vec<Atom>> = std::sync::RwLock::new(Vec::new());
++
++/// pyro: the id of a `::highlight()` name (ids live as long as the process; names are few).
++pub fn highlight_name_id(name: &Atom) -> u16 {
++    if let Some(index) = HIGHLIGHT_NAMES.read().unwrap().iter().position(|n| n == name) {
++        return index as u16 + 1;
++    }
++    let mut names = HIGHLIGHT_NAMES.write().unwrap();
++    if let Some(index) = names.iter().position(|n| n == name) {
++        return index as u16 + 1;
++    }
++    if names.len() >= u16::MAX as usize - 1 {
++        return u16::MAX;
++    }
++    names.push(name.clone());
++    names.len() as u16
++}
++
++/// pyro: the name of a `::highlight()` id (`None` for `ANY_HIGHLIGHT` or an unknown id).
++pub fn highlight_name(id: u16) -> Option<Atom> {
++    let index = (id as usize).checked_sub(1)?;
++    HIGHLIGHT_NAMES.read().unwrap().get(index).cloned()
++}
++
+ impl ToCss for PseudoElement {
+     fn to_css<W>(&self, dest: &mut W) -> fmt::Result
+     where
+@@ -93,6 +141,26 @@
              Backdrop => "::backdrop",
              DetailsContent => "::details-content",
              Marker => "::marker",
@@ -819,14 +934,21 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
 +            ScrollButtonDown => "::scroll-button(down)",
 +            ScrollButtonLeft => "::scroll-button(left)",
 +            ScrollButtonRight => "::scroll-button(right)",
++            TargetText => "::target-text",
++            Highlight(id) => {
++                dest.write_str("::highlight(")?;
++                if let Some(name) = highlight_name(id) {
++                    serialize_identifier(&name.to_string(), dest)?;
++                }
++                return dest.write_char(')');
++            },
              ColorSwatch => "::color-swatch",
              FileSelectorButton => "::file-selector-button",
              Placeholder => "::placeholder",
-@@ -115,6 +142,42 @@
- impl ::selectors::parser::PseudoElement for PseudoElement {
+@@ -116,6 +184,42 @@
      fn parses_as_element_backed(&self) -> bool {
          matches!(self, Self::DetailsContent)
-+    }
+     }
 +
 +    // pyro: `::before::marker` and `::after::marker` (CSS Pseudo-Elements 4 § 4.1): the marker
 +    // of a `::before` or `::after` box that is a list item.
@@ -862,10 +984,31 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
 +                | Self::FileSelectorButton
 +                | Self::DetailsContent
 +        )
-     }
++    }
  }
  
-@@ -137,7 +200,8 @@
+ /// The number of eager pseudo-elements. Keep this in sync with cascade_type.
+@@ -126,18 +230,26 @@
+     #[inline]
+     pub fn eager_index(&self) -> usize {
+         debug_assert!(self.is_eager());
+-        self.clone() as usize
++        self.discriminant() as usize
+     }
+ 
++    /// pyro: the variant's tag (`Highlight` carries a name id, so no `as` cast).
++    #[inline]
++    pub const fn discriminant(&self) -> u8 {
++        // SAFETY: a `#[repr(u8)]` enum starts with its `u8` tag.
++        unsafe { *(self as *const Self as *const u8) }
++    }
++
+     /// An index for this pseudo-element to be indexed in an enumerated array.
+     #[inline]
+     pub fn index(&self) -> usize {
+-        self.clone() as usize
++        self.discriminant() as usize
+     }
  
      /// An array of `None`, one per pseudo-element.
      pub fn pseudo_none_array<T>() -> [Option<T>; PSEUDO_COUNT] {
@@ -875,10 +1018,29 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
      }
  
      /// Creates a pseudo-element from an eager index.
-@@ -168,6 +232,41 @@
-         *self == PseudoElement::Marker
+@@ -145,8 +257,15 @@
+     pub fn from_eager_index(i: usize) -> Self {
+         const _: () = assert!(EAGER_PSEUDO_COUNT <= (u8::MAX as usize));
+         assert!(i < EAGER_PSEUDO_COUNT);
+-        let result: PseudoElement = unsafe { mem::transmute(i as u8) };
++        let result = match i {
++            0 => PseudoElement::After,
++            1 => PseudoElement::Before,
++            2 => PseudoElement::Selection,
++            3 => PseudoElement::FirstLetter,
++            _ => PseudoElement::FirstLine,
++        };
+         debug_assert!(result.is_eager());
++        debug_assert_eq!(result.eager_index(), i);
+         result
      }
  
+@@ -166,8 +285,45 @@
+     #[inline]
+     pub fn is_marker(&self) -> bool {
+         *self == PseudoElement::Marker
++    }
++
 +    /// pyro: whether this pseudo-element is `::scroll-marker`.
 +    #[inline]
 +    pub fn is_scroll_marker(&self) -> bool {
@@ -900,8 +1062,8 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
 +                | PseudoElement::ScrollButtonLeft
 +                | PseudoElement::ScrollButtonRight
 +        )
-+    }
-+
+     }
+ 
 +    /// pyro: the key a rule for this pseudo-element is filed under in the stylist's maps: every
 +    /// `::scroll-button()` rule under `::scroll-button(*)`, as which a button's box is styled (its
 +    /// node then matches each rule's argument against its direction).
@@ -909,6 +1071,8 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
 +    pub fn rule_map_key(&self) -> PseudoElement {
 +        if self.is_scroll_button() {
 +            PseudoElement::ScrollButtonAll
++        } else if self.is_highlight() {
++            PseudoElement::Highlight(ANY_HIGHLIGHT)
 +        } else {
 +            *self
 +        }
@@ -917,7 +1081,7 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
      /// Whether this pseudo-element is the ::selection pseudo.
      #[inline]
      pub fn is_selection(&self) -> bool {
-@@ -261,7 +360,19 @@
+@@ -261,7 +417,21 @@
              | PseudoElement::SliderTrack
              | PseudoElement::MozProgressBar
              | PseudoElement::ServoTextControlInnerContainer
@@ -934,11 +1098,29 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
 +            | PseudoElement::ScrollButtonUp
 +            | PseudoElement::ScrollButtonDown
 +            | PseudoElement::ScrollButtonLeft
-+            | PseudoElement::ScrollButtonRight => PseudoElementCascadeType::Lazy,
++            | PseudoElement::ScrollButtonRight
++            | PseudoElement::TargetText
++            | PseudoElement::Highlight(_) => PseudoElementCascadeType::Lazy,
              PseudoElement::ServoAnonymousBox
              | PseudoElement::ServoAnonymousTable
              | PseudoElement::ServoAnonymousTableCell
-@@ -317,9 +428,12 @@
+@@ -292,7 +462,9 @@
+                 PropertyFlags::APPLIES_TO_MARKER
+             },
+             PseudoElement::Placeholder => PropertyFlags::APPLIES_TO_PLACEHOLDER,
+-            PseudoElement::Selection => PropertyFlags::APPLIES_TO_HIGHLIGHT,
++            PseudoElement::Selection | PseudoElement::TargetText | PseudoElement::Highlight(_) => {
++                PropertyFlags::APPLIES_TO_HIGHLIGHT
++            },
+             _ => PropertyFlags::empty(),
+         }
+     }
+@@ -313,19 +485,22 @@
+ 
+     /// Whether this pseudo-element is the ::highlight pseudo.
+     pub fn is_highlight(&self) -> bool {
+-        false
++        matches!(self, PseudoElement::Highlight(_))
      }
  
      /// Whether this pseudo-element takes an argument.
@@ -948,11 +1130,18 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
      #[inline]
      pub fn has_argument(&self) -> bool {
 -        false
-+        self.is_scroll_button()
++        self.is_scroll_button() || self.is_highlight()
      }
  
      /// Whether this pseudo-element is the ::target-text pseudo.
-@@ -341,7 +455,10 @@
+     #[inline]
+     pub fn is_target_text(&self) -> bool {
+-        false
++        *self == PseudoElement::TargetText
+     }
+ 
+     /// Whether this is a highlight pseudo-element that is styled lazily during
+@@ -341,7 +516,10 @@
      #[inline]
      pub fn is_element_backed(&self) -> bool {
          use selectors::parser::PseudoElement;
@@ -963,7 +1152,7 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
              || matches!(
                  self,
                  Self::Placeholder
-@@ -357,6 +474,14 @@
+@@ -357,6 +535,14 @@
      }
  }
  
@@ -978,7 +1167,7 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
  /// The type used for storing `:lang` arguments.
  pub type Lang = Box<str>;
  
-@@ -376,6 +501,9 @@
+@@ -376,6 +562,9 @@
      /// The :state` pseudo-class.
      CustomState(CustomState),
      Default,
@@ -988,7 +1177,7 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
      Defined,
      Disabled,
      Enabled,
-@@ -405,6 +533,12 @@
+@@ -405,6 +594,12 @@
      Required,
      ServoNonZeroBorder,
      Target,
@@ -1001,7 +1190,7 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
      UserInvalid,
      UserValid,
      Valid,
-@@ -417,11 +551,22 @@
+@@ -417,11 +612,22 @@
          matches!(*self, NonTSPseudoClass::Active | NonTSPseudoClass::Hover)
      }
  
@@ -1025,7 +1214,7 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
          )
      }
  
-@@ -441,6 +586,11 @@
+@@ -441,6 +647,11 @@
              serialize_identifier(lang, dest)?;
              return dest.write_char(')');
          }
@@ -1037,7 +1226,7 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
  
          dest.write_str(match *self {
              Self::Active => ":active",
-@@ -481,11 +631,14 @@
+@@ -481,11 +692,14 @@
              Self::Required => ":required",
              Self::ServoNonZeroBorder => ":-servo-nonzero-border",
              Self::Target => ":target",
@@ -1053,7 +1242,7 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
          })
      }
  }
-@@ -527,11 +680,14 @@
+@@ -527,11 +741,14 @@
              Self::ReadWrite => ElementState::READWRITE,
              Self::Required => ElementState::REQUIRED,
              Self::Target => ElementState::URLTARGET,
@@ -1069,7 +1258,7 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
                  ElementState::empty()
              },
          }
-@@ -646,6 +802,9 @@
+@@ -646,6 +863,9 @@
              "read-write" => NonTSPseudoClass::ReadWrite,
              "required" => NonTSPseudoClass::Required,
              "target" => NonTSPseudoClass::Target,
@@ -1079,32 +1268,31 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
              "user-invalid" => NonTSPseudoClass::UserInvalid,
              "user-valid" => NonTSPseudoClass::UserValid,
              "valid" => NonTSPseudoClass::Valid,
-@@ -697,6 +856,9 @@
+@@ -696,6 +916,9 @@
+             "state" => {
                  let result = AtomIdent::from(parser.expect_ident()?.as_ref());
                  NonTSPseudoClass::CustomState(CustomState(result))
-             },
++            },
 +            "dir" if !after_part => {
 +                NonTSPseudoClass::Dir(parser.expect_ident()?.to_ascii_lowercase().into())
-+            },
+             },
              _ => return Err(ParseError::custom(SelectorParseErrorKind::UnexpectedIdent)),
          };
- 
-@@ -714,6 +876,9 @@
+@@ -714,6 +937,10 @@
              "first-letter" => FirstLetter,
              "first-line" if crate::pref!("layout.css.first-line.enabled") => FirstLine,
              "marker" => Marker,
 +            "scroll-marker-group" => ScrollMarkerGroup,
 +            "scroll-marker" => ScrollMarker,
 +            "column" => Column,
++            "target-text" => TargetText,
              "details-content" => DetailsContent,
              "color-swatch" => ColorSwatch,
              "placeholder" => Placeholder,
-@@ -774,6 +939,33 @@
-         };
- 
+@@ -776,6 +1003,37 @@
          Ok(pseudo_element)
-+    }
-+
+     }
+ 
 +    // pyro: `::scroll-button(<direction> | *)` (CSS Overflow 5 § 3.2).
 +    fn parse_functional_pseudo_element(
 +        &self,
@@ -1112,6 +1300,10 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
 +        arguments: &mut CssParser<'i>,
 +    ) -> Result<PseudoElement, ParseError> {
 +        use self::PseudoElement::*;
++        if name.eq_ignore_ascii_case("highlight") {
++            let ident = arguments.expect_ident()?;
++            return Ok(Highlight(highlight_name_id(&Atom::from(ident.as_ref()))));
++        }
 +        if !name.eq_ignore_ascii_case("scroll-button") {
 +            return Err(ParseError::custom(SelectorParseErrorKind::UnexpectedIdent));
 +        }
@@ -1130,13 +1322,15 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
 +            "right" => ScrollButtonRight,
 +            _ => return Err(ParseError::custom(SelectorParseErrorKind::UnexpectedIdent)),
 +        })
-     }
- 
++    }
++
      fn default_namespace(&self) -> Option<Namespace> {
+         self.namespaces.default.as_ref().map(|ns| ns.clone())
+     }
 diff -ruN a/style_adjuster.rs b/style_adjuster.rs
 --- a/style_adjuster.rs	2026-11-11 19:55:57
-+++ b/style_adjuster.rs	2026-11-16 18:58:01
-@@ -184,6 +184,36 @@
++++ b/style_adjuster.rs	2026-11-17 00:12:05
+@@ -184,8 +184,86 @@
          self.style
              .mutate_box()
              .set_adjusted_display(new_display, false);
@@ -1166,14 +1360,83 @@ diff -ruN a/style_adjuster.rs b/style_adjuster.rs
 +            (false, true) => Display::Flex,
 +            (false, false) => Display::InlineFlex,
 +        };
++        // pyro: a horizontal box is a single-line flex row: `-webkit-box-direction`,
++        // `-webkit-box-align` and `-webkit-box-pack` give its direction and alignment.
++        if !vertical {
++            use crate::values::computed::{BoxAlign, BoxDirection, BoxPack};
++            use crate::values::specified::align::{AlignFlags, ContentDistribution, ItemPlacement};
++            use crate::values::specified::position::{FlexDirection, FlexWrap};
++            let (align, pack, direction) = (
++                box_style.slow_clone__webkit_box_align(),
++                box_style.slow_clone__webkit_box_pack(),
++                box_style.slow_clone__webkit_box_direction(),
++            );
++            let pos = self.style.mutate_position();
++            pos.set_flex_direction(match direction {
++                BoxDirection::Normal => FlexDirection::Row,
++                BoxDirection::Reverse => FlexDirection::RowReverse,
++            });
++            pos.set_flex_wrap(FlexWrap::NOWRAP);
++            pos.set_align_items(ItemPlacement(match align {
++                BoxAlign::Stretch => AlignFlags::STRETCH,
++                BoxAlign::Start => AlignFlags::FLEX_START,
++                BoxAlign::Center => AlignFlags::CENTER,
++                BoxAlign::Baseline => AlignFlags::BASELINE,
++                BoxAlign::End => AlignFlags::FLEX_END,
++            }));
++            pos.set_justify_content(ContentDistribution::new(match pack {
++                BoxPack::Start => AlignFlags::FLEX_START,
++                BoxPack::Center => AlignFlags::CENTER,
++                BoxPack::End => AlignFlags::FLEX_END,
++                BoxPack::Justify => AlignFlags::SPACE_BETWEEN,
++            }));
++            self.style.add_flags(ComputedValueFlags::IS_WEBKIT_BOX);
++        }
 +        self.style.mutate_box().set_adjusted_display(new_display, true);
 +        if clamps {
 +            self.style.add_flags(ComputedValueFlags::WEBKIT_LINE_CLAMP_APPLIES);
 +        }
      }
  
++    /// pyro: a child of a legacy horizontal `-webkit-box` (laid out as flex) flexes by
++    /// `-webkit-box-flex`, growing and shrinking alike, and its `align-self` does nothing (the
++    /// box's `-webkit-box-align` aligns it): Blink's `LayoutDeprecatedFlexibleBox`.
++    #[cfg(feature = "servo")]
++    fn adjust_for_webkit_box_child(&mut self, layout_parent_style: &ComputedValues) {
++        use crate::values::specified::align::SelfAlignment;
++        if !layout_parent_style.flags.contains(ComputedValueFlags::IS_WEBKIT_BOX) {
++            return;
++        }
++        let flex = self.style.get_box().slow_clone__webkit_box_flex();
++        let pos = self.style.mutate_position();
++        pos.set_flex_grow(flex);
++        pos.set_flex_shrink(flex);
++        pos.set_align_self(SelfAlignment::auto());
++    }
++
      /// CSS 2.1 section 9.7:
-@@ -821,6 +851,90 @@
+     ///
+     ///    If 'position' has the value 'absolute' or 'fixed', [...] the computed
+@@ -419,9 +497,16 @@
+         }
+ 
+         if overflow_x.is_scrollable() != overflow_y.is_scrollable() {
++            // pyro: `clip` beside `hidden` stays `clip`, as in Blink: that axis neither scrolls nor
++            // keeps a scroll offset (WPT css-overflow `single-axis-overflow-scroll-to-clip`)
++            use crate::values::computed::Overflow;
++            let adjust = |own: Overflow, other: Overflow| match (own, other) {
++                (Overflow::Clip, Overflow::Hidden) => Overflow::Clip,
++                _ => own.to_scrollable(),
++            };
+             let box_style = self.style.mutate_box();
+-            box_style.set_overflow_x(overflow_x.to_scrollable());
+-            box_style.set_overflow_y(overflow_y.to_scrollable());
++            box_style.set_overflow_x(adjust(overflow_x, overflow_y));
++            box_style.set_overflow_y(adjust(overflow_y, overflow_x));
+         }
+     }
+ 
+@@ -821,6 +906,90 @@
      /// for web-compat reasons.
      /// We intentionally don't check 'list-style-image' below since we want it to use
      /// the same font as its fallback ('list-style-type') in case it fails to load.
@@ -1264,16 +1527,19 @@ diff -ruN a/style_adjuster.rs b/style_adjuster.rs
      #[cfg(feature = "gecko")]
      fn adjust_for_marker_pseudo(&mut self, author_or_user_specified_properties: &LonghandIdSet) {
          use crate::values::computed::counters::Content;
-@@ -1064,6 +1178,8 @@
+@@ -1064,6 +1233,11 @@
          //     "Should always have an element around for non-pseudo styles"
          // );
  
 +        #[cfg(feature = "servo")]
-+        self.adjust_for_webkit_box();
++        {
++            self.adjust_for_webkit_box();
++            self.adjust_for_webkit_box_child(layout_parent_style);
++        }
          self.adjust_for_links(element);
          self.adjust_for_prohibited_display_contents(element);
          #[cfg(feature = "gecko")]
-@@ -1090,6 +1206,12 @@
+@@ -1090,6 +1264,12 @@
          self.adjust_for_appearance(element);
          #[cfg(feature = "gecko")]
          self.adjust_for_marker_pseudo(author_or_user_specified_properties);
@@ -1882,9 +2148,25 @@ diff -ruN a/values/computed/image.rs b/values/computed/image.rs
              Image::LightDark(_) => unreachable!("Shouldn't have computed image-set values"),
          }
      }
+diff -ruN a/values/computed/length.rs b/values/computed/length.rs
+--- a/values/computed/length.rs	2026-11-11 19:55:57
++++ b/values/computed/length.rs	2026-11-16 23:22:52
+@@ -548,7 +548,11 @@
+             | Self::MinContent
+             | Self::FitContent
+             | Self::WebkitFillAvailable
+-            | Self::Stretch => {},
++            | Self::Stretch
++            | Self::CalcSizeAuto(_)
++            | Self::CalcSizeFitContent(_)
++            | Self::CalcSizeMinContent(_)
++            | Self::CalcSizeMaxContent(_) => {},
+             #[cfg(feature = "gecko")]
+             Self::MozAvailable => {},
+         }
 diff -ruN a/values/computed/mod.rs b/values/computed/mod.rs
 --- a/values/computed/mod.rs	2026-11-11 19:55:57
-+++ b/values/computed/mod.rs	2026-11-16 18:58:01
++++ b/values/computed/mod.rs	2026-11-16 17:29:45
 @@ -69,7 +69,7 @@
      ContainIntrinsicSize, ContainerName, ContainerType, ContentVisibility, DirectionProperty,
      Display, DominantBaseline, Float, ImageOrientation, Isolation, LineClamp, MarginTrim, Orient,
@@ -1899,13 +2181,13 @@ diff -ruN a/values/computed/mod.rs b/values/computed/mod.rs
  pub use self::text::{OverflowWrap, RubyPosition, TextOverflow, WordBreak, WordSpacing};
  pub use self::text::{TextAlign, TextAlignLast, TextEmphasisPosition, TextEmphasisStyle};
 -pub use self::text::{TextAutospace, TextUnderlinePosition};
-+pub use self::text::{TextAutospace, TextSpacingTrim, TextUnderlinePosition};
++pub use self::text::{TextAutospace, TextFit, TextSpacingTrim, TextUnderlinePosition};
  pub use self::text::{TextBoxEdge, TextBoxTrim};
  pub use self::text::{
      TextDecorationInset, TextDecorationLength, TextDecorationSkipInk, TextJustify,
 diff -ruN a/values/computed/text.rs b/values/computed/text.rs
 --- a/values/computed/text.rs	2026-11-11 19:55:57
-+++ b/values/computed/text.rs	2026-11-16 16:33:29
++++ b/values/computed/text.rs	2026-11-16 17:29:45
 @@ -26,7 +26,7 @@
  
  pub use crate::values::specified::text::{
@@ -1915,6 +2197,25 @@ diff -ruN a/values/computed/text.rs b/values/computed/text.rs
      TextDecorationLine, TextDecorationSkipInk, TextDecorationStyle, TextEmphasisPosition,
      TextJustify, TextOverflow, TextRendering, TextSecurity, TextSizeAdjust, TextTransform,
      TextUnderlinePosition, TextWrapMode, TextWrapStyle, UnicodeBidi, WhiteSpaceCollapse, WordBreak,
+@@ -99,6 +99,18 @@
+ /// The computed value of `text-indent`.
+ pub type TextIndent = GenericTextIndent<LengthPercentage>;
+ 
++/// pyro: a computed value for the `text-fit` property.
++pub type TextFit = crate::values::generics::text::GenericTextFit<crate::values::computed::Percentage>;
++
++impl TextFit {
++    /// `none`.
++    #[inline]
++    pub fn none() -> Self {
++        use crate::values::generics::text::{TextFitKind, TextFitTarget};
++        Self { kind: TextFitKind::None, target: TextFitTarget::Consistent, limit: None }
++    }
++}
++
+ /// A computed value for the `hyphenate-character` property.
+ pub type HyphenateLimitChars = GenericHyphenateLimitChars<CSSInteger>;
+ 
 diff -ruN a/values/generics/basic_shape.rs b/values/generics/basic_shape.rs
 --- a/values/generics/basic_shape.rs	2026-11-11 19:55:57
 +++ b/values/generics/basic_shape.rs	2026-11-16 16:33:29
@@ -2107,6 +2408,33 @@ diff -ruN a/values/generics/image.rs b/values/generics/image.rs
          }
      }
  }
+diff -ruN a/values/generics/length.rs b/values/generics/length.rs
+--- a/values/generics/length.rs	2026-11-11 19:55:57
++++ b/values/generics/length.rs	2026-11-16 23:22:52
+@@ -174,6 +174,23 @@
+     FitContentFunction(LengthPercent),
+     AnchorSizeFunction(Box<GenericAnchorSizeFunction<Self>>),
+     AnchorContainingCalcFunction(LengthPercent),
++    /// pyro: `calc-size(auto, <calculation>)`, the calculation with its `size` as `100%`
++    /// (a percentage of the size the basis gives).
++    #[animation(error)]
++    #[css(function = "calc-size")]
++    CalcSizeAuto(LengthPercent),
++    /// pyro: `calc-size(fit-content, <calculation>)`, as `CalcSizeAuto`.
++    #[animation(error)]
++    #[css(function = "calc-size")]
++    CalcSizeFitContent(LengthPercent),
++    /// pyro: `calc-size(min-content, <calculation>)`, as `CalcSizeAuto`.
++    #[animation(error)]
++    #[css(function = "calc-size")]
++    CalcSizeMinContent(LengthPercent),
++    /// pyro: `calc-size(max-content, <calculation>)`, as `CalcSizeAuto`.
++    #[animation(error)]
++    #[css(function = "calc-size")]
++    CalcSizeMaxContent(LengthPercent),
+ }
+ 
+ impl<LengthPercent> SpecifiedValueInfo for GenericSize<LengthPercent>
 diff -ruN a/values/generics/mod.rs b/values/generics/mod.rs
 --- a/values/generics/mod.rs	2026-11-11 19:55:57
 +++ b/values/generics/mod.rs	2026-11-11 19:55:57
@@ -2120,8 +2448,112 @@ diff -ruN a/values/generics/mod.rs b/values/generics/mod.rs
  pub struct GreaterThanOrEqualToOne<T>(pub T);
 diff -ruN a/values/generics/text.rs b/values/generics/text.rs
 --- a/values/generics/text.rs	2026-11-11 19:55:57
-+++ b/values/generics/text.rs	2026-11-16 11:59:59
-@@ -103,6 +103,34 @@
++++ b/values/generics/text.rs	2026-11-16 17:29:45
+@@ -84,6 +84,103 @@
+     }
+ }
+ 
++/// pyro: how `text-fit` (CSS Text 5) scales a block's text: not at all, up or down.
++#[derive(
++    Clone,
++    Copy,
++    Debug,
++    Eq,
++    Hash,
++    MallocSizeOf,
++    Parse,
++    PartialEq,
++    SpecifiedValueInfo,
++    ToComputedValue,
++    ToCss,
++    ToResolvedValue,
++    ToShmem,
++    ToTyped,
++)]
++#[repr(u8)]
++pub enum TextFitKind {
++    /// `none`
++    None,
++    /// `grow`
++    Grow,
++    /// `shrink`
++    Shrink,
++}
++
++/// pyro: which lines `text-fit` scales: all by one factor, or each line on its own (the last
++/// one too with `per-line-all`).
++#[derive(
++    Clone,
++    Copy,
++    Debug,
++    Eq,
++    Hash,
++    MallocSizeOf,
++    Parse,
++    PartialEq,
++    SpecifiedValueInfo,
++    ToComputedValue,
++    ToCss,
++    ToResolvedValue,
++    ToShmem,
++    ToTyped,
++)]
++#[repr(u8)]
++pub enum TextFitTarget {
++    /// `consistent`
++    Consistent,
++    /// `per-line`
++    PerLine,
++    /// `per-line-all`
++    PerLineAll,
++}
++
++/// pyro: a generic value for the `text-fit` property:
++/// `[none | grow | shrink] [consistent | per-line | per-line-all]? <percentage>?`.
++#[derive(
++    Clone,
++    Debug,
++    MallocSizeOf,
++    PartialEq,
++    SpecifiedValueInfo,
++    ToComputedValue,
++    ToResolvedValue,
++    ToShmem,
++    ToTyped,
++)]
++#[repr(C)]
++#[typed(todo_derive_fields)]
++pub struct GenericTextFit<Percentage> {
++    /// Whether text grows, shrinks or neither.
++    pub kind: TextFitKind,
++    /// Which lines are scaled.
++    pub target: TextFitTarget,
++    /// The limit on the scale factor (`100%` is 1).
++    pub limit: Option<Percentage>,
++}
++
++impl<Percentage: ToCss> ToCss for GenericTextFit<Percentage> {
++    fn to_css<W>(&self, dest: &mut CssWriter<W>) -> fmt::Result
++    where
++        W: Write,
++    {
++        self.kind.to_css(dest)?;
++        if self.target != TextFitTarget::Consistent {
++            dest.write_char(' ')?;
++            self.target.to_css(dest)?;
++        }
++        if let Some(limit) = &self.limit {
++            dest.write_char(' ')?;
++            limit.to_css(dest)?;
++        }
++        Ok(())
++    }
++}
++
+ /// A generic value for the `initial-letter` property.
+ #[derive(
+     Clone,
+@@ -103,8 +200,36 @@
      pub size: Number,
      /// The sink, >=1, if specified, 0 otherwise.
      pub sink: Integer,
@@ -2129,8 +2561,8 @@ diff -ruN a/values/generics/text.rs b/values/generics/text.rs
 +    /// as written: `sink` is 0 then.
 +    #[css(skip)]
 +    pub keyword: InitialLetterKeyword,
-+}
-+
+ }
+ 
 +/// pyro: the keyword of `initial-letter` that stands for its sink: `drop` (the size rounded
 +/// down) or `raise` (1).
 +#[derive(
@@ -2153,10 +2585,12 @@ diff -ruN a/values/generics/text.rs b/values/generics/text.rs
 +    Drop,
 +    /// `raise`
 +    Raise,
- }
- 
++}
++
  pub use self::GenericInitialLetter as InitialLetter;
-@@ -113,6 +141,7 @@
+ impl<N: Zero, I: Zero> InitialLetter<N, I> {
+     /// Returns `normal`.
+@@ -113,6 +238,7 @@
          InitialLetter {
              size: N::zero(),
              sink: I::zero(),
@@ -2164,7 +2598,7 @@ diff -ruN a/values/generics/text.rs b/values/generics/text.rs
          }
      }
  }
-@@ -126,6 +155,11 @@
+@@ -126,6 +252,11 @@
              return dest.write_str("normal");
          }
          self.size.to_css(dest)?;
@@ -2379,7 +2813,7 @@ diff -ruN a/values/specified/basic_shape.rs b/values/specified/basic_shape.rs
  pub type BasicShape =
 diff -ruN a/values/specified/box.rs b/values/specified/box.rs
 --- a/values/specified/box.rs	2026-11-11 19:55:57
-+++ b/values/specified/box.rs	2026-11-16 18:58:01
++++ b/values/specified/box.rs	2026-11-16 20:04:46
 @@ -15,7 +15,7 @@
      GenericLineClamp, GenericOverflowClipMargin, GenericPerspective, GenericScrollbarInset,
      MaxLines, OverflowClipMarginBox,
@@ -2433,6 +2867,15 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
      WebkitBox,
  }
  
+@@ -179,7 +180,7 @@
+     fn is_valid_for_list_item(self) -> bool {
+         match self {
+             DisplayInside::Flow => true,
+-            #[cfg(feature = "gecko")]
++            // pyro: `flow-root list-item` in servo too (CSS Display 3; Blink parses it).
+             DisplayInside::FlowRoot => true,
+             _ => false,
+         }
 @@ -239,7 +240,6 @@
      );
      pub const Block: Self =
@@ -2649,6 +3092,70 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
 +    None,
 +    Auto,
 +}
+diff -ruN a/values/specified/calc.rs b/values/specified/calc.rs
+--- a/values/specified/calc.rs	2026-11-11 19:55:57
++++ b/values/specified/calc.rs	2026-11-16 23:22:52
+@@ -305,6 +305,9 @@
+         const ANCHOR = 1 << 0;
+         /// `anchor-size()` function.
+         const ANCHOR_SIZE = 1 << 1;
++        /// pyro: the `size` keyword of a `calc-size()` calculation, parsed as `100%` (whose
++        /// basis is then the size of the `calc-size()` basis); other percentages are invalid.
++        const CALC_SIZE = 1 << 2;
+     }
+ }
+ 
+@@ -927,6 +930,11 @@
+                 if let Ok(t) = NoCalcResolution::parse_dimension(value, unit) {
+                     return Ok(CalcNode::Leaf(Leaf::Resolution(t)));
+                 }
++                Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError))
++            },
++            &Token::Percentage { .. }
++                if flags.additional_functions.intersects(AdditionalFunctions::CALC_SIZE) =>
++            {
+                 Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError))
+             },
+             &Token::Percentage { unit_value, .. } => {
+@@ -970,6 +978,15 @@
+                 let function = CalcNode::math_function(context, name)?;
+                 CalcNode::parse(context, input, function, flags)
+             },
++            Token::Ident(ident)
++                if flags.additional_functions.intersects(AdditionalFunctions::CALC_SIZE)
++                    && ident.eq_ignore_ascii_case("size") =>
++            {
++                Ok(CalcNode::Leaf(Leaf::Percentage(CalcPercentageLeaf::new(
++                    1.0,
++                    Optional::Some(NumericBaseType::Length),
++                ))))
++            },
+             Token::Ident(ident) => {
+                 let leaf = match_ignore_ascii_case! { &**ident,
+                     "e" => Leaf::Number(NoCalcNumber::new(std::f32::consts::E)),
+@@ -1631,6 +1648,22 @@
+             .map_err(|()| ParseError::custom(StyleParseErrorKind::UnspecifiedError))
+     }
+ 
++    /// pyro: the calculation of a `calc-size()`, its `size` keyword as `100%`.
++    pub fn parse_calc_size_calculation(
++        context: &ParserContext,
++        input: &mut Parser,
++        clamping_mode: AllowedNumericType,
++    ) -> Result<CalcLengthPercentage, ParseError> {
++        let flags = CalcParseFlags {
++            additional_functions: AdditionalFunctions::CALC_SIZE,
++            percentage_context: PercentageContext::allowed_with_hint(NumericBaseType::Length),
++            ..Default::default()
++        };
++        Self::parse_argument(context, input, flags)?
++            .into_length_or_percentage(clamping_mode)
++            .map_err(|()| ParseError::custom(StyleParseErrorKind::UnspecifiedError))
++    }
++
+     /// Convenience parsing function for percentages.
+     pub fn parse_percentage(
+         context: &ParserContext,
 diff -ruN a/values/specified/counters.rs b/values/specified/counters.rs
 --- a/values/specified/counters.rs	2026-11-11 19:55:57
 +++ b/values/specified/counters.rs	2026-11-15 09:17:37
@@ -3075,7 +3582,7 @@ diff -ruN a/values/specified/image.rs b/values/specified/image.rs
          context: &ParserContext,
 diff -ruN a/values/specified/length.rs b/values/specified/length.rs
 --- a/values/specified/length.rs	2026-11-11 19:55:57
-+++ b/values/specified/length.rs	2026-11-16 15:05:29
++++ b/values/specified/length.rs	2026-11-16 23:22:52
 @@ -187,13 +187,14 @@
              "lvi" if !in_page_rule => Self::Lvi,
              "dvi" if !in_page_rule => Self::Dvi,
@@ -3098,9 +3605,48 @@ diff -ruN a/values/specified/length.rs b/values/specified/length.rs
              _ => return Err(()),
          })
      }
+@@ -1875,6 +1876,10 @@
+         parse_size_non_length!(Size, input, allow_webkit_fill_available,
+                                "auto" => Auto);
+         parse_fit_content_function!(Size, input, context, allow_quirks);
++        // pyro: `calc-size(<intrinsic keyword>, <calculation>)`.
++        if let Ok(size) = input.try_parse(|input| Self::parse_calc_size(context, input)) {
++            return Ok(size);
++        }
+ 
+         let allow_anchor = allow_anchor_functions == ParseAnchorFunctions::Yes
+             && crate::pref!("layout.css.anchor-positioning.enabled", gecko = true);
+@@ -1942,6 +1947,27 @@
+     #[inline]
+     pub fn zero_percent() -> Self {
+         GenericSize::LengthPercentage(NonNegativeLengthPercentage::zero_percent())
++    }
++    /// pyro: `calc-size(auto | fit-content | min-content | max-content, <calculation>)`.
++    fn parse_calc_size(context: &ParserContext, input: &mut Parser) -> Result<Self, ParseError> {
++        input.expect_function_matching("calc-size")?;
++        input.parse_nested_block(|input| {
++            let basis = try_match_ident_ignore_ascii_case! { input,
++                "auto" => 0u8,
++                "fit-content" => 1u8,
++                "min-content" => 2u8,
++                "max-content" => 3u8,
++            };
++            input.expect_comma()?;
++            let calc = CalcNode::parse_calc_size_calculation(context, input, AllowedNumericType::NonNegative)?;
++            let length = NonNegative(LengthPercentage::Calc(Box::new(calc)));
++            Ok(match basis {
++                0 => GenericSize::CalcSizeAuto(length),
++                1 => GenericSize::CalcSizeFitContent(length),
++                2 => GenericSize::CalcSizeMinContent(length),
++                _ => GenericSize::CalcSizeMaxContent(length),
++            })
++        })
+     }
+ }
+ 
 diff -ruN a/values/specified/mod.rs b/values/specified/mod.rs
 --- a/values/specified/mod.rs	2026-11-11 19:55:57
-+++ b/values/specified/mod.rs	2026-11-16 18:58:01
++++ b/values/specified/mod.rs	2026-11-16 17:29:45
 @@ -48,7 +48,7 @@
      ContainIntrinsicSize, ContainerName, ContainerType, ContentVisibility, DirectionProperty,
      Display, DominantBaseline, Float, ImageOrientation, Isolation, LineClamp, MarginTrim, Orient,
@@ -3115,7 +3661,7 @@ diff -ruN a/values/specified/mod.rs b/values/specified/mod.rs
  pub use self::text::{OverflowWrap, TextEmphasisPosition, TextEmphasisStyle, WordBreak};
  pub use self::text::{TextAlignKeyword, TextDecorationLine, TextOverflow, WordSpacing};
 -pub use self::text::{TextAlignLast, TextAutospace, TextUnderlinePosition};
-+pub use self::text::{TextAlignLast, TextAutospace, TextSpacingTrim, TextUnderlinePosition};
++pub use self::text::{TextAlignLast, TextAutospace, TextFit, TextSpacingTrim, TextUnderlinePosition};
  pub use self::text::{TextBoxEdge, TextBoxTrim};
  pub use self::text::{
      TextDecorationInset, TextDecorationLength, TextDecorationSkipInk, TextJustify, TextTransform,
@@ -3172,8 +3718,32 @@ diff -ruN a/values/specified/number.rs b/values/specified/number.rs
          match self.0.unpack_mut() {
 diff -ruN a/values/specified/text.rs b/values/specified/text.rs
 --- a/values/specified/text.rs	2026-11-11 19:55:57
-+++ b/values/specified/text.rs	2026-11-16 16:33:29
-@@ -152,11 +152,26 @@
++++ b/values/specified/text.rs	2026-11-16 17:35:53
+@@ -25,6 +25,23 @@
+ use style_traits::{CssWriter, ParseError, StyleParseErrorKind, ToCss};
+ use style_traits::{KeywordsCollectFn, SpecifiedValueInfo};
+ 
++/// pyro: a specified value for the `text-fit` property.
++pub type TextFit = crate::values::generics::text::GenericTextFit<crate::values::specified::Percentage>;
++
++impl Parse for TextFit {
++    fn parse(context: &ParserContext, input: &mut Parser) -> Result<Self, ParseError> {
++        use crate::values::generics::text::{TextFitKind, TextFitTarget};
++        let kind = TextFitKind::parse(input)?;
++        let target = input
++            .try_parse(TextFitTarget::parse)
++            .unwrap_or(TextFitTarget::Consistent);
++        let limit = input
++            .try_parse(|i| crate::values::specified::Percentage::parse_non_negative(context, i))
++            .ok();
++        Ok(Self { kind, target, limit })
++    }
++}
++
+ /// A specified type for the `initial-letter` property.
+ pub type InitialLetter = GenericInitialLetter<Number, Integer>;
+ 
+@@ -152,11 +169,26 @@
          {
              return Ok(Self::normal());
          }
@@ -3201,7 +3771,7 @@ diff -ruN a/values/specified/text.rs b/values/specified/text.rs
      }
  }
  
-@@ -824,6 +839,10 @@
+@@ -824,6 +856,10 @@
          self.remove(Self::RIGHT); // Right is the default
          true
      }
@@ -3212,7 +3782,7 @@ diff -ruN a/values/specified/text.rs b/values/specified/text.rs
  }
  
  fn word_break_break_word_enabled(_: &ParserContext) -> bool {
-@@ -858,6 +877,10 @@
+@@ -858,6 +894,10 @@
      /// `anywhere`, and `word-break` behave like `normal`.
      #[parse(condition = "word_break_break_word_enabled")]
      BreakWord,
@@ -3223,10 +3793,12 @@ diff -ruN a/values/specified/text.rs b/values/specified/text.rs
  }
  
  /// Values for the `text-justify` CSS property.
-@@ -1333,6 +1356,38 @@
+@@ -1331,6 +1371,38 @@
+         const REPLACE = 1 << 6;
+         */
      }
- }
- 
++}
++
 +/// pyro: the `text-spacing-trim` property: which fullwidth punctuation is set half-width.
 +///
 +/// https://drafts.csswg.org/css-text-4/#text-spacing-trim-property
@@ -3257,11 +3829,9 @@ diff -ruN a/values/specified/text.rs b/values/specified/text.rs
 +    TrimBoth,
 +    TrimAll,
 +    Auto,
-+}
-+
+ }
+ 
  /* Bug 1980111: Uncomment the following to support 'replace' value.
- impl TextAutospace {
-     fn validate_mixed_flags(&self) -> bool {
 diff -ruN a/values/specified/transform.rs b/values/specified/transform.rs
 --- a/values/specified/transform.rs	2026-11-11 19:55:57
 +++ b/values/specified/transform.rs	2026-11-14 18:55:29

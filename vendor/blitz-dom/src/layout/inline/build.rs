@@ -280,7 +280,8 @@ fn in_vertical_multicol(nodes: &crate::NodeTree, root_id: NodeId) -> bool {
     false
 }
 
-/// pyro: whether an inline box with `style` has a border or padding over or under it.
+/// pyro: whether an inline box with `style` has a border or padding over or under it (left or
+/// right of it in a vertical writing mode).
 fn has_block_edges(style: &style::properties::ComputedValues) -> bool {
     use style::values::computed::Length;
     let (b, p) = (style.get_border(), style.get_padding());
@@ -290,6 +291,12 @@ fn has_block_edges(style: &style::properties::ComputedValues) -> bool {
     let padding = |v: &style::values::computed::NonNegativeLengthPercentage| {
         v.0.resolve(Length::new(0.0)).px() != 0.0 || v.0.has_percentage()
     };
+    if style.writing_mode.is_vertical() {
+        return border(&b.border_left_width, b.border_left_style)
+            || border(&b.border_right_width, b.border_right_style)
+            || padding(&p.padding_left)
+            || padding(&p.padding_right);
+    }
     border(&b.border_top_width, b.border_top_style)
         || border(&b.border_bottom_width, b.border_bottom_style)
         || padding(&p.padding_top)
@@ -744,8 +751,11 @@ fn build_inline_layout_with(
             layout.break_all_lines(None);
             layout.full_width()
         };
-        let space = advance_of("\u{a0}") + (parley_style.letter_spacing + parley_style.word_spacing) * scale;
+        // The space (U+0020) of the first font that has one: measured between two digits, as a
+        // font without spaces may still map U+00A0 (WPT css-text `tab-size-integer-005`).
         let ch = advance_of("0");
+        let space = (advance_of("0 0") - 2.0 * ch).max(0.0)
+            + (parley_style.letter_spacing + parley_style.word_spacing) * scale;
         text_layout.layout.set_tab_stops(space, ch / 2.0);
     }
     // pyro: the shaped text's content widths, for every layout of it (`TextLayout::
@@ -998,7 +1008,9 @@ fn build_inline_layout_with(
                             Some(s) => builder.push_style_span(contents_style(node.id, s)),
                             None => builder.push_style_modification_span(&[]),
                         }
-                        for child_id in node.children.iter().copied() {
+                        // pyro: with its `::before` and `::after`.
+                        let children = node.before().into_iter().chain(node.children.iter().copied()).chain(node.after());
+                        for child_id in children {
                             // node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
                             crate::util::ensure_stack(|| build_inline_layout_recursive(
                                 builder,
@@ -1247,7 +1259,7 @@ fn build_inline_layout_with(
                 match letter {
                     // pyro: an initial letter is a box of its own (`layout::first_letter`): the
                     // root's text leaves the letter out and holds the box in its place.
-                    Some((split, _)) if split.initial.is_some() => {
+                    Some((split, _)) if split.initial.is_some() || split.floated => {
                         let content = &data.content;
                         let head = &content[..split.range.start];
                         let text = text_transformer.transform(head, parent_text_transform, builder);
@@ -1286,7 +1298,25 @@ fn build_inline_layout_with(
                         let text =
                             text_transformer.transform(&data.content, parent_text_transform, builder);
                         let before = if hyphenates { word_before(builder.text()) } else { String::new() };
-                        builder.push_text(&hyphenate(&before, text));
+                        let text = hyphenate(&before, text);
+                        // pyro: a preserved newline ends the bidi paragraph as a `<br>` does: the
+                        // embeddings and overrides still open go on after it.
+                        let preserves_newlines = bidi
+                            && !bidi_scan.open_controls.is_empty()
+                            && parent_style.as_ref().is_some_and(|style| {
+                                use style::computed_values::white_space_collapse::T as Collapse;
+                                !matches!(style.get_inherited_text().white_space_collapse, Collapse::Collapse | Collapse::PreserveSpaces)
+                            });
+                        if preserves_newlines && text.contains('\n') {
+                            for piece in text.split_inclusive('\n') {
+                                builder.push_text(piece);
+                                if piece.ends_with('\n') {
+                                    reopen_bidi_controls(builder, bidi_scan);
+                                }
+                            }
+                        } else {
+                            builder.push_text(&text);
+                        }
                     }
                 }
                 text_nodes.push((node_id, start..builder.text().len()));

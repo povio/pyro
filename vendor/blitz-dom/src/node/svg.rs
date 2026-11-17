@@ -22,6 +22,10 @@ pub struct SvgIntrinsicDimensions {
     /// Whether the root declared a `viewBox` with a zero width or height,
     /// which disables rendering of the element per the SVG spec.
     pub degenerate_view_box: bool,
+    /// pyro: the root's `background-color` (attribute or `style` declaration). usvg paints it
+    /// over the `viewBox` only; a browser paints the root's background over the whole viewport
+    /// (the canvas), so an image drawn letterboxed shows it in the bands too.
+    pub root_background: Option<svgtypes::Color>,
 }
 
 impl SvgIntrinsicDimensions {
@@ -56,7 +60,19 @@ impl SvgIntrinsicDimensions {
             .and_then(|s| s.parse().ok())
             .unwrap_or_default();
 
+        let root_background = root
+            .attribute("style")
+            .and_then(|style| {
+                style.split(';').rev().find_map(|declaration| {
+                    let (name, value) = declaration.split_once(':')?;
+                    (name.trim() == "background-color").then(|| value.trim())
+                })
+            })
+            .or_else(|| root.attribute("background-color"))
+            .and_then(|value| value.parse::<svgtypes::Color>().ok());
+
         Self {
+            root_background,
             width: parse_length("width"),
             height: parse_length("height"),
             view_box,
@@ -314,7 +330,8 @@ impl crate::BaseDocument {
             }
             next = node.parent;
         }
-        let source = self.with_svg_sprites(root?.svg_source());
+        let root = root?;
+        let source = self.with_svg_sprites(self.with_svg_images(root.svg_source(), root.id));
         // pyro: `content` in a group anyrender_svg knows a box's reference by (its masks of
         // opaque shapes are drawn as the shapes).
         let document = format!(

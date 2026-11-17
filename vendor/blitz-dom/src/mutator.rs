@@ -379,6 +379,14 @@ impl DocumentMutator<'_> {
         self.rebuild_select_for_attribute(node_id, &name);
         self.rebuild_text_input_for_attribute(node_id, &name);
         let shadow_marker = crate::shadow::is_shadow_marker(&name);
+        // pyro: `quotes: auto` follows the language (`layout::counters`).
+        // pyro: `start`, `reversed` and `value` number list items (`layout::counters`).
+        if matches!(
+            name.local,
+            local_name!("lang") | local_name!("start") | local_name!("reversed") | local_name!("value")
+        ) {
+            self.doc.counters_dirty = true;
+        }
         self.set_attribute_impl(node_id, name, value);
         if shadow_marker {
             self.doc.sync_shadow_markers(node_id);
@@ -557,6 +565,14 @@ impl DocumentMutator<'_> {
         self.rebuild_select_for_attribute(node_id, &name);
         self.rebuild_text_input_for_attribute(node_id, &name);
         let shadow_marker = crate::shadow::is_shadow_marker(&name);
+        // pyro: `quotes: auto` follows the language (`layout::counters`).
+        // pyro: `start`, `reversed` and `value` number list items (`layout::counters`).
+        if matches!(
+            name.local,
+            local_name!("lang") | local_name!("start") | local_name!("reversed") | local_name!("value")
+        ) {
+            self.doc.counters_dirty = true;
+        }
         self.clear_attribute_impl(node_id, name);
         if shadow_marker {
             self.doc.sync_shadow_markers(node_id);

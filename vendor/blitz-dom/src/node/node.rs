@@ -1185,6 +1185,8 @@ impl Node {
         Some(
             if self.element_data().is_some_and(|el| el.is_button_input()) {
                 stylo_taffy::convert::button_input_display(display)
+            } else if self.is_fieldset() {
+                stylo_taffy::convert::fieldset_display(display)
             } else {
                 display
             },
@@ -1735,7 +1737,9 @@ impl Node {
                 // input's line is 8.25px down (painted from 8px), not 8.5px (9px).
                 let content_box_height = self.unrounded_layout().content_box_height();
                 let input_height = input_data.editor.try_layout().unwrap().height() / scale as f32;
-                let y_offset = ((content_box_height - input_height) / 2.0).max(0.0);
+                // pyro: a line taller than the content box is centred too, overflowing both
+                // edges (Blink; WPT css-overflow `input-scrollable-region-001`)
+                let y_offset = (content_box_height - input_height) / 2.0;
 
                 return y_offset as f64;
             }
@@ -2057,6 +2061,9 @@ impl Node {
             if el.is_button_input() {
                 flags |= stylo_taffy::StyleFlags::IS_BUTTON_INPUT;
             }
+            if el.name.local == local_name!("fieldset") {
+                flags |= stylo_taffy::StyleFlags::IS_FIELDSET;
+            }
             if let Some(inline_layout) = el.inline_layout_data.as_deref() {
                 flags |= inline_layout.span_cb_flags;
             }
@@ -2098,11 +2105,12 @@ impl Node {
     /// traversal, and when a cell's collapsed borders change.
     pub(crate) fn update_layout_styles(&mut self) {
         let collapsed_border = self.collapsed_border();
+        let fieldset = self.is_fieldset();
         let Some(stylo) = self.try_stylo_element_data_mut() else {
             return;
         };
         let derived = match stylo.get().as_ref().and_then(|data| data.styles.get_primary()) {
-            Some(style) => LayoutStyles::derive(style, collapsed_border),
+            Some(style) => LayoutStyles::derive(style, collapsed_border, fieldset),
             None => LayoutStyles::default(),
         };
         *stylo.layout_styles_mut() = derived;
@@ -2150,7 +2158,14 @@ impl Node {
         };
         stylo
             .layout_styles()
-            .assert_current(&primary, self.collapsed_border(), self.id);
+            .assert_current(&primary, self.collapsed_border(), self.is_fieldset(), self.id);
+    }
+
+    /// pyro: whether this is a `<fieldset>` element (laid out by its own rules whatever its
+    /// `display`: `stylo_taffy::convert::fieldset_display`).
+    #[inline]
+    pub(crate) fn is_fieldset(&self) -> bool {
+        self.data.downcast_element().is_some_and(|el| el.name.local == local_name!("fieldset"))
     }
 
     /// The node's style for Taffy, expressed in the axes of the writing mode `layout_wm` (the writing

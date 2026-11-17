@@ -25,6 +25,23 @@ use style_traits::values::SequenceWriter;
 use style_traits::{CssWriter, ParseError, StyleParseErrorKind, ToCss};
 use style_traits::{KeywordsCollectFn, SpecifiedValueInfo};
 
+/// pyro: a specified value for the `text-fit` property.
+pub type TextFit = crate::values::generics::text::GenericTextFit<crate::values::specified::Percentage>;
+
+impl Parse for TextFit {
+    fn parse(context: &ParserContext, input: &mut Parser) -> Result<Self, ParseError> {
+        use crate::values::generics::text::{TextFitKind, TextFitTarget};
+        let kind = TextFitKind::parse(input)?;
+        let target = input
+            .try_parse(TextFitTarget::parse)
+            .unwrap_or(TextFitTarget::Consistent);
+        let limit = input
+            .try_parse(|i| crate::values::specified::Percentage::parse_non_negative(context, i))
+            .ok();
+        Ok(Self { kind, target, limit })
+    }
+}
+
 /// A specified type for the `initial-letter` property.
 pub type InitialLetter = GenericInitialLetter<Number, Integer>;
 

@@ -66,9 +66,23 @@ pub(in super::super) struct GridItem {
     /// The item's first baseline (horizontal), measured from the top of its border box. Set from the item's
     /// intrinsic layout when resolving baseline alignment during track sizing, then from its final layout.
     pub baseline: Option<f32>,
+    /// pyro: the item's last baseline, from its final layout
+    pub last_baseline: Option<f32>,
+    /// pyro: for an item baseline-aligned in the axis last resolved, the distance from its track's edge (its
+    /// group's side) to its group's baseline, without `extra_margin` (`subgrid::record_subgrid_baselines`)
+    pub baseline_distance: Option<f32>,
     /// Shim for baseline alignment that acts like an extra top margin
-    /// TODO: Support last baseline and vertical text baselines
     pub baseline_shim: f32,
+    /// pyro: shim for `last baseline` alignment (or first baseline of an item whose block flow runs the
+    /// other way) in the block axis: an extra bottom margin
+    pub baseline_shim_block_end: f32,
+    /// pyro: shims for baseline alignment in the inline axis (`justify-self`), as extra margins on the
+    /// physical left (`start`) and right (`end`) sides
+    pub baseline_shim_inline: Line<f32>,
+    /// pyro: per axis (`width`: inline, `height`: block), whether the item's block axis lies along it and its
+    /// block flow then runs the other way from the grid's (`Some(true)`); `None` if it is perpendicular, so
+    /// that the item's baselines in that axis are synthesized (css-align-3 §9.1).
+    pub baseline_flow: Size<Option<bool>>,
     /// pyro: a table cell aligned on its row's baseline (`table_baseline`): `baseline_shim` moves its content
     /// down inside it rather than acting as a margin.
     pub table_baseline: bool,
@@ -172,7 +186,17 @@ impl GridItem {
             align_self: style.align_self().unwrap_or(parent_align_items),
             justify_self: style.justify_self().unwrap_or(parent_justify_items),
             baseline: None,
+            last_baseline: None,
+            baseline_distance: None,
             baseline_shim: 0.0,
+            baseline_shim_block_end: 0.0,
+            baseline_shim_inline: Line { start: 0.0, end: 0.0 },
+            baseline_flow: Size {
+                width: (style.subgrid_axis(crate::AbsoluteAxis::Horizontal) == crate::AbsoluteAxis::Vertical)
+                    .then(|| style.subgrid_reversed(crate::AbsoluteAxis::Horizontal)),
+                height: (style.subgrid_axis(crate::AbsoluteAxis::Vertical) == crate::AbsoluteAxis::Vertical)
+                    .then(|| style.subgrid_reversed(crate::AbsoluteAxis::Vertical)),
+            },
             table_baseline: false,
             width_unfloored: false,
             row_indexes: Line { start: 0, end: 0 }, // Properly initialised later
@@ -221,11 +245,40 @@ impl GridItem {
     #[inline(always)]
     pub fn participates_in_baseline_alignment(&self) -> bool {
         // pyro: a subgrid's items and a subgrid stretched in its rows take no part (yet).
-        !self.is_virtual
-            && !self.excluded.height
-            && self.align_self.keyword == AlignItemsKeyword::Baseline
+        // pyro: a subgrid's items in this grid's tracks (virtual items) take part (css-grid-2 §9)
+        !self.excluded.height
+            && matches!(self.align_self.keyword, AlignItemsKeyword::Baseline | AlignItemsKeyword::LastBaseline)
             && !self.has_auto_block_margin()
             && !self.has_cyclic_block_size_dependency()
+    }
+
+    /// pyro: whether the item takes part in baseline alignment in the inline axis (`justify-self: baseline`)
+    #[inline(always)]
+    pub fn participates_in_inline_baseline_alignment(&self) -> bool {
+        !self.excluded.width
+            && matches!(self.justify_self.keyword, AlignItemsKeyword::Baseline | AlignItemsKeyword::LastBaseline)
+            && !(self.margin.left.is_auto() || self.margin.right.is_auto())
+            && !(self.size.width.0.uses_percentage() && (self.crosses_intrinsic_column || self.crosses_flexible_column))
+    }
+
+    /// pyro: whether the item takes part in baseline alignment in `axis`
+    #[inline(always)]
+    pub fn participates_in_baseline_alignment_in(&self, axis: AbstractAxis) -> bool {
+        match axis {
+            AbstractAxis::Inline => self.participates_in_inline_baseline_alignment(),
+            AbstractAxis::Block => self.participates_in_baseline_alignment(),
+        }
+    }
+
+    /// pyro: whether the item's baseline-sharing group in `axis` aligns to the end of its tracks (css-align-3
+    /// §9.1: `last baseline`, flipped when the item's block flow runs the other way from the grid's)
+    #[inline(always)]
+    pub fn baseline_group_is_end(&self, axis: AbstractAxis) -> bool {
+        let (keyword, reversed) = match axis {
+            AbstractAxis::Inline => (self.justify_self.keyword, self.baseline_flow.width),
+            AbstractAxis::Block => (self.align_self.keyword, self.baseline_flow.height),
+        };
+        (keyword == AlignItemsKeyword::LastBaseline) != reversed.unwrap_or(false)
     }
 
     /// This item's placement in the specified axis in OriginZero coordinates
@@ -343,7 +396,7 @@ impl GridItem {
     /// Retrieve the known_dimensions for the given grid area size from the cache or compute them.
     /// The min-content and max-content contributions of an item are both computed from the same known_dimensions.
     #[inline(always)]
-    fn known_dimensions_cached(
+    pub(crate) fn known_dimensions_cached(
         &mut self,
         tree: &mut impl LayoutPartialTree,
         grid_area_size: Size<Option<f32>>,
@@ -594,13 +647,16 @@ impl GridItem {
     ) -> Size<f32> {
         Rect {
             left: self.margin.left.resolve_or_zero(Some(0.0), |val, basis| tree.calc(val, basis))
+                + self.baseline_shim_inline.start
                 + self.extra_margin.left,
             right: self.margin.right.resolve_or_zero(Some(0.0), |val, basis| tree.calc(val, basis))
+                + self.baseline_shim_inline.end
                 + self.extra_margin.right,
             top: self.margin.top.resolve_or_zero(inner_node_width, |val, basis| tree.calc(val, basis))
                 + self.baseline_shim
                 + self.extra_margin.top,
             bottom: self.margin.bottom.resolve_or_zero(inner_node_width, |val, basis| tree.calc(val, basis))
+                + self.baseline_shim_block_end
                 + self.extra_margin.bottom,
         }
         .sum_axes()
@@ -712,10 +768,12 @@ impl GridItem {
         let margin = self.margin.resolve_or_zero(grid_area_size.width, |val, basis| tree.calc(val, basis))
             + self.extra_margin;
         Size {
-            width: available_space.width.map(|width| f32_max(width - margin.horizontal_axis_sum(), 0.0)),
-            height: available_space
-                .height
-                .map(|height| f32_max(height - margin.vertical_axis_sum() - self.baseline_shim, 0.0)),
+            width: available_space
+                .width
+                .map(|width| f32_max(width - margin.horizontal_axis_sum() - self.baseline_shim_inline.sum(), 0.0)),
+            height: available_space.height.map(|height| {
+                f32_max(height - margin.vertical_axis_sum() - self.baseline_shim - self.baseline_shim_block_end, 0.0)
+            }),
         }
     }
 

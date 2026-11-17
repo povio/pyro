@@ -120,9 +120,37 @@ pub fn dimension(val: &stylo::Size) -> taffy::Dimension {
         stylo::Size::Stretch => taffy::Dimension::stretch(),
         stylo::Size::WebkitFillAvailable => taffy::Dimension::stretch(),
 
+        // pyro: `calc-size()` is laid out as its basis; blitz-dom applies the calculation.
+        stylo::Size::CalcSizeAuto(_) => taffy::Dimension::AUTO,
+        stylo::Size::CalcSizeFitContent(_) => taffy::Dimension::fit_content(),
+        stylo::Size::CalcSizeMinContent(_) => taffy::Dimension::min_content(),
+        stylo::Size::CalcSizeMaxContent(_) => taffy::Dimension::max_content(),
+
         // Anchor positioning will be flagged off for time being
         stylo::Size::AnchorSizeFunction(_) => unreachable!(),
         stylo::Size::AnchorContainingCalcFunction(_) => unreachable!(),
+    }
+}
+
+/// pyro: the calculation of a `calc-size()` value, its `size` being a percentage of the size the
+/// basis gives.
+#[inline]
+pub fn calc_size_function(val: &stylo::LengthPercentage) -> taffy::CalcSizeFunction {
+    match val.unpack() {
+        stylo::UnpackedLengthPercentage::Length(len) => taffy::CalcSizeFunction::Length(len.px()),
+        stylo::UnpackedLengthPercentage::Percentage(percentage) => taffy::CalcSizeFunction::Scale(percentage.0),
+        stylo::UnpackedLengthPercentage::Calc(calc_ptr) => {
+            taffy::CalcSizeFunction::Calc(calc_ptr as *const stylo::CalcLengthPercentage as *const ())
+        }
+    }
+}
+
+/// pyro: the calculation of a `calc-size(auto, ...)` value.
+#[inline]
+pub fn calc_size_auto(val: &stylo::Size) -> Option<taffy::CalcSizeFunction> {
+    match val {
+        stylo::Size::CalcSizeAuto(calc) => Some(calc_size_function(&calc.0)),
+        _ => None,
     }
 }
 
@@ -139,6 +167,12 @@ pub fn min_size(val: &stylo::Size) -> taffy::LengthPercentageAuto {
         stylo::Size::FitContentFunction(_) => taffy::LengthPercentageAuto::AUTO,
         stylo::Size::Stretch => taffy::LengthPercentageAuto::AUTO,
         stylo::Size::WebkitFillAvailable => taffy::LengthPercentageAuto::AUTO,
+        // pyro: `calc-size(auto, ...)` is the automatic minimum through its calculation
+        // (`CoreStyle::calc_size_min`); other bases are not supported.
+        stylo::Size::CalcSizeAuto(_)
+        | stylo::Size::CalcSizeFitContent(_)
+        | stylo::Size::CalcSizeMinContent(_)
+        | stylo::Size::CalcSizeMaxContent(_) => taffy::LengthPercentageAuto::AUTO,
 
         // Anchor positioning will be flagged off for time being
         stylo::Size::AnchorSizeFunction(_) => unreachable!(),
@@ -151,7 +185,12 @@ pub fn min_size(val: &stylo::Size) -> taffy::LengthPercentageAuto {
 #[inline]
 pub fn min_size_keyword(val: &stylo::Size) -> taffy::Dimension {
     match val {
-        stylo::Size::LengthPercentage(_) | stylo::Size::Auto => taffy::Dimension::AUTO,
+        stylo::Size::LengthPercentage(_)
+        | stylo::Size::Auto
+        | stylo::Size::CalcSizeAuto(_)
+        | stylo::Size::CalcSizeFitContent(_)
+        | stylo::Size::CalcSizeMinContent(_)
+        | stylo::Size::CalcSizeMaxContent(_) => taffy::Dimension::AUTO,
         keyword => dimension(keyword),
     }
 }
@@ -230,6 +269,20 @@ pub fn button_input_display(input: stylo::Display) -> stylo::Display {
     match input.outside() {
         stylo::DisplayOutside::None => input,
         stylo::DisplayOutside::Inline => stylo::Display::InlineBlock,
+        _ => stylo::Display::Block,
+    }
+}
+
+/// pyro: the display a `<fieldset>` is laid out with (HTML § 15.3.13 "The fieldset and legend
+/// elements"; Blink's LayoutFieldset): an inline-level one is an inline-block (`inline-flex` and
+/// `inline-grid` stay), a table or table-internal one a block.
+pub fn fieldset_display(input: stylo::Display) -> stylo::Display {
+    use stylo::{DisplayInside, DisplayOutside};
+    match (input.outside(), input.inside()) {
+        (DisplayOutside::None, _) => input,
+        (DisplayOutside::Inline, DisplayInside::Flex | DisplayInside::Grid) => input,
+        (DisplayOutside::Inline, _) => stylo::Display::InlineBlock,
+        (DisplayOutside::Block, DisplayInside::Flex | DisplayInside::Grid | DisplayInside::Flow | DisplayInside::FlowRoot) => input,
         _ => stylo::Display::Block,
     }
 }

@@ -319,15 +319,54 @@ pub struct Baselines {
     pub first: Option<f32>,
     /// The last baseline of the node, if any
     pub last: Option<f32>,
+    /// pyro: the first and last baselines of a node laid out in a writing mode orthogonal to its parent's
+    /// (`LayoutOutput::transpose`), measured along the parent's inline axis from the node's own block-start
+    /// edge. Only grid baseline alignment in the inline axis (`justify-self: baseline`) reads them.
+    pub orthogonal_first: Option<f32>,
+    /// pyro: see `orthogonal_first`
+    pub orthogonal_last: Option<f32>,
+    /// pyro: the first and last baselines measured from the node's block-start edge in its dominant baseline
+    /// (central for vertical writing modes with upright or mixed text), where they differ from `first`/`last`
+    /// (which a vertical inline layout gives in its lines' own coordinates, alphabetic from the line-over side).
+    /// Only baseline self-alignment in grids reads them.
+    pub dominant_first: Option<f32>,
+    /// pyro: see `dominant_first`
+    pub dominant_last: Option<f32>,
 }
 
 impl Baselines {
     /// A `Baselines` with neither a first nor a last baseline
-    pub const NONE: Self = Self { first: None, last: None };
+    pub const NONE: Self = Self {
+        first: None,
+        last: None,
+        orthogonal_first: None,
+        orthogonal_last: None,
+        dominant_first: None,
+        dominant_last: None,
+    };
 
     /// Create a `Baselines` from just a first baseline
     pub const fn from_first(first: Option<f32>) -> Self {
-        Self { first, last: None }
+        Self { first, ..Self::NONE }
+    }
+
+    /// pyro: a first and a last baseline
+    pub const fn new(first: Option<f32>, last: Option<f32>) -> Self {
+        Self { first, last, ..Self::NONE }
+    }
+
+    /// pyro: the baselines as seen from a parent in an orthogonal writing mode
+    pub const fn transpose(self) -> Self {
+        Self {
+            orthogonal_first: if self.dominant_first.is_some() { self.dominant_first } else { self.first },
+            orthogonal_last: if self.dominant_last.is_some() { self.dominant_last } else { self.last },
+            ..Self::NONE
+        }
+    }
+
+    /// pyro: the first and last baselines from the block-start edge in the dominant baseline
+    pub fn dominant(self) -> (Option<f32>, Option<f32>) {
+        (self.dominant_first.or(self.first), self.dominant_last.or(self.last))
     }
 }
 
@@ -673,13 +712,14 @@ impl LayoutOutput {
     /// Swap the horizontal and vertical axes of the output (inverse of [`LayoutInput::transpose`]).
     ///
     /// Baselines and collapsible margins are block-axis quantities that have no meaning on the
-    /// parent's inline axis, so they are dropped. Out-of-flow candidates are unaffected.
+    /// parent's block axis: margins are dropped, baselines kept only as `Baselines::orthogonal_*`.
+    /// Out-of-flow candidates are unaffected.
     pub fn transpose(self) -> Self {
         Self {
             size: self.size.transpose(),
             #[cfg(feature = "content_size")]
             scrollable_overflow_rect: self.scrollable_overflow_rect.transpose(),
-            baselines: Baselines::NONE,
+            baselines: self.baselines.transpose(),
             top_margin: CollapsibleMarginSet::ZERO,
             bottom_margin: CollapsibleMarginSet::ZERO,
             margins_can_collapse_through: false,

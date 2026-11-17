@@ -173,3 +173,13 @@ marks and numerals that are not), for parley's `text-autospace`.
 (`ShapedText::set_character_justification`): a character's justification opportunities (CSS `text-justify`), which
 parley sets and its line breaker and spacing read; `shape/east_asian_spacing.rs` (`is_format`, `is_cursive`) tells
 parley which characters justification passes over and which scripts it does not space apart.
+
+## `FontMetrics::scaled` (`text-fit`; WPT round 3, lane TS)
+
+`src/shape/shaped_text.rs`: a font's metrics at a multiple of its size, for the lines parley scales with CSS
+`text-fit`.
+- `src/shape/shaper.rs`: control characters other than tabs and line breaks are shaped as U+FFFF, so they draw the
+  font's missing-glyph box even where the font maps them to an empty `.null` glyph (U+0008, U+001D; WPT css-text
+  `control-chars-*`).
+- `src/analysis.rs` (`keep_all_hyphen_breaks`): under `word-break: keep-all` the line may break after a hyphen-minus
+  before a letter, as under `normal` (ICU4X's keep-all data drops HY ÷ AL; WPT `word-break-keep-all-u002d`).

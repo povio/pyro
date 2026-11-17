@@ -1068,7 +1068,7 @@ impl BaseDocument {
             };
             // pyro: an initial letter box is laid out by the root's first line: it is the first
             // of the root's layout children, with its own inline layout.
-            if let Some(split) = layout.first_letter.as_ref().filter(|split| split.initial.is_some()) {
+            if let Some(split) = layout.first_letter.as_ref().filter(|split| split.initial.is_some() || split.floated) {
                 crate::layout::first_letter::build_initial_letter_box(self, task.node_id, split.style_node);
             }
             layout.first_line = match self.first_line_styles {

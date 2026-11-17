@@ -23,7 +23,7 @@ use crate::{
     },
     node::{NodeFlags, NodeKind, SpecialElementData, TextInputData, TextLayout},
     qual_name, stylo_to_parley,
-    traversal::{iter_children, iter_children_and_pseudos},
+    traversal::iter_children_and_pseudos,
 };
 
 use super::scroll_markers;
@@ -283,7 +283,17 @@ fn push_hoisted_children_and_pseudos(
     doc.nodes[container_node_id].children = children;
     for child_id in boxes {
         let child = &doc.nodes[child_id];
-        if child.data.kind() == NodeKind::Comment || child.is_collapsible_whitespace_node() {
+        if child.data.kind() == NodeKind::Comment {
+            continue;
+        }
+        if child.is_collapsible_whitespace_node() {
+            // pyro: white space inside a run of inline content stays in the run: it separates the
+            // texts around it, which may come from other `display: contents` elements (`x <div
+            // style="display: contents">y</div>` is "x y"). White space that starts a run, or makes
+            // a run alone, gives no box.
+            if let (Some(wrap_ctx), Some(_)) = (wrap, out.anonymous_block_id) {
+                out.push_wrapped(wrap_ctx.container_node_id, child_id, doc);
+            }
             continue;
         }
         push_hoisted_child(doc, child_id, out, wrap);
@@ -306,6 +316,26 @@ fn push_non_whitespace_children_and_pseudos(layout_children: &mut ThinVec<NodeId
     if let Some(after) = node.after() {
         layout_children.push(after);
     }
+}
+
+/// pyro: whether a flow container with only out-of-flow children has a text indent and an
+/// absolutely positioned child that would be inline-level: its static position is on the
+/// container's (empty) first line, after the indent (WPT css-text
+/// `text-indent-with-absolute-pos-child`), so the children are laid out inline, not hoisted.
+fn indents_inline_level_abspos(doc: &BaseDocument, container_node_id: NodeId) -> bool {
+    let node = &doc.nodes[container_node_id];
+    let indented = node.primary_styles().is_some_and(|style| {
+        let indent = style.slow_clone_text_indent().length;
+        indent.resolve(style::values::computed::CSSPixelLength::new(100.0)).px() != 0.0
+            || indent.resolve(style::values::computed::CSSPixelLength::new(0.0)).px() != 0.0
+    });
+    indented
+        && node.children.iter().any(|&child| {
+            doc.nodes[child].primary_styles().is_some_and(|style| {
+                style.clone_position().is_absolutely_positioned()
+                    && style.get_box().original_display.outside() == DisplayOutside::Inline
+            })
+        })
 }
 
 /// Result of classifying the in-flow children of a flow container as
@@ -435,6 +465,17 @@ fn classify_flow_children(
             }
         }
     }
+}
+
+/// pyro: make the `::before` and `::after` of the container's `display: contents` children (and
+/// theirs, through nested ones), whose boxes are the container's.
+fn flush_contents_pseudos(doc: &mut BaseDocument, container_node_id: NodeId) {
+    doc.iter_children_mut(container_node_id, |child_id, doc| {
+        if doc.nodes[child_id].display_style().is_some_and(|display| display.inside() == DisplayInside::Contents) {
+            flush_pseudo_elements(doc, child_id);
+            crate::util::ensure_stack(|| flush_contents_pseudos(doc, child_id));
+        }
+    });
 }
 
 pub(crate) fn collect_layout_children(
@@ -595,7 +636,9 @@ fn collect_layout_children_with_wrap(
 
         #[cfg(feature = "svg")]
         if matches!(tag_name, "svg") {
-            let outer_html = doc.with_svg_sprites(doc.get_node(container_node_id).unwrap().svg_source());
+            let outer_html = doc.with_svg_sprites(
+                doc.with_svg_images(doc.get_node(container_node_id).unwrap().svg_source(), container_node_id),
+            );
             // pyro: with the resources it references in the page's other `<svg>`s.
             let outer_html = doc.with_cross_svg_references(outer_html);
 
@@ -760,6 +803,10 @@ fn collect_layout_children_with_wrap(
         // layout children (text nodes carry no style and cannot be laid out
         // as block/flex/grid items).
         _ => {
+            // pyro: the `::before` and `::after` of `display: contents` children are the
+            // container's content too: made before they are classified (they were not, on the
+            // first build, and an empty contents element's generated text made blocks).
+            flush_contents_pseudos(doc, container_node_id);
             let mut classification = FlowClassification::default();
             classify_flow_children(doc, container_node_id, &mut classification);
 
@@ -788,7 +835,10 @@ fn collect_layout_children_with_wrap(
                     .insert(NodeFlags::IS_INLINE_WITH_ONLY_BLOCK_CHILDREN);
             }
 
-            if classification.all_out_of_flow && !inside_marker {
+            if classification.all_out_of_flow
+                && !inside_marker
+                && !indents_inline_level_abspos(doc, container_node_id)
+            {
                 // Contents-transparent: a display:contents child may be
                 // holding the out-of-flow elements (otherwise the contents
                 // node itself would be pushed as a layout box).
@@ -1108,7 +1158,7 @@ pub(crate) fn flush_pseudo_elements(doc: &mut BaseDocument, node_id: NodeId) {
         // unset `var()` in `content` computes to `normal`).
         let generates =
             |s: &style::servo_arc::Arc<style::properties::ComputedValues>| !matches!(s.get_counters().content, Content::Normal | Content::None);
-        let before_style = before_style.filter(generates);
+            let before_style = before_style.filter(generates);
         let after_style = after_style.filter(generates);
 
         (before_style, after_style, before_node_id, after_node_id)
@@ -1365,8 +1415,13 @@ fn place_complex_child(
         // Also hide all-whitespace flexbox children as these should be ignored
         //
         // White space that follows text or a `<br>` (an open anonymous block) stays if it's preserved.
+        //
+        // pyro: so does collapsible white space inside a run of text in a flex or grid container
+        // (an anonymous item is open): it separates the run's texts, which `display: contents`
+        // children may have brought in; only a run all of white space makes no item (CSS Flexbox
+        // § 4). It collapses away at the end of the item.
         let keep_whitespace = out.anonymous_block_id.is_some()
-            && !doc.nodes[child_id].is_collapsible_whitespace_node();
+            && (hide_whitespace || !doc.nodes[child_id].is_collapsible_whitespace_node());
         if child_node_kind == NodeKind::Comment
             || (hide_whitespace && is_whitespace_node && !keep_whitespace)
         {
@@ -1766,7 +1821,8 @@ pub(crate) fn find_inline_layout_embedded_boxes(
                     }
                     (DisplayOutside::None, DisplayInside::Contents) => {
                         node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
-                        iter_children!(nodes[node_id], |child_id| {
+                        // pyro: with its `::before` and `::after` (an inline-block one is a box).
+                        iter_children_and_pseudos!(nodes[node_id], |child_id| {
                             crate::util::ensure_stack(|| find_inline_layout_embedded_boxes_recursive(
                                 nodes,
                                 parent_id,

@@ -7,6 +7,7 @@
 //! between ideographs and letters or numerals, dropped at a line's end. Measured on inline boxes
 //! (`span`s) in 20px Noto Sans CJK JP (a subset with `halt`), whose ideographs and fullwidth
 //! punctuation are 20px wide, and on `b` markers (empty inline-blocks) that sit after text.
+//! Also CSS Text 5 `text-fit`, which scales the text of a block's lines to fill them.
 use std::{cell::RefCell, rc::Rc, sync::Arc};
 
 use pyro_dom::{
@@ -212,4 +213,33 @@ fn hyphens_auto_breaks_words_of_a_known_language() {
         ],
         &[120.0, 40.0, 40.0, 40.0, 80.0],
     );
+}
+
+#[test]
+fn text_fit_scales_lines_to_their_width() {
+    // Two lines of ideographs (40px and 80px) in a 200px block; the spans are as wide as their
+    // scaled text.
+    let fit = |value: &str, width: u32| {
+        widths(
+            &format!(
+                "<div style='width:{width}px;white-space:pre;text-fit:{value}'><span id=a>国国</span>\n<span id=b>国国国国</span></div>"
+            ),
+            &["a", "b"],
+        )
+    };
+    let fits = [
+        fit("none", 200),
+        fit("grow per-line-all", 200),
+        // Lines ending at a forced break or at the block's end keep their size (Blink's
+        // per-line), here both.
+        fit("grow per-line", 200),
+        // Every line by what the widest needs.
+        fit("grow consistent", 200),
+        fit("grow per-line-all 150%", 200),
+        fit("shrink consistent", 40),
+        // Shrinking leaves lines that fit alone.
+        fit("shrink per-line-all", 60),
+    ];
+    let want: [[f64; 2]; 7] = [[40.0, 80.0], [200.0, 200.0], [40.0, 80.0], [100.0, 200.0], [60.0, 120.0], [20.0, 40.0], [40.0, 60.0]];
+    assert_near(&fits.concat(), &want.concat());
 }

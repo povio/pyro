@@ -244,6 +244,17 @@ pub struct Snapshot {
     /// The page's selection, painted highlighted in screenshots of a [`Live`]
     /// document ([`Renderer::paint`]; PDFs show none).
     pub selection: Option<TextSelection>,
+    /// The page's custom highlights and target text, bottom first, painted under the selection
+    /// in screenshots of a [`Live`] document.
+    pub highlights: Vec<TextHighlight>,
+}
+
+/// A highlight of a page ([`Snapshot::highlights`]): a custom highlight's name (`None`: the
+/// target text, `::target-text`) and its ranges.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TextHighlight {
+    pub name: Option<String>,
+    pub ranges: Vec<TextSelection>,
 }
 
 /// A page's selection ([`Snapshot::selection`]): from `start` to `end` in
@@ -761,6 +772,9 @@ pub struct Renderer {
     /// External SVG sprite files of persistent documents, by resource
     /// scope and URL.
     sprites: HashMap<(String, String), Arc<String>>,
+    /// External SVG `<image>`/`<feImage>` resources as `data:` URLs (`svg_use::resolve_images`),
+    /// by resource scope and URL.
+    svg_images: HashMap<(String, String), Arc<(String, String)>>,
     /// Longest wait for sub-resources per render.
     pub fetch_timeout: Duration,
     /// Longest wait, before the first layout, for the fonts and images the
@@ -804,6 +818,7 @@ impl Renderer {
             pdf_cache: pdf::PdfCache::default(),
             geometry: HashMap::new(),
             sprites: HashMap::new(),
+            svg_images: HashMap::new(),
             fetch_timeout: Duration::from_secs(10),
             first_layout_wait: Duration::from_secs(3),
             hyphen_digit_breaks: hyphen_digit_breaks(),
@@ -972,6 +987,18 @@ impl Renderer {
                     self.animations.insert(live.page, frame.clone());
                 }
                 self.apply_animations(live.page);
+                let images = mirror::take_svg_image_hrefs();
+                if let (false, Some(m)) = (images.is_empty(), self.mirrors.get_mut(&live.page)) {
+                    svg_use::resolve_images(
+                        &mut m.doc,
+                        images,
+                        &snap.base_url,
+                        &snap.resource_scope,
+                        &mut self.svg_images,
+                        fetcher,
+                        self.fetch_timeout,
+                    );
+                }
                 let hrefs = mirror::take_sprite_hrefs();
                 if let (false, Some(m)) = (hrefs.is_empty(), self.mirrors.get_mut(&live.page)) {
                     svg_use::resolve_sprites(
@@ -1001,6 +1028,7 @@ impl Renderer {
                         }
                         m.set_canvases(&snap.canvases);
                         // The selection's text nodes, both in the document.
+                        let selection_paint = selection;
                         let selection = snap.selection.filter(|_| selection).and_then(|s| {
                             Some(blitz_dom::DomSelection {
                                 start: (m.node(s.start.0)?, s.start.1 as usize),
@@ -1008,6 +1036,29 @@ impl Renderer {
                             })
                         });
                         m.doc.set_dom_selection(selection);
+                        let highlights = snap
+                            .highlights
+                            .iter()
+                            .filter(|_| selection_paint)
+                            .map(|highlight| {
+                                let name = match &highlight.name {
+                                    Some(name) => blitz_dom::HighlightName::Custom(name.clone()),
+                                    None => blitz_dom::HighlightName::TargetText,
+                                };
+                                let ranges = highlight
+                                    .ranges
+                                    .iter()
+                                    .filter_map(|s| {
+                                        Some(blitz_dom::DomSelection {
+                                            start: (m.node(s.start.0)?, s.start.1 as usize),
+                                            end: (m.node(s.end.0)?, s.end.1 as usize),
+                                        })
+                                    })
+                                    .collect();
+                                (name, ranges)
+                            })
+                            .collect();
+                        m.doc.set_dom_highlights(highlights);
                         let clip = live.clip.and_then(|k| m.node(k));
                         (&mut m.doc, &m.bridge, clip)
                     }
@@ -1033,6 +1084,18 @@ impl Renderer {
 
                 svg_use::resolve(&mut doc, &snap.base_url, fetcher, self.fetch_timeout)
                     .map_err(RenderError::Resource)?;
+                let images = svg_use::image_hrefs(&doc);
+                if !images.is_empty() {
+                    svg_use::resolve_images(
+                        &mut doc,
+                        images,
+                        &snap.base_url,
+                        &snap.resource_scope,
+                        &mut self.svg_images,
+                        fetcher,
+                        self.fetch_timeout,
+                    );
+                }
                 let (doc, bridge) = fresh.insert((doc, bridge));
                 let clip = doc.query_selector(&format!("[{CLIP_ATTRIBUTE}]")).ok().flatten();
                 (doc, &*bridge, clip)
@@ -1162,6 +1225,7 @@ impl Renderer {
         // (Painting knows where the page lands in the image's pixels: see `paint_scene_for_device`.)
         blitz_paint::paint_scene_for_device(&mut page, doc, dpr, extent_w, extent_h, 0, 0, transform);
         doc.set_dom_selection(None);
+        doc.set_dom_highlights(Vec::new());
         scene.append_scene(page, transform);
         let hash = scene_hash(&scene, w, h, &mut self.blob_hashes);
         timings.scene = t.elapsed();

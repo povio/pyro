@@ -308,9 +308,59 @@ around both (`<span nowrap>国</span>国` and `<span nowrap>国</span><span nowr
 block that wraps; `国<span>国</span>` in a `nowrap` block does not). The breaker used the previous atom's mode alone.
 Covered by `white_space_changes_wrap_as_in_chromium` in `crates/pyro-render/tests/text_spacing.rs`; WPT
 `white-space-wrap-after-nowrap-001`.
+## `text-fit` (WPT round 3, lane TS)
+
+- `style/mod.rs` (`TextFit`, `TextFitKind`, `TextFitTarget`), `layout/layout.rs` (`Layout::set_text_fit`,
+  `Layout::text_fit_block_scale`): CSS Text 5 `text-fit` for a layout, as Blink does it by default (paint-time
+  scaling): lines are broken at the text's own size, then each line's text is scaled to fill it. `per-line` and
+  `per-line-all` scale a line by its own factor (Blink's `LineFitter`: what its inline boxes leave over its text;
+  lines within two pixels of their width, and with `per-line` a block's last line and lines before a forced break,
+  are left alone); `consistent` scales every line by the block's factor, which blitz-dom measures with
+  `text_fit_block_scale` on the lines broken without one (Blink's `MeasurePerBlockScale`) and sets before breaking
+  again. The `<percentage>` limit bounds the factor.
+- `layout/line_break.rs` (`fit_line`, `rescale_box_metrics`), `layout/style_metrics.rs` (`scale_style_metrics`,
+  `StyleMetrics::{font, annotation}`), `layout/data.rs` (`LineData::text_fit`, `LayoutData::line_style_metrics`):
+  a committed line takes the scaled advance (inline boxes, span edges and letter or word spacing given as lengths
+  keep their size) and span boxes at the scale (font metrics scaled, line heights resolved again unless lengths,
+  emphasis-mark space scaled), which `Line`'s span accessors read.
+- `layout/run.rs`, `layout/cluster.rs`, `layout/line.rs`, `layout/spacing.rs` (`Spacing::{fit, fixed}`,
+  `SpacingScales`, `StyleProperty::SpacingScales`): a run's font size, font metrics (`Run::font_metrics` returns
+  them by value now), advance, glyphs and clusters are at its line's scale (`Run::text_fit_scale`); letter and word
+  spacing that are percentages scale too. A break with `text-fit` lines is not resumed.
+
+Covered by `text_fit_scales_lines_to_their_width` in `crates/pyro-render/tests/text_spacing.rs`; WPT
+`css-text/text-fit`.
+
 ## Bidi side of out-of-flow boxes (WPT css-position, round 3 lane P)
 
 `PositionedInlineBox::is_rtl` (`layout/line.rs`): whether the level the box resolved to (as U+FFFC) is right-to-left.
 blitz-dom puts an inline-level absolutely positioned box on the start side of its place in that direction (Blink's
 `InlineItem::Direction()`): Latin text in a right-to-left paragraph runs left to right, and so does the box after it
 (WPT `static-position/htb-rtl-*`, `vlr-rtl-*`, `vrl-rtl-*`).
+- `src/layout/data.rs` (`ContentWidthsMeasurer`): zero-advance clusters at the start of a line (an empty text item
+  before an atomic inline) are no content, so the wrap opportunity before the box after them is not taken and the
+  first line's text indent adds to the box (WPT `css/CSS2/text/text-indent-intrinsic-001`); a line kept from wrapping
+  while its running width is negative counts its content only, not a negative text indent (`line_indent`; WPT
+  `text-indent-intrinsic-003/004`). Covered by `crates/pyro-render/tests/css2_intrinsic_and_hints.rs`.
+- `src/layout/line_break.rs` (`wraps_after`, `LineState::after_box`): an atomic inline counts as a character of the
+  span around it (`parent_style_index`): whether the line may wrap before it is decided as before text, and there is
+  a soft wrap opportunity after it that the next atom's `wraps_after` takes, so images in two adjacent `nowrap` spans
+  wrap between them in a block that wraps (WPT css-text `line-breaking-030/031`).
+- `src/resolve/tree.rs` (`PendingWhitespace::segment_break`): a collapsible white space sequence holding a segment
+  break next to U+200B ZERO WIDTH SPACE is removed (CSS Text 4 § 4.1.3), across inline box boundaries and
+  out-of-flow boxes (WPT `seg-break-transformation-018/019`). Both covered by
+  `crates/pyro-render/tests/text_breaks_bidi_paragraphs.rs`.
+- `src/layout/line_break.rs` (inline boxes): a box after nothing but span start edges (`!has_inline_content`) is
+  at the line's start: it overflows instead of wrapping to leave an empty line (WPT css-text
+  `text-indent-overflow-ref`, a 200px start margin in a 200px block).
+- `src/layout/whitespace.rs` (`is_collapsible`): collapsible white space is spaces, tabs and segment breaks; a form
+  feed is a control character (WPT `control-chars-00C`).
+- `src/resolve/tree.rs` (`pushed_span_edge`, `push_empty_box_strut`), `src/builder.rs`: white space pending before a
+  span's start edge is no longer committed there: it collapses with the white space after the edge, and goes before
+  the edge (and an empty box's strut) only if content follows; at a line's or paragraph's end it is removed and the
+  edges stay next to the content before it (WPT css-text `line-edge-white-space-collapse-001`). An empty box without
+  edges keeps its strut next to the content before it (`line-break-anywhere-and-white-space-004`). Covered by
+  `white_space_ending_a_line_leaves_the_span_edges_after_it_at_the_content`.
+- `src/shape/mod.rs` (`shifted_span`): text is shaped apart on either side of the edge of a span that `vertical-align`
+  shifts, nested spans included (CSS Text 3 § 7.3; WPT css-text `boundary-shaping-002/006`: no `ffi` ligature across a
+  raised `f`).

@@ -5,6 +5,7 @@ use style::dom::TNode as _;
 
 use crate::{BaseDocument, Node};
 
+#[allow(unused_macros)] // pyro: its last user walks pseudo-elements too now
 macro_rules! iter_children {
     ($node_expr:expr, $cb:expr) => {{
         let node = &mut $node_expr;
@@ -15,6 +16,7 @@ macro_rules! iter_children {
         $node_expr.children = children;
     }};
 }
+#[allow(unused_imports)]
 pub(crate) use iter_children;
 
 macro_rules! iter_children_and_pseudos {

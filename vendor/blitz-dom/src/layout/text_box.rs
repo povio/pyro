@@ -140,7 +140,53 @@ fn is_edge_in_flow_child(doc: &BaseDocument, parent: NodeId, child: NodeId, star
         let node = &doc.nodes[*id];
         node.display_style().is_none_or(|display| display != style::values::specified::Display::None)
             && !node.primary_styles().is_some_and(|style| is_out_of_flow(&style))
+            && !is_empty_anonymous_block(doc, *id)
     };
     let found = if start { children.iter().find(|id| in_flow(id)) } else { children.iter().rev().find(|id| in_flow(id)) };
     found == Some(&child)
+}
+
+/// pyro: whether `id` is an anonymous block that makes no line: it holds collapsible white space
+/// and the empty heads or tails of split inlines (no content, no inline-axis edges). The block in
+/// an inline after it holds its container's first formatted line (WPT css-inline
+/// `text-box-trim-block-in-inline-*`).
+fn is_empty_anonymous_block(doc: &BaseDocument, id: NodeId) -> bool {
+    let node = &doc.nodes[id];
+    if !node.is_anonymous() {
+        return false;
+    }
+    let len = node.children.len();
+    node.children.iter().enumerate().all(|(index, &child)| match node.split_ref_at(index, len) {
+        Some(tail) => is_empty_split_part(doc, child, tail),
+        None => doc.nodes[child].is_collapsible_whitespace_node(),
+    })
+}
+
+/// pyro: whether the head (`tail: false`) or the tail of the split inline `id` holds nothing.
+fn is_empty_split_part(doc: &BaseDocument, id: NodeId, tail: bool) -> bool {
+    use style::values::computed::Length;
+    let Some(style) = doc.nodes[id].primary_styles() else { return false };
+    let (b, p, m) = (style.get_border(), style.get_padding(), style.get_margin());
+    let zero = |v: &style::values::computed::LengthPercentage| v.resolve(Length::new(0.0)).px() == 0.0 && !v.has_percentage();
+    let margin = |v: &style::values::computed::Margin| match v {
+        style::values::generics::length::GenericMargin::LengthPercentage(v) => zero(v),
+        _ => true,
+    };
+    let border = |w: &style::values::computed::BorderSideWidth, s: style::values::computed::BorderStyle| {
+        s.none_or_hidden() || w.0.to_f32_px() == 0.0
+    };
+    let edges_empty = if style.writing_mode.is_vertical() {
+        zero(&p.padding_top.0) && zero(&p.padding_bottom.0) && margin(&m.margin_top) && margin(&m.margin_bottom)
+            && border(&b.border_top_width, b.border_top_style) && border(&b.border_bottom_width, b.border_bottom_style)
+    } else {
+        zero(&p.padding_left.0) && zero(&p.padding_right.0) && margin(&m.margin_left) && margin(&m.margin_right)
+            && border(&b.border_left_width, b.border_left_style) && border(&b.border_right_width, b.border_right_style)
+    };
+    drop(style);
+    if !edges_empty {
+        return false;
+    }
+    let (part, nested) = super::construct::split_inline_part(&doc.nodes, id, tail);
+    part.iter().all(|&child| doc.nodes[child].is_collapsible_whitespace_node())
+        && nested.is_none_or(|nested| is_empty_split_part(doc, nested, tail))
 }

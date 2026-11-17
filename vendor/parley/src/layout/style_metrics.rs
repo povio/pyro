@@ -105,6 +105,11 @@ pub(crate) struct StyleMetrics {
     pub(crate) parent: u16,
     /// The style's font size, against which `sub`/`super` of children are resolved.
     pub(crate) font_size: f32,
+    /// pyro: the metrics of the first available font, unrounded, which a line that `text-fit`
+    /// scales scales ([`scale_style_metrics`]).
+    pub(crate) font: Option<FontMetrics>,
+    /// pyro: the space over and under the content area that annotations (emphasis marks) take.
+    pub(crate) annotation: [f32; 2],
 }
 
 /// Resolve the [`StyleMetrics`] of every style in `styles`, in table order.
@@ -164,6 +169,7 @@ pub(crate) fn resolve_style_metrics<B: Brush>(
 
         let mut metrics = StyleMetrics::from_font(&font_metrics, line_height, quantum);
         metrics.font_size = style.font_size;
+        metrics.font = Some(font_metrics);
         // pyro: the ideographic boxes: the font's `BASE` table, else derived from the em box as
         // Blink derives them (the em box sits on the descent; the face box is 5% of the em in).
         {
@@ -187,6 +193,7 @@ pub(crate) fn resolve_style_metrics<B: Brush>(
         // takes room beyond its content area; the span box grows to hold it where its line height
         // leaves too little (CSS Ruby 1, 4.4).
         let space = style.annotation_space;
+        metrics.annotation = [space.over, space.under];
         if space.over > 0. {
             metrics.over = metrics.over.max(metrics.ascent + space.over);
         }
@@ -233,6 +240,66 @@ pub(crate) fn resolve_style_metrics<B: Brush>(
             }
         }
 
+        out.push(metrics);
+    }
+}
+
+/// pyro: appends to `out` the span box metrics `base` (the layout's) have at `scale` times their
+/// font sizes, for a line CSS `text-fit` scales: Blink scales the text metrics of such a line's
+/// boxes, and their line heights unless those are lengths; the space emphasis marks take scales
+/// with the text. (Ruby turns `text-fit` off in Blink.)
+pub(crate) fn scale_style_metrics<B: Brush>(
+    styles: &[crate::layout::Style<B>],
+    base: &[StyleMetrics],
+    scale: f32,
+    quantum: f32,
+    out: &mut Vec<StyleMetrics>,
+) {
+    let quantize = quantum > 0.;
+    let start = out.len();
+    for (index, (style, base)) in styles.iter().zip(base).enumerate() {
+        let font = base
+            .font
+            .unwrap_or_else(|| FontMetrics::fallback(base.font_size))
+            .scaled(scale);
+        let font_size = base.font_size * scale;
+        let line_height = style.line_height.resolve(font_size, &font, quantum);
+        let mut metrics = StyleMetrics::from_font(&font, line_height, quantum);
+        metrics.font = Some(font);
+        metrics.font_size = font_size;
+        metrics.ideographic = base.ideographic.map(|value| value * scale);
+        // A side `text-box-trim` trims stays trimmed (to its scaled edge).
+        if base.content_over != base.ascent {
+            metrics.content_over = base.content_over * scale;
+        }
+        if base.content_under != base.descent {
+            metrics.content_under = base.content_under * scale;
+        }
+        let [over, under] = base.annotation;
+        metrics.annotation = [over * scale, under * scale];
+        if over > 0. {
+            metrics.over = metrics.over.max(metrics.ascent + over * scale);
+        }
+        if under > 0. {
+            metrics.under = metrics.under.max(metrics.descent + under * scale);
+        }
+        metrics.parent = base.parent;
+        if index > 0 {
+            let align = style.vertical_align;
+            if align.is_line_relative() {
+                metrics.aligned_subtree_root = index as u16;
+            } else {
+                let parent = &out[start + usize::from(base.parent).min(index - 1)];
+                let shift = shift_from_parent(align, metrics.over, metrics.under, parent);
+                metrics.exact_baseline_offset = parent.exact_baseline_offset + shift;
+                metrics.baseline_offset = if quantize {
+                    metrics.exact_baseline_offset.round()
+                } else {
+                    metrics.exact_baseline_offset
+                };
+                metrics.aligned_subtree_root = parent.aligned_subtree_root;
+            }
+        }
         out.push(metrics);
     }
 }
@@ -339,6 +406,8 @@ impl StyleMetrics {
             aligned_subtree_root: 0,
             parent: 0,
             font_size: 0.,
+            font: None,
+            annotation: [0.; 2],
         }
     }
 }

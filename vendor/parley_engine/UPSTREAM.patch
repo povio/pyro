@@ -144,10 +144,26 @@
 +}
 --- a/src/shape/shaped_text.rs
 +++ b/src/shape/shaped_text.rs
-@@ -51,6 +51,60 @@
-     pub x_height: Option<f32>,
+@@ -52,6 +52,77 @@
  }
  
+ impl FontMetrics {
++    /// pyro: the metrics at `scale` times the font size (CSS `text-fit`).
++    pub fn scaled(&self, scale: f32) -> Self {
++        Self {
++            ascent: self.ascent * scale,
++            descent: self.descent * scale,
++            leading: self.leading * scale,
++            underline_offset: self.underline_offset * scale,
++            underline_size: self.underline_size * scale,
++            strikethrough_offset: self.strikethrough_offset * scale,
++            strikethrough_size: self.strikethrough_size * scale,
++            cap_height: self.cap_height.map(|v| v * scale),
++            x_height: self.x_height.map(|v| v * scale),
++        }
++    }
++}
++
 +/// pyro: the ideographic baselines of a font's `BASE` table (horizontal axis), scaled to a font
 +/// size, as coordinates above the alphabetic baseline: `ideo`, `idtp`, `icfb` and `icft`.
 +#[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -202,10 +218,11 @@
 +    }
 +}
 +
- impl FontMetrics {
++impl FontMetrics {
      /// Metrics to use when no font is available at all.
      ///
-@@ -92,17 +146,43 @@
+     /// These roughly match common Latin fonts, so that a layout without fonts still has plausible
+@@ -92,17 +163,43 @@
                          .map(|v| (skrifa::Tag::new(&v.tag.to_bytes()), v.value)),
                  ),
          );
@@ -257,7 +274,7 @@
          // Default values from HarfBuzz: https://github.com/harfbuzz/harfbuzz/blob/12ee77ee00514c442bcd28f9aa9d56b708c37382/src/hb-ot-metrics.cc#L355-L372
          let fallback_decoration_size = font_size / 18.0;
  
-@@ -119,7 +199,7 @@
+@@ -119,7 +216,7 @@
          };
  
          Self {
@@ -266,12 +283,10 @@
              descent: -metrics.descent,
              leading: metrics.leading,
              underline_offset,
-@@ -130,6 +210,113 @@
-             cap_height: metrics.cap_height,
-         }
+@@ -132,6 +229,113 @@
      }
-+}
-+
+ }
+ 
 +/// pyro: WebKit's and Chromium's (macOS) extra ascent for Times,
 +/// Helvetica and Courier, "to closely match the vertical metrics of their
 +/// Microsoft counterparts": 15% of the rounded ascent plus descent, rounded
@@ -377,10 +392,12 @@
 +    /// Range into [`ShapedText::normalized_coords`].
 +    normalized_coords_range: Range<usize>,
 +    metrics: RunMetrics,
- }
- 
++}
++
  /// The result of shaping.
-@@ -152,6 +339,9 @@
+ ///
+ /// After [analyzing][crate::Analysis] your text, [shape the text][crate::Shaper::shape_text],
+@@ -152,6 +356,9 @@
      glyphs: Vec<Glyph>,
      fonts: Vec<FontInstance>,
      normalized_coords: Vec<NormalizedCoord>,
@@ -390,7 +407,7 @@
  }
  
  impl ShapedText {
-@@ -179,6 +369,7 @@
+@@ -179,6 +386,7 @@
          self.glyphs.clear();
          self.fonts.clear();
          self.normalized_coords.clear();
@@ -398,7 +415,7 @@
      }
  
      /// Get a [`ShapedSlice`] of the run at `run_index`.
-@@ -218,6 +409,113 @@
+@@ -218,6 +426,113 @@
          }
      }
  
@@ -512,7 +529,7 @@
      /// The character data of the text, in logical order.
      ///
      /// [`ShapedRun::characters_range`] indexes into this. The nth [`Character`] corresponds exactly
-@@ -273,7 +571,9 @@
+@@ -273,7 +588,9 @@
          font: &FontInstance,
          glyph_buffer: &harfrust::GlyphBuffer,
          normalized_coords: &[harfrust::NormalizedCoord],
@@ -523,7 +540,7 @@
          debug_assert_eq!(
              range.char_range.len(),
              text[range.byte_range.clone()].chars().count(),
-@@ -302,18 +602,36 @@
+@@ -302,18 +619,36 @@
                  index
              });
  
@@ -570,7 +587,7 @@
  
          // `HarfRust` returns glyphs in visual order, so we need to process them as such while
          // maintaining logical ordering of clusters.
-@@ -324,20 +642,22 @@
+@@ -324,20 +659,22 @@
  
          // Push all characters.
          let characters_start = self.characters.len();
@@ -599,7 +616,7 @@
                  grapheme_start: info.is_grapheme_start(),
              });
          }
-@@ -395,7 +715,9 @@
+@@ -395,7 +732,9 @@
              bidi_level: segment.bidi_level,
              advance: run_advance,
              font_metrics,
@@ -609,7 +626,7 @@
      }
  }
  
-@@ -423,6 +745,9 @@
+@@ -423,6 +762,9 @@
      pub bidi_level: BidiLevel,
      /// Total advance of the run.
      pub advance: f32,
@@ -619,7 +636,7 @@
      /// The font metrics of this run.
      pub font_metrics: FontMetrics,
  }
-@@ -534,7 +859,15 @@
+@@ -534,7 +876,15 @@
              y: -(glyph_pos.y_offset as f32) * scale_factor,
              advance: (glyph_pos.x_advance as f32) * scale_factor,
          };
@@ -636,7 +653,7 @@
              // Defer this potential zero-offset, single glyph cluster
              cluster.inline_glyph = Some(glyph);
          } else {
-@@ -647,9 +980,16 @@
+@@ -647,9 +997,16 @@
              char_end: text.chars().count().try_into().unwrap(),
              options: ShapeOptions {
                  font_size: 32.0,
@@ -653,7 +670,7 @@
              },
          }];
          shaper.shape_text(
-@@ -805,18 +1145,32 @@
+@@ -805,18 +1162,32 @@
                  char_end: 1,
                  options: ShapeOptions {
                      font_size: 32.0,
@@ -950,7 +967,7 @@
                  )
              },
          );
- 
++
 +        // Use the entire run text including newlines.
 +        let run_text = &text[range.byte_range.clone()];
 +        let pre_context = context_before(&text[..range.byte_range.start]);
@@ -1006,7 +1023,7 @@
 +            }
 +            _ => (features, features),
 +        };
-+
+ 
 +        let glyph_key = cache::GlyphKey {
 +            font_blob_id: font.font.data.id(),
 +            font_index: font.font.index,
@@ -1073,18 +1090,25 @@
          buffer.reserve(run_text.len());
          #[expect(clippy::cast_possible_truncation, reason = "Deferred")]
          for (i, ch) in run_text.chars().enumerate() {
-@@ -340,7 +573,9 @@
+@@ -340,6 +573,17 @@
              // with `char_indices`, push each char individually via `.chars` with a cluster index
              // that matches its `infos` counterpart. This allows us to lookup `infos` via cluster
              // index in `data.rs`.
--            buffer.add(ch, i as u32);
 +            // pyro: a tab is shaped as a space, as in browsers: it draws nothing, and its advance
 +            // is the line breaker's to set (the tab stop it reaches).
-+            buffer.add(if ch == '\t' { ' ' } else { ch }, i as u32);
++            // pyro: a control character other than a tab or a line break is visible, as in
++            // browsers (CSS Text 3 § 4.1.1): it is shaped as a code point no font maps, so it
++            // draws the font's missing-glyph box even where the font maps it to an empty glyph
++            // (TrueType fonts map U+0008 and U+001D to `.null`).
++            let ch = match ch {
++                '\t' => ' ',
++                '\u{0}'..='\u{8}' | '\u{b}' | '\u{c}' | '\u{e}'..='\u{1f}' | '\u{7f}'..='\u{84}' | '\u{86}'..='\u{9f}' => '\u{FFFF}',
++                ch => ch,
++            };
+             buffer.add(ch, i as u32);
          }
  
-         buffer.set_pre_context(&text[..range.byte_range.start]);
-@@ -356,11 +591,11 @@
+@@ -356,11 +600,11 @@
              buffer,
              HarfShapeOptions::new()
                  .plan(Some(shaper_plan))
@@ -1099,7 +1123,7 @@
              text,
              range,
              segment,
-@@ -370,15 +605,24 @@
+@@ -370,15 +614,24 @@
              font,
              &glyph_buffer,
              harf_shaper.coords(),
@@ -1126,7 +1150,7 @@
  
      // The segment's characters with their analysis data and style indices.
      let mut chars = segment_text
-@@ -417,18 +661,109 @@
+@@ -417,18 +670,109 @@
          } else {
              if let Some((run_font, run_range)) = run.take() {
                  // The font changed: shape the previous run.
@@ -1453,13 +1477,13 @@
      }
  
      /// Whether this character is a variation selector.
-@@ -807,22 +841,127 @@
-             properties.is_emoji_modifier_base(),
+@@ -808,21 +842,159 @@
          ));
      }
-+
-+    quotation_mark_breaks(text, options, &mut analysis.info);
  
++    quotation_mark_breaks(text, options, &mut analysis.info);
++    keep_all_hyphen_breaks(text, options, &mut analysis.info);
++
      if needs_bidi_resolution || options.base_direction == BaseDirection::Rtl {
 -        analyzer.bidi.resolve(
 -            text.chars().map(|ch| {
@@ -1519,7 +1543,39 @@
 +            }
 +            start = end;
 +        }
++    }
++}
++
++/// pyro: `word-break: keep-all` keeps letters together, not what a hyphen-minus separates: the
++/// line may break after one before a letter, as under `normal` (UAX #14: HY ÷ AL; ICU4X's
++/// keep-all data drops it; WPT css-text `word-break-keep-all-u002d`).
++fn keep_all_hyphen_breaks(text: &str, options: &AnalysisOptions<'_>, info: &mut [CharInfo]) {
++    if !text.contains('-') || !options.line_break.iter().any(|(_, config)| config.word_break == WordBreak::KeepAll) {
++        return;
      }
++    let config_at = |byte: usize| {
++        options
++            .line_break
++            .iter()
++            .find(|(range, _)| range.contains(&byte))
++            .map(|(_, config)| *config)
++            .unwrap_or_default()
++    };
++    let chars: Vec<(usize, char)> = text.char_indices().collect();
++    for index in 1..chars.len().saturating_sub(1) {
++        let (byte, ch) = chars[index];
++        if ch != '-' {
++            continue;
++        }
++        let config = config_at(byte);
++        if config.word_break != WordBreak::KeepAll || config.line_break == LineBreak::Anywhere {
++            continue;
++        }
++        let (before, after) = (chars[index - 1].1, chars[index + 1].1);
++        if before.is_alphanumeric() && after.is_alphabetic() {
++            info[index + 1].set_soft_wrap_opportunity(true);
++        }
++    }
  }
  
 +/// pyro: soft wrap opportunities around curly quotation marks as Chromium's ICU finds them,

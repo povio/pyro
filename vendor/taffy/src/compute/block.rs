@@ -388,6 +388,8 @@ struct BlockItem {
     /// pyro: the item's width is its height's through its preferred aspect ratio, with an
     /// automatic minimum: its min-content width, no larger than its `max-width` (css-sizing-4 §5.1).
     min_width_is_content: bool,
+    /// pyro: `min-width: calc-size(auto, ...)`, applied to that automatic minimum.
+    calc_size_min_width: Option<crate::style::CalcSizeFunction>,
     /// pyro: the item's width is its height's through its preferred aspect ratio.
     width_from_ratio: bool,
     /// pyro: `min-width`/`min-height` and `max-width`/`max-height` that are sizing keywords
@@ -591,8 +593,10 @@ pub fn compute_block_layout(
     // pyro: a height that is the width's through the aspect ratio is not known here: the box's
     // layout derives it from its used width, and its content can make it taller (the automatic
     // minimum size, css-sizing-4 §5.1).
+    // A content-size measure (a flex item's flex base size) follows the ratio too: the
+    // max-content height of a box of `min-width: 100px; aspect-ratio: 1` is 100px (WPT
+    // css-sizing `flex-aspect-ratio-034..037`).
     let height_follows_ratio = sizes.height_from_ratio
-        && inputs.sizing_mode == SizingMode::InherentSize
         && known_dimensions.height.is_none()
         && min_max_definite_size.height.is_none();
     if height_follows_ratio {
@@ -727,6 +731,7 @@ fn compute_inner(
     };
     // pyro: the automatic minimum size in the block axis of a box whose height follows its ratio is
     // its content height (css-sizing-4 §5.1), unless it is a scroll container.
+    let calc_size_min_height = style.calc_size_min().height;
     let min_height_is_content = height_follows_ratio
         && style.min_size().height.is_auto()
         && !style.overflow().y.is_scroll_container()
@@ -743,7 +748,15 @@ fn compute_inner(
         // pyro: the height is settled once the content is laid out
         known_dimensions
     } else {
-        let derived = known_dimensions.maybe_apply_aspect_ratio(aspect_ratio).maybe_clamp(min_size, max_size);
+        // pyro: through the box the ratio is between (`ratio_inset` + `box_sizing_adjustment`
+        // from the border box; WPT css-sizing `flex-aspect-ratio-025` `auto 19/1`)
+        let inset = box_sizing_adjustment + ratio_inset;
+        let derived = known_dimensions
+            .maybe_sub(inset)
+            .map(|size| size.map(|size| size.max(0.0)))
+            .maybe_apply_aspect_ratio(aspect_ratio)
+            .maybe_add(inset)
+            .maybe_clamp(min_size, max_size);
         Size { width: known_dimensions.width.or(derived.width), height: known_dimensions.height.or(derived.height) }
     };
     let percentage_basis_dimensions = Size {
@@ -817,7 +830,15 @@ fn compute_inner(
             .maybe_sub(content_box_inset.vertical_axis_sum());
         let intrinsic_width = determine_content_based_container_width(tree, &items, available_width, percentage_height)
             + content_box_inset.horizontal_axis_sum();
-        intrinsic_width.maybe_clamp(min_size.width, max_size.width).maybe_max(Some(padding_border_size.width))
+        // pyro: a content size ignores the box's own `min-width`/`max-width`, as inline layout's
+        // does (a flex base size is the content's, `max-width` clamps the hypothetical size only;
+        // WPT css-flexbox `flex-base-size-ignores-max-width`)
+        // (a box with a ratio keeps them: its height follows the width they give)
+        let (min_width, max_width) = match inputs.sizing_mode {
+            SizingMode::ContentSize if aspect_ratio.is_none() => (None, None),
+            _ => (min_size.width, max_size.width),
+        };
+        intrinsic_width.maybe_clamp(min_width, max_width).maybe_max(Some(padding_border_size.width))
     });
 
     // Short-circuit if computing size and both dimensions known
@@ -915,9 +936,15 @@ fn compute_inner(
             // pyro: the ratio's height, or the content's when that is taller and `min-height` is
             // `auto` (never past `max-height`).
             Some(height) if min_height_is_content => {
-                height.max(intrinsic_outer_height.maybe_min(max_size.height))
+                // pyro: `min-height: calc-size(auto, ...)` is its calculation of the content height
+                let content = match calc_size_min_height {
+                    Some(function) => function.apply(intrinsic_outer_height, |val, basis| tree.calc(val, basis)),
+                    None => intrinsic_outer_height,
+                };
+                height.max(content.maybe_min(max_size.height))
             }
             Some(height) => height,
+            None if inputs.sizing_mode == SizingMode::ContentSize => intrinsic_outer_height,
             None => intrinsic_outer_height.maybe_clamp(min_size.height, max_size.height),
         })
         .maybe_max(Some(padding_border_size.height));
@@ -1009,7 +1036,7 @@ fn compute_inner(
         size: final_outer_size,
         #[cfg(feature = "content_size")]
         scrollable_overflow_rect: crate::tree::ScrollableOverflow::ZERO,
-        baselines: Baselines { first: first_baseline, last: last_baseline },
+        baselines: Baselines::new(first_baseline, last_baseline),
         top_margin: if own_margins_collapse_with_children.start {
             first_child_top_margin_set
         } else {
@@ -1048,6 +1075,9 @@ fn compute_inner(
         let mut overlap = false;
         let mut reach = f32::NEG_INFINITY;
         let mut after_overflow = false;
+        // pyro: the content of a last child that overflows it overflows this box too (a trimmed
+        // line's glyphs nested in blocks reach into what follows them all).
+        let mut last_overflows = false;
         for item in items.iter() {
             let Some(layout) = item.final_layout.as_ref() else { continue };
             if layout.size.height > 0.0 && (after_overflow || layout.location.y + 0.01 < reach) {
@@ -1057,8 +1087,13 @@ fn compute_inner(
             let (child_overlap, child_overflows) = tree.block_child_flow_overlap(item.node_id);
             overlap |= child_overlap;
             after_overflow |= child_overflows;
+            last_overflows = child_overflows;
         }
-        tree.set_block_flow_overlap(node_id, overlap, intrinsic_outer_height > container_outer_height + 0.01);
+        tree.set_block_flow_overlap(
+            node_id,
+            overlap,
+            last_overflows || intrinsic_outer_height > container_outer_height + 0.01,
+        );
     }
 
     // 4. Collect out-of-flow candidates in document order (direct out-of-flow children plus
@@ -1258,6 +1293,7 @@ fn generate_item_list(
                 min_size: sizes.min_size,
                 max_size: sizes.max_size,
                 min_width_is_content,
+                calc_size_min_width: child_style.calc_size_min().width,
                 width_from_ratio: sizes.width_from_ratio,
                 min_size_keyword: child_style.min_size_keyword(),
                 max_size_keyword: child_style.max_size_keyword(),
@@ -1420,6 +1456,14 @@ fn determine_content_based_container_width(
                 _ => width,
             }
         });
+        // pyro: keyword `min-width`/`max-width` bound an automatic width's contribution too
+        // (`min-width: max-content` on a block in a flex item; WPT css-flexbox
+        // `flex-item-content-is-min-width-max-content`)
+        let width = match (known_dimensions.width, available_space.width) {
+            (Some(_), _) => width,
+            // (`stretch` only against a definite width: there is nothing to stretch to otherwise)
+            (None, available) => clamp_width_by_keywords(tree, item, width, available.into_option(), None, Size::NONE),
+        };
 
         // pyro: a table is never narrower than its min-content width, whatever its `width` or
         // `max-width` (CSS Tables 3 §3.9.2): its contribution is at least that.
@@ -1473,6 +1517,11 @@ fn ratio_min_content_width(
         crate::AbsoluteAxis::Horizontal,
         if item.is_in_same_bfc { Line::TRUE } else { Line::FALSE },
     );
+    // pyro: `min-width: calc-size(auto, ...)` is its calculation of it.
+    let width = match item.calc_size_min_width {
+        Some(function) => function.apply(width, |val, basis| tree.calc(val, basis)),
+        None => width,
+    };
     width.maybe_min(item.max_size.width)
 }
 
@@ -1554,7 +1603,13 @@ fn block_item_known_dimensions(
 ) -> Size<Option<f32>> {
     // Unless stretched, tables and compressible replaced elements resolve their own width
     // <https://www.w3.org/TR/CSS22/visudet.html#block-replaced-width>
-    if (item.is_table || item.is_compressible_replaced) && !is_stretch {
+    // pyro: `stretch` in `width`, `min-width` or `max-width` is the stretch width for them too
+    // (beside floats: the slot's;
+    // WPT css-sizing `stretch/replaced-next-to-float-*`)
+    let stretch_keyword = item.size_style.width.is_stretch()
+        || item.min_size_keyword.width.is_stretch()
+        || item.max_size_keyword.width.is_stretch();
+    if (item.is_table || item.is_compressible_replaced) && !is_stretch && !stretch_keyword {
         Size::NONE
     } else {
         // The automatic width of a block-level box whose `justify-self` is neither `normal` nor `stretch`
@@ -2066,7 +2121,18 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
                                 laid_out = Some(size);
                                 size.width
                             } else {
-                                item.size.width.unwrap_or(0.0).maybe_clamp(item.min_size.width, item.max_size.width)
+                                let width =
+                                    item.size.width.unwrap_or(0.0).maybe_clamp(item.min_size.width, item.max_size.width);
+                                // pyro: `max-width: stretch` (and the other keywords) bound it in the slot
+                                // (WPT css-sizing `stretch/bfc-next-to-float-2`)
+                                clamp_width_by_keywords(
+                                    tree,
+                                    item,
+                                    width,
+                                    Some(stretch_width),
+                                    Some(container_inner_width),
+                                    parent_size,
+                                )
                             };
                             if width.max(item.padding_border_sum.width) > slot.border_width + FIT_TOLERANCE {
                                 slot_segment = Some(segment_id);

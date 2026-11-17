@@ -178,6 +178,7 @@ impl ResolveContext {
             StyleProperty::TextSpacingTrim(value) => TextSpacingTrim(*value),
             StyleProperty::TextAutospace(value) => TextAutospace(*value),
             StyleProperty::TextJustify(value) => TextJustify(*value),
+            StyleProperty::SpacingScales(value) => SpacingScales(*value),
         }
     }
 
@@ -228,6 +229,7 @@ impl ResolveContext {
             text_spacing_trim: raw_style.text_spacing_trim,
             text_autospace: raw_style.text_autospace,
             text_justify: raw_style.text_justify,
+            spacing_scales: raw_style.spacing_scales,
             annotation_space: raw_style.annotation_space.scale(scale),
             text_box_trim: raw_style.text_box_trim,
         }
@@ -438,6 +440,8 @@ pub(crate) enum ResolvedProperty<B: Brush> {
     TextAutospace(crate::style::TextAutospace),
     /// pyro: where justification adds space.
     TextJustify(crate::style::TextJustify),
+    /// pyro: which of the letter and word spacing scale with the font size.
+    SpacingScales(crate::style::SpacingScales),
 }
 
 /// pyro: `tab_size` with a length in layout units.
@@ -513,6 +517,8 @@ pub(crate) struct ResolvedStyle<B: Brush> {
     pub(crate) text_autospace: crate::style::TextAutospace,
     /// pyro: where justification adds space.
     pub(crate) text_justify: crate::style::TextJustify,
+    /// pyro: which of the letter and word spacing scale with the font size.
+    pub(crate) spacing_scales: crate::style::SpacingScales,
     /// pyro: room beyond the content area ([`TextStyle::annotation_space`]), scaled.
     pub(crate) annotation_space: AnnotationSpace,
     /// pyro: the edges the content area is trimmed to ([`TextStyle::text_box_trim`]).
@@ -559,6 +565,7 @@ impl<B: Brush> ResolvedStyle<B> {
             TextSpacingTrim(value) => self.text_spacing_trim = value,
             TextAutospace(value) => self.text_autospace = value,
             TextJustify(value) => self.text_justify = value,
+            SpacingScales(value) => self.spacing_scales = value,
         }
     }
 
@@ -600,6 +607,7 @@ impl<B: Brush> ResolvedStyle<B> {
             TextSpacingTrim(value) => self.text_spacing_trim == *value,
             TextAutospace(value) => self.text_autospace == *value,
             TextJustify(value) => self.text_justify == *value,
+            SpacingScales(value) => self.spacing_scales == *value,
         }
     }
 

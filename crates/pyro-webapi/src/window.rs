@@ -182,6 +182,17 @@ where
     crate::websocket::define_globals(def);
     crate::indexeddb::define_globals(def);
     crate::editing_globals::define_globals(def);
+    // `Highlight` and `HighlightRegistry` (CSS Custom Highlight API), made on first use.
+    def.global_value_accessor(
+        "Highlight",
+        |s, w| crate::highlights::global(s, w.page(), "Highlight"),
+        |s, w, value| crate::highlights::replace_global(s, w.page(), "Highlight", value),
+    );
+    def.global_value_accessor(
+        "HighlightRegistry",
+        |s, w| crate::highlights::global(s, w.page(), "HighlightRegistry"),
+        |s, w, value| crate::highlights::replace_global(s, w.page(), "HighlightRegistry", value),
+    );
     // The `CSS` namespace object, made on its first read (most realms never
     // read it); assignment shadows it with a data property.
     def.accessor(
@@ -706,6 +717,8 @@ pub fn css_namespace<'s>(s: &Scope<'s>) -> JsResult<Value<'s>> {
         Ok(s.undefined())
     })?;
     o.set_atom("registerProperty", register.value())?;
+    let page = crate::target::page_of(s)?;
+    o.set_atom("highlights", crate::highlights::member(s, &page, "highlights")?)?;
     Ok(o.value())
 }
 

@@ -64,6 +64,10 @@ pub struct RenderSnapshot {
     /// the start to the end, each a text node's render key and an offset in
     /// UTF-16 code units of its data (`text_selection`).
     pub selection: Option<((u64, u32), (u64, u32))>,
+    /// The highlights under the selection, bottom first, in every form: custom highlights
+    /// (`CSS.highlights`, by priority, then registration) by name, then the target text (`None`),
+    /// each with its ranges as [`RenderSnapshot::selection`]'s.
+    pub highlights: Vec<(Option<String>, Vec<((u64, u32), (u64, u32))>)>,
 }
 
 /// How a snapshot carries the document.
@@ -109,8 +113,38 @@ impl PageDom {
         let selection = crate::editing::selection_range(self);
         let dom = self.dom.borrow();
         let selection = selection.and_then(|range| text_selection(&dom, self.document(), range));
+        let mut highlights = Vec::new();
+        {
+            let custom = self.highlights.borrow();
+            let mut order: Vec<&crate::highlights::CustomHighlight> = custom.iter().collect();
+            order.sort_by_key(|highlight| highlight.priority);
+            for highlight in order {
+                let ranges: Vec<_> = highlight
+                    .ranges
+                    .iter()
+                    .filter_map(|range| text_selection(&dom, self.document(), range.points()))
+                    .collect();
+                if !ranges.is_empty() {
+                    highlights.push((Some(highlight.name.clone()), ranges));
+                }
+            }
+            let target: Vec<_> = self
+                .target_text
+                .borrow()
+                .iter()
+                .filter_map(|owner| text_selection(&dom, self.document(), (owner.live.start(), owner.live.end())))
+                .collect();
+            if !target.is_empty() {
+                highlights.push((None, target));
+            }
+        }
         let layout = self.layout();
-        RenderSnapshot { canvases, selection, ..snapshot_of(&dom, &layout, self.document(), base_url, mark, form) }
+        RenderSnapshot {
+            canvases,
+            selection,
+            highlights,
+            ..snapshot_of(&dom, &layout, self.document(), base_url, mark, form)
+        }
     }
 }
 
@@ -170,6 +204,7 @@ fn snapshot_of(
             quirks_mode: dom.is_quirks_mode(document),
             content_language: dom.content_language(document).map(str::to_owned),
             selection: None,
+            highlights: Vec::new(),
         }
     }
 }

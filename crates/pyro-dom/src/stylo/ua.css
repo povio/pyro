@@ -92,8 +92,6 @@ input {
 input[type="checkbox" i],
 input[type="radio" i] {
     box-sizing: border-box;
-    width: 13px;
-    height: 13px;
     padding: initial;
     border: initial;
     background-color: initial;

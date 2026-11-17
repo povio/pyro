@@ -305,6 +305,9 @@ bitflags! {
         const ANCHOR = 1 << 0;
         /// `anchor-size()` function.
         const ANCHOR_SIZE = 1 << 1;
+        /// pyro: the `size` keyword of a `calc-size()` calculation, parsed as `100%` (whose
+        /// basis is then the size of the `calc-size()` basis); other percentages are invalid.
+        const CALC_SIZE = 1 << 2;
     }
 }
 
@@ -929,6 +932,11 @@ impl CalcNode {
                 }
                 Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError))
             },
+            &Token::Percentage { .. }
+                if flags.additional_functions.intersects(AdditionalFunctions::CALC_SIZE) =>
+            {
+                Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError))
+            },
             &Token::Percentage { unit_value, .. } => {
                 let hint = match flags.percentage_context {
                     PercentageContext::NotAllowed => {
@@ -969,6 +977,15 @@ impl CalcNode {
             Token::Function(name) => {
                 let function = CalcNode::math_function(context, name)?;
                 CalcNode::parse(context, input, function, flags)
+            },
+            Token::Ident(ident)
+                if flags.additional_functions.intersects(AdditionalFunctions::CALC_SIZE)
+                    && ident.eq_ignore_ascii_case("size") =>
+            {
+                Ok(CalcNode::Leaf(Leaf::Percentage(CalcPercentageLeaf::new(
+                    1.0,
+                    Optional::Some(NumericBaseType::Length),
+                ))))
             },
             Token::Ident(ident) => {
                 let leaf = match_ignore_ascii_case! { &**ident,
@@ -1627,6 +1644,22 @@ impl CalcNode {
             ..Default::default()
         };
         Self::parse(context, input, function, flags)?
+            .into_length_or_percentage(clamping_mode)
+            .map_err(|()| ParseError::custom(StyleParseErrorKind::UnspecifiedError))
+    }
+
+    /// pyro: the calculation of a `calc-size()`, its `size` keyword as `100%`.
+    pub fn parse_calc_size_calculation(
+        context: &ParserContext,
+        input: &mut Parser,
+        clamping_mode: AllowedNumericType,
+    ) -> Result<CalcLengthPercentage, ParseError> {
+        let flags = CalcParseFlags {
+            additional_functions: AdditionalFunctions::CALC_SIZE,
+            percentage_context: PercentageContext::allowed_with_hint(NumericBaseType::Length),
+            ..Default::default()
+        };
+        Self::parse_argument(context, input, flags)?
             .into_length_or_percentage(clamping_mode)
             .map_err(|()| ParseError::custom(StyleParseErrorKind::UnspecifiedError))
     }

@@ -575,7 +575,16 @@ fn shape_segment(
             // index in `data.rs`.
             // pyro: a tab is shaped as a space, as in browsers: it draws nothing, and its advance
             // is the line breaker's to set (the tab stop it reaches).
-            buffer.add(if ch == '\t' { ' ' } else { ch }, i as u32);
+            // pyro: a control character other than a tab or a line break is visible, as in
+            // browsers (CSS Text 3 § 4.1.1): it is shaped as a code point no font maps, so it
+            // draws the font's missing-glyph box even where the font maps it to an empty glyph
+            // (TrueType fonts map U+0008 and U+001D to `.null`).
+            let ch = match ch {
+                '\t' => ' ',
+                '\u{0}'..='\u{8}' | '\u{b}' | '\u{c}' | '\u{e}'..='\u{1f}' | '\u{7f}'..='\u{84}' | '\u{86}'..='\u{9f}' => '\u{FFFF}',
+                ch => ch,
+            };
+            buffer.add(ch, i as u32);
         }
 
         buffer.set_pre_context(&text[..range.byte_range.start]);

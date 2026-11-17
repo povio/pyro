@@ -113,6 +113,7 @@ fn compare(worker: &RenderWorker, request: Request) -> Result<serde_json::Value,
         quirks_mode: s.quirks_mode,
         content_language: s.content_language,
         selection: None,
+        highlights: Vec::new(),
     };
     let errors = Arc::new(Mutex::new(Vec::new()));
     let fetcher = Arc::new(Assets { root: request.asset_root, origin: request.asset_origin, errors: errors.clone() });

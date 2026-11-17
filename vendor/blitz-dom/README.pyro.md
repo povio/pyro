@@ -1216,7 +1216,10 @@ and a `content-box` local background reached the scrollport's edge at the end (W
   item increments `list-item`) and evaluates the `content` of each `::before`/`::after` that generates a box:
   `counter()` and `counters()` in the predefined counter styles (numeric, alphabetic, additive, cyclic; an
   unknown name or a value out of a style's range is decimal) and `open-quote`/`close-quote` at the document's
-  quote depth (`quotes: auto` is English's). A counter is visible to its element, its descendants and its
+  quote depth. `quotes: auto` takes the quotes of the language of the originating element's parent from
+  `src/layout/quotes_table.rs` (CLDR 48 delimiters of the ICU locales, generated; a tag not found loses its
+  last subtag, as Chromium's `LayoutLocale::GetQuotesData`; English's when none matches), and a `lang`
+  change runs the walk again. A counter is visible to its element, its descendants and its
   following siblings; one a sibling made is replaced; an element with no box (`display: none`, `display:
   contents`) changes none. The walk runs once a traversal kept a `::before`/`::after` whose content reads a
   counter or a quote (sticky), and only after a restyle changed what counters read of an element (its and its
@@ -2277,3 +2280,118 @@ container (flow or flow-root, in flow, not a table cell's child) hands its own p
 children (`BaseDocument::quirks_skips_for_percent_height`, used by `block_container_passes_percentage_height` and by
 inline layout for its atomic inlines), Chromium's `UseParentPercentageResolutionBlockSizeForChildren`. Covered by
 `crates/pyro-render/tests/intrinsic_percentages.rs`.
+
+Round 3 lane C2T (CSS2), covered by `crates/pyro-render/tests/css2_intrinsic_and_hints.rs`:
+- `src/stylo.rs`: the `<br clear>` presentational hint (`left`, `right`, `all`/`both` → `clear`), WPT
+  `css/CSS2/floats-clear/floats-clear-multicol-*`.
+- `src/layout/inline/layout.rs`: an atomic inline's percentage margins resolve against the line root's content
+  width (zero while it is measured), not the root's parent (WPT `intrinsic-size-with-negative-margins`).
+- `src/layout/table.rs`: `rowspan="0"` spans the rest of the row group, and a rowspan never reaches past its group in
+  the column cursor (`ColumnCursor::end_group`); a table without rows has no border spacing (its caption alone is the
+  table, as Chromium), and an incremental update that removes the last row builds the table again.
+### `display: contents` content and fieldsets (WPT round 3, lane ID)
+
+- `src/layout/construct.rs` (`push_hoisted_children_and_pseudos`, `collect_complex_layout_children_in`): collapsible
+  white space between inline content hoisted out of `display: contents` elements stays in the open run (anonymous
+  block or flex/grid item): `x <div style="display: contents">y</div>` is "x y"; white space that starts a run or makes
+  a run alone still gives no box (WPT css-display `display-contents-flex-002/003`, `-list-001`, their dynamic
+  variants).
+- `src/layout/construct.rs` (`flush_contents_pseudos`), `find_inline_layout_embedded_boxes`, `src/layout/inline/build.rs`:
+  a `display: contents` element's `::before` and `::after` are its parent's content. They are made before the parent's
+  children are classified (on a first build an empty contents element's generated text came out as blocks), and an
+  inline root walks them with the element's children (they were dropped when the parent was all inline). WPT
+  `display-contents-dynamic-pseudo-insertion-001`, `-fieldset-002`, `-shadow-dom-1`.
+- `src/node/node.rs` (`Node::display_style`, `Node::is_fieldset`, `StyleFlags::IS_FIELDSET`), `src/node/stylo_data.rs`
+  (`LayoutStyles::derive`): a `<fieldset>` is laid out with `stylo_taffy::convert::fieldset_display` (an inline one is
+  an inline-block, a table-type one a block) and has no table-part or cell layout style (a `table-cell` fieldset kept
+  its `height` in none). Covered by `crates/pyro-render/tests/display_contents_boxes.rs`.
+- `src/layout/inline/build.rs` (`has_block_edges`): in a vertical writing mode an inline box's block-axis border and
+  padding are its left and right ones: a root with such boxes is painted in Appendix E phases
+  (`FLOW_CONTENT_OVERFLOWS`), so the boxes reaching past its lines paint over the block backgrounds after it.
+- `src/layout/text_box.rs` (`is_empty_anonymous_block`): an anonymous block holding only collapsible white space and
+  the empty heads or tails of split inlines (no content, no inline-axis edges) is no line for `text-box-trim`: the
+  container's trim reaches the first or last line of the block in the inline after or before it (WPT css-inline
+  `text-box-trim-block-in-inline-*`). Covered by `a_trim_reaches_the_first_line_of_a_block_in_an_inline`.
+
+## `text-fit` (WPT round 3, lane TS)
+
+`src/stylo_to_parley.rs` (`text_fit`, `TextStyle::spacing_scales`), `src/layout/inline/layout.rs`: a block
+container's `text-fit` goes to its parley layout before the final break (not beside floats or with an initial letter,
+where Blink turns it off too, and part of the break key); `consistent` breaks once without it to measure the block's
+factor (`Layout::text_fit_block_scale`), then again with it. Which letter and word spacing are percentages goes to
+parley, which scales those on fitted lines. parley does the scaling (its README).
+- `src/layout/inline/layout.rs`: an inline layout in a vertical writing mode with a central dominant baseline also
+  exports its baselines from the block-start edge (`taffy::Baselines::dominant_first/last`: the middle of the line's
+  content, turned for `vertical-lr`), which grid baseline alignment reads (vendor/taffy/README.pyro.md).
+- `src/layout/inline/build.rs` (text nodes): a preserved newline ends the bidi paragraph like a `<br>`, so the
+  embeddings and overrides still open (`unicode-bidi: bidi-override` of the block) are pushed again after it (WPT
+  css-text `pre-wrap-align-*-003`). Covered by `bidi_override_holds_after_a_preserved_newline`.
+**SVG image root background, replaced ratios, stretch in anonymous blocks, size containers (lane S2).** An SVG
+image's root `background-color` (attribute or `style`, `SvgIntrinsicDimensions::root_background`) is painted over the
+bands of its viewport outside the area usvg painted it in (its `viewBox`), even-odd, so letterboxed images show it as
+browsers do. `ReplacedContext::ratio_in_box_sizing_box`: an `aspect-ratio: <ratio>` without `auto` is between
+`box-sizing` boxes (a border box under `border-box`). An anonymous block hands its parent's height as the definite
+available height to its atomic inlines (`height: stretch` on an iframe). `effective_size_containment`: a
+`container-type: size` (`inline-size`) box has size (inline-size) containment for layout.
+
+## Custom highlights and the target text (WPT round 3, lane PX)
+
+`HighlightName` and `BaseDocument::set_dom_highlights`: the embedder's custom highlights (CSS Custom Highlight API)
+and the target text of a fragment's text directive, bottom first, each a list of `DomSelection` ranges;
+`highlight_layer_ranges` maps them to inline roots' byte ranges as the selection's. `highlight_pseudo_style` computes
+an element's `::highlight(<name>)` / `::target-text` style lazily (`None` without a rule), and
+`style_declares_current_color` tells a highlight's `color: currentcolor` (which computes to the inherited colour) from a
+colour. `getComputedStyle(el, '::highlight(x)')` matches the name too (the lazy path's `matching_fn`).
+
+## Floated `::first-letter` (WPT round 3, lane PX)
+
+A `::first-letter` with `float` is a box as an initial letter's (`FirstLetterSplit::floated`, the `IS_INITIAL_LETTER_BOX`
+style node holding a copy of the letter, `display: block`), but laid out as any inline root and placed as any float
+of the first line (`compute_inline_layout` takes the initial-letter path only with `initial-letter`). Outside markers
+whose text is a `::marker` `content` string keep the marker's font (not the bundled bullet font). Covered by
+`a_floated_first_letter_is_a_float` in `crates/pyro-render/tests/initial_letter.rs`.
+- `src/layout/construct.rs` (`indents_inline_level_abspos`), `src/layout/inline/layout.rs` (static position): a
+  container with only out-of-flow children, a text indent and an inline-level absolutely positioned child is laid
+  out inline, so the box's static position is after the indent; on a line without in-flow content the box takes the
+  container's direction (WPT css-text `text-indent-with-absolute-pos-child`).
+- `src/layout/first_line.rs` (`starts_a_block`), `src/layout/inline/layout.rs` (text indent): an anonymous flex or
+  grid item's first line is a first formatted line and takes the text indent (WPT `anonymous-flex-item-001`).
+- `src/layout/table.rs` (hinted column widths): a table that shrinks to fit its columns is no wider than its
+  `max-width`, nor narrower than its columns' min-content widths (WPT css-text `overflow-wrap-min-content-size-001`,
+  `word-break-min-content-001`). Covered by `a_shrinking_table_is_no_wider_than_its_max_width`.
+
+
+A single-line text input's line is centred in its content box also when it is taller than the box (it overflows
+both edges, as in Blink; WPT css-overflow `input-scrollable-region-001`).
+- `src/layout/mod.rs` (`LayoutPassState::calc_size_inputs`, `has_calc_size`): a box whose `width` or `height` is
+  `calc-size()` is laid out as its basis first (Taffy, through stylo_taffy) and then with a known size: the
+  calculation of the size its parent gave it, else of its own measured size, in its `box-sizing` box, between
+  `min-*` and `max-*`. Measured in definite space, an `auto`/`fit-content` basis gives the space between the
+  calculations of its min-content and max-content widths (Blink's fit-content of the result). A size it measured
+  and its parent hands back is not calculated again (`calc_size_results`, per pass). Horizontal writing modes only.
+## List item numbers from the `list-item` counter (WPT round 3, lane IT)
+
+A marker's number is its item's `list-item` counter value, computed by the counter walk (`layout::counters`, which
+now runs for every document with list items: `generated_counters` is set by a `display: list-item` style) and kept
+in `BaseDocument::list_item_numbers` (elements; `::before`/`::after` list items by their originating element);
+`list::collect_list_item_children` reads it (its running index is only the fallback). The walk applies HTML's
+presentational hints itself: `ol start` (reset to start − 1), `ol reversed` (a reversed `list-item` counter: list
+items increment it by −1; without `start` its initial value is CSS Lists 3 § 4.4.2's, `reversed_initial`) and
+`li value` (`counter-set`), each unless an author rule declares the property; `counter-reset: reversed(name)` works
+for any counter. A changed number damages the item and its parent; `start`, `reversed` and `value` changes dirty
+the counters. Covered by `crates/pyro-render/tests/list_numbering.rs`.
+- `src/layout/inline/build.rs` (tab stops): the space a `tab-size` number counts is U+0020 of the first font that has
+  one, measured between two digits (a font without spaces may map U+00A0; WPT css-text `tab-size-integer-005`).
+- `src/document.rs` (`BaseDocument::svg_images`, `with_svg_images`, `damage_inline_svgs`), `src/layout/construct.rs`,
+  `src/node/svg.rs`: SVG `<image href>` and `<feImage href>` of a resource that is no `data:` URL are drawn from the
+  `data:` URLs pyro-render fetched for that href (usvg loads `data:` URLs only; a JPEG comes as PNGs turned by its
+  EXIF orientation and not): each `<svg>` source (inline, or the reference document of an HTML box's
+  `filter: url(#f)`) has the href replaced when it is built, unturned under the root's `image-orientation: none`;
+  new entries build the inline `<svg>`s again.
+- `src/layout/table.rs`: a table cell `width` that stays a `calc()` (a length and a percentage) is `auto` in table
+  layout, as in Blink (WPT css-values `calc-width-table-auto-1`, `-fixed-1`).
+
+Checkboxes and radios are 13x13 by nature (the leaf measure in `layout/mod.rs`), not by `width`/`height` in the UA
+sheet, so a flex parent stretches them and percentages size them (WPT css-flexbox `stretch-flex-item-*-input`). A
+fixed-layout table with a percentage width (empty ones, laid out as blocks, too) reports Blink's `kTableMaxWidth`
+(1,000,000 px) as its max-content width (WPT css-flexbox `fixed-table-layout-with-percentage-width-in-flex-item`).

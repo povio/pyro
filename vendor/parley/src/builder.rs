@@ -317,8 +317,6 @@ impl<'b, B: Brush> TreeBuilder<'b, B> {
                 self.lcx.tree_style_builder.flush_pending_whitespace();
                 self.lcx.tree_style_builder.set_last_item_is_inline_box();
             }
-            // pyro: white space before a span's start edge is outside the span.
-            InlineBoxKind::SpanStart => self.lcx.tree_style_builder.begin_span_start_edge(),
             _ => {}
         }
 
@@ -330,10 +328,10 @@ impl<'b, B: Brush> TreeBuilder<'b, B> {
             parent_style_index,
             baseline_offset: 0.,
         });
-        if kind == InlineBoxKind::SpanEnd {
-            // pyro: white space pending before a span's end edge is inside the span.
+        if matches!(kind, InlineBoxKind::SpanStart | InlineBoxKind::SpanEnd) {
+            // pyro: white space pending before a span's edge goes before the edge if it is kept.
             let box_index = self.lcx.inline_boxes.len() - 1;
-            self.lcx.tree_style_builder.pushed_span_end_edge(box_index);
+            self.lcx.tree_style_builder.pushed_span_edge(box_index);
         }
     }
 

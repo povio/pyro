@@ -259,6 +259,10 @@ pub struct PageDom {
     /// The document selection (`crate::editing`), shared by every world.
     pub(crate) selection: RefCell<Option<crate::editing::DocSelection>>,
     pub(crate) selectionchange_pending: Cell<bool>,
+    /// The custom highlights (`CSS.highlights`, `crate::highlights`), in registration order.
+    pub(crate) highlights: RefCell<Vec<crate::highlights::CustomHighlight>>,
+    /// The ranges of the last fragment navigation's text directives (`::target-text`).
+    pub(crate) target_text: RefCell<Vec<Rc<crate::range::RangeOwner>>>,
     /// Undo/redo steps of user edits (`crate::edit_commands`).
     pub(crate) undo: RefCell<crate::edit_commands::UndoHistory>,
     /// The native drag-and-drop session in progress, if any.
@@ -743,6 +747,8 @@ impl PageDom {
             drag: RefCell::new(None),
             selection: RefCell::new(None),
             selectionchange_pending: Cell::new(false),
+            highlights: RefCell::new(Vec::new()),
+            target_text: RefCell::new(Vec::new()),
             undo: RefCell::new(Default::default()),
             script_parser: RefCell::new(None),
             script_parser_active: Cell::new(false),
@@ -898,6 +904,9 @@ impl PageDom {
         drop(self.drag.take());
         // The selection owns Persistents to its Range wrappers.
         drop(self.selection.take());
+        // Highlights hold their ranges' nodes.
+        drop(self.highlights.take());
+        drop(self.target_text.take());
         self.opaque_storage.clear();
         drop(self.blob_urls.take());
         drop(self.reflected_url_base.take());

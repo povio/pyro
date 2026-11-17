@@ -196,3 +196,28 @@ fn a_relatively_positioned_span_moves_its_text_in_vertical_lines() {
     assert!(!still.is_empty(), "the span paints");
     assert_eq!(moved.first().map(|y| y - 50), still.first().copied(), "{still:?} {moved:?}");
 }
+
+/// The span's border reaches past two nested blocks, the last children of their parents: each passes the overflow
+/// on, so it is painted over the background of the block after them all.
+#[test]
+fn a_spans_border_nested_in_blocks_is_painted_over_the_next_blocks_background() {
+    let img = render(
+        "<div><div><div><span style='border-bottom:30px solid #00f'>x</span></div></div></div>\
+         <div style='background:#0f0;height:60px'></div>",
+    );
+    let blue = rows(&img, [0, 0, 255]);
+    assert!(blue.iter().any(|&y| y >= 60), "{blue:?}");
+}
+
+/// A block in an inline holds its container's first formatted line: the empty anonymous block before it (white space
+/// and the inline's empty head) is no line, so the container's trim reaches it.
+#[test]
+fn a_trim_reaches_the_first_line_of_a_block_in_an_inline() {
+    let after = |trim: &str| {
+        tops(&format!("<div style='{trim}'>\n  <span>\n    <div>x</div>\n  </span>\n</div><b id=b></b>"), &["b"])[0]
+    };
+    let plain = after("");
+    let trimmed = after("text-box:trim-start text");
+    assert_eq!(plain, 60.0);
+    assert!(trimmed < 60.0 && trimmed > 30.0, "{trimmed}");
+}

@@ -393,7 +393,7 @@ impl LayoutPassState<'_> {
         LayoutOutput::from_sizes_and_baselines(
             size,
             taffy::ScrollableOverflow::ZERO,
-            taffy::Baselines { first: Some(first), last: Some(first) },
+            taffy::Baselines::new(Some(first), Some(first)),
         )
     }
 
@@ -403,7 +403,10 @@ impl LayoutPassState<'_> {
         inputs: taffy::tree::LayoutInput,
         block_ctx: Option<&mut BlockContext<'_>>,
     ) -> taffy::LayoutOutput {
-        if self.nodes[node_id].flags.contains(NodeFlags::IS_INITIAL_LETTER_BOX) {
+        // (A floated first letter's box is laid out as any inline root.)
+        if self.nodes[node_id].flags.contains(NodeFlags::IS_INITIAL_LETTER_BOX)
+            && self.nodes[node_id].primary_styles().is_some_and(|style| style.slow_clone_initial_letter().size > 0.0)
+        {
             return self.compute_initial_letter_box_layout(node_id, inputs);
         }
         let LayoutInput {
@@ -731,9 +734,16 @@ impl LayoutPassState<'_> {
         };
 
         // Compute size of inline boxes
+        // pyro: an anonymous block is no containing block: its atomic inlines stretch to the
+        // height of the one around it too (`height: stretch` on an iframe; WPT css-sizing
+        // `stretch/stretch-anonymous-block-001`).
+        let child_available_space = match (self.nodes[node_id].is_anonymous(), parent_size.height) {
+            (true, Some(height)) => Size { height: AvailableSpace::Definite(height), ..available_space },
+            _ => available_space,
+        };
         let child_inputs = taffy::tree::LayoutInput {
             known_dimensions: Size::NONE,
-            available_space,
+            available_space: child_available_space,
             sizing_mode: SizingMode::InherentSize,
             parent_size: Size {
                 width: available_space.width.into_option(),
@@ -784,9 +794,18 @@ impl LayoutPassState<'_> {
                 continue;
             }
             let style = self.child_layout_style(&self.nodes[NodeId::from_u64(ibox.id)]);
-            let margin = style
-                .margin()
-                .resolve_or_zero(inputs.parent_size, resolve_calc_value);
+            // pyro: an atomic inline's percentage margins are of its containing block, this
+            // root's content box (zero while the root is measured, CSS Sizing 3 § 5.2.1), not of
+            // the root's own parent (WPT `css/CSS2/normal-flow/intrinsic-size-with-negative-margins`).
+            let margin_basis = Size {
+                width: Some(
+                    known_dimensions
+                        .width
+                        .map_or(0.0, |width| (width - content_box_inset.horizontal_axis_sum()).max(0.0)),
+                ),
+                height: inputs.parent_size.height,
+            };
+            let margin = style.margin().resolve_or_zero(margin_basis, resolve_calc_value);
 
             #[cfg(feature = "floats")]
             let is_floated = style.float().is_floated();
@@ -902,7 +921,8 @@ impl LayoutPassState<'_> {
             let later_anonymous_block = node.is_anonymous()
                 && !text_indent.each_line
                 && node.parent.is_some_and(|parent| {
-                    self.nodes[parent]
+                    !crate::layout::first_line::is_flex_or_grid_container(&self.nodes[parent])
+                        && self.nodes[parent]
                         .layout_children
                         .borrow()
                         .as_ref()
@@ -1166,6 +1186,10 @@ impl LayoutPassState<'_> {
                 for ibox in inline_layout.layout.inline_boxes() {
                     (ibox.id, ibox.width.to_bits(), ibox.height.to_bits(), ibox.baseline.map(f32::to_bits)).hash(&mut h);
                 }
+                // pyro: and `text-fit`.
+                if let Some(fit) = self.nodes[node_id].primary_styles().and_then(|s| stylo_to_parley::text_fit(&s)) {
+                    (fit.kind as u8, fit.target as u8, fit.limit.map(f32::to_bits)).hash(&mut h);
+                }
                 h.finish()
             };
             let floats_involved = block_ctx.find_content_slot(0.0, 0.0, Clear::None, None).segment_id.is_some()
@@ -1225,6 +1249,19 @@ impl LayoutPassState<'_> {
                     balanced_wrap_limit(&mut inline_layout.layout, max_advance, scale, clamp)
                 })
                 .flatten();
+                // pyro: CSS `text-fit` (CSS Text 5), not beside floats or with an initial letter,
+                // as in Blink. `consistent` scales every line by what the widest (narrowest) line
+                // needs, measured on the lines broken without it.
+                let text_fit = self.nodes[node_id]
+                    .primary_styles()
+                    .and_then(|s| stylo_to_parley::text_fit(&s))
+                    .filter(|_| !floats_involved && initial_letter.is_none());
+                inline_layout.layout.set_text_fit(text_fit.unwrap_or_default(), None);
+                if let Some(fit) = text_fit.filter(|fit| fit.target == parley::TextFitTarget::Consistent) {
+                    inline_layout.layout.break_all_lines(Some(max_advance));
+                    let scale = inline_layout.layout.text_fit_block_scale();
+                    inline_layout.layout.set_text_fit(fit, scale);
+                }
                 let mut breaker = inline_layout.layout.break_lines();
                 let mut line_slot = block_ctx.find_content_slot(0.0, 0.0, Clear::None, None);
                 let mut has_active_floats = line_slot.segment_id.is_some();
@@ -1890,8 +1927,12 @@ impl LayoutPassState<'_> {
                         // in the container's: Latin text in a right-to-left paragraph runs left
                         // to right, and so does the box after it (Blink's `InlineItem::Direction()`;
                         // WPT `static-position/htb-rtl-*`). A block-level box takes the container's.
+                        // On a line with no in-flow content the box resolves to no text's level:
+                        // it takes the container's direction (WPT css-text
+                        // `text-indent-with-absolute-pos-child`, right to left).
                         let static_direction = if is_inline_level
                             && ibox.is_rtl != inline_layout.layout.is_rtl()
+                            && first_in_flow_index(&line, &inline_layout.layout).is_some()
                         {
                             match container_direction {
                                 Direction::Ltr => Direction::Rtl,
@@ -2039,14 +2080,32 @@ impl LayoutPassState<'_> {
             .then(|| last_line_index.and_then(|i| inline_layout.layout.get(i)))
             .flatten()
             .map(line_baseline);
+        // pyro: in a vertical writing mode with a central dominant baseline (text not sideways; Blink's
+        // `ComputedStyle::GetFontBaseline`), the baselines from the block-start edge, for grid baseline
+        // alignment. The lines of `vertical-lr` are painted turned within their slot (line-over at block-end).
+        // (Sideways text keeps `first_baseline`/`last_baseline`, which inline-block alignment agrees with.)
+        let (dominant_first, dominant_last) = {
+            let wm = self.nodes[node_id].writing_mode();
+            if wm.is_vertical() && !wm.is_sideways() && exports_baseline {
+                let dominant = |line: parley::Line<'_, _>| {
+                    let m = line.metrics();
+                    let central = (m.content_block_min_coord + m.content_block_max_coord) / 2.0;
+                    let central = if wm.intersects(stylo_taffy::WritingMode::LINE_INVERTED) {
+                        m.block_min_coord + m.block_max_coord - central
+                    } else {
+                        central
+                    };
+                    central / scale + line_box_top
+                };
+                (
+                    inline_layout.layout.lines().next().map(dominant),
+                    last_line_index.and_then(|i| inline_layout.layout.get(i)).map(dominant),
+                )
+            } else {
+                (None, None)
+            }
+        };
 
-        // pyro: the lines and where they start are what paint draws and the inline boxes are
-        // placed on. A measuring run that broke them with other inputs than the last final layout
-        // (the available width of a stretched column flex item, a table cell measured at another
-        // width) and left them elsewhere, or moved them (a cell's `vertical-align` in another
-        // height), leaves them unlike that layout, which a cached final layout of this root, or
-        // of a box it is laid out in, stands for: those lay out again. Lines broken beside floats
-        // are not compared (nor are the floats' places): a measuring run leaves them stale.
         let (block_offset_bits, line_box_top_bits) = (inline_layout.block_offset.to_bits(), line_box_top.to_bits());
         if inputs.run_mode == RunMode::PerformLayout {
             inline_layout.final_lines = Some(crate::node::LaidOutLines {
@@ -2134,8 +2193,9 @@ impl LayoutPassState<'_> {
                 )
             },
             baselines: taffy::Baselines {
-                first: first_baseline,
-                last: last_baseline,
+                dominant_first,
+                dominant_last,
+                ..taffy::Baselines::new(first_baseline, last_baseline)
             },
             top_margin: CollapsibleMarginSet::ZERO,
             bottom_margin: CollapsibleMarginSet::ZERO,

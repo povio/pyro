@@ -417,14 +417,17 @@ impl crate::document::BaseDocument {
                 author: &guard.read(),
                 ua_or_user: &guard.read(),
             };
+            // pyro: `::highlight(<name>)` rules share one map; the name must match.
+            let wanted = *pseudo;
+            let matches = move |pe: &PseudoElement| *pe == wanted;
             let lazy = self.stylist.lazily_compute_pseudo_element_style(
                 &guards,
                 node,
-                pseudo,
+                &pseudo.rule_map_key(),
                 RuleInclusion::All,
                 &primary,
                 false,
-                None,
+                pseudo.is_highlight().then_some(&matches as &dyn Fn(&PseudoElement) -> bool),
             );
             if lazy.is_some() {
                 return lazy;
@@ -1710,6 +1713,24 @@ impl Node {
                 }
             }
 
+            // pyro: `<br clear>` maps to `clear` (HTML § 15.3.10, "Phrasing content"):
+            // `left`, `right`, `all` and `both`, ASCII case-insensitively.
+            if *name == local_name!("clear") && *tag == local_name!("br") && elem.name.ns == ns!(html) {
+                use style::values::specified::box_::Clear;
+                let clear = if value.eq_ignore_ascii_case("left") {
+                    Some(Clear::Left)
+                } else if value.eq_ignore_ascii_case("right") {
+                    Some(Clear::Right)
+                } else if value.eq_ignore_ascii_case("all") || value.eq_ignore_ascii_case("both") {
+                    Some(Clear::Both)
+                } else {
+                    None
+                };
+                if let Some(clear) = clear {
+                    push_style(PropertyDeclaration::Clear(clear));
+                }
+            }
+
             if *name == local_name!("align") {
                 use style::values::specified::TextAlign;
                 let keyword = match value {
@@ -2352,7 +2373,7 @@ impl<'dom> DomTraversal<BlitzNode<'dom>> for RecalcStyle<'_> {
             drop(old_primary);
             if derive {
                 let derived = match new_primary {
-                    Some(style) => LayoutStyles::derive(style, el.collapsed_border()),
+                    Some(style) => LayoutStyles::derive(style, el.collapsed_border(), el.is_fieldset()),
                     None => LayoutStyles::default(),
                 };
                 // SAFETY: the traversal has exclusive access to `el`, and nothing reads its
@@ -2365,7 +2386,7 @@ impl<'dom> DomTraversal<BlitzNode<'dom>> for RecalcStyle<'_> {
                 if let (Some(style), Some(stylo)) = (new_primary, el.try_stylo_element_data()) {
                     stylo
                         .layout_styles()
-                        .assert_current(style, el.collapsed_border(), el.id);
+                        .assert_current(style, el.collapsed_border(), el.is_fieldset(), el.id);
                 }
             }
             if collapsed_edges_changed {
@@ -2384,6 +2405,11 @@ impl<'dom> DomTraversal<BlitzNode<'dom>> for RecalcStyle<'_> {
                 el.record_out_of_flow(style);
                 if !style.slow_clone_text_box_trim().is_empty() {
                     self.text_box_trim_styles.store(true, std::sync::atomic::Ordering::Relaxed);
+                }
+                // pyro: list items number their markers with the `list-item` counter
+                // (`layout::counters`).
+                if style.get_box().display.is_list_item() {
+                    self.generated_counters.store(true, std::sync::atomic::Ordering::Relaxed);
                 }
             }
 
@@ -2587,14 +2613,14 @@ fn sync_pseudo_element_styles(
             }
         }
         if LayoutStyles::affected_by(diff.damage) {
-            let derived = LayoutStyles::derive(&pe_style, pe_node.collapsed_border());
+            let derived = LayoutStyles::derive(&pe_style, pe_node.collapsed_border(), false);
             // SAFETY: as for `pe_data` above (only the owner's `process_preorder` reaches it).
             unsafe { stylo_data.set_layout_styles(derived) };
         } else {
             #[cfg(debug_assertions)]
             stylo_data
                 .layout_styles()
-                .assert_current(&pe_style, pe_node.collapsed_border(), pe_node_id);
+                .assert_current(&pe_style, pe_node.collapsed_border(), false, pe_node_id);
         }
         pe_node.record_out_of_flow(&pe_style);
         pe_data.styles.primary = Some(pe_style);

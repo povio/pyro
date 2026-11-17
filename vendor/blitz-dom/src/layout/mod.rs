@@ -25,6 +25,7 @@ use taffy::{
 
 pub(crate) mod construct;
 pub(crate) mod counters;
+mod quotes_table;
 pub(crate) mod damage;
 pub(crate) mod first_letter;
 pub(crate) mod first_line;
@@ -88,6 +89,20 @@ fn tag_intrinsic_sizes(
     (IntrinsicSizes::default(), DEFAULT_OBJECT_SIZE)
 }
 
+/// pyro: whether `width` or `height` is `calc-size()` (`LayoutPassState::calc_size_inputs`).
+#[inline]
+fn has_calc_size(styles: &style::properties::ComputedValues) -> bool {
+    use style::values::computed::Size;
+    let is_calc_size = |size: &Size| {
+        matches!(
+            size,
+            Size::CalcSizeAuto(_) | Size::CalcSizeFitContent(_) | Size::CalcSizeMinContent(_) | Size::CalcSizeMaxContent(_)
+        )
+    };
+    let position = styles.get_position();
+    is_calc_size(&position.width) || is_calc_size(&position.height)
+}
+
 pub(crate) fn resolve_calc_value(calc_ptr: *const (), parent_size: f32) -> f32 {
     let calc = unsafe { &*(calc_ptr as *const CalcLengthPercentage) };
     let result = calc.resolve(CSSPixelLength::new(parent_size));
@@ -121,6 +136,9 @@ pub(crate) struct LayoutPassState<'doc> {
     /// pyro: the multi-column container whose strip is being laid out and its content box width,
     /// while it has column spanners (`layout::multicol`).
     pub(crate) column_spanners: Option<(crate::NodeId, f32)>,
+    /// pyro: the sizes `calc_size_inputs` measured for boxes this pass (box, axis 0 width or 1
+    /// height, size): a parent that hands one back as a known size hands back the result.
+    calc_size_results: Vec<(NodeId, u8, f32)>,
     /// pyro: the multi-column container whose strip is being laid out and the border-box height
     /// its content's percentage heights resolve against (its column height, `layout::multicol`).
     pub(crate) multicol_percent_height: Option<(crate::NodeId, f32)>,
@@ -166,6 +184,7 @@ impl<'doc> LayoutPassState<'doc> {
             #[cfg(feature = "writing-mode")]
             round_counts: (0, 0),
             column_spanners: None,
+            calc_size_results: Vec::new(),
             multicol_percent_height: None,
             stale_lines: Vec::new(),
         }
@@ -237,7 +256,10 @@ impl LayoutPassState<'_> {
         let mut inputs = self.adjusted_child_inputs(node_id, inputs);
         // pyro: size containment (`Self::size_contained_size`) and inline-size containment
         // (`Self::inline_size_contained_width`)
-        let contain = self.nodes[dom_node_id(node_id)].primary_styles().map(|styles| styles.get_box().contain);
+        let (contain, calc_size) = match self.nodes[dom_node_id(node_id)].primary_styles() {
+            Some(styles) => (Some(effective_size_containment(&styles)), has_calc_size(&styles)),
+            None => (None, false),
+        };
         if contain.is_some_and(|contain| contain.contains(style::values::computed::Contain::BLOCK_SIZE)) {
             if let Some(size) = self.size_contained_size(node_id, inputs) {
                 if inputs.run_mode != RunMode::PerformLayout {
@@ -253,6 +275,10 @@ impl LayoutPassState<'_> {
                 return taffy::tree::LayoutOutput::from_outer_size(taffy::Size { width, height: 0.0 });
             }
             inputs.known_dimensions.width = Some(width);
+        }
+        // pyro: `width`/`height: calc-size(<basis>, <calculation>)` (`Self::calc_size_inputs`)
+        if calc_size {
+            inputs = self.calc_size_inputs(node_id, inputs);
         }
         // pyro: a box that clamps its lines ends at the clamp line, which its laid-out
         // content names (`layout::line_clamp`): a measuring run lays it out too, and what
@@ -284,6 +310,111 @@ impl LayoutPassState<'_> {
         output
     }
 
+    /// pyro: the inputs of a box whose `width` or `height` is `calc-size(<basis>, <calculation>)`
+    /// (CSS Values 5 §6.1). Taffy lays the box out as its basis (`stylo_taffy::convert::dimension`);
+    /// the size that gives (the size its parent resolved it to, else the box's own size measured
+    /// with the basis) goes through the calculation, as the `box-sizing` box, and the result,
+    /// between `min-*` and `max-*`, becomes a known size. In a horizontal writing mode only.
+    #[inline(never)]
+    fn calc_size_inputs(&mut self, node_id: NodeId, mut inputs: taffy::tree::LayoutInput) -> taffy::tree::LayoutInput {
+        use style::values::computed::{LengthPercentage, Size as StyloSize};
+        use taffy::{MaybeMath as _, MaybeResolve as _, ResolveOrZero as _};
+        let node = &self.nodes[dom_node_id(node_id)];
+        let Some(styles) = node.primary_styles() else { return inputs };
+        if !styles.writing_mode.is_horizontal() {
+            return inputs;
+        }
+        let calculation = |size: &StyloSize| -> Option<LengthPercentage> {
+            match size {
+                StyloSize::CalcSizeAuto(lp)
+                | StyloSize::CalcSizeFitContent(lp)
+                | StyloSize::CalcSizeMinContent(lp)
+                | StyloSize::CalcSizeMaxContent(lp) => Some(lp.0.clone()),
+                _ => None,
+            }
+        };
+        // An `auto` or `fit-content` basis shrinks to fit when its parent measures it.
+        let shrinks = matches!(styles.get_position().width, StyloSize::CalcSizeAuto(_) | StyloSize::CalcSizeFitContent(_));
+        let position = styles.get_position();
+        let mut functions = taffy::Size { width: calculation(&position.width), height: calculation(&position.height) };
+        if functions.width.is_none() && functions.height.is_none() {
+            return inputs;
+        }
+        let content_box = styles.get_position().box_sizing == style::computed_values::box_sizing::T::ContentBox;
+        drop(styles);
+        let style = node.layout_style();
+        let parent_width = inputs.parent_size.width;
+        let padding_border = style.padding().resolve_or_zero(parent_width, resolve_calc_value).sum_axes()
+            + style.border().resolve_or_zero(parent_width, resolve_calc_value).sum_axes();
+        let box_inset = if content_box { padding_border } else { taffy::Size::ZERO };
+        let min = style.min_size().maybe_resolve(inputs.parent_size, resolve_calc_value).maybe_add(box_inset);
+        let max = style.max_size().maybe_resolve(inputs.parent_size, resolve_calc_value).maybe_add(box_inset);
+        drop(style);
+        let missing = inputs.known_dimensions.width.is_none() && functions.width.is_some()
+            || inputs.known_dimensions.height.is_none() && functions.height.is_some();
+        let measured = missing.then(|| {
+            let probe = taffy::tree::LayoutInput {
+                run_mode: RunMode::ComputeSize,
+                sizing_mode: taffy::SizingMode::InherentSize,
+                axis: taffy::RequestedAxis::Both,
+                ..inputs
+            };
+            self.dispatch_child_layout(node_id, probe, None).size
+        });
+        let apply = |function: &LengthPercentage, size: f32, inset: f32| -> f32 {
+            let basis = (size - inset).max(0.0);
+            function.resolve(CSSPixelLength::new(basis)).px().max(0.0) + inset
+        };
+        let given = |state: &Self, axis: u8, known: Option<f32>| {
+            known.is_some_and(|known| state.calc_size_results.iter().any(|&(id, a, size)| id == node_id && a == axis && size == known))
+        };
+        let known_width = inputs.known_dimensions.width;
+        if functions.width.is_some() && given(self, 0, known_width) {
+            functions.width = None;
+        }
+        if functions.height.is_some() && given(self, 1, inputs.known_dimensions.height) {
+            functions.height = None;
+        }
+        if let Some(function) = &functions.width {
+            let size = inputs.known_dimensions.width.or(measured.map(|size| size.width)).unwrap_or(0.0);
+            let mut width = apply(function, size, box_inset.width);
+            // A size measured in definite space is the box's fit-content size: the space between
+            // the calculation of its min-content and max-content sizes (as Blink), not the
+            // calculation of the fit-content size of its basis.
+            if let (true, None, AvailableSpace::Definite(space)) =
+                (shrinks, inputs.known_dimensions.width, inputs.available_space.width)
+            {
+                let mut content = |available: AvailableSpace| {
+                    let probe = taffy::tree::LayoutInput {
+                        run_mode: RunMode::ComputeSize,
+                        sizing_mode: taffy::SizingMode::InherentSize,
+                        axis: taffy::RequestedAxis::Both,
+                        available_space: taffy::Size { width: available, ..inputs.available_space },
+                        ..inputs
+                    };
+                    apply(function, self.dispatch_child_layout(node_id, probe, None).size.width, box_inset.width)
+                };
+                let min_content = content(AvailableSpace::MinContent);
+                let max_content = content(AvailableSpace::MaxContent).max(min_content);
+                width = space.clamp(min_content, max_content);
+            }
+            let width = width.maybe_min(max.width).maybe_max(min.width);
+            inputs.known_dimensions.width = Some(width.max(padding_border.width));
+            if known_width.is_none() {
+                self.calc_size_results.push((node_id, 0, width.max(padding_border.width)));
+            }
+        }
+        if let Some(function) = &functions.height {
+            let size = inputs.known_dimensions.height.or(measured.map(|size| size.height)).unwrap_or(0.0);
+            let height = apply(function, size, box_inset.height).maybe_min(max.height).maybe_max(min.height);
+            if inputs.known_dimensions.height.is_none() {
+                self.calc_size_results.push((node_id, 1, height.max(padding_border.height)));
+            }
+            inputs.known_dimensions.height = Some(height.max(padding_border.height));
+        }
+        inputs
+    }
+
     /// pyro: the size of a box with size containment (`contain: size`, css-contain-2 §3.1): the
     /// size it has as an empty box whose content is `contain-intrinsic-size` (css-sizing-4 §4.1;
     /// `none` is zero, `auto <length>` the length: no size is remembered). Its content is then
@@ -297,7 +428,7 @@ impl LayoutPassState<'_> {
         let node = &self.nodes[dom_node_id(node_id)];
         let content = {
             let styles = node.primary_styles()?;
-            if !styles.get_box().contain.contains(Contain::INLINE_SIZE | Contain::BLOCK_SIZE) {
+            if !effective_size_containment(&styles).contains(Contain::INLINE_SIZE | Contain::BLOCK_SIZE) {
                 return None;
             }
             let display = styles.clone_display();
@@ -843,7 +974,7 @@ impl LayoutPassState<'_> {
                         let content_height = output.size.height - padding.vertical_axis_sum() - border.vertical_axis_sum();
                         let offset = ((content_height - line.line_height / scale) / 2.0).floor().max(0.0);
                         let baseline = padding.top + border.top + offset + line.baseline / scale;
-                        output.baselines = taffy::Baselines { first: Some(baseline), last: Some(baseline) };
+                        output.baselines = taffy::Baselines::new(Some(baseline), Some(baseline));
                     }
                     return ChildLayout::Done(output);
                 }
@@ -854,27 +985,15 @@ impl LayoutPassState<'_> {
                         Some("hidden") => {
                             return ChildLayout::Done(taffy::LayoutOutput::HIDDEN);
                         }
-                        Some("checkbox") => {
+                        // pyro: a checkbox or radio is 13x13 by nature (Blink's theme size), not by
+                        // the UA sheet's `width`/`height`: a flex parent stretches it and a percentage
+                        // sizes it (WPT css-flexbox `stretch-flex-item-checkbox-input`)
+                        Some("checkbox" | "radio") => {
                             return ChildLayout::Done(compute_leaf_layout(
                                 inputs,
                                 &node.layout_style(),
                                 resolve_calc_value,
-                                |_known_size, _available_space| {
-                                    let size = node.layout_style().size();
-                                    let width = size.width.resolve_or_zero(
-                                        inputs.parent_size.width,
-                                        resolve_calc_value,
-                                    );
-                                    let height = size.height.resolve_or_zero(
-                                        inputs.parent_size.height,
-                                        resolve_calc_value,
-                                    );
-                                    let min_size = width.min(height);
-                                    taffy::Size {
-                                        width: min_size,
-                                        height: min_size,
-                                    }
-                                },
+                                |_known_size, _available_space| taffy::Size { width: 13.0, height: 13.0 },
                             ));
                         }
                         None | Some("text" | "password" | "email" | "tel" | "url" | "search" | "time") => {
@@ -932,7 +1051,7 @@ impl LayoutPassState<'_> {
                                     output.size.height - content_top - padding.bottom - border.bottom;
                                 let (line_height, baseline) = (line.line_height / scale, line.baseline / scale);
                                 let baseline = content_top + (content_height - line_height) / 2.0 + baseline;
-                                output.baselines = taffy::Baselines { first: Some(baseline), last: Some(baseline) };
+                                output.baselines = taffy::Baselines::new(Some(baseline), Some(baseline));
                             }
                             return ChildLayout::Done(output);
                         }
@@ -1131,9 +1250,13 @@ impl LayoutPassState<'_> {
                             (intrinsic_sizes, default_object_size)
                         };
 
+                    let ratio_in_box_sizing_box = node
+                        .primary_styles()
+                        .is_some_and(|style| !style.get_position().aspect_ratio.auto);
                     let replaced_context = ReplacedContext {
                         intrinsic_sizes,
                         default_object_size,
+                        ratio_in_box_sizing_box,
                     };
 
                     let mut style = node.layout_style();
@@ -1144,6 +1267,31 @@ impl LayoutPassState<'_> {
                         resolve_calc_value,
                         &replaced_context,
                     ));
+                }
+
+                // pyro: a fixed-layout table with a percentage width asks to be as wide as possible:
+                // its max-content width is Blink's `kTableMaxWidth` (flex items holding such tables
+                // share the line evenly; WPT css-flexbox
+                // `fixed-table-layout-with-percentage-width-in-flex-item`). Empty tables too, which
+                // are laid out as blocks.
+                if inputs.run_mode == RunMode::ComputeSize
+                    && inputs.axis == taffy::RequestedAxis::Horizontal
+                    && inputs.known_dimensions.width.is_none()
+                    && inputs.available_space.width == AvailableSpace::MaxContent
+                    && node.primary_styles().is_some_and(|style| {
+                        style.clone_display().inside() == style::values::specified::box_::DisplayInside::Table
+                            && style.get_table().table_layout
+                                == style::computed_values::table_layout::T::Fixed
+                            && matches!(
+                                &style.get_position().width,
+                                style::values::computed::Size::LengthPercentage(lp) if lp.0.has_percentage()
+                            )
+                    })
+                {
+                    return ChildLayout::Done(taffy::LayoutOutput::from_outer_size(taffy::Size {
+                        width: 1_000_000.0,
+                        height: 0.0,
+                    }));
                 }
 
                 if node.flags.is_table_root() {
@@ -2204,4 +2352,20 @@ impl BaseDocument {
             && !box_style.position.is_absolutely_positioned()
             && !parent_is_cell
     }
+}
+
+/// pyro: `contain` with the size containment a size container has (`container-type: size` is
+/// size containment, `inline-size` inline-size containment; css-contain-3 §2): its content does
+/// not size it (WPT css-conditional `container-queries/flex-basis-with-container-type`).
+pub(crate) fn effective_size_containment(styles: &style::properties::ComputedValues) -> style::values::computed::Contain {
+    use style::values::computed::Contain;
+    use style::values::specified::box_::ContainerType;
+    let box_style = styles.get_box();
+    let mut contain = box_style.contain;
+    if box_style.container_type.intersects(ContainerType::SIZE) {
+        contain |= Contain::INLINE_SIZE | Contain::BLOCK_SIZE;
+    } else if box_style.container_type.intersects(ContainerType::INLINE_SIZE) {
+        contain |= Contain::INLINE_SIZE;
+    }
+    contain
 }

@@ -59,8 +59,7 @@ pub(crate) fn resolve_sizing_keyword(
 ///
 /// - `area_size` is the size of the item's containing block (which insets and percentages
 ///   resolve against).
-/// - The stretch size in each axis is the containing block minus the item's insets and margins
-///   in that axis.
+/// - `stretch_fit_size`: the inset-modified containing block less the non-auto margins.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn resolve_absolute_sizing_keywords(
     tree: &mut impl LayoutPartialTree,
@@ -68,28 +67,12 @@ pub(crate) fn resolve_absolute_sizing_keywords(
     known_dimensions: &mut Size<Option<f32>>,
     size_style: Size<Dimension>,
     area_size: Size<f32>,
-    inset: Rect<Option<f32>>,
-    margin: Rect<Option<f32>>,
+    stretch_fit_size: Size<f32>,
     sizing_mode: SizingMode,
 ) {
-    let stretch_size = Size {
-        width: f32_max(
-            area_size.width
-                - inset.left.unwrap_or(0.0)
-                - inset.right.unwrap_or(0.0)
-                - margin.left.unwrap_or(0.0)
-                - margin.right.unwrap_or(0.0),
-            0.0,
-        ),
-        height: f32_max(
-            area_size.height
-                - inset.top.unwrap_or(0.0)
-                - inset.bottom.unwrap_or(0.0)
-                - margin.top.unwrap_or(0.0)
-                - margin.bottom.unwrap_or(0.0),
-            0.0,
-        ),
-    };
+    // pyro: the stretch-fit size of the inset-modified containing block, which an auto inset
+    // bounds at the static position (WPT css-sizing `stretch/positioned-*-1`)
+    let stretch_size = stretch_fit_size;
 
     let keyword_width = if known_dimensions.width.is_none() {
         resolve_sizing_keyword(size_style.width, Some(stretch_size.width), Some(area_size.width), |val, basis| {

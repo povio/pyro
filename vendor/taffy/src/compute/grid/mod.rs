@@ -36,6 +36,7 @@ pub(crate) use types::{GridCoordinate, GridLine, OriginZeroLine, MAX_GRID_TRACKS
 pub use types::{GridLineNames, GridLineNamesIter};
 
 mod alignment;
+mod baseline;
 mod explicit_grid;
 mod implicit_grid;
 mod placement;
@@ -607,6 +608,7 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
         let content_minimum = style.min_size().height.is_auto() && !overflow.x.is_scroll_container() && !overflow.y.is_scroll_container();
         (ratio, adjustment, content_minimum)
     });
+    let baseline_synthesis = style.baseline_synthesis();
     drop(style);
 
     // pyro: subgrid children (css-grid-2 §9): their contexts, and their items to size this grid's tracks
@@ -633,7 +635,22 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
     }
 
     // Determine if the grid has any baseline aligned items
-    let has_baseline_aligned_item = items.iter().any(|item| item.participates_in_baseline_alignment());
+    let has_baseline_aligned_item = !table_rows
+        && items.iter().any(|item| {
+            item.participates_in_baseline_alignment() || item.participates_in_inline_baseline_alignment()
+        });
+    let baseline_params = |other_axis_known: bool| {
+        has_baseline_aligned_item.then_some(track_sizing::BaselineParams {
+            synthesis: baseline_synthesis,
+            direction,
+            other_axis_known,
+        })
+    };
+
+    // pyro: the heights of the items of subgrids in their columns only, in their own rows.
+    if has_subgrid_items && replay.is_none() {
+        subgrid::resolve_standalone_heights(tree, &mut items, own_item_count);
+    }
 
     // Run track sizing algorithm for Inline axis
     // (A table laid out again keeps its columns: they depend on no item.)
@@ -654,7 +671,7 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
             |track: &GridTrack, parent_size: Option<f32>, tree: &Tree| {
                 track.max_track_sizing_function.definite_value(parent_size, |val, basis| tree.calc(val, basis))
             },
-            has_baseline_aligned_item,
+            baseline_params(false),
             false,
             None,
             None,
@@ -718,7 +735,7 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
         &mut columns,
         &mut items,
         |track: &GridTrack, _, _| Some(track.base_size),
-        false, // TODO: Support baseline alignment in the vertical axis
+        baseline_params(true),
         table_rows,
         replay.as_ref().map(|replay| replay.affected_tracks.as_slice()),
         rows_sized.as_mut(),
@@ -727,6 +744,10 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
         subgrid::update_subgrid_track_sizes(tree, &items[..own_item_count], AbsoluteAxis::Vertical, &rows, false, &subgrid_parent);
     }
     let initial_row_sum = rows.iter().map(|track| track.base_size).sum::<f32>();
+    // pyro: a subgrid in its columns only keeps its rows for its parent's column sizing.
+    if own_subgrid.as_ref().is_some_and(|c| c.columns.is_some() && c.rows.is_none()) {
+        subgrid::record_own_rows(tree, node, &rows, inner_node_size.height.unwrap_or(initial_row_sum));
+    }
 
     debug_log!("initial_column_sum", dbg:initial_column_sum);
     debug_log!(dbg: columns.iter().map(|track| track.base_size).collect::<Vec<_>>());
@@ -877,7 +898,7 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
             &mut rows,
             &mut items,
             |track: &GridTrack, _, _| Some(track.base_size),
-            has_baseline_aligned_item,
+            baseline_params(true),
             false,
             None,
             None,
@@ -942,7 +963,7 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
             &mut columns,
             &mut items,
             |track: &GridTrack, _, _| Some(track.base_size),
-            false, // TODO: Support baseline alignment in the vertical axis
+            baseline_params(true),
             table_rows,
             None,
             None,
@@ -1026,6 +1047,36 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
         }
         if let Some(axis) = &context.rows {
             subgrid::place_subgrid_tracks(&mut rows, axis, border.top + padding.top, container_content_box.height, false);
+        }
+    }
+
+    // pyro: the baseline shims with the final track sizes (an item's baselines can depend on both), with the
+    // parent's group baselines in a subgrid's subgridded axes; a subgrid's items here give it this grid's.
+    if has_baseline_aligned_item && replay.is_none() {
+        for axis in [AbstractAxis::Inline, AbstractAxis::Block] {
+            let parent_axis = own_subgrid.as_ref().and_then(|context| match axis {
+                AbstractAxis::Inline => context.columns.as_ref(),
+                AbstractAxis::Block => context.rows.as_ref(),
+            });
+            let parent_baselines = parent_axis.and_then(|sub| sub.baselines.clone());
+            let mut synthesis = baseline_synthesis;
+            if let Some(parent_synthesis) = parent_axis.and_then(|sub| sub.baseline_synthesis) {
+                synthesis.set(axis, parent_synthesis);
+            }
+            baseline::resolve_baseline_shims(
+                tree,
+                axis,
+                &mut items,
+                Some(&columns),
+                Some(&rows),
+                inner_node_size,
+                synthesis,
+                direction,
+                parent_baselines.as_deref(),
+            );
+            if has_subgrid_items {
+                subgrid::record_subgrid_baselines(tree, &items, axis, synthesis.get(axis));
+            }
         }
     }
 
@@ -1119,6 +1170,7 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
                 item.y_position = old.y_position;
                 item.height = old.height;
                 item.baseline = old.baseline;
+                item.last_baseline = old.last_baseline;
                 continue;
             }
             Some(Some(moved)) => moved,
@@ -1135,6 +1187,20 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
                 } else {
                     item.baseline_shim
                 };
+                let baseline = alignment::ItemBaselineAlignment {
+                    shim: Rect {
+                        left: item.baseline_shim_inline.start,
+                        right: item.baseline_shim_inline.end,
+                        top: baseline_shim,
+                        bottom: item.baseline_shim_block_end,
+                    },
+                    end: Size {
+                        width: (has_baseline_aligned_item && item.participates_in_inline_baseline_alignment())
+                            .then(|| item.baseline_group_is_end(AbstractAxis::Inline)),
+                        height: (has_baseline_aligned_item && item.participates_in_baseline_alignment())
+                            .then(|| item.baseline_group_is_end(AbstractAxis::Block)),
+                    },
+                };
                 align_and_position_item(
                     tree,
                     item.node,
@@ -1142,7 +1208,7 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
                     grid_area,
                     Size { width: grid_area.right - grid_area.left, height: grid_area.bottom - grid_area.top },
                     container_alignment_styles,
-                    baseline_shim,
+                    baseline,
                     item.width_unfloored,
                     item.subgrid,
                     direction,
@@ -1159,6 +1225,7 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
         item.y_position = placed.y_position;
         item.height = placed.height;
         item.baseline = placed.baseline;
+        item.last_baseline = placed.last_baseline;
         if index < positioned.len() {
             positioned[index] = placed;
         } else if table_rows {
@@ -1348,25 +1415,38 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
         return output;
     }
 
-    // Determine the grid container baseline(s) (currently we only compute the first baseline)
+    // Determine the grid container baselines
     // Layout containment suppresses the box's baseline for baseline-alignment purposes
-    let grid_container_baseline: Option<f32> = if contain.suppresses_baseline() {
-        None
+    let (grid_container_baseline, grid_container_last_baseline) = if contain.suppresses_baseline() {
+        (None, None)
     } else {
         // Get the row index of the first row containing items
         let first_row = items.iter().map(|item| item.row_indexes.start).min().unwrap();
 
         // Check if any items in *this row* participate in baseline alignment
         // (items with an auto block-axis margin do not participate: https://www.w3.org/TR/css-align-3/#baseline-align-self)
+        let first_group = |item: &GridItem| {
+            item.participates_in_baseline_alignment() && !item.baseline_group_is_end(AbstractAxis::Block)
+        };
         let mut first_row_items = items.iter().filter(|item| item.row_indexes.start == first_row);
         let first_item = first_row_items.next().unwrap();
-        let item = if first_item.participates_in_baseline_alignment() {
+        let item = if first_group(first_item) {
             first_item
         } else {
-            first_row_items.find(|item| item.participates_in_baseline_alignment()).unwrap_or(first_item)
+            first_row_items.find(|item| first_group(item)).unwrap_or(first_item)
         };
+        let first = item.y_position + item.baseline.unwrap_or(item.height);
 
-        Some(item.y_position + item.baseline.unwrap_or(item.height))
+        // pyro: the last baseline from the last row (css-grid-1 §10.1): its items in a last-baseline group, else
+        // its last item in grid order
+        let last_row = items.iter().map(|item| item.row_indexes.end).max().unwrap();
+        let last_group = |item: &GridItem| {
+            item.participates_in_baseline_alignment() && item.baseline_group_is_end(AbstractAxis::Block)
+        };
+        let last_row_items = || items.iter().filter(|item| item.row_indexes.end == last_row);
+        let item = last_row_items().find(|item| last_group(item)).or_else(|| last_row_items().last()).unwrap();
+        let last = item.y_position + item.last_baseline.unwrap_or(item.height);
+        (Some(first), Some(last))
     };
 
     // A scroll container's own padding at the end of the content is part of its scrollable
@@ -1398,7 +1478,7 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
     let mut output = LayoutOutput::from_sizes_and_baselines(
         container_border_box,
         scrollable_overflow_rect,
-        Baselines::from_first(grid_container_baseline),
+        Baselines::new(grid_container_baseline, grid_container_last_baseline),
     );
     output.oof_candidates = oof_candidates;
     output.oof_positioning_area = oof_positioning_area;
