@@ -140,6 +140,11 @@ pub(super) struct RequestLog {
     open: HashMap<RequestId, usize>,
     /// Entries dropped from the front: `seq` keeps counting across drops.
     dropped: usize,
+    /// Keep response bodies (from the first run with a `responseBody`
+    /// request check on): `request` steps hand them out.
+    pub(super) capture_bodies: bool,
+    /// Bytes of the kept response bodies.
+    body_bytes: usize,
 }
 
 /// Longest request body a logged request keeps (`postDataTruncated` past it).
@@ -162,7 +167,23 @@ pub(super) struct LoggedRequest {
     post_data_truncated: bool,
     /// The response headers once the head arrived.
     pub(super) response_headers: Option<http::HeaderMap>,
+    /// The response body, when the log keeps bodies (`capture_bodies`).
+    response_body: Option<ResponseBody>,
 }
+
+/// A logged response's body: shared chunks, at most `MAX_LOGGED_RESPONSE_BODY`.
+#[derive(Clone, Debug, Default)]
+struct ResponseBody {
+    chunks: Vec<Bytes>,
+    len: usize,
+    textual: bool,
+    truncated: bool,
+}
+
+/// Longest response body a logged request keeps (`responseBodyTruncated` past it).
+const MAX_LOGGED_RESPONSE_BODY: usize = 4 * 1024 * 1024;
+/// Response bytes a page's log keeps in all: older bodies go first.
+const MAX_LOGGED_RESPONSE_BYTES: usize = 32 * 1024 * 1024;
 
 pub(super) fn redact_header_values(mut headers: Value) -> Value {
     if let Some(values) = headers.as_object_mut() {
@@ -238,6 +259,36 @@ impl LoggedRequest {
         }
         v
     }
+
+    pub(super) fn has_response_body(&self) -> bool {
+        self.response_body.is_some()
+    }
+
+    /// [`Self::to_json`] with the response body, when the log kept it.
+    pub(super) fn to_json_with_body(&self) -> Value {
+        let mut v = self.to_json();
+        if let Some(body) = &self.response_body {
+            let mut bytes = Vec::with_capacity(body.len);
+            for chunk in &body.chunks {
+                bytes.extend_from_slice(chunk);
+            }
+            match String::from_utf8(bytes) {
+                Ok(text) if body.textual => v["responseBody"] = json!(text),
+                Ok(text) => {
+                    v["responseBody"] = json!(base64_encode(text.as_bytes()));
+                    v["responseBodyBase64"] = json!(true);
+                }
+                Err(e) => {
+                    v["responseBody"] = json!(base64_encode(e.as_bytes()));
+                    v["responseBodyBase64"] = json!(true);
+                }
+            }
+            if body.truncated {
+                v["responseBodyTruncated"] = json!(true);
+            }
+        }
+        v
+    }
 }
 
 impl RequestLog {
@@ -264,7 +315,9 @@ impl RequestLog {
                 }
                 if self.entries.len() >= MAX_LOGGED {
                     let cut = MAX_LOGGED / 2;
-                    self.entries.drain(..cut);
+                    for gone in self.entries.drain(..cut) {
+                        self.body_bytes -= gone.response_body.map_or(0, |b| b.len);
+                    }
                     self.dropped += cut;
                     self.open.retain(|_, i| {
                         let keep = *i >= cut;
@@ -288,10 +341,12 @@ impl RequestLog {
                     post_data,
                     post_data_truncated,
                     response_headers: None,
+                    response_body: None,
                 };
                 // The same hop sent again without a redirect (a cache
                 // revalidation that had to refetch) is still one request.
                 if let Some(&i) = self.open.get(id) {
+                    self.body_bytes -= self.entries[i].response_body.as_ref().map_or(0, |b| b.len);
                     self.entries[i] = entry;
                     return;
                 }
@@ -302,9 +357,48 @@ impl RequestLog {
                 if let Some(&i) = self.open.get(id) {
                     self.entries[i].status = Some(head.status.as_u16());
                     self.entries[i].response_headers = Some(head.headers.clone());
+                    if self.capture_bodies {
+                        let mime = &head.mime;
+                        let textual = mime.starts_with("text/")
+                            || mime.contains("json")
+                            || mime.contains("javascript")
+                            || mime.contains("xml")
+                            || mime.is_empty();
+                        self.body_bytes -= self.entries[i].response_body.as_ref().map_or(0, |b| b.len);
+                        self.entries[i].response_body = Some(ResponseBody { textual, ..Default::default() });
+                    }
                 }
             }
-            NetEvent::DataReceived { .. } => {}
+            NetEvent::DataReceived { id, data, .. } => {
+                let Some(&i) = self.open.get(id) else { return };
+                let Some(body) = &self.entries[i].response_body else { return };
+                if body.truncated || data.is_empty() {
+                    return;
+                }
+                if body.len + data.len() > MAX_LOGGED_RESPONSE_BODY {
+                    self.entries[i].response_body.as_mut().expect("checked").truncated = true;
+                    return;
+                }
+                // Room from the oldest kept bodies first (never this one's).
+                let mut oldest = 0;
+                while self.body_bytes + data.len() > MAX_LOGGED_RESPONSE_BYTES && oldest < self.entries.len() {
+                    if oldest != i {
+                        if let Some(gone) = self.entries[oldest].response_body.take() {
+                            self.body_bytes -= gone.len;
+                        }
+                    }
+                    oldest += 1;
+                }
+                if self.body_bytes + data.len() > MAX_LOGGED_RESPONSE_BYTES {
+                    self.entries[i].response_body.as_mut().expect("checked").truncated = true;
+                    return;
+                }
+                let body = self.entries[i].response_body.as_mut().expect("checked");
+                // `Bytes` is reference counted: keeping it does not copy.
+                body.chunks.push(data.clone());
+                body.len += data.len();
+                self.body_bytes += data.len();
+            }
             NetEvent::LoadingFinished { id, timestamp, .. } => {
                 if let Some(i) = self.open.remove(id) {
                     (self.entries[i].done, self.entries[i].end) = (true, Some(*timestamp));

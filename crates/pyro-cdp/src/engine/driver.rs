@@ -388,6 +388,15 @@ struct RequestMatch {
     /// Which requests count: `finished` (the default: finished or failed,
     /// as `status` needs) or `started` (sent, still in flight or done).
     state: Option<RequestState>,
+    /// The result carries the matched response's body (`responseBody`, as
+    /// text, or base64 with `responseBodyBase64`). The page's log keeps
+    /// bodies from the run with the first such step on.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    response_body: bool,
+    /// The run's values get the matched response's body (with
+    /// `responseBody`) or the matched request under this name.
+    #[serde(default, rename = "as", skip_serializing_if = "Option::is_none")]
+    key: Option<String>,
 }
 
 #[derive(Deserialize, Serialize, Clone, Copy, Debug, PartialEq, Eq)]
@@ -5066,6 +5075,11 @@ impl EngineHost {
             self.update_network_subscriptions();
             Some(0)
         };
+        if steps.iter().any(|(s, _)| matches!(s, Step::Request(m) if m.response_body)) {
+            if let Some(log) = self.pages.get_mut(&cmd.page).and_then(|s| s.network.log.as_mut()) {
+                log.capture_bodies = true;
+            }
+        }
         let popups_from = self.popups.len();
         let now = Instant::now();
         let first = steps.first().map_or(Duration::ZERO, |(_, t)| *t);
@@ -5631,6 +5645,10 @@ impl EngineHost {
         | Step::Held { key: Some(key), .. } = step
         {
             w.job.reads.insert(key.clone(), value.clone());
+        } else if let Step::Request(RequestMatch { key: Some(key), response_body, .. }) = step {
+            let read =
+                if *response_body { value.get("responseBody").cloned().unwrap_or(Value::Null) } else { value.clone() };
+            w.job.reads.insert(key.clone(), read);
         } else if let Step::MatchScreenshot(shot) = step {
             if let Some(key) = &shot.key {
                 w.job.reads.insert(key.clone(), value.clone());
@@ -5983,6 +6001,10 @@ impl EngineHost {
         }
         let candidates = if started { &matching } else { &finished };
         match candidates.iter().rev().find(|r| m.status.as_ref().is_none_or(|s| s.accepts(r.status))) {
+            Some(r) if m.response_body && !r.has_response_body() && r.error.is_none() => Attempt::Retry(
+                "the matching response's body was not kept (it ended before the run asked for bodies)".into(),
+            ),
+            Some(r) if m.response_body => Attempt::Done(r.to_json_with_body()),
             Some(r) => Attempt::Done(r.to_json()),
             None => Attempt::Retry(match candidates.last() {
                 Some(r) => format!("last match was {}", r.to_json()),

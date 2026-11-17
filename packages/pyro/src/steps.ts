@@ -476,6 +476,19 @@ class RequestCheck implements StepLike {
   timeout(timeout: number): RequestCheck {
     return new RequestCheck({ ...this.m, timeout });
   }
+  /**
+   * The matched response's body: in the step's result (`responseBody`, text,
+   * or base64 with `responseBodyBase64: true`), and in the run's values
+   * under `as` when given. The page keeps response bodies from the first run
+   * with such a check on, so the request must start in that run or later.
+   */
+  responseBody(as?: string): RequestCheck {
+    return new RequestCheck({ ...this.m, responseBody: true, ...(as !== undefined ? { as } : {}) });
+  }
+  /** The run's values get the matched request (its result) under `as`. */
+  as(as: string): RequestCheck {
+    return new RequestCheck({ ...this.m, as });
+  }
   toStep(): Step {
     return { request: this.m };
   }

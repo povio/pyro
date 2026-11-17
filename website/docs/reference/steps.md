@@ -243,6 +243,8 @@ Checks the run's request log. The method compares case-insensitively. A string `
 | `.state('started' \| 'finished')` | `finished` (default) counts requests with a response or an error. `started` also counts requests still in flight |
 | `.scope('batch' \| 'context')` | `batch` (default): this run only. `context`: also earlier runs of this page (never sibling pages) |
 | `.timeout(ms: number)` | Step timeout |
+| `.responseBody(as?: string)` | The result also has the matched response's body: `responseBody` (text, or base64 with `responseBodyBase64: true`); `values[as]` gets it. The page keeps bodies from its first run with such a check |
+| `.as(name: string)` | `values[name]` gets the matched request |
 
 ```ts
 check.request('POST', '/api/orders').status(201).bodyKeys(['sku', 'qty']);
