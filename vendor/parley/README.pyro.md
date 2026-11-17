@@ -422,3 +422,9 @@ Covered by `crates/pyro-render/tests/text_inline_round4.rs` and `soft_hyphens.rs
   Boxes not marked keep their alphabetic baseline. Text keeps its
   alphabetic geometry (the strut's line-height box is the same around both). WPT css-inline
   `initial-letter-raise-initial-vlr/-vrl`, `initial-letter-sunk-initial-vlr`; `crates/pyro-render/tests/vertical_lines_and_controls.rs`.
+- `layout/line_break.rs` (round 4 lane F): a line that wraps inside a run keeps no legacy `kern` pair across its end:
+  HarfBuzz splits a pair between the two glyphs (half on the first's advance, half on the second's offset and advance;
+  parley_engine `ShapedText::legacy_kern_across` recovers both from the `hmtx` advance, for fonts with a `kern` table and
+  no `GPOS`), and both glyphs lose their parts (`shift_edge_cluster`, restored before the next break). Blink shapes line
+  edges again where shaping was not safe to break, so its wrapped lines start at the content edge (macOS Times and
+  Helvetica). WPT CSS2 `bidi-002` (RLO run broken after a space), css-text `hyphens-auto-001` (space|W pairs).

@@ -283,10 +283,14 @@
              descent: -metrics.descent,
              leading: metrics.leading,
              underline_offset,
-@@ -132,6 +229,121 @@
-     }
- }
- 
+@@ -128,10 +225,125 @@
+             strikethrough_size,
+             x_height: metrics.x_height,
+             cap_height: metrics.cap_height,
++        }
++    }
++}
++
 +/// pyro: WebKit's and Chromium's (macOS) extra ascent for Times,
 +/// Helvetica and Courier, "to closely match the vertical metrics of their
 +/// Microsoft counterparts": 15% of the rounded ascent plus descent, rounded
@@ -378,10 +382,10 @@
 +            font_metrics: FontMetrics::from_skrifa_metrics(&font_ref, &metrics, font_size)
 +                .with_face_metrics(font.synthesis.face_metrics(), font_size),
 +            hyphen,
-+        }
-+    }
-+}
-+
+         }
+     }
+ }
+ 
 +/// The metrics of the runs of one font at one size and variation location in a [`ShapedText`].
 +#[derive(Clone, Debug, PartialEq)]
 +struct RunMetricsEntry {
@@ -423,7 +427,7 @@
      }
  
      /// Get a [`ShapedSlice`] of the run at `run_index`.
-@@ -218,6 +434,164 @@
+@@ -218,6 +434,218 @@
          }
      }
  
@@ -491,6 +495,60 @@
 +            glyph.x = x;
 +            glyph.advance += d_advance;
 +        }
++    }
++
++    /// pyro: the legacy `kern` pair between the shaped clusters `left` and `right` (visually
++    /// adjacent, `left` first, in one run): HarfBuzz splits a pair's value between the two
++    /// glyphs, `k1` on the first one's advance and `k2` on the second one's offset and advance.
++    /// `Some((k1, k2))` for single-glyph clusters of a font with a `kern` table and no `GPOS`
++    /// whose pair kerned (Blink shapes a line's edges again where shaping was not safe to break,
++    /// so a line break leaves no pair across it).
++    pub fn legacy_kern_across(&self, left: u32, right: u32) -> Option<(f32, f32)> {
++        use skrifa::raw::TopLevelTable as _;
++        let run = self.runs.iter().find(|run| {
++            run.shaped_clusters_range.contains(&left) && run.shaped_clusters_range.contains(&right)
++        })?;
++        let glyph = |index: u32| -> Option<(u32, f32, f32)> {
++            let cluster = self.shaped_clusters.get(index as usize)?;
++            if cluster.glyph_len() != 1 {
++                return None;
++            }
++            if cluster.has_inline_glyph() {
++                return Some((cluster.glyph_offset, 0.0, cluster.advance));
++            }
++            let glyph = self.glyphs.get(cluster.glyph_offset as usize)?;
++            Some((glyph.id, glyph.x, glyph.advance))
++        };
++        let (right_x, (left_id, left_x, left_advance)) = (glyph(right)?.1, glyph(left)?);
++        if right_x == 0.0 {
++            return None;
++        }
++        let font = self.fonts.get(run.font_index)?;
++        let font_ref = skrifa::FontRef::from_index(font.font.data.as_ref(), font.font.index).ok()?;
++        if font_ref.table_data(skrifa::raw::types::Tag::new(b"kern")).is_none()
++            || font_ref.table_data(skrifa::raw::tables::gpos::Gpos::TAG).is_some()
++        {
++            return None;
++        }
++        let coords: alloc::vec::Vec<skrifa::instance::NormalizedCoord> = self.normalized_coords
++            [run.normalized_coords_range.clone()]
++        .iter()
++        .map(|coord| skrifa::instance::NormalizedCoord::from_bits(coord.to_bits()))
++        .collect();
++        let metrics =
++            skrifa::metrics::GlyphMetrics::new(&font_ref, skrifa::prelude::Size::unscaled(), coords.as_slice());
++        let units_per_em = { use skrifa::raw::TableProvider as _; font_ref.head().ok()?.units_per_em() };
++        (units_per_em != 0).then_some(())?;
++        let base = metrics.advance_width(skrifa::GlyphId::new(left_id))? * (run.font_size / f32::from(units_per_em));
++        Some((left_advance - base - left_x, right_x))
++    }
++
++    /// pyro: the bidi level of the run holding the shaped cluster at `index`.
++    pub fn cluster_is_rtl(&self, index: u32) -> Option<bool> {
++        self.runs
++            .iter()
++            .find(|run| run.shaped_clusters_range.contains(&index))
++            .map(|run| run.bidi_level.is_rtl())
 +    }
 +
 +    /// pyro: the glyph of `ch` in the font of the run at `run_index` and its advance at the run's
@@ -588,7 +646,7 @@
      /// The character data of the text, in logical order.
      ///
      /// [`ShapedRun::characters_range`] indexes into this. The nth [`Character`] corresponds exactly
-@@ -273,7 +647,9 @@
+@@ -273,7 +701,9 @@
          font: &FontInstance,
          glyph_buffer: &harfrust::GlyphBuffer,
          normalized_coords: &[harfrust::NormalizedCoord],
@@ -599,7 +657,7 @@
          debug_assert_eq!(
              range.char_range.len(),
              text[range.byte_range.clone()].chars().count(),
-@@ -302,18 +678,36 @@
+@@ -302,18 +732,36 @@
                  index
              });
  
@@ -646,7 +704,7 @@
  
          // `HarfRust` returns glyphs in visual order, so we need to process them as such while
          // maintaining logical ordering of clusters.
-@@ -324,20 +718,23 @@
+@@ -324,20 +772,23 @@
  
          // Push all characters.
          let characters_start = self.characters.len();
@@ -676,7 +734,7 @@
                  grapheme_start: info.is_grapheme_start(),
              });
          }
-@@ -395,7 +792,9 @@
+@@ -395,7 +846,9 @@
              bidi_level: segment.bidi_level,
              advance: run_advance,
              font_metrics,
@@ -686,7 +744,7 @@
      }
  }
  
-@@ -423,6 +822,9 @@
+@@ -423,6 +876,9 @@
      pub bidi_level: BidiLevel,
      /// Total advance of the run.
      pub advance: f32,
@@ -696,7 +754,7 @@
      /// The font metrics of this run.
      pub font_metrics: FontMetrics,
  }
-@@ -534,7 +936,15 @@
+@@ -534,7 +990,15 @@
              y: -(glyph_pos.y_offset as f32) * scale_factor,
              advance: (glyph_pos.x_advance as f32) * scale_factor,
          };
@@ -713,7 +771,7 @@
              // Defer this potential zero-offset, single glyph cluster
              cluster.inline_glyph = Some(glyph);
          } else {
-@@ -647,9 +1057,16 @@
+@@ -647,9 +1111,16 @@
              char_end: text.chars().count().try_into().unwrap(),
              options: ShapeOptions {
                  font_size: 32.0,
@@ -730,7 +788,7 @@
              },
          }];
          shaper.shape_text(
-@@ -805,18 +1222,32 @@
+@@ -805,18 +1276,32 @@
                  char_end: 1,
                  options: ShapeOptions {
                      font_size: 32.0,

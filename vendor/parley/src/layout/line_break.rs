@@ -1492,6 +1492,25 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                 self.state.line.x += removed;
             }
         }
+        // pyro: a line that wraps inside a run keeps no legacy `kern` pair across its end
+        // (`ShapedText::legacy_kern_across`): the glyphs on both sides lose their parts of it.
+        if matches!(reason, BreakReason::Regular | BreakReason::Emergency)
+            && let Some(last) = self.state.line.clusters.end.checked_sub(1)
+            && self.state.line.clusters.start <= last
+        {
+            let next = self.state.line.clusters.end;
+            let shaped = &self.layout.data.shaped_text;
+            if let (Some(rtl), Some(next_rtl)) = (shaped.cluster_is_rtl(last), shaped.cluster_is_rtl(next))
+                && rtl == next_rtl
+            {
+                let (left, right) = if rtl { (next, last) } else { (last, next) };
+                if let Some((k1, k2)) = shaped.legacy_kern_across(left, right) {
+                    self.layout.data.shift_edge_cluster(left, 0.0, -k1);
+                    self.layout.data.shift_edge_cluster(right, -k2, -k2);
+                    self.state.line.x -= if rtl { k2 } else { k1 };
+                }
+            }
+        }
         // pyro: a line ending after an ideograph or a letter drops the space `text-autospace`
         // put after it.
         if let Some(last) = self.state.line.clusters.end.checked_sub(1)
