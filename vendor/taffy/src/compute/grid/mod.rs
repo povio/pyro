@@ -815,7 +815,15 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
     let has_percentage_column = columns.iter().any(|track| track.uses_percentage());
     let has_percentage_row = rows.iter().any(|track| track.uses_percentage());
     let parent_width_indefinite = outer_node_size.width.is_none();
-    rerun_column_sizing = parent_width_indefinite && has_percentage_column;
+    // pyro: flexible tracks whose flex factors sum to less than one take only that share of a definite free
+    // space, but the sum counts as one against the indefinite size of the first pass: re-run with the size it gave
+    // (Blink sizes tracks again at the definite size; WPT css-grid `grid-template-flexible-rerun-track-sizing`,
+    // `flex-sizing-rows-indefinite-height`)
+    let fractional_flex = |tracks: &[GridTrack]| {
+        let sum: f32 = tracks.iter().filter(|track| track.is_flexible()).map(|track| track.flex_factor()).sum();
+        sum > 0.0 && sum < 1.0
+    };
+    rerun_column_sizing = parent_width_indefinite && (has_percentage_column || fractional_flex(&columns));
 
     if !rerun_column_sizing {
         // Note: every item must be visited (no short-circuiting) as the closure updates each item's caches
@@ -871,7 +879,7 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
     //   - Column sizing was re-run and any grid item crossing an intrinsically sized track's min content contribution height has changed
     // TODO: Only rerun sizing for tracks that actually require it rather than for all tracks if any need it.
     let parent_height_indefinite = outer_node_size.height.is_none();
-    let mut rerun_row_sizing = parent_height_indefinite && has_percentage_row;
+    let mut rerun_row_sizing = parent_height_indefinite && (has_percentage_row || fractional_flex(&rows));
     let mut intrinsic_row_contribution_changed = false;
 
     if rerun_row_sizing {

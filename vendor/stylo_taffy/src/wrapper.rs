@@ -50,6 +50,9 @@ bitflags! {
         const IS_FIELDSET = 1 << 8;
         /// pyro: the element is replaced by the image of its `content: url()`.
         const IS_CONTENT_REPLACED = 1 << 9;
+        /// pyro: the element is an `<input>`: its `overflow` makes it no scroll container for layout (an
+        /// automatic minimum size of zero; Blink, WPT css-grid `stretch-grid-item-text-input-overflow`).
+        const IS_INPUT = 1 << 10;
     }
 }
 
@@ -250,7 +253,7 @@ impl<T: Deref<Target = ComputedValues>> taffy::CoreStyle for TaffyStyloStyle<T> 
 
     #[inline]
     fn overflow(&self) -> taffy::Point<taffy::Overflow> {
-        if self.flags.contains(StyleFlags::OVERFLOW_TO_VIEWPORT) {
+        if self.flags.intersects(StyleFlags::OVERFLOW_TO_VIEWPORT | StyleFlags::IS_INPUT) {
             return taffy::Point { x: taffy::Overflow::Visible, y: taffy::Overflow::Visible };
         }
         let box_styles = self.style.get_box();

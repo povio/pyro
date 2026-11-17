@@ -2067,6 +2067,10 @@ impl Node {
             if el.name.local == local_name!("fieldset") {
                 flags |= stylo_taffy::StyleFlags::IS_FIELDSET;
             }
+            // pyro
+            if el.name.local == local_name!("input") {
+                flags |= stylo_taffy::StyleFlags::IS_INPUT;
+            }
             if let Some(inline_layout) = el.inline_layout_data.as_deref() {
                 flags |= inline_layout.span_cb_flags;
             }

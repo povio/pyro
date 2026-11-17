@@ -2507,3 +2507,4 @@ does not let margins collapse through it, even when its lines have no height (CS
   the first letter is part of it (Blink), and an initial letter's box keeps it before the ink, a tab going to the
   paragraph's tab stops; the first letter on a `::first-line` line inherits from the first-line style (the first-line
   style node is made first).
+- Round 4 lane B: `node/node.rs` sets `StyleFlags::IS_INPUT` on `<input>` elements (see vendor/stylo_taffy/README.pyro.md).

@@ -618,3 +618,11 @@ out-of-flow boxes; block items get them from their parent too).
   `auto` in `min_size`) turns off the ratio's content-based automatic minimum (`aspect-ratio/intrinsic-size-010`).
   `tree/traits.rs` `LayoutBlockContainer::block_container_fill_height`: the least border-box height of an `auto`-height
   block container that its children's `stretch` and percentage heights resolve against (the quirky html/body).
+- Round 4 lane B (2): `compute/grid/mod.rs` re-runs column/row sizing at the definite container size when the flexible
+  tracks' factors sum to less than one (the first pass counted the sum as one against the indefinite size; WPT css-grid
+  `grid-template-flexible-rerun-track-sizing`, `flex-sizing-rows-indefinite-height*`); `track_sizing.rs`: an item
+  spanning several tracks, a flexible one among them, gives them only its minimum contribution under a content
+  constraint (`grid-flex-spanning-items-001`). `compute/flexbox.rs`: `stretch` as the cross size makes the item's cross
+  size definite for its flex base and automatic minimum whatever `align-self` (css-sizing
+  `stretch/flexbox-auto-minimum-002`); a replaced item with a natural ratio in a row measures with the container's
+  width as its main parent size, so a ratio-only one stretch-fits it (css-flexbox `svg-root-as-flex-item-003`).
