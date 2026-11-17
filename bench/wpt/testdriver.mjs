@@ -53,6 +53,9 @@ async function actions(page, off, sources) {
   const ticks = Math.max(0, ...sources.map((s) => s.actions.length));
   const pos = { x: 0, y: 0 };
   const pressed = new Set(), buttons = new Set();
+  // Click count, as Chrome's WebDriver counts it: a press of the same button at the same spot within 500 ms of the
+  // last one counts one more (a double click's second press carries detail 2).
+  let last = null, clicks = 1;
   for (let i = 0; i < ticks; i++) {
     let wait = 0;
     for (const s of sources) {
@@ -74,8 +77,15 @@ async function actions(page, off, sources) {
           wait = Math.max(wait, d);
           break;
         }
-        case 'pointerDown': buttons.add(a.button ?? 0); await page.mouse.down({ button: BUTTONS[a.button ?? 0] ?? 'left' }); break;
-        case 'pointerUp': buttons.delete(a.button ?? 0); await page.mouse.up({ button: BUTTONS[a.button ?? 0] ?? 'left' }); break;
+        case 'pointerDown': {
+          const b = a.button ?? 0, now = Date.now();
+          clicks = last && last.b === b && last.x === pos.x && last.y === pos.y && now - last.t < 500 ? clicks + 1 : 1;
+          last = { b, x: pos.x, y: pos.y, t: now };
+          buttons.add(b);
+          await page.mouse.down({ button: BUTTONS[b] ?? 'left', clickCount: clicks });
+          break;
+        }
+        case 'pointerUp': buttons.delete(a.button ?? 0); await page.mouse.up({ button: BUTTONS[a.button ?? 0] ?? 'left', clickCount: clicks }); break;
         case 'keyDown': pressed.add(keyName(a.value)); await page.keyboard.down(keyName(a.value)); break;
         case 'keyUp': pressed.delete(keyName(a.value)); await page.keyboard.up(keyName(a.value)); break;
         case 'scroll': {
@@ -105,6 +115,13 @@ export async function installTestdriver(context) {
         await sendKeys(page, c.keys);
       } else if (c.cmd === 'actions') {
         await actions(page, off, c.sources);
+      } else if (c.cmd === 'aria') {
+        // The snapshot's first line is the element's own node: `- role "name" [...]` (or `- role: text`).
+        const snap = await frame.locator(`[data-pyro-testdriver="${c.id}"]`).ariaSnapshot({ timeout: 5000 });
+        const m = snap.split('\n')[0].match(/^- ([\w-]+)(?: ("(?:[^"\\]|\\.)*"))?/);
+        // Nothing in the accessibility tree (hidden, or presentational with no content): no role, no name.
+        if (!m) return JSON.stringify({ role: '', name: '' });
+        return JSON.stringify({ role: m[1], name: m[2] ? JSON.parse(m[2]) : '' });
       } else if (c.cmd === 'set_permission') {
         // Browser.setPermission on the page's session applies to the page's browser context.
         const s = (sessions.get(page) ?? sessions.set(page, await context.newCDPSession(page)).get(page));

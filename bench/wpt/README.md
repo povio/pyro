@@ -271,6 +271,12 @@ timeout with no result, for a page that was about to complete too.
 
 ## Timings
 
+`run.mjs` prints progress every 100 pages or 30 s. A watchdog replaces the browser when a worker is stuck on a page
+for its limit plus 75 s (outside the per-page guard: a context that never closes, a browser that never starts) and
+logs the page (`watchdogKills` in the results). `WPT_TRACE=FILE` appends `start`/`end` lines per page, to find a hang
+afterwards. The one apparent hang of a wptserve sample (2026-11-17, 213 pages at `--jobs 2`, no output for 11 min)
+was the old progress interval: the same pages in chunks of 20 took 670 s for 160 of them, and none hung.
+
 The slowest pages are slow by design or by a known engine gap, not by the runner:
 
 - `dom/nodes/NodeList-static-length-getter-tampered-*.html` (6 long pages, 22-29 s each on a loaded machine): 50 x
@@ -653,12 +659,19 @@ results as `wpt-full-results`. A pull request that changes the workflow, `wptser
 - Elements in frames: the frame's content-box offset in the page is added.
 
 `set_permission` sends `Browser.setPermission` for the document's origin on the page's session (its browser context).
-Everything else (`get_computed_role`/`label`, cookies, BiDi, virtual authenticators, ...) rejects
+`get_computed_role` and `get_computed_label` read the element's node from Playwright's accessibility engine
+(`locator.ariaSnapshot()`: role and name of its first line; nothing in the tree gives `""`), finding the element by a
+`data-pyro-testdriver` attribute held for the call only (pyro's CDP has no Accessibility domain). Presses of the same
+button at the same spot within 500 ms count up (`clickCount`), as Chrome's WebDriver counts a double click.
+Everything else ( cookies, BiDi, virtual authenticators, ...) rejects
 as "not implemented", as testdriver.js does with no vendor. At a421f2fe 3,206 of the 3,462 files that load testdriver
 call only `click`, `send_keys`, `Actions` or `bless`; next by use: `set_permission` (165 calls), `get_computed_role`
 (114), `get_computed_label` (77). With `--dirs all --server wptserve --testdriver`: testharness 35,562 pages,
 reftests 28,303, crashtests 2,105 (every crashtest in the manifest). In a first local check, 6 of 10 testdriver pages
-in uievents, css/selectors and html/user-activation passed every subtest.
+in uievents, css/selectors and html/user-activation passed every subtest. Of the other four, three fail on pyro
+gaps (no `navigator.userActivation`; `mouseenter.composed` is true; no mouseover when layout moves an element
+under a still pointer) and `uievents/mouse/cancel-mousedown-in-subframe.html` times out; `auxclick_event.html` passes
+since click counting. Six wai-aria/accname/html-aam pages: 46 of 52 subtests pass.
 
 ## Crashtests
 

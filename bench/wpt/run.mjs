@@ -314,15 +314,44 @@ async function exited(proc) {
   return proc.exitCode != null || !!proc.signalCode;
 }
 
+// Watchdog: every page in flight, by worker. guarded() bounds a page's own run; this catches a worker stuck anywhere
+// else (a context that never closes, a browser that never starts) or a page whose guard did not fire. Past its
+// limit plus WATCHDOG_MS the browser is killed and replaced, which fails every wait on it, and the stuck page is
+// logged. WPT_TRACE=FILE appends `start|end <worker> <url> [status ms]` per page (find a hang after the fact).
+const WATCHDOG_MS = 60000;
+const inflight = new Map();
+const TRACE = process.env.WPT_TRACE && fs.createWriteStream(process.env.WPT_TRACE, { flags: 'a' });
+const trace = (line) => TRACE?.write(`${new Date().toISOString()} ${line}\n`);
+let watchdogKills = 0;
+const watchdog = setInterval(() => {
+  const now = Date.now();
+  for (const [w, p] of inflight) {
+    if (p.killed || now - p.since < (p.limit ?? TIMEOUT) + 15000 + WATCHDOG_MS) continue;
+    p.killed = true;
+    watchdogKills++;
+    console.error(`${LABEL}: watchdog: worker ${w} stuck ${((now - p.since) / 1000).toFixed(0)} s on ${p.url}; replacing the browser`);
+    trace(`watchdog ${w} ${p.url}`);
+    killBrowser();
+    restartBrowser(generation);
+  }
+}, 5000);
+watchdog.unref();
+// Progress at least every 30 s (a slow run looks the same as a hung one otherwise).
+let lastProgress = Date.now();
+
 const PLAN = tests.map((t) => t.url);
 await startBrowser();
 const results = [];
 let next = 0, done = 0, restarts = 0;
 const t0 = Date.now();
+let workers = 0;
 async function worker() {
   const slot = {};
+  const w = workers++;
   while (next < tests.length) {
     const t = tests[next++];
+    inflight.set(w, { url: t.url, since: Date.now(), limit: t.limit });
+    trace(`start ${w} ${t.url}`);
     let r;
     if (restarting) await restarting;
     const leave = RENDERS ? await enter(t) : () => {};
@@ -361,8 +390,11 @@ async function worker() {
     if (r.status === 'hang') { slot.browser = slot.ctx = slot.page = null; restarts++; await restartBrowser(gen); }
     if (r.status === 'timeout') await resetSlot(slot);
     const { est, limit, retried, solo: alone, refs, fuzzy, viewport, ...meta } = t;
+    inflight.delete(w);
+    trace(`end ${w} ${t.url} ${r.status} ${r.ms ?? ''}`);
     results.push({ ...meta, status: r.status, ms: r.ms, error: r.error, subtests: r.subtests ?? parse(r.log) });
-    if (++done % 100 === 0) {
+    if (++done % 100 === 0 || Date.now() - lastProgress > 30000) {
+      lastProgress = Date.now();
       if (OUT) fs.writeFileSync(OUT + '.partial', JSON.stringify({ label: LABEL, results }));
       console.error(`${LABEL}: ${done}/${PLAN.length} (${((Date.now() - t0) / 1000).toFixed(0)} s)`);
     }
@@ -377,7 +409,7 @@ const ru = process.resourceUsage();
 const run = {
   label: LABEL, bin: BIN, kind: KIND, mode: GATE ? 'gate' : 'full', shard: `${SHARD}/${SHARDS}`, dirs: DIRS, jobs: JOBS,
   restricted: RESTRICTED, reuseContext: REUSE, wptRevision: WPT_REVISION, discovered, plan: PLAN, skipped,
-  wallMs, browserCpuS, runnerCpuS: (ru.userCPUTime + ru.systemCPUTime) / 1e6, serverCpuS, restarts, excluded, ...(info ? { info } : {}), results,
+  wallMs, browserCpuS, runnerCpuS: (ru.userCPUTime + ru.systemCPUTime) / 1e6, serverCpuS, restarts, watchdogKills, excluded, ...(info ? { info } : {}), results,
 };
 if (OUT) { fs.writeFileSync(OUT, JSON.stringify(run)); try { fs.unlinkSync(OUT + '.partial'); } catch {} }
 console.error(`${LABEL}: done ${PLAN.length} pages in ${(wallMs / 1000).toFixed(1)} s (CPU: browser ${browserCpuS.toFixed(1)} s, runner ${run.runnerCpuS.toFixed(1)} s, server ${serverCpuS.toFixed(1)} s), restarts ${restarts}`);
