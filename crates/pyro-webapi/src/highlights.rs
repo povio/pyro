@@ -200,9 +200,9 @@ const BLOCKS: &[&str] = &[
 ];
 const SKIPPED: &[&str] = &["head", "script", "style", "noscript", "template", "iframe", "textarea", "select", "title"];
 
-fn haystack(dom: &Dom, document: NodeId) -> Haystack {
+fn haystack(dom: &Dom, document: NodeId, inline: &dyn Fn(NodeId) -> bool) -> Haystack {
     let mut hay = Haystack { chars: Vec::new(), at: Vec::new() };
-    fn walk(dom: &Dom, node: NodeId, hay: &mut Haystack) {
+    fn walk(dom: &Dom, node: NodeId, hay: &mut Haystack, inline: &dyn Fn(NodeId) -> bool) {
         let Ok(children) = dom.children(node) else { return };
         for child in children {
             if crate::editing::is_text(dom, child) {
@@ -229,19 +229,21 @@ fn haystack(dom: &Dom, document: NodeId) -> Haystack {
             if name.is_empty() || SKIPPED.contains(&name.as_str()) {
                 continue;
             }
-            let block = BLOCKS.contains(&name.as_str());
+            // pyro: by its computed display: an inline `div` is no boundary (WPT css-pseudo
+            // `target-text-010`).
+            let block = BLOCKS.contains(&name.as_str()) && !inline(child);
             if block {
                 hay.chars.push('\0');
                 hay.at.push(None);
             }
-            walk(dom, child, hay);
+            walk(dom, child, hay, inline);
             if block {
                 hay.chars.push('\0');
                 hay.at.push(None);
             }
         }
     }
-    walk(dom, document, &mut hay);
+    walk(dom, document, &mut hay, inline);
     hay
 }
 
@@ -348,9 +350,36 @@ pub fn apply_fragment_directive(page: &Rc<PageDom>, directives: &str) {
     let parsed = parse_directives(directives);
     let found: Vec<_> = {
         let dom = page.dom.borrow();
-        let hay = haystack(&dom, page.document());
+        let layout = page.layout();
+        let style = layout.style();
+        let inline = |id: NodeId| style.computed_display(&dom, id).is_some_and(|d| d.starts_with("inline"));
+        let hay = haystack(&dom, page.document(), &inline);
         parsed.iter().filter_map(|d| hay.matches(d)).collect()
     };
+    // pyro: the ancestor revealing algorithm (HTML): a `hidden=until-found` element around the
+    // text gets `beforematch` and loses its `hidden`, so the text shows (WPT css-pseudo
+    // `target-text-010`).
+    let mut reveal = Vec::new();
+    {
+        let dom = page.dom.borrow();
+        for &((start, _), (end, _)) in &found {
+            for node in [start, end] {
+                let mut current = Some(node);
+                while let Some(id) = current {
+                    if dom.element(id).is_ok_and(|e| e.attr("hidden").is_some_and(|v| v.eq_ignore_ascii_case("until-found")))
+                        && !reveal.contains(&id)
+                    {
+                        reveal.push(id);
+                    }
+                    current = dom.parent(id).ok().flatten();
+                }
+            }
+        }
+    }
+    for id in reveal {
+        crate::input::fire_simple(page, id, "beforematch", true, false);
+        let _ = page.dom.borrow_mut().remove_attribute(id, "hidden");
+    }
     let mut ranges = Vec::new();
     for (start, end) in found {
         if let Ok(owner) = RangeOwner::new(page, start, end) {

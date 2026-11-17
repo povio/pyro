@@ -257,9 +257,20 @@ fn selection_style(doc: &BaseDocument, node_id: NodeId) -> Option<LayerStyle> {
         current = node.parent;
     }
     let style_of = |id: NodeId| {
-        doc.get_node(id)?.try_stylo_element_data().and_then(|data| {
+        let node = doc.get_node(id)?;
+        let eager = node.try_stylo_element_data().and_then(|data| {
             data.get().and_then(|data| data.styles.pseudos.get(&PseudoElement::Selection).cloned())
-        })
+        })?;
+        // pyro: container units (`cqh`, ...) in an eager style resolve before layout gives the
+        // containers sizes: computed again now (WPT css-conditional
+        // `container-units-selection-pseudo`).
+        use style::computed_value_flags::ComputedValueFlags;
+        if eager.flags.contains(ComputedValueFlags::USES_CONTAINER_UNITS) {
+            if let Some(again) = doc.selection_pseudo_style(id) {
+                return Some(again);
+            }
+        }
+        Some(eager)
     };
     Some(resolve_layer(doc, node_id, style_of, Some((HIGHLIGHT, HIGHLIGHT_TEXT))))
 }

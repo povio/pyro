@@ -208,6 +208,7 @@ fn node_list_item_child(
     let text_style = marker_style.as_ref().unwrap_or(&styles);
     let brush = style_node.unwrap_or(child_id);
 
+    let mut annotations = Vec::new();
     let position = match list_style_position {
         ListStylePosition::Inside => {
             // pyro: a symbol marker inside the item is drawn from the bundled bullet font, unless
@@ -271,6 +272,14 @@ fn node_list_item_child(
             let mut layout = builder.build().0;
             let width = layout.calculate_content_widths().max;
             layout.break_all_lines(Some(width));
+            // pyro: its emphasis marks (`text-emphasis`), drawn as over the item's text.
+            annotations.extend(super::inline::build::marker_emphasis(
+                &doc.nodes,
+                &mut doc.layout_ctx,
+                &mut font_ctx,
+                doc.viewport.scale(),
+                brush,
+            ));
 
             ListItemLayoutPosition::Outside(Box::new(layout))
         }
@@ -283,6 +292,7 @@ fn node_list_item_child(
         tabular_nums,
         isolate,
         content_box_subpixel_offset: taffy::Point::ZERO,
+        annotations,
     })
 }
 

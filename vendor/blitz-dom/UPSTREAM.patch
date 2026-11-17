@@ -3295,7 +3295,7 @@ diff --git a/packages/blitz-dom/src/dom_selection.rs b/packages/blitz-dom/src/do
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/dom_selection.rs
-@@ -0,0 +1,283 @@
+@@ -0,0 +1,306 @@
 +//! pyro: the page's selection, a DOM range the embedder keeps (pyro-webapi's document
 +//! selection), painted as highlighted text. The embedder sets it before a paint
 +//! ([`BaseDocument::set_dom_selection`]); blitz-paint reads it as the inline roots' selected byte
@@ -3377,6 +3377,29 @@ new file mode 100644
 +            &primary,
 +            true,
 +            Some(&matches),
++        )
++    }
++
++    /// pyro: the `::selection` style of `node_id` computed now (its eager one resolved container
++    /// units before layout sized the containers).
++    pub fn selection_pseudo_style(
++        &self,
++        node_id: NodeId,
++    ) -> Option<style::servo_arc::Arc<style::properties::ComputedValues>> {
++        use style::shared_lock::StylesheetGuards;
++        use style::stylist::RuleInclusion;
++        let node = self.nodes.get(node_id)?;
++        let primary = node.primary_styles()?;
++        let read_guard = self.guard.read();
++        let guards = StylesheetGuards::same(&read_guard);
++        self.stylist.lazily_compute_pseudo_element_style::<&crate::Node>(
++            &guards,
++            node,
++            &style::selector_parser::PseudoElement::Selection,
++            RuleInclusion::All,
++            &primary,
++            true,
++            None,
 +        )
 +    }
 +
@@ -9773,7 +9796,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
          match marker {
              // Bullet glyphs live in the bundled bullet font. The position-outside
              // path already asks for it; without the same span here a marker like
-@@ -76,54 +515,521 @@
+@@ -76,54 +515,497 @@
              Marker::Char(char) => {
                  let mut marker_style = parley_style.clone();
                  marker_style.font_family = BULLET_FONT_FAMILY.into();
@@ -9976,9 +9999,11 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
 +            annotations,
 +            bidi,
 +            &mut bidi_scan,
-+        );
-+    }
-+
+         );
+     }
+ 
+-    text_layout.text = builder.build_into(&mut text_layout.layout);
+-    return;
 +    for end in piece_ends.into_iter().rev().flatten() {
 +        close_span(&mut builder, end, bidi, &mut bidi_scan);
 +    }
@@ -10059,8 +10084,8 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
 +            strut_build,
 +            &space,
 +            bidi,
-         );
-     }
++        );
++    }
 +    // pyro: the "…" (or the string of `text-overflow: "<string>"`) that `text-overflow` ends an
 +    // overflowing line with, in the root's own style (its first available font, as in Chromium).
 +    // (An anonymous block holds lines of its parent: `overflow` and `text-overflow` are the
@@ -10172,38 +10197,12 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
 +                let under = matches!(itext.ruby_position, RubyPosition::Under | RubyPosition::AlternateUnder);
 +                (builder.build().0, under)
 +            }
-+            TextAnnotationKind::Emphasis => {
-+                let mark = emphasis_mark(&itext.text_emphasis_style)?;
-+                parley_style.font_size *= 0.5;
-+                parley_style.line_height = parley::LineHeight::FontSizeRelative(1.0);
-+                parley_style.letter_spacing = 0.0;
-+                parley_style.word_spacing = 0.0;
-+                let mut builder = layout_ctx.tree_builder(font_ctx, scale, true, &parley_style);
-+                builder.push_text(mark);
-+                // `auto` is `over right`, but `under right` for Chinese. In a vertical writing
-+                // mode the right side is over the line (pyro: under it in `sideways-lr`).
-+                let position = itext.text_emphasis_position;
-+                let under = if style.writing_mode.is_vertical() {
-+                    let sideways_lr = style
-+                        .writing_mode
-+                        .contains(style::logical_geometry::WritingMode::WRITING_MODE_SIDEWAYS_LR);
-+                    position.contains(TextEmphasisPosition::LEFT) != sideways_lr
-+                } else if position.contains(TextEmphasisPosition::AUTO) {
-+                    let lang: &str = &style.get_font()._x_lang.0;
-+                    let lang = lang.to_ascii_lowercase();
-+                    lang == "zh" || lang.starts_with("zh-")
-+                } else {
-+                    position.contains(TextEmphasisPosition::UNDER)
-+                };
-+                (builder.build().0, under)
-+            }
++            TextAnnotationKind::Emphasis => emphasis_layout(layout_ctx, font_ctx, scale, &style, parley_style)?,
 +        };
 +        layout.break_all_lines(None);
 +        Some(TextAnnotation { node_id, kind, under, layout: Box::new(layout) })
 +    }
  
--    text_layout.text = builder.build_into(&mut text_layout.layout);
--    return;
 +    /// pyro: the head (`tail: false`) or the tail of the split inline `node_id`, in its span:
 +    /// a head has its start, a tail its end (`construct::split_inline_part`).
 +    #[allow(clippy::too_many_arguments)]
@@ -10249,19 +10248,19 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
 +        }
 +        close_span(builder, end, bidi, bidi_scan);
 +    }
- 
++
 +    #[allow(clippy::too_many_arguments)]
 +    /// pyro: builds `node_id`'s inline content, with the scroll pseudo-element boxes generated
 +    /// beside it (`scroll_markers`) before and after it, unless `container` (whose box list holds
 +    /// `node_id`'s box) placed them already (`scroll_markers::siblings_of`).
 +    #[allow(clippy::too_many_arguments)]
      fn build_inline_layout_recursive(
-         builder: &mut TreeBuilder<TextBrush>,
-         text_transformer: &mut TextTransformer,
-         nodes: &crate::NodeTree,
++        builder: &mut TreeBuilder<TextBrush>,
++        text_transformer: &mut TextTransformer,
++        nodes: &crate::NodeTree,
 +        container: NodeId,
-         node_id: NodeId,
-         parent_text_transform: &CaseTransform,
++        node_id: NodeId,
++        parent_text_transform: &CaseTransform,
 +        text_nodes: &mut Vec<(NodeId, std::ops::Range<usize>)>,
 +        strut: &mut bool,
 +        first_letter: Option<&FirstLetterSplit>,
@@ -10287,11 +10286,11 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
 +
 +    #[allow(clippy::too_many_arguments)]
 +    fn build_inline_layout_node(
-+        builder: &mut TreeBuilder<TextBrush>,
-+        text_transformer: &mut TextTransformer,
-+        nodes: &crate::NodeTree,
-+        node_id: NodeId,
-+        parent_text_transform: &CaseTransform,
+         builder: &mut TreeBuilder<TextBrush>,
+         text_transformer: &mut TextTransformer,
+         nodes: &crate::NodeTree,
+         node_id: NodeId,
+         parent_text_transform: &CaseTransform,
 +        text_nodes: &mut Vec<(NodeId, std::ops::Range<usize>)>,
 +        strut: &mut bool,
 +        first_letter: Option<&FirstLetterSplit>,
@@ -10301,7 +10300,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
      ) {
          let node = &nodes[node_id];
  
-@@ -143,6 +1049,49 @@
+@@ -143,6 +1025,49 @@
                      }
                  }
  
@@ -10351,7 +10350,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
                  let display = node.display_style().unwrap_or(Display::inline());
                  let position = style
                      .map(|s| s.clone_position())
-@@ -161,41 +1110,44 @@
+@@ -161,41 +1086,44 @@
                          // node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
                      }
                      (DisplayOutside::None, DisplayInside::Contents) => {
@@ -10418,7 +10417,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
                              }
                              builder.push_inline_box(InlineBox {
                                  id: node_id.as_u64(),
-@@ -210,66 +1162,171 @@
+@@ -210,66 +1138,171 @@
                                      .primary_styles()
                                      .map(|s| stylo_to_parley::vertical_align(&s))
                                      .unwrap_or_default(),
@@ -10611,7 +10610,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
                          }
                          builder.push_inline_box(InlineBox {
                              id: node_id.as_u64(),
-@@ -284,6 +1341,8 @@
+@@ -284,6 +1317,8 @@
                                  .primary_styles()
                                  .map(|s| stylo_to_parley::vertical_align(&s))
                                  .unwrap_or_default(),
@@ -10620,7 +10619,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
                          });
                      }
                  };
-@@ -291,10 +1350,94 @@
+@@ -291,10 +1326,94 @@
              NodeData::Text(data) => {
                  // node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
                  // dbg!(&data.content);
@@ -10718,7 +10717,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
              }
              NodeData::Comment { .. } => {
                  // node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
-@@ -303,3 +1446,261 @@
+@@ -303,3 +1422,314 @@
          }
      }
  }
@@ -10979,6 +10978,59 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
 +        }
 +    }
 +    out
++}
++
++/// pyro: the one-mark layout of an element's `text-emphasis` in `parley_style` (its style's) at
++/// half its size, and whether the marks go under the line; `None` without marks.
++fn emphasis_layout(
++    layout_ctx: &mut LayoutContext<TextBrush>,
++    font_ctx: &mut FontContext,
++    scale: f32,
++    style: &style::properties::ComputedValues,
++    mut parley_style: parley::TextStyle<'_, '_, TextBrush>,
++) -> Option<(parley::Layout<TextBrush>, bool)> {
++    use style::values::computed::text::TextEmphasisPosition;
++    let itext = style.get_inherited_text();
++
++    let mark = emphasis_mark(&itext.text_emphasis_style)?;
++    parley_style.font_size *= 0.5;
++    parley_style.line_height = parley::LineHeight::FontSizeRelative(1.0);
++    parley_style.letter_spacing = 0.0;
++    parley_style.word_spacing = 0.0;
++    let mut builder = layout_ctx.tree_builder(font_ctx, scale, true, &parley_style);
++    builder.push_text(mark);
++    // `auto` is `over right`, but `under right` for Chinese. In a vertical writing
++    // mode the right side is over the line (pyro: under it in `sideways-lr`).
++    let position = itext.text_emphasis_position;
++    let under = if style.writing_mode.is_vertical() {
++        let sideways_lr = style
++            .writing_mode
++            .contains(style::logical_geometry::WritingMode::WRITING_MODE_SIDEWAYS_LR);
++        position.contains(TextEmphasisPosition::LEFT) != sideways_lr
++    } else if position.contains(TextEmphasisPosition::AUTO) {
++        let lang: &str = &style.get_font()._x_lang.0;
++        let lang = lang.to_ascii_lowercase();
++        lang == "zh" || lang.starts_with("zh-")
++    } else {
++        position.contains(TextEmphasisPosition::UNDER)
++    };
++    Some((builder.build().0, under))
++}
++
++/// pyro: the emphasis marks of an outside list marker whose text has `node_id`'s style
++/// (`layout::list`), as [`build_annotation`] builds an element's.
++pub(crate) fn marker_emphasis(
++    nodes: &crate::NodeTree,
++    layout_ctx: &mut LayoutContext<TextBrush>,
++    font_ctx: &mut FontContext,
++    scale: f32,
++    node_id: NodeId,
++) -> Option<TextAnnotation> {
++    let style = nodes[node_id].primary_styles()?;
++    let parley_style = stylo_to_parley::style(node_id, &style);
++    let (mut layout, under) = emphasis_layout(layout_ctx, font_ctx, scale, &style, parley_style)?;
++    layout.break_all_lines(None);
++    Some(TextAnnotation { node_id, kind: TextAnnotationKind::Emphasis, under, layout: Box::new(layout) })
 +}
 diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom/src/layout/inline/layout.rs
 --- a/packages/blitz-dom/src/layout/inline/layout.rs
@@ -13631,7 +13683,7 @@ diff --git a/packages/blitz-dom/src/layout/list.rs b/packages/blitz-dom/src/layo
  ) -> Option<ListItemLayout> {
      let node = &doc.nodes[child_id];
  
-@@ -71,17 +147,99 @@
+@@ -71,17 +147,100 @@
          return None;
      };
  
@@ -13698,6 +13750,7 @@ diff --git a/packages/blitz-dom/src/layout/list.rs b/packages/blitz-dom/src/layo
 +    let text_style = marker_style.as_ref().unwrap_or(&styles);
 +    let brush = style_node.unwrap_or(child_id);
  
++    let mut annotations = Vec::new();
      let position = match list_style_position {
 -        ListStylePosition::Inside => ListItemLayoutPosition::Inside,
 +        ListStylePosition::Inside => {
@@ -13736,7 +13789,7 @@ diff --git a/packages/blitz-dom/src/layout/list.rs b/packages/blitz-dom/src/layo
                  parley_style.font_family = font_family;
              }
  
-@@ -93,13 +251,21 @@
+@@ -93,18 +252,34 @@
                  true,
                  &parley_style,
              );
@@ -13758,7 +13811,20 @@ diff --git a/packages/blitz-dom/src/layout/list.rs b/packages/blitz-dom/src/layo
              };
  
              let mut layout = builder.build().0;
-@@ -112,14 +278,309 @@
+             let width = layout.calculate_content_widths().max;
+             layout.break_all_lines(Some(width));
++            // pyro: its emphasis marks (`text-emphasis`), drawn as over the item's text.
++            annotations.extend(super::inline::build::marker_emphasis(
++                &doc.nodes,
++                &mut doc.layout_ctx,
++                &mut font_ctx,
++                doc.viewport.scale(),
++                brush,
++            ));
+ 
+             ListItemLayoutPosition::Outside(Box::new(layout))
+         }
+@@ -112,14 +287,310 @@
  
      Some(ListItemLayout {
          marker,
@@ -13767,6 +13833,7 @@ diff --git a/packages/blitz-dom/src/layout/list.rs b/packages/blitz-dom/src/layo
 +        tabular_nums,
 +        isolate,
          content_box_subpixel_offset: taffy::Point::ZERO,
++        annotations,
      })
  }
  
@@ -14069,7 +14136,7 @@ diff --git a/packages/blitz-dom/src/layout/list.rs b/packages/blitz-dom/src/layo
          CounterStyle::None => return None,
          CounterStyle::Name(name) => match &*name.0 {
              "lower-alpha" => {
-@@ -132,13 +593,34 @@
+@@ -132,13 +603,34 @@
                  build_alpha_marker(index, &mut marker);
                  Marker::String(format!("{}. ", marker.to_ascii_uppercase()))
              }
@@ -14106,7 +14173,7 @@ diff --git a/packages/blitz-dom/src/layout/list.rs b/packages/blitz-dom/src/layo
          },
          CounterStyle::String(atom_string) => Marker::String(atom_string.as_ref().to_string()),
          CounterStyle::Symbols { symbols, .. } => {
-@@ -149,7 +631,7 @@
+@@ -149,7 +641,7 @@
                  Marker::Char('•')
              } else {
                  // Cycle through symbols based on index: 1st, 2nd, 1st, 2nd, etc.
@@ -14115,7 +14182,7 @@ diff --git a/packages/blitz-dom/src/layout/list.rs b/packages/blitz-dom/src/layo
                  // Symbol is String or Ident variant, extract the string value
                  let sym = &syms[idx];
                  let marker_str = match sym {
-@@ -171,6 +653,36 @@
+@@ -171,6 +663,36 @@
      None
  }
  
@@ -14152,7 +14219,7 @@ diff --git a/packages/blitz-dom/src/layout/list.rs b/packages/blitz-dom/src/layo
  const ALPHABET: [char; 26] = [
      'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's',
      't', 'u', 'v', 'w', 'x', 'y', 'z',
-@@ -204,24 +716,24 @@
+@@ -204,24 +726,24 @@
  
      #[test]
      fn test_marker_for_disc() {
@@ -14184,7 +14251,7 @@ diff --git a/packages/blitz-dom/src/layout/list.rs b/packages/blitz-dom/src/layo
          assert_eq!(result_1, Some(Marker::String("a. ".to_string())));
          assert_eq!(result_2, Some(Marker::String("b. ".to_string())));
          assert_eq!(result_extended_1, Some(Marker::String("aa. ".to_string())));
-@@ -230,10 +742,10 @@
+@@ -230,10 +752,10 @@
  
      #[test]
      fn test_marker_for_upper_alpha() {
@@ -27956,7 +28023,7 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
          }
      }
  }
-@@ -953,7 +1144,17 @@
+@@ -953,11 +1144,23 @@
  #[derive(Clone)]
  pub struct ListItemLayout {
      pub marker: Marker,
@@ -27974,7 +28041,13 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
      /// Offset (in physical CSS px) of the unrounded content box origin from the rounded one in
      /// `final_layout`. Paint draws text from the unrounded origin so that it keeps its sub-pixel
      /// position while box edges stay snapped. Set by the `writing-mode` layout pass; zero otherwise.
-@@ -966,6 +1167,9 @@
+     pub content_box_subpixel_offset: taffy::Point<f32>,
++    /// pyro: an outside marker's emphasis marks (`text-emphasis`), drawn as over inline text.
++    pub annotations: Vec<crate::node::TextAnnotation>,
+ }
+ 
+ //We seperate chars from strings in order to optimise rendering - ie not needing to
+@@ -966,6 +1169,9 @@
  pub enum Marker {
      Char(char),
      String(String),

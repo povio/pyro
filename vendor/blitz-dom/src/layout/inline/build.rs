@@ -906,31 +906,7 @@ fn build_inline_layout_with(
                 let under = matches!(itext.ruby_position, RubyPosition::Under | RubyPosition::AlternateUnder);
                 (builder.build().0, under)
             }
-            TextAnnotationKind::Emphasis => {
-                let mark = emphasis_mark(&itext.text_emphasis_style)?;
-                parley_style.font_size *= 0.5;
-                parley_style.line_height = parley::LineHeight::FontSizeRelative(1.0);
-                parley_style.letter_spacing = 0.0;
-                parley_style.word_spacing = 0.0;
-                let mut builder = layout_ctx.tree_builder(font_ctx, scale, true, &parley_style);
-                builder.push_text(mark);
-                // `auto` is `over right`, but `under right` for Chinese. In a vertical writing
-                // mode the right side is over the line (pyro: under it in `sideways-lr`).
-                let position = itext.text_emphasis_position;
-                let under = if style.writing_mode.is_vertical() {
-                    let sideways_lr = style
-                        .writing_mode
-                        .contains(style::logical_geometry::WritingMode::WRITING_MODE_SIDEWAYS_LR);
-                    position.contains(TextEmphasisPosition::LEFT) != sideways_lr
-                } else if position.contains(TextEmphasisPosition::AUTO) {
-                    let lang: &str = &style.get_font()._x_lang.0;
-                    let lang = lang.to_ascii_lowercase();
-                    lang == "zh" || lang.starts_with("zh-")
-                } else {
-                    position.contains(TextEmphasisPosition::UNDER)
-                };
-                (builder.build().0, under)
-            }
+            TextAnnotationKind::Emphasis => emphasis_layout(layout_ctx, font_ctx, scale, &style, parley_style)?,
         };
         layout.break_all_lines(None);
         Some(TextAnnotation { node_id, kind, under, layout: Box::new(layout) })
@@ -1703,4 +1679,57 @@ fn word_after(nodes: &crate::NodeTree, node_id: NodeId) -> String {
         }
     }
     out
+}
+
+/// pyro: the one-mark layout of an element's `text-emphasis` in `parley_style` (its style's) at
+/// half its size, and whether the marks go under the line; `None` without marks.
+fn emphasis_layout(
+    layout_ctx: &mut LayoutContext<TextBrush>,
+    font_ctx: &mut FontContext,
+    scale: f32,
+    style: &style::properties::ComputedValues,
+    mut parley_style: parley::TextStyle<'_, '_, TextBrush>,
+) -> Option<(parley::Layout<TextBrush>, bool)> {
+    use style::values::computed::text::TextEmphasisPosition;
+    let itext = style.get_inherited_text();
+
+    let mark = emphasis_mark(&itext.text_emphasis_style)?;
+    parley_style.font_size *= 0.5;
+    parley_style.line_height = parley::LineHeight::FontSizeRelative(1.0);
+    parley_style.letter_spacing = 0.0;
+    parley_style.word_spacing = 0.0;
+    let mut builder = layout_ctx.tree_builder(font_ctx, scale, true, &parley_style);
+    builder.push_text(mark);
+    // `auto` is `over right`, but `under right` for Chinese. In a vertical writing
+    // mode the right side is over the line (pyro: under it in `sideways-lr`).
+    let position = itext.text_emphasis_position;
+    let under = if style.writing_mode.is_vertical() {
+        let sideways_lr = style
+            .writing_mode
+            .contains(style::logical_geometry::WritingMode::WRITING_MODE_SIDEWAYS_LR);
+        position.contains(TextEmphasisPosition::LEFT) != sideways_lr
+    } else if position.contains(TextEmphasisPosition::AUTO) {
+        let lang: &str = &style.get_font()._x_lang.0;
+        let lang = lang.to_ascii_lowercase();
+        lang == "zh" || lang.starts_with("zh-")
+    } else {
+        position.contains(TextEmphasisPosition::UNDER)
+    };
+    Some((builder.build().0, under))
+}
+
+/// pyro: the emphasis marks of an outside list marker whose text has `node_id`'s style
+/// (`layout::list`), as [`build_annotation`] builds an element's.
+pub(crate) fn marker_emphasis(
+    nodes: &crate::NodeTree,
+    layout_ctx: &mut LayoutContext<TextBrush>,
+    font_ctx: &mut FontContext,
+    scale: f32,
+    node_id: NodeId,
+) -> Option<TextAnnotation> {
+    let style = nodes[node_id].primary_styles()?;
+    let parley_style = stylo_to_parley::style(node_id, &style);
+    let (mut layout, under) = emphasis_layout(layout_ctx, font_ctx, scale, &style, parley_style)?;
+    layout.break_all_lines(None);
+    Some(TextAnnotation { node_id, kind: TextAnnotationKind::Emphasis, under, layout: Box::new(layout) })
 }

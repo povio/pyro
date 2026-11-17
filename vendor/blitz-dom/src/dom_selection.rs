@@ -82,6 +82,29 @@ impl BaseDocument {
         )
     }
 
+    /// pyro: the `::selection` style of `node_id` computed now (its eager one resolved container
+    /// units before layout sized the containers).
+    pub fn selection_pseudo_style(
+        &self,
+        node_id: NodeId,
+    ) -> Option<style::servo_arc::Arc<style::properties::ComputedValues>> {
+        use style::shared_lock::StylesheetGuards;
+        use style::stylist::RuleInclusion;
+        let node = self.nodes.get(node_id)?;
+        let primary = node.primary_styles()?;
+        let read_guard = self.guard.read();
+        let guards = StylesheetGuards::same(&read_guard);
+        self.stylist.lazily_compute_pseudo_element_style::<&crate::Node>(
+            &guards,
+            node,
+            &style::selector_parser::PseudoElement::Selection,
+            RuleInclusion::All,
+            &primary,
+            true,
+            None,
+        )
+    }
+
     /// pyro: whether the author declaration of `longhand` that `style` uses is `currentcolor`
     /// (`color: currentcolor` computes to the inherited colour, which a highlight replaces with
     /// the colour of the highlight below).

@@ -3560,6 +3560,30 @@ impl ElementCx<'_, '_> {
                 None,
                 None,
             );
+            // pyro: its emphasis marks, as over the item's text.
+            if let Some(item) = self.list_item.filter(|item| !item.annotations.is_empty()) {
+                let text = match marker {
+                    Marker::String(text) => text.clone(),
+                    Marker::Char(c) => c.to_string(),
+                    Marker::Image { .. } => String::new(),
+                };
+                let recording = draw_text_context.runs.is_some();
+                for line in layout.lines() {
+                    crate::text::draw_text_annotations(
+                        scene,
+                        &line,
+                        &item.annotations,
+                        &text,
+                        self.context.dom,
+                        transform,
+                        self.scale,
+                        recording,
+                        None,
+                        None,
+                        None,
+                    );
+                }
+            }
         }
     }
 

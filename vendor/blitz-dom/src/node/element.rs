@@ -1159,6 +1159,8 @@ pub struct ListItemLayout {
     /// `final_layout`. Paint draws text from the unrounded origin so that it keeps its sub-pixel
     /// position while box edges stay snapped. Set by the `writing-mode` layout pass; zero otherwise.
     pub content_box_subpixel_offset: taffy::Point<f32>,
+    /// pyro: an outside marker's emphasis marks (`text-emphasis`), drawn as over inline text.
+    pub annotations: Vec<crate::node::TextAnnotation>,
 }
 
 //We seperate chars from strings in order to optimise rendering - ie not needing to

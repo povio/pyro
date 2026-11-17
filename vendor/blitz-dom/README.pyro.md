@@ -2599,3 +2599,8 @@ Round 4 lane G:
   axes (`layout_style_in(self.layout_wm)`); `Node::column_fragments` leaves it out (geometry and hit tests see the
   strip) and `Node::vertical_column_fragments` gives paint the logical columns. It is a paint-layer root like a
   horizontal one (`paint_tree.rs`). WPT css-position `position-absolute-in-inline-008a/010/012`.
+- Round 4 lane F: `BaseDocument::selection_pseudo_style` (an eager `::selection` style computed again at paint when it
+  uses container units, which resolved before layout sized the containers; WPT css-conditional
+  `container-units-selection-pseudo`). Outside list markers carry their `text-emphasis` marks
+  (`ListItemLayout::annotations`, `inline::build::marker_emphasis` sharing `emphasis_layout` with inline text; WPT
+  css-pseudo `marker-content-024`).
