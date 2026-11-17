@@ -10461,3 +10461,40 @@ fn scroll_into_view_and_actions_scroll_every_container_inside_a_scaled_layer() {
     assert!(r.get("error").is_none(), "{r}");
     assert_eq!(r["result"]["reads"]["scrolled"], json!([true, true]), "{r}");
 }
+
+#[test]
+fn computed_style_inside_display_none_follows_every_change() {
+    // Styles resolved on demand inside a display: none subtree are cached
+    // until the next sync; each kind of change still shows (Chromium: the
+    // same reads).
+    let mut h = Harness::new();
+    load_html(
+        &mut h,
+        r#"<!doctype html><style>.on .item{color:rgb(1, 2, 3)} .menu:has(.picked) .item{background-color:rgb(4, 5, 6)}</style>
+<div id=menu class=menu style="display:none"><span id=item class=item>a</span><span id=other>b</span></div>"#,
+    );
+    let read = "(() => { const s = getComputedStyle(document.getElementById('item')); return s.color + ' ' + s.backgroundColor + ' ' + s.width; })()";
+    let r = h.page(
+        "Pyro.run",
+        json!({"steps": [
+            {"eval": {"expression": read, "as": "a"}},
+            {"eval": {"expression": read, "as": "a2"}},
+            {"eval": {"expression": "document.getElementById('menu').classList.add('on'); null"}},
+            {"eval": {"expression": read, "as": "b"}},
+            {"eval": {"expression": "document.getElementById('other').classList.add('picked'); null"}},
+            {"eval": {"expression": read, "as": "c"}},
+            {"eval": {"expression": "document.head.append(Object.assign(document.createElement('style'), {textContent: '#item{color:rgb(9, 9, 9)}'})); null"}},
+            {"eval": {"expression": read, "as": "d"}},
+            {"eval": {"expression": "document.getElementById('item').style.color = 'rgb(7, 7, 7)'; null"}},
+            {"eval": {"expression": read, "as": "e"}}
+        ]}),
+    );
+    assert!(r.get("error").is_none(), "{r}");
+    let reads = &r["result"]["reads"];
+    assert_eq!(reads["a"], reads["a2"], "{r}");
+    assert_eq!(reads["a"], json!("rgb(0, 0, 0) rgba(0, 0, 0, 0) auto"), "{r}");
+    assert_eq!(reads["b"], json!("rgb(1, 2, 3) rgba(0, 0, 0, 0) auto"), "{r}");
+    assert_eq!(reads["c"], json!("rgb(1, 2, 3) rgb(4, 5, 6) auto"), "{r}");
+    assert_eq!(reads["d"], json!("rgb(9, 9, 9) rgb(4, 5, 6) auto"), "{r}");
+    assert_eq!(reads["e"], json!("rgb(7, 7, 7) rgb(4, 5, 6) auto"), "{r}");
+}

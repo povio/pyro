@@ -150,6 +150,7 @@ pub fn install_with(fetchers: FetcherFactory) {
         Rc::new(BlitzGeometry {
             page: NEXT_PAGE.fetch_add(1, Ordering::Relaxed),
             synced: Default::default(),
+            undisplayed: Default::default(),
             sheets: Default::default(),
             resources: std::cell::Cell::new(RESOURCES.load(Ordering::Relaxed)),
             base_url: RefCell::new(BaseUrl::new(BLANK)),
@@ -206,6 +207,13 @@ pub struct BlitzGeometry {
     /// revision (`StyleEngine::sheet_revision`), as last synced (see
     /// [`BlitzGeometry::changed_style_sheets`]).
     sheets: RefCell<Vec<(NodeId, bool, u64)>>,
+    /// Styles resolved on demand for elements in `display: none` subtrees
+    /// (`getComputedStyle` on a closed menu's items), by key, until the next
+    /// sync: Stylo keeps none on such nodes, and resolving one matches every
+    /// rule again (a `:has()` rule walks the subtree each time), which page
+    /// scripts reading them in a loop turned into seconds per task. Chromium
+    /// keeps them until the next style recalc too.
+    undisplayed: RefCell<std::collections::HashMap<u64, style::servo_arc::Arc<style::properties::ComputedValues>>>,
 }
 
 impl Drop for BlitzGeometry {
@@ -436,6 +444,7 @@ impl BlitzGeometry {
         );
         let now = (dom.version(), style.observation_stamp(dom).1, viewport, style.invalidations());
         let last = self.synced.replace(Some(now));
+        self.undisplayed.borrow_mut().clear();
         // The changes since the last sync, when the journal covers them and
         // neither sheets nor viewport changed: no whole-tree snapshot or diff.
         if let Some((version, generation, vp, invalidations)) = last {
@@ -579,6 +588,7 @@ impl BlitzGeometry {
                 }
             });
             self.synced.set(None);
+            self.undisplayed.borrow_mut().clear();
         }
         // Told before every sync, so the first restyle after the engine
         // learns to track (and the first sync, which creates the document)
@@ -844,7 +854,14 @@ impl GeometrySource for BlitzGeometry {
     }
 
     fn element_style(&self, key: u64) -> Option<style::servo_arc::Arc<style::properties::ComputedValues>> {
-        RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.element_style(self.page, key))
+        if let Some(style) = self.undisplayed.borrow().get(&key) {
+            return Some(style.clone());
+        }
+        let (style, resolved) = RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.element_style_resolved(self.page, key))?;
+        if resolved {
+            self.undisplayed.borrow_mut().insert(key, style.clone());
+        }
+        Some(style)
     }
 
     fn element_displayed(&self, key: u64) -> Option<bool> {
@@ -972,6 +989,7 @@ mod tests {
         let g = super::BlitzGeometry {
             page: 0,
             synced: Default::default(),
+            undisplayed: Default::default(),
             sheets: Default::default(),
             resources: Default::default(),
             base_url: RefCell::new(super::BaseUrl::new(super::BLANK)),

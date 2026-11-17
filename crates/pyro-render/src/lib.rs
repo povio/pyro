@@ -1387,11 +1387,22 @@ impl Renderer {
         page: u64,
         key: u64,
     ) -> Option<style::servo_arc::Arc<style::properties::ComputedValues>> {
+        self.element_style_resolved(page, key).map(|(style, _)| style)
+    }
+
+    /// [`Renderer::element_style`], and whether it was resolved on demand
+    /// (the element is in a `display: none` subtree, so Stylo kept none):
+    /// such a style holds until the document changes.
+    pub fn element_style_resolved(
+        &self,
+        page: u64,
+        key: u64,
+    ) -> Option<(style::servo_arc::Arc<style::properties::ComputedValues>, bool)> {
         let m = self.mirrors.get(&page)?;
         let id = m.node(key)?;
         match m.doc.get_node(id)?.primary_styles() {
-            Some(s) => Some((*s).clone()),
-            None => m.doc.resolve_undisplayed_style(id),
+            Some(s) => Some(((*s).clone(), false)),
+            None => m.doc.resolve_undisplayed_style(id).map(|s| (s, true)),
         }
     }
 
