@@ -389,7 +389,11 @@ pub(crate) fn build_inline_layout_into(
     // without text, so a line of empty inline-blocks was 0px tall. A
     // word joiner (zero-width, no break opportunity) provides the strut.
     // pyro: so has the line of a list item's outside marker in an item without in-flow content.
-    if (text_layout.layout.inline_boxes().len() > 0 || outside_marker(&nodes[inline_context_root_node_id]))
+    // pyro: not in quirks and limited-quirks mode, where a line without text has no strut (Quirks
+    // Mode §3.3, "The line height calculation quirk"): an image alone in a block leaves no gap
+    // under it (WPT css-sizing `intrinsic-percent-replaced-006`).
+    let marker = outside_marker(&nodes[inline_context_root_node_id]);
+    if (marker || (text_layout.layout.inline_boxes().len() > 0 && !nodes.line_height_quirk))
         && text_layout.text.chars().all(|c| (c.is_whitespace() && c != '\n') || is_bidi_control(c))
     {
         build_inline_layout_with(nodes, layout_ctx, font_ctx, text_layout, scale, inline_context_root_node_id, true, &[], bidi);
@@ -795,6 +799,7 @@ fn build_inline_layout_with(
             + (parley_style.letter_spacing + parley_style.word_spacing) * scale;
         text_layout.layout.set_tab_stops(space, ch / 2.0);
     }
+    text_layout.layout.set_line_height_quirk(nodes.line_height_quirk);
     // pyro: the shaped text's content widths, for every layout of it (`TextLayout::
     // content_widths`): a function of the shaped clusters alone while no in-flow inline box, whose
     // size each layout sets, takes part in them. Measured with no text indent; the layout sets its

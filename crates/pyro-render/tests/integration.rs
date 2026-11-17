@@ -29,6 +29,7 @@ mod filter_image_function;
 mod first_line;
 mod flex_collapse;
 mod flex_content_sizes;
+mod table_part_containing_blocks;
 mod flex_gaps;
 mod flex_last_baseline;
 mod flex_natural_ratio;

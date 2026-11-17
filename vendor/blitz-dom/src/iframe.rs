@@ -76,6 +76,7 @@ impl BaseDocument {
             // pyro: a frame's document is parsed as HTML.
             xml_document: false,
             quirks_mode: false,
+            line_height_quirk: false,
             content_language: None,
             // A sub-document is a separate devtools target with its own provider
             #[cfg(feature = "devtools")]

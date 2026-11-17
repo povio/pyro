@@ -719,6 +719,7 @@ impl BaseDocument {
         let mut nodes = Box::new(NodeTree::new());
         nodes.xml_document = config.xml_document;
         nodes.quirks_mode = config.quirks_mode;
+        nodes.line_height_quirk = config.line_height_quirk;
         nodes.content_language = config.content_language.map(Into::into);
         // pyro: one lock for the thread's documents, so a parsed
         // sheet can serve them all (`make_stylesheet`).

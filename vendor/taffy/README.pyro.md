@@ -601,3 +601,7 @@ gives it its share, and loses its size after each row sizing pass (CSS 2.1 §17.
 element shrinks to fit (min/max-content against the initial containing block) and sits on its side (WPT CSS2
 `floats/float-root`). `compute/block.rs`: a flex or grid scroll container child gives its block parent its contents'
 last baseline; only a block one gives its bottom margin edge (WPT css-align `baseline-of-scrollable-1b`).
+
+`util/resolve.rs` (lane SP): `LengthPercentageAuto::resolve_or_zero` resolves a `calc()` against an indefinite basis
+with its percentages as zero (Blink's `MinimumValueForLength`): a `calc(10% + 100px)` margin is 100px in an
+intrinsic size (WPT css-sizing `calc-margins-flex`). Padding keeps zero (css-flexbox `dynamic-isize-change-004`).

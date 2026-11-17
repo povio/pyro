@@ -467,6 +467,9 @@ pub fn compute_replaced_layout(
         if is_content_keyword(max_style.height) {
             max_size.height = Some(content_height.maybe_max(min_size.height));
         }
+        // A keyword minimum wins over a length maximum too (WPT css-sizing
+        // `replaced-aspect-ratio-stretch-fit-003`: `min-width: max-content; max-width: 50px`).
+        max_size = max_size.maybe_max(min_size);
     }
 
     // For ContentSize mode, ignore preferred/min size styles in the axis being measured: the

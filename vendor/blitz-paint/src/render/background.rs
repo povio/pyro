@@ -153,7 +153,7 @@ impl<'a> ImageLayerStyles<'a> {
 impl ElementCx<'_, '_> {
     pub(super) fn draw_background(&self, scene: &mut impl PaintScene) {
         let style = self.style.clone();
-        self.draw_background_layers(scene, &style, &self.element.background_images, None);
+        self.draw_background_layers(scene, &style, &self.element.background_images, None, None);
     }
 
     /// pyro: the canvas background (CSS Backgrounds 3 §2.11.2), drawn by the root element in place
@@ -178,18 +178,23 @@ impl ElementCx<'_, '_> {
         }
         let canvas = self.transform.inverse().transform_rect_bbox(canvas);
         let style = (*style).clone();
-        self.draw_background_layers(scene, &style, &element.background_images, Some(canvas));
+        self.draw_background_layers(scene, &style, &element.background_images, Some(canvas), None);
     }
 
     /// The background of `style` with the images `image_data`, over this element's background
     /// painting area, or over `canvas` (this element's space) for the canvas background.
+    /// pyro: `text_mask`, for a table part's background drawn in one of its cells: that cell and
+    /// its transform, whose text `background-clip: text` layers show in (with a canvas, text
+    /// clips are otherwise border-box).
     fn draw_background_layers(
         &self,
         scene: &mut impl PaintScene,
         style: &ComputedValues,
         image_data: &[Option<ImageResourceData>],
         canvas: Option<Rect>,
+        text_mask: Option<(NodeId, Affine)>,
     ) {
+        let text_clips = canvas.is_none() || text_mask.is_some();
         let bg_styles = &style.get_background();
         let layer_count = bg_styles.background_image.0.len();
 
@@ -274,9 +279,9 @@ impl ElementCx<'_, '_> {
         );
 
         // Draw background color (if any)
-        let mut text_run = last_clip == StyloBackgroundClip::Text && canvas.is_none();
+        let mut text_run = last_clip == StyloBackgroundClip::Text && text_clips;
         if text_run {
-            self.begin_text_clip_group(scene);
+            self.begin_text_clip_group(scene, canvas);
         }
         let current_color = style.clone_color();
         let bg_color = bg_styles
@@ -312,12 +317,12 @@ impl ElementCx<'_, '_> {
 
         for idx in (0..layer_count).rev() {
             let layer = ImageLayerStyles::from_background(bg_styles, image_data, idx);
-            let layer_text_clip = layer.text_clip && canvas.is_none();
+            let layer_text_clip = layer.text_clip && text_clips;
             if layer_text_clip != text_run {
                 if text_run {
-                    self.end_text_clip_group(scene);
+                    self.end_text_clip_group(scene, canvas, text_mask);
                 } else {
-                    self.begin_text_clip_group(scene);
+                    self.begin_text_clip_group(scene, canvas);
                 }
                 text_run = layer_text_clip;
             }
@@ -359,7 +364,7 @@ impl ElementCx<'_, '_> {
             }
         }
         if text_run {
-            self.end_text_clip_group(scene);
+            self.end_text_clip_group(scene, canvas, text_mask);
         }
         self.context.layer_manager.maybe_pop_layer(scene, blend_group);
     }
@@ -502,13 +507,15 @@ impl ElementCx<'_, '_> {
 
     /// Starts an isolated group for `background-clip: text` layers; layers drawn
     /// until [`end_text_clip_group`](Self::end_text_clip_group) are clipped to text.
-    fn begin_text_clip_group(&self, scene: &mut impl PaintScene) {
+    /// pyro: over `canvas` when there is one (a table part's background in a cell).
+    fn begin_text_clip_group(&self, scene: &mut impl PaintScene, canvas: Option<Rect>) {
+        let area = canvas.map_or_else(|| self.frame.border_box_path(), |canvas| canvas.to_path(0.1));
         scene.push_layer(
             Fill::NonZero,
             Mix::Normal,
             ALMOST_OPAQUE,
             self.transform,
-            &self.frame.border_box_path(),
+            &area,
             None,
             None,
         );
@@ -516,18 +523,24 @@ impl ElementCx<'_, '_> {
 
     /// Ends the group started by [`begin_text_clip_group`](Self::begin_text_clip_group):
     /// draws the text mask in a `DestIn` layer, then pops both layers.
-    fn end_text_clip_group(&self, scene: &mut impl PaintScene) {
+    fn end_text_clip_group(
+        &self,
+        scene: &mut impl PaintScene,
+        canvas: Option<Rect>,
+        text_mask: Option<(NodeId, Affine)>,
+    ) {
+        let area = canvas.map_or_else(|| self.frame.border_box_path(), |canvas| canvas.to_path(0.1));
         scene.push_layer(
             Fill::NonZero,
             BlendMode::new(Mix::Normal, Compose::DestIn),
             1.0,
             self.transform,
-            &self.frame.border_box_path(),
+            &area,
             None,
             None,
         );
-        self.context
-            .draw_text_mask(scene, self.node.id, self.transform, true);
+        let (node, transform) = text_mask.unwrap_or((self.node.id, self.transform));
+        self.context.draw_text_mask(scene, node, transform, true);
         scene.pop_layer();
         scene.pop_layer();
     }
@@ -705,15 +718,13 @@ impl ElementCx<'_, '_> {
             })
             .collect();
         // pyro: a part with a background image paints it (with its colour) cell by cell too,
-        // positioned against the part's own box (CSS 2.1 §17.5.1).
+        // positioned against the part's own box (CSS 2.1 §17.5.1). So does one whose colour is
+        // cut to the text (`background-clip: text`): the cells' text masks it.
         let has_image = |node_id: NodeId| -> bool {
             !positioned(node_id) && self.context.dom.get_node(node_id).and_then(|node| node.primary_styles()).is_some_and(|style| {
-                style
-                    .get_background()
-                    .background_image
-                    .0
-                    .iter()
-                    .any(|image| !matches!(image, ComputedImage::None))
+                let background = style.get_background();
+                background.background_image.0.iter().any(|image| !matches!(image, ComputedImage::None))
+                    || background.background_clip.0.last() == Some(&StyloBackgroundClip::Text)
             })
         };
         let column_images: Vec<[bool; 2]> =
@@ -851,7 +862,24 @@ impl ElementCx<'_, '_> {
                 match (image, part_rects.as_ref()) {
                     (true, Some(rects)) => {
                         let part = rects.rect(table, node_id, kind, cell);
-                        self.draw_table_part_background(scene, node_id, part, &shape, transform);
+                        let location = Vec2::new(rect.x0, rect.y0);
+                        let cell_location = self
+                            .context
+                            .dom
+                            .get_node(cell.node_id)
+                            .map_or(location, |node| {
+                                let location = node.final_layout().location;
+                                Vec2::new(location.x as f64, location.y as f64)
+                            });
+                        let cell_transform = transform * Affine::translate(cell_location * self.scale);
+                        self.draw_table_part_background(
+                            scene,
+                            node_id,
+                            part,
+                            &shape,
+                            transform,
+                            (cell.node_id, cell_transform),
+                        );
                     }
                     _ => {
                         if let Some(color) = color {
@@ -896,7 +924,7 @@ impl ElementCx<'_, '_> {
                     // The part's box in the cell's space.
                     let location = layout.location;
                     let rect = rects.rect(table, part, kind, cell) - Vec2::new(location.x as f64, location.y as f64);
-                    self.draw_table_part_background(scene, part, rect, &shape, self.transform);
+                    self.draw_table_part_background(scene, part, rect, &shape, self.transform, (self.node.id, self.transform));
                     continue;
                 }
             }
@@ -984,6 +1012,7 @@ impl ElementCx<'_, '_> {
         part: Rect,
         clip: &Rect,
         base: Affine,
+        (cell, cell_transform): (NodeId, Affine),
     ) {
         let Some(node) = self.context.dom.get_node(node_id) else { return };
         if node.element_data().is_none() || node.primary_styles().is_none() {
@@ -1000,7 +1029,7 @@ impl ElementCx<'_, '_> {
         let canvas = *clip - Vec2::new(part.x0, part.y0) * self.scale;
         if let (Some(style), Some(element)) = (node.primary_styles(), node.element_data()) {
             let style = (*style).clone();
-            part_cx.draw_background_layers(scene, &style, &element.background_images, Some(canvas));
+            part_cx.draw_background_layers(scene, &style, &element.background_images, Some(canvas), Some((cell, cell_transform)));
         }
         scene.pop_layer();
     }

@@ -1003,3 +1003,9 @@ of their own then. Covered by `highlights_paint_under_the_selection` in `crates/
 `render.rs` (`hides_empty_cell`): an empty table cell (white space and out-of-flow boxes only, no pseudo-elements)
 with `empty-cells: hide` in the separated borders model paints no background, border or shadow (WPT CSS2
 `empty-cells-applies-to-014`).
+
+Lane SP: `render.rs` (`table_part_transform`): an out-of-flow box laid out by its table for a row or row group paints
+in that part's transform. `draw_svg`: an SVG image is drawn at its unsnapped content size, stretched to the snapped
+box (css-sizing `image-fractional-height-with-wide-aspect-ratio`). `render/background.rs`: a table part's
+`background-clip: text` layers are masked by the cell's text (`draw_background_layers` `text_mask`; css-backgrounds
+`background-multiple-layers-table-cell`, `clip-text-background-table-cell`).

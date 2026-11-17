@@ -4153,6 +4153,34 @@ impl BaseDocument {
         Some([row.group, Some(row.node_id)])
     }
 
+    /// pyro: the containing block of the out-of-flow box `box_id` (`position` absolute or fixed)
+    /// below table `table_id`: the nearest ancestor of the box below the table that makes one for
+    /// it (positioned, transformed, ...). When that is a row or row group, which have no boxes of
+    /// their own, the table lays the box out against the part's area, and it paints in the part's
+    /// transform.
+    pub fn containing_block_below_table(
+        &self,
+        table_id: NodeId,
+        box_id: NodeId,
+        position: taffy::Position,
+    ) -> Option<NodeId> {
+        let mut current = self.nodes.get(box_id)?.parent;
+        loop {
+            let id = current?;
+            if id == table_id {
+                return None;
+            }
+            let node = self.nodes.get(id)?;
+            if node
+                .primary_styles()
+                .is_some_and(|style| stylo_taffy::convert::containing_block_claims(&style).for_position(position))
+            {
+                return Some(id);
+            }
+            current = node.parent;
+        }
+    }
+
     /// pyro: the row group and row of table cell `cell_id` that are positioned (relative or
     /// sticky): the cell paints with them, as positioned boxes paint, over their backgrounds.
     pub fn table_cell_positioned_parts(&self, cell_id: NodeId) -> [Option<NodeId>; 2] {

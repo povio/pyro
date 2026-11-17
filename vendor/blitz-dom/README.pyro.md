@@ -2442,3 +2442,11 @@ keep their tracks (`row_tracks`); Taffy collapses them once sized.
   `ColumnCursor::place` counts a row-spanning cell's rows as `start_row` counts them down, so the cells after it get
   their columns (`TableCell::column`: column widths, part backgrounds; WPT css-tables
   `paint/background-image-column`, `border-collapse-spanning-cells-003`).
+
+- Lane SP: `BaseDocument::containing_block_below_table` (layout/table.rs): an absolutely positioned or fixed box whose
+  containing block is a row or row group (positioned, transformed, any property that makes one) is laid out by the
+  table against the part's area (`table_part_containing_block`, now for `fixed` too) (WPT css-transforms
+  `transform-transformed-*-contains-fixed-position`, `-tr-percent-height-child`). `replaced.rs`: a keyword minimum
+  wins over a length maximum (`replaced-aspect-ratio-stretch-fit-003`). `DocumentConfig::line_height_quirk`
+  (quirks and limited-quirks mode): no strut for lines without text (inline/build.rs, parley
+  `Layout::set_line_height_quirk`; css-sizing `intrinsic-percent-replaced-006`).

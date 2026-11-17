@@ -1088,6 +1088,13 @@ impl Dom {
         self.check(doc).is_ok_and(|i| matches!(&self.n(i).kind, NodeKind::Document(d) if d.quirks == QuirksMode::Quirks))
     }
 
+    /// Whether `doc` is in limited-quirks mode (an HTML document whose doctype is a
+    /// transitional or frameset one with a system identifier).
+    pub fn is_limited_quirks_mode(&self, doc: NodeId) -> bool {
+        self.check(doc)
+            .is_ok_and(|i| matches!(&self.n(i).kind, NodeKind::Document(d) if d.quirks == QuirksMode::LimitedQuirks))
+    }
+
     pub fn set_quirks_mode(&mut self, doc: NodeId, q: QuirksMode) -> DomResult<()> {
         let i = self.check(doc)?;
         if let NodeKind::Document(d) = &mut self.n_mut(i).kind {

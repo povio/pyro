@@ -124,7 +124,16 @@ impl ResolveOrZero<Option<f32>, f32> for LengthPercentage {
 
 impl ResolveOrZero<Option<f32>, f32> for LengthPercentageAuto {
     /// Will return a default value of result is evaluated to `None`
+    ///
+    /// pyro: a `calc()` against an indefinite basis resolves its percentages as zero, its lengths
+    /// stay (Blink's `MinimumValueForLength(length, 0)`): a `calc(10% + 100px)` margin is 100px in
+    /// an intrinsic size. WPT css-sizing `calc-margins-flex`. (Margins only: padding resolved so lost
+    /// css-flexbox `dynamic-isize-change-004`, where a flex item's padding met an indefinite basis.)
     fn resolve_or_zero(self, context: Option<f32>, calc: impl Fn(*const (), f32) -> f32) -> f32 {
+        #[cfg(feature = "calc")]
+        if context.is_none() && self.0.is_plain_calc() {
+            return calc(self.0.calc_value(), 0.0);
+        }
         self.maybe_resolve(context, calc).unwrap_or(0.0)
     }
 }

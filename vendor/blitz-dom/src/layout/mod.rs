@@ -1528,11 +1528,15 @@ impl LayoutPassState<'_> {
         if inputs.run_mode == RunMode::PerformLayout && !output.oof_candidates.is_empty() {
             let table_id = dom_node_id(node_id);
             for candidate in output.oof_candidates.as_mut_slice() {
-                if candidate.containing_block.is_some() || candidate.position != taffy::Position::Absolute {
+                if candidate.containing_block.is_some() {
                     continue;
                 }
-                candidate.containing_block =
-                    self.table_part_containing_block(table_id, &context, dom_node_id(candidate.node));
+                candidate.containing_block = self.table_part_containing_block(
+                    table_id,
+                    &context,
+                    dom_node_id(candidate.node),
+                    candidate.position,
+                );
             }
         }
 
@@ -1564,20 +1568,10 @@ impl LayoutPassState<'_> {
         table_id: crate::NodeId,
         context: &crate::layout::table::TableContext,
         box_id: crate::NodeId,
+        position: taffy::Position,
     ) -> Option<(taffy::Size<f32>, taffy::Point<f32>)> {
-        use style::computed_values::position::T as Position;
-        let mut current = self.nodes[box_id].parent;
-        let part = loop {
-            let id = current?;
-            if id == table_id {
-                return None;
-            }
-            let node = &self.nodes[id];
-            if node.primary_styles().is_some_and(|style| style.clone_position() != Position::Static) {
-                break id;
-            }
-            current = node.parent;
-        };
+        let doc: &BaseDocument = self;
+        let part = doc.containing_block_below_table(table_id, box_id, position)?;
         let rows: Vec<usize> = context
             .rows
             .iter()
@@ -1599,7 +1593,6 @@ impl LayoutPassState<'_> {
         }
         let (y0, y1) = (first_row.start.min(last_row.start), first_row.end.max(last_row.end));
         // Its relative offset, and its row group's for a row.
-        let doc: &BaseDocument = self;
         let table_parent = Some(table_id);
         let group = context.rows[first].group.filter(|&group| group != part);
         let mut offset = taffy::Point::ZERO;

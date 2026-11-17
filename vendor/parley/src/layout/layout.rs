@@ -222,6 +222,13 @@ impl<B: Brush> Layout<B> {
         self.data.tab_min_advance = min_advance.max(0.0);
     }
 
+    /// pyro: the line height calculation quirk (Quirks Mode §3.3): the root span box (the strut)
+    /// counts on a line only when the line holds text; a line of inline boxes alone is as tall
+    /// as they are. Set before the lines are broken.
+    pub fn set_line_height_quirk(&mut self, quirk: bool) {
+        self.data.line_height_quirk = quirk;
+    }
+
     /// pyro: makes the layout's lines scale their text to fill them (CSS `text-fit`); `scale` is
     /// the factor of every line for [`TextFitTarget::Consistent`](crate::TextFitTarget), which
     /// [`Self::text_fit_block_scale`] measures on the lines broken without it.

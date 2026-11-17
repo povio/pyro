@@ -1116,12 +1116,15 @@ impl<'a, B: Brush> BreakLines<'a, B> {
         state.line.reset();
         state.contributed.clear();
         state.subtrees.clear();
-        state.line.box_metrics.add_style(
-            0,
-            &self.layout.data.style_metrics,
-            &mut state.contributed,
-            &mut state.subtrees,
-        );
+        // pyro: under the line height quirk, text adds the strut with its own span boxes.
+        if !self.layout.data.line_height_quirk {
+            state.line.box_metrics.add_style(
+                0,
+                &self.layout.data.style_metrics,
+                &mut state.contributed,
+                &mut state.subtrees,
+            );
+        }
         state.update_max_height_exceeded();
     }
 
@@ -1258,10 +1261,12 @@ impl<'a, B: Brush> BreakLines<'a, B> {
         state.line.box_metrics.reset();
         state.contributed.clear();
         state.subtrees.clear();
-        state
-            .line
-            .box_metrics
-            .add_style(0, table, &mut state.contributed, &mut state.subtrees);
+        if !data.line_height_quirk {
+            state
+                .line
+                .box_metrics
+                .add_style(0, table, &mut state.contributed, &mut state.subtrees);
+        }
         let line = &self.lines.lines[line_index];
         let mut placements = Vec::new();
         for item in &self.lines.line_items[line.item_range.clone()] {

@@ -375,3 +375,5 @@ enabled: under `white-space: pre` the text after it stays on its line (WPT css-o
   `TextUnder` and `XMiddle` align a span's text-over / text-under / x-middle baseline (its font's ascent, descent,
   half x-height) with its parent's (css-inline-3 `alignment-baseline` / `dominant-baseline`); inline boxes align
   with the first two as with `TextTop` / `TextBottom`, and stay on the baseline for `XMiddle`.
+- `layout/line_break.rs` (`reset_line`, `rescale_box_metrics`; lane SP): `Layout::set_line_height_quirk` (Quirks
+  Mode §3.3): the root span box counts on a line only once text adds it; a line of inline boxes alone is their height.

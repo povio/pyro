@@ -398,6 +398,7 @@ impl BlitzGeometry {
             animations: None,
             xml_document: dom.is_xml_document(style.document()),
             quirks_mode: dom.is_quirks_mode(style.document()),
+            limited_quirks_mode: dom.is_limited_quirks_mode(style.document()),
             content_language: dom.content_language(style.document()).map(str::to_owned),
             selection: None,
             highlights: Vec::new(),

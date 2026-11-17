@@ -577,22 +577,43 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
 
     /// pyro: the transforms of a table cell's row group and row, which are no boxes of their own
     /// (their cells are the table's children): each about its own box, in the table's space.
+    ///
+    /// An absolutely positioned or fixed box whose containing block is a row or row group (the
+    /// table lays it out, `containing_block_below_table`) paints in that part's transform too.
     fn table_part_transform(&self, node: &Node) -> Affine {
         let index = node.layout_data().table_cell_index;
-        if index == u32::MAX {
+        let position = node.taffy_position();
+        let out_of_flow = matches!(position, taffy::Position::Absolute | taffy::Position::Fixed);
+        if index == u32::MAX && !out_of_flow {
             return Affine::IDENTITY;
         }
-        let Some(table) = node.layout_parent.get().and_then(|id| self.dom.get_node(id)) else {
+        // (An out-of-flow box is laid out by its containing block: the table for one in a part.)
+        let table = if index != u32::MAX { node.layout_parent.get() } else { node.containing_block() };
+        let Some(table) = table.and_then(|id| self.dom.get_node(id)) else {
             return Affine::IDENTITY;
         };
         let Some(blitz_dom::node::SpecialElementData::TableRoot(ctx)) = table.element_data().map(|e| &e.special_data) else {
             return Affine::IDENTITY;
         };
-        let Some(cell) = ctx.cells.get(index as usize).filter(|cell| cell.node_id == node.id) else {
-            return Affine::IDENTITY;
-        };
-        let Some(row) = ctx.rows.get(cell.row as usize) else {
-            return Affine::IDENTITY;
+        let parts = if index != u32::MAX {
+            let Some(cell) = ctx.cells.get(index as usize).filter(|cell| cell.node_id == node.id) else {
+                return Affine::IDENTITY;
+            };
+            let Some(row) = ctx.rows.get(cell.row as usize) else {
+                return Affine::IDENTITY;
+            };
+            [row.group, Some(row.node_id)]
+        } else {
+            let Some(part) = self.dom.containing_block_below_table(table.id, node.id, position) else {
+                return Affine::IDENTITY;
+            };
+            if let Some(row) = ctx.rows.iter().find(|row| row.node_id == part) {
+                [row.group, Some(part)]
+            } else if ctx.rows.iter().any(|row| row.group == Some(part)) {
+                [Some(part), None]
+            } else {
+                return Affine::IDENTITY;
+            }
         };
         let transformed = |id: NodeId| {
             self.dom.get_node(id).and_then(|node| node.primary_styles()).is_some_and(|style| {
@@ -604,7 +625,6 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
                     || !matches!(b.scale, GenericScale::None)
             })
         };
-        let parts = [row.group, Some(row.node_id)];
         // pyro: the sticky offsets of the cell's row group and row move their cells.
         let mut sticky = Vec2::ZERO;
         for id in parts.iter().flatten() {
@@ -3905,8 +3925,23 @@ impl ElementCx<'_, '_> {
             return;
         };
 
-        let width = self.frame.content_box.width() as f32;
-        let height = self.frame.content_box.height() as f32;
+        // pyro: an SVG image (not an inline `<svg>`) is drawn at its unsnapped content size and
+        // stretched to the snapped box, as Chromium draws an image into its pixel-snapped rect:
+        // a 100x12.5 image box snapped to 100x13 is filled, without a seam where the `meet` of a
+        // 8:1 view box left a part of a pixel (WPT css-sizing
+        // `image-fractional-height-with-wide-aspect-ratio`).
+        let snapped = (self.frame.content_box.width() as f32, self.frame.content_box.height() as f32);
+        let (width, height) = if self.element.name.local != local_name!("svg") {
+            let layout = self.node.unrounded_layout();
+            let w = (layout.size.width - layout.padding.left - layout.padding.right - layout.border.left - layout.border.right)
+                * self.scale as f32;
+            let h = (layout.size.height - layout.padding.top - layout.padding.bottom - layout.border.top - layout.border.bottom)
+                * self.scale as f32;
+            if w > 0.0 && h > 0.0 && (w - snapped.0).abs() < 1.0 && (h - snapped.1).abs() < 1.0 { (w, h) } else { snapped }
+        } else {
+            snapped
+        };
+        let stretch = Affine::scale_non_uniform((snapped.0 / width) as f64, (snapped.1 / height) as f64);
         // pyro: an inline `<svg>` without a `viewBox` lays its content out in its box, in user
         // units of a CSS px times its zoom (`zoom: 2` draws its content twice as large).
         let units = self.scale as f32 * self.style.effective_zoom.value();
@@ -3971,11 +4006,16 @@ impl ElementCx<'_, '_> {
             }
             None => (x_offset, y_offset, paint_size),
         };
+        let (origin_x, origin_y) = (x, y);
         let x = x + x_offset.px() as f64;
         let y = y + y_offset.px() as f64;
 
         let viewport = svg_viewport_affine(svg, paint_size.width, paint_size.height);
-        let transform = (self.transform * viewport).then_translate(Vec2 { x, y });
+        let transform = self.transform
+            * Affine::translate((origin_x, origin_y))
+            * stretch
+            * Affine::translate((x - origin_x, y - origin_y))
+            * viewport;
 
         // pyro: the viewport clip, as Chromium has it (`LayoutSVGRoot::ShouldApplyViewportClip`,
         // `ReplacedPainter`): an inline `<svg>` clips its content unless its `overflow` is
