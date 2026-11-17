@@ -399,3 +399,6 @@ enabled: under `white-space: pre` the text after it stays on its line (WPT css-o
   `-end-016`, `bidi-lines-001`). `Layout::is_rtl` stays the first paragraph's.
 
 Covered by `crates/pyro-render/tests/text_inline_round4.rs` and `soft_hyphens.rs`.
+- `layout/alignment.rs` (`align`, round 4 lane D): right-, end- and centre-aligned lines take their content width rounded
+  up to a layout unit (1/64 CSS px), as Blink's snapped text item widths: such a line starts where a shrink-to-fit box
+  of the same text does (WPT CSS2 `positioning-float-002`, `float-applies-to-008`).

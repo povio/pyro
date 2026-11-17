@@ -121,15 +121,24 @@ pub(crate) fn align<B: Brush>(
             alignment
         };
 
+        // pyro: the line's content is as wide as Blink's text items, each a whole number of layout
+        // units (1/64 CSS px, `ShapeResult::SnappedWidth` rounds up): a right- or centre-aligned
+        // line then starts where a shrink-to-fit box of the same text would.
+        let snapped_free_space = {
+            let unit = 64.0 / layout.scale;
+            let advance = line.metrics.advance - line.metrics.hanging_advance;
+            let snapped = ((advance * unit - 0.01).ceil() / unit).max(advance);
+            free_space - (snapped - advance)
+        };
         match (line_alignment, is_rtl) {
             (Alignment::Left, _) | (Alignment::Start, false) | (Alignment::End, true) => {
                 // Do nothing
             }
             (Alignment::Right, _) | (Alignment::Start, true) | (Alignment::End, false) => {
-                line.metrics.offset += free_space;
+                line.metrics.offset += snapped_free_space;
             }
             (Alignment::Center, _) => {
-                line.metrics.offset += free_space * 0.5;
+                line.metrics.offset += snapped_free_space * 0.5;
             }
             (Alignment::Justify, _) => {
                 // Justified alignment doesn't have any effect if free_space is negative or zero

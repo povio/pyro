@@ -2499,3 +2499,5 @@ does not let margins collapse through it, even when its lines have no height (CS
   `block_container_fill_height`, inline layout (`compute_inline_layout_inner`) as a least height and a definite height
   for `stretch` and its children's available height, flex and grid through `quirky_fill_layout` (laid out again at the
   filled height). WPT css-sizing `stretch/stretch-quirk-001`, css-flexbox `flexbox_quirks_body`.
+- `node/svg.rs` (round 4 lane D): an SVG image's root background is also read from a `background` shorthand that is a
+  lone colour.

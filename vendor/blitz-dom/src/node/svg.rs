@@ -65,11 +65,18 @@ impl SvgIntrinsicDimensions {
             .and_then(|style| {
                 style.split(';').rev().find_map(|declaration| {
                     let (name, value) = declaration.split_once(':')?;
-                    (name.trim() == "background-color").then(|| value.trim())
+                    // pyro: or the `background` shorthand when it is a colour alone.
+                    let name = name.trim();
+                    let value = value.trim();
+                    match name {
+                        "background-color" => Some(value.parse::<svgtypes::Color>().ok()),
+                        "background" => Some(value.parse::<svgtypes::Color>().ok()),
+                        _ => None,
+                    }
                 })
             })
-            .or_else(|| root.attribute("background-color"))
-            .and_then(|value| value.parse::<svgtypes::Color>().ok());
+            .flatten()
+            .or_else(|| root.attribute("background-color").and_then(|value| value.parse::<svgtypes::Color>().ok()));
 
         Self {
             root_background,

@@ -2630,25 +2630,20 @@ impl ElementCx<'_, '_> {
         if let Some(style) = &fragment.style {
             cx.style = style.clone();
         }
-        // pyro: a turned (vertical) fragment's open sides are its top and bottom.
-        if fragment.turned {
-            if !left {
-                cx.frame.border_radii.top_left = Vec2::ZERO;
-                cx.frame.border_radii.top_right = Vec2::ZERO;
-            }
-            if !right {
-                cx.frame.border_radii.bottom_left = Vec2::ZERO;
-                cx.frame.border_radii.bottom_right = Vec2::ZERO;
-            }
-        } else {
-            if !left {
-                cx.frame.border_radii.top_left = Vec2::ZERO;
-                cx.frame.border_radii.bottom_left = Vec2::ZERO;
-            }
-            if !right {
-                cx.frame.border_radii.top_right = Vec2::ZERO;
-                cx.frame.border_radii.bottom_right = Vec2::ZERO;
-            }
+        // pyro: the open sides' corners are square, left out before overlapping radii are scaled
+        // down (a turned (vertical) fragment's open sides are its top and bottom).
+        if !(left && right) {
+            let keep = if fragment.turned { [left, left, right, right] } else { [left, right, right, left] };
+            let layout = Layout {
+                size: taffy::Size {
+                    width: (size.width / self.scale) as f32,
+                    height: (size.height / self.scale) as f32,
+                },
+                border: fragment.border,
+                padding: fragment.padding,
+                ..Layout::new()
+            };
+            cx.frame = create_css_rect_with_corners(&cx.style, &layout, self.scale, keep);
         }
         // The whole box, for a sliced box's shadows and background images, and the fragment's
         // piece of it: its border box, and for the outer shadows the space past its closed
@@ -4508,6 +4503,13 @@ fn insets_from_taffy_rect(input: taffy::Rect<f64>) -> Insets {
 
 /// Convert Stylo and Taffy types into Kurbo types
 fn create_css_rect(style: &ComputedValues, layout: &Layout, scale: f64) -> CssBox {
+    create_css_rect_with_corners(style, layout, scale, [true; 4])
+}
+
+/// pyro: [`create_css_rect`] with only the corners `keep` marks (top left, top right, bottom
+/// right, bottom left) rounded: the others are left out before overlapping radii are scaled down,
+/// as Blink's `CalcRadiiFor` does for the open sides of an inline box's fragment.
+fn create_css_rect_with_corners(style: &ComputedValues, layout: &Layout, scale: f64, keep: [bool; 4]) -> CssBox {
     // Resolve and rescale
     // We have to scale since document pixels are not same same as rendered pixels
     let width: f64 = layout.size.width as f64;
@@ -4540,11 +4542,12 @@ fn create_css_rect(style: &ComputedValues, layout: &Layout, scale: f64) -> CssBo
             resolve_radii(radius)
         }
     };
+    let kept = |keep: bool, radius: Vec2| if keep { radius } else { Vec2::ZERO };
     let border_radii = NonUniformRoundedRectRadii {
-        top_left: shaped(&s_border.border_top_left_radius, s_border.corner_top_left_shape.k),
-        top_right: shaped(&s_border.border_top_right_radius, s_border.corner_top_right_shape.k),
-        bottom_right: shaped(&s_border.border_bottom_right_radius, s_border.corner_bottom_right_shape.k),
-        bottom_left: shaped(&s_border.border_bottom_left_radius, s_border.corner_bottom_left_shape.k),
+        top_left: kept(keep[0], shaped(&s_border.border_top_left_radius, s_border.corner_top_left_shape.k)),
+        top_right: kept(keep[1], shaped(&s_border.border_top_right_radius, s_border.corner_top_right_shape.k)),
+        bottom_right: kept(keep[2], shaped(&s_border.border_bottom_right_radius, s_border.corner_bottom_right_shape.k)),
+        bottom_left: kept(keep[3], shaped(&s_border.border_bottom_left_radius, s_border.corner_bottom_left_shape.k)),
     };
 
     let frame = CssBox::new(border_box, border, padding, outline_width, border_radii);

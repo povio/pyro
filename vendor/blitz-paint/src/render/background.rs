@@ -1206,6 +1206,12 @@ impl ElementCx<'_, '_> {
                     y.start + hc as f64 * y.stride,
                 );
                 let transform = base_transform * kurbo::Affine::translate(origin) * viewport;
+                // pyro: the root's background (an SVG document's canvas) fills the tile.
+                if let Some(color) = svg.intrinsic_dimensions.root_background {
+                    let tile = Rect::from_origin_size(origin.to_point(), bg_size);
+                    let color = peniko::Color::from_rgba8(color.red, color.green, color.blue, color.alpha);
+                    scene.fill(Fill::NonZero, base_transform, color, None, &tile);
+                }
                 if overflows {
                     let tile = Rect::from_origin_size(origin.to_point(), bg_size);
                     scene.push_clip_layer(Fill::NonZero, base_transform, &tile);

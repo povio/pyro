@@ -28984,7 +28984,7 @@ diff --git a/packages/blitz-dom/src/node/svg.rs b/packages/blitz-dom/src/node/sv
  }
  
  impl SvgIntrinsicDimensions {
-@@ -56,7 +60,19 @@
+@@ -56,7 +60,26 @@
              .and_then(|s| s.parse().ok())
              .unwrap_or_default();
  
@@ -28993,18 +28993,25 @@ diff --git a/packages/blitz-dom/src/node/svg.rs b/packages/blitz-dom/src/node/sv
 +            .and_then(|style| {
 +                style.split(';').rev().find_map(|declaration| {
 +                    let (name, value) = declaration.split_once(':')?;
-+                    (name.trim() == "background-color").then(|| value.trim())
++                    // pyro: or the `background` shorthand when it is a colour alone.
++                    let name = name.trim();
++                    let value = value.trim();
++                    match name {
++                        "background-color" => Some(value.parse::<svgtypes::Color>().ok()),
++                        "background" => Some(value.parse::<svgtypes::Color>().ok()),
++                        _ => None,
++                    }
 +                })
 +            })
-+            .or_else(|| root.attribute("background-color"))
-+            .and_then(|value| value.parse::<svgtypes::Color>().ok());
++            .flatten()
++            .or_else(|| root.attribute("background-color").and_then(|value| value.parse::<svgtypes::Color>().ok()));
 +
          Self {
 +            root_background,
              width: parse_length("width"),
              height: parse_length("height"),
              view_box,
-@@ -80,6 +96,15 @@
+@@ -80,6 +103,15 @@
      pub tree: Arc<usvg::Tree>,
      /// The dimensions declared on the root `<svg>` element.
      pub intrinsic_dimensions: SvgIntrinsicDimensions,
@@ -29020,7 +29027,7 @@ diff --git a/packages/blitz-dom/src/node/svg.rs b/packages/blitz-dom/src/node/sv
  }
  
  impl SvgImageData {
-@@ -106,13 +131,51 @@
+@@ -106,13 +138,51 @@
          };
          let doc = roxmltree::Document::parse_with_options(text, xml_options)
              .map_err(usvg::Error::ParsingFailed)?;
@@ -29074,7 +29081,7 @@ diff --git a/packages/blitz-dom/src/node/svg.rs b/packages/blitz-dom/src/node/sv
      /// The intrinsic width in CSS px, present only when the root `<svg>`
      /// declared an absolute (non-percentage) `width`.
      pub fn intrinsic_width(&self) -> Option<f32> {
-@@ -121,6 +184,12 @@
+@@ -121,6 +191,12 @@
              .intrinsic_dimensions
              .width
              .is_some_and(|len| len.unit != LengthUnit::Percent);
@@ -29087,7 +29094,7 @@ diff --git a/packages/blitz-dom/src/node/svg.rs b/packages/blitz-dom/src/node/sv
          declared.then(|| self.tree.size().width())
      }
  
-@@ -132,6 +201,10 @@
+@@ -132,6 +208,10 @@
              .intrinsic_dimensions
              .height
              .is_some_and(|len| len.unit != LengthUnit::Percent);
@@ -29098,7 +29105,7 @@ diff --git a/packages/blitz-dom/src/node/svg.rs b/packages/blitz-dom/src/node/sv
          declared.then(|| self.tree.size().height())
      }
  
-@@ -230,6 +303,49 @@
+@@ -230,6 +310,49 @@
      }
  }
  
@@ -29148,7 +29155,7 @@ diff --git a/packages/blitz-dom/src/node/svg.rs b/packages/blitz-dom/src/node/sv
  /// Map a `viewBox` onto a viewport of the given size per `preserveAspectRatio`.
  fn view_box_transform(
      view_box: usvg::NonZeroRect,
-@@ -263,3 +379,288 @@
+@@ -263,3 +386,288 @@
      let ty = (height - view_box.height() * sy) * align_y - view_box.y() * sy;
      usvg::Transform::from_row(sx, 0.0, 0.0, sy, tx, ty)
  }

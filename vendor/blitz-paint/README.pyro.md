@@ -1022,3 +1022,9 @@ content, so text that overlaps an outside marker covers it (css-pseudo `outside-
 emphasis mark is centred on its character without the letter spacing after it (css-text `letter-spacing-211`); over
 selected text a line-through of its own colour takes the highlight's colour too (css-pseudo
 `selection-originating-decoration-color`), underlines and overlines of their own colour keep it.
+
+Round 4 lane D: `text.rs` (`quarter_pixel`): glyph origins go to a layout unit (1/64 px) before Skia's quarter-pixel
+grid, so a glyph inside a run bins as the same glyph starting a box whose edge a layout unit rounds (CSS2
+`display-008`). `render.rs` (`create_css_rect_with_corners`): an inline box fragment's open-side corners are left out
+before overlapping radii are scaled down, as Blink's `CalcRadiiFor` (css-backgrounds `border-radius-012`).
+`render/background.rs`: an SVG background image's root background fills its tile (`background-image-007`).

@@ -203,6 +203,14 @@ fn snap_turned_band(transform: Affine, top: f64, size: f64) -> (f64, f64) {
     (y0.min(y1), (y1 - y0).abs())
 }
 
+/// pyro: a glyph origin `x` (device px) on Skia's quarter-pixel grid, taken to a layout unit
+/// (1/64 px) first: glyphs within a run then bin as those starting a box whose edge a layout unit
+/// rounds (text in two table cells against the same text in one line), where half-unit advances
+/// (1/128 px at 16px in a 2048-unit font) would put them on either side of a quarter's edge.
+fn quarter_pixel(x: f64) -> f64 {
+    (layout_unit(x) * 4.0).round() / 4.0
+}
+
 /// pyro: Blink's `LayoutUnit::FromFloatRound`: to the nearest 1/64 px.
 fn layout_unit(v: f64) -> f64 {
     (v * 64.0).round() / 64.0
@@ -2156,7 +2164,7 @@ pub(crate) fn stroke_text<'a, S: PaintScene>(
                     .map(|glyph| anyrender::Glyph {
                         id: glyph.id as _,
                         x: if quarter_x {
-                            (((tx + glyph.x as f64) * 4.0).round() / 4.0 - tx) as f32
+                            (quarter_pixel(tx + glyph.x as f64) - tx) as f32
                         } else {
                             glyph.x
                         },
@@ -2526,7 +2534,7 @@ fn draw_glyph_run<S: PaintScene>(
         glyph_run.positioned_glyphs().map(|glyph| anyrender::Glyph {
             id: glyph.id as _,
             x: if quarter_x {
-                (((tx + glyph.x as f64) * 4.0).round() / 4.0 - tx) as f32
+                (quarter_pixel(tx + glyph.x as f64) - tx) as f32
             } else {
                 glyph.x
             },

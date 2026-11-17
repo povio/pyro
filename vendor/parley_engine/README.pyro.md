@@ -196,3 +196,6 @@ parley which characters justification passes over and which scripts it does not 
   opportunity after a soft hyphen of `hyphens: none`; under `auto-phrase` a phrase fallback.
 - `analysis.rs` (`Analysis::paragraph_levels`): the byte offset and base level of each later paragraph, when one
   differs from the first's (an `Auto` base direction).
+- `src/shape/shaper.rs` (`shapes_word_by_word`, round 4 lane D): in a font without `GSUB` and `GPOS` (legacy `kern`/
+  `morx` only, as the macOS Times) a run breaks at every space and no-break space, as Blink shapes word by word when the
+  font's OpenType lookups never take the space glyph: no kerning across spaces (WPT CSS2 `color-applies-to-*`).

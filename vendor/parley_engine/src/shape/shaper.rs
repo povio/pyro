@@ -648,6 +648,8 @@ fn shape_segment(
     // The end of the previous grapheme.
     let mut byte_end = text_range.start;
     let mut char_end = char_range.start;
+    // pyro: per font of the segment, whether it shapes word by word (`shapes_word_by_word`).
+    let mut word_fonts: Vec<(u64, u32, bool)> = Vec::new();
 
     for grapheme_length in grapheme_lengths {
         let (byte_start, char_start) = (byte_end, char_end);
@@ -662,8 +664,23 @@ fn shape_segment(
             .select_font(segment, options, char_cluster)
             .ok_or(())?;
 
+        // pyro: Blink shapes word by word (a space or no-break space alone, each word between
+        // them alone) when the font's OpenType lookups never involve the space glyph, so a font
+        // with only legacy `kern`/`morx` tables (Times, among the macOS fonts) never kerns
+        // across a space. Such a run is broken at every space boundary.
+        let is_space = |range: &TextRange| matches!(&text[range.byte_range.clone()], " " | "\u{a0}");
+        let word_break = run.as_ref().is_some_and(|(run_font, run_range)| {
+            run_font.as_ref() == font
+                && {
+                    let last = text[run_range.byte_range.clone()].chars().next_back();
+                    matches!(last, Some(' ' | '\u{a0}')) || is_space(&grapheme)
+                }
+                && shapes_word_by_word(&mut word_fonts, run_font)
+        });
+
         if let Some((run_font, run_range)) = &mut run
             && run_font.as_ref() == font
+            && !word_break
         {
             run_range.byte_range.end = byte_end;
             run_range.char_range.end = char_end;
@@ -682,6 +699,23 @@ fn shape_segment(
     }
 
     Ok(())
+}
+
+/// pyro: whether Blink shapes text in `font` word by word (`Font::CanShapeWordByWord`): its
+/// OpenType lookups never take the space glyph. Only fonts without `GSUB` and `GPOS` are
+/// recognized (their lookups take nothing); `fonts` keeps the answers of the segment.
+fn shapes_word_by_word(fonts: &mut Vec<(u64, u32, bool)>, font: &FontInstance) -> bool {
+    let (id, index) = (font.font.data.id(), font.font.index);
+    if let Some(&(.., known)) = fonts.iter().find(|(i, x, _)| *i == id && *x == index) {
+        return known;
+    }
+    let answer = harfrust::FontRef::from_index(font.font.data.as_ref(), index).is_ok_and(|font_ref| {
+        use skrifa::raw::TopLevelTable as _;
+        font_ref.table_data(skrifa::raw::tables::gsub::Gsub::TAG).is_none()
+            && font_ref.table_data(skrifa::raw::tables::gpos::Gpos::TAG).is_none()
+    });
+    fonts.push((id, index, answer));
+    answer
 }
 
 /// pyro: the trimming data of `font` in `language` (`han_font_data`), from `fonts` or probed
