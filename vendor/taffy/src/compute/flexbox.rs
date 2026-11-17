@@ -1353,9 +1353,24 @@ fn determine_flex_base_size(
                     None => None,
                 }
             } else {
-                if let Some(flex_basis) = flex_basis.or(main_size.filter(|_| flex_basis_style.is_auto())) {
+                if let Some(mut basis) = flex_basis.or(main_size.filter(|_| flex_basis_style.is_auto())) {
+                    // pyro: a table's `height` is its grid's and its captions add to it: a column
+                    // flex base size from it is the table's height laid out with it (WPT css-flexbox
+                    // `table-as-item-stretch-cross-size-5`; an explicit flex basis is the box's).
+                    if flex_basis.is_none() && child.is_table && !dir.is_row() {
+                        let height = tree.measure_child_size(
+                            child.node,
+                            child_known_dimensions,
+                            child_parent_size,
+                            available_space,
+                            SizingMode::InherentSize,
+                            dir.main_axis(),
+                            Line::FALSE,
+                        );
+                        basis = basis.max(height);
+                    }
                     child.flex_basis_is_definite = true;
-                    break 'flex_basis flex_basis;
+                    break 'flex_basis basis;
                 };
 
                 // A main size that is a sizing keyword either resolves to an exact size or
@@ -1583,15 +1598,12 @@ fn determine_flex_base_size(
         // pyro: a table is never smaller than its min-content size (Blink): its width in a row, its content
         // height at its width in a column, whatever its `min-width`/`min-height`.
         if child.is_table {
-            // (In a column, its own `height` is its grid's minimum and its captions add to it: the
-            // table's height with its sizes, not its content's alone; WPT css-flexbox
-            // `table-as-item-stretch-cross-size-5`.)
             let min_content = tree.measure_child_size(
                 child.node,
                 child_known_dimensions,
                 child_parent_size,
                 Size::MIN_CONTENT.with_cross(dir, cross_axis_available_space),
-                if dir.is_row() { SizingMode::ContentSize } else { SizingMode::InherentSize },
+                SizingMode::ContentSize,
                 dir.main_axis(),
                 Line::FALSE,
             );
