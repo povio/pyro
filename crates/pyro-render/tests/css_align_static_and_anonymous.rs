@@ -134,6 +134,19 @@ fn a_floated_root_shrinks_to_its_side() {
     assert_color(&img, 25, 25, WHITE, "not at the left edge");
 }
 
+/// Margins do not collapse through a block whose line holds text, however short its line is
+/// (`font-size: 0`; WPT css-fonts `font-size-zero-1`).
+#[test]
+fn margins_do_not_collapse_through_a_zero_height_text_line() {
+    let img = render(
+        "<div style='height:20px;background:green;margin-bottom:20px'></div>\
+         <div style='font-size:0;line-height:0'>text</div>\
+         <div style='height:20px;background:green;margin-top:20px'></div>",
+    );
+    assert_color(&img, 10, 50, WHITE, "the gap is both margins");
+    assert_color(&img, 10, 65, GREEN, "second box");
+}
+
 /// A flex scroll container gives the inline-block holding it its contents' baseline; a block one
 /// gives its bottom margin edge (WPT css-align `baseline-of-scrollable-1b`).
 #[test]
@@ -148,3 +161,19 @@ fn a_flex_scroll_container_gives_its_contents_baseline() {
     let y = (0..200).find(|&y| pixel(&img, 5, y) == GREEN).expect("square");
     assert!(y < 30, "square top at {y}");
 }
+
+/// A no-break space is text: a zero-height line of it keeps margins apart as a line of letters does
+/// (WPT css-color `t32-opacity-offscreen-multiple-boxes-2-c`, whose reference is `&nbsp;` text).
+#[test]
+fn a_zero_height_line_of_no_break_spaces_is_text() {
+    for text in ["XX", "&nbsp;&nbsp;"] {
+        let img = render(&format!(
+            "<div style='height:20px;background:green;margin-bottom:20px'></div>\
+             <div style='line-height:0'>{text}</div>\
+             <div style='height:20px;background:green;margin-top:20px'></div>"
+        ));
+        assert_color(&img, 10, 50, WHITE, "the gap is both margins");
+        assert_color(&img, 10, 65, GREEN, "second box");
+    }
+}
+

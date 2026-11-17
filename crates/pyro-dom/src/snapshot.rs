@@ -8,7 +8,7 @@
 //!   checkedness, a textarea's value, each option's selectedness;
 //! - `<style>` text and `<link rel=stylesheet>` URLs come from the caller
 //!   (the style engine holds the live text, CSSOM edits included);
-//! - `<script>`, `<noscript>` (scripting is on), `<template>`, comments and
+//! - a `<script>` is written without its text; `<noscript>` (scripting is on), `<template>`, comments and
 //!   processing instructions are left out, and so is an `<iframe>`'s `src`
 //!   (frames render as empty boxes); HTML markup leaves out event handler
 //!   (`on*`) attributes, which keyed trees keep (`content: attr(onclick)`);
@@ -368,12 +368,13 @@ impl Dom {
                 NodeKind::Element(e) => {
                     let html = e.is_html();
                     let local: &str = &e.name.local;
-                    if html && matches!(local, "script" | "noscript" | "template") {
+                    if html && matches!(local, "noscript" | "template") {
                         continue;
                     }
-                    if e.name.ns == ns!(svg) && local == "script" {
-                        continue;
-                    }
+                    // pyro: a script element is in the tree, without its text: it counts for
+                    // sibling and structural selectors, and `script { display: block }` boxes
+                    // render (WPT CSS2 `content-072`, `-090`, `-138`).
+                    let is_script = local == "script" && (html || e.name.ns == ns!(svg));
                     // A slot in a shadow tree: its children are the host's light children
                     // assigned to it, else its fallback content.
                     let slot_kids = (html && local == "slot" && scope != NONE).then(|| {
@@ -503,6 +504,9 @@ impl Dom {
                     }
                     tags.push(tag);
                     stack.push(Step::Close);
+                    if is_script {
+                        continue;
+                    }
                     if html && local == "style" {
                         let text = (opts.style_text)(id).unwrap_or_else(|| self.child_text_content(id).into_owned());
                         stack.push(Step::Synthetic(n, text, TextKind::Style));
@@ -927,8 +931,7 @@ impl Dom {
             NodeKind::Text(_) | NodeKind::CData(_) => true,
             NodeKind::Element(e) => {
                 let local: &str = &e.name.local;
-                !(e.is_html() && matches!(local, "script" | "noscript" | "template"))
-                    && !(e.name.ns == ns!(svg) && local == "script")
+                !(e.is_html() && matches!(local, "noscript" | "template"))
             }
             _ => false,
         }

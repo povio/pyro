@@ -2450,3 +2450,6 @@ keep their tracks (`row_tracks`); Taffy collapses them once sized.
   wins over a length maximum (`replaced-aspect-ratio-stretch-fit-003`). `DocumentConfig::line_height_quirk`
   (quirks and limited-quirks mode): no strut for lines without text (inline/build.rs, parley
   `Layout::set_line_height_quirk`; css-sizing `intrinsic-percent-replaced-006`).
+An inline formatting context whose text has anything but collapsible white space (a no-break space counts as text)
+does not let margins collapse through it, even when its lines have no height (CSS 2.1 §9.4.2; WPT css-fonts
+`font-size-zero-1`, css-color `t32-opacity-offscreen-multiple-boxes-2-c`, whose reference is `&nbsp;` text).
