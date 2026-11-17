@@ -733,7 +733,16 @@ impl<T: Deref<Target = ComputedValues>> taffy::FlexboxContainerStyle for TaffySt
     #[inline]
     fn block_baseline_synthesis(&self) -> f32 {
         let wm = self.style.writing_mode;
-        if wm.is_vertical() && !wm.is_sideways() { 0.5 } else { 1.0 }
+        // pyro: an alphabetic baseline is synthesized at the line-under edge: block-end, but
+        // block-start in `vertical-lr` (its line-under side is the left; WPT css-flexbox
+        // `baseline-synthesis-vert-lr-line-under`).
+        if wm.is_vertical() && !wm.is_sideways() {
+            0.5
+        } else if wm.is_vertical() && wm.is_vertical_lr() {
+            0.0
+        } else {
+            1.0
+        }
     }
     #[inline]
     fn flex_direction(&self) -> taffy::FlexDirection {

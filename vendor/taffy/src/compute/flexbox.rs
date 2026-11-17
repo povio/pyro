@@ -1583,12 +1583,15 @@ fn determine_flex_base_size(
         // pyro: a table is never smaller than its min-content size (Blink): its width in a row, its content
         // height at its width in a column, whatever its `min-width`/`min-height`.
         if child.is_table {
+            // (In a column, its own `height` is its grid's minimum and its captions add to it: the
+            // table's height with its sizes, not its content's alone; WPT css-flexbox
+            // `table-as-item-stretch-cross-size-5`.)
             let min_content = tree.measure_child_size(
                 child.node,
                 child_known_dimensions,
                 child_parent_size,
                 Size::MIN_CONTENT.with_cross(dir, cross_axis_available_space),
-                SizingMode::ContentSize,
+                if dir.is_row() { SizingMode::ContentSize } else { SizingMode::InherentSize },
                 dir.main_axis(),
                 Line::FALSE,
             );
@@ -2703,7 +2706,8 @@ fn calculate_children_base_lines(
                 child_first_baseline(baselines.dominant_first.or(baselines.first), height, child.overflow.y)
                     .unwrap_or(height * 0.5)
             } else {
-                child_first_baseline(baselines.first, height, child.overflow.y).unwrap_or(height)
+                child_first_baseline(baselines.first, height, child.overflow.y)
+                    .unwrap_or(height * constants.block_baseline_synthesis)
             };
 
             child.baseline = baseline + child.margin.top;
