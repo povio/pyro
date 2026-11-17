@@ -1246,8 +1246,8 @@ fn determine_flex_base_size(
         // Available space for child sizing (excluding the child's margins)
         // Min/max sizes transferred through the aspect ratio are taken into account here
         // https://github.com/w3c/csswg-drafts/issues/10997
-        let transferred_min_size = child.min_size.maybe_apply_aspect_ratio(child.aspect_ratio);
-        let transferred_max_size = child.max_size.maybe_apply_aspect_ratio(child.aspect_ratio);
+        let transferred_min_size = transfer_through_ratio(child.min_size, child.aspect_ratio, child.ratio_inset);
+        let transferred_max_size = transfer_through_ratio(child.max_size, child.aspect_ratio, child.ratio_inset);
         let child_min_cross = transferred_min_size.cross(dir);
         let child_max_cross = transferred_max_size.cross(dir);
 
@@ -1493,7 +1493,7 @@ fn determine_flex_base_size(
                 }
             }
         }
-        let transferred_max_size = child.max_size.maybe_apply_aspect_ratio(child.aspect_ratio);
+        let transferred_max_size = transfer_through_ratio(child.max_size, child.aspect_ratio, child.ratio_inset);
 
         // Note that it is important that the `parent_size` parameter in the main axis is not set for this
         // function call as it used for resolving percentages, and percentage size in an axis should not contribute
@@ -1598,7 +1598,7 @@ fn determine_flex_base_size(
                 child.max_size.set_main(dir, Some(max.max(min_content)));
             }
         }
-        let transferred_max_size = child.max_size.maybe_apply_aspect_ratio(child.aspect_ratio);
+        let transferred_max_size = transfer_through_ratio(child.max_size, child.aspect_ratio, child.ratio_inset);
 
         // Sizes transferred through the aspect ratio clamp the hypothetical main size,
         // but do not participate in resolving flexible lengths or clamping the final size.
@@ -2141,9 +2141,9 @@ fn determine_container_main_size(
                                     // `determine_flex_base_size` does: an item measured wider than its
                                     // max-width wraps onto fewer lines and under-reports its height.
                                     let transferred_min_size =
-                                        item.min_size.maybe_apply_aspect_ratio(item.aspect_ratio);
+                                        transfer_through_ratio(item.min_size, item.aspect_ratio, item.ratio_inset);
                                     let transferred_max_size =
-                                        item.max_size.maybe_apply_aspect_ratio(item.aspect_ratio);
+                                        transfer_through_ratio(item.max_size, item.aspect_ratio, item.ratio_inset);
                                     ckd.set_cross(
                                         dir,
                                         ckd.cross(dir).maybe_clamp(
@@ -2525,8 +2525,8 @@ fn determine_hypothetical_cross_size(
 
         // Sizes transferred through the aspect ratio clamp the hypothetical cross size
         // https://github.com/w3c/csswg-drafts/issues/10997
-        let transferred_min_cross = child.min_size.maybe_apply_aspect_ratio(child.aspect_ratio).cross(constants.dir);
-        let transferred_max_cross = child.max_size.maybe_apply_aspect_ratio(child.aspect_ratio).cross(constants.dir);
+        let transferred_min_cross = transfer_through_ratio(child.min_size, child.aspect_ratio, child.ratio_inset).cross(constants.dir);
+        let transferred_max_cross = transfer_through_ratio(child.max_size, child.aspect_ratio, child.ratio_inset).cross(constants.dir);
 
         let child_cross = child
             .size
@@ -2562,6 +2562,17 @@ fn determine_hypothetical_cross_size(
             _ => child_available_cross,
         };
 
+        // pyro: in a column container of indefinite width, a non-replaced item with a preferred
+        // aspect ratio whose height comes from its content (no definite basis or height, no
+        // growing) takes its own width, not one that height gives through the ratio (Chromium;
+        // WPT css-sizing `aspect-ratio/flex-aspect-ratio-026`; `-013/014` keep theirs).
+        let main_known = !(child.aspect_ratio.is_some()
+            && !child.is_replaced
+            && !constants.is_row
+            && child.size.main(constants.dir).is_none()
+            && !child.flex_basis_is_definite
+            && child.flex_grow == 0.0
+            && constants.node_inner_size.cross(constants.dir).is_none());
         let child_inner_cross = child_cross.unwrap_or_else(|| {
             tree.compute_child_layout(
                 child.node,
@@ -2571,7 +2582,13 @@ fn determine_hypothetical_cross_size(
                     axis: constants.dir.cross_axis().into(),
                     known_dimensions: Size {
                         width: if constants.is_row { child.target_size.width.into() } else { child_cross },
-                        height: if constants.is_row { child_cross } else { child.target_size.height.into() },
+                        height: if constants.is_row {
+                            child_cross
+                        } else if main_known {
+                            child.target_size.height.into()
+                        } else {
+                            None
+                        },
                     },
                     known_dimensions_are_definite: item_known_dimension_definiteness(constants, child),
                     parent_size: constants.node_inner_size,
@@ -4196,4 +4213,18 @@ impl AlgoConstants {
         let (x, y) = if self.is_column { (cross, main) } else { (main, cross) };
         Point { x: x ^ self.layout_direction.is_rtl(), y }
     }
+}
+
+/// pyro: a size transferred through an item's preferred aspect ratio, which is between the boxes
+/// `ratio_inset` smaller than the border boxes these sizes are (css-sizing-4 §5.1; WPT css-sizing
+/// `aspect-ratio/flex-aspect-ratio-025/026`: `auto 19/1` under `box-sizing: border-box`).
+#[inline]
+fn transfer_through_ratio(size: Size<Option<f32>>, ratio: Option<f32>, ratio_inset: Size<f32>) -> Size<Option<f32>> {
+    if ratio.is_none() || ratio_inset == Size::ZERO {
+        return size.maybe_apply_aspect_ratio(ratio);
+    }
+    size.maybe_sub(ratio_inset)
+        .map(|size| size.map(|size| size.max(0.0)))
+        .maybe_apply_aspect_ratio(ratio)
+        .maybe_add(ratio_inset)
 }

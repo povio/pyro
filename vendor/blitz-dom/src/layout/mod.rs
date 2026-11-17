@@ -1233,6 +1233,8 @@ impl LayoutPassState<'_> {
                     // A `<video>` with known metadata is sized by its video
                     // track, whatever its poster's size.
                     let is_video = element_data.name.local == local_name!("video");
+                    // pyro: `ReplacedContext::svg_root`.
+                    let svg_root = element_data.name.local == local_name!("svg");
                     // The token is the density-corrected natural size (a `srcset` candidate's `2x`),
                     // which a loaded raster image's pixel size is not.
                     let raster = matches!(&element_data.special_data, SpecialElementData::Image(d) if matches!(&**d, ImageData::Raster(_)));
@@ -1329,6 +1331,7 @@ impl LayoutPassState<'_> {
                         intrinsic_sizes,
                         default_object_size,
                         ratio_in_box_sizing_box,
+                        svg_root,
                     };
 
                     let mut style = node.layout_style();

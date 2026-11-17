@@ -2581,3 +2581,9 @@ Round 4 lane G:
   `overlay` is `auto`; `dialog:modal, :popover-open { overlay: auto }` (not `!important`: sampled transition values
   rank below important declarations). WPT css-position `overlay-transition-backdrop`, `-in-rendering`,
   `-out-rendering`.
+- Ratio sizes (round 4 lane G, step 2): inline layout takes a block container's ratio height through the ratio's box
+  (`ratio_box_inset`: content box under `box-sizing: content-box` or `auto <ratio>`), clamped by min/max-height (WPT
+  css-sizing `block-aspect-ratio-027`). `replaced.rs` `ReplacedContext::svg_root`: an inline `<svg>` with a ratio and no
+  natural size contributes no width to a container's intrinsic sizing without a known containing block width (the
+  default object width for a percentage width) and, when its ratio is only `aspect-ratio`'s, stretches to a definite
+  width (`svg-intrinsic-size-006`).

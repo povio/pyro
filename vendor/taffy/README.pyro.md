@@ -654,3 +654,8 @@ of height 0, then clamped (css-tables `percentage-sizing-of-table-cell-007`). `t
   its central one (`dominant_first`), else its baseline, else synthesized in its middle (WPT css-flexbox
   `baseline-synthesis-004` with vertical lines that centre their atomic inlines). Such a row container exports the same
   item's central baseline as its `dominant_first` (`FlexItem::dominant_baseline`; WPT `synthesize-vrl-baseline`).
+
+Round 4 lane G: flexbox transfers min/max sizes through an item's ratio via its ratio inset (`transfer_through_ratio`;
+WPT css-sizing `flex-aspect-ratio-025/026`), and a column container of indefinite width measures a non-replaced ratio
+item without its content-based height (no definite basis or height, no growing) for its hypothetical width
+(`flex-aspect-ratio-026`).

@@ -656,6 +656,12 @@ impl LayoutPassState<'_> {
         } else {
             Size::ZERO
         };
+        // pyro: what the box an aspect ratio is between is smaller by than the border box.
+        let ratio_box_inset = if style.box_sizing() == BoxSizing::ContentBox || style.aspect_ratio_of_content_box() {
+            pb_sum
+        } else {
+            Size::ZERO
+        };
 
         // Scrollbar gutters are reserved when the `overflow` property is set to `Overflow::Scroll`.
         // However, the axis are switched (transposed) because a node that scrolls vertically needs
@@ -1920,10 +1926,17 @@ impl LayoutPassState<'_> {
         };
         let final_size = Size {
             width: clamped_size.width,
+            // pyro: through the box the ratio is between (the content box under `box-sizing:
+            // content-box` or `aspect-ratio: auto <ratio>`), clamped by `min-height`/`max-height`
+            // (WPT css-sizing `aspect-ratio/block-aspect-ratio-027`).
             height: f32_max(
                 clamped_size.height,
                 aspect_ratio
-                    .map(|ratio| clamped_size.width / ratio)
+                    .map(|ratio| {
+                        let inset = ratio_box_inset;
+                        let height = (clamped_size.width - inset.width).max(0.0) / ratio + inset.height;
+                        height.maybe_clamp(node_min_size.height, node_max_size.height)
+                    })
                     .unwrap_or(0.0),
             ),
         }
