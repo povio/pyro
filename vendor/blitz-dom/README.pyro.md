@@ -2607,7 +2607,7 @@ Round 4 lane G:
 - `animation.rs`: `display` to or from `none` interpolates as Stylo's `Animate for Display` says (the other value
   throughout, `none` only at its end), which the discrete fallback skipped (`transition-behavior: allow-discrete`).
 - Round 4 lane F, `font_metrics.rs`: `ch` is the "0" of the first available font (the first face whose `unicode-range`
-  covers U+0020, whatever glyphs it has), 0.5em (1em upright) when it has none; in upright vertical text its vertical
+  covers U+0030, whatever glyphs it has; WPT `ch-unit-018`), 0.5em (1em upright) when it has none; in upright vertical text its vertical
   advance from `vmtx` (WPT css-values `ch-unit-017`, `-019`). Upright Latin text itself still advances horizontally
   (Chrome: by the font's height; `ch-unit-002`, `-011` left).
 - Round 4 lane F, `layout/list.rs`: a marker image without a natural size (a gradient `list-style-image`, an SVG with no `width`, `height` or `viewBox`) is a square of half the font's ascent, as Blink's `ListMarker` (WPT css-lists `list-style-image-gradients`, `-dynamic`).

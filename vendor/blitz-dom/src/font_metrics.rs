@@ -289,15 +289,15 @@ impl BlitzFontMetricsProvider {
             Some((ascent, metrics.x_height, metrics.cap_height))
         }
 
-        // pyro: `ch` is the "0" of the first available font (the first with a space), 0.5em
-        // when that font has none (CSS Values 4 § 6.1.1; WPT css-values `ch-unit-019`), not a
-        // fallback font's; in upright vertical text its vertical advance (`vmtx`; WPT
-        // `ch-unit-017`).
+        // pyro: `ch` is the "0" of the face that would render it by `unicode-range` (the first
+        // whose range covers U+0030, WPT css-values `ch-unit-018`), 0.5em when that face has no
+        // "0" glyph (CSS Values 4 § 6.1.1; `ch-unit-019`), not a fallback font's; in upright
+        // vertical text its vertical advance (`vmtx`; `ch-unit-017`).
         let zero_advance = (|| {
-            // (The first face whose `unicode-range` covers U+0020, whatever glyphs it has.)
+            // (Whatever glyphs it has.)
             let mut first = None;
             query.matches_with(|q_font: &QueryFont| {
-                if q_font.unicode_range.contains(' '.into()) {
+                if q_font.unicode_range.contains('0'.into()) {
                     first = Some(q_font.clone());
                     QueryStatus::Stop
                 } else {
