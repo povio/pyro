@@ -4,9 +4,10 @@
   "type": "module",
   "scripts": {
     "dev": "vitepress dev docs",
-    "build": "vitepress build docs",
+    "build": "bun scripts/wpt-status.mjs && vitepress build docs && bun scripts/wpt-status.mjs --pages",
     "preview": "vitepress preview docs",
-    "deploy": "bunx robodev@0.84.0 deploy --force"
+    "deploy": "bunx robodev@0.84.0 deploy --force",
+    "status": "bun scripts/wpt-status.mjs"
   },
   "devDependencies": {
     "vitepress": "^1.6.4"

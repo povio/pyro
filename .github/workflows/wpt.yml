@@ -671,3 +671,42 @@ jobs:
           path: crashtest-baseline.json
           retention-days: 30
           overwrite: true
+
+  # The docs site's WPT status pages (bench/wpt/status-export.mjs, /status/wpt.html): after a push to main whose three
+  # gates passed, the build's results (its committed baselines, which those gates checked) go to the `wpt-results`
+  # branch as runs/<sha>.json.gz plus index.json. The push there rebuilds the site (docs.yml).
+  status:
+    needs: [gate, reftest-gate, crashtest]
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.gate.result == 'success' && needs.reftest-gate.result == 'success' && needs.crashtest.result == 'success' }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    concurrency:
+      group: wpt-results
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - name: Export the results to the wpt-results branch
+        env:
+          SHA: ${{ github.sha }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          date="$(git show -s --format=%cI "$SHA")"
+          subject="$(git show -s --format=%s "$SHA")"
+          for attempt in 1 2 3 4 5; do
+            rm -rf "$RUNNER_TEMP/results"
+            if git fetch --depth=1 origin wpt-results; then
+              git worktree add --detach "$RUNNER_TEMP/results" FETCH_HEAD
+            else
+              git worktree add --detach "$RUNNER_TEMP/results" && git -C "$RUNNER_TEMP/results" checkout --orphan wpt-results-new && git -C "$RUNNER_TEMP/results" rm -rfq .
+            fi
+            bun bench/wpt/status-export.mjs export --data "$RUNNER_TEMP/results" --sha "$SHA" --date "$date" --subject "$subject"
+            git -C "$RUNNER_TEMP/results" add -A
+            git -C "$RUNNER_TEMP/results" commit -qm "WPT results for ${SHA:0:10}"
+            if git -C "$RUNNER_TEMP/results" push origin HEAD:refs/heads/wpt-results; then exit 0; fi
+            git worktree remove --force "$RUNNER_TEMP/results"
+            sleep $((attempt * 5))
+          done
+          exit 1
