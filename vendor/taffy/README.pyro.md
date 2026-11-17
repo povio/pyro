@@ -574,3 +574,39 @@ falls back to plain `flex-start` (csswg-drafts#11937). Covered by `crates/pyro-r
 `compute/block.rs` (`ratio_min_content_width`, `BlockItem::calc_size_min_width`, the content minimum of a box whose
 height follows its ratio): `min-width`/`min-height: calc-size(auto, <calculation>)` is the calculation of the
 automatic minimum size those compute (WPT css-values `calc-size-flex-*`, `calc-size-aspect-ratio-003..005`).
+
+`util/resolve.rs` (`maybe_resolve_min_size`), `compute/block.rs`: a `min-width`/`min-height` `calc()` against an
+indefinite percentage basis resolves its percentages as zero, as in Blink (`calc(25px + 50%)` is 25px; a plain
+percentage stays none): WPT css-values `calc-min-height-block-1`, `calc-min-width-block-intrinsic-1`.
+`compute/mod.rs` (`compute_in_flow_root_layout`, `CoreStyle::is_content_replaced`): a root replaced by its `content: url()` is not stretched to
+the viewport's width; it takes its natural size (WPT css-content `element-replacement-root`).
+In a row's intrinsic size each item's share is clamped by its max main size and floored by its resolved minimum
+(an inflexible basis above `max-width` counts the max). A table in a row bases on its layout in the container's
+width (fit-content, percentage columns taking their share), whatever its `flex-basis` keyword, as in Blink.
+
+Forced clearance (a float adjoining the strut a cleared box's top margin would collapse into) is read before the
+box is laid out: the box's own floats, merged into that strut by its layout, forced clearance on it and moved it up
+to their bottom, over the box before it (`clear: both` blocks of a fixed height holding floats overlapped).
+
+A wrapping column's unstretched item with an automatic cross size shrinks to fit its line's cross size once that is
+known (fit-content, its main size kept; `determine_used_cross_size`), and a wrapping column without a cross size of
+its own in definite space fits its lines into that space, at least its widest line (`determine_container_cross_size`).
+`compute/grid/types/grid_track.rs` (`collapse_after_sizing`, `collapse_sized`), `compute/grid/explicit_grid.rs`,
+`compute/grid/mod.rs`: a collapsed table row (`Style::collapsed_rows`) is sized as any other row, so a cell spanning it
+gives it its share, and loses its size after each row sizing pass (CSS 2.1 §17.5.5, Blink; WPT css-align
+`blocks/align-content-table-cell-002..005`). Its gutter still collapses up front. Tables with one are not reused
+(`table_reuse`).
+
+`style/mod.rs` (`CoreStyle::root_float_is_right`), `compute/mod.rs` (`compute_in_flow_root_layout`): a floated root
+element shrinks to fit (min/max-content against the initial containing block) and sits on its side (WPT CSS2
+`floats/float-root`). `compute/block.rs`: a flex or grid scroll container child gives its block parent its contents'
+last baseline; only a block one gives its bottom margin edge (WPT css-align `baseline-of-scrollable-1b`).
+
+`util/resolve.rs` (lane SP): `LengthPercentageAuto::resolve_or_zero` resolves a `calc()` against an indefinite basis
+with its percentages as zero (Blink's `MinimumValueForLength`): a `calc(10% + 100px)` margin is 100px in an
+intrinsic size (WPT css-sizing `calc-margins-flex`). Padding keeps zero (css-flexbox `dynamic-isize-change-004`).
+`style/block.rs` (`BlockContainerStyle::own_height_keywords`), `compute/block.rs` (`compute_inner`, lane SP): a block
+container's own `min-height`/`max-height` content keywords clamp its height to its content (atomic inlines, floats,
+out-of-flow boxes; block items get them from their parent too).
+- `compute/grid/track_sizing.rs` (`initialize_track_sizes`): a `calc()` gutter against an indefinite size keeps its
+  lengths, its percentages resolving to 0 (`gap: calc(20px + 5%)` of an inline grid; WPT css-grid `grid-gutters-009`).

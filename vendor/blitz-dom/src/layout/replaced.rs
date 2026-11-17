@@ -42,7 +42,8 @@ pub(crate) fn is_replaced(element: &ElementData) -> bool {
 /// (`BaseDocument::flush_content_image`) in place of its children: replaced content laid out
 /// and painted like `<img>`, once the image has loaded.
 pub(crate) fn is_content_image(element: &ElementData) -> bool {
-    element.content_image.is_some()
+    element.content_gradient
+        || element.content_image.is_some()
         && matches!(&element.special_data, crate::node::SpecialElementData::Image(image)
             if !matches!(**image, crate::node::ImageData::None))
 }
@@ -466,6 +467,9 @@ pub fn compute_replaced_layout(
         if is_content_keyword(max_style.height) {
             max_size.height = Some(content_height.maybe_max(min_size.height));
         }
+        // A keyword minimum wins over a length maximum too (WPT css-sizing
+        // `replaced-aspect-ratio-stretch-fit-003`: `min-width: max-content; max-width: 50px`).
+        max_size = max_size.maybe_max(min_size);
     }
 
     // For ContentSize mode, ignore preferred/min size styles in the axis being measured: the

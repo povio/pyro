@@ -568,11 +568,26 @@ pub(crate) fn white_space_collapse(input: stylo::WhiteSpaceCollapse) -> parley::
 /// Percentages are resolved against the element's own `line-height`.
 pub(crate) fn vertical_align(style: &stylo::ComputedValues) -> parley::VerticalAlign {
     let box_styles = style.get_box();
+    // pyro: `vertical-align`'s keywords align as CSS 2.1 has them; the `alignment-baseline`
+    // longhand's (and, for `baseline`, the inherited `dominant-baseline`'s) align the span's
+    // baselines of that name with its parent's, as Blink does (WPT css-inline
+    // `alignment-baseline-*`, `dominant-baseline-*`).
     let alignment = match box_styles.slow_clone_alignment_baseline() {
-        stylo::AlignmentBaseline::Baseline => parley::AlignmentBaseline::Baseline,
-        stylo::AlignmentBaseline::TextTop => parley::AlignmentBaseline::TextTop,
-        stylo::AlignmentBaseline::TextBottom => parley::AlignmentBaseline::TextBottom,
-        stylo::AlignmentBaseline::Middle => parley::AlignmentBaseline::Middle,
+        stylo::AlignmentBaseline::Baseline => {
+            use style::values::computed::DominantBaseline;
+            match style.get_inherited_box().slow_clone_dominant_baseline() {
+                DominantBaseline::TextTop => parley::AlignmentBaseline::TextOver,
+                DominantBaseline::TextBottom => parley::AlignmentBaseline::TextUnder,
+                DominantBaseline::Middle => parley::AlignmentBaseline::XMiddle,
+                _ => parley::AlignmentBaseline::Baseline,
+            }
+        }
+        stylo::AlignmentBaseline::VerticalAlignTextTop => parley::AlignmentBaseline::TextTop,
+        stylo::AlignmentBaseline::VerticalAlignTextBottom => parley::AlignmentBaseline::TextBottom,
+        stylo::AlignmentBaseline::VerticalAlignMiddle => parley::AlignmentBaseline::Middle,
+        stylo::AlignmentBaseline::TextTop => parley::AlignmentBaseline::TextOver,
+        stylo::AlignmentBaseline::TextBottom => parley::AlignmentBaseline::TextUnder,
+        stylo::AlignmentBaseline::Middle => parley::AlignmentBaseline::XMiddle,
     };
     let shift = match box_styles.get_baseline_shift() {
         stylo::BaselineShift::Keyword(stylo::BaselineShiftKeyword::Sub) => {

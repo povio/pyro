@@ -7,6 +7,13 @@ use crate::{CoreStyle, Style};
 
 /// The set of styles required for a Block layout container
 pub trait BlockContainerStyle: CoreStyle {
+    /// pyro: the container's own `min-height` and `max-height` when they are sizing keywords
+    /// (`auto` otherwise), which `CoreStyle::min_size` / `max_size` cannot say.
+    #[inline(always)]
+    fn own_height_keywords(&self) -> (Dimension, Dimension) {
+        (Dimension::auto(), Dimension::auto())
+    }
+
     /// Defines which row in the grid the item should start and end at
     #[inline(always)]
     fn text_align(&self) -> TextAlign {

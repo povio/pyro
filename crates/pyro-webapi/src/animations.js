@@ -1325,7 +1325,11 @@
     const seen = new Set();
     for (const run of runs) {
       seen.add(run[0]);
-      if (cssRuns.has(run[0])) continue;
+      const known = cssRuns.get(run[0]);
+      if (known !== undefined) {
+        cssFollow(known, run);
+        continue;
+      }
       // One run that cannot be made is left out; the others are listed.
       try { cssRuns.set(run[0], cssRun(run)); } catch {}
     }
@@ -1334,6 +1338,23 @@
       cssRuns.delete(id);
       live.delete(object);
     }
+  }
+  // An object script does not control follows its run's play state
+  // (`animation-play-state` paused or running again).
+  function cssFollow(object, run) {
+    const a = animations.get(object);
+    if (a.scripted || a.pending !== null) return;
+    const start = run[4], held = run[11];
+    if (held !== null) {
+      if (a.startTime === null && a.holdTime === held) return;
+      a.startTime = null;
+      a.holdTime = held;
+    } else {
+      if (a.holdTime === null && a.startTime === start) return;
+      a.startTime = start;
+      a.holdTime = null;
+    }
+    updateFinished(a, true, false);
   }
   Object.defineProperty(CSSAnimation.prototype, Symbol.toStringTag, { value: 'CSSAnimation', configurable: true });
   Object.defineProperty(CSSTransition.prototype, Symbol.toStringTag, { value: 'CSSTransition', configurable: true });

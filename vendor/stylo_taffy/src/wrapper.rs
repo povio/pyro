@@ -48,6 +48,8 @@ bitflags! {
         /// pyro: the node is a `<fieldset>`: an inline one is an inline-block and a table-type one a
         /// block (HTML § 15.3.13).
         const IS_FIELDSET = 1 << 8;
+        /// pyro: the element is replaced by the image of its `content: url()`.
+        const IS_CONTENT_REPLACED = 1 << 9;
     }
 }
 
@@ -217,6 +219,23 @@ impl<T: Deref<Target = ComputedValues>> taffy::CoreStyle for TaffyStyloStyle<T> 
     #[inline]
     fn is_replaced(&self) -> bool {
         self.flags.contains(StyleFlags::IS_REPLACED)
+    }
+
+    #[inline]
+    fn is_content_replaced(&self) -> bool {
+        self.flags.contains(StyleFlags::IS_CONTENT_REPLACED)
+    }
+
+    #[inline]
+    fn root_float_is_right(&self) -> Option<bool> {
+        let ltr = self.style.writing_mode.is_bidi_ltr();
+        match self.style.clone_float() {
+            stylo::Float::None => None,
+            stylo::Float::Left => Some(false),
+            stylo::Float::Right => Some(true),
+            stylo::Float::InlineStart => Some(!ltr),
+            stylo::Float::InlineEnd => Some(ltr),
+        }
     }
 
     #[inline]
@@ -414,6 +433,15 @@ impl<T: Deref<Target = ComputedValues>> taffy::CoreStyle for TaffyStyloStyle<T> 
 #[cfg(feature = "block")]
 impl<T: Deref<Target = ComputedValues>> taffy::BlockContainerStyle for TaffyStyloStyle<T> {
     #[inline]
+    fn own_height_keywords(&self) -> (taffy::Dimension, taffy::Dimension) {
+        let (min, max) = (
+            <Self as taffy::BlockItemStyle>::min_size_keyword(self),
+            <Self as taffy::BlockItemStyle>::max_size_keyword(self),
+        );
+        (min.height, max.height)
+    }
+
+    #[inline]
     fn margin_trim(&self) -> taffy::Line<bool> {
         use style::values::computed::MarginTrim;
         let trim = *self.style.get_margin().get_margin_trim();
@@ -471,12 +499,27 @@ impl<T: Deref<Target = ComputedValues>> taffy::BlockContainerStyle for TaffyStyl
 
     #[inline]
     fn justify_items(&self) -> taffy::AlignItems {
+        // pyro: an anonymous block or a split inline is no box of its own to the author:
+        // `justify-items` does not apply to it (WPT css-align blocks/justify-items-anonymous,
+        // justify-self-block-in-inline-002; csswg-drafts#11461/#11462, as Blink)
+        if self.is_anonymous_or_split_inline() {
+            return taffy::AlignItems::NORMAL;
+        }
         self.inline_item_alignment((self.style.get_position().justify_items.computed.0).0)
             .unwrap_or(taffy::AlignItems::NORMAL)
     }
 }
 
 impl<T: Deref<Target = ComputedValues>> TaffyStyloStyle<T> {
+    /// pyro: an anonymous block box, or an inline box split around block-level content laid
+    /// out as a block: its `justify-self: auto` is `normal`, and it passes no `justify-items`
+    /// on to its children.
+    #[inline]
+    fn is_anonymous_or_split_inline(&self) -> bool {
+        self.flags.contains(StyleFlags::IS_SPLIT_INLINE)
+            || matches!(self.style.pseudo(), Some(style::selector_parser::PseudoElement::ServoAnonymousBox))
+    }
+
     /// Item alignment in the layout writing mode's inline axis; `left`/`right` resolve against it.
     #[inline]
     fn inline_item_alignment(&self, input: stylo::AlignFlags) -> Option<taffy::AlignItems> {
@@ -624,10 +667,11 @@ impl<T: Deref<Target = ComputedValues>> taffy::BlockItemStyle for TaffyStyloStyl
 
     #[inline]
     fn justify_self(&self) -> Option<taffy::AlignSelf> {
-        self.oof_self_alignment(
-            self.style.get_position().justify_self.0,
-            self.align_axis_is_inline(),
-        )
+        let justify_self = self.style.get_position().justify_self.0;
+        if justify_self.value() == stylo::AlignFlags::AUTO && self.is_anonymous_or_split_inline() {
+            return Some(taffy::AlignItems::NORMAL);
+        }
+        self.oof_self_alignment(justify_self, self.align_axis_is_inline())
     }
 
     #[inline]

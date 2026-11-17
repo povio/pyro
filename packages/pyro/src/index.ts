@@ -26,6 +26,7 @@ import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { open, rm, type FileHandle } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { resolveBinary } from './binary.js';
+import { localeScript } from './locale.js';
 import { Cdp, CdpError } from './cdp.js';
 import { loaded, route as routeStep, goto, matchScreenshot, ScreenshotStep, type ScreenshotOptions, type Step, type StepLike } from './steps.js';
 import { mismatch, prepare, settle, ScreenshotMismatchError, type ScreenshotResult, type SentBaselines } from './screenshots.js';
@@ -77,6 +78,20 @@ export type Profile = {
   proxyServer?: string;
   /** Hosts that skip `proxyServer`, in Chrome's `--proxy-bypass-list` syntax (loopback always does unless it lists `<-loopback>`). */
   proxyBypassList?: string;
+  /**
+   * The pages' locale, as Playwright's context option: `navigator.language`,
+   * `Accept-Language`, and the default of `Intl` and the `toLocale*String`
+   * methods wherever a page leaves the locales argument out (e.g. `'en-GB'`).
+   * Part of the definition; a profile with a `base` has its base's.
+   */
+  locale?: string;
+  /**
+   * The pages' time zone, as Playwright's context option (an IANA name, e.g.
+   * `'Europe/Zurich'`). It is the server's JavaScript VM's: every profile of
+   * one server (fork mode) or connection must name the same zone or none.
+   * Part of the definition; a profile with a `base` has its base's.
+   */
+  timezoneId?: string;
 };
 
 /**
@@ -149,6 +164,14 @@ type ProfileEntry = {
 
 /** A registration's or adoption's reply (`state` and `error` from servers that report them). */
 type ProfileReply = { profileId: number; state?: string; error?: string; setup?: unknown[]; base?: number | null };
+
+/** A profile's `locale` and `timezoneId` as `registerPreparedPage` takes them. */
+function emulationParams(p?: Profile): { locale?: string; timezoneId?: string } {
+  return {
+    ...(p?.locale !== undefined ? { locale: p.locale } : {}),
+    ...(p?.timezoneId !== undefined ? { timezoneId: p.timezoneId } : {}),
+  };
+}
 
 /** One CDP connection: one browser thread, with its own page pools and screenshot baselines. */
 type Conn = {
@@ -332,7 +355,12 @@ export class Pyro {
     const entry = await this.updateProfiles(async (): Promise<ProfileEntry> => {
       const base = profile.base === undefined ? undefined : (await this.resolveLocked(profile.base))?.ids?.[0];
       if (profile.base !== undefined && base === undefined) throw new Error(`no prepared profile ${profile.base} to start from`);
-      const scripts = [...(profile.localStorage ? [storageScript(profile.localStorage)] : []), ...(profile.initScripts ?? [])];
+      // The locale's script first, so that it is the first script of every document.
+      const scripts = [
+        ...(profile.locale !== undefined ? [localeScript(profile.locale)] : []),
+        ...(profile.localStorage ? [storageScript(profile.localStorage)] : []),
+        ...(profile.initScripts ?? []),
+      ];
       const params = {
         url: profile.url,
         initScripts: scripts,
@@ -341,6 +369,7 @@ export class Pyro {
         ...(profile.setup?.length ? { setup: profile.setup.map((s) => s.toStep()) } : {}),
         ...(base !== undefined ? { base } : {}),
         ...contextParams(profile),
+        ...emulationParams(profile),
       };
       const local = this.profiles.get(name);
       if (this.shared && profile.prepare !== false) {
@@ -419,6 +448,8 @@ export class Pyro {
       ...(r.userAgent != null ? { userAgent: r.userAgent } : {}),
       ...(r.proxyServer != null ? { proxyServer: r.proxyServer } : {}),
       ...(r.proxyBypassList != null ? { proxyBypassList: r.proxyBypassList } : {}),
+      ...(r.locale != null ? { locale: r.locale } : {}),
+      ...(r.timezoneId != null ? { timezoneId: r.timezoneId } : {}),
     };
     const entry: ProfileEntry = { ids: [r.profileId], profile, scripts: r.initScripts ?? [], definition: '' };
     entry.ready = handled(this.settle(name, entry, r, true));
@@ -654,6 +685,9 @@ async function freshPage(conn: Conn, entry?: ProfileEntry, extra: string[] = [])
   }
   const v = entry?.profile.viewport;
   if (v) await cdp.send('Emulation.setDeviceMetricsOverride', { ...v, deviceScaleFactor: 1, mobile: false }, sessionId);
+  const { locale, timezoneId } = emulationParams(entry?.profile);
+  if (locale !== undefined) await cdp.send('Emulation.setLocaleOverride', { locale }, sessionId);
+  if (timezoneId !== undefined) await cdp.send('Emulation.setTimezoneOverride', { timezoneId }, sessionId);
   return new Page(conn, sessionId, targetId, browserContextId);
 }
 

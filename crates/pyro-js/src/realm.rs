@@ -717,6 +717,31 @@ impl Realm {
     /// Sets the origin used for root-relative module specifiers. For realms
     /// created ahead of their frame (see pyro-browser's spare realm); call
     /// before any script runs in the realm.
+    /// Whether this JavaScriptCore can hand a global proxy to a new realm
+    /// ([`Realm::adopt_global_proxy`], patch 0033).
+    pub fn can_adopt_global_proxy() -> bool {
+        sys::spi::get().adopt_global_proxy.is_some()
+    }
+
+    /// Makes `proxy`, the global proxy of an earlier realm of this engine (its
+    /// `globalThis`, kept as a [`Persistent`]), this realm's global proxy: the
+    /// proxy forwards to this realm's global from now on, also for the other
+    /// realm's references to it. A frame's WindowProxy follows the frame to its
+    /// next document this way. Call before any script of this realm runs.
+    /// False when the JavaScriptCore lacks it or `proxy` is no global proxy.
+    pub fn adopt_global_proxy(&self, proxy: &Persistent) -> JsResult<bool> {
+        let Some(adopt) = sys::spi::get().adopt_global_proxy else { return Ok(false) };
+        let ctx = self.inner.global_ctx()?;
+        let raw = proxy.as_raw() as sys::JSObjectRef;
+        // SAFETY: a live context; `proxy` is protected and of the same VM
+        // (JSC checks that it is a global proxy of it).
+        if !unsafe { adopt(ctx, raw) } {
+            return Ok(false);
+        }
+        self.inner.global_object.set(raw);
+        Ok(true)
+    }
+
     pub fn set_origin(&self, origin: Option<String>) {
         *self.inner.origin.borrow_mut() = origin;
     }

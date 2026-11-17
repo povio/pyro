@@ -227,7 +227,8 @@ pub(crate) fn resolve_style_metrics<B: Brush>(
                 metrics.exact_baseline_offset = 0.;
                 metrics.aligned_subtree_root = index as u16;
             } else {
-                let shift = shift_from_parent(align, metrics.over, metrics.under, parent);
+                let own = Some((metrics.ascent, metrics.descent, metrics.x_height));
+                let shift = shift_from_parent(align, metrics.over, metrics.under, own, parent);
                 metrics.exact_baseline_offset = parent.exact_baseline_offset + shift;
                 // Rounded once from the accumulated offset (not per level) so the total error
                 // stays within half a pixel.
@@ -290,7 +291,8 @@ pub(crate) fn scale_style_metrics<B: Brush>(
                 metrics.aligned_subtree_root = index as u16;
             } else {
                 let parent = &out[start + usize::from(base.parent).min(index - 1)];
-                let shift = shift_from_parent(align, metrics.over, metrics.under, parent);
+                let own = Some((metrics.ascent, metrics.descent, metrics.x_height));
+                let shift = shift_from_parent(align, metrics.over, metrics.under, own, parent);
                 metrics.exact_baseline_offset = parent.exact_baseline_offset + shift;
                 metrics.baseline_offset = if quantize {
                     metrics.exact_baseline_offset.round()
@@ -442,13 +444,21 @@ pub(crate) fn shift_from_parent(
     align: VerticalAlign,
     over: f32,
     under: f32,
+    // pyro: a span's own font ascent, descent and x-height (none for an inline box).
+    own: Option<(f32, f32, f32)>,
     parent: &StyleMetrics,
 ) -> f32 {
-    let alignment = match align.alignment {
-        AlignmentBaseline::Baseline => 0.,
-        AlignmentBaseline::TextTop => parent.ascent - over,
-        AlignmentBaseline::TextBottom => under - parent.descent,
-        AlignmentBaseline::Middle => parent.x_height / 2. - (over - under) / 2.,
+    let alignment = match (align.alignment, own) {
+        (AlignmentBaseline::Baseline, _) => 0.,
+        (AlignmentBaseline::TextTop, _) | (AlignmentBaseline::TextOver, None) => parent.ascent - over,
+        (AlignmentBaseline::TextBottom, _) | (AlignmentBaseline::TextUnder, None) => under - parent.descent,
+        (AlignmentBaseline::Middle, _) => parent.x_height / 2. - (over - under) / 2.,
+        // (A box's x-middle baseline is synthesized as Blink does it here: its alphabetic
+        // baseline; WPT css-inline `alignment-baseline-horizontal-003`.)
+        (AlignmentBaseline::XMiddle, None) => 0.,
+        (AlignmentBaseline::TextOver, Some((ascent, _, _))) => parent.ascent - ascent,
+        (AlignmentBaseline::TextUnder, Some((_, descent, _))) => descent - parent.descent,
+        (AlignmentBaseline::XMiddle, Some((_, _, x_height))) => parent.x_height / 2. - x_height / 2.,
     };
     let shift = match align.shift {
         BaselineShift::Length(length) => length,
@@ -493,7 +503,7 @@ pub(crate) fn inline_box_placement(
         .get(usize::from(parent_style))
         .copied()
         .unwrap_or_default();
-    let shift = shift_from_parent(inline_box.vertical_align, ascent, descent, &parent);
+    let shift = shift_from_parent(inline_box.vertical_align, ascent, descent, None, &parent);
     let baseline_offset = parent.exact_baseline_offset + shift;
     InlineBoxPlacement {
         aligned_subtree_root: parent.aligned_subtree_root,

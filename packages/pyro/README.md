@@ -78,14 +78,17 @@ test.concurrent('closes a position', async () => {
 - **Locators** are data: `css`, `testId`, `text`, `label`, `placeholder`,
   `role` (and `button`, `dialog`, `link`, …), chained inside one another
   (`dialog().button('OK')`), filtered (`.visible()`, `.hasText()`,
-  `.hasNotText()`, `.has()`, `.hasNot()`) and picked (`.first()`, `.last()`,
-  `.nth(i)`). Strings match case-insensitive substrings unless `{ exact: true }`;
+  `.hasNotText()`, `.has()`, `.hasNot()`; each narrows further), picked
+  (`.first()`, `.last()`, `.nth(i)`), combined (`.or()`, `.and()`) and
+  narrowed by role state (`heading('X', { level: 2 })`). Strings match case-insensitive substrings unless `{ exact: true }`;
   a `RegExp` (flags `i`, `m`, `s`) tests the whitespace-normalized text.
 - **Steps**: `.click()`, `.fill(v)`, `.press('Enter' | 'Shift+Tab' | …)`,
   `.check()`, `.uncheck()`, `.focus()`, `.read(as)`; `check(loc).visible()`,
   `.hidden()`, `.text()`, `.containsText()`, `.value()`, `.count()`,
-  `.checked()`, `.not.…`; `check.request(method, path).status(n)` /
-  `.count(n)`; `goto(url)`, `route(url)`, `evaluate(expr, as)`.
+  `.checked()`, `.attribute()`, `.not.…` (text and value checks take a
+  `RegExp` too); `check.request(method, path).status(n)` / `.count(n)`;
+  `goto(url, { timeout })`, `route(url)`, `keyboard.press(key)`,
+  `evaluate(expr, as)`.
 - **Waiting** happens in the browser. A step that does not hold yet is tried
   again when the DOM changes; an action settles before the next step (the
   page goes quiet: no queued task, no request the action started, no timeout
@@ -192,6 +195,11 @@ pyro e2e apps/fe/e2e --setup e2e/setup.ts --concurrency 16 --timeout 30000 \
 - Paths are files, directories (`*.test.*`, `*.spec.*`), globs or path
   filters. `-t` filters by name, `--only` runs `.only` tests, `--bail [n]`
   stops after n failures, `-u` writes screenshot baselines.
+- `test.skip()` / `test.skip(condition, reason)` inside a running test (or
+  its `beforeEach`) ends it as skipped, as in Playwright. `--retries n` (or
+  `{ retries: n }` as a test's options) runs a failing test again; one that
+  passes then is reported as flaky. A failed test's open pages are saved as
+  PNGs in `test-results/` (`--output <dir>`, `--screenshot off`).
 - `--shard i/n` splits the files by their durations in `--timings`
   (`{"version": 1, "files": {"<path>": ms}}`), longest first onto the least
   loaded shard; `--update-timings` records this run's. `--junit <file>` (or

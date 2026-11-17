@@ -149,6 +149,31 @@ pub fn unfiltered_image(image: &style::values::computed::Image) -> &style::value
     }
 }
 
+/// pyro: whether `style`'s `content` is one image, which replaces the element's content (CSS
+/// Content 3 §2; `BaseDocument::flush_content_image`), unless the element is `display: contents`
+/// (WPT css-display `display-contents-replaced-content`).
+pub fn content_replaces(style: &style::properties::ComputedValues) -> bool {
+    use style::values::computed::{Content, ContentItem};
+    !style.get_box().display.is_contents()
+        && matches!(&style.get_counters().content, Content::Items(items) if matches!(&items.items[..], [ContentItem::Image(_)]))
+}
+
+/// pyro: the gradient `style`'s `content` is when it is one gradient image (through `image-set()`
+/// and `filter()`): the box shows it in place of content (CSS Content 3 §2).
+pub fn content_gradient(style: &style::properties::ComputedValues) -> Option<&style::values::computed::Gradient> {
+    use style::values::computed::{Content, ContentItem};
+    use style::values::generics::image::GenericImage;
+    if style.get_box().display.is_contents() {
+        return None;
+    }
+    let Content::Items(items) = &style.get_counters().content else { return None };
+    let [ContentItem::Image(image)] = &items.items[..] else { return None };
+    match unfiltered_image(image) {
+        GenericImage::Gradient(gradient) => Some(gradient),
+        _ => None,
+    }
+}
+
 /// pyro: the image pixels per CSS px of `image`: the `<resolution>` of the `image-set()` option
 /// selected (through nested ones), 1 for any other image. A raster image's natural size is its
 /// pixel size divided by it.

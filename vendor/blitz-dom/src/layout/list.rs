@@ -74,8 +74,16 @@ pub(super) fn collect_list_item_children(
             }
             // pyro: the list items of a `display: contents` child (a slot's assigned items) are
             // this list's, numbered on (WPT css-lists `counter-list-item-slot-order`); a list
-            // element numbers its own.
-            if doc.nodes[child].primary_styles().is_some_and(|style| style.get_box().display.is_contents()) {
+            // element numbers its own (the numbers come from `layout::counters` anyway).
+            // pyro: so are those of an inline box (an `ol` with `display: inline`), which its
+            // inline formatting context lays out and no construction of its own numbers (WPT
+            // css-lists `inline-block-list`).
+            if doc.nodes[child].primary_styles().is_some_and(|style| {
+                let display = style.get_box().display;
+                display.is_contents()
+                    || (display.outside() == style::values::specified::box_::DisplayOutside::Inline
+                        && display.inside() == style::values::specified::box_::DisplayInside::Flow)
+            }) {
                 match list_numbering(doc, child) {
                     Some((mut own, own_reversed)) => {
                         crate::util::ensure_stack(|| collect_list_item_children(doc, &mut own, own_reversed, child))
@@ -175,6 +183,10 @@ fn node_list_item_child(
     let tabular_nums = !rule_style
         .as_ref()
         .is_some_and(|style| doc.style_declares(style, &[style::properties::LonghandId::FontVariantNumeric]));
+    let isolate = !rule_style.as_ref().is_some_and(|style| {
+        style.clone_unicode_bidi() == style::computed_values::unicode_bidi::T::Normal
+            && doc.style_declares(style, &[style::properties::LonghandId::UnicodeBidi])
+    });
     // The marker's text has the pseudo-element's style.
     let text_style = marker_style.as_ref().unwrap_or(&styles);
     let brush = style_node.unwrap_or(child_id);
@@ -182,11 +194,15 @@ fn node_list_item_child(
     let position = match list_style_position {
         ListStylePosition::Inside => {
             // pyro: a symbol marker inside the item is drawn from the bundled bullet font, unless
-            // the page styles `::marker`: then it is text in the item's font, as Gecko draws it.
-            if let Marker::Char(symbol) = marker {
-                if marker_style.is_some() {
-                    marker = Marker::String(format!("{symbol} "));
-                }
+            // a `::marker` rule sets its `font-family`: then it is text in that font, as
+            // `counter(c, square)` is (WPT CSS2 `content-counter-004`). Other `::marker` styles
+            // keep the symbol (WPT css-pseudo `marker-word-spacing`, in Ahem).
+            if let Marker::Char(symbol) = marker
+                && rule_style
+                    .as_ref()
+                    .is_some_and(|style| doc.style_declares(style, &[style::properties::LonghandId::FontFamily]))
+            {
+                marker = Marker::String(format!("{symbol} "));
             }
             ListItemLayoutPosition::Inside
         }
@@ -218,6 +234,12 @@ fn node_list_item_child(
                 true,
                 &parley_style,
             );
+            // pyro: the marker's text is a paragraph of the item's direction (an isolate).
+            builder.set_base_direction(if text_style.clone_direction() == style::computed_values::direction::T::Rtl {
+                parley::BaseDirection::Rtl
+            } else {
+                parley::BaseDirection::Ltr
+            });
 
             match &marker {
                 Marker::Char(_) | Marker::Image { .. } if symbol => builder.push_text("x"),
@@ -242,6 +264,7 @@ fn node_list_item_child(
         style_node,
         position,
         tabular_nums,
+        isolate,
         content_box_subpixel_offset: taffy::Point::ZERO,
     })
 }

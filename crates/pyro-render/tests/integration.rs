@@ -2,6 +2,7 @@
 //! whole renderer (and is re-signed on macOS), so one per file made `cargo test`
 //! mostly link time. Add new test files as modules here.
 
+mod alignment_baseline;
 mod aspect_ratio;
 mod backdrop_filter;
 mod background_images_and_edges;
@@ -12,6 +13,7 @@ mod calc_size;
 mod br_flex_item;
 mod clip_path_mask;
 mod css2_intrinsic_and_hints;
+mod css_align_static_and_anonymous;
 mod compositing_rounding;
 mod container_queries;
 mod containing_block_chain;
@@ -27,6 +29,7 @@ mod filter_image_function;
 mod first_line;
 mod flex_collapse;
 mod flex_content_sizes;
+mod table_part_containing_blocks;
 mod flex_gaps;
 mod flex_last_baseline;
 mod flex_natural_ratio;
@@ -61,6 +64,7 @@ mod lang_pseudo_class;
 mod line_break_resume;
 mod line_clamp;
 mod hoisted_clip_layers;
+mod empty_clips_and_table_widths;
 mod line_height_normal;
 mod list_numbering;
 mod line_paint_order;
@@ -98,6 +102,7 @@ mod svg_content;
 mod svg_css_effects;
 mod svg_external_images;
 mod svg_external_references;
+mod svg_foreign_object;
 mod svg_filter_primitives;
 mod svg_filters;
 mod svg_image_natural_size;

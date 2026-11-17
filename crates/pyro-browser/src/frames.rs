@@ -185,6 +185,10 @@ pub(crate) struct FrameHost {
     /// For such a popup, the ticket through which the opener's document
     /// reaches it (its `window.open` result is `event.source` there).
     pub(crate) popup: RefCell<Option<Rc<pyro_webapi::PopupTicket>>>,
+    /// Each child frame's WindowProxy: its first main-world realm's global
+    /// proxy, which every later document's realm adopts (`make_realm`), so
+    /// that `iframe.contentWindow` stays one object that follows the frame.
+    window_proxies: RefCell<BTreeMap<u64, pyro_js::Persistent>>,
 }
 impl FrameHost {
     pub fn new(browser: &Browser, page: PageId, context: ContextId, root: Frame, nav: Rc<PageNav>) -> Rc<Self> {
@@ -222,6 +226,7 @@ impl FrameHost {
             class: Cell::new(browser.engine.register::<Window>()),
             opener: RefCell::new(None),
             popup: RefCell::new(None),
+            window_proxies: RefCell::new(BTreeMap::new()),
             focus: RefCell::new(crate::focus::FocusState::new(page)),
         })
     }
@@ -344,11 +349,36 @@ impl FrameHost {
             }
             None => Engine::create_realm_in_current_thread(options)?,
         };
+        if world.is_none() {
+            if let Some(child) = key.child {
+                self.keep_window_proxy(child, &realm)?;
+            }
+        }
         self.setup_realm(&realm, key, nav, &dom)?;
         self.push_realm(key, world.clone(), &realm)?;
         self.finish_realm(&realm, key, &world, &bindings, &scripts)?;
         self.emit(PageEvent::RealmCreated { frame_id: frame.id, realm: realm.id(), world, origin: frame.origin });
         Ok(realm)
+    }
+    /// The frame's WindowProxy for its new main-world `realm`: the proxy of
+    /// the frame's first document, which `realm` adopts, as browsers keep one
+    /// WindowProxy per browsing context (HTML "WindowProxy"). The first
+    /// realm's own proxy becomes the frame's.
+    fn keep_window_proxy(&self, child: u64, realm: &Realm) -> Result<(), JsError> {
+        if !Realm::can_adopt_global_proxy() {
+            return Ok(());
+        }
+        let kept = self.window_proxies.borrow().get(&child).map(|p| realm.adopt_global_proxy(p));
+        match kept {
+            Some(Ok(true)) => Ok(()),
+            Some(Err(e)) => Err(e),
+            None | Some(Ok(false)) => {
+                let scope = realm.scope()?;
+                let proxy = pyro_js::Persistent::new(&scope, scope.global().value());
+                self.window_proxies.borrow_mut().insert(child, proxy);
+                Ok(())
+            }
+        }
     }
     /// A made realm's frame state and bindings: the Window's data, the
     /// page's bindings (pyro-webapi), the module fetcher.
@@ -566,6 +596,7 @@ impl FrameHost {
             self.detach(child);
         }
         if let Some(id) = key.child {
+            self.window_proxies.borrow_mut().remove(&id);
             let removed = self.children.borrow_mut().remove(&id);
             if let Some(state) = removed {
                 self.retired.borrow_mut().push(state);
@@ -820,7 +851,8 @@ impl FrameHost {
         s: &pyro_js::Scope<'s>,
         key: FrameKey,
     ) -> pyro_js::JsResult<pyro_js::Value<'s>> {
-        if key.child.is_some() {
+        // A popup whose opener set `popup.opener = null` before it existed.
+        if key.child.is_some() || self.popup.borrow().as_ref().is_some_and(|t| t.opener_cleared()) {
             return Ok(s.null());
         }
         let Some(opener) = self.opener.borrow().as_ref().and_then(std::rc::Weak::upgrade) else { return Ok(s.null()) };

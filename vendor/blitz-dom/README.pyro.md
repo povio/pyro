@@ -2392,6 +2392,98 @@ the counters. Covered by `crates/pyro-render/tests/list_numbering.rs`.
   layout, as in Blink (WPT css-values `calc-width-table-auto-1`, `-fixed-1`).
 
 Checkboxes and radios are 13x13 by nature (the leaf measure in `layout/mod.rs`), not by `width`/`height` in the UA
-sheet, so a flex parent stretches them and percentages size them (WPT css-flexbox `stretch-flex-item-*-input`). A
+sheet, so a flex parent stretches them and percentages size them (WPT css-flexbox `stretch-flex-item-*-input`). The
+13x13 is the border box: the measured content is what the UA `input` padding and border leave of it (without that a
+checkbox was 21x19 and a radio 17x15). A
 fixed-layout table with a percentage width (empty ones, laid out as blocks, too) reports Blink's `kTableMaxWidth`
 (1,000,000 px) as its max-content width (WPT css-flexbox `fixed-table-layout-with-percentage-width-in-flex-item`).
+- `src/layout/construct.rs`: the children of an element its `content: url()` replaces (`is_content_image`) generate
+  no boxes, as an `<object>` showing an image (the root's children were laid out and painted over its image).
+- `src/layout/damage.rs` (`flush_content_image`), `src/document.rs` (`apply_loaded_image`): an `<img>` or `<video>`
+  shows the image of its `content: url()` in place of its `src`/`poster`, whichever loads last (Blink; WPT css-content
+  `element-replacement-image-src.tentative`). `src/node/node.rs` (`layout_style`) flags an element replaced by its
+  content image (`StyleFlags::IS_CONTENT_REPLACED`).
+
+More of lane IT (round 3):
+- `src/layout/list.rs`: the list items of an inline box child (`ol { display: inline }`) are numbered with their
+  container's (no construction of their own collects them; WPT css-lists `inline-block-list*`). An outside
+  string marker's layout has the item's direction as its base direction; `ListItemLayout::isolate`: an inside
+  string marker is bidi-isolated in the item's paragraph (`src/layout/inline/build.rs`) unless a `::marker` rule
+  declares `unicode-bidi: normal` (WPT css-lists `list-style-type-string-005a/006`, css-pseudo
+  `marker-unicode-bidi-*`).
+- `src/layout/inline/build.rs`: the marker line of an empty item with an outside image marker is as tall as the
+  image above the baseline (WPT css-lists `outside-marker-taller-than-content`).
+- `src/layout/mod.rs` (table layout): a table without a known width whose `max-width` cuts below its min-content
+  width (measured without `width` and `max-width`) takes its min-content width (WPT css-tables
+  `table-intrinsic-size-002`; a fixed table with a larger `width` keeps to `max-width`, CSS2
+  `max-width-applies-to-013`).
+- `src/layout/table.rs`: `CollapsedEdge::is_double`.
+
+A table's content-size measure (`SizingMode::ContentSize`, a flex base size) runs the grid as an inherent-size
+layout, so the width its columns give survives, with the table's own `height` and `min-height` dropped (WPT
+css-flexbox `table-as-item-min-height-1`, `table-as-item-percent-width-cell-001`).
+A block-level absolutely positioned box in an inline formatting context (`layout/inline/layout.rs`) is aligned in a
+static-position rectangle with no inline extent at the line start and the block extent of the line box, one line
+down when content precedes it (Blink; WPT css-align `abspos/align-self-static-position-003/004/007`). Collapsed rows
+keep their tracks (`row_tracks`); Taffy collapses them once sized.
+- `src/util.rs` (`content_replaces`, `content_gradient`), `src/layout/construct.rs`, `src/layout/damage.rs`,
+  `src/layout/replaced.rs`, `src/node/element.rs` (`ElementData::content_gradient`): an element whose `content` is
+  one image builds no boxes for its children from the computed value on (while the image loads, and when it fails:
+  WPT `element-replacement-alt`); a `content` gradient (also through `image-set()`) replaces an element or a
+  `::before`/`::after` box as an image without a natural size (default object size, or its `width`/`height`),
+  which blitz-paint fills with the gradient (`element-replacement-gradient`, `pseudo-element-gradient`,
+  `pseudo-element-image-set`).
+- `src/stylo_to_parley.rs` (`vertical_align`): `vertical-align`'s keywords (stylo's `VerticalAlign*` variants) keep
+  parley's CSS 2.1 alignments; the `alignment-baseline` longhand's `text-top` / `middle` / `text-bottom`, and those of
+  an inherited `dominant-baseline` under `alignment-baseline: baseline`, map to parley's `TextOver` / `XMiddle` /
+  `TextUnder`; the pref `layout.css.dominant-baseline.enabled` is on (here and in pyro-dom). An `align=middle`
+  hint is `VerticalAlignMiddle`. Covered by `crates/pyro-render/tests/alignment_baseline.rs`.
+
+- `src/layout/table.rs` (lane IT, round 3): only a table's first header group goes before its rows and only its first
+  footer group after them; the others stay in place as row groups (WPT css-tables `row-group-order`).
+  `ColumnCursor::place` counts a row-spanning cell's rows as `start_row` counts them down, so the cells after it get
+  their columns (`TableCell::column`: column widths, part backgrounds; WPT css-tables
+  `paint/background-image-column`, `border-collapse-spanning-cells-003`).
+
+- Lane SP: `BaseDocument::containing_block_below_table` (layout/table.rs): an absolutely positioned or fixed box whose
+  containing block is a row or row group (positioned, transformed, any property that makes one) is laid out by the
+  table against the part's area (`table_part_containing_block`, now for `fixed` too) (WPT css-transforms
+  `transform-transformed-*-contains-fixed-position`, `-tr-percent-height-child`). `replaced.rs`: a keyword minimum
+  wins over a length maximum (`replaced-aspect-ratio-stretch-fit-003`). `DocumentConfig::line_height_quirk`
+  (quirks and limited-quirks mode): no strut for lines without text (inline/build.rs, parley
+  `Layout::set_line_height_quirk`; css-sizing `intrinsic-percent-replaced-006`).
+An inline formatting context whose text has anything but collapsible white space (a no-break space counts as text)
+does not let margins collapse through it, even when its lines have no height (CSS 2.1 §9.4.2; WPT css-fonts
+`font-size-zero-1`, css-color `t32-opacity-offscreen-multiple-boxes-2-c`, whose reference is `&nbsp;` text).
+- SVG `<foreignObject>` (`layout/construct.rs` `svg_foreign_objects`, `document.rs` `svg_foreign_objects`,
+  `resolve.rs` `foreign_object_roots`, `layout/paint_tree.rs`, `node/svg_css.rs` `foreign_object_href`, UA sheet):
+  each `<foreignObject>` of an inline `<svg>` keeps its construction damage, is built, laid out (a root block of its
+  `width`/`height`, mapped as presentation hints in `stylo.rs`, `overflow: hidden`), transformed and given a paint
+  tree as a root of its own; the `<svg>` source writes it as an `<image>` whose data names it, so usvg applies its
+  transform, clip path, mask, filter and opacity. Without a width or height it renders nothing.
+- `stylo.rs` (`is_html_element_in_html_document`): only HTML elements of an HTML document match type selectors
+  case-insensitively (`svg|foreignObject` matches, `foreignobject` does not match an SVG element).
+- `layout/construct.rs` (`input_type_keyword`), `layout/mod.rs`: an `<input>`'s `type` is read case-insensitively
+  and an empty or unknown value is the Text state (a text field), also after a change from `hidden`.
+- `resolve.rs` (`refresh_container_query_sizes`): an element inside an `<svg>` (a `<foreignObject>`, now a CSS box)
+  is no size query container.
+- Lane SP: inline/layout.rs: `height: stretch` on atomic inlines (not replaced ones, `replaced.rs` has it) fills the
+  inline root's definite content height less margins (`inline_box_inputs` `stretch_height`); an inline root's own
+  `min-height`/`max-height` content keywords clamp its final height (css-sizing
+  `hori-block-size-small-or-larger-than-container-with-min-or-max-content-1`).
+- SVG images with a `<foreignObject>` (`net.rs` `foreign_source`, `document.rs` `svg_image_documents`,
+  `update_svg_image_documents`, `html.rs` `HtmlParserProvider::parse_svg_document`): the image's source is parsed as
+  an XML document of its own (no script runs in it), laid out at the image's natural size each resolve, and painted
+  by blitz-paint in place of the usvg tree, which drops HTML content.
+- `node/svg.rs` (`for_url`): an SVG image without a `viewBox` and with a zero `width` or `height` (no natural ratio)
+  is laid out in the box it is drawn in, as Blink does.
+- `node/svg_css.rs` (`attribute_boxes`, `boxes`): an `<image>`'s or `<foreignObject>`'s fill box is its geometry;
+  a `<foreignObject>` without a size is an empty group (its filter region still paints).
+- `layout/list.rs`, `layout/inline/build.rs`, `layout/construct.rs`: an inside symbol marker stays a bundled-font symbol
+  under `::marker` rules unless one sets `font-family`; it is not spaced by `letter-spacing`/`word-spacing`, is
+  bidi-isolated like a string marker, and gives an otherwise empty item its line. An inside marker's `::marker` style
+  has its own emphasis marks (with their room in the line).
+- `layout/first_letter.rs`: `::first-letter` takes any punctuation before the letter (dashes and connectors too) with
+  combining marks and typographic spaces, and after it all but opening punctuation and dashes (a non-word-separator
+  space bridges to more); a preserved line break before any letter means no first letter; a `::before`/`::after`
+  box with an atomic display does not pass on its container's first line.

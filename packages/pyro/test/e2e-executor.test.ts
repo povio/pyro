@@ -238,3 +238,33 @@ test('one fork-mode browser for the run: profiles per describe, pages closed, no
   // The browser (its whole process group) is gone with the run.
   expect(serving().filter((l) => !before.has(pid(l)))).toEqual([]);
 }, 60000);
+
+test('retries, test.skip() at run time, and a screenshot of a failed test\'s page', async () => {
+  const out = join(work, 'results');
+  const r = await e2e(['test/e2e-fixture/retry/retry.e2e.ts', '-j', '1', '--output', out, '--timeout', '20000']);
+  expect(r.code).toBe(1);
+  // A retried test runs again until it passes (flaky) or runs out of retries.
+  expect(r.events.filter((e) => e.event === 'flaky').map((e) => e.run)).toEqual([1, 2]);
+  expect(r.names.filter((n) => n === 'always').length).toBe(2);
+  expect(r.out).toContain('passes on its second run (run 2 times)');
+  expect(r.out).toContain('1 flaky (passed on a retry)');
+  // test.skip(condition, reason) ends the test as skipped; afterEach still runs.
+  expect(r.names).toContain('before skip');
+  expect(r.names).not.toContain('after skip');
+  expect(r.names).toContain('ran on');
+  expect(r.out).toContain('skips itself at run time (skipped: not on this backend)');
+  expect(r.out).toContain('1 skip');
+  expect(r.out).toContain('2 fail');
+  expect(r.names.filter((n) => n === 'afterEach').length).toBe(7);
+  // The failed test's open page, as the failure left it.
+  const shot = /screenshot: (\S+\.png)/.exec(r.out)?.[1];
+  expect(shot).toBeDefined();
+  const png = readFileSync(join(pkg, shot!));
+  expect(png.subarray(1, 4).toString()).toBe('PNG');
+  expect(shot).toContain('a-failure-screenshots-its-page');
+  // test.skip() in a beforeEach skips every test (none fails, nothing is retried).
+  const hooked = await e2e(['test/e2e-fixture/retry/retry.e2e.ts', '-j', '1', '--screenshot', 'off'], { E2E_SKIP_IN_HOOK: '1' });
+  expect(hooked.code).toBe(0);
+  expect(hooked.out).toContain('5 skip');
+  expect(hooked.names.filter((n) => n !== 'afterEach')).toEqual([]);
+}, 60000);

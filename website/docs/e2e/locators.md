@@ -15,7 +15,7 @@ All are exported from `@povio/pyro`.
 
 | Builder | Matches |
 |---|---|
-| `role(role, name?, { exact? })` | Elements with this ARIA role (explicit or implicit) and, if given, this accessible name |
+| `role(role, name?, opts?)` | Elements with this ARIA role (explicit or implicit) and, if given, this accessible name; `opts` takes `exact` and the [role states](#role-states) |
 | `button(name?, opts?)` | `role('button', ...)` |
 | `link(name?, opts?)` | `role('link', ...)` |
 | `heading(name?, opts?)` | `role('heading', ...)` |
@@ -32,7 +32,7 @@ All are exported from `@povio/pyro`.
 | `placeholder(text, { exact? })` | An `input` or `textarea` whose `placeholder` matches |
 | `text(text, { exact? })` | The smallest elements whose text matches (see [Text matching](#text-matching)) |
 | `testId(id, attribute?)` | Elements whose `data-testid` equals `id`; pass `attribute` to use another one, for example `testId('row-1', 'data-test')` |
-| `css(selector)` | Elements matching a CSS selector |
+| `css(selector)` | Elements matching a CSS selector (`:scope` is the element of the scope, see below) |
 | `inFrame(frameLocator)` | A scope inside an iframe's document (see [Iframes](#iframes)) |
 
 `name` and `text` arguments take a string or a `RegExp`.
@@ -52,19 +52,21 @@ css('form#signup').label('Email')           // the Email field of that form
 |---|---|
 | `loc.locator(css)` | `css(...)` inside `loc` |
 | `loc.role(role, name?, opts?)` | `role(...)` inside `loc` |
-| `loc.button(...)`, `loc.link(...)`, `loc.textbox(...)` | the role shortcuts inside `loc` |
+| `loc.button(...)`, `loc.link(...)`, `loc.textbox(...)`, `loc.heading(...)` | the role shortcuts inside `loc` |
 | `loc.text(text, opts?)` | `text(...)` inside `loc` |
 | `loc.label(text, opts?)` | `label(...)` inside `loc` |
 | `loc.placeholder(text, opts?)` | `placeholder(...)` inside `loc` |
 | `loc.testId(id)` | `testId(id)` inside `loc` (default attribute) |
 
-Only `button`, `link` and `textbox` have method shortcuts. For other roles inside a scope use `loc.role('row', 'EXP-1')`.
+Only `button`, `link`, `textbox` and `heading` have method shortcuts. For other roles inside a scope use `loc.role('row', 'EXP-1')`.
+
+In a CSS selector inside a scope, `:scope` is the scope's element: `css('#list').locator(':scope > li')` finds the list's own items, not nested ones.
 
 The inner locator matches strictly inside the outer element, except `text()`: as in Playwright's `getByText`, the scope element itself can match. `css('td').text('Domestic', { exact: true })` finds the `<td>` whose text is "Domestic".
 
 ## Filters
 
-Filters narrow a locator's matches. Each returns a new locator. Several filters on one locator must all hold.
+Filters narrow a locator's matches. Each returns a new locator. Several filters on one locator must all hold, and each one narrows further: `css('li').hasText('apple').hasText('red')` keeps the items with both texts (a second `hasText` never replaces the first).
 
 | Filter | Keeps matches that |
 |---|---|
@@ -91,7 +93,28 @@ css('li').hasNot(button('Delete'))                // items without a Delete butt
 | `.last()` | The last match |
 | `.nth(i)` | The match at index `i`; a negative index counts from the end (`-1` is the last) |
 
-Filters run first, then the pick. The builders enforce that order: calling a filter after `.first()`, `.last()` or `.nth()` throws `filter before first() / last() / nth()` when you build the locator. A pick that is out of range matches nothing, so the step waits.
+Steps apply in the order you write them, as in Playwright: `css('li').hasText('a').first()` picks the first item with the text, while `css('li').first().hasText('a')` takes the first item and keeps it only if it has the text. A pick that is out of range matches nothing, so the step waits.
+
+## Combining locators
+
+| Method | Matches |
+|---|---|
+| `a.or(b)` | The elements of either, in document order (Playwright's `or`): `button('Save').or(text('Saved'))` |
+| `a.and(b)` | The elements of `a` that `b` matches too: `css('.chip').and(role('button', 'Remove'))` |
+
+## Role states
+
+`role()` and its shortcuts take Playwright's `getByRole` options besides `exact`:
+
+| Option | Keeps elements that |
+|---|---|
+| `level` | Are headings of this level (`<h2>`, `aria-level`): `heading(undefined, { level: 2 })` |
+| `checked` | Are checked (`true`), unchecked (`false`) or `'mixed'` |
+| `pressed` | Are pressed (`aria-pressed`): `true`, `false` or `'mixed'` |
+| `selected` | Are selected (`aria-selected`, a selected `<option>`) |
+| `expanded` | Are expanded (`aria-expanded`) |
+| `disabled` | Are disabled (natively, or `aria-disabled` on them or an ancestor) |
+| `includeHidden` | Also match when hidden from the accessibility tree |
 
 Use a pick only when any of several matches will do. To name one specific element, scope or filter the locator instead.
 
@@ -103,7 +126,7 @@ These rules apply to role names, `text`, `label` and `placeholder`:
 - **`{ exact: true }`** makes it a whole, case-sensitive match after normalization. `text('domestic', { exact: true })` does not match "Domestic".
 - **A `RegExp`** is tested against the normalized text and ignores `exact`. Flags `i`, `m` and `s` are kept; `g`, `y` and `u` are dropped by the builder. The browser runs it with JavaScript semantics: look-ahead, look-behind, backreferences and named groups work.
 
-`text()` finds the **smallest** elements whose text matches: an element matches when its text matches and none of its child elements' text does. `<script>`, `<style>`, `<noscript>`, `<template>`, `<head>` and `<title>` are skipped. With an exact string, an element also matches when one run of its own text nodes equals the string, so `text('TS-1', { exact: true })` finds `<span><span>|</span>TS-1</span>`.
+`text()` follows Playwright's `getByText`: an element matches when its whole text matches and none of its child elements' text does. With `{ exact: true }` the whole text must equal the string, so for `<span>Charges difference <span>+37.86 USD</span></span>` `text('Charges difference', { exact: true })` does not match (its text is "Charges difference +37.86 USD"). The text of `<script>`, `<style>`, `<noscript>` and everything in `<head>` does not count; an `<input type=submit|button|reset>` counts its value. (Wright's `locator('text="…"')`, Playwright's legacy text selector, also matches an element one of whose own text-node runs equals the string, so `text="TS-1"` finds `<span><span>|</span>TS-1</span>`.)
 
 ## Hidden elements
 
@@ -155,11 +178,7 @@ The wire format has a few locator fields that the native builders do not produce
 | Field | Meaning |
 |---|---|
 | `xpath` | An XPath expression, relative to `within` or the document: `new Locator({ xpath: '//h2' })` |
-| `or` | Joined with these locators' matches in document order: `new Locator({ css: 'h2', or: [{ css: 'h3' }] })` |
-| `and` | Kept only where each of these matches too |
-| `checked`, `pressed` (`true`, `false`, `'mixed'`), `disabled`, `expanded`, `selected`, `level` | Role states, as Playwright's `getByRole` options; they need `role`: `new Locator({ role: 'heading', level: 3 })` |
-| `includeHidden` | Lets a role locator match hidden elements. The accessible name of a `display: none` element can be empty, so match such elements by role or test id rather than by name |
-| `of` | Another locator's matches as the base set, so a filter or a pick can follow a pick: `new Locator({ of: { role: 'button', nth: 0 }, filter: { hasText: 'Bold' } })` |
+| `of` | Another locator's matches as the base set (what `.or()`, `.and()` and a filter after a pick produce): `new Locator({ of: { role: 'button', nth: 0 }, filter: { hasText: 'Bold' } })` |
 
 A `Locator` built this way has every method of the builders' locators (`.click()`, `.read()`, chaining). See [SDK: locators and steps](/reference/steps) and [Pyro.run wire format](/reference/pyro-run).
 

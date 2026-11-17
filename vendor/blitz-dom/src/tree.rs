@@ -56,6 +56,8 @@ pub struct NodeTree {
     pub(crate) xml_document: bool,
     /// pyro: [`crate::DocumentConfig::quirks_mode`].
     pub(crate) quirks_mode: bool,
+    /// pyro: [`crate::DocumentConfig::line_height_quirk`].
+    pub(crate) line_height_quirk: bool,
     /// pyro: [`crate::DocumentConfig::content_language`].
     pub(crate) content_language: Option<Box<str>>,
     /// pyro: the styles of each shadow root, by host (`crate::shadow`).
@@ -74,6 +76,7 @@ impl NodeTree {
             viewport_scroll: crate::Point::ZERO,
             xml_document: false,
             quirks_mode: false,
+            line_height_quirk: false,
             content_language: None,
             shadow_roots: HashMap::new(),
             has_shadow_hosts: false,

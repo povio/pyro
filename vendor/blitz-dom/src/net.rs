@@ -798,6 +798,14 @@ impl ImageHandler {
                     if bytes.len() <= MAX_KEPT_SOURCE {
                         svg.source = Some(std::sync::Arc::from(&bytes[..]));
                     }
+                    // pyro: one with a `<foreignObject>` is drawn as a document of its own
+                    // (`BaseDocument::svg_image_documents`).
+                    if bytes.len() <= MAX_KEPT_SOURCE
+                        && memchr_foreign_object(&bytes)
+                        && let Ok(text) = std::str::from_utf8(&bytes)
+                    {
+                        svg.foreign_source = Some(std::sync::Arc::from(text));
+                    }
                     return Ok(Resource::Svg(self.kind, svg));
                 }
                 // pyro: a document loaded for an element of it that a `clip-path`, `filter` or
@@ -1045,4 +1053,12 @@ mod tests {
             Fq::Oblique(Some(10.0)),
         );
     }
+}
+
+/// pyro: whether SVG source `bytes` has a `<foreignObject>` element (a cheap test).
+#[cfg(feature = "svg")]
+fn memchr_foreign_object(bytes: &[u8]) -> bool {
+    bytes.windows(14).any(|w| w == b"foreignObject ")
+        || bytes.windows(14).any(|w| w == b"foreignObject>")
+        || bytes.windows(14).any(|w| w == b"foreignObject\n")
 }

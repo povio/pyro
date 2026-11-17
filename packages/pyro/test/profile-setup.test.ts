@@ -14,6 +14,12 @@ beforeAll(() => {
     port: 0,
     fetch(req) {
       const path = new URL(req.url).pathname;
+      // `/boot`: the app lands (replaceState to `/landing`) once a 2.5 s request answers.
+      if (path === '/api/slow') return new Promise((r) => setTimeout(() => r(new Response('{}', { headers: { 'content-type': 'application/json' } })), 2500));
+      if (path === '/boot') {
+        const app = '<script>fetch("/api/slow").then(() => { history.replaceState(null, "", "/landing"); document.body.dataset.landed = "1"; })</script>';
+        return new Response(`<!doctype html><div id="ready">ready</div>${app}`, { headers: { 'content-type': 'text/html' } });
+      }
       const late = path === '/slow'
         ? '<script>setTimeout(() => document.body.insertAdjacentHTML("beforeend", "<i id=late>late</i>"), 300)</script>'
         : fixed ? '<i id="late">late</i>' : '';
@@ -119,5 +125,26 @@ test('declaring a failed profile again tries again, for every client holding it'
   } finally {
     worker.close();
     launcher.close();
+  }
+}, 30000);
+
+test('a setup runs once the page has landed, also while a connection waits, and forks start from there', async () => {
+  const lp = await Pyro.launch({ bin, args: ['--fork'] });
+  try {
+    await lp.profile('plain', { url: url() });
+    const landing = lp.profile('landing', { url: url('/boot'), setup: [evaluate('window.setupAt = location.pathname')] });
+    // Registered (booting) before a connection arrives: that connection waits for every page of the template.
+    for (let i = 0; !(await listed(lp)).some((p) => p.startsWith('landing:')); i++) {
+      if (i > 500) throw new Error('landing was not registered');
+      await Bun.sleep(5);
+    }
+    await using plain = await lp.page({ as: 'plain' });
+    expect((await plain.run([evaluate('location.pathname', 'path')])).values.path).toBe('/app');
+    await landing;
+    await using page = await lp.page({ as: 'landing' });
+    const r = await page.run([evaluate('window.setupAt', 'at'), evaluate('location.pathname', 'path'), evaluate('document.body.dataset.landed', 'landed')]);
+    expect(r.values).toEqual({ at: '/landing', path: '/landing', landed: '1' });
+  } finally {
+    lp.close();
   }
 }, 30000);

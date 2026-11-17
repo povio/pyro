@@ -62,6 +62,56 @@ pub fn render_svg_str_with<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
     Ok(())
 }
 
+/// pyro: a `<foreignObject>` drawn as an image (see [`foreign_object_id`]): the error handler is
+/// called for its node while [`foreign_object`] returns it.
+#[derive(Clone, Copy, Debug)]
+pub struct ForeignObject {
+    /// The id blitz-dom wrote in the image's data (a `NodeId`).
+    pub id: u64,
+    /// Maps the image's pixels (`0..size`) to the scene's space.
+    pub transform: Affine,
+    /// The image's size in pixels.
+    pub size: (f64, f64),
+}
+
+thread_local! {
+    pub(crate) static FOREIGN_OBJECT: std::cell::Cell<Option<ForeignObject>> = const { std::cell::Cell::new(None) };
+}
+
+/// pyro: what [`render_svg_tree`] draws for a node it cannot render (a red box), for an error
+/// handler that handles some nodes itself.
+pub fn draw_error_box<S: PaintScene>(scene: &mut S, node: &usvg::Node) {
+    util::default_error_handler(scene, node);
+}
+
+/// pyro: the `<foreignObject>` whose image the error handler is called for, if it is one.
+pub fn foreign_object() -> Option<ForeignObject> {
+    FOREIGN_OBJECT.with(|f| f.get())
+}
+
+/// pyro: the id in a `<foreignObject>`'s stand-in image (blitz-dom `svg_css::foreign_object_href`:
+/// a PNG whose chunk after `IHDR` is `pyFo` with an 8-byte big-endian id).
+pub fn foreign_object_id(kind: &usvg::ImageKind) -> Option<u64> {
+    let usvg::ImageKind::PNG(data) = kind else { return None };
+    let data = data.get(33..49)?;
+    if &data[0..8] != [0, 0, 0, 8, b'p', b'y', b'F', b'o'] {
+        return None;
+    }
+    Some(u64::from_be_bytes(data[8..16].try_into().ok()?))
+}
+
+/// pyro: [`render_svg_tree_with`] with what the document knows of the tree's filter primitives
+/// (see [`render_svg_tree_with_notes`]).
+pub fn render_svg_tree_with_notes_and<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
+    scene: &mut S,
+    svg: &usvg::Tree,
+    transform: Affine,
+    notes: FilterNotes,
+    error_handler: &mut F,
+) {
+    filter::with_notes(notes, || render_svg_tree_with(scene, svg, transform, error_handler));
+}
+
 /// Append a [`usvg::Tree`] to an [`anyrender::PaintScene`].
 ///
 /// This will draw a red box over (some) unsupported elements.

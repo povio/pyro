@@ -980,20 +980,30 @@ impl LayoutPassState<'_> {
                 }
 
                 if *element_data.name.local == *"input" {
-                    match element_data.attr(local_name!("type")) {
+                    match construct::input_type_keyword(element_data.attr(local_name!("type"))) {
                         // if the input type is hidden, hide it
                         Some("hidden") => {
                             return ChildLayout::Done(taffy::LayoutOutput::HIDDEN);
                         }
                         // pyro: a checkbox or radio is 13x13 by nature (Blink's theme size), not by
                         // the UA sheet's `width`/`height`: a flex parent stretches it and a percentage
-                        // sizes it (WPT css-flexbox `stretch-flex-item-checkbox-input`)
+                        // sizes it (WPT css-flexbox `stretch-flex-item-checkbox-input`). The 13x13 is the
+                        // border box: the content is what padding and border leave of it (the UA sheet's
+                        // `input` padding and border would otherwise make a checkbox 21x19 and a radio 17x15).
                         Some("checkbox" | "radio") => {
+                            let style = node.layout_style();
+                            let parent = inputs.parent_size.width;
+                            let padding = style.padding().resolve_or_zero(parent, resolve_calc_value);
+                            let border = style.border().resolve_or_zero(parent, resolve_calc_value);
+                            let natural = taffy::Size {
+                                width: (13.0 - padding.horizontal_axis_sum() - border.horizontal_axis_sum()).max(0.0),
+                                height: (13.0 - padding.vertical_axis_sum() - border.vertical_axis_sum()).max(0.0),
+                            };
                             return ChildLayout::Done(compute_leaf_layout(
                                 inputs,
-                                &node.layout_style(),
+                                &style,
                                 resolve_calc_value,
-                                |_known_size, _available_space| taffy::Size { width: 13.0, height: 13.0 },
+                                |_known_size, _available_space| natural,
                             ));
                         }
                         None | Some("text" | "password" | "email" | "tel" | "url" | "search" | "time") => {
@@ -1373,6 +1383,18 @@ impl LayoutPassState<'_> {
             style: None,
         };
         table_wrapper.style = table_wrapper.auto_column_widths(&inputs);
+        // pyro: a table's content size (a flex item's flex base size) is the width its columns give
+        // it (the grid's preferred width, which a content-size grid would drop: WPT css-flexbox
+        // `table-as-item-percent-width-cell-001`) and the height of its rows, its own `height` and
+        // `min-height` aside (Blink; WPT css-flexbox `table-as-item-min-height-1`)
+        let mut inputs = inputs;
+        if inputs.sizing_mode == taffy::SizingMode::ContentSize {
+            let mut style = table_wrapper.style.take().unwrap_or_else(|| table_wrapper.ctx.style.clone());
+            style.size.height = taffy::Dimension::auto();
+            style.min_size.height = taffy::LengthPercentageAuto::auto();
+            table_wrapper.style = Some(style);
+            inputs.sizing_mode = taffy::SizingMode::InherentSize;
+        }
         let mut output = compute_grid_layout(&mut table_wrapper, node_id, inputs);
         if let Some(min) = caption_min.filter(|min| *min > output.size.width) {
             if inputs.known_dimensions.width.is_none() {
@@ -1382,6 +1404,40 @@ impl LayoutPassState<'_> {
                 };
                 table_wrapper.style = table_wrapper.auto_column_widths(&wider);
                 output = compute_grid_layout(&mut table_wrapper, node_id, wider);
+            }
+        }
+        // pyro: nor does its `max-width` make it narrower than its min-content width (CSS 2.1
+        // § 17.5.2: the used width is at least the minimum width; WPT css-tables
+        // `table-intrinsic-size-002`): measured without the maximum and its `width`, the table
+        // takes that width.
+        if inputs.known_dimensions.width.is_none() {
+            let base = table_wrapper.style.clone().unwrap_or_else(|| table_wrapper.ctx.style.clone());
+            if !base.max_size.width.is_auto() {
+                let mut unbounded = base.clone();
+                unbounded.max_size.width = taffy::style_helpers::auto();
+                unbounded.size.width = taffy::style_helpers::auto();
+                let saved = table_wrapper.style.replace(unbounded);
+                let measuring = taffy::tree::LayoutInput {
+                    run_mode: RunMode::ComputeSize,
+                    available_space: taffy::Size {
+                        width: taffy::AvailableSpace::MinContent,
+                        height: inputs.available_space.height,
+                    },
+                    ..inputs
+                };
+                let min = compute_grid_layout(&mut table_wrapper, node_id, measuring).size.width;
+                table_wrapper.style = saved;
+                if min > output.size.width + 0.01 {
+                    let wider = taffy::tree::LayoutInput {
+                        known_dimensions: taffy::Size { width: Some(min), height: inputs.known_dimensions.height },
+                        ..inputs
+                    };
+                    table_wrapper.style = table_wrapper.auto_column_widths(&wider);
+                    let mut style = table_wrapper.style.clone().unwrap_or_else(|| table_wrapper.ctx.style.clone());
+                    style.max_size.width = taffy::style_helpers::auto();
+                    table_wrapper.style = Some(style);
+                    output = compute_grid_layout(&mut table_wrapper, node_id, wider);
+                }
             }
         }
 
@@ -1482,11 +1538,15 @@ impl LayoutPassState<'_> {
         if inputs.run_mode == RunMode::PerformLayout && !output.oof_candidates.is_empty() {
             let table_id = dom_node_id(node_id);
             for candidate in output.oof_candidates.as_mut_slice() {
-                if candidate.containing_block.is_some() || candidate.position != taffy::Position::Absolute {
+                if candidate.containing_block.is_some() {
                     continue;
                 }
-                candidate.containing_block =
-                    self.table_part_containing_block(table_id, &context, dom_node_id(candidate.node));
+                candidate.containing_block = self.table_part_containing_block(
+                    table_id,
+                    &context,
+                    dom_node_id(candidate.node),
+                    candidate.position,
+                );
             }
         }
 
@@ -1518,20 +1578,10 @@ impl LayoutPassState<'_> {
         table_id: crate::NodeId,
         context: &crate::layout::table::TableContext,
         box_id: crate::NodeId,
+        position: taffy::Position,
     ) -> Option<(taffy::Size<f32>, taffy::Point<f32>)> {
-        use style::computed_values::position::T as Position;
-        let mut current = self.nodes[box_id].parent;
-        let part = loop {
-            let id = current?;
-            if id == table_id {
-                return None;
-            }
-            let node = &self.nodes[id];
-            if node.primary_styles().is_some_and(|style| style.clone_position() != Position::Static) {
-                break id;
-            }
-            current = node.parent;
-        };
+        let doc: &BaseDocument = self;
+        let part = doc.containing_block_below_table(table_id, box_id, position)?;
         let rows: Vec<usize> = context
             .rows
             .iter()
@@ -1553,7 +1603,6 @@ impl LayoutPassState<'_> {
         }
         let (y0, y1) = (first_row.start.min(last_row.start), first_row.end.max(last_row.end));
         // Its relative offset, and its row group's for a row.
-        let doc: &BaseDocument = self;
         let table_parent = Some(table_id);
         let group = context.rows[first].group.filter(|&group| group != part);
         let mut offset = taffy::Point::ZERO;

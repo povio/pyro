@@ -45,6 +45,12 @@ export type LocatorSpec = {
   or?: LocatorSpec[];
   /** Kept only where each of these matches too (Playwright's `and`). */
   and?: LocatorSpec[];
+  /**
+   * `text` follows Playwright's legacy `text="…"` selector rather than
+   * `getByText`: an exact string also matches an element one of whose own
+   * text-node runs equals it.
+   */
+  legacyText?: boolean;
   /** `role` states (Playwright's `getByRole` options). */
   checked?: boolean | 'mixed';
   pressed?: boolean | 'mixed';
@@ -57,6 +63,37 @@ export type LocatorSpec = {
 
 export type Step = Record<string, unknown>;
 type Exact = { exact?: boolean };
+/** Playwright's `getByRole` options: the name match and the element's states. */
+export type RoleOptions = Exact & {
+  checked?: boolean | 'mixed';
+  pressed?: boolean | 'mixed';
+  disabled?: boolean;
+  expanded?: boolean;
+  selected?: boolean;
+  /** Heading level (`<h2>`, `aria-level`). */
+  level?: number;
+  /** Let elements hidden from the accessibility tree match. */
+  includeHidden?: boolean;
+};
+type Filter = NonNullable<LocatorSpec['filter']>;
+
+/** `spec` as the base set of a further step: wrapped (`of`) once it picked an `nth`, a `frame` kept outside. */
+const asBase = (spec: LocatorSpec): LocatorSpec => {
+  const { frame, ...inner } = spec;
+  return { of: inner, ...(frame ? { frame } : {}) };
+};
+
+/**
+ * `spec` narrowed by `filter`. Each filter narrows further, as Playwright's
+ * chained `filter()` calls: a condition the spec already has (a second
+ * `hasText`) applies to its matches instead of replacing it, and a filter
+ * after `nth` applies to the picked element.
+ */
+export function narrow(spec: LocatorSpec, filter: Filter): LocatorSpec {
+  const clash = spec.filter && Object.keys(filter).some((k) => k in spec.filter!);
+  if (spec.nth !== undefined || clash) return { ...asBase(spec), filter };
+  return { ...spec, filter: { ...spec.filter, ...filter } };
+}
 
 /** Anything that becomes one step of a run. */
 export interface StepLike {
@@ -90,10 +127,8 @@ export class Locator {
 
   // ---- narrowing (each returns a new locator) ----
 
-  private with(filter: NonNullable<LocatorSpec['filter']>): Locator {
-    // The browser filters the matches, then picks nth.
-    if (this.spec.nth !== undefined) throw new Error('filter before first() / last() / nth()');
-    return new Locator({ ...this.spec, filter: { ...this.spec.filter, ...filter } });
+  private with(filter: Filter): Locator {
+    return new Locator(narrow(this.spec, filter));
   }
   visible(visible = true): Locator {
     return this.with({ visible });
@@ -111,13 +146,21 @@ export class Locator {
     return this.with({ hasNot: inner.spec });
   }
   nth(index: number): Locator {
-    return new Locator({ ...this.spec, nth: index });
+    return new Locator({ ...(this.spec.nth === undefined ? this.spec : asBase(this.spec)), nth: index });
   }
   first(): Locator {
     return this.nth(0);
   }
   last(): Locator {
     return this.nth(-1);
+  }
+  /** The elements of this locator or of `other`, in document order (Playwright's `or`). */
+  or(other: Locator): Locator {
+    return new Locator({ ...asBase(this.spec), or: [other.spec] });
+  }
+  /** The elements of this locator that `other` matches too (Playwright's `and`). */
+  and(other: Locator): Locator {
+    return new Locator({ ...asBase(this.spec), and: [other.spec] });
   }
 
   // ---- locators inside this one ----
@@ -130,17 +173,20 @@ export class Locator {
   locator(css: string): Locator {
     return this.inner({ css });
   }
-  role(role: string, name?: TextMatch, opts: Exact = {}): Locator {
+  role(role: string, name?: TextMatch, opts: RoleOptions = {}): Locator {
     return this.inner(roleSpec(role, name, opts));
   }
-  button(name?: TextMatch, opts?: Exact): Locator {
+  button(name?: TextMatch, opts?: RoleOptions): Locator {
     return this.role('button', name, opts);
   }
-  link(name?: TextMatch, opts?: Exact): Locator {
+  link(name?: TextMatch, opts?: RoleOptions): Locator {
     return this.role('link', name, opts);
   }
-  textbox(name?: TextMatch, opts?: Exact): Locator {
+  textbox(name?: TextMatch, opts?: RoleOptions): Locator {
     return this.role('textbox', name, opts);
+  }
+  heading(name?: TextMatch, opts?: RoleOptions): Locator {
+    return this.role('heading', name, opts);
   }
   text(text: TextMatch, opts: Exact = {}): Locator {
     return this.inner(textSpec(text, opts));
@@ -247,17 +293,20 @@ export class FrameScope {
   locator(css: string): Locator {
     return css_(css).inFrame(this.frameLocator);
   }
-  role(role: string, name?: TextMatch, opts: Exact = {}): Locator {
+  role(role: string, name?: TextMatch, opts: RoleOptions = {}): Locator {
     return new Locator(roleSpec(role, name, opts)).inFrame(this.frameLocator);
   }
-  button(name?: TextMatch, opts?: Exact): Locator {
+  button(name?: TextMatch, opts?: RoleOptions): Locator {
     return this.role('button', name, opts);
   }
-  link(name?: TextMatch, opts?: Exact): Locator {
+  link(name?: TextMatch, opts?: RoleOptions): Locator {
     return this.role('link', name, opts);
   }
-  textbox(name?: TextMatch, opts?: Exact): Locator {
+  textbox(name?: TextMatch, opts?: RoleOptions): Locator {
     return this.role('textbox', name, opts);
+  }
+  heading(name?: TextMatch, opts?: RoleOptions): Locator {
+    return this.role('heading', name, opts);
   }
   text(text: TextMatch, opts: Exact = {}): Locator {
     return new Locator(textSpec(text, opts)).inFrame(this.frameLocator);
@@ -278,11 +327,12 @@ export class FrameScope {
 }
 
 const exact = (opts: Exact) => (opts.exact ? { exact: true } : {});
-const roleSpec = (role: string, name: TextMatch | undefined, opts: Exact): LocatorSpec => ({
-  role,
-  ...(name === undefined ? {} : { name: pattern(name) }),
-  ...exact(opts),
-});
+const ROLE_STATES = ['checked', 'pressed', 'disabled', 'expanded', 'selected', 'level', 'includeHidden'] as const;
+const roleSpec = (role: string, name: TextMatch | undefined, opts: RoleOptions): LocatorSpec => {
+  const spec: LocatorSpec = { role, ...(name === undefined ? {} : { name: pattern(name) }), ...exact(opts) };
+  for (const k of ROLE_STATES) if (opts[k] !== undefined) (spec as Record<string, unknown>)[k] = opts[k];
+  return spec;
+};
 const textSpec = (text: TextMatch, opts: Exact): LocatorSpec => ({ text: pattern(text), ...exact(opts) });
 
 function act(loc: Locator, action: string, value: string | undefined, opts: Record<string, unknown>): StepLike {
@@ -298,19 +348,19 @@ export const testId = (id: string, attribute?: string) =>
 export const text = (t: TextMatch, opts: Exact = {}) => new Locator(textSpec(t, opts));
 export const label = (t: TextMatch, opts: Exact = {}) => new Locator({ label: pattern(t), ...exact(opts) });
 export const placeholder = (t: TextMatch, opts: Exact = {}) => new Locator({ placeholder: pattern(t), ...exact(opts) });
-export const role = (r: string, name?: TextMatch, opts: Exact = {}) => new Locator(roleSpec(r, name, opts));
-export const button = (name?: TextMatch, opts?: Exact) => role('button', name, opts);
-export const link = (name?: TextMatch, opts?: Exact) => role('link', name, opts);
-export const dialog = (name?: TextMatch, opts?: Exact) => role('dialog', name, opts);
-export const heading = (name?: TextMatch, opts?: Exact) => role('heading', name, opts);
-export const textbox = (name?: TextMatch, opts?: Exact) => role('textbox', name, opts);
-export const checkbox = (name?: TextMatch, opts?: Exact) => role('checkbox', name, opts);
-export const combobox = (name?: TextMatch, opts?: Exact) => role('combobox', name, opts);
-export const option = (name?: TextMatch, opts?: Exact) => role('option', name, opts);
-export const row = (name?: TextMatch, opts?: Exact) => role('row', name, opts);
-export const cell = (name?: TextMatch, opts?: Exact) => role('cell', name, opts);
-export const tab = (name?: TextMatch, opts?: Exact) => role('tab', name, opts);
-export const menuitem = (name?: TextMatch, opts?: Exact) => role('menuitem', name, opts);
+export const role = (r: string, name?: TextMatch, opts: RoleOptions = {}) => new Locator(roleSpec(r, name, opts));
+export const button = (name?: TextMatch, opts?: RoleOptions) => role('button', name, opts);
+export const link = (name?: TextMatch, opts?: RoleOptions) => role('link', name, opts);
+export const dialog = (name?: TextMatch, opts?: RoleOptions) => role('dialog', name, opts);
+export const heading = (name?: TextMatch, opts?: RoleOptions) => role('heading', name, opts);
+export const textbox = (name?: TextMatch, opts?: RoleOptions) => role('textbox', name, opts);
+export const checkbox = (name?: TextMatch, opts?: RoleOptions) => role('checkbox', name, opts);
+export const combobox = (name?: TextMatch, opts?: RoleOptions) => role('combobox', name, opts);
+export const option = (name?: TextMatch, opts?: RoleOptions) => role('option', name, opts);
+export const row = (name?: TextMatch, opts?: RoleOptions) => role('row', name, opts);
+export const cell = (name?: TextMatch, opts?: RoleOptions) => role('cell', name, opts);
+export const tab = (name?: TextMatch, opts?: RoleOptions) => role('tab', name, opts);
+export const menuitem = (name?: TextMatch, opts?: RoleOptions) => role('menuitem', name, opts);
 /** Locators inside the `<iframe>` `frame` matches: `inFrame(css('#editor')).button('Bold')`. */
 export const inFrame = (frame: Locator) => frame.frame();
 
@@ -343,14 +393,26 @@ class Check {
   hidden(opts?: CheckOpts) {
     return this.step('hidden', undefined, opts);
   }
-  text(expected: string, opts?: CheckOpts) {
-    return this.step('text', expected, opts);
+  /** The whole text (whitespace-normalized), or a RegExp tested against it (`toHaveText`). */
+  text(expected: TextMatch, opts?: CheckOpts) {
+    return this.step('text', pattern(expected), opts);
   }
-  containsText(expected: string, opts?: CheckOpts) {
-    return this.step('containsText', expected, opts);
+  /** Part of the text, or a RegExp tested against it (`toContainText`). */
+  containsText(expected: TextMatch, opts?: CheckOpts) {
+    return this.step('containsText', pattern(expected), opts);
   }
-  value(expected: string, opts?: CheckOpts) {
-    return this.step('value', expected, opts);
+  /** A form control's value, or a RegExp tested against it (`toHaveValue`). */
+  value(expected: TextMatch, opts?: CheckOpts) {
+    return this.step('value', pattern(expected), opts);
+  }
+  /**
+   * An attribute's value: exact for a string, a RegExp tested against it
+   * (`toHaveAttribute(name, value)`); without `value`, that the element has
+   * the attribute (`toHaveAttribute(name)`).
+   */
+  attribute(name: string, value?: TextMatch, opts?: CheckOpts) {
+    if (value === undefined) return new Check(this.loc, !this.negate).step('attribute', null, opts, { property: name });
+    return this.step('attribute', pattern(value), opts, { property: name });
   }
   count(expected: number, opts?: CheckOpts) {
     return this.step('count', expected, opts);
@@ -414,6 +476,19 @@ class RequestCheck implements StepLike {
   timeout(timeout: number): RequestCheck {
     return new RequestCheck({ ...this.m, timeout });
   }
+  /**
+   * The matched response's body: in the step's result (`responseBody`, text,
+   * or base64 with `responseBodyBase64: true`), and in the run's values
+   * under `as` when given. The page keeps response bodies from the first run
+   * with such a check on, so the request must start in that run or later.
+   */
+  responseBody(as?: string): RequestCheck {
+    return new RequestCheck({ ...this.m, responseBody: true, ...(as !== undefined ? { as } : {}) });
+  }
+  /** The run's values get the matched request (its result) under `as`. */
+  as(as: string): RequestCheck {
+    return new RequestCheck({ ...this.m, as });
+  }
   toStep(): Step {
     return { request: this.m };
   }
@@ -431,9 +506,15 @@ export const check = Object.assign((loc: Locator) => new Check(loc), {
 
 // ---- navigation and escape hatches ----
 
-export const goto = (url: string, waitUntil: 'load' | 'domcontentloaded' = 'load'): StepLike => ({
-  toStep: () => ({ goto: { url, waitUntil } }),
-});
+export type GotoOptions = { waitUntil?: 'load' | 'domcontentloaded'; timeout?: number };
+/**
+ * Navigates and waits for `load` (or `domcontentloaded`). `timeout` bounds
+ * this step alone: `goto(url, { timeout: 60_000 })`.
+ */
+export const goto = (url: string, opts: 'load' | 'domcontentloaded' | GotoOptions = {}): StepLike => {
+  const { waitUntil = 'load', timeout } = typeof opts === 'string' ? { waitUntil: opts } : opts;
+  return { toStep: () => ({ goto: { url, waitUntil, ...(timeout === undefined ? {} : { timeout }) } }) };
+};
 /**
  * Same-document navigation (pushState + popstate), as a client-side router
  * sees a link. Settles on the requests it starts unless `settle: false`.
@@ -574,6 +655,23 @@ export type MouseOptions = {
 export const mouse = (action: MouseAction, opts: MouseOptions = {}): StepLike => ({
   toStep: () => ({ mouse: { action, ...opts } }),
 });
+export type KeyboardOptions = {
+  /** Modifier keys held (`Shift`, `Control`, `Alt`, `Meta`, `ControlOrMeta`). */
+  modifiers?: string[];
+  settle?: boolean;
+  timeout?: number;
+};
+/**
+ * Keys at the focused element (the body when nothing has focus), as
+ * Playwright's `page.keyboard`: `keyboard.press('Escape')`,
+ * `keyboard.press('Shift+Tab')`, `keyboard.type('abc')` (one key press per
+ * character). `locator.press(key)` focuses the element first.
+ */
+export const keyboard = {
+  press: (key: string, opts: KeyboardOptions = {}): StepLike => ({ toStep: () => ({ keyboard: { press: key, ...opts } }) }),
+  type: (text: string, opts: KeyboardOptions = {}): StepLike => ({ toStep: () => ({ keyboard: { type: text, ...opts } }) }),
+};
+
 /** Mouse wheel over an element (engine 0.0.10). */
 export const wheel = (loc: Locator, deltaX: number, deltaY: number, opts: ActOptions = {}): StepLike =>
   loc.wheel(deltaX, deltaY, opts);

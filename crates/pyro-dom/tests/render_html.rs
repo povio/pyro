@@ -60,14 +60,18 @@ fn form_state_is_written_into_markup() {
 }
 
 #[test]
-fn scripts_handlers_and_comments_are_dropped() {
+fn script_text_handlers_and_comments_are_dropped() {
     let (dom, d) = doc(concat!(
         "<!DOCTYPE html><html><head><script>alert(1)</script></head>",
         "<body onload=\"x()\"><!-- c --><noscript>no js</noscript><template><p>t</p></template>",
         "<iframe src=\"/frame\"></iframe><p>kept</p></body></html>",
     ));
     let html = render(&dom.borrow(), d);
-    assert_eq!(html, "<!DOCTYPE html><html><head></head><body><iframe></iframe><p>kept</p></body></html>");
+    // A script stays (without its text): it counts for sibling selectors (WPT CSS2 `content-072`).
+    assert_eq!(
+        html,
+        "<!DOCTYPE html><html><head><script></script></head><body><iframe></iframe><p>kept</p></body></html>"
+    );
 }
 
 #[test]
@@ -161,10 +165,13 @@ fn render_tree_has_the_html_content_with_stable_keys() {
     let value = element(render_key(t) | SYNTHETIC_TEXT);
     assert_eq!(value.kind, RenderNodeKind::Text("typed".into()));
     assert_eq!(tree.nodes[value.parent as usize].key, render_key(t));
-    assert!(tree
+    // A script is an element without its text.
+    let script = tree
         .nodes
         .iter()
-        .all(|n| !matches!(&n.kind, RenderNodeKind::Element { name, .. } if &*name.local == "script")));
+        .position(|n| matches!(&n.kind, RenderNodeKind::Element { name, .. } if &*name.local == "script"))
+        .expect("script element");
+    assert!(tree.nodes.iter().all(|n| n.parent != script as u32 || !matches!(n.kind, RenderNodeKind::Text(_))));
     // Keys survive a mutation elsewhere; a changed attribute changes only that node.
     dom.borrow_mut().set_attribute(p, "class", "b").unwrap();
     let again = dom.borrow().render_tree(d, &opts).unwrap();

@@ -65,3 +65,12 @@ fn a_flex_item_minimum_is_the_calculation_of_its_automatic_minimum() {
     );
     check(&img, &[(95, 25, GREEN), (105, 25, WHITE)]);
 }
+
+#[test]
+fn a_calc_minimum_against_an_indefinite_height_takes_its_percentages_as_zero() {
+    // `calc(25px + 50%)` in a box of auto height is 25px (Blink), not none.
+    let img = render(
+        "<div style='width:50px'><div style='min-height:calc(25px + 50%);background:green'></div></div>",
+    );
+    check(&img, &[(25, 20, GREEN), (25, 30, WHITE)]);
+}

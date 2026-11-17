@@ -364,3 +364,16 @@ blitz-dom puts an inline-level absolutely positioned box on the start side of it
 - `src/shape/mod.rs` (`shifted_span`): text is shaped apart on either side of the edge of a span that `vertical-align`
   shifts, nested spans included (CSS Text 3 § 7.3; WPT css-text `boundary-shaping-002/006`: no `ffi` ligature across a
   raised `f`).
+
+A lone word joiner committed as text (the strut blitz-dom pushes for a line of atomic inlines) is no content for
+white space processing: a collapsible space after it at the start of the paragraph is still removed (it was kept
+after an inline box's start margin; WPT css-flexbox `grandchild-span-height`).
+
+An inline box that does not fit at the start of a line marks a wrap opportunity after it only where wrapping is
+enabled: under `white-space: pre` the text after it stays on its line (WPT css-overflow `text-overflow-009`).
+- `style/mod.rs`, `layout/style_metrics.rs` (`shift_from_parent`, lane IT, round 3): `AlignmentBaseline::TextOver`,
+  `TextUnder` and `XMiddle` align a span's text-over / text-under / x-middle baseline (its font's ascent, descent,
+  half x-height) with its parent's (css-inline-3 `alignment-baseline` / `dominant-baseline`); inline boxes align
+  with the first two as with `TextTop` / `TextBottom`, and stay on the baseline for `XMiddle`.
+- `layout/line_break.rs` (`reset_line`, `rescale_box_metrics`; lane SP): `Layout::set_line_height_quirk` (Quirks
+  Mode §3.3): the root span box counts on a line only once text adds it; a line of inline boxes alone is their height.

@@ -344,7 +344,21 @@ nor keeps a scroll offset. Other mixes still turn `visible` into `auto` and `cli
 and flex-shrink and `align-self: auto` (Blink's `LayoutDeprecatedFlexibleBox`; WPT css-flexbox
 `flexbox-safe-overflow-position-006`, `balance/webkit-box-no-balance`).
 
+`values/specified/align.rs`: `anchor-center` parses whatever the anchor-positioning pref says (servo has no
+anchor positioning; stylo_taffy lays it out as `center`, which is what it is without a default anchor; WPT css-align
+`abspos/align-self-static-position-008`, `justify-self-static-position-001`).
+
 ## Updating or dropping the patch
 
 - When upstream has the change: delete this directory and the `[patch.crates-io]` entry.
 - To move to a newer stylo: copy the published crate over this directory and apply `UPSTREAM.patch`.
+
+- `values/specified/box.rs`, `properties/shorthands.rs` (lane IT, round 3): servo-only `AlignmentBaseline` variants
+  `VerticalAlignTextTop` / `VerticalAlignMiddle` / `VerticalAlignTextBottom`, which the `vertical-align` shorthand
+  sets for its `text-top` / `middle` / `text-bottom` (`AlignmentBaseline::from_vertical_align`), so layout can keep
+  CSS 2.1's alignments for `vertical-align` and give the `alignment-baseline` longhand css-inline-3's (as Blink
+  does). They are never parsed and serialize as the longhand's keywords (`AlignmentBaseline::keyword`, manual
+  `ToCss`).
+- `properties/data.py` (`PropertyRestrictions.marker`): `::marker` also takes `letter-spacing`, `word-spacing`,
+  `line-break`, `word-break`, `overflow-wrap`, `tab-size` and `text-decoration-skip-ink` (CSS Pseudo 4, Blink; WPT
+  css-pseudo `marker-word-spacing`, `marker-word-break`, ...).

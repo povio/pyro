@@ -389,7 +389,11 @@ pub(crate) fn build_inline_layout_into(
     // without text, so a line of empty inline-blocks was 0px tall. A
     // word joiner (zero-width, no break opportunity) provides the strut.
     // pyro: so has the line of a list item's outside marker in an item without in-flow content.
-    if (text_layout.layout.inline_boxes().len() > 0 || outside_marker(&nodes[inline_context_root_node_id]))
+    // pyro: not in quirks and limited-quirks mode, where a line without text has no strut (Quirks
+    // Mode §3.3, "The line height calculation quirk"): an image alone in a block leaves no gap
+    // under it (WPT css-sizing `intrinsic-percent-replaced-006`).
+    let marker = outside_marker(&nodes[inline_context_root_node_id]);
+    if (marker || (text_layout.layout.inline_boxes().len() > 0 && !nodes.line_height_quirk))
         && text_layout.text.chars().all(|c| (c.is_whitespace() && c != '\n') || is_bidi_control(c))
     {
         build_inline_layout_with(nodes, layout_ctx, font_ctx, text_layout, scale, inline_context_root_node_id, true, &[], bidi);
@@ -481,6 +485,7 @@ fn build_inline_layout_with(
         style_node,
         position: ListItemLayoutPosition::Inside,
         tabular_nums,
+        isolate,
         ..
     }) = root_node
         .element_data()
@@ -489,11 +494,33 @@ fn build_inline_layout_with(
         // pyro: in the item's `::marker` style, when a rule styles the marker.
         let styled = style_node
             .and_then(|id| nodes.get(id).and_then(|node| node.primary_styles().map(|style| (id, style))))
-            .map(|(id, style)| stylo_to_parley::style(id, &style));
+            .map(|(id, style)| {
+                let mut parley_style = stylo_to_parley::style(id, &style);
+                // (With the room its emphasis marks take, `FoundAnnotations`.)
+                parley_style.annotation_space = space_of(annotation_space, id);
+                parley_style
+            });
         if let Some(style) = &styled {
             builder.push_style_span(style.clone());
         }
         let parley_style = styled.as_ref().unwrap_or(&parley_style);
+        // pyro: a string marker is bidi-isolated in the item's direction (the UA's `::marker {
+        // unicode-bidi: isolate }`; WPT css-lists `list-style-type-string-006`).
+        // (`unicode-bidi: normal` in a `::marker` rule leaves it in the item's paragraph; WPT
+        // css-pseudo `marker-unicode-bidi-normal`.)
+        // (A symbol too: WPT css-lists `list-marker-symbol-bidi`.)
+        let isolate = *isolate && matches!(marker, Marker::String(_) | Marker::Char(_));
+        if isolate {
+            let rtl = root_node_style
+                .as_deref()
+                .is_some_and(|style| style.clone_direction() == style::computed_values::direction::T::Rtl);
+            if bidi {
+                builder.push_bidi_control(if rtl { '\u{2067}' } else { '\u{2066}' });
+            } else {
+                bidi_scan.controls = true;
+                bidi_scan.rtl |= rtl;
+            }
+        }
         match marker {
             // Bullet glyphs live in the bundled bullet font. The position-outside
             // path already asks for it; without the same span here a marker like
@@ -502,6 +529,10 @@ fn build_inline_layout_with(
             Marker::Char(char) => {
                 let mut marker_style = parley_style.clone();
                 marker_style.font_family = BULLET_FONT_FAMILY.into();
+                // pyro: a symbol and its space are not spaced by `letter-spacing` or
+                // `word-spacing` (Blink; WPT css-pseudo `marker-word-spacing`).
+                marker_style.letter_spacing = 0.0;
+                marker_style.word_spacing = 0.0;
                 builder.push_style_span(marker_style);
                 builder.push_text(&format!("{char} "));
                 builder.pop_style_span();
@@ -534,6 +565,9 @@ fn build_inline_layout_with(
                 builder.pop_style_span();
             }
         }
+        if isolate && bidi {
+            builder.push_bidi_control('\u{2069}');
+        }
         if styled.is_some() {
             builder.pop_style_span();
         }
@@ -546,6 +580,14 @@ fn build_inline_layout_with(
     let annotations = &mut FoundAnnotations { space: annotation_space.to_vec(), ..Default::default() };
     if let Some(style) = root_node.primary_styles() {
         annotations.enter(inline_context_root_node_id, &style);
+    }
+    // pyro: an inside marker's `::marker` style has emphasis marks of its own (WPT css-pseudo
+    // `marker-text-emphasis`): its text's brush is the style's node.
+    if let Some(ListItemLayout { style_node: Some(id), position: ListItemLayoutPosition::Inside, .. }) =
+        root_node.element_data().and_then(|el| el.list_item_data.as_deref())
+        && let Some(style) = nodes.get(*id).and_then(|node| node.primary_styles())
+    {
+        annotations.enter(*id, &style);
     }
     if root_node.data.is_element_with_tag_name(&local_name!("ruby")) {
         annotations.ruby_base_start = Some(builder.text().len());
@@ -561,6 +603,23 @@ fn build_inline_layout_with(
         && text_layout.layout.inline_boxes().all(|inline_box| inline_box.kind != InlineBoxKind::InFlow);
     if marker_line {
         builder.push_text("\u{2060}");
+        // pyro: an image marker is an inline replaced box on that line, its bottom on the
+        // baseline: the line is as tall as it above the baseline (WPT css-lists
+        // `outside-marker-taller-than-content`).
+        if let Some(Marker::Image { height, .. }) =
+            root_node.element_data().and_then(|el| el.list_item_data.as_deref()).map(|item| &item.marker)
+        {
+            let mut marker_style = parley_style.clone();
+            marker_style.font_size = 0.01;
+            marker_style.line_height = parley::LineHeight::Absolute(*height);
+            marker_style.vertical_align = parley::VerticalAlign {
+                alignment: parley::AlignmentBaseline::Baseline,
+                shift: parley::BaselineShift::Length(*height / 2.0),
+            };
+            builder.push_style_span(marker_style);
+            builder.push_text("\u{2060}");
+            builder.pop_style_span();
+        }
     }
     let strut = &mut { strut && !marker_line };
     // pyro: the first letter the root's `::first-letter` styles (`layout::first_letter`).
@@ -758,6 +817,7 @@ fn build_inline_layout_with(
             + (parley_style.letter_spacing + parley_style.word_spacing) * scale;
         text_layout.layout.set_tab_stops(space, ch / 2.0);
     }
+    text_layout.layout.set_line_height_quirk(nodes.line_height_quirk);
     // pyro: the shaped text's content widths, for every layout of it (`TextLayout::
     // content_widths`): a function of the shaped clusters alone while no in-flow inline box, whose
     // size each layout sets, takes part in them. Measured with no text indent; the layout sets its

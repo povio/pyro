@@ -96,7 +96,8 @@ A locator names elements. It needs **exactly one** base kind, can be scoped and 
 | `placeholder` | pattern | *Base.* Inputs by placeholder. |
 | `ariaRef` | string | *Base.* Playwright's `aria-ref=e5`: the element that the document's last AI-mode ARIA snapshot gave this ref (`f1e5` for a child frame). |
 | `of` | locator | *Base.* Another locator's matches as the base set, so a `filter` or `nth` can follow an `nth`. |
-| `exact` | boolean | Whole-string, case-sensitive match for `text`, `name`, `label` and `placeholder` (after whitespace normalization). Otherwise matching is a case-insensitive substring. Ignored by regex patterns. |
+| `exact` | boolean | Whole-string, case-sensitive match for `text`, `name`, `label` and `placeholder` (after whitespace normalization). Otherwise matching is a case-insensitive substring. Ignored by regex patterns. `text` follows Playwright's `getByText`: an element matches when its whole text does and no child element's text does. |
+| `legacyText` | boolean | `text` as Playwright's legacy `text="…"` selector: an exact string also matches an element one of whose own text-node runs equals it, and an element whose child matches too. |
 | `within` | locator | Search inside each match of this locator. |
 | `frame` | locator | Search inside the document of the `<iframe>` this locator matches (in the parent document; it can have its own `frame`). |
 | `or` | locator[] | Add these locators' matches, in document order. |
@@ -183,12 +184,12 @@ Same-document navigation: `history.pushState` and a `popstate` event. Settles on
 | --- | --- | --- | --- |
 | `locator` | [locator](#locator) | required | all |
 | `action` | `click` \| `dblclick` \| `hover` \| `fill` \| `type` \| `press` \| `check` \| `uncheck` \| `focus` \| `blur` \| `upload` \| `dropFiles` \| `drag` \| `wheel` | required | |
-| `value` | string | `""` | `fill`, `type` (text), `press` (key or chord such as `Shift+Tab`), `upload`/`dropFiles` (paths, one per line) |
+| `value` | string | `""` | `fill`, `type` (text), `press` (key or chord such as `Shift+Tab`), `upload`/`dropFiles` (paths, one per line). `press` and `type` do not need an enabled element |
 | `files` | `[{name, mimeType?, text? \| base64?}]` | `[]` | `upload`, `dropFiles`: inline files, 64 MiB each at most. `mimeType` defaults from the extension. |
 | `to` | locator | | `drag` (required) |
 | `button` | `left` \| `right` \| `middle` | `left` | pointer actions |
 | `position` | `{x, y}` | center of the visible part | `click`, `dblclick`, `hover`, `wheel`: offset from the element's top-left corner |
-| `force` | boolean | `false` | `click`, `dblclick`, `hover`, `wheel`: skip the hit test and the enabled check |
+| `force` | boolean | `false` | `click`, `dblclick`, `hover`, `wheel`: skip the hit test and the enabled check, and aim at the center of the box where it meets the viewport, whatever clips it |
 | `deltaX`, `deltaY` | number | `0` | `wheel` |
 | `modifiers` | `("Shift" \| "Control" \| "Alt" \| "Meta" \| "ControlOrMeta")[]` | `[]` | pointer actions (`ControlOrMeta` is Meta on macOS) |
 | `settle` | boolean | `true` in `Pyro.run`, `false` in `Pyro.act` | wait for the page to go quiet afterwards |
@@ -214,6 +215,25 @@ Result `{}`, or `{settleMs, settled?, pending?}` after a settle.
 | `settle` | boolean | `true` |
 | `timeout` | integer | run timeout |
 
+### keyboard {#keyboard}
+
+```json
+{ "keyboard": { "press": "Escape" } }
+{ "keyboard": { "type": "hello" } }
+```
+
+Keys at the focused element (the body when none has focus), as Playwright's `page.keyboard`.
+
+| Field | Type | Default |
+| --- | --- | --- |
+| `press` | string | a key or chord; exactly one of `press` and `type` |
+| `type` | string | text, one key press per character |
+| `modifiers` | as for `act` | `[]` |
+| `settle` | boolean | `true` |
+| `timeout` | integer | run timeout |
+
+An unknown key fails validation (`Unknown key: "…"`). Result `{}`, or `{settleMs, …}` after a settle.
+
 ### check {#check}
 
 ```json
@@ -235,9 +255,9 @@ Result `{}`, or `{settleMs, settled?, pending?}` after a settle.
 | --- | --- | --- |
 | `visible` | | one match and it is visible |
 | `hidden` | | no match, or the one match is not visible |
-| `text` | string | text equals (both whitespace-normalized) |
-| `containsText` | string | text contains (normalized) |
-| `value` | string | form control value equals |
+| `text` | string or regex pattern | text equals (both whitespace-normalized), or the regex matches the normalized text |
+| `containsText` | string or regex pattern | text contains (normalized), or the regex matches it |
+| `value` | string or regex pattern | form control value equals, or the regex matches it |
 | `count` | integer | number of matches equals |
 | `checked` | `true` (default) \| `false` \| `"mixed"` | checkbox/radio state equals |
 | `css` | string | computed value of `property` equals |

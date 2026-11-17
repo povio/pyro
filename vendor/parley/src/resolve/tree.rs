@@ -374,7 +374,10 @@ impl<B: Brush> TreeStyleBuilder<B> {
             }),
         }
         self.last_item_is_inline_box = false;
-        self.has_content = true;
+        // pyro: a lone word joiner (the strut blitz-dom pushes for a line of atomic inlines) is no
+        // content: white space after it still collapses away at the start of the paragraph (WPT
+        // css-flexbox `grandchild-span-height`)
+        self.has_content |= text != "\u{2060}";
     }
 
     /// The index of `span`'s style in the style table, adding it (and any ancestors that have not

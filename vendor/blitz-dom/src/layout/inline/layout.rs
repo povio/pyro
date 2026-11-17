@@ -44,10 +44,19 @@ fn subtract_margins(mut child_inputs: LayoutInput, margin: taffy::Rect<f32>) -> 
 /// into the available space or known width the box is measured with.
 fn inline_box_inputs(
     width_style: taffy::Dimension,
+    height_style: taffy::Dimension,
+    stretch_height: Option<f32>,
     margin: taffy::Rect<f32>,
     child_inputs: LayoutInput,
 ) -> LayoutInput {
     let mut inputs = subtract_margins(child_inputs, margin);
+    // pyro: `height: stretch` fills the definite height of the containing block (`stretch_height`,
+    // its content box), less the box's margins (WPT css-sizing `stretch/*`; an `inline-block`,
+    // a button, an input with `height: -webkit-fill-available`). Replaced boxes resolve it
+    // themselves (`replaced.rs`).
+    if let (true, Some(height)) = (height_style.is_stretch(), stretch_height) {
+        inputs.known_dimensions.height = Some((height - margin.vertical_axis_sum()).max(0.0));
+    }
     let stretch_width = inputs.available_space.width.into_option();
     let percent_basis = child_inputs.parent_size.width;
 
@@ -644,6 +653,13 @@ impl LayoutPassState<'_> {
 
         // Resolve node's preferred/min/max sizes (width/heights) against the available space (percentages resolve to pixel values)
         // For ContentSize mode, we pretend that the node has no size styles as these should be ignored.
+        // pyro: `min-height`/`max-height` content keywords, applied to the final height below
+        // (taffy `compute_inner` does the same for block containers).
+        let height_keywords = {
+            let content = |keyword: taffy::Dimension| keyword.is_sizing_keyword() && !keyword.is_stretch();
+            let (min, max) = taffy::BlockContainerStyle::own_height_keywords(&style);
+            (sizing_mode == SizingMode::InherentSize && content(min), sizing_mode == SizingMode::InherentSize && content(max))
+        };
         let (node_size, node_min_size, node_max_size, aspect_ratio) = match sizing_mode {
             SizingMode::ContentSize => {
                 let node_size = known_dimensions;
@@ -740,6 +756,15 @@ impl LayoutPassState<'_> {
         let child_available_space = match (self.nodes[node_id].is_anonymous(), parent_size.height) {
             (true, Some(height)) => Size { height: AvailableSpace::Definite(height), ..available_space },
             _ => available_space,
+        };
+        // pyro: the height `height: stretch` fills (`inline_box_inputs`): this block's content
+        // height when it is definite (an anonymous block's containing block's).
+        let stretch_height = if self.nodes[node_id].is_anonymous() {
+            parent_size.height
+        } else if known_dimensions.height.is_some() || node_size.height.is_some() {
+            available_space.height.into_option()
+        } else {
+            None
         };
         let child_inputs = taffy::tree::LayoutInput {
             known_dimensions: Size::NONE,
@@ -847,7 +872,7 @@ impl LayoutPassState<'_> {
             let contain_layout = box_style.slow_clone_contain().contains(Contain::LAYOUT);
             let exports_baseline = !(contain_layout
                 || (baseline_source == BaselineSource::Auto && is_block_axis_scroll_container));
-            let box_inputs = inline_box_inputs(style.size().width, margin, child_inputs);
+            let box_inputs = inline_box_inputs(style.size().width, style.size().height, stretch_height.filter(|_| !style.flags.contains(StyleFlags::IS_REPLACED)), margin, child_inputs);
             drop(style);
 
             if is_out_of_flow || is_floated {
@@ -1650,6 +1675,10 @@ impl LayoutPassState<'_> {
         // also of zero width) is no phantom line box (CSS Inline 3 § 2.1): margins do not
         // collapse through its block, whatever its height.
         let has_span_edges = inline_layout.layout.inline_boxes().any(|inline_box| inline_box.kind.is_span_edge());
+        let has_visible_text = inline_layout.text.chars().any(|c| {
+            // (a no-break space is content: WPT css-color `t32-opacity-offscreen-multiple-boxes-2-c`)
+            !matches!(c, ' ' | '\t' | '\n' | '\r' | '\u{C}') && !matches!(c, '\u{200B}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}' | '\u{2061}' | '\u{FFFC}')
+        });
 
         let mut height = if has_inline_content {
             inline_layout.layout.height()
@@ -1749,6 +1778,19 @@ impl LayoutPassState<'_> {
             .or(node_size)
             .unwrap_or(measured_size + content_box_inset.sum_axes())
             .maybe_clamp(node_min_size, node_max_size);
+        // pyro: content keywords in `min-height`/`max-height` (WPT css-sizing
+        // `hori-block-size-small-or-larger-than-container-with-min-or-max-content-1`).
+        let clamped_size = {
+            let content_height = measured_size.height + content_box_inset.vertical_axis_sum();
+            let mut height = clamped_size.height;
+            if height_keywords.1 {
+                height = height.min(content_height);
+            }
+            if height_keywords.0 {
+                height = height.max(content_height);
+            }
+            Size { height, ..clamped_size }
+        };
         let final_size = Size {
             width: clamped_size.width,
             height: f32_max(
@@ -1864,7 +1906,7 @@ impl LayoutPassState<'_> {
                             .bottom
                             .maybe_resolve(container_content_size.height, resolve_calc_value),
                     };
-                    let box_inputs = inline_box_inputs(style.size().width, margin, child_inputs);
+                    let box_inputs = inline_box_inputs(style.size().width, style.size().height, stretch_height.filter(|_| !style.flags.contains(StyleFlags::IS_REPLACED)), margin, child_inputs);
                     drop(style);
 
                     if is_absolute {
@@ -1912,13 +1954,20 @@ impl LayoutPassState<'_> {
                             } else {
                                 line_has_in_flow_content
                             };
+                            // pyro: the static-position rectangle is the line box's block
+                            // extent, on the next line when content precedes the box, with no
+                            // inline extent at the line's start (Blink; WPT css-align
+                            // abspos/align-self-static-position-003/004/007).
+                            let line_height = line_bottom - line_top;
                             let y = if preceded { line_bottom } else { line_top };
+                            let x = if container_direction.is_rtl() {
+                                final_size.width - container_pb.right + span_offset.x
+                            } else {
+                                container_pb.left + span_offset.x
+                            };
                             (
-                                taffy::Line {
-                                    start: container_pb.left + span_offset.x,
-                                    end: final_size.width - container_pb.right + span_offset.x,
-                                },
-                                taffy::Line { start: y, end: y },
+                                taffy::Line { start: x, end: x },
+                                taffy::Line { start: y, end: y + line_height },
                             )
                         };
 
@@ -2199,10 +2248,13 @@ impl LayoutPassState<'_> {
             },
             top_margin: CollapsibleMarginSet::ZERO,
             bottom_margin: CollapsibleMarginSet::ZERO,
+            // pyro: nor through lines that hold text, however short (`font-size: 0`, `line-height:
+            // 0`): they are line boxes (CSS 2.1 §8.3.1; WPT css-fonts `font-size-zero-1`)
             margins_can_collapse_through: !has_styles_preventing_being_collapsed_through
                 && !has_span_edges
                 && final_size.height == 0.0
-                && measured_size.height == 0.0,
+                && measured_size.height == 0.0
+                && !has_visible_text,
             oof_candidates,
             oof_positioning_area: Some(OofPositioningArea {
                 size: final_size - oof_position_inset.sum_axes(),

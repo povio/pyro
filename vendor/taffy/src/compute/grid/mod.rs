@@ -740,6 +740,8 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
         replay.as_ref().map(|replay| replay.affected_tracks.as_slice()),
         rows_sized.as_mut(),
     );
+    // pyro: collapsed table rows lose their size once sized (`GridTrack::collapse_sized`)
+    rows.iter_mut().for_each(GridTrack::collapse_sized);
     if has_subgrid_items {
         subgrid::update_subgrid_track_sizes(tree, &items[..own_item_count], AbsoluteAxis::Vertical, &rows, false, &subgrid_parent);
     }
@@ -968,6 +970,8 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
             None,
             None,
         );
+        // pyro: collapsed table rows lose their size once sized (`GridTrack::collapse_sized`)
+        rows.iter_mut().for_each(GridTrack::collapse_sized);
         if has_subgrid_items {
             subgrid::update_subgrid_track_sizes(tree, &items[..own_item_count], AbsoluteAxis::Vertical, &rows, false, &subgrid_parent);
         }

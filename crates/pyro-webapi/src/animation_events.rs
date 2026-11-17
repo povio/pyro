@@ -14,7 +14,11 @@
 //! `animationstart` after its delay, `animationiteration` at each iteration
 //! boundary still ahead and `animationend` after its last iteration; one
 //! whose name left the style before that fires `animationcancel`. An
-//! `infinite` animation fires `animationstart` only.
+//! `infinite` animation fires `animationstart` only. `animation-play-state:
+//! paused` holds an animation's events with its time; set running again,
+//! the rest fire from there ([`plan_animation`]). Once script controls a
+//! CSS animation's object (play, pause, finish, cancel, its time), the
+//! events follow the object's state instead ([`scripted_state`]).
 //!
 //! Transitions need a before-change style. Once a transition listener
 //! exists, the layout engine records the elements whose computed style a
@@ -78,6 +82,13 @@ pub(crate) struct Timeline {
     /// An animation held by `animation-play-state: paused`: the local time
     /// it holds (ms).
     paused_at: Option<f64>,
+    /// An animation: the events of its current plan ([`plan_animation`]),
+    /// cleared when it plays on another way (paused, resumed, or script set
+    /// its time).
+    epoch: Rc<Cell<bool>>,
+    /// An animation: how far its events got: 0 none, 1 `animationstart`,
+    /// `1 + k` the `animationiteration` of boundary `k`, [`ENDED`] its end.
+    progress: Rc<Cell<u32>>,
     /// A transition: its easing (`None`: `ease`) and the keyframes it runs
     /// between (the property's value before and after the style change).
     easing: Option<String>,
@@ -263,6 +274,84 @@ struct Planned {
     live: Rc<Cell<bool>>,
     /// Set when the event fires (the timeline's `end`).
     ends: Option<Rc<Cell<bool>>>,
+    /// An animation's plan the event belongs to ([`Timeline::epoch`]).
+    epoch: Option<Rc<Cell<bool>>>,
+    /// An animation's progress and the step this event takes it to.
+    step: Option<(Rc<Cell<u32>>, u32)>,
+}
+
+/// [`Timeline::progress`] once `animationend` fired.
+const ENDED: u32 = u32::MAX;
+
+/// Plans the events of animation `t` from its local time `local` (ms) on,
+/// replacing those planned before: the ones its time reached already and
+/// that did not fire yet fire now (a run resumed or finished by script past
+/// them; `animationstart` before the rest), the later ones when it gets
+/// there, playing at `rate` (none while `held`). Iteration boundaries it
+/// passed without playing through fire nothing.
+fn plan_animation(t: &mut Timeline, local: f64, rate: f64, held: bool, planned: &mut Vec<Planned>) {
+    t.epoch.set(false);
+    t.epoch = Rc::new(Cell::new(true));
+    let progress = t.progress.get();
+    if !t.live.get() || progress == ENDED {
+        return;
+    }
+    let (delay, duration, iterations) = (t.delay_ms, t.duration_ms, t.iterations);
+    let moving = !held && rate > 0.0;
+    let at = |time: f64| {
+        if time <= local {
+            Some(0.0)
+        } else if moving {
+            Some((time - local) / rate)
+        } else {
+            None
+        }
+    };
+    // An event due now is the animation's already: it fires (in its task)
+    // whatever plan replaces this one in the meantime, and counts as fired.
+    let event = |ty: &'static str, at_ms: f64, elapsed_ms: f64, step: u32| {
+        let due = at_ms <= 0.0;
+        if due {
+            t.progress.set(t.progress.get().max(step));
+            if step == ENDED {
+                t.ended.set(true);
+            }
+        }
+        Planned {
+            el: t.el,
+            ty,
+            transition: false,
+            name: t.name.clone(),
+            elapsed_s: elapsed_ms / 1000.0,
+            after: after(at_ms),
+            live: t.live.clone(),
+            ends: (step == ENDED && !due).then(|| t.ended.clone()),
+            epoch: (!due).then(|| t.epoch.clone()),
+            step: (!due).then(|| (t.progress.clone(), step)),
+        }
+    };
+    if progress < 1 {
+        if let Some(at_ms) = at(delay) {
+            planned.push(event("animationstart", at_ms, (-delay).max(0.0), 1));
+        }
+    }
+    if !iterations.is_finite() {
+        return;
+    }
+    if duration > 0.0 && moving {
+        // Boundaries behind it fire nothing: a negative delay passed them,
+        // or it was resumed or sought past them.
+        let boundaries = (1..).map(|k| k as f64).take_while(|k| *k < iterations);
+        let ahead = boundaries.filter(|k| delay + k * duration > local && *k as u32 + 1 > progress);
+        for k in ahead.take(MAX_ITERATIONS) {
+            let at_ms = (delay + k * duration - local) / rate;
+            planned.push(event("animationiteration", at_ms, k * duration, k as u32 + 1));
+        }
+    }
+    let active = duration * iterations;
+    if let Some(at_ms) = at(delay + active) {
+        planned.push(event("animationend", at_ms, active, ENDED));
+    }
 }
 
 fn after(ms: f64) -> Duration {
@@ -331,6 +420,11 @@ fn update(page: &Rc<PageDom>, defer: bool) {
         if !wanted.is_empty() || crate::smil::present(page, &dom) {
             state.install_source(page, style);
         }
+        // The CSS animations script controls follow their objects' states.
+        let scripted_ids: FxHashSet<u64> = match state.scripted.try_borrow() {
+            Ok(scripted) => scripted.values().filter_map(|s| s.css_id()).collect(),
+            Err(_) => FxHashSet::default(),
+        };
         let mut animations = state.animations.borrow_mut();
         let before = animations.len();
         animations.retain(|known| {
@@ -348,6 +442,8 @@ fn update(page: &Rc<PageDom>, defer: bool) {
                         after: Duration::ZERO,
                         live: Rc::new(Cell::new(true)),
                         ends: None,
+                        epoch: None,
+                        step: None,
                     });
                 }
             }
@@ -360,25 +456,34 @@ fn update(page: &Rc<PageDom>, defer: bool) {
                 .find(|known| known.el == el && known.timing.as_ref().is_some_and(|t| t.same_run(&animation)))
             {
                 // A change of how it plays: paused holds its local time,
-                // running again goes on from there.
+                // running again goes on from there, and its events follow
+                // (unless script controls it: then its object's state does).
                 let timing = known.timing.as_mut().unwrap();
                 if timing.style != animation.style {
-                    match (known.paused_at, animation.style.paused) {
-                        (None, true) => known.paused_at = Some(now_ms - known.start_ms),
+                    let replan = match (known.paused_at, animation.style.paused) {
+                        (None, true) => {
+                            known.paused_at = Some(now_ms - known.start_ms);
+                            true
+                        }
                         (Some(held), false) => {
                             known.start_ms = now_ms - held;
                             known.paused_at = None;
+                            true
                         }
-                        _ => {}
-                    }
+                        _ => false,
+                    };
                     timing.style = animation.style.clone();
                     changed = true;
+                    if replan && !scripted_ids.contains(&known.id) {
+                        let (local, held) = (known.local_ms(now_ms), known.paused_at.is_some());
+                        plan_animation(known, local, 1.0, held, &mut planned);
+                    }
                 }
                 continue;
             }
             changed = true;
             let paused = animation.style.paused;
-            let timeline = Timeline {
+            let mut timeline = Timeline {
                 id: state.next_id(),
                 start_ms: now_ms,
                 delay_ms: animation.delay_ms,
@@ -391,41 +496,14 @@ fn update(page: &Rc<PageDom>, defer: bool) {
                 timing: Some(animation.clone()),
                 // Paused from the start: held at its beginning.
                 paused_at: paused.then_some(0.0),
+                epoch: Rc::new(Cell::new(true)),
+                progress: Rc::new(Cell::new(0)),
                 easing: None,
                 keyframes: None,
             };
-            let event = |ty: &'static str, at_ms: f64, elapsed_ms: f64, ends: bool| Planned {
-                el,
-                ty,
-                transition: false,
-                name: animation.name.clone(),
-                elapsed_s: elapsed_ms / 1000.0,
-                after: after(at_ms),
-                live: timeline.live.clone(),
-                ends: ends.then(|| timeline.ended.clone()),
-            };
-            let (delay, duration) = (animation.delay_ms, animation.duration_ms);
-            if paused {
-                // Held: it starts only where a negative delay put it in its
-                // active phase already, and goes no further.
-                if delay <= 0.0 {
-                    planned.push(event("animationstart", 0.0, -delay, false));
-                }
-                animations.push(timeline);
-                continue;
-            }
-            planned.push(event("animationstart", delay, (-delay).max(0.0), false));
-            if animation.iterations.is_finite() {
-                if duration > 0.0 {
-                    // Boundaries a negative delay already passed fire nothing.
-                    let boundaries = (1..).map(|k| k as f64).take_while(|k| *k < animation.iterations);
-                    for k in boundaries.filter(|k| delay + k * duration > 0.0).take(MAX_ITERATIONS) {
-                        planned.push(event("animationiteration", delay + k * duration, k * duration, false));
-                    }
-                }
-                let active = duration * animation.iterations;
-                planned.push(event("animationend", delay + active, active, true));
-            }
+            // Held at 0 when paused: it starts only where a negative delay
+            // put it in its active phase already, and goes no further.
+            plan_animation(&mut timeline, 0.0, 1.0, paused, &mut planned);
             animations.push(timeline);
         }
         drop(animations);
@@ -459,6 +537,56 @@ fn update(page: &Rc<PageDom>, defer: bool) {
         }
     }
     schedule(page, planned, defer);
+}
+
+/// Script changed the state of CSS animation `id`'s object (play, pause,
+/// finish, cancel, its current time or rate): its events follow the object
+/// from now on. An idle object (canceled) fires `animationcancel` unless the
+/// animation ended, and starts again if played.
+pub(crate) fn scripted_state(
+    page: &Rc<PageDom>,
+    id: u64,
+    start: Option<f64>,
+    hold: Option<f64>,
+    rate: f64,
+    origin: Option<f64>,
+) {
+    if page.is_disposed() || page.scripting_disabled() {
+        return;
+    }
+    let now_ms = crate::event::page_now_ms(page);
+    let mut planned = Vec::new();
+    {
+        let Ok(mut animations) = page.animation_events.animations.try_borrow_mut() else { return };
+        let Some(t) = animations.iter_mut().find(|t| t.id == id) else { return };
+        let local = match (hold, start, origin) {
+            (Some(hold), _, _) => Some(hold),
+            (None, Some(start), Some(origin)) => Some((now_ms - origin - start) * rate),
+            _ => None,
+        };
+        match local {
+            Some(local) => plan_animation(t, local, rate, hold.is_some(), &mut planned),
+            None => {
+                t.epoch.set(false);
+                if t.progress.get() != ENDED {
+                    t.progress.set(0);
+                    planned.push(Planned {
+                        el: t.el,
+                        ty: "animationcancel",
+                        transition: false,
+                        name: t.name.clone(),
+                        elapsed_s: 0.0,
+                        after: Duration::ZERO,
+                        live: t.live.clone(),
+                        ends: None,
+                        epoch: None,
+                        step: None,
+                    });
+                }
+            }
+        }
+    }
+    schedule(page, planned, true);
 }
 
 /// A rendering opportunity (a screenshot or screencast frame): the style
@@ -875,6 +1003,8 @@ fn cancel_event(el: NodeId, name: &str) -> Planned {
         after: Duration::ZERO,
         live: Rc::new(Cell::new(true)),
         ends: None,
+        epoch: None,
+        step: None,
     }
 }
 
@@ -960,6 +1090,8 @@ fn start_transitions(
                 ended: Rc::new(Cell::new(false)),
                 timing: None,
                 paused_at: None,
+                epoch: Rc::new(Cell::new(true)),
+                progress: Rc::new(Cell::new(0)),
                 easing: transition.easing.clone(),
                 keyframes: pyro_dom::timing::transition_keyframes(before, now, longhand).map(std::sync::Arc::new),
             };
@@ -973,6 +1105,8 @@ fn start_transitions(
                 after: after(at_ms),
                 live: timeline.live.clone(),
                 ends: ends.then(|| timeline.ended.clone()),
+                epoch: None,
+                step: None,
             };
             starting.events.push(event("transitionrun", 0.0, 0.0, false));
             starting.events.push(event("transitionstart", delay, (-delay).max(0.0), false));
@@ -1018,7 +1152,7 @@ fn schedule(page: &Rc<PageDom>, planned: Vec<Planned>, defer: bool) {
 /// Dispatches one event at its element, unless its timeline was canceled or
 /// the element left the document meanwhile.
 fn fire(page: &Rc<PageDom>, event: &Planned) {
-    if !event.live.get() || page.is_disposed() {
+    if !event.live.get() || event.epoch.as_ref().is_some_and(|e| !e.get()) || page.is_disposed() {
         return;
     }
     {
@@ -1029,6 +1163,9 @@ fn fire(page: &Rc<PageDom>, event: &Planned) {
     }
     if let Some(ended) = &event.ends {
         ended.set(true);
+    }
+    if let Some((progress, step)) = &event.step {
+        progress.set(progress.get().max(*step));
     }
     let interface = if event.transition { EventInterface::TransitionEvent } else { EventInterface::AnimationEvent };
     let ev = EventCore::trusted(page, interface, event.ty, true, false);

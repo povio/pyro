@@ -610,9 +610,13 @@ pub mod vertical_align {
             return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError));
         }
 
+        // pyro: CSS 2.1's alignments for `vertical-align` (`AlignmentBaseline::VerticalAlignMiddle`).
+        let alignment_baseline = alignment_baseline.unwrap_or(AlignmentBaseline::Baseline);
+        #[cfg(feature = "servo")]
+        let alignment_baseline = alignment_baseline.from_vertical_align();
         Ok(expanded! {
             baseline_source: baseline_source.unwrap_or(BaselineSource::Auto),
-            alignment_baseline: alignment_baseline.unwrap_or(AlignmentBaseline::Baseline),
+            alignment_baseline: alignment_baseline,
             baseline_shift: baseline_shift.unwrap_or(BaselineShift::zero()),
         })
     }

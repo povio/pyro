@@ -103,3 +103,40 @@ fn marker_text_transform_comes_from_marker_rules() {
         assert_eq!(columns(&list("li{text-transform:uppercase}", "lower-roman"), [0, 0, 255]), lower, "{position}");
     }
 }
+
+/// The text properties CSS Pseudo 4 allows on `::marker` (`word-spacing`, `letter-spacing`, ...)
+/// reach the marker from a `::marker` rule as when inherited; a symbol marker keeps its symbol
+/// and is not spaced by them.
+#[test]
+fn marker_rules_space_the_marker_text() {
+    let list = |style: &str, ty: &str| {
+        render(&format!(
+            "<style>li::marker{{color:#00f}} ul{{list-style:{ty} inside}} {style}</style><ul><li>x</li></ul>"
+        ))
+    };
+    let blue = |img: &RgbaImage| columns(img, [0, 0, 255]);
+    let plain = list("", "'a b'");
+    let inherited = list("ul{word-spacing:40px}", "'a b'");
+    let explicit = list("li::marker{word-spacing:40px}", "'a b'");
+    assert_ne!(blue(&inherited), blue(&plain));
+    assert_eq!(blue(&explicit), blue(&inherited));
+    // A disc and its space are not spaced, and stay a disc under a `::marker` rule.
+    let disc = list("", "disc");
+    assert_eq!(blue(&list("li::marker{word-spacing:40px;letter-spacing:20px}", "disc")), blue(&disc));
+}
+
+/// An item with only an inside symbol marker has a line for it.
+#[test]
+fn an_empty_item_has_the_line_of_its_inside_symbol_marker() {
+    let img = render("<style>li::marker{color:#00f}</style><ul style='list-style:disc inside'><li></li></ul>");
+    assert!(!columns(&img, [0, 0, 255]).is_empty());
+}
+
+/// An outside marker is painted before the item's text, which covers it where they overlap.
+#[test]
+fn text_covers_an_outside_marker() {
+    let img = render(
+        "<style>li::marker{color:#00f} li{text-indent:-200px} x{background:#000}</style><ol><li><x>XXXXXXXX</x></li></ol>",
+    );
+    assert!(columns(&img, [0, 0, 255]).is_empty());
+}

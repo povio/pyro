@@ -12,7 +12,7 @@ import { STATUS_CODES } from 'node:http';
 import { basename } from 'node:path';
 import { Cdp, CdpError } from '../cdp.js';
 import { writeFileMakingDirs } from './files.js';
-import type { LocatorSpec, Step } from '../steps.js';
+import { narrow, type LocatorSpec, type Step } from '../steps.js';
 import {
   type ExpectedText,
   type UrlMatch,
@@ -480,14 +480,15 @@ export class Locator extends Scope {
     return { of: picked, ...(frame ? { frame } : {}) };
   }
   filter(options: FilterOptions = {}): Locator {
-    const base = this.base();
-    const filter = { ...base.filter };
+    const filter: NonNullable<LocatorSpec['filter']> = {};
     if (options.hasText !== undefined) filter.hasText = pattern(options.hasText);
     if (options.hasNotText !== undefined) filter.hasNotText = pattern(options.hasNotText);
     if (options.has) filter.has = innerSpec(options.has);
     if (options.hasNot) filter.hasNot = innerSpec(options.hasNot);
     if (options.visible !== undefined) filter.visible = options.visible;
-    return new Locator(this._page, { ...base, filter }, `${this._desc}.filter(${filterDesc(options)})`);
+    // Each filter() narrows the matches further, never replacing an earlier one.
+    const spec = Object.keys(filter).length ? narrow(this._spec, filter) : this.base();
+    return new Locator(this._page, spec, `${this._desc}.filter(${filterDesc(options)})`);
   }
   nth(index: number): Locator {
     return new Locator(this._page, { ...this.base(), nth: index }, `${this._desc}.nth(${index})`);

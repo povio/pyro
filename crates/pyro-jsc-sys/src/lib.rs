@@ -601,6 +601,11 @@ pub mod spi {
     /// Patched JavaScriptCore only (`webkit/patches/0015-impure-named-properties.patch`).
     pub type JSAddImpurePropertyFn = unsafe extern "C" fn(ctx: JSContextRef, name: JSStringRef);
     /// Patched JavaScriptCore only (`webkit/patches/0004-named-properties-object.patch`).
+    /// Patch 0033: the global of `ctx` becomes the target of `proxy`, another
+    /// context's global proxy, which becomes its `globalThis` (a WindowProxy that
+    /// follows its frame to the next document). False when `proxy` is not one.
+    pub type JSGlobalContextAdoptGlobalProxyFn =
+        unsafe extern "C" fn(ctx: JSGlobalContextRef, proxy: JSObjectRef) -> bool;
     pub type JSGlobalContextInstallNamedPropertiesFn = unsafe extern "C" fn(
         ctx: JSGlobalContextRef,
         filter: JSNamedPropertyFilter,
@@ -976,6 +981,7 @@ pub mod spi {
         pub set_time_zone: Option<JSContextGroupSetTimeZoneFn>,
         pub set_wrapper_property_added: Option<JSSetWrapperPropertyAddedCallbackFn>,
         pub install_named_properties: Option<JSGlobalContextInstallNamedPropertiesFn>,
+        pub adopt_global_proxy: Option<JSGlobalContextAdoptGlobalProxyFn>,
         pub add_impure_property: Option<JSAddImpurePropertyFn>,
         pub set_custom_accessor: Option<JSObjectSetCustomAccessorFn>,
         pub set_fast_getter: Option<JSObjectSetFastGetterFn>,
@@ -1164,6 +1170,10 @@ pub mod spi {
             set_time_zone: resolve!("JSContextGroupSetTimeZone"),
             set_wrapper_property_added: resolve!("JSSetWrapperPropertyAddedCallback"),
             install_named_properties: resolve!("JSGlobalContextInstallNamedProperties"),
+            #[cfg(any(pyro_jsc_adopt_global_proxy, not(pyro_jsc_static)))]
+            adopt_global_proxy: resolve!("JSGlobalContextAdoptGlobalProxy"),
+            #[cfg(not(any(pyro_jsc_adopt_global_proxy, not(pyro_jsc_static))))]
+            adopt_global_proxy: None,
             add_impure_property: resolve!("JSAddImpureProperty"),
             set_custom_accessor: resolve!("JSObjectSetCustomAccessor"),
             set_fast_getter: resolve!("JSObjectSetFastGetter"),

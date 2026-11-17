@@ -1,7 +1,7 @@
 // Playwright's text, URL and selector rules, client side: what its matchers
 // send as `expectedText`, its URL globs, and the selector strings
 // `page.locator()` takes, turned into pyro locator specs.
-import type { LocatorSpec } from '../steps.js';
+import { narrow, type LocatorSpec } from '../steps.js';
 
 /** One entry of Playwright's `expectedText` (`serializeExpectedTextValues`). */
 export type ExpectedText = {
@@ -134,9 +134,15 @@ function value(body: string): { pattern: Pattern; exact: boolean } {
   }
   return { pattern: v, exact: false };
 }
-const textSpec = (body: string): LocatorSpec => {
+/**
+ * `internal:text` (getByText) compares an exact string with the whole text;
+ * the legacy `text="…"` engine and bare quoted selectors also match an
+ * element one of whose own text-node runs equals it (`legacyText`).
+ */
+const textSpec = (body: string, legacy = false): LocatorSpec => {
   const { pattern: p, exact } = value(body);
-  return typeof p === 'string' && exact ? { text: p, exact: true } : { text: p };
+  if (typeof p !== 'string' || !exact) return { text: p };
+  return legacy ? { text: p, exact: true, legacyText: true } : { text: p, exact: true };
 };
 
 /** Splits at `sep` outside quotes, brackets and parentheses. */
@@ -225,10 +231,8 @@ const base = (spec: LocatorSpec): LocatorSpec => {
   const { frame, ...picked } = spec;
   return { of: picked, ...(frame ? { frame } : {}) };
 };
-const filtered = (spec: LocatorSpec, filter: NonNullable<LocatorSpec['filter']>): LocatorSpec => {
-  const b = base(spec);
-  return { ...b, filter: { ...b.filter, ...filter } };
-};
+/** Each filter narrows further (a second `has-text` applies to the first one's matches). */
+const filtered = (spec: LocatorSpec, filter: NonNullable<LocatorSpec['filter']>): LocatorSpec => narrow(spec, filter);
 
 const PW_PSEUDOS = ['has-text', 'text', 'text-is', 'text-matches', 'visible', 'nth-match', 'light', 'left-of', 'right-of', 'above', 'below', 'near'];
 const LAYOUT = ['left-of', 'right-of', 'above', 'below', 'near'];
@@ -397,6 +401,7 @@ function part(prev: LocatorSpec | undefined, sel: string, testIdAttribute: strin
       case 'css:light':
         return fresh(cssPart(body, testIdAttribute));
       case 'text':
+        return fresh(textSpec(body, true));
       case 'internal:text':
         return fresh(textSpec(body));
       case 'id':
@@ -455,7 +460,7 @@ function part(prev: LocatorSpec | undefined, sel: string, testIdAttribute: strin
     }
   }
   if (s.startsWith('//') || s.startsWith('..') || s.startsWith('(//')) return fresh({ xpath: s });
-  if (/^["'][\s\S]*["'][is]?$/.test(s)) return fresh(textSpec(s));
+  if (/^["'][\s\S]*["'][is]?$/.test(s)) return fresh(textSpec(s, true));
   return fresh(cssPart(s, testIdAttribute));
 }
 

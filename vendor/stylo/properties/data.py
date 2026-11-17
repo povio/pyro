@@ -1336,8 +1336,17 @@ class PropertyRestrictions:
                 "cursor",
                 "direction",
                 "hyphens",
+                # pyro: the text properties CSS Pseudo 4 and Blink allow on `::marker` (WPT
+                # css-pseudo `marker-letter-spacing`, `marker-word-break`, ...).
+                "letter-spacing",
+                "line-break",
                 "line-height",
+                "overflow-wrap",
                 "quotes",
+                "tab-size",
+                "text-decoration-skip-ink",
+                "word-break",
+                "word-spacing",
                 "text-combine-upright",
                 "text-emphasis-color",
                 "text-emphasis-position",

@@ -15,10 +15,10 @@ index 14aded4..862cfe1 100644
  optional = true
 diff --git b/src/filter.rs b/src/filter.rs
 new file mode 100644
-index 0000000..073d561
+index 0000000..256d4c7
 --- /dev/null
 +++ b/src/filter.rs
-@@ -0,0 +1,1033 @@
+@@ -0,0 +1,1038 @@
 +// Copyright 2024 the Vello Authors
 +// SPDX-License-Identifier: Apache-2.0 OR MIT
 +
@@ -79,6 +79,10 @@ index 0000000..073d561
 +    /// It is an `feFlood` element: a transparent black flood is that, not usvg's stand-in for a
 +    /// primitive it could not read (Figma's `<feFlood flood-opacity="0" result="BackgroundImageFix"/>`).
 +    pub flood: bool,
++    /// It is an `feImage` of an element of the document (`href="#id"`): a transparent black flood
++    /// is its result when usvg could not draw the element (a lone `<tspan>`), as in Chromium (WPT
++    /// filter-effects `svg-feimage-004`), not a stand-in to leave the filter out for.
++    pub element_image: bool,
 +}
 +
 +/// pyro: what the document knows of the primitives of the filters of a tree (by the `<filter>`'s
@@ -416,7 +420,8 @@ index 0000000..073d561
 +                if flood.opacity().get() == 0.0
 +                    && flood.color() == usvg::Color::black()
 +                    && !note.no_light
-+                    && !note.flood =>
++                    && !note.flood
++                    && !note.element_image =>
 +            {
 +                return None;
 +            }
@@ -1053,7 +1058,7 @@ index 0000000..073d561
 +    }
 +}
 diff --git a/src/lib.rs b/src/lib.rs
-index 3370fa2..cc4f0e6 100644
+index 3370fa2..6b6ec48 100644
 --- a/src/lib.rs
 +++ b/src/lib.rs
 @@ -21,10 +21,13 @@
@@ -1070,7 +1075,64 @@ index 3370fa2..cc4f0e6 100644
  pub use usvg;
  
  use anyrender::PaintScene;
-@@ -66,6 +69,33 @@ pub fn render_svg_tree<S: PaintScene>(scene: &mut S, svg: &usvg::Tree, transform
+@@ -59,6 +62,56 @@ pub fn render_svg_str_with<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
+     Ok(())
+ }
+ 
++/// pyro: a `<foreignObject>` drawn as an image (see [`foreign_object_id`]): the error handler is
++/// called for its node while [`foreign_object`] returns it.
++#[derive(Clone, Copy, Debug)]
++pub struct ForeignObject {
++    /// The id blitz-dom wrote in the image's data (a `NodeId`).
++    pub id: u64,
++    /// Maps the image's pixels (`0..size`) to the scene's space.
++    pub transform: Affine,
++    /// The image's size in pixels.
++    pub size: (f64, f64),
++}
++
++thread_local! {
++    pub(crate) static FOREIGN_OBJECT: std::cell::Cell<Option<ForeignObject>> = const { std::cell::Cell::new(None) };
++}
++
++/// pyro: what [`render_svg_tree`] draws for a node it cannot render (a red box), for an error
++/// handler that handles some nodes itself.
++pub fn draw_error_box<S: PaintScene>(scene: &mut S, node: &usvg::Node) {
++    util::default_error_handler(scene, node);
++}
++
++/// pyro: the `<foreignObject>` whose image the error handler is called for, if it is one.
++pub fn foreign_object() -> Option<ForeignObject> {
++    FOREIGN_OBJECT.with(|f| f.get())
++}
++
++/// pyro: the id in a `<foreignObject>`'s stand-in image (blitz-dom `svg_css::foreign_object_href`:
++/// a PNG whose chunk after `IHDR` is `pyFo` with an 8-byte big-endian id).
++pub fn foreign_object_id(kind: &usvg::ImageKind) -> Option<u64> {
++    let usvg::ImageKind::PNG(data) = kind else { return None };
++    let data = data.get(33..49)?;
++    if &data[0..8] != [0, 0, 0, 8, b'p', b'y', b'F', b'o'] {
++        return None;
++    }
++    Some(u64::from_be_bytes(data[8..16].try_into().ok()?))
++}
++
++/// pyro: [`render_svg_tree_with`] with what the document knows of the tree's filter primitives
++/// (see [`render_svg_tree_with_notes`]).
++pub fn render_svg_tree_with_notes_and<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
++    scene: &mut S,
++    svg: &usvg::Tree,
++    transform: Affine,
++    notes: FilterNotes,
++    error_handler: &mut F,
++) {
++    filter::with_notes(notes, || render_svg_tree_with(scene, svg, transform, error_handler));
++}
++
+ /// Append a [`usvg::Tree`] to an [`anyrender::PaintScene`].
+ ///
+ /// This will draw a red box over (some) unsupported elements.
+@@ -66,6 +119,33 @@ pub fn render_svg_tree<S: PaintScene>(scene: &mut S, svg: &usvg::Tree, transform
      render_svg_tree_with(scene, svg, transform, &mut util::default_error_handler);
  }
  
@@ -1104,7 +1166,7 @@ index 3370fa2..cc4f0e6 100644
  /// Append a [`usvg::Tree`] to an [`anyrender::PaintScene`] (with custom error handling).
  ///
  /// See the [module level documentation](crate#unsupported-features) for a list of some unsupported svg features
-@@ -75,15 +105,43 @@ pub fn render_svg_tree_with<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
+@@ -75,15 +155,43 @@ pub fn render_svg_tree_with<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
      transform: Affine,
      error_handler: &mut F,
  ) {
@@ -1148,7 +1210,7 @@ index 3370fa2..cc4f0e6 100644
  #[cfg(test)]
  mod tests {
      use super::*;
-@@ -106,9 +164,13 @@ mod tests {
+@@ -106,9 +214,13 @@ mod tests {
              .iter()
              .find_map(|command| match command {
                  RenderCommand::PushLayer(layer) => Some(layer.fill),
@@ -1163,7 +1225,7 @@ index 3370fa2..cc4f0e6 100644
      }
  
      #[test]
-@@ -134,6 +196,87 @@ mod tests {
+@@ -134,6 +246,87 @@ mod tests {
          );
      }
  
@@ -1252,7 +1314,7 @@ index 3370fa2..cc4f0e6 100644
      fn fill_rule_does_not_control_clipping() {
          assert_eq!(clip_rule("", r#"fill-rule="evenodd""#), Fill::NonZero);
 diff --git a/src/render.rs b/src/render.rs
-index 2e9e1c4..4de71c5 100644
+index 2e9e1c4..e2012dc 100644
 --- a/src/render.rs
 +++ b/src/render.rs
 @@ -2,92 +2,73 @@
@@ -1452,7 +1514,29 @@ index 2e9e1c4..4de71c5 100644
                      }
                  }
              }
-@@ -124,7 +137,7 @@ pub(crate) fn render_group<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
+@@ -111,6 +124,21 @@ pub(crate) fn render_group<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
+                 if !img.is_visible() {
+                     continue;
+                 }
++                // pyro: a `<foreignObject>`'s stand-in (blitz-dom `svg_css`): its painter draws
++                // its content in the image's place, through the error handler.
++                if let Some(id) = crate::foreign_object_id(img.kind()) {
++                    let size = img.size();
++                    crate::FOREIGN_OBJECT.with(|f| {
++                        f.set(Some(crate::ForeignObject {
++                            id,
++                            transform: global_transform * transform,
++                            size: (size.width() as f64, size.height() as f64),
++                        }))
++                    });
++                    error_handler(scene, node);
++                    crate::FOREIGN_OBJECT.with(|f| f.set(None));
++                    continue;
++                }
+                 match img.kind() {
+                     usvg::ImageKind::JPEG(_)
+                     | usvg::ImageKind::PNG(_)
+@@ -124,7 +152,7 @@ pub(crate) fn render_group<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
                                  continue;
                              };
                              let image = util::into_image(decoded_image, img.rendering_mode());
@@ -1461,7 +1545,7 @@ index 2e9e1c4..4de71c5 100644
                              scene.draw_image(image.as_ref(), image_ts);
                          }
  
-@@ -141,24 +154,1092 @@ pub(crate) fn render_group<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
+@@ -141,24 +169,1092 @@ pub(crate) fn render_group<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
                              transform,
                              global_transform,
                              error_handler,
@@ -2195,8 +2279,8 @@ index 2e9e1c4..4de71c5 100644
 +    if !(box_reference && fill_mask_shapes(scene, mask, ts, rect)) {
 +        if let Some((image, image_ts)) = mask_image(mask, ts, rect) {
 +            scene.draw_image(image.as_ref(), image_ts);
-         }
-     }
++        }
++    }
 +    scene.pop_layer();
 +}
 +
@@ -2310,8 +2394,8 @@ index 2e9e1c4..4de71c5 100644
 +                    scene.pop_layer();
 +                }
 +            }
-+        }
-+    }
+         }
+     }
 +    let mut items = Vec::new();
 +    let mut paths = Vec::new();
 +    if !collect(mask.root(), ts, &mut items, &mut paths) || paths.is_empty() {
@@ -2557,7 +2641,7 @@ index 2e9e1c4..4de71c5 100644
  }
  
  fn fill<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
-@@ -168,9 +1249,13 @@ fn fill<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
+@@ -168,9 +1264,13 @@ fn fill<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
      transform: Affine,
      local_path: &BezPath,
      node: &Node,
@@ -2572,7 +2656,7 @@ index 2e9e1c4..4de71c5 100644
              scene.fill(
                  match fill.rule() {
                      usvg::FillRule::NonZero => Fill::NonZero,
-@@ -181,7 +1266,7 @@ fn fill<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
+@@ -181,7 +1281,7 @@ fn fill<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
                  Some(brush_transform),
                  local_path,
              );
@@ -2581,7 +2665,7 @@ index 2e9e1c4..4de71c5 100644
              error_handler(scene, node);
          }
      }
-@@ -194,9 +1279,14 @@ fn stroke<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
+@@ -194,9 +1294,14 @@ fn stroke<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
      transform: Affine,
      local_path: &BezPath,
      node: &Node,
@@ -2597,7 +2681,7 @@ index 2e9e1c4..4de71c5 100644
              let conv_stroke = util::to_stroke(stroke);
              scene.stroke(
                  &conv_stroke,
-@@ -205,7 +1295,7 @@ fn stroke<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
+@@ -205,7 +1310,7 @@ fn stroke<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
                  Some(brush_transform),
                  local_path,
              );
@@ -2606,3 +2690,18 @@ index 2e9e1c4..4de71c5 100644
              error_handler(scene, node);
          }
      }
+diff --git a/src/util.rs b/src/util.rs
+index a350130..52dc5e0 100644
+--- a/src/util.rs
++++ b/src/util.rs
+@@ -239,6 +239,10 @@ fn to_extend(spread_method: usvg::SpreadMethod) -> peniko::Extend {
+ /// Error handler function for [`super::append_tree_with`] which draws a transparent red box
+ /// instead of unsupported SVG features
+ pub(crate) fn default_error_handler<S: PaintScene>(scene: &mut S, node: &usvg::Node) {
++    // pyro: a `<foreignObject>` this renderer cannot draw draws nothing.
++    if crate::foreign_object().is_some() {
++        return;
++    }
+     let bb = node.bounding_box();
+     let rect = Rect {
+         x0: bb.left() as f64,

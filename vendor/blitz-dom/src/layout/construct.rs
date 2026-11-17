@@ -188,6 +188,54 @@ impl LayoutChildren {
     }
 }
 
+/// pyro: an `<input>`'s `type` attribute as the keyword of its state, lowercase: `None` for the
+/// Text state of a missing, empty or unknown value (HTML: the invalid value default).
+pub(crate) fn input_type_keyword(attr: Option<&str>) -> Option<&'static str> {
+    const KEYWORDS: [&str; 22] = [
+        "hidden", "text", "search", "tel", "url", "email", "password", "date", "month", "week", "time",
+        "datetime-local", "number", "range", "color", "checkbox", "radio", "file", "submit", "image", "reset",
+        "button",
+    ];
+    let attr = attr?;
+    KEYWORDS.into_iter().find(|keyword| attr.eq_ignore_ascii_case(keyword))
+}
+
+/// pyro: whether `node` is an SVG `<foreignObject>` element.
+pub(crate) fn is_foreign_object(node: &Node) -> bool {
+    node.data
+        .downcast_element()
+        .is_some_and(|el| el.name.ns == ns!(svg) && &*el.name.local == "foreignObject")
+}
+
+/// pyro: the `<foreignObject>` elements in the `<svg>` at `svg` (not those in one of them: they
+/// are in its HTML content, which another `<svg>` there draws), in tree order.
+fn svg_foreign_objects(doc: &BaseDocument, svg: NodeId) -> Vec<NodeId> {
+    let mut out = Vec::new();
+    let mut stack: Vec<NodeId> = doc.nodes[svg].children.iter().rev().copied().collect();
+    while let Some(id) = stack.pop() {
+        let node = &doc.nodes[id];
+        if is_foreign_object(node) {
+            out.push(id);
+            continue;
+        }
+        stack.extend(node.children.iter().rev().copied());
+    }
+    out
+}
+
+/// pyro: removes the construction damage of the `<svg>` at `svg` and its subtree, but for the
+/// subtrees of its `<foreignObject>`s ([`svg_foreign_objects`]).
+fn clear_svg_construct_damage(doc: &mut BaseDocument, svg: NodeId) {
+    let mut stack = vec![svg];
+    while let Some(id) = stack.pop() {
+        if id != svg && is_foreign_object(&doc.nodes[id]) {
+            continue;
+        }
+        doc.nodes[id].remove_damage(CONSTRUCT_BOX | CONSTRUCT_DESCENDENT | CONSTRUCT_FC);
+        stack.extend(doc.nodes[id].children.iter().copied());
+    }
+}
+
 fn push_children_and_pseudos(layout_children: &mut ThinVec<NodeId>, node: &Node) {
     if let Some(before) = node.before() {
         layout_children.push(before);
@@ -587,10 +635,9 @@ fn collect_layout_children_with_wrap(
         // Handle text inputs
         let tag_name = el.name.local.as_ref();
         if matches!(tag_name, "input" | "textarea") {
-            let type_attr: Option<&str> = doc.nodes[container_node_id]
-                .data
-                .downcast_element()
-                .and_then(|el| el.attr(local_name!("type")));
+            let type_attr = input_type_keyword(
+                doc.nodes[container_node_id].data.downcast_element().and_then(|el| el.attr(local_name!("type"))),
+            );
             if tag_name == "textarea" {
                 create_text_editor(doc, container_node_id, true);
                 return;
@@ -626,8 +673,13 @@ fn collect_layout_children_with_wrap(
         }
 
         // pyro: an `<object>` showing an image is replaced content (`replaced::is_image_object`):
-        // its children, the fallback, generate no boxes.
-        if crate::layout::replaced::is_image_object(el) {
+        // its children, the fallback, generate no boxes. Nor do those of an element its
+        // `content` image replaces (`util::content_replaces`; the root's were painted), also
+        // while the image loads or when it fails (WPT css-content `element-replacement-alt`).
+        if crate::layout::replaced::is_image_object(el)
+            || (!doc.nodes[container_node_id].is_anonymous()
+                && doc.nodes[container_node_id].primary_styles().is_some_and(|style| crate::util::content_replaces(&style)))
+        {
             doc.iter_subtree_mut(container_node_id, |id: NodeId, doc: &mut BaseDocument| {
                 doc.nodes[id].remove_damage(CONSTRUCT_BOX | CONSTRUCT_DESCENDENT | CONSTRUCT_FC);
             });
@@ -643,9 +695,19 @@ fn collect_layout_children_with_wrap(
             let outer_html = doc.with_cross_svg_references(outer_html);
 
             // Remove contruction damage from subtree
-            doc.iter_subtree_mut(container_node_id, |id: NodeId, doc: &mut BaseDocument| {
-                doc.nodes[id].remove_damage(CONSTRUCT_BOX | CONSTRUCT_DESCENDENT | CONSTRUCT_FC);
-            });
+            // pyro: but for the content of its `<foreignObject>`s, which are boxes of their own:
+            // each is a root, built by `resolve_layout_children` after the `<svg>`
+            // (`BaseDocument::svg_foreign_objects`).
+            let foreign_objects = svg_foreign_objects(doc, container_node_id);
+            clear_svg_construct_damage(doc, container_node_id);
+            for &fo in &foreign_objects {
+                doc.nodes[fo].insert_damage(CONSTRUCT_BOX);
+            }
+            if foreign_objects.is_empty() {
+                doc.svg_foreign_objects.remove(&container_node_id);
+            } else {
+                doc.svg_foreign_objects.insert(container_node_id, foreign_objects);
+            }
 
             match crate::util::parse_svg_image(outer_html.as_bytes()) {
                 Ok(mut svg) => {
@@ -695,12 +757,10 @@ fn collect_layout_children_with_wrap(
         }
     }
 
-    // pyro: a list item's inside marker that is text (a number, or a symbol the page styles
-    // through `::marker`) is inline content of its own: an item without any other has a line with
-    // the marker, and so has the anonymous block an item of blocks puts its marker in
-    // (`place_inside_marker`). (An empty item's bundled-font symbol marker stays unpainted: painting
-    // it exposes WPT `list-style-position-applies-to-015`, an empty item in a table caption, until
-    // table captions render.) An item with an outside marker and no in-flow content has the line
+    // pyro: a list item's inside marker (text, a symbol or an image) is inline content of its
+    // own: an item without any other has a line with the marker (WPT css-pseudo
+    // `marker-word-break`), and so has the anonymous block an item of blocks puts its marker in
+    // (`place_inside_marker`). An item with an outside marker and no in-flow content has the line
     // the marker sits on (Chromium: the marker's box sets the item's height and baseline), a line
     // of the item's strut (`inline::build`).
     let inside_marker = doc.nodes[container_node_id]
@@ -708,8 +768,10 @@ fn collect_layout_children_with_wrap(
         .and_then(|element| element.list_item_data.as_deref())
         .is_some_and(|item| match item.position {
             crate::node::ListItemLayoutPosition::Inside => {
-                matches!(item.marker, crate::node::Marker::String(_) | crate::node::Marker::Image { .. })
-                    || doc.nodes[container_node_id].is_anonymous()
+                matches!(
+                    item.marker,
+                    crate::node::Marker::String(_) | crate::node::Marker::Image { .. } | crate::node::Marker::Char(_)
+                ) || doc.nodes[container_node_id].is_anonymous()
             }
             crate::node::ListItemLayoutPosition::Outside(_) => true,
         });
@@ -1049,6 +1111,16 @@ fn sync_generated_children(
     pe_style: &style::servo_arc::Arc<style::properties::ComputedValues>,
     pieces: &[Piece],
 ) -> bool {
+    // pyro: a `content` that is one gradient makes the pseudo-element's box replaced by it.
+    let gradient = crate::util::content_gradient(pe_style).is_some();
+    let gradient_changed = doc.nodes[pe_node_id].element_data_mut().is_some_and(|element| {
+        let changed = element.content_gradient != gradient;
+        element.content_gradient = gradient;
+        changed
+    });
+    if gradient_changed {
+        doc.nodes[pe_node_id].clear_layout_cache();
+    }
     let same = {
         let children = &doc.nodes[pe_node_id].children;
         children.len() == pieces.len()
@@ -1065,7 +1137,7 @@ fn sync_generated_children(
             })
     };
     if same {
-        return false;
+        return gradient_changed;
     }
     // A single text that changed (a counter's value) is edited in place.
     let single = match (pieces, &doc.nodes[pe_node_id].children[..]) {

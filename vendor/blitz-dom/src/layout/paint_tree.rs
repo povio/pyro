@@ -64,9 +64,18 @@ pub fn hoisted_child_position(tree: &NodeTree, sc_root_id: NodeId, child_id: Nod
         };
         // pyro: out of a multi-column container's strip into its columns (`layout::multicol`).
         if let Some(columns) = node.column_fragments() {
+            // A relatively positioned box is in the column of its place in the flow, moved from
+            // there (Blink): a box moved up over a column break stays in the column after it.
             let own = child.final_layout().location;
-            let shown = columns.strip_to_columns(Point { x: position.x + own.x, y: position.y + own.y });
-            position = Point { x: shown.x - own.x, y: shown.y - own.y };
+            let relative = match child.primary_styles() {
+                Some(style) if style.get_box().position == style::computed_values::position::T::Relative => {
+                    let size = node.final_layout().size;
+                    super::inline::relative::relative_offset(&style, size, false).y
+                }
+                _ => 0.0,
+            };
+            let (dx, dy) = columns.shift_at(position.y + own.y - relative);
+            position = Point { x: position.x + dx, y: position.y + dy };
         }
         let location = node.final_layout().location;
         let scroll_offset = *node.scroll_offset();
@@ -262,6 +271,11 @@ impl BaseDocument {
             && let Some(root_id) = self.try_root_element().map(|root| root.id)
         {
             self.build_paint_tree(root_id);
+            // pyro: each `<foreignObject>` is a stacking context of its own, painted where its
+            // `<svg>` draws it (`BaseDocument::svg_foreign_objects`).
+            for fo in self.foreign_object_roots() {
+                self.build_paint_tree_impl(fo, None);
+            }
             debug_assert!(
                 self.paint_tree_matches_fresh_build(),
                 "the incrementally built paint tree differs from a fresh build"

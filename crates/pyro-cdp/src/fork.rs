@@ -39,9 +39,11 @@ use crate::server::ServerConfig;
 use crate::target::{Browser, ForkProfiles, Host, NamedProfile, PreparedProfile, ProfileRelease, ProfileStatus};
 use crate::ws::OutFrame;
 
-/// A connection waits at most this long for loaded pages to go quiet: a
-/// request still in flight at the fork fails in the template (its network
-/// threads stop), and polling apps keep timers due.
+/// A loaded page with no request or navigation in flight counts as quiet
+/// after this long, for its setup and its forks: polling apps keep timers
+/// due. Counted from when the page loaded (again after its setup), never
+/// from when a connection arrived: a setup that runs before the app has
+/// settled loses to the app's own landing redirect, in every fork.
 const QUIET_WAIT: Duration = Duration::from_secs(2);
 
 /// A page that has not loaded by then is forked as it is.
@@ -544,8 +546,10 @@ struct Snapshot {
 }
 
 struct ProfileState {
-    /// When its page started booting.
+    /// When its page started booting (again when its setup ran).
     started: Instant,
+    /// Since when its page has been loaded, as last seen (reset with `started`).
+    loaded_at: Option<Instant>,
     /// Settled (one full collection) since it loaded or ran its setup.
     settled: bool,
     /// Its setup steps ran (or it has none).
@@ -564,6 +568,7 @@ impl ProfileState {
     fn new(profile: &PreparedProfile) -> Self {
         ProfileState {
             started: Instant::now(),
+            loaded_at: None,
             settled: false,
             set_up: profile.setup.is_empty(),
             derive_from: None,
@@ -763,7 +768,7 @@ fn run_template(options: &ServeOptions, socket: &Path) -> Result<(), TemplateErr
         }
         t.forward_waiting();
         t.deliver_pending_derives();
-        let ready = ready_to_fork(&mut t.snapshot, t.waiting.front().map(|w| w.2));
+        let ready = ready_to_fork(&mut t.snapshot);
         // Before any fork: a child must not report what this process did.
         t.report_statuses();
         if ready {
@@ -1026,16 +1031,20 @@ impl TemplateProcess {
         if differs(&profile.user_agent, &of_base.user_agent)
             || differs(&profile.proxy_server, &of_base.proxy_server)
             || differs(&profile.proxy_bypass_list, &of_base.proxy_bypass_list)
+            || differs(&profile.locale, &of_base.locale)
+            || differs(&profile.timezone_id, &of_base.timezone_id)
         {
             return Err(format!(
-                "a profile with a base has its base's userAgent, proxyServer and proxyBypassList \
-                 (profile {}): leave them out",
+                "a profile with a base has its base's userAgent, proxyServer, proxyBypassList, locale and \
+                 timezoneId (profile {}): leave them out",
                 self.label(base)
             ));
         }
         profile.user_agent.clone_from(&of_base.user_agent);
         profile.proxy_server.clone_from(&of_base.proxy_server);
         profile.proxy_bypass_list.clone_from(&of_base.proxy_bypass_list);
+        profile.locale.clone_from(&of_base.locale);
+        profile.timezone_id.clone_from(&of_base.timezone_id);
         Ok(profile)
     }
 
@@ -1152,6 +1161,11 @@ impl TemplateProcess {
             if !self.snapshot.browser.prepared_profile_active(base) {
                 return Err(format!("no profile {base} to start from"));
             }
+        }
+        let active =
+            browser.prepared_profiles().iter().enumerate().filter(|(id, _)| browser.prepared_profile_active(*id));
+        if let Some(conflict) = profile.timezone_conflict(active.map(|(_, p)| p)) {
+            return Err(conflict);
         }
         self.snapshot.profiles.push(ProfileState::new(&profile));
         if profile.base.is_none() {
@@ -1767,19 +1781,32 @@ fn one_page(p: &PreparedProfile) -> PreparedProfile {
     PreparedProfile { pool: 1, refill_after_close: false, ..p.clone() }
 }
 
-/// Every page has loaded, run its setup and gone quiet (or waited long
-/// enough); pages are settled first, so forks start from their live size.
-/// A profile whose setup fails (or whose page does not load in time to run
-/// it) fails: see [`Snapshot::fail`].
-fn ready_to_fork(snapshot: &mut Snapshot, waiting_since: Option<Instant>) -> bool {
-    let waited_enough = waiting_since.is_some_and(|t| t.elapsed() > QUIET_WAIT);
+/// Every page has loaded, gone quiet, run its setup and gone quiet again;
+/// pages are settled first, so forks start from their live size. A page
+/// that keeps timers due (polling) counts as quiet once it has been loaded
+/// for [`QUIET_WAIT`] with no request or navigation in flight, one that
+/// never gets there after [`LOAD_WAIT`]. A connection that waits does not
+/// cut this short: a fork must never start before its profile is set up
+/// and its page has settled. A profile whose setup fails (or whose page
+/// does not load in time to run it) fails: see [`Snapshot::fail`].
+fn ready_to_fork(snapshot: &mut Snapshot) -> bool {
     let mut ready = true;
     for (id, page) in snapshot.browser.prepared_pages() {
         let host = snapshot.browser.host();
         let loaded = host.page_loaded(page);
-        let quiet = host.page_work(page).is_none_or(|w| w.quiet());
-        let waited = snapshot.profiles[id].started.elapsed();
-        if !(loaded && (quiet || waited_enough) || waited > LOAD_WAIT) {
+        let work = host.page_work(page);
+        let state = &mut snapshot.profiles[id];
+        if !loaded {
+            state.loaded_at = None;
+        } else if state.loaded_at.is_none() {
+            state.loaded_at = Some(Instant::now());
+        }
+        let loaded_for = state.loaded_at.map_or(Duration::ZERO, |t| t.elapsed());
+        let quiet = work.as_ref().is_none_or(|w| w.quiet())
+            || work.as_ref().is_some_and(|w| w.requests == 0 && w.navigations == 0) && loaded_for > QUIET_WAIT
+            || loaded_for > LOAD_WAIT;
+        let waited = state.started.elapsed();
+        if !(loaded && quiet || !loaded && waited > LOAD_WAIT) {
             ready = false;
             continue;
         }
@@ -1804,6 +1831,7 @@ fn ready_to_fork(snapshot: &mut Snapshot, waiting_since: Option<Instant>) -> boo
                     // Whatever the steps started has to go quiet again.
                     snapshot.profiles[target].settled = false;
                     snapshot.profiles[target].started = Instant::now();
+                    snapshot.profiles[target].loaded_at = None;
                 }
                 Err(error) => snapshot.fail(target, error),
             }

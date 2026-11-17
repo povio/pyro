@@ -60,3 +60,9 @@ fn items_in_nested_blocks_continue_the_list() {
     assert!(render(numbered) != render("<ol><li>x<li value=1>x</ol>"));
     same("<ol><li>x</li><div><li>x</li></div></ol>", numbered);
 }
+
+#[test]
+fn items_of_an_inline_list_have_markers() {
+    let list = |style: &str| render(&format!("<div><ol style='display:inline{style}'><li style='display:inline flow-root list-item'>x</li></ol></div>"));
+    assert!(list("") != list(";list-style:none"), "the item's marker is painted");
+}

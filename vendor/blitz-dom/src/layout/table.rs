@@ -863,6 +863,11 @@ impl CollapsedEdge {
         (self.width, self.rank) > (other.width, other.rank)
     }
 
+    /// pyro: whether the winning border is `double` (painted as two lines).
+    pub fn is_double(&self) -> bool {
+        self.rank == 8
+    }
+
     const NONE: Self = CollapsedEdge {
         width: 0.0,
         color: style::color::AbsoluteColor::TRANSPARENT_BLACK,
@@ -1332,8 +1337,11 @@ impl ColumnCursor {
         if self.rowspans.len() < end as usize {
             self.rowspans.resize(end as usize, 0);
         }
+        // pyro: `start_row` counts a row down before the next row looks: the rows after this one
+        // that the cell still occupies are `rowspan - 1`, so `rowspan` before that count (a cell
+        // after a two-row cell went into its column).
         for remaining in &mut self.rowspans[self.col as usize..end as usize] {
-            *remaining = rowspan - 1;
+            *remaining = rowspan;
         }
         self.col = end;
         self.num_columns = self.num_columns.max(end);
@@ -1474,10 +1482,8 @@ fn row_tracks(rows: &[TableRow], gutter: f32) -> Vec<taffy::GridTemplateComponen
     let has_unconstrained_rows = rows.iter().any(|row| !row.is_constrained);
     rows.iter()
         .map(|row| {
-            if row.collapsed {
-                let track: TrackSizingFunction = style_helpers::length(0.0);
-                return track.into();
-            }
+            // pyro: a collapsed row is sized as the others, then collapsed (taffy
+            // `Style::collapsed_rows`): a cell spanning it gives it its share.
             let min = match row.height {
                 Some(height) => style_helpers::length((height - gutter).max(0.0)),
                 // Table rows retain their cells' intrinsic minimum even when
@@ -1578,15 +1584,26 @@ pub(crate) fn build_table_context(doc: &mut BaseDocument, table_root_node_id: No
     // Percentage widths set on first-row cells: (column index, percentage, padding + border)
     let mut percent_columns: Vec<(u16, f32, f32)> = Vec::new();
     let mut calc_values: Vec<LengthPercentage> = Vec::new();
-    // Header row groups are laid out before other rows, and footer row groups after
-    let row_group_order = |doc: &BaseDocument, child_id: NodeId| -> u8 {
-        let display = doc.nodes[child_id]
-            .primary_styles()
-            .map(|s| s.clone_display());
-        match display.map(|d| d.inside()) {
-            Some(DisplayInside::TableHeaderGroup) => 0,
-            Some(DisplayInside::TableFooterGroup) => 2,
-            _ => 1,
+    // Header row groups are laid out before other rows, and footer row groups after.
+    // pyro: only the first of each (CSS 2.1 § 17.2: the others are treated as row groups, as
+    // browsers do; WPT css-tables `row-group-order`).
+    let group_kind = |doc: &BaseDocument, child_id: NodeId| {
+        doc.nodes[child_id].primary_styles().map(|s| s.clone_display().inside())
+    };
+    let first_of = |kind: DisplayInside| {
+        children
+            .iter()
+            .copied()
+            .find(|&id| !captions.contains(&id) && group_kind(doc, id) == Some(kind))
+    };
+    let (first_header, first_footer) = (first_of(DisplayInside::TableHeaderGroup), first_of(DisplayInside::TableFooterGroup));
+    let row_group_order = |_doc: &BaseDocument, child_id: NodeId| -> u8 {
+        if Some(child_id) == first_header {
+            0
+        } else if Some(child_id) == first_footer {
+            2
+        } else {
+            1
         }
     };
     for order in 0..3 {
@@ -4134,6 +4151,34 @@ impl BaseDocument {
         let cell = ctx.cells.get(index as usize).filter(|cell| cell.node_id == cell_id)?;
         let row = ctx.rows.get(cell.row as usize)?;
         Some([row.group, Some(row.node_id)])
+    }
+
+    /// pyro: the containing block of the out-of-flow box `box_id` (`position` absolute or fixed)
+    /// below table `table_id`: the nearest ancestor of the box below the table that makes one for
+    /// it (positioned, transformed, ...). When that is a row or row group, which have no boxes of
+    /// their own, the table lays the box out against the part's area, and it paints in the part's
+    /// transform.
+    pub fn containing_block_below_table(
+        &self,
+        table_id: NodeId,
+        box_id: NodeId,
+        position: taffy::Position,
+    ) -> Option<NodeId> {
+        let mut current = self.nodes.get(box_id)?.parent;
+        loop {
+            let id = current?;
+            if id == table_id {
+                return None;
+            }
+            let node = self.nodes.get(id)?;
+            if node
+                .primary_styles()
+                .is_some_and(|style| stylo_taffy::convert::containing_block_claims(&style).for_position(position))
+            {
+                return Some(id);
+            }
+            current = node.parent;
+        }
     }
 
     /// pyro: the row group and row of table cell `cell_id` that are positioned (relative or

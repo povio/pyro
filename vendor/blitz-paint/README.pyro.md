@@ -986,3 +986,35 @@ The target text defaults to `Mark` on `MarkText` unless a style declares either 
 of their own then. Covered by `highlights_paint_under_the_selection` in `crates/pyro-render/tests/selection_highlight.rs`.
 - `src/render.rs` (`inline_box_fragments`): a line's content ends where its items end, so a justified line's inline
   boxes take the justification (the line's `advance` does not; WPT css-text `text-justify-and-trailing-spaces-*`).
+- `src/render.rs` (`canvas_background_source`): a root that its `content: url()` replaces propagates no `body`
+  background to the canvas (WPT css-content `element-replacement-root-canvas-bg-from-body`).
+
+- `src/render.rs` (`render_element`): the zero-area clip shortcut (no content box, no overflow) only skips a box
+  whose border box is empty too: an `<hr>` (`overflow: hidden` in the UA sheet) paints its borders (WPT css-lists
+  `outside-marker-with-hr-content`).
+- `src/render/border.rs`: `double` collapsed table borders are two lines a third of the rule's width each, on the
+  uniform path and per edge (`CollapsedEdge::is_double`; WPT css-tables `border-collapse-double-border`).
+- `src/render.rs` (`draw_content_gradient`): a box replaced by its `content` gradient (`ElementData::content_gradient`) paints it over its content box.
+- `src/render/background.rs` (`table_part_rects`, `TablePartRects::rect`): column tracks in logical order, as
+  `TableContext::columns` indexes them, so a column's background box in an `rtl` table is its own column's (WPT
+  css-tables `paint/col-paint-htb-rtl`).
+- `src/filters.rs` (`primitive_notes`): notes `feImage href="#id"` primitives (`PrimitiveNotes::element_image`).
+
+`render.rs` (`hides_empty_cell`): an empty table cell (white space and out-of-flow boxes only, no pseudo-elements)
+with `empty-cells: hide` in the separated borders model paints no background, border or shadow (WPT CSS2
+`empty-cells-applies-to-014`).
+
+Lane SP: `render.rs` (`table_part_transform`): an out-of-flow box laid out by its table for a row or row group paints
+in that part's transform. `draw_svg`: an SVG image is drawn at its unsnapped content size, stretched to the snapped
+box (css-sizing `image-fractional-height-with-wide-aspect-ratio`). `render/background.rs`: a table part's
+`background-clip: text` layers are masked by the cell's text (`draw_background_layers` `text_mask`; css-backgrounds
+`background-multiple-layers-table-cell`, `clip-text-background-table-cell`).
+`render.rs` (`draw_foreign_object`): an inline `<svg>`'s `<foreignObject>` content (blitz-dom
+`svg_foreign_objects`) is painted where usvg draws its stand-in image, its box mapped onto the image, cut at its box
+unless its `overflow` is visible.
+
+`render.rs` (`draw_svg_image_document_into`): an SVG image drawn as a document (blitz-dom `svg_image_documents`) is
+painted from it, clipped to the content box, when drawn at the size it was laid out at.
+`text.rs` (`ink_gaps`): each glyph run's own `text-decoration-skip-ink` decides whether it cuts the lines over it
+(css-pseudo `marker-text-decoration-skip-ink`). `render.rs`: a list item's marker is painted before its inline
+content, so text that overlaps an outside marker covers it (css-pseudo `outside-marker-paint-order`).

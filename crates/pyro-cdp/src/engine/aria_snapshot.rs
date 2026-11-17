@@ -314,21 +314,8 @@ impl<'a, 'p> Walk<'a, 'p> {
         (self.parent_visible, self.parent_aria_visible) = saved;
     }
 
-    /// Playwright's `computeBox(element).visible`: shown (`checkVisibility()`
-    /// and `visibility: visible`) with an area; a `display: contents`
-    /// element through its children.
     fn box_visible(&self, id: NodeId) -> bool {
-        let (dom, layout) = (self.dom, self.layout);
-        if layout.computed_style_value(dom, id, "display") == "contents" {
-            return dom.children(id).into_iter().flatten().any(|c| match dom.node(c).map(|n| &n.kind) {
-                Ok(NodeKind::Element(_)) => self.box_visible(c),
-                Ok(NodeKind::Text(t)) => !t.trim().is_empty() && layout.is_visible(dom, id),
-                _ => false,
-            });
-        }
-        layout.is_visible(dom, id)
-            && !layout.style().has_visibility_hidden_inherited(dom, id)
-            && layout.client_rect(dom, id).is_some_and(|r| r.width > 0.0 && r.height > 0.0)
+        box_visible(self.dom, self.layout, id)
     }
 
     /// Playwright's `computeAriaRef` (refs "interactable"), `active` and
@@ -490,6 +477,27 @@ impl<'a, 'p> Walk<'a, 'p> {
             }
         }
     }
+}
+
+/// Playwright's `computeBox(element).visible` (`isElementVisible`): shown
+/// (`checkVisibility()` and `visibility: visible`, so not `hidden` or
+/// `collapse`) with an area; a `display: contents` element through its
+/// children (an element child visible, or a text child with a box).
+pub(super) fn box_visible(dom: &Dom, layout: &Layout, id: NodeId) -> bool {
+    if layout.computed_style_value(dom, id, "display") == "contents" {
+        return dom.children(id).into_iter().flatten().any(|c| match dom.node(c).map(|n| &n.kind) {
+            Ok(NodeKind::Element(_)) => box_visible(dom, layout, c),
+            Ok(NodeKind::Text(t)) => {
+                !t.trim().is_empty()
+                    && layout.is_visible(dom, id)
+                    && layout.text_rect(dom, c).is_some_and(|r| r.width > 0.0 && r.height > 0.0)
+            }
+            _ => false,
+        });
+    }
+    layout.is_visible(dom, id)
+        && !layout.style().has_visibility_hidden_inherited(dom, id)
+        && layout.client_rect(dom, id).is_some_and(|r| r.width > 0.0 && r.height > 0.0)
 }
 
 fn only_text_child(dom: &Dom, id: NodeId) -> bool {

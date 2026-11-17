@@ -66,3 +66,51 @@ fn a_cell_width_mixing_a_percentage_and_a_length_is_auto() {
     assert_eq!(calc.data, auto.data);
 }
 
+
+#[test]
+fn a_root_its_content_url_replaces_is_its_image() {
+    // The root is the image at its natural size; its body is not rendered, nor its background
+    // propagated to the canvas.
+    let img = render(
+        "<style>:root{content:url(green.png);width:auto}body{background:red}</style><p>text</p>",
+    );
+    assert_eq!(pixel(&img, 2, 2), [0, 128, 0]);
+    assert_eq!(pixel(&img, 10, 10), [255, 255, 255]);
+}
+
+#[test]
+fn an_inline_block_its_content_url_replaces_in_an_inline_block() {
+    let img = render(
+        "<div style='display:inline-block;width:100px'><div style='display:inline-block;content:url(green.png)'></div></div>\
+         <div style='display:inline-block;width:100px'><div style='display:inline-block;content:url(missing.png)'>FAIL</div></div>",
+    );
+    // (It rendered: this used to panic.) The image shows; the broken one's text does not.
+    let green = (0..img.height as usize).any(|y| (0..100).any(|x| pixel(&img, x, y) == [0, 128, 0]));
+    let ink = (0..img.height as usize).any(|y| (100..200).any(|x| pixel(&img, x, y) != [255, 255, 255]));
+    assert!(green && !ink);
+}
+
+#[test]
+fn a_gradient_content_replaces_an_element_and_a_pseudo_element() {
+    let gradient = |css: &str, html: &str| render(&format!("<style>{css}</style>{html}"));
+    let element = gradient("div{width:50px;height:50px;content:linear-gradient(green,green)}", "<div>FAIL</div>");
+    let pseudo = gradient(
+        "div::before{content:linear-gradient(green,green);display:block;width:50px;height:50px}",
+        "<div></div>",
+    );
+    for img in [&element, &pseudo] {
+        assert_eq!(pixel(img, 25, 25), [0, 128, 0]);
+        assert_eq!(pixel(img, 75, 25), [255, 255, 255]);
+    }
+}
+
+#[test]
+fn an_fe_image_of_an_element_usvg_cannot_draw_is_transparent() {
+    // A lone `<tspan>` draws nothing: the filtered rect disappears (it is not left unfiltered).
+    let img = render(
+        "<svg width='100' height='100'><defs><filter id='f' x='0' y='0' width='1' height='1'><feImage href='#t'/></filter>\
+         <text><tspan id='t' x='0' y='20' fill='red'>X</tspan></text></defs>\
+         <rect width='100' height='100' fill='red' filter='url(#f)'/></svg>",
+    );
+    assert_eq!(pixel(&img, 50, 50), [255, 255, 255]);
+}

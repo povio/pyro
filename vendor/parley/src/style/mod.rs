@@ -294,6 +294,15 @@ pub enum AlignmentBaseline {
     /// Align the vertical midpoint of the box with the parent span's baseline plus half the
     /// x-height of the parent.
     Middle,
+    /// pyro: css-inline-3 `alignment-baseline: text-top`: align the span's text-over baseline
+    /// (its font's ascent) with the parent's. A box aligns as with [`Self::TextTop`].
+    TextOver,
+    /// pyro: css-inline-3 `alignment-baseline: text-bottom`: align the text-under baselines
+    /// (descents). A box aligns as with [`Self::TextBottom`].
+    TextUnder,
+    /// pyro: css-inline-3 `alignment-baseline: middle`: align the span's x-middle baseline (half
+    /// its x-height above its baseline) with the parent's. A box stays on the baseline.
+    XMiddle,
 }
 
 /// A shift applied to a span (or [`InlineBox`]) after [`AlignmentBaseline`] alignment. Mirrors

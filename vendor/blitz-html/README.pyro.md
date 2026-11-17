@@ -5,3 +5,5 @@
 needs this version. No local changes: `src/` is upstream's, and `Cargo.toml` is the package manifest with the
 workspace's dependency versions written in. Drop it (and its `[patch.crates-io]` entry) once a Blitz release
 carries these commits.
+- `html_sink.rs` (`HtmlProvider::parse_svg_document`): parses an SVG image's source as XML (blitz-dom
+  `svg_image_documents`).

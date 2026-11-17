@@ -57,6 +57,8 @@ export type TestCase = {
   /** Position among its scope's children. */
   index: number;
   timeout?: number;
+  /** Times a failing test runs again (`{ retries }`; default `--retries`). */
+  retries?: number;
   serial: boolean;
   skip: boolean;
   todo: boolean;
@@ -73,8 +75,19 @@ export type TestRun = {
   ms: number;
   defers: Fn[];
   /** Pages the test opened through the run's browser, closed when it ends (`send`: a CDP command on the page). */
-  pages: Set<{ close(): void; send?(method: string): Promise<unknown> }>;
+  pages: Set<{ close(): void; send?(method: string, params?: object): Promise<any> }>;
+  /** Runs it took (more than 1: it was retried; passing then means flaky). */
+  attempts: number;
+  /** Why `test.skip()` skipped it at run time. */
+  skipReason?: string;
+  /** Screenshots of its pages when it failed (paths relative to the working directory). */
+  screenshots: string[];
 };
+
+/** What `test.skip()` throws inside a running test (marked, not a class: module copies differ). */
+export const SKIP = Symbol.for('@povio/pyro/e2e/skip');
+export type SkipSignal = Error & { [SKIP]: true };
+export const isSkip = (e: unknown): e is SkipSignal => typeof e === 'object' && e !== null && (e as SkipSignal)[SKIP] === true;
 
 /** What runs now: a test (with its scope) or a scope's own hooks. */
 export type Running = { scope: Scope; test?: TestCase };

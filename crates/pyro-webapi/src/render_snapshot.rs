@@ -57,6 +57,8 @@ pub struct RenderSnapshot {
     pub xml_document: bool,
     /// A document in quirks mode (`pyro_dom::Dom::is_quirks_mode`), in every form.
     pub quirks_mode: bool,
+    /// A document in limited-quirks mode (`pyro_dom::Dom::is_limited_quirks_mode`), in every form.
+    pub limited_quirks_mode: bool,
     /// The document's HTTP `Content-Language`
     /// (`pyro_dom::Dom::content_language`), in every form.
     pub content_language: Option<String>,
@@ -202,6 +204,7 @@ fn snapshot_of(
             canvases: Vec::new(),
             xml_document: dom.is_xml_document(document),
             quirks_mode: dom.is_quirks_mode(document),
+            limited_quirks_mode: dom.is_limited_quirks_mode(document),
             content_language: dom.content_language(document).map(str::to_owned),
             selection: None,
             highlights: Vec::new(),

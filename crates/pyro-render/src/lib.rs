@@ -237,6 +237,10 @@ pub struct Snapshot {
     /// A document in quirks mode: percentage heights look through `auto`-height blocks for
     /// their basis (Quirks Mode §3.5). A [`Live`] document whose value changes is built anew.
     pub quirks_mode: bool,
+    /// A document in limited-quirks mode: with [`Self::quirks_mode`], a line without text has no
+    /// strut (Quirks Mode §3.3, the line height calculation quirk). A [`Live`] document whose
+    /// value changes is built anew.
+    pub limited_quirks_mode: bool,
     /// The document's HTTP `Content-Language` (one language tag), the last
     /// fallback for `:lang()`. A [`Live`] document whose value changes is
     /// built anew.
@@ -907,7 +911,9 @@ impl Renderer {
             line_break_override: self.hyphen_digit_breaks.then_some(parley::HYPHEN_DIGIT_LINE_BREAK_OVERRIDE),
             xml_document: snap.xml_document,
             quirks_mode: snap.quirks_mode,
+            line_height_quirk: snap.quirks_mode || snap.limited_quirks_mode,
             content_language: snap.content_language.clone(),
+            html_parser_provider: Some(Arc::new(SvgImageParser)),
             ..DocumentConfig::default()
         };
         // Documents are resolved at time 0: a CSS transition or animation
@@ -929,6 +935,7 @@ impl Renderer {
                     || m.facts.0 != snap.xml_document
                     || m.facts.1 != snap.content_language
                     || m.facts.2 != snap.quirks_mode
+                    || m.facts.3 != (snap.quirks_mode || snap.limited_quirks_mode)
                     || m.doc.line_break_override().is_some() != self.hyphen_digit_breaks =>
             {
                 Some(Rebuild::Document)
@@ -3545,5 +3552,23 @@ mod deferred_html_scroll_tests {
         let empty = pixels(r#"<input type="time" value="" style="width:70px;height:24px;font:12px Arial">"#);
         assert_ne!(morning, empty, "a time value must not paint as an empty field");
         assert_ne!(morning, afternoon, "changing the saved time must change the rendered pixels");
+    }
+}
+
+/// Parses SVG images with a `<foreignObject>` into documents of their own (blitz-dom
+/// `svg_image_documents`); nothing else: frames and `innerHTML` stay pyro-dom's.
+struct SvgImageParser;
+
+impl blitz_dom::HtmlParserProvider for SvgImageParser {
+    fn parse_inner_html<'m, 'doc>(
+        &self,
+        _mutr: &'m mut blitz_dom::DocumentMutator<'doc>,
+        _element_id: blitz_dom::NodeId,
+        _html: &str,
+    ) {
+    }
+
+    fn parse_svg_document(&self, svg: &str, config: DocumentConfig) -> Option<Box<dyn blitz_dom::Document>> {
+        blitz_html::HtmlProvider.parse_svg_document(svg, config)
     }
 }

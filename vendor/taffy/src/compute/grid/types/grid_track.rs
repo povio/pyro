@@ -27,6 +27,11 @@ pub(in super::super) struct GridTrack {
     /// they don't exist for the purposes of grid sizing. Gutters between collapsed tracks are also collapsed.
     pub is_collapsed: bool,
 
+    /// pyro: a table row with `visibility: collapse`: sized as any other row (a cell spanning it
+    /// gives it its share), then collapsed (CSS 2.1 §17.5.5, as Blink; WPT css-align
+    /// `blocks/align-content-table-cell-*`). See `collapse_sized_tracks`.
+    pub collapse_after_sizing: bool,
+
     /// The minimum track sizing function of the track
     pub min_track_sizing_function: MinTrackSizingFunction,
 
@@ -72,6 +77,7 @@ impl GridTrack {
         GridTrack {
             kind,
             is_collapsed: false,
+            collapse_after_sizing: false,
             min_track_sizing_function,
             max_track_sizing_function,
             offset: 0.0,
@@ -110,6 +116,16 @@ impl GridTrack {
         self.min_track_sizing_function = MinTrackSizingFunction::ZERO;
         self.max_track_sizing_function = MaxTrackSizingFunction::ZERO;
         self.fit_content_limit = f32::INFINITY;
+    }
+
+    /// pyro: collapse a track marked `collapse_after_sizing` once it has been sized: it keeps its
+    /// sizing functions (sizing it again sizes it as before), but has no size.
+    pub fn collapse_sized(&mut self) {
+        if self.collapse_after_sizing {
+            self.is_collapsed = true;
+            self.base_size = 0.0;
+            self.growth_limit = 0.0;
+        }
     }
 
     #[inline(always)]

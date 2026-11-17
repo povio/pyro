@@ -108,6 +108,27 @@ pub(crate) fn range_rect<'s>(
             return rect_value(s, r.layout_units());
         }
     }
+    // A range over the children of one node (`selectNodeContents`,
+    // `selectNode`): the union of their boxes, as Chromium unites the
+    // selected nodes' rects (a `display: contents` child through its own
+    // children; empty rects add nothing, none at all is an empty rect).
+    if start == end && start_offset < end_offset {
+        let dom = page.dom.borrow();
+        if matches!(dom.node_type(start).js()?, pyro_dom::NodeType::Element | pyro_dom::NodeType::DocumentFragment) {
+            let layout = page.layout();
+            let children: Vec<NodeId> = dom
+                .children(start)
+                .js()?
+                .skip(start_offset as usize)
+                .take((end_offset - start_offset) as usize)
+                .collect();
+            let mut union = None;
+            for c in children {
+                unite_node_rects(&dom, &layout, c, &mut union);
+            }
+            return rect_value(s, union.unwrap_or_default().layout_units());
+        }
+    }
     let el = {
         let dom = page.dom.borrow();
         if dom.node_type(start).js()? == pyro_dom::NodeType::Element {
@@ -121,6 +142,39 @@ pub(crate) fn range_rect<'s>(
         None => pyro_dom::layout::Rect::default(),
     };
     rect_value(s, r.layout_units())
+}
+
+/// Adds `node`'s rect to `union`: a text node's line box, an element's
+/// border box, a `display: contents` element's children's.
+fn unite_node_rects(
+    dom: &pyro_dom::Dom,
+    layout: &pyro_dom::layout::Layout,
+    node: NodeId,
+    union: &mut Option<pyro_dom::layout::Rect>,
+) {
+    let rect = match dom.node_type(node) {
+        Ok(pyro_dom::NodeType::Text) => layout.text_rect(dom, node),
+        Ok(pyro_dom::NodeType::Element) => {
+            if layout.computed_style_value(dom, node, "display") == "contents" {
+                for c in dom.children(node).into_iter().flatten() {
+                    unite_node_rects(dom, layout, c, union);
+                }
+                return;
+            }
+            layout.client_rect(dom, node)
+        }
+        _ => None,
+    };
+    // Blink's rect union skips empty rects.
+    let Some(r) = rect.filter(|r| r.width > 0.0 && r.height > 0.0) else { return };
+    *union = Some(match *union {
+        None => r,
+        Some(u) => {
+            let (x0, y0) = (u.x.min(r.x), u.y.min(r.y));
+            let (x1, y1) = ((u.x + u.width).max(r.x + r.width), (u.y + u.height).max(r.y + r.height));
+            pyro_dom::layout::Rect { x: x0, y: y0, width: x1 - x0, height: y1 - y0 }
+        }
+    });
 }
 
 /// Queues the `scroll` event of a completed scroll of `target` (None: the

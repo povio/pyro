@@ -40,6 +40,8 @@ Each returns a new check, so they chain:
 | `.state('started')` | Count requests as soon as they are sent, in flight or done. The default, `'finished'`, counts only requests with a response or an error |
 | `.scope('context')` | Also look at earlier runs of the same page. The default, `'batch'`, is this run only |
 | `.timeout(ms)` | This step's timeout |
+| `.responseBody(as?)` | The step's result carries the matched response's body (`responseBody`), and the run's `values[as]` gets it. Newer than 0.0.39 |
+| `.as(name)` | The run's `values[name]` gets the matched request. Newer than 0.0.39 |
 
 ```ts
 check.request('POST', '/api/save')
@@ -53,6 +55,20 @@ check.request('POST', '/api/save')
 Without `.count`, the step holds as soon as at least one matching request has finished with an accepted status, and its result is that request (the latest one). With `.count(n)`, its result is `{ count: n }`.
 
 `.state('started')` is what you want when a mock delays or holds the request: `.count(1).state('started')` holds while the request is still parked.
+
+### Reading a response body
+
+`.responseBody(as)` hands out what the server answered, for a test that needs an id the app was given or wants to compare the page with the data:
+
+```ts
+const r = await page.run([
+  button('Save').click(),
+  check.request('POST', '/api/items').status(201).responseBody('created'),
+]);
+const { id } = JSON.parse(r.values.created as string);
+```
+
+Text bodies (`text/*`, JSON, JavaScript, XML) come as the text; others as base64, with `responseBodyBase64: true` in the step's result. A page keeps response bodies from its first run with a `.responseBody()` check on, so the request must start in that run or a later one (a matched response whose body was not kept fails the step with `the matching response's body was not kept`). A body is kept up to 4 MiB (`responseBodyTruncated: true` past it), and a page keeps 32 MiB of bodies, dropping the oldest first. Bodies never appear in `r.requests`.
 
 ### When a request check fails
 

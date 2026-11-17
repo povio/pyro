@@ -569,7 +569,7 @@ pub fn compute_block_layout(
     // pyro: css-sizing-4 §5 ([`RatioSizes`])
     let sizes = resolve_sizes_with_aspect_ratio(
         style.size().maybe_resolve(parent_size, |val, basis| tree.calc(val, basis)),
-        style.min_size().maybe_resolve(parent_size, |val, basis| tree.calc(val, basis)),
+        crate::util::maybe_resolve_min_size(style.min_size(), parent_size, |val, basis| tree.calc(val, basis)),
         style.max_size().maybe_resolve(parent_size, |val, basis| tree.calc(val, basis)),
         aspect_ratio,
         aspect_ratio_inset(&style, padding_border_size),
@@ -714,7 +714,7 @@ fn compute_inner(
     let ratio_inset = aspect_ratio_inset(&style, padding_border_size);
     let sizes = resolve_sizes_with_aspect_ratio(
         style.size().maybe_resolve(parent_size, |val, basis| tree.calc(val, basis)),
-        style.min_size().maybe_resolve(parent_size, |val, basis| tree.calc(val, basis)),
+        crate::util::maybe_resolve_min_size(style.min_size(), parent_size, |val, basis| tree.calc(val, basis)),
         style.max_size().maybe_resolve(parent_size, |val, basis| tree.calc(val, basis)),
         aspect_ratio,
         ratio_inset,
@@ -732,6 +732,15 @@ fn compute_inner(
     // pyro: the automatic minimum size in the block axis of a box whose height follows its ratio is
     // its content height (css-sizing-4 §5.1), unless it is a scroll container.
     let calc_size_min_height = style.calc_size_min().height;
+    // pyro: `min-height`/`max-height` content keywords (`min-content`, `max-content`,
+    // `fit-content`): the content height, applied to the box's own height below. A block-level
+    // box's parent applies them too (`block_item_known_dimensions`); an atomic inline, a float or
+    // an out-of-flow box has only this (WPT css-sizing `hori-block-size-*-with-min-or-max-content`).
+    let content_keyword = |keyword: Dimension| keyword.is_sizing_keyword() && !keyword.is_stretch();
+    let height_keywords = {
+        let (min, max) = style.own_height_keywords();
+        (content_keyword(min), content_keyword(max))
+    };
     let min_height_is_content = height_follows_ratio
         && style.min_size().height.is_auto()
         && !style.overflow().y.is_scroll_container()
@@ -946,8 +955,15 @@ fn compute_inner(
             Some(height) => height,
             None if inputs.sizing_mode == SizingMode::ContentSize => intrinsic_outer_height,
             None => intrinsic_outer_height.maybe_clamp(min_size.height, max_size.height),
-        })
-        .maybe_max(Some(padding_border_size.height));
+        });
+    let container_outer_height = if inputs.sizing_mode == SizingMode::InherentSize {
+        let (min_keyword, max_keyword) = height_keywords;
+        let height = if max_keyword { container_outer_height.min(intrinsic_outer_height) } else { container_outer_height };
+        if min_keyword { height.max(intrinsic_outer_height) } else { height }
+    } else {
+        container_outer_height
+    }
+    .maybe_max(Some(padding_border_size.height));
     let final_outer_size = Size { width: container_outer_width, height: container_outer_height };
 
     // CSS2 §8.3.1: the bottom margin of a block with `height: auto` collapses with its last
@@ -1230,7 +1246,7 @@ fn generate_item_list(
             // pyro: css-sizing-4 §5 ([`RatioSizes`])
             let sizes = resolve_sizes_with_aspect_ratio(
                 child_style.size().maybe_resolve(node_inner_size, |val, basis| tree.calc(val, basis)),
-                child_style.min_size().maybe_resolve(node_inner_size, |val, basis| tree.calc(val, basis)),
+                crate::util::maybe_resolve_min_size(child_style.min_size(), node_inner_size, |val, basis| tree.calc(val, basis)),
                 child_style.max_size().maybe_resolve(node_inner_size, |val, basis| tree.calc(val, basis)),
                 aspect_ratio,
                 aspect_ratio_inset(&child_style, pb_sum),
@@ -2189,6 +2205,12 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
 
             #[cfg(feature = "float_layout")]
             let clear_threshold = block_ctx.cleared_threshold(item.clear);
+            // pyro: whether a float placed before the item adjoins the strut its top margin would
+            // collapse into, read before the item's own floats join that strut: a cleared box's own
+            // float forced clearance on it, moving it up to that float's bottom over the box before
+            // it (`.c { clear: both; height: 50px }` blocks holding floats overlapped).
+            #[cfg(feature = "float_layout")]
+            let forced_clearance = block_ctx.has_adjoining_float(item.clear);
             #[cfg(feature = "float_layout")]
             let clear_pos = clear_threshold.unwrap_or(f32::NEG_INFINITY);
             #[cfg(not(feature = "float_layout"))]
@@ -2298,7 +2320,6 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
                     // adjoining the margin-collapse strut that the item's top margin would collapse into:
                     // if the margins were allowed to collapse they would pull the float down with the item,
                     // so clearance is inserted to separate the two, placing the item just below the float.
-                    let forced_clearance = block_ctx.has_adjoining_float(item.clear);
                     if forced_clearance || hypothetical_y < threshold {
                         has_clearance = true;
                         // Clearance stops the item's top margin collapsing with preceding margins. If those
@@ -2464,7 +2485,9 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
             // A block container gives its own: none when it holds no line box (but tables).
             let child_last_baseline = if item.is_table {
                 None
-            } else if item.overflow.y.is_scroll_container() {
+            } else if item.overflow.y.is_scroll_container() && item.is_block_container {
+                // (A flex or grid scroll container gives its contents' baseline, as Blink: WPT
+                // css-align `baseline-of-scrollable-1b`.)
                 Some(item_layout.size.height + resolved_margin.bottom)
             } else if item.is_block_container {
                 item_layout.baselines.last

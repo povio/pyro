@@ -80,6 +80,10 @@ pub struct DocumentConfig {
     /// of `auto` height resolves against the nearest ancestor that has one (Quirks Mode §3.5,
     /// "The percentage height calculation quirk"). Defaults to `false`.
     pub quirks_mode: bool,
+    /// pyro: a document in quirks or limited-quirks mode: a line without text, preserved white
+    /// space or inline boxes with edges has no strut (Quirks Mode §3.3, "The line height
+    /// calculation quirk"). Defaults to `false`.
+    pub line_height_quirk: bool,
     /// pyro: the document's language from the protocol (HTTP `Content-Language`), the last
     /// fallback for `:lang()` when no element and no `<meta http-equiv>` pragma gives one.
     pub content_language: Option<String>,
@@ -107,6 +111,7 @@ impl Default for DocumentConfig {
             line_break_override: None,
             xml_document: false,
             quirks_mode: false,
+            line_height_quirk: false,
             content_language: None,
             #[cfg(feature = "devtools")]
             devtools_provider: None,

@@ -5,6 +5,7 @@ pub(crate) mod sys;
 
 pub use math::MaybeMath;
 pub use resolve::{MaybeResolve, ResolveOrZero};
+pub(crate) use resolve::maybe_resolve_min_size;
 
 #[cfg(feature = "grid")]
 mod front_back_vec_builder;

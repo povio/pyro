@@ -30,8 +30,10 @@ Declares the profile and starts booting its pages. It resolves once the server h
 | `userAgent` | `string` | Pyro's own | The `User-Agent` of every request of the profile's pages and their `navigator.userAgent`. Newer than 0.0.33 |
 | `proxyServer` | `string` | the server's `--proxy` | An HTTP proxy for the profile's pages: `http://[user:pass@]host:port`, or `direct://` for none. Newer than 0.0.33 |
 | `proxyBypassList` | `string` | | Hosts that skip `proxyServer`, in Chrome's `--proxy-bypass-list` syntax. Newer than 0.0.33 |
+| `locale` | `string` | the system's | As Playwright's context option (`'en-GB'`): `navigator.language(s)`, `Accept-Language`, and the default locale of `Intl` and the `toLocale*String` methods wherever a page leaves it out. Newer than 0.0.39 |
+| `timezoneId` | `string` | the system's | As Playwright's context option (`'Europe/Zurich'`). The zone is the server's JavaScript VM's: in fork mode every profile of the server, otherwise every profile of the connection, must name the same zone or none; another zone fails with `timezoneId X: another profile of this server has Y`. Newer than 0.0.39 |
 
-Declaring `setup` or `base` against a server without `--fork` fails with `Pyro.registerPreparedPage: setup and base need serve --fork`. A `pool` outside 1 to 8 fails with `Pyro.registerPreparedPage: pool must be between 1 and 8`. A `proxyBypassList` without `proxyServer` fails with `Pyro.registerPreparedPage: proxyBypassList needs proxyServer`.
+Declaring `setup` or `base` against a server without `--fork` fails with `Pyro.registerPreparedPage: setup and base need serve --fork`. A `pool` outside 1 to 8 fails with `Pyro.registerPreparedPage: pool must be between 1 and 8`. A `proxyBypassList` without `proxyServer` fails with `Pyro.registerPreparedPage: proxyBypassList needs proxyServer`. A profile with `base` has its base's `userAgent`, proxy, `locale` and `timezoneId`: leave them out.
 
 ### Signing in with `localStorage`
 

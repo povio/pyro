@@ -2049,6 +2049,9 @@ impl Node {
         if let Some(el) = self.data.downcast_element() {
             if crate::layout::replaced::is_replaced(el) {
                 flags |= stylo_taffy::StyleFlags::IS_REPLACED;
+                if crate::layout::replaced::is_content_image(el) {
+                    flags |= stylo_taffy::StyleFlags::IS_CONTENT_REPLACED;
+                }
                 // pyro
                 if styles.get_position().aspect_ratio.auto && crate::layout::replaced::has_natural_ratio(el) {
                     flags |= stylo_taffy::StyleFlags::HAS_NATURAL_RATIO;

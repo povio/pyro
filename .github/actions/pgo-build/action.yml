@@ -32,13 +32,16 @@ runs:
       id: llvm
       with:
         path: ~/llvm-pgo
-        key: llvm-pgo-macos-arm64-${{ env.LLVM_VERSION }}
+        # Per runner: actions/cache stores ~ paths relative to the workspace, so an archive saved
+        # by a runner whose work directory sits at another depth restores somewhere else.
+        key: llvm-pgo-macos-arm64-${{ env.LLVM_VERSION }}-${{ runner.name }}
     - name: LLVM release of rustc's major version
-      if: steps.llvm.outputs.cache-hit != 'true'
       shell: bash
       env:
         GH_TOKEN: ${{ github.token }}
       run: |
+        # Checked by file, not by cache hit (see the cache key above).
+        if [ -x ~/llvm-pgo/bin/clang ]; then ~/llvm-pgo/bin/clang --version; exit 0; fi
         # rustc's exact LLVM version, else the newest release of its major version (common.sh
         # checks the major version only).
         tag="llvmorg-$LLVM_VERSION"

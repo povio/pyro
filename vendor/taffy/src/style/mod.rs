@@ -134,6 +134,18 @@ pub trait CoreStyle {
     fn is_replaced(&self) -> bool {
         false
     }
+    /// pyro: whether the element is replaced by the image of its `content: url()` (as the root,
+    /// it takes the image's size instead of stretching to the viewport's width).
+    #[inline(always)]
+    fn is_content_replaced(&self) -> bool {
+        false
+    }
+    /// pyro: the side the box floats to as the root element (`Some(true)` for right), whose
+    /// float is honoured in the initial containing block: it shrinks to fit (CSS 2.1 §9.5.1).
+    #[inline(always)]
+    fn root_float_is_right(&self) -> Option<bool> {
+        None
+    }
     /// Which box do size styles apply to
     #[inline(always)]
     fn box_sizing(&self) -> BoxSizing {
@@ -1257,6 +1269,11 @@ impl<S: CheapCloneStr> BlockContainerStyle for Style<S> {
 
 #[cfg(feature = "block_layout")]
 impl<T: BlockContainerStyle> BlockContainerStyle for &'_ T {
+    #[inline(always)]
+    fn own_height_keywords(&self) -> (Dimension, Dimension) {
+        (*self).own_height_keywords()
+    }
+
     #[inline(always)]
     fn text_align(&self) -> TextAlign {
         (*self).text_align()

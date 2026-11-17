@@ -45,7 +45,7 @@
 //! owes as well, so a step's own `scroll` event (a `focus` that revealed its
 //! element) does not arrive a frame interval later, inside another step.
 use std::cell::{Cell, RefCell};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::rc::{Rc, Weak};
 use std::time::{Duration, Instant};
 
@@ -126,6 +126,11 @@ pub(super) struct Locator {
     /// case-insensitive substring. A `{"regex"}` pattern ignores it.
     #[serde(default)]
     exact: bool,
+    /// `text` follows Playwright's legacy `text="…"` selector engine rather
+    /// than `getByText`: an exact string also matches an element one of whose
+    /// own text-node runs equals it, and an element whose child matches too.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    legacy_text: bool,
     within: Option<Box<Locator>>,
     filter: Option<Filter>,
     /// Index into the matches (negative counts from the end).
@@ -255,18 +260,10 @@ enum Action {
 
 impl Action {
     /// Actions that need an enabled element (Playwright's actionability:
-    /// hover, focus, blur, wheel and drag do not).
+    /// hover, focus, blur, wheel and drag do not; `press` and `type` focus
+    /// the element and send the keys whatever its state).
     fn needs_enabled(self) -> bool {
-        matches!(
-            self,
-            Action::Click
-                | Action::DblClick
-                | Action::Fill
-                | Action::Check
-                | Action::Uncheck
-                | Action::Press
-                | Action::Type
-        )
+        matches!(self, Action::Click | Action::DblClick | Action::Fill | Action::Check | Action::Uncheck)
     }
 }
 
@@ -391,6 +388,15 @@ struct RequestMatch {
     /// Which requests count: `finished` (the default: finished or failed,
     /// as `status` needs) or `started` (sent, still in flight or done).
     state: Option<RequestState>,
+    /// The result carries the matched response's body (`responseBody`, as
+    /// text, or base64 with `responseBodyBase64`). The page's log keeps
+    /// bodies from the run with the first such step on.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    response_body: bool,
+    /// The run's values get the matched response's body (with
+    /// `responseBody`) or the matched request under this name.
+    #[serde(default, rename = "as", skip_serializing_if = "Option::is_none")]
+    key: Option<String>,
 }
 
 #[derive(Deserialize, Serialize, Clone, Copy, Debug, PartialEq, Eq)]
@@ -654,6 +660,16 @@ enum Step {
         steps: u32,
         settle: bool,
     },
+    /// Keys sent to the focused element (the body when none has focus), as
+    /// Playwright's `page.keyboard.press` / `keyboard.type`.
+    Keyboard {
+        /// A key or chord (`Escape`, `Shift+Tab`) for `press`.
+        press: Option<String>,
+        /// Text typed one key press per character.
+        text: Option<String>,
+        modifiers: input::Modifiers,
+        settle: bool,
+    },
     Check {
         locator: Locator,
         assert: Assert,
@@ -729,6 +745,7 @@ impl Step {
             Step::Request(_) => "request",
             Step::Act { .. } => "act",
             Step::Mouse { .. } => "mouse",
+            Step::Keyboard { .. } => "keyboard",
             Step::Check { .. } => "check",
             Step::Read { .. } => "read",
             Step::MatchScreenshot(_) => "matchScreenshot",
@@ -768,6 +785,8 @@ impl Step {
                 (Some(x), Some(y)) => format!("mouse {action:?} at {x},{y}"),
                 _ => format!("mouse {action:?}"),
             },
+            Step::Keyboard { press: Some(key), .. } => format!("keyboard press {key}"),
+            Step::Keyboard { .. } => "keyboard type".into(),
             Step::Check { locator, assert, .. } => format!("expect {assert:?} {}", locator.describe()),
             Step::Read { locator, read, .. } => format!("read {read:?} {}", locator.describe()),
             Step::MatchScreenshot(shot) => format!("matchScreenshot {}", shot.name),
@@ -1257,9 +1276,27 @@ struct DragSeq {
 #[derive(Default)]
 struct PointerStability {
     frame: Option<Rc<Cell<bool>>>,
-    previous: Option<pyro_dom::layout::Rect>,
+    /// The box at the last frame that saw it change, and when.
+    previous: Option<(pyro_dom::layout::Rect, Instant)>,
     ready: bool,
+    /// How long the box must stay the same: [`STABLE_SPAN`] before the first
+    /// move, nothing beyond two frames alike before the press after it.
+    span: Duration,
 }
+
+impl PointerStability {
+    /// Before the first move: Playwright waits for a box that is the same in
+    /// two consecutive rendering frames (about 16 ms apart). Frames run back
+    /// to back here while a client drives the page, so a box counts as stable
+    /// only once it stayed put for a frame's time: a sheet sliding in is
+    /// hovered and clicked where it stops, not on its way.
+    fn before_move() -> PointerStability {
+        PointerStability { span: STABLE_SPAN, ..Default::default() }
+    }
+}
+
+/// See [`PointerStability::before_move`].
+const STABLE_SPAN: Duration = Duration::from_millis(16);
 
 /// The input events of an action still to dispatch, each in its own task so
 /// that, as in Chromium, the tasks, timers and animation frames one event's
@@ -1275,6 +1312,9 @@ pub(super) struct Sequence {
     events: std::collections::VecDeque<Input>,
     drag: Option<DragSeq>,
     stability: Option<PointerStability>,
+    /// The ResizeObserver deliveries counted when the press first waited on
+    /// resize work.
+    resize_round: Option<u64>,
 }
 
 impl Sequence {
@@ -1285,7 +1325,16 @@ impl Sequence {
         m: MouseInput,
         events: impl IntoIterator<Item = Input>,
     ) -> Sequence {
-        Sequence { page: page.clone(), id, opts, m, events: events.into_iter().collect(), drag: None, stability: None }
+        Sequence {
+            page: page.clone(),
+            id,
+            opts,
+            m,
+            events: events.into_iter().collect(),
+            drag: None,
+            stability: None,
+            resize_round: None,
+        }
     }
 
     /// Dispatches the next event. `Ok(None)`: more follow; `Ok(Some)`: the
@@ -1295,19 +1344,38 @@ impl Sequence {
         if page.is_disposed() {
             return Err("document is gone".into());
         }
+        // The sizes the current layout changed are delivered before the
+        // press, as Chromium's rendering update does before input reaches
+        // the page. One delivered round settles them: observers that resize
+        // something again in every round (Chromium delivers once per frame
+        // and never holds input for them) do not hold the press.
         if !self.opts.force
             && matches!(self.events.front(), Some(Input::Mouse { kind: MouseKind::Pressed, at: At::Element, .. }))
             && page.pending_resize_observer_work()
         {
-            page.request_resize_observer_update_for_input();
-            return Ok(None);
+            let delivered = page.resize_observer_deliveries();
+            let first = *self.resize_round.get_or_insert(delivered);
+            if delivered == first {
+                page.request_resize_observer_update_for_input();
+                return Ok(None);
+            }
         }
-        if matches!(self.events.front(), Some(Input::Mouse { kind: MouseKind::Pressed, at: At::Element, .. }))
-            && !self.stable_before_press()?
+        // A stable box before the first move (`PointerStability::before_move`),
+        // and again before the press: what the move's hover handlers render
+        // (a control swapped in, a menu that shifts it) lands first.
+        if matches!(
+            self.events.front(),
+            Some(Input::Mouse { kind: MouseKind::Moved | MouseKind::Pressed, at: At::Element, .. })
+        ) && !self.stable_before_press()?
         {
             return Ok(None);
         }
         let Some(next) = self.events.pop_front() else { return Ok(Some(self.result())) };
+        if matches!(next, Input::Mouse { kind: MouseKind::Moved, at: At::Element, .. }) {
+            if let Some(stability) = &mut self.stability {
+                *stability = PointerStability::default();
+            }
+        }
         // The driver is the client driving the page: frames stay on the
         // short interval while a sequence runs.
         pyro_browser::note_client_activity();
@@ -1404,11 +1472,22 @@ impl Sequence {
                 pyro_webapi::layout_api::hit_test(&self.page, self.m.x, self.m.y).ok_or("no replacement at pointer")?
             };
             let bounds = visible_box(&self.page, target).ok_or("element is not visible")?;
-            if stability.previous == Some(bounds) {
-                stability.ready = true;
-                return Ok(true);
+            let now = Instant::now();
+            // Only a moving animation or transition can move the box between
+            // frames with no DOM change; without one, two frames alike suffice.
+            let span = if stability.span.is_zero() || self.page.moving_animation_frame_interval().is_none() {
+                Duration::ZERO
+            } else {
+                stability.span
+            };
+            match stability.previous {
+                Some((previous, at)) if previous == bounds && now.duration_since(at) >= span => {
+                    stability.ready = true;
+                    return Ok(true);
+                }
+                Some((previous, _)) if previous == bounds => {}
+                _ => stability.previous = Some((bounds, now)),
             }
-            stability.previous = Some(bounds);
         }
         let realm = self.page.main_world_realm().ok_or("page has no realm")?;
         stability.frame = Some(pyro_browser::request_native_frame(&realm).map_err(|error| error.to_string())?);
@@ -1463,6 +1542,9 @@ pub(super) struct Waiter {
 
 /// How often a `url` step looks again.
 const URL_POLL: Duration = Duration::from_millis(25);
+/// How soon an action step whose element was not ready is tried again when
+/// nothing in the DOM changes (see [`EngineHost::park_retry`]).
+const ACT_POLL: Duration = Duration::from_millis(100);
 
 /// The command running on the browser thread now (a page command, or a
 /// `Pyro.run` driven between commands), shared with the connection's
@@ -1613,7 +1695,14 @@ impl Waiter {
         }
         match &self.phase {
             Phase::Try if self.waits_on_log() => false,
-            Phase::Try if self.poll_at.is_some() => self.poll_at.is_some_and(|at| now >= at),
+            Phase::Try if self.poll_at.is_some_and(|at| now >= at) => true,
+            // An action step also goes again as soon as the DOM changes.
+            Phase::Try
+                if self.poll_at.is_some()
+                    && !matches!(self.job.steps.get(self.job.index), Some((Step::Act { .. }, _))) =>
+            {
+                false
+            }
             Phase::Try => match self.doc.upgrade() {
                 Some(doc) => doc.is_disposed() || doc.dom.borrow().version() != self.seen,
                 None => true,
@@ -2835,67 +2924,181 @@ pub(super) fn accessible_name_in(
     normalize(&names.alternative(id, NameOpts { target: Target::Own, ..NameOpts::default() }))
 }
 
+/// Playwright's `shouldSkipForTextMatching`: script, noscript and style
+/// elements and everything in `<head>` have no text for text matching.
 fn skipped_for_text(dom: &Dom, id: NodeId) -> bool {
-    matches!(local(dom, id), Some("script" | "style" | "noscript" | "template" | "head" | "title"))
+    matches!(local(dom, id), Some("script" | "noscript" | "style"))
+        || self_and_ancestors(dom, id).any(|a| local(dom, a) == Some("head"))
 }
 
-/// Runs of the element's own text nodes (Playwright's `immediate` text):
-/// `<span><span>|</span>TS-1</span>` has `["TS-1"]`.
-fn immediate_texts(dom: &Dom, id: NodeId) -> Vec<String> {
-    let mut runs = Vec::new();
-    let mut run = String::new();
-    for c in dom.children(id).into_iter().flatten() {
-        match dom.node(c).map(|n| &n.kind) {
-            Ok(NodeKind::Text(t) | NodeKind::CData(t)) => run.push_str(t),
-            Ok(NodeKind::Comment(_)) => {}
-            _ => {
+/// Playwright's `elementText`: the element's full text (its text nodes and
+/// its child elements' texts, skipped elements contributing nothing; an open
+/// shadow root's text after the children; the value of an `<input>` button)
+/// and the runs of its own text nodes (`immediate`:
+/// `<span><span>|</span>TS-1</span>` has `["TS-1"]`).
+#[derive(Clone, Default)]
+struct ElementText {
+    full: String,
+    normalized: String,
+    immediate: Vec<String>,
+}
+
+#[derive(Default)]
+struct TextCache(HashMap<NodeId, Rc<ElementText>>);
+
+impl TextCache {
+    fn get(&mut self, dom: &Dom, id: NodeId) -> Rc<ElementText> {
+        if let Some(t) = self.0.get(&id) {
+            return t.clone();
+        }
+        let mut value = ElementText::default();
+        let is_element = dom.element(id).is_ok();
+        if !(is_element && skipped_for_text(dom, id)) {
+            let input_button = local(dom, id) == Some("input")
+                && matches!(
+                    dom.input_type(id),
+                    Ok(pyro_dom::forms::InputType::Submit
+                        | pyro_dom::forms::InputType::Button
+                        | pyro_dom::forms::InputType::Reset)
+                );
+            if input_button {
+                let v = dom.value(id).unwrap_or_default();
+                value.immediate = vec![v.clone()];
+                value.full = v;
+            } else {
+                let mut run = String::new();
+                for c in dom.children(id).into_iter().flatten() {
+                    match dom.node(c).map(|n| &n.kind) {
+                        Ok(NodeKind::Text(t) | NodeKind::CData(t)) => {
+                            value.full.push_str(t);
+                            run.push_str(t);
+                        }
+                        Ok(NodeKind::Comment(_)) => {}
+                        Ok(kind) => {
+                            let element = matches!(kind, NodeKind::Element(_));
+                            if !run.is_empty() {
+                                value.immediate.push(std::mem::take(&mut run));
+                            }
+                            if element {
+                                let child = self.get(dom, c);
+                                value.full.push_str(&child.full);
+                            }
+                        }
+                        Err(_) => {}
+                    }
+                }
                 if !run.is_empty() {
-                    runs.push(std::mem::take(&mut run));
+                    value.immediate.push(run);
+                }
+                if is_element {
+                    if let Some(sr) = open_shadow_root(dom, id) {
+                        let shadow = self.get(dom, sr);
+                        value.full.push_str(&shadow.full);
+                    }
                 }
             }
+            value.normalized = normalize(&value.full);
+        }
+        let value = Rc::new(value);
+        self.0.insert(id, value.clone());
+        value
+    }
+}
+
+fn open_shadow_root(dom: &Dom, host: NodeId) -> Option<NodeId> {
+    let sr = dom.shadow_root(host).ok().flatten()?;
+    (dom.shadow_root_mode(sr).ok().flatten() == Some(pyro_dom::ShadowRootMode::Open)).then_some(sr)
+}
+
+/// A text locator's matcher, as Playwright's `createTextMatcher`: a regex
+/// (tested against the normalized text), `strict` (an exact string: the
+/// whole normalized text, or for the legacy `text="…"` engine one run of
+/// the element's own text nodes) or `lax` (a case-insensitive substring).
+struct TextMatcher<'a> {
+    want: &'a Pattern,
+    strict: bool,
+    legacy: bool,
+    normalized_want: String,
+}
+
+impl<'a> TextMatcher<'a> {
+    fn new(want: &'a Pattern, exact: bool, legacy: bool) -> Self {
+        let strict = exact && want.regex.is_none();
+        let n = normalize(&want.text);
+        TextMatcher {
+            want,
+            strict,
+            legacy,
+            normalized_want: if strict || want.regex.is_some() { n } else { n.to_lowercase() },
         }
     }
-    if !run.is_empty() {
-        runs.push(run);
+
+    fn lax(&self) -> bool {
+        !self.strict && self.want.regex.is_none()
     }
-    runs
+
+    fn matches(&self, t: &ElementText) -> bool {
+        if let Some(re) = &self.want.regex {
+            return re.find(&t.normalized).is_some();
+        }
+        if !self.strict {
+            return t.normalized.to_lowercase().contains(&self.normalized_want);
+        }
+        if !self.legacy {
+            return t.normalized == self.normalized_want;
+        }
+        if self.normalized_want.is_empty() && t.immediate.is_empty() {
+            return true;
+        }
+        t.immediate.iter().any(|run| normalize(run) == self.normalized_want)
+    }
 }
 
-/// Whether an element's text matches: its whole text, or, for an exact
-/// string, one run of its own text nodes (Playwright's `text="..."`, so
-/// exact `TS-1` matches `<span><span>|</span>TS-1</span>`).
-fn element_text_matches(dom: &Dom, id: NodeId, want: &Pattern, exact: bool) -> bool {
-    if want.matches(&text_of(dom, id), exact) {
-        return true;
-    }
-    exact && want.regex.is_none() && immediate_texts(dom, id).iter().any(|run| normalize(run) == normalize(&want.text))
+#[derive(PartialEq, Eq)]
+enum TextHit {
+    None,
+    OnlySelf,
+    SelfAndChildren,
 }
 
-/// The smallest elements whose text matches: an element whose text matches
-/// and none of whose child elements' text does. `root` itself is a candidate.
-fn by_text(dom: &Dom, root: NodeId, want: &Pattern, exact: bool, out: &mut Vec<NodeId>) -> bool {
-    let children: Vec<NodeId> = dom
-        .children(root)
-        .into_iter()
-        .flatten()
-        .filter(|c| dom.element(*c).is_ok() && !skipped_for_text(dom, *c))
-        .collect();
-    let here = element_text_matches(dom, root, want, exact);
-    // A substring match in a child implies one here: prune subtrees that
-    // cannot match. Exact and regex matches need the whole walk.
-    if !here && !exact && want.regex.is_none() {
-        return false;
+/// Playwright's `elementMatchesText`.
+fn element_matches_text(dom: &Dom, cache: &mut TextCache, id: NodeId, m: &TextMatcher<'_>) -> TextHit {
+    if skipped_for_text(dom, id) || !m.matches(&cache.get(dom, id)) {
+        return TextHit::None;
     }
-    let before = out.len();
-    let mut child_matched = false;
-    for c in children {
-        child_matched |= by_text(dom, c, want, exact, out);
+    for c in dom.children(id).into_iter().flatten() {
+        if dom.element(c).is_ok() && m.matches(&cache.get(dom, c)) {
+            return TextHit::SelfAndChildren;
+        }
     }
-    if here && !child_matched && out.len() == before {
-        out.push(root);
-        return true;
+    if let Some(sr) = open_shadow_root(dom, id) {
+        if m.matches(&cache.get(dom, sr)) {
+            return TextHit::SelfAndChildren;
+        }
     }
-    child_matched || here
+    TextHit::OnlySelf
+}
+
+/// Playwright's text engine over `root` (a candidate itself) and the
+/// elements inside it: an element matches when its text does and no child
+/// element's text does (the legacy `text="…"` engine also keeps strict
+/// matches whose children match too). Lax matching skips the subtrees of
+/// elements that do not match.
+fn by_text(dom: &Dom, root: NodeId, want: &Pattern, exact: bool, legacy: bool, out: &mut Vec<NodeId>) {
+    let m = TextMatcher::new(want, exact, legacy);
+    let mut cache = TextCache::default();
+    let mut last_miss: Option<NodeId> = None;
+    for el in std::iter::once(root).chain(elements(dom, root).filter(|n| *n != root)) {
+        if m.lax() && last_miss.is_some_and(|miss| contains(dom, miss, el)) {
+            continue;
+        }
+        match element_matches_text(dom, &mut cache, el, &m) {
+            TextHit::None => last_miss = Some(el),
+            TextHit::OnlySelf => out.push(el),
+            TextHit::SelfAndChildren if m.strict && legacy => out.push(el),
+            TextHit::SelfAndChildren => {}
+        }
+    }
 }
 
 /// Drops nulls and `false` from a serialized locator, for messages.
@@ -3032,10 +3235,10 @@ impl Locator {
             // candidate: `css('td').text('Domestic', exact)` matches the cell.
             if root == doc {
                 if let Ok(Some(html)) = dom.document_element(doc) {
-                    by_text(&dom, html, text, self.exact, &mut found);
+                    by_text(&dom, html, text, self.exact, self.legacy_text, &mut found);
                 }
-            } else if dom.element(root).is_ok() && !skipped_for_text(&dom, root) {
-                by_text(&dom, root, text, self.exact, &mut found);
+            } else if dom.element(root).is_ok() {
+                by_text(&dom, root, text, self.exact, self.legacy_text, &mut found);
             }
         } else if let Some(role) = &self.role {
             let role = role.to_ascii_lowercase();
@@ -3081,7 +3284,7 @@ impl Locator {
 impl Filter {
     fn keeps(&self, page: &PageDom, selectors: &RefCell<SelectorCache>, n: NodeId) -> CdpResult<bool> {
         if let Some(want) = self.visible {
-            if visible_box(page, n).is_some() != want {
+            if is_visible(page, n) != want {
                 return Ok(false);
             }
         }
@@ -3224,6 +3427,16 @@ fn visible_box(page: &PageDom, id: NodeId) -> Option<pyro_dom::layout::Rect> {
     page.layout().client_rect(&dom, id).filter(|r| r.width > 0.0 && r.height > 0.0)
 }
 
+/// Playwright's `isVisible` semantics (`isElementVisible`): a box with an
+/// area, `visibility: visible` (an element under `visibility: hidden` or
+/// `collapse` is not), a `display: contents` element through its children.
+/// The `visible()` filter, `read("visible")`, the visible/hidden checks and
+/// the actions' visible check use it.
+fn is_visible(page: &PageDom, id: NodeId) -> bool {
+    let layout = page.layout();
+    super::aria_snapshot::box_visible(&page.dom.borrow(), &layout, id)
+}
+
 fn act(page: &Rc<PageDom>, id: NodeId, action: Action, value: &str, opts: PointerOpts) -> Attempt {
     {
         let dom = page.dom.borrow();
@@ -3231,7 +3444,9 @@ fn act(page: &Rc<PageDom>, id: NodeId, action: Action, value: &str, opts: Pointe
             return Attempt::Retry("element is detached".into());
         }
     }
-    if visible_box(page, id).is_none() {
+    // Not visible to Playwright: no area, or `visibility: hidden` (a forced
+    // action only needs the box to aim at).
+    if visible_box(page, id).is_none() || (!opts.force && !is_visible(page, id)) {
         let rect = page.layout().client_rect(&page.dom.borrow(), id);
         let detail = match rect {
             Some(r) => format!(" (box {:.1},{:.1} {:.1}x{:.1})", r.x, r.y, r.width, r.height),
@@ -3395,6 +3610,21 @@ fn clipped_box(page: &PageDom, id: NodeId, rect: pyro_dom::layout::Rect) -> Opti
     page.layout().visible_client_rect(&page.dom.borrow(), id, rect)
 }
 
+/// The part of `rect` inside the viewport, when it covers at least about a
+/// pixel (Playwright's quads with an area above 0.99).
+fn in_viewport(page: &PageDom, rect: pyro_dom::layout::Rect) -> Option<pyro_dom::layout::Rect> {
+    let layout = page.layout();
+    let (w, h) = (layout.inner_width() as f64, layout.inner_height() as f64);
+    let (x0, y0) = (rect.x.max(0.0), rect.y.max(0.0));
+    let (x1, y1) = ((rect.x + rect.width).min(w), (rect.y + rect.height).min(h));
+    (x1 > x0 && y1 > y0 && (x1 - x0) * (y1 - y0) > 0.99).then(|| pyro_dom::layout::Rect {
+        x: x0,
+        y: y0,
+        width: x1 - x0,
+        height: y1 - y0,
+    })
+}
+
 /// Where a pointer action lands, once the element is revealed: `position`
 /// from its top-left, else the center of its visible part; checked to
 /// receive pointer events there unless `force`.
@@ -3404,7 +3634,11 @@ fn pointer_target(page: &Rc<PageDom>, id: NodeId, opts: PointerOpts) -> Result<(
     let (x, y) = match opts.position {
         Some((dx, dy)) => (rect.x + dx, rect.y + dy),
         None => {
-            let Some(shown) = clipped_box(page, id, rect) else {
+            // As Playwright with `force`: the center of the element's box
+            // where it meets the viewport, whatever clips it (a visually
+            // hidden control's `clip: rect(0 0 0 0)` or `clip-path`).
+            let shown = if opts.force { in_viewport(page, rect) } else { clipped_box(page, id, rect) };
+            let Some(shown) = shown else {
                 let layout = page.layout();
                 return Err(Attempt::Retry(format!(
                     "element is outside the viewport (box {:.1},{:.1} {:.1}x{:.1}; viewport {}x{})",
@@ -3484,8 +3718,8 @@ fn pointer(page: &Rc<PageDom>, id: NodeId, what: Pointer, opts: PointerOpts) -> 
         Input::Mouse { kind, button, buttons, count, at }
     });
     let mut sequence = Sequence::new(page, id, opts, m, events);
-    if matches!(what, Pointer::Click | Pointer::DblClick) {
-        sequence.stability = Some(PointerStability::default());
+    if matches!(what, Pointer::Click | Pointer::DblClick | Pointer::Hover) {
+        sequence.stability = Some(PointerStability::before_move());
     }
     start(sequence)
 }
@@ -3552,6 +3786,31 @@ fn mouse_step(
         m.click_count = count;
         if let Err(retry) = send(&m, kind) {
             return retry;
+        }
+    }
+    Attempt::Done(json!({}))
+}
+
+/// A `keyboard` step: a key press (or chord), or text typed key by key, at
+/// the focused element (`press` and `type` of `page.keyboard`).
+fn keyboard_step(page: &Rc<PageDom>, press: Option<&str>, text: Option<&str>, modifiers: input::Modifiers) -> Attempt {
+    if let Some(key) = press {
+        // Checked when the step was read (`KeyboardParams::step`).
+        let Ok(keys) = super::keyboard::chord(key, modifiers) else {
+            return Attempt::Retry(format!("Unknown key: {key:?}"));
+        };
+        for (kind, k) in keys {
+            input::dispatch_key(page, kind, &k);
+        }
+    }
+    for c in text.unwrap_or_default().chars() {
+        match super::keyboard::type_char(c, modifiers) {
+            Some(keys) => {
+                for (kind, k) in keys {
+                    input::dispatch_key(page, kind, &k);
+                }
+            }
+            None => input::insert_text(page, c.encode_utf8(&mut [0; 4])),
         }
     }
     Attempt::Done(json!({}))
@@ -3704,7 +3963,7 @@ fn expect(
         Assert::Visible | Assert::Hidden => {
             let el = if found.is_empty() { None } else { single(found, &dom, locator)? };
             drop(dom);
-            let visible = el.is_some_and(|el| visible_box(page, el).is_some());
+            let visible = el.is_some_and(|el| is_visible(page, el));
             (visible == (assert == Assert::Visible), json!(visible))
         }
         Assert::Text | Assert::ContainsText | Assert::Value | Assert::Checked => {
@@ -3725,16 +3984,24 @@ fn expect(
                     };
                     (checked == want, checked.to_json())
                 }
+                // A `{"regex"}` expected value is tested as Playwright's
+                // `toHaveValue(re)` (the raw value) and `toHaveText(re)` /
+                // `toContainText(re)` (the whitespace-normalized text).
                 Assert::Value => {
-                    let want = expected.as_str().ok_or_else(|| CdpError::invalid_params("value needs a string"))?;
                     let have = dom.value(el).unwrap_or_default();
-                    (have == want, json!(have))
+                    let ok = match expected {
+                        Value::String(want) => have == *want,
+                        _ => check_regex(expected, "value")?.matches_raw(&have),
+                    };
+                    (ok, json!(have))
                 }
                 _ => {
-                    let want = expected.as_str().ok_or_else(|| CdpError::invalid_params("text needs a string"))?;
                     let have = normalize(&text_of(&dom, el));
-                    let ok =
-                        if assert == Assert::Text { have == normalize(want) } else { have.contains(&normalize(want)) };
+                    let ok = match expected {
+                        Value::String(want) if assert == Assert::Text => have == normalize(want),
+                        Value::String(want) => have.contains(&normalize(want)),
+                        _ => check_regex(expected, "text")?.matches(&have, false),
+                    };
                     (ok, json!(have))
                 }
             }
@@ -3745,6 +4012,14 @@ fn expect(
     } else {
         Attempt::Retry(format!("expected {}{:?} {expected}, got {actual}", if not { "not " } else { "" }, assert))
     })
+}
+
+/// A check's `{"regex": "...", "flags": "i"}` expected value.
+fn check_regex(expected: &Value, what: &str) -> CdpResult<Pattern> {
+    match expected {
+        Value::Object(_) => serde_json::from_value(expected.clone()).map_err(|e| CdpError::invalid_params(e.to_string())),
+        _ => Err(CdpError::invalid_params(format!("{what} needs a string or a {{\"regex\"}} pattern"))),
+    }
 }
 
 #[derive(Deserialize)]
@@ -3816,6 +4091,36 @@ struct MouseParams {
     /// Wait for the requests the action started (default: true).
     settle: Option<bool>,
     timeout: Option<u64>,
+}
+
+/// `{"keyboard": {"press": "Escape"}}` or `{"keyboard": {"type": "abc"}}`:
+/// keys at the focused element.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct KeyboardParams {
+    press: Option<String>,
+    #[serde(rename = "type")]
+    text: Option<String>,
+    /// Modifier keys held (`Shift`, `Control`, `Alt`, `Meta`, `ControlOrMeta`).
+    #[serde(default)]
+    modifiers: Vec<String>,
+    /// Wait for the requests the keys started (default: true).
+    settle: Option<bool>,
+    timeout: Option<u64>,
+}
+
+impl KeyboardParams {
+    fn step(self) -> CdpResult<(Step, Option<u64>)> {
+        if self.press.is_some() == self.text.is_some() {
+            return Err(CdpError::invalid_params("keyboard needs exactly one of press or type"));
+        }
+        if let Some(key) = self.press.as_deref().and_then(super::keyboard::unknown_key) {
+            return Err(CdpError::invalid_params(format!("Unknown key: \"{key}\"")));
+        }
+        let modifiers = modifiers_of(&self.modifiers)?;
+        let settle = self.settle.unwrap_or(true);
+        Ok((Step::Keyboard { press: self.press, text: self.text, modifiers, settle }, self.timeout))
+    }
 }
 
 fn mouse_button(name: Option<&str>) -> CdpResult<MouseButton> {
@@ -3963,6 +4268,7 @@ enum StepParams {
     Route(RouteParams),
     Act(ActParams),
     Mouse(MouseParams),
+    Keyboard(KeyboardParams),
     Check(ExpectParams),
     Read(QueryParams),
     Eval(EvalParams),
@@ -4512,6 +4818,7 @@ impl StepParams {
             StepParams::MatchScreenshot(p) => p.step(),
             StepParams::Act(p) => p.step(true),
             StepParams::Mouse(p) => p.step(),
+            StepParams::Keyboard(p) => p.step(),
             StepParams::Check(p) => p.step(),
             StepParams::Read(p) => {
                 let read = p.read()?;
@@ -4551,7 +4858,7 @@ fn read_value(page: &PageDom, el: NodeId, read: Read, property: Option<&str>) ->
         },
         Read::Text => json!(normalize(&text_of(&page.dom.borrow(), el))),
         Read::Value => json!(page.dom.borrow().value(el).unwrap_or_default()),
-        Read::Visible => json!(visible_box(page, el).is_some()),
+        Read::Visible => json!(is_visible(page, el)),
         Read::Box => match visible_box(page, el) {
             Some(r) => json!({"x": r.x, "y": r.y, "width": r.width, "height": r.height}),
             None => Value::Null,
@@ -4706,6 +5013,7 @@ impl EngineHost {
             | Step::Page { .. }
             | Step::Request(_)
             | Step::Mouse { .. }
+            | Step::Keyboard { .. }
             | Step::MatchScreenshot(_) => {
                 unreachable!("not a locator step")
             }
@@ -4816,6 +5124,11 @@ impl EngineHost {
             self.update_network_subscriptions();
             Some(0)
         };
+        if steps.iter().any(|(s, _)| matches!(s, Step::Request(m) if m.response_body)) {
+            if let Some(log) = self.pages.get_mut(&cmd.page).and_then(|s| s.network.log.as_mut()) {
+                log.capture_bodies = true;
+            }
+        }
         let popups_from = self.popups.len();
         let now = Instant::now();
         let first = steps.first().map_or(Duration::ZERO, |(_, t)| *t);
@@ -5100,6 +5413,7 @@ impl EngineHost {
                         step,
                         Step::Act { settle: true, .. }
                             | Step::Mouse { settle: true, .. }
+                            | Step::Keyboard { settle: true, .. }
                             | Step::Route { settle: true, .. }
                             | Step::Viewport { .. }
                             | Step::Media(_)
@@ -5322,6 +5636,12 @@ impl EngineHost {
                             }
                             (attempt, Some(page))
                         }
+                        Step::Keyboard { press, text, modifiers, .. } => {
+                            let page = self.main_document(w.job.page).map_err(|e| w.job.fail(e))?;
+                            let attempt = keyboard_step(&page, press.as_deref(), text.as_deref(), *modifiers);
+                            self.thread.browser.checkpoint();
+                            (attempt, Some(page))
+                        }
                         _ => {
                             let page = self.main_document(w.job.page).map_err(|e| w.job.fail(e))?;
                             let span = if matches!(&step, Step::Check { .. }) {
@@ -5374,6 +5694,10 @@ impl EngineHost {
         | Step::Held { key: Some(key), .. } = step
         {
             w.job.reads.insert(key.clone(), value.clone());
+        } else if let Step::Request(RequestMatch { key: Some(key), response_body, .. }) = step {
+            let read =
+                if *response_body { value.get("responseBody").cloned().unwrap_or(Value::Null) } else { value.clone() };
+            w.job.reads.insert(key.clone(), read);
         } else if let Step::MatchScreenshot(shot) = step {
             if let Some(key) = &shot.key {
                 w.job.reads.insert(key.clone(), value.clone());
@@ -5412,7 +5736,8 @@ impl EngineHost {
     }
 
     /// A step that cannot finish yet: fails once past its deadline, else
-    /// parks until the document it searched changes.
+    /// parks until the document it searched changes (an action step also
+    /// until [`ACT_POLL`] passed; URL, route, hold and page steps poll only).
     fn park_retry(
         &self,
         mut w: Waiter,
@@ -5431,11 +5756,20 @@ impl EngineHost {
             w.seen = page.dom.borrow().version();
             w.doc = Rc::downgrade(page);
         }
-        w.poll_at = matches!(
+        w.poll_at = if matches!(
             step,
             Step::Url(_) | Step::Route { .. } | Step::Release { .. } | Step::Held { .. } | Step::Page { .. }
-        )
-        .then(|| Instant::now() + URL_POLL);
+        ) {
+            Some(Instant::now() + URL_POLL)
+        } else if matches!(step, Step::Act { .. }) {
+            // An element that is outside the viewport, covered or moving gets
+            // there through animations, transitions and scrolling as well as
+            // DOM changes: tried again on a timer too, as Playwright's retries
+            // are (20, 100, 100, then 500 ms apart).
+            Some(Instant::now() + ACT_POLL)
+        } else {
+            None
+        };
         w.reason = reason;
         w.phase = Phase::Try;
         Ok(Drive::Park(Box::new(w)))
@@ -5726,6 +6060,10 @@ impl EngineHost {
         }
         let candidates = if started { &matching } else { &finished };
         match candidates.iter().rev().find(|r| m.status.as_ref().is_none_or(|s| s.accepts(r.status))) {
+            Some(r) if m.response_body && !r.has_response_body() && r.error.is_none() => Attempt::Retry(
+                "the matching response's body was not kept (it ended before the run asked for bodies)".into(),
+            ),
+            Some(r) if m.response_body => Attempt::Done(r.to_json_with_body()),
             Some(r) => Attempt::Done(r.to_json()),
             None => Attempt::Retry(match candidates.last() {
                 Some(r) => format!("last match was {}", r.to_json()),

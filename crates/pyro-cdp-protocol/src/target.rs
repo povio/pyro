@@ -204,6 +204,12 @@ pub trait Host {
     fn add_init_script(&mut self, _page: PageKey, _source: &str) {}
     /// Sets the page's viewport size.
     fn set_viewport(&mut self, _page: PageKey, _width: u32, _height: u32) {}
+    /// Sets the page's locale (`Emulation.setLocaleOverride`).
+    fn set_locale(&mut self, _page: PageKey, _locale: &str) {}
+    /// Sets the page's time zone (`Emulation.setTimezoneOverride`).
+    fn set_timezone(&mut self, _page: PageKey, _timezone_id: &str) -> CdpResult<()> {
+        Ok(())
+    }
     /// A prepared page finished booting and now waits: shrink it to its
     /// live size (full collection, free pages returned).
     fn settle_page(&mut self, _page: PageKey) {}
@@ -272,6 +278,19 @@ pub struct PreparedProfile {
     /// Hosts that skip `proxy_server` (Chrome's `--proxy-bypass-list` syntax).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub proxy_bypass_list: Option<String>,
+    /// Locale of the profile's pages, as `Emulation.setLocaleOverride` sets
+    /// it: `navigator.language(s)` and `Accept-Language` (clients add the
+    /// init script that makes it Intl's default). A profile with a `base`
+    /// has its base's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub locale: Option<String>,
+    /// Time zone of the profile's pages (`Emulation.setTimezoneOverride`).
+    /// It is the JavaScript VM's, which every page of the process shares (in
+    /// fork mode the template's, and so every fork's): profiles with
+    /// different zones are refused on one server. A profile with a `base`
+    /// has its base's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timezone_id: Option<String>,
 }
 
 impl PreparedProfile {
@@ -291,8 +310,34 @@ impl PreparedProfile {
             (None, Some(_)) => return Err(CdpError::invalid_params("proxyBypassList needs proxyServer")),
             (None, None) => {}
         }
+        if let Some(locale) = &self.locale {
+            if !valid_locale(locale) {
+                return Err(CdpError::invalid_params("locale must be a BCP 47 language tag such as en-GB"));
+            }
+        }
+        if self.timezone_id.as_deref() == Some("") {
+            return Err(CdpError::invalid_params("timezoneId must not be empty"));
+        }
         Ok(())
     }
+
+    /// Why this profile cannot join `others` (the active profiles of the
+    /// same VM): another one has a different `timezoneId`.
+    pub fn timezone_conflict<'a>(&self, others: impl IntoIterator<Item = &'a PreparedProfile>) -> Option<String> {
+        let mine = self.timezone_id.as_deref()?;
+        let other = others.into_iter().find_map(|p| p.timezone_id.as_deref().filter(|z| *z != mine))?;
+        Some(format!(
+            "timezoneId {mine}: another profile of this server has {other}, and the time zone is the \
+             server's JavaScript VM's (one zone per server; start another `pyro serve` for another zone)"
+        ))
+    }
+}
+
+/// What `Emulation.setLocaleOverride` accepts: letters, digits, `-` and `_`.
+pub fn valid_locale(locale: &str) -> bool {
+    !locale.is_empty()
+        && http::HeaderValue::from_str(locale).is_ok()
+        && locale.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_'))
 }
 
 /// How far a prepared profile is (`serve --fork`, where its page boots and
@@ -614,6 +659,8 @@ impl<H: Host> Browser<H> {
         profile.user_agent = None;
         profile.proxy_server = None;
         profile.proxy_bypass_list = None;
+        profile.locale = None;
+        profile.timezone_id = None;
         Ok(true)
     }
 
@@ -845,7 +892,11 @@ impl<H: Host> Browser<H> {
                 if let Some(v) = profile.viewport {
                     self.host.set_viewport(page, v.width, v.height);
                 }
-                if self.host.navigate(page, &profile.url).is_err() {
+                if let Some(locale) = &profile.locale {
+                    self.host.set_locale(page, locale);
+                }
+                let zoned = profile.timezone_id.as_deref().is_none_or(|z| self.host.set_timezone(page, z).is_ok());
+                if !zoned || self.host.navigate(page, &profile.url).is_err() {
                     self.host.close_page(page);
                     self.dispose_context(&context_id, &mut Discard);
                     break;
@@ -890,6 +941,11 @@ impl<H: Host> Browser<H> {
                 }
                 if name.is_some() {
                     return Err(CdpError::invalid_params("profile names need serve --fork"));
+                }
+                let active =
+                    self.prepared_profiles.iter().enumerate().filter(|(i, _)| self.prepared_profile_active(*i));
+                if let Some(conflict) = profile.timezone_conflict(active.map(|(_, p)| p)) {
+                    return Err(CdpError::invalid_params(conflict));
                 }
                 self.prepared_profiles.push(profile);
                 self.refill_blocked = false;
@@ -944,6 +1000,8 @@ impl<H: Host> Browser<H> {
                     "userAgent": profile.user_agent,
                     "proxyServer": profile.proxy_server,
                     "proxyBypassList": profile.proxy_bypass_list,
+                    "locale": profile.locale,
+                    "timezoneId": profile.timezone_id,
                 });
                 status.add_to(&mut reply);
                 out.send(msg::result_frame(id, &reply, cmd.session_id()));

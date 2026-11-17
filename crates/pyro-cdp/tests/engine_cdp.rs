@@ -5856,9 +5856,10 @@ fn driver_run_eval_awaits_promises_and_route_can_skip_settling() {
 
 /// `text` locators follow Playwright's text engine: the scope element
 /// itself is a candidate (`css('td').text('Domestic', exact)` matches
-/// `<td>Domestic</td>`), and an exact string also matches an element one of
-/// whose own text-node runs equals it, child elements aside
-/// (`<span><span>|</span>TS-106-POSITION</span>`).
+/// `<td>Domestic</td>`). With `legacyText` (Playwright's `text="…"`) an
+/// exact string also matches an element one of whose own text-node runs
+/// equals it, child elements aside (`<span><span>|</span>TS-106-POSITION</span>`);
+/// `getByText` exact compares the whole text only.
 #[test]
 fn driver_text_locators_match_the_scope_root_and_own_text_nodes() {
     let mut h = Harness::new();
@@ -5877,10 +5878,12 @@ fn driver_text_locators_match_the_scope_root_and_own_text_nodes() {
     assert_eq!(r["result"]["value"], "Domestic", "{r}");
     let r = h.page("Pyro.query", json!({"locator": {"text": "Domestic"}, "read": "count"}));
     assert_eq!(r["result"]["value"], 2, "{r}");
-    let r = q(&mut h, json!({"text": "TS-106-POSITION", "exact": true}));
+    let r = q(&mut h, json!({"text": "TS-106-POSITION", "exact": true, "legacyText": true}));
     assert_eq!(r["result"]["value"], "|TS-106-POSITION", "{r}");
-    let r = q(&mut h, json!({"text": "TS-106-POSITION", "exact": true, "within": {"css": "#pos"}}));
+    let r = q(&mut h, json!({"text": "TS-106-POSITION", "exact": true, "legacyText": true, "within": {"css": "#pos"}}));
     assert_eq!(r["result"]["value"], "|TS-106-POSITION", "{r}");
+    let r = h.page("Pyro.query", json!({"locator": {"text": "TS-106-POSITION", "exact": true}, "read": "count"}));
+    assert_eq!(r["result"]["value"], 0, "{r}");
     // The whole text still wins, and own text nodes do not match substrings.
     let r = q(&mut h, json!({"text": "bold and plain", "exact": true}));
     assert_eq!(r["result"]["value"], "bold and plain", "{r}");
@@ -6115,6 +6118,159 @@ fn driver_within_row_in_frame_scopes_inner_locator() {
     );
     assert!(r.get("error").is_none(), "{r}");
     assert_eq!(r["result"]["reads"], json!({"second": 2, "first": 1, "has": 2}), "{r}");
+}
+
+/// Danex 6: exact `text` is Playwright's `getByText(…, { exact: true })`:
+/// the element's whole text, and only where no child element's text
+/// matches too. `<span>Charges difference <span>+37.86 USD</span></span>`
+/// does not match "Charges difference"; the `<dt>`'s inner span does.
+/// Script and style text does not count; `<input type=submit>` counts its value.
+#[test]
+fn driver_exact_text_compares_the_whole_text() {
+    let mut h = Harness::new();
+    load_html(
+        &mut h,
+        r#"<!doctype html><body>
+<span id="a">Charges difference <span>+37.86 USD</span></span>
+<dl><dt><span id="b">Charges difference</span></dt></dl>
+<p id="c">Total<script>var x = 1;</script></p>
+<div id="d"><input type="submit" value="Go"></div>
+<div id="e">X<p>Z<b>X</b></p></div>"#,
+    );
+    let count = |h: &mut Harness, locator: Value| {
+        h.page("Pyro.query", json!({"locator": locator, "read": "count"}))["result"]["value"].clone()
+    };
+    assert_eq!(count(&mut h, json!({"text": "Charges difference", "exact": true})), 1);
+    let r = h.page("Pyro.query", json!({"locator": {"text": "Charges difference", "exact": true}, "read": "box"}));
+    assert!(r.get("error").is_none(), "{r}");
+    assert_eq!(count(&mut h, json!({"text": "Charges difference", "exact": true, "within": {"css": "dt"}})), 1);
+    assert_eq!(count(&mut h, json!({"text": "Charges difference"})), 2);
+    assert_eq!(count(&mut h, json!({"text": "Total", "exact": true})), 1);
+    assert_eq!(count(&mut h, json!({"text": "Go", "exact": true})), 1);
+    // A regex: `<div id=e>` ("XZX") matches /^X/ while its child <p> ("ZX")
+    // does not, so it is a match, and so is the <b>.
+    assert_eq!(count(&mut h, json!({"text": {"regex": "^X"}, "within": {"css": "#e"}})), 2);
+}
+
+/// Danex 7: a second `hasText` narrows the first one's matches (as the SDK
+/// sends it: the first filter's locator as the base set, `of`).
+#[test]
+fn driver_chained_filters_narrow() {
+    let mut h = Harness::new();
+    load_html(&mut h, r#"<!doctype html><body><ul><li>apple red</li><li>apple green</li><li>pear red</li></ul>"#);
+    let count = |h: &mut Harness, locator: Value| {
+        h.page("Pyro.query", json!({"locator": locator, "read": "count"}))["result"]["value"].clone()
+    };
+    let first = json!({"css": "li", "filter": {"hasText": "apple"}});
+    assert_eq!(count(&mut h, json!({"of": first, "filter": {"hasText": "red"}})), 1);
+    assert_eq!(count(&mut h, json!({"of": {"css": "li", "nth": 0}, "filter": {"hasText": "green"}})), 0);
+}
+
+/// Danex 2: `press` and `type` do not check that the element is enabled
+/// (Playwright focuses it and sends the keys): an `aria-disabled` button
+/// gets the keydown. `fill` and `click` still wait for an enabled element.
+#[test]
+fn driver_press_ignores_aria_disabled() {
+    let mut h = Harness::new();
+    load_html(
+        &mut h,
+        r#"<!doctype html><title>start</title><button aria-disabled="true" onkeydown="document.title = 'pressed ' + event.key">Settled</button>"#,
+    );
+    let r = h.page(
+        "Pyro.run",
+        json!({"timeout": 2000, "steps": [
+            {"act": {"locator": {"role": "button", "name": "Settled"}, "action": "press", "value": "Enter"}},
+            {"eval": {"expression": "document.title", "as": "title"}},
+            {"eval": {"expression": "document.activeElement.textContent", "as": "focused"}},
+        ]}),
+    );
+    assert!(r.get("error").is_none(), "{r}");
+    assert_eq!(r["result"]["reads"]["title"], "pressed Enter", "{r}");
+    assert_eq!(r["result"]["reads"]["focused"], "Settled", "{r}");
+}
+
+/// Danex 8: Escape in a filled `<input type=search>` empties it and fires
+/// `input`, then `search` (Chromium's SearchInputType); an empty one lets
+/// the key through.
+#[test]
+fn driver_escape_clears_a_search_field() {
+    let mut h = Harness::new();
+    load_html(
+        &mut h,
+        r#"<!doctype html><input type="search" id="s"><div id="log"></div>
+<script>
+  const s = document.getElementById('s'), log = [];
+  for (const t of ['input', 'search', 'change']) s.addEventListener(t, () => { log.push(t + ':' + s.value); document.getElementById('log').textContent = log.join(','); });
+</script>"#,
+    );
+    let r = h.page(
+        "Pyro.run",
+        json!({"steps": [
+            {"act": {"locator": {"css": "#s"}, "action": "fill", "value": "abc"}},
+            {"act": {"locator": {"css": "#s"}, "action": "press", "value": "Escape"}},
+            {"eval": {"expression": "[document.getElementById('s').value, document.getElementById('log').textContent]", "as": "after"}},
+        ]}),
+    );
+    assert!(r.get("error").is_none(), "{r}");
+    assert_eq!(r["result"]["reads"]["after"], json!(["", "input:abc,input:,search:"]), "{r}");
+}
+
+/// Danex 9: `click({ force: true })` on a visually hidden checkbox (react-aria:
+/// absolutely positioned, 1px, `clip: rect(0 0 0 0)`, `clip-path: inset(50%)`)
+/// clicks the center of its box, as Playwright's force does.
+#[test]
+fn driver_force_click_on_a_visually_hidden_checkbox() {
+    let mut h = Harness::new();
+    load_html(
+        &mut h,
+        r#"<!doctype html><label id=l style="display:inline-flex;gap:8px;margin:40px"><span style="position:absolute;overflow:hidden;clip:rect(0 0 0 0);clip-path:inset(50%);width:1px;height:1px;white-space:nowrap"><input type=checkbox id=c aria-label="Grant"></span><span>Grant</span></label>"#,
+    );
+    let r = h.page(
+        "Pyro.run",
+        json!({"timeout": 2000, "steps": [
+            {"act": {"locator": {"css": "#c"}, "action": "click", "force": true}},
+            {"check": {"locator": {"css": "#c"}, "assert": "checked"}},
+        ]}),
+    );
+    assert!(r.get("error").is_none(), "{r}");
+}
+
+/// Native API gaps: RegExp expectations for text/containsText/value, the
+/// attribute check, the page-level `keyboard` step, `:scope` in a scoped
+/// CSS locator, heading `level`.
+#[test]
+fn driver_regex_checks_keyboard_step_scope_and_level() {
+    let mut h = Harness::new();
+    load_html(
+        &mut h,
+        r#"<!doctype html><h1>Top</h1><h2>Sub</h2><p id="t">Order   #123 placed</p><input id="v" value="ID-42" data-state="open">
+<ul id="list"><li>a<ul><li>nested</li></ul></li><li>b</li></ul><div id="keys"></div>
+<script>document.addEventListener('keydown', (e) => { document.getElementById('keys').textContent += e.key + '@' + (document.activeElement && document.activeElement.id) + ' '; });</script>"#,
+    );
+    let r = h.page(
+        "Pyro.run",
+        json!({"timeout": 2000, "steps": [
+            {"check": {"locator": {"css": "#t"}, "assert": "text", "expected": {"regex": "^Order #\\d+ placed$"}}},
+            {"check": {"locator": {"css": "#t"}, "assert": "containsText", "expected": {"regex": "#1\\d3", "flags": "i"}}},
+            {"check": {"locator": {"css": "#v"}, "assert": "value", "expected": {"regex": "^ID-\\d+$"}}},
+            {"check": {"locator": {"css": "#v"}, "assert": "value", "expected": {"regex": "^\\d"}, "not": true}},
+            {"check": {"locator": {"css": "#v"}, "assert": "attribute", "property": "data-state", "expected": "open"}},
+            {"check": {"locator": {"css": "#v"}, "assert": "attribute", "property": "data-state", "expected": {"regex": "^op"}}},
+            {"check": {"locator": {"css": "#v"}, "assert": "attribute", "property": "data-state", "expected": null, "not": true}},
+            {"check": {"locator": {"css": "#v"}, "assert": "attribute", "property": "data-gone", "expected": null}},
+            {"check": {"locator": {"role": "heading", "level": 2}, "assert": "text", "expected": "Sub"}},
+            {"check": {"locator": {"css": ":scope > li", "within": {"css": "#list"}}, "assert": "count", "expected": 2}},
+            {"act": {"locator": {"css": "#v"}, "action": "focus"}},
+            {"keyboard": {"press": "Shift+x"}},
+            {"act": {"locator": {"css": "#v"}, "action": "blur"}},
+            {"keyboard": {"type": "ab"}},
+            {"eval": {"expression": "document.getElementById('keys').textContent", "as": "keys"}},
+        ]}),
+    );
+    assert!(r.get("error").is_none(), "{r}");
+    assert_eq!(r["result"]["reads"]["keys"], "Shift@v x@v a@ b@ ", "{r}");
+    let r = h.page("Pyro.run", json!({"steps": [{"keyboard": {"press": "NoSuchKey"}}]}));
+    assert!(r["error"]["message"].as_str().unwrap_or_default().contains("Unknown key"), "{r}");
 }
 
 const DRIVER_POINTER_PAGE: &str = r#"<!doctype html><body>
@@ -6448,6 +6604,75 @@ fn settle_brings_paced_resize_observer_gathers_forward() {
     let click = &r["result"]["results"][1];
     assert!(click.get("settled").is_none(), "{r}");
     assert!(click["settleMs"].as_f64().unwrap() < 40.0, "{r}");
+}
+
+/// A ResizeObserver that resizes its target in every round (Chromium
+/// delivers it once per frame, and input does not wait for it) does not hold
+/// a click: the press waits for one delivered round, not for the loop to end.
+#[test]
+fn a_resize_observer_loop_does_not_hold_a_click() {
+    let mut h = Harness::new();
+    load_html(
+        &mut h,
+        r#"<!doctype html><div id="t" style="width:100px;height:20px"></div>
+<button id="b" onclick="document.title = 'clicked'">Go</button>
+<script>
+  const t = document.getElementById('t');
+  new ResizeObserver(() => { t.style.width = t.offsetWidth === 100 ? '101px' : '100px'; }).observe(t);
+</script>"#,
+    );
+    let r = h.page(
+        "Pyro.run",
+        json!({"timeout": 3000, "steps": [
+            {"act": {"locator": {"css": "#b"}, "action": "click", "settle": false}},
+            {"eval": {"expression": "document.title", "as": "title"}},
+        ]}),
+    );
+    assert!(r.get("error").is_none(), "{r}");
+    assert_eq!(r["result"]["reads"]["title"], "clicked", "{r}");
+}
+
+/// Playwright's visibility: `visibility: hidden` or `collapse` (own or
+/// inherited) is not visible to the `visible` filter, `read: visible` and the
+/// visible/hidden checks, and an action waits on it.
+#[test]
+fn visibility_hidden_is_not_visible_to_the_driver() {
+    let mut h = Harness::new();
+    load_html(
+        &mut h,
+        r#"<div style="visibility:hidden"><span id="inherited">a</span><button id="b">B</button></div>
+<span id="own" style="visibility:hidden">b</span><span id="col" style="visibility:collapse">c</span><span id="shown">d</span>"#,
+    );
+    for (id, visible) in [("inherited", false), ("own", false), ("col", false), ("shown", true)] {
+        let r = h.page("Pyro.query", json!({"locator":{"css":format!("#{id}")},"read":"visible"}));
+        assert_eq!(r["result"]["value"], visible, "{id}: {r}");
+        let r =
+            h.page("Pyro.query", json!({"locator":{"css":format!("#{id}"),"filter":{"visible":true}},"read":"count"}));
+        assert_eq!(r["result"]["value"], u64::from(visible), "{id}: {r}");
+    }
+    let r = h.page("Pyro.expect", json!({"locator":{"css":"#inherited"},"assert":"hidden"}));
+    assert_eq!(r["result"]["actual"], false, "{r}");
+    let r = h.page("Pyro.act", json!({"locator":{"css":"#b"},"action":"click","timeout":50}));
+    let message = r["error"]["message"].as_str().unwrap_or_default();
+    assert!(message.contains("not visible"), "{r}");
+}
+
+/// `Range.getBoundingClientRect()` over an element's children is the union
+/// of their boxes (Chromium): a `display: contents` element in a flex parent
+/// has no box of its own, and its range reports its child's.
+#[test]
+fn a_range_over_display_contents_children_unites_their_boxes() {
+    let mut h = Harness::new();
+    load_html(
+        &mut h,
+        r#"<body style="margin:0"><div style="margin:40px"><span style="display:inline-flex"><span id="c" style="display:contents"><span id="in" style="padding:0 3px">Ana Novak</span></span></span></div>
+<div style="display:flex;margin:40px"><span id="m" style="display:contents"><b id="x">x</b> text <i id="y">y</i></span></div></body>"#,
+    );
+    let r = eval_value(
+        &mut h,
+        "(() => { const rect = (b) => [b.x, b.y, b.width, b.height].map(Math.round).join();            const range = (id) => { const r = document.createRange(); r.selectNodeContents(document.getElementById(id)); return rect(r.getBoundingClientRect()); };            const x = x_ => document.getElementById(x_).getBoundingClientRect();            const [a, b] = [x('x'), x('y')];            return [range('c') === rect(x('in')), rect(x('in')) !== '0,0,0,0',                    range('m') === [a.x, a.y, b.right - a.x, Math.max(a.bottom, b.bottom) - a.y].map(Math.round).join()].join(); })()",
+    );
+    assert_eq!(r, json!("true,true,true"));
 }
 
 /// Observers that keep resizing what they observe do not turn the settle
@@ -10090,6 +10315,48 @@ fn review_closing_a_target_while_its_deferred_world_waits() {
         assert!(reply.get("error").is_some() || reply["result"].get("exceptionDetails").is_some(), "{reply}");
     }
     assert_eq!(h.pending_replies(), 0, "no reply is left waiting on the closed page's world");
+}
+
+/// Danex E2E (v0.0.40 check): a side sheet that slides in with a keyframe
+/// animation a task after the click that opens it. A hover waits until the
+/// target's box is stable over a frame before its first move (the page places
+/// a marker where the hovered text is then, as Danex's dev-mode targets), and a
+/// click whose target is still outside the viewport tries again on a timer: no
+/// DOM change brings the sheet in. Before: the hover landed at the animation's
+/// start (marker off-screen) and the click waited for a DOM change until its
+/// deadline.
+#[test]
+fn driver_pointer_actions_wait_for_a_sheet_sliding_in() {
+    let mut h = Harness::new();
+    load_html(
+        &mut h,
+        r#"<!doctype html><style>
+  #sheet{position:fixed;top:0;right:0;width:300px;height:100vh;background:#fff;transform:translateX(100%)}
+  @keyframes slide{from{transform:translateX(100%)}to{transform:none}}
+  #sheet.in{transform:none;animation:slide 300ms ease-out}
+  #marker{position:fixed;width:12px;height:12px}
+</style><button id=show>Open</button><div id=sheet><p style="margin:40px"><span id=who>Blake Baker</span></p><button id=ok style="margin:40px">Approve</button></div><i id=marker></i>
+<script>
+  window.log = [];
+  document.getElementById('show').onclick = () => setTimeout(() => document.getElementById('sheet').classList.add('in'));
+  document.getElementById('who').addEventListener('mouseover', () => { const r = document.getElementById('who').getBoundingClientRect(); marker.style.left = r.right + 'px'; marker.style.top = (r.top - 12) + 'px'; });
+  for (const t of ['mousemove', 'click']) document.getElementById('ok').addEventListener(t, () => log.push(t));
+</script>"#,
+    );
+    let r = h.page(
+        "Pyro.run",
+        json!({"timeout": 3000, "steps": [
+            {"act": {"locator": {"css": "#show"}, "action": "click"}},
+            {"act": {"locator": {"css": "#who"}, "action": "hover"}},
+            {"eval": {"expression": "Math.round(marker.getBoundingClientRect().left) === Math.round(document.getElementById('who').getBoundingClientRect().right)", "as": "settled"}},
+            {"eval": {"expression": "document.getElementById('sheet').classList.remove('in'); void document.body.offsetWidth; document.getElementById('show').click(); 1"}},
+            {"act": {"locator": {"css": "#ok"}, "action": "click"}},
+            {"eval": {"expression": "log.join(',')", "as": "log"}},
+        ]}),
+    );
+    assert!(r.get("error").is_none(), "{r}");
+    assert_eq!(r["result"]["reads"]["settled"], json!(true), "{r}");
+    assert_eq!(r["result"]["reads"]["log"], json!("mousemove,click"), "{r}");
 }
 
 #[test]

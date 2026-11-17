@@ -205,7 +205,7 @@ diff -ruN a/properties/counted_unknown_properties.py b/properties/counted_unknow
      "-webkit-app-region",
 diff -ruN a/properties/data.py b/properties/data.py
 --- a/properties/data.py	2026-11-11 19:55:57
-+++ b/properties/data.py	2026-11-16 18:58:01
++++ b/properties/data.py	2026-11-17 09:03:25
 @@ -342,9 +342,19 @@
          allow_quirks=False,
          ignored_when_colors_disabled=False,
@@ -244,6 +244,24 @@ diff -ruN a/properties/data.py b/properties/data.py
                  "TextBoxEdge",
                  "TextBoxTrim",
                  "TextDecorationLine",
+@@ -1323,8 +1336,17 @@
+                 "cursor",
+                 "direction",
+                 "hyphens",
++                # pyro: the text properties CSS Pseudo 4 and Blink allow on `::marker` (WPT
++                # css-pseudo `marker-letter-spacing`, `marker-word-break`, ...).
++                "letter-spacing",
++                "line-break",
+                 "line-height",
++                "overflow-wrap",
+                 "quotes",
++                "tab-size",
++                "text-decoration-skip-ink",
++                "word-break",
++                "word-spacing",
+                 "text-combine-upright",
+                 "text-emphasis-color",
+                 "text-emphasis-position",
 diff -ruN a/properties/helpers.mako.rs b/properties/helpers.mako.rs
 --- a/properties/helpers.mako.rs	2026-11-11 19:55:57
 +++ b/properties/helpers.mako.rs	2026-11-11 19:55:57
@@ -629,7 +647,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  engine = "gecko"
 diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
 --- a/properties/shorthands.rs	2026-11-11 19:55:57
-+++ b/properties/shorthands.rs	2026-11-14 13:56:06
++++ b/properties/shorthands.rs	2026-11-17 02:11:28
 @@ -542,7 +542,6 @@
      }
  }
@@ -638,7 +656,22 @@ diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
  pub mod container {
      use super::*;
      pub use crate::properties::generated::shorthands::container::*;
-@@ -810,7 +809,6 @@
+@@ -611,9 +610,13 @@
+             return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError));
+         }
+ 
++        // pyro: CSS 2.1's alignments for `vertical-align` (`AlignmentBaseline::VerticalAlignMiddle`).
++        let alignment_baseline = alignment_baseline.unwrap_or(AlignmentBaseline::Baseline);
++        #[cfg(feature = "servo")]
++        let alignment_baseline = alignment_baseline.from_vertical_align();
+         Ok(expanded! {
+             baseline_source: baseline_source.unwrap_or(BaselineSource::Auto),
+-            alignment_baseline: alignment_baseline.unwrap_or(AlignmentBaseline::Baseline),
++            alignment_baseline: alignment_baseline,
+             baseline_shift: baseline_shift.unwrap_or(BaselineShift::zero()),
+         })
+     }
+@@ -810,7 +813,6 @@
      }
  }
  
@@ -646,7 +679,7 @@ diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
  pub mod column_rule {
      pub use crate::properties::generated::shorthands::column_rule::*;
  
-@@ -3680,20 +3678,10 @@
+@@ -3680,20 +3682,10 @@
  
                  if has_repeat {
                      writer.item(repeat)?;
@@ -2612,7 +2645,7 @@ diff -ruN a/values/generics/text.rs b/values/generics/text.rs
              self.sink.to_css(dest)?;
 diff -ruN a/values/specified/align.rs b/values/specified/align.rs
 --- a/values/specified/align.rs	2026-11-11 19:55:57
-+++ b/values/specified/align.rs	2026-11-16 18:58:01
++++ b/values/specified/align.rs	2026-11-17 01:17:02
 @@ -67,6 +67,10 @@
          const SPACE_EVENLY = 16;
          /// `anchor-center`
@@ -2660,7 +2693,7 @@ diff -ruN a/values/specified/align.rs b/values/specified/align.rs
              AlignFlags::LEFT => AlignFlags::RIGHT,
              AlignFlags::RIGHT => AlignFlags::LEFT,
              AlignFlags::SELF_START => AlignFlags::SELF_END,
-@@ -642,6 +652,8 @@
+@@ -642,14 +652,16 @@
          "end" => AlignFlags::END,
          "flex-start" => AlignFlags::FLEX_START,
          "flex-end" => AlignFlags::FLEX_END,
@@ -2669,7 +2702,18 @@ diff -ruN a/values/specified/align.rs b/values/specified/align.rs
          "center" => AlignFlags::CENTER,
          "self-start" => AlignFlags::SELF_START,
          "self-end" => AlignFlags::SELF_END,
-@@ -662,6 +674,8 @@
+         "left" if axis == AxisDirection::Inline => AlignFlags::LEFT,
+         "right" if axis == AxisDirection::Inline => AlignFlags::RIGHT,
+-        "anchor-center"
+-            if matches!(allow_anchor_center, AllowAnchorCenter::Yes)
+-                && crate::pref!("layout.css.anchor-positioning.enabled", gecko = true) =>
++        // pyro: parsed whatever the anchor-positioning pref says (without a default anchor it
++        // behaves as `center`; WPT css-align abspos/*-static-position-*)
++        "anchor-center" if matches!(allow_anchor_center, AllowAnchorCenter::Yes) =>
+         {
+             AlignFlags::ANCHOR_CENTER
+         },
+@@ -662,14 +674,14 @@
          "end",
          "flex-start",
          "flex-end",
@@ -2678,6 +2722,15 @@ diff -ruN a/values/specified/align.rs b/values/specified/align.rs
          "center",
          "self-start",
          "self-end",
+     ]);
+ 
+-    if crate::pref!("layout.css.anchor-positioning.enabled", gecko = true) {
+-        f(&["anchor-center"]);
+-    }
++    f(&["anchor-center"]);
+ 
+     if axis == AxisDirection::Inline {
+         f(&["left", "right"]);
 diff -ruN a/values/specified/background.rs b/values/specified/background.rs
 --- a/values/specified/background.rs	2026-11-11 19:55:57
 +++ b/values/specified/background.rs	2026-11-14 15:14:02
@@ -2813,7 +2866,7 @@ diff -ruN a/values/specified/basic_shape.rs b/values/specified/basic_shape.rs
  pub type BasicShape =
 diff -ruN a/values/specified/box.rs b/values/specified/box.rs
 --- a/values/specified/box.rs	2026-11-11 19:55:57
-+++ b/values/specified/box.rs	2026-11-16 20:04:46
++++ b/values/specified/box.rs	2026-11-17 08:54:47
 @@ -15,7 +15,7 @@
      GenericLineClamp, GenericOverflowClipMargin, GenericPerspective, GenericScrollbarInset,
      MaxLines, OverflowClipMarginBox,
@@ -2971,7 +3024,96 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
              return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError));
          }
  
-@@ -2013,6 +2024,8 @@
+@@ -788,7 +799,6 @@
+     Parse,
+     PartialEq,
+     SpecifiedValueInfo,
+-    ToCss,
+     ToShmem,
+     ToComputedValue,
+     ToResolvedValue,
+@@ -824,8 +834,80 @@
+     /// Used to implement the deprecated "align=middle" attribute for HTML img elements.
+     #[cfg(feature = "gecko")]
+     MozMiddleWithBaseline,
++    /// pyro: `text-bottom` set through the `vertical-align` shorthand: CSS 2.1's alignment (the
++    /// bottom of the box with the bottom of the parent's content area), which browsers keep for
++    /// `vertical-align`; the longhand's `text-bottom` aligns text-under baselines (css-inline-3).
++    #[cfg(feature = "servo")]
++    #[css(skip)]
++    VerticalAlignTextBottom,
++    /// pyro: `middle` set through `vertical-align`: the box's vertical midpoint with the parent's
++    /// baseline plus half its x-height (CSS 2.1); the longhand's aligns x-middle baselines.
++    #[cfg(feature = "servo")]
++    #[css(skip)]
++    VerticalAlignMiddle,
++    /// pyro: `text-top` set through `vertical-align` (CSS 2.1: the top of the box with the top of
++    /// the parent's content area); the longhand's aligns text-over baselines.
++    #[cfg(feature = "servo")]
++    #[css(skip)]
++    VerticalAlignTextTop,
+ }
+ 
++#[cfg(feature = "servo")]
++impl AlignmentBaseline {
++    /// pyro: the value `vertical-align` sets for a keyword of this longhand (see
++    /// `VerticalAlignMiddle`).
++    pub fn from_vertical_align(self) -> Self {
++        match self {
++            Self::TextBottom => Self::VerticalAlignTextBottom,
++            Self::Middle => Self::VerticalAlignMiddle,
++            Self::TextTop => Self::VerticalAlignTextTop,
++            other => other,
++        }
++    }
++
++    /// pyro: the longhand keyword of a value `vertical-align` set.
++    pub fn keyword(self) -> Self {
++        match self {
++            Self::VerticalAlignTextBottom => Self::TextBottom,
++            Self::VerticalAlignMiddle => Self::Middle,
++            Self::VerticalAlignTextTop => Self::TextTop,
++            other => other,
++        }
++    }
++}
++
++impl ToCss for AlignmentBaseline {
++    fn to_css<W>(&self, dest: &mut CssWriter<W>) -> fmt::Result
++    where
++        W: Write,
++    {
++        #[cfg(feature = "servo")]
++        let value = self.keyword();
++        #[cfg(not(feature = "servo"))]
++        let value = *self;
++        dest.write_str(match value {
++            Self::Baseline => "baseline",
++            Self::TextBottom => "text-bottom",
++            #[cfg(feature = "gecko")]
++            Self::Alphabetic => "alphabetic",
++            #[cfg(feature = "gecko")]
++            Self::Ideographic => "ideographic",
++            Self::Middle => "middle",
++            #[cfg(feature = "gecko")]
++            Self::Central => "central",
++            #[cfg(feature = "gecko")]
++            Self::Mathematical => "mathematical",
++            #[cfg(feature = "gecko")]
++            Self::Hanging => "hanging",
++            Self::TextTop => "text-top",
++            #[cfg(feature = "gecko")]
++            Self::MozMiddleWithBaseline => "-moz-middle-with-baseline",
++            #[cfg(feature = "servo")]
++            Self::VerticalAlignTextBottom | Self::VerticalAlignMiddle | Self::VerticalAlignTextTop => unreachable!(),
++        })
++    }
++}
++
+ /// A specified value for the `baseline-source` property.
+ /// https://drafts.csswg.org/css-inline-3/#baseline-source
+ #[derive(
+@@ -2013,8 +2095,12 @@
      Auto,
      Page,
      Avoid,
@@ -2979,32 +3121,35 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
 +    AvoidColumn,
      Left,
      Right,
++    /// pyro: `column` (CSS Fragmentation 3), forces a column break.
++    Column,
  }
-@@ -2030,7 +2043,9 @@
+ 
+ impl BreakBetween {
+@@ -2030,7 +2116,9 @@
              BreakBetween::Auto | BreakBetween::Avoid | BreakBetween::Left | BreakBetween::Right => {
                  Ok(break_value)
              },
 -            BreakBetween::Page => Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError)),
-+            BreakBetween::Page | BreakBetween::AvoidPage | BreakBetween::AvoidColumn => {
++            BreakBetween::Page | BreakBetween::AvoidPage | BreakBetween::AvoidColumn | BreakBetween::Column => {
 +                Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError))
 +            },
          }
      }
  
-@@ -2047,7 +2062,7 @@
+@@ -2047,7 +2135,7 @@
                  self.to_css(dest)
              },
              BreakBetween::Page => dest.write_str("always"),
 -            BreakBetween::Always => Ok(()),
-+            BreakBetween::Always | BreakBetween::AvoidPage | BreakBetween::AvoidColumn => Ok(()),
++            BreakBetween::Always | BreakBetween::AvoidPage | BreakBetween::AvoidColumn | BreakBetween::Column => Ok(()),
          }
      }
  }
-@@ -2628,4 +2643,91 @@
- pub enum DirectionProperty {
+@@ -2629,3 +2717,90 @@
      Ltr,
      Rtl,
-+}
+ }
 +
 +/// pyro: the `scroll-marker-group` property (CSS Overflow 5): whether a scroll container
 +/// generates a `::scroll-marker-group` box, and on which side of its own box it goes.
@@ -3046,7 +3191,7 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
 +        /// The markers are tabs (the focus model).
 +        const TABS = 1 << 3;
 +    }
- }
++}
 +
 +impl ScrollMarkerGroup {
 +    fn validate_mixed_flags(&self) -> bool {

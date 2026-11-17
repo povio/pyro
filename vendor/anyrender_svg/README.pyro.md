@@ -114,3 +114,9 @@ Regenerate the patch from a pristine copy of the published crate:
 `git diff --no-index --no-prefix a b` with the published crate in `a` (without `.cargo_vcs_info.json`,
 `Cargo.toml.orig` and `.cargo-ok`) and this directory, without this file and the patch, in `b`, run from their
 parent; `git apply UPSTREAM.patch` in a pristine copy reproduces `src` and `Cargo.toml`.
+- `src/filter.rs` (`PrimitiveNotes::element_image`): an `feImage` of an element of the document that usvg could not draw (its transparent flood stand-in) is transparent, not a reason to leave the filter out (WPT filter-effects `svg-feimage-004`).
+- `src/lib.rs`, `src/render.rs`, `src/util.rs` (`ForeignObject`, `foreign_object`, `foreign_object_id`,
+  `render_svg_tree_with_notes_and`, `draw_error_box`): an `<image>` whose PNG data carries a `pyFo` chunk is a
+  `<foreignObject>`'s stand-in (blitz-dom `svg_css::foreign_object_href`); the error handler is called for it with
+  `foreign_object()` set to its id, transform and size, and blitz-paint paints the element's HTML content there. The
+  default handler draws nothing for one.

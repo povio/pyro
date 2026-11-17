@@ -93,6 +93,9 @@ pub struct ElementData {
     /// of a generated `img` box (`content: url()` of `::before`/`::after`), or of an element
     /// whose own `content` is one image (it is laid out as an `<img>` of it).
     pub content_image: Option<(String, f32)>,
+    /// pyro: this box (an element or a `::before`/`::after`) shows the gradient its `content` is
+    /// in place of content, as an image without a natural size (`util::content_gradient`).
+    pub content_gradient: bool,
 
     /// Parley text layout (elements with inline inner display mode only)
     pub inline_layout_data: Option<Box<TextLayout>>,
@@ -411,6 +414,7 @@ impl Clone for ElementData {
             border_images: self.border_images.clone(),
             list_style_images: self.list_style_images.clone(),
             content_image: self.content_image.clone(),
+            content_gradient: self.content_gradient,
             reference_images: self.reference_images.clone(),
             inline_layout_data: self.inline_layout_data.clone(),
             list_item_data: self.list_item_data.clone(),
@@ -542,6 +546,7 @@ impl ElementData {
             border_images: ThinVec::new(),
             list_style_images: ThinVec::new(),
             content_image: None,
+            content_gradient: false,
             reference_images: ThinVec::new(),
 
             stylo_element_data: Default::default(),
@@ -1146,6 +1151,10 @@ pub struct ListItemLayout {
     /// pyro: the marker's digits are tabular (Blink's UA sheet: `::marker { font-variant-numeric:
     /// tabular-nums }`), unless a `::marker` rule declares `font-variant-numeric`.
     pub tabular_nums: bool,
+    /// pyro: a string marker inside the item is bidi-isolated in the item's paragraph (Blink's UA
+    /// sheet: `::marker { unicode-bidi: isolate }`), unless a `::marker` rule declares
+    /// `unicode-bidi: normal`.
+    pub isolate: bool,
     /// Offset (in physical CSS px) of the unrounded content box origin from the rounded one in
     /// `final_layout`. Paint draws text from the unrounded origin so that it keeps its sub-pixel
     /// position while box edges stay snapped. Set by the `writing-mode` layout pass; zero otherwise.

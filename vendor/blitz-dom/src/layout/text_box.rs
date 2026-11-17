@@ -53,6 +53,38 @@ pub(crate) fn span_trim(style: &ComputedValues) -> parley::TextBoxTrim {
     parley::TextBoxTrim { over: trim_over.then_some(over), under: trim_under.then_some(under) }
 }
 
+/// pyro: the sides (block-start, block-end) a multi-column container's columns trim at its column
+/// breaks (horizontal writing modes only): its own (Blink: the column boxes inherit
+/// `text-box-trim`).
+pub(crate) fn fragment_trims(style: &ComputedValues) -> (bool, bool) {
+    let trim = style.slow_clone_text_box_trim();
+    (trim.contains(TextBoxTrim::TRIM_START), trim.contains(TextBoxTrim::TRIM_END))
+}
+
+/// pyro: the sides a block with style `style`, inside a multi-column container, trims at column
+/// breaks, from those of its container (`outer`): on a side of its own `text-box-trim` only with
+/// `box-decoration-break: clone`, on others as its container (Blink: WPT css-inline
+/// `text-box-trim-multicol-004`/`005`).
+pub(crate) fn fragment_trims_within(style: &ComputedValues, outer: (bool, bool)) -> (bool, bool) {
+    let trim = style.slow_clone_text_box_trim();
+    let clone = style.get_border().box_decoration_break == style::values::computed::BoxDecorationBreak::Clone;
+    let side = |flag: TextBoxTrim, outer: bool| if trim.contains(flag) { clone } else { outer };
+    (side(TextBoxTrim::TRIM_START, outer.0), side(TextBoxTrim::TRIM_END, outer.1))
+}
+
+/// pyro: what a horizontal line of an inline root with style `root_style` loses over (`start`) or
+/// under its root inline box's `text-box-edge` metric when it starts or ends a column fragment
+/// (layout units, from the line's block-start or block-end side).
+pub(crate) fn fragment_line_trim(line: &parley::Line<'_, crate::node::TextBrush>, root_style: &ComputedValues, start: bool) -> f32 {
+    let (over, under) = edges(root_style);
+    let m = line.metrics();
+    if start {
+        (line.span_text_edge(0, over, true) - m.block_min_coord).max(0.0)
+    } else {
+        (m.block_max_coord - line.span_text_edge(0, under, false)).max(0.0)
+    }
+}
+
 /// A side of a line trimmed for a block: the metric the line ends at, and whether that is its
 /// line-over side.
 #[derive(Clone, Copy, Debug, PartialEq)]

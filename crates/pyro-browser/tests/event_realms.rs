@@ -170,6 +170,45 @@ fn css_animations_and_transitions_fire_their_events() {
 }
 
 #[test]
+fn a_css_animation_resumed_by_its_play_state_or_by_script_fires_its_remaining_events() {
+    // An animation that starts paused (react-toastify's progress bar) and is
+    // set running later starts, iterates and ends from where it was held;
+    // one paused midway waits; script's pause/play, finish and cancel drive
+    // the events of a CSS animation as Chromium does.
+    let (mut t, root) = page_with_frames();
+    eval(
+        &root,
+        "const style = document.head.appendChild(document.createElement('style'));
+         style.textContent = '@keyframes k {} .a { animation: k 40ms linear 2 forwards } .p { animation-play-state: paused }';
+         globalThis.made = {};
+         globalThis.logs = {};
+         globalThis.ends = {};
+         globalThis.t0 = performance.now();
+         for (const id of ['resumed', 'paused', 'script', 'finished', 'canceled']) {
+           const e = document.body.appendChild(document.createElement('div'));
+           made[id] = e;
+           logs[id] = [];
+           for (const type of ['animationstart', 'animationiteration', 'animationend', 'animationcancel'])
+             e.addEventListener(type, ev => logs[id].push(ev.type + ':' + ev.elapsedTime));
+           e.addEventListener('animationend', () => { ends[id] = performance.now() - t0; });
+           e.className = id === 'resumed' || id === 'paused' ? 'a p' : 'a';
+         }
+         setTimeout(() => { made.resumed.className = 'a'; }, 60);
+         setTimeout(() => { const a = made.script.getAnimations()[0]; a.pause(); setTimeout(() => a.play(), 100); }, 10);
+         setTimeout(() => made.finished.getAnimations()[0].finish(), 10);
+         setTimeout(() => made.canceled.getAnimations()[0].cancel(), 10); 0",
+    );
+    run_until(&mut t, &root, "['resumed', 'script', 'finished'].every(id => logs[id].some(e => e.startsWith('animationend'))) && logs.canceled.length > 1");
+    t.run_until_idle(Some(Instant::now() + Duration::from_millis(50)));
+    assert_eq!(
+        eval(&root, "JSON.stringify(logs)"),
+        r#"{"resumed":["animationstart:0","animationiteration:0.04","animationend:0.08"],"paused":["animationstart:0"],"script":["animationstart:0","animationiteration:0.04","animationend:0.08"],"finished":["animationstart:0","animationend:0.08"],"canceled":["animationstart:0","animationcancel:0"]}"#
+    );
+    // Held while paused: each ends 80 ms of playing after it was resumed.
+    assert_eq!(eval(&root, "[ends.resumed >= 60 + 80, ends.script >= 110 + 40].join()"), "true,true");
+}
+
+#[test]
 fn a_first_style_read_fires_nothing_and_a_later_read_after_a_change_fires_its_transition() {
     // A first read only records the before-change style (the sheets' timing
     // rules are not needed for it); a second read after a change reads them

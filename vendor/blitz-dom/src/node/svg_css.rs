@@ -175,6 +175,45 @@ struct Writer<'a> {
     typed_masks: Vec<(String, &'static str, String)>,
 }
 
+/// The side, in pixels, of the stand-in image a `<foreignObject>` is drawn as (see
+/// [`foreign_object_href`]); it is stretched to the element's box (`preserveAspectRatio="none"`).
+pub const FOREIGN_OBJECT_IMAGE_SIZE: u32 = 1024;
+
+/// A `data:` URL of the stand-in image of the `<foreignObject>` `id`: a PNG header (signature
+/// and `IHDR`, all usvg reads of it) of a [`FOREIGN_OBJECT_IMAGE_SIZE`] square, then a `pyFo`
+/// chunk holding the id (8 bytes, big-endian) and `IEND`. anyrender_svg's
+/// `foreign_object_id` reads it back; nothing decodes its pixels.
+pub fn foreign_object_href(id: NodeId) -> String {
+    fn chunk(out: &mut Vec<u8>, kind: &[u8; 4], data: &[u8]) {
+        out.extend_from_slice(&(data.len() as u32).to_be_bytes());
+        out.extend_from_slice(kind);
+        out.extend_from_slice(data);
+        out.extend_from_slice(&[0; 4]);
+    }
+    let mut png = vec![0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
+    let mut header = Vec::with_capacity(13);
+    header.extend_from_slice(&FOREIGN_OBJECT_IMAGE_SIZE.to_be_bytes());
+    header.extend_from_slice(&FOREIGN_OBJECT_IMAGE_SIZE.to_be_bytes());
+    header.extend_from_slice(&[8, 6, 0, 0, 0]);
+    chunk(&mut png, b"IHDR", &header);
+    chunk(&mut png, b"pyFo", &id.as_u64().to_be_bytes());
+    chunk(&mut png, b"IEND", &[]);
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::from("data:image/png;base64,");
+    for group in png.chunks(3) {
+        let b = [group[0], *group.get(1).unwrap_or(&0), *group.get(2).unwrap_or(&0)];
+        let n = (u32::from(b[0]) << 16) | (u32::from(b[1]) << 8) | u32::from(b[2]);
+        for i in 0..4 {
+            if i <= group.len() {
+                out.push(ALPHABET[(n >> (18 - 6 * i) & 63) as usize] as char);
+            } else {
+                out.push('=');
+            }
+        }
+    }
+    out
+}
+
 /// The source of the `<svg>` subtree at `root` for usvg (see the module docs).
 pub(crate) fn svg_source(root: &Node) -> String {
     let guard = root.element_data().and_then(|data| data.guard.as_ref()).map(|lock| lock.read());
@@ -212,6 +251,47 @@ pub(crate) fn svg_source(root: &Node) -> String {
     writer.pass = Pass::Final;
     writer.write_node(root, 0);
     writer.finish()
+}
+
+/// pyro: a `calc()` of percentages and lengths in a `<filter>` or `<mask>` region attribute
+/// (`width="calc(25% + 0.25px)"`) as the number usvg reads: in `objectBoundingBox` units (the
+/// default) a percentage is a fraction of the box and a length a number of boxes, as Chromium
+/// resolves them; in user space only lengths. `None` for anything else.
+fn region_calc(data: &crate::node::ElementData, tag: &str, value: &str) -> Option<String> {
+    let units = match tag {
+        "filter" => "filterUnits",
+        "mask" => "maskUnits",
+        _ => return None,
+    };
+    let inner = value.trim().strip_prefix("calc(")?.strip_suffix(')')?;
+    let bounding_box = data.attr(markup5ever::LocalName::from(units)).is_none_or(|u| u.trim() != "userSpaceOnUse");
+    let mut total = 0.0f32;
+    let mut sign = 1.0f32;
+    let mut expect_term = true;
+    for token in inner.split_whitespace() {
+        if !expect_term {
+            sign = match token {
+                "+" => 1.0,
+                "-" => -1.0,
+                _ => return None,
+            };
+            expect_term = true;
+            continue;
+        }
+        let (number, scale) = if let Some(n) = token.strip_suffix('%') {
+            if !bounding_box {
+                return None;
+            }
+            (n, 0.01)
+        } else if let Some(n) = token.strip_suffix("px") {
+            (n, 1.0)
+        } else {
+            (token, 1.0)
+        };
+        total += sign * number.parse::<f32>().ok()? * scale;
+        expect_term = false;
+    }
+    (!expect_term).then(|| total.to_string())
 }
 
 /// The boxes of the elements named in `ids`, from a parsed tree.
@@ -639,6 +719,32 @@ impl Writer<'_> {
         };
         let current_color = styles.as_ref().map(|style| style.clone_color().to_css_string());
 
+        // A `<foreignObject>` is written as an `<image>` of its geometry whose data names it
+        // ([`foreign_object_href`]): usvg applies its transform, clip path, mask, filter and
+        // opacity, and anyrender_svg has blitz-paint paint its HTML content where the image is
+        // (a box of the element's `width` and `height`, laid out as a root). Without a width
+        // or a height it renders nothing (`auto` is 0, SVG 2).
+        // One of no size is an empty group, which still paints its filter's region (as Chromium
+        // does; WPT filter-effects `svg-empty-hidden-foreignobject-with-filter-001`).
+        let foreign_object = is_svg && !is_root && tag == "foreignObject";
+        let mut unsized_foreign_object = false;
+        if foreign_object {
+            let size = |name: markup5ever::LocalName| data.attr(name).and_then(|v| v.trim().trim_end_matches("px").parse::<f64>().ok());
+            let sized = |name: markup5ever::LocalName, id: LonghandId| {
+                author.contains(&id) || size(name).is_some_and(|v| v > 0.0)
+            };
+            unsized_foreign_object =
+                !sized(local_name!("width"), LonghandId::Width) || !sized(local_name!("height"), LonghandId::Height);
+        }
+        let foreign_object = foreign_object && !unsized_foreign_object;
+        let tag = if foreign_object {
+            "image"
+        } else if unsized_foreign_object {
+            "g"
+        } else {
+            tag
+        };
+
         // Viewports for `transform-box: view-box`.
         let pushed_viewport = is_svg && tag == "svg";
         if pushed_viewport {
@@ -662,6 +768,8 @@ impl Writer<'_> {
         let mut rewrites: Vec<Rewrite> = Vec::new();
         let mut declarations = String::new();
         let mut temp_id = None;
+        // pyro: a clip path that must clip the element's markers too: a group around it.
+        let mut marker_clip: Option<String> = None;
         if let (Some(style), true) = (&styles, is_svg) {
             // `filter` is a declaration of the `style` attribute (which wins over the `<svg>`'s
             // own style sheets, as the page's value does), or the attribute when it has
@@ -731,7 +839,7 @@ impl Writer<'_> {
             // Not on the root: its CSS box's.
             if !is_root {
                 if author.contains(&LonghandId::ClipPath) {
-                    self.clip_path_rewrite(node, data, style, &mut rewrites, &mut temp_id);
+                    marker_clip = self.clip_path_rewrite(node, data, tag, style, &mut rewrites, &mut temp_id);
                 }
                 if author.contains(&LonghandId::MaskImage) {
                     if !self.css_mask_rewrite(node, data, style, &mut rewrites, &mut temp_id) {
@@ -764,6 +872,9 @@ impl Writer<'_> {
             && styles.as_ref().is_some_and(|style| {
                 style.get_effects().mix_blend_mode == style::computed_values::mix_blend_mode::T::PlusLighter
             });
+        if let Some(clip) = &marker_clip {
+            let _ = write!(self.out, "<g clip-path=\"url(#{clip})\">");
+        }
         if plus_lighter {
             let id = self.new_id("compose");
             let _ = write!(self.out, "<g id=\"__pyro_compose_pluslighter_{}\">", &id["__pyro_compose_".len()..]);
@@ -791,6 +902,14 @@ impl Writer<'_> {
             if (temp_id.is_some() || self.shadow_copy.is_some()) && attr.name.ns == ns!() && local == "id" {
                 continue;
             }
+            // pyro: a `calc()` filter or mask region, which usvg cannot read.
+            if attr.name.ns == ns!()
+                && matches!(local, "x" | "y" | "width" | "height")
+                && let Some(value) = region_calc(data, tag, &attr.value)
+            {
+                self.write_attr(&attr.name, &value, None);
+                continue;
+            }
             self.write_attr(&attr.name, &attr.value, current_color.as_deref());
         }
         for rewrite in rewrites.iter().filter(|r| !r.in_style) {
@@ -801,6 +920,11 @@ impl Writer<'_> {
                 encode_quoted_attribute_to_string(value, &mut self.out);
                 self.out.push('"');
             }
+        }
+        if foreign_object {
+            self.out.push_str(" preserveAspectRatio=\"none\" href=\"");
+            self.out.push_str(&foreign_object_href(node.id));
+            self.out.push('"');
         }
         if let (Some(id), None) = (&temp_id, self.shadow_copy) {
             self.out.push_str(" id=\"");
@@ -826,7 +950,7 @@ impl Writer<'_> {
             }
         }
 
-        if node.children.is_empty() {
+        if node.children.is_empty() || foreign_object || unsized_foreign_object {
             self.out.push_str(" />");
         } else {
             self.out.push('>');
@@ -838,6 +962,9 @@ impl Writer<'_> {
             self.out.push('>');
         }
         if plus_lighter {
+            self.out.push_str("</g>");
+        }
+        if marker_clip.is_some() {
             self.out.push_str("</g>");
         }
         if pushed_viewport {
@@ -908,6 +1035,14 @@ impl Writer<'_> {
     /// The element's fill and stroke boxes, from the first pass; in the first
     /// pass, an id for it to be found by.
     fn boxes(&mut self, node: &Node, data: &ElementData, temp_id: &mut Option<String>) -> Boxes {
+        // pyro: an image's and a `<foreignObject>`'s boxes are their geometry ([`attribute_boxes`]).
+        if data.name.ns == ns!(svg) && matches!(data.name.local.as_ref(), "image" | "foreignObject") {
+            if let Some(boxes) = attribute_boxes(data) {
+                // What uses them is written in the final pass.
+                self.needs_boxes |= self.pass == Pass::Boxes;
+                return boxes;
+            }
+        }
         match self.pass {
             Pass::Boxes => {
                 self.needs_boxes = true;
@@ -1101,23 +1236,42 @@ impl Writer<'_> {
 
     /// CSS `clip-path` on an SVG element: a reference as the attribute, a
     /// basic shape or a box as a `<clipPath>` made for it.
+    ///
+    /// pyro: returns the id of the clip path to put on a group around the element instead, when
+    /// the element has markers (a clip path clips the element with its markers, SVG 2 §11.6;
+    /// usvg puts the markers beside the clipped shape): an `objectBoundingBox` `<clipPath>` is
+    /// copied into user space in the shape's fill box (markers do not count in the bounding box).
     fn clip_path_rewrite(
         &mut self,
         node: &Node,
         data: &ElementData,
+        tag: &str,
         style: &ComputedValues,
         rewrites: &mut Vec<Rewrite>,
         temp_id: &mut Option<String>,
-    ) {
+    ) -> Option<String> {
         let (shape, geometry_box) = match style.get_svg().clip_path.clone() {
             ClipPath::None => {
                 rewrites.push(Rewrite { name: "clip-path", value: None, in_style: true });
-                return;
+                return None;
             }
             ClipPath::Url(_) => {
                 let value = computed_value(style, LonghandId::ClipPath);
+                let has_markers = matches!(tag, "path" | "line" | "polyline" | "polygon")
+                    && (data.attrs().iter().any(|attr| attr.name.local.starts_with("marker"))
+                        || data.attr(local_name!("style")).is_some_and(|s| s.contains("marker")));
+                let id = value.strip_prefix("url(#").and_then(|v| v.strip_suffix(')')).map(str::to_owned);
+                if has_markers && let Some(id) = id {
+                    let fill = self.boxes(node, data, temp_id).fill;
+                    if self.pass == Pass::Final
+                        && let Some(group_clip) = self.clip_in_user_space(&id, fill)
+                    {
+                        rewrites.push(Rewrite { name: "clip-path", value: None, in_style: true });
+                        return Some(group_clip);
+                    }
+                }
                 rewrites.push(Rewrite { name: "clip-path", value: Some(value), in_style: true });
-                return;
+                return None;
             }
             ClipPath::Shape(shape, geometry_box) => (Some(shape), geometry_box),
             ClipPath::Box(geometry_box) => (None, geometry_box),
@@ -1138,19 +1292,86 @@ impl Writer<'_> {
         // this pass is for.
         let from_boxes = !matches!(geometry_box, ShapeGeometryBox::ViewBox);
         let (Some(reference), false) = (reference, from_boxes && self.pass == Pass::Boxes) else {
-            return;
+            return None;
         };
         let element = match &shape {
             Some(shape) => match shape_element(shape, reference) {
                 Some(element) => element,
                 // An unsupported shape keeps the element unclipped.
-                None => return,
+                None => return None,
             },
             None => rect_element(reference, 0.0, 0.0),
         };
         let id = self.new_id("clip");
         let _ = write!(self.defs, "<clipPath id=\"{id}\" clipPathUnits=\"userSpaceOnUse\">{element}</clipPath>");
         rewrites.push(Rewrite { name: "clip-path", value: Some(format!("url(#{id})")), in_style: true });
+        None
+    }
+
+    /// pyro: the `<clipPath>` of id `id` for a group around an element whose fill box is `fill`:
+    /// itself in user space, else a copy of it in user space mapping the bounding box units onto
+    /// `fill`. `None` without such an element.
+    fn clip_in_user_space(&mut self, id: &str, fill: Rect) -> Option<String> {
+        let mut stack = vec![self.root];
+        let mut found = None;
+        while let Some(node) = stack.pop() {
+            if node.element_data().is_some_and(|data| data.attr(local_name!("id")) == Some(id)) {
+                found = Some(node);
+                break;
+            }
+            stack.extend(node.children.iter().rev().map(|&child| &node.tree()[child]));
+        }
+        let node = found?;
+        let data = node.element_data()?;
+        if data.name.ns != ns!(svg) || &*data.name.local != "clipPath" {
+            return None;
+        }
+        if data.attr(markup5ever::LocalName::from("clipPathUnits")).map(str::trim) != Some("objectBoundingBox") {
+            return Some(id.to_string());
+        }
+        if fill.width() <= 0.0 || fill.height() <= 0.0 {
+            return None;
+        }
+        let saved = std::mem::take(&mut self.out);
+        self.write_node(node, 1);
+        let written = std::mem::replace(&mut self.out, saved);
+        let mut quote = None;
+        let end = written.char_indices().find_map(|(i, c)| {
+            match (quote, c) {
+                (None, '"') => quote = Some(c),
+                (Some(_), '"') => quote = None,
+                (None, '>') => return Some(i),
+                _ => {}
+            }
+            None
+        })?;
+        let (start_tag, rest) = written.split_at(end);
+        let mut start_tag = start_tag.trim_end_matches('/').trim_end().to_string();
+        let mut take_attr = |tag: &mut String, name: &str| -> Option<String> {
+            let key = format!(" {name}=\"");
+            let start = tag.find(&key)?;
+            let value_start = start + key.len();
+            let value_end = value_start + tag[value_start..].find('"')?;
+            let value = tag[value_start..value_end].to_string();
+            tag.replace_range(start..value_end + 1, "");
+            Some(value)
+        };
+        take_attr(&mut start_tag, "id");
+        take_attr(&mut start_tag, "clipPathUnits");
+        let own = take_attr(&mut start_tag, "transform").unwrap_or_default();
+        let copy = self.new_id("clip");
+        let _ = write!(
+            start_tag,
+            " id=\"{copy}\" clipPathUnits=\"userSpaceOnUse\" transform=\"matrix({} 0 0 {} {} {}) {own}\"",
+            fill.width(),
+            fill.height(),
+            fill.x0,
+            fill.y0
+        );
+        let rest = if rest.starts_with("/>") || rest == ">" { "></clipPath>".to_string() } else { rest.to_string() };
+        self.defs.push_str(&start_tag);
+        self.defs.push_str(&rest);
+        Some(copy)
     }
 
     /// The fill and stroke `node` inherits as usvg reads them ([`own_paint`] of the nearest SVG
@@ -1659,7 +1880,9 @@ fn attribute_boxes(data: &ElementData) -> Option<Boxes> {
         data.attr(markup5ever::LocalName::from(name)).and_then(|value| value.trim().parse::<f64>().ok())
     };
     let fill = match data.name.local.as_ref() {
-        "rect" => {
+        // pyro: also an `<image>`'s or `<foreignObject>`'s viewport (its fill box, SVG 2), which
+        // usvg's group for the image holds in the image's pixels.
+        "rect" | "image" | "foreignObject" => {
             let (x, y) = (number("x").unwrap_or(0.0), number("y").unwrap_or(0.0));
             Rect::new(x, y, x + number("width")?, y + number("height")?)
         }

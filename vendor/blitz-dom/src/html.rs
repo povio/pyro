@@ -16,6 +16,13 @@ pub trait HtmlParserProvider {
         let _ = html;
         Box::new(PlainDocument(BaseDocument::new(config)))
     }
+
+    /// pyro: parse a standalone SVG document as XML (an SVG image with a `<foreignObject>`, which
+    /// is rendered as a document: `BaseDocument::svg_image_documents`). `None`: not supported.
+    fn parse_svg_document(&self, svg: &str, config: DocumentConfig) -> Option<Box<dyn Document>> {
+        let _ = (svg, config);
+        None
+    }
 }
 
 pub struct DummyHtmlParserProvider;

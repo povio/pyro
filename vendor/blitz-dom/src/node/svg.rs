@@ -102,6 +102,9 @@ pub struct SvgImageData {
     /// pyro: the document an SVG image was loaded from, which an inline `<svg>` with CSS
     /// `mask-image` layers of it embeds (`svg_css`).
     pub source: Option<Arc<[u8]>>,
+    /// pyro: the source of an SVG image with a `<foreignObject>`, which is rendered as a document
+    /// of its own (`BaseDocument::svg_image_documents`) to draw its HTML content.
+    pub foreign_source: Option<Arc<str>>,
 }
 
 impl SvgImageData {
@@ -154,6 +157,7 @@ impl SvgImageData {
             intrinsic_dimensions,
             inline_source: None,
             source: None,
+            foreign_source: None,
         })
     }
 
@@ -381,7 +385,7 @@ impl SvgImageData {
     /// fragment naming a `<view>` element (`sprite.svg#icon`) shows the document through the
     /// view's `viewBox` and `preserveAspectRatio` (SVG 2 §5.8.3, as Chromium draws SVG sprites):
     /// the root takes them, so the image gets the view's aspect ratio. An image with no
-    /// `viewBox`, `width` or `height` keeps its source: its content is laid out in the box it is
+    /// `viewBox` keeps its source: its content is laid out in the box it is
     /// drawn in (the concrete object size: a background's size, an `<img>`'s content box), as
     /// an inline `<svg>` without a `viewBox` is ([`Self::sized`]), so percentages (a `100%`
     /// rect, a `10%` stroke) resolve against that box rather than against usvg's 100x100.
@@ -389,11 +393,16 @@ impl SvgImageData {
         let Ok(text) = std::str::from_utf8(source) else {
             return self;
         };
-        let viewed = url
+        let fragment = url
             .split_once('#')
             .map(|(_, fragment)| fragment)
-            .filter(|fragment| !fragment.is_empty() && !fragment.starts_with("svgView("))
-            .and_then(|fragment| with_view(text, fragment));
+            .filter(|fragment| !fragment.is_empty() && !fragment.starts_with("svgView("));
+        // pyro: the element the fragment names is the document's `:target` (WPT css-masking
+        // `mask-image-url-image-hash`): usvg's style sheets know no `:target`, so it is written
+        // as that id selector.
+        let targeted = fragment.and_then(|fragment| with_target(text, fragment));
+        let text = targeted.as_deref().unwrap_or(text);
+        let viewed = fragment.and_then(|fragment| with_view(text, fragment)).or(targeted.clone());
         let (mut svg, text) = match viewed {
             Some(viewed) => match crate::util::parse_svg_image(viewed.as_bytes()) {
                 Ok(svg) => (svg, viewed),
@@ -401,15 +410,25 @@ impl SvgImageData {
             },
             None => (self, text.to_string()),
         };
-        if svg.intrinsic_dimensions.view_box.is_none()
-            && svg.intrinsic_width().is_none()
-            && svg.intrinsic_height().is_none()
-            && !svg.intrinsic_dimensions.degenerate_view_box
-        {
+        // pyro: so does one with a zero `width` or `height` (no natural ratio), as Blink draws it:
+        // the concrete object size is its viewport, unscaled (a `width="0" height="20"` circle of
+        // `r="50%"` stretched to 350x250 is a circle; WPT css-grid
+        // `grid-item-no-aspect-ratio-stretch-*`). One with natural dimensions is scaled.
+        let (width, height) = (svg.intrinsic_width(), svg.intrinsic_height());
+        let no_natural_ratio = (width.is_none() && height.is_none()) || width == Some(0.0) || height == Some(0.0);
+        if svg.intrinsic_dimensions.view_box.is_none() && no_natural_ratio && !svg.intrinsic_dimensions.degenerate_view_box {
             svg.inline_source = Some(text.into());
         }
         svg
     }
+}
+
+/// pyro: `source` with its style sheets' `:target` written as `#fragment`, when `fragment` is a
+/// plain identifier; `None` when nothing changes.
+fn with_target(source: &str, fragment: &str) -> Option<String> {
+    let plain = fragment.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        && !fragment.starts_with(|c: char| c.is_ascii_digit());
+    (plain && source.contains(":target")).then(|| source.replace(":target", &format!("#{fragment}")))
 }
 
 /// pyro: `source` with its root showing the `<view>` whose id is `fragment`: the root takes the

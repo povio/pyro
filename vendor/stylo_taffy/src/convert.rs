@@ -597,7 +597,10 @@ pub fn table_cell_vertical_align(style: &stylo::ComputedValues) -> Option<taffy:
         (_, stylo::BaselineShift::Keyword(stylo::BaselineShiftKeyword::Bottom)) => {
             taffy::AlignContent::END
         }
-        (stylo::AlignmentBaseline::Middle, _) => taffy::AlignContent::CENTER,
+        // pyro: `vertical-align: middle` (and the longhand's `middle`).
+        (stylo::AlignmentBaseline::Middle | stylo::AlignmentBaseline::VerticalAlignMiddle, _) => {
+            taffy::AlignContent::CENTER
+        }
         _ => return None,
     };
     align.safety = taffy::AlignmentSafety::Safe;
@@ -674,6 +677,8 @@ pub fn item_alignment(input: stylo::AlignFlags, is_horiz_rtl: bool) -> Option<ta
         stylo::AlignFlags::RIGHT if is_horiz_rtl => taffy::AlignItems::START,
         stylo::AlignFlags::RIGHT => taffy::AlignItems::END,
         stylo::AlignFlags::CENTER => taffy::AlignItems::CENTER,
+        // pyro: no anchor positioning: `anchor-center` without a default anchor is `center`
+        stylo::AlignFlags::ANCHOR_CENTER => taffy::AlignItems::CENTER,
         stylo::AlignFlags::BASELINE => taffy::AlignItems::BASELINE,
         // pyro: Taffy aligns flex rows by last baselines; elsewhere it behaves as its fallback
         // alignment, `safe end` (https://www.w3.org/TR/css-align-3/#baseline-values)

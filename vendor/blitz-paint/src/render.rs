@@ -577,22 +577,43 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
 
     /// pyro: the transforms of a table cell's row group and row, which are no boxes of their own
     /// (their cells are the table's children): each about its own box, in the table's space.
+    ///
+    /// An absolutely positioned or fixed box whose containing block is a row or row group (the
+    /// table lays it out, `containing_block_below_table`) paints in that part's transform too.
     fn table_part_transform(&self, node: &Node) -> Affine {
         let index = node.layout_data().table_cell_index;
-        if index == u32::MAX {
+        let position = node.taffy_position();
+        let out_of_flow = matches!(position, taffy::Position::Absolute | taffy::Position::Fixed);
+        if index == u32::MAX && !out_of_flow {
             return Affine::IDENTITY;
         }
-        let Some(table) = node.layout_parent.get().and_then(|id| self.dom.get_node(id)) else {
+        // (An out-of-flow box is laid out by its containing block: the table for one in a part.)
+        let table = if index != u32::MAX { node.layout_parent.get() } else { node.containing_block() };
+        let Some(table) = table.and_then(|id| self.dom.get_node(id)) else {
             return Affine::IDENTITY;
         };
         let Some(blitz_dom::node::SpecialElementData::TableRoot(ctx)) = table.element_data().map(|e| &e.special_data) else {
             return Affine::IDENTITY;
         };
-        let Some(cell) = ctx.cells.get(index as usize).filter(|cell| cell.node_id == node.id) else {
-            return Affine::IDENTITY;
-        };
-        let Some(row) = ctx.rows.get(cell.row as usize) else {
-            return Affine::IDENTITY;
+        let parts = if index != u32::MAX {
+            let Some(cell) = ctx.cells.get(index as usize).filter(|cell| cell.node_id == node.id) else {
+                return Affine::IDENTITY;
+            };
+            let Some(row) = ctx.rows.get(cell.row as usize) else {
+                return Affine::IDENTITY;
+            };
+            [row.group, Some(row.node_id)]
+        } else {
+            let Some(part) = self.dom.containing_block_below_table(table.id, node.id, position) else {
+                return Affine::IDENTITY;
+            };
+            if let Some(row) = ctx.rows.iter().find(|row| row.node_id == part) {
+                [row.group, Some(part)]
+            } else if ctx.rows.iter().any(|row| row.group == Some(part)) {
+                [Some(part), None]
+            } else {
+                return Affine::IDENTITY;
+            }
         };
         let transformed = |id: NodeId| {
             self.dom.get_node(id).and_then(|node| node.primary_styles()).is_some_and(|style| {
@@ -604,7 +625,6 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
                     || !matches!(b.scale, GenericScale::None)
             })
         };
-        let parts = [row.group, Some(row.node_id)];
         // pyro: the sticky offsets of the cell's row group and row move their cells.
         let mut sticky = Vec2::ZERO;
         for id in parts.iter().flatten() {
@@ -1002,7 +1022,14 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         let clip_area = content_box_size.width * content_box_size.height;
         let overflow_area =
             node.scrollable_overflow().width() * node.scrollable_overflow().height();
-        if should_clip && clip_area < 0.01 && overflow_area < 0.01 && filter_steps.is_none() {
+        // pyro: a box with borders or padding around its empty content box still paints them (an
+        // `<hr>`, `overflow: hidden` in the UA sheet; WPT css-lists `outside-marker-with-hr-content`).
+        if should_clip
+            && clip_area < 0.01
+            && overflow_area < 0.01
+            && border_box.area() < 0.01
+            && filter_steps.is_none()
+        {
             return;
         }
 
@@ -1058,8 +1085,10 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
                     cx.stroke_devtools(scene);
                 }
                 FlowPhase::Foreground => {
-                    cx.draw_inline_layout(scene, content_position);
+                    // pyro: the marker first: it is at the start of its line, under text that
+                    // overlaps it (WPT css-pseudo `outside-marker-paint-order`).
                     cx.draw_marker(scene, content_position);
+                    cx.draw_inline_layout(scene, content_position);
                     if cx.outline_line().is_some() {
                         self.deferred_outlines.set(true);
                     }
@@ -1175,7 +1204,9 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         }
 
         // pyro: a split inline's fragments are painted by its pieces' lines (`inline_box_fragments`).
-        let paints_own_box = !node.is_inline_with_only_block_children() && !node.is_split_inline();
+        let paints_own_box = !node.is_inline_with_only_block_children()
+            && !node.is_split_inline()
+            && !hides_empty_cell(self.dom.as_ref(), node);
 
         // pyro: `opacity` and `filter` apply to everything the element paints, as one group
         // (Chromium's effect node): its outset box-shadow, its box, its content and descendants
@@ -1345,10 +1376,14 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
                 };
 
                 cx.transform = self.scrolled_transform(node, cx.transform);
+                // pyro: an `<svg>` paints whatever its own visibility: what in it is visible
+                // (`visibility: visible` on a child, a filter's region) is (usvg drops the hidden
+                // shapes; WPT filter-effects `svg-visibility-hidden-element-with-filter-002`).
+                #[cfg(feature = "svg")]
+                cx.draw_svg(scene);
                 if !hidden {
                     cx.draw_image(scene);
-                    #[cfg(feature = "svg")]
-                    cx.draw_svg(scene);
+                    cx.draw_content_gradient(scene);
                     #[cfg(feature = "custom-widget")]
                     cx.draw_custom_widget(scene);
                     cx.draw_sub_document(scene);
@@ -1381,10 +1416,10 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
                     // pyro: the stacking contexts with a negative z-index go under the box's own
                     // inline content (CSS 2.1 Appendix E, step 3 before step 7).
                     cx.draw_neg_z_children(scene, cx.transform, child_clip_rect);
-                    cx.draw_inline_layout(scene, content_position);
                     if !hidden {
                         cx.draw_marker(scene, content_position);
                     }
+                    cx.draw_inline_layout(scene, content_position);
                     cx.draw_children_above(scene, cx.transform, child_clip_rect);
                 }
             },
@@ -1708,8 +1743,12 @@ fn canvas_background_source(dom: &BaseDocument) -> Option<NodeId> {
                 > 0.0
     };
     let contained = |style: &ComputedValues| !style.get_box().slow_clone_contain().is_empty();
+    // pyro: a root its `content: url()` replaces renders no `body` (WPT css-content
+    // `element-replacement-root-canvas-bg-from-body`).
+    let replaced = root.element_data().is_some_and(|element| element.content_image.is_some());
     if has_background(&root_style)
         || contained(&root_style)
+        || replaced
         || !root.data.is_element_with_tag_name(&local_name!("html"))
     {
         return Some(root.id);
@@ -3655,8 +3694,8 @@ impl ElementCx<'_, '_> {
                 }
             }
         }
-        self.draw_inline_layout(scene, content_position);
         self.draw_marker(scene, content_position);
+        self.draw_inline_layout(scene, content_position);
         let outer_outlines = self.context.deferred_outlines.replace(false);
         self.draw_flow_children(
             scene,
@@ -3883,6 +3922,84 @@ impl ElementCx<'_, '_> {
         }
     }
 
+    /// pyro: the content of an inline `<svg>`'s `<foreignObject>` (a root laid out in a box of
+    /// its size, `BaseDocument::svg_foreign_objects`), in the place usvg draws its stand-in
+    /// image: its box `0..size` mapped onto the image's `0..fo.size`. usvg applied the element's
+    /// own transform, clip path, mask, filter and opacity to the image; its box is cut at its
+    /// edges unless its `overflow` is visible (the UA sheet's is hidden, as Chromium's).
+    #[cfg(feature = "svg")]
+    fn draw_foreign_object<S: PaintScene>(&self, scene: &mut S, fo: anyrender_svg::ForeignObject) {
+        let id = NodeId::from_u64(fo.id);
+        let Some(node) = self.context.dom.get_node(id) else { return };
+        if node.element_data().is_none() || node.layout_parent.get() != Some(self.node.id) {
+            return;
+        }
+        let Some(style) = node.primary_styles() else { return };
+        let layout = *node.final_layout();
+        let (width, height) = (f64::from(layout.size.width), f64::from(layout.size.height));
+        if width <= 0.0 || height <= 0.0 {
+            return;
+        }
+        let scale = self.scale;
+        let transform = fo.transform * Affine::scale_non_uniform(fo.size.0 / (width * scale), fo.size.1 / (height * scale));
+        let cx = self.context.element_cx(node, layout, transform, None);
+        let overflow = style.get_box();
+        let clips = overflow.overflow_x != style::values::computed::Overflow::Visible
+            || overflow.overflow_y != style::values::computed::Overflow::Visible;
+        drop(style);
+        if clips {
+            scene.push_clip_layer(Fill::NonZero, transform, &Rect::new(0.0, 0.0, width * scale, height * scale));
+        }
+        let clip_rect = Rect::new(-1e9, -1e9, 1e9, 1e9);
+        let pb = (layout.padding + layout.border).map(f64::from);
+        let content_position = Point { x: pb.left * scale, y: pb.top * scale };
+        if cx.style.get_inherited_box().visibility == StyloVisibility::Visible {
+            cx.draw_background(scene);
+            cx.draw_border(scene);
+        }
+        if node.flags.intersects(
+            blitz_dom::node::NodeFlags::HAS_FLOAT_PAINT_CHILDREN | blitz_dom::node::NodeFlags::FLOW_BOXES_OVERLAP,
+        ) {
+            cx.draw_children_in_phases(scene, transform, clip_rect, content_position);
+        } else {
+            cx.draw_neg_z_children(scene, transform, clip_rect);
+            cx.draw_inline_layout(scene, content_position);
+            cx.draw_children_above(scene, transform, clip_rect);
+        }
+        if clips {
+            scene.pop_layer();
+        }
+    }
+
+    /// pyro: see [`Self::draw_svg`]; `false` when the image is drawn from its usvg tree.
+    #[cfg(feature = "svg")]
+    fn draw_svg_image_document_into<S: PaintScene>(&self, scene: &mut S) -> bool {
+        let Some(entry) = self.context.dom.svg_image_documents.get(&self.node.id) else {
+            return false;
+        };
+        let scale = self.scale;
+        let content = self.frame.content_box;
+        let (width, height) = (f64::from(entry.size.0) * scale, f64::from(entry.size.1) * scale);
+        if (content.width() - width).abs() > scale || (content.height() - height).abs() > scale {
+            return false;
+        }
+        let sub_doc = entry.document.inner();
+        let translation = self.transform.translation();
+        let painter = BlitzDomPainter::new(
+            &sub_doc,
+            scale,
+            width.ceil() as u32,
+            height.ceil() as u32,
+            translation.x + content.origin().x,
+            translation.y + content.origin().y,
+            self.custom_widget_scenes,
+        );
+        scene.push_clip_layer(Fill::NonZero, self.transform, &content);
+        painter.paint_scene(scene);
+        scene.pop_layer();
+        true
+    }
+
     #[cfg(feature = "svg")]
     fn draw_svg(&self, scene: &mut impl PaintScene) {
         use style::properties::generated::longhands::object_fit::computed_value::T as ObjectFit;
@@ -3890,9 +4007,29 @@ impl ElementCx<'_, '_> {
         let Some(svg) = self.svg else {
             return;
         };
+        // pyro: an SVG image with a `<foreignObject>` drawn as a document (blitz-dom
+        // `svg_image_documents`), when it is drawn at the size the document is laid out at.
+        if self.draw_svg_image_document_into(scene) {
+            return;
+        }
 
-        let width = self.frame.content_box.width() as f32;
-        let height = self.frame.content_box.height() as f32;
+        // pyro: an SVG image (not an inline `<svg>`) is drawn at its unsnapped content size and
+        // stretched to the snapped box, as Chromium draws an image into its pixel-snapped rect:
+        // a 100x12.5 image box snapped to 100x13 is filled, without a seam where the `meet` of a
+        // 8:1 view box left a part of a pixel (WPT css-sizing
+        // `image-fractional-height-with-wide-aspect-ratio`).
+        let snapped = (self.frame.content_box.width() as f32, self.frame.content_box.height() as f32);
+        let (width, height) = if self.element.name.local != local_name!("svg") {
+            let layout = self.node.unrounded_layout();
+            let w = (layout.size.width - layout.padding.left - layout.padding.right - layout.border.left - layout.border.right)
+                * self.scale as f32;
+            let h = (layout.size.height - layout.padding.top - layout.padding.bottom - layout.border.top - layout.border.bottom)
+                * self.scale as f32;
+            if w > 0.0 && h > 0.0 && (w - snapped.0).abs() < 1.0 && (h - snapped.1).abs() < 1.0 { (w, h) } else { snapped }
+        } else {
+            snapped
+        };
+        let stretch = Affine::scale_non_uniform((snapped.0 / width) as f64, (snapped.1 / height) as f64);
         // pyro: an inline `<svg>` without a `viewBox` lays its content out in its box, in user
         // units of a CSS px times its zoom (`zoom: 2` draws its content twice as large).
         let units = self.scale as f32 * self.style.effective_zoom.value();
@@ -3957,11 +4094,16 @@ impl ElementCx<'_, '_> {
             }
             None => (x_offset, y_offset, paint_size),
         };
+        let (origin_x, origin_y) = (x, y);
         let x = x + x_offset.px() as f64;
         let y = y + y_offset.px() as f64;
 
         let viewport = svg_viewport_affine(svg, paint_size.width, paint_size.height);
-        let transform = (self.transform * viewport).then_translate(Vec2 { x, y });
+        let transform = self.transform
+            * Affine::translate((origin_x, origin_y))
+            * stretch
+            * Affine::translate((x - origin_x, y - origin_y))
+            * viewport;
 
         // pyro: the viewport clip, as Chromium has it (`LayoutSVGRoot::ShouldApplyViewportClip`,
         // `ReplacedPainter`): an inline `<svg>` clips its content unless its `overflow` is
@@ -4087,12 +4229,17 @@ impl ElementCx<'_, '_> {
                     let color = peniko::Color::from_rgba8(color.red, color.green, color.blue, color.alpha);
                     scene.fill(Fill::EvenOdd, self.transform, color, None, &bands);
                 }
-                // pyro: with what the document knows of its filters (tainted primitives).
+                // pyro: with what the document knows of its filters (tainted primitives), and its
+                // `<foreignObject>`s' content painted where usvg draws their images.
+                let mut handler = |scene: &mut _, node: &anyrender_svg::usvg::Node| match anyrender_svg::foreign_object() {
+                    Some(fo) => self.draw_foreign_object(scene, fo),
+                    None => anyrender_svg::draw_error_box(scene, node),
+                };
                 match crate::filters::svg_filter_notes(self.context.dom, self.node, &svg.tree) {
                     Some(notes) => {
-                        anyrender_svg::render_svg_tree_with_notes(scene, &svg.tree, transform, notes)
+                        anyrender_svg::render_svg_tree_with_notes_and(scene, &svg.tree, transform, notes, &mut handler)
                     }
-                    None => anyrender_svg::render_svg_tree(scene, &svg.tree, transform),
+                    None => anyrender_svg::render_svg_tree_with(scene, &svg.tree, transform, &mut handler),
                 }
                 if isolate {
                     scene.pop_layer();
@@ -4155,6 +4302,30 @@ impl ElementCx<'_, '_> {
             None,
             paint,
         );
+    }
+
+    /// pyro: the gradient a box's `content` replaces it with (`ElementData::content_gradient`): an
+    /// image without a natural size, so it fills the content box.
+    fn draw_content_gradient(&self, scene: &mut impl PaintScene) {
+        if !self.element.content_gradient {
+            return;
+        }
+        let Some(gradient) = blitz_dom::util::content_gradient(&self.style) else { return };
+        let content = self.frame.content_box;
+        if content.width() <= 0.0 || content.height() <= 0.0 {
+            return;
+        }
+        let tile = Rect::new(0.0, 0.0, content.width(), content.height());
+        let current_color = self.style.clone_color();
+        let (gradient, gradient_transform) = crate::gradient::to_peniko_gradient(
+            gradient,
+            tile,
+            self.frame.border_box.bounding_box(),
+            self.scale,
+            &current_color,
+        );
+        let transform = self.transform * Affine::translate(content.origin().to_vec2());
+        scene.fill(Fill::NonZero, transform, anyrender::Paint::Gradient(&gradient), gradient_transform, &tile);
     }
 
     fn draw_image(&self, scene: &mut impl PaintScene) {
@@ -4482,3 +4653,32 @@ fn marker_line_x(line: &parley::Line<'_, blitz_dom::node::TextBrush>) -> f32 {
     });
     if own_float { 0.0 } else { line.metrics().inline_min_coord }
 }
+
+/// pyro: an empty table cell with `empty-cells: hide` in the separated borders model paints no
+/// background and no border (CSS 2.1 §17.6.1.1; WPT CSS2 `empty-cells-applies-to-014`). A cell is
+/// empty when it holds nothing but collapsible white space and out-of-flow boxes.
+fn hides_empty_cell(dom: &blitz_dom::BaseDocument, node: &blitz_dom::Node) -> bool {
+    use style::values::specified::box_::DisplayInside;
+    let Some(style) = node.primary_styles() else { return false };
+    if style.get_inherited_table().empty_cells != style::computed_values::empty_cells::T::Hide
+        || style.get_inherited_table().border_collapse != style::computed_values::border_collapse::T::Separate
+        || style.clone_display().inside() != DisplayInside::TableCell
+    {
+        return false;
+    }
+    node.children.iter().all(|&id| {
+        let Some(child) = dom.get_node(id) else { return true };
+        if child.is_text_node() {
+            return child.is_whitespace_node();
+        }
+        child.primary_styles().is_none_or(|style| {
+            style.clone_display().is_none()
+                || matches!(
+                    style.clone_position(),
+                    style::computed_values::position::T::Absolute | style::computed_values::position::T::Fixed
+                )
+        })
+    }) && node.before().is_none()
+        && node.after().is_none()
+}
+

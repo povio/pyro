@@ -3,10 +3,11 @@
 // of different files interleave; they share one fork-mode browser, which this
 // executor launches on first use and closes when the run ends.
 import { spawnSync } from 'node:child_process';
-import { readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join, relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { chain, newScope, registry, titlePath, type Fn, type Scope, type TestCase, type TestRun } from './registry.js';
+import { chain, isSkip, newScope, registry, titlePath, type Fn, type Scope, type TestCase, type TestRun } from './registry.js';
 import { consoleReporter, junitReport, type Failure, type Summary } from './report.js';
 import { resolveBinary } from '../binary.js';
 import type { BrowserOptions, Setup } from './index.js';
@@ -32,6 +33,12 @@ export type Options = {
   preload: string[];
   browserArgs: string[];
   updateSnapshots: boolean;
+  /** Times a failing test runs again (a test's own `{ retries }` wins). */
+  retries?: number;
+  /** Screenshots of a failed test's open pages (default `only-on-failure`). */
+  screenshot?: 'only-on-failure' | 'off';
+  /** Where failure screenshots go (default `test-results`), relative to `cwd`. */
+  outputDir?: string;
 };
 
 const SPEC = /[._](test|spec)\.[cm]?[jt]sx?$/;
@@ -115,6 +122,37 @@ class HookError extends Error {
     super(`${message}: ${cause instanceof Error ? cause.message : String(cause)}`);
     if (cause instanceof Error && cause.stack) this.stack = `${this.name}: ${this.message}\n${cause.stack.split('\n').slice(1).join('\n')}`;
   }
+}
+
+/** A file name for a test's artifacts: its file and titles, readable and short. */
+function slug(test: TestCase): string {
+  const text = [test.scope.file.replace(/\.[cm]?[jt]sx?$/, ''), ...titlePath(test)].join('-');
+  const clean = text.replace(/[^A-Za-z0-9._-]+/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+  return clean.length > 120 ? `${clean.slice(0, 100)}-${createHash('sha1').update(clean).digest('hex').slice(0, 8)}` : clean;
+}
+
+/**
+ * PNG screenshots of a failed test's open pages, as they are when it failed
+ * (before its afterEach hooks), into `dir`. A page that does not answer
+ * within `ms` is left out.
+ */
+async function screenshots(pages: TestRun['pages'], dir: string, name: string, ms: number): Promise<string[]> {
+  const saved: string[] = [];
+  let i = 0;
+  for (const page of pages) {
+    if (!page.send) continue;
+    const n = ++i;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const shot = page.send('Page.captureScreenshot', { format: 'png' }).catch(() => undefined) as Promise<{ data?: string } | undefined>;
+    const r = await Promise.race([shot, new Promise<undefined>((done) => (timer = setTimeout(() => done(undefined), ms)))]);
+    clearTimeout(timer);
+    if (!r?.data) continue;
+    mkdirSync(dir, { recursive: true });
+    const path = join(dir, `${name}${pages.size > 1 ? `-page${n}` : ''}.png`);
+    writeFileSync(path, Buffer.from(r.data, 'base64'));
+    saved.push(path);
+  }
+  return saved;
 }
 
 /** Calls `fn` (a promise, a `done` callback, or sync) and fails it after `ms`. */
@@ -329,8 +367,8 @@ export class Executor {
       }
       this.tests.push(child);
       const name = titlePath(child).join(' ');
-      if (todo || child.todo) child.run = { status: 'todo', start: 0, ms: 0, defers: [], pages: new Set() };
-      else if (skip || child.skip) child.run = { status: 'skip', start: 0, ms: 0, defers: [], pages: new Set() };
+      if (todo || child.todo) child.run = { status: 'todo', start: 0, ms: 0, defers: [], pages: new Set(), attempts: 0, screenshots: [] };
+      else if (skip || child.skip) child.run = { status: 'skip', start: 0, ms: 0, defers: [], pages: new Set(), attempts: 0, screenshots: [] };
       else if ((this.o.testNamePattern && !this.o.testNamePattern.test(name)) || (this.o.only && !(only || child.only))) this.filtered++;
       else {
         this.queue.push(child);
@@ -415,7 +453,7 @@ export class Executor {
   }
 
   private async execute(test: TestCase) {
-    const run: TestRun = { status: 'pass', start: this.now(), ms: 0, defers: [], pages: new Set() };
+    const run: TestRun = { status: 'pass', start: this.now(), ms: 0, defers: [], pages: new Set(), attempts: 0, screenshots: [] };
     test.run = run;
     const scopes = this.scopes(test);
     let error: unknown;
@@ -427,43 +465,27 @@ export class Executor {
       }
     }
     const t0 = performance.now();
-    if (error === undefined) {
-      const timeout = test.timeout ?? this.r.defaultTimeout;
-      error = await this.r.context.run({ scope: test.scope, test }, async () => {
-        let failure: unknown;
-        try {
-          for (const s of scopes) for (const h of s.beforeEach) await call(h.fn, h.timeout ?? timeout, 'beforeEach hook');
-          await call(test.fn, timeout, 'test');
-        } catch (e) {
-          failure = e;
-          if (e instanceof TimeoutError) await cancelRuns(run.pages, 1_000);
-        }
-        for (const s of [...scopes].reverse()) {
-          for (const h of s.afterEach) {
-            try {
-              await call(h.fn, h.timeout ?? timeout, 'afterEach hook');
-            } catch (e) {
-              failure ??= e;
-            }
-          }
-        }
-        for (const d of run.defers.reverse()) {
-          try {
-            await call(d, timeout, 'deferred cleanup');
-          } catch (e) {
-            failure ??= e;
-          }
-        }
-        return failure;
-      });
-    }
-    for (const page of run.pages) {
-      try {
-        page.close();
-      } catch {}
+    const retries = Math.max(0, Math.floor(test.retries ?? this.o.retries ?? 0));
+    let skipped = false;
+    // A failing beforeAll is not retried: its scope's setup ran once for every test.
+    for (let attempt = 0; error === undefined; attempt++) {
+      run.attempts = attempt + 1;
+      error = await this.attempt(test, run, scopes);
+      if (isSkip(error)) {
+        skipped = true;
+        run.skipReason = (error as { reason?: string }).reason;
+        error = undefined;
+        break;
+      }
+      if (error === undefined || attempt >= retries || this.stopped) break;
+      this.report.retry(test, attempt + 1, error);
+      error = undefined;
+      run.pages = new Set();
+      run.defers = [];
     }
     run.ms = performance.now() - t0;
     this.charge(test.scope.file, run.ms);
+    if (skipped) run.status = 'skip';
     if (error !== undefined) {
       run.status = 'fail';
       run.error = error;
@@ -479,6 +501,55 @@ export class Executor {
       s.state.remaining--;
       if (s.state.remaining === 0) await this.close(s);
     }
+  }
+
+  /**
+   * One run of a test: its beforeEach hooks, the test, then (whatever
+   * happened) its afterEach hooks and deferred work; its pages close at the
+   * end. A failure screenshots its open pages first. What it failed with
+   * (a skip signal when `test.skip()` ended it), or undefined.
+   */
+  private async attempt(test: TestCase, run: TestRun, scopes: Scope[]): Promise<unknown> {
+    const timeout = test.timeout ?? this.r.defaultTimeout;
+    const error = await this.r.context.run({ scope: test.scope, test }, async () => {
+      let failure: unknown;
+      try {
+        for (const s of scopes) for (const h of s.beforeEach) await call(h.fn, h.timeout ?? timeout, 'beforeEach hook');
+        await call(test.fn, timeout, 'test');
+      } catch (e) {
+        failure = e;
+        if (e instanceof TimeoutError) await cancelRuns(run.pages, 1_000);
+        if (!isSkip(e) && (this.o.screenshot ?? 'only-on-failure') !== 'off') {
+          const name = `${slug(test)}${run.attempts > 1 ? `-retry${run.attempts - 1}` : ''}`;
+          const dir = resolve(this.o.cwd, this.o.outputDir ?? 'test-results');
+          const saved = await screenshots(run.pages, dir, name, 5_000).catch(() => []);
+          run.screenshots.push(...saved.map((p) => relative(this.o.cwd, p)));
+        }
+      }
+      for (const s of [...scopes].reverse()) {
+        for (const h of s.afterEach) {
+          try {
+            await call(h.fn, h.timeout ?? timeout, 'afterEach hook');
+          } catch (e) {
+            if (failure === undefined || isSkip(failure)) failure = e;
+          }
+        }
+      }
+      for (const d of run.defers.reverse()) {
+        try {
+          await call(d, timeout, 'deferred cleanup');
+        } catch (e) {
+          if (failure === undefined || isSkip(failure)) failure = e;
+        }
+      }
+      return failure;
+    });
+    for (const page of run.pages) {
+      try {
+        page.close();
+      } catch {}
+    }
+    return error;
   }
 
   /** A scope's afterAll hooks and deferred work, once. */

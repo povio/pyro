@@ -66,3 +66,15 @@ entry) once a Blitz release carries these commits and changes.
   `src/wrapper.rs` (`CoreStyle::calc_size_min`): `calc-size()` (vendor/stylo/README.pyro.md) is laid out as its
   basis (`auto` as `auto`, the keywords as themselves; a minimum as the automatic minimum); blitz-dom applies the
   calculation of `width`/`height`, Taffy that of `min-width: calc-size(auto, ...)` (`calc_size_min`).
+- `src/wrapper.rs` (`StyleFlags::IS_CONTENT_REPLACED`, `CoreStyle::is_content_replaced`): an element replaced by its `content: url()` image (blitz-dom sets the flag), which Taffy does not stretch as the root.
+
+- `src/convert.rs` (`item_alignment`): `anchor-center` is `center` (no anchor positioning).
+- `src/wrapper.rs` (`is_anonymous_or_split_inline`): an anonymous block (`::-servo-anonymous-box`) or a split inline
+  has `justify-self: auto` as `normal` and passes no `justify-items` on to its children (csswg-drafts#11461/#11462,
+  Blink; WPT css-align `blocks/justify-items-anonymous`, `justify-self-block-in-inline-002`).
+- `src/convert.rs` (`table_cell_vertical_align`): `vertical-align: middle` is `AlignmentBaseline::VerticalAlignMiddle`
+  since lane IT (round 3); a cell centres for it and for the longhand's `middle`.
+
+- `src/wrapper.rs` (`root_float_is_right`): the physical side of `float` for a floated root (Taffy).
+
+Lane SP: `wrapper.rs` implements `BlockContainerStyle::own_height_keywords` from the `min-height`/`max-height` keywords.

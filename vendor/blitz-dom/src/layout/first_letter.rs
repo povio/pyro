@@ -49,8 +49,8 @@ use crate::{
 
 const GENERAL_CATEGORY: CodePointMapDataBorrowed<'static, GeneralCategory> = CodePointMapData::<GeneralCategory>::new();
 
-/// Punctuation that joins a first letter (CSS 2.1: the Ps, Pe, Pi, Pf and Po classes; Chromium's
-/// `IsPunctuationForFirstLetter`). Dashes (Pd) and connectors (Pc) do not.
+/// Punctuation that joins a first letter before it (pyro: CSS Pseudo 4 § 2.2: any P* class,
+/// dashes and connectors too; WPT css-pseudo `first-letter-trailing-punctuation`).
 fn is_punctuation(c: char) -> bool {
     matches!(
         GENERAL_CATEGORY.get(c),
@@ -59,7 +59,25 @@ fn is_punctuation(c: char) -> bool {
             | GeneralCategory::InitialPunctuation
             | GeneralCategory::FinalPunctuation
             | GeneralCategory::OtherPunctuation
+            | GeneralCategory::DashPunctuation
+            | GeneralCategory::ConnectorPunctuation
     )
+}
+
+/// pyro: punctuation that may follow the first letter: all but opening punctuation and dashes.
+fn is_trailing_punctuation(c: char) -> bool {
+    is_punctuation(c)
+        && !matches!(GENERAL_CATEGORY.get(c), GeneralCategory::OpenPunctuation | GeneralCategory::DashPunctuation)
+}
+
+/// pyro: a space separator other than U+0020 (typographic space, CSS Pseudo 4 § 2.2).
+fn is_typographic_space(c: char) -> bool {
+    c != ' ' && GENERAL_CATEGORY.get(c) == GeneralCategory::SpaceSeparator
+}
+
+/// pyro: a word-separator character (CSS Text 3 § 8.2).
+fn is_word_separator(c: char) -> bool {
+    matches!(c, ' ' | '\u{A0}' | '\u{1361}' | '\u{10100}' | '\u{10101}' | '\u{1039F}' | '\u{1091F}')
 }
 
 /// A character that belongs to the letter before it (a combining mark, a joiner or a variation
@@ -98,14 +116,38 @@ pub(crate) fn scan_text(text: &str) -> TextScan {
     if first.is_whitespace() {
         return TextScan::Stop;
     }
-    while chars.next_if(|&(_, c)| is_punctuation(c)).is_some() {}
+    // pyro: a punctuation mark keeps the combining marks after it (WPT css-pseudo
+    // `first-letter-004`).
+    // pyro: so do typographic spaces between the punctuation and the letter, other than a plain
+    // space (WPT css-pseudo `first-letter-trailing-punctuation`: "«&nbsp;T").
+    while chars.next_if(|&(_, c)| is_punctuation(c)).is_some() {
+        while chars.next_if(|&(_, c)| extends_letter(c)).is_some() {}
+        while chars.next_if(|&(_, c)| is_typographic_space(c)).is_some() {}
+    }
     match chars.next() {
         None => return TextScan::Letter(start..text.len()),
         Some((_, c)) if c.is_whitespace() => return TextScan::Skip,
         Some(_) => {}
     }
     while chars.next_if(|&(_, c)| extends_letter(c)).is_some() {}
-    while chars.next_if(|&(_, c)| is_punctuation(c)).is_some() {}
+    // pyro: punctuation after the letter, except opening punctuation and dashes; a typographic
+    // space that is not a word separator bridges to more of it, but is not taken alone.
+    loop {
+        if chars.next_if(|&(_, c)| is_trailing_punctuation(c)).is_some() {
+            while chars.next_if(|&(_, c)| extends_letter(c)).is_some() {}
+            continue;
+        }
+        let mut ahead = chars.clone();
+        let mut spaces = 0;
+        while ahead.next_if(|&(_, c)| is_typographic_space(c) && !is_word_separator(c)).is_some() {
+            spaces += 1;
+        }
+        if spaces > 0 && ahead.peek().is_some_and(|&(_, c)| is_trailing_punctuation(c)) {
+            chars = ahead;
+            continue;
+        }
+        break;
+    }
     let end = chars.peek().map_or(text.len(), |&(index, _)| index);
     TextScan::Letter(start..end)
 }
@@ -162,7 +204,13 @@ pub(super) fn origin(
         // Only an in-flow block box passes its first line on to its container. pyro: an
         // anonymous block is one, whatever display its anonymous style computes.
         let in_flow = node.primary_styles().is_some_and(|style| !is_out_of_flow(&style));
-        let block = node.is_anonymous()
+        // pyro: a `::before`/`::after` box is not an anonymous block: its display decides (an
+        // inline-block one is atomic; WPT css-pseudo `first-line-with-inline-block-before`).
+        let pseudo_box = node.parent.is_some_and(|parent| {
+            let parent = &doc.nodes[parent];
+            parent.before() == Some(current) || parent.after() == Some(current)
+        });
+        let block = (node.is_anonymous() && !pseudo_box)
             || (display.outside() == DisplayOutside::Block
                 && matches!(display.inside(), DisplayInside::Flow | DisplayInside::FlowRoot));
         if !split && (!block || !in_flow) {
@@ -206,6 +254,20 @@ fn find_letter(doc: &BaseDocument, root: NodeId) -> Option<(NodeId, std::ops::Ra
     fn walk(doc: &BaseDocument, node_id: NodeId) -> Option<Found> {
         let node = &doc.nodes[node_id];
         match &node.data {
+            // pyro: a preserved line break before any letter ends the first line without one
+            // (WPT css-pseudo `first-letter-with-preceding-new-line`).
+            NodeData::Text(data)
+                if data.content.trim_start_matches(|c: char| c.is_ascii_whitespace() && c != '\n').starts_with('\n')
+                    && node.parent.and_then(|parent| doc.nodes[parent].primary_styles()).is_some_and(|style| {
+                        use style::computed_values::white_space_collapse::T as Collapse;
+                        matches!(
+                            style.get_inherited_text().white_space_collapse,
+                            Collapse::Preserve | Collapse::PreserveBreaks | Collapse::BreakSpaces
+                        )
+                    }) =>
+            {
+                Some(Found::Stop)
+            }
             NodeData::Text(data) => match scan_text(&data.content) {
                 TextScan::Letter(range) => Some(Found::Letter(node_id, range)),
                 TextScan::Stop => Some(Found::Stop),
@@ -602,7 +664,14 @@ mod tests {
         assert_eq!(scan_text("42 Filler"), TextScan::Letter(0..1));
         assert_eq!(scan_text("\u{00BF}T\u{00BF}est"), TextScan::Letter(0..5));
         // Dashes and connectors are not first-letter punctuation.
-        assert_eq!(scan_text("-T-est"), TextScan::Letter(0..1));
+        // pyro: a dash before the letter joins it, one after it does not (CSS Pseudo 4).
+        assert_eq!(scan_text("-T-est"), TextScan::Letter(0..2));
+        assert_eq!(scan_text("_T_est"), TextScan::Letter(0..3));
+        assert_eq!(scan_text("T(rail"), TextScan::Letter(0..1));
+        assert_eq!(scan_text("\u{AB}\u{A0}T\u{A0}\u{BB}est"), TextScan::Letter(0..5));
+        assert_eq!(scan_text("T\u{2003}.est"), TextScan::Letter(0..5));
+        assert_eq!(scan_text("T.\u{2003}est"), TextScan::Letter(0..2));
+        assert_eq!(scan_text("\u{104E}\u{300}T\u{300}x"), TextScan::Letter(0..8));
         assert_eq!(scan_text("\u{2019}T\u{2019}x"), TextScan::Letter(0..7));
     }
 

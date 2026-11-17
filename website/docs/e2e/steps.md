@@ -5,7 +5,7 @@ A run is a list of steps. Each step waits in the browser until it can complete, 
 ```ts
 import {
   button, check, label, text, css, goto, route, reload, waitForUrl, loaded, idle,
-  evaluate, viewport, media, popup, switchTo, download, downloadCount, mouse,
+  evaluate, viewport, media, popup, switchTo, download, downloadCount, mouse, keyboard,
 } from '@povio/pyro';
 ```
 
@@ -36,7 +36,7 @@ These steps settle: every locator action except `focus()` and `blur()`, `mouse(.
 
 ## Actions
 
-Every action first resolves its locator to exactly one element ([strict mode](/e2e/locators#strict-mode)), then waits until the element is attached and visible (a box with non-zero width and height). `click`, `dblclick`, `fill`, `check`, `uncheck`, `press` and `type` also need it enabled. Pointer actions scroll it into view and need it not covered by another element.
+Every action first resolves its locator to exactly one element ([strict mode](/e2e/locators#strict-mode)), then waits until the element is attached and visible (a box with non-zero width and height). `click`, `dblclick`, `fill`, `check` and `uncheck` also need it enabled; `press` and `type` do not (as in Playwright, they focus the element and send the keys, so an `aria-disabled` button still gets its keydown). Pointer actions scroll it into view and need it not covered by another element.
 
 All actions take `{ settle?: boolean; timeout?: number }`.
 
@@ -69,7 +69,7 @@ All actions take `{ settle?: boolean; timeout?: number }`.
 |---|---|---|
 | `button` | `'left'` | `'left'`, `'right'` or `'middle'` (`click` and `dblclick`). A right click fires `contextmenu` after the press and `auxclick` after the release, never `click`, as Chromium does |
 | `position` | center of the element's visible part | `{ x, y }` offset from the element's top-left corner |
-| `force` | `false` | Skip the covered check and the enabled check; act at the point whatever is there |
+| `force` | `false` | Skip the covered check and the enabled check; act at the point whatever is there. Without `position` the point is the center of the element's box where it meets the viewport, whatever clips it (a visually hidden control with `clip: rect(0 0 0 0)`), as Playwright's `force` does |
 
 The default point is the center of the part of the element that is visible inside the viewport and its scroll containers, as in Playwright, so an element wider than its container is clicked where it can be seen.
 
@@ -116,6 +116,16 @@ A chord sends the modifiers down, the key down and up, then the modifiers up. Wi
 
 `type` sends each character as its own key press; a character it cannot send waits with `cannot type '...'`.
 
+Escape in a filled `<input type=search>` empties it and fires `input`, then `search`, as Chromium does; dialogs and popovers close only on the next Escape.
+
+`keyboard.press(key, opts?)` and `keyboard.type(text, opts?)` send keys to whichever element has focus (the body when none has), without focusing anything first, as Playwright's `page.keyboard`. They take `{ modifiers?, settle?, timeout? }`; an unknown key fails the run at once.
+
+```ts
+button('Open menu').click(),
+keyboard.press('ArrowDown'),
+keyboard.press('Escape'),
+```
+
 ## Checks
 
 `check(loc)` returns a builder. Each check waits until it holds, trying again whenever the page's DOM changes. Every check takes `{ timeout }`.
@@ -124,9 +134,10 @@ A chord sends the modifiers down, the key down and up, then the modifiers up. Wi
 |---|---|---|
 | `.visible()` | The one match has a visible box | `{ actual: true }` |
 | `.hidden()` | Nothing matches, or the one match has no visible box | `{ actual: false }` |
-| `.text(expected)` | The element's text equals `expected` after whitespace normalization (case-sensitive) | `{ actual }` |
-| `.containsText(expected)` | The normalized text contains `expected` (case-sensitive) | `{ actual }` |
-| `.value(expected)` | The form control's value equals `expected` exactly | `{ actual }` |
+| `.text(expected)` | The element's text equals `expected` after whitespace normalization (case-sensitive), or a `RegExp` matches the normalized text | `{ actual }` |
+| `.containsText(expected)` | The normalized text contains `expected` (case-sensitive), or a `RegExp` matches it | `{ actual }` |
+| `.value(expected)` | The form control's value equals `expected` exactly, or a `RegExp` matches it | `{ actual }` |
+| `.attribute(name, value?)` | The attribute equals `value` exactly, or a `RegExp` matches it; without `value`, the element has the attribute (`check(loc).not.attribute('hidden')`: it has not) | `{ actual }` |
 | `.count(n)` | The locator matches exactly `n` elements (no strict mode) | `{ actual }` |
 | `.checked(expected = true)` | A checkbox or radio button is (`true`) or is not (`false`) checked | `{ actual }` |
 | `.css(property, expected)` | The computed style property equals `expected`: `.css('background-color', 'rgb(0, 0, 0)')` | `{ actual }` |
@@ -166,7 +177,7 @@ Use reads for values the test computes with; assert everything else with `check(
 
 | Step | What it does | Options |
 |---|---|---|
-| `goto(url, waitUntil = 'load')` | Navigates the page and waits for `load` (or `'domcontentloaded'`) | Step timeout comes from the run |
+| `goto(url, opts?)` | Navigates the page and waits for `load` (or `'domcontentloaded'`) | `{ waitUntil?, timeout? }`, or the `waitUntil` string alone: `goto(url, { timeout: 60_000 })` |
 | `route(url, opts?)` | Same-document navigation: `history.pushState` then a `popstate` event, as a client-side router sees a link. Settles on the requests it starts | `{ settle?, timeout? }` |
 | `reload(opts?)` | Reloads the current document and waits for `load` | `{ timeout? }` |
 | `waitForUrl(url, opts?)` | Waits until the page URL contains the string, or matches the `RegExp` | `{ timeout? }` |
@@ -281,7 +292,6 @@ await page.run([
 |---|---|
 | `{ advanceTime: { ms } }` | Advances the page clock: `Date` jumps forward and timers due within `ms` fire. At most one day per step. Result `{ advanced }`. Use it for timeouts and debounces you would otherwise wait out; a mock's `delay` is a real network delay and is not affected |
 | `act` field `modifiers: ['Shift', ...]` | Modifier keys held during a pointer action: `raw({ act: { locator: button('Mod').spec, action: 'click', modifiers: ['Shift'] } })` |
-| `check` with `assert: 'attribute'`, `property`, `expected` | An attribute equals `expected` (a string), matches a `{ regex }`, or is absent (`expected: null`) |
 | `check` with `assert: 'description'` | The accessible description (from `aria-describedby`, `aria-description` or `title`) matches `expected` |
 | `eval` fields `call`, `locator`, `all`, `arg` | Call a function expression, optionally with the matched element (or all matches) and a JSON argument; this is what the Playwright layer's `evaluate(fn, arg)` uses |
 | `{ held: { hold, count, status, as? } }` | Waits until `count` responses held under `hold` have these statuses; their bodies land in `values[as]` |

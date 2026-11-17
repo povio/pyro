@@ -271,6 +271,8 @@ pub(crate) struct LayoutData<B: Brush> {
     /// pyro: the least advance of a tab (0.5ch of the root style): a tab closer than this to its
     /// stop goes on to the next one.
     pub(crate) tab_min_advance: f32,
+    /// pyro: [`crate::Layout::set_line_height_quirk`].
+    pub(crate) line_height_quirk: bool,
     /// pyro: the soft hyphens that show a hyphen (their lines end at them): each one's shaped
     /// cluster with the glyph and advance it was shaped with.
     pub(crate) shown_hyphens: Vec<(u32, u32, f32)>,
@@ -314,6 +316,7 @@ impl<B: Brush> Default for LayoutData<B> {
             indent_options: IndentOptions::default(),
             tab_space: -1.0,
             tab_min_advance: 0.0,
+            line_height_quirk: false,
             shown_hyphens: Vec::new(),
             edge_clusters: Vec::new(),
             autospace: Vec::new(),
@@ -372,6 +375,7 @@ impl<B: Brush> LayoutData<B> {
         self.indent_options = IndentOptions::default();
         self.tab_space = -1.0;
         self.tab_min_advance = 0.0;
+        self.line_height_quirk = false;
         self.shown_hyphens.clear();
         self.edge_clusters.clear();
         self.autospace.clear();

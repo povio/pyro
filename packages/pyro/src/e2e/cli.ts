@@ -31,6 +31,11 @@ not a file, directory or glob filters the spec paths, as with bun test.
       --junit <file>              both at once
   -u, --update-snapshots          write screenshot baselines instead of comparing
       --bail [n]                  stop after n failures (default 1)
+      --retries <n>               run a failing test again, up to n times (a test's own
+                                  { retries } wins); one that passes then counts as flaky
+      --screenshot <mode>         only-on-failure (default): PNGs of a failed test's open
+                                  pages, as the failure left them; off
+      --output <dir>              where they go (default test-results)
   -h, --help
 `;
 
@@ -120,6 +125,18 @@ export async function main(argv: string[]): Promise<number> {
       case '-u':
       case '--update-snapshots':
         o.updateSnapshots = true;
+        break;
+      case '--retries':
+        o.retries = Math.floor(number());
+        break;
+      case '--screenshot': {
+        const mode = value();
+        if (mode !== 'only-on-failure' && mode !== 'off') throw new Usage(`--screenshot is only-on-failure or off, not ${mode}`);
+        o.screenshot = mode;
+        break;
+      }
+      case '--output':
+        o.outputDir = value();
         break;
       case '--bail':
         if (inline !== undefined || /^\d+$/.test(argv[i + 1] ?? '')) o.bail = Math.max(1, number());

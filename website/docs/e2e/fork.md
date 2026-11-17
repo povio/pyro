@@ -105,6 +105,8 @@ profile app: setup step 0 (expect Visible {"text":"missing"}): timed out after 3
 
 The error has `.profile` (the name) and `.step` (the index of the failed step in this profile's `setup`, from 0; `undefined` when the base profile failed instead). No page of a failed profile is handed out: `pyro.page({ as })` and `pyro.warm()` throw the same error, and profiles with `base` on it fail with `profile <name>: base profile <base> failed: ...`. Declaring the profile again runs the setup again. The server also prints the failure on its standard error, as `pyro: template: profile 2: setup step 0 (...): ...`.
 
+The setup runs once the profile's page has loaded and gone quiet (no request or navigation in flight, nothing due soon), and no page of the profile is handed out before the setup ran and the page went quiet again (newer than 0.0.39). An app that lands somewhere after it loaded (a redirect once its session check answers) has landed before the setup starts, and every fork starts from there. An app that keeps timers due (polling) counts as quiet once it has been loaded for 2 s with no request or navigation in flight. Up to 0.0.39 a connection that had waited 2 s could start the setup, or take a fork, while the page was still loading, so the app's landing redirect overrode the test's `route`.
+
 With `pyro.profile()` in a `beforeAll`, a failed setup fails every test of that scope with the step's reason. End a setup with a check of the state it should reach (as `check(text('Signed in')).visible()` above), so that a sign-in that did not work is a setup failure and not a later, less obvious one.
 
 In releases up to 0.0.33 a failed setup does not make `pyro.profile()` throw. The server prints `pyro: template: setup of profile 2: step 0 (...)` on its standard error and pages of the profile still open, from wherever the setup stopped. There, keep the server's stderr visible in CI and look there first when every test of one profile fails.
@@ -159,6 +161,41 @@ What it costs:
 - **One connection per page.** The server's `--cdp-max-connections` (default 16) caps open pages. Raise it when more tests run at once: `args: ['--fork', '--cdp-max-connections', '64']`. `pyro e2e` sets it to at least 64.
 - **JavaScriptCore's optimizing tiers are off in forks.** Forked pages run without the DFG and FTL JITs, because connections are too short for them to pay off. Set `JSC_useDFGJIT=true` in the server's environment to override.
 - **Templates run the app.** Every template and spare process runs your app's timers and polling while it waits, so many profiles cost CPU even when idle. Release the ones you no longer need.
+
+## Testing against a dev server (Vite)
+
+A forked page is a copy of the template's page without its network connections: the WebSocket a dev server's client keeps open is gone in the fork. Two Vite behaviours follow from that, and both need a change in the app's test config, not in the tests.
+
+**The HMR client reloads forked pages.** Vite's client sees its socket close, pings the server until it answers, and then calls `location.reload()`, in the middle of a test. Tests do not edit code while they run, so drop that reload in the config the test server uses:
+
+```ts
+// vite.e2e.config.ts
+import { defineConfig, type Plugin } from 'vite';
+import appConfig from './vite.config';
+
+const noReloadOnLostConnection: Plugin = {
+  name: 'e2e-no-reload-on-lost-connection',
+  enforce: 'post',
+  transform(code, id) {
+    if (!id.includes('vite/dist/client/client.mjs')) return null;
+    const patched = code.replace(/await waitForSuccessfulPing\(url\.href\);\s*location\.reload\(\);/, 'return;');
+    // Fail loudly when a Vite release changes the client, instead of reloading again.
+    if (patched === code) throw new Error("Vite's client changed: its reload after a lost connection wasn't found.");
+    return patched;
+  },
+};
+```
+
+**Re-optimized dependencies break forked pages.** When the dev server re-optimizes dependencies (a new import found, or another dev server rebuilding the same cache), it serves the old chunks with `504 (Outdated Optimize Dep)` and tells its clients to reload. A forked page cannot hear that message, so its next lazy import fails. Give the test server an optimizer cache of its own, so that nothing rebuilds it under the running suite, and start the suite once the server has optimized (load the app once in the setup module, or declare the profiles there):
+
+```ts
+export default defineConfig((env) => {
+  const app = appConfig(env);
+  return { ...app, cacheDir: 'node_modules/.vite-e2e', plugins: [...(app.plugins ?? []), noReloadOnLostConnection] };
+});
+```
+
+A production build served with `--static` has neither problem; see [Static files](/e2e/static).
 
 ## Platform limits
 

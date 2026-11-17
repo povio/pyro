@@ -375,7 +375,8 @@ pub(super) fn initialize_grid_tracks(
                     continue;
                 }
                 let track = 1 + 2 * index;
-                tracks[track].collapse();
+                // (sized as any other row first: `GridTrack::collapse_sized`)
+                tracks[track].collapse_after_sizing = true;
                 let later_open = (index + 1..rows)
                     .any(|r| !tracks[1 + 2 * r].is_collapsed && !collapsed.contains(&((r - first) as u16)));
                 if later_open {

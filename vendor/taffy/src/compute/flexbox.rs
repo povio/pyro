@@ -548,7 +548,8 @@ fn compute_preliminary(tree: &mut impl LayoutFlexboxContainer, node: NodeId, inp
 
     // 15. Determine the flex container’s used cross size.
     debug_log!("determine_container_cross_size");
-    let total_line_cross_size = determine_container_cross_size(&flex_lines, known_dimensions, &mut constants);
+    let total_line_cross_size =
+        determine_container_cross_size(&flex_lines, known_dimensions, available_space, &mut constants);
 
     // We have the container size.
     // If our caller does not care about performing layout we are done now.
@@ -761,7 +762,7 @@ fn compute_empty_container_layout(
         return LayoutOutput::from_outer_size(size);
     }
 
-    let _ = determine_container_cross_size(&[], known_dimensions, &mut constants);
+    let _ = determine_container_cross_size(&[], known_dimensions, inputs.available_space, &mut constants);
 
     // With no children there are no out-of-flow candidates, so the positioning area's value is
     // never read. It still has to be `Some`: that is what makes `compute_oof_layout` clear a
@@ -1394,10 +1395,20 @@ fn determine_flex_base_size(
             //    is auto and not definite, in this calculation use fit-content as the
             //    flex item’s cross size. The flex base size is the item’s resulting main size.
 
+            // pyro: a table in a row is laid out in the container's width (fit-content, its percentage
+            // columns taking their share), as in Blink, whatever its `flex-basis` keyword (WPT css-flexbox
+            // `table-as-item-percent-width-cell-001`, `table-with-infinite-max-intrinsic-width`)
+            let table_fit_width = match (child.is_table && dir.is_row(), available_space.main(dir)) {
+                (true, AvailableSpace::Definite(available)) => {
+                    let width = constants.node_inner_size.main(dir).unwrap_or(available);
+                    Some(AvailableSpace::Definite((width - child.margin.main_axis_sum(dir)).max(0.0)))
+                }
+                _ => None,
+            };
             let child_available_space = Size::MAX_CONTENT
                 .with_main(
                     dir,
-                    keyword_main_available_space.unwrap_or(
+                    table_fit_width.or(keyword_main_available_space).unwrap_or(
                         // Map AvailableSpace::Definite to AvailableSpace::MaxContent
                         if available_space.main(dir) == AvailableSpace::MinContent {
                             AvailableSpace::MinContent
@@ -2195,7 +2206,18 @@ fn determine_container_main_size(
                             } else {
                                 0.0
                             };
-                            let size = item.flex_basis + flex_contribution + item.margin.main_axis_sum(constants.dir);
+                            let mut size = item.flex_basis + flex_contribution;
+                            // pyro: a row item's share is its hypothetical size: clamped by its max main size and
+                            // floored by its resolved minimum, as in Blink (an inflexible `flex-basis: 200px` with
+                            // `max-width: 100px` counts 100px; WPT css-flexbox `intrinsic-size/row-007`)
+                            if constants.is_row {
+                                let padding_border = (item.padding + item.border).main_axis_sum(constants.dir);
+                                size = size
+                                    .maybe_min(item.max_size.main(constants.dir))
+                                    .max(item.resolved_minimum_main_size)
+                                    .max(padding_border);
+                            }
+                            let size = size + item.margin.main_axis_sum(constants.dir);
                             if floor_by_largest_item {
                                 largest_item_size = f32_max(largest_item_size, size);
                             }
@@ -2734,7 +2756,7 @@ fn handle_align_content_stretch(flex_lines: &mut [FlexLine], node_size: Size<Opt
 ///   **Note that this step does not affect the main size of the flex item, even if it has an intrinsic aspect ratio**.
 #[inline]
 fn determine_used_cross_size(
-    tree: &impl LayoutFlexboxContainer,
+    tree: &mut impl LayoutFlexboxContainer,
     flex_lines: &mut [FlexLine],
     constants: &AlgoConstants,
 ) {
@@ -2742,12 +2764,12 @@ fn determine_used_cross_size(
         let line_cross_size = line.cross_size;
 
         for child in line.items.iter_mut() {
-            let child_style = tree.get_flexbox_child_style(child.node);
             // A cross size of `stretch` stretches to the flex line like align-self: stretch
             // (but regardless of the alignment style)
             child.target_size.set_cross(
                 constants.dir,
                 if child.is_stretched(constants.dir) {
+                    let child_style = tree.get_flexbox_child_style(child.node);
                     // For some reason this particular usage of max_width is an exception to the rule that max_width's transfer
                     // using the aspect_ratio (if set). Both Chrome and Firefox agree on this. And reading the spec, it seems like
                     // a reasonable interpretation. Although it seems to me that the spec *should* apply aspect_ratio here.
@@ -2769,6 +2791,32 @@ fn determine_used_cross_size(
                     (line_cross_size - child.margin.cross_axis_sum(constants.dir))
                         .max(0.0)
                         .maybe_clamp(child.min_size.cross(constants.dir), max_cross)
+                } else if !constants.is_row
+                    && constants.is_wrap
+                    && child.size_style.cross(constants.dir).is_auto()
+                    && line_cross_size
+                        > child.hypothetical_inner_size.cross(constants.dir) + child.margin.cross_axis_sum(constants.dir)
+                {
+                    // pyro: an item of a wrapping column that is not stretched shrinks to fit the cross size
+                    // of its line once that is known (wider than the container when another item made it so),
+                    // its main size staying as it was (Blink; WPT css-flexbox `align-self-016`)
+                    let available = (line_cross_size - child.margin.cross_axis_sum(constants.dir)).max(0.0);
+                    let known = Size { width: None, height: Some(child.target_size.height) };
+                    let mut measure = |space: AvailableSpace| {
+                        tree.measure_child_size(
+                            child.node,
+                            known,
+                            constants.node_inner_size,
+                            Size { width: space, height: AvailableSpace::MaxContent },
+                            SizingMode::ContentSize,
+                            AbsoluteAxis::Horizontal,
+                            Line::FALSE,
+                        )
+                    };
+                    let (min_content, max_content) = (measure(AvailableSpace::MinContent), measure(AvailableSpace::MaxContent));
+                    let fit = max_content.min(available).max(min_content);
+                    fit.maybe_clamp(child.min_size.width, child.max_size.width)
+                        .max(child.hypothetical_inner_size.cross(constants.dir))
                 } else {
                     child.hypothetical_inner_size.cross(constants.dir)
                 },
@@ -3045,6 +3093,7 @@ fn align_flex_items_along_cross_axis(
 fn determine_container_cross_size(
     flex_lines: &[FlexLine],
     node_size: Size<Option<f32>>,
+    available_space: Size<AvailableSpace>,
     constants: &mut AlgoConstants,
 ) -> f32 {
     let total_cross_axis_gap = sum_axis_gaps(constants.gap.cross(constants.dir), flex_lines.len());
@@ -3054,9 +3103,20 @@ fn determine_container_cross_size(
     let cross_scrollbar_gutter = constants.scrollbar_gutter.cross(constants.dir);
     let min_cross_size = constants.min_size.cross(constants.dir);
     let max_cross_size = constants.max_size.cross(constants.dir);
+    // pyro: a wrapping column without a width of its own in definite space (a float's shrink-to-fit
+    // width) fits its lines into that space, as wide as its widest line at least (Blink; WPT
+    // css-flexbox `multiline-shrink-to-fit`)
+    let content_cross_size = total_line_cross_size + total_cross_axis_gap + padding_border_sum;
+    let content_cross_size = match available_space.cross(constants.dir) {
+        AvailableSpace::Definite(available) if !constants.is_row && flex_lines.len() > 1 => {
+            let widest = flex_lines.iter().map(|line| line.cross_size).fold(0.0, f32::max) + padding_border_sum;
+            content_cross_size.min(available.max(widest))
+        }
+        _ => content_cross_size,
+    };
     let outer_container_size = node_size
         .cross(constants.dir)
-        .unwrap_or(total_line_cross_size + total_cross_axis_gap + padding_border_sum)
+        .unwrap_or(content_cross_size)
         .maybe_clamp(min_cross_size, max_cross_size)
         .max(padding_border_sum - cross_scrollbar_gutter);
     let inner_container_size = f32_max(outer_container_size - padding_border_sum, 0.0);
