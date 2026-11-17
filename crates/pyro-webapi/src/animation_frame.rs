@@ -669,9 +669,11 @@ impl pyro_dom::animation::AnimationSource for Source {
         // next style change event) is not reported.
         {
             let dom = page.dom.try_borrow().ok()?;
-            let current = page.try_layout()?.style().stylo_style(&dom, el)?;
-            if !pyro_dom::animation::same_computed_value(longhand, &current, after) {
-                return None;
+            // (An element going `display: none` has no style of the engine's to compare.)
+            if let Some(current) = page.try_layout()?.style().stylo_style(&dom, el) {
+                if !pyro_dom::animation::same_computed_value(longhand, &current, after) {
+                    return None;
+                }
             }
         }
         // In whole frames: a transition started since the last frame is at its start, as in a

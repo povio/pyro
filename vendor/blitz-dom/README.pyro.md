@@ -2604,3 +2604,5 @@ Round 4 lane G:
   `container-units-selection-pseudo`). Outside list markers carry their `text-emphasis` marks
   (`ListItemLayout::annotations`, `inline::build::marker_emphasis` sharing `emphasis_layout` with inline text; WPT
   css-pseudo `marker-content-024`).
+- `animation.rs`: `display` to or from `none` interpolates as Stylo's `Animate for Display` says (the other value
+  throughout, `none` only at its end), which the discrete fallback skipped (`transition-behavior: allow-discrete`).

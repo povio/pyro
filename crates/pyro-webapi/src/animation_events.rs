@@ -739,6 +739,10 @@ pub(crate) fn style_flush(page: &Rc<PageDom>, read: Option<NodeId>) {
         if let Some(el) = read {
             style_read_hidden_content(state, &dom, style, el);
         }
+        // The read that follows reports the transitions just started (`transition_value`).
+        if state.transitions.try_borrow().is_ok_and(|t| !t.is_empty()) {
+            state.install_source(page, style);
+        }
     }
     finish_overlay_exits(page);
     schedule(page, planned, true);
@@ -839,6 +843,13 @@ fn transitions_from_changes(
             start_transitions(state, dom, style, &rules, el, &before, &now, now_ms, &mut starting);
             continue;
         }
+        // A box going `display: none` with a discrete `display` transition stays rendered while it
+        // runs (css-display-4 §2.1, `transition-behavior: allow-discrete`): its transitions start.
+        // (One without its own `display` change, inside such a box, has no rendered box to animate.)
+        if !was_none && is_none && transitions_display(dom, style, &rules, el, &now) {
+            start_transitions(state, dom, style, &rules, el, &before, &now, now_ms, &mut starting);
+            continue;
+        }
         // `display: none` at either style change event: not rendered then, so
         // no transitions (and no before-change style once shown), unless the
         // engine's `display: none` is Chrome's `content-visibility: hidden`
@@ -859,6 +870,22 @@ fn transitions_from_changes(
         }
     }
     starting.commit(state, planned);
+}
+
+/// Whether `el` (after-change style `now`) runs a discrete transition of `display` (or `all`).
+fn transitions_display(
+    dom: &pyro_dom::Dom,
+    style: &pyro_dom::style::StyleEngine,
+    rules: &TimingRules,
+    el: NodeId,
+    now: &StyleSnapshot,
+) -> bool {
+    let style_of = |e: NodeId| if e == el { Some(now.clone()) } else { style.stylo_style(dom, e) };
+    rules
+        .element(dom, el, &style_of)
+        .transitions
+        .iter()
+        .any(|t| t.allow_discrete && matches!(t.property.as_str(), "display" | "all"))
 }
 
 /// Whether the engine's `display: none` of `el` is where Chrome has

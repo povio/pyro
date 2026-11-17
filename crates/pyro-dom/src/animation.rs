@@ -145,6 +145,16 @@ pub fn transition_value(
         }
         None => progress,
     };
+    // `display` to or from `none` shows the other value throughout, `none` only at its end
+    // (css-display-4 §2.1, Stylo's `Animate for Display`, which the discrete path skips).
+    if longhand == "display" {
+        let (a, b) = (before.computed_value_to_string(physical), after.computed_value_to_string(physical));
+        return Some(match (a == "none", b == "none") {
+            (false, true) => if eased < 1.0 { a } else { b },
+            (true, false) => if eased > 0.0 { b } else { a },
+            _ => if eased < 0.5 { a } else { b },
+        });
+    }
     let value = from
         .animate(&to, Procedure::Interpolate { progress: eased })
         .unwrap_or_else(|_| if eased < 0.5 { from.clone() } else { to.clone() });

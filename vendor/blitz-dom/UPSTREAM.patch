@@ -444,7 +444,7 @@ diff --git a/packages/blitz-dom/src/animation.rs b/packages/blitz-dom/src/animat
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/animation.rs
-@@ -0,0 +1,929 @@
+@@ -0,0 +1,937 @@
 +//! pyro: animated values the embedder samples into the cascade.
 +//!
 +//! pyro keeps the timing of every animation (CSS animations, CSS transitions
@@ -1345,12 +1345,20 @@ new file mode 100644
 +                    progress: transformed,
 +                },
 +            )
-+            .unwrap_or_else(|_| {
-+                if transformed < 0.5 {
-+                    start.value.clone()
-+                } else {
-+                    end.value.clone()
++            .unwrap_or_else(|_| match (&start.value, &end.value) {
++                // pyro: `display` to or from `none` shows the other value throughout, `none` only
++                // at its end (css-display-4 §2.1; Stylo's `Animate for Display`, which the
++                // discrete path skips).
++                (AnimationValue::Display(a), AnimationValue::Display(b)) if a.is_none() != b.is_none() => {
++                    let other = if b.is_none() { transformed < 1.0 } else { transformed <= 0.0 };
++                    if other {
++                        start.value.clone()
++                    } else {
++                        end.value.clone()
++                    }
 +                }
++                _ if transformed < 0.5 => start.value.clone(),
++                _ => end.value.clone(),
 +            }),
 +    )
 +}

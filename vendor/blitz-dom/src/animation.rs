@@ -898,12 +898,20 @@ fn sample_property(
                     progress: transformed,
                 },
             )
-            .unwrap_or_else(|_| {
-                if transformed < 0.5 {
-                    start.value.clone()
-                } else {
-                    end.value.clone()
+            .unwrap_or_else(|_| match (&start.value, &end.value) {
+                // pyro: `display` to or from `none` shows the other value throughout, `none` only
+                // at its end (css-display-4 §2.1; Stylo's `Animate for Display`, which the
+                // discrete path skips).
+                (AnimationValue::Display(a), AnimationValue::Display(b)) if a.is_none() != b.is_none() => {
+                    let other = if b.is_none() { transformed < 1.0 } else { transformed <= 0.0 };
+                    if other {
+                        start.value.clone()
+                    } else {
+                        end.value.clone()
+                    }
                 }
+                _ if transformed < 0.5 => start.value.clone(),
+                _ => end.value.clone(),
             }),
     )
 }
