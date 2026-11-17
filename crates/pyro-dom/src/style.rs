@@ -1023,6 +1023,13 @@ impl StyleEngine {
         self.animation_laid_out.set(stamp);
     }
 
+    /// The value a running CSS transition of `longhand` gives `el` now
+    /// ([`crate::animation::AnimationSource::transition_value`]).
+    pub fn transition_value(&self, el: NodeId, longhand: &str) -> Option<String> {
+        let source = self.animation_source.try_borrow().ok()?.clone()?;
+        source.transition_value(el, longhand)
+    }
+
     /// The animated values for a sync of the layout engine, now; `None`
     /// without an animation source.
     pub fn take_animation_frame(&self) -> Option<crate::animation::AnimationFrame> {

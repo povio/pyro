@@ -251,7 +251,11 @@ pub(crate) fn report(page: &Rc<PageDom>, seq: u64, state: Option<ReportedState>)
                 );
             }
             None => {
-                scripted.remove(&seq);
+                if let Some(id) = scripted.remove(&seq).and_then(|s| s.css) {
+                    if let Ok(mut removed) = events.effect_removed.try_borrow_mut() {
+                        removed.insert(id);
+                    }
+                }
             }
         }
     }
@@ -645,6 +649,39 @@ impl pyro_dom::animation::AnimationSource for Source {
             Some(page) if !page.is_disposed() => frame(&page, self.now(&page), false),
             _ => AnimationFrame::default(),
         }
+    }
+
+    fn transition_value(&self, el: NodeId, longhand: &str) -> Option<String> {
+        let page = self.page.upgrade().filter(|page| !page.is_disposed())?;
+        let now = self.now(&page);
+        let state = &page.animation_events;
+        let (_, transitions) = state.try_timelines()?;
+        let t = transitions.iter().rev().find(|t| t.is_live() && t.el() == el && t.name() == longhand)?;
+        // (One script controls through its `CSSTransition` object follows that object: left out.)
+        if t.has_ended()
+            || state.scripted.try_borrow().ok()?.values().any(|s| s.css == Some(t.id()))
+            || state.effect_removed.try_borrow().ok()?.contains(&t.id())
+        {
+            return None;
+        }
+        let (before, after) = t.styles.as_ref()?;
+        // A transition the style no longer runs to (removed, or the value changed again before the
+        // next style change event) is not reported.
+        {
+            let dom = page.dom.try_borrow().ok()?;
+            let current = page.try_layout()?.style().stylo_style(&dom, el)?;
+            if !pyro_dom::animation::same_computed_value(longhand, &current, after) {
+                return None;
+            }
+        }
+        // In whole frames: a transition started since the last frame is at its start, as in a
+        // browser, whose timeline time moves only at frames.
+        let local = ((now - t.start_ms()) / FRAME_MS).floor().max(0.0) * FRAME_MS;
+        if local >= t.delay_ms + t.duration_ms {
+            return None;
+        }
+        let p = progress(&transition_timing(t), local, 1.0)?;
+        pyro_dom::animation::transition_value(longhand, before, after, p.progress, p.before, Some(t.easing().unwrap_or("ease")))
     }
 }
 

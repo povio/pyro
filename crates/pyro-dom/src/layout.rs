@@ -3112,6 +3112,12 @@ impl Layout {
         let custom = name.starts_with("--");
         let name = if custom { Cow::Borrowed(name) } else { lowercase(name) };
         let name: &str = &name;
+        // pyro: a running CSS transition's value now (the layout engine samples none)
+        if !custom {
+            if let Some(v) = self.style.transition_value(el, name) {
+                return self.resolved_value(dom, el, name, &v).unwrap_or(v);
+            }
+        }
         match name {
             "display" if self.style.has_display_none(dom, el) => return "none".into(),
             "display" => return self.style.computed_display(dom, el).unwrap_or_default(),

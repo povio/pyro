@@ -93,6 +93,9 @@ pub(crate) struct Timeline {
     /// between (the property's value before and after the style change).
     easing: Option<String>,
     keyframes: Option<std::sync::Arc<pyro_dom::animation::TextKeyframes>>,
+    /// A transition: the before-change and after-change styles it runs between
+    /// (`getComputedStyle` interpolates them, `animation_frame::Source::transition_value`).
+    pub(crate) styles: Option<(StyleSnapshot, StyleSnapshot)>,
 }
 
 impl Timeline {
@@ -114,6 +117,10 @@ impl Timeline {
     }
     pub(crate) fn is_live(&self) -> bool {
         self.live.get()
+    }
+    /// Its `end` event fired.
+    pub(crate) fn has_ended(&self) -> bool {
+        self.ended.get()
     }
     pub(crate) fn is_paused(&self) -> bool {
         self.paused_at.is_some()
@@ -159,6 +166,9 @@ pub(crate) struct State {
     /// animations and transitions script controls), as script reported them
     /// (`animation_frame::report`).
     pub(crate) scripted: RefCell<FxHashMap<u64, crate::animation_frame::Scripted>>,
+    /// The CSS animations and transitions whose `Animation` object lost its effect
+    /// (`effect = null`): `getComputedStyle` reports no transition value for them.
+    pub(crate) effect_removed: RefCell<FxHashSet<u64>>,
     /// The layout engine samples the page's animated values
     /// (`StyleEngine::set_animation_source` was called).
     source_installed: Cell<bool>,
@@ -520,6 +530,7 @@ fn update(page: &Rc<PageDom>, defer: bool) {
                 progress: Rc::new(Cell::new(0)),
                 easing: None,
                 keyframes: None,
+                styles: None,
             };
             // Held at 0 when paused: it starts only where a negative delay
             // put it in its active phase already, and goes no further.
@@ -1158,6 +1169,7 @@ fn start_transitions(
                 progress: Rc::new(Cell::new(0)),
                 easing: transition.easing.clone(),
                 keyframes: pyro_dom::timing::transition_keyframes(before, now, longhand).map(std::sync::Arc::new),
+                styles: Some((before.clone(), now.clone())),
             };
             let (delay, duration) = (transition.delay_ms, transition.duration_ms);
             let event = |ty: &'static str, at_ms: f64, elapsed_ms: f64, ends: bool| Planned {
