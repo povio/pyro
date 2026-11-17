@@ -4317,7 +4317,7 @@ diff -ruN a/values/specified/number.rs b/values/specified/number.rs
          match self.0.unpack_mut() {
 diff -ruN a/values/specified/text.rs b/values/specified/text.rs
 --- a/values/specified/text.rs	2026-11-11 19:55:57
-+++ b/values/specified/text.rs	2026-11-16 17:35:53
++++ b/values/specified/text.rs	2026-11-17 11:04:11
 @@ -25,6 +25,23 @@
  use style_traits::{CssWriter, ParseError, StyleParseErrorKind, ToCss};
  use style_traits::{KeywordsCollectFn, SpecifiedValueInfo};
@@ -4370,18 +4370,18 @@ diff -ruN a/values/specified/text.rs b/values/specified/text.rs
      }
  }
  
-@@ -824,6 +856,10 @@
-         self.remove(Self::RIGHT); // Right is the default
-         true
+@@ -826,6 +858,10 @@
      }
-+}
-+
-+fn word_break_manual_enabled(_: &ParserContext) -> bool {
-+    cfg!(feature = "servo")
  }
  
++fn word_break_manual_enabled(_: &ParserContext) -> bool {
++    cfg!(feature = "servo")
++}
++
  fn word_break_break_word_enabled(_: &ParserContext) -> bool {
-@@ -858,6 +894,10 @@
+     crate::pref!("layout.css.word-break.break-word.enabled", gecko = true)
+ }
+@@ -858,6 +894,14 @@
      /// `anywhere`, and `word-break` behave like `normal`.
      #[parse(condition = "word_break_break_word_enabled")]
      BreakWord,
@@ -4389,10 +4389,14 @@ diff -ruN a/values/specified/text.rs b/values/specified/text.rs
 +    /// dictionaries find in Southeast Asian scripts.
 +    #[parse(condition = "word_break_manual_enabled")]
 +    Manual,
++    /// pyro: `auto-phrase` (CSS Text 4): as `keep-all`, with soft wrap opportunities between
++    /// phrases the UA finds.
++    #[parse(condition = "word_break_manual_enabled")]
++    AutoPhrase,
  }
  
  /// Values for the `text-justify` CSS property.
-@@ -1331,6 +1371,38 @@
+@@ -1331,6 +1375,38 @@
          const REPLACE = 1 << 6;
          */
      }

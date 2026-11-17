@@ -194,6 +194,8 @@ may be negative, as Blink takes it (the clip edge moves inwards; WPT `css-overfl
 `crates/pyro-render/tests/overflow_clip.rs`.
 - `values/specified/text.rs` (`WordBreak::Manual`): `word-break: manual` (CSS Text 4) is parsed for the servo engine.
   blitz-dom lays it out as `normal` without dictionary breaks in Southeast Asian scripts (its README.pyro.md).
+  `WordBreak::AutoPhrase`: `word-break: auto-phrase` (CSS Text 4), parsed under the same condition; parley lays it
+  out as `keep-all` with phrase breaks (`parley_engine` README.pyro.md).
 `values/specified/image.rs` (`Color::has_modern_syntax`): a colour with a missing component
 (`rgb(none 255 0)`) is modern syntax, so a gradient with one interpolates in Oklab by default, as in
 Chromium (WPT `gradient-eval-004`, `gradient-analogous-missing-components-*`). Stylo's legacy flag says

@@ -2489,3 +2489,7 @@ does not let margins collapse through it, even when its lines have no height (CS
 - `net.rs`: `@font-face` rules inside `@media`, passing `@supports` and `@layer` blocks load too (media lists are not
   evaluated there); a `tech()` source needing a technology outside `SERVO_SUPPORTED` is skipped.
   `document.rs` sets `layout.css.font-tech.enabled`.
+- `layout/inline/build.rs`, `stylo_to_parley.rs` (round 4 lane A): `<wbr>` is a U+200B soft wrap opportunity (it was
+  nothing: no break at all, also under `keep-all`); a quirks-mode `<br>` carries its own `line-height` (parley's line
+  height quirk sizes a line holding only it); `word-break: auto-phrase` maps to `keep-all` with parley's phrase
+  breaks; a `hyphenate-character` of two to four characters is `SoftHyphen::Chars`.

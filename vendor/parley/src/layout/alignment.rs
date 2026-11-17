@@ -73,10 +73,18 @@ pub(crate) fn align<B: Brush>(
 ) {
     layout.alignment = Some(alignment);
 
-    let is_rtl = layout.base_level.is_rtl();
+    let base_rtl = layout.base_level.is_rtl();
+    let plaintext = !layout.paragraph_levels.is_empty();
 
     // Apply alignment to line items
-    for line in &mut layout.lines {
+    for line_index in 0..layout.lines.len() {
+        // pyro: each line takes its paragraph's direction (`unicode-bidi: plaintext`).
+        let is_rtl = if plaintext {
+            layout.level_at(layout.lines[line_index].text_range.start).is_rtl()
+        } else {
+            base_rtl
+        };
+        let line = &mut layout.lines[line_index];
         line.justification.amount_per_opportunity = 0.;
 
         let indent = line.metrics.indent;

@@ -456,6 +456,7 @@ fn build_into_layout<B: Brush>(
     layout.data.scale = options.scale;
     layout.data.quantize = options.quantize;
     layout.data.base_level = lcx.analysis.paragraph_level();
+    layout.data.paragraph_levels.extend_from_slice(lcx.analysis.paragraph_levels());
     layout.data.text_len = text.len();
 
     // Characters not covered by any style run (e.g. the space substituted for empty text during

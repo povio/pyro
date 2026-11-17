@@ -215,6 +215,9 @@ pub(crate) struct LayoutData<B: Brush> {
     pub(crate) quantize: bool,
     /// The `BiDi` base level
     pub(crate) base_level: BidiLevel,
+    /// pyro: the byte offset and base level of each later paragraph whose level differs (CSS
+    /// `unicode-bidi: plaintext`); empty when every paragraph has `base_level`.
+    pub(crate) paragraph_levels: Vec<(usize, BidiLevel)>,
     /// The length of the text in the layout
     pub(crate) text_len: usize,
 
@@ -274,8 +277,8 @@ pub(crate) struct LayoutData<B: Brush> {
     /// pyro: [`crate::Layout::set_line_height_quirk`].
     pub(crate) line_height_quirk: bool,
     /// pyro: the soft hyphens that show a hyphen (their lines end at them): each one's shaped
-    /// cluster with the glyph and advance it was shaped with.
-    pub(crate) shown_hyphens: Vec<(u32, u32, f32)>,
+    /// cluster with the glyphs it was shaped with.
+    pub(crate) shown_hyphens: Vec<(u32, parley_engine::ClusterGlyphs)>,
     /// pyro: the shaped clusters a line's edge changed (fullwidth punctuation set half-width at
     /// a line's start or end, `text-spacing-trim`; the space after an ideograph that ends a line,
     /// `text-autospace`): each one with its glyph's x offset and its advance as shaped. Each line
@@ -292,6 +295,7 @@ impl<B: Brush> Default for LayoutData<B> {
             scale: 1.,
             quantize: true,
             base_level: BidiLevel::new(0),
+            paragraph_levels: Vec::new(),
             text_len: 0,
             width: 0.,
             full_width: 0.,
@@ -362,10 +366,20 @@ impl<B: Brush> LayoutData<B> {
         if self.quantize { self.scale } else { 0. }
     }
 
+    /// pyro: the base level of the paragraph the text at byte `offset` is in.
+    pub(crate) fn level_at(&self, offset: usize) -> BidiLevel {
+        if self.paragraph_levels.is_empty() {
+            return self.base_level;
+        }
+        let at = self.paragraph_levels.partition_point(|&(start, _)| start <= offset);
+        at.checked_sub(1).map_or(self.base_level, |at| self.paragraph_levels[at].1)
+    }
+
     pub(crate) fn clear(&mut self) {
         self.scale = 1.;
         self.quantize = true;
         self.base_level = BidiLevel::new(0);
+        self.paragraph_levels.clear();
         self.text_len = 0;
         self.width = 0.;
         self.full_width = 0.;
@@ -727,7 +741,7 @@ impl ContentWidthsMeasurer {
                     // bidi reordering. We don't currently apply UAX #9 L1 (resetting trailing
                     // whitespace to paragraph level), so only logically-last items that match the
                     // paragraph level are guaranteed to be at that edge.
-                    let can_hang = item.bidi_level == layout_data.base_level;
+                    let can_hang = item.bidi_level == layout_data.level_at(slice.characters().first().map_or(0, |c| c.text_byte_range().start));
                     let is_rtl = item.bidi_level.is_rtl();
 
                     if run_spacing.is_zero() {

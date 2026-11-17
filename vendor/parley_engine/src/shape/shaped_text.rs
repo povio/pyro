@@ -336,6 +336,14 @@ struct RunMetricsEntry {
     metrics: RunMetrics,
 }
 
+/// pyro: a shaped cluster's glyphs before [`ShapedText::show_hyphen`] changed them.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ClusterGlyphs {
+    glyph_offset: u32,
+    flags: u16,
+    advance: f32,
+}
+
 /// The result of shaping.
 ///
 /// After [analyzing][crate::Analysis] your text, [shape the text][crate::Shaper::shape_text],
@@ -513,6 +521,57 @@ impl ShapedText {
         Some((glyph.to_u32(), metrics.advance_width(glyph)? * (run.font_size / f32::from(units_per_em))))
     }
 
+    /// pyro: shows a hyphen on the shaped cluster at `index`: its glyphs become `hyphen`'s (glyph,
+    /// advance) pairs, after its own glyphs when `keep` (a soft hyphen that shaping merged into the
+    /// cluster before it), in visual order for `rtl` text. The new glyphs go to the end of the
+    /// glyph array. Returns what the cluster had, for [`Self::restore_cluster`].
+    pub fn show_hyphen(&mut self, index: u32, hyphen: &[(u32, f32)], keep: bool, rtl: bool) -> Option<ClusterGlyphs> {
+        let cluster = *self.shaped_clusters.get(index as usize)?;
+        let saved = ClusterGlyphs {
+            glyph_offset: cluster.glyph_offset,
+            flags: cluster.flags.bits(),
+            advance: cluster.advance,
+        };
+        let mut own = alloc::vec::Vec::new();
+        if keep {
+            if cluster.has_inline_glyph() {
+                own.push(Glyph { id: cluster.glyph_offset, x: 0., y: 0., advance: cluster.advance });
+            } else {
+                let start = cluster.glyph_offset as usize;
+                own.extend_from_slice(self.glyphs.get(start..start + usize::from(cluster.glyph_len()))?);
+            }
+        }
+        let added = hyphen.iter().map(|&(id, advance)| Glyph { id, x: 0., y: 0., advance });
+        let start = self.glyphs.len();
+        if rtl {
+            self.glyphs.extend(added.rev());
+            self.glyphs.extend(own);
+        } else {
+            self.glyphs.extend(own);
+            self.glyphs.extend(added);
+        }
+        let len = self.glyphs.len() - start;
+        if len == 0 || len > 255 {
+            self.glyphs.truncate(start);
+            return None;
+        }
+        let advance = if keep { cluster.advance } else { 0. } + hyphen.iter().map(|&(_, advance)| advance).sum::<f32>();
+        let cluster = &mut self.shaped_clusters[index as usize];
+        cluster.glyph_offset = start as u32;
+        cluster.flags = cluster.flags.with_glyph_len(len as u8).with_inline_glyph(false);
+        cluster.advance = advance;
+        Some(saved)
+    }
+
+    /// pyro: gives the shaped cluster at `index` back what [`Self::show_hyphen`] returned.
+    pub fn restore_cluster(&mut self, index: u32, saved: ClusterGlyphs) {
+        if let Some(cluster) = self.shaped_clusters.get_mut(index as usize) {
+            cluster.glyph_offset = saved.glyph_offset;
+            cluster.flags = super::data::ShapedClusterFlags::from_bits(saved.flags);
+            cluster.advance = saved.advance;
+        }
+    }
+
     /// pyro: gives the one-glyph shaped cluster at `index` the glyph `id` with `advance`, and
     /// returns what it had (a soft hyphen at the end of a line shows a hyphen; one inside a line
     /// gets its own glyph back).
@@ -665,7 +724,8 @@ impl ShapedText {
             .zip(&char_style_indices[range.char_range.clone()])
             .enumerate()
         {
-            let flags = CharacterFlags::new(ch, info.is_word_boundary(), info.is_soft_wrap_opportunity());
+            let flags = CharacterFlags::new(ch, info.is_word_boundary(), info.is_soft_wrap_opportunity())
+                .with_phrase_fallback(info.is_phrase_fallback());
             self.characters.push(Character {
                 text_byte_start: (range.byte_range.start + byte_offset) as u32,
                 style_index: *style_index,

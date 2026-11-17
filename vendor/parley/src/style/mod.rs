@@ -68,6 +68,9 @@ pub enum SoftHyphen {
     Auto,
     /// The line may end there and then shows this character, if the font has it.
     Char(char),
+    /// The line may end there and then shows the first `.1` of these characters, if the font has
+    /// them all (a `hyphenate-character` string of two to four characters).
+    Chars([char; 4], u8),
     /// The line may end there and shows nothing.
     Hidden,
     /// No line ends there.
@@ -463,6 +466,8 @@ pub enum StyleProperty<'a, B: Brush> {
     SoftHyphen(SoftHyphen),
     /// pyro: whether lines may break inside words where dictionaries find boundaries.
     DictionaryBreaks(bool),
+    /// pyro: whether lines break between phrases (CSS `word-break: auto-phrase`).
+    PhraseBreaks(bool),
     /// pyro: whether the font size is set by `font-size-adjust` (a face's `size-adjust` is then
     /// not applied).
     FontSizeAdjusted(bool),
@@ -542,6 +547,10 @@ pub struct TextStyle<'family, 'settings, B: Brush> {
     /// pyro: whether lines may break inside words where dictionaries find boundaries (Thai, Lao,
     /// Khmer, Burmese). `false` for CSS `word-break: manual`.
     pub dictionary_breaks: bool,
+    /// pyro: CSS `word-break: auto-phrase`: with `word_break` [`WordBreak::KeepAll`], lines also
+    /// break between Japanese phrases, and a line whose phrase does not fit breaks as under
+    /// [`WordBreak::Normal`].
+    pub phrase_breaks: bool,
     /// pyro: whether the font size is set by CSS `font-size-adjust`: it fixes the size of the
     /// metric it names for every font, so a face's `size-adjust` (`@font-face`) is not applied.
     pub font_size_adjusted: bool,
@@ -646,6 +655,7 @@ impl<B: Brush> Default for TextStyle<'static, 'static, B> {
             tab_size: TabSize::default(),
             soft_hyphen: SoftHyphen::default(),
             dictionary_breaks: true,
+            phrase_breaks: false,
             font_size_adjusted: false,
             auto_optical_size: false,
             language_override: None,

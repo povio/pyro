@@ -57,6 +57,25 @@ impl ShapedClusterFlags {
         Self(glyph_len as u16)
     }
 
+    /// pyro: these flags with `glyph_len` glyphs.
+    #[inline(always)]
+    pub(crate) const fn with_glyph_len(mut self, glyph_len: u8) -> Self {
+        self.0 = self.0 & !Self::GLYPH_LEN_MASK | glyph_len as u16;
+        self
+    }
+
+    /// pyro: the raw bits ([`crate::ClusterGlyphs`]).
+    #[inline(always)]
+    pub(crate) const fn bits(self) -> u16 {
+        self.0
+    }
+
+    /// pyro: flags from [`Self::bits`].
+    #[inline(always)]
+    pub(crate) const fn from_bits(bits: u16) -> Self {
+        Self(bits)
+    }
+
     #[inline(always)]
     pub(crate) const fn with_inline_glyph(mut self, set: bool) -> Self {
         self.0 = self.0 & !Self::INLINE_GLYPH | if set { Self::INLINE_GLYPH } else { 0 };
@@ -280,6 +299,9 @@ impl CharacterFlags {
     const EXPAND_BEFORE: u16 = 1 << 10;
     /// pyro: a justification opportunity after the character.
     const EXPAND_AFTER: u16 = 1 << 11;
+    /// pyro: a soft wrap opportunity before the character for a line whose phrase does not fit
+    /// (CSS `word-break: auto-phrase`).
+    const PHRASE_FALLBACK: u16 = 1 << 12;
 
     #[inline(always)]
     pub fn new(source_char: char, is_word_boundary: bool, is_soft_wrap_opportunity: bool) -> Self {
@@ -309,6 +331,19 @@ impl CharacterFlags {
                     0
                 },
         )
+    }
+
+    /// pyro: these flags with [`Self::is_phrase_fallback`] set to `value`.
+    #[inline(always)]
+    pub(crate) fn with_phrase_fallback(self, value: bool) -> Self {
+        Self(if value { self.0 | Self::PHRASE_FALLBACK } else { self.0 })
+    }
+
+    /// pyro: whether there is a soft wrap opportunity before the character only for a line whose
+    /// phrase does not fit (`word-break: auto-phrase` falls back to `normal` there).
+    #[inline(always)]
+    pub fn is_phrase_fallback(self) -> bool {
+        self.0 & Self::PHRASE_FALLBACK != 0
     }
 
     /// pyro: whether the character is U+00AD SOFT HYPHEN.

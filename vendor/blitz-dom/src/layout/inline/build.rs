@@ -1022,12 +1022,35 @@ fn build_inline_layout_with(
                     }
                 }
 
+                // pyro: `<wbr>` is a soft wrap opportunity (HTML § 15.3.3: as U+200B ZERO WIDTH
+                // SPACE), also under `word-break: keep-all` and in CJK text.
+                if element_data.name.local.eq_str_ignore_ascii_case("wbr")
+                    && element_data.name.ns == markup5ever::ns!(html)
+                    && !node
+                        .display_style()
+                        .is_some_and(|d| matches!(d.inside(), DisplayInside::None))
+                {
+                    builder.push_text("\u{200B}");
+                    return;
+                }
+
                 if node.is_line_break() {
                     // node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
                     // TODO: update span id for br spans
-                    builder.push_style_modification_span(&[
-                        parley::StyleProperty::WhiteSpaceCollapse(WhiteSpaceCollapse::Preserve),
-                    ]);
+                    // pyro: in quirks mode a `<br>` alone on its line sets the line's height with its
+                    // own line height (Quirks Mode §3.3; Blink's `LayoutBR`).
+                    let br_line_height = style
+                        .filter(|_| nodes.line_height_quirk)
+                        .map(|s| crate::stylo_to_parley::style(node_id, s).line_height);
+                    match br_line_height {
+                        Some(line_height) => builder.push_style_modification_span(&[
+                            parley::StyleProperty::WhiteSpaceCollapse(WhiteSpaceCollapse::Preserve),
+                            parley::StyleProperty::LineHeight(line_height),
+                        ]),
+                        None => builder.push_style_modification_span(&[
+                            parley::StyleProperty::WhiteSpaceCollapse(WhiteSpaceCollapse::Preserve),
+                        ]),
+                    }
                     if node.primary_styles().is_some_and(|style| {
                         style.clone_clear() != style::computed_values::clear::T::None
                     }) {
