@@ -1946,13 +1946,14 @@ fn stroke_inline_text(
             context.line_tops = None;
             // pyro: on the first line, in the `::first-line` colour (the line's root style).
             let mut options = options;
-            if line.root_style() != 0 && options.brush_override.is_none() {
-                options.brush_override = text_layout
-                    .layout
-                    .styles()
-                    .get(usize::from(line.root_style()))
-                    .and_then(|style| dom.get_node(style.brush.id))
-                    .and_then(|node| node.primary_styles().map(|style| style.clone_color().as_srgb_color()));
+            // (A line clamp's own ellipsis is shaped in the first line's style already.)
+            let text_overflow = text_layout.ellipsis.as_deref().is_some_and(|own| std::ptr::eq(own, ellipsis));
+            if index == 0 && text_overflow && options.brush_override.is_none() {
+                if let Some(first_line) = text_layout.first_line {
+                    options.brush_override = dom
+                        .get_node(first_line)
+                        .and_then(|node| node.primary_styles().map(|style| style.clone_color().as_srgb_color()));
+                }
             }
             crate::text::stroke_text(
                 scene,

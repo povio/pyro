@@ -1969,8 +1969,16 @@ impl LayoutPassState<'_> {
         // pyro: for a line clamp (`layout::line_clamp`), which a later layout of the box that
         // clamps sets again.
         inline_layout.line_box_top = line_box_top;
+        // pyro: invisible line boxes at the end (phantom lines: CSS Inline 3 § 4.1) count for no
+        // line clamp (WPT css-overflow `line-clamp-037`).
         inline_layout.counted_lines = match has_inline_content {
-            true => trailing_empty_line.unwrap_or(line_count) as u32,
+            true => {
+                let mut counted = trailing_empty_line.unwrap_or(line_count);
+                while counted > 1 && inline_layout.layout.get(counted - 1).is_some_and(|line| line.metrics().invisible) {
+                    counted -= 1;
+                }
+                counted as u32
+            }
             false => 0,
         };
         inline_layout.clamp = None;

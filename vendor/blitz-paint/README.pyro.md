@@ -1062,3 +1062,5 @@ text cut at the box (`TextCut`), as Appendix E orders a line's boxes and text (c
 Round 4 lane G: `draw_sub_document` records an iframe's document at its viewport's origin and appends it with the
 frame's whole transform, clipped to the content box (upstream applied the translation only). WPT css-transforms
 `transform-iframe-002`, `transform-iframe-scroll-position`.
+- Round 4 lane F: the first line's ellipsis takes the colour of the `::first-line` style (`TextLayout::first_line`; WPT
+  css-overflow `text-overflow-ellipsis-multiline-001`).

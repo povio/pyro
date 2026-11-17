@@ -2591,3 +2591,5 @@ Round 4 lane G:
   from the bottom (Taffy's right), so a float or initial-letter slot, left to right in Taffy's axes, starts its line
   `layout width - (slot.x + slot.width)` from the line-left side (WPT css-inline `initial-letter-raise-initial-slr`,
   `initial-letter-sunk-initial-slr`).
+- Round 4 lane F: trailing invisible line boxes (phantom lines) do not count for `line-clamp` (`counted_lines`; WPT
+  css-overflow `line-clamp-037`).
