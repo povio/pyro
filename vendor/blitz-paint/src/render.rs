@@ -3969,6 +3969,35 @@ impl ElementCx<'_, '_> {
         }
     }
 
+    /// pyro: see [`Self::draw_svg`]; `false` when the image is drawn from its usvg tree.
+    #[cfg(feature = "svg")]
+    fn draw_svg_image_document_into<S: PaintScene>(&self, scene: &mut S) -> bool {
+        let Some(entry) = self.context.dom.svg_image_documents.get(&self.node.id) else {
+            return false;
+        };
+        let scale = self.scale;
+        let content = self.frame.content_box;
+        let (width, height) = (f64::from(entry.size.0) * scale, f64::from(entry.size.1) * scale);
+        if (content.width() - width).abs() > scale || (content.height() - height).abs() > scale {
+            return false;
+        }
+        let sub_doc = entry.document.inner();
+        let translation = self.transform.translation();
+        let painter = BlitzDomPainter::new(
+            &sub_doc,
+            scale,
+            width.ceil() as u32,
+            height.ceil() as u32,
+            translation.x + content.origin().x,
+            translation.y + content.origin().y,
+            self.custom_widget_scenes,
+        );
+        scene.push_clip_layer(Fill::NonZero, self.transform, &content);
+        painter.paint_scene(scene);
+        scene.pop_layer();
+        true
+    }
+
     #[cfg(feature = "svg")]
     fn draw_svg(&self, scene: &mut impl PaintScene) {
         use style::properties::generated::longhands::object_fit::computed_value::T as ObjectFit;
@@ -3976,6 +4005,11 @@ impl ElementCx<'_, '_> {
         let Some(svg) = self.svg else {
             return;
         };
+        // pyro: an SVG image with a `<foreignObject>` drawn as a document (blitz-dom
+        // `svg_image_documents`), when it is drawn at the size the document is laid out at.
+        if self.draw_svg_image_document_into(scene) {
+            return;
+        }
 
         // pyro: an SVG image (not an inline `<svg>`) is drawn at its unsnapped content size and
         // stretched to the snapped box, as Chromium draws an image into its pixel-snapped rect:

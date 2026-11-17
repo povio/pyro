@@ -1012,3 +1012,6 @@ box (css-sizing `image-fractional-height-with-wide-aspect-ratio`). `render/backg
 `render.rs` (`draw_foreign_object`): an inline `<svg>`'s `<foreignObject>` content (blitz-dom
 `svg_foreign_objects`) is painted where usvg draws its stand-in image, its box mapped onto the image, cut at its box
 unless its `overflow` is visible.
+
+`render.rs` (`draw_svg_image_document_into`): an SVG image drawn as a document (blitz-dom `svg_image_documents`) is
+painted from it, clipped to the content box, when drawn at the size it was laid out at.

@@ -724,14 +724,26 @@ impl Writer<'_> {
         // opacity, and anyrender_svg has blitz-paint paint its HTML content where the image is
         // (a box of the element's `width` and `height`, laid out as a root). Without a width
         // or a height it renders nothing (`auto` is 0, SVG 2).
+        // One of no size is an empty group, which still paints its filter's region (as Chromium
+        // does; WPT filter-effects `svg-empty-hidden-foreignobject-with-filter-001`).
         let foreign_object = is_svg && !is_root && tag == "foreignObject";
+        let mut unsized_foreign_object = false;
         if foreign_object {
-            let sized = |name: markup5ever::LocalName, id: LonghandId| data.attr(name).is_some() || author.contains(&id);
-            if !sized(local_name!("width"), LonghandId::Width) || !sized(local_name!("height"), LonghandId::Height) {
-                return;
-            }
+            let size = |name: markup5ever::LocalName| data.attr(name).and_then(|v| v.trim().trim_end_matches("px").parse::<f64>().ok());
+            let sized = |name: markup5ever::LocalName, id: LonghandId| {
+                author.contains(&id) || size(name).is_some_and(|v| v > 0.0)
+            };
+            unsized_foreign_object =
+                !sized(local_name!("width"), LonghandId::Width) || !sized(local_name!("height"), LonghandId::Height);
         }
-        let tag = if foreign_object { "image" } else { tag };
+        let foreign_object = foreign_object && !unsized_foreign_object;
+        let tag = if foreign_object {
+            "image"
+        } else if unsized_foreign_object {
+            "g"
+        } else {
+            tag
+        };
 
         // Viewports for `transform-box: view-box`.
         let pushed_viewport = is_svg && tag == "svg";
@@ -938,7 +950,7 @@ impl Writer<'_> {
             }
         }
 
-        if node.children.is_empty() || foreign_object {
+        if node.children.is_empty() || foreign_object || unsized_foreign_object {
             self.out.push_str(" />");
         } else {
             self.out.push('>');
@@ -1023,6 +1035,14 @@ impl Writer<'_> {
     /// The element's fill and stroke boxes, from the first pass; in the first
     /// pass, an id for it to be found by.
     fn boxes(&mut self, node: &Node, data: &ElementData, temp_id: &mut Option<String>) -> Boxes {
+        // pyro: an image's and a `<foreignObject>`'s boxes are their geometry ([`attribute_boxes`]).
+        if data.name.ns == ns!(svg) && matches!(data.name.local.as_ref(), "image" | "foreignObject") {
+            if let Some(boxes) = attribute_boxes(data) {
+                // What uses them is written in the final pass.
+                self.needs_boxes |= self.pass == Pass::Boxes;
+                return boxes;
+            }
+        }
         match self.pass {
             Pass::Boxes => {
                 self.needs_boxes = true;
@@ -1860,7 +1880,9 @@ fn attribute_boxes(data: &ElementData) -> Option<Boxes> {
         data.attr(markup5ever::LocalName::from(name)).and_then(|value| value.trim().parse::<f64>().ok())
     };
     let fill = match data.name.local.as_ref() {
-        "rect" => {
+        // pyro: also an `<image>`'s or `<foreignObject>`'s viewport (its fill box, SVG 2), which
+        // usvg's group for the image holds in the image's pixels.
+        "rect" | "image" | "foreignObject" => {
             let (x, y) = (number("x").unwrap_or(0.0), number("y").unwrap_or(0.0));
             Rect::new(x, y, x + number("width")?, y + number("height")?)
         }

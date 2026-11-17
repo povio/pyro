@@ -468,6 +468,18 @@ fn initialize_track_sizes(
             .min_track_sizing_function
             .definite_value(axis_inner_node_size, |val, basis| tree.calc(val, basis))
             .unwrap_or(0.0);
+        // pyro: a `calc()` gutter against an indefinite size keeps its lengths, its percentages
+        // resolving to 0 (`gap: calc(20px + 5%)` is 20px while an inline grid sizes itself, as in
+        // Chromium; WPT css-grid `grid-gutters-009`). The size is resolved again once known.
+        if track.kind == super::types::GridTrackKind::Gutter && axis_inner_node_size.is_none() {
+            let raw = track.min_track_sizing_function.into_raw();
+            #[cfg(feature = "calc")]
+            if raw.is_plain_calc() {
+                track.base_size = tree.calc(raw.calc_value(), 0.0).max(0.0);
+                track.growth_limit = track.base_size;
+                continue;
+            }
+        }
 
         // For each track, if the track’s max track sizing function is:
         // - A fixed sizing function

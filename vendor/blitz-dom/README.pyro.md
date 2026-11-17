@@ -2469,3 +2469,11 @@ does not let margins collapse through it, even when its lines have no height (CS
   inline root's definite content height less margins (`inline_box_inputs` `stretch_height`); an inline root's own
   `min-height`/`max-height` content keywords clamp its final height (css-sizing
   `hori-block-size-small-or-larger-than-container-with-min-or-max-content-1`).
+- SVG images with a `<foreignObject>` (`net.rs` `foreign_source`, `document.rs` `svg_image_documents`,
+  `update_svg_image_documents`, `html.rs` `HtmlParserProvider::parse_svg_document`): the image's source is parsed as
+  an XML document of its own (no script runs in it), laid out at the image's natural size each resolve, and painted
+  by blitz-paint in place of the usvg tree, which drops HTML content.
+- `node/svg.rs` (`for_url`): an SVG image without a `viewBox` and with a zero `width` or `height` (no natural ratio)
+  is laid out in the box it is drawn in, as Blink does.
+- `node/svg_css.rs` (`attribute_boxes`, `boxes`): an `<image>`'s or `<foreignObject>`'s fill box is its geometry;
+  a `<foreignObject>` without a size is an empty group (its filter region still paints).

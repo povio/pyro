@@ -913,6 +913,7 @@ impl Renderer {
             quirks_mode: snap.quirks_mode,
             line_height_quirk: snap.quirks_mode || snap.limited_quirks_mode,
             content_language: snap.content_language.clone(),
+            html_parser_provider: Some(Arc::new(SvgImageParser)),
             ..DocumentConfig::default()
         };
         // Documents are resolved at time 0: a CSS transition or animation
@@ -3551,5 +3552,23 @@ mod deferred_html_scroll_tests {
         let empty = pixels(r#"<input type="time" value="" style="width:70px;height:24px;font:12px Arial">"#);
         assert_ne!(morning, empty, "a time value must not paint as an empty field");
         assert_ne!(morning, afternoon, "changing the saved time must change the rendered pixels");
+    }
+}
+
+/// Parses SVG images with a `<foreignObject>` into documents of their own (blitz-dom
+/// `svg_image_documents`); nothing else: frames and `innerHTML` stay pyro-dom's.
+struct SvgImageParser;
+
+impl blitz_dom::HtmlParserProvider for SvgImageParser {
+    fn parse_inner_html<'m, 'doc>(
+        &self,
+        _mutr: &'m mut blitz_dom::DocumentMutator<'doc>,
+        _element_id: blitz_dom::NodeId,
+        _html: &str,
+    ) {
+    }
+
+    fn parse_svg_document(&self, svg: &str, config: DocumentConfig) -> Option<Box<dyn blitz_dom::Document>> {
+        blitz_html::HtmlProvider.parse_svg_document(svg, config)
     }
 }

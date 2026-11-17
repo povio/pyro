@@ -43,6 +43,15 @@ impl HtmlParserProvider for HtmlProvider {
     ) -> Box<dyn blitz_dom::Document> {
         Box::new(crate::HtmlDocument::from_html(html, config))
     }
+
+    // pyro: SVG images with a `<foreignObject>` (blitz-dom `svg_image_documents`).
+    fn parse_svg_document(
+        &self,
+        svg: &str,
+        config: blitz_dom::DocumentConfig,
+    ) -> Option<Box<dyn blitz_dom::Document>> {
+        Some(Box::new(crate::HtmlDocument::from_xml(svg, config)))
+    }
 }
 
 pub struct DocumentHtmlParser<'m, 'doc> {

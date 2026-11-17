@@ -608,3 +608,5 @@ intrinsic size (WPT css-sizing `calc-margins-flex`). Padding keeps zero (css-fle
 `style/block.rs` (`BlockContainerStyle::own_height_keywords`), `compute/block.rs` (`compute_inner`, lane SP): a block
 container's own `min-height`/`max-height` content keywords clamp its height to its content (atomic inlines, floats,
 out-of-flow boxes; block items get them from their parent too).
+- `compute/grid/track_sizing.rs` (`initialize_track_sizes`): a `calc()` gutter against an indefinite size keeps its
+  lengths, its percentages resolving to 0 (`gap: calc(20px + 5%)` of an inline grid; WPT css-grid `grid-gutters-009`).

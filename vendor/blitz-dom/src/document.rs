@@ -532,6 +532,12 @@ pub struct BaseDocument {
     /// of its `width` and `height` and painted where usvg draws its stand-in image
     /// (`svg_css`, blitz-paint `draw_svg`). See [`BaseDocument::foreign_object_roots`].
     pub(crate) svg_foreign_objects: HashMap<NodeId, Vec<NodeId>>,
+    /// pyro: the documents SVG images with a `<foreignObject>` are drawn from, by the element
+    /// showing the image: its source parsed as XML (no script runs in it), laid out at the image's
+    /// natural size (`BaseDocument::update_svg_image_documents`), painted by blitz-paint in place of
+    /// the image's usvg tree, which has no HTML content. Set once such an image loaded.
+    pub svg_image_documents: HashMap<NodeId, SvgImageDocument>,
+    pub(crate) has_svg_image_documents: bool,
     /// A resolve ran since the paint tree was last built: `ensure_paint_tree`
     /// rebuilds the nodes flagged `PAINT_TREE_DIRTY` before the next paint or
     /// hit test.
@@ -820,6 +826,8 @@ impl BaseDocument {
             track_style_changes: false,
             left_layout_lists: Vec::new(),
             svg_foreign_objects: HashMap::new(),
+            svg_image_documents: HashMap::new(),
+            has_svg_image_documents: false,
             paint_tree_dirty: true,
             hit_overflow_dirty: true,
             has_multicol: false,
@@ -2021,6 +2029,8 @@ impl BaseDocument {
             }
             #[cfg(feature = "svg")]
             Resource::Svg(_kind, svg) => {
+                // pyro: one with a `<foreignObject>` is drawn as a document (`svg_image_documents`).
+                self.has_svg_image_documents |= svg.foreign_source.is_some();
                 // Create the ImageData and cache it
                 let image = ImageData::Svg(svg);
 
@@ -4873,5 +4883,81 @@ mod change_tracking_tests {
         doc.clear_changes();
         doc.clear_focus();
         assert!(doc.has_changes());
+    }
+}
+
+/// pyro: an SVG image drawn as a document (see [`BaseDocument::svg_image_documents`]).
+pub struct SvgImageDocument {
+    /// The image's source (to tell a new image from the one the document was made of).
+    pub source: std::sync::Arc<str>,
+    /// The size it is laid out at, in CSS px.
+    pub size: (u32, u32),
+    pub document: Box<dyn Document>,
+}
+
+impl BaseDocument {
+    /// pyro: makes and lays out the documents of the SVG images with a `<foreignObject>` that
+    /// elements of this document show ([`BaseDocument::svg_image_documents`]), at the size each is
+    /// drawn at: its natural size, else the element's content box.
+    #[cfg(feature = "svg")]
+    pub(crate) fn update_svg_image_documents(&mut self) {
+        if !self.has_svg_image_documents {
+            return;
+        }
+        let mut wanted: Vec<(NodeId, std::sync::Arc<str>, (u32, u32))> = Vec::new();
+        for (id, node) in self.nodes.iter() {
+            if !node.flags.is_in_document() {
+                continue;
+            }
+            let Some(ImageData::Svg(svg)) = node.element_data().and_then(|el| el.image_data()) else { continue };
+            let Some(source) = svg.foreign_source.clone() else { continue };
+            let layout = node.final_layout();
+            let content = (layout.content_box_width(), layout.content_box_height());
+            let width = svg.intrinsic_width().unwrap_or(content.0);
+            let height = svg.intrinsic_height().unwrap_or(content.1);
+            if !(width >= 1.0 && height >= 1.0) || width > 4096.0 || height > 4096.0 {
+                continue;
+            }
+            wanted.push((id, source, (width.ceil() as u32, height.ceil() as u32)));
+        }
+        self.svg_image_documents.retain(|id, _| wanted.iter().any(|(w, ..)| w == id));
+        let scale = self.viewport.hidpi_scale;
+        for (id, source, size) in wanted {
+            let current = self
+                .svg_image_documents
+                .get(&id)
+                .is_some_and(|doc| std::sync::Arc::ptr_eq(&doc.source, &source) && doc.size == size);
+            let viewport = Viewport::new(
+                (size.0 as f32 * scale).ceil() as u32,
+                (size.1 as f32 * scale).ceil() as u32,
+                scale,
+                self.viewport.color_scheme,
+            );
+            if !current {
+                if self.subdocument_depth >= crate::iframe::MAX_SUBDOCUMENT_DEPTH {
+                    continue;
+                }
+                let config = crate::DocumentConfig {
+                    viewport: Some(viewport.clone()),
+                    base_url: None,
+                    font_ctx: Some(self.font_ctx.lock().unwrap().clone()),
+                    media_type: Some(self.media_type.clone()),
+                    subdocument_depth: self.subdocument_depth + 1,
+                    xml_document: true,
+                    ..Default::default()
+                };
+                let Some(document) = self.html_parser_provider.clone().parse_svg_document(&source, config) else {
+                    continue;
+                };
+                self.svg_image_documents.insert(id, SvgImageDocument { source, size, document });
+            }
+            let entry = self.svg_image_documents.get_mut(&id).unwrap();
+            let mut doc = entry.document.inner_mut();
+            if current {
+                doc.set_viewport(viewport);
+            }
+            doc.resolve(0.0);
+            doc.ensure_paint_tree();
+        }
     }
 }

@@ -6307,7 +6307,7 @@ index 00000000..9f036648
 +        })
 +}
 diff --git a/src/compute/grid/track_sizing.rs b/src/compute/grid/track_sizing.rs
-index 18063621..f2c8bea1 100644
+index 18063621..410a1556 100644
 --- a/src/compute/grid/track_sizing.rs
 +++ b/src/compute/grid/track_sizing.rs
 @@ -1,12 +1,12 @@
@@ -6420,7 +6420,26 @@ index 18063621..f2c8bea1 100644
  
      // 11.6. Maximise Tracks
      // Distributes free space (if any) to tracks with FINITE growth limits, up to their limits.
-@@ -449,95 +488,15 @@ fn initialize_track_sizes(
+@@ -429,6 +468,18 @@ fn initialize_track_sizes(
+             .min_track_sizing_function
+             .definite_value(axis_inner_node_size, |val, basis| tree.calc(val, basis))
+             .unwrap_or(0.0);
++        // pyro: a `calc()` gutter against an indefinite size keeps its lengths, its percentages
++        // resolving to 0 (`gap: calc(20px + 5%)` is 20px while an inline grid sizes itself, as in
++        // Chromium; WPT css-grid `grid-gutters-009`). The size is resolved again once known.
++        if track.kind == super::types::GridTrackKind::Gutter && axis_inner_node_size.is_none() {
++            let raw = track.min_track_sizing_function.into_raw();
++            #[cfg(feature = "calc")]
++            if raw.is_plain_calc() {
++                track.base_size = tree.calc(raw.calc_value(), 0.0).max(0.0);
++                track.growth_limit = track.base_size;
++                continue;
++            }
++        }
+ 
+         // For each track, if the track’s max track sizing function is:
+         // - A fixed sizing function
+@@ -449,95 +500,15 @@ fn initialize_track_sizes(
      }
  }
  
@@ -6525,7 +6544,7 @@ index 18063621..f2c8bea1 100644
  }
  
  /// 11.5 Resolve Intrinsic Track Sizes
-@@ -551,7 +510,21 @@ fn resolve_intrinsic_track_sizes<Tree: LayoutPartialTree>(
+@@ -551,7 +522,21 @@ fn resolve_intrinsic_track_sizes<Tree: LayoutPartialTree>(
      axis_available_grid_space: AvailableSpace,
      inner_node_size: Size<Option<f32>>,
      get_track_size_estimate: impl Fn(&GridTrack, Option<f32>, &Tree) -> Option<f32>,
@@ -6547,7 +6566,7 @@ index 18063621..f2c8bea1 100644
      // Step 1. Shim baseline-aligned items so their intrinsic size contributions reflect their baseline alignment.
  
      // Already done at this point. See resolve_item_baselines function.
-@@ -565,9 +538,15 @@ fn resolve_intrinsic_track_sizes<Tree: LayoutPartialTree>(
+@@ -565,9 +550,15 @@ fn resolve_intrinsic_track_sizes<Tree: LayoutPartialTree>(
      // Items that cross a flexible track are all processed together in a single batch (regardless of their span), so
      // they only need to be moved to the end of the list. And the order in which items within a batch are processed
      // does not affect the result, so the remaining items only need to be sorted if any of them span more than one track.
@@ -6565,7 +6584,7 @@ index 18063621..f2c8bea1 100644
          if item.crosses_flexible_track(axis) {
              partitioned_items.push_back(item);
          } else {
-@@ -601,6 +580,15 @@ fn resolve_intrinsic_track_sizes<Tree: LayoutPartialTree>(
+@@ -601,6 +592,15 @@ fn resolve_intrinsic_track_sizes<Tree: LayoutPartialTree>(
          // 2. Size tracks to fit non-spanning items: For each track with an intrinsic track sizing function and not a flexible sizing function,
          // consider the items in it with a span of 1:
          let batch_span = batch[0].placement(axis).span();
@@ -6581,7 +6600,7 @@ index 18063621..f2c8bea1 100644
          if !is_flex && batch_span == 1 {
              for item in batch.iter_mut() {
                  let track_index = item.placement_indexes(axis).start + 1;
-@@ -998,6 +986,56 @@ fn resolve_intrinsic_track_sizes<Tree: LayoutPartialTree>(
+@@ -998,6 +998,56 @@ fn resolve_intrinsic_track_sizes<Tree: LayoutPartialTree>(
          .for_each(|track| track.growth_limit = track.base_size);
  }
  
@@ -6638,7 +6657,7 @@ index 18063621..f2c8bea1 100644
  /// The sum of the flex factors of the flexible tracks in an item's spanned track range
  #[inline(always)]
  fn crossed_flex_factor_sum(tracks: &[GridTrack]) -> f32 {
-@@ -1295,7 +1333,7 @@ fn expand_flexible_tracks<Tree: LayoutPartialTree>(
+@@ -1295,7 +1345,7 @@ fn expand_flexible_tracks<Tree: LayoutPartialTree>(
                  // that the item crosses and a space to fill of the item’s max-content contribution.
                  items
                      .iter_mut()
@@ -6647,7 +6666,7 @@ index 18063621..f2c8bea1 100644
                      .map(|item| {
                          let max_content_contribution = item_sizer.max_content_contribution(item, axis_tracks);
                          let tracks = &axis_tracks[item.track_range_excluding_lines(axis)];
-@@ -1334,9 +1372,20 @@ fn expand_flexible_tracks<Tree: LayoutPartialTree>(
+@@ -1334,9 +1384,20 @@ fn expand_flexible_tracks<Tree: LayoutPartialTree>(
  
      // For each flexible track, if the product of the used flex fraction and the track’s flex factor is greater
      // than the track’s base size, set its base size to that product.

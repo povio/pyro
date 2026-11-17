@@ -228,6 +228,8 @@ impl BaseDocument {
         for fo in self.foreign_object_roots() {
             self.resolve_transforms(fo, resolve_all, ContainingTransform::default());
         }
+        #[cfg(feature = "svg")]
+        self.update_svg_image_documents();
         timer.record_time("transform");
         phase_profile::mark(5, &mut phase_t);
 

@@ -6,10 +6,23 @@ use std::sync::Arc;
 
 use pyro_render::*;
 
+/// Serves `fo.svg`: a green square drawn by a `<foreignObject>`'s HTML content, and a script that
+/// would turn it red if it ran.
 struct NoFetch;
 impl Fetcher for NoFetch {
-    fn fetch(&self, _url: String, done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>) {
-        done(Err("404".into()));
+    fn fetch(&self, url: String, done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>) {
+        if url.ends_with("fo.svg") {
+            let svg = r#"<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100">
+              <foreignObject x="0" y="50" width="100" height="50">
+                <div xmlns="http://www.w3.org/1999/xhtml" id="d" style="height: 50px; background: green"></div>
+                <script xmlns="http://www.w3.org/1999/xhtml">document.getElementById('d').style.background = 'red'</script>
+              </foreignObject>
+            </svg>"#;
+            let body = svg.as_bytes().to_vec();
+            std::thread::spawn(move || done(Ok(body)));
+        } else {
+            done(Err("404".into()));
+        }
     }
 }
 
@@ -82,4 +95,13 @@ fn without_a_size_nothing_renders() {
            </svg>"#,
     );
     assert_pixel(&img, (50, 50), WHITE, "no width");
+}
+
+/// An SVG image's `<foreignObject>` content is drawn too (as a document of its own, whose scripts
+/// do not run); usvg alone drops it.
+#[test]
+fn an_svg_image_draws_its_foreign_object() {
+    let img = render(r#"<img src="fo.svg" style="display: block">"#);
+    assert_pixel(&img, (50, 75), GREEN, "the foreignObject's content");
+    assert_pixel(&img, (50, 25), WHITE, "above it");
 }
