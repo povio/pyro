@@ -3205,7 +3205,7 @@ impl Locator {
 impl Filter {
     fn keeps(&self, page: &PageDom, selectors: &RefCell<SelectorCache>, n: NodeId) -> CdpResult<bool> {
         if let Some(want) = self.visible {
-            if visible_box(page, n).is_some() != want {
+            if is_visible(page, n) != want {
                 return Ok(false);
             }
         }
@@ -3348,6 +3348,16 @@ fn visible_box(page: &PageDom, id: NodeId) -> Option<pyro_dom::layout::Rect> {
     page.layout().client_rect(&dom, id).filter(|r| r.width > 0.0 && r.height > 0.0)
 }
 
+/// Playwright's `isVisible` semantics (`isElementVisible`): a box with an
+/// area, `visibility: visible` (an element under `visibility: hidden` or
+/// `collapse` is not), a `display: contents` element through its children.
+/// The `visible()` filter, `read("visible")`, the visible/hidden checks and
+/// the actions' visible check use it.
+fn is_visible(page: &PageDom, id: NodeId) -> bool {
+    let layout = page.layout();
+    super::aria_snapshot::box_visible(&page.dom.borrow(), &layout, id)
+}
+
 fn act(page: &Rc<PageDom>, id: NodeId, action: Action, value: &str, opts: PointerOpts) -> Attempt {
     {
         let dom = page.dom.borrow();
@@ -3355,7 +3365,9 @@ fn act(page: &Rc<PageDom>, id: NodeId, action: Action, value: &str, opts: Pointe
             return Attempt::Retry("element is detached".into());
         }
     }
-    if visible_box(page, id).is_none() {
+    // Not visible to Playwright: no area, or `visibility: hidden` (a forced
+    // action only needs the box to aim at).
+    if visible_box(page, id).is_none() || (!opts.force && !is_visible(page, id)) {
         let rect = page.layout().client_rect(&page.dom.borrow(), id);
         let detail = match rect {
             Some(r) => format!(" (box {:.1},{:.1} {:.1}x{:.1})", r.x, r.y, r.width, r.height),
@@ -3872,7 +3884,7 @@ fn expect(
         Assert::Visible | Assert::Hidden => {
             let el = if found.is_empty() { None } else { single(found, &dom, locator)? };
             drop(dom);
-            let visible = el.is_some_and(|el| visible_box(page, el).is_some());
+            let visible = el.is_some_and(|el| is_visible(page, el));
             (visible == (assert == Assert::Visible), json!(visible))
         }
         Assert::Text | Assert::ContainsText | Assert::Value | Assert::Checked => {
@@ -4767,7 +4779,7 @@ fn read_value(page: &PageDom, el: NodeId, read: Read, property: Option<&str>) ->
         },
         Read::Text => json!(normalize(&text_of(&page.dom.borrow(), el))),
         Read::Value => json!(page.dom.borrow().value(el).unwrap_or_default()),
-        Read::Visible => json!(visible_box(page, el).is_some()),
+        Read::Visible => json!(is_visible(page, el)),
         Read::Box => match visible_box(page, el) {
             Some(r) => json!({"x": r.x, "y": r.y, "width": r.width, "height": r.height}),
             None => Value::Null,

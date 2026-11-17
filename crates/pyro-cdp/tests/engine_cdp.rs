@@ -6550,6 +6550,31 @@ fn settle_brings_paced_resize_observer_gathers_forward() {
     assert!(click["settleMs"].as_f64().unwrap() < 40.0, "{r}");
 }
 
+/// Playwright's visibility: `visibility: hidden` or `collapse` (own or
+/// inherited) is not visible to the `visible` filter, `read: visible` and the
+/// visible/hidden checks, and an action waits on it.
+#[test]
+fn visibility_hidden_is_not_visible_to_the_driver() {
+    let mut h = Harness::new();
+    load_html(
+        &mut h,
+        r#"<div style="visibility:hidden"><span id="inherited">a</span><button id="b">B</button></div>
+<span id="own" style="visibility:hidden">b</span><span id="col" style="visibility:collapse">c</span><span id="shown">d</span>"#,
+    );
+    for (id, visible) in [("inherited", false), ("own", false), ("col", false), ("shown", true)] {
+        let r = h.page("Pyro.query", json!({"locator":{"css":format!("#{id}")},"read":"visible"}));
+        assert_eq!(r["result"]["value"], visible, "{id}: {r}");
+        let r =
+            h.page("Pyro.query", json!({"locator":{"css":format!("#{id}"),"filter":{"visible":true}},"read":"count"}));
+        assert_eq!(r["result"]["value"], u64::from(visible), "{id}: {r}");
+    }
+    let r = h.page("Pyro.expect", json!({"locator":{"css":"#inherited"},"assert":"hidden"}));
+    assert_eq!(r["result"]["actual"], false, "{r}");
+    let r = h.page("Pyro.act", json!({"locator":{"css":"#b"},"action":"click","timeout":50}));
+    let message = r["error"]["message"].as_str().unwrap_or_default();
+    assert!(message.contains("not visible"), "{r}");
+}
+
 /// Observers that keep resizing what they observe do not turn the settle
 /// into a busy loop: it brings a few gathers forward, then the pacing
 /// applies again until it gives up and reports the observers as pending.
