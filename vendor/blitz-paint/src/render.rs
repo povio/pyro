@@ -1182,7 +1182,9 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         }
 
         // pyro: a split inline's fragments are painted by its pieces' lines (`inline_box_fragments`).
-        let paints_own_box = !node.is_inline_with_only_block_children() && !node.is_split_inline();
+        let paints_own_box = !node.is_inline_with_only_block_children()
+            && !node.is_split_inline()
+            && !hides_empty_cell(self.dom.as_ref(), node);
 
         // pyro: `opacity` and `filter` apply to everything the element paints, as one group
         // (Chromium's effect node): its outset box-shadow, its box, its content and descendants
@@ -4518,3 +4520,32 @@ fn marker_line_x(line: &parley::Line<'_, blitz_dom::node::TextBrush>) -> f32 {
     });
     if own_float { 0.0 } else { line.metrics().inline_min_coord }
 }
+
+/// pyro: an empty table cell with `empty-cells: hide` in the separated borders model paints no
+/// background and no border (CSS 2.1 §17.6.1.1; WPT CSS2 `empty-cells-applies-to-014`). A cell is
+/// empty when it holds nothing but collapsible white space and out-of-flow boxes.
+fn hides_empty_cell(dom: &blitz_dom::BaseDocument, node: &blitz_dom::Node) -> bool {
+    use style::values::specified::box_::DisplayInside;
+    let Some(style) = node.primary_styles() else { return false };
+    if style.get_inherited_table().empty_cells != style::computed_values::empty_cells::T::Hide
+        || style.get_inherited_table().border_collapse != style::computed_values::border_collapse::T::Separate
+        || style.clone_display().inside() != DisplayInside::TableCell
+    {
+        return false;
+    }
+    node.children.iter().all(|&id| {
+        let Some(child) = dom.get_node(id) else { return true };
+        if child.is_text_node() {
+            return child.is_whitespace_node();
+        }
+        child.primary_styles().is_none_or(|style| {
+            style.clone_display().is_none()
+                || matches!(
+                    style.clone_position(),
+                    style::computed_values::position::T::Absolute | style::computed_values::position::T::Fixed
+                )
+        })
+    }) && node.before().is_none()
+        && node.after().is_none()
+}
+

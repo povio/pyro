@@ -2436,3 +2436,6 @@ keep their tracks (`row_tracks`); Taffy collapses them once sized.
   an inherited `dominant-baseline` under `alignment-baseline: baseline`, map to parley's `TextOver` / `XMiddle` /
   `TextUnder`; the pref `layout.css.dominant-baseline.enabled` is on (here and in pyro-dom). An `align=middle`
   hint is `VerticalAlignMiddle`. Covered by `crates/pyro-render/tests/alignment_baseline.rs`.
+
+An inline formatting context whose text has any visible character does not let margins collapse through it, even
+when its lines have no height (`font-size: 0`; WPT css-fonts `font-size-zero-1`).

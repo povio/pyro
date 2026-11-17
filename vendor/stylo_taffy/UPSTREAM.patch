@@ -238,7 +238,7 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
          }
      }
  
-@@ -198,6 +221,11 @@
+@@ -198,6 +221,23 @@
          self.flags.contains(StyleFlags::IS_REPLACED)
      }
  
@@ -247,10 +247,22 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
 +        self.flags.contains(StyleFlags::IS_CONTENT_REPLACED)
 +    }
 +
++    #[inline]
++    fn root_float_is_right(&self) -> Option<bool> {
++        let ltr = self.style.writing_mode.is_bidi_ltr();
++        match self.style.clone_float() {
++            stylo::Float::None => None,
++            stylo::Float::Left => Some(false),
++            stylo::Float::Right => Some(true),
++            stylo::Float::InlineStart => Some(!ltr),
++            stylo::Float::InlineEnd => Some(ltr),
++        }
++    }
++
      #[inline]
      fn box_sizing(&self) -> taffy::BoxSizing {
          convert::box_sizing(self.style.get_position().box_sizing)
-@@ -210,6 +238,9 @@
+@@ -210,6 +250,9 @@
  
      #[inline]
      fn overflow(&self) -> taffy::Point<taffy::Overflow> {
@@ -260,7 +272,7 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
          let box_styles = self.style.get_box();
          let overflow = taffy::Point {
              x: convert::overflow(box_styles.overflow_x),
-@@ -249,6 +280,9 @@
+@@ -249,6 +292,9 @@
  
      #[inline]
      fn size(&self) -> taffy::Size<taffy::Dimension> {
@@ -270,7 +282,7 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
          let position_styles = self.style.get_position();
          self.size(taffy::Size {
              width: convert::dimension(&position_styles.width),
-@@ -256,8 +290,20 @@
+@@ -256,8 +302,20 @@
          })
      }
  
@@ -291,7 +303,7 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
          let position_styles = self.style.get_position();
          self.size(taffy::Size {
              width: convert::min_size(&position_styles.min_width),
-@@ -267,6 +313,9 @@
+@@ -267,6 +325,9 @@
  
      #[inline]
      fn max_size(&self) -> taffy::Size<taffy::LengthPercentageAuto> {
@@ -301,7 +313,7 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
          let position_styles = self.style.get_position();
          self.size(taffy::Size {
              width: convert::max_size(&position_styles.max_width),
-@@ -276,12 +325,34 @@
+@@ -276,12 +337,34 @@
  
      #[inline]
      fn aspect_ratio(&self) -> Option<f32> {
@@ -337,7 +349,7 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
          let margin_styles = self.style.get_margin();
          self.rect(taffy::Rect {
              left: convert::margin(&margin_styles.margin_left),
-@@ -293,6 +364,9 @@
+@@ -293,6 +376,9 @@
  
      #[inline]
      fn padding(&self) -> taffy::Rect<taffy::LengthPercentage> {
@@ -347,7 +359,7 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
          let padding_styles = self.style.get_padding();
          if let Some(basis) = self.percent_basis() {
              let resolve = |value: &stylo::LengthPercentage| {
-@@ -318,6 +392,9 @@
+@@ -318,6 +404,9 @@
  
      #[inline]
      fn border(&self) -> taffy::Rect<taffy::LengthPercentage> {
@@ -357,7 +369,7 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
          let border_styles = self.style.get_border();
          self.rect(taffy::Rect {
              left: convert::border(
-@@ -343,12 +420,38 @@
+@@ -343,12 +432,38 @@
  // BlockContainerStyle impl
  #[cfg(feature = "block")]
  impl<T: Deref<Target = ComputedValues>> taffy::BlockContainerStyle for TaffyStyloStyle<T> {
@@ -396,7 +408,7 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
      #[inline]
      fn align_content(&self) -> taffy::AlignContent {
          let display = self.effective_display();
-@@ -375,12 +478,27 @@
+@@ -375,12 +490,27 @@
  
      #[inline]
      fn justify_items(&self) -> taffy::AlignItems {
@@ -424,7 +436,7 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
      /// Item alignment in the layout writing mode's inline axis; `left`/`right` resolve against it.
      #[inline]
      fn inline_item_alignment(&self, input: stylo::AlignFlags) -> Option<taffy::AlignItems> {
-@@ -484,6 +602,40 @@
+@@ -484,6 +614,40 @@
          convert::is_table(self.effective_display())
      }
  
@@ -465,7 +477,7 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
      #[inline]
      fn align_self(&self) -> Option<taffy::AlignSelf> {
          self.oof_self_alignment(
-@@ -494,10 +646,11 @@
+@@ -494,10 +658,11 @@
  
      #[inline]
      fn justify_self(&self) -> Option<taffy::AlignSelf> {
@@ -481,7 +493,7 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
      }
  
      #[inline]
-@@ -508,14 +661,26 @@
+@@ -508,14 +673,26 @@
      #[cfg(feature = "floats")]
      #[inline]
      fn float(&self) -> taffy::Float {
@@ -510,7 +522,7 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
          self.layout_wm().logical_clear(clear)
      }
  }
-@@ -595,6 +760,26 @@
+@@ -595,6 +772,26 @@
          self.style.get_position().flex_shrink.0
      }
  
@@ -537,7 +549,7 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
      #[inline]
      fn align_self(&self) -> Option<taffy::AlignSelf> {
          self.self_alignment(
-@@ -874,6 +1059,66 @@
+@@ -874,6 +1071,66 @@
          convert::grid_auto_flow(self.style.get_position().grid_auto_flow)
      }
  
@@ -604,7 +616,7 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
      #[inline]
      fn gap(&self) -> taffy::Size<taffy::LengthPercentage> {
          let position_styles = self.style.get_position();
-@@ -927,6 +1172,56 @@
+@@ -927,6 +1184,56 @@
          self.grid_row_placement()
      }
  
@@ -661,7 +673,7 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
      #[inline]
      fn grid_column(&self) -> taffy::Line<taffy::GridPlacement<Atom>> {
          self.grid_column_placement()
-@@ -950,6 +1245,16 @@
+@@ -950,6 +1257,16 @@
  }
  
  impl<T: Deref<Target = ComputedValues>> taffy::OofItemStyle for TaffyStyloStyle<T> {

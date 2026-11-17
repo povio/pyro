@@ -99,3 +99,65 @@ fn justify_items_skips_anonymous_and_split_inline_boxes() {
     let y = (50..120).find(|&y| pixel(&img, 10, y) == GREEN).expect("second box");
     assert_color(&img, 190, y + 5, GREEN, "block in an inline stretches");
 }
+
+/// An empty cell with `empty-cells: hide` paints neither background nor border in the separated
+/// borders model (WPT CSS2 `empty-cells-applies-to-014`); one with content does.
+#[test]
+fn empty_cells_hide_paints_no_box() {
+    let img = render(
+        "<table style='border-spacing:0;empty-cells:hide'><tr>\
+         <td style='width:50px;height:50px;padding:0;background:red;border:5px solid red'> </td>\
+         <td style='width:50px;height:50px;padding:0;background:green'><span></span>&nbsp;</td></tr></table>",
+    );
+    assert_color(&img, 30, 30, WHITE, "empty cell");
+    assert_color(&img, 2, 2, WHITE, "empty cell border");
+    assert_color(&img, 85, 30, GREEN, "cell with content");
+}
+
+/// A floated root element shrinks to fit and floats to its side of the initial containing block
+/// (WPT CSS2 `floats/float-root`).
+#[test]
+fn a_floated_root_shrinks_to_its_side() {
+    let fetcher: Arc<dyn Fetcher> = Arc::new(NoFetch);
+    let snapshot = Snapshot {
+        html: "<!doctype html><html style='float:right;background:#fff'><body style='margin:0'>\
+               <div style='width:50px;height:50px;background:green'></div>"
+            .into(),
+        base_url: "http://test/".into(),
+        width: 400,
+        height: 400,
+        device_scale_factor: 1.0,
+        ..Default::default()
+    };
+    let img = Renderer::new().render(&snapshot, Area::Viewport, Backend::Cpu, &fetcher).unwrap().0;
+    assert_color(&img, 375, 25, GREEN, "at the right edge");
+    assert_color(&img, 25, 25, WHITE, "not at the left edge");
+}
+
+/// Margins do not collapse through a block whose line holds text, however short its line is
+/// (`font-size: 0`; WPT css-fonts `font-size-zero-1`).
+#[test]
+fn margins_do_not_collapse_through_a_zero_height_text_line() {
+    let img = render(
+        "<div style='height:20px;background:green;margin-bottom:20px'></div>\
+         <div style='font-size:0;line-height:0'>text</div>\
+         <div style='height:20px;background:green;margin-top:20px'></div>",
+    );
+    assert_color(&img, 10, 50, WHITE, "the gap is both margins");
+    assert_color(&img, 10, 65, GREEN, "second box");
+}
+
+/// A flex scroll container gives the inline-block holding it its contents' baseline; a block one
+/// gives its bottom margin edge (WPT css-align `baseline-of-scrollable-1b`).
+#[test]
+fn a_flex_scroll_container_gives_its_contents_baseline() {
+    let img = render(
+        "<div style='font:20px/20px monospace'>\
+         <span style='display:inline-block;width:10px;height:10px;background:green'></span>\
+         <div style='display:inline-block'><div style='display:flex;overflow:hidden;height:100px;width:50px'>x</div></div>\
+         </div>",
+    );
+    // The square sits on the text's baseline, in the first 20px line, not at the box's bottom.
+    let y = (0..200).find(|&y| pixel(&img, 5, y) == GREEN).expect("square");
+    assert!(y < 30, "square top at {y}");
+}

@@ -1,5 +1,5 @@
 diff --git a/src/compute/block.rs b/src/compute/block.rs
-index 3cd3e713..1d577196 100644
+index 3cd3e713..3fe6b729 100644
 --- a/src/compute/block.rs
 +++ b/src/compute/block.rs
 @@ -6,8 +6,8 @@ use crate::style::{
@@ -1209,7 +1209,7 @@ index 3cd3e713..1d577196 100644
                      _ => Some(false),
                  };
                  let offset = match align_to_end {
-@@ -1826,6 +2459,26 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
+@@ -1826,6 +2459,28 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
                      child_first_baseline(item_layout.baselines.first, item_layout.size.height, item.overflow.y);
                  first_baseline = child_baseline.map(|baseline| location.y - inset_offset.y + baseline);
              }
@@ -1223,7 +1223,9 @@ index 3cd3e713..1d577196 100644
 +            // A block container gives its own: none when it holds no line box (but tables).
 +            let child_last_baseline = if item.is_table {
 +                None
-+            } else if item.overflow.y.is_scroll_container() {
++            } else if item.overflow.y.is_scroll_container() && item.is_block_container {
++                // (A flex or grid scroll container gives its contents' baseline, as Blink: WPT
++                // css-align `baseline-of-scrollable-1b`.)
 +                Some(item_layout.size.height + resolved_margin.bottom)
 +            } else if item.is_block_container {
 +                item_layout.baselines.last
@@ -1236,7 +1238,7 @@ index 3cd3e713..1d577196 100644
  
              // Used auto margins include float-avoidance offsets, unlike the alignment margins above.
              #[cfg(feature = "float_layout")]
-@@ -1908,6 +2561,7 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
+@@ -1908,6 +2563,7 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
                  y_offset_for_absolute = committed_y_offset + item_layout.size.height + y_margin_offset;
              } else {
                  committed_y_offset = location.y - inset_offset.y + item_layout.size.height;
@@ -1244,7 +1246,7 @@ index 3cd3e713..1d577196 100644
                  // A self-collapsing item with clearance is not collapsed through (its margins do not collapse
                  // with margins of preceding siblings), but its top and bottom margins still collapse with each
                  // other and with the margins of following siblings.
-@@ -1931,6 +2585,38 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
+@@ -1931,6 +2587,38 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
          }
      }
  
@@ -1283,7 +1285,7 @@ index 3cd3e713..1d577196 100644
      // The margins of a self-collapsing element with clearance do not collapse with the bottom
      // margin of the parent block: they extend the parent's content height instead of escaping it
      let last_child_bottom_margin_set =
-@@ -1947,5 +2633,5 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
+@@ -1947,5 +2635,5 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
  
      committed_y_offset += resolved_content_box_inset.bottom + bottom_y_margin_offset;
      let content_height = f32_max(0.0, committed_y_offset);
@@ -7124,7 +7126,7 @@ index 70838fe7..674c80a0 100644
      pub(crate) fn area_column_count(&self) -> u16 {
          self.area_column_count
 diff --git a/src/compute/mod.rs b/src/compute/mod.rs
-index bb954acf..d3c3c784 100644
+index bb954acf..eb14e801 100644
 --- a/src/compute/mod.rs
 +++ b/src/compute/mod.rs
 @@ -80,13 +80,24 @@ pub fn compute_root_layout(
@@ -7178,7 +7180,7 @@ index bb954acf..d3c3c784 100644
          }
      }
  }
-@@ -244,7 +264,10 @@ fn compute_in_flow_root_layout(
+@@ -244,7 +264,41 @@ fn compute_in_flow_root_layout(
              });
  
              // Block nodes automatically stretch fit their width to fit available space if available space is definite
@@ -7186,11 +7188,54 @@ index bb954acf..d3c3c784 100644
 +            // pyro: not a replaced root (`content: url()` on `:root`), which takes its natural size (WPT
 +            // css-content `element-replacement-root`)
 +            let stretch_width = if style.is_content_replaced() { None } else { root_available_space.width.into_option() };
++            // pyro: a floated root shrinks to fit its contents (CSS 2.1 §10.3.5; WPT CSS2 `floats/float-root`)
++            let stretch_width = match (style.root_float_is_right(), stretch_width) {
++                (Some(_), Some(available)) if clamped_style_size.width.is_none() => {
++                    drop(style);
++                    let measure = |tree: &mut _, width: AvailableSpace| {
++                        crate::LayoutPartialTree::compute_child_layout(
++                            tree,
++                            root,
++                            LayoutInput {
++                                known_dimensions: Size::NONE,
++                                known_dimensions_are_definite: Size { width: true, height: true },
++                                parent_size: available_space.into_options(),
++                                available_space: Size { width, height: root_available_space.height },
++                                sizing_mode: SizingMode::InherentSize,
++                                axis: RequestedAxis::Horizontal,
++                                run_mode: RunMode::ComputeSize,
++                                vertical_margins_are_collapsible: Line::FALSE,
++                            },
++                        )
++                        .size
++                        .width
++                    };
++                    let min = measure(tree, AvailableSpace::MinContent);
++                    let max = measure(tree, AvailableSpace::MaxContent);
++                    Some(available.max(min).min(max))
++                }
++                (_, width) => {
++                    drop(style);
++                    width
++                }
++            };
 +            let available_space_based_size = Size { width: stretch_width, height: None };
  
              let styled_based_known_dimensions = known_dimensions
                  .or(min_max_definite_size)
-@@ -381,6 +404,9 @@ pub fn round_layout(tree: &mut impl RoundTree, node_id: NodeId) {
+@@ -284,8 +338,10 @@ fn compute_in_flow_root_layout(
+     let is_rtl = style.direction().is_rtl();
+ 
+     // The root's margin box is placed at the origin of the initial containing block
++    // pyro: a root floated right is placed against the right edge (`root_float_is_right`)
++    let on_right = style.root_float_is_right().unwrap_or(is_rtl);
+     let mut location = Point {
+-        x: match (is_rtl, available_space.width.into_option()) {
++        x: match (on_right, available_space.width.into_option()) {
+             (true, Some(available_width)) => available_width - output.size.width - margin.right,
+             _ => margin.left,
+         },
+@@ -381,6 +437,9 @@ pub fn round_layout(tree: &mut impl RoundTree, node_id: NodeId) {
      /// Recursive function to apply rounding to all descendents
      fn round_layout_inner(tree: &mut impl RoundTree, node_id: NodeId, cumulative_x: f32, cumulative_y: f32) {
          let unrounded_layout = tree.get_unrounded_layout(node_id);
@@ -7200,7 +7245,7 @@ index bb954acf..d3c3c784 100644
          let mut layout = unrounded_layout;
  
          let parent_x = cumulative_x;
-@@ -416,6 +442,7 @@ pub fn round_layout(tree: &mut impl RoundTree, node_id: NodeId) {
+@@ -416,6 +475,7 @@ pub fn round_layout(tree: &mut impl RoundTree, node_id: NodeId) {
          );
  
          tree.set_final_layout(node_id, &layout);
@@ -7208,7 +7253,7 @@ index bb954acf..d3c3c784 100644
  
          // Recurse into in-flow children. Out-of-flow (absolute/fixed) children are skipped here:
          // they are instead visited via their containing block's hoisted child list below, which
-@@ -489,7 +516,8 @@ pub fn compute_hidden_layout(tree: &mut (impl LayoutPartialTree + CacheTree), no
+@@ -489,7 +549,8 @@ pub fn compute_hidden_layout(tree: &mut (impl LayoutPartialTree + CacheTree), no
  pub mod detailed_info {
      #[cfg(feature = "grid")]
      pub use super::grid::{
@@ -7696,7 +7741,7 @@ index a3f746b1..d435261a 100644
  
  /// Controls whether grid items are placed row-wise or column-wise. And whether the sparse or dense packing algorithm is used.
 diff --git a/src/style/mod.rs b/src/style/mod.rs
-index a9e57f33..ed9c0839 100644
+index a9e57f33..330c4380 100644
 --- a/src/style/mod.rs
 +++ b/src/style/mod.rs
 @@ -41,7 +41,7 @@ pub use self::grid::{
@@ -7740,7 +7785,7 @@ index a9e57f33..ed9c0839 100644
  /// The core set of styles that are shared between all CSS layout nodes
  ///
  /// Note that all methods come with a default implementation which simply returns the default value for that style property
-@@ -109,6 +134,12 @@ pub trait CoreStyle {
+@@ -109,6 +134,18 @@ pub trait CoreStyle {
      fn is_replaced(&self) -> bool {
          false
      }
@@ -7750,10 +7795,16 @@ index a9e57f33..ed9c0839 100644
 +    fn is_content_replaced(&self) -> bool {
 +        false
 +    }
++    /// pyro: the side the box floats to as the root element (`Some(true)` for right), whose
++    /// float is honoured in the initial containing block: it shrinks to fit (CSS 2.1 §9.5.1).
++    #[inline(always)]
++    fn root_float_is_right(&self) -> Option<bool> {
++        None
++    }
      /// Which box do size styles apply to
      #[inline(always)]
      fn box_sizing(&self) -> BoxSizing {
-@@ -181,6 +212,25 @@ pub trait CoreStyle {
+@@ -181,6 +218,25 @@ pub trait CoreStyle {
      fn aspect_ratio(&self) -> Option<f32> {
          Style::<Self::CustomIdent>::DEFAULT.aspect_ratio
      }
@@ -7779,7 +7830,7 @@ index a9e57f33..ed9c0839 100644
  
      // Spacing Properties
      /// How large should the margin be on each side?
-@@ -227,6 +277,19 @@ pub trait OofItemStyle: CoreStyle {
+@@ -227,6 +283,19 @@ pub trait OofItemStyle: CoreStyle {
      fn is_table(&self) -> bool {
          false
      }
@@ -7799,7 +7850,7 @@ index a9e57f33..ed9c0839 100644
      /// Defines which row in the grid the box should start and end at, when the box's containing
      /// block is a grid container
      #[cfg(feature = "grid")]
-@@ -715,6 +778,10 @@ pub struct Style<S: CheapCloneStr = DefaultCheapStr> {
+@@ -715,6 +784,10 @@ pub struct Style<S: CheapCloneStr = DefaultCheapStr> {
      /// Whether a child is display:table or not. This affects children of block layouts.
      /// This should really be part of `Display`, but it is currently seperate because table layout isn't implemented
      pub item_is_table: bool,
@@ -7810,7 +7861,7 @@ index a9e57f33..ed9c0839 100644
      /// Is it a replaced element like an image or video? Implies `is_compressible_replaced`.
      /// <https://html.spec.whatwg.org/multipage/rendering.html#replaced-elements>
      pub item_is_replaced: bool,
-@@ -877,6 +944,8 @@ impl<S: CheapCloneStr> Style<S> {
+@@ -877,6 +950,8 @@ impl<S: CheapCloneStr> Style<S> {
          dummy: core::marker::PhantomData,
          display: Display::DEFAULT,
          item_is_table: false,
@@ -7819,7 +7870,7 @@ index a9e57f33..ed9c0839 100644
          item_is_replaced: false,
          item_is_compressible_replaced: false,
          box_sizing: BoxSizing::BorderBox,
-@@ -1128,6 +1197,10 @@ impl<T: CoreStyle> CoreStyle for &'_ T {
+@@ -1128,6 +1203,10 @@ impl<T: CoreStyle> CoreStyle for &'_ T {
          (*self).aspect_ratio()
      }
      #[inline(always)]
@@ -7830,7 +7881,7 @@ index a9e57f33..ed9c0839 100644
      fn margin(&self) -> Rect<LengthPercentageAuto> {
          (*self).margin()
      }
-@@ -1430,6 +1503,10 @@ impl<S: CheapCloneStr> GridContainerStyle for Style<S> {
+@@ -1430,6 +1509,10 @@ impl<S: CheapCloneStr> GridContainerStyle for Style<S> {
          self.grid_auto_columns.iter().copied()
      }
      #[inline(always)]
@@ -7841,7 +7892,7 @@ index a9e57f33..ed9c0839 100644
      fn grid_auto_flow(&self) -> GridAutoFlow {
          self.grid_auto_flow
      }
-@@ -1552,6 +1629,10 @@ impl<T: GridContainerStyle> GridContainerStyle for &'_ T {
+@@ -1552,6 +1635,10 @@ impl<T: GridContainerStyle> GridContainerStyle for &'_ T {
          (*self).grid_template_row_names()
      }
      #[inline(always)]
@@ -7852,7 +7903,7 @@ index a9e57f33..ed9c0839 100644
      fn grid_auto_flow(&self) -> GridAutoFlow {
          (*self).grid_auto_flow()
      }
-@@ -1636,6 +1717,8 @@ mod tests {
+@@ -1636,6 +1723,8 @@ mod tests {
              dummy: core::marker::PhantomData,
              display: Default::default(),
              item_is_table: false,

@@ -74,3 +74,5 @@ entry) once a Blitz release carries these commits and changes.
   Blink; WPT css-align `blocks/justify-items-anonymous`, `justify-self-block-in-inline-002`).
 - `src/convert.rs` (`table_cell_vertical_align`): `vertical-align: middle` is `AlignmentBaseline::VerticalAlignMiddle`
   since lane IT (round 3); a cell centres for it and for the longhand's `middle`.
+
+- `src/wrapper.rs` (`root_float_is_right`): the physical side of `float` for a floated root (Taffy).

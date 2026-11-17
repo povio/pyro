@@ -267,6 +267,37 @@ fn compute_in_flow_root_layout(
             // pyro: not a replaced root (`content: url()` on `:root`), which takes its natural size (WPT
             // css-content `element-replacement-root`)
             let stretch_width = if style.is_content_replaced() { None } else { root_available_space.width.into_option() };
+            // pyro: a floated root shrinks to fit its contents (CSS 2.1 §10.3.5; WPT CSS2 `floats/float-root`)
+            let stretch_width = match (style.root_float_is_right(), stretch_width) {
+                (Some(_), Some(available)) if clamped_style_size.width.is_none() => {
+                    drop(style);
+                    let measure = |tree: &mut _, width: AvailableSpace| {
+                        crate::LayoutPartialTree::compute_child_layout(
+                            tree,
+                            root,
+                            LayoutInput {
+                                known_dimensions: Size::NONE,
+                                known_dimensions_are_definite: Size { width: true, height: true },
+                                parent_size: available_space.into_options(),
+                                available_space: Size { width, height: root_available_space.height },
+                                sizing_mode: SizingMode::InherentSize,
+                                axis: RequestedAxis::Horizontal,
+                                run_mode: RunMode::ComputeSize,
+                                vertical_margins_are_collapsible: Line::FALSE,
+                            },
+                        )
+                        .size
+                        .width
+                    };
+                    let min = measure(tree, AvailableSpace::MinContent);
+                    let max = measure(tree, AvailableSpace::MaxContent);
+                    Some(available.max(min).min(max))
+                }
+                (_, width) => {
+                    drop(style);
+                    width
+                }
+            };
             let available_space_based_size = Size { width: stretch_width, height: None };
 
             let styled_based_known_dimensions = known_dimensions
@@ -307,8 +338,10 @@ fn compute_in_flow_root_layout(
     let is_rtl = style.direction().is_rtl();
 
     // The root's margin box is placed at the origin of the initial containing block
+    // pyro: a root floated right is placed against the right edge (`root_float_is_right`)
+    let on_right = style.root_float_is_right().unwrap_or(is_rtl);
     let mut location = Point {
-        x: match (is_rtl, available_space.width.into_option()) {
+        x: match (on_right, available_space.width.into_option()) {
             (true, Some(available_width)) => available_width - output.size.width - margin.right,
             _ => margin.left,
         },

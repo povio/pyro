@@ -999,3 +999,7 @@ of their own then. Covered by `highlights_paint_under_the_selection` in `crates/
   `TableContext::columns` indexes them, so a column's background box in an `rtl` table is its own column's (WPT
   css-tables `paint/col-paint-htb-rtl`).
 - `src/filters.rs` (`primitive_notes`): notes `feImage href="#id"` primitives (`PrimitiveNotes::element_image`).
+
+`render.rs` (`hides_empty_cell`): an empty table cell (white space and out-of-flow boxes only, no pseudo-elements)
+with `empty-cells: hide` in the separated borders model paints no background, border or shadow (WPT CSS2
+`empty-cells-applies-to-014`).

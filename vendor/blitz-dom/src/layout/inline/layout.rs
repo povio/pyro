@@ -1650,6 +1650,9 @@ impl LayoutPassState<'_> {
         // also of zero width) is no phantom line box (CSS Inline 3 § 2.1): margins do not
         // collapse through its block, whatever its height.
         let has_span_edges = inline_layout.layout.inline_boxes().any(|inline_box| inline_box.kind.is_span_edge());
+        let has_visible_text = inline_layout.text.chars().any(|c| {
+            !c.is_whitespace() && !matches!(c, '\u{200B}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}' | '\u{2061}' | '\u{FFFC}')
+        });
 
         let mut height = if has_inline_content {
             inline_layout.layout.height()
@@ -2206,10 +2209,13 @@ impl LayoutPassState<'_> {
             },
             top_margin: CollapsibleMarginSet::ZERO,
             bottom_margin: CollapsibleMarginSet::ZERO,
+            // pyro: nor through lines that hold text, however short (`font-size: 0`, `line-height:
+            // 0`): they are line boxes (CSS 2.1 §8.3.1; WPT css-fonts `font-size-zero-1`)
             margins_can_collapse_through: !has_styles_preventing_being_collapsed_through
                 && !has_span_edges
                 && final_size.height == 0.0
-                && measured_size.height == 0.0,
+                && measured_size.height == 0.0
+                && !has_visible_text,
             oof_candidates,
             oof_positioning_area: Some(OofPositioningArea {
                 size: final_size - oof_position_inset.sum_axes(),

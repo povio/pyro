@@ -2469,7 +2469,9 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
             // A block container gives its own: none when it holds no line box (but tables).
             let child_last_baseline = if item.is_table {
                 None
-            } else if item.overflow.y.is_scroll_container() {
+            } else if item.overflow.y.is_scroll_container() && item.is_block_container {
+                // (A flex or grid scroll container gives its contents' baseline, as Blink: WPT
+                // css-align `baseline-of-scrollable-1b`.)
                 Some(item_layout.size.height + resolved_margin.bottom)
             } else if item.is_block_container {
                 item_layout.baselines.last

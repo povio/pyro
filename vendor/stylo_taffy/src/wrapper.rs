@@ -227,6 +227,18 @@ impl<T: Deref<Target = ComputedValues>> taffy::CoreStyle for TaffyStyloStyle<T> 
     }
 
     #[inline]
+    fn root_float_is_right(&self) -> Option<bool> {
+        let ltr = self.style.writing_mode.is_bidi_ltr();
+        match self.style.clone_float() {
+            stylo::Float::None => None,
+            stylo::Float::Left => Some(false),
+            stylo::Float::Right => Some(true),
+            stylo::Float::InlineStart => Some(!ltr),
+            stylo::Float::InlineEnd => Some(ltr),
+        }
+    }
+
+    #[inline]
     fn box_sizing(&self) -> taffy::BoxSizing {
         convert::box_sizing(self.style.get_position().box_sizing)
     }

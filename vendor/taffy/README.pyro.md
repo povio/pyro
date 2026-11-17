@@ -596,3 +596,8 @@ its own in definite space fits its lines into that space, at least its widest li
 gives it its share, and loses its size after each row sizing pass (CSS 2.1 §17.5.5, Blink; WPT css-align
 `blocks/align-content-table-cell-002..005`). Its gutter still collapses up front. Tables with one are not reused
 (`table_reuse`).
+
+`style/mod.rs` (`CoreStyle::root_float_is_right`), `compute/mod.rs` (`compute_in_flow_root_layout`): a floated root
+element shrinks to fit (min/max-content against the initial containing block) and sits on its side (WPT CSS2
+`floats/float-root`). `compute/block.rs`: a flex or grid scroll container child gives its block parent its contents'
+last baseline; only a block one gives its bottom margin edge (WPT css-align `baseline-of-scrollable-1b`).
