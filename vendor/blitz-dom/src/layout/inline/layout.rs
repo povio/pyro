@@ -374,6 +374,24 @@ impl LayoutPassState<'_> {
             return LayoutOutput::HIDDEN;
         };
         let options = AlignmentOptions { align_when_overflowing: false, last_line_alignment: None };
+        // pyro: preserved white space before the letter is in the box, before the ink, and a tab
+        // goes to the paragraph's tab stops (the root's space, not the letter's: Blink; WPT
+        // css-inline `initial-letter-with-tab`).
+        let leading_space = text.text.starts_with(|c: char| c.is_whitespace());
+        if leading_space {
+            let parent_size = self.nodes[node_id]
+                .parent
+                .and_then(|parent| self.nodes[parent].primary_styles())
+                .map(|s| s.get_font().font_size.used_size.0.px());
+            let own_size = self.nodes[node_id].primary_styles().map(|s| s.get_font().font_size.used_size.0.px());
+            if let (Some(parent_size), Some(own_size)) = (parent_size, own_size)
+                && own_size > 0.0
+            {
+                let (space, min_advance) = text.layout.tab_stops();
+                let ratio = parent_size / own_size;
+                text.layout.set_tab_stops(space * ratio, min_advance * ratio);
+            }
+        }
         text.layout.set_text_indent(0.0, IndentOptions::default());
         text.layout.break_all_lines(None);
         text.layout.align(parley::Alignment::Start, options);
@@ -385,6 +403,12 @@ impl LayoutPassState<'_> {
         let [left, top, right, bottom] = match glyph_ink_bounds(&text.layout) {
             Some([l, t, r, b]) => [out(l / scale, false), out(t / scale, false), out(r / scale, true), out(b / scale, true)],
             None => [0.0, 0.0, text.layout.width() / scale, text.layout.height() / scale],
+        };
+        let (left, right) = match leading_space {
+            // Right-to-left, the white space is on the ink's right.
+            true if text.layout.is_rtl() => (left, right.max(out(text.layout.full_width() / scale, true))),
+            true => (left.min(0.0), right),
+            false => (left, right),
         };
         text.layout.set_text_indent((indent - left) * scale, IndentOptions::default());
         text.layout.break_all_lines(None);

@@ -194,6 +194,7 @@ parley which characters justification passes over and which scripts it does not 
   lacks become phrase fallbacks (`CharInfo::is_phrase_fallback`, `CharacterFlags::is_phrase_fallback`).
 - `analyzer.rs` (`LineBreakConfig::no_soft_hyphen_breaks`), `analysis.rs` (`no_soft_hyphen_breaks`): no soft wrap
   opportunity after a soft hyphen of `hyphens: none`; under `auto-phrase` a phrase fallback.
+- `shape/data.rs` (`CharacterFlags::is_empty_box_strut`): U+2061, parley's strut of an empty inline box.
 - `analysis.rs` (`Analysis::paragraph_levels`): the byte offset and base level of each later paragraph, when one
   differs from the first's (an `Auto` base direction).
 - `src/shape/shaper.rs` (`shapes_word_by_word`, round 4 lane D): in a font without `GSUB` and `GPOS` (legacy `kern`/

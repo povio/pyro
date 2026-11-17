@@ -1089,8 +1089,13 @@ impl BaseDocument {
         // the tree construction left, with the nodes holding their styles made before the builds.
         for task in deferred_construction_nodes.iter_mut() {
             let ConstructionTaskData::InlineLayout(layout) = &mut task.data;
+            // pyro: the first line's style node first: a first letter on it inherits from it.
+            layout.first_line = match self.first_line_styles {
+                true => crate::layout::first_line::style_node_for(self, task.node_id),
+                false => None,
+            };
             layout.first_letter = match self.first_letter_styles {
-                true => crate::layout::first_letter::split(self, task.node_id),
+                true => crate::layout::first_letter::split(self, task.node_id, layout.first_line),
                 false => None,
             };
             // pyro: an initial letter box is laid out by the root's first line: it is the first
@@ -1098,10 +1103,6 @@ impl BaseDocument {
             if let Some(split) = layout.first_letter.as_ref().filter(|split| split.initial.is_some() || split.floated) {
                 crate::layout::first_letter::build_initial_letter_box(self, task.node_id, split.style_node);
             }
-            layout.first_line = match self.first_line_styles {
-                true => crate::layout::first_line::style_node_for(self, task.node_id),
-                false => None,
-            };
         }
 
         #[cfg(feature = "parallel-construct")]

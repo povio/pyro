@@ -123,3 +123,11 @@ fn plaintext_paragraphs_take_their_own_direction() {
     assert_eq!(b[0][0], 0.0);
     assert!(b[1][0] > 200.0, "{b:?}");
 }
+
+#[test]
+fn a_line_of_empty_inline_boxes_is_invisible() {
+    assert_eq!(height("<div id=d><span></span></div>"), 0.0);
+    assert_eq!(height("<div id=d><ruby></ruby></div>"), 0.0);
+    // With text on the line, an empty box's strut still counts.
+    assert_eq!(height("<div id=d><span style='line-height:60px'></span>X</div>"), 60.0);
+}

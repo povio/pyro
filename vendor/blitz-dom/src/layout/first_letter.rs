@@ -269,6 +269,20 @@ fn find_letter(doc: &BaseDocument, root: NodeId) -> Option<(NodeId, std::ops::Ra
                 Some(Found::Stop)
             }
             NodeData::Text(data) => match scan_text(&data.content) {
+                // pyro: preserved white space before the letter is part of it (Blink's
+                // `FirstLetterLength`: "leading white-space is always included"; WPT css-inline
+                // `initial-letter-with-tab`).
+                TextScan::Letter(range)
+                    if node.parent.and_then(|parent| doc.nodes[parent].primary_styles()).is_some_and(|style| {
+                        use style::computed_values::white_space_collapse::T as Collapse;
+                        matches!(
+                            style.get_inherited_text().white_space_collapse,
+                            Collapse::Preserve | Collapse::BreakSpaces
+                        )
+                    }) =>
+                {
+                    Some(Found::Letter(node_id, 0..range.end))
+                }
                 TextScan::Letter(range) => Some(Found::Letter(node_id, range)),
                 TextScan::Stop => Some(Found::Stop),
                 TextScan::Empty | TextScan::Skip => None,
@@ -319,16 +333,28 @@ fn find_letter(doc: &BaseDocument, root: NodeId) -> Option<(NodeId, std::ops::Ra
 
 /// The first letter the inline root `root` styles when it builds its inline layout, creating or
 /// updating the node with its style. `None` when its first line has no `::first-letter`.
-pub(crate) fn split(doc: &mut BaseDocument, root: NodeId) -> Option<FirstLetterSplit> {
+pub(crate) fn split(doc: &mut BaseDocument, root: NodeId, first_line: Option<NodeId>) -> Option<FirstLetterSplit> {
     let (origin_id, eager) = origin(doc, root, &PseudoElement::FirstLetter)?;
     let (text, range) = find_letter(doc, root)?;
     let text_parent = doc.nodes[text].parent?;
-    let style = if text_parent == origin_id {
+    // pyro: on a line that `::first-line` styles, the letter inherits from the first-line box
+    // (CSS Pseudo 4 § 2.4; WPT css-inline `initial-letter-with-first-line`).
+    let first_line_parent = first_line.and_then(|first_line| {
+        if text_parent == root || text_parent == doc.first_line_parent(root) {
+            doc.nodes.get(first_line)?.primary_styles().map(|style| (*style).clone())
+        } else {
+            doc.first_line_style(root, first_line, text_parent, &mut Vec::new())
+        }
+    });
+    let style = if text_parent == origin_id && first_line_parent.is_none() {
         eager
     } else {
         // Inherit from the element holding the letter: the rules the cascade matched for the
         // originating element, cascaded again with that parent.
-        let parent_style: Arc<ComputedValues> = (*doc.nodes[text_parent].primary_styles()?).clone();
+        let parent_style: Arc<ComputedValues> = match first_line_parent {
+            Some(style) => style,
+            None => (*doc.nodes[text_parent].primary_styles()?).clone(),
+        };
         let read_guard = doc.guard.read();
         let guards = StylesheetGuards::same(&read_guard);
         doc.stylist.compute_pseudo_element_style_with_inputs(

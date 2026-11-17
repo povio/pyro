@@ -398,6 +398,11 @@ enabled: under `white-space: pre` the text after it stays on its line (WPT css-o
   `unicode-bidi: plaintext`) aligns and hangs its lines in its own direction (WPT css-text `text-align-start-016`,
   `-end-016`, `bidi-lines-001`). `Layout::is_rtl` stays the first paragraph's.
 
+- `layout/line_break.rs` (`add_text`), `layout/line.rs` (`LineMetrics::invisible`): an empty inline box's strut
+  (U+2061, `CharacterFlags::is_empty_box_strut`) adds the box's metrics but is no content, so a line of empty inline
+  boxes alone is an invisible line box (height 0; blitz-paint paints none of its boxes). `Layout::tab_stops` reads
+  back what `set_tab_stops` set.
+
 Covered by `crates/pyro-render/tests/text_inline_round4.rs` and `soft_hyphens.rs`.
 - `layout/alignment.rs` (`align`, round 4 lane D): right-, end- and centre-aligned lines take their content width rounded
   up to a layout unit (1/64 CSS px), as Blink's snapped text item widths: such a line starts where a shrink-to-fit box

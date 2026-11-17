@@ -2501,3 +2501,7 @@ does not let margins collapse through it, even when its lines have no height (CS
   filled height). WPT css-sizing `stretch/stretch-quirk-001`, css-flexbox `flexbox_quirks_body`.
 - `node/svg.rs` (round 4 lane D): an SVG image's root background is also read from a `background` shorthand that is a
   lone colour.
+- `layout/first_letter.rs`, `resolve.rs`, `layout/inline/layout.rs` (round 4 lane A): preserved white space before
+  the first letter is part of it (Blink), and an initial letter's box keeps it before the ink, a tab going to the
+  paragraph's tab stops; the first letter on a `::first-line` line inherits from the first-line style (the first-line
+  style node is made first).

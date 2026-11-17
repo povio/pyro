@@ -1028,3 +1028,8 @@ grid, so a glyph inside a run bins as the same glyph starting a box whose edge a
 `display-008`). `render.rs` (`create_css_rect_with_corners`): an inline box fragment's open-side corners are left out
 before overlapping radii are scaled down, as Blink's `CalcRadiiFor` (css-backgrounds `border-radius-012`).
 `render/background.rs`: an SVG background image's root background fills its tile (`background-image-007`).
+## Invisible line boxes (WPT round 4, lane A)
+
+`render.rs` (`inline_box_fragments`): the empty inline boxes of an invisible line box (parley's
+`LineMetrics::invisible`: only empty inline boxes on it) have no height and paint nothing, no outline either (WPT
+css-inline `empty-span-size-002`).

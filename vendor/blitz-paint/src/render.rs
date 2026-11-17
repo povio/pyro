@@ -2277,6 +2277,12 @@ impl ElementCx<'_, '_> {
         for (line_index, line) in layout.lines().enumerate() {
             let first = fragments.len();
             let metrics = line.metrics();
+            // pyro: the empty inline boxes of an invisible line box have no height: nothing to
+            // paint (WPT css-inline `empty-span-size-*`).
+            if metrics.invisible {
+                item_index += line.items().count();
+                continue;
+            }
             // Collapsible white space hanging at the line's end is in no box (preserved and
             // ideographic spaces that hang are: `LineMetrics::collapsed_advance`). pyro: the line starts at its
             // `inline_min_coord`, past the floats before it (its items are placed from there): without

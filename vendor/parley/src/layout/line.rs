@@ -293,6 +293,10 @@ pub struct LineMetrics {
     ///
     /// For horizontal text, this would be the bottom of the line's content.
     pub content_block_max_coord: f32,
+
+    /// pyro: the line is an invisible line box (CSS Inline 3 § 4.1): it holds no text and no
+    /// box with content, only empty inline boxes, so it has no height and they have none.
+    pub invisible: bool,
 }
 
 impl LineMetrics {

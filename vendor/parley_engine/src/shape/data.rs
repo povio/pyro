@@ -302,6 +302,8 @@ impl CharacterFlags {
     /// pyro: a soft wrap opportunity before the character for a line whose phrase does not fit
     /// (CSS `word-break: auto-phrase`).
     const PHRASE_FALLBACK: u16 = 1 << 12;
+    /// pyro: the source character is U+2061, the strut parley commits for an empty inline box.
+    const EMPTY_BOX_STRUT: u16 = 1 << 13;
 
     #[inline(always)]
     pub fn new(source_char: char, is_word_boundary: bool, is_soft_wrap_opportunity: bool) -> Self {
@@ -329,6 +331,11 @@ impl CharacterFlags {
                     Self::SOFT_HYPHEN
                 } else {
                     0
+                }
+                | if source_char == '\u{2061}' {
+                    Self::EMPTY_BOX_STRUT
+                } else {
+                    0
                 },
         )
     }
@@ -344,6 +351,13 @@ impl CharacterFlags {
     #[inline(always)]
     pub fn is_phrase_fallback(self) -> bool {
         self.0 & Self::PHRASE_FALLBACK != 0
+    }
+
+    /// pyro: whether the character is U+2061, the strut of an empty inline box: it adds the
+    /// box's metrics to its line but is no content (a line of such boxes alone is invisible).
+    #[inline(always)]
+    pub fn is_empty_box_strut(self) -> bool {
+        self.0 & Self::EMPTY_BOX_STRUT != 0
     }
 
     /// pyro: whether the character is U+00AD SOFT HYPHEN.

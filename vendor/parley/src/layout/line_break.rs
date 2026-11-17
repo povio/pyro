@@ -472,7 +472,11 @@ impl LineBoxMetrics {
         contributed: &mut Vec<u16>,
         subtrees: &mut SubtreeHistory,
     ) {
-        self.has_content = true;
+        // pyro: an empty inline box's strut alone is no content: its line stays invisible
+        // (CSS Inline 3 § 4.1; WPT css-inline `empty-span-size-*`).
+        if !matches!(characters, [character] if character.flags.is_empty_box_strut()) {
+            self.has_content = true;
+        }
         // Consecutive atoms almost always come from the same run and style, whose boxes are then
         // already on the line, so we can exit early. In case the run has atoms with mixed styles,
         // new boxes may still be added.
@@ -2292,6 +2296,7 @@ impl<'a, B: Brush> BreakLines<'a, B> {
         line.metrics.offset = 0.;
 
         line.metrics.line_height = line_height;
+        line.metrics.invisible = invisible;
 
         if line.item_range.is_empty() {
             line.text_range = self.layout.data.text_len..self.layout.data.text_len;
