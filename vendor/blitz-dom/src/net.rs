@@ -449,10 +449,28 @@ pub(crate) fn fetch_font_face_rules<'a>(
     node_id: Option<NodeId>,
     network_provider: &Arc<dyn NetProvider>,
     shell_provider: &Arc<dyn ShellProvider>,
-    read_guard: &SharedRwLockReadGuard,
+    read_guard: &'a SharedRwLockReadGuard,
     abort_signal: Option<&AbortSignal>,
 ) {
-    rules
+    // pyro: `@font-face` rules nested in conditional group rules (`@media`, `@supports`) and
+    // `@layer` blocks count too (css-conditional at-media-content-002 / at-supports-content-002).
+    // A `@supports` block whose condition fails is skipped; `@media` lists are not evaluated
+    // here (no device), so a face under a non-matching query still registers.
+    fn flatten<'a>(rules: impl Iterator<Item = &'a CssRule>, guard: &'a SharedRwLockReadGuard, out: &mut Vec<&'a CssRule>) {
+        for rule in rules {
+            match rule {
+                CssRule::Media(media) => flatten(media.rules.read_with(guard).0.iter(), guard, out),
+                CssRule::Supports(supports) if supports.enabled => {
+                    flatten(supports.rules.read_with(guard).0.iter(), guard, out)
+                }
+                CssRule::LayerBlock(layer) => flatten(layer.rules.read_with(guard).0.iter(), guard, out),
+                _ => out.push(rule),
+            }
+        }
+    }
+    let mut flat = Vec::new();
+    flatten(rules, read_guard, &mut flat);
+    flat.into_iter()
         .filter_map(|rule| match rule {
             CssRule::FontFace(font_face) => {
                 let descriptor = &font_face.read_with(read_guard).descriptors;
@@ -569,6 +587,11 @@ fn preferred_font_source(source_list: &SourceList) -> Option<(Url, FontFaceSourc
             tracing::warn!("Skipping @font-face source with unresolvable url");
             return None;
         };
+
+        // pyro: a `tech()` source needing a technology we do not render is skipped.
+        if !style::font_face::FontFaceSourceTechFlags::SERVO_SUPPORTED.contains(url_source.tech_flags) {
+            return None;
+        }
 
         let format = match &url_source.format_hint {
             Some(FontFaceSourceFormat::Keyword(keyword)) => *keyword,

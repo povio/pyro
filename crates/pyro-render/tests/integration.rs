@@ -61,6 +61,7 @@ mod input_percentage_min_content;
 mod input_placeholder;
 mod intrinsic_percentages;
 mod lang_pseudo_class;
+mod media_features;
 mod line_break_resume;
 mod line_clamp;
 mod hoisted_clip_layers;

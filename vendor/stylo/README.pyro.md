@@ -364,3 +364,12 @@ anchor positioning; stylo_taffy lays it out as `center`, which is what it is wit
   css-pseudo `marker-word-spacing`, `marker-word-break`, ...).
 - `properties/longhands.toml`, `shorthands.toml`, `shorthands.rs`: `-webkit-text-stroke`, `-webkit-text-stroke-width`
   and `-webkit-text-stroke-color` are parsed for servo too (blitz-paint strokes the glyphs).
+- `servo/media_features.rs`: servo evaluates the Media Queries 4/5 features it lacked, with Blink's headless answers:
+  `color` (8), `color-index`/`monochrome` (0), `grid` (false), `-webkit-transform-3d`, `device-aspect-ratio`,
+  `color-gamut` and `(video-)dynamic-range` (sRGB, standard), `prefers-reduced-motion/-transparency/-data` and
+  `prefers-contrast` (no preference), `forced-colors`, `inverted-colors`, `overflow-block/-inline` and `update`
+  (paged/none under `print`), `display-mode` (browser), `scripting` (enabled). The new names are not static atoms, so
+  `MEDIA_FEATURES` is a `LazyLock` (`queries/feature_expression.rs` derefs it).
+- `stylesheets/supports_rule.rs`, `font_face.rs`: `font-format()` matches collection/opentype/truetype/woff/woff2 and
+  `font-tech()` matches `FontFaceSourceTechFlags::SERVO_SUPPORTED` (features-opentype, COLRv0/v1, variations,
+  palettes) for servo (the pref `layout.css.font-tech.enabled` is set by the embedder).

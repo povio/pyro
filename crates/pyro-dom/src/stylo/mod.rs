@@ -26,6 +26,8 @@ pub(crate) fn enable_features() {
     ONCE.call_once(|| {
         style_config::set_pref!("layout.css.flexbox-balance.enabled", true);
         style_config::set_pref!("layout.css.text-box.enabled", true);
+        // pyro: `font-format()`/`font-tech()` in `@supports`, `tech()` in `@font-face` sources.
+        style_config::set_pref!("layout.css.font-tech.enabled", true);
         // pyro: `initial-letter` on `::first-letter` (`layout::first_letter`).
         style_config::set_pref!("layout.css.initial-letter.enabled", true);
         style_config::set_pref!("layout.css.dominant-baseline.enabled", true);

@@ -2486,3 +2486,6 @@ does not let margins collapse through it, even when its lines have no height (CS
   space bridges to more); a preserved line break before any letter means no first letter; a `::before`/`::after`
   box with an atomic display does not pass on its container's first line.
 - `layout/mod.rs`: an `<input type=number>` is sized as a text field (it was an empty box); `size` does not apply.
+- `net.rs`: `@font-face` rules inside `@media`, passing `@supports` and `@layer` blocks load too (media lists are not
+  evaluated there); a `tech()` source needing a technology outside `SERVO_SUPPORTED` is skipped.
+  `document.rs` sets `layout.css.font-tech.enabled`.

@@ -52,7 +52,7 @@ impl FeatureType {
         use crate::stylesheets::container_rule::CONTAINER_FEATURES;
 
         match *self {
-            FeatureType::Media => &MEDIA_FEATURES,
+            FeatureType::Media => &*MEDIA_FEATURES,
             FeatureType::Container => &CONTAINER_FEATURES,
         }
     }
