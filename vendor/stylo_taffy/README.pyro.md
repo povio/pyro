@@ -72,3 +72,5 @@ entry) once a Blitz release carries these commits and changes.
 - `src/wrapper.rs` (`is_anonymous_or_split_inline`): an anonymous block (`::-servo-anonymous-box`) or a split inline
   has `justify-self: auto` as `normal` and passes no `justify-items` on to its children (csswg-drafts#11461/#11462,
   Blink; WPT css-align `blocks/justify-items-anonymous`, `justify-self-block-in-inline-002`).
+- `src/convert.rs` (`table_cell_vertical_align`): `vertical-align: middle` is `AlignmentBaseline::VerticalAlignMiddle`
+  since lane IT (round 3); a cell centres for it and for the longhand's `middle`.

@@ -2431,3 +2431,8 @@ keep their tracks (`row_tracks`); Taffy collapses them once sized.
   `::before`/`::after` box as an image without a natural size (default object size, or its `width`/`height`),
   which blitz-paint fills with the gradient (`element-replacement-gradient`, `pseudo-element-gradient`,
   `pseudo-element-image-set`).
+- `src/stylo_to_parley.rs` (`vertical_align`): `vertical-align`'s keywords (stylo's `VerticalAlign*` variants) keep
+  parley's CSS 2.1 alignments; the `alignment-baseline` longhand's `text-top` / `middle` / `text-bottom`, and those of
+  an inherited `dominant-baseline` under `alignment-baseline: baseline`, map to parley's `TextOver` / `XMiddle` /
+  `TextUnder`; the pref `layout.css.dominant-baseline.enabled` is on (here and in pyro-dom). An `align=middle`
+  hint is `VerticalAlignMiddle`. Covered by `crates/pyro-render/tests/alignment_baseline.rs`.

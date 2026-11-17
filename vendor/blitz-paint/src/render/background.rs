@@ -942,7 +942,8 @@ impl ElementCx<'_, '_> {
             return;
         }
         let Some(rects) = self.table_part_rects(table) else { return };
-        let (x0, x1) = (rects.columns[0].0, rects.columns[rects.columns.len() - 1].1);
+        let x0 = rects.columns.iter().map(|c| c.0).fold(f64::INFINITY, f64::min);
+        let x1 = rects.columns.iter().map(|c| c.1).fold(f64::NEG_INFINITY, f64::max);
         for (id, rows) in parts {
             let open: Vec<usize> = rows.iter().copied().filter(|&at| !table.rows[at].collapsed).collect();
             let (Some(&first), Some(&last)) = (open.first(), open.last()) else { continue };
@@ -964,10 +965,9 @@ impl ElementCx<'_, '_> {
         let grid_info = table.computed_grid_info.borrow();
         let grid_info = grid_info.as_ref()?;
         let top = table.grid_box.borrow().map_or(0.0, |(top, _)| top as f64);
-        let columns: Vec<(f64, f64)> = super::PhysicalTracks::from_tracks(&grid_info.columns)
-            .iter()
-            .map(|track| (track.start as f64, track.end as f64))
-            .collect();
+        // (In logical order, as `TableContext::columns` index them: right to left in an `rtl` table.)
+        let columns: Vec<(f64, f64)> =
+            grid_info.columns.positions.iter().map(|track| (track.start as f64, track.end as f64)).collect();
         let rows: Vec<(f64, f64)> = super::PhysicalTracks::from_tracks(&grid_info.rows)
             .iter()
             .map(|track| (track.start as f64 + top, track.end as f64 + top))
@@ -1914,12 +1914,14 @@ impl TablePartRects {
         cell: &blitz_dom::TableCell,
     ) -> Rect {
         // From the start of the first track at `indices` to the end of the last.
+        // (Tracks in logical order: the columns of an `rtl` table run right to left.)
         fn span(tracks: &[(f64, f64)], mut indices: impl Iterator<Item = usize>) -> Option<(f64, f64)> {
             let first = indices.next()?;
             let last = indices.last().unwrap_or(first);
-            Some((tracks.get(first)?.0, tracks.get(last.min(tracks.len() - 1))?.1))
+            let (a, b) = (tracks.get(first)?, tracks.get(last.min(tracks.len() - 1))?);
+            Some((a.0.min(b.0), a.1.max(b.1)))
         }
-        let all_columns = (self.columns[0].0, self.columns[self.columns.len() - 1].1);
+        let all_columns = span(&self.columns, [0, self.columns.len() - 1].into_iter()).unwrap();
         let all_rows = (self.rows[0].0, self.rows[self.rows.len() - 1].1);
         let (xs, ys) = match kind {
             PartKind::Row => (all_columns, span(&self.rows, std::iter::once(cell.row as usize)).unwrap_or(all_rows)),

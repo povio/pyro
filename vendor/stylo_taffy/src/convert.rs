@@ -597,7 +597,10 @@ pub fn table_cell_vertical_align(style: &stylo::ComputedValues) -> Option<taffy:
         (_, stylo::BaselineShift::Keyword(stylo::BaselineShiftKeyword::Bottom)) => {
             taffy::AlignContent::END
         }
-        (stylo::AlignmentBaseline::Middle, _) => taffy::AlignContent::CENTER,
+        // pyro: `vertical-align: middle` (and the longhand's `middle`).
+        (stylo::AlignmentBaseline::Middle | stylo::AlignmentBaseline::VerticalAlignMiddle, _) => {
+            taffy::AlignContent::CENTER
+        }
         _ => return None,
     };
     align.safety = taffy::AlignmentSafety::Safe;

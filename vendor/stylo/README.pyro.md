@@ -352,3 +352,10 @@ anchor positioning; stylo_taffy lays it out as `center`, which is what it is wit
 
 - When upstream has the change: delete this directory and the `[patch.crates-io]` entry.
 - To move to a newer stylo: copy the published crate over this directory and apply `UPSTREAM.patch`.
+
+- `values/specified/box.rs`, `properties/shorthands.rs` (lane IT, round 3): servo-only `AlignmentBaseline` variants
+  `VerticalAlignTextTop` / `VerticalAlignMiddle` / `VerticalAlignTextBottom`, which the `vertical-align` shorthand
+  sets for its `text-top` / `middle` / `text-bottom` (`AlignmentBaseline::from_vertical_align`), so layout can keep
+  CSS 2.1's alignments for `vertical-align` and give the `alignment-baseline` longhand css-inline-3's (as Blink
+  does). They are never parsed and serialize as the longhand's keywords (`AlignmentBaseline::keyword`, manual
+  `ToCss`).

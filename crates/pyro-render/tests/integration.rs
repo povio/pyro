@@ -2,6 +2,7 @@
 //! whole renderer (and is re-signed on macOS), so one per file made `cargo test`
 //! mostly link time. Add new test files as modules here.
 
+mod alignment_baseline;
 mod aspect_ratio;
 mod backdrop_filter;
 mod background_images_and_edges;

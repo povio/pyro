@@ -94,6 +94,8 @@ pub(crate) fn init_stylo_prefs() {
         style_config::set_pref!("layout.css.text-combine-upright.enabled", true);
         // pyro: `initial-letter` on `::first-letter` (`layout::first_letter`).
         style_config::set_pref!("layout.css.initial-letter.enabled", true);
+        // pyro: `dominant-baseline` on HTML boxes (`stylo_to_parley::vertical_align`).
+        style_config::set_pref!("layout.css.dominant-baseline.enabled", true);
         // pyro: `light-dark()` of images (the computed value is the image of the used scheme).
         style_config::set_pref!("layout.css.light-dark.images.enabled", true);
         style_config::set_pref!("layout.css.background-clip.text.enabled", true);

@@ -371,3 +371,7 @@ after an inline box's start margin; WPT css-flexbox `grandchild-span-height`).
 
 An inline box that does not fit at the start of a line marks a wrap opportunity after it only where wrapping is
 enabled: under `white-space: pre` the text after it stays on its line (WPT css-overflow `text-overflow-009`).
+- `style/mod.rs`, `layout/style_metrics.rs` (`shift_from_parent`, lane IT, round 3): `AlignmentBaseline::TextOver`,
+  `TextUnder` and `XMiddle` align a span's text-over / text-under / x-middle baseline (its font's ascent, descent,
+  half x-height) with its parent's (css-inline-3 `alignment-baseline` / `dominant-baseline`); inline boxes align
+  with the first two as with `TextTop` / `TextBottom`, and stay on the baseline for `XMiddle`.

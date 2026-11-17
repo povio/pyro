@@ -122,7 +122,19 @@ diff --git a/packages/stylo_taffy/src/convert.rs b/packages/stylo_taffy/src/conv
          stylo::AlignFlags::CENTER => taffy::AlignContent::CENTER,
          stylo::AlignFlags::SPACE_BETWEEN => taffy::AlignContent::SPACE_BETWEEN,
          stylo::AlignFlags::SPACE_AROUND => taffy::AlignContent::SPACE_AROUND,
-@@ -582,6 +662,9 @@
+@@ -517,7 +597,10 @@
+         (_, stylo::BaselineShift::Keyword(stylo::BaselineShiftKeyword::Bottom)) => {
+             taffy::AlignContent::END
+         }
+-        (stylo::AlignmentBaseline::Middle, _) => taffy::AlignContent::CENTER,
++        // pyro: `vertical-align: middle` (and the longhand's `middle`).
++        (stylo::AlignmentBaseline::Middle | stylo::AlignmentBaseline::VerticalAlignMiddle, _) => {
++            taffy::AlignContent::CENTER
++        }
+         _ => return None,
+     };
+     align.safety = taffy::AlignmentSafety::Safe;
+@@ -582,6 +665,9 @@
          stylo::AlignFlags::STRETCH => taffy::AlignItems::STRETCH,
          stylo::AlignFlags::FLEX_START => taffy::AlignItems::FLEX_START,
          stylo::AlignFlags::FLEX_END => taffy::AlignItems::FLEX_END,
@@ -132,7 +144,7 @@ diff --git a/packages/stylo_taffy/src/convert.rs b/packages/stylo_taffy/src/conv
          stylo::AlignFlags::SELF_START => taffy::AlignItems::SELF_START,
          stylo::AlignFlags::SELF_END => taffy::AlignItems::SELF_END,
          stylo::AlignFlags::START => taffy::AlignItems::START,
-@@ -591,10 +674,12 @@
+@@ -591,10 +677,12 @@
          stylo::AlignFlags::RIGHT if is_horiz_rtl => taffy::AlignItems::START,
          stylo::AlignFlags::RIGHT => taffy::AlignItems::END,
          stylo::AlignFlags::CENTER => taffy::AlignItems::CENTER,
@@ -148,7 +160,7 @@ diff --git a/packages/stylo_taffy/src/convert.rs b/packages/stylo_taffy/src/conv
          // Should never be hit. But no real reason to panic here.
          _ => return None,
      };
-@@ -967,6 +1052,7 @@
+@@ -967,6 +1055,7 @@
          display: self::display(display),
          box_sizing: self::box_sizing(style.clone_box_sizing()),
          item_is_table: display.inside() == stylo::DisplayInside::Table,

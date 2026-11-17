@@ -1770,7 +1770,7 @@ impl Node {
                         BaselineShift::Keyword(BaselineShiftKeyword::Top),
                     ))
                 } else if value.eq_ignore_ascii_case("middle") {
-                    Some((AlignmentBaseline::Middle, BaselineShift::zero()))
+                    Some((AlignmentBaseline::VerticalAlignMiddle, BaselineShift::zero()))
                 } else if value.eq_ignore_ascii_case("bottom") {
                     Some((
                         AlignmentBaseline::Baseline,

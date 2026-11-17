@@ -995,3 +995,6 @@ of their own then. Covered by `highlights_paint_under_the_selection` in `crates/
 - `src/render/border.rs`: `double` collapsed table borders are two lines a third of the rule's width each, on the
   uniform path and per edge (`CollapsedEdge::is_double`; WPT css-tables `border-collapse-double-border`).
 - `src/render.rs` (`draw_content_gradient`): a box replaced by its `content` gradient (`ElementData::content_gradient`) paints it over its content box.
+- `src/render/background.rs` (`table_part_rects`, `TablePartRects::rect`): column tracks in logical order, as
+  `TableContext::columns` indexes them, so a column's background box in an `rtl` table is its own column's (WPT
+  css-tables `paint/col-paint-htb-rtl`).

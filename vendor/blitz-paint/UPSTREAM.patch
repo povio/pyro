@@ -9177,7 +9177,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
              origin: (*get_cyclic(&svg_styles.mask_origin.0, idx)).into(),
              // There is no `mask-attachment` property
              attachment: StyloBackgroundAttachment::Scroll,
-@@ -129,54 +152,352 @@
+@@ -129,56 +152,354 @@
  
  impl ElementCx<'_, '_> {
      pub(super) fn draw_background(&self, scene: &mut impl PaintScene) {
@@ -9401,8 +9401,8 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
              self.end_text_clip_group(scene);
          }
 +        self.context.layer_manager.maybe_pop_layer(scene, blend_group);
-+    }
-+
+     }
+ 
 +    /// pyro: the border box that `background-clip: border-box` layers are cut to under a rounded
 +    /// border that hides the background's edge, as Chromium paints it
 +    /// (`BoxDecorationData::ComputeBleedAvoidance`, `kBackgroundBleedShrinkBackground`): every
@@ -9537,9 +9537,11 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
 +            0.0,
 +            NonUniformRoundedRectRadii::default(),
 +        ))
-     }
- 
++    }
++
      /// Starts an isolated group for `background-clip: text` layers; layers drawn
+     /// until [`end_text_clip_group`](Self::end_text_clip_group) are clipped to text.
+     fn begin_text_clip_group(&self, scene: &mut impl PaintScene) {
 @@ -217,6 +538,7 @@
              BoxModelBox::BorderBox => self.frame.border_box_path(),
              BoxModelBox::PaddingBox => self.frame.padding_box_path(),
@@ -9897,7 +9899,8 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
 +            return;
 +        }
 +        let Some(rects) = self.table_part_rects(table) else { return };
-+        let (x0, x1) = (rects.columns[0].0, rects.columns[rects.columns.len() - 1].1);
++        let x0 = rects.columns.iter().map(|c| c.0).fold(f64::INFINITY, f64::min);
++        let x1 = rects.columns.iter().map(|c| c.1).fold(f64::NEG_INFINITY, f64::max);
 +        for (id, rows) in parts {
 +            let open: Vec<usize> = rows.iter().copied().filter(|&at| !table.rows[at].collapsed).collect();
 +            let (Some(&first), Some(&last)) = (open.first(), open.last()) else { continue };
@@ -9919,10 +9922,9 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
 +        let grid_info = table.computed_grid_info.borrow();
 +        let grid_info = grid_info.as_ref()?;
 +        let top = table.grid_box.borrow().map_or(0.0, |(top, _)| top as f64);
-+        let columns: Vec<(f64, f64)> = super::PhysicalTracks::from_tracks(&grid_info.columns)
-+            .iter()
-+            .map(|track| (track.start as f64, track.end as f64))
-+            .collect();
++        // (In logical order, as `TableContext::columns` index them: right to left in an `rtl` table.)
++        let columns: Vec<(f64, f64)> =
++            grid_info.columns.positions.iter().map(|track| (track.start as f64, track.end as f64)).collect();
 +        let rows: Vec<(f64, f64)> = super::PhysicalTracks::from_tracks(&grid_info.rows)
 +            .iter()
 +            .map(|track| (track.start as f64 + top, track.end as f64 + top))
@@ -10144,7 +10146,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
          let Some(bg_image) = layer.image_data else {
              return;
          };
-@@ -509,95 +1205,163 @@
+@@ -509,94 +1205,162 @@
          let image_rendering = self.style.clone_image_rendering();
          let quality = to_image_quality(image_rendering);
  
@@ -10338,7 +10340,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
 +            to_peniko_gradient(gradient, tile_rect, bounding_box, scale, current_color)
 +        })
 +    }
- 
++
 +    /// pyro: a layer whose image has no natural size and is made for its tile: a gradient
 +    /// (`make` gets the tile and the border box's bounds), or `image(<color>)` as a gradient of
 +    /// one colour.
@@ -10352,10 +10354,9 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
 +        // The tiles cover the painting area (`area`: the clip box, or the canvas), in the
 +        // positioning area's space.
 +        let (origin_rect, base_transform, clip_rect) = self.positioning_area(layer, area);
-+
+ 
          let (bg_pos, bg_size) = compute_layer_position_and_size(
              layer,
-             origin_rect.width() / self.scale,
 @@ -629,24 +1393,50 @@
              bg_size.height,
          );
@@ -10443,12 +10444,15 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
      );
  
 -    let BackgroundRepeat(repeat_x, repeat_y) = layer.repeat;
-+    (bg_pos, bg_size)
-+}
- 
+-
 -    let bg_size = if matches!(repeat_x, Round) && matches!(repeat_y, Round) {
 -        let count = (container_w / bg_size.width).round();
 -        let width = container_w / count;
++    (bg_pos, bg_size)
++}
+ 
+-        let count = (container_h / bg_size.height).round();
+-        let height = container_h / count;
 +/// Which axes of a `background-size` are `auto` (x, y).
 +fn size_is_auto(size: &BackgroundSize) -> (bool, bool) {
 +    use style::values::generics::length::GenericLengthPercentageOrAuto as Lpa;
@@ -10460,9 +10464,6 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
 +    }
 +}
  
--        let count = (container_h / bg_size.height).round();
--        let height = container_h / count;
--
 -        Size::new(width, height)
 -    } else if matches!(repeat_x, Round) {
 -        let count = (container_w / bg_size.width).round();
@@ -10666,7 +10667,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
  /// Whether drawing the layer is guaranteed to paint nothing, making its clip
  /// layer unnecessary
  fn layer_paints_nothing(layer: &ImageLayerStyles) -> bool {
-@@ -1009,3 +1887,55 @@
+@@ -1009,3 +1887,57 @@
          -extend_length
      }
  }
@@ -10697,12 +10698,14 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
 +        cell: &blitz_dom::TableCell,
 +    ) -> Rect {
 +        // From the start of the first track at `indices` to the end of the last.
++        // (Tracks in logical order: the columns of an `rtl` table run right to left.)
 +        fn span(tracks: &[(f64, f64)], mut indices: impl Iterator<Item = usize>) -> Option<(f64, f64)> {
 +            let first = indices.next()?;
 +            let last = indices.last().unwrap_or(first);
-+            Some((tracks.get(first)?.0, tracks.get(last.min(tracks.len() - 1))?.1))
++            let (a, b) = (tracks.get(first)?, tracks.get(last.min(tracks.len() - 1))?);
++            Some((a.0.min(b.0), a.1.max(b.1)))
 +        }
-+        let all_columns = (self.columns[0].0, self.columns[self.columns.len() - 1].1);
++        let all_columns = span(&self.columns, [0, self.columns.len() - 1].into_iter()).unwrap();
 +        let all_rows = (self.rows[0].0, self.rows[self.rows.len() - 1].1);
 +        let (xs, ys) = match kind {
 +            PartKind::Row => (all_columns, span(&self.rows, std::iter::once(cell.row as usize)).unwrap_or(all_rows)),

@@ -799,7 +799,6 @@ pub enum DominantBaseline {
     Parse,
     PartialEq,
     SpecifiedValueInfo,
-    ToCss,
     ToShmem,
     ToComputedValue,
     ToResolvedValue,
@@ -835,6 +834,78 @@ pub enum AlignmentBaseline {
     /// Used to implement the deprecated "align=middle" attribute for HTML img elements.
     #[cfg(feature = "gecko")]
     MozMiddleWithBaseline,
+    /// pyro: `text-bottom` set through the `vertical-align` shorthand: CSS 2.1's alignment (the
+    /// bottom of the box with the bottom of the parent's content area), which browsers keep for
+    /// `vertical-align`; the longhand's `text-bottom` aligns text-under baselines (css-inline-3).
+    #[cfg(feature = "servo")]
+    #[css(skip)]
+    VerticalAlignTextBottom,
+    /// pyro: `middle` set through `vertical-align`: the box's vertical midpoint with the parent's
+    /// baseline plus half its x-height (CSS 2.1); the longhand's aligns x-middle baselines.
+    #[cfg(feature = "servo")]
+    #[css(skip)]
+    VerticalAlignMiddle,
+    /// pyro: `text-top` set through `vertical-align` (CSS 2.1: the top of the box with the top of
+    /// the parent's content area); the longhand's aligns text-over baselines.
+    #[cfg(feature = "servo")]
+    #[css(skip)]
+    VerticalAlignTextTop,
+}
+
+#[cfg(feature = "servo")]
+impl AlignmentBaseline {
+    /// pyro: the value `vertical-align` sets for a keyword of this longhand (see
+    /// `VerticalAlignMiddle`).
+    pub fn from_vertical_align(self) -> Self {
+        match self {
+            Self::TextBottom => Self::VerticalAlignTextBottom,
+            Self::Middle => Self::VerticalAlignMiddle,
+            Self::TextTop => Self::VerticalAlignTextTop,
+            other => other,
+        }
+    }
+
+    /// pyro: the longhand keyword of a value `vertical-align` set.
+    pub fn keyword(self) -> Self {
+        match self {
+            Self::VerticalAlignTextBottom => Self::TextBottom,
+            Self::VerticalAlignMiddle => Self::Middle,
+            Self::VerticalAlignTextTop => Self::TextTop,
+            other => other,
+        }
+    }
+}
+
+impl ToCss for AlignmentBaseline {
+    fn to_css<W>(&self, dest: &mut CssWriter<W>) -> fmt::Result
+    where
+        W: Write,
+    {
+        #[cfg(feature = "servo")]
+        let value = self.keyword();
+        #[cfg(not(feature = "servo"))]
+        let value = *self;
+        dest.write_str(match value {
+            Self::Baseline => "baseline",
+            Self::TextBottom => "text-bottom",
+            #[cfg(feature = "gecko")]
+            Self::Alphabetic => "alphabetic",
+            #[cfg(feature = "gecko")]
+            Self::Ideographic => "ideographic",
+            Self::Middle => "middle",
+            #[cfg(feature = "gecko")]
+            Self::Central => "central",
+            #[cfg(feature = "gecko")]
+            Self::Mathematical => "mathematical",
+            #[cfg(feature = "gecko")]
+            Self::Hanging => "hanging",
+            Self::TextTop => "text-top",
+            #[cfg(feature = "gecko")]
+            Self::MozMiddleWithBaseline => "-moz-middle-with-baseline",
+            #[cfg(feature = "servo")]
+            Self::VerticalAlignTextBottom | Self::VerticalAlignMiddle | Self::VerticalAlignTextTop => unreachable!(),
+        })
+    }
 }
 
 /// A specified value for the `baseline-source` property.
