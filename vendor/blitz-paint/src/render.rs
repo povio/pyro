@@ -4634,22 +4634,27 @@ impl ElementCx<'_, '_> {
             let width = self.frame.content_box.width() as u32;
             let height = self.frame.content_box.height() as u32;
 
-            // TODO: Support arbitrary transforms of subdocuments
-            let translation = self.transform.translation();
-            let initial_x = translation.x + self.frame.content_box.origin().x;
-            let initial_y = translation.y + self.frame.content_box.origin().y;
-            // let transform = self.transform.then_translate(Vec2 { x, y });
-
+            // pyro: the document is painted at its viewport's origin and placed with the frame's
+            // whole transform (rotated and scaled frames: WPT css-transforms
+            // `transform-iframe-002`, `transform-iframe-scroll-position`), clipped to its
+            // content box.
+            let origin = self.frame.content_box.origin();
+            let transform = self.transform * Affine::translate((origin.x, origin.y));
             let painter = BlitzDomPainter::new(
                 &sub_doc,
                 scale,
                 width,
                 height,
-                initial_x,
-                initial_y,
+                0.0,
+                0.0,
                 self.custom_widget_scenes,
             );
-            painter.paint_scene(scene);
+            let mut recording = anyrender::recording::Scene::new();
+            painter.paint_scene(&mut recording);
+            let clip = Rect::new(0.0, 0.0, width as f64, height as f64);
+            scene.push_clip_layer(Fill::NonZero, transform, &clip);
+            scene.append_scene(recording, transform);
+            scene.pop_layer();
         }
     }
 

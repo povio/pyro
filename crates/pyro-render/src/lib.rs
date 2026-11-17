@@ -3571,4 +3571,32 @@ impl blitz_dom::HtmlParserProvider for SvgImageParser {
     fn parse_svg_document(&self, svg: &str, config: DocumentConfig) -> Option<Box<dyn blitz_dom::Document>> {
         blitz_html::HtmlProvider.parse_svg_document(svg, config)
     }
+
+    /// A frame's document (the render snapshot's `srcdoc`), with the page's own UA additions.
+    fn parse_document(&self, html: &str, mut config: DocumentConfig) -> Box<dyn blitz_dom::Document> {
+        config.ua_stylesheets.push(blitz_dom::UserAgentStylesheet::parse(NO_TRANSITIONS));
+        config.ua_stylesheets.push(blitz_dom::UserAgentStylesheet::parse(FILE_INPUT));
+        config.html_parser_provider = Some(Arc::new(SvgImageParser));
+        let mut doc = blitz_html::HtmlDocument::from_html(html, config);
+        // The frame's scrolled elements and moved sticky boxes, as the page has them.
+        for id in doc.query_selector_all("[data-pyro-scroll-left],[data-pyro-sticky]").unwrap_or_default() {
+            let Some(node) = doc.get_node_mut(id) else { continue };
+            let number = |s: &str| s.parse::<f64>().ok().filter(|v| v.is_finite());
+            let scroll = (
+                node.attr("data-pyro-scroll-left".into()).and_then(number),
+                node.attr("data-pyro-scroll-top".into()).and_then(number),
+            );
+            let sticky = node.attr("data-pyro-sticky".into()).and_then(|value| {
+                let mut parts = value.split(' ').map(number);
+                Some((parts.next()??, parts.next()??))
+            });
+            if let (Some(x), Some(y)) = scroll {
+                *node.scroll_offset_mut() = blitz_dom::Point { x, y };
+            }
+            if let Some((x, y)) = sticky {
+                node.set_sticky_offset(blitz_dom::Point { x, y });
+            }
+        }
+        Box::new(doc)
+    }
 }

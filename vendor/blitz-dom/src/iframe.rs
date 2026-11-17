@@ -126,7 +126,12 @@ impl BaseDocument {
     /// document's base URL.
     pub(crate) fn load_iframe_srcdoc(&mut self, node_id: NodeId, srcdoc: &str) {
         let signal = self.new_iframe_generation(node_id, None);
-        let base_url = Some(self.url.to_string());
+        // pyro: a frame document from the render snapshot names its own URL.
+        let frame_url = self
+            .get_node(node_id)
+            .and_then(|node| node.attr(markup5ever::LocalName::from("data-pyro-frame-url")))
+            .map(str::to_owned);
+        let base_url = Some(frame_url.unwrap_or_else(|| self.url.to_string()));
         self.attach_iframe_document(node_id, srcdoc, base_url, signal);
     }
 

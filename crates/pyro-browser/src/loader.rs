@@ -1278,6 +1278,23 @@ impl Browser {
         }
         .map_err(|e| JsError::type_error(format!("{e:?}")))?;
         parser.set_transport_charset(resource.charset.as_deref());
+        // An image is shown in an image document (HTML § 7.6.6 "Page load processing model for
+        // media"): Chromium's markup, the image at the top left in a frame, centred on a dark
+        // background in a window.
+        let body = if resource.mime.starts_with("image/") && !pyro_dom::parse::is_xml_mime(&resource.mime) {
+            let src = resource.url.replace('&', "&amp;").replace('"', "&quot;");
+            let (body, img) = match page.child {
+                Some(_) => ("margin: 0px;", "display: block;"),
+                None => (
+                    "margin: 0px; height: 100%; background-color: rgb(14, 14, 14);",
+                    "display: block;-webkit-user-select: none;margin: auto;background-color: hsl(0, 0%, 90%);",
+                ),
+            };
+            format!("<html><head><meta name=\"viewport\" content=\"width=device-width, minimum-scale=0.1\"></head><body style=\"{body}\"><img style=\"{img}\" src=\"{src}\"></body></html>")
+                .into_bytes()
+        } else {
+            resource.body
+        };
         let mut p = self.doc_mut(page).ok_or(JsError::Type("no such page".into()))?;
         p.main_frame.dom = Some(dom.clone());
         p.main_frame.document = Some(doc);
@@ -1288,7 +1305,7 @@ impl Browser {
             dom,
             parser: Some(parser),
             speculation: Default::default(),
-            phase: ParsePhase::Feed(resource.body),
+            phase: ParsePhase::Feed(body),
             blocked: false,
             stylesheet_blocked_script: None,
             deferred: VecDeque::new(),

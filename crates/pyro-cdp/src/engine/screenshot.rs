@@ -307,6 +307,8 @@ impl EngineHost {
         let page = self.thread.browser.page(pid).ok_or_else(|| CdpError::server("page is gone"))?;
         // Responsive iframes take their documents' heights (css-sizing-4).
         page.update_responsive_frames();
+        // Frames show their documents (`srcdoc` of the render tree), their sheets served with ours.
+        let frame_sheets = page.update_frame_documents();
         let frame = &page.main_frame;
         let dom = frame.page_dom.clone().ok_or_else(|| CdpError::server("page has no document"))?;
         let stamp = dom.render_stamp();
@@ -319,6 +321,9 @@ impl EngineHost {
             }
             _ => {
                 let mut s = dom.render_snapshot_tree(&frame.base_url, None);
+                for (url, text) in frame_sheets {
+                    s.sheets.entry(url).or_insert(text);
+                }
                 let tree = Arc::new(convert(s.tree.take().unwrap_or_default()));
                 let sheets = s.sheets.clone();
                 self.renders.live.insert(pid, LiveTree { stamp, tree: tree.clone(), sheets });
