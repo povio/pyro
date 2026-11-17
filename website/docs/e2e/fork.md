@@ -162,6 +162,41 @@ What it costs:
 - **JavaScriptCore's optimizing tiers are off in forks.** Forked pages run without the DFG and FTL JITs, because connections are too short for them to pay off. Set `JSC_useDFGJIT=true` in the server's environment to override.
 - **Templates run the app.** Every template and spare process runs your app's timers and polling while it waits, so many profiles cost CPU even when idle. Release the ones you no longer need.
 
+## Testing against a dev server (Vite)
+
+A forked page is a copy of the template's page without its network connections: the WebSocket a dev server's client keeps open is gone in the fork. Two Vite behaviours follow from that, and both need a change in the app's test config, not in the tests.
+
+**The HMR client reloads forked pages.** Vite's client sees its socket close, pings the server until it answers, and then calls `location.reload()`, in the middle of a test. Tests do not edit code while they run, so drop that reload in the config the test server uses:
+
+```ts
+// vite.e2e.config.ts
+import { defineConfig, type Plugin } from 'vite';
+import appConfig from './vite.config';
+
+const noReloadOnLostConnection: Plugin = {
+  name: 'e2e-no-reload-on-lost-connection',
+  enforce: 'post',
+  transform(code, id) {
+    if (!id.includes('vite/dist/client/client.mjs')) return null;
+    const patched = code.replace(/await waitForSuccessfulPing\(url\.href\);\s*location\.reload\(\);/, 'return;');
+    // Fail loudly when a Vite release changes the client, instead of reloading again.
+    if (patched === code) throw new Error("Vite's client changed: its reload after a lost connection wasn't found.");
+    return patched;
+  },
+};
+```
+
+**Re-optimized dependencies break forked pages.** When the dev server re-optimizes dependencies (a new import found, or another dev server rebuilding the same cache), it serves the old chunks with `504 (Outdated Optimize Dep)` and tells its clients to reload. A forked page cannot hear that message, so its next lazy import fails. Give the test server an optimizer cache of its own, so that nothing rebuilds it under the running suite, and start the suite once the server has optimized (load the app once in the setup module, or declare the profiles there):
+
+```ts
+export default defineConfig((env) => {
+  const app = appConfig(env);
+  return { ...app, cacheDir: 'node_modules/.vite-e2e', plugins: [...(app.plugins ?? []), noReloadOnLostConnection] };
+});
+```
+
+A production build served with `--static` has neither problem; see [Static files](/e2e/static).
+
 ## Platform limits
 
 - Fork mode needs the patched JavaScriptCore: macOS on Apple silicon and Linux. The macOS Intel build has no fork mode.
