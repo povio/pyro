@@ -120,6 +120,14 @@ pub(super) fn align_and_position_item(
 ) -> PositionedItem {
     let grid_area_size = Size { width: grid_area.right - grid_area.left, height: grid_area.bottom - grid_area.top };
 
+    // pyro: a `min-content`/`max-content` minimum width (`keyword_min_width`)
+    let keyword_min_width = if subgrid.width {
+        None
+    } else {
+        let keyword = tree.get_grid_child_style(node).grid_min_size_keyword().width;
+        super::types::keyword_min_width(tree, node, keyword, containing_block_size.map(Some))
+    };
+
     let style = tree.get_grid_child_style(node);
 
     let overflow = style.overflow();
@@ -190,6 +198,9 @@ pub(super) fn align_and_position_item(
         .maybe_apply_aspect_ratio(aspect_ratio);
     if width_unfloored {
         min_size.width = None;
+    }
+    if let Some(width) = keyword_min_width {
+        min_size.width = min_size.width.maybe_max(Some(width)).or(Some(width));
     }
     let max_size = max_size_style
         .maybe_resolve(containing_block_size, |val, basis| tree.calc(val, basis))

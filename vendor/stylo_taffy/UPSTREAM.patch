@@ -705,7 +705,17 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
      #[inline]
      fn gap(&self) -> taffy::Size<taffy::LengthPercentage> {
          let position_styles = self.style.get_position();
-@@ -927,6 +1219,56 @@
+@@ -922,11 +1214,66 @@
+ // GridItemStyle impl
+ #[cfg(feature = "grid")]
+ impl<T: Deref<Target = ComputedValues>> taffy::GridItemStyle for TaffyStyloStyle<T> {
++    #[inline]
++    fn grid_min_size_keyword(&self) -> taffy::Size<taffy::Dimension> {
++        <Self as taffy::BlockItemStyle>::min_size_keyword(self)
++    }
++
+     #[inline]
+     fn grid_row(&self) -> taffy::Line<taffy::GridPlacement<Atom>> {
          self.grid_row_placement()
      }
  
@@ -762,7 +772,7 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
      #[inline]
      fn grid_column(&self) -> taffy::Line<taffy::GridPlacement<Atom>> {
          self.grid_column_placement()
-@@ -950,6 +1292,16 @@
+@@ -950,6 +1297,16 @@
  }
  
  impl<T: Deref<Target = ComputedValues>> taffy::OofItemStyle for TaffyStyloStyle<T> {

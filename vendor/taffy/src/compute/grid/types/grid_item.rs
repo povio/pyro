@@ -49,6 +49,9 @@ pub(in super::super) struct GridItem {
     pub size: Size<Dimension>,
     /// The item's min_size style
     pub min_size: Size<LengthPercentageAuto>,
+    /// pyro: its `min-width`/`min-height` when they are `min-content` or `max-content`
+    /// ([`GridItemStyle::grid_min_size_keyword`]; [`keyword_min_width`]).
+    pub min_size_keyword: Size<Dimension>,
     /// The item's max_size style
     pub max_size: Size<LengthPercentageAuto>,
     /// The item's aspect_ratio style
@@ -178,6 +181,7 @@ impl GridItem {
             box_sizing: style.box_sizing(),
             size: style.size(),
             min_size: style.min_size(),
+            min_size_keyword: style.grid_min_size_keyword(),
             max_size: style.max_size(),
             aspect_ratio: style.aspect_ratio(),
             padding: style.padding(),
@@ -471,6 +475,9 @@ impl GridItem {
         if self.width_unfloored {
             min_size.width = None;
         }
+        if let Some(width) = keyword_min_width(tree, self.node, self.min_size_keyword.width, grid_area_size) {
+            min_size.width = min_size.width.maybe_max(Some(width)).or(Some(width));
+        }
         let max_size = self
             .max_size
             .maybe_resolve(grid_area_size, |val, basis| tree.calc(val, basis))
@@ -681,7 +688,7 @@ impl GridItem {
         // Spec:
         // https://www.w3.org/TR/css-grid-1/#grid-item-sizing
         // https://www.w3.org/TR/css-grid-1/#algo-overview
-        tree.measure_child_size(
+        let size = tree.measure_child_size(
             self.node,
             known_dimensions,
             grid_area_size,
@@ -696,7 +703,8 @@ impl GridItem {
             SizingMode::InherentSize,
             axis.as_abs_naive(),
             Line::FALSE,
-        )
+        );
+        self.floor_by_keyword_min(axis, tree, grid_area_size, size)
     }
 
     /// Retrieve the item's min content contribution from the cache or compute it using the provided parameters
@@ -733,7 +741,7 @@ impl GridItem {
         // See the min-content path above. Max-content measurement uses the same containing-block
         // basis so percentage-dependent item geometry is measured from the grid area rather than
         // from the container.
-        tree.measure_child_size(
+        let size = tree.measure_child_size(
             self.node,
             known_dimensions,
             grid_area_size,
@@ -748,7 +756,26 @@ impl GridItem {
             SizingMode::InherentSize,
             axis.as_abs_naive(),
             Line::FALSE,
-        )
+        );
+        self.floor_by_keyword_min(axis, tree, grid_area_size, size)
+    }
+
+    /// pyro: `size`, at least the item's `min-content`/`max-content` minimum width in the inline axis.
+    #[inline(always)]
+    fn floor_by_keyword_min(
+        &self,
+        axis: AbstractAxis,
+        tree: &mut impl LayoutPartialTree,
+        grid_area_size: Size<Option<f32>>,
+        size: f32,
+    ) -> f32 {
+        if axis != AbstractAxis::Inline {
+            return size;
+        }
+        match keyword_min_width(tree, self.node, self.min_size_keyword.width, grid_area_size) {
+            Some(width) => size.max(width),
+            None => size,
+        }
     }
 
     /// Subtract the item's margins (and baseline shim) from the definite axes of the space available
@@ -875,6 +902,12 @@ impl GridItem {
                 (size.is_sizing_keyword() && !size.is_stretch())
                     .then(|| self.min_content_contribution_cached(axis, tree, grid_area_size, grid_area_size))
             })
+            // pyro: a `min-content`/`max-content` minimum size
+            .or_else(|| {
+                (axis == AbstractAxis::Inline)
+                    .then(|| keyword_min_width(tree, self.node, self.min_size_keyword.width, grid_area_size))
+                    .flatten()
+            })
             .or_else(|| {
                 self.min_size
                     .maybe_resolve(grid_area_size.map(|size| size.unwrap_or(0.0)), |val, basis| tree.calc(val, basis))
@@ -972,4 +1005,31 @@ impl GridItem {
             size
         })
     }
+}
+
+/// pyro: the width a `min-width` of `min-content` or `max-content` gives grid item `node` (its
+/// border box's min-content or max-content width; `None` for any other value). `fit-content` is
+/// left as `auto`.
+pub(in crate::compute::grid) fn keyword_min_width(
+    tree: &mut impl LayoutPartialTree,
+    node: NodeId,
+    keyword: Dimension,
+    parent_size: Size<Option<f32>>,
+) -> Option<f32> {
+    let available = if keyword.0.is_max_content() {
+        AvailableSpace::MaxContent
+    } else if keyword.0.is_min_content() {
+        AvailableSpace::MinContent
+    } else {
+        return None;
+    };
+    Some(tree.measure_child_size(
+        node,
+        Size::NONE,
+        parent_size,
+        Size { width: available, height: AvailableSpace::MaxContent },
+        SizingMode::ContentSize,
+        crate::geometry::AbsoluteAxis::Horizontal,
+        Line::FALSE,
+    ))
 }

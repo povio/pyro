@@ -659,3 +659,6 @@ Round 4 lane G: flexbox transfers min/max sizes through an item's ratio via its 
 WPT css-sizing `flex-aspect-ratio-025/026`), and a column container of indefinite width measures a non-replaced ratio
 item without its content-based height (no definite basis or height, no growing) for its hypothetical width
 (`flex-aspect-ratio-026`).
+- Round 4 lane G: grid items honour `min-width: min-content | max-content` (`GridItemStyle::grid_min_size_keyword`,
+  `grid_item::keyword_min_width`): in their known size and final clamp, their min-/max-content contributions and their
+  minimum contribution (WPT css-grid `grid-items/grid-intrinsic-maximums`).

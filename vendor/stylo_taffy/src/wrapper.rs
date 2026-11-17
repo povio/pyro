@@ -1215,6 +1215,11 @@ impl<T: Deref<Target = ComputedValues>> taffy::GridContainerStyle for TaffyStylo
 #[cfg(feature = "grid")]
 impl<T: Deref<Target = ComputedValues>> taffy::GridItemStyle for TaffyStyloStyle<T> {
     #[inline]
+    fn grid_min_size_keyword(&self) -> taffy::Size<taffy::Dimension> {
+        <Self as taffy::BlockItemStyle>::min_size_keyword(self)
+    }
+
+    #[inline]
     fn grid_row(&self) -> taffy::Line<taffy::GridPlacement<Atom>> {
         self.grid_row_placement()
     }
