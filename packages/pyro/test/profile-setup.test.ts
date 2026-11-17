@@ -20,6 +20,11 @@ beforeAll(() => {
         const app = '<script>fetch("/api/slow").then(() => { history.replaceState(null, "", "/landing"); document.body.dataset.landed = "1"; })</script>';
         return new Response(`<!doctype html><div id="ready">ready</div>${app}`, { headers: { 'content-type': 'text/html' } });
       }
+      // `/timer`: the app redirects to `/landed` from a timer set at load.
+      if (path === '/timer') {
+        const app = '<script>addEventListener("load", () => setTimeout(() => { location.href = "/landed"; }, 700))</script>';
+        return new Response(`<!doctype html><div id="ready">ready</div>${app}`, { headers: { 'content-type': 'text/html' } });
+      }
       const late = path === '/slow'
         ? '<script>setTimeout(() => document.body.insertAdjacentHTML("beforeend", "<i id=late>late</i>"), 300)</script>'
         : fixed ? '<i id="late">late</i>' : '';
@@ -144,6 +149,18 @@ test('a setup runs once the page has landed, also while a connection waits, and 
     await using page = await lp.page({ as: 'landing' });
     const r = await page.run([evaluate('window.setupAt', 'at'), evaluate('location.pathname', 'path'), evaluate('document.body.dataset.landed', 'landed')]);
     expect(r.values).toEqual({ at: '/landing', path: '/landing', landed: '1' });
+  } finally {
+    lp.close();
+  }
+}, 30000);
+
+test('a setup waits for a redirect the page set on a timer', async () => {
+  const lp = await Pyro.launch({ bin, args: ['--fork'] });
+  try {
+    await lp.profile('timer', { url: url('/timer'), setup: [evaluate('window.setupAt = location.pathname')] });
+    await using page = await lp.page({ as: 'timer' });
+    const r = await page.run([evaluate('window.setupAt', 'at'), evaluate('location.pathname', 'path')]);
+    expect(r.values).toEqual({ at: '/landed', path: '/landed' });
   } finally {
     lp.close();
   }

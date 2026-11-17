@@ -1784,7 +1784,7 @@ fn one_page(p: &PreparedProfile) -> PreparedProfile {
 /// Every page has loaded, gone quiet, run its setup and gone quiet again;
 /// pages are settled first, so forks start from their live size. A page
 /// that keeps timers due (polling) counts as quiet once it has been loaded
-/// for [`QUIET_WAIT`] with no request or navigation in flight, one that
+/// for [`QUIET_WAIT`] with no request, navigation or task pending, one that
 /// never gets there after [`LOAD_WAIT`]. A connection that waits does not
 /// cut this short: a fork must never start before its profile is set up
 /// and its page has settled. A profile whose setup fails (or whose page
@@ -1795,6 +1795,7 @@ fn ready_to_fork(snapshot: &mut Snapshot) -> bool {
         let host = snapshot.browser.host();
         let loaded = host.page_loaded(page);
         let work = host.page_work(page);
+        let timeouts = host.page_timeouts_due(page, QUIET_WAIT);
         let state = &mut snapshot.profiles[id];
         if !loaded {
             state.loaded_at = None;
@@ -1802,8 +1803,14 @@ fn ready_to_fork(snapshot: &mut Snapshot) -> bool {
             state.loaded_at = Some(Instant::now());
         }
         let loaded_for = state.loaded_at.map_or(Duration::ZERO, |t| t.elapsed());
-        let quiet = work.as_ref().is_none_or(|w| w.quiet())
-            || work.as_ref().is_some_and(|w| w.requests == 0 && w.navigations == 0) && loaded_for > QUIET_WAIT
+        // Quiet now, and no `setTimeout` due within QUIET_WAIT (an app that
+        // lands, or redirects, from a timer); else, once loaded for
+        // QUIET_WAIT, nothing in flight and nothing queued: a response whose
+        // completion is posted but has not run is no request any more, only
+        // a task, and its handler is often the landing redirect itself.
+        let quiet = work.as_ref().is_none_or(|w| w.quiet()) && timeouts == 0
+            || work.as_ref().is_some_and(|w| w.tasks == 0 && w.requests == 0 && w.navigations == 0)
+                && loaded_for > QUIET_WAIT
             || loaded_for > LOAD_WAIT;
         let waited = state.started.elapsed();
         if !(loaded && quiet || !loaded && waited > LOAD_WAIT) {
