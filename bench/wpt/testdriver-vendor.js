@@ -4,7 +4,7 @@
 // (window.__pyroTestdriver, a function returning a promise of the runner's JSON answer). Elements cannot cross the
 // binding: they go as their center in this frame's viewport, and the runner adds the offsets of the frames around it.
 // Implemented: click, send_keys, action_sequence (pointer, key, wheel and none sources), and with them bless, and
-// set_permission, get_computed_role and get_computed_label. The rest keeps testdriver.js's own "not implemented" rejections.
+// set_permission, get_computed_role, get_computed_label and delete_all_cookies. The rest keeps testdriver.js's own "not implemented" rejections.
 (function () {
   'use strict';
   const internal = window.test_driver_internal;
@@ -50,6 +50,9 @@
   }
   internal.get_computed_role = async (el) => (await aria(el)).role;
   internal.get_computed_label = async (el) => (await aria(el)).name;
+
+  // WebDriver's Delete All Cookies: the browser context's cookies.
+  internal.delete_all_cookies = () => call({ cmd: 'delete_all_cookies' });
 
   internal.action_sequence = (sources) => {
     // Element origins become this frame's viewport coordinates of the element's center.

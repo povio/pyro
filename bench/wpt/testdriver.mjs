@@ -122,6 +122,8 @@ export async function installTestdriver(context) {
         // Nothing in the accessibility tree (hidden, or presentational with no content): no role, no name.
         if (!m) return JSON.stringify({ role: '', name: '' });
         return JSON.stringify({ role: m[1], name: m[2] ? JSON.parse(m[2]) : '' });
+      } else if (c.cmd === 'delete_all_cookies') {
+        await context.clearCookies();
       } else if (c.cmd === 'set_permission') {
         // Browser.setPermission on the page's session applies to the page's browser context.
         const s = (sessions.get(page) ?? sessions.set(page, await context.newCDPSession(page)).get(page));
