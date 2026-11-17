@@ -285,8 +285,14 @@ fn haystack(dom: &Dom, document: NodeId) -> Haystack {
 }
 
 fn needle(text: &str) -> Vec<char> {
+    needle_of(text.trim())
+}
+
+/// pyro: [`needle`] keeping white space at its ends (Chromium: `text=PASS%20` matches only a
+/// "PASS" followed by white space; WPT css-pseudo `target-text-007`).
+fn needle_of(text: &str) -> Vec<char> {
     let mut out: Vec<char> = Vec::new();
-    for c in text.trim().chars() {
+    for c in text.chars() {
         if c.is_whitespace() {
             if out.last() != Some(&' ') {
                 out.push(' ');
@@ -334,7 +340,17 @@ impl Haystack {
     }
 
     fn matches(&self, directive: &TextDirective) -> Option<((NodeId, u32), (NodeId, u32))> {
-        let start = needle(&directive.start);
+        // pyro: a start with white space at its ends first as it is, then trimmed.
+        let untrimmed = needle_of(&directive.start);
+        if untrimmed != needle(&directive.start) && directive.end.is_none() {
+            if let Some(found) = self.matches_start(directive, untrimmed) {
+                return Some(found);
+            }
+        }
+        self.matches_start(directive, needle(&directive.start))
+    }
+
+    fn matches_start(&self, directive: &TextDirective, start: Vec<char>) -> Option<((NodeId, u32), (NodeId, u32))> {
         let end = directive.end.as_deref().map(needle);
         let prefix = directive.prefix.as_deref().map(needle);
         let suffix = directive.suffix.as_deref().map(needle);
