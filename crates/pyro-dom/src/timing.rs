@@ -262,6 +262,23 @@ pub struct TimingRules {
     /// `var()` declarations as substituted, parsed: by property and text
     /// (`None`: invalid at computed-value time).
     substituted: std::cell::RefCell<rustc_hash::FxHashMap<(&'static str, String), Option<Rc<Vec<(Longhand, Value)>>>>>,
+    /// [`TimingRules::animation_candidates`] as last computed, kept up to date
+    /// from the DOM's change journal.
+    candidates: std::cell::RefCell<CandidateCache>,
+    /// Whether an animation rule's selectors could change their matches on
+    /// a text change or a `style` attribute change (`:empty`, `:has()`,
+    /// `[style]`): computed once.
+    journal_unsafe: std::cell::OnceCell<bool>,
+}
+
+/// The animation candidates of one document at one DOM version.
+#[derive(Default)]
+struct CandidateCache {
+    /// DOM identity, version and document they were computed at.
+    at: Option<(u64, u64, NodeId)>,
+    elements: Vec<NodeId>,
+    /// The elements whose `style` attribute declares an animation.
+    inline: FxHashSet<NodeId>,
 }
 
 /// The cascaded value of each longhand for one element ([`TimingRules::lists`]):
@@ -339,11 +356,71 @@ impl TimingRules {
     /// The elements of `doc` that may run an animation: those a rule
     /// declaring an animation name matches, and those whose `style`
     /// attribute declares one.
+    ///
+    /// Cached per DOM version: after changes the journal shows to be text or
+    /// `style` attributes only (a measuring probe written and read in a loop),
+    /// the rules' matches stand and only those elements' inline declarations
+    /// are checked again, instead of querying every rule over the document
+    /// on each style flush.
     pub fn animation_candidates(&self, dom: &Dom, doc: NodeId) -> Vec<NodeId> {
         if self.keyframes.is_empty() {
             return Vec::new();
         }
-        self.candidates(dom, doc, Longhand::AnimationName, "animation")
+        let now = (dom.uid(), dom.version(), doc);
+        let mut cache = self.candidates.borrow_mut();
+        if cache.at == Some(now) {
+            return cache.elements.clone();
+        }
+        if let Some((uid, since, at_doc)) = cache.at {
+            if uid == now.0 && at_doc == doc && !self.journal_unsafe() && self.only_text_or_style_since(dom, since, &cache.inline) {
+                cache.at = Some(now);
+                return cache.elements.clone();
+            }
+        }
+        let elements = self.candidates(dom, doc, Longhand::AnimationName, "animation");
+        let inline = elements.iter().copied().filter(|&id| inline_declares(dom, id, "animation")).collect();
+        *cache = CandidateCache { at: Some(now), elements: elements.clone(), inline };
+        elements
+    }
+
+    /// Whether every change after `since` is a text change or a `style`
+    /// attribute change that leaves the element's inline animation
+    /// declaration as it was (in `inline` or not).
+    fn only_text_or_style_since(&self, dom: &Dom, since: u64, inline: &FxHashSet<NodeId>) -> bool {
+        let Some(changes) = dom.changes_since(since) else { return false };
+        let style = crate::dom::attr_name_hash("style");
+        for change in changes {
+            match change {
+                crate::dom::Change::Text(_) => {}
+                // A text or comment node inserted or removed (`textContent = …`): no selector sees
+                // it but `:empty` and `:has()` (journal_unsafe).
+                crate::dom::Change::Inserted(_, node) | crate::dom::Change::Removed(_, node, _) => {
+                    let id = dom.id_of(node);
+                    if dom.check(id).is_err() || dom.n(node).is_element() {
+                        return false;
+                    }
+                }
+                crate::dom::Change::Attr(idx, name, false) if name == style => {
+                    // A slot freed or reused later shows as a removal or insertion further on.
+                    let id = dom.id_of(idx);
+                    if inline_declares(dom, id, "animation") != inline.contains(&id) {
+                        return false;
+                    }
+                }
+                _ => return false,
+            }
+        }
+        true
+    }
+
+    fn journal_unsafe(&self) -> bool {
+        *self.journal_unsafe.get_or_init(|| {
+            use cssparser::ToCss;
+            self.rules.iter().any(|rule| {
+                let text = rule.selectors.to_css_string().to_ascii_lowercase();
+                text.contains(":empty") || text.contains(":has") || text.contains("[style")
+            })
+        })
     }
 
     fn candidates(&self, dom: &Dom, doc: NodeId, longhand: Longhand, inline_word: &str) -> Vec<NodeId> {
@@ -378,11 +455,7 @@ impl TimingRules {
         }
         if let Ok(descendants) = dom.descendants(doc) {
             for id in descendants {
-                let inline = dom
-                    .element(id)
-                    .ok()
-                    .and_then(|e| e.attr_local(&markup5ever::local_name!("style")))
-                    .is_some_and(|s| s.contains(inline_word));
+                let inline = inline_declares(dom, id, inline_word);
                 if inline && seen.insert(id.index()) {
                     out.push(id);
                 }
@@ -1219,4 +1292,12 @@ mod tests {
         assert_eq!(shown(Longhand::TransitionDuration, "0.150000001s"), "0.15s");
         assert_eq!(shown(Longhand::AnimationName, "a b"), "\"a b\"");
     }
+}
+
+/// Whether `id`'s `style` attribute mentions `word` (`animation`, `transition`).
+fn inline_declares(dom: &Dom, id: NodeId, word: &str) -> bool {
+    dom.element(id)
+        .ok()
+        .and_then(|e| e.attr_local(&markup5ever::local_name!("style")))
+        .is_some_and(|s| s.contains(word))
 }

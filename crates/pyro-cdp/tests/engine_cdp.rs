@@ -10556,3 +10556,72 @@ fn computed_style_inside_display_none_inherits_from_changed_ancestors() {
     assert_eq!(reads["c"], json!("rgb(200, 0, 0) underline"), "{r}");
     assert_eq!(reads["d"], json!("rgb(200, 0, 0) none"), "{r}");
 }
+
+/// 1,000 write/read pairs on a hidden measuring probe (Danex's textWidth: set
+/// font and text, read getBoundingClientRect) on a page with an animation
+/// rule and 3,000 elements, in ms.
+fn probe_pairs_ms(h: &mut Harness, elements: usize) -> f64 {
+    let cells: String = (0..elements).map(|i| format!("<span class=c{}>{i}</span>", i % 7)).collect();
+    load_html(
+        h,
+        &format!(
+            r#"<!doctype html><style>@keyframes spin{{to{{transform:rotate(1turn)}}}} .c3.on{{animation:spin 1s}}</style><div id=grid>{cells}</div>"#
+        ),
+    );
+    let r = h.page(
+        "Pyro.run",
+        json!({"timeout": 120000, "steps": [{"eval": {"as": "ms", "expression": "(() => {
+            const probe = document.createElement('span');
+            probe.style.cssText = 'position:absolute;visibility:hidden;white-space:pre;left:-9999px;top:0';
+            document.body.append(probe);
+            probe.getBoundingClientRect();
+            const t = performance.now(); let w = 0;
+            for (let i = 0; i < 1000; i++) {
+                probe.style.fontSize = i % 7 ? '13px' : '12px';
+                probe.textContent = 'DX09-' + i + ' 129.951';
+                w += probe.getBoundingClientRect().width;
+            }
+            return w > 0 ? performance.now() - t : -1;
+        })()"}}]}),
+    );
+    assert!(r.get("error").is_none(), "{r}");
+    r["result"]["reads"]["ms"].as_f64().unwrap()
+}
+
+#[test]
+fn measuring_probe_write_read_pairs_stay_cheap() {
+    // Each pair used to query every animation rule over the whole document
+    // (and walk it for counters), so its cost grew with the page. Compared
+    // with a small page rather than against a fixed budget, so that machine
+    // load cancels out.
+    let mut h = Harness::new();
+    probe_pairs_ms(&mut h, 30);
+    let small = probe_pairs_ms(&mut h, 30);
+    let big = probe_pairs_ms(&mut h, 3000);
+    eprintln!("probe pairs: 30 elements {small} ms, 3,000 elements {big} ms");
+    assert!(small > 0.0 && big > 0.0, "{small} {big}");
+    // Debug build: 13.4x before the journal-driven candidates, 4.8x after (the rest is the layout each read
+    // flushes, which still grows with the page).
+    assert!(big < small * 8.0 + 100.0, "1,000 probe pairs: {big} ms on 3,000 elements vs {small} ms on 30");
+}
+
+#[test]
+fn animations_start_after_text_only_changes_from_a_class_or_inline_style() {
+    // The candidate cache skips the rule query across text and `style`
+    // changes; a class or an inline animation added afterwards still starts.
+    let mut h = Harness::new();
+    load_html(
+        &mut h,
+        r#"<!doctype html><style>@keyframes spin{to{transform:rotate(1turn)}} .on{animation:spin 1s}</style><p id=p>a</p><i id=i></i><b id=b></b>"#,
+    );
+    let r = h.page(
+        "Pyro.run",
+        json!({"steps": [
+            {"eval": {"expression": "window.started = []; document.addEventListener('animationstart', e => started.push(e.target.id)); for (let k = 0; k < 50; k++) { p.textContent = 'x' + k; p.style.color = k % 2 ? 'red' : 'blue'; p.getBoundingClientRect(); } null"}},
+            {"eval": {"expression": "i.className = 'on'; b.style.animation = 'spin 2s'; null"}},
+            {"eval": {"expression": "new Promise(r => requestAnimationFrame(() => requestAnimationFrame(() => r(started.slice().sort()))))", "as": "started"}}
+        ]}),
+    );
+    assert!(r.get("error").is_none(), "{r}");
+    assert_eq!(r["result"]["reads"]["started"], json!(["b", "i"]), "{r}");
+}
