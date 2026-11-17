@@ -9003,6 +9003,28 @@ fn native_click_waits_for_hover_triggered_render_updates_before_pressing() {
     assert!(r.get("error").is_none(), "{r}");
 }
 
+/// Within one task the layout samples a running animation once (as Chromium
+/// samples its timelines once per frame): a box read twice 60 ms apart in
+/// the same task is in the same place. Sampled at each query, a task asking
+/// for geometry over and over re-synced the layout every 16 ms (Danex's
+/// dev-mode targets ran for minutes over a large view).
+#[test]
+fn a_running_animation_is_sampled_once_per_task() {
+    let mut h = Harness::new();
+    load_html(
+        &mut h,
+        "<!doctype html><style>@keyframes move{from{transform:translateX(0)}to{transform:translateX(1000px)}}#box{width:10px;height:10px;animation:move 1s linear infinite}</style><div id=box></div>",
+    );
+    let r = h.page("Pyro.run", json!({"timeout": 2000, "steps": [
+        {"eval": {"expression": "new Promise(resolve => setTimeout(() => { const b = document.querySelector('#box'); const a = b.getBoundingClientRect().x; const end = performance.now() + 60; while (performance.now() < end) {} const c = b.getBoundingClientRect().x; requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(() => resolve([a, c, b.getBoundingClientRect().x]), 60))); }, 20))", "as": "xs"}}
+    ]}));
+    assert!(r.get("error").is_none(), "{r}");
+    let xs = r["result"]["reads"]["xs"].as_array().cloned().unwrap_or_default();
+    assert_eq!(xs.len(), 3, "{r}");
+    assert_eq!(xs[0], xs[1], "same task, same sample: {r}");
+    assert_ne!(xs[0], xs[2], "a later task samples again: {r}");
+}
+
 #[test]
 fn click_waits_for_pending_resize_observer_popover_position() {
     let mut h = Harness::new();

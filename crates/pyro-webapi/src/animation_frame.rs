@@ -590,7 +590,7 @@ pub(crate) fn animates(
 /// The page's [`pyro_dom::animation::AnimationSource`]: what the layout
 /// engine samples at each sync (no transitions).
 pub(crate) fn source(page: &Rc<PageDom>) -> pyro_dom::animation::SharedAnimationSource {
-    Rc::new(Source { page: Rc::downgrade(page), clock: Cell::new(None) })
+    Rc::new(Source { page: Rc::downgrade(page), clock: Cell::new(None), stamp: Cell::new(None) })
 }
 
 struct Source {
@@ -603,6 +603,11 @@ struct Source {
     /// whole layout again every 16 ms while an infinite animation ran,
     /// minutes for a large page.
     clock: Cell<Option<(u64, f64)>>,
+    /// The stamp last computed in this task, with the animation and
+    /// `<animate>` generations it saw: every style and layout query asks
+    /// for it, and computing it walks every animation of the page (axe-core
+    /// asks some 10^5 times in one run on a large page).
+    stamp: Cell<Option<((u64, u64, u64), u64)>>,
 }
 
 impl Source {
@@ -621,10 +626,18 @@ impl Source {
 
 impl pyro_dom::animation::AnimationSource for Source {
     fn stamp(&self) -> u64 {
-        match self.page.upgrade() {
-            Some(page) if !page.is_disposed() => stamp(&page, self.now(&page)),
-            _ => 0,
+        let Some(page) = self.page.upgrade().filter(|page| !page.is_disposed()) else { return 0 };
+        let Some(seq) = pyro_runtime::task_seq() else { return stamp(&page, crate::event::page_now_ms(&page)) };
+        let key = |page: &PageDom| (seq, page.animation_events.generation.get(), crate::smil::version(page));
+        if let Some((at, value)) = self.stamp.get() {
+            if at == key(&page) {
+                return value;
+            }
         }
+        let value = stamp(&page, self.now(&page));
+        // Keyed by the generations after the walk (it reads `<animate>`).
+        self.stamp.set(Some((key(&page), value)));
+        value
     }
 
     fn frame(&self) -> AnimationFrame {
