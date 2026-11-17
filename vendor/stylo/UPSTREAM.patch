@@ -311,7 +311,7 @@ diff -ruN a/properties/helpers.mako.rs b/properties/helpers.mako.rs
                              if !context.builder.effective_zoom_for_inheritance.is_one() {
 diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 --- a/properties/longhands.toml	2026-11-11 19:55:57
-+++ b/properties/longhands.toml	2026-11-17 14:08:59
++++ b/properties/longhands.toml	2026-11-17 16:53:18
 @@ -473,7 +473,6 @@
  type = "BreakBetween"
  initial = "computed::BreakBetween::Auto"
@@ -451,12 +451,10 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  struct = "list"
  animation_type = "discrete"
  spec = "https://drafts.csswg.org/css-lists/#propdef-list-style-image"
-@@ -1425,6 +1439,17 @@
- struct = "position"
- boxed = true
+@@ -1427,6 +1441,17 @@
  spec = "https://drafts.csswg.org/css-images-3/#the-object-position"
-+affects = "layout"
-+
+ affects = "layout"
+ 
 +# pyro: `object-view-box: none | <basic-shape-rect>` (CSS Images 5): the part of a replaced
 +# element's content that is its view, as a `clip-path` value of `none` or one rectangle.
 +[object-view-box]
@@ -466,13 +464,18 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +parse_method = "parse_object_view_box"
 +animation_type = "discrete"
 +spec = "https://drafts.csswg.org/css-images-5/#the-object-view-box"
- affects = "layout"
- 
++affects = "layout"
++
  [offset-anchor]
-@@ -1857,6 +1882,26 @@
- animation_type = "discrete"
- affects = "paint"
- 
+ type = "PositionOrAuto"
+ initial = "computed::PositionOrAuto::auto()"
+@@ -1854,7 +1879,27 @@
+ struct = "box"
+ engine = "gecko"
+ spec = "https://drafts.csswg.org/css-scroll-snap-1/#scroll-snap-stop"
++animation_type = "discrete"
++affects = "paint"
++
 +[scroll-marker-group]
 +type = "ScrollMarkerGroup"
 +initial = "computed::ScrollMarkerGroup::NONE"
@@ -488,14 +491,12 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +initial = "computed::ScrollTargetGroup::None"
 +struct = "box"
 +engine = "servo"
-+animation_type = "discrete"
+ animation_type = "discrete"
 +servo_restyle_damage = "repaint"
 +spec = "https://drafts.csswg.org/css-overflow-5/#scroll-target-group"
-+affects = "paint"
-+
+ affects = "paint"
+ 
  [scroll-snap-type]
- type = "ScrollSnapType"
- initial = "computed::ScrollSnapType::none()"
 @@ -2117,7 +2162,6 @@
  type = "TransformBox"
  initial = "computed::TransformBox::ViewBox"
@@ -600,7 +601,26 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  animation_type = "discrete"
  affects = "layout"
  type = "BoxDecorationBreak"
-@@ -3770,7 +3844,6 @@
+@@ -3730,6 +3804,18 @@
+ type = "TopLayer"
+ initial = "computed::TopLayer::None"
+ 
++# pyro: css-position-4 `overlay`, for Servo: whether an element in the top layer is rendered there
++# (`auto`). The UA sheet sets it on top-layer elements; a discrete transition keeps it, and the element in
++# the top layer, past their removal (pyro-dom, blitz-paint).
++[overlay]
++struct = "box"
++engine = "servo"
++spec = "https://drafts.csswg.org/css-position-4/#overlay"
++animation_type = "discrete"
++affects = "layout"
++type = "TopLayer"
++initial = "computed::TopLayer::None"
++
+ [scroll-behavior]
+ struct = "box"
+ servo_pref = "layout.css.scroll-behavior.enabled"
+@@ -3770,7 +3856,6 @@
  
  [column-fill]
  struct = "column"
@@ -608,7 +628,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/css-multicol/#propdef-column-fill"
  animation_type = "discrete"
  affects = "layout"
-@@ -3901,9 +3974,9 @@
+@@ -3901,9 +3986,9 @@
  type = "TextOrientation"
  initial = "computed::TextOrientation::Mixed"
  
@@ -619,7 +639,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/css-images/#propdef-image-orientation"
  animation_type = "discrete"
  affects = "layout"
-@@ -4093,6 +4166,17 @@
+@@ -4093,6 +4178,17 @@
  type = "BoxSizing"
  initial = "computed::BoxSizing::ContentBox"
  
@@ -637,7 +657,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  [object-fit]
  struct = "position"
  spec = "https://drafts.csswg.org/css-images/#propdef-object-fit"
-@@ -4287,9 +4371,64 @@
+@@ -4287,9 +4383,64 @@
  affects = "layout"
  gecko_ffi_name = "mBoxOrient"
  aliases = ["-webkit-box-orient"]

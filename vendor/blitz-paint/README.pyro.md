@@ -1058,3 +1058,7 @@ text cut at the box (`TextCut`), as Appendix E orders a line's boxes and text (c
   (`truncate_line`, parley `inline_min_coord`/`inline_max_coord`); an atomic inline that does not fit before its line's
   ellipsis is not painted (`hidden_by_ellipsis`, Blink's `LineTruncator`). WPT css-overflow `text-overflow-006`, `-010`,
   `text-overflow-ellipsis-vertical-001`, `-vertical-rtl-001`.
+
+Round 4 lane G: `draw_sub_document` records an iframe's document at its viewport's origin and appends it with the
+frame's whole transform, clipped to the content box (upstream applied the translation only). WPT css-transforms
+`transform-iframe-002`, `transform-iframe-scroll-position`.

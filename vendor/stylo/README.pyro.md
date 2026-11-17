@@ -381,3 +381,6 @@ Round 4 lane B: `frame-sizing` (css-sizing-4 responsive iframes) for the servo e
 `values/specified/position.rs` `FrameSizing` (`auto | content-width | content-height | content-block-size |
 content-inline-size`, re-exported in the specified and computed value modules, a Copy type in `properties/data.py`).
 blitz-dom reads it for iframes.
+
+Round 4 lane G: `overlay` (css-position-4) for the servo engine in `properties/longhands.toml`, of the existing
+`TopLayer` type (`none | auto`), discrete. blitz-dom renders a top-layer element there only while it is `auto`.

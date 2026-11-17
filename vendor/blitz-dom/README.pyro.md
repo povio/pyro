@@ -2569,3 +2569,15 @@ does not let margins collapse through it, even when its lines have no height (CS
   `resolve.rs`): a `::marker` `content` that reads counters other than `counter(list-item)` is evaluated by the
   counter walk in tree order (`BaseDocument::marker_texts`); the first one met turns the walk on and the resolve runs
   one more pass (`marker_counters_pending`).
+
+Round 4 lane G:
+- Iframes (`src/iframe.rs`, `src/resolve.rs`): a `srcdoc` frame document from pyro's render snapshot resolves
+  against its `data-pyro-frame-url`; a sub-document's viewport is the iframe's content box (upstream took the border
+  box) and keeps the `data-pyro-frame-scroll` scroll position. WPT css-transforms `transform-iframe-002`,
+  `-scroll-position`, css-sizing `dynamic-available-size-iframe`.
+- Size containment (`src/layout/mod.rs` `size_contained_size`): an inline replaced element is contained (an atomic
+  inline). WPT css-sizing `contain-intrinsic-size-012/017/020`.
+- `overlay` (`src/layout/paint_tree.rs`, `assets/default.css`): a top-layer element is rendered there only while its
+  `overlay` is `auto`; `dialog:modal, :popover-open { overlay: auto }` (not `!important`: sampled transition values
+  rank below important declarations). WPT css-position `overlay-transition-backdrop`, `-in-rendering`,
+  `-out-rendering`.
