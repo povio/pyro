@@ -1038,18 +1038,30 @@ impl Layout {
     }
 
     /// `offsetWidth` / `offsetHeight` (Element.zig:1915-1927).
+    /// Layout sizes, as Chromium's: a CSS transform on the element or an
+    /// ancestor scales its client rect, not its `offsetWidth`.
     pub fn offset_width(&self, dom: &Dom, el: NodeId) -> f64 {
         if !self.is_visible(dom, el) {
             return 0.0;
         }
-        self.layout_box(dom, el).map_or(0.0, |b| b.rect.width)
+        self.untransformed_size(dom, el).0
     }
 
     pub fn offset_height(&self, dom: &Dom, el: NodeId) -> f64 {
         if !self.is_visible(dom, el) {
             return 0.0;
         }
-        self.layout_box(dom, el).map_or(0.0, |b| b.rect.height)
+        self.untransformed_size(dom, el).1
+    }
+
+    /// The border box's size before transforms (the engine's quads keep it);
+    /// the laid-out rect's for boxes without quads (SVG content).
+    fn untransformed_size(&self, dom: &Dom, el: NodeId) -> (f64, f64) {
+        let Some(b) = self.layout_box(dom, el) else { return (0.0, 0.0) };
+        match self.box_quads(dom, el) {
+            Some(q) if q.transformed => (q.width, q.height),
+            _ => (b.rect.width, b.rect.height),
+        }
     }
 
     /// `offsetTop`/`offsetLeft`: border-box offset from the offset parent's
@@ -1440,11 +1452,34 @@ impl Layout {
                 return (dx, dy);
             }
             if let Some(&(x, y)) = self.element_scroll.get(&dom.id_of(parent)) {
-                dx += x as f64;
-                dy += y as f64;
+                let (kx, ky) = self.scroller_scale(dom, dom.id_of(parent), (x, y));
+                dx += x as f64 * kx;
+                dy += y as f64 * ky;
             }
             cur = parent;
         }
+    }
+
+    /// How much one CSS px of `scroller`'s scroll offset moves its content
+    /// in client px, per axis: 1 unless a transform on the scroller or an
+    /// ancestor scales it (a scroller inside a `scale(0.5)` stage moves its
+    /// content half as far as its `scrollTop`, as in Chromium).
+    fn scroller_scale(&self, dom: &Dom, scroller: NodeId, offset: (i32, i32)) -> (f64, f64) {
+        if offset == (0, 0) {
+            return (1.0, 1.0);
+        }
+        let Some(source) = self.synced_geometry_source(dom) else { return (1.0, 1.0) };
+        let Some(q) = source.element_quads(crate::snapshot::render_key(scroller)) else { return (1.0, 1.0) };
+        if !q.transformed {
+            return (1.0, 1.0);
+        }
+        let b = q.border;
+        let span = |i: usize| {
+            let v = [b[i], b[i + 2], b[i + 4], b[i + 6]];
+            v.iter().copied().fold(f64::MIN, f64::max) - v.iter().copied().fold(f64::MAX, f64::min)
+        };
+        let ratio = |client: f64, local: f64| if client > 0.0 && local > 0.0 { client / local } else { 1.0 };
+        (ratio(span(0), q.width), ratio(span(1), q.height))
     }
 
     fn bounding_client_rect_for_visible(&self, dom: &Dom, el: NodeId) -> Rect {
@@ -1507,8 +1542,9 @@ impl Layout {
             let parent = dom.n(dom.check(node).expect("node in the current hit-test tree")).parent;
             if parent != NIL {
                 if let Some(&(x, y)) = self.element_scroll.get(&dom.id_of(parent)) {
-                    offset.0 += x as f64;
-                    offset.1 += y as f64;
+                    let (kx, ky) = self.scroller_scale(dom, dom.id_of(parent), (x, y));
+                    offset.0 += x as f64 * kx;
+                    offset.1 += y as f64 * ky;
                 }
             }
             cache.insert(node, offset);
@@ -2767,6 +2803,37 @@ impl Layout {
     /// first. Recompute relative geometry after each move so an inner offset is
     /// not counted again by an outer container. Explicitly scrolled containers
     /// retain the previous reveal behavior even without an overflow declaration.
+    /// `target` (a client rect) inside `node`'s scrollport, in `node`'s own
+    /// CSS px: (left, width, top, height) from the padding box's top-left.
+    /// A transformed (scaled) container or ancestor shows its scroll offsets
+    /// scaled, so client distances divide by the container's scale, as
+    /// Blink's scroll into view maps the rect into the scroller's space.
+    fn rect_in_scrollport(&self, dom: &Dom, node: NodeId, target: Rect) -> (f64, f64, f64, f64) {
+        let container = self.bounding_client_rect(dom, node);
+        let scale = |client: f64, local: f64| if client > 0.0 && local > 0.0 { client / local } else { 1.0 };
+        let (width, height) = self.untransformed_size(dom, node);
+        let sx = scale(container.width, width);
+        let sy = scale(container.height, height);
+        (
+            (target.left() - container.left()) / sx - self.client_left(dom, node),
+            target.width / sx,
+            (target.top() - container.top()) / sy - self.client_top(dom, node),
+            target.height / sy,
+        )
+    }
+
+    /// Whether `node` is a scroll container on either axis (`hidden`,
+    /// `scroll` or `auto`): scroll into view scrolls every one, `hidden`
+    /// included, as Chromium does for script and for an action's reveal.
+    fn is_scroll_container(&self, dom: &Dom, node: NodeId) -> bool {
+        use style::values::specified::box_::Overflow as O;
+        let scroller = |o: O| matches!(o, O::Hidden | O::Scroll | O::Auto);
+        self.style.stylo_style(dom, node).is_some_and(|s| {
+            let b = s.get_box();
+            scroller(b.overflow_x) || scroller(b.overflow_y)
+        })
+    }
+
     fn reveal_in_scroll_ancestors(&mut self, dom: &Dom, el: NodeId) -> Vec<ScrollTarget> {
         let mut moved = Vec::new();
         let mut cur = dom.parent_element(el).ok().flatten();
@@ -2774,24 +2841,17 @@ impl Layout {
             if self.is_root_container(dom, node) {
                 break;
             }
-            let axes = self.style.overflow_axes(dom, node);
+            let any = self.is_scroll_container(dom, node);
+            let axes = ScrollAxes { x: any, y: any };
             let explicit = self.element_scroll.contains_key(&node);
             if axes.x || axes.y || explicit {
                 let target = self.bounding_client_rect(dom, el);
-                let container = self.bounding_client_rect(dom, node);
+                let (x, width, offset, height) = self.rect_in_scrollport(dom, node, target);
                 let left = (axes.x || explicit)
-                    .then(|| {
-                        nearest_scroll_offset(
-                            target.left() - container.left(),
-                            target.width,
-                            self.client_width(dom, node),
-                            self.scroll_left(node) as i64,
-                        )
-                    })
+                    .then(|| nearest_scroll_offset(x, width, self.client_width(dom, node), self.scroll_left(node) as i64))
                     .flatten();
-                let offset = target.top() - container.top();
                 let visible = self.client_height(dom, node);
-                let top = ((axes.y || explicit) && (offset < 0.0 || offset + target.height > visible)).then(|| {
+                let top = ((axes.y || explicit) && (offset < 0.0 || offset + height > visible)).then(|| {
                     (offset + self.scroll_top(node) as f64).trunc().clamp(i32::MIN as f64, i32::MAX as f64) as i32
                 });
                 if self.element_scroll_to(dom, node, left, top) {
@@ -2820,28 +2880,16 @@ impl Layout {
             let axes = self.style.overflow_axes(dom, node);
             if axes.x || axes.y {
                 let target = self.bounding_client_rect(dom, el);
-                let container = self.bounding_client_rect(dom, node);
+                let (x, width, y, height) = self.rect_in_scrollport(dom, node, target);
+                let x = x + self.client_left(dom, node);
+                let y = y + self.client_top(dom, node);
                 let left = axes
                     .x
-                    .then(|| {
-                        focus_scroll_offset(
-                            target.left() - container.left(),
-                            target.width,
-                            self.client_width(dom, node),
-                            self.scroll_left(node) as i64,
-                        )
-                    })
+                    .then(|| focus_scroll_offset(x, width, self.client_width(dom, node), self.scroll_left(node) as i64))
                     .flatten();
                 let top = axes
                     .y
-                    .then(|| {
-                        focus_scroll_offset(
-                            target.top() - container.top(),
-                            target.height,
-                            self.client_height(dom, node),
-                            self.scroll_top(node) as i64,
-                        )
-                    })
+                    .then(|| focus_scroll_offset(y, height, self.client_height(dom, node), self.scroll_top(node) as i64))
                     .flatten();
                 if self.element_scroll_to(dom, node, left, top) {
                     moved.push(ScrollTarget::Container(node));
@@ -2935,8 +2983,8 @@ impl Layout {
     /// Script-facing `Element.scrollIntoView(options)` with an explicit
     /// alignment per axis (`block` vertical, `inline` horizontal; CSSOM View
     /// "scroll an element into view"), changed targets in delivery order.
-    /// The default `{block: start, inline: nearest}` keeps
-    /// [`Layout::scroll_into_view_targets`]'s policy.
+    /// The default `{block: start, inline: nearest}` aligns in every scroll
+    /// container on the way too, as Chromium does.
     pub fn scroll_into_view_aligned_script_targets(
         &mut self,
         dom: &Dom,
@@ -2944,11 +2992,7 @@ impl Layout {
         block: ScrollAlign,
         inline: ScrollAlign,
     ) -> Vec<ScrollTarget> {
-        let moved = if block == ScrollAlign::Start && inline == ScrollAlign::Nearest {
-            self.scroll_into_view_targets(dom, el)
-        } else {
-            self.scroll_into_view_offset_targets(dom, el, inline.offset_fn(), block.offset_fn(), true)
-        };
+        let moved = self.scroll_into_view_offset_targets(dom, el, inline.offset_fn(), block.offset_fn(), true);
         self.set_scroll_target(dom, el);
         moved
     }
@@ -3029,44 +3073,34 @@ impl Layout {
             if self.is_root_container(dom, node) {
                 break;
             }
-            let axes = if script {
-                // A scroll container scrolls on both axes: the other axis's
-                // `visible` computes to `auto` and `clip` to `hidden`.
-                use style::values::specified::box_::Overflow as O;
-                let scroller = |o: O| matches!(o, O::Hidden | O::Scroll | O::Auto);
-                let any = self.style.stylo_style(dom, node).is_some_and(|s| {
-                    let b = s.get_box();
-                    scroller(b.overflow_x) || scroller(b.overflow_y)
-                });
-                ScrollAxes { x: any, y: any }
-            } else {
-                self.style.overflow_axes(dom, node)
-            };
+            // A scroll container scrolls on both axes: the other axis's
+            // `visible` computes to `auto` and `clip` to `hidden`. `hidden`
+            // scrolls for an action's reveal too (Chromium's
+            // DOM.scrollIntoViewIfNeeded brings a box past an overflow:
+            // hidden stage's edge in).
+            let any = self.is_scroll_container(dom, node);
+            let mut axes = ScrollAxes { x: any, y: any };
             let explicit = !script && self.element_scroll.contains_key(&node);
+            let target = self.bounding_client_rect(dom, el);
+            // From the scrollport (the padding box) in the container's own px, as
+            // Blink's scroll into view measures for script and for an action's reveal alike.
+            let (x, width, y, height) = self.rect_in_scrollport(dom, node, target);
+            if !script && any {
+                // An action's reveal leaves a visually hidden wrapper (a 1px
+                // overflow: hidden box around a native control) alone: on an
+                // axis that does not scroll for the user it scrolls only a box
+                // the target fits in, so a clipped control still falls back to
+                // its label instead of showing a sliver.
+                let user = self.style.overflow_axes(dom, node);
+                axes.x = user.x || width <= self.client_width(dom, node);
+                axes.y = user.y || height <= self.client_height(dom, node);
+            }
             if axes.x || axes.y || explicit {
-                let target = self.bounding_client_rect(dom, el);
-                let container = self.bounding_client_rect(dom, node);
                 let left = (axes.x || explicit)
-                    .then(|| {
-                        offset_x(
-                            // From the scrollport (the padding box), as Blink's scroll into view
-                            // measures for script and for an action's reveal alike.
-                            target.left() - container.left() - self.client_left(dom, node),
-                            target.width,
-                            self.client_width(dom, node),
-                            self.scroll_left(node) as i64,
-                        )
-                    })
+                    .then(|| offset_x(x, width, self.client_width(dom, node), self.scroll_left(node) as i64))
                     .flatten();
                 let top = (axes.y || explicit)
-                    .then(|| {
-                        offset_y(
-                            target.top() - container.top() - self.client_top(dom, node),
-                            target.height,
-                            self.client_height(dom, node),
-                            self.scroll_top(node) as i64,
-                        )
-                    })
+                    .then(|| offset_y(y, height, self.client_height(dom, node), self.scroll_top(node) as i64))
                     .flatten();
                 if self.element_scroll_to(dom, node, left, top) {
                     moved.push(ScrollTarget::Container(node));

@@ -10411,3 +10411,53 @@ fn animation_frames_advance_moving_geometry_after_client_activity() {
             "scripted={scripted}: {xs:?}");
     }
 }
+
+#[test]
+fn scroll_into_view_and_actions_scroll_every_container_inside_a_scaled_layer() {
+    // Danex's lab canvas: a scaled world in an overflow: hidden stage, a
+    // scroller inside it. Chromium 147 (measured, 800x600): scrollIntoView()
+    // scrolls the scroller 683 of its own px (its content moves 683 * 0.6
+    // client px) and the window 142, leaving the target at the top; an
+    // overflow: hidden stage scrolls too (760 for a box past its edge);
+    // offsetWidth ignores the transform; click and hover scroll and hit.
+    let mut h = Harness::new();
+    h.page(
+        "Emulation.setDeviceMetricsOverride",
+        json!({"width": 800, "height": 600, "deviceScaleFactor": 1, "mobile": false}),
+    );
+    let rows: String = (0..20).map(|_| "<div style=\"height:40px;border-bottom:1px solid\"></div>").collect();
+    load_html(
+        &mut h,
+        &format!(
+            r#"<!doctype html><body style="margin:0">
+<div id=stage style="position:absolute;left:0;top:0;width:2000px;height:1500px;transform:scale(0.6);transform-origin:0 0">
+<div id=sc style="position:absolute;left:100px;top:100px;width:400px;height:300px;overflow:auto">{rows}<button id=target style="height:40px">target</button><div style="height:123px"></div></div>
+</div>
+<div id=clip style="position:absolute;left:200px;top:0;width:500px;height:300px;overflow:hidden">
+<div style="position:absolute;left:0;top:0;transform:translate(40px,30px) scale(0.5);transform-origin:0 0"><div style="position:absolute;left:1600px;top:0;width:400px;height:100px"><button id=far>far</button></div></div>
+</div><output id=out></output>"#
+        ),
+    );
+    let read = "[document.getElementById('sc').scrollTop, scrollY, Math.round(document.getElementById('target').getBoundingClientRect().top), document.getElementById('sc').offsetWidth, document.getElementById('sc').getBoundingClientRect().width]";
+    let r = h.page(
+        "Pyro.run",
+        json!({"steps": [
+            {"eval": {"expression": "document.getElementById('target').scrollIntoView(); null"}},
+            {"eval": {"expression": read, "as": "after"}}
+        ]}),
+    );
+    assert!(r.get("error").is_none(), "{r}");
+    assert_eq!(r["result"]["reads"]["after"], json!([683, 142, 0, 400, 240]), "{r}");
+    let r = h.page(
+        "Pyro.run",
+        json!({"timeout": 2000, "steps": [
+            {"eval": {"expression": "document.getElementById('sc').scrollTop = 0; scrollTo(0, 0); for (const id of ['target', 'far']) document.getElementById(id).addEventListener('click', () => document.getElementById('out').textContent += id + ' '); null"}},
+            {"act": {"locator": {"css": "#target"}, "action": "click"}},
+            {"act": {"locator": {"css": "#far"}, "action": "click"}},
+            {"check": {"locator": {"css": "#out"}, "assert": "text", "expected": "target far "}},
+            {"eval": {"expression": "[document.getElementById('sc').scrollTop > 0, document.getElementById('clip').scrollLeft > 0]", "as": "scrolled"}}
+        ]}),
+    );
+    assert!(r.get("error").is_none(), "{r}");
+    assert_eq!(r["result"]["reads"]["scrolled"], json!([true, true]), "{r}");
+}
