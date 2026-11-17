@@ -70,3 +70,39 @@ fn a_double_collapsed_border_is_two_lines() {
     let blue = |img: &RgbaImage| img.data.chunks(4).filter(|p| p[..3] == [0, 0, 255]).count();
     assert!(blue(&double) * 4 < blue(&solid) * 3, "{} {}", blue(&double), blue(&solid));
 }
+
+/// The rows of `color` (y positions with a pixel of it).
+fn rows(img: &RgbaImage, color: [u8; 3]) -> Vec<u32> {
+    (0..img.height)
+        .filter(|&y| {
+            (0..img.width).any(|x| {
+                let i = (y as usize * img.width as usize + x as usize) * 4;
+                [img.data[i], img.data[i + 1], img.data[i + 2]] == color
+            })
+        })
+        .collect()
+}
+
+#[test]
+fn only_the_first_header_group_moves_to_the_top() {
+    let img = render(
+        "<table style='border-spacing:0'><tbody><tr><td style='height:10px;background:#00f'></td></tr></tbody>
+         <thead><tr><td style='height:10px;background:#0f0'></td></tr></thead>
+         <thead><tr><td style='height:10px;width:10px;background:#f00'></td></tr></thead></table>",
+    );
+    let (green, blue, red) = (rows(&img, [0, 255, 0]), rows(&img, [0, 0, 255]), rows(&img, [255, 0, 0]));
+    assert!(green[0] < blue[0] && blue[0] < red[0], "{green:?} {blue:?} {red:?}");
+}
+
+#[test]
+fn a_cell_after_a_two_row_cell_is_in_its_own_column() {
+    // The second column's background paints the cell under the two-row cell's neighbour, not the
+    // cell after it (the cells' columns count the rows a row-spanning cell takes).
+    let img = render(
+        "<table style='border-spacing:0'><col><col style='background:#00f'><col>
+         <tr><td rowspan=2 style='width:10px;height:20px'></td><td style='width:10px'></td><td style='width:10px'></td></tr>
+         <tr><td style='height:10px'></td><td style='height:10px'></td></tr></table>",
+    );
+    let blue = columns(&img, [0, 0, 255]);
+    assert!((10..16).contains(&blue), "one column of blue: {blue}");
+}

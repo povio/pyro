@@ -20406,7 +20406,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
      style: taffy::Style<Atom>,
  }
  
-@@ -101,6 +1327,11 @@
+@@ -101,13 +1327,21 @@
          self.col
      }
  
@@ -20418,7 +20418,18 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
      fn place(&mut self, colspan: u16, rowspan: u16) {
          let end = self.col + colspan;
          if self.rowspans.len() < end as usize {
-@@ -133,6 +1364,13 @@
+             self.rowspans.resize(end as usize, 0);
+         }
++        // pyro: `start_row` counts a row down before the next row looks: the rows after this one
++        // that the cell still occupies are `rowspan - 1`, so `rowspan` before that count (a cell
++        // after a two-row cell went into its column).
+         for remaining in &mut self.rowspans[self.col as usize..end as usize] {
+-            *remaining = rowspan - 1;
++            *remaining = rowspan;
+         }
+         self.col = end;
+         self.num_columns = self.num_columns.max(end);
+@@ -133,6 +1367,13 @@
      /// specified length `height`. Such rows do not receive excess table height when there
      /// are unconstrained rows to receive it instead.
      pub is_constrained: bool,
@@ -20432,7 +20443,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
  }
  
  /// The used width of one border side: border widths are not adjusted for
-@@ -156,8 +1394,37 @@
+@@ -156,8 +1397,37 @@
  }
  
  /// Convert a table part's style into the table's writing mode
@@ -20472,7 +20483,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
  }
  
  fn side_width(width: app_units::Au, style: BorderStyle) -> f32 {
-@@ -200,10 +1467,48 @@
+@@ -200,10 +1470,48 @@
      dim.into()
  }
  
@@ -20525,7 +20536,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
      let mut cells: Vec<TableCell> = Vec::new();
      let mut oof_children: Vec<(NodeId, taffy::Position)> = Vec::new();
      let mut rows: Vec<TableRow> = Vec::new();
-@@ -211,15 +1516,28 @@
+@@ -211,15 +1519,28 @@
      let mut cursor = ColumnCursor::default();
  
      let wm = table_wm(doc, table_root_node_id);
@@ -20557,7 +20568,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
      style.item_is_table = true;
      // Use `dense` row-flow so that each cell scans the row from its
      // leftmost column for the first free track. Without `dense`,
-@@ -246,14 +1564,19 @@
+@@ -246,32 +1567,48 @@
      for child_id in children.iter().copied() {
          collect_columns(doc, child_id, wm, &mut columns, &mut column_sizes);
      }
@@ -20579,7 +20590,37 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
      let mut first_cell_border: Option<ServoArc<Border>> = None;
      // Percentage widths set on first-row cells: (column index, percentage, padding + border)
      let mut percent_columns: Vec<(u16, f32, f32)> = Vec::new();
-@@ -271,7 +1594,7 @@
+     let mut calc_values: Vec<LengthPercentage> = Vec::new();
+-    // Header row groups are laid out before other rows, and footer row groups after
+-    let row_group_order = |doc: &BaseDocument, child_id: NodeId| -> u8 {
+-        let display = doc.nodes[child_id]
+-            .primary_styles()
+-            .map(|s| s.clone_display());
+-        match display.map(|d| d.inside()) {
+-            Some(DisplayInside::TableHeaderGroup) => 0,
+-            Some(DisplayInside::TableFooterGroup) => 2,
+-            _ => 1,
++    // Header row groups are laid out before other rows, and footer row groups after.
++    // pyro: only the first of each (CSS 2.1 § 17.2: the others are treated as row groups, as
++    // browsers do; WPT css-tables `row-group-order`).
++    let group_kind = |doc: &BaseDocument, child_id: NodeId| {
++        doc.nodes[child_id].primary_styles().map(|s| s.clone_display().inside())
++    };
++    let first_of = |kind: DisplayInside| {
++        children
++            .iter()
++            .copied()
++            .find(|&id| !captions.contains(&id) && group_kind(doc, id) == Some(kind))
++    };
++    let (first_header, first_footer) = (first_of(DisplayInside::TableHeaderGroup), first_of(DisplayInside::TableFooterGroup));
++    let row_group_order = |_doc: &BaseDocument, child_id: NodeId| -> u8 {
++        if Some(child_id) == first_header {
++            0
++        } else if Some(child_id) == first_footer {
++            2
++        } else {
++            1
+         }
      };
      for order in 0..3 {
          for child_id in children.iter().copied() {
@@ -20588,7 +20629,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
                  continue;
              }
              collect_table_cells(
-@@ -288,9 +1611,22 @@
+@@ -288,9 +1625,22 @@
                  &mut column_sizes,
                  &mut first_cell_border,
                  &mut percent_columns,
@@ -20611,7 +20652,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
      let remaining_column = if is_fixed {
          style_helpers::minmax(style_helpers::length(0.0), style_helpers::fr(1.0))
      } else {
-@@ -308,6 +1644,61 @@
+@@ -308,6 +1658,61 @@
      }
      let num_columns = cursor.num_columns.max(column_sizes.len() as u16);
      column_sizes.resize(num_columns as usize, remaining_column);
@@ -20673,7 +20714,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
      if is_fixed {
          // In the fixed table layout algorithm, percentage column widths resolve against
          // the table's content width minus the horizontal border-spacing between columns,
-@@ -343,36 +1734,59 @@
+@@ -343,36 +1748,59 @@
                  *column = percent_track(percent, extra);
              }
          }
@@ -20755,7 +20796,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
              let padding = style.padding.resolve_or_zero(None, resolve_calc_value);
              style.padding = taffy::Rect {
                  left: style_helpers::length(padding.left + spacing_x),
-@@ -380,6 +1794,32 @@
+@@ -380,6 +1808,32 @@
                  top: style_helpers::length(padding.top + spacing_y),
                  bottom: style_helpers::length(padding.bottom + spacing_y),
              };
@@ -20788,7 +20829,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
              taffy::Size {
                  width: style_helpers::length(spacing_x),
                  height: style_helpers::length(spacing_y),
-@@ -409,30 +1849,952 @@
+@@ -409,30 +1863,952 @@
              top: style.gap.height,
              bottom: style.gap.height,
          };
@@ -21763,7 +21804,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
  }
  
  /// Collect `<col>` elements (and `display: table-column` elements) along with their
-@@ -464,50 +2826,236 @@
+@@ -464,50 +2840,236 @@
              for column in &mut columns[first_column..] {
                  column.group.get_or_insert(node_id);
              }
@@ -22040,7 +22081,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
      }
  }
  
-@@ -526,10 +3074,12 @@
+@@ -526,10 +3088,12 @@
      columns: &mut Vec<TrackSizingFunction>,
      first_cell_border: &mut Option<ServoArc<Border>>,
      percent_columns: &mut Vec<(u16, f32, f32)>,
@@ -22054,7 +22095,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
          return;
      }
  
-@@ -548,6 +3098,8 @@
+@@ -548,6 +3112,8 @@
      // block rather than as part of the table grid.
      let position = node.primary_styles().unwrap().clone_position();
      if position.is_absolutely_positioned() {
@@ -22063,7 +22104,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
          oof_children.push((node_id, stylo_taffy::convert::position(position)));
          return;
      }
-@@ -557,9 +3109,18 @@
+@@ -557,9 +3123,18 @@
          | DisplayInside::TableHeaderGroup
          | DisplayInside::TableFooterGroup
          | DisplayInside::Contents => {
@@ -22084,7 +22125,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
                  doc.nodes[child_id]
                      .remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
                  collect_table_cells(
-@@ -576,10 +3137,14 @@
+@@ -576,10 +3151,14 @@
                      columns,
                      first_cell_border,
                      percent_columns,
@@ -22100,7 +22141,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
                  for row in &mut rows[first_row..] {
                      row.group.get_or_insert(node_id);
                  }
-@@ -590,19 +3155,32 @@
+@@ -590,19 +3169,32 @@
              *row += 1;
              cursor.start_row();
  
@@ -22138,7 +22179,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
                  collect_table_cells(
                      doc,
                      child_id,
-@@ -617,24 +3195,71 @@
+@@ -617,24 +3209,71 @@
                      columns,
                      first_cell_border,
                      percent_columns,
@@ -22217,7 +22258,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
  
              // In the collapsed borders model the borders are laid out as gutters between
              // the cells (see the table's `gap`) rather than as part of the cells
-@@ -653,34 +3278,35 @@
+@@ -653,34 +3292,35 @@
                  style.min_size.width = style_helpers::length(0.0);
              }
  
@@ -22273,7 +22314,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
                              // Resolved in `build_table_context` once the column count is known
                              percent_columns.push((col, style.size.width.value(), extra));
                              style_helpers::percent(style.size.width.value())
-@@ -726,11 +3352,78 @@
+@@ -726,11 +3366,78 @@
                  }
              }
  
@@ -22352,7 +22393,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
                  style,
              });
  
-@@ -740,7 +3433,9 @@
+@@ -740,7 +3447,9 @@
          | DisplayInside::FlowRoot
          | DisplayInside::Flex
          | DisplayInside::Grid
@@ -22363,7 +22404,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
              node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
              // Probably a table caption: ignore
              // println!(
-@@ -801,7 +3496,7 @@
+@@ -801,7 +3510,7 @@
      type CustomIdent = Atom;
  
      fn get_core_container_style(&self, _node_id: taffy::NodeId) -> &taffy::Style<Atom> {
@@ -22372,7 +22413,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
      }
  
      fn resolve_calc_value(&self, calc_ptr: *const (), parent_size: f32) -> f32 {
-@@ -809,7 +3504,9 @@
+@@ -809,7 +3518,9 @@
      }
  
      fn set_unrounded_layout(&mut self, node_id: taffy::NodeId, layout: &taffy::Layout) {
@@ -22383,7 +22424,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
          self.doc.set_unrounded_layout(node_id, layout)
      }
  
-@@ -820,7 +3517,49 @@
+@@ -820,7 +3531,49 @@
      ) -> taffy::LayoutOutput {
          let cell = &self.ctx.cells[usize::from(node_id)];
          let node_id = crate::taffy_node_id(cell.node_id);
@@ -22434,7 +22475,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
      }
  }
  
-@@ -843,6 +3582,111 @@
+@@ -843,6 +3596,111 @@
          &self.ctx.cells[usize::from(child_node_id)].style
      }
  
@@ -22546,7 +22587,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
      fn set_detailed_grid_info(
          &mut self,
          _node_id: taffy::NodeId,
-@@ -851,3 +3695,468 @@
+@@ -851,3 +3709,468 @@
          *self.ctx.computed_grid_info.borrow_mut() = Some(detailed_grid_info);
      }
  }

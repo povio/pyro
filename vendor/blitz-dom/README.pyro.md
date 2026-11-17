@@ -2437,3 +2437,8 @@ keep their tracks (`row_tracks`); Taffy collapses them once sized.
   `TextUnder`; the pref `layout.css.dominant-baseline.enabled` is on (here and in pyro-dom). An `align=middle`
   hint is `VerticalAlignMiddle`. Covered by `crates/pyro-render/tests/alignment_baseline.rs`.
 
+- `src/layout/table.rs` (lane IT, round 3): only a table's first header group goes before its rows and only its first
+  footer group after them; the others stay in place as row groups (WPT css-tables `row-group-order`).
+  `ColumnCursor::place` counts a row-spanning cell's rows as `start_row` counts them down, so the cells after it get
+  their columns (`TableCell::column`: column widths, part backgrounds; WPT css-tables
+  `paint/background-image-column`, `border-collapse-spanning-cells-003`).

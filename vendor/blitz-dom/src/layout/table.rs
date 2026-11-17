@@ -1337,8 +1337,11 @@ impl ColumnCursor {
         if self.rowspans.len() < end as usize {
             self.rowspans.resize(end as usize, 0);
         }
+        // pyro: `start_row` counts a row down before the next row looks: the rows after this one
+        // that the cell still occupies are `rowspan - 1`, so `rowspan` before that count (a cell
+        // after a two-row cell went into its column).
         for remaining in &mut self.rowspans[self.col as usize..end as usize] {
-            *remaining = rowspan - 1;
+            *remaining = rowspan;
         }
         self.col = end;
         self.num_columns = self.num_columns.max(end);
@@ -1581,15 +1584,26 @@ pub(crate) fn build_table_context(doc: &mut BaseDocument, table_root_node_id: No
     // Percentage widths set on first-row cells: (column index, percentage, padding + border)
     let mut percent_columns: Vec<(u16, f32, f32)> = Vec::new();
     let mut calc_values: Vec<LengthPercentage> = Vec::new();
-    // Header row groups are laid out before other rows, and footer row groups after
-    let row_group_order = |doc: &BaseDocument, child_id: NodeId| -> u8 {
-        let display = doc.nodes[child_id]
-            .primary_styles()
-            .map(|s| s.clone_display());
-        match display.map(|d| d.inside()) {
-            Some(DisplayInside::TableHeaderGroup) => 0,
-            Some(DisplayInside::TableFooterGroup) => 2,
-            _ => 1,
+    // Header row groups are laid out before other rows, and footer row groups after.
+    // pyro: only the first of each (CSS 2.1 § 17.2: the others are treated as row groups, as
+    // browsers do; WPT css-tables `row-group-order`).
+    let group_kind = |doc: &BaseDocument, child_id: NodeId| {
+        doc.nodes[child_id].primary_styles().map(|s| s.clone_display().inside())
+    };
+    let first_of = |kind: DisplayInside| {
+        children
+            .iter()
+            .copied()
+            .find(|&id| !captions.contains(&id) && group_kind(doc, id) == Some(kind))
+    };
+    let (first_header, first_footer) = (first_of(DisplayInside::TableHeaderGroup), first_of(DisplayInside::TableFooterGroup));
+    let row_group_order = |_doc: &BaseDocument, child_id: NodeId| -> u8 {
+        if Some(child_id) == first_header {
+            0
+        } else if Some(child_id) == first_footer {
+            2
+        } else {
+            1
         }
     };
     for order in 0..3 {
