@@ -1088,9 +1088,26 @@ impl ElementCx<'_, '_> {
         let top = grid_top + rows.origin() as f64 - border_width.height;
         let bottom = grid_top + (rows.origin() + rows.span()) as f64 + border_width.height;
 
+        // pyro: `double` rules are two lines a third of their width each, along their outer
+        // sides (WPT css-tables `border-collapse-double-border`); thinner than 3px they are solid.
+        let double = border_style.border_top_style == BorderStyle::Double;
         let mut fill = |x0: f64, y0: f64, x1: f64, y1: f64| {
-            let shape = Rect::new(x0, y0, x1, y1).scale_from_origin(self.scale);
-            scene.fill(Fill::NonZero, self.transform, border_color, None, &shape);
+            let rect = Rect::new(x0, y0, x1, y1);
+            let thin = rect.width().min(rect.height());
+            let line = (thin / 3.0).round();
+            let shapes: Vec<Rect> = if double && line >= 1.0 {
+                if rect.height() <= rect.width() {
+                    vec![Rect::new(x0, y0, x1, y0 + line), Rect::new(x0, y1 - line, x1, y1)]
+                } else {
+                    vec![Rect::new(x0, y0, x0 + line, y1), Rect::new(x1 - line, y0, x1, y1)]
+                }
+            } else {
+                vec![rect]
+            };
+            for shape in shapes {
+                let shape = shape.scale_from_origin(self.scale);
+                scene.fill(Fill::NonZero, self.transform, border_color, None, &shape);
+            }
         };
 
         // Horizontal borders: the outer edges, then the gutters between adjacent row tracks.
@@ -1168,7 +1185,14 @@ impl ElementCx<'_, '_> {
                     let x0 = snap_x(xs[c] - a / 2.0);
                     let x1 = snap_x(xs[end] - b / 2.0) + b;
                     let y0 = snap_y(ys[line] - width / 2.0);
-                    fill(x0, y0, x1, y0 + width, edge.color);
+                    // pyro: a `double` rule is two lines a third of its width each.
+                    let third = (width / 3.0).round();
+                    if edge.is_double() && third >= 1.0 {
+                        fill(x0, y0, x1, y0 + third, edge.color);
+                        fill(x0, y0 + width - third, x1, y0 + width, edge.color);
+                    } else {
+                        fill(x0, y0, x1, y0 + width, edge.color);
+                    }
                 }
                 c = end;
             }
@@ -1184,7 +1208,13 @@ impl ElementCx<'_, '_> {
                 if edge.width > 0.0 {
                     let width = edge.width as f64;
                     let x0 = snap_x(xs[line] - width / 2.0);
-                    fill(x0, snap_y(ys[r]), x0 + width, snap_y(ys[end]), edge.color);
+                    let third = (width / 3.0).round();
+                    if edge.is_double() && third >= 1.0 {
+                        fill(x0, snap_y(ys[r]), x0 + third, snap_y(ys[end]), edge.color);
+                        fill(x0 + width - third, snap_y(ys[r]), x0 + width, snap_y(ys[end]), edge.color);
+                    } else {
+                        fill(x0, snap_y(ys[r]), x0 + width, snap_y(ys[end]), edge.color);
+                    }
                 }
                 r = end;
             }
@@ -1345,7 +1375,7 @@ impl ElementCx<'_, '_> {
 }
 
 fn same_edge(a: &blitz_dom::CollapsedEdge, b: &blitz_dom::CollapsedEdge) -> bool {
-    a.width == b.width && a.color == b.color
+    a.width == b.width && a.color == b.color && a.is_double() == b.is_double()
 }
 
 /// The grid lines around `tracks`, in physical order.

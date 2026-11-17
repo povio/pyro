@@ -1384,6 +1384,40 @@ impl LayoutPassState<'_> {
                 output = compute_grid_layout(&mut table_wrapper, node_id, wider);
             }
         }
+        // pyro: nor does its `max-width` make it narrower than its min-content width (CSS 2.1
+        // § 17.5.2: the used width is at least the minimum width; WPT css-tables
+        // `table-intrinsic-size-002`): measured without the maximum and its `width`, the table
+        // takes that width.
+        if inputs.known_dimensions.width.is_none() {
+            let base = table_wrapper.style.clone().unwrap_or_else(|| table_wrapper.ctx.style.clone());
+            if !base.max_size.width.is_auto() {
+                let mut unbounded = base.clone();
+                unbounded.max_size.width = taffy::style_helpers::auto();
+                unbounded.size.width = taffy::style_helpers::auto();
+                let saved = table_wrapper.style.replace(unbounded);
+                let measuring = taffy::tree::LayoutInput {
+                    run_mode: RunMode::ComputeSize,
+                    available_space: taffy::Size {
+                        width: taffy::AvailableSpace::MinContent,
+                        height: inputs.available_space.height,
+                    },
+                    ..inputs
+                };
+                let min = compute_grid_layout(&mut table_wrapper, node_id, measuring).size.width;
+                table_wrapper.style = saved;
+                if min > output.size.width + 0.01 {
+                    let wider = taffy::tree::LayoutInput {
+                        known_dimensions: taffy::Size { width: Some(min), height: inputs.known_dimensions.height },
+                        ..inputs
+                    };
+                    table_wrapper.style = table_wrapper.auto_column_widths(&wider);
+                    let mut style = table_wrapper.style.clone().unwrap_or_else(|| table_wrapper.ctx.style.clone());
+                    style.max_size.width = taffy::style_helpers::auto();
+                    table_wrapper.style = Some(style);
+                    output = compute_grid_layout(&mut table_wrapper, node_id, wider);
+                }
+            }
+        }
 
         // pyro: a height a flex or grid parent gives a table is its wrapper box's, captions included
         // (css-flexbox-1 §4.1): the grid gets what the captions leave. The table's own `height` is its

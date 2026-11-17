@@ -1146,6 +1146,10 @@ pub struct ListItemLayout {
     /// pyro: the marker's digits are tabular (Blink's UA sheet: `::marker { font-variant-numeric:
     /// tabular-nums }`), unless a `::marker` rule declares `font-variant-numeric`.
     pub tabular_nums: bool,
+    /// pyro: a string marker inside the item is bidi-isolated in the item's paragraph (Blink's UA
+    /// sheet: `::marker { unicode-bidi: isolate }`), unless a `::marker` rule declares
+    /// `unicode-bidi: normal`.
+    pub isolate: bool,
     /// Offset (in physical CSS px) of the unrounded content box origin from the rounded one in
     /// `final_layout`. Paint draws text from the unrounded origin so that it keeps its sub-pixel
     /// position while box edges stay snapped. Set by the `writing-mode` layout pass; zero otherwise.

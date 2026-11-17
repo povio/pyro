@@ -988,3 +988,9 @@ of their own then. Covered by `highlights_paint_under_the_selection` in `crates/
   boxes take the justification (the line's `advance` does not; WPT css-text `text-justify-and-trailing-spaces-*`).
 - `src/render.rs` (`canvas_background_source`): a root that its `content: url()` replaces propagates no `body`
   background to the canvas (WPT css-content `element-replacement-root-canvas-bg-from-body`).
+
+- `src/render.rs` (`render_element`): the zero-area clip shortcut (no content box, no overflow) only skips a box
+  whose border box is empty too: an `<hr>` (`overflow: hidden` in the UA sheet) paints its borders (WPT css-lists
+  `outside-marker-with-hr-content`).
+- `src/render/border.rs`: `double` collapsed table borders are two lines a third of the rule's width each, on the
+  uniform path and per edge (`CollapsedEdge::is_double`; WPT css-tables `border-collapse-double-border`).

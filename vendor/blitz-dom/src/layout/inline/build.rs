@@ -481,6 +481,7 @@ fn build_inline_layout_with(
         style_node,
         position: ListItemLayoutPosition::Inside,
         tabular_nums,
+        isolate,
         ..
     }) = root_node
         .element_data()
@@ -494,6 +495,22 @@ fn build_inline_layout_with(
             builder.push_style_span(style.clone());
         }
         let parley_style = styled.as_ref().unwrap_or(&parley_style);
+        // pyro: a string marker is bidi-isolated in the item's direction (the UA's `::marker {
+        // unicode-bidi: isolate }`; WPT css-lists `list-style-type-string-006`).
+        // (`unicode-bidi: normal` in a `::marker` rule leaves it in the item's paragraph; WPT
+        // css-pseudo `marker-unicode-bidi-normal`.)
+        let isolate = *isolate && matches!(marker, Marker::String(_));
+        if isolate {
+            let rtl = root_node_style
+                .as_deref()
+                .is_some_and(|style| style.clone_direction() == style::computed_values::direction::T::Rtl);
+            if bidi {
+                builder.push_bidi_control(if rtl { '\u{2067}' } else { '\u{2066}' });
+            } else {
+                bidi_scan.controls = true;
+                bidi_scan.rtl |= rtl;
+            }
+        }
         match marker {
             // Bullet glyphs live in the bundled bullet font. The position-outside
             // path already asks for it; without the same span here a marker like
@@ -534,6 +551,9 @@ fn build_inline_layout_with(
                 builder.pop_style_span();
             }
         }
+        if isolate && bidi {
+            builder.push_bidi_control('\u{2069}');
+        }
         if styled.is_some() {
             builder.pop_style_span();
         }
@@ -561,6 +581,23 @@ fn build_inline_layout_with(
         && text_layout.layout.inline_boxes().all(|inline_box| inline_box.kind != InlineBoxKind::InFlow);
     if marker_line {
         builder.push_text("\u{2060}");
+        // pyro: an image marker is an inline replaced box on that line, its bottom on the
+        // baseline: the line is as tall as it above the baseline (WPT css-lists
+        // `outside-marker-taller-than-content`).
+        if let Some(Marker::Image { height, .. }) =
+            root_node.element_data().and_then(|el| el.list_item_data.as_deref()).map(|item| &item.marker)
+        {
+            let mut marker_style = parley_style.clone();
+            marker_style.font_size = 0.01;
+            marker_style.line_height = parley::LineHeight::Absolute(*height);
+            marker_style.vertical_align = parley::VerticalAlign {
+                alignment: parley::AlignmentBaseline::Baseline,
+                shift: parley::BaselineShift::Length(*height / 2.0),
+            };
+            builder.push_style_span(marker_style);
+            builder.push_text("\u{2060}");
+            builder.pop_style_span();
+        }
     }
     let strut = &mut { strut && !marker_line };
     // pyro: the first letter the root's `::first-letter` styles (`layout::first_letter`).

@@ -863,6 +863,11 @@ impl CollapsedEdge {
         (self.width, self.rank) > (other.width, other.rank)
     }
 
+    /// pyro: whether the winning border is `double` (painted as two lines).
+    pub fn is_double(&self) -> bool {
+        self.rank == 8
+    }
+
     const NONE: Self = CollapsedEdge {
         width: 0.0,
         color: style::color::AbsoluteColor::TRANSPARENT_BLACK,

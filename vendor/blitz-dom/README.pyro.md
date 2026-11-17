@@ -2401,3 +2401,18 @@ fixed-layout table with a percentage width (empty ones, laid out as blocks, too)
   shows the image of its `content: url()` in place of its `src`/`poster`, whichever loads last (Blink; WPT css-content
   `element-replacement-image-src.tentative`). `src/node/node.rs` (`layout_style`) flags an element replaced by its
   content image (`StyleFlags::IS_CONTENT_REPLACED`).
+
+More of lane IT (round 3):
+- `src/layout/list.rs`: the list items of an inline box child (`ol { display: inline }`) are numbered with their
+  container's (no construction of their own collects them; WPT css-lists `inline-block-list*`). An outside
+  string marker's layout has the item's direction as its base direction; `ListItemLayout::isolate`: an inside
+  string marker is bidi-isolated in the item's paragraph (`src/layout/inline/build.rs`) unless a `::marker` rule
+  declares `unicode-bidi: normal` (WPT css-lists `list-style-type-string-005a/006`, css-pseudo
+  `marker-unicode-bidi-*`).
+- `src/layout/inline/build.rs`: the marker line of an empty item with an outside image marker is as tall as the
+  image above the baseline (WPT css-lists `outside-marker-taller-than-content`).
+- `src/layout/mod.rs` (table layout): a table without a known width whose `max-width` cuts below its min-content
+  width (measured without `width` and `max-width`) takes its min-content width (WPT css-tables
+  `table-intrinsic-size-002`; a fixed table with a larger `width` keeps to `max-width`, CSS2
+  `max-width-applies-to-013`).
+- `src/layout/table.rs`: `CollapsedEdge::is_double`.

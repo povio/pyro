@@ -61,6 +61,7 @@ mod lang_pseudo_class;
 mod line_break_resume;
 mod line_clamp;
 mod hoisted_clip_layers;
+mod empty_clips_and_table_widths;
 mod line_height_normal;
 mod list_numbering;
 mod line_paint_order;

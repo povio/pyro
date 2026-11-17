@@ -1002,7 +1002,14 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         let clip_area = content_box_size.width * content_box_size.height;
         let overflow_area =
             node.scrollable_overflow().width() * node.scrollable_overflow().height();
-        if should_clip && clip_area < 0.01 && overflow_area < 0.01 && filter_steps.is_none() {
+        // pyro: a box with borders or padding around its empty content box still paints them (an
+        // `<hr>`, `overflow: hidden` in the UA sheet; WPT css-lists `outside-marker-with-hr-content`).
+        if should_clip
+            && clip_area < 0.01
+            && overflow_area < 0.01
+            && border_box.area() < 0.01
+            && filter_steps.is_none()
+        {
             return;
         }
 
