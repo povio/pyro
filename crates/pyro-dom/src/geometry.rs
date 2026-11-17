@@ -267,6 +267,10 @@ pub trait GeometrySource {
     fn sticky_elements(&self) -> Vec<(u64, ExternalSticky)> {
         self.geometry().map(|g| g.sticky).unwrap_or_default()
     }
+    /// The entry of [`Self::sticky_elements`] for one element, if it has one.
+    fn sticky_element(&self, key: u64) -> Option<ExternalSticky> {
+        self.sticky_elements().into_iter().find(|(k, _)| *k == key).map(|(_, s)| s)
+    }
     /// The elements whose box may hold `probe` and their ancestors, in
     /// tree order, from a descent of the engine's tree that skips the
     /// subtrees that cannot hold it (`None`: the engine has no such

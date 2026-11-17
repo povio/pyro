@@ -10559,13 +10559,13 @@ fn computed_style_inside_display_none_inherits_from_changed_ancestors() {
 
 /// 1,000 write/read pairs on a hidden measuring probe (Danex's textWidth: set
 /// font and text, read getBoundingClientRect) on a page with an animation
-/// rule and 3,000 elements, in ms.
+/// rule, sticky elements (one in seven) and `elements` elements, in ms.
 fn probe_pairs_ms(h: &mut Harness, elements: usize) -> f64 {
     let cells: String = (0..elements).map(|i| format!("<span class=c{}>{i}</span>", i % 7)).collect();
     load_html(
         h,
         &format!(
-            r#"<!doctype html><style>@keyframes spin{{to{{transform:rotate(1turn)}}}} .c3.on{{animation:spin 1s}}</style><div id=grid>{cells}</div>"#
+            r#"<!doctype html><style>@keyframes spin{{to{{transform:rotate(1turn)}}}} .c3.on{{animation:spin 1s}} .c5{{position:sticky;top:0}}</style><div id=grid>{cells}</div>"#
         ),
     );
     let r = h.page(

@@ -1653,6 +1653,26 @@ impl Renderer {
     /// The `position: sticky` elements of `page`'s persistent document as
     /// last synced (by key, with their sticky inputs): the set Blitz's style
     /// traversal keeps, not a pass over the document.
+    /// [`Self::sticky_elements`]' entry for the element keyed `key`, alone:
+    /// `None` unless it is a displayed `position: sticky` element. A rect
+    /// query needs only its ancestors', not every sticky box of the page.
+    pub fn sticky_element(&self, page: u64, key: u64) -> Option<StickyBox> {
+        let m = self.mirrors.get(&page)?;
+        let g = self.geometry.get(&page)?;
+        let doc = &m.doc;
+        let id = m.node(key)?;
+        let node = doc.get_node(id)?;
+        if !node.is_element() || !node.primary_styles().is_some_and(|s| !s.clone_display().is_none()) {
+            return None;
+        }
+        let b = g.element_box(doc, id)?;
+        (b.position == BoxPosition::Sticky).then(|| {
+            let (mut s, cb) = g.sticky_box(doc, id);
+            s.cb = cb.and_then(|cb| m.key_of(cb));
+            s
+        })
+    }
+
     pub fn sticky_elements(&self, page: u64) -> Option<Vec<(u64, StickyBox)>> {
         let m = self.mirrors.get(&page)?;
         let g = self.geometry.get(&page)?;

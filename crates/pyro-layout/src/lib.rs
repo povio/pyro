@@ -809,6 +809,10 @@ impl GeometrySource for BlitzGeometry {
         w
     }
 
+    fn sticky_element(&self, key: u64) -> Option<ExternalSticky> {
+        RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.sticky_element(self.page, key)).map(external_sticky)
+    }
+
     fn sticky_elements(&self) -> Vec<(u64, ExternalSticky)> {
         RENDERER
             .with(|r| r.try_borrow().ok()?.as_ref()?.sticky_elements(self.page))

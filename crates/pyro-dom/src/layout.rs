@@ -253,6 +253,9 @@ pub struct Layout {
     /// The `position: sticky` elements' inputs, with the sync they were
     /// read at.
     sticky: RefCell<Option<(u64, Rc<FxHashMap<NodeId, ExternalSticky>>)>>,
+    /// Sticky entries looked up one element at a time since the last sync
+    /// ([`Layout::sticky_shift`]), `None` for elements that are not sticky.
+    sticky_lazy: RefCell<Option<(u64, FxHashMap<NodeId, Option<ExternalSticky>>)>>,
     /// The hit-test index of the current layout and scroll position, and
     /// what decides when one is built (see [`HitIndex`]).
     hit_index: RefCell<HitIndexState>,
@@ -522,6 +525,7 @@ impl Layout {
             result: RefCell::new(None),
             text: RefCell::new(None),
             sticky: RefCell::new(None),
+            sticky_lazy: RefCell::new(None),
             hit_index: RefCell::default(),
         }
     }
@@ -1217,7 +1221,7 @@ impl Layout {
         let result = self.text_result(dom);
         let &(r, fixed) = result.texts.get(&text)?;
         let (dx, dy) = self.ancestor_scroll_offset(dom, text);
-        let (kx, ky) = self.sticky_shift_in(dom, &self.sticky_map(dom), text);
+        let (kx, ky) = self.sticky_shift_lazy(dom, text);
         let (sx, sy) = if fixed { (0.0, 0.0) } else { (self.window_scroll.0 as f64, self.window_scroll.1 as f64) };
         Some(Rect { x: r.x - sx - dx + kx, y: r.y - sy - dy + ky, width: r.width, height: r.height })
     }
@@ -1401,7 +1405,7 @@ impl Layout {
         let source = self.synced_geometry_source(dom)?;
         let mut q = source.element_quads(crate::snapshot::render_key(el))?;
         let (dx, dy) = self.ancestor_scroll_offset(dom, el);
-        let (kx, ky) = self.sticky_shift_in(dom, &self.sticky_map(dom), el);
+        let (kx, ky) = self.sticky_shift_lazy(dom, el);
         let (sx, sy) = if q.fixed { (0.0, 0.0) } else { (self.window_scroll.0 as f64, self.window_scroll.1 as f64) };
         let (ox, oy) = (kx - sx - dx, ky - sy - dy);
         for quad in std::iter::once(&mut q.border).chain(q.fragments.iter_mut()) {
@@ -1490,7 +1494,7 @@ impl Layout {
             return r;
         }
         let Some(b) = self.layout_box(dom, el) else { return Rect::default() };
-        let (kx, ky) = self.sticky_shift_in(dom, &self.sticky_map(dom), el);
+        let (kx, ky) = self.sticky_shift_lazy(dom, el);
         let (sx, sy) = if b.fixed { (0.0, 0.0) } else { (self.window_scroll.0 as f64, self.window_scroll.1 as f64) };
         Rect { x: b.rect.x - sx - dx + kx, y: b.rect.y - sy - dy + ky, width: b.rect.width, height: b.rect.height }
     }
@@ -1616,6 +1620,50 @@ impl Layout {
 
     /// [`Layout::sticky_shift`] with the sticky elements `sticky`
     /// ([`Layout::sticky_map`]) and the engine's boxes as they are.
+    /// [`Self::sticky_shift_in`] for one rect query: when the whole sticky
+    /// map is not built for this sync, only the sticky entries of `node`'s
+    /// ancestors (and their containing blocks) are looked up, and kept until
+    /// the next sync. A text probe written and read in a loop on a page with
+    /// many sticky table heads no longer gets every sticky box after each
+    /// write.
+    fn sticky_shift_lazy(&self, dom: &Dom, node: NodeId) -> (f64, f64) {
+        let styled_without_sticky = self.external.as_ref().filter(|s| s.active()).is_some_and(|source| {
+            self.style.engine_styled(dom).is_some() && !source.has_sticky()
+        });
+        if styled_without_sticky {
+            return (0.0, 0.0);
+        }
+        let Some(source) = self.synced_geometry_source(dom).filter(|s| s.has_sticky()) else { return (0.0, 0.0) };
+        let key = self.syncs.get();
+        if let Some((k, m)) = self.sticky.borrow().as_ref() {
+            if *k == key {
+                let m = m.clone();
+                return self.sticky_shift_in(dom, &m, node);
+            }
+        }
+        {
+            let mut lazy = self.sticky_lazy.borrow_mut();
+            if lazy.as_ref().is_none_or(|(k, _)| *k != key) {
+                *lazy = Some((key, FxHashMap::default()));
+            }
+        }
+        let sticky_of = |n: NodeId| -> Option<ExternalSticky> {
+            if let Ok(lazy) = self.sticky_lazy.try_borrow() {
+                if let Some(hit) = lazy.as_ref().and_then(|(_, cache)| cache.get(&n)) {
+                    return *hit;
+                }
+            }
+            let found = source.sticky_element(crate::snapshot::render_key(n));
+            if let Ok(mut lazy) = self.sticky_lazy.try_borrow_mut() {
+                if let Some((_, cache)) = lazy.as_mut() {
+                    cache.insert(n, found);
+                }
+            }
+            found
+        };
+        self.sticky_shift_with(dom, node, &sticky_of, &|n| self.layout_box(dom, n))
+    }
+
     fn sticky_shift_in(&self, dom: &Dom, sticky: &FxHashMap<NodeId, ExternalSticky>, node: NodeId) -> (f64, f64) {
         if sticky.is_empty() {
             return (0.0, 0.0);
