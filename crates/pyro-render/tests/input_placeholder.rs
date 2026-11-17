@@ -94,3 +94,18 @@ fn a_textarea_placeholder_wraps_at_its_width() {
     assert!(b[3] - b[1] > 64, "three lines of 32px text: {b:?}");
     assert!(b[2] < 110, "within the content box: {b:?}");
 }
+
+/// A number field is a text field: as wide and tall as a text input, with its placeholder
+/// (WPT css-pseudo `placeholder-input-number`).
+#[test]
+fn a_number_input_is_laid_out_and_painted_as_a_text_field() {
+    let field = |ty: &str| {
+        render(&format!(
+            "<style>input{{all:revert;font:16px Arial}} input::placeholder{{color:#ff0000}}</style><input type={ty} placeholder=IIII>"
+        ))
+    };
+    let red = |c: [u8; 3]| c[0] > 200 && c[1] < 80 && c[2] < 80;
+    let (text, number) = (ink(&field("text"), 0, 400, red), ink(&field("number"), 0, 400, red));
+    assert!(number.0 > 0, "the placeholder is painted");
+    assert_eq!(number, text);
+}

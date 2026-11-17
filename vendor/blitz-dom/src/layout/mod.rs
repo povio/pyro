@@ -996,7 +996,10 @@ impl LayoutPassState<'_> {
                                 |_known_size, _available_space| taffy::Size { width: 13.0, height: 13.0 },
                             ));
                         }
-                        None | Some("text" | "password" | "email" | "tel" | "url" | "search" | "time") => {
+                        // pyro: a number field too (it was laid out as an empty box; WPT css-pseudo
+                        // `placeholder-input-number`); `size` does not apply to it.
+                        kind @ (None
+                        | Some("text" | "password" | "email" | "tel" | "url" | "search" | "time" | "number")) => {
                             // Chromium's intrinsic width: `size` (default 20) average
                             // characters plus a max-char allowance, about
                             // (size / 2 + 0.4)em (166px for 16px Arial). It does not
@@ -1004,6 +1007,7 @@ impl LayoutPassState<'_> {
                             // unless given `min-width: 0`.
                             let size = element_data
                                 .attr(local_name!("size"))
+                                .filter(|_| kind != Some("number"))
                                 .and_then(|val| val.trim().parse::<u32>().ok())
                                 .filter(|&size| size > 0)
                                 .unwrap_or(20) as f32;

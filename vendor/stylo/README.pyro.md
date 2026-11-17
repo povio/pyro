@@ -362,3 +362,5 @@ anchor positioning; stylo_taffy lays it out as `center`, which is what it is wit
 - `properties/data.py` (`PropertyRestrictions.marker`): `::marker` also takes `letter-spacing`, `word-spacing`,
   `line-break`, `word-break`, `overflow-wrap`, `tab-size` and `text-decoration-skip-ink` (CSS Pseudo 4, Blink; WPT
   css-pseudo `marker-word-spacing`, `marker-word-break`, ...).
+- `properties/longhands.toml`, `shorthands.toml`, `shorthands.rs`: `-webkit-text-stroke`, `-webkit-text-stroke-width`
+  and `-webkit-text-stroke-color` are parsed for servo too (blitz-paint strokes the glyphs).

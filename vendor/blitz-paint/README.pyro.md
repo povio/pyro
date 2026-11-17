@@ -1018,3 +1018,7 @@ painted from it, clipped to the content box, when drawn at the size it was laid 
 `text.rs` (`ink_gaps`): each glyph run's own `text-decoration-skip-ink` decides whether it cuts the lines over it
 (css-pseudo `marker-text-decoration-skip-ink`). `render.rs`: a list item's marker is painted before its inline
 content, so text that overlaps an outside marker covers it (css-pseudo `outside-marker-paint-order`).
+`text.rs`: `-webkit-text-stroke` strokes the glyphs over their fill (centred on the outline, any width > 0); an
+emphasis mark is centred on its character without the letter spacing after it (css-text `letter-spacing-211`); over
+selected text a line-through of its own colour takes the highlight's colour too (css-pseudo
+`selection-originating-decoration-color`), underlines and overlines of their own colour keep it.

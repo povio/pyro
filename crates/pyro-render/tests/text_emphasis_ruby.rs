@@ -132,3 +132,24 @@ fn no_marks_without_emphasis() {
     let plain = render("<div style='line-height:5'>MONITOR</div>", 1.0);
     assert!(same(&none, &plain));
 }
+
+/// A mark is centred on its character, not on the character and the letter spacing after it
+/// (WPT css-text `letter-spacing-211`): a spaced letter has its mark where the letter alone has it.
+#[test]
+fn emphasis_marks_are_centred_without_the_letter_spacing() {
+    let spaced = render("<p style='letter-spacing:1em;text-emphasis:dot;margin:0'>A</p>", 1.0);
+    let plain = render("<p style='text-emphasis:dot;margin:0'>A</p>", 1.0);
+    let unmarked = render("<p style='letter-spacing:1em;margin:0'>A</p>", 1.0);
+    assert!(!same(&spaced, &unmarked), "the mark is drawn");
+    assert!(same(&spaced, &plain));
+}
+
+/// `-webkit-text-stroke` outlines the glyphs, even a stroke thinner than a pixel.
+#[test]
+fn text_stroke_outlines_glyphs() {
+    let stroked = render("<p style='color:#fff;-webkit-text-stroke:0.1px #000'>H</p>", 1.0);
+    let thick = render("<p style='color:#fff;-webkit-text-stroke:2px #000'>H</p>", 1.0);
+    let plain = render("<p style='color:#fff'>H</p>", 1.0);
+    assert!(!same(&stroked, &plain));
+    assert!(!same(&stroked, &thick));
+}

@@ -19162,6 +19162,11 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 -                -geom.descent
 -            } else if deco.underline_offset.is_some() && !deco.underline_from_font {
 -                0.0
+-            } else {
+-                geom.underline_offset
+-            };
+-            let offset = base_offset - extra_underline_offset as f32;
+-
 +                .map(|lp| f64::from(lp.resolve(Length::new(geom.css_font_size as f32)).px()));
 +            let top = if let Some(top) = central_top(true, offset.unwrap_or(0.0), t) {
 +                top
@@ -19173,12 +19178,9 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 +            } else if let Some(offset) = offset {
 +                // An explicit offset under `auto` is taken from the alphabetic baseline.
 +                offset.round()
-             } else {
--                geom.underline_offset
++            } else {
 +                (t / 2.0).ceil().max(1.0)
-             };
--            let offset = base_offset - extra_underline_offset as f32;
--
++            };
              // A `double` underline extends downward, away from the text.
 -            draw_decoration_line(
 -                scene,
@@ -19557,7 +19559,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
      stack.clear();
      path_scratch.clear();
      deco_boxes.clear();
-@@ -608,152 +1720,782 @@
+@@ -608,152 +1720,827 @@
      // for each run, only resolve styles for the nodes newly descended into (popping
      // as we ascend). `path_scratch` is a reusable buffer for the run's node path.
      for line in lines {
@@ -19577,6 +19579,30 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
          // draws one decoration per box rather than one stepped segment per differently-sized
          // run. Clearing preserves the allocation for the next line and inline context.
          deco_boxes.clear();
+-
+-        for item in line.items() {
+-            if let PositionedLayoutItem::GlyphRun(glyph_run) = item {
+-                let run = glyph_run.run();
+-                let font = run.font();
+-                let font_size = run.font_size();
+-                let metrics = run.font_metrics();
+-                let style = glyph_run.style();
+-                let synthesis = run.synthesis();
+-                let glyph_xform = synthesis
+-                    .skew()
+-                    .map(|angle| Affine::skew(angle.to_radians().tan() as f64, 0.0));
+-
+-                let css_font_size = font_size as f64 / scale;
+-
+-                // Reconcile the stack with this run's ancestor path. Build the path
+-                // (inline root -> run node), keep the shared prefix already on the stack,
+-                // pop the rest, and resolve styles only for the newly-descended nodes.
+-                path_scratch.clear();
+-                let mut walk_id = Some(style.brush.id);
+-                while let Some(node_id) = walk_id {
+-                    path_scratch.push(node_id);
+-                    if node_id == inline_root_id {
+-                        break;
 +        run_paints.clear();
 +        run_shadows.clear();
 +        // pyro: the line's glyph runs, walked by each pass over the line.
@@ -19608,26 +19634,18 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 +                loop {
 +                    if id == element {
 +                        return true;
-+                    }
+                     }
+-                    walk_id = doc.get_node(node_id).and_then(|node| node.parent);
 +                    match doc.get_node(id).and_then(|node| node.parent) {
 +                        Some(parent) if id != inline_root_id => id = parent,
 +                        _ => return false,
 +                    }
-+                }
+                 }
+-                path_scratch.reverse();
 +            });
 +        }
  
--        for item in line.items() {
--            if let PositionedLayoutItem::GlyphRun(glyph_run) = item {
--                let run = glyph_run.run();
--                let font = run.font();
--                let font_size = run.font_size();
--                let metrics = run.font_metrics();
--                let style = glyph_run.style();
--                let synthesis = run.synthesis();
--                let glyph_xform = synthesis
--                    .skew()
--                    .map(|angle| Affine::skew(angle.to_radians().tan() as f64, 0.0));
+-                let shared = stack
 +        // pyro: each run's own `text-decoration-skip-ink` (inherited), which decides whether its
 +        // glyphs cut the lines over them (WPT css-pseudo `marker-text-decoration-skip-ink`).
 +        let run_skip_ink: SmallVec<[Option<TextDecorationSkipInk>; 16]> = glyph_runs
@@ -19638,8 +19656,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 +                    .map(|style| style.get_inherited_text().text_decoration_skip_ink)
 +            })
 +            .collect();
- 
--                let css_font_size = font_size as f64 / scale;
++
 +        // pyro: the line's decorations, and what each of its glyph runs is drawn with.
 +        for glyph_run in &glyph_runs {
 +            let run = glyph_run.run();
@@ -19658,18 +19675,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 +                    styles.get_font().font_size_adjust != style::values::computed::font::FontSizeAdjust::None
 +                })
 +                .map_or(css_font_size, |styles| f64::from(styles.get_font().font_size.computed_size().px()));
- 
--                // Reconcile the stack with this run's ancestor path. Build the path
--                // (inline root -> run node), keep the shared prefix already on the stack,
--                // pop the rest, and resolve styles only for the newly-descended nodes.
--                path_scratch.clear();
--                let mut walk_id = Some(style.brush.id);
--                while let Some(node_id) = walk_id {
--                    path_scratch.push(node_id);
--                    if node_id == inline_root_id {
--                        break;
--                    }
--                    walk_id = doc.get_node(node_id).and_then(|node| node.parent);
++
 +            // Reconcile the stack with this run's ancestor path. Build the path
 +            // (inline root -> run node), keep the shared prefix already on the stack,
 +            // pop the rest, and resolve styles only for the newly-descended nodes.
@@ -19679,10 +19685,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 +                path_scratch.push(node_id);
 +                if node_id == inline_root_id {
 +                    break;
-                 }
--                path_scratch.reverse();
--
--                let shared = stack
++                }
 +                walk_id = doc.get_node(node_id).and_then(|node| node.parent);
 +            }
 +            path_scratch.reverse();
@@ -19928,9 +19931,15 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 -                            y: glyph.y,
 -                        }),
 -                    );
-+        // pyro: over selected text, decorations of the text's colour take the highlight's.
++        // pyro: over selected text, decorations of the text's colour take the highlight's, and so
++        // does a line-through of a colour of its own, drawn over the text as part of it (Blink;
++        // WPT css-pseudo `selection-originating-decoration-color`); an underline or overline of
++        // its own colour keeps it (css-text-decor `text-decoration-inset-marked-text-gap`).
 +        if highlighting {
-+            for acc in deco_boxes.iter_mut().filter(|acc| acc.deco.current_color && !acc.selection) {
++            for acc in deco_boxes
++                .iter_mut()
++                .filter(|acc| (acc.deco.current_color || acc.deco.line == TextDecorationLine::LINE_THROUGH) && !acc.selection)
++            {
 +                if let Some(color) = crate::highlight::highlight_of(doc, acc.node_id, highlights).and_then(|h| h.color) {
 +                    acc.deco.color = color;
                  }
@@ -20106,15 +20115,42 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 +                    );
 +                    draw_shadow(scene, shadow, scale, transform, ink, draw);
 +                }
-+                None if fill_color.components[3] > 0.0 || runs.is_some() => {
-+                    // Only drawn runs are recorded: the PDF matches each drawn glyph run to the
-+                    // next recorded one, so a run recorded but not drawn would stop the matching.
-+                    if let Some(runs) = runs.as_mut() {
-+                        runs.push(crate::TextRun::new(glyph_run, source, unshifted, kept.clone(), kept_extent));
++                None => {
++                    // pyro: `-webkit-text-stroke`, an outline of the glyphs over their fill
++                    // (centred on the outline, as Skia strokes; WPT css-text
++                    // `text-stroke-width-subpixel`).
++                    let stroke = doc.get_node(glyph_run.style().brush.id).and_then(|node| node.primary_styles()).and_then(|style| {
++                        let itext = style.get_inherited_text();
++                        let width = itext._webkit_text_stroke_width.to_f32_px();
++                        let color = itext._webkit_text_stroke_color.resolve_to_absolute(&style.clone_color()).as_srgb_color();
++                        (width > 0.0 && color.components[3] > 0.0).then_some((width, color))
++                    });
++                    if fill_color.components[3] > 0.0 || runs.is_some() {
++                        // Only drawn runs are recorded: the PDF matches each drawn glyph run to
++                        // the next recorded one, so a run recorded but not drawn would stop the
++                        // matching.
++                        if let Some(runs) = runs.as_mut() {
++                            runs.push(crate::TextRun::new(glyph_run, source, unshifted, kept.clone(), kept_extent));
++                        }
++                        draw(scene, fill_color, transform);
 +                    }
-+                    draw(scene, fill_color, transform);
++                    if let Some((width, color)) = stroke {
++                        let stroke = kurbo::Stroke::new(f64::from(width) * scale);
++                        scene.draw_glyphs(
++                            font,
++                            font_size,
++                            false,
++                            normalized_coords,
++                            kurbo::Vec2::default(),
++                            &stroke,
++                            &anyrender::Paint::from(color),
++                            1.0,
++                            transform,
++                            glyph_xform,
++                            glyphs(),
++                        );
++                    }
 +                }
-+                None => {}
 +            }
 +        };
  
@@ -20234,6 +20270,18 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 +                            }
 +                        });
 +                        if marked && kept {
++                            // pyro: centred on the character, not on it and the letter spacing
++                            // after it (WPT css-text `letter-spacing-211`).
++                            let spacing = doc
++                                .get_node(node_id)
++                                .and_then(|node| node.primary_styles())
++                                .map_or(0.0, |style| {
++                                    let spacing = &style.get_inherited_text().letter_spacing.0;
++                                    let em = style.get_font().font_size.computed_size().px();
++                                    f64::from(spacing.resolve(style::values::computed::Length::new(em)).px().max(0.0))
++                                })
++                                * scale;
++                            let extent = (extent.0, (extent.1 - spacing).max(extent.0));
 +                            marks.push((index, extent, content));
                          }
 -                    };
@@ -20452,7 +20500,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
      selection_start: usize,
      selection_end: usize,
  ) {
-@@ -761,12 +2503,54 @@
+@@ -761,12 +2548,54 @@
      let focus = Cursor::from_byte_index(layout, selection_end, Affinity::Downstream);
      let selection = Selection::new(anchor, focus);
  
@@ -20509,10 +20557,11 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
  /// Approximates macOS font smoothing (stem dilation). CoreGraphics dilates each side by an amount
  /// in device pixels that grows with the device ppem up to 0.3px (fitted to Safari's ink at 9-72px
  /// and 1x-3x scale), and keeps dilating at large sizes, so there is no ppem cutoff. glifo applies
-@@ -804,3 +2588,239 @@
+@@ -803,4 +2632,240 @@
+         prev = *point;
      }
      prev.1
- }
++}
 +
 +/// pyro: where `text-decoration-skip-ink` leaves gaps in a decoration line spanning `extent`
 +/// (layout x), as Blink's `TextPainter::ClipDecorationLine` cuts them: around the ink of every
@@ -20599,7 +20648,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 +        }
 +    }
 +    merged
-+}
+ }
 +
 +/// pyro: whether a character is CJK (Han, kana, Hangul, their punctuation and compatibility
 +/// forms), whose glyphs `text-decoration-skip-ink: auto` does not skip (Blink's

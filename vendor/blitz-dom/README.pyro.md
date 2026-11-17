@@ -2485,3 +2485,4 @@ does not let margins collapse through it, even when its lines have no height (CS
   combining marks and typographic spaces, and after it all but opening punctuation and dashes (a non-word-separator
   space bridges to more); a preserved line break before any letter means no first letter; a `::before`/`::after`
   box with an atomic display does not pass on its container's first line.
+- `layout/mod.rs`: an `<input type=number>` is sized as a text field (it was an empty box); `size` does not apply.

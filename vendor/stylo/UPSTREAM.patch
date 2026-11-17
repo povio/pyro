@@ -285,7 +285,7 @@ diff -ruN a/properties/helpers.mako.rs b/properties/helpers.mako.rs
                              if !context.builder.effective_zoom_for_inheritance.is_one() {
 diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 --- a/properties/longhands.toml	2026-11-11 19:55:57
-+++ b/properties/longhands.toml	2026-11-17 00:11:39
++++ b/properties/longhands.toml	2026-11-17 10:09:54
 @@ -473,7 +473,6 @@
  type = "BreakBetween"
  initial = "computed::BreakBetween::Auto"
@@ -427,12 +427,10 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  struct = "list"
  animation_type = "discrete"
  spec = "https://drafts.csswg.org/css-lists/#propdef-list-style-image"
-@@ -1425,6 +1439,17 @@
- struct = "position"
- boxed = true
+@@ -1427,6 +1441,17 @@
  spec = "https://drafts.csswg.org/css-images-3/#the-object-position"
-+affects = "layout"
-+
+ affects = "layout"
+ 
 +# pyro: `object-view-box: none | <basic-shape-rect>` (CSS Images 5): the part of a replaced
 +# element's content that is its view, as a `clip-path` value of `none` or one rectangle.
 +[object-view-box]
@@ -442,15 +440,15 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +parse_method = "parse_object_view_box"
 +animation_type = "discrete"
 +spec = "https://drafts.csswg.org/css-images-5/#the-object-view-box"
- affects = "layout"
- 
++affects = "layout"
++
  [offset-anchor]
-@@ -1854,7 +1879,27 @@
- struct = "box"
- engine = "gecko"
+ type = "PositionOrAuto"
+ initial = "computed::PositionOrAuto::auto()"
+@@ -1856,7 +1881,27 @@
  spec = "https://drafts.csswg.org/css-scroll-snap-1/#scroll-snap-stop"
-+animation_type = "discrete"
-+affects = "paint"
+ animation_type = "discrete"
+ affects = "paint"
 +
 +[scroll-marker-group]
 +type = "ScrollMarkerGroup"
@@ -461,18 +459,20 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +servo_restyle_damage = "rebuild_box"
 +spec = "https://drafts.csswg.org/css-overflow-5/#scroll-marker-group-property"
 +affects = "layout"
-+
+ 
 +[scroll-target-group]
 +type = "ScrollTargetGroup"
 +initial = "computed::ScrollTargetGroup::None"
 +struct = "box"
 +engine = "servo"
- animation_type = "discrete"
++animation_type = "discrete"
 +servo_restyle_damage = "repaint"
 +spec = "https://drafts.csswg.org/css-overflow-5/#scroll-target-group"
- affects = "paint"
- 
++affects = "paint"
++
  [scroll-snap-type]
+ type = "ScrollSnapType"
+ initial = "computed::ScrollSnapType::none()"
 @@ -2117,7 +2162,6 @@
  type = "TransformBox"
  initial = "computed::TransformBox::ViewBox"
@@ -481,7 +481,23 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/css-transforms/#transform-box"
  animation_type = "discrete"
  affects = "overflow"
-@@ -2597,6 +2641,28 @@
+@@ -2521,7 +2565,6 @@
+ type = "Color"
+ initial = "computed_value::T::currentcolor()"
+ struct = "inherited_text"
+-engine = "gecko"
+ ignored_when_colors_disabled = true
+ spec = "https://compat.spec.whatwg.org/#the-webkit-text-stroke-color"
+ affects = "paint"
+@@ -2530,7 +2573,6 @@
+ type = "LineWidth"
+ initial = "app_units::Au(0)"
+ struct = "inherited_text"
+-engine = "gecko"
+ spec = "https://compat.spec.whatwg.org/#the-webkit-text-stroke-width"
+ animation_type = "discrete"
+ affects = "overflow"
+@@ -2597,6 +2639,28 @@
  gecko_pref = "layout.css.text-autospace.enabled"
  has_effect_on_gecko_scrollbars = false
  spec = "https://drafts.csswg.org/css-text-4/#text-autospace-property"
@@ -510,7 +526,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  affects = "layout"
  
  [text-autospace-size]
-@@ -2635,7 +2701,6 @@
+@@ -2635,7 +2699,6 @@
  type = "TextDecorationSkipInk"
  initial = "computed::TextDecorationSkipInk::Auto"
  struct = "inherited_text"
@@ -518,7 +534,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  animation_type = "discrete"
  spec = "https://drafts.csswg.org/css-text-decor-4/#text-decoration-skip-ink-property"
  affects = "overflow"
-@@ -2665,6 +2730,7 @@
+@@ -2665,6 +2728,7 @@
  servo_pref = "layout.css.text-emphasis.enabled"
  animation_type = "discrete"
  spec = "https://drafts.csswg.org/css-text-decor/#propdef-text-emphasis-style"
@@ -526,7 +542,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  affects = "overflow"
  
  [text-underline-offset]
-@@ -3171,6 +3237,15 @@
+@@ -3171,6 +3235,15 @@
  boxed = true
  logical_group = "border-radius"
  logical = true
@@ -542,7 +558,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  affects = "paint"
  
  [corner-top-left-shape]
-@@ -3383,9 +3458,9 @@
+@@ -3383,9 +3456,9 @@
  type = "MarginTrim"
  initial = "computed::MarginTrim::empty()"
  struct = "margin"
@@ -553,7 +569,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/css-box-4/#propdef-margin-trim"
  affects = "layout"
  
-@@ -3694,6 +3769,7 @@
+@@ -3694,6 +3767,7 @@
  [box-decoration-break]
  struct = "border"
  spec = "https://drafts.csswg.org/css-break/#propdef-box-decoration-break"
@@ -561,7 +577,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  animation_type = "discrete"
  affects = "layout"
  type = "BoxDecorationBreak"
-@@ -3770,7 +3846,6 @@
+@@ -3770,7 +3844,6 @@
  
  [column-fill]
  struct = "column"
@@ -569,7 +585,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/css-multicol/#propdef-column-fill"
  animation_type = "discrete"
  affects = "layout"
-@@ -3901,9 +3976,9 @@
+@@ -3901,9 +3974,9 @@
  type = "TextOrientation"
  initial = "computed::TextOrientation::Mixed"
  
@@ -580,7 +596,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/css-images/#propdef-image-orientation"
  animation_type = "discrete"
  affects = "layout"
-@@ -4287,9 +4362,64 @@
+@@ -4287,9 +4360,64 @@
  affects = "layout"
  gecko_ffi_name = "mBoxOrient"
  aliases = ["-webkit-box-orient"]
@@ -599,7 +615,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +servo_restyle_damage = "rebuild_box"
  type = "BoxOrient"
  initial = "computed::BoxOrient::Horizontal"
- 
++
 +# pyro: the other legacy `-webkit-box` properties for the servo engine (the gecko ones are the
 +# `-moz-box-*` aliases): `StyleAdjuster::adjust_for_webkit_box` maps them onto flex layout.
 +[-webkit-box-align]
@@ -611,7 +627,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +servo_restyle_damage = "rebuild_box"
 +type = "BoxAlign"
 +initial = "computed::BoxAlign::Stretch"
-+
+ 
 +[-webkit-box-pack]
 +struct = "box"
 +engine = "servo"
@@ -647,7 +663,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  engine = "gecko"
 diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
 --- a/properties/shorthands.rs	2026-11-11 19:55:57
-+++ b/properties/shorthands.rs	2026-11-17 02:11:28
++++ b/properties/shorthands.rs	2026-11-17 10:10:29
 @@ -542,7 +542,6 @@
      }
  }
@@ -679,6 +695,15 @@ diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
  pub mod column_rule {
      pub use crate::properties::generated::shorthands::column_rule::*;
  
+@@ -1000,7 +1002,7 @@
+     }
+ }
+ 
+-#[cfg(feature = "gecko")]
++// pyro: also for servo (blitz-paint draws the stroke).
+ pub mod _webkit_text_stroke {
+     pub use crate::properties::generated::shorthands::_webkit_text_stroke::*;
+ 
 @@ -3680,20 +3682,10 @@
  
                  if has_repeat {
@@ -704,7 +729,7 @@ diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
                  if has_clip && *clip != From::from(*origin) {
 diff -ruN a/properties/shorthands.toml b/properties/shorthands.toml
 --- a/properties/shorthands.toml	2026-11-11 19:55:57
-+++ b/properties/shorthands.toml	2026-11-15 21:50:40
++++ b/properties/shorthands.toml	2026-11-17 10:09:54
 @@ -209,7 +209,7 @@
  kind = "two_properties"
  
@@ -750,7 +775,13 @@ diff -ruN a/properties/shorthands.toml b/properties/shorthands.toml
  sub_properties = ["column-rule-width", "column-rule-style", "column-rule-color"]
  spec = "https://drafts.csswg.org/css-multicol/#propdef-column-rule"
  derive_serialize = true
-@@ -556,7 +551,6 @@
+@@ -550,13 +545,11 @@
+ derive_value_info = false
+ 
+ [-webkit-text-stroke]
+-engine = "gecko"
+ sub_properties = ["-webkit-text-stroke-width", "-webkit-text-stroke-color"]
+ spec = "https://compat.spec.whatwg.org/#the-webkit-text-stroke"
  derive_serialize = true
  
  [-webkit-line-clamp]
