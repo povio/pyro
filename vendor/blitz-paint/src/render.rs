@@ -3432,7 +3432,10 @@ impl ElementCx<'_, '_> {
     /// pyro: an inside marker that is an image (`list-style-image`): at the start of the
     /// item's first line, its bottom on the baseline (the inline layout left room for it).
     fn draw_inside_marker_image(&self, scene: &mut impl PaintScene, pos: Point, width: f32, height: f32) {
-        let Some(image) = self.element.list_style_images.first().and_then(Option::as_ref) else { return };
+        let image = self.element.list_style_images.first().and_then(Option::as_ref);
+        if image.is_none() && self.marker_gradient().is_none() {
+            return;
+        }
         let Some(text_layout) = self.element.inline_layout_data.as_ref() else { return };
         let Some(line) = text_layout.layout.lines().next() else { return };
         let metrics = line.metrics();
@@ -3442,6 +3445,10 @@ impl ElementCx<'_, '_> {
         let x = pos.x + f64::from(line_x);
         let y = pos.y + f64::from(text_layout.block_offset + metrics.baseline / layout_scale - height);
         let origin = Affine::translate(((x * self.scale).round(), (y * self.scale).round()));
+        let Some(image) = image else {
+            self.draw_marker_gradient(scene, origin, width, height);
+            return;
+        };
         match &image.image {
             blitz_dom::node::ImageData::Raster(raster) if raster.width > 0 && raster.height > 0 => {
                 let quality = to_image_quality(self.style.clone_image_rendering());
@@ -3457,7 +3464,17 @@ impl ElementCx<'_, '_> {
             }
             #[cfg(feature = "svg")]
             blitz_dom::node::ImageData::Svg(svg) => {
-                anyrender_svg::render_svg_tree(scene, &svg.tree, self.transform * origin * Affine::scale(self.scale));
+                // pyro: drawn into the marker box (a sizeless image gets the default square), the
+                // root's background filling it as a browser's canvas.
+                let base = self.transform * origin * Affine::scale(self.scale);
+                if let Some(color) = svg.intrinsic_dimensions.root_background {
+                    let color = peniko::Color::from_rgba8(color.red, color.green, color.blue, color.alpha);
+                    let rect = Rect::new(0.0, 0.0, f64::from(width), f64::from(height));
+                    scene.fill(peniko::Fill::NonZero, base, color, None, &rect);
+                }
+                let viewport = svg.viewport_transform(width, height);
+                let viewport = Affine::new([viewport.sx, viewport.ky, viewport.kx, viewport.sy, viewport.tx, viewport.ty].map(f64::from));
+                anyrender_svg::render_svg_tree(scene, &svg.tree, base * viewport);
             }
             _ => {}
         }
@@ -3695,6 +3712,23 @@ impl ElementCx<'_, '_> {
     /// (`ListMarker::InlineMarginsForOutside`): the image at its natural size, ending 7px before
     /// the item's border box, its bottom on the baseline of the item's first line (an inline
     /// replaced box on the marker's line), at whole device pixels.
+    /// pyro: a gradient `list-style-image` (no natural size: `layout::list` makes the marker a
+    /// square of half the font's ascent, as Blink).
+    fn marker_gradient(&self) -> Option<&style::values::computed::Gradient> {
+        match &self.style.get_list().list_style_image {
+            style::values::computed::Image::Gradient(gradient) => Some(gradient),
+            _ => None,
+        }
+    }
+
+    fn draw_marker_gradient(&self, scene: &mut impl PaintScene, origin: Affine, width: f32, height: f32) {
+        let Some(gradient) = self.marker_gradient() else { return };
+        let rect = Rect::new(0.0, 0.0, f64::from(width) * self.scale, f64::from(height) * self.scale);
+        let (gradient, brush_transform) =
+            crate::gradient::to_peniko_gradient(gradient, rect, rect, self.scale, &self.style.clone_color());
+        scene.fill(peniko::Fill::NonZero, self.transform * origin, &gradient, brush_transform, &rect);
+    }
+
     fn draw_marker_image(
         &self,
         scene: &mut impl PaintScene,
@@ -3703,7 +3737,10 @@ impl ElementCx<'_, '_> {
         height: f32,
         marker_layout: &parley::Layout<blitz_dom::node::TextBrush>,
     ) {
-        let Some(image) = self.element.list_style_images.first().and_then(Option::as_ref) else { return };
+        let image = self.element.list_style_images.first().and_then(Option::as_ref);
+        if image.is_none() && self.marker_gradient().is_none() {
+            return;
+        }
         let (baseline, line_x) = self.marker_baseline(marker_layout);
         let item_layout = self.node.final_layout();
         let subpixel = self.list_item.map_or(taffy::Point::ZERO, |item| item.content_box_subpixel_offset);
@@ -3711,6 +3748,10 @@ impl ElementCx<'_, '_> {
             - f64::from(width + 7.0);
         let y = pos.y + f64::from(subpixel.y + baseline - height);
         let origin = Affine::translate(((x * self.scale).round(), (y * self.scale).round()));
+        let Some(image) = image else {
+            self.draw_marker_gradient(scene, origin, width, height);
+            return;
+        };
         match &image.image {
             blitz_dom::node::ImageData::Raster(raster) if raster.width > 0 && raster.height > 0 => {
                 let quality = to_image_quality(self.style.clone_image_rendering());
@@ -3726,7 +3767,17 @@ impl ElementCx<'_, '_> {
             }
             #[cfg(feature = "svg")]
             blitz_dom::node::ImageData::Svg(svg) => {
-                anyrender_svg::render_svg_tree(scene, &svg.tree, self.transform * origin * Affine::scale(self.scale));
+                // pyro: drawn into the marker box (a sizeless image gets the default square), the
+                // root's background filling it as a browser's canvas.
+                let base = self.transform * origin * Affine::scale(self.scale);
+                if let Some(color) = svg.intrinsic_dimensions.root_background {
+                    let color = peniko::Color::from_rgba8(color.red, color.green, color.blue, color.alpha);
+                    let rect = Rect::new(0.0, 0.0, f64::from(width), f64::from(height));
+                    scene.fill(peniko::Fill::NonZero, base, color, None, &rect);
+                }
+                let viewport = svg.viewport_transform(width, height);
+                let viewport = Affine::new([viewport.sx, viewport.ky, viewport.kx, viewport.sy, viewport.tx, viewport.ty].map(f64::from));
+                anyrender_svg::render_svg_tree(scene, &svg.tree, base * viewport);
             }
             _ => {}
         }

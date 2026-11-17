@@ -1070,3 +1070,4 @@ frame's whole transform, clipped to the content box (upstream applied the transl
   (`selection_pseudo_style`); `draw_marker` draws an outside marker's emphasis marks (`draw_text_annotations`).
 - Round 4 lane F: list marker images honour `image-orientation: none` (`unturn`, as `<img>`; WPT css-images
   `image-orientation-list-style-image`).
+- Round 4 lane F, `render.rs`: gradient list markers fill their box; SVG marker images are drawn into the marker box through `viewport_transform`, the root's background filling it.

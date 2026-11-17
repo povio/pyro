@@ -13748,7 +13748,7 @@ diff --git a/packages/blitz-dom/src/layout/list.rs b/packages/blitz-dom/src/layo
  ) -> Option<ListItemLayout> {
      let node = &doc.nodes[child_id];
  
-@@ -71,17 +147,100 @@
+@@ -71,17 +147,113 @@
          return None;
      };
  
@@ -13762,7 +13762,20 @@ diff --git a/packages/blitz-dom/src/layout/list.rs b/packages/blitz-dom/src/layo
 +    // pyro: inside the item too (a box at the start of its first line, `inline::build`), and
 +    // at the resolution of an `image-set()` option.
 +    let resolution = crate::util::image_resolution(&styles.get_list().list_style_image);
-+    let image = node.element_data().and_then(|element| image_marker(element, resolution));
++    // pyro: a marker image without a natural size (a gradient, an SVG without `width` and
++    // `height`) is, as Blink's `ListMarker`, a square of half the font's ascent.
++    let default_size = || {
++        let provider = crate::font_metrics::BlitzFontMetricsProvider { font_ctx: doc.font_ctx.clone() };
++        let font = styles.get_font();
++        let ascent = provider.metrics_for(font, font.font_size.computed_size(), ' ').ascent.px();
++        Marker::Image { width: ascent / 2.0, height: ascent / 2.0 }
++    };
++    let image = match node.element_data().and_then(|element| image_marker(element, resolution)) {
++        Some(Marker::Image { width, height }) if width.is_nan() || height.is_nan() => Some(default_size()),
++        Some(marker) => Some(marker),
++        None => matches!(styles.get_list().list_style_image, style::values::computed::Image::Gradient(_))
++            .then(default_size),
++    };
 +    // pyro: the item's `::marker` style, on a node of its own (the marker text's brush), and
 +    // the marker's `content`: `none` leaves no marker, strings replace it (CSS Lists 3 § 3.2).
 +    let (marker_style, rule_style) = item_marker_style(doc, child_id, &styles);
@@ -13854,7 +13867,7 @@ diff --git a/packages/blitz-dom/src/layout/list.rs b/packages/blitz-dom/src/layo
                  parley_style.font_family = font_family;
              }
  
-@@ -93,18 +252,34 @@
+@@ -93,18 +265,34 @@
                  true,
                  &parley_style,
              );
@@ -13889,7 +13902,7 @@ diff --git a/packages/blitz-dom/src/layout/list.rs b/packages/blitz-dom/src/layo
  
              ListItemLayoutPosition::Outside(Box::new(layout))
          }
-@@ -112,14 +287,310 @@
+@@ -112,14 +300,314 @@
  
      Some(ListItemLayout {
          marker,
@@ -13912,7 +13925,11 @@ diff --git a/packages/blitz-dom/src/layout/list.rs b/packages/blitz-dom/src/layo
 +    let (width, height) = match &image.image {
 +        ImageData::Raster(raster) => (raster.width as f32 / resolution, raster.height as f32 / resolution),
 +        #[cfg(feature = "svg")]
-+        ImageData::Svg(svg) => (svg.tree.size().width(), svg.tree.size().height()),
++        // pyro: no natural size at all → NaN (the caller's default size).
++        ImageData::Svg(svg) => match (svg.intrinsic_width(), svg.intrinsic_height()) {
++            (None, None) if svg.viewbox_aspect_ratio().is_none() => (f32::NAN, f32::NAN),
++            _ => (svg.tree.size().width(), svg.tree.size().height()),
++        },
 +        _ => return None,
 +    };
 +    Some(Marker::Image { width, height })
@@ -14201,7 +14218,7 @@ diff --git a/packages/blitz-dom/src/layout/list.rs b/packages/blitz-dom/src/layo
          CounterStyle::None => return None,
          CounterStyle::Name(name) => match &*name.0 {
              "lower-alpha" => {
-@@ -132,13 +603,34 @@
+@@ -132,13 +620,34 @@
                  build_alpha_marker(index, &mut marker);
                  Marker::String(format!("{}. ", marker.to_ascii_uppercase()))
              }
@@ -14238,7 +14255,7 @@ diff --git a/packages/blitz-dom/src/layout/list.rs b/packages/blitz-dom/src/layo
          },
          CounterStyle::String(atom_string) => Marker::String(atom_string.as_ref().to_string()),
          CounterStyle::Symbols { symbols, .. } => {
-@@ -149,7 +641,7 @@
+@@ -149,7 +658,7 @@
                  Marker::Char('•')
              } else {
                  // Cycle through symbols based on index: 1st, 2nd, 1st, 2nd, etc.
@@ -14247,7 +14264,7 @@ diff --git a/packages/blitz-dom/src/layout/list.rs b/packages/blitz-dom/src/layo
                  // Symbol is String or Ident variant, extract the string value
                  let sym = &syms[idx];
                  let marker_str = match sym {
-@@ -171,6 +663,36 @@
+@@ -171,6 +680,36 @@
      None
  }
  
@@ -14284,7 +14301,7 @@ diff --git a/packages/blitz-dom/src/layout/list.rs b/packages/blitz-dom/src/layo
  const ALPHABET: [char; 26] = [
      'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's',
      't', 'u', 'v', 'w', 'x', 'y', 'z',
-@@ -204,24 +726,24 @@
+@@ -204,24 +743,24 @@
  
      #[test]
      fn test_marker_for_disc() {
@@ -14316,7 +14333,7 @@ diff --git a/packages/blitz-dom/src/layout/list.rs b/packages/blitz-dom/src/layo
          assert_eq!(result_1, Some(Marker::String("a. ".to_string())));
          assert_eq!(result_2, Some(Marker::String("b. ".to_string())));
          assert_eq!(result_extended_1, Some(Marker::String("aa. ".to_string())));
-@@ -230,10 +752,10 @@
+@@ -230,10 +769,10 @@
  
      #[test]
      fn test_marker_for_upper_alpha() {

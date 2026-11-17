@@ -155,7 +155,20 @@ fn node_list_item_child(
     // pyro: inside the item too (a box at the start of its first line, `inline::build`), and
     // at the resolution of an `image-set()` option.
     let resolution = crate::util::image_resolution(&styles.get_list().list_style_image);
-    let image = node.element_data().and_then(|element| image_marker(element, resolution));
+    // pyro: a marker image without a natural size (a gradient, an SVG without `width` and
+    // `height`) is, as Blink's `ListMarker`, a square of half the font's ascent.
+    let default_size = || {
+        let provider = crate::font_metrics::BlitzFontMetricsProvider { font_ctx: doc.font_ctx.clone() };
+        let font = styles.get_font();
+        let ascent = provider.metrics_for(font, font.font_size.computed_size(), ' ').ascent.px();
+        Marker::Image { width: ascent / 2.0, height: ascent / 2.0 }
+    };
+    let image = match node.element_data().and_then(|element| image_marker(element, resolution)) {
+        Some(Marker::Image { width, height }) if width.is_nan() || height.is_nan() => Some(default_size()),
+        Some(marker) => Some(marker),
+        None => matches!(styles.get_list().list_style_image, style::values::computed::Image::Gradient(_))
+            .then(default_size),
+    };
     // pyro: the item's `::marker` style, on a node of its own (the marker text's brush), and
     // the marker's `content`: `none` leaves no marker, strings replace it (CSS Lists 3 § 3.2).
     let (marker_style, rule_style) = item_marker_style(doc, child_id, &styles);
@@ -306,7 +319,11 @@ fn image_marker(element: &crate::node::ElementData, resolution: f32) -> Option<M
     let (width, height) = match &image.image {
         ImageData::Raster(raster) => (raster.width as f32 / resolution, raster.height as f32 / resolution),
         #[cfg(feature = "svg")]
-        ImageData::Svg(svg) => (svg.tree.size().width(), svg.tree.size().height()),
+        // pyro: no natural size at all → NaN (the caller's default size).
+        ImageData::Svg(svg) => match (svg.intrinsic_width(), svg.intrinsic_height()) {
+            (None, None) if svg.viewbox_aspect_ratio().is_none() => (f32::NAN, f32::NAN),
+            _ => (svg.tree.size().width(), svg.tree.size().height()),
+        },
         _ => return None,
     };
     Some(Marker::Image { width, height })
