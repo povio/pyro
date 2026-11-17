@@ -145,6 +145,13 @@ fn decorations_of_the_text_colour_take_the_selection_colour() {
         ("a", 2, "a", 6),
         "<p style='text-decoration:underline #00f'>Un<span style='color:#0a0'>derl</span>ined</p>",
     );
+    // A line-through of its own colour takes the selection's over the selected part (Blink; WPT
+    // css-pseudo `selection-originating-decoration-color`).
+    matches(
+        &format!("{style}<p id=a style='text-decoration:line-through #00f'>Struck</p>"),
+        ("a", 2, "a", 4),
+        "<p style='text-decoration:line-through #00f'>St<span style='color:#0a0;text-decoration:line-through #0a0'>ru</span>ck</p>",
+    );
 }
 
 /// A `::selection` style's own text decoration is drawn over the selected text (WPT

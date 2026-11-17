@@ -163,6 +163,9 @@ struct Writer<'a> {
     next_id: usize,
     /// The nearest viewport's reference box size (`transform-box: view-box`).
     viewports: Vec<(f64, f64)>,
+    /// pyro: per entry of `viewports`, whether its size is the root's CSS box guessed before layout (a root
+    /// without a `viewBox` and without plain length sizes, or an `<svg>` sized in percentages in one)
+    viewport_guessed: Vec<bool>,
     /// The root's `perspective`, which its children's 3D transforms are seen through.
     root_perspective: Option<euclid::default::Transform3D<f64>>,
     /// Set while a text's shadow copy is written (see [`text_shadow`]).
@@ -215,6 +218,25 @@ pub fn foreign_object_href(id: NodeId) -> String {
 }
 
 /// The source of the `<svg>` subtree at `root` for usvg (see the module docs).
+thread_local! {
+    /// pyro: set while serializing when a `view-box` reference box was the root's CSS box guessed before
+    /// layout: the source then depends on the root's laid-out size ([`svg_source_for_viewport`]).
+    static VIEWPORT_DEPENDENT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// pyro: the root's laid-out content box size to serialize with ([`svg_source_for_viewport`]).
+    static ROOT_VIEWPORT: std::cell::Cell<Option<(f64, f64)>> = const { std::cell::Cell::new(None) };
+}
+
+/// pyro: [`svg_source`], and whether it depends on the root's laid-out size (a `view-box` reference box,
+/// percentages in `transform` say, of a root sized in percentages or not at all), serialized with the root's
+/// viewport `viewport` when given (WPT css-transforms `transform-percent-010`).
+pub(crate) fn svg_source_for_viewport(root: &Node, viewport: Option<(f64, f64)>) -> (String, bool) {
+    VIEWPORT_DEPENDENT.with(|d| d.set(false));
+    let old = ROOT_VIEWPORT.with(|v| v.replace(viewport));
+    let source = svg_source(root);
+    ROOT_VIEWPORT.with(|v| v.set(old));
+    (source, VIEWPORT_DEPENDENT.with(|d| d.replace(false)))
+}
+
 pub(crate) fn svg_source(root: &Node) -> String {
     let guard = root.element_data().and_then(|data| data.guard.as_ref()).map(|lock| lock.read());
     let mut writer = Writer {
@@ -229,6 +251,7 @@ pub(crate) fn svg_source(root: &Node) -> String {
         defs: String::new(),
         next_id: 0,
         viewports: Vec::new(),
+        viewport_guessed: Vec::new(),
         root_perspective: None,
         shadow_copy: None,
         imported: Vec::new(),
@@ -658,6 +681,20 @@ struct Rewrite {
     in_style: bool,
 }
 
+/// pyro: whether `node` is inside an SVG `<text>`.
+fn in_text(node: &Node) -> bool {
+    let mut parent = node.parent;
+    while let Some(id) = parent {
+        let p = &node.tree()[id];
+        match p.element_data() {
+            Some(data) if data.name.ns == ns!(svg) && &*data.name.local == "text" => return true,
+            Some(data) if data.name.ns == ns!(svg) => parent = p.parent,
+            _ => return false,
+        }
+    }
+    false
+}
+
 impl Writer<'_> {
     fn finish(&mut self) -> String {
         let mut out = std::mem::take(&mut self.out);
@@ -688,6 +725,58 @@ impl Writer<'_> {
     }
 
     fn write_element(&mut self, node: &Node, data: &ElementData, nesting: usize) {
+        // pyro: `display: contents` on an SVG element (CSS Display 3, appendix B): a `<g>`,
+        // `<tspan>`, `<a>` or nested `<svg>` is unboxed (its children render in its place, without
+        // its own attributes or effects); a `<use>` renders its reference without its own
+        // effects; any other element renders nothing (WPT css-display
+        // `display-contents-svg-elements`).
+        if nesting > 0
+            && data.name.ns == ns!(svg)
+            && node.primary_styles().is_some_and(|style| style.clone_display().is_contents())
+        {
+            match data.name.local.as_ref() {
+                "g" | "tspan" | "a" | "svg" => {
+                    // Its children still inherit from it: a bare wrapper (a `<tspan>` in text, else
+                    // a `<g>`) carries the inherited properties declared on it, nothing else
+                    // (WPT css-display `display-contents-svg-tspan-text-fill`).
+                    let wrapper = if matches!(data.name.local.as_ref(), "tspan" | "a") && in_text(node) { "tspan" } else { "g" };
+                    let mut declarations = String::new();
+                    if let (Some(style), Some(guard)) = (node.primary_styles(), &self.guard) {
+                        let author = author_longhands(&style, guard);
+                        for &(id, name) in STYLE_PROPERTIES {
+                            if id.inherited() && author.contains(&id) {
+                                let _ = write!(declarations, "{name}:{};", computed_value(&style, id));
+                            }
+                        }
+                    }
+                    let _ = write!(self.out, "<{wrapper}");
+                    if !declarations.is_empty() {
+                        self.out.push_str(" style=\"");
+                        encode_quoted_attribute_to_string(&declarations, &mut self.out);
+                        self.out.push('"');
+                    }
+                    self.out.push('>');
+                    for &child_id in &node.children {
+                        self.write_node(&node.tree()[child_id], nesting + 1);
+                    }
+                    let _ = write!(self.out, "</{wrapper}>");
+                }
+                "use" => {
+                    self.out.push_str("<use");
+                    for attr in data.attrs() {
+                        let name = attr.name.local.as_ref();
+                        if matches!(name, "href" | "x" | "y" | "width" | "height") {
+                            let _ = write!(self.out, " {}=\"", if name == "href" { "href" } else { name });
+                            encode_quoted_attribute_to_string(&attr.value, &mut self.out);
+                            self.out.push('"');
+                        }
+                    }
+                    self.out.push_str(" />");
+                }
+                _ => {}
+            }
+            return;
+        }
         // A `<text>`'s `text-shadow`: a copy of it before it, moved by the offset and painted
         // in the shadow's colour ([`text_shadow`]).
         if nesting > 0
@@ -729,7 +818,10 @@ impl Writer<'_> {
         let foreign_object = is_svg && !is_root && tag == "foreignObject";
         let mut unsized_foreign_object = false;
         if foreign_object {
-            let size = |name: markup5ever::LocalName| data.attr(name).and_then(|v| v.trim().trim_end_matches("px").parse::<f64>().ok());
+            // pyro: a percentage too (of the viewport; WPT css-transforms `view-box-mutation-003`)
+            let size = |name: markup5ever::LocalName| {
+                data.attr(name).and_then(|v| v.trim().trim_end_matches(['%']).trim_end_matches("px").parse::<f64>().ok())
+            };
             let sized = |name: markup5ever::LocalName, id: LonghandId| {
                 author.contains(&id) || size(name).is_some_and(|v| v > 0.0)
             };
@@ -748,8 +840,9 @@ impl Writer<'_> {
         // Viewports for `transform-box: view-box`.
         let pushed_viewport = is_svg && tag == "svg";
         if pushed_viewport {
-            let viewport = self.viewport_size(data, styles.as_deref(), is_root);
+            let (viewport, guessed) = self.viewport_size(data, styles.as_deref(), is_root);
             self.viewports.push(viewport);
+            self.viewport_guessed.push(guessed);
             if is_root {
                 // In the root's box, which its user space is (without a `viewBox`).
                 self.root_perspective = styles.as_deref().and_then(|style| {
@@ -835,6 +928,14 @@ impl Writer<'_> {
                     let under_root = nesting == 1;
                     self.transform_rewrite(node, data, tag, style, &author, &mut rewrites, &mut temp_id, under_root);
                 }
+            }
+            // pyro: an element without a box (`display: contents`) decorates nothing: line
+            // decorations propagate through boxes (CSS Text Decoration 3 § 2.1).
+            if !is_root
+                && style.clone_display().is_contents()
+                && (author.contains(&LonghandId::TextDecorationLine) || data.attr(local_name!("text-decoration")).is_some())
+            {
+                rewrites.push(Rewrite { name: "text-decoration", value: None, in_style: true });
             }
             // Not on the root: its CSS box's.
             if !is_root {
@@ -932,6 +1033,19 @@ impl Writer<'_> {
             self.out.push('"');
         }
         let style_attr = style_attr.map(without_handled_declarations).filter(|v| !v.trim().is_empty());
+        // pyro: a rewritten `text-decoration` replaces the element's own declarations of it.
+        let style_attr = match style_attr {
+            Some(style) if rewrites.iter().any(|r| r.in_style && r.name == "text-decoration") => Some(
+                style
+                    .split(';')
+                    .filter(|d| !d.split(':').next().unwrap_or("").trim().to_ascii_lowercase().starts_with("text-decoration"))
+                    .filter(|d| !d.trim().is_empty())
+                    .map(|d| format!("{};", d.trim()))
+                    .collect::<String>(),
+            )
+            .filter(|v| !v.is_empty()),
+            other => other,
+        };
         match (style_attr, declarations.is_empty()) {
             (None, true) => {}
             (style_attr, _) => {
@@ -969,6 +1083,7 @@ impl Writer<'_> {
         }
         if pushed_viewport {
             self.viewports.pop();
+            self.viewport_guessed.pop();
         }
     }
 
@@ -987,7 +1102,17 @@ impl Writer<'_> {
 
     /// The reference box size of `transform-box: view-box` inside this `<svg>`:
     /// its `viewBox` size, else its own size.
-    fn viewport_size(&self, data: &ElementData, style: Option<&ComputedValues>, is_root: bool) -> (f64, f64) {
+    /// pyro: the size of the innermost viewport, for a `view-box` reference box; noted
+    /// ([`VIEWPORT_DEPENDENT`]) when it is the root's CSS box guessed before layout.
+    fn view_box_size(&self) -> (f64, f64) {
+        if self.viewport_guessed.last().copied().unwrap_or(false) {
+            VIEWPORT_DEPENDENT.with(|d| d.set(true));
+        }
+        self.viewports.last().copied().unwrap_or((300.0, 150.0))
+    }
+
+    /// The size, and whether it is the root's CSS box guessed before layout (see `viewport_guessed`).
+    fn viewport_size(&self, data: &ElementData, style: Option<&ComputedValues>, is_root: bool) -> ((f64, f64), bool) {
         if let Some(view_box) = data.attr(local_name!("viewBox")) {
             let numbers: Vec<f64> = view_box
                 .split(|c: char| c == ',' || c.is_ascii_whitespace())
@@ -996,11 +1121,12 @@ impl Writer<'_> {
                 .collect();
             if let [_, _, w, h] = numbers[..] {
                 if w > 0.0 && h > 0.0 {
-                    return (w, h);
+                    return ((w, h), false);
                 }
             }
         }
         let parent = self.viewports.last().copied().unwrap_or((300.0, 150.0));
+        let parent_guessed = self.viewport_guessed.last().copied().unwrap_or(false);
         let length = |name: markup5ever::LocalName, basis: f64, css: Option<f64>, fallback: f64| {
             if let Some(px) = css {
                 return px;
@@ -1026,9 +1152,30 @@ impl Writer<'_> {
             }
         };
         let (fallback_w, fallback_h) = if is_root { (300.0, 150.0) } else { parent };
+        // A size that is not a plain length: the root's CSS box, which layout gives (`ROOT_VIEWPORT`, when the
+        // painter serializes again at the laid-out size), or one in percentages of such a box
+        let plain = |name: markup5ever::LocalName, css: Option<f64>| {
+            css.is_some()
+                || data
+                    .attr(name)
+                    .and_then(|v| v.trim().parse::<svgtypes::Length>().ok())
+                    .is_some_and(|len| len.unit != svgtypes::LengthUnit::Percent)
+        };
+        let guessed_axis = |name: markup5ever::LocalName, css: Option<f64>| {
+            !plain(name, css) && (is_root || parent_guessed)
+        };
+        let guessed = guessed_axis(local_name!("width"), css(true)) || guessed_axis(local_name!("height"), css(false));
+        if is_root && guessed {
+            if let Some(size) = ROOT_VIEWPORT.with(|v| v.get()) {
+                return (size, true);
+            }
+        }
         (
-            length(local_name!("width"), parent.0, css(true), fallback_w),
-            length(local_name!("height"), parent.1, css(false), fallback_h),
+            (
+                length(local_name!("width"), parent.0, css(true), fallback_w),
+                length(local_name!("height"), parent.1, css(false), fallback_h),
+            ),
+            guessed,
         )
     }
 
@@ -1145,7 +1292,7 @@ impl Writer<'_> {
         // The reference box.
         let reference = match style.get_box().transform_box {
             TransformBox::ViewBox => {
-                let (w, h) = self.viewports.last().copied().unwrap_or((300.0, 150.0));
+                let (w, h) = self.view_box_size();
                 Rect::new(0.0, 0.0, w, h)
             }
             TransformBox::FillBox | TransformBox::ContentBox => self.boxes(node, data, temp_id).fill,
@@ -1281,7 +1428,7 @@ impl Writer<'_> {
             | ShapeGeometryBox::ShapeBox(ShapeBox::ContentBox)
             | ShapeGeometryBox::ShapeBox(ShapeBox::PaddingBox) => Some(self.boxes(node, data, temp_id).fill),
             ShapeGeometryBox::ViewBox => {
-                let (w, h) = self.viewports.last().copied().unwrap_or((300.0, 150.0));
+                let (w, h) = self.view_box_size();
                 Some(Rect::new(0.0, 0.0, w, h))
             }
             // `border-box` (the default), `margin-box` and `stroke-box`.
@@ -1589,7 +1736,7 @@ impl Writer<'_> {
             MaskBox::Fill => boxes.fill,
             MaskBox::Stroke => boxes.stroke,
             MaskBox::View => {
-                let (w, h) = self.viewports.last().copied().unwrap_or((300.0, 150.0));
+                let (w, h) = self.view_box_size();
                 Rect::new(0.0, 0.0, w, h)
             }
             MaskBox::NoClip => return Ok(None),

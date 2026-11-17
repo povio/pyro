@@ -2166,6 +2166,38 @@ pub enum BoxSizing {
     BorderBox,
 }
 
+/// pyro: `frame-sizing` (css-sizing-4 responsive iframes): whether an iframe takes its natural size from
+/// its embedded document's content.
+/// https://drafts.csswg.org/css-sizing-4/#frame-sizing
+#[allow(missing_docs)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Deserialize,
+    Eq,
+    FromPrimitive,
+    Hash,
+    MallocSizeOf,
+    Parse,
+    PartialEq,
+    Serialize,
+    SpecifiedValueInfo,
+    ToComputedValue,
+    ToCss,
+    ToResolvedValue,
+    ToShmem,
+    ToTyped,
+)]
+#[repr(u8)]
+pub enum FrameSizing {
+    Auto,
+    ContentWidth,
+    ContentHeight,
+    ContentBlockSize,
+    ContentInlineSize,
+}
+
 /// https://drafts.csswg.org/css-images/#propdef-object-fit
 #[allow(missing_docs)]
 #[derive(

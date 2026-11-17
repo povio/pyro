@@ -577,7 +577,11 @@ fn build_inline_layout_with(
     text_transformer.word_break(&builder);
     let text_nodes = &mut Vec::new();
     // pyro: ruby annotations and emphasis marks found on the way (see `TextAnnotation`).
-    let annotations = &mut FoundAnnotations { space: annotation_space.to_vec(), ..Default::default() };
+    let annotations = &mut FoundAnnotations {
+        space: annotation_space.to_vec(),
+        first_line: (text_layout.first_line_styles.clone(), text_layout.first_line_end.unwrap_or(usize::MAX)),
+        ..Default::default()
+    };
     if let Some(style) = root_node.primary_styles() {
         annotations.enter(inline_context_root_node_id, &style);
     }
@@ -736,6 +740,42 @@ fn build_inline_layout_with(
         && (bidi_scan.rtl || (!builder.text().is_ascii() && builder.text().chars().any(is_rtl_char)))
     {
         return false;
+    }
+
+    // pyro: `::first-line` styles that change layout apply to the first line's text (CSS Pseudo 4
+    // § 2.1): its font size, line height, font family, weight and style, letter and word spacing.
+    text_layout.first_line_layout = false;
+    if let (Some(first_line), Some(root_style)) = (text_layout.first_line, root_node_style.as_ref())
+        && let Some(line_style) = nodes.get(first_line).and_then(|node| node.primary_styles())
+    {
+        let line = stylo_to_parley::style(first_line, &line_style);
+        let root = stylo_to_parley::style(inline_context_root_node_id, root_style);
+        let mut changes = Vec::new();
+        if line.font_size != root.font_size {
+            changes.push(parley::StyleProperty::FontSize(line.font_size));
+        }
+        if line.line_height != root.line_height {
+            changes.push(parley::StyleProperty::LineHeight(line.line_height));
+        }
+        if line.font_family != root.font_family {
+            changes.push(parley::StyleProperty::FontFamily(line.font_family.clone()));
+        }
+        if line.font_weight != root.font_weight {
+            changes.push(parley::StyleProperty::FontWeight(line.font_weight));
+        }
+        if line.font_style != root.font_style {
+            changes.push(parley::StyleProperty::FontStyle(line.font_style));
+        }
+        if line.letter_spacing != root.letter_spacing {
+            changes.push(parley::StyleProperty::LetterSpacing(line.letter_spacing));
+        }
+        if line.word_spacing != root.word_spacing {
+            changes.push(parley::StyleProperty::WordSpacing(line.word_spacing));
+        }
+        if !changes.is_empty() {
+            builder.set_first_line(text_layout.first_line_end.unwrap_or(usize::MAX), &changes);
+            text_layout.first_line_layout = true;
+        }
     }
 
     // The first build keeps the lines of the layout's last break over the text that did not
@@ -1022,12 +1062,35 @@ fn build_inline_layout_with(
                     }
                 }
 
+                // pyro: `<wbr>` is a soft wrap opportunity (HTML § 15.3.3: as U+200B ZERO WIDTH
+                // SPACE), also under `word-break: keep-all` and in CJK text.
+                if element_data.name.local.eq_str_ignore_ascii_case("wbr")
+                    && element_data.name.ns == markup5ever::ns!(html)
+                    && !node
+                        .display_style()
+                        .is_some_and(|d| matches!(d.inside(), DisplayInside::None))
+                {
+                    builder.push_text("\u{200B}");
+                    return;
+                }
+
                 if node.is_line_break() {
                     // node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
                     // TODO: update span id for br spans
-                    builder.push_style_modification_span(&[
-                        parley::StyleProperty::WhiteSpaceCollapse(WhiteSpaceCollapse::Preserve),
-                    ]);
+                    // pyro: in quirks mode a `<br>` alone on its line sets the line's height with its
+                    // own line height (Quirks Mode §3.3; Blink's `LayoutBR`).
+                    let br_line_height = style
+                        .filter(|_| nodes.line_height_quirk)
+                        .map(|s| crate::stylo_to_parley::style(node_id, s).line_height);
+                    match br_line_height {
+                        Some(line_height) => builder.push_style_modification_span(&[
+                            parley::StyleProperty::WhiteSpaceCollapse(WhiteSpaceCollapse::Preserve),
+                            parley::StyleProperty::LineHeight(line_height),
+                        ]),
+                        None => builder.push_style_modification_span(&[
+                            parley::StyleProperty::WhiteSpaceCollapse(WhiteSpaceCollapse::Preserve),
+                        ]),
+                    }
                     if node.primary_styles().is_some_and(|style| {
                         style.clone_clear() != style::computed_values::clear::T::None
                     }) {
@@ -1167,7 +1230,11 @@ fn build_inline_layout_with(
                             // at its start and its end (CSS 2.1 9.4.2): an edge box at each, inside
                             // the span's style, when there is any.
                             let (start_edge, end_edge, percent) =
-                                node.primary_styles().map(|s| span_edge_widths_in(&s, 0.0)).unwrap_or_default();
+                                // pyro: on the first line, with its `::first-line` style there.
+                                match annotations.first_line_style(node_id, builder.text().len()) {
+                                    Some(s) => span_edge_widths_in(&s, 0.0),
+                                    None => node.primary_styles().map(|s| span_edge_widths_in(&s, 0.0)).unwrap_or_default(),
+                                };
                             bidi_scan.percent_edges |= percent;
                             let scale = builder.scale();
                             let rtl = node.primary_styles().is_some_and(|style| {
@@ -1402,9 +1469,20 @@ struct FoundAnnotations {
     found: Vec<(NodeId, TextAnnotationKind, NodeId)>,
     /// The room the annotations of each span take, from the build before.
     space: Vec<(NodeId, parley::AnnotationSpace)>,
+    /// pyro: `TextLayout::first_line_styles` and where the first line's text ends.
+    first_line: (Vec<(NodeId, style::servo_arc::Arc<style::properties::ComputedValues>)>, usize),
 }
 
 impl FoundAnnotations {
+    /// pyro: the style of element `node_id` on the first line, when its content starting at text
+    /// offset `at` is on it and `::first-line` changes layout there.
+    fn first_line_style(&self, node_id: NodeId, at: usize) -> Option<style::servo_arc::Arc<style::properties::ComputedValues>> {
+        if at >= self.first_line.1 {
+            return None;
+        }
+        self.first_line.0.iter().find(|(id, _)| *id == node_id).map(|(_, style)| style.clone())
+    }
+
     /// An element whose text is in the root: it has emphasis marks over its own text when its
     /// `text-emphasis-style` (inherited) is not `none`.
     fn enter(&mut self, node_id: NodeId, style: &style::properties::ComputedValues) {

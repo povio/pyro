@@ -94,6 +94,18 @@ pub struct TextLayout {
     /// pyro: the node holding the `::first-line` style of the root's first line
     /// (`layout::first_line`), set before each build: paint draws the line with it.
     pub first_line: Option<NodeId>,
+    /// pyro: where the first line's text ended at the last layout (byte offset), for the
+    /// `::first-line` styles that change layout (`first_line_layout`): the build gives the text
+    /// before it those styles (all the text when `None`), and a layout whose first line ends
+    /// elsewhere builds the text again (`layout::inline`).
+    pub first_line_end: Option<usize>,
+    /// pyro: the last build gave the first line `::first-line` styles that change layout (font
+    /// size, line height, font family, weight or style, letter or word spacing).
+    pub first_line_layout: bool,
+    /// pyro: the styles of the root's inline elements on its first line (reparented onto the
+    /// `::first-line` box, `BaseDocument::first_line_style`), when `::first-line` changes layout:
+    /// their edges (`em` borders, padding, margins) take them there. Set before each build.
+    pub first_line_styles: Vec<(NodeId, style::servo_arc::Arc<style::properties::ComputedValues>)>,
     /// pyro: when the root is an anonymous block holding a piece of inline boxes split around
     /// block-level content (`NodeFlags::IS_SPLIT_INLINE`), those boxes, innermost first, each
     /// with whether this piece holds its start and its end: only there do its fragments have

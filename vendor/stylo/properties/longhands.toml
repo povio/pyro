@@ -2565,7 +2565,6 @@ affects = "paint"
 type = "Color"
 initial = "computed_value::T::currentcolor()"
 struct = "inherited_text"
-engine = "gecko"
 ignored_when_colors_disabled = true
 spec = "https://compat.spec.whatwg.org/#the-webkit-text-stroke-color"
 affects = "paint"
@@ -2574,7 +2573,6 @@ affects = "paint"
 type = "LineWidth"
 initial = "app_units::Au(0)"
 struct = "inherited_text"
-engine = "gecko"
 spec = "https://compat.spec.whatwg.org/#the-webkit-text-stroke-width"
 animation_type = "discrete"
 affects = "overflow"
@@ -4167,6 +4165,17 @@ extra_prefixes = ["moz:layout.css.prefixes.box-sizing", "webkit"]
 servo_restyle_damage = "rebuild_box"
 type = "BoxSizing"
 initial = "computed::BoxSizing::ContentBox"
+
+# pyro: css-sizing-4 `frame-sizing` (responsive iframes), for Servo: blitz-dom gives an iframe the height of
+# its embedded document's content (`data-pyro-frame-content-height`, from pyro) for `content-height`.
+[frame-sizing]
+struct = "position"
+engine = "servo"
+spec = "https://drafts.csswg.org/css-sizing-4/#frame-sizing"
+animation_type = "discrete"
+affects = "layout"
+type = "FrameSizing"
+initial = "computed::FrameSizing::Auto"
 
 [object-fit]
 struct = "position"

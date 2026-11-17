@@ -142,6 +142,13 @@ pub(crate) struct LayoutPassState<'doc> {
     /// pyro: the multi-column container whose strip is being laid out and the border-box height
     /// its content's percentage heights resolve against (its column height, `layout::multicol`).
     pub(crate) multicol_percent_height: Option<(crate::NodeId, f32)>,
+    /// pyro: a table cell being laid out and the border-box height its children's percentage
+    /// heights resolve against: its own length `height` (`table::TableTreeWrapper::definite_height`).
+    pub(crate) cell_percent_height: Option<(crate::NodeId, f32)>,
+    /// pyro: a table cell being laid out in a table of non-`auto` `height` (Blink's restricted block
+    /// size table): its percentage-height scroll containers count as 0 when their percentage does not
+    /// resolve (`block_container_restricts_percent_scrollers`).
+    pub(crate) restricted_cell: Option<crate::NodeId>,
     /// pyro: the inline roots this pass marked `FINAL_LAYOUT_STALE` (`mark_final_layout_stale`).
     pub(crate) stale_lines: Vec<crate::NodeId>,
 }
@@ -186,6 +193,8 @@ impl<'doc> LayoutPassState<'doc> {
             column_spanners: None,
             calc_size_results: Vec::new(),
             multicol_percent_height: None,
+            cell_percent_height: None,
+            restricted_cell: None,
             stale_lines: Vec::new(),
         }
     }
@@ -731,12 +740,38 @@ impl LayoutPassState<'_> {
 
     #[inline(never)]
     fn flexbox_layout(&mut self, node_id: NodeId, inputs: taffy::tree::LayoutInput) -> taffy::tree::LayoutOutput {
-        compute_flexbox_layout(self, node_id, inputs)
+        self.quirky_fill_layout(node_id, inputs, |tree, inputs| compute_flexbox_layout(tree, node_id, inputs))
     }
 
     #[inline(never)]
     fn grid_layout(&mut self, node_id: NodeId, inputs: taffy::tree::LayoutInput) -> taffy::tree::LayoutOutput {
-        compute_grid_layout(self, node_id, inputs)
+        self.quirky_fill_layout(node_id, inputs, |tree, inputs| compute_grid_layout(tree, node_id, inputs))
+    }
+
+    /// pyro: a flex or grid container that is the quirky html or body (`quirky_fill_height`): laid out
+    /// again at its filled height when its content leaves it shorter (WPT css-flexbox `flexbox_quirks_body`).
+    fn quirky_fill_layout(
+        &mut self,
+        node_id: NodeId,
+        inputs: taffy::tree::LayoutInput,
+        layout: impl Fn(&mut Self, taffy::tree::LayoutInput) -> taffy::tree::LayoutOutput,
+    ) -> taffy::tree::LayoutOutput {
+        let fill = if inputs.sizing_mode == taffy::SizingMode::InherentSize && inputs.known_dimensions.height.is_none() {
+            self.quirky_fill_height(dom_node_id(node_id), inputs.parent_size)
+        } else {
+            None
+        };
+        let output = layout(self, inputs);
+        match fill {
+            Some(fill) if output.size.height < fill => layout(
+                self,
+                taffy::tree::LayoutInput {
+                    known_dimensions: Size { height: Some(fill), ..inputs.known_dimensions },
+                    ..inputs
+                },
+            ),
+            _ => output,
+        }
     }
 
     /// The layout of a leaf box (text, form controls, replaced elements, hidden boxes), or the
@@ -824,6 +859,11 @@ impl LayoutPassState<'_> {
 
         // pyro: the root `<svg>` of an SVG document keeps usvg's size (see the `Svg` arm below).
         let is_root_element = node.is_root_element();
+        // pyro: `frame-sizing: content-height` (see the iframe step below)
+        let frame_sizing_content_height = node.primary_styles().is_some_and(|style| {
+            use style::values::computed::FrameSizing;
+            matches!(style.get_position().frame_sizing, FrameSizing::ContentHeight | FrameSizing::ContentBlockSize)
+        });
         match &mut node.data {
             NodeData::Text(data) => {
                 // With the new "inline context" architecture all text nodes should be wrapped in an "inline layout context"
@@ -1006,7 +1046,10 @@ impl LayoutPassState<'_> {
                                 |_known_size, _available_space| natural,
                             ));
                         }
-                        None | Some("text" | "password" | "email" | "tel" | "url" | "search" | "time") => {
+                        // pyro: a number field too (it was laid out as an empty box; WPT css-pseudo
+                        // `placeholder-input-number`); `size` does not apply to it.
+                        kind @ (None
+                        | Some("text" | "password" | "email" | "tel" | "url" | "search" | "time" | "number")) => {
                             // Chromium's intrinsic width: `size` (default 20) average
                             // characters plus a max-char allowance, about
                             // (size / 2 + 0.4)em (166px for 16px Arial). It does not
@@ -1014,6 +1057,7 @@ impl LayoutPassState<'_> {
                             // unless given `min-width: 0`.
                             let size = element_data
                                 .attr(local_name!("size"))
+                                .filter(|_| kind != Some("number"))
                                 .and_then(|val| val.trim().parse::<u32>().ok())
                                 .filter(|&size| size > 0)
                                 .unwrap_or(20) as f32;
@@ -1201,6 +1245,21 @@ impl LayoutPassState<'_> {
                         _ => (intrinsic_sizes, default_object_size),
                     };
 
+                    // pyro: an iframe of `frame-sizing: content-height` showing a responsively embedded
+                    // document is as tall as its content (css-sizing-4; the height comes from pyro through the
+                    // render tree's `data-pyro-frame-content-height`; WPT css-sizing `responsive-iframe/*`)
+                    let (intrinsic_sizes, default_object_size) = match element_data
+                        .attr(markup5ever::LocalName::from("data-pyro-frame-content-height"))
+                        .and_then(|value| value.parse::<f32>().ok())
+                    {
+                        Some(height)
+                            if element_data.name.local == local_name!("iframe") && frame_sizing_content_height =>
+                        {
+                            (IntrinsicSizes { width: None, height: Some(height.max(0.0)), ratio: None }, default_object_size)
+                        }
+                        _ => (intrinsic_sizes, default_object_size),
+                    };
+
                     // pyro: an image of generated content or of the element's `content` at the
                     // resolution of its `image-set()` option.
                     let intrinsic_sizes = match &element_data.content_image {
@@ -1377,10 +1436,19 @@ impl LayoutPassState<'_> {
             Some(self.table_captions_min_width(&context, inputs))
         };
 
+        // pyro: whether the table's height is definite: then its cells' percentage-height children
+        // resolve against the cells' stretched heights (`TableTreeWrapper::definite_height`).
+        let restricted = !context.style.size.height.is_auto();
+        let definite_height = inputs.known_dimensions.height.is_some() || {
+            use taffy::MaybeResolve as _;
+            context.style.size.height.maybe_resolve(inputs.parent_size.height, resolve_calc_value).is_some()
+        };
         let mut table_wrapper = TableTreeWrapper {
             doc: self,
             ctx: context,
             style: None,
+            definite_height,
+            restricted,
         };
         table_wrapper.style = table_wrapper.auto_column_widths(&inputs);
         // pyro: a table's content size (a flex item's flex base size) is the width its columns give
@@ -1923,6 +1991,58 @@ impl LayoutContainingBlock for LayoutPassState<'_> {
 }
 
 impl LayoutPassState<'_> {
+    /// pyro: Quirks Mode §3.6 and §3.7: in quirks mode the root `html` element, and a `body` that is its
+    /// child, each in flow with an `auto` height, fill their containing block: the html element the
+    /// viewport less its margins, the body the html element's content box less its own margins. The
+    /// border-box height, which is their least height and what their children's `stretch` and percentage
+    /// heights resolve against (Blink `IsQuirkyAndFillsViewport`; WPT css-sizing `stretch/stretch-quirk-*`).
+    /// `parent_size`: the containing block (the html element passes its own on to the body through the
+    /// percentage height quirk).
+    pub(crate) fn quirky_fill_height(&self, node_id: crate::NodeId, parent_size: Size<Option<f32>>) -> Option<f32> {
+        use style::values::specified::box_::{DisplayInside, DisplayOutside};
+        use taffy::{CoreStyle as _, ResolveOrZero as _};
+        if !self.tree().quirks_mode {
+            return None;
+        }
+        let node = &self.nodes[node_id];
+        let el = node.data.downcast_element()?;
+        let root = self.root_element();
+        let is_root = node_id == root.id;
+        let is_body = !is_root && el.name.local == local_name!("body") && node.parent == Some(root.id);
+        if !(is_root || is_body) || (is_root && el.name.local != local_name!("html")) {
+            return None;
+        }
+        let fills = |node: &Node| {
+            let Some(styles) = node.primary_styles() else { return false };
+            let box_style = styles.get_box();
+            box_style.display.outside() == DisplayOutside::Block
+                && matches!(
+                    box_style.display.inside(),
+                    DisplayInside::Flow | DisplayInside::FlowRoot | DisplayInside::Flex | DisplayInside::Grid
+                )
+                && !box_style.position.is_absolutely_positioned()
+                && box_style.float == style::computed_values::float::T::None
+                && styles.get_position().height.is_auto()
+        };
+        let flow_root = root
+            .primary_styles()
+            .is_some_and(|s| matches!(s.get_box().display.inside(), DisplayInside::Flow | DisplayInside::FlowRoot));
+        if !fills(node) || (is_body && !(fills(root) && flow_root)) {
+            return None;
+        }
+        let width = parent_size.width;
+        let mut height = parent_size.height?;
+        if is_body {
+            let html = self.child_layout_style(root);
+            let margin = html.margin().resolve_or_zero(width, resolve_calc_value);
+            let padding = html.padding().resolve_or_zero(width, resolve_calc_value);
+            let border = html.border().resolve_or_zero(width, resolve_calc_value);
+            height -= margin.top + margin.bottom + padding.top + padding.bottom + border.top + border.bottom;
+        }
+        let margin = self.child_layout_style(node).margin().resolve_or_zero(width, resolve_calc_value);
+        Some((height - margin.top - margin.bottom).max(0.0))
+    }
+
     #[cfg(feature = "floats")]
     fn clear_layout_cache_of(&mut self, node_id: NodeId) {
         use taffy::CacheTree as _;
@@ -2063,9 +2183,20 @@ impl taffy::LayoutBlockContainer for LayoutPassState<'_> {
         node.is_split_inline() || node.is_inline_with_only_block_children() || self.quirks_skips_for_percent_height(node)
     }
 
+    fn block_container_restricts_percent_scrollers(&self, node_id: NodeId) -> bool {
+        // pyro: a table cell's in a table of non-`auto` height (`LayoutPassState::restricted_cell`;
+        // WPT css-tables `percentage-sizing-of-table-cell-007` against `-children-005`).
+        self.restricted_cell == Some(dom_node_id(node_id))
+    }
+
+    fn block_container_fill_height(&self, node_id: NodeId, parent_size: Size<Option<f32>>) -> Option<f32> {
+        self.quirky_fill_height(dom_node_id(node_id), parent_size)
+    }
+
     fn block_container_percentage_height(&self, node_id: NodeId) -> Option<f32> {
         self.multicol_percent_height
             .filter(|(container, _)| *container == dom_node_id(node_id))
+            .or(self.cell_percent_height.filter(|(cell, _)| *cell == dom_node_id(node_id)))
             .map(|(_, height)| height)
     }
 
@@ -2417,4 +2548,42 @@ pub(crate) fn effective_size_containment(styles: &style::properties::ComputedVal
         contain |= Contain::INLINE_SIZE;
     }
     contain
+}
+
+impl LayoutPassState<'_> {
+    /// pyro: the viewport of the `<svg>` nearest a `<foreignObject>` (CSS px): its `viewBox` size,
+    /// else its `width` and `height` when they are numbers, else (the root) its laid-out content box.
+    pub(crate) fn foreign_object_viewport(&self, fo: crate::NodeId) -> Option<(f32, f32)> {
+        let mut at = self.nodes[fo].parent;
+        while let Some(id) = at {
+            let node = &self.nodes[id];
+            let data = node.element_data()?;
+            if data.name.local == local_name!("svg") {
+                if let Some(view_box) = data.attr(local_name!("viewBox")) {
+                    let n: Vec<f32> = view_box
+                        .split(|c: char| c == ',' || c.is_ascii_whitespace())
+                        .filter_map(|v| v.parse().ok())
+                        .collect();
+                    if let [_, _, w, h] = n[..] {
+                        if w > 0.0 && h > 0.0 {
+                            return Some((w, h));
+                        }
+                    }
+                }
+                let number = |name| data.attr(name).and_then(|v: &str| v.trim().trim_end_matches("px").parse::<f32>().ok());
+                if let (Some(w), Some(h)) = (number(local_name!("width")), number(local_name!("height"))) {
+                    return Some((w, h));
+                }
+                let parent_is_svg = node.parent.and_then(|p| self.nodes[p].element_data()).is_some_and(|d| d.name.ns == markup5ever::ns!(svg));
+                if !parent_is_svg {
+                    let layout = node.unrounded_layout();
+                    let w = layout.size.width - layout.padding.left - layout.padding.right - layout.border.left - layout.border.right;
+                    let h = layout.size.height - layout.padding.top - layout.padding.bottom - layout.border.top - layout.border.bottom;
+                    return (w > 0.0 && h > 0.0).then_some((w, h));
+                }
+            }
+            at = node.parent;
+        }
+        None
+    }
 }

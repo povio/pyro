@@ -1089,8 +1089,17 @@ impl BaseDocument {
         // the tree construction left, with the nodes holding their styles made before the builds.
         for task in deferred_construction_nodes.iter_mut() {
             let ConstructionTaskData::InlineLayout(layout) = &mut task.data;
+            // pyro: the first line's style node first: a first letter on it inherits from it.
+            layout.first_line = match self.first_line_styles {
+                true => crate::layout::first_line::style_node_for(self, task.node_id),
+                false => None,
+            };
+            layout.first_line_styles = match layout.first_line {
+                Some(first_line) => crate::layout::first_line::layout_styles(self, task.node_id, first_line),
+                None => Vec::new(),
+            };
             layout.first_letter = match self.first_letter_styles {
-                true => crate::layout::first_letter::split(self, task.node_id),
+                true => crate::layout::first_letter::split(self, task.node_id, layout.first_line),
                 false => None,
             };
             // pyro: an initial letter box is laid out by the root's first line: it is the first
@@ -1098,10 +1107,6 @@ impl BaseDocument {
             if let Some(split) = layout.first_letter.as_ref().filter(|split| split.initial.is_some() || split.floated) {
                 crate::layout::first_letter::build_initial_letter_box(self, task.node_id, split.style_node);
             }
-            layout.first_line = match self.first_line_styles {
-                true => crate::layout::first_line::style_node_for(self, task.node_id),
-                false => None,
-            };
         }
 
         #[cfg(feature = "parallel-construct")]
@@ -1137,6 +1142,7 @@ impl BaseDocument {
                         layout: std::mem::take(&mut layout.layout),
                         first_letter: layout.first_letter.take(),
                         first_line: layout.first_line.take(),
+                        first_line_styles: std::mem::take(&mut layout.first_line_styles),
                         ..TextLayout::new()
                     };
                     build_inline_layout_into(
@@ -1268,7 +1274,12 @@ impl BaseDocument {
             {
                 state.layout_wm = state.layout_wm_of(crate::dom_node_id(fo));
             }
-            taffy::compute_root_layout_in(&mut state, fo, initial_containing_block, initial_containing_block);
+            // pyro: its percentage `width`/`height` resolve against the nearest `<svg>` viewport (WPT
+            // css-transforms `view-box-mutation-003`).
+            let viewport = state.foreign_object_viewport(crate::dom_node_id(fo)).map_or(initial_containing_block, |(w, h)| {
+                taffy::Size { width: taffy::AvailableSpace::Definite(w), height: taffy::AvailableSpace::Definite(h) }
+            });
+            taffy::compute_root_layout_in(&mut state, fo, viewport, viewport);
             #[cfg(feature = "writing-mode")]
             state.physicalise_and_round_layout(fo);
             #[cfg(not(feature = "writing-mode"))]

@@ -194,6 +194,8 @@ may be negative, as Blink takes it (the clip edge moves inwards; WPT `css-overfl
 `crates/pyro-render/tests/overflow_clip.rs`.
 - `values/specified/text.rs` (`WordBreak::Manual`): `word-break: manual` (CSS Text 4) is parsed for the servo engine.
   blitz-dom lays it out as `normal` without dictionary breaks in Southeast Asian scripts (its README.pyro.md).
+  `WordBreak::AutoPhrase`: `word-break: auto-phrase` (CSS Text 4), parsed under the same condition; parley lays it
+  out as `keep-all` with phrase breaks (`parley_engine` README.pyro.md).
 `values/specified/image.rs` (`Color::has_modern_syntax`): a colour with a missing component
 (`rgb(none 255 0)`) is modern syntax, so a gradient with one interpolates in Oklab by default, as in
 Chromium (WPT `gradient-eval-004`, `gradient-analogous-missing-components-*`). Stylo's legacy flag says
@@ -362,3 +364,20 @@ anchor positioning; stylo_taffy lays it out as `center`, which is what it is wit
 - `properties/data.py` (`PropertyRestrictions.marker`): `::marker` also takes `letter-spacing`, `word-spacing`,
   `line-break`, `word-break`, `overflow-wrap`, `tab-size` and `text-decoration-skip-ink` (CSS Pseudo 4, Blink; WPT
   css-pseudo `marker-word-spacing`, `marker-word-break`, ...).
+- `properties/longhands.toml`, `shorthands.toml`, `shorthands.rs`: `-webkit-text-stroke`, `-webkit-text-stroke-width`
+  and `-webkit-text-stroke-color` are parsed for servo too (blitz-paint strokes the glyphs).
+- `servo/media_features.rs`: servo evaluates the Media Queries 4/5 features it lacked, with Blink's headless answers:
+  `color` (8), `color-index`/`monochrome` (0), `grid` (false), `-webkit-transform-3d`, `device-aspect-ratio`,
+  `color-gamut` and `(video-)dynamic-range` (sRGB, standard), `prefers-reduced-motion/-transparency/-data` and
+  `prefers-contrast` (no preference), `forced-colors`, `inverted-colors`, `overflow-block/-inline` and `update`
+  (paged/none under `print`), `display-mode` (browser), `scripting` (enabled). The new names are not static atoms, so
+  `MEDIA_FEATURES` is a `LazyLock` (`queries/feature_expression.rs` derefs it).
+- `stylesheets/supports_rule.rs`, `font_face.rs`: `font-format()` matches collection/opentype/truetype/woff/woff2 and
+  `font-tech()` matches `FontFaceSourceTechFlags::SERVO_SUPPORTED` (features-opentype, COLRv0/v1, variations,
+  palettes) for servo (the pref `layout.css.font-tech.enabled` is set by the embedder).
+- `stylist.rs`: `CascadeData::counter_style(name)` (embedders resolve counter style names in shadow trees).
+
+Round 4 lane B: `frame-sizing` (css-sizing-4 responsive iframes) for the servo engine: `properties/longhands.toml`,
+`values/specified/position.rs` `FrameSizing` (`auto | content-width | content-height | content-block-size |
+content-inline-size`, re-exported in the specified and computed value modules, a Copy type in `properties/data.py`).
+blitz-dom reads it for iframes.

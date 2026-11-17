@@ -116,6 +116,10 @@ pub struct DocumentData {
     /// The viewport `<meta>` this document processed last
     /// (`Dom::viewport_meta`).
     pub(crate) viewport_meta: Option<crate::viewport_meta::MetaViewport>,
+    /// A `<meta name="responsive-embedded-sizing">` was processed before the document had a body: an
+    /// iframe of `frame-sizing: content-height` showing it takes its content's height (css-sizing-4
+    /// responsive iframes; `Dom::is_responsively_embedded`).
+    pub(crate) responsive_embedded: bool,
     /// The language its response's `Content-Language` header gave
     /// (`Dom::set_content_language`): the last fallback of `:lang()`.
     pub(crate) content_language: Option<Box<str>>,

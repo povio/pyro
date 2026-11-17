@@ -374,6 +374,24 @@ impl LayoutPassState<'_> {
             return LayoutOutput::HIDDEN;
         };
         let options = AlignmentOptions { align_when_overflowing: false, last_line_alignment: None };
+        // pyro: preserved white space before the letter is in the box, before the ink, and a tab
+        // goes to the paragraph's tab stops (the root's space, not the letter's: Blink; WPT
+        // css-inline `initial-letter-with-tab`).
+        let leading_space = text.text.starts_with(|c: char| c.is_whitespace());
+        if leading_space {
+            let parent_size = self.nodes[node_id]
+                .parent
+                .and_then(|parent| self.nodes[parent].primary_styles())
+                .map(|s| s.get_font().font_size.used_size.0.px());
+            let own_size = self.nodes[node_id].primary_styles().map(|s| s.get_font().font_size.used_size.0.px());
+            if let (Some(parent_size), Some(own_size)) = (parent_size, own_size)
+                && own_size > 0.0
+            {
+                let (space, min_advance) = text.layout.tab_stops();
+                let ratio = parent_size / own_size;
+                text.layout.set_tab_stops(space * ratio, min_advance * ratio);
+            }
+        }
         text.layout.set_text_indent(0.0, IndentOptions::default());
         text.layout.break_all_lines(None);
         text.layout.align(parley::Alignment::Start, options);
@@ -385,6 +403,12 @@ impl LayoutPassState<'_> {
         let [left, top, right, bottom] = match glyph_ink_bounds(&text.layout) {
             Some([l, t, r, b]) => [out(l / scale, false), out(t / scale, false), out(r / scale, true), out(b / scale, true)],
             None => [0.0, 0.0, text.layout.width() / scale, text.layout.height() / scale],
+        };
+        let (left, right) = match leading_space {
+            // Right-to-left, the white space is on the ink's right.
+            true if text.layout.is_rtl() => (left, right.max(out(text.layout.full_width() / scale, true))),
+            true => (left.min(0.0), right),
+            false => (left, right),
         };
         text.layout.set_text_indent((indent - left) * scale, IndentOptions::default());
         text.layout.break_all_lines(None);
@@ -660,6 +684,9 @@ impl LayoutPassState<'_> {
             let (min, max) = taffy::BlockContainerStyle::own_height_keywords(&style);
             (sizing_mode == SizingMode::InherentSize && content(min), sizing_mode == SizingMode::InherentSize && content(max))
         };
+        // pyro: the box's own height (`height` clamped), for a known height that is no basis for
+        // percentages (`LayoutInput::known_dimensions_are_definite`: a table cell's stretched height).
+        let mut own_height: Option<f32> = None;
         let (node_size, node_min_size, node_max_size, aspect_ratio) = match sizing_mode {
             SizingMode::ContentSize => {
                 let node_size = known_dimensions;
@@ -684,8 +711,16 @@ impl LayoutPassState<'_> {
                     .maybe_resolve(parent_size, resolve_calc_value)
                     .maybe_add(box_sizing_adjustment);
 
+                // pyro: the quirky html and body fill the viewport (`quirky_fill_height`)
+                let mut style_min_size = style_min_size;
+                if style_size.height.is_none() && known_dimensions.height.is_none() {
+                    if let Some(fill) = self.quirky_fill_height(node_id, parent_size) {
+                        style_min_size.height = Some(style_min_size.height.map_or(fill, |min| min.max(fill)));
+                    }
+                }
                 let node_size =
                     known_dimensions.or(style_size.maybe_clamp(style_min_size, style_max_size));
+                own_height = style_size.height.maybe_clamp(style_min_size.height, style_max_size.height);
                 (node_size, style_min_size, style_max_size, aspect_ratio)
             }
         };
@@ -753,9 +788,22 @@ impl LayoutPassState<'_> {
         // pyro: an anonymous block is no containing block: its atomic inlines stretch to the
         // height of the one around it too (`height: stretch` on an iframe; WPT css-sizing
         // `stretch/stretch-anonymous-block-001`).
+        // pyro: the quirky html and body's filled height (`quirky_fill_height`), their content box's
+        let quirky_fill = if sizing_mode == SizingMode::InherentSize
+            && known_dimensions.height.is_none()
+            && node_size.height.is_none()
+        {
+            self.quirky_fill_height(node_id, parent_size)
+                .map(|fill| (fill - content_box_inset.vertical_axis_sum()).max(0.0))
+        } else {
+            None
+        };
         let child_available_space = match (self.nodes[node_id].is_anonymous(), parent_size.height) {
             (true, Some(height)) => Size { height: AvailableSpace::Definite(height), ..available_space },
-            _ => available_space,
+            _ => match quirky_fill {
+                Some(height) => Size { height: AvailableSpace::Definite(height), ..available_space },
+                None => available_space,
+            },
         };
         // pyro: the height `height: stretch` fills (`inline_box_inputs`): this block's content
         // height when it is definite (an anonymous block's containing block's).
@@ -763,6 +811,8 @@ impl LayoutPassState<'_> {
             parent_size.height
         } else if known_dimensions.height.is_some() || node_size.height.is_some() {
             available_space.height.into_option()
+        } else if quirky_fill.is_some() {
+            quirky_fill
         } else {
             None
         };
@@ -781,6 +831,24 @@ impl LayoutPassState<'_> {
                 {
                     // pyro: the percentage height quirk (`quirks_skips_for_percent_height`)
                     parent_size.height
+                } else if known_dimensions.height.is_some()
+                    && !inputs.known_dimensions_are_definite.height
+                    && self.nodes[node_id].primary_styles().is_some_and(|style| {
+                        style.get_box().display.inside() == style::values::specified::box_::DisplayInside::TableCell
+                    })
+                {
+                    // pyro: a table cell's stretched height that is no basis
+                    // (`table::TableTreeWrapper::definite_height`): its own length `height` is.
+                    own_height
+                        .or(self.cell_percent_height.filter(|(cell, _)| *cell == node_id).map(|(_, height)| height))
+                        .map(|height| (height - content_box_inset.vertical_axis_sum()).max(0.0))
+                } else if known_dimensions.height.is_none() && node_size.height.is_none() {
+                    // pyro: a table cell measured for its row: its own length `height`
+                    // (`LayoutPassState::cell_percent_height`).
+                    match self.cell_percent_height.filter(|(cell, _)| *cell == node_id) {
+                        Some((_, height)) => Some((height - content_box_inset.vertical_axis_sum()).max(0.0)),
+                        None => available_space.height.into_option(),
+                    }
                 } else {
                     available_space.height.into_option()
                 },
@@ -1160,6 +1228,29 @@ impl LayoutPassState<'_> {
         inline_layout
             .layout
             .set_text_indent(resolved_text_indent * scale, indent_options);
+
+        // pyro: `::first-line` styles that change layout (`TextLayout::first_line_layout`): the
+        // build gave them to the text up to where the first line ended last time (all of it at
+        // first); a first line that ends elsewhere at this width builds the text again with that end.
+        if inline_layout.first_line_layout {
+            for _ in 0..2 {
+                inline_layout.layout.break_all_lines(Some(width));
+                let end = inline_layout.layout.lines().next().map(|line| line.text_range().end);
+                if end.is_none() || end == inline_layout.first_line_end {
+                    break;
+                }
+                inline_layout.first_line_end = end;
+                let crate::BaseDocument { nodes, layout_ctx, font_ctx, viewport, .. } = &mut **self;
+                let mut font_ctx = font_ctx.lock().unwrap();
+                super::build_inline_layout_into(nodes, layout_ctx, &mut font_ctx, &mut inline_layout, viewport.scale(), node_id);
+                drop(font_ctx);
+                inline_layout.last_break = None;
+                inline_layout.final_lines = None;
+                inline_layout
+                    .layout
+                    .set_text_indent(resolved_text_indent * scale, indent_options);
+            }
+        }
 
         // Content sized to fit exactly (e.g. shrink-to-fit) can end up a few ulps wider than
         // `width`: the width goes through round trips in CSS px, and the line breaker sums
@@ -1736,7 +1827,7 @@ impl LayoutPassState<'_> {
                 && let Some(line) = layout.get(0)
             {
                 let top = line.metrics().block_min_coord;
-                let edge = line.span_text_edge(0, trim.edge, trim.over);
+                let edge = line.span_text_edge(line.root_style(), trim.edge, trim.over);
                 // An inverted line (`vertical-lr`) has its under side at the block start.
                 text_box_shift = if trim.over { edge - top } else { line.metrics().block_max_coord - edge };
             }
@@ -1744,7 +1835,7 @@ impl LayoutPassState<'_> {
             if let Some(trim) = end
                 && let Some(line) = trailing_empty_line.unwrap_or(line_count).checked_sub(1).and_then(|i| layout.get(i))
             {
-                let edge = line.span_text_edge(0, trim.edge, trim.over);
+                let edge = line.span_text_edge(line.root_style(), trim.edge, trim.over);
                 end_trim = if trim.over { edge - line.metrics().block_min_coord } else { line.metrics().block_max_coord - edge };
             }
             // (Not above where a `<br>`'s clearance put the end of the content.)

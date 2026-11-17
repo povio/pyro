@@ -2487,3 +2487,70 @@ does not let margins collapse through it, even when its lines have no height (CS
   combining marks and typographic spaces, and after it all but opening punctuation and dashes (a non-word-separator
   space bridges to more); a preserved line break before any letter means no first letter; a `::before`/`::after`
   box with an atomic display does not pass on its container's first line.
+- `layout/mod.rs`: an `<input type=number>` is sized as a text field (it was an empty box); `size` does not apply.
+- `net.rs`: `@font-face` rules inside `@media`, passing `@supports` and `@layer` blocks load too (a `@media` list must
+  match the document's device; imported sheets, which load without one, keep every face); a `tech()` source needing a technology outside `SERVO_SUPPORTED` is skipped.
+  `document.rs` sets `layout.css.font-tech.enabled`.
+- `layout/inline/build.rs`, `stylo_to_parley.rs` (round 4 lane A): `<wbr>` is a U+200B soft wrap opportunity (it was
+  nothing: no break at all, also under `keep-all`); a quirks-mode `<br>` carries its own `line-height` (parley's line
+  height quirk sizes a line holding only it); `word-break: auto-phrase` maps to `keep-all` with parley's phrase
+  breaks; a `hyphenate-character` of two to four characters is `SoftHyphen::Chars`.
+- Round 4 lane B: `layout/mod.rs` `quirky_fill_height` (Quirks Mode §3.6/§3.7): in quirks mode the root html element and
+  a body child of it, in flow with `auto` height (flow, flow-root, flex or grid), fill the viewport less margins (the
+  body: less the html element's margins, border and padding too). Taffy block uses it through
+  `block_container_fill_height`, inline layout (`compute_inline_layout_inner`) as a least height and a definite height
+  for `stretch` and its children's available height, flex and grid through `quirky_fill_layout` (laid out again at the
+  filled height). WPT css-sizing `stretch/stretch-quirk-001`, css-flexbox `flexbox_quirks_body`.
+- `node/svg.rs` (round 4 lane D): an SVG image's root background is also read from a `background` shorthand that is a
+  lone colour.
+- `layout/first_letter.rs`, `resolve.rs`, `layout/inline/layout.rs` (round 4 lane A): preserved white space before
+  the first letter is part of it (Blink), and an initial letter's box keeps it before the ink, a tab going to the
+  paragraph's tab stops; the first letter on a `::first-line` line inherits from the first-line style (the first-line
+  style node is made first).
+- Round 4 lane B: `node/node.rs` sets `StyleFlags::IS_INPUT` on `<input>` elements (see vendor/stylo_taffy/README.pyro.md).
+- `animation.rs` (`sample_property`, round 4 lane D): keyframe easings take the effect's before flag, as Blink's take its
+  limit direction (a `jump-start` step in the before phase stays at its start; css-animations
+  `jump-start-animation-before-phase`).
+- `node/svg_css.rs` (round 4 lane D): an SVG element with `display: contents` loses its own `text-decoration` (line
+  decorations propagate through boxes; css-text-decor `text-decoration-propagation-display-contents`).
+- `stylo.rs`: `is_html_element`/`is_svg_element`/`is_mathml_element` answer by namespace (every element was HTML, none
+  SVG), so stylo's `display: contents` unboxing rules apply (an outer `<svg>`, other SVG and MathML elements: none).
+  `query_container_size`: a first query from a laid-out element outside the traversal (a lazy `::highlight()`/
+  `::backdrop` style) samples the content box at once (no later pass fills it).
+- `node/svg_css.rs`: `display: contents` on `<g>`, `<tspan>`, `<a>`, nested `<svg>` writes a bare wrapper with only the
+  inherited properties declared on it; a `<use>` keeps only its reference and position; other elements nothing.
+- `lang.rs`: a node assigned to a slot takes its language from the slot's host, not the slot.
+- `layout/list.rs`: `@counter-style` rules of every system format list markers (also over a predefined name such as
+  `lower-roman`), looked up in the item's shadow trees inside out before the document's (`CascadeData::counter_style`).
+- `node/element.rs`, `mutator.rs`: only the `id` attribute in no namespace is the element's ID (`xml:id` is not).
+- `layout/first_letter.rs`: the letter is a whole grapheme: a regional-indicator pair (a flag), an emoji ZWJ sequence.
+- Round 4 lane B: `node/svg_css.rs` notes when a `view-box` reference box (CSS `transform` percentages, clip-path
+  `view-box`, mask `view-box`) was the root's CSS box guessed before layout (a root sized in percentages or not at all:
+  300x150), `svg_source_for_viewport`; construct.rs keeps it as `SvgImageData::viewport_dependent`, and
+  `BaseDocument::inline_svg_at_viewport` serializes and parses such an `<svg>` again at its laid-out content box (cached
+  per node and size, dropped on reconstruction), which blitz-paint `draw_svg` paints (WPT css-transforms
+  `transform-percent-010`).
+- `layout/inline/build.rs`, `layout/inline/layout.rs`, `layout/first_line.rs` (`layout_styles`), `node/text.rs`
+  (round 4 lane A): `::first-line` font size, line height, family, weight, style and spacing apply in layout. The
+  build gives them to the text before `TextLayout::first_line_end` (all of it at first; parley's
+  `set_first_line`); `compute_inline_layout` breaks at the width and builds again when the first line ends
+  elsewhere (at most twice). The inline elements' styles on that line are cascaded again in full with the
+  first-line box as parent (`TextLayout::first_line_styles`): span edges with `em` widths follow it. A text-box-trim
+  edge and the first line's strut use the line's root style (`Line::root_style`). String markers of items without a
+  line of their own sit on `marker_baseline` (with the trim shift of the anonymous block holding the first line).
+- Round 4 lane B: `layout/mod.rs` (leaf layout of replaced elements): an iframe of `frame-sizing: content-height` (or
+  `content-block-size`) whose render tree element carries `data-pyro-frame-content-height` (pyro-dom's snapshot, from
+  the embedded document's root element height when that document opted in to responsive embedded sizing) has that
+  natural height (WPT css-sizing `responsive-iframe/*`).
+- `layout/table.rs`, `layout/mod.rs`, `layout/inline/layout.rs` (round 4 lane E): percentage heights of a table cell's
+  children follow CSS Tables 3 / Blink: unless the table's height (or the row's) is definite, the cell's stretched
+  height is no basis (`TableTreeWrapper::definite_height`); the cell's own length `height` is
+  (`LayoutPassState::cell_percent_height`, also in the baseline and intrinsic passes), else they are indefinite; in a
+  table of non-`auto` height a percentage-height scroll container counts as 0 (`restricted_cell`). css-tables
+  `percent-height-replaced-in-percent-cell-002..004`, `percent-height-table-cell-child`,
+  `table-cell-child-overflow-measure`, `percentage-sizing-of-table-cell-007`, `-children-006`.
+- `node/svg_css.rs`, `resolve.rs` (round 4 lane E): a `<foreignObject>` with a percentage `width`/`height` is drawn,
+  and its root is laid out against the nearest `<svg>`'s viewport (`LayoutPassState::foreign_object_viewport`;
+  css-transforms `view-box-mutation-003`).
+- `layout/table.rs`, `node/stylo_data.rs` (round 4 lane E): `max-height` does not apply to a table cell, as in
+  Chromium (css-tables `table-cell-overflow-explicit-height-002`).

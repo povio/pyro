@@ -74,6 +74,21 @@ impl LineLayout {
     }
 }
 
+/// pyro: a soft hyphen a line may end at ([`LineState::shy`]).
+#[derive(Clone, Copy, Debug)]
+struct Shy {
+    /// The shaped cluster that shows the hyphen.
+    cluster: u32,
+    /// The hyphen's glyphs and advances, the first `len` of them.
+    glyphs: [(u32, f32); 4],
+    len: u8,
+    /// The hyphen's advance.
+    advance: f32,
+    /// The cluster keeps its own glyphs (shaping merged the soft hyphen into it).
+    keep: bool,
+    rtl: bool,
+}
+
 #[derive(Clone, Default)]
 struct LineState {
     x: f32,
@@ -109,9 +124,9 @@ struct LineState {
     tabs: SmallVec<[(u32, f32); 2]>,
     /// pyro: the shaped cluster after the line's last such tab: justification starts there.
     justify_from: u32,
-    /// pyro: the last atom appended to the line when it is a soft hyphen: its shaped cluster and
-    /// the hyphen of its run's font (glyph, advance). A line that ends there shows the hyphen.
-    shy: Option<(u32, u32, f32)>,
+    /// pyro: the last atom appended to the line when it ends with a soft hyphen, and the hyphen a
+    /// line that ends there shows.
+    shy: Option<Shy>,
     /// pyro: the last atom appended is a soft hyphen that no line ends at (`hyphens: none`).
     no_break_after: bool,
     /// pyro: text or an atomic inline was appended to the line: what comes next does not start
@@ -457,7 +472,11 @@ impl LineBoxMetrics {
         contributed: &mut Vec<u16>,
         subtrees: &mut SubtreeHistory,
     ) {
-        self.has_content = true;
+        // pyro: an empty inline box's strut alone is no content: its line stays invisible
+        // (CSS Inline 3 § 4.1; WPT css-inline `empty-span-size-*`).
+        if !matches!(characters, [character] if character.flags.is_empty_box_strut()) {
+            self.has_content = true;
+        }
         // Consecutive atoms almost always come from the same run and style, whose boxes are then
         // already on the line, so we can exit early. In case the run has atoms with mixed styles,
         // new boxes may still be added.
@@ -490,7 +509,22 @@ impl LineBoxMetrics {
         subtrees: &mut SubtreeHistory,
     ) {
         self.last_text = (item_idx, style_index);
-        if contributed.last() != Some(&style_index) {
+        if data.line_height_quirk {
+            // pyro: under the line height quirk text adds only the box of its own style: an
+            // inline box without text of its own adds nothing (Quirks Mode §3.3, as in Blink).
+            if !contributed.contains(&style_index) {
+                contributed.push(style_index);
+                if let Some(metrics) = data.style_metrics.get(usize::from(style_index)) {
+                    let span_box = BoxMetrics {
+                        ascent: metrics.ascent,
+                        descent: metrics.descent,
+                        over: metrics.over,
+                        under: metrics.under,
+                    };
+                    self.add_box(metrics.aligned_subtree_root, metrics.baseline_offset, span_box, subtrees);
+                }
+            }
+        } else if contributed.last() != Some(&style_index) {
             self.add_style(style_index, &data.style_metrics, contributed, subtrees);
         }
         if data.runs[run_idx].has_mixed_style_atoms {
@@ -696,6 +730,9 @@ pub struct BreakerState {
     prev_boundary: Option<PrevBoundaryState>,
     /// Saved breaker state for the last emergency line-breaking opportunity
     emergency_boundary: Option<PrevBoundaryState>,
+    /// pyro: saved breaker state for the last phrase fallback opportunity (`word-break:
+    /// auto-phrase`), taken before an emergency one when the line has no regular opportunity.
+    phrase_boundary: Option<PrevBoundaryState>,
 }
 
 impl Default for BreakerState {
@@ -717,6 +754,7 @@ impl Default for BreakerState {
             subtrees: SubtreeHistory::default(),
             prev_boundary: None,
             emergency_boundary: None,
+            phrase_boundary: None,
         }
     }
 }
@@ -762,37 +800,73 @@ impl BreakerState {
         if atom.advance() != 0.0 || atom.characters()[0].whitespace != Whitespace::None {
             self.line.has_inline_content = true;
         }
-        if let [character] = atom.characters()
-            && character.flags.is_soft_hyphen()
-            && atom.shaped_clusters_range().len() == 1
-        {
+        // pyro: a soft hyphen alone in its cluster, or one that shaping merged into the cluster
+        // before it (a font without a space glyph: HarfRust deletes the default ignorable).
+        let characters = atom.characters();
+        let clusters = atom.shaped_clusters_range();
+        let shy_at = match characters {
+            [character] if character.flags.is_soft_hyphen() && clusters.len() == 1 => {
+                Some((clusters.start, false, character.style_index))
+            }
+            [_, .., last] if last.flags.is_soft_hyphen() && !clusters.is_empty() => {
+                Some((clusters.end - 1, true, last.style_index))
+            }
+            _ => None,
+        };
+        if let Some((cluster, keep, shy_style)) = shy_at {
             use crate::style::SoftHyphen;
-            let font_hyphen = || data.shaped_text.runs().get(self.run_idx).and_then(|run| run.hyphen);
-            let hyphen = match data.styles[style_index as usize].soft_hyphen {
-                SoftHyphen::Auto => font_hyphen(),
-                SoftHyphen::Char(ch) => data.shaped_text.glyph_of(self.run_idx, ch).or_else(font_hyphen),
+            let run = data.shaped_text.runs().get(self.run_idx);
+            let font_hyphen = || run.and_then(|run| run.hyphen);
+            let mut glyphs = [(0, 0.0); 4];
+            let len = match data.styles[shy_style as usize].soft_hyphen {
+                SoftHyphen::Auto => font_hyphen().map(|glyph| { glyphs[0] = glyph; 1 }),
+                SoftHyphen::Char(ch) => data
+                    .shaped_text
+                    .glyph_of(self.run_idx, ch)
+                    .or_else(font_hyphen)
+                    .map(|glyph| { glyphs[0] = glyph; 1 }),
+                SoftHyphen::Chars(chars, len) => {
+                    let found = chars[..usize::from(len)].iter().enumerate().all(|(index, &ch)| {
+                        data.shaped_text.glyph_of(self.run_idx, ch).map(|glyph| glyphs[index] = glyph).is_some()
+                    });
+                    if found { Some(len) } else { font_hyphen().map(|glyph| { glyphs[0] = glyph; 1 }) }
+                }
                 SoftHyphen::Hidden => None,
                 SoftHyphen::NoBreak => {
                     self.line.no_break_after = true;
                     None
                 }
             };
-            self.line.shy = hyphen.map(|(glyph, advance)| (atom.shaped_clusters_range().start, glyph, advance));
+            self.line.shy = len.map(|len| Shy {
+                cluster,
+                glyphs,
+                len,
+                advance: glyphs[..usize::from(len)].iter().map(|glyph| glyph.1).sum(),
+                keep,
+                rtl: run.is_some_and(|run| run.bidi_level.is_rtl()),
+            });
         }
         // pyro: a tab that goes to a tab stop keeps what is before it where it is.
         if self.line.tabs.last().is_some_and(|tab| tab.0 == atom.shaped_clusters_range().start) {
             self.line.num_word_separators = 0;
             self.line.justify_from = atom.shaped_clusters_range().end;
         }
-        self.line.box_metrics.add_text(
-            self.item_idx,
-            self.run_idx,
-            style_index,
-            atom.characters(),
-            data,
-            &mut self.contributed,
-            &mut self.subtrees,
-        );
+        // pyro: under the line height quirk a line break counts only on a line without other
+        // content (a `<br>` alone sets its line's height; Blink's `PlaceControlItem`).
+        if !(data.line_height_quirk
+            && self.line.box_metrics.has_content
+            && atom.characters()[0].whitespace == Whitespace::Newline)
+        {
+            self.line.box_metrics.add_text(
+                self.item_idx,
+                self.run_idx,
+                style_index,
+                atom.characters(),
+                data,
+                &mut self.contributed,
+                &mut self.subtrees,
+            );
+        }
         self.update_max_height_exceeded();
     }
 
@@ -861,6 +935,18 @@ impl BreakerState {
     /// an *emergency* line breaking opportunity at this point.
     fn mark_emergency_break_opportunity(&mut self) {
         self.emergency_boundary = Some(PrevBoundaryState {
+            item_idx: self.item_idx,
+            run_idx: self.run_idx,
+            cluster_idx: self.cluster_idx,
+            state: self.line.clone(),
+            contributed_len: self.contributed.len(),
+            subtrees_len: self.subtrees.save(),
+        });
+    }
+
+    /// pyro: store the current iteration state as a phrase fallback opportunity.
+    fn mark_phrase_break_opportunity(&mut self) {
+        self.phrase_boundary = Some(PrevBoundaryState {
             item_idx: self.item_idx,
             run_idx: self.run_idx,
             cluster_idx: self.cluster_idx,
@@ -1118,8 +1204,10 @@ impl<'a, B: Brush> BreakLines<'a, B> {
         state.subtrees.clear();
         // pyro: under the line height quirk, text adds the strut with its own span boxes.
         if !self.layout.data.line_height_quirk {
+            // pyro: the first line's strut is its `::first-line` root style's.
+            let root = self.layout.data.first_line_root.filter(|_| self.lines.lines.is_empty()).unwrap_or(0);
             state.line.box_metrics.add_style(
-                0,
+                root,
                 &self.layout.data.style_metrics,
                 &mut state.contributed,
                 &mut state.subtrees,
@@ -1342,34 +1430,38 @@ impl<'a, B: Brush> BreakLines<'a, B> {
     ) -> Option<YieldData> {
         // pyro: a line that wraps after a soft hyphen shows the hyphen of the font there; the
         // line's other soft hyphens show nothing (an earlier break may have ended a line at one).
-        let shy = self.state.line.shy.take().filter(|&(cluster, _, _)| {
+        let shy = self.state.line.shy.take().filter(|shy| {
             matches!(reason, BreakReason::Regular | BreakReason::Emergency)
-                && cluster + 1 == self.state.line.clusters.end
+                && shy.cluster + 1 == self.state.line.clusters.end
         });
         let clusters = self.state.line.clusters.clone();
         let data = &mut self.layout.data;
         let mut shown = false;
-        data.shown_hyphens.retain(|&(cluster, glyph, advance)| {
-            if shy.is_some_and(|(at, _, _)| at == cluster) {
+        data.shown_hyphens.retain(|&(cluster, saved)| {
+            if shy.is_some_and(|shy| shy.cluster == cluster) {
                 shown = true;
                 true
             } else if clusters.contains(&cluster) {
-                data.shaped_text.set_cluster_glyph(cluster, glyph, advance);
+                data.shaped_text.restore_cluster(cluster, saved);
                 false
             } else {
                 true
             }
         });
-        if let Some((cluster, glyph, advance)) = shy {
+        if let Some(shy) = shy {
             if !shown
-                && let Some((was_glyph, was_advance)) =
-                    data.shaped_text.set_cluster_glyph(cluster, glyph, advance)
+                && let Some(saved) = data.shaped_text.show_hyphen(
+                    shy.cluster,
+                    &shy.glyphs[..usize::from(shy.len)],
+                    shy.keep,
+                    shy.rtl,
+                )
             {
-                data.shown_hyphens.push((cluster, was_glyph, was_advance));
+                data.shown_hyphens.push((shy.cluster, saved));
                 shown = true;
             }
             if shown {
-                self.state.line.x += advance;
+                self.state.line.x += shy.advance;
             }
         }
         // pyro: the line's tabs take the advances that reach their stops.
@@ -1438,6 +1530,7 @@ impl<'a, B: Brush> BreakLines<'a, B> {
         self.line_open = false;
         self.state.prev_boundary = None;
         self.state.emergency_boundary = None;
+        self.state.phrase_boundary = None;
 
         // `finish_line` reads the line's accumulated vertical metrics from `self.state.line`, so
         // it must run before we reset the per-line running state. It may grow the line (e.g. the
@@ -1778,8 +1871,8 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                             // pyro: nor after a soft hyphen whose hyphen would not fit, when
                             // the line can end earlier, nor after one that `hyphens: none` has.
                             let hyphen_fits = self.state.prev_boundary.is_none()
-                                || self.state.line.shy.is_none_or(|(_, _, hyphen)| {
-                                    self.state.line.x + hyphen <= fit_advance + FIT_TOLERANCE
+                                || self.state.line.shy.is_none_or(|shy| {
+                                    self.state.line.x + shy.advance <= fit_advance + FIT_TOLERANCE
                                 });
                             if self.state.line.x != 0.0
                                 && !self.state.line.after_span_start
@@ -1789,6 +1882,14 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                                 self.state.mark_line_break_opportunity();
                                 // break_opportunity = true;
                             }
+                        } else if first_character.flags.is_phrase_fallback()
+                            && text_wrap_mode == TextWrapMode::Wrap
+                            && self.state.line.x != 0.0
+                            && !self.state.line.after_span_start
+                        {
+                            // pyro: `word-break: auto-phrase` breaks here only when the line's
+                            // phrase does not fit.
+                            self.state.mark_phrase_break_opportunity();
                         } else if
                         // This text can contribute "emergency" line breaks.
                         style.overflow_wrap != OverflowWrap::Normal
@@ -1946,6 +2047,16 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                             //
                             // We "take" the line-breaking opportunity by starting a new line and resetting our
                             // item/run/cluster iteration state back to how it was when the line-breaking opportunity was encountered
+                            // pyro: a line whose phrase does not fit breaks as under `word-break:
+                            // normal`.
+                            else if let Some(prev_phrase) = self.state.phrase_boundary.take() {
+                                self.state.reset_to(prev_phrase);
+                                return self.start_new_line(
+                                    BreakReason::Regular,
+                                    max_advance,
+                                    line_indent,
+                                );
+                            }
                             else if let Some(prev_emergency) =
                                 self.state.emergency_boundary.take()
                             {
@@ -2181,12 +2292,16 @@ impl<'a, B: Brush> BreakLines<'a, B> {
     }
 
     fn finish_line(&mut self, line_idx: usize, line_height: f32, invisible: bool) -> f32 {
+        // pyro: an atomic inline (even an empty one) makes the line no invisible line box for
+        // painting (its boxes' fragments paint), whatever height it has here.
+        let has_atomic = self.state.line.has_inline_content;
         let line = &mut self.lines.lines[line_idx];
 
         // Reset metrics for line
         line.metrics.offset = 0.;
 
         line.metrics.line_height = line_height;
+        line.metrics.invisible = invisible && !has_atomic;
 
         if line.item_range.is_empty() {
             line.text_range = self.layout.data.text_len..self.layout.data.text_len;
@@ -2664,7 +2779,7 @@ fn hanging_whitespace<B: Brush>(
                 // reordering. We don't currently apply UAX #9 L1 (resetting trailing whitespace to
                 // paragraph level), so only logically-last items that match the paragraph level are
                 // guaranteed to be at that edge.
-                if line_item.bidi_level != layout.data.base_level {
+                if line_item.bidi_level != layout.data.level_at(line_item.text_range.start) {
                     break;
                 }
 
@@ -2845,7 +2960,9 @@ fn line_end_trim<B: Brush>(data: &LayoutData<B>, atom: &Atom<'_>) -> Option<(u32
 /// trailing white space (spaces, tabs, a segment break) and zero-width formatting characters
 /// get the paragraph's level. A text item ending in some is split in two at their start.
 fn reset_trailing_whitespace_level<B: Brush>(layout: &Layout<B>, line_items: &mut Vec<LineItemData>, start: usize) {
-    let base_level = layout.data.base_level;
+    let base_level = line_items
+        .get(start)
+        .map_or(layout.data.base_level, |item| layout.data.level_at(item.text_range.start));
     let shaped_text = &layout.data.shaped_text;
     let shaped_clusters = shaped_text.shaped_clusters();
     let mut index = line_items.len();

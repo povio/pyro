@@ -217,6 +217,11 @@ impl<B: Brush> Layout<B> {
     /// a space.
     ///
     /// Like the indent, this must be set before the content widths are read and the lines broken.
+    /// pyro: the `(space, min_advance)` [`Self::set_tab_stops`] set.
+    pub fn tab_stops(&self) -> (f32, f32) {
+        (self.data.tab_space, self.data.tab_min_advance)
+    }
+
     pub fn set_tab_stops(&mut self, space: f32, min_advance: f32) {
         self.data.tab_space = if space.is_finite() { space.max(0.0) } else { 0.0 };
         self.data.tab_min_advance = min_advance.max(0.0);

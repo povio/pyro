@@ -2821,8 +2821,27 @@ where
         }
     }
     loop {
+        // pyro: inside :is() / :where() / :not() the default namespace is ignored only for the
+        // subject compound (Selectors 4 §4.2); a compound a combinator follows keeps it (WPT
+        // selectors is-default-ns-003, not-default-ns-003). Probe for that combinator.
+        let skip_default_ns = state.intersects(SelectorParsingState::SKIP_DEFAULT_NAMESPACE);
+        if skip_default_ns && parser.default_namespace().is_some() {
+            let start = input.state();
+            let mut probe_state = state;
+            let mut probe_builder = SelectorBuilder::default();
+            let followed = matches!(
+                parse_compound_selector(parser, &mut probe_state, input, &mut probe_builder),
+                Ok(false)
+            ) && !probe_state.intersects(SelectorParsingState::AFTER_PSEUDO)
+                && try_parse_combinator(input).is_ok();
+            input.reset(&start);
+            if followed {
+                state.remove(SelectorParsingState::SKIP_DEFAULT_NAMESPACE);
+            }
+        }
         // Parse a sequence of simple selectors.
         let empty = parse_compound_selector(parser, &mut state, input, &mut builder)?;
+        state.set(SelectorParsingState::SKIP_DEFAULT_NAMESPACE, skip_default_ns);
         if empty {
             return Err(ParseError::custom(if builder.has_combinators() {
                 SelectorParseErrorKind::DanglingCombinator

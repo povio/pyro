@@ -136,6 +136,8 @@ pub(crate) struct State {
     rules: RefCell<Option<Rc<TimingRules>>>,
     /// The style stamp the rules' key was last computed at.
     rules_stamp: Cell<Option<Stamp>>,
+    /// The style stamp `inline_animations` last looked at, and its answer.
+    inline_stamp: Cell<Option<(Stamp, bool)>>,
     /// The style stamp of the last frame update.
     stamp: Cell<Option<Stamp>>,
     queued: Cell<bool>,
@@ -199,8 +201,26 @@ impl State {
     /// Whether timelines are kept: the sheets animate or transition (their
     /// values are sampled into the layout engine's cascade), a listener could
     /// observe their events, or `getAnimations()` lists them.
-    fn tracking(&self, dom: &pyro_dom::Dom, style: &pyro_dom::style::StyleEngine) -> bool {
-        dom.has_animation_listeners() || self.listed.get() || dom.smil_seen() || self.rules(dom, style).animates()
+    fn tracking(&self, dom: &pyro_dom::Dom, style: &pyro_dom::style::StyleEngine, doc: NodeId) -> bool {
+        dom.has_animation_listeners()
+            || self.listed.get()
+            || dom.smil_seen()
+            || self.rules(dom, style).animates()
+            || self.inline_animations(dom, style, doc)
+    }
+    /// Whether a `style` attribute asks for an animation of an existing
+    /// `@keyframes` rule (no sheet rule declares one): the page times it too,
+    /// as Stylo's own animations get negative and changed delays wrong.
+    fn inline_animations(&self, dom: &pyro_dom::Dom, style: &pyro_dom::style::StyleEngine, doc: NodeId) -> bool {
+        let stamp = style.observation_stamp(dom);
+        if let Some((at, found)) = self.inline_stamp.get() {
+            if at == stamp {
+                return found;
+            }
+        }
+        let found = !self.rules(dom, style).animation_candidates(dom, doc).is_empty();
+        self.inline_stamp.set(Some((stamp, found)));
+        found
     }
     fn transitions_tracked(&self, dom: &pyro_dom::Dom, style: &pyro_dom::style::StyleEngine) -> bool {
         dom.has_transition_listeners() || self.listed.get() || self.rules(dom, style).animates()
@@ -368,7 +388,7 @@ pub(crate) fn after_task(page: &Rc<PageDom>) {
     {
         let Ok(dom) = page.dom.try_borrow() else { return };
         let Some(layout) = page.try_layout() else { return };
-        if !state.tracking(&dom, layout.style()) {
+        if !state.tracking(&dom, layout.style(), page.document()) {
             return;
         }
         // The syncs before that update record their style changes too: a
@@ -602,7 +622,7 @@ pub(crate) fn before_render(page: &Rc<PageDom>) {
         let Ok(dom) = page.dom.try_borrow() else { return };
         let Some(layout) = page.try_layout() else { return };
         let style = layout.style();
-        if !state.tracking(&dom, style) || state.stamp.get() == Some(style.observation_stamp(&dom)) {
+        if !state.tracking(&dom, style, page.document()) || state.stamp.get() == Some(style.observation_stamp(&dom)) {
             return;
         }
     }

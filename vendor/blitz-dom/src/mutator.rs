@@ -475,7 +475,9 @@ impl DocumentMutator<'_> {
         let tag = &element.name.local;
         let attr = &name.local;
 
-        if *attr == local_name!("id") {
+        // pyro: only the `id` attribute in no namespace is the element's ID (`xml:id` is not;
+        // WPT selectors historical-xmlid).
+        if *attr == local_name!("id") && name.ns == markup5ever::ns!() {
             element.id = Some(Atom::from(value))
         }
 
@@ -637,7 +639,7 @@ impl DocumentMutator<'_> {
                 .attribute_changed(&name.local, old_value, None);
         }
 
-        if name.local == local_name!("id") {
+        if name.local == local_name!("id") && name.ns == markup5ever::ns!() {
             element.id = None;
         }
 

@@ -88,6 +88,8 @@ pub(crate) fn init_stylo_prefs() {
     INIT.call_once(|| {
         style_config::set_pref!("layout.css.flexbox-balance.enabled", true);
         style_config::set_pref!("layout.css.text-box.enabled", true);
+        // pyro: `font-format()`/`font-tech()` in `@supports`, `tech()` in `@font-face` sources.
+        style_config::set_pref!("layout.css.font-tech.enabled", true);
         // pyro: `text-autospace` (parley spaces ideographs from letters and numerals).
         style_config::set_pref!("layout.css.text-autospace.enabled", true);
         // pyro: `text-combine-upright` (no text-autospace in such upright text; the layout ignores it).
@@ -537,6 +539,10 @@ pub struct BaseDocument {
     /// natural size (`BaseDocument::update_svg_image_documents`), painted by blitz-paint in place of
     /// the image's usvg tree, which has no HTML content. Set once such an image loaded.
     pub svg_image_documents: HashMap<NodeId, SvgImageDocument>,
+    /// pyro: inline `<svg>`s serialized again at their laid-out size (`inline_svg_at_viewport`), by node:
+    /// the size and the parse.
+    #[cfg(feature = "svg")]
+    pub(crate) viewport_svgs: RefCell<HashMap<NodeId, ((u32, u32), Option<Arc<crate::node::SvgImageData>>)>>,
     pub(crate) has_svg_image_documents: bool,
     /// A resolve ran since the paint tree was last built: `ensure_paint_tree`
     /// rebuilds the nodes flagged `PAINT_TREE_DIRTY` before the next paint or
@@ -827,6 +833,8 @@ impl BaseDocument {
             left_layout_lists: Vec::new(),
             svg_foreign_objects: HashMap::new(),
             svg_image_documents: HashMap::new(),
+            #[cfg(feature = "svg")]
+            viewport_svgs: RefCell::new(HashMap::new()),
             has_svg_image_documents: false,
             paint_tree_dirty: true,
             hit_overflow_dirty: true,
@@ -1809,6 +1817,7 @@ impl BaseDocument {
                 &self.shell_provider,
                 &self.guard.read(),
                 self.abort_signal.as_ref(),
+                Some(self.stylist.device()),
             );
             let element = &mut self.nodes[node_id].element_data_mut().unwrap();
             element.special_data = SpecialElementData::Stylesheet(stylesheet.clone());
@@ -1832,6 +1841,7 @@ impl BaseDocument {
             &self.shell_provider,
             &self.guard.read(),
             self.abort_signal.as_ref(),
+            Some(self.stylist.device()),
         );
 
         // Store data on element
@@ -3031,6 +3041,30 @@ impl BaseDocument {
                 svg = svg.replace(&attr, &format!("href=\"{data}\""));
             }
         }
+        svg
+    }
+
+    /// pyro: an inline `<svg>` whose source depends on its laid-out size (`SvgImageData::viewport_dependent`),
+    /// serialized and parsed again for a content box of `width` x `height` CSS px (kept until the size
+    /// changes); `None` when that fails.
+    #[cfg(feature = "svg")]
+    pub fn inline_svg_at_viewport(&self, node_id: NodeId, width: f32, height: f32) -> Option<Arc<crate::node::SvgImageData>> {
+        let key = ((width * 64.0).round() as u32, (height * 64.0).round() as u32);
+        if let Some((size, svg)) = self.viewport_svgs.borrow().get(&node_id) {
+            if *size == key {
+                return svg.clone();
+            }
+        }
+        let node = self.get_node(node_id)?;
+        let (source, _) = node.svg_source_for_viewport(Some((width as f64, height as f64)));
+        let source = self.with_cross_svg_references(self.with_svg_sprites(self.with_svg_images(source, node_id)));
+        let svg = crate::util::parse_svg_image(source.as_bytes()).ok().map(|mut svg| {
+            if svg.intrinsic_dimensions.view_box.is_none() {
+                svg.inline_source = Some(source.as_str().into());
+            }
+            Arc::new(svg)
+        });
+        self.viewport_svgs.borrow_mut().insert(node_id, (key, svg.clone()));
         svg
     }
 

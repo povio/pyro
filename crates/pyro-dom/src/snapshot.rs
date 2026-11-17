@@ -465,6 +465,15 @@ impl Dom {
                             }
                         }
                     }
+                    if html && local == "iframe" {
+                        if let Some(height) = self.frame_content_heights.get(&n) {
+                            attrs.push(RAttr {
+                                name: plain("data-pyro-frame-content-height"),
+                                value: Cow::Owned(height.to_string()),
+                                valueless: false,
+                            });
+                        }
+                    }
                     if html && local == "option" && self.option_selected(id).unwrap_or(false) {
                         attrs.push(RAttr { name: plain("selected"), value: Cow::Borrowed(""), valueless: true });
                     }

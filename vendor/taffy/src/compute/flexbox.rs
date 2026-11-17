@@ -1198,6 +1198,13 @@ fn determine_flex_base_size(
         // Parent size for child sizing
         let cross_axis_parent_size = constants.node_inner_size.cross(dir);
         let child_parent_size = Size::from_cross(dir, cross_axis_parent_size);
+        // pyro: a replaced item with a natural ratio measures in a row against the container's width: one with
+        // only a ratio (an SVG with a `viewBox` alone) stretch-fits it, less its margins, as in Blink (WPT
+        // css-flexbox `svg-root-as-flex-item-003`); one with natural sizes does not read it
+        let child_parent_size = match (dir.is_row() && child.is_replaced && child.natural_ratio.is_some(), constants.node_inner_size.main(dir)) {
+            (true, Some(main)) => child_parent_size.with_main(dir, Some(main)),
+            _ => child_parent_size,
+        };
 
         // pyro: sizing keywords in the min and max cross sizes: the item measured in the cross axis
         for minimum in [true, false] {
@@ -1254,7 +1261,9 @@ fn determine_flex_base_size(
                 dir,
                 ckd.cross(dir).maybe_clamp(transferred_min_size.cross(dir), transferred_max_size.cross(dir)),
             );
-            if child.align_self == AlignSelf::STRETCH
+            // pyro: `stretch` as the cross size stretches whatever `align-self` is (WPT css-sizing
+            // `stretch/flexbox-auto-minimum-002`: its size transfers through the ratio to the automatic minimum)
+            if (child.align_self == AlignSelf::STRETCH || child.size_style.cross(dir).is_stretch())
                 && !child.margin_is_auto.cross_start(constants.dir)
                 && !child.margin_is_auto.cross_end(constants.dir)
                 && ckd.cross(dir).is_none()
@@ -1955,11 +1964,30 @@ fn determine_container_main_size(
                                 .map(|child| {
                                     let padding_border_sum =
                                         (child.padding + child.border).main_axis_sum(constants.dir);
-                                    let min = if child.flex_shrink == 0.0 {
-                                        child.flex_basis.max(child.resolved_minimum_main_size)
-                                    } else {
-                                        child.resolved_minimum_main_size
-                                    };
+                                    // pyro: the item's min-content contribution (Blink's row algorithm,
+                                    // css-flexbox-1 §9.9.1): its min-content size, at least its flex base size
+                                    // under a min-content constraint (§9.2.3 C: a content basis is the
+                                    // min-content size) when it cannot shrink, at most that basis when it
+                                    // cannot grow, and at least its minimum (WPT css-flexbox
+                                    // `intrinsic-size/row-001`, `row-004`)
+                                    let min_content = tree.measure_child_size(
+                                        child.node,
+                                        Size::NONE,
+                                        Size::NONE,
+                                        Size::MIN_CONTENT,
+                                        SizingMode::ContentSize,
+                                        dir.main_axis(),
+                                        Line::FALSE,
+                                    );
+                                    let basis = if child.flex_basis_is_definite { child.flex_basis } else { min_content.max(padding_border_sum) };
+                                    let mut size = min_content;
+                                    if child.flex_grow == 0.0 {
+                                        size = size.min(basis);
+                                    }
+                                    if child.flex_shrink == 0.0 {
+                                        size = size.max(basis);
+                                    }
+                                    let min = size.maybe_min(child.max_size.main(dir)).max(child.resolved_minimum_main_size);
                                     (min + child.margin.main_axis_sum(constants.dir)).max(padding_border_sum)
                                 })
                                 .sum::<f32>();

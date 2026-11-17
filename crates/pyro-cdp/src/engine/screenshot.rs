@@ -305,6 +305,8 @@ impl ClipParams {
 impl EngineHost {
     fn snapshot(&mut self, pid: PageId, mark: Option<NodeId>) -> CdpResult<Snapshot> {
         let page = self.thread.browser.page(pid).ok_or_else(|| CdpError::server("page is gone"))?;
+        // Responsive iframes take their documents' heights (css-sizing-4).
+        page.update_responsive_frames();
         let frame = &page.main_frame;
         let dom = frame.page_dom.clone().ok_or_else(|| CdpError::server("page has no document"))?;
         let stamp = dom.render_stamp();

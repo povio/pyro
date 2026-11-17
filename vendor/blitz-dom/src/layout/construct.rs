@@ -688,9 +688,11 @@ fn collect_layout_children_with_wrap(
 
         #[cfg(feature = "svg")]
         if matches!(tag_name, "svg") {
-            let outer_html = doc.with_svg_sprites(
-                doc.with_svg_images(doc.get_node(container_node_id).unwrap().svg_source(), container_node_id),
-            );
+            // pyro: noting whether the source depends on the root's laid-out size
+            // (`SvgImageData::viewport_dependent`)
+            let (source, viewport_dependent) = doc.get_node(container_node_id).unwrap().svg_source_for_viewport(None);
+            doc.viewport_svgs.borrow_mut().remove(&container_node_id);
+            let outer_html = doc.with_svg_sprites(doc.with_svg_images(source, container_node_id));
             // pyro: with the resources it references in the page's other `<svg>`s.
             let outer_html = doc.with_cross_svg_references(outer_html);
 
@@ -716,6 +718,7 @@ fn collect_layout_children_with_wrap(
                     if svg.intrinsic_dimensions.view_box.is_none() {
                         svg.inline_source = Some(outer_html.as_str().into());
                     }
+                    svg.viewport_dependent = viewport_dependent;
                     doc.get_node_mut(container_node_id)
                         .unwrap()
                         .element_data_mut()

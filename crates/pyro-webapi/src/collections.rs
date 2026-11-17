@@ -1451,7 +1451,169 @@ pub fn animated_enumeration<'s>(
     s.wrap::<SvgAnimatedEnumeration>(AnimatedEnumData { el: NodeHold::new(&page, id)?, e }, Some(key))
 }
 
+// ----- SVGAnimatedTransformList ----------------------------------------------------
+
+/// One function of an SVG `transform` attribute: its `SVGTransform` type (1 matrix, 2 translate,
+/// 3 scale, 4 rotate, 5 skewX, 6 skewY), angle (degrees, rotations and skews) and matrix.
+#[derive(Clone, Copy)]
+pub struct SvgTransformItem {
+    kind: u16,
+    angle: f64,
+    matrix: [f64; 6],
+}
+
+/// The functions of a `transform` list attribute (SVG 1.1 syntax: commas or spaces between
+/// numbers); an attribute that does not parse is an empty list, as in Chromium.
+fn parse_transform_list(text: &str) -> Vec<SvgTransformItem> {
+    let mut items = Vec::new();
+    let mut rest = text.trim_start_matches(|c: char| c.is_ascii_whitespace() || c == ',');
+    while !rest.is_empty() {
+        let Some(open) = rest.find('(') else { return Vec::new() };
+        let name = rest[..open].trim();
+        let Some(close) = rest[open..].find(')') else { return Vec::new() };
+        let args: Option<Vec<f64>> = rest[open + 1..open + close]
+            .split(|c: char| c.is_ascii_whitespace() || c == ',')
+            .filter(|v| !v.is_empty())
+            .map(|v| v.parse::<f64>().ok())
+            .collect();
+        let Some(n) = args else { return Vec::new() };
+        let rad = |deg: f64| deg.to_radians();
+        let item = match (name, n.as_slice()) {
+            ("matrix", &[a, b, c, d, e, f]) => SvgTransformItem { kind: 1, angle: 0.0, matrix: [a, b, c, d, e, f] },
+            ("translate", &[x]) => SvgTransformItem { kind: 2, angle: 0.0, matrix: [1.0, 0.0, 0.0, 1.0, x, 0.0] },
+            ("translate", &[x, y]) => SvgTransformItem { kind: 2, angle: 0.0, matrix: [1.0, 0.0, 0.0, 1.0, x, y] },
+            ("scale", &[x]) => SvgTransformItem { kind: 3, angle: 0.0, matrix: [x, 0.0, 0.0, x, 0.0, 0.0] },
+            ("scale", &[x, y]) => SvgTransformItem { kind: 3, angle: 0.0, matrix: [x, 0.0, 0.0, y, 0.0, 0.0] },
+            ("rotate", &[a]) | ("rotate", &[a, _, _]) => {
+                let (sin, cos) = rad(a).sin_cos();
+                let (cx, cy) = if n.len() == 3 { (n[1], n[2]) } else { (0.0, 0.0) };
+                SvgTransformItem {
+                    kind: 4,
+                    angle: a,
+                    matrix: [cos, sin, -sin, cos, cx - cos * cx + sin * cy, cy - sin * cx - cos * cy],
+                }
+            }
+            ("skewX", &[a]) => SvgTransformItem { kind: 5, angle: a, matrix: [1.0, 0.0, rad(a).tan(), 1.0, 0.0, 0.0] },
+            ("skewY", &[a]) => SvgTransformItem { kind: 6, angle: a, matrix: [1.0, rad(a).tan(), 0.0, 1.0, 0.0, 0.0] },
+            _ => return Vec::new(),
+        };
+        items.push(item);
+        rest = rest[open + close + 1..].trim_start_matches(|c: char| c.is_ascii_whitespace() || c == ',');
+    }
+    items
+}
+
+pub struct TransformListData {
+    el: NodeHold,
+    attr: &'static str,
+}
+
+impl TransformListData {
+    fn items(&self) -> Vec<SvgTransformItem> {
+        let dom = self.el.page.dom.borrow();
+        dom.get_attribute(self.el.id, self.attr).ok().flatten().map_or_else(Vec::new, |v| parse_transform_list(&v))
+    }
+}
+
+/// `SVGAnimatedTransformList`: `baseVal` and `animVal` are the same list of the attribute (nothing
+/// animates it). The CSS `transform` property is not in it (WPT css-transforms
+/// `css-transforms-transformlist`).
+pub struct SvgAnimatedTransformList;
+impl JsClass for SvgAnimatedTransformList {
+    const NAME: &'static str = "SVGAnimatedTransformList";
+    type Data = TransformListData;
+    type Parent = NoParent;
+    fn define(def: &mut ClassDef<Self>) {
+        def.getter("baseVal", |s, t| Ok(transform_list(s, &t.el, t.attr, 33)?.value()));
+        def.getter("animVal", |s, t| Ok(transform_list(s, &t.el, t.attr, 34)?.value()));
+    }
+}
+
+/// `SVGTransformList`, read only: the attribute's functions at each access.
+pub struct SvgTransformList;
+impl JsClass for SvgTransformList {
+    const NAME: &'static str = "SVGTransformList";
+    type Data = TransformListData;
+    type Parent = NoParent;
+    fn define(def: &mut ClassDef<Self>) {
+        def.getter("length", |s, t| Ok(s.number(t.items().len() as f64)));
+        def.getter("numberOfItems", |s, t| Ok(s.number(t.items().len() as f64)));
+        def.method("getItem", 1, |s, t, a| {
+            let i = to_u32(a.get(0))? as usize;
+            let Some(item) = t.items().get(i).copied() else {
+                return Err(JsError::dom("IndexSizeError", format!("The index provided ({i}) is greater than the maximum bound.")));
+            };
+            Ok(s.wrap::<SvgTransform>(item, None)?.value())
+        });
+    }
+}
+
+/// `SVGTransform`: its type, angle and the six numbers of its matrix (`matrix.a` .. `matrix.f`).
+pub struct SvgTransform;
+impl JsClass for SvgTransform {
+    const NAME: &'static str = "SVGTransform";
+    type Data = SvgTransformItem;
+    type Parent = NoParent;
+    fn define(def: &mut ClassDef<Self>) {
+        for (name, value) in [
+            ("SVG_TRANSFORM_UNKNOWN", 0.0),
+            ("SVG_TRANSFORM_MATRIX", 1.0),
+            ("SVG_TRANSFORM_TRANSLATE", 2.0),
+            ("SVG_TRANSFORM_SCALE", 3.0),
+            ("SVG_TRANSFORM_ROTATE", 4.0),
+            ("SVG_TRANSFORM_SKEWX", 5.0),
+            ("SVG_TRANSFORM_SKEWY", 6.0),
+        ] {
+            def.constant(name, value);
+        }
+        def.getter("type", |s, t| Ok(s.number(f64::from(t.kind))));
+        def.getter("angle", |s, t| Ok(s.number(t.angle)));
+        def.getter("matrix", |s, t| {
+            Ok(s.wrap::<SvgMatrix>(t.matrix, None)?.value())
+        });
+    }
+}
+
+/// `SVGMatrix` (read only here): `a` .. `f`.
+pub struct SvgMatrix;
+impl JsClass for SvgMatrix {
+    const NAME: &'static str = "SVGMatrix";
+    type Data = [f64; 6];
+    type Parent = NoParent;
+    fn define(def: &mut ClassDef<Self>) {
+        def.getter("a", |s, m| Ok(s.number(m[0])));
+        def.getter("b", |s, m| Ok(s.number(m[1])));
+        def.getter("c", |s, m| Ok(s.number(m[2])));
+        def.getter("d", |s, m| Ok(s.number(m[3])));
+        def.getter("e", |s, m| Ok(s.number(m[4])));
+        def.getter("f", |s, m| Ok(s.number(m[5])));
+    }
+}
+
+fn transform_list<'s>(s: &Scope<'s>, el: &NodeHold, attr: &'static str, slot: u64) -> JsResult<Object<'s>> {
+    let key = coll_identity(&el.page, slot, el.id);
+    if let Some(o) = s.lookup_identity(key) {
+        return Ok(o);
+    }
+    s.wrap::<SvgTransformList>(TransformListData { el: NodeHold::new(&el.page, el.id)?, attr }, Some(key))
+}
+
+/// The element's `SVGAnimatedTransformList` of `attr` (`transform`, `gradientTransform`,
+/// `patternTransform`), the same object each time.
+pub fn animated_transform_list<'s>(s: &Scope<'s>, page: &PageDom, id: NodeId, attr: &'static str) -> JsResult<Object<'s>> {
+    let key = coll_identity(page, 32, id);
+    if let Some(o) = s.lookup_identity(key) {
+        return Ok(o);
+    }
+    let page = page_rc(s)?;
+    s.wrap::<SvgAnimatedTransformList>(TransformListData { el: NodeHold::new(&page, id)?, attr }, Some(key))
+}
+
 pub(crate) fn register(engine: &pyro_js::Engine) {
+    engine.register::<SvgAnimatedTransformList>();
+    engine.register::<SvgTransformList>();
+    engine.register::<SvgTransform>();
+    engine.register::<SvgMatrix>();
     engine.register::<SvgAnimatedEnumeration>();
     engine.register::<NodeList>();
     engine.register::<RadioNodeList>();

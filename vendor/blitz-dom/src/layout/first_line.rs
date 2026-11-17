@@ -55,6 +55,73 @@ pub(crate) fn style_node_for(doc: &mut BaseDocument, root: NodeId) -> Option<Nod
     Some(style_node(doc, origin_id, root, style))
 }
 
+/// pyro: the styles the inline elements of `root` have on its first line, when its `::first-line`
+/// style (node `first_line`) changes layout (font size, line height, font family, weight or style,
+/// letter or word spacing): `TextLayout::first_line_styles`. Empty otherwise, and past 4,096
+/// elements.
+pub(crate) fn layout_styles(doc: &BaseDocument, root: NodeId, first_line: NodeId) -> Vec<(NodeId, Arc<ComputedValues>)> {
+    let (Some(line), Some(own)) = (
+        doc.nodes.get(first_line).and_then(|node| node.primary_styles()),
+        doc.nodes.get(root).and_then(|node| node.primary_styles()),
+    ) else {
+        return Vec::new();
+    };
+    let (lf, of) = (line.get_font(), own.get_font());
+    let (lt, ot) = (line.get_inherited_text(), own.get_inherited_text());
+    if lf.font_size == of.font_size
+        && lf.line_height == of.line_height
+        && lf.font_family == of.font_family
+        && lf.font_weight == of.font_weight
+        && lf.font_style == of.font_style
+        && lt.letter_spacing == ot.letter_spacing
+        && lt.word_spacing == ot.word_spacing
+    {
+        return Vec::new();
+    }
+    let line: Arc<ComputedValues> = (*line).clone();
+    drop(own);
+    // Cascaded again in full with the first-line box as the root's content's parent (not
+    // reparented: `em` lengths of reset properties, an edge's `1em` border, follow it too).
+    let mut out: Vec<(NodeId, Arc<ComputedValues>)> = Vec::new();
+    let mut stack: Vec<(NodeId, Arc<ComputedValues>)> =
+        doc.nodes[root].children.iter().rev().map(|&id| (id, line.clone())).collect();
+    while let Some((id, parent)) = stack.pop() {
+        if out.len() >= 4096 {
+            break;
+        }
+        let Some(node) = doc.nodes.get(id) else { continue };
+        if !node.is_element() || !node.display_style().is_some_and(|d| d.is_inline_flow()) {
+            continue;
+        }
+        let Some(own) = node.primary_styles().map(|style| (*style).clone()) else { continue };
+        let style = recascade(doc, node, &own, &parent);
+        stack.extend(node.children.iter().rev().map(|&child| (child, style.clone())));
+        out.push((id, style));
+    }
+    out
+}
+
+/// pyro: `own` (the style of `node`) cascaded again in full with `parent` as its parent.
+fn recascade(doc: &BaseDocument, node: &Node, own: &Arc<ComputedValues>, parent: &ComputedValues) -> Arc<ComputedValues> {
+    let read_guard = doc.guard.read();
+    let guards = StylesheetGuards::same(&read_guard);
+    let inputs = CascadeInputs::new_from_style(own);
+    let pseudo = own.pseudo();
+    doc.stylist.cascade_style_and_visited(
+        Some(node),
+        pseudo.as_ref(),
+        &inputs,
+        &guards,
+        Some(parent),
+        Some(parent),
+        FirstLineReparenting::No,
+        &PositionTryFallbacksTryTactic::default(),
+        None,
+        &mut RuleCacheConditions::default(),
+        &mut TreeCountingCaches::default(),
+    )
+}
+
 /// The originating element's first-line node, created when it has none, with `style` and the
 /// inline root holding the line as its parent.
 fn style_node(doc: &mut BaseDocument, origin_id: NodeId, root: NodeId, style: Arc<ComputedValues>) -> NodeId {

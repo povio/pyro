@@ -241,14 +241,22 @@ fn eval_font_tech(flag: &FontFaceSourceTechFlags) -> bool {
     unsafe { bindings::Gecko_IsFontTechSupported(*flag) }
 }
 
+// pyro: the formats and technologies the embedder loads (blitz-dom `preferred_font_source`).
 #[cfg(feature = "servo")]
-fn eval_font_format(_: &FontFaceSourceFormatKeyword) -> bool {
-    false
+fn eval_font_format(kw: &FontFaceSourceFormatKeyword) -> bool {
+    matches!(
+        kw,
+        FontFaceSourceFormatKeyword::Collection
+            | FontFaceSourceFormatKeyword::Opentype
+            | FontFaceSourceFormatKeyword::Truetype
+            | FontFaceSourceFormatKeyword::Woff
+            | FontFaceSourceFormatKeyword::Woff2
+    )
 }
 
 #[cfg(feature = "servo")]
-fn eval_font_tech(_: &FontFaceSourceTechFlags) -> bool {
-    false
+fn eval_font_tech(flag: &FontFaceSourceTechFlags) -> bool {
+    FontFaceSourceTechFlags::SERVO_SUPPORTED.contains(*flag)
 }
 
 /// supports_condition | declaration

@@ -1112,14 +1112,40 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             return;
         }
 
-        let backdrop_filter =
-            convert_filters(&effects.backdrop_filter.0, self.scale, &current_color, self.dom).map(Arc::new);
+        // pyro: a `url()` naming an SVG filter graph (one that is no colour chain) is the backdrop
+        // filter as that graph, in the element's user space (CSS px from its border box's corner),
+        // which the backdrop markers are pushed in (WPT filter-effects
+        // `backdrop-filter-svg-displacement`, `backdrop-filter-reference-filter-mutated`).
+        #[cfg(feature = "svg")]
+        let backdrop_graph = match crate::filters::filter_steps(
+            &effects.backdrop_filter.0,
+            self.scale,
+            &current_color,
+            self.dom,
+            ((cx.frame.border_box.width() / self.scale) as f32, (cx.frame.border_box.height() / self.scale) as f32),
+            node.element_data().map_or(&[][..], |element| &element.reference_images[..]),
+        )
+        .as_deref()
+        {
+            Some([crate::filters::FilterStep::Graph(graph)]) => Some(graph.filter.clone()),
+            _ => None,
+        };
+        #[cfg(not(feature = "svg"))]
+        let backdrop_graph: Option<Arc<anyrender::Filter>> = None;
+        let backdrop_space = match backdrop_graph {
+            Some(_) => Affine::translate(cx.frame.border_box.origin().to_vec2()) * Affine::scale(self.scale),
+            None => Affine::IDENTITY,
+        };
+        let backdrop_filter = backdrop_graph.or_else(|| {
+            convert_filters(&effects.backdrop_filter.0, self.scale, &current_color, self.dom).map(Arc::new)
+        });
         // pyro: `backdrop-filter`: the backdrop is captured here, before the element's own layers
         // (its clip-path, mask and blend mode are no backdrop root for it), and drawn first in its
         // effect group (`paint_effect_group`). See anyrender_vello_cpu's `backdrop`.
-        let backdrop_clip = backdrop_filter.as_ref().map(|_| cx.frame.border_box_path());
-        if let (Some(backdrop), Some(clip)) = (&backdrop_filter, &backdrop_clip) {
-            scene.push_layer(Fill::NonZero, BlendMode::default(), 0.0, cx.transform, clip, None, Some(backdrop.clone()));
+        // (The clip in the filter's space, which the markers' transform maps on: `backdrop_space`.)
+        let backdrop_clip = backdrop_filter.as_ref().map(|_| (backdrop_space.inverse() * cx.frame.border_box_path(), backdrop_space));
+        if let (Some(backdrop), Some((clip, space))) = (&backdrop_filter, &backdrop_clip) {
+            scene.push_layer(Fill::NonZero, BlendMode::default(), 0.0, cx.transform * *space, clip, None, Some(backdrop.clone()));
             scene.pop_layer();
         }
         let css_clip_layer_pushed = self.layer_manager.maybe_push_layer(
@@ -1528,8 +1554,8 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         );
         // pyro: the backdrop filter's draw, first in the group: under the element's content, and
         // inside its opacity and filter (see `render_element`).
-        if let (Some(backdrop), Some(clip)) = (backdrop_filter, &backdrop_clip) {
-            scene.push_layer(Fill::NonZero, BlendMode::default(), 1.0, transform, clip, None, Some(backdrop));
+        if let (Some(backdrop), Some((clip, space))) = (backdrop_filter, &backdrop_clip) {
+            scene.push_layer(Fill::NonZero, BlendMode::default(), 1.0, transform * *space, clip, None, Some(backdrop));
             scene.pop_layer();
         }
         scene.append_scene(group, Affine::IDENTITY);
@@ -1589,8 +1615,8 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             None,
             backdrop_filter.clone(),
         );
-        if let (Some(backdrop), Some(clip)) = (backdrop_filter, &backdrop_clip) {
-            scene.push_layer(Fill::NonZero, BlendMode::default(), 1.0, transform, clip, None, Some(backdrop));
+        if let (Some(backdrop), Some((clip, space))) = (backdrop_filter, &backdrop_clip) {
+            scene.push_layer(Fill::NonZero, BlendMode::default(), 1.0, transform * *space, clip, None, Some(backdrop));
             scene.pop_layer();
         }
         for step in steps.iter().rev() {
@@ -2272,11 +2298,17 @@ impl ElementCx<'_, '_> {
         // pyro: the first line's content is in the `::first-line` box (blitz-dom
         // `TextLayout::first_line`), outside the elements on it, which have their styles there.
         let first_line = text_layout.first_line.filter(|&id| dom.get_node(id).is_some());
-        let mut first_line_styles = Vec::new();
+        let mut first_line_styles = text_layout.first_line_styles.clone();
         let mut item_index = 0usize;
         for (line_index, line) in layout.lines().enumerate() {
             let first = fragments.len();
             let metrics = line.metrics();
+            // pyro: the empty inline boxes of an invisible line box have no height: nothing to
+            // paint (WPT css-inline `empty-span-size-*`).
+            if metrics.invisible {
+                item_index += line.items().count();
+                continue;
+            }
             // Collapsible white space hanging at the line's end is in no box (preserved and
             // ideographic spaces that hang are: `LineMetrics::collapsed_advance`). pyro: the line starts at its
             // `inline_min_coord`, past the floats before it (its items are placed from there): without
@@ -2326,7 +2358,7 @@ impl ElementCx<'_, '_> {
                 chain_of(&mut chain, style_index);
                 let on_first_line = first_line.filter(|_| line.text_range().start == 0);
                 if let Some(first_line) = on_first_line {
-                    chain.push((first_line, 0));
+                    chain.push((first_line, line.root_style()));
                 }
                 let depth = chain.len();
                 for (level, &(node, style_index)) in chain.iter().enumerate() {
@@ -2448,6 +2480,14 @@ impl ElementCx<'_, '_> {
             // and right (device px). Only where that shows: a box of one colour paints the same
             // either way.
             let effects = style.get_effects();
+            // pyro: an outer shadow reaching left of the box, over the text before it on its line
+            // (`InlineBoxFragment::reaches_back`).
+            let reaches_back = !rtl
+                && effects
+                    .box_shadow
+                    .0
+                    .iter()
+                    .any(|shadow| !shadow.inset && shadow.base.horizontal.px() - shadow.spread.px() - shadow.base.blur.px() < 0.0);
             let stitch = (!(first == index && last == index)
                 && style.get_border().box_decoration_break == style::values::computed::BoxDecorationBreak::Slice
                 && (!effects.box_shadow.0.is_empty()
@@ -2467,7 +2507,14 @@ impl ElementCx<'_, '_> {
                 let later = total - earlier - width;
                 if rtl { (later, earlier) } else { (earlier, later) }
             });
-            let (border, padding) = (style.get_border(), style.get_padding());
+            // pyro: on the first line, its edges as the element has them there (`em` widths follow
+            // the `::first-line` font size).
+            let line_style = fragment.style.clone();
+            let edge_style: &ComputedValues = match &line_style {
+                Some(line_style) => line_style,
+                None => &style,
+            };
+            let (border, padding) = (edge_style.get_border(), edge_style.get_padding());
             let side = |open: bool, width: f32| if open { 0.0 } else { width };
             // The used width: none where the side has no border style.
             let used = |width: &style::values::computed::BorderSideWidth, style: style::values::computed::BorderStyle| {
@@ -2532,6 +2579,8 @@ impl ElementCx<'_, '_> {
                     left,
                     right,
                     reaches_above: false,
+                    reaches_back: false,
+                    x0: fragment.x0,
                     style: fragment.style.clone(),
                     turned: true,
                 });
@@ -2592,6 +2641,8 @@ impl ElementCx<'_, '_> {
                 left,
                 right,
                 reaches_above: (rect.y0 as f32) < fragment.line_top,
+                reaches_back: reaches_back && left,
+                x0: fragment.x0,
                 style: fragment.style.clone(),
                 turned: false,
             });
@@ -2630,25 +2681,20 @@ impl ElementCx<'_, '_> {
         if let Some(style) = &fragment.style {
             cx.style = style.clone();
         }
-        // pyro: a turned (vertical) fragment's open sides are its top and bottom.
-        if fragment.turned {
-            if !left {
-                cx.frame.border_radii.top_left = Vec2::ZERO;
-                cx.frame.border_radii.top_right = Vec2::ZERO;
-            }
-            if !right {
-                cx.frame.border_radii.bottom_left = Vec2::ZERO;
-                cx.frame.border_radii.bottom_right = Vec2::ZERO;
-            }
-        } else {
-            if !left {
-                cx.frame.border_radii.top_left = Vec2::ZERO;
-                cx.frame.border_radii.bottom_left = Vec2::ZERO;
-            }
-            if !right {
-                cx.frame.border_radii.top_right = Vec2::ZERO;
-                cx.frame.border_radii.bottom_right = Vec2::ZERO;
-            }
+        // pyro: the open sides' corners are square, left out before overlapping radii are scaled
+        // down (a turned (vertical) fragment's open sides are its top and bottom).
+        if !(left && right) {
+            let keep = if fragment.turned { [left, left, right, right] } else { [left, right, right, left] };
+            let layout = Layout {
+                size: taffy::Size {
+                    width: (size.width / self.scale) as f32,
+                    height: (size.height / self.scale) as f32,
+                },
+                border: fragment.border,
+                padding: fragment.padding,
+                ..Layout::new()
+            };
+            cx.frame = create_css_rect_with_corners(&cx.style, &layout, self.scale, keep);
         }
         // The whole box, for a sliced box's shadows and background images, and the fragment's
         // piece of it: its border box, and for the outer shadows the space past its closed
@@ -2765,39 +2811,57 @@ impl ElementCx<'_, '_> {
                 && text_layout.ellipsis.is_none()
                 && text_layout.clamp.is_none()
                 && text_layout.annotations.is_empty()
-                && fragments.iter().any(|fragment| fragment.line > 0 && fragment.reaches_above);
+                && fragments
+                    .iter()
+                    .any(|fragment| (fragment.line > 0 && fragment.reaches_above) || fragment.reaches_back);
             if by_line {
                 let options = TextPaintOptions {
                     scale: self.scale,
                     brush_override: None,
                     shadows: true,
                 };
-                let mut next = 0;
                 for (index, line) in text_layout.layout.lines().enumerate() {
-                    // (A fragment's `background-clip: text` mask borrows the text context.)
-                    while let Some(fragment) = fragments.get(next).filter(|fragment| fragment.line == index) {
-                        self.paint_inline_box_fragment(scene, fragment, transform, tops);
-                        next += 1;
+                    let on_line = || fragments.iter().filter(move |fragment| fragment.line == index);
+                    // pyro: the text before the first box whose shadow reaches back over it, the
+                    // boxes before that box, then the rest (`InlineBoxFragment::reaches_back`).
+                    let edge = on_line().filter(|fragment| fragment.reaches_back).map(|fragment| fragment.x0).reduce(f32::min);
+                    let passes: &[Option<crate::text::TextCut>] = match edge {
+                        Some(edge) => &[
+                            Some(crate::text::TextCut { edge, keep_left: true }),
+                            Some(crate::text::TextCut { edge, keep_left: false }),
+                        ],
+                        None => &[None],
+                    };
+                    for (pass, cut) in passes.iter().enumerate() {
+                        // (A fragment's `background-clip: text` mask borrows the text context.)
+                        for fragment in on_line() {
+                            let before = edge.is_some_and(|edge| fragment.x0 < edge);
+                            if edge.is_none() || (pass == 0) == before {
+                                self.paint_inline_box_fragment(scene, fragment, transform, tops);
+                            }
+                        }
+                        let mut draw_text_context = self.context.draw_text_context.borrow_mut();
+                        let outer_cut = std::mem::replace(&mut draw_text_context.cut, *cut);
+                        draw_text_context.text_shift = text_shift;
+                        draw_text_context.line_tops = tops;
+                        draw_text_context.first_line = text_layout.first_line;
+                        crate::text::stroke_text(
+                            scene,
+                            std::iter::once(line),
+                            self.context.dom,
+                            transform,
+                            options,
+                            self.node.id,
+                            Some(&text_layout.text),
+                            &mut draw_text_context,
+                            None,
+                            Some(&text_layout.layout),
+                        );
+                        draw_text_context.text_shift = 0.0;
+                        draw_text_context.line_tops = None;
+                        draw_text_context.first_line = None;
+                        draw_text_context.cut = outer_cut;
                     }
-                    let mut draw_text_context = self.context.draw_text_context.borrow_mut();
-                    draw_text_context.text_shift = text_shift;
-                    draw_text_context.line_tops = tops;
-                    draw_text_context.first_line = text_layout.first_line;
-                    crate::text::stroke_text(
-                        scene,
-                        std::iter::once(line),
-                        self.context.dom,
-                        transform,
-                        options,
-                        self.node.id,
-                        Some(&text_layout.text),
-                        &mut draw_text_context,
-                        None,
-                        Some(&text_layout.layout),
-                    );
-                    draw_text_context.text_shift = 0.0;
-                    draw_text_context.line_tops = None;
-                    draw_text_context.first_line = None;
                 }
                 return;
             }
@@ -3337,7 +3401,13 @@ impl ElementCx<'_, '_> {
             let line_x = first_line.as_ref().filter(|_| !rtl).map_or(0.0, |(text_layout, line)| {
                 marker_line_x(line) / text_layout.layout.scale()
             });
-            let y_offset = if let Some((text_layout, first_text_line)) = &first_line
+            let y_offset = if first_line.is_none() {
+                // pyro: no line of its own (its first line is in a block inside it, an anonymous
+                // one beside a nested list): on the baseline of that line, with its trim shift
+                // (WPT css-inline `text-box-trim-list-001`).
+                let own = layout.lines().next().map_or(0.0, |line| line.metrics().baseline) / layout.scale();
+                self.marker_baseline(layout).0 - own
+            } else if let Some((text_layout, first_text_line)) = &first_line
             {
                 // pyro: with the line, where it is painted (`LineTops`).
                 let shift = self
@@ -4033,6 +4103,14 @@ impl ElementCx<'_, '_> {
         // pyro: an inline `<svg>` without a `viewBox` lays its content out in its box, in user
         // units of a CSS px times its zoom (`zoom: 2` draws its content twice as large).
         let units = self.scale as f32 * self.style.effective_zoom.value();
+        // pyro: a source that depends on the laid-out size, serialized again at it (blitz-dom
+        // `inline_svg_at_viewport`; WPT css-transforms `transform-percent-010`)
+        let at_viewport = if svg.viewport_dependent {
+            self.context.dom.as_ref().inline_svg_at_viewport(self.node.id, width / units, height / units)
+        } else {
+            None
+        };
+        let svg = at_viewport.as_deref().unwrap_or(svg);
         let sized = svg.sized(width / units, height / units);
         let svg = sized.as_ref().unwrap_or(svg);
         let svg_size = svg.tree.size();
@@ -4508,6 +4586,13 @@ fn insets_from_taffy_rect(input: taffy::Rect<f64>) -> Insets {
 
 /// Convert Stylo and Taffy types into Kurbo types
 fn create_css_rect(style: &ComputedValues, layout: &Layout, scale: f64) -> CssBox {
+    create_css_rect_with_corners(style, layout, scale, [true; 4])
+}
+
+/// pyro: [`create_css_rect`] with only the corners `keep` marks (top left, top right, bottom
+/// right, bottom left) rounded: the others are left out before overlapping radii are scaled down,
+/// as Blink's `CalcRadiiFor` does for the open sides of an inline box's fragment.
+fn create_css_rect_with_corners(style: &ComputedValues, layout: &Layout, scale: f64, keep: [bool; 4]) -> CssBox {
     // Resolve and rescale
     // We have to scale since document pixels are not same same as rendered pixels
     let width: f64 = layout.size.width as f64;
@@ -4540,11 +4625,12 @@ fn create_css_rect(style: &ComputedValues, layout: &Layout, scale: f64) -> CssBo
             resolve_radii(radius)
         }
     };
+    let kept = |keep: bool, radius: Vec2| if keep { radius } else { Vec2::ZERO };
     let border_radii = NonUniformRoundedRectRadii {
-        top_left: shaped(&s_border.border_top_left_radius, s_border.corner_top_left_shape.k),
-        top_right: shaped(&s_border.border_top_right_radius, s_border.corner_top_right_shape.k),
-        bottom_right: shaped(&s_border.border_bottom_right_radius, s_border.corner_bottom_right_shape.k),
-        bottom_left: shaped(&s_border.border_bottom_left_radius, s_border.corner_bottom_left_shape.k),
+        top_left: kept(keep[0], shaped(&s_border.border_top_left_radius, s_border.corner_top_left_shape.k)),
+        top_right: kept(keep[1], shaped(&s_border.border_top_right_radius, s_border.corner_top_right_shape.k)),
+        bottom_right: kept(keep[2], shaped(&s_border.border_bottom_right_radius, s_border.corner_bottom_right_shape.k)),
+        bottom_left: kept(keep[3], shaped(&s_border.border_bottom_left_radius, s_border.corner_bottom_left_shape.k)),
     };
 
     let frame = CssBox::new(border_box, border, padding, outline_width, border_radii);
@@ -4588,7 +4674,8 @@ struct EffectLayer {
     filter: Option<Arc<anyrender::Filter>>,
     backdrop_filter: Option<Arc<anyrender::Filter>>,
     /// pyro: the element's border box with its radii, in its space: what its backdrop shows in.
-    backdrop_clip: Option<kurbo::BezPath>,
+    /// (With the space it is in: the filter's, in the element's.)
+    backdrop_clip: Option<(kurbo::BezPath, Affine)>,
     /// pyro: the `filter` list as layers when an SVG filter in it is a graph (`filter` is then
     /// `None`): see `filters::filter_steps`.
     #[cfg(feature = "svg")]
@@ -4614,6 +4701,12 @@ struct InlineBoxFragment {
     right: bool,
     /// Whether its box reaches above its line box, over the line before.
     reaches_above: bool,
+    /// pyro: whether an outer shadow of its box reaches left of it, over the text before it on its
+    /// line: that text is painted first, as CSS 2.1 Appendix E paints a line's boxes and text in tree
+    /// order (WPT css-backgrounds `box-shadow-overlapping-001`).
+    reaches_back: bool,
+    /// pyro: its left edge in the line's coordinates (the text's).
+    x0: f32,
     /// pyro: its element's style on the first line, in place of its own (`::first-line`).
     style: Option<style::servo_arc::Arc<ComputedValues>>,
     /// pyro: a fragment of a vertical writing mode's turned line: `left` and `right` are its top

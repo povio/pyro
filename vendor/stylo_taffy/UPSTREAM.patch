@@ -111,7 +111,31 @@ diff --git a/packages/stylo_taffy/src/convert.rs b/packages/stylo_taffy/src/conv
  #[inline]
  pub fn is_block(input: stylo::Display) -> bool {
      self::display(input) == taffy::Display::Block
-@@ -473,6 +549,10 @@
+@@ -316,7 +392,7 @@
+ /// <https://developer.mozilla.org/en-US/docs/Web/CSS/CSS_positioned_layout/Containing_block#identifying_the_containing_block>
+ pub fn establishes_fixed_containing_block(style: &stylo::ComputedValues) -> bool {
+     use style::values::computed::{Perspective, Rotate, Scale, Translate};
+-    use style::values::specified::box_::{Contain, ContainerType, WillChangeBits};
++    use style::values::specified::box_::{Contain, WillChangeBits};
+ 
+     let box_style = style.get_box();
+     if !box_style.transform.0.is_empty()
+@@ -341,12 +417,8 @@
+     {
+         return true;
+     }
+-    if box_style
+-        .container_type
+-        .intersects(ContainerType::SIZE | ContainerType::INLINE_SIZE)
+-    {
+-        return true;
+-    }
++    // pyro: a size container has no layout containment (css-conditional-5 dropped it; Blink), so
++    // `container-type` alone makes no containing block (WPT container-queries/no-layout-containment-*).
+ 
+     let effects = style.get_effects();
+     !effects.filter.0.is_empty() || !effects.backdrop_filter.0.is_empty()
+@@ -473,6 +545,10 @@
          stylo::AlignFlags::FLEX_START => taffy::AlignContent::FLEX_START,
          stylo::AlignFlags::STRETCH => taffy::AlignContent::STRETCH,
          stylo::AlignFlags::FLEX_END => taffy::AlignContent::FLEX_END,
@@ -122,7 +146,7 @@ diff --git a/packages/stylo_taffy/src/convert.rs b/packages/stylo_taffy/src/conv
          stylo::AlignFlags::CENTER => taffy::AlignContent::CENTER,
          stylo::AlignFlags::SPACE_BETWEEN => taffy::AlignContent::SPACE_BETWEEN,
          stylo::AlignFlags::SPACE_AROUND => taffy::AlignContent::SPACE_AROUND,
-@@ -517,7 +597,10 @@
+@@ -517,7 +593,10 @@
          (_, stylo::BaselineShift::Keyword(stylo::BaselineShiftKeyword::Bottom)) => {
              taffy::AlignContent::END
          }
@@ -134,7 +158,7 @@ diff --git a/packages/stylo_taffy/src/convert.rs b/packages/stylo_taffy/src/conv
          _ => return None,
      };
      align.safety = taffy::AlignmentSafety::Safe;
-@@ -582,6 +665,9 @@
+@@ -582,6 +661,9 @@
          stylo::AlignFlags::STRETCH => taffy::AlignItems::STRETCH,
          stylo::AlignFlags::FLEX_START => taffy::AlignItems::FLEX_START,
          stylo::AlignFlags::FLEX_END => taffy::AlignItems::FLEX_END,
@@ -144,7 +168,7 @@ diff --git a/packages/stylo_taffy/src/convert.rs b/packages/stylo_taffy/src/conv
          stylo::AlignFlags::SELF_START => taffy::AlignItems::SELF_START,
          stylo::AlignFlags::SELF_END => taffy::AlignItems::SELF_END,
          stylo::AlignFlags::START => taffy::AlignItems::START,
-@@ -591,10 +677,12 @@
+@@ -591,10 +673,12 @@
          stylo::AlignFlags::RIGHT if is_horiz_rtl => taffy::AlignItems::START,
          stylo::AlignFlags::RIGHT => taffy::AlignItems::END,
          stylo::AlignFlags::CENTER => taffy::AlignItems::CENTER,
@@ -160,7 +184,7 @@ diff --git a/packages/stylo_taffy/src/convert.rs b/packages/stylo_taffy/src/conv
          // Should never be hit. But no real reason to panic here.
          _ => return None,
      };
-@@ -967,6 +1055,7 @@
+@@ -967,6 +1051,7 @@
          display: self::display(display),
          box_sizing: self::box_sizing(style.clone_box_sizing()),
          item_is_table: display.inside() == stylo::DisplayInside::Table,
@@ -168,6 +192,29 @@ diff --git a/packages/stylo_taffy/src/convert.rs b/packages/stylo_taffy/src/conv
          item_is_replaced: false,
          item_is_compressible_replaced: false,
          position: self::position(style.clone_position()),
+@@ -995,7 +1080,21 @@
+             width: self::max_size(&pos.max_width),
+             height: self::max_size(&pos.max_height),
+         },
+-        aspect_ratio: self::aspect_ratio(pos.aspect_ratio),
++        // pyro: not on internal table boxes (css-sizing-4 §2; WPT css-sizing `aspect-ratio/table-element-001`)
++        aspect_ratio: if matches!(
++            display.inside(),
++            stylo::DisplayInside::TableRowGroup
++                | stylo::DisplayInside::TableColumn
++                | stylo::DisplayInside::TableColumnGroup
++                | stylo::DisplayInside::TableHeaderGroup
++                | stylo::DisplayInside::TableFooterGroup
++                | stylo::DisplayInside::TableRow
++                | stylo::DisplayInside::TableCell
++        ) {
++            None
++        } else {
++            self::aspect_ratio(pos.aspect_ratio)
++        },
+ 
+         inset: self::inset_rect(style),
+         margin: taffy::Rect {
 diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrapper.rs
 --- a/packages/stylo_taffy/src/wrapper.rs
 +++ b/packages/stylo_taffy/src/wrapper.rs
@@ -180,7 +227,7 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
          /// Whether the node is a replaced element (e.g. an image or form control)
          const IS_REPLACED = 1 << 0;
          /// Whether an inline span laid out by the node (an inline root) is a containing block
-@@ -34,6 +34,22 @@
+@@ -34,6 +34,25 @@
          const IS_BUTTON = 1 << 3;
          /// Whether the node is a button-type input whose label always uses block layout
          const IS_BUTTON_INPUT = 1 << 4;
@@ -200,10 +247,13 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
 +        const IS_FIELDSET = 1 << 8;
 +        /// pyro: the element is replaced by the image of its `content: url()`.
 +        const IS_CONTENT_REPLACED = 1 << 9;
++        /// pyro: the element is an `<input>`: its `overflow` makes it no scroll container for layout (an
++        /// automatic minimum size of zero; Blink, WPT css-grid `stretch-grid-item-text-input-overflow`).
++        const IS_INPUT = 1 << 10;
      }
  }
  
-@@ -58,6 +74,9 @@
+@@ -58,6 +77,9 @@
      /// `parent_size.width`, i.e. the containing block's block size.
      #[cfg(feature = "writing-mode")]
      pub percent_basis: Option<f32>,
@@ -213,7 +263,7 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
  }
  
  impl<T: Deref<Target = ComputedValues>> TaffyStyloStyle<T> {
-@@ -67,6 +86,8 @@
+@@ -67,6 +89,8 @@
          let display = self.style.clone_display();
          if self.flags.contains(StyleFlags::IS_BUTTON_INPUT) {
              convert::button_input_display(display)
@@ -222,7 +272,7 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
          } else {
              display
          }
-@@ -86,6 +107,7 @@
+@@ -86,6 +110,7 @@
              align_axis_is_inline: false,
              #[cfg(feature = "writing-mode")]
              percent_basis: None,
@@ -230,7 +280,7 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
          }
      }
  
-@@ -102,6 +124,7 @@
+@@ -102,6 +127,7 @@
              align_axis_is_inline: false,
              #[cfg(feature = "writing-mode")]
              percent_basis: None,
@@ -238,7 +288,7 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
          }
      }
  
-@@ -198,6 +221,23 @@
+@@ -198,6 +224,23 @@
          self.flags.contains(StyleFlags::IS_REPLACED)
      }
  
@@ -262,17 +312,17 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
      #[inline]
      fn box_sizing(&self) -> taffy::BoxSizing {
          convert::box_sizing(self.style.get_position().box_sizing)
-@@ -210,6 +250,9 @@
+@@ -210,6 +253,9 @@
  
      #[inline]
      fn overflow(&self) -> taffy::Point<taffy::Overflow> {
-+        if self.flags.contains(StyleFlags::OVERFLOW_TO_VIEWPORT) {
++        if self.flags.intersects(StyleFlags::OVERFLOW_TO_VIEWPORT | StyleFlags::IS_INPUT) {
 +            return taffy::Point { x: taffy::Overflow::Visible, y: taffy::Overflow::Visible };
 +        }
          let box_styles = self.style.get_box();
          let overflow = taffy::Point {
              x: convert::overflow(box_styles.overflow_x),
-@@ -249,6 +292,9 @@
+@@ -249,6 +295,9 @@
  
      #[inline]
      fn size(&self) -> taffy::Size<taffy::Dimension> {
@@ -282,7 +332,7 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
          let position_styles = self.style.get_position();
          self.size(taffy::Size {
              width: convert::dimension(&position_styles.width),
-@@ -256,8 +302,20 @@
+@@ -256,8 +305,20 @@
          })
      }
  
@@ -303,7 +353,7 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
          let position_styles = self.style.get_position();
          self.size(taffy::Size {
              width: convert::min_size(&position_styles.min_width),
-@@ -267,6 +325,9 @@
+@@ -267,6 +328,9 @@
  
      #[inline]
      fn max_size(&self) -> taffy::Size<taffy::LengthPercentageAuto> {
@@ -313,12 +363,29 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
          let position_styles = self.style.get_position();
          self.size(taffy::Size {
              width: convert::max_size(&position_styles.max_width),
-@@ -276,12 +337,34 @@
+@@ -276,12 +340,51 @@
  
      #[inline]
      fn aspect_ratio(&self) -> Option<f32> {
 -        let ratio = convert::aspect_ratio(self.style.get_position().aspect_ratio);
 +        let aspect_ratio = self.style.get_position().aspect_ratio;
++        // pyro: `aspect-ratio` does not apply to internal table boxes (css-sizing-4 §2; WPT
++        // css-sizing `aspect-ratio/table-element-001`).
++        {
++            use style::values::specified::box_::DisplayInside as I;
++            if matches!(
++                self.style.get_box().display.inside(),
++                I::TableRowGroup
++                    | I::TableColumn
++                    | I::TableColumnGroup
++                    | I::TableHeaderGroup
++                    | I::TableFooterGroup
++                    | I::TableRow
++                    | I::TableCell
++            ) {
++                return None;
++            }
++        }
 +        // pyro: `auto <ratio>` on a replaced element with a natural aspect ratio is `auto`: the
 +        // natural ratio, which its measure function applies.
 +        if aspect_ratio.auto && self.flags.contains(StyleFlags::HAS_NATURAL_RATIO) {
@@ -349,7 +416,7 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
          let margin_styles = self.style.get_margin();
          self.rect(taffy::Rect {
              left: convert::margin(&margin_styles.margin_left),
-@@ -293,6 +376,9 @@
+@@ -293,6 +396,9 @@
  
      #[inline]
      fn padding(&self) -> taffy::Rect<taffy::LengthPercentage> {
@@ -359,7 +426,7 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
          let padding_styles = self.style.get_padding();
          if let Some(basis) = self.percent_basis() {
              let resolve = |value: &stylo::LengthPercentage| {
-@@ -318,6 +404,9 @@
+@@ -318,6 +424,9 @@
  
      #[inline]
      fn border(&self) -> taffy::Rect<taffy::LengthPercentage> {
@@ -369,7 +436,7 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
          let border_styles = self.style.get_border();
          self.rect(taffy::Rect {
              left: convert::border(
-@@ -343,12 +432,47 @@
+@@ -343,12 +452,47 @@
  // BlockContainerStyle impl
  #[cfg(feature = "block")]
  impl<T: Deref<Target = ComputedValues>> taffy::BlockContainerStyle for TaffyStyloStyle<T> {
@@ -417,7 +484,7 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
      #[inline]
      fn align_content(&self) -> taffy::AlignContent {
          let display = self.effective_display();
-@@ -375,12 +499,27 @@
+@@ -375,12 +519,27 @@
  
      #[inline]
      fn justify_items(&self) -> taffy::AlignItems {
@@ -445,7 +512,7 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
      /// Item alignment in the layout writing mode's inline axis; `left`/`right` resolve against it.
      #[inline]
      fn inline_item_alignment(&self, input: stylo::AlignFlags) -> Option<taffy::AlignItems> {
-@@ -484,6 +623,40 @@
+@@ -484,6 +643,40 @@
          convert::is_table(self.effective_display())
      }
  
@@ -486,7 +553,7 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
      #[inline]
      fn align_self(&self) -> Option<taffy::AlignSelf> {
          self.oof_self_alignment(
-@@ -494,10 +667,11 @@
+@@ -494,10 +687,11 @@
  
      #[inline]
      fn justify_self(&self) -> Option<taffy::AlignSelf> {
@@ -502,7 +569,7 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
      }
  
      #[inline]
-@@ -508,14 +682,26 @@
+@@ -508,14 +702,26 @@
      #[cfg(feature = "floats")]
      #[inline]
      fn float(&self) -> taffy::Float {
@@ -531,7 +598,7 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
          self.layout_wm().logical_clear(clear)
      }
  }
-@@ -595,6 +781,26 @@
+@@ -595,6 +801,26 @@
          self.style.get_position().flex_shrink.0
      }
  
@@ -558,7 +625,7 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
      #[inline]
      fn align_self(&self) -> Option<taffy::AlignSelf> {
          self.self_alignment(
-@@ -874,6 +1080,66 @@
+@@ -874,6 +1100,66 @@
          convert::grid_auto_flow(self.style.get_position().grid_auto_flow)
      }
  
@@ -625,7 +692,7 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
      #[inline]
      fn gap(&self) -> taffy::Size<taffy::LengthPercentage> {
          let position_styles = self.style.get_position();
-@@ -927,6 +1193,56 @@
+@@ -927,6 +1213,56 @@
          self.grid_row_placement()
      }
  
@@ -682,7 +749,7 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
      #[inline]
      fn grid_column(&self) -> taffy::Line<taffy::GridPlacement<Atom>> {
          self.grid_column_placement()
-@@ -950,6 +1266,16 @@
+@@ -950,6 +1286,16 @@
  }
  
  impl<T: Deref<Target = ComputedValues>> taffy::OofItemStyle for TaffyStyloStyle<T> {

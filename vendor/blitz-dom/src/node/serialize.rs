@@ -128,6 +128,13 @@ impl Node {
         super::svg_css::svg_source(self)
     }
 
+    /// pyro: [`Self::svg_source`] with the root's viewport `viewport` (its laid-out content box size), and
+    /// whether the source depends on that size (`svg_css::svg_source_for_viewport`).
+    #[cfg(feature = "svg")]
+    pub(crate) fn svg_source_for_viewport(&self, viewport: Option<(f64, f64)>) -> (String, bool) {
+        super::svg_css::svg_source_for_viewport(self, viewport)
+    }
+
     fn write_outer_html_in_style(&self, writer: &mut String, opts: SerializeOpts, nesting: usize) {
         const INDENT: &str = "  ";
         let style = opts.style;

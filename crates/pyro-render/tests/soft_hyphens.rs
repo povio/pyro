@@ -135,3 +135,11 @@ fn an_out_of_flow_box_beside_the_soft_hyphen_changes_nothing() {
     assert_near(s[2][0], 5.0 * ch);
     assert_eq!((s[1][1], s[3][1]), (80.0, 80.0));
 }
+
+#[test]
+fn a_hyphenate_character_string_shows_all_its_characters() {
+    let ch = ch();
+    let s = sizes("<div id=d style='width:7.5ch;hyphenate-character:\"/-/\"'><u id=a>high&shy;</u>ways</div>", &["a", "d"]);
+    assert_near(s[0][0], 7.0 * ch);
+    assert_near(s[1][1], 80.0);
+}

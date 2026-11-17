@@ -247,6 +247,21 @@ impl<'b, B: Brush> TreeBuilder<'b, B> {
         self.lcx.tree_style_builder.push_style_span(resolved);
     }
 
+    /// pyro: CSS `::first-line` in layout: the text before byte `end` (the first line's) takes
+    /// these style changes (font size, line height, font family, weight and style, letter and
+    /// word spacing) where it inherits the root's values; a font size scales every span's.
+    pub fn set_first_line<'s, 'iter>(&mut self, end: usize, properties: impl IntoIterator<Item = &'iter StyleProperty<'s, B>>)
+    where
+        's: 'iter,
+        B: 'iter,
+    {
+        let resolved = properties
+            .into_iter()
+            .map(|p| self.lcx.rcx.resolve_property(self.fcx, p, self.options.scale))
+            .collect();
+        self.lcx.tree_style_builder.set_first_line(end, resolved);
+    }
+
     pub fn push_style_modification_span<'s, 'iter>(
         &mut self,
         properties: impl IntoIterator<Item = &'iter StyleProperty<'s, B>>,
@@ -456,6 +471,7 @@ fn build_into_layout<B: Brush>(
     layout.data.scale = options.scale;
     layout.data.quantize = options.quantize;
     layout.data.base_level = lcx.analysis.paragraph_level();
+    layout.data.paragraph_levels.extend_from_slice(lcx.analysis.paragraph_levels());
     layout.data.text_len = text.len();
 
     // Characters not covered by any style run (e.g. the space substituted for empty text during
@@ -476,6 +492,14 @@ fn build_into_layout<B: Brush>(
         .data
         .styles
         .extend(lcx.style_table.iter().map(|s| s.as_layout_style()));
+    // pyro: the first line's root style (`::first-line` in layout), its own parent.
+    layout.data.first_line_root = lcx
+        .style_table
+        .iter()
+        .enumerate()
+        .skip(1)
+        .find(|(index, style)| usize::from(style.parent) == *index)
+        .map(|(index, _)| index as u16);
 
     // Sort the inline boxes as subsequent code assumes that they are in text index order.
     // Note: It's important that this is a stable sort to allow users to control the order of contiguous inline boxes

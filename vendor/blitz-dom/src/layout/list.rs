@@ -165,7 +165,7 @@ fn node_list_item_child(
     let mut marker = match (content, image) {
         (Some(text), _) => Marker::String(text),
         (None, Some(image)) => image,
-        (None, None) => match custom_counter_marker(doc, list_style_type, number) {
+        (None, None) => match custom_counter_marker(doc, child_id, list_style_type, number) {
             Some(marker) => marker,
             None => marker_for_style(list_style_type, number)?,
         },
@@ -452,8 +452,8 @@ fn marker_style_node(
 /// another style (`system: extends <name>`): the item's number in the extended style, with the
 /// rule's `prefix` and `suffix` (the extended style's when it gives none). It is text in the
 /// item's font, also for an extended `disc` (CSS Counter Styles 3: only the predefined bullets
-/// may be drawn otherwise). Other systems are not supported (`None`: the marker of the name).
-fn custom_counter_marker(doc: &BaseDocument, list_style_type: &ListStyleType, number: i32) -> Option<Marker> {
+/// may be drawn otherwise). Rules of the other systems format the number with their own symbols.
+fn custom_counter_marker(doc: &BaseDocument, item: NodeId, list_style_type: &ListStyleType, number: i32) -> Option<Marker> {
     use style::counter_style::{Symbol, System};
     let CounterStyle::Name(name) = &list_style_type.0 else {
         return None;
@@ -465,20 +465,64 @@ fn custom_counter_marker(doc: &BaseDocument, list_style_type: &ListStyleType, nu
     ) {
         return None;
     }
-    let rule = doc
-        .stylist
-        .iter_extra_data_origins_rev()
-        .find_map(|(data, _)| data.counter_styles.get(&name.0).cloned())?;
+    // pyro: the item's shadow trees first, inside out (tree-scoped names, CSS Scoping 1 §3.5;
+    // WPT css-shadow scoped-reference-animation-002), then the document's origins.
+    let scoped = || {
+        let mut host = doc.nodes.get(item)?.containing_shadow_host_id();
+        while let Some(id) = host {
+            let node = &doc.nodes[id];
+            if let Some(rule) = node.shadow_cascade_data().and_then(|data| data.counter_style(&name.0)) {
+                return Some(rule.clone());
+            }
+            host = node.containing_shadow_host_id();
+        }
+        None
+    };
+    let rule = scoped().or_else(|| {
+        doc.stylist
+            .iter_extra_data_origins_rev()
+            .find_map(|(data, _)| data.counter_styles.get(&name.0).cloned())
+    })?;
     let guard = doc.guard.read();
     let rule = rule.read_with(&guard);
-    let System::Extends(base) = rule.resolved_system() else {
-        return None;
-    };
     let symbol = |symbol: &Symbol| match symbol {
         Symbol::String(text) => text.to_string(),
         Symbol::Ident(ident) => ident.0.to_string(),
     };
     let descriptors = rule.descriptors();
+    let System::Extends(base) = rule.resolved_system() else {
+        // pyro: the other systems format with the rule's own symbols (CSS Counter Styles 3 §3.1);
+        // a value out of their range takes `decimal` (the default `fallback`). Overriding a
+        // predefined name (`@counter-style lower-roman { ... }`) is allowed.
+        use super::counters::{additive, alphabetic, cyclic, fixed, numeric, symbolic};
+        let symbols: Vec<String> = descriptors.symbols.as_ref().map_or(Vec::new(), |s| s.0.iter().map(symbol).collect());
+        let symbols: Vec<&str> = symbols.iter().map(String::as_str).collect();
+        let text = match rule.resolved_system() {
+            System::Cyclic => cyclic(number, &symbols),
+            System::Numeric => numeric(number, &symbols),
+            System::Alphabetic => alphabetic(number, &symbols),
+            System::Symbolic => symbolic(number, &symbols),
+            System::Fixed { first_symbol_value } => {
+                let first = first_symbol_value.as_ref().and_then(|v| v.resolve()).unwrap_or(1);
+                fixed(number.saturating_sub(first - 1), &symbols)
+            }
+            System::Additive => {
+                let tuples: Vec<(u32, String)> = descriptors.additive_symbols.as_ref().map_or(Vec::new(), |list| {
+                    list.0
+                        .iter()
+                        .filter_map(|t| Some((u32::try_from(t.weight.resolve()?).ok()?, symbol(&t.symbol))))
+                        .collect()
+                });
+                let tuples: Vec<(u32, &str)> = tuples.iter().map(|(w, s)| (*w, s.as_str())).collect();
+                additive(number, &tuples)
+            }
+            System::Extends(_) => None,
+        };
+        let text = text.unwrap_or_else(|| number.to_string());
+        let prefix = descriptors.prefix.as_ref().map(symbol).unwrap_or_default();
+        let suffix = descriptors.suffix.as_ref().map(symbol).unwrap_or_else(|| ". ".into());
+        return Some(Marker::String(format!("{prefix}{text}{suffix}")));
+    };
     let bullet = matches!(&*base.0, "disc" | "circle" | "square" | "disclosure-open" | "disclosure-closed");
     let prefix = descriptors.prefix.as_ref().map(symbol).unwrap_or_default();
     let suffix = descriptors

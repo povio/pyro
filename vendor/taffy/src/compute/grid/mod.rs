@@ -71,6 +71,9 @@ struct GridContainerConstants {
     max_size: Size<Option<f32>>,
     /// The container's border-box preferred size, if definite
     preferred_size: Size<Option<f32>>,
+    /// pyro: the preferred height is the one the aspect ratio gives from the width (its final value is the
+    /// automatic one, which keeps the automatic minimum height)
+    height_from_ratio: bool,
     /// The space reserved for scrollbars in each axis
     scrollbar_gutter: Point<f32>,
     /// Whether the container's overflow makes it a scroll container
@@ -125,17 +128,27 @@ fn compute_container_constants<Tree: LayoutGridContainer>(
         .maybe_resolve(parent_size, |val, basis| tree.calc(val, basis))
         .maybe_apply_aspect_ratio(aspect_ratio)
         .maybe_add(box_sizing_adjustment);
-    let max_size = style
-        .max_size()
-        .maybe_resolve(parent_size, |val, basis| tree.calc(val, basis))
-        .maybe_apply_aspect_ratio(aspect_ratio)
-        .maybe_add(box_sizing_adjustment);
+    // pyro: a `max-width` does not cap an `auto` height through the ratio: the height the ratio gives from the
+    // (clamped) width is the automatic one, at least the rows' (`auto_height`; WPT css-grid
+    // `grid-content-distribution-029`)
+    let max_size = {
+        let max = style.max_size().maybe_resolve(parent_size, |val, basis| tree.calc(val, basis));
+        let transferred = max.maybe_apply_aspect_ratio(aspect_ratio);
+        Size { width: transferred.width, height: max.height }.maybe_add(box_sizing_adjustment)
+    };
+    // pyro: a height the preferred aspect ratio gives from the width is from the width between `min-width` and
+    // `max-width`, and its final value is `auto_height`'s below (which keeps the automatic minimum height; WPT
+    // css-grid `grid-content-distribution-029`)
+    let mut height_from_ratio = false;
     let preferred_size = if inputs.sizing_mode == SizingMode::InherentSize {
-        style
-            .size()
-            .maybe_resolve(parent_size, |val, basis| tree.calc(val, basis))
-            .maybe_apply_aspect_ratio(style.aspect_ratio())
-            .maybe_add(box_sizing_adjustment)
+        let raw = style.size().maybe_resolve(parent_size, |val, basis| tree.calc(val, basis));
+        let mut size = raw.maybe_apply_aspect_ratio(aspect_ratio).maybe_add(box_sizing_adjustment);
+        if let (Some(ratio), Some(width), None) = (aspect_ratio, raw.width, raw.height) {
+            let outer = (width + box_sizing_adjustment.width).maybe_clamp(min_size.width, max_size.width);
+            size.height = Some((outer - box_sizing_adjustment.width).max(0.0) / ratio + box_sizing_adjustment.height);
+            height_from_ratio = true;
+        }
+        size
     } else {
         Size::NONE
     };
@@ -203,6 +216,7 @@ fn compute_container_constants<Tree: LayoutGridContainer>(
         min_size,
         max_size,
         preferred_size,
+        height_from_ratio,
         scrollbar_gutter,
         #[cfg(feature = "content_size")]
         is_scroll_container,
@@ -247,6 +261,7 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
         min_size,
         max_size,
         preferred_size,
+        height_from_ratio,
         scrollbar_gutter,
         #[cfg(feature = "content_size")]
         is_scroll_container,
@@ -779,8 +794,7 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
     };
     let mut container_border_box = Size {
         width,
-        height: resolved_style_size
-            .get(AbstractAxis::Block)
+        height: (if height_from_ratio && known_dimensions.height.is_none() { None } else { resolved_style_size.get(AbstractAxis::Block) })
             .unwrap_or(auto_height)
             .maybe_clamp(min_size.height, max_size.height)
             .max(padding_border_size.height),
@@ -815,7 +829,15 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
     let has_percentage_column = columns.iter().any(|track| track.uses_percentage());
     let has_percentage_row = rows.iter().any(|track| track.uses_percentage());
     let parent_width_indefinite = outer_node_size.width.is_none();
-    rerun_column_sizing = parent_width_indefinite && has_percentage_column;
+    // pyro: flexible tracks whose flex factors sum to less than one take only that share of a definite free
+    // space, but the sum counts as one against the indefinite size of the first pass: re-run with the size it gave
+    // (Blink sizes tracks again at the definite size; WPT css-grid `grid-template-flexible-rerun-track-sizing`,
+    // `flex-sizing-rows-indefinite-height`)
+    let fractional_flex = |tracks: &[GridTrack]| {
+        let sum: f32 = tracks.iter().filter(|track| track.is_flexible()).map(|track| track.flex_factor()).sum();
+        sum > 0.0 && sum < 1.0
+    };
+    rerun_column_sizing = parent_width_indefinite && (has_percentage_column || fractional_flex(&columns));
 
     if !rerun_column_sizing {
         // Note: every item must be visited (no short-circuiting) as the closure updates each item's caches
@@ -871,7 +893,7 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
     //   - Column sizing was re-run and any grid item crossing an intrinsically sized track's min content contribution height has changed
     // TODO: Only rerun sizing for tracks that actually require it rather than for all tracks if any need it.
     let parent_height_indefinite = outer_node_size.height.is_none();
-    let mut rerun_row_sizing = parent_height_indefinite && has_percentage_row;
+    let mut rerun_row_sizing = parent_height_indefinite && (has_percentage_row || fractional_flex(&rows));
     let mut intrinsic_row_contribution_changed = false;
 
     if rerun_row_sizing {
