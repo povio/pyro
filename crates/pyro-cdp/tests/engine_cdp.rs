@@ -10498,3 +10498,28 @@ fn computed_style_inside_display_none_follows_every_change() {
     assert_eq!(reads["d"], json!("rgb(9, 9, 9) rgb(4, 5, 6) auto"), "{r}");
     assert_eq!(reads["e"], json!("rgb(7, 7, 7) rgb(4, 5, 6) auto"), "{r}");
 }
+
+#[test]
+fn computed_width_and_height_inside_display_none_are_the_computed_values() {
+    // Chromium 147 (measured): an element without a box reports its
+    // computed width/height (`7px` from a :has() rule, `50%`, `3em` as
+    // `48px`, `auto`), not `auto` for every declaration.
+    let mut h = Harness::new();
+    load_html(
+        &mut h,
+        r#"<!doctype html><style>.menu:has(.picked) .a{width:7px} .b{width:50%;height:3em} .c{font-size:10px;width:calc(2em + 1px)}</style>
+<div class=menu style="display:none"><i class=picked></i><span id=a class=a></span><span id=b class=b></span><span id=c class=c></span><span id=d style="width:3px"></span><span id=e></span></div>"#,
+    );
+    let r = h.page(
+        "Pyro.run",
+        json!({"steps": [
+            {"eval": {"expression": "['a','b','c','d','e'].map(id => { const s = getComputedStyle(document.getElementById(id)); return s.width + ' ' + s.height; })", "as": "sizes"}}
+        ]}),
+    );
+    assert!(r.get("error").is_none(), "{r}");
+    assert_eq!(
+        r["result"]["reads"]["sizes"],
+        json!(["7px auto", "50% 48px", "21px auto", "3px auto", "auto auto"]),
+        "{r}"
+    );
+}

@@ -3245,7 +3245,9 @@ impl Layout {
         }
         if name == "width" || name == "height" {
             if !self.is_visible(dom, el) {
-                return "auto".into();
+                // No box (display: none, or inside one): the computed value,
+                // as Chromium reports it (`7px`, `50%`, `auto`).
+                return declared.unwrap_or_else(|| "auto".into());
             }
             // A declared absolute length is the used size the renderless layout cannot derive.
             if let Some(px) = declared.filter(|v| v.ends_with("px")) {
