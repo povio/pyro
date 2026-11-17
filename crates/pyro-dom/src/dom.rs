@@ -235,6 +235,9 @@ pub struct Dom {
     /// What each `version` bump changed, for caches that can update
     /// selectively (style invalidation). Bounded: see `changes_since`.
     journal: Vec<(u64, Change)>,
+    /// The content height of the responsively embedded document each iframe shows (by slot), for the
+    /// renderer (`set_frame_content_height`, snapshot `data-pyro-frame-content-height`).
+    pub(crate) frame_content_heights: rustc_hash::FxHashMap<u32, f32>,
     /// Versions at or below this have no complete journal.
     journal_floor: u64,
     /// Old values of attributes selectors read, from their first change
@@ -322,6 +325,7 @@ impl Dom {
             removals: 0,
             removal_log: VecDeque::new(),
             journal: Vec::new(),
+            frame_content_heights: Default::default(),
             journal_floor: 0,
             style_snapshots: Default::default(),
             shadow_disabled: Vec::new(),
@@ -874,6 +878,7 @@ impl Dom {
             head: NIL,
             body: NIL,
             viewport_meta: None,
+            responsive_embedded: false,
             content_language: None,
         };
         let idx = self.alloc(NodeKind::Document(Box::new(data)), NIL);
@@ -954,6 +959,17 @@ impl Dom {
             return;
         }
         let Some(e) = n.element() else { return };
+        // A responsive embedded sizing `<meta>` opts the document in while it has no body yet, and for good
+        // (Blink `HTMLMetaElement::ProcessContent`; WPT css-sizing `responsive-iframe/*`)
+        if e.attr_local(&local_name!("name")).is_some_and(|name| name.eq_ignore_ascii_case("responsive-embedded-sizing")) {
+            let doc = n.owner_doc;
+            let d = self.doc_data_mut(doc);
+            if d.body == NIL && !d.responsive_embedded {
+                d.responsive_embedded = true;
+                self.viewport_meta_version += 1;
+            }
+            return;
+        }
         let (Some(name), Some(content)) = (e.attr_local(&local_name!("name")), e.attr_local(&local_name!("content")))
         else {
             return;
@@ -984,6 +1000,43 @@ impl Dom {
     /// mobile emulation ([`crate::viewport_meta`]).
     pub fn viewport_meta(&self, doc: NodeId) -> Option<&crate::viewport_meta::MetaViewport> {
         self.document_data(doc).ok()?.viewport_meta.as_ref()
+    }
+
+    /// The content height of the document `iframe` shows when that document is responsively embedded
+    /// (`None`: it is not), which the render snapshot gives the renderer: an iframe of `frame-sizing:
+    /// content-height` takes it as its natural height (css-sizing-4).
+    pub fn set_frame_content_height(&mut self, iframe: NodeId, height: Option<f32>) {
+        let Ok(i) = self.check(iframe) else { return };
+        if self.frame_content_heights.get(&i).copied() == height {
+            return;
+        }
+        match height {
+            Some(height) => self.frame_content_heights.insert(i, height),
+            None => self.frame_content_heights.remove(&i),
+        };
+        self.bump();
+        self.note(Change::State(i));
+    }
+
+    /// [`Dom::set_frame_content_height`] for all iframes at once: those not in `heights` have none.
+    pub fn set_frame_content_heights(&mut self, heights: &[(NodeId, f32)]) {
+        let keep: Vec<u32> = heights.iter().filter_map(|&(iframe, _)| self.check(iframe).ok()).collect();
+        let stale: Vec<u32> = self.frame_content_heights.keys().copied().filter(|i| !keep.contains(i)).collect();
+        for i in stale {
+            self.frame_content_heights.remove(&i);
+            if self.slot_live(i) {
+                self.bump();
+                self.note(Change::State(i));
+            }
+        }
+        for &(iframe, height) in heights {
+            self.set_frame_content_height(iframe, Some(height));
+        }
+    }
+
+    /// Whether `doc` opted in to responsive embedded sizing (`DocumentData::responsive_embedded`).
+    pub fn is_responsively_embedded(&self, doc: NodeId) -> bool {
+        self.document_data(doc).is_ok_and(|d| d.responsive_embedded)
     }
 
     /// Bumped whenever a document's viewport `<meta>` changes.

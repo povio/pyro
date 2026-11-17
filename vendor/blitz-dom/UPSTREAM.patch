@@ -14613,7 +14613,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
          let node = &mut self.nodes[dom_node_id(node_id)];
  
          let font_styles = node.primary_styles().map(|style| {
-@@ -239,8 +821,35 @@
+@@ -239,8 +821,40 @@
              (font_size, line_height)
          });
          let font_size = font_styles.map(|s| s.0);
@@ -14647,10 +14647,15 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 +
 +        // pyro: the root `<svg>` of an SVG document keeps usvg's size (see the `Svg` arm below).
 +        let is_root_element = node.is_root_element();
++        // pyro: `frame-sizing: content-height` (see the iframe step below)
++        let frame_sizing_content_height = node.primary_styles().is_some_and(|style| {
++            use style::values::computed::FrameSizing;
++            matches!(style.get_position().frame_sizing, FrameSizing::ContentHeight | FrameSizing::ContentBlockSize)
++        });
          match &mut node.data {
              NodeData::Text(data) => {
                  // With the new "inline context" architecture all text nodes should be wrapped in an "inline layout context"
-@@ -255,7 +864,7 @@
+@@ -255,7 +869,7 @@
                  #[cfg(not(feature = "tracing"))]
                  let _ = data;
  
@@ -14659,7 +14664,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
                  // unreachable!();
  
                  // compute_leaf_layout(inputs, &node.style, |known_dimensions, available_space| {
-@@ -292,9 +901,11 @@
+@@ -292,9 +906,11 @@
                          &node.layout_style(),
                          resolve_calc_value,
                          |_known_size, _available_space| taffy::Size {
@@ -14674,7 +14679,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
                              height: resolved_line_height.unwrap_or(16.0) * rows,
                          },
                      );
-@@ -322,60 +933,173 @@
+@@ -322,60 +938,173 @@
                                  &mut doc.font_ctx.lock().unwrap(),
                                  &mut doc.layout_ctx,
                              );
@@ -14881,7 +14886,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
                      // Width/height attributes are presentational hints mapped to the CSS
                      // width/height properties by
                      // `synthesize_presentational_hints_for_legacy_attributes`, so they
-@@ -407,39 +1131,50 @@
+@@ -407,39 +1136,50 @@
                              }
                              #[cfg(feature = "svg")]
                              ImageData::Svg(svg) => {
@@ -14953,7 +14958,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
                              // A canvas's content attributes determine its intrinsic size,
                              // overriding the widget-reported one; the widget-reported size
                              // in turn overrides the tag's fallback.
-@@ -472,6 +1207,73 @@
+@@ -472,6 +1212,88 @@
                          _ => unreachable!(),
                      };
  
@@ -14978,6 +14983,21 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 +                            },
 +                            DEFAULT_OBJECT_SIZE,
 +                        ),
++                        _ => (intrinsic_sizes, default_object_size),
++                    };
++
++                    // pyro: an iframe of `frame-sizing: content-height` showing a responsively embedded
++                    // document is as tall as its content (css-sizing-4; the height comes from pyro through the
++                    // render tree's `data-pyro-frame-content-height`; WPT css-sizing `responsive-iframe/*`)
++                    let (intrinsic_sizes, default_object_size) = match element_data
++                        .attr(markup5ever::LocalName::from("data-pyro-frame-content-height"))
++                        .and_then(|value| value.parse::<f32>().ok())
++                    {
++                        Some(height)
++                            if element_data.name.local == local_name!("iframe") && frame_sizing_content_height =>
++                        {
++                            (IntrinsicSizes { width: None, height: Some(height.max(0.0)), ratio: None }, default_object_size)
++                        }
 +                        _ => (intrinsic_sizes, default_object_size),
 +                    };
 +
@@ -15027,7 +15047,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
                      #[cfg(feature = "writing-mode")]
                      let (intrinsic_sizes, default_object_size) =
                          if node.writing_mode().is_vertical() {
-@@ -488,126 +1290,530 @@
+@@ -488,126 +1310,530 @@
                              (intrinsic_sizes, default_object_size)
                          };
  
@@ -15182,9 +15202,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
                          }
 -                        compute_flexbox_layout(self, node_id, inputs)
 +                        ChildLayout::Flex
-                     }
--                    Display::Grid => compute_grid_layout(self, node_id, inputs),
--                    Display::None => taffy::LayoutOutput::HIDDEN,
++                    }
 +                    Display::Grid => ChildLayout::Grid,
 +                    Display::None => ChildLayout::Done(taffy::LayoutOutput::HIDDEN),
 +                }
@@ -15309,7 +15327,9 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 +                    taffy::BoxSizing::ContentBox => {
 +                        own + style.padding.resolve_or_zero(parent.width, resolve_calc_value).vertical_axis_sum()
 +                            + style.border.resolve_or_zero(parent.width, resolve_calc_value).vertical_axis_sum()
-+                    }
+                     }
+-                    Display::Grid => compute_grid_layout(self, node_id, inputs),
+-                    Display::None => taffy::LayoutOutput::HIDDEN,
 +                })
 +            };
 +            // An inflexible item of a column flex container has its definite flex basis as its height: the
@@ -15348,10 +15368,12 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 +                    };
 +                    table_wrapper.style = table_wrapper.auto_column_widths(&inner);
 +                    output = compute_grid_layout(&mut table_wrapper, node_id, inner);
-+                }
-+            }
+                 }
+             }
+-            NodeData::Document(_) => compute_block_layout(self, node_id, inputs, None),
 +        }
-+
+ 
+-            _ => taffy::LayoutOutput::HIDDEN,
 +        // Absolutely positioned children take no part in the table grid. Their
 +        // static position is the top-left of the table's content box.
 +        let context = table_wrapper.ctx;
@@ -15395,15 +15417,14 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 +            for candidate in output.oof_candidates.as_mut_slice() {
 +                if candidate.containing_block.is_some() {
 +                    continue;
-                 }
++                }
 +                candidate.containing_block = self.table_part_containing_block(
 +                    table_id,
 +                    &context,
 +                    dom_node_id(candidate.node),
 +                    candidate.position,
 +                );
-             }
--            NodeData::Document(_) => compute_block_layout(self, node_id, inputs, None),
++            }
 +        }
 +
 +        // HACK: Cap scrollable overflow at node size to prevent scrolling
@@ -15421,8 +15442,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 +        output
 +    }
 +}
- 
--            _ => taffy::LayoutOutput::HIDDEN,
++
 +impl LayoutPassState<'_> {
 +    /// pyro: the containing block of the absolutely positioned box `box_id` when it is a
 +    /// positioned row or row group of the table `table_id` (the nearest positioned ancestor of the
@@ -15457,7 +15477,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 +        let x1 = column_lines.iter().map(|line| line.start.max(line.end)).fold(f32::NEG_INFINITY, f32::max);
 +        if !x0.is_finite() || !x1.is_finite() {
 +            return None;
-         }
++        }
 +        let (y0, y1) = (first_row.start.min(last_row.start), first_row.end.max(last_row.end));
 +        // Its relative offset, and its row group's for a row.
 +        let table_parent = Some(table_id);
@@ -15617,7 +15637,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 +                self.set_unrounded_layout(taffy_node_id(*caption), &layout);
 +            }
 +            *context.grid_box.borrow_mut() = Some((top, grid_height));
-+        }
+         }
 +        output.size.height = top + grid_height + bottom;
 +        output.baselines.first = output.baselines.first.map(|baseline| baseline + top);
 +        output.baselines.last = output.baselines.last.map(|baseline| baseline + top);
@@ -15644,7 +15664,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  impl TraversePartialTree for LayoutPassState<'_> {
      type ChildIter<'a>
          = RefCellChildIter<'a>
-@@ -667,7 +1873,11 @@
+@@ -667,7 +1893,11 @@
      }
  
      fn set_unrounded_layout(&mut self, node_id: NodeId, layout: &Layout) {
@@ -15657,7 +15677,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      fn resolve_calc_value(&self, calc_ptr: *const (), parent_size: f32) -> f32 {
-@@ -698,17 +1908,26 @@
+@@ -698,17 +1928,26 @@
  
      fn clear_hoisted_children(&mut self, node_id: NodeId) {
          let containing_block = dom_node_id(node_id);
@@ -15686,7 +15706,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      fn add_hoisted_children(&mut self, node_id: NodeId, hoisted: &[NodeId]) {
-@@ -721,6 +1940,7 @@
+@@ -721,6 +1960,7 @@
              self.node_from_id(hoisted_id)
                  .oof_containing_block
                  .set(Some(containing_block));
@@ -15694,7 +15714,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
          }
      }
  
-@@ -732,6 +1952,122 @@
+@@ -732,6 +1972,122 @@
      }
  }
  
@@ -15817,7 +15837,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  impl taffy::CacheTree for LayoutPassState<'_> {
      #[inline]
      fn cache_get(
-@@ -739,10 +2075,12 @@
+@@ -739,10 +2095,12 @@
          node_id: NodeId,
          inputs: &taffy::LayoutInput,
      ) -> Option<taffy::LayoutOutput> {
@@ -15834,7 +15854,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      #[inline]
-@@ -752,9 +2090,11 @@
+@@ -752,9 +2110,11 @@
          inputs: &taffy::LayoutInput,
          layout_output: taffy::LayoutOutput,
      ) {
@@ -15849,7 +15869,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      #[inline]
-@@ -782,16 +2122,96 @@
+@@ -782,16 +2142,96 @@
          self.child_layout_style(self.node_from_id(child_node_id))
      }
  
@@ -15950,7 +15970,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  }
  
-@@ -844,6 +2264,30 @@
+@@ -844,6 +2284,30 @@
              element.detailed_layout_info = DetailedLayoutInfo::Grid(Box::new(detailed_grid_info));
          }
      }
@@ -15981,7 +16001,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  }
  
  impl RoundTree for LayoutPassState<'_> {
-@@ -852,7 +2296,19 @@
+@@ -852,7 +2316,19 @@
      }
  
      fn set_final_layout(&mut self, node_id: NodeId, layout: &Layout) {
@@ -16002,7 +16022,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      fn is_out_of_flow(&self, node_id: NodeId) -> bool {
-@@ -868,6 +2324,30 @@
+@@ -868,6 +2344,30 @@
      fn get_hoisted_child_id(&self, node_id: NodeId, index: usize) -> NodeId {
          taffy_node_id(self.node_from_id(node_id).hoisted_children.borrow()[index])
      }
@@ -16033,7 +16053,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  }
  
  pub(crate) struct TaffyDebugTree<'doc>(pub(crate) &'doc BaseDocument);
-@@ -972,3 +2452,55 @@
+@@ -972,3 +2472,55 @@
          })
      }
  }

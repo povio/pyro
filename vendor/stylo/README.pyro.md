@@ -376,3 +376,8 @@ anchor positioning; stylo_taffy lays it out as `center`, which is what it is wit
   `font-tech()` matches `FontFaceSourceTechFlags::SERVO_SUPPORTED` (features-opentype, COLRv0/v1, variations,
   palettes) for servo (the pref `layout.css.font-tech.enabled` is set by the embedder).
 - `stylist.rs`: `CascadeData::counter_style(name)` (embedders resolve counter style names in shadow trees).
+
+Round 4 lane B: `frame-sizing` (css-sizing-4 responsive iframes) for the servo engine: `properties/longhands.toml`,
+`values/specified/position.rs` `FrameSizing` (`auto | content-width | content-height | content-block-size |
+content-inline-size`, re-exported in the specified and computed value modules, a Copy type in `properties/data.py`).
+blitz-dom reads it for iframes.

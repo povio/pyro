@@ -4166,6 +4166,17 @@ servo_restyle_damage = "rebuild_box"
 type = "BoxSizing"
 initial = "computed::BoxSizing::ContentBox"
 
+# pyro: css-sizing-4 `frame-sizing` (responsive iframes), for Servo: blitz-dom gives an iframe the height of
+# its embedded document's content (`data-pyro-frame-content-height`, from pyro) for `content-height`.
+[frame-sizing]
+struct = "position"
+engine = "servo"
+spec = "https://drafts.csswg.org/css-sizing-4/#frame-sizing"
+animation_type = "discrete"
+affects = "layout"
+type = "FrameSizing"
+initial = "computed::FrameSizing::Auto"
+
 [object-fit]
 struct = "position"
 spec = "https://drafts.csswg.org/css-images/#propdef-object-fit"

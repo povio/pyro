@@ -2538,3 +2538,7 @@ does not let margins collapse through it, even when its lines have no height (CS
   first-line box as parent (`TextLayout::first_line_styles`): span edges with `em` widths follow it. A text-box-trim
   edge and the first line's strut use the line's root style (`Line::root_style`). String markers of items without a
   line of their own sit on `marker_baseline` (with the trim shift of the anonymous block holding the first line).
+- Round 4 lane B: `layout/mod.rs` (leaf layout of replaced elements): an iframe of `frame-sizing: content-height` (or
+  `content-block-size`) whose render tree element carries `data-pyro-frame-content-height` (pyro-dom's snapshot, from
+  the embedded document's root element height when that document opted in to responsive embedded sizing) has that
+  natural height (WPT css-sizing `responsive-iframe/*`).

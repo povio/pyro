@@ -850,6 +850,11 @@ impl LayoutPassState<'_> {
 
         // pyro: the root `<svg>` of an SVG document keeps usvg's size (see the `Svg` arm below).
         let is_root_element = node.is_root_element();
+        // pyro: `frame-sizing: content-height` (see the iframe step below)
+        let frame_sizing_content_height = node.primary_styles().is_some_and(|style| {
+            use style::values::computed::FrameSizing;
+            matches!(style.get_position().frame_sizing, FrameSizing::ContentHeight | FrameSizing::ContentBlockSize)
+        });
         match &mut node.data {
             NodeData::Text(data) => {
                 // With the new "inline context" architecture all text nodes should be wrapped in an "inline layout context"
@@ -1228,6 +1233,21 @@ impl LayoutPassState<'_> {
                             },
                             DEFAULT_OBJECT_SIZE,
                         ),
+                        _ => (intrinsic_sizes, default_object_size),
+                    };
+
+                    // pyro: an iframe of `frame-sizing: content-height` showing a responsively embedded
+                    // document is as tall as its content (css-sizing-4; the height comes from pyro through the
+                    // render tree's `data-pyro-frame-content-height`; WPT css-sizing `responsive-iframe/*`)
+                    let (intrinsic_sizes, default_object_size) = match element_data
+                        .attr(markup5ever::LocalName::from("data-pyro-frame-content-height"))
+                        .and_then(|value| value.parse::<f32>().ok())
+                    {
+                        Some(height)
+                            if element_data.name.local == local_name!("iframe") && frame_sizing_content_height =>
+                        {
+                            (IntrinsicSizes { width: None, height: Some(height.max(0.0)), ratio: None }, default_object_size)
+                        }
                         _ => (intrinsic_sizes, default_object_size),
                     };
 

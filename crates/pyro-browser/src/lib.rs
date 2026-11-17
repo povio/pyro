@@ -550,6 +550,47 @@ impl std::ops::DerefMut for Page {
 }
 
 impl Page {
+    /// pyro: the content heights of the responsively embedded documents its iframes show (css-sizing-4
+    /// responsive iframes: a `<meta name="responsive-embedded-sizing">` before the body), handed to the
+    /// render snapshot (`Dom::set_frame_content_heights`): an iframe of `frame-sizing: content-height` is
+    /// as tall as its document's root element. Call before taking a render snapshot.
+    pub fn update_responsive_frames(&self) {
+        if !self.frames.has_children() {
+            return;
+        }
+        let mut heights = Vec::new();
+        let mut store = None;
+        for key in self.frames.keys() {
+            if key.child.is_none() {
+                continue;
+            }
+            let Some((owner, page_dom, document)) =
+                self.frames.with_frame(key, |f| (f.owner, f.page_dom.clone(), f.document))
+            else {
+                continue;
+            };
+            let (Some(owner), Some(page_dom), Some(document)) = (owner, page_dom, document) else { continue };
+            store.get_or_insert_with(|| page_dom.dom.clone());
+            let root = {
+                let Ok(dom) = page_dom.dom.try_borrow() else { continue };
+                if !dom.is_responsively_embedded(document) {
+                    continue;
+                }
+                dom.document_element(document).ok().flatten()
+            };
+            let Some(root) = root else { continue };
+            let Some(layout) = page_dom.try_layout() else { continue };
+            let Ok(dom) = page_dom.dom.try_borrow() else { continue };
+            heights.push((owner, layout.offset_height(&dom, root) as f32));
+        }
+        let store = store.or_else(|| self.main_frame.page_dom.as_ref().map(|p| p.dom.clone()));
+        if let Some(store) = store {
+            if let Ok(mut dom) = store.try_borrow_mut() {
+                dom.set_frame_content_heights(&heights);
+            }
+        }
+    }
+
     /// Copies the page's own request options (extra headers, cache bypass)
     /// into `defaults`, e.g. those derived from a user agent override.
     fn apply_request_options(&self, defaults: &mut pyro_net::RequestDefaults) {
