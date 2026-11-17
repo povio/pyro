@@ -662,3 +662,7 @@ item without its content-based height (no definite basis or height, no growing) 
 - Round 4 lane G: grid items honour `min-width: min-content | max-content` (`GridItemStyle::grid_min_size_keyword`,
   `grid_item::keyword_min_width`): in their known size and final clamp, their min-/max-content contributions and their
   minimum contribution (WPT css-grid `grid-items/grid-intrinsic-maximums`).
+- Round 4 lane G (baselines): flexbox synthesizes a baseline at `height * block_baseline_synthesis` (0 in sideways
+  vertical-lr, the line-under side); a column table item's flex base size from its `height` is measured at that
+  height (captions added); grid `baseline.rs` synthesizes an orthogonal item's missing inline-axis baseline at its
+  physical left (line-under).
