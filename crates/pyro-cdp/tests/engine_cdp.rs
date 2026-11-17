@@ -10035,3 +10035,34 @@ fn review_closing_a_target_while_its_deferred_world_waits() {
     }
     assert_eq!(h.pending_replies(), 0, "no reply is left waiting on the closed page's world");
 }
+
+#[test]
+fn animation_frames_advance_moving_geometry_after_client_activity() {
+    for scripted in [false, true] {
+        let mut h = Harness::new();
+        let animation = if scripted {
+            "target.animate([{transform:'translateX(0px)'},{transform:'translateX(1000px)'}],
+                {duration:10000,iterations:Infinity});"
+        } else {
+            "document.head.innerHTML = '<style>@keyframes move {from {transform:translateX(0px)} to {transform:translateX(1000px)}} #target {animation:move 10s linear infinite}</style>';"
+        };
+        let expression = format!("new Promise(resolve => {{
+            document.body.innerHTML = '<div id=target>moving</div>';
+            const target = document.getElementById('target');
+            {animation}
+            const xs = [];
+            const step = () => {{
+                xs.push(target.getBoundingClientRect().x);
+                if (xs.length < 6) requestAnimationFrame(step);
+                else resolve(xs);
+            }};
+            requestAnimationFrame(step);
+        }})");
+        let r = h.page("Runtime.evaluate",
+            json!({"expression": expression, "awaitPromise": true, "returnByValue": true}));
+        let xs = r["result"]["result"]["value"].as_array().expect("six frame positions");
+        assert_eq!(xs.len(), 6, "{r}");
+        assert!(xs.windows(2).all(|pair| pair[1].as_f64().unwrap() > pair[0].as_f64().unwrap()),
+            "scripted={scripted}: {xs:?}");
+    }
+}
