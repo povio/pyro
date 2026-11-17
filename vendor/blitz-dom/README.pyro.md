@@ -2493,3 +2493,9 @@ does not let margins collapse through it, even when its lines have no height (CS
   nothing: no break at all, also under `keep-all`); a quirks-mode `<br>` carries its own `line-height` (parley's line
   height quirk sizes a line holding only it); `word-break: auto-phrase` maps to `keep-all` with parley's phrase
   breaks; a `hyphenate-character` of two to four characters is `SoftHyphen::Chars`.
+- Round 4 lane B: `layout/mod.rs` `quirky_fill_height` (Quirks Mode §3.6/§3.7): in quirks mode the root html element and
+  a body child of it, in flow with `auto` height (flow, flow-root, flex or grid), fill the viewport less margins (the
+  body: less the html element's margins, border and padding too). Taffy block uses it through
+  `block_container_fill_height`, inline layout (`compute_inline_layout_inner`) as a least height and a definite height
+  for `stretch` and its children's available height, flex and grid through `quirky_fill_layout` (laid out again at the
+  filled height). WPT css-sizing `stretch/stretch-quirk-001`, css-flexbox `flexbox_quirks_body`.

@@ -338,6 +338,23 @@ impl<T: Deref<Target = ComputedValues>> taffy::CoreStyle for TaffyStyloStyle<T> 
     #[inline]
     fn aspect_ratio(&self) -> Option<f32> {
         let aspect_ratio = self.style.get_position().aspect_ratio;
+        // pyro: `aspect-ratio` does not apply to internal table boxes (css-sizing-4 §2; WPT
+        // css-sizing `aspect-ratio/table-element-001`).
+        {
+            use style::values::specified::box_::DisplayInside as I;
+            if matches!(
+                self.style.get_box().display.inside(),
+                I::TableRowGroup
+                    | I::TableColumn
+                    | I::TableColumnGroup
+                    | I::TableHeaderGroup
+                    | I::TableFooterGroup
+                    | I::TableRow
+                    | I::TableCell
+            ) {
+                return None;
+            }
+        }
         // pyro: `auto <ratio>` on a replaced element with a natural aspect ratio is `auto`: the
         // natural ratio, which its measure function applies.
         if aspect_ratio.auto && self.flags.contains(StyleFlags::HAS_NATURAL_RATIO) {

@@ -684,6 +684,13 @@ impl LayoutPassState<'_> {
                     .maybe_resolve(parent_size, resolve_calc_value)
                     .maybe_add(box_sizing_adjustment);
 
+                // pyro: the quirky html and body fill the viewport (`quirky_fill_height`)
+                let mut style_min_size = style_min_size;
+                if style_size.height.is_none() && known_dimensions.height.is_none() {
+                    if let Some(fill) = self.quirky_fill_height(node_id, parent_size) {
+                        style_min_size.height = Some(style_min_size.height.map_or(fill, |min| min.max(fill)));
+                    }
+                }
                 let node_size =
                     known_dimensions.or(style_size.maybe_clamp(style_min_size, style_max_size));
                 (node_size, style_min_size, style_max_size, aspect_ratio)
@@ -753,9 +760,22 @@ impl LayoutPassState<'_> {
         // pyro: an anonymous block is no containing block: its atomic inlines stretch to the
         // height of the one around it too (`height: stretch` on an iframe; WPT css-sizing
         // `stretch/stretch-anonymous-block-001`).
+        // pyro: the quirky html and body's filled height (`quirky_fill_height`), their content box's
+        let quirky_fill = if sizing_mode == SizingMode::InherentSize
+            && known_dimensions.height.is_none()
+            && node_size.height.is_none()
+        {
+            self.quirky_fill_height(node_id, parent_size)
+                .map(|fill| (fill - content_box_inset.vertical_axis_sum()).max(0.0))
+        } else {
+            None
+        };
         let child_available_space = match (self.nodes[node_id].is_anonymous(), parent_size.height) {
             (true, Some(height)) => Size { height: AvailableSpace::Definite(height), ..available_space },
-            _ => available_space,
+            _ => match quirky_fill {
+                Some(height) => Size { height: AvailableSpace::Definite(height), ..available_space },
+                None => available_space,
+            },
         };
         // pyro: the height `height: stretch` fills (`inline_box_inputs`): this block's content
         // height when it is definite (an anonymous block's containing block's).
@@ -763,6 +783,8 @@ impl LayoutPassState<'_> {
             parent_size.height
         } else if known_dimensions.height.is_some() || node_size.height.is_some() {
             available_space.height.into_option()
+        } else if quirky_fill.is_some() {
+            quirky_fill
         } else {
             None
         };

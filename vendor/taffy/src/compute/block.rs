@@ -720,7 +720,16 @@ fn compute_inner(
         ratio_inset,
         box_sizing_adjustment,
     );
-    let (size, min_size, max_size) = (sizes.size, sizes.min_size, sizes.max_size);
+    let (size, mut min_size, max_size) = (sizes.size, sizes.min_size, sizes.max_size);
+    // pyro: the quirky html and body fill the viewport (`block_container_fill_height`)
+    let fill_height = if inputs.sizing_mode == SizingMode::InherentSize && size.height.is_none() {
+        tree.block_container_fill_height(node_id, parent_size)
+    } else {
+        None
+    };
+    if let Some(fill) = fill_height {
+        min_size.height = Some(min_size.height.map_or(fill, |min| min.max(fill)));
+    }
     // pyro: the height the aspect ratio gives a border box of a width, between `min-height` and
     // `max-height`, when the height follows the ratio.
     let ratio_height = |outer_width: f32| -> Option<f32> {
@@ -739,10 +748,14 @@ fn compute_inner(
     let content_keyword = |keyword: Dimension| keyword.is_sizing_keyword() && !keyword.is_stretch();
     let height_keywords = {
         let (min, max) = style.own_height_keywords();
-        (content_keyword(min), content_keyword(max))
+        // pyro: a height the preferred aspect ratio gives from the width is the box's intrinsic
+        // height: its content does not change it (WPT css-sizing `aspect-ratio/intrinsic-size-010`)
+        (content_keyword(min) && !height_follows_ratio, content_keyword(max) && !height_follows_ratio)
     };
+    // pyro: (a `min-height` keyword reads as `auto` in `min_size`)
     let min_height_is_content = height_follows_ratio
         && style.min_size().height.is_auto()
+        && style.own_height_keywords().0.is_auto()
         && !style.overflow().y.is_scroll_container()
         && !style.overflow().x.is_scroll_container();
 
@@ -835,6 +848,8 @@ fn compute_inner(
         let percentage_height = percentage_basis_dimensions
             .height
             .or(if inputs.sizing_mode == SizingMode::InherentSize { size.height.maybe_max(min_size.height) } else { None })
+            // pyro: the quirky html and body (their filled height)
+            .or(fill_height)
             .or(if tree.block_container_passes_percentage_height(node_id) { parent_size.height } else { None })
             .maybe_sub(content_box_inset.vertical_axis_sum());
         let intrinsic_width = determine_content_based_container_width(tree, &items, available_width, percentage_height)
@@ -882,6 +897,8 @@ fn compute_inner(
         // pyro
         .or_else(|| ratio_height(container_outer_width))
         .or(if inputs.sizing_mode == SizingMode::InherentSize { size.height.maybe_max(min_size.height) } else { None })
+        // pyro: the quirky html and body (their filled height)
+        .or(fill_height)
         // pyro: a box that is no containing block (an inline box laid out around its blocks)
         // hands its own containing block's height on.
         .or(if tree.block_container_passes_percentage_height(node_id) { parent_size.height } else { None })
@@ -1252,8 +1269,10 @@ fn generate_item_list(
                 aspect_ratio_inset(&child_style, pb_sum),
                 box_sizing_adjustment,
             );
+            // pyro: (a `min-width` keyword reads as `auto` in `min_size`)
             let min_width_is_content = sizes.width_from_ratio
                 && child_style.min_size().width.is_auto()
+                && child_style.min_size_keyword().width.is_auto()
                 && !child_style.is_compressible_replaced()
                 && !overflow.x.is_scroll_container()
                 && !overflow.y.is_scroll_container();
@@ -1320,6 +1339,7 @@ fn generate_item_list(
                         && !child_style.is_compressible_replaced()
                         && !child_style.breaks_lines_in_block_axis()
                         && child_style.min_size().height.is_auto()
+                        && child_style.min_size_keyword().height.is_auto()
                         && !overflow.x.is_scroll_container()
                         && !overflow.y.is_scroll_container()
                 })
@@ -1441,7 +1461,14 @@ fn determine_content_based_container_width(
         // pyro: in an intrinsic size a percentage resolves against zero, also inside `calc()`:
         // `calc(10% + 100px)` counts 100px (upstream dropped the whole margin; WPT
         // `calc-margins-block`).
-        let item_x_margin_sum = item
+        // pyro: also under a definite available width (a shrink-to-fit box: abspos, float,
+        // inline-block): percentages in the contribution are zero, and resolve only once the
+        // box's width is known (Blink `ComputeMinMaxMargins`; WPT css-sizing
+        // `abspos-auto-sizing-fit-content-percentage-*`). The available width the item is
+        // measured in still has them resolved against it.
+        let item_x_margin_sum =
+            item.margin.resolve_or_zero(Some(0.0), |val, basis| tree.calc(val, basis)).horizontal_axis_sum();
+        let item_x_available_margin_sum = item
             .margin
             .resolve_or_zero(available_space.width.into_option().or(Some(0.0)), |val, basis| tree.calc(val, basis))
             .horizontal_axis_sum();
@@ -1450,7 +1477,7 @@ fn determine_content_based_container_width(
                 match resolve_sizing_keyword(item.size_style.width, None, None, |val, basis| tree.calc(val, basis)) {
                     Some(SizingKeywordResolution::Measure(available_width)) => available_width,
                     Some(SizingKeywordResolution::Exact(width)) => AvailableSpace::Definite(width),
-                    None => available_space.width.maybe_sub(item_x_margin_sum),
+                    None => available_space.width.maybe_sub(item_x_available_margin_sum),
                 };
             let width = tree.measure_child_size(
                 item.node_id,
@@ -1589,9 +1616,11 @@ fn clamp_width_by_keywords(
                     }
                     intrinsic => measure(intrinsic),
                 };
-                // A width the preferred aspect ratio gives from a height is an intrinsic width
+                // pyro: a width the preferred aspect ratio gives from a definite height is the box's
+                // intrinsic width: its content does not widen it (css-sizing-4 §5.1; WPT css-sizing
+                // `aspect-ratio/intrinsic-size-010`)
                 if item.width_from_ratio {
-                    content_width.max(width)
+                    width
                 } else {
                     content_width
                 }

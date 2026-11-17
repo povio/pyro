@@ -610,3 +610,11 @@ container's own `min-height`/`max-height` content keywords clamp its height to i
 out-of-flow boxes; block items get them from their parent too).
 - `compute/grid/track_sizing.rs` (`initialize_track_sizes`): a `calc()` gutter against an indefinite size keeps its
   lengths, its percentages resolving to 0 (`gap: calc(20px + 5%)` of an inline grid; WPT css-grid `grid-gutters-009`).
+- Round 4 lane B: `compute/block.rs` `determine_content_based_container_width` counts percentage margins of the items as
+  zero in the contribution also under a definite available width (shrink-to-fit abspos/floats/inline-blocks; WPT
+  css-sizing `abspos-auto-sizing-fit-content-percentage-*`); a width the ratio gives from a definite height is the
+  item's `min-content`/`max-content`/`fit-content` width (`clamp_width_by_keywords`), and a height the ratio gives from
+  the width ignores the box's own content keyword min/max heights; a `min-width`/`min-height` keyword (which reads as
+  `auto` in `min_size`) turns off the ratio's content-based automatic minimum (`aspect-ratio/intrinsic-size-010`).
+  `tree/traits.rs` `LayoutBlockContainer::block_container_fill_height`: the least border-box height of an `auto`-height
+  block container that its children's `stretch` and percentage heights resolve against (the quirky html/body).

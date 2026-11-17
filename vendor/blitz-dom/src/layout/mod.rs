@@ -731,12 +731,38 @@ impl LayoutPassState<'_> {
 
     #[inline(never)]
     fn flexbox_layout(&mut self, node_id: NodeId, inputs: taffy::tree::LayoutInput) -> taffy::tree::LayoutOutput {
-        compute_flexbox_layout(self, node_id, inputs)
+        self.quirky_fill_layout(node_id, inputs, |tree, inputs| compute_flexbox_layout(tree, node_id, inputs))
     }
 
     #[inline(never)]
     fn grid_layout(&mut self, node_id: NodeId, inputs: taffy::tree::LayoutInput) -> taffy::tree::LayoutOutput {
-        compute_grid_layout(self, node_id, inputs)
+        self.quirky_fill_layout(node_id, inputs, |tree, inputs| compute_grid_layout(tree, node_id, inputs))
+    }
+
+    /// pyro: a flex or grid container that is the quirky html or body (`quirky_fill_height`): laid out
+    /// again at its filled height when its content leaves it shorter (WPT css-flexbox `flexbox_quirks_body`).
+    fn quirky_fill_layout(
+        &mut self,
+        node_id: NodeId,
+        inputs: taffy::tree::LayoutInput,
+        layout: impl Fn(&mut Self, taffy::tree::LayoutInput) -> taffy::tree::LayoutOutput,
+    ) -> taffy::tree::LayoutOutput {
+        let fill = if inputs.sizing_mode == taffy::SizingMode::InherentSize && inputs.known_dimensions.height.is_none() {
+            self.quirky_fill_height(dom_node_id(node_id), inputs.parent_size)
+        } else {
+            None
+        };
+        let output = layout(self, inputs);
+        match fill {
+            Some(fill) if output.size.height < fill => layout(
+                self,
+                taffy::tree::LayoutInput {
+                    known_dimensions: Size { height: Some(fill), ..inputs.known_dimensions },
+                    ..inputs
+                },
+            ),
+            _ => output,
+        }
     }
 
     /// The layout of a leaf box (text, form controls, replaced elements, hidden boxes), or the
@@ -1917,6 +1943,58 @@ impl LayoutContainingBlock for LayoutPassState<'_> {
 }
 
 impl LayoutPassState<'_> {
+    /// pyro: Quirks Mode §3.6 and §3.7: in quirks mode the root `html` element, and a `body` that is its
+    /// child, each in flow with an `auto` height, fill their containing block: the html element the
+    /// viewport less its margins, the body the html element's content box less its own margins. The
+    /// border-box height, which is their least height and what their children's `stretch` and percentage
+    /// heights resolve against (Blink `IsQuirkyAndFillsViewport`; WPT css-sizing `stretch/stretch-quirk-*`).
+    /// `parent_size`: the containing block (the html element passes its own on to the body through the
+    /// percentage height quirk).
+    pub(crate) fn quirky_fill_height(&self, node_id: crate::NodeId, parent_size: Size<Option<f32>>) -> Option<f32> {
+        use style::values::specified::box_::{DisplayInside, DisplayOutside};
+        use taffy::{CoreStyle as _, ResolveOrZero as _};
+        if !self.tree().quirks_mode {
+            return None;
+        }
+        let node = &self.nodes[node_id];
+        let el = node.data.downcast_element()?;
+        let root = self.root_element();
+        let is_root = node_id == root.id;
+        let is_body = !is_root && el.name.local == local_name!("body") && node.parent == Some(root.id);
+        if !(is_root || is_body) || (is_root && el.name.local != local_name!("html")) {
+            return None;
+        }
+        let fills = |node: &Node| {
+            let Some(styles) = node.primary_styles() else { return false };
+            let box_style = styles.get_box();
+            box_style.display.outside() == DisplayOutside::Block
+                && matches!(
+                    box_style.display.inside(),
+                    DisplayInside::Flow | DisplayInside::FlowRoot | DisplayInside::Flex | DisplayInside::Grid
+                )
+                && !box_style.position.is_absolutely_positioned()
+                && box_style.float == style::computed_values::float::T::None
+                && styles.get_position().height.is_auto()
+        };
+        let flow_root = root
+            .primary_styles()
+            .is_some_and(|s| matches!(s.get_box().display.inside(), DisplayInside::Flow | DisplayInside::FlowRoot));
+        if !fills(node) || (is_body && !(fills(root) && flow_root)) {
+            return None;
+        }
+        let width = parent_size.width;
+        let mut height = parent_size.height?;
+        if is_body {
+            let html = self.child_layout_style(root);
+            let margin = html.margin().resolve_or_zero(width, resolve_calc_value);
+            let padding = html.padding().resolve_or_zero(width, resolve_calc_value);
+            let border = html.border().resolve_or_zero(width, resolve_calc_value);
+            height -= margin.top + margin.bottom + padding.top + padding.bottom + border.top + border.bottom;
+        }
+        let margin = self.child_layout_style(node).margin().resolve_or_zero(width, resolve_calc_value);
+        Some((height - margin.top - margin.bottom).max(0.0))
+    }
+
     #[cfg(feature = "floats")]
     fn clear_layout_cache_of(&mut self, node_id: NodeId) {
         use taffy::CacheTree as _;
@@ -2055,6 +2133,10 @@ impl taffy::LayoutBlockContainer for LayoutPassState<'_> {
     fn block_container_passes_percentage_height(&self, node_id: NodeId) -> bool {
         let node = self.node_from_id(node_id);
         node.is_split_inline() || node.is_inline_with_only_block_children() || self.quirks_skips_for_percent_height(node)
+    }
+
+    fn block_container_fill_height(&self, node_id: NodeId, parent_size: Size<Option<f32>>) -> Option<f32> {
+        self.quirky_fill_height(dom_node_id(node_id), parent_size)
     }
 
     fn block_container_percentage_height(&self, node_id: NodeId) -> Option<f32> {

@@ -1084,7 +1084,21 @@ pub fn to_taffy_style(style: &stylo::ComputedValues) -> taffy::Style<Atom> {
             width: self::max_size(&pos.max_width),
             height: self::max_size(&pos.max_height),
         },
-        aspect_ratio: self::aspect_ratio(pos.aspect_ratio),
+        // pyro: not on internal table boxes (css-sizing-4 §2; WPT css-sizing `aspect-ratio/table-element-001`)
+        aspect_ratio: if matches!(
+            display.inside(),
+            stylo::DisplayInside::TableRowGroup
+                | stylo::DisplayInside::TableColumn
+                | stylo::DisplayInside::TableColumnGroup
+                | stylo::DisplayInside::TableHeaderGroup
+                | stylo::DisplayInside::TableFooterGroup
+                | stylo::DisplayInside::TableRow
+                | stylo::DisplayInside::TableCell
+        ) {
+            None
+        } else {
+            self::aspect_ratio(pos.aspect_ratio)
+        },
 
         inset: self::inset_rect(style),
         margin: taffy::Rect {
