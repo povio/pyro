@@ -1114,6 +1114,18 @@ impl StyleEngine {
         external.as_ref()?.0.element_style(crate::snapshot::render_key(el))
     }
 
+    /// `el`'s starting style (`@starting-style`) from the layout engine (`None`: none applies).
+    pub fn starting_style(
+        &self,
+        dom: &Dom,
+        el: NodeId,
+    ) -> Option<style::servo_arc::Arc<style::properties::ComputedValues>> {
+        self.owns(dom, el)?;
+        self.engine_styled(dom)?;
+        let external = self.external.borrow();
+        external.as_ref()?.0.element_starting_style(crate::snapshot::render_key(el))
+    }
+
     /// Makes `source` (the document's layout engine) the source of computed
     /// styles; `None`: elements have none.
     pub fn set_style_engine(&self, source: Option<std::rc::Rc<dyn crate::geometry::GeometrySource>>) {

@@ -2620,3 +2620,6 @@ Round 4 lane G:
   for relayout. A freed node also leaves its block's list and stops being the block of the boxes it held. Before,
   only the block's own layout reset its list, so a block rounded without being laid out again kept a dropped
   child's id (Danex lab canvas: `invalid SlotMap key` in `physicalise_and_round_inner`).
+- `animation.rs` `BaseDocument::starting_style`: an element's style with its `@starting-style` rules (its primary
+  rules cascaded with `RuleCascadeFlags::STARTING_STYLE`), the before-change style pyro's transitions use for a box
+  shown from `display: none` (css-transitions-2 §3.2).

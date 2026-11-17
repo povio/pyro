@@ -1406,6 +1406,17 @@ impl Renderer {
         }
     }
 
+    /// The starting style (`@starting-style`) of the element keyed `key` in `page`'s persistent
+    /// document, as of the last sync (`blitz_dom::BaseDocument::starting_style`).
+    pub fn element_starting_style(
+        &self,
+        page: u64,
+        key: u64,
+    ) -> Option<style::servo_arc::Arc<style::properties::ComputedValues>> {
+        let m = self.mirrors.get(&page)?;
+        m.doc.starting_style(m.node(key)?)
+    }
+
     /// Whether the element keyed `key` in `page`'s persistent document is
     /// outside every `display: none` subtree of the rendered (flat) tree, as
     /// of the last style sync, read from the styles Stylo keeps on the nodes

@@ -319,6 +319,10 @@ pub trait GeometrySource {
     fn element_style(&self, _key: u64) -> Option<style::servo_arc::Arc<style::properties::ComputedValues>> {
         None
     }
+    /// One element's starting style (`@starting-style`), as of the last sync (`None`: none applies).
+    fn element_starting_style(&self, _key: u64) -> Option<style::servo_arc::Arc<style::properties::ComputedValues>> {
+        None
+    }
     /// Whether the element is outside every `display: none` subtree of the
     /// rendered tree, from the styles the engine keeps as of the last style
     /// sync (`None`: the engine cannot tell, and the derived

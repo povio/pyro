@@ -871,6 +871,12 @@ fn transitions_from_changes(
         }
         if (content || !is_none) && (was_content || content || !was_none) {
             start_transitions(state, dom, style, &rules, el, &before, &now, now_ms, &mut starting);
+        } else if was_none && !is_none && !was_content {
+            // Shown from `display: none`: no before-change style, but its starting style
+            // (`@starting-style`) stands for one (css-transitions-2 §3.2).
+            if let Some(start) = style.starting_style(dom, el) {
+                start_transitions(state, dom, style, &rules, el, &start, &now, now_ms, &mut starting);
+            }
         }
     }
     starting.commit(state, planned);

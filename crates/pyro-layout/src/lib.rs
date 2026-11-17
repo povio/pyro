@@ -864,6 +864,10 @@ impl GeometrySource for BlitzGeometry {
         Some(style)
     }
 
+    fn element_starting_style(&self, key: u64) -> Option<style::servo_arc::Arc<style::properties::ComputedValues>> {
+        RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.element_starting_style(self.page, key))
+    }
+
     fn element_displayed(&self, key: u64) -> Option<bool> {
         RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.element_displayed(self.page, key))
     }
