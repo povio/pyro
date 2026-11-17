@@ -629,10 +629,13 @@ pages, reftests 27,802 -> 28,219, crashtests 2,031 -> 2,076 (with `--dirs all`).
 - It covers what `serve.mjs` does by hand: `/resources/WebIDLParser.js`, `?pipe=trickle`, `xhr/resources/delay.py`.
 - Pages load from the origin their name asks for, as wptrunner loads them: `.https.` and `.serviceworker.` over https,
   `.www.` from the www subdomain.
-- Known gap (2026-11-17): every https load fails in pyro with `net::ERR_FAILED: error reading a body from connection`.
-  wptserve's responses carry no `Content-Length` and end when the connection closes, and Python's TLS closes without
-  `close_notify`, which pyro's TLS stack treats as truncation (curl and Chrome accept it). The fix belongs in
-  pyro-net.
+- https through wptserve needed a pyro-net fix (2026-11-17): its responses carry no `Content-Length` and end when
+  the connection closes, and Python's TLS closes without `close_notify`, which pyro read as a cut body (every https
+  load failed with `error reading a body from connection`). Such an end now reads as the end of the stream, as in
+  Chromium. In a sample of 212 of the pages wptserve adds (1 in 40, `--jobs 2`): before, 27 failed to load and 25
+  timed out (6.6 s per page); after, 202 completed, 10 timed out, none failed to load, 113 of 118 `.https.` pages
+  completed, 3.4 s per page, 366 s wall, no browser restart. 51 pages passed every subtest, 1,535 of 2,716
+  subtests passed.
 
 The PR gate keeps `serve.mjs` and its plan until a CI run records baselines for the whole suite.
 
