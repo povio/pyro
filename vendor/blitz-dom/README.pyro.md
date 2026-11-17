@@ -2530,3 +2530,11 @@ does not let margins collapse through it, even when its lines have no height (CS
   `BaseDocument::inline_svg_at_viewport` serializes and parses such an `<svg>` again at its laid-out content box (cached
   per node and size, dropped on reconstruction), which blitz-paint `draw_svg` paints (WPT css-transforms
   `transform-percent-010`).
+- `layout/inline/build.rs`, `layout/inline/layout.rs`, `layout/first_line.rs` (`layout_styles`), `node/text.rs`
+  (round 4 lane A): `::first-line` font size, line height, family, weight, style and spacing apply in layout. The
+  build gives them to the text before `TextLayout::first_line_end` (all of it at first; parley's
+  `set_first_line`); `compute_inline_layout` breaks at the width and builds again when the first line ends
+  elsewhere (at most twice). The inline elements' styles on that line are cascaded again in full with the
+  first-line box as parent (`TextLayout::first_line_styles`): span edges with `em` widths follow it. A text-box-trim
+  edge and the first line's strut use the line's root style (`Line::root_style`). String markers of items without a
+  line of their own sit on `marker_baseline` (with the trim shift of the anonymous block holding the first line).

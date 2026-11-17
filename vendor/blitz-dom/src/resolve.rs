@@ -1094,6 +1094,10 @@ impl BaseDocument {
                 true => crate::layout::first_line::style_node_for(self, task.node_id),
                 false => None,
             };
+            layout.first_line_styles = match layout.first_line {
+                Some(first_line) => crate::layout::first_line::layout_styles(self, task.node_id, first_line),
+                None => Vec::new(),
+            };
             layout.first_letter = match self.first_letter_styles {
                 true => crate::layout::first_letter::split(self, task.node_id, layout.first_line),
                 false => None,
@@ -1138,6 +1142,7 @@ impl BaseDocument {
                         layout: std::mem::take(&mut layout.layout),
                         first_letter: layout.first_letter.take(),
                         first_line: layout.first_line.take(),
+                        first_line_styles: std::mem::take(&mut layout.first_line_styles),
                         ..TextLayout::new()
                     };
                     build_inline_layout_into(

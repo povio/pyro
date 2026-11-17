@@ -1207,6 +1207,29 @@ impl LayoutPassState<'_> {
             .layout
             .set_text_indent(resolved_text_indent * scale, indent_options);
 
+        // pyro: `::first-line` styles that change layout (`TextLayout::first_line_layout`): the
+        // build gave them to the text up to where the first line ended last time (all of it at
+        // first); a first line that ends elsewhere at this width builds the text again with that end.
+        if inline_layout.first_line_layout {
+            for _ in 0..2 {
+                inline_layout.layout.break_all_lines(Some(width));
+                let end = inline_layout.layout.lines().next().map(|line| line.text_range().end);
+                if end.is_none() || end == inline_layout.first_line_end {
+                    break;
+                }
+                inline_layout.first_line_end = end;
+                let crate::BaseDocument { nodes, layout_ctx, font_ctx, viewport, .. } = &mut **self;
+                let mut font_ctx = font_ctx.lock().unwrap();
+                super::build_inline_layout_into(nodes, layout_ctx, &mut font_ctx, &mut inline_layout, viewport.scale(), node_id);
+                drop(font_ctx);
+                inline_layout.last_break = None;
+                inline_layout.final_lines = None;
+                inline_layout
+                    .layout
+                    .set_text_indent(resolved_text_indent * scale, indent_options);
+            }
+        }
+
         // Content sized to fit exactly (e.g. shrink-to-fit) can end up a few ulps wider than
         // `width`: the width goes through round trips in CSS px, and the line breaker sums
         // advances in a different order to `calculate_content_widths`. Give the line breaker a
@@ -1782,7 +1805,7 @@ impl LayoutPassState<'_> {
                 && let Some(line) = layout.get(0)
             {
                 let top = line.metrics().block_min_coord;
-                let edge = line.span_text_edge(0, trim.edge, trim.over);
+                let edge = line.span_text_edge(line.root_style(), trim.edge, trim.over);
                 // An inverted line (`vertical-lr`) has its under side at the block start.
                 text_box_shift = if trim.over { edge - top } else { line.metrics().block_max_coord - edge };
             }
@@ -1790,7 +1813,7 @@ impl LayoutPassState<'_> {
             if let Some(trim) = end
                 && let Some(line) = trailing_empty_line.unwrap_or(line_count).checked_sub(1).and_then(|i| layout.get(i))
             {
-                let edge = line.span_text_edge(0, trim.edge, trim.over);
+                let edge = line.span_text_edge(line.root_style(), trim.edge, trim.over);
                 end_trim = if trim.over { edge - line.metrics().block_min_coord } else { line.metrics().block_max_coord - edge };
             }
             // (Not above where a `<br>`'s clearance put the end of the content.)

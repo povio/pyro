@@ -22,6 +22,15 @@ pub struct Line<'a, B: Brush> {
 }
 
 impl<'a, B: Brush> Line<'a, B> {
+    /// pyro: the style of the line's root span box: the root's (`0`), or on the first line its
+    /// `::first-line` copy (`TreeBuilder::set_first_line`).
+    pub fn root_style(&self) -> u16 {
+        match self.index {
+            0 => self.layout.data.first_line_root.unwrap_or(0),
+            _ => 0,
+        }
+    }
+
     /// Returns the metrics for the line.
     pub fn metrics(&self) -> &LineMetrics {
         &self.data.metrics

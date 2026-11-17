@@ -131,3 +131,21 @@ fn a_line_of_empty_inline_boxes_is_invisible() {
     // With text on the line, an empty box's strut still counts.
     assert_eq!(height("<div id=d><span style='line-height:60px'></span>X</div>"), 60.0);
 }
+
+#[test]
+fn first_line_font_size_and_line_height_apply_in_layout() {
+    // ::first-line doubles the font: its line is 80px tall, the second 40px.
+    let h = height("<style>#d::first-line{font-size:40px}</style><div id=d style='font:20px/2 monospace'>Line1<br>Line2</div>");
+    assert_eq!(h, 120.0);
+    // A paragraph that wraps: the first line takes the ::first-line line height only.
+    let h = height(
+        "<style>#d::first-line{line-height:60px}</style><div id=d style='font:20px/20px monospace;width:5ch'>aaaa bbbb cccc</div>",
+    );
+    assert_eq!(h, 100.0);
+    // An `em` border on the first line follows the first-line font size.
+    let b = boxes(
+        &format!("{STYLE}<style>#d::first-line{{font-size:10px}} #s{{border-left:solid 1em}}</style><div id=d style='font:40px/1 monospace'><span id=s>x</span></div>"),
+        &["s"],
+    );
+    assert!((b[0][2] - (10.0 + 6.0)).abs() < 1.5, "{b:?}");
+}

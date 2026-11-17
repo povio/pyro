@@ -402,6 +402,12 @@ enabled: under `white-space: pre` the text after it stays on its line (WPT css-o
   (U+2061, `CharacterFlags::is_empty_box_strut`) adds the box's metrics but is no content, so a line of empty inline
   boxes alone is an invisible line box (height 0; blitz-paint paints none of its boxes). `Layout::tab_stops` reads
   back what `set_tab_stops` set.
+- `::first-line` in layout (`builder.rs` `TreeBuilder::set_first_line`, `resolve/tree.rs` `apply_first_line`,
+  `LayoutData::first_line_root`, `Line::root_style`): every style gets a first-line copy (appended, parents first)
+  whose font size scales by the first line's over the root's and whose line height, family, weight, style and
+  letter/word spacing take the first line's where they are the root's; text before the given byte end takes the
+  copies. The root's copy is its own parent and a root span box in `resolve_style_metrics` (the first line's
+  strut, `reset_line`); `Line::root_style` names it on line 0 for trim edges and struts.
 
 Covered by `crates/pyro-render/tests/text_inline_round4.rs` and `soft_hyphens.rs`.
 - `layout/alignment.rs` (`align`, round 4 lane D): right-, end- and centre-aligned lines take their content width rounded

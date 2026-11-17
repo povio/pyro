@@ -201,9 +201,10 @@ pub(crate) fn resolve_style_metrics<B: Brush>(
             metrics.under = metrics.under.max(metrics.descent + space.under);
         }
 
-        if index == 0 {
+        // pyro: the first line's root (`::first-line`, its own parent) is a root span box too.
+        if index == 0 || usize::from(style.parent) == index {
             // The root span box (the strut).
-            metrics.parent = 0;
+            metrics.parent = index as u16;
             metrics.baseline_offset = 0.;
             metrics.exact_baseline_offset = 0.;
             metrics.aligned_subtree_root = 0;
@@ -285,7 +286,7 @@ pub(crate) fn scale_style_metrics<B: Brush>(
             metrics.under = metrics.under.max(metrics.descent + under * scale);
         }
         metrics.parent = base.parent;
-        if index > 0 {
+        if index > 0 && usize::from(base.parent) != index {
             let align = style.vertical_align;
             if align.is_line_relative() {
                 metrics.aligned_subtree_root = index as u16;

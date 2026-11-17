@@ -86,6 +86,9 @@ pub(crate) struct TreeStyleBuilder<B: Brush> {
     deferred_controls: Vec<(u16, char)>,
     /// pyro: whether any text other than bidi formatting characters was committed.
     has_content: bool,
+    /// pyro: the end (byte offset) of the first line's text and the changes CSS `::first-line`
+    /// makes to its styles ([`Self::set_first_line`]).
+    first_line: Option<(usize, Vec<ResolvedProperty<B>>)>,
 }
 
 impl<B: Brush> Default for TreeStyleBuilder<B> {
@@ -102,6 +105,7 @@ impl<B: Brush> Default for TreeStyleBuilder<B> {
             edge_moves: Vec::new(),
             deferred_controls: Vec::new(),
             has_content: false,
+            first_line: None,
         }
     }
 }
@@ -112,6 +116,12 @@ impl<B: Brush> TreeStyleBuilder<B> {
         self.tree[self.current_span].style.clone()
     }
 
+    /// pyro: the first line's text ends at `end` (a byte offset of the text) and CSS
+    /// `::first-line` changes its styles by `properties` (see `apply_first_line`).
+    pub(crate) fn set_first_line(&mut self, end: usize, properties: Vec<ResolvedProperty<B>>) {
+        self.first_line = (!properties.is_empty()).then_some((end, properties));
+    }
+
     /// Prepares the builder for accepting a tree of styles and text.
     ///
     /// The provided `root_style` is the default style applied to all text unless overridden.
@@ -120,6 +130,7 @@ impl<B: Brush> TreeStyleBuilder<B> {
         self.style_table.clear();
         self.style_runs.clear();
         self.text.clear();
+        self.first_line = None;
         self.pending_whitespace = None;
         self.last_item_is_inline_box = false;
         self.deferred_edges.clear();
@@ -499,6 +510,9 @@ impl<B: Brush> TreeStyleBuilder<B> {
         style_runs.clear();
         style_table.extend_from_slice(&self.style_table);
         style_runs.extend_from_slice(&self.style_runs);
+        if let Some((end, properties)) = self.first_line.take() {
+            apply_first_line(style_table, style_runs, end, &properties);
+        }
 
         if style_runs.is_empty() {
             // If there's no text, the layout still needs the root style, e.g., to size a cursor.
@@ -510,6 +524,69 @@ impl<B: Brush> TreeStyleBuilder<B> {
 
         core::mem::take(&mut self.text)
     }
+}
+
+/// pyro: CSS `::first-line` in layout. Each style gets a first-line copy, appended to the table in
+/// table order (parents first): `properties` change what it inherits from the root (a value equal
+/// to the root's), and a font size scales by the first line's over the root's (so `em` sizes of
+/// spans follow it). The root's copy is its own parent: the first line's root span box (the strut,
+/// [`crate::layout::data::LayoutData::first_line_root`]). Text before `end` takes the copies.
+fn apply_first_line<B: Brush>(
+    style_table: &mut Vec<ResolvedStyle<B>>,
+    style_runs: &mut Vec<StyleRun>,
+    end: usize,
+    properties: &[ResolvedProperty<B>],
+) {
+    let count = style_table.len();
+    if end == 0 || count == 0 || count * 2 > usize::from(u16::MAX) {
+        return;
+    }
+    let root = style_table[0].clone();
+    for index in 0..count {
+        let style = &style_table[index];
+        let mut copy = style.clone();
+        for property in properties {
+            match property {
+                ResolvedProperty::FontSize(size) if root.font_size > 0.0 => {
+                    copy.font_size = style.font_size * size / root.font_size;
+                }
+                ResolvedProperty::LineHeight(value) if style.line_height == root.line_height => {
+                    copy.line_height = *value;
+                }
+                ResolvedProperty::FontFamily(value) if style.font_family == root.font_family => {
+                    copy.font_family = *value;
+                }
+                ResolvedProperty::FontWeight(value) if style.font_weight == root.font_weight => {
+                    copy.font_weight = *value;
+                }
+                ResolvedProperty::FontStyle(value) if style.font_style == root.font_style => {
+                    copy.font_style = *value;
+                }
+                ResolvedProperty::LetterSpacing(value) if style.letter_spacing == root.letter_spacing => {
+                    copy.letter_spacing = *value;
+                }
+                ResolvedProperty::WordSpacing(value) if style.word_spacing == root.word_spacing => {
+                    copy.word_spacing = *value;
+                }
+                _ => {}
+            }
+        }
+        copy.parent = if index == 0 { count as u16 } else { count as u16 + style.parent };
+        style_table.push(copy);
+    }
+    let mut runs = Vec::with_capacity(style_runs.len() + 1);
+    for run in style_runs.drain(..) {
+        if run.range.start >= end {
+            runs.push(run);
+            continue;
+        }
+        let split = run.range.end.min(end);
+        runs.push(StyleRun { style_index: run.style_index + count as u16, range: run.range.start..split });
+        if split < run.range.end {
+            runs.push(StyleRun { style_index: run.style_index, range: split..run.range.end });
+        }
+    }
+    *style_runs = runs;
 }
 
 #[cfg(test)]

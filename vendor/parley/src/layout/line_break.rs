@@ -1204,8 +1204,10 @@ impl<'a, B: Brush> BreakLines<'a, B> {
         state.subtrees.clear();
         // pyro: under the line height quirk, text adds the strut with its own span boxes.
         if !self.layout.data.line_height_quirk {
+            // pyro: the first line's strut is its `::first-line` root style's.
+            let root = self.layout.data.first_line_root.filter(|_| self.lines.lines.is_empty()).unwrap_or(0);
             state.line.box_metrics.add_style(
-                0,
+                root,
                 &self.layout.data.style_metrics,
                 &mut state.contributed,
                 &mut state.subtrees,
@@ -2290,13 +2292,16 @@ impl<'a, B: Brush> BreakLines<'a, B> {
     }
 
     fn finish_line(&mut self, line_idx: usize, line_height: f32, invisible: bool) -> f32 {
+        // pyro: an atomic inline (even an empty one) makes the line no invisible line box for
+        // painting (its boxes' fragments paint), whatever height it has here.
+        let has_atomic = self.state.line.has_inline_content;
         let line = &mut self.lines.lines[line_idx];
 
         // Reset metrics for line
         line.metrics.offset = 0.;
 
         line.metrics.line_height = line_height;
-        line.metrics.invisible = invisible;
+        line.metrics.invisible = invisible && !has_atomic;
 
         if line.item_range.is_empty() {
             line.text_range = self.layout.data.text_len..self.layout.data.text_len;

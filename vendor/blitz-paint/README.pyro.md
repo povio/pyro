@@ -1035,3 +1035,12 @@ before overlapping radii are scaled down, as Blink's `CalcRadiiFor` (css-backgro
 css-inline `empty-span-size-002`).
 - Round 4 lane B: `render.rs` `draw_svg` paints an inline `<svg>` whose source depends on its laid-out size
   (`SvgImageData::viewport_dependent`) from blitz-dom `inline_svg_at_viewport` at its content box size.
+
+## `::first-line` in layout (WPT round 4, lane A)
+
+`render.rs` (`inline_box_fragments`): the `::first-line` box's fragment uses the line's root style
+(`Line::root_style`, the first line's own font metrics), and a fragment's border and padding widths come from the
+element's style on the first line (seeded from blitz-dom's `TextLayout::first_line_styles`, full cascades: `em`
+widths follow the first-line font). `text.rs`: the strut of the first line is its root style's; the root's text on
+the first line takes `font-synthesis-*` from the `::first-line` style. An outside string marker of an item without a
+line of its own sits on `marker_baseline` (WPT css-inline `text-box-trim-list-001`).

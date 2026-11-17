@@ -218,6 +218,9 @@ pub(crate) struct LayoutData<B: Brush> {
     /// pyro: the byte offset and base level of each later paragraph whose level differs (CSS
     /// `unicode-bidi: plaintext`); empty when every paragraph has `base_level`.
     pub(crate) paragraph_levels: Vec<(usize, BidiLevel)>,
+    /// pyro: the style of the first line's root span box (CSS `::first-line` in layout,
+    /// `TreeBuilder::set_first_line`): the first line's strut.
+    pub(crate) first_line_root: Option<u16>,
     /// The length of the text in the layout
     pub(crate) text_len: usize,
 
@@ -296,6 +299,7 @@ impl<B: Brush> Default for LayoutData<B> {
             quantize: true,
             base_level: BidiLevel::new(0),
             paragraph_levels: Vec::new(),
+            first_line_root: None,
             text_len: 0,
             width: 0.,
             full_width: 0.,
@@ -380,6 +384,7 @@ impl<B: Brush> LayoutData<B> {
         self.quantize = true;
         self.base_level = BidiLevel::new(0);
         self.paragraph_levels.clear();
+        self.first_line_root = None;
         self.text_len = 0;
         self.width = 0.;
         self.full_width = 0.;

@@ -2068,7 +2068,7 @@ pub(crate) fn stroke_text<'a, S: PaintScene>(
 
         // pyro: the root's own font on the line, for the decorations of the root (and of the
         // blocks it is in) where it has no text of its own.
-        let (strut_top, strut_bottom) = line.span_content_area(0);
+        let (strut_top, strut_bottom) = line.span_content_area(line.root_style());
         let line_baseline = line.metrics().baseline;
         let strut = StrutGeometry {
             baseline: line_baseline,
@@ -2106,7 +2106,12 @@ pub(crate) fn stroke_text<'a, S: PaintScene>(
             let synthesis = run.synthesis();
             // pyro: `font-synthesis-weight` and `font-synthesis-style` of the run's element
             // decide whether a missing bold or slanted face is faked.
-            let (fake_bold, fake_slant) = synthesis_allowed(doc, glyph_run.style().brush.id);
+            // pyro: the root's text on the first line, by its `::first-line` style.
+            let synthesis_node = match on_first_line {
+                Some(first_line) if glyph_run.style().brush.id == inline_root_id => first_line,
+                _ => glyph_run.style().brush.id,
+            };
+            let (fake_bold, fake_slant) = synthesis_allowed(doc, synthesis_node);
             let glyph_xform = synthesis
                 .skew()
                 .filter(|_| fake_slant)

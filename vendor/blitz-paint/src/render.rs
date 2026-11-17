@@ -2272,7 +2272,7 @@ impl ElementCx<'_, '_> {
         // pyro: the first line's content is in the `::first-line` box (blitz-dom
         // `TextLayout::first_line`), outside the elements on it, which have their styles there.
         let first_line = text_layout.first_line.filter(|&id| dom.get_node(id).is_some());
-        let mut first_line_styles = Vec::new();
+        let mut first_line_styles = text_layout.first_line_styles.clone();
         let mut item_index = 0usize;
         for (line_index, line) in layout.lines().enumerate() {
             let first = fragments.len();
@@ -2332,7 +2332,7 @@ impl ElementCx<'_, '_> {
                 chain_of(&mut chain, style_index);
                 let on_first_line = first_line.filter(|_| line.text_range().start == 0);
                 if let Some(first_line) = on_first_line {
-                    chain.push((first_line, 0));
+                    chain.push((first_line, line.root_style()));
                 }
                 let depth = chain.len();
                 for (level, &(node, style_index)) in chain.iter().enumerate() {
@@ -2473,7 +2473,14 @@ impl ElementCx<'_, '_> {
                 let later = total - earlier - width;
                 if rtl { (later, earlier) } else { (earlier, later) }
             });
-            let (border, padding) = (style.get_border(), style.get_padding());
+            // pyro: on the first line, its edges as the element has them there (`em` widths follow
+            // the `::first-line` font size).
+            let line_style = fragment.style.clone();
+            let edge_style: &ComputedValues = match &line_style {
+                Some(line_style) => line_style,
+                None => &style,
+            };
+            let (border, padding) = (edge_style.get_border(), edge_style.get_padding());
             let side = |open: bool, width: f32| if open { 0.0 } else { width };
             // The used width: none where the side has no border style.
             let used = |width: &style::values::computed::BorderSideWidth, style: style::values::computed::BorderStyle| {
@@ -3338,7 +3345,13 @@ impl ElementCx<'_, '_> {
             let line_x = first_line.as_ref().filter(|_| !rtl).map_or(0.0, |(text_layout, line)| {
                 marker_line_x(line) / text_layout.layout.scale()
             });
-            let y_offset = if let Some((text_layout, first_text_line)) = &first_line
+            let y_offset = if first_line.is_none() {
+                // pyro: no line of its own (its first line is in a block inside it, an anonymous
+                // one beside a nested list): on the baseline of that line, with its trim shift
+                // (WPT css-inline `text-box-trim-list-001`).
+                let own = layout.lines().next().map_or(0.0, |line| line.metrics().baseline) / layout.scale();
+                self.marker_baseline(layout).0 - own
+            } else if let Some((text_layout, first_text_line)) = &first_line
             {
                 // pyro: with the line, where it is painted (`LineTops`).
                 let shift = self
