@@ -182,3 +182,13 @@ fn a_changed_first_line_style_is_painted_in_a_persistent_document() {
     assert_eq!(after.hash, fresh.hash, "the persistent document paints the new style");
     assert_ne!(after.hash, before.hash);
 }
+
+/// An inline-block `::before` is atomic: the `::first-line` colour does not reach its text.
+#[test]
+fn first_line_skips_an_inline_block_before() {
+    matches(
+        "<style>div::first-line{color:#f00} div::before{content:'ab';color:#080;display:inline-block}</style><div>cd</div>",
+        "<div><span style='color:#080'>ab</span><span style='color:#f00'>cd</span></div>",
+        "<div><span style='color:#f00'>abcd</span></div>",
+    );
+}

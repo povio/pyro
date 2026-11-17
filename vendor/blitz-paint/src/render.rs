@@ -1085,8 +1085,10 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
                     cx.stroke_devtools(scene);
                 }
                 FlowPhase::Foreground => {
-                    cx.draw_inline_layout(scene, content_position);
+                    // pyro: the marker first: it is at the start of its line, under text that
+                    // overlaps it (WPT css-pseudo `outside-marker-paint-order`).
                     cx.draw_marker(scene, content_position);
+                    cx.draw_inline_layout(scene, content_position);
                     if cx.outline_line().is_some() {
                         self.deferred_outlines.set(true);
                     }
@@ -1414,10 +1416,10 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
                     // pyro: the stacking contexts with a negative z-index go under the box's own
                     // inline content (CSS 2.1 Appendix E, step 3 before step 7).
                     cx.draw_neg_z_children(scene, cx.transform, child_clip_rect);
-                    cx.draw_inline_layout(scene, content_position);
                     if !hidden {
                         cx.draw_marker(scene, content_position);
                     }
+                    cx.draw_inline_layout(scene, content_position);
                     cx.draw_children_above(scene, cx.transform, child_clip_rect);
                 }
             },
@@ -3692,8 +3694,8 @@ impl ElementCx<'_, '_> {
                 }
             }
         }
-        self.draw_inline_layout(scene, content_position);
         self.draw_marker(scene, content_position);
+        self.draw_inline_layout(scene, content_position);
         let outer_outlines = self.context.deferred_outlines.replace(false);
         self.draw_flow_children(
             scene,

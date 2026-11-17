@@ -757,12 +757,10 @@ fn collect_layout_children_with_wrap(
         }
     }
 
-    // pyro: a list item's inside marker that is text (a number, or a symbol the page styles
-    // through `::marker`) is inline content of its own: an item without any other has a line with
-    // the marker, and so has the anonymous block an item of blocks puts its marker in
-    // (`place_inside_marker`). (An empty item's bundled-font symbol marker stays unpainted: painting
-    // it exposes WPT `list-style-position-applies-to-015`, an empty item in a table caption, until
-    // table captions render.) An item with an outside marker and no in-flow content has the line
+    // pyro: a list item's inside marker (text, a symbol or an image) is inline content of its
+    // own: an item without any other has a line with the marker (WPT css-pseudo
+    // `marker-word-break`), and so has the anonymous block an item of blocks puts its marker in
+    // (`place_inside_marker`). An item with an outside marker and no in-flow content has the line
     // the marker sits on (Chromium: the marker's box sets the item's height and baseline), a line
     // of the item's strut (`inline::build`).
     let inside_marker = doc.nodes[container_node_id]
@@ -770,8 +768,10 @@ fn collect_layout_children_with_wrap(
         .and_then(|element| element.list_item_data.as_deref())
         .is_some_and(|item| match item.position {
             crate::node::ListItemLayoutPosition::Inside => {
-                matches!(item.marker, crate::node::Marker::String(_) | crate::node::Marker::Image { .. })
-                    || doc.nodes[container_node_id].is_anonymous()
+                matches!(
+                    item.marker,
+                    crate::node::Marker::String(_) | crate::node::Marker::Image { .. } | crate::node::Marker::Char(_)
+                ) || doc.nodes[container_node_id].is_anonymous()
             }
             crate::node::ListItemLayoutPosition::Outside(_) => true,
         });

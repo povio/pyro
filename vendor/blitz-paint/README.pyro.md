@@ -1015,3 +1015,6 @@ unless its `overflow` is visible.
 
 `render.rs` (`draw_svg_image_document_into`): an SVG image drawn as a document (blitz-dom `svg_image_documents`) is
 painted from it, clipped to the content box, when drawn at the size it was laid out at.
+`text.rs` (`ink_gaps`): each glyph run's own `text-decoration-skip-ink` decides whether it cuts the lines over it
+(css-pseudo `marker-text-decoration-skip-ink`). `render.rs`: a list item's marker is painted before its inline
+content, so text that overlaps an outside marker covers it (css-pseudo `outside-marker-paint-order`).

@@ -205,7 +205,7 @@ diff -ruN a/properties/counted_unknown_properties.py b/properties/counted_unknow
      "-webkit-app-region",
 diff -ruN a/properties/data.py b/properties/data.py
 --- a/properties/data.py	2026-11-11 19:55:57
-+++ b/properties/data.py	2026-11-16 18:58:01
++++ b/properties/data.py	2026-11-17 09:03:25
 @@ -342,9 +342,19 @@
          allow_quirks=False,
          ignored_when_colors_disabled=False,
@@ -244,6 +244,24 @@ diff -ruN a/properties/data.py b/properties/data.py
                  "TextBoxEdge",
                  "TextBoxTrim",
                  "TextDecorationLine",
+@@ -1323,8 +1336,17 @@
+                 "cursor",
+                 "direction",
+                 "hyphens",
++                # pyro: the text properties CSS Pseudo 4 and Blink allow on `::marker` (WPT
++                # css-pseudo `marker-letter-spacing`, `marker-word-break`, ...).
++                "letter-spacing",
++                "line-break",
+                 "line-height",
++                "overflow-wrap",
+                 "quotes",
++                "tab-size",
++                "text-decoration-skip-ink",
++                "word-break",
++                "word-spacing",
+                 "text-combine-upright",
+                 "text-emphasis-color",
+                 "text-emphasis-position",
 diff -ruN a/properties/helpers.mako.rs b/properties/helpers.mako.rs
 --- a/properties/helpers.mako.rs	2026-11-11 19:55:57
 +++ b/properties/helpers.mako.rs	2026-11-11 19:55:57

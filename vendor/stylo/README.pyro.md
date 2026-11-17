@@ -359,3 +359,6 @@ anchor positioning; stylo_taffy lays it out as `center`, which is what it is wit
   CSS 2.1's alignments for `vertical-align` and give the `alignment-baseline` longhand css-inline-3's (as Blink
   does). They are never parsed and serialize as the longhand's keywords (`AlignmentBaseline::keyword`, manual
   `ToCss`).
+- `properties/data.py` (`PropertyRestrictions.marker`): `::marker` also takes `letter-spacing`, `word-spacing`,
+  `line-break`, `word-break`, `overflow-wrap`, `tab-size` and `text-decoration-skip-ink` (CSS Pseudo 4, Blink; WPT
+  css-pseudo `marker-word-spacing`, `marker-word-break`, ...).

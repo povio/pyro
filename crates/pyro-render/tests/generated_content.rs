@@ -90,10 +90,11 @@ fn the_first_letter_takes_the_punctuation_around_it() {
             &format!("<div>{punctuation}{letter}{punctuation}{rest}</div>"),
         );
     }
-    // A dash is not first-letter punctuation: the letter is the dash.
+    // A dash joins the letter before it, not after it (CSS Pseudo 4; WPT css-pseudo
+    // `first-letter-trailing-punctuation`).
     matches(
         &format!("{LETTER}<div>-T-est</div>"),
-        &format!("{LETTER}<div><span class=ref>-</span>T-est</div>"),
+        &format!("{LETTER}<div><span class=ref>-T</span>-est</div>"),
         "<div>-T-est</div>",
     );
 }

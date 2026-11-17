@@ -2477,3 +2477,11 @@ does not let margins collapse through it, even when its lines have no height (CS
   is laid out in the box it is drawn in, as Blink does.
 - `node/svg_css.rs` (`attribute_boxes`, `boxes`): an `<image>`'s or `<foreignObject>`'s fill box is its geometry;
   a `<foreignObject>` without a size is an empty group (its filter region still paints).
+- `layout/list.rs`, `layout/inline/build.rs`, `layout/construct.rs`: an inside symbol marker stays a bundled-font symbol
+  under `::marker` rules unless one sets `font-family`; it is not spaced by `letter-spacing`/`word-spacing`, is
+  bidi-isolated like a string marker, and gives an otherwise empty item its line. An inside marker's `::marker` style
+  has its own emphasis marks (with their room in the line).
+- `layout/first_letter.rs`: `::first-letter` takes any punctuation before the letter (dashes and connectors too) with
+  combining marks and typographic spaces, and after it all but opening punctuation and dashes (a non-word-separator
+  space bridges to more); a preserved line break before any letter means no first letter; a `::before`/`::after`
+  box with an atomic display does not pass on its container's first line.

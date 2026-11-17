@@ -494,7 +494,12 @@ fn build_inline_layout_with(
         // pyro: in the item's `::marker` style, when a rule styles the marker.
         let styled = style_node
             .and_then(|id| nodes.get(id).and_then(|node| node.primary_styles().map(|style| (id, style))))
-            .map(|(id, style)| stylo_to_parley::style(id, &style));
+            .map(|(id, style)| {
+                let mut parley_style = stylo_to_parley::style(id, &style);
+                // (With the room its emphasis marks take, `FoundAnnotations`.)
+                parley_style.annotation_space = space_of(annotation_space, id);
+                parley_style
+            });
         if let Some(style) = &styled {
             builder.push_style_span(style.clone());
         }
@@ -503,7 +508,8 @@ fn build_inline_layout_with(
         // unicode-bidi: isolate }`; WPT css-lists `list-style-type-string-006`).
         // (`unicode-bidi: normal` in a `::marker` rule leaves it in the item's paragraph; WPT
         // css-pseudo `marker-unicode-bidi-normal`.)
-        let isolate = *isolate && matches!(marker, Marker::String(_));
+        // (A symbol too: WPT css-lists `list-marker-symbol-bidi`.)
+        let isolate = *isolate && matches!(marker, Marker::String(_) | Marker::Char(_));
         if isolate {
             let rtl = root_node_style
                 .as_deref()
@@ -523,6 +529,10 @@ fn build_inline_layout_with(
             Marker::Char(char) => {
                 let mut marker_style = parley_style.clone();
                 marker_style.font_family = BULLET_FONT_FAMILY.into();
+                // pyro: a symbol and its space are not spaced by `letter-spacing` or
+                // `word-spacing` (Blink; WPT css-pseudo `marker-word-spacing`).
+                marker_style.letter_spacing = 0.0;
+                marker_style.word_spacing = 0.0;
                 builder.push_style_span(marker_style);
                 builder.push_text(&format!("{char} "));
                 builder.pop_style_span();
@@ -570,6 +580,14 @@ fn build_inline_layout_with(
     let annotations = &mut FoundAnnotations { space: annotation_space.to_vec(), ..Default::default() };
     if let Some(style) = root_node.primary_styles() {
         annotations.enter(inline_context_root_node_id, &style);
+    }
+    // pyro: an inside marker's `::marker` style has emphasis marks of its own (WPT css-pseudo
+    // `marker-text-emphasis`): its text's brush is the style's node.
+    if let Some(ListItemLayout { style_node: Some(id), position: ListItemLayoutPosition::Inside, .. }) =
+        root_node.element_data().and_then(|el| el.list_item_data.as_deref())
+        && let Some(style) = nodes.get(*id).and_then(|node| node.primary_styles())
+    {
+        annotations.enter(*id, &style);
     }
     if root_node.data.is_element_with_tag_name(&local_name!("ruby")) {
         annotations.ruby_base_start = Some(builder.text().len());

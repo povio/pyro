@@ -4789,12 +4789,10 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
 +        }
      }
  
-+    // pyro: a list item's inside marker that is text (a number, or a symbol the page styles
-+    // through `::marker`) is inline content of its own: an item without any other has a line with
-+    // the marker, and so has the anonymous block an item of blocks puts its marker in
-+    // (`place_inside_marker`). (An empty item's bundled-font symbol marker stays unpainted: painting
-+    // it exposes WPT `list-style-position-applies-to-015`, an empty item in a table caption, until
-+    // table captions render.) An item with an outside marker and no in-flow content has the line
++    // pyro: a list item's inside marker (text, a symbol or an image) is inline content of its
++    // own: an item without any other has a line with the marker (WPT css-pseudo
++    // `marker-word-break`), and so has the anonymous block an item of blocks puts its marker in
++    // (`place_inside_marker`). An item with an outside marker and no in-flow content has the line
 +    // the marker sits on (Chromium: the marker's box sets the item's height and baseline), a line
 +    // of the item's strut (`inline::build`).
 +    let inside_marker = doc.nodes[container_node_id]
@@ -4802,8 +4800,10 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
 +        .and_then(|element| element.list_item_data.as_deref())
 +        .is_some_and(|item| match item.position {
 +            crate::node::ListItemLayoutPosition::Inside => {
-+                matches!(item.marker, crate::node::Marker::String(_) | crate::node::Marker::Image { .. })
-+                    || doc.nodes[container_node_id].is_anonymous()
++                matches!(
++                    item.marker,
++                    crate::node::Marker::String(_) | crate::node::Marker::Image { .. } | crate::node::Marker::Char(_)
++                ) || doc.nodes[container_node_id].is_anonymous()
 +            }
 +            crate::node::ListItemLayoutPosition::Outside(_) => true,
 +        });
@@ -7831,7 +7831,7 @@ diff --git a/packages/blitz-dom/src/layout/first_letter.rs b/packages/blitz-dom/
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/layout/first_letter.rs
-@@ -0,0 +1,624 @@
+@@ -0,0 +1,693 @@
 +//! pyro: `::first-letter` (CSS 2.1 5.12.2, CSS Pseudo-Elements 4 2.2).
 +//!
 +//! The first letter of a block container's first formatted line takes the style of the
@@ -7883,8 +7883,8 @@ new file mode 100644
 +
 +const GENERAL_CATEGORY: CodePointMapDataBorrowed<'static, GeneralCategory> = CodePointMapData::<GeneralCategory>::new();
 +
-+/// Punctuation that joins a first letter (CSS 2.1: the Ps, Pe, Pi, Pf and Po classes; Chromium's
-+/// `IsPunctuationForFirstLetter`). Dashes (Pd) and connectors (Pc) do not.
++/// Punctuation that joins a first letter before it (pyro: CSS Pseudo 4 § 2.2: any P* class,
++/// dashes and connectors too; WPT css-pseudo `first-letter-trailing-punctuation`).
 +fn is_punctuation(c: char) -> bool {
 +    matches!(
 +        GENERAL_CATEGORY.get(c),
@@ -7893,7 +7893,25 @@ new file mode 100644
 +            | GeneralCategory::InitialPunctuation
 +            | GeneralCategory::FinalPunctuation
 +            | GeneralCategory::OtherPunctuation
++            | GeneralCategory::DashPunctuation
++            | GeneralCategory::ConnectorPunctuation
 +    )
++}
++
++/// pyro: punctuation that may follow the first letter: all but opening punctuation and dashes.
++fn is_trailing_punctuation(c: char) -> bool {
++    is_punctuation(c)
++        && !matches!(GENERAL_CATEGORY.get(c), GeneralCategory::OpenPunctuation | GeneralCategory::DashPunctuation)
++}
++
++/// pyro: a space separator other than U+0020 (typographic space, CSS Pseudo 4 § 2.2).
++fn is_typographic_space(c: char) -> bool {
++    c != ' ' && GENERAL_CATEGORY.get(c) == GeneralCategory::SpaceSeparator
++}
++
++/// pyro: a word-separator character (CSS Text 3 § 8.2).
++fn is_word_separator(c: char) -> bool {
++    matches!(c, ' ' | '\u{A0}' | '\u{1361}' | '\u{10100}' | '\u{10101}' | '\u{1039F}' | '\u{1091F}')
 +}
 +
 +/// A character that belongs to the letter before it (a combining mark, a joiner or a variation
@@ -7932,14 +7950,38 @@ new file mode 100644
 +    if first.is_whitespace() {
 +        return TextScan::Stop;
 +    }
-+    while chars.next_if(|&(_, c)| is_punctuation(c)).is_some() {}
++    // pyro: a punctuation mark keeps the combining marks after it (WPT css-pseudo
++    // `first-letter-004`).
++    // pyro: so do typographic spaces between the punctuation and the letter, other than a plain
++    // space (WPT css-pseudo `first-letter-trailing-punctuation`: "«&nbsp;T").
++    while chars.next_if(|&(_, c)| is_punctuation(c)).is_some() {
++        while chars.next_if(|&(_, c)| extends_letter(c)).is_some() {}
++        while chars.next_if(|&(_, c)| is_typographic_space(c)).is_some() {}
++    }
 +    match chars.next() {
 +        None => return TextScan::Letter(start..text.len()),
 +        Some((_, c)) if c.is_whitespace() => return TextScan::Skip,
 +        Some(_) => {}
 +    }
 +    while chars.next_if(|&(_, c)| extends_letter(c)).is_some() {}
-+    while chars.next_if(|&(_, c)| is_punctuation(c)).is_some() {}
++    // pyro: punctuation after the letter, except opening punctuation and dashes; a typographic
++    // space that is not a word separator bridges to more of it, but is not taken alone.
++    loop {
++        if chars.next_if(|&(_, c)| is_trailing_punctuation(c)).is_some() {
++            while chars.next_if(|&(_, c)| extends_letter(c)).is_some() {}
++            continue;
++        }
++        let mut ahead = chars.clone();
++        let mut spaces = 0;
++        while ahead.next_if(|&(_, c)| is_typographic_space(c) && !is_word_separator(c)).is_some() {
++            spaces += 1;
++        }
++        if spaces > 0 && ahead.peek().is_some_and(|&(_, c)| is_trailing_punctuation(c)) {
++            chars = ahead;
++            continue;
++        }
++        break;
++    }
 +    let end = chars.peek().map_or(text.len(), |&(index, _)| index);
 +    TextScan::Letter(start..end)
 +}
@@ -7996,7 +8038,13 @@ new file mode 100644
 +        // Only an in-flow block box passes its first line on to its container. pyro: an
 +        // anonymous block is one, whatever display its anonymous style computes.
 +        let in_flow = node.primary_styles().is_some_and(|style| !is_out_of_flow(&style));
-+        let block = node.is_anonymous()
++        // pyro: a `::before`/`::after` box is not an anonymous block: its display decides (an
++        // inline-block one is atomic; WPT css-pseudo `first-line-with-inline-block-before`).
++        let pseudo_box = node.parent.is_some_and(|parent| {
++            let parent = &doc.nodes[parent];
++            parent.before() == Some(current) || parent.after() == Some(current)
++        });
++        let block = (node.is_anonymous() && !pseudo_box)
 +            || (display.outside() == DisplayOutside::Block
 +                && matches!(display.inside(), DisplayInside::Flow | DisplayInside::FlowRoot));
 +        if !split && (!block || !in_flow) {
@@ -8040,6 +8088,20 @@ new file mode 100644
 +    fn walk(doc: &BaseDocument, node_id: NodeId) -> Option<Found> {
 +        let node = &doc.nodes[node_id];
 +        match &node.data {
++            // pyro: a preserved line break before any letter ends the first line without one
++            // (WPT css-pseudo `first-letter-with-preceding-new-line`).
++            NodeData::Text(data)
++                if data.content.trim_start_matches(|c: char| c.is_ascii_whitespace() && c != '\n').starts_with('\n')
++                    && node.parent.and_then(|parent| doc.nodes[parent].primary_styles()).is_some_and(|style| {
++                        use style::computed_values::white_space_collapse::T as Collapse;
++                        matches!(
++                            style.get_inherited_text().white_space_collapse,
++                            Collapse::Preserve | Collapse::PreserveBreaks | Collapse::BreakSpaces
++                        )
++                    }) =>
++            {
++                Some(Found::Stop)
++            }
 +            NodeData::Text(data) => match scan_text(&data.content) {
 +                TextScan::Letter(range) => Some(Found::Letter(node_id, range)),
 +                TextScan::Stop => Some(Found::Stop),
@@ -8436,7 +8498,14 @@ new file mode 100644
 +        assert_eq!(scan_text("42 Filler"), TextScan::Letter(0..1));
 +        assert_eq!(scan_text("\u{00BF}T\u{00BF}est"), TextScan::Letter(0..5));
 +        // Dashes and connectors are not first-letter punctuation.
-+        assert_eq!(scan_text("-T-est"), TextScan::Letter(0..1));
++        // pyro: a dash before the letter joins it, one after it does not (CSS Pseudo 4).
++        assert_eq!(scan_text("-T-est"), TextScan::Letter(0..2));
++        assert_eq!(scan_text("_T_est"), TextScan::Letter(0..3));
++        assert_eq!(scan_text("T(rail"), TextScan::Letter(0..1));
++        assert_eq!(scan_text("\u{AB}\u{A0}T\u{A0}\u{BB}est"), TextScan::Letter(0..5));
++        assert_eq!(scan_text("T\u{2003}.est"), TextScan::Letter(0..5));
++        assert_eq!(scan_text("T.\u{2003}est"), TextScan::Letter(0..2));
++        assert_eq!(scan_text("\u{104E}\u{300}T\u{300}x"), TextScan::Letter(0..8));
 +        assert_eq!(scan_text("\u{2019}T\u{2019}x"), TextScan::Letter(0..7));
 +    }
 +
@@ -9340,7 +9409,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
      // Create a parley tree builder
      let mut builder = layout_ctx.tree_builder(font_ctx, scale, true, &parley_style);
      if let Some(style) = root_node_style.as_deref() {
-@@ -59,15 +462,59 @@
+@@ -59,15 +462,65 @@
          .map(|s| CaseTransform::from_style(s))
          .unwrap_or(CaseTransform::NONE);
  
@@ -9376,7 +9445,12 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
 +        // pyro: in the item's `::marker` style, when a rule styles the marker.
 +        let styled = style_node
 +            .and_then(|id| nodes.get(id).and_then(|node| node.primary_styles().map(|style| (id, style))))
-+            .map(|(id, style)| stylo_to_parley::style(id, &style));
++            .map(|(id, style)| {
++                let mut parley_style = stylo_to_parley::style(id, &style);
++                // (With the room its emphasis marks take, `FoundAnnotations`.)
++                parley_style.annotation_space = space_of(annotation_space, id);
++                parley_style
++            });
 +        if let Some(style) = &styled {
 +            builder.push_style_span(style.clone());
 +        }
@@ -9385,7 +9459,8 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
 +        // unicode-bidi: isolate }`; WPT css-lists `list-style-type-string-006`).
 +        // (`unicode-bidi: normal` in a `::marker` rule leaves it in the item's paragraph; WPT
 +        // css-pseudo `marker-unicode-bidi-normal`.)
-+        let isolate = *isolate && matches!(marker, Marker::String(_));
++        // (A symbol too: WPT css-lists `list-marker-symbol-bidi`.)
++        let isolate = *isolate && matches!(marker, Marker::String(_) | Marker::Char(_));
 +        if isolate {
 +            let rtl = root_node_style
 +                .as_deref()
@@ -9400,7 +9475,15 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
          match marker {
              // Bullet glyphs live in the bundled bullet font. The position-outside
              // path already asks for it; without the same span here a marker like
-@@ -80,50 +527,464 @@
+@@ -76,54 +529,480 @@
+             Marker::Char(char) => {
+                 let mut marker_style = parley_style.clone();
+                 marker_style.font_family = BULLET_FONT_FAMILY.into();
++                // pyro: a symbol and its space are not spaced by `letter-spacing` or
++                // `word-spacing` (Blink; WPT css-pseudo `marker-word-spacing`).
++                marker_style.letter_spacing = 0.0;
++                marker_style.word_spacing = 0.0;
+                 builder.push_style_span(marker_style);
                  builder.push_text(&format!("{char} "));
                  builder.pop_style_span();
              }
@@ -9447,6 +9530,14 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
 +    let annotations = &mut FoundAnnotations { space: annotation_space.to_vec(), ..Default::default() };
 +    if let Some(style) = root_node.primary_styles() {
 +        annotations.enter(inline_context_root_node_id, &style);
++    }
++    // pyro: an inside marker's `::marker` style has emphasis marks of its own (WPT css-pseudo
++    // `marker-text-emphasis`): its text's brush is the style's node.
++    if let Some(ListItemLayout { style_node: Some(id), position: ListItemLayoutPosition::Inside, .. }) =
++        root_node.element_data().and_then(|el| el.list_item_data.as_deref())
++        && let Some(style) = nodes.get(*id).and_then(|node| node.primary_styles())
++    {
++        annotations.enter(*id, &style);
 +    }
 +    if root_node.data.is_element_with_tag_name(&local_name!("ruby")) {
 +        annotations.ruby_base_start = Some(builder.text().len());
@@ -9602,7 +9693,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
 +    {
 +        return false;
 +    }
-+
+ 
 +    // The first build keeps the lines of the layout's last break over the text that did not
 +    // change, for `BreakLines::resume`. The strut build follows a build of the same content.
 +    text_layout.text = if strut_build {
@@ -9702,7 +9793,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
 +    text_layout.percent_span_edges = bidi_scan.percent_edges;
 +    text_layout.span_block_edges = bidi_scan.block_edges;
 +    return true;
- 
++
 +    /// pyro: lays out on one line what an annotation draws: a ruby annotation's content in its
 +    /// style, or the emphasis mark of an element in its font at half its size (as an `<rt>` has it).
 +    fn build_annotation(
@@ -9871,7 +9962,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
      ) {
          let node = &nodes[node_id];
  
-@@ -143,6 +1004,26 @@
+@@ -143,6 +1022,26 @@
                      }
                  }
  
@@ -9898,7 +9989,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
                  let display = node.display_style().unwrap_or(Display::inline());
                  let position = style
                      .map(|s| s.clone_position())
-@@ -161,41 +1042,44 @@
+@@ -161,41 +1060,44 @@
                          // node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
                      }
                      (DisplayOutside::None, DisplayInside::Contents) => {
@@ -9965,7 +10056,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
                              }
                              builder.push_inline_box(InlineBox {
                                  id: node_id.as_u64(),
-@@ -210,66 +1094,165 @@
+@@ -210,66 +1112,165 @@
                                      .primary_styles()
                                      .map(|s| stylo_to_parley::vertical_align(&s))
                                      .unwrap_or_default(),
@@ -10152,7 +10243,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
                          }
                          builder.push_inline_box(InlineBox {
                              id: node_id.as_u64(),
-@@ -284,6 +1267,7 @@
+@@ -284,6 +1285,7 @@
                                  .primary_styles()
                                  .map(|s| stylo_to_parley::vertical_align(&s))
                                  .unwrap_or_default(),
@@ -10160,7 +10251,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
                          });
                      }
                  };
-@@ -291,10 +1275,93 @@
+@@ -291,10 +1293,93 @@
              NodeData::Text(data) => {
                  // node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
                  // dbg!(&data.content);
@@ -10257,7 +10348,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
              }
              NodeData::Comment { .. } => {
                  // node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
-@@ -303,3 +1370,250 @@
+@@ -303,3 +1388,250 @@
          }
      }
  }
@@ -12930,7 +13021,7 @@ diff --git a/packages/blitz-dom/src/layout/list.rs b/packages/blitz-dom/src/layo
  ) -> Option<ListItemLayout> {
      let node = &doc.nodes[child_id];
  
-@@ -71,17 +147,78 @@
+@@ -71,17 +147,82 @@
          return None;
      };
  
@@ -12984,11 +13075,15 @@ diff --git a/packages/blitz-dom/src/layout/list.rs b/packages/blitz-dom/src/layo
 -        ListStylePosition::Inside => ListItemLayoutPosition::Inside,
 +        ListStylePosition::Inside => {
 +            // pyro: a symbol marker inside the item is drawn from the bundled bullet font, unless
-+            // the page styles `::marker`: then it is text in the item's font, as Gecko draws it.
-+            if let Marker::Char(symbol) = marker {
-+                if marker_style.is_some() {
-+                    marker = Marker::String(format!("{symbol} "));
-+                }
++            // a `::marker` rule sets its `font-family`: then it is text in that font, as
++            // `counter(c, square)` is (WPT CSS2 `content-counter-004`). Other `::marker` styles
++            // keep the symbol (WPT css-pseudo `marker-word-spacing`, in Ahem).
++            if let Marker::Char(symbol) = marker
++                && rule_style
++                    .as_ref()
++                    .is_some_and(|style| doc.style_declares(style, &[style::properties::LonghandId::FontFamily]))
++            {
++                marker = Marker::String(format!("{symbol} "));
 +            }
 +            ListItemLayoutPosition::Inside
 +        }
@@ -13014,7 +13109,7 @@ diff --git a/packages/blitz-dom/src/layout/list.rs b/packages/blitz-dom/src/layo
                  parley_style.font_family = font_family;
              }
  
-@@ -93,13 +230,21 @@
+@@ -93,13 +234,21 @@
                  true,
                  &parley_style,
              );
@@ -13036,7 +13131,7 @@ diff --git a/packages/blitz-dom/src/layout/list.rs b/packages/blitz-dom/src/layo
              };
  
              let mut layout = builder.build().0;
-@@ -112,14 +257,251 @@
+@@ -112,14 +261,251 @@
  
      Some(ListItemLayout {
          marker,
@@ -13289,7 +13384,7 @@ diff --git a/packages/blitz-dom/src/layout/list.rs b/packages/blitz-dom/src/layo
          CounterStyle::None => return None,
          CounterStyle::Name(name) => match &*name.0 {
              "lower-alpha" => {
-@@ -132,13 +514,34 @@
+@@ -132,13 +518,34 @@
                  build_alpha_marker(index, &mut marker);
                  Marker::String(format!("{}. ", marker.to_ascii_uppercase()))
              }
@@ -13326,7 +13421,7 @@ diff --git a/packages/blitz-dom/src/layout/list.rs b/packages/blitz-dom/src/layo
          },
          CounterStyle::String(atom_string) => Marker::String(atom_string.as_ref().to_string()),
          CounterStyle::Symbols { symbols, .. } => {
-@@ -149,7 +552,7 @@
+@@ -149,7 +556,7 @@
                  Marker::Char('•')
              } else {
                  // Cycle through symbols based on index: 1st, 2nd, 1st, 2nd, etc.
@@ -13335,7 +13430,7 @@ diff --git a/packages/blitz-dom/src/layout/list.rs b/packages/blitz-dom/src/layo
                  // Symbol is String or Ident variant, extract the string value
                  let sym = &syms[idx];
                  let marker_str = match sym {
-@@ -171,6 +574,36 @@
+@@ -171,6 +578,36 @@
      None
  }
  
@@ -13372,7 +13467,7 @@ diff --git a/packages/blitz-dom/src/layout/list.rs b/packages/blitz-dom/src/layo
  const ALPHABET: [char; 26] = [
      'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's',
      't', 'u', 'v', 'w', 'x', 'y', 'z',
-@@ -204,24 +637,24 @@
+@@ -204,24 +641,24 @@
  
      #[test]
      fn test_marker_for_disc() {
@@ -13404,7 +13499,7 @@ diff --git a/packages/blitz-dom/src/layout/list.rs b/packages/blitz-dom/src/layo
          assert_eq!(result_1, Some(Marker::String("a. ".to_string())));
          assert_eq!(result_2, Some(Marker::String("b. ".to_string())));
          assert_eq!(result_extended_1, Some(Marker::String("aa. ".to_string())));
-@@ -230,10 +663,10 @@
+@@ -230,10 +667,10 @@
  
      #[test]
      fn test_marker_for_upper_alpha() {

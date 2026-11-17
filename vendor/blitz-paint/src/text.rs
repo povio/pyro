@@ -1168,6 +1168,7 @@ fn flush_line_decorations<S: PaintScene>(
     strut: &StrutGeometry,
     phase: DecorationPhase,
     line_runs: &[parley::GlyphRun<'_, TextBrush>],
+    run_skip_ink: &[Option<TextDecorationSkipInk>],
     run_shadows: &[TextShadow],
     source: Option<&str>,
     vertical: Option<VerticalLine>,
@@ -1265,13 +1266,14 @@ fn flush_line_decorations<S: PaintScene>(
                 None => (top, size),
             };
             let gaps = match skip {
-                Some(t) if deco.skip_ink != TextDecorationSkipInk::None => ink_gaps(
+                Some(t) => ink_gaps(
                     line_runs,
+                    run_skip_ink,
+                    deco.skip_ink,
                     source,
                     (acc.min_x, acc.max_x),
                     (top + 0.5 * scale, top + size - 0.5 * scale),
                     t.min(13.0) * scale,
-                    deco.skip_ink == TextDecorationSkipInk::All,
                     vertical,
                 ),
                 _ => SmallVec::new(),
@@ -1774,6 +1776,17 @@ pub(crate) fn stroke_text<'a, S: PaintScene>(
             });
         }
 
+        // pyro: each run's own `text-decoration-skip-ink` (inherited), which decides whether its
+        // glyphs cut the lines over them (WPT css-pseudo `marker-text-decoration-skip-ink`).
+        let run_skip_ink: SmallVec<[Option<TextDecorationSkipInk>; 16]> = glyph_runs
+            .iter()
+            .map(|run| {
+                doc.get_node(run.style().brush.id)
+                    .and_then(|node| node.primary_styles())
+                    .map(|style| style.get_inherited_text().text_decoration_skip_ink)
+            })
+            .collect();
+
         // pyro: the line's decorations, and what each of its glyph runs is drawn with.
         for glyph_run in &glyph_runs {
             let run = glyph_run.run();
@@ -2060,6 +2073,7 @@ pub(crate) fn stroke_text<'a, S: PaintScene>(
                 &strut,
                 phase,
                 &glyph_runs,
+                &run_skip_ink,
                 run_shadows,
                 source,
                 vertical,
@@ -2584,11 +2598,12 @@ fn embolden_scale(color: Color) -> f64 {
 #[allow(clippy::too_many_arguments)]
 fn ink_gaps(
     runs: &[parley::GlyphRun<'_, TextBrush>],
+    run_skip_ink: &[Option<TextDecorationSkipInk>],
+    skip_ink: TextDecorationSkipInk,
     source: Option<&str>,
     extent: (f64, f64),
     band: (f64, f64),
     dilation: f64,
-    cjk: bool,
     vertical: Option<VerticalLine>,
 ) -> SmallVec<[(f64, f64); 8]> {
     let mut gaps: SmallVec<[(f64, f64); 8]> = SmallVec::new();
@@ -2596,7 +2611,13 @@ fn ink_gaps(
     if band.1 < band.0 {
         return gaps;
     }
-    for glyph_run in runs {
+    for (index, glyph_run) in runs.iter().enumerate() {
+        // pyro: the run's own value (the decorating box's for a run without a style).
+        let skip_ink = run_skip_ink.get(index).copied().flatten().unwrap_or(skip_ink);
+        if skip_ink == TextDecorationSkipInk::None {
+            continue;
+        }
+        let cjk = skip_ink == TextDecorationSkipInk::All;
         let (run_x0, run_x1) = (f64::from(glyph_run.offset()), f64::from(glyph_run.offset() + glyph_run.advance()));
         if run_x1 + dilation < extent.0 || run_x0 - dilation > extent.1 {
             continue;

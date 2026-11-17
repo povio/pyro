@@ -194,11 +194,15 @@ fn node_list_item_child(
     let position = match list_style_position {
         ListStylePosition::Inside => {
             // pyro: a symbol marker inside the item is drawn from the bundled bullet font, unless
-            // the page styles `::marker`: then it is text in the item's font, as Gecko draws it.
-            if let Marker::Char(symbol) = marker {
-                if marker_style.is_some() {
-                    marker = Marker::String(format!("{symbol} "));
-                }
+            // a `::marker` rule sets its `font-family`: then it is text in that font, as
+            // `counter(c, square)` is (WPT CSS2 `content-counter-004`). Other `::marker` styles
+            // keep the symbol (WPT css-pseudo `marker-word-spacing`, in Ahem).
+            if let Marker::Char(symbol) = marker
+                && rule_style
+                    .as_ref()
+                    .is_some_and(|style| doc.style_declares(style, &[style::properties::LonghandId::FontFamily]))
+            {
+                marker = Marker::String(format!("{symbol} "));
             }
             ListItemLayoutPosition::Inside
         }
