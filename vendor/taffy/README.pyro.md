@@ -591,3 +591,8 @@ to their bottom, over the box before it (`clear: both` blocks of a fixed height 
 A wrapping column's unstretched item with an automatic cross size shrinks to fit its line's cross size once that is
 known (fit-content, its main size kept; `determine_used_cross_size`), and a wrapping column without a cross size of
 its own in definite space fits its lines into that space, at least its widest line (`determine_container_cross_size`).
+`compute/grid/types/grid_track.rs` (`collapse_after_sizing`, `collapse_sized`), `compute/grid/explicit_grid.rs`,
+`compute/grid/mod.rs`: a collapsed table row (`Style::collapsed_rows`) is sized as any other row, so a cell spanning it
+gives it its share, and loses its size after each row sizing pass (CSS 2.1 §17.5.5, Blink; WPT css-align
+`blocks/align-content-table-cell-002..005`). Its gutter still collapses up front. Tables with one are not reused
+(`table_reuse`).

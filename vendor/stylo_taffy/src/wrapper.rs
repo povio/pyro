@@ -478,12 +478,27 @@ impl<T: Deref<Target = ComputedValues>> taffy::BlockContainerStyle for TaffyStyl
 
     #[inline]
     fn justify_items(&self) -> taffy::AlignItems {
+        // pyro: an anonymous block or a split inline is no box of its own to the author:
+        // `justify-items` does not apply to it (WPT css-align blocks/justify-items-anonymous,
+        // justify-self-block-in-inline-002; csswg-drafts#11461/#11462, as Blink)
+        if self.is_anonymous_or_split_inline() {
+            return taffy::AlignItems::NORMAL;
+        }
         self.inline_item_alignment((self.style.get_position().justify_items.computed.0).0)
             .unwrap_or(taffy::AlignItems::NORMAL)
     }
 }
 
 impl<T: Deref<Target = ComputedValues>> TaffyStyloStyle<T> {
+    /// pyro: an anonymous block box, or an inline box split around block-level content laid
+    /// out as a block: its `justify-self: auto` is `normal`, and it passes no `justify-items`
+    /// on to its children.
+    #[inline]
+    fn is_anonymous_or_split_inline(&self) -> bool {
+        self.flags.contains(StyleFlags::IS_SPLIT_INLINE)
+            || matches!(self.style.pseudo(), Some(style::selector_parser::PseudoElement::ServoAnonymousBox))
+    }
+
     /// Item alignment in the layout writing mode's inline axis; `left`/`right` resolve against it.
     #[inline]
     fn inline_item_alignment(&self, input: stylo::AlignFlags) -> Option<taffy::AlignItems> {
@@ -631,10 +646,11 @@ impl<T: Deref<Target = ComputedValues>> taffy::BlockItemStyle for TaffyStyloStyl
 
     #[inline]
     fn justify_self(&self) -> Option<taffy::AlignSelf> {
-        self.oof_self_alignment(
-            self.style.get_position().justify_self.0,
-            self.align_axis_is_inline(),
-        )
+        let justify_self = self.style.get_position().justify_self.0;
+        if justify_self.value() == stylo::AlignFlags::AUTO && self.is_anonymous_or_split_inline() {
+            return Some(taffy::AlignItems::NORMAL);
+        }
+        self.oof_self_alignment(justify_self, self.align_axis_is_inline())
     }
 
     #[inline]

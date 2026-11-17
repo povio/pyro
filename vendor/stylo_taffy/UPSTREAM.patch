@@ -132,9 +132,12 @@ diff --git a/packages/stylo_taffy/src/convert.rs b/packages/stylo_taffy/src/conv
          stylo::AlignFlags::SELF_START => taffy::AlignItems::SELF_START,
          stylo::AlignFlags::SELF_END => taffy::AlignItems::SELF_END,
          stylo::AlignFlags::START => taffy::AlignItems::START,
-@@ -592,9 +675,9 @@
+@@ -591,10 +674,12 @@
+         stylo::AlignFlags::RIGHT if is_horiz_rtl => taffy::AlignItems::START,
          stylo::AlignFlags::RIGHT => taffy::AlignItems::END,
          stylo::AlignFlags::CENTER => taffy::AlignItems::CENTER,
++        // pyro: no anchor positioning: `anchor-center` without a default anchor is `center`
++        stylo::AlignFlags::ANCHOR_CENTER => taffy::AlignItems::CENTER,
          stylo::AlignFlags::BASELINE => taffy::AlignItems::BASELINE,
 -        // Taffy does not support last-baseline alignment, so map it to its
 -        // fallback alignment of `self-end` (https://www.w3.org/TR/css-align-3/#baseline-values)
@@ -145,7 +148,7 @@ diff --git a/packages/stylo_taffy/src/convert.rs b/packages/stylo_taffy/src/conv
          // Should never be hit. But no real reason to panic here.
          _ => return None,
      };
-@@ -967,6 +1050,7 @@
+@@ -967,6 +1052,7 @@
          display: self::display(display),
          box_sizing: self::box_sizing(style.clone_box_sizing()),
          item_is_table: display.inside() == stylo::DisplayInside::Table,
@@ -381,7 +384,35 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
      #[inline]
      fn align_content(&self) -> taffy::AlignContent {
          let display = self.effective_display();
-@@ -484,6 +587,40 @@
+@@ -375,12 +478,27 @@
+ 
+     #[inline]
+     fn justify_items(&self) -> taffy::AlignItems {
++        // pyro: an anonymous block or a split inline is no box of its own to the author:
++        // `justify-items` does not apply to it (WPT css-align blocks/justify-items-anonymous,
++        // justify-self-block-in-inline-002; csswg-drafts#11461/#11462, as Blink)
++        if self.is_anonymous_or_split_inline() {
++            return taffy::AlignItems::NORMAL;
++        }
+         self.inline_item_alignment((self.style.get_position().justify_items.computed.0).0)
+             .unwrap_or(taffy::AlignItems::NORMAL)
+     }
+ }
+ 
+ impl<T: Deref<Target = ComputedValues>> TaffyStyloStyle<T> {
++    /// pyro: an anonymous block box, or an inline box split around block-level content laid
++    /// out as a block: its `justify-self: auto` is `normal`, and it passes no `justify-items`
++    /// on to its children.
++    #[inline]
++    fn is_anonymous_or_split_inline(&self) -> bool {
++        self.flags.contains(StyleFlags::IS_SPLIT_INLINE)
++            || matches!(self.style.pseudo(), Some(style::selector_parser::PseudoElement::ServoAnonymousBox))
++    }
++
+     /// Item alignment in the layout writing mode's inline axis; `left`/`right` resolve against it.
+     #[inline]
+     fn inline_item_alignment(&self, input: stylo::AlignFlags) -> Option<taffy::AlignItems> {
+@@ -484,6 +602,40 @@
          convert::is_table(self.effective_display())
      }
  
@@ -422,7 +453,23 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
      #[inline]
      fn align_self(&self) -> Option<taffy::AlignSelf> {
          self.oof_self_alignment(
-@@ -508,14 +645,26 @@
+@@ -494,10 +646,11 @@
+ 
+     #[inline]
+     fn justify_self(&self) -> Option<taffy::AlignSelf> {
+-        self.oof_self_alignment(
+-            self.style.get_position().justify_self.0,
+-            self.align_axis_is_inline(),
+-        )
++        let justify_self = self.style.get_position().justify_self.0;
++        if justify_self.value() == stylo::AlignFlags::AUTO && self.is_anonymous_or_split_inline() {
++            return Some(taffy::AlignItems::NORMAL);
++        }
++        self.oof_self_alignment(justify_self, self.align_axis_is_inline())
+     }
+ 
+     #[inline]
+@@ -508,14 +661,26 @@
      #[cfg(feature = "floats")]
      #[inline]
      fn float(&self) -> taffy::Float {
@@ -451,7 +498,7 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
          self.layout_wm().logical_clear(clear)
      }
  }
-@@ -595,6 +744,26 @@
+@@ -595,6 +760,26 @@
          self.style.get_position().flex_shrink.0
      }
  
@@ -478,7 +525,7 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
      #[inline]
      fn align_self(&self) -> Option<taffy::AlignSelf> {
          self.self_alignment(
-@@ -874,6 +1043,66 @@
+@@ -874,6 +1059,66 @@
          convert::grid_auto_flow(self.style.get_position().grid_auto_flow)
      }
  
@@ -545,7 +592,7 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
      #[inline]
      fn gap(&self) -> taffy::Size<taffy::LengthPercentage> {
          let position_styles = self.style.get_position();
-@@ -927,6 +1156,56 @@
+@@ -927,6 +1172,56 @@
          self.grid_row_placement()
      }
  
@@ -602,7 +649,7 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
      #[inline]
      fn grid_column(&self) -> taffy::Line<taffy::GridPlacement<Atom>> {
          self.grid_column_placement()
-@@ -950,6 +1229,16 @@
+@@ -950,6 +1245,16 @@
  }
  
  impl<T: Deref<Target = ComputedValues>> taffy::OofItemStyle for TaffyStyloStyle<T> {

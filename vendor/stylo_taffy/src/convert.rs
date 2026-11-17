@@ -674,6 +674,8 @@ pub fn item_alignment(input: stylo::AlignFlags, is_horiz_rtl: bool) -> Option<ta
         stylo::AlignFlags::RIGHT if is_horiz_rtl => taffy::AlignItems::START,
         stylo::AlignFlags::RIGHT => taffy::AlignItems::END,
         stylo::AlignFlags::CENTER => taffy::AlignItems::CENTER,
+        // pyro: no anchor positioning: `anchor-center` without a default anchor is `center`
+        stylo::AlignFlags::ANCHOR_CENTER => taffy::AlignItems::CENTER,
         stylo::AlignFlags::BASELINE => taffy::AlignItems::BASELINE,
         // pyro: Taffy aligns flex rows by last baselines; elsewhere it behaves as its fallback
         // alignment, `safe end` (https://www.w3.org/TR/css-align-3/#baseline-values)

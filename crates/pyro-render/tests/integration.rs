@@ -12,6 +12,7 @@ mod calc_size;
 mod br_flex_item;
 mod clip_path_mask;
 mod css2_intrinsic_and_hints;
+mod css_align_static_and_anonymous;
 mod compositing_rounding;
 mod container_queries;
 mod containing_block_chain;

@@ -659,9 +659,9 @@ fn parse_self_position(
         "self-end" => AlignFlags::SELF_END,
         "left" if axis == AxisDirection::Inline => AlignFlags::LEFT,
         "right" if axis == AxisDirection::Inline => AlignFlags::RIGHT,
-        "anchor-center"
-            if matches!(allow_anchor_center, AllowAnchorCenter::Yes)
-                && crate::pref!("layout.css.anchor-positioning.enabled", gecko = true) =>
+        // pyro: parsed whatever the anchor-positioning pref says (without a default anchor it
+        // behaves as `center`; WPT css-align abspos/*-static-position-*)
+        "anchor-center" if matches!(allow_anchor_center, AllowAnchorCenter::Yes) =>
         {
             AlignFlags::ANCHOR_CENTER
         },
@@ -681,9 +681,7 @@ fn list_self_position_keywords(f: KeywordsCollectFn, axis: AxisDirection) {
         "self-end",
     ]);
 
-    if crate::pref!("layout.css.anchor-positioning.enabled", gecko = true) {
-        f(&["anchor-center"]);
-    }
+    f(&["anchor-center"]);
 
     if axis == AxisDirection::Inline {
         f(&["left", "right"]);

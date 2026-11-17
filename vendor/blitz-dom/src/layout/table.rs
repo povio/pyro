@@ -1479,10 +1479,8 @@ fn row_tracks(rows: &[TableRow], gutter: f32) -> Vec<taffy::GridTemplateComponen
     let has_unconstrained_rows = rows.iter().any(|row| !row.is_constrained);
     rows.iter()
         .map(|row| {
-            if row.collapsed {
-                let track: TrackSizingFunction = style_helpers::length(0.0);
-                return track.into();
-            }
+            // pyro: a collapsed row is sized as the others, then collapsed (taffy
+            // `Style::collapsed_rows`): a cell spanning it gives it its share.
             let min = match row.height {
                 Some(height) => style_helpers::length((height - gutter).max(0.0)),
                 // Table rows retain their cells' intrinsic minimum even when

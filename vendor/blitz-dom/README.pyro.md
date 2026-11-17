@@ -2420,3 +2420,7 @@ More of lane IT (round 3):
 A table's content-size measure (`SizingMode::ContentSize`, a flex base size) runs the grid as an inherent-size
 layout, so the width its columns give survives, with the table's own `height` and `min-height` dropped (WPT
 css-flexbox `table-as-item-min-height-1`, `table-as-item-percent-width-cell-001`).
+A block-level absolutely positioned box in an inline formatting context (`layout/inline/layout.rs`) is aligned in a
+static-position rectangle with no inline extent at the line start and the block extent of the line box, one line
+down when content precedes it (Blink; WPT css-align `abspos/align-self-static-position-003/004/007`). Collapsed rows
+keep their tracks (`row_tracks`); Taffy collapses them once sized.

@@ -3282,10 +3282,10 @@ index 00000000..5f4dabea
 +    }
 +}
 diff --git a/src/compute/grid/explicit_grid.rs b/src/compute/grid/explicit_grid.rs
-index 037a2d1c..d0abc8ef 100644
+index 037a2d1c..88347ca7 100644
 --- a/src/compute/grid/explicit_grid.rs
 +++ b/src/compute/grid/explicit_grid.rs
-@@ -362,6 +362,31 @@ pub(super) fn initialize_grid_tracks(
+@@ -362,6 +362,32 @@ pub(super) fn initialize_grid_tracks(
          create_implicit_tracks(tracks, counts.positive_implicit + grid_area_tracks, iter, gap)
      }
  
@@ -3302,7 +3302,8 @@ index 037a2d1c..d0abc8ef 100644
 +                    continue;
 +                }
 +                let track = 1 + 2 * index;
-+                tracks[track].collapse();
++                // (sized as any other row first: `GridTrack::collapse_sized`)
++                tracks[track].collapse_after_sizing = true;
 +                let later_open = (index + 1..rows)
 +                    .any(|r| !tracks[1 + 2 * r].is_collapsed && !collapsed.contains(&((r - first) as u16)));
 +                if later_open {
@@ -3318,7 +3319,7 @@ index 037a2d1c..d0abc8ef 100644
      tracks.first_mut().unwrap().collapse();
      tracks.last_mut().unwrap().collapse();
 diff --git a/src/compute/grid/mod.rs b/src/compute/grid/mod.rs
-index f0109c6e..298d4216 100644
+index f0109c6e..b3016576 100644
 --- a/src/compute/grid/mod.rs
 +++ b/src/compute/grid/mod.rs
 @@ -36,15 +36,22 @@ pub(crate) use types::{GridCoordinate, GridLine, OriginZeroLine, MAX_GRID_TRACKS
@@ -3869,7 +3870,7 @@ index f0109c6e..298d4216 100644
      track_sizing_algorithm(
          tree,
          AbstractAxis::Block,
-@@ -464,9 +735,19 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -464,9 +735,21 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
          &mut columns,
          &mut items,
          |track: &GridTrack, _, _| Some(track.base_size),
@@ -3879,6 +3880,8 @@ index f0109c6e..298d4216 100644
 +        replay.as_ref().map(|replay| replay.affected_tracks.as_slice()),
 +        rows_sized.as_mut(),
      );
++    // pyro: collapsed table rows lose their size once sized (`GridTrack::collapse_sized`)
++    rows.iter_mut().for_each(GridTrack::collapse_sized);
 +    if has_subgrid_items {
 +        subgrid::update_subgrid_track_sizes(tree, &items[..own_item_count], AbsoluteAxis::Vertical, &rows, false, &subgrid_parent);
 +    }
@@ -3890,7 +3893,7 @@ index f0109c6e..298d4216 100644
  
      debug_log!("initial_column_sum", dbg:initial_column_sum);
      debug_log!(dbg: columns.iter().map(|track| track.base_size).collect::<Vec<_>>());
-@@ -475,18 +756,39 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -475,18 +758,39 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
  
      // 6. Compute container size
      let resolved_style_size = known_dimensions.or(preferred_size);
@@ -3936,7 +3939,7 @@ index f0109c6e..298d4216 100644
      let mut container_content_box = Size {
          width: f32_max(0.0, container_border_box.width - content_box_inset.horizontal_axis_sum()),
          height: f32_max(0.0, container_border_box.height - content_box_inset.vertical_axis_sum()),
-@@ -516,7 +818,20 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -516,7 +820,20 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
      if !rerun_column_sizing {
          // Note: every item must be visited (no short-circuiting) as the closure updates each item's caches
          intrinsic_column_contribution_changed =
@@ -3958,7 +3961,7 @@ index f0109c6e..298d4216 100644
                  let grid_area_size = item.grid_area_size(
                      AbstractAxis::Inline,
                      &columns,
-@@ -567,6 +882,7 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -567,6 +884,7 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
          });
      }
  
@@ -3966,7 +3969,7 @@ index f0109c6e..298d4216 100644
      if rerun_column_sizing {
          // Re-run track sizing algorithm for Inline axis
          track_sizing_algorithm(
-@@ -582,15 +898,27 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -582,15 +900,27 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
              &mut rows,
              &mut items,
              |track: &GridTrack, _, _| Some(track.base_size),
@@ -3996,7 +3999,7 @@ index f0109c6e..298d4216 100644
                      let grid_area_size = item.grid_area_size(
                          AbstractAxis::Block,
                          &rows,
-@@ -617,6 +945,10 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -617,6 +947,10 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
      }
  
      if rerun_row_sizing {
@@ -4007,7 +4010,7 @@ index f0109c6e..298d4216 100644
          // Re-run track sizing algorithm for Block axis
          track_sizing_algorithm(
              tree,
-@@ -631,8 +963,14 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -631,8 +965,16 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
              &mut columns,
              &mut items,
              |track: &GridTrack, _, _| Some(track.base_size),
@@ -4017,13 +4020,15 @@ index f0109c6e..298d4216 100644
 +            None,
 +            None,
          );
++        // pyro: collapsed table rows lose their size once sized (`GridTrack::collapse_sized`)
++        rows.iter_mut().for_each(GridTrack::collapse_sized);
 +        if has_subgrid_items {
 +            subgrid::update_subgrid_track_sizes(tree, &items[..own_item_count], AbsoluteAxis::Vertical, &rows, false, &subgrid_parent);
 +        }
      }
  
      if (intrinsic_column_contribution_changed && !has_percentage_column)
-@@ -661,6 +999,14 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -661,6 +1003,14 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
                  f32_max(0.0, container_border_box.height - content_box_inset.vertical_axis_sum());
          }
      }
@@ -4038,7 +4043,7 @@ index f0109c6e..298d4216 100644
  
      // If only the container's size has been requested
      if run_mode == RunMode::ComputeSize {
-@@ -693,6 +1039,54 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -693,6 +1043,54 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
          false,
      );
  
@@ -4093,7 +4098,7 @@ index f0109c6e..298d4216 100644
      // 9. Size, Align, and Position Grid Items
  
      #[cfg_attr(not(feature = "content_size"), allow(unused_mut))]
-@@ -721,6 +1115,13 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -721,6 +1119,13 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
      };
  
      // Position in-flow children (stored in items vector)
@@ -4107,7 +4112,7 @@ index f0109c6e..298d4216 100644
      for (index, item) in items.iter_mut().enumerate() {
          // Tracks are stored in logical order. In RTL the physical offsets are assigned
          // right-to-left, so an item's physical left edge is derived from its logical end
-@@ -739,25 +1140,97 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -739,25 +1144,97 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
                  columns[item.column_indexes.end as usize].offset
              },
          };
@@ -4223,7 +4228,7 @@ index f0109c6e..298d4216 100644
  
          #[cfg(feature = "content_size")]
          {
-@@ -765,6 +1238,24 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -765,6 +1242,24 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
          }
      }
  
@@ -4248,7 +4253,7 @@ index f0109c6e..298d4216 100644
      // Position hidden and absolutely positioned children, merging in the candidates bubbled out
      // of in-flow children's subtrees (`items` is sorted by `source_order`, i.e. child index)
      let mut order = items.len() as u32;
-@@ -841,7 +1332,7 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -841,7 +1336,7 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
              };
              drop(child_style);
  
@@ -4257,7 +4262,7 @@ index f0109c6e..298d4216 100644
                  node: child,
                  order,
                  position,
-@@ -869,19 +1360,17 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -869,19 +1364,17 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
      // resolve the grid areas of out-of-flow boxes whose containing block is this grid
      let areas =
          name_resolver.populate_detailed_line_resolvers(&mut detailed_row_line_names, &mut detailed_column_line_names);
@@ -4285,7 +4290,7 @@ index f0109c6e..298d4216 100644
              items: items.iter().map(DetailedGridItemsInfo::from_grid_item).collect(),
              areas,
          },
-@@ -926,25 +1415,38 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -926,25 +1419,38 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
          return output;
      }
  
@@ -4330,7 +4335,7 @@ index f0109c6e..298d4216 100644
      };
  
      // A scroll container's own padding at the end of the content is part of its scrollable
-@@ -976,13 +1478,86 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -976,13 +1482,86 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
      let mut output = LayoutOutput::from_sizes_and_baselines(
          container_border_box,
          scrollable_overflow_rect,
@@ -4418,7 +4423,7 @@ index f0109c6e..298d4216 100644
  /// Resolve the static-position rectangle (the grid area determined by the grid-placement
  /// properties) for an out-of-flow child of a positioned grid container.
  ///
-@@ -1298,6 +1873,10 @@ pub struct DetailedGridTracksInfo<S: CheapCloneStr = DefaultCheapStr> {
+@@ -1298,6 +1877,10 @@ pub struct DetailedGridTracksInfo<S: CheapCloneStr = DefaultCheapStr> {
      /// [`DetailedGridTracksInfo::iter_line_names`] for indices relative to the full grid
      /// (including implicit tracks). Empty if the grid has no named lines.
      pub line_names: GridLineNames<S>,
@@ -4429,7 +4434,7 @@ index f0109c6e..298d4216 100644
  }
  
  impl<S: CheapCloneStr> DetailedGridTracksInfo<S> {
-@@ -1337,6 +1916,7 @@ impl<S: CheapCloneStr> DetailedGridTracksInfo<S> {
+@@ -1337,6 +1920,7 @@ impl<S: CheapCloneStr> DetailedGridTracksInfo<S> {
              collapsed_tracks,
              empty_axis_line,
              line_names,
@@ -4437,7 +4442,7 @@ index f0109c6e..298d4216 100644
          }
      }
  
-@@ -1380,6 +1960,16 @@ impl<S: CheapCloneStr> DetailedGridTracksInfo<S> {
+@@ -1380,6 +1964,16 @@ impl<S: CheapCloneStr> DetailedGridTracksInfo<S> {
              out.write_char(']')
          }
  
@@ -4454,7 +4459,7 @@ index f0109c6e..298d4216 100644
          if self.positions.is_empty() {
              return out.write_str("none");
          }
-@@ -1454,3 +2044,131 @@ impl DetailedGridItemsInfo {
+@@ -1454,3 +2048,131 @@ impl DetailedGridItemsInfo {
          }
      }
  }
@@ -5832,10 +5837,10 @@ index 00000000..09d602c5
 +}
 diff --git a/src/compute/grid/table_reuse.rs b/src/compute/grid/table_reuse.rs
 new file mode 100644
-index 00000000..9a97edf9
+index 00000000..9f036648
 --- /dev/null
 +++ b/src/compute/grid/table_reuse.rs
-@@ -0,0 +1,444 @@
+@@ -0,0 +1,445 @@
 +//! pyro: a table's grid laid out again from its last layout.
 +//!
 +//! A table's rows are a grid's (`LayoutGridContainer::grid_rows_are_table_rows`). After a full layout
@@ -5952,6 +5957,7 @@ index 00000000..9a97edf9
 +fn same_sizing(a: &GridTrack, b: &GridTrack) -> bool {
 +    a.kind == b.kind
 +        && a.is_collapsed == b.is_collapsed
++        && a.collapse_after_sizing == b.collapse_after_sizing
 +        && a.min_track_sizing_function == b.min_track_sizing_function
 +        && a.max_track_sizing_function == b.max_track_sizing_function
 +}
@@ -6275,7 +6281,7 @@ index 00000000..9a97edf9
 +                && track.content_alignment_adjustment == 0.0
 +                && !(track.is_collapsed && track.kind == GridTrackKind::Track)
 +        })
-+        && rows.iter().all(|track| !track.uses_percentage() && track.content_alignment_adjustment == 0.0 && !(track.is_collapsed && track.kind == GridTrackKind::Track))
++        && rows.iter().all(|track| !track.uses_percentage() && track.content_alignment_adjustment == 0.0 && !track.collapse_after_sizing && !(track.is_collapsed && track.kind == GridTrackKind::Track))
 +        && items.iter().all(|item| {
 +            item.span(crate::geometry::AbstractAxis::Block) == 1 && item.oof_candidates.is_empty()
 +        })
@@ -6964,6 +6970,47 @@ index 6ad11edc..16653270 100644
              size
          })
      }
+diff --git a/src/compute/grid/types/grid_track.rs b/src/compute/grid/types/grid_track.rs
+index 4c0e0fa3..4b8c2367 100644
+--- a/src/compute/grid/types/grid_track.rs
++++ b/src/compute/grid/types/grid_track.rs
+@@ -27,6 +27,11 @@ pub(in super::super) struct GridTrack {
+     /// they don't exist for the purposes of grid sizing. Gutters between collapsed tracks are also collapsed.
+     pub is_collapsed: bool,
+ 
++    /// pyro: a table row with `visibility: collapse`: sized as any other row (a cell spanning it
++    /// gives it its share), then collapsed (CSS 2.1 §17.5.5, as Blink; WPT css-align
++    /// `blocks/align-content-table-cell-*`). See `collapse_sized_tracks`.
++    pub collapse_after_sizing: bool,
++
+     /// The minimum track sizing function of the track
+     pub min_track_sizing_function: MinTrackSizingFunction,
+ 
+@@ -72,6 +77,7 @@ impl GridTrack {
+         GridTrack {
+             kind,
+             is_collapsed: false,
++            collapse_after_sizing: false,
+             min_track_sizing_function,
+             max_track_sizing_function,
+             offset: 0.0,
+@@ -112,6 +118,16 @@ impl GridTrack {
+         self.fit_content_limit = f32::INFINITY;
+     }
+ 
++    /// pyro: collapse a track marked `collapse_after_sizing` once it has been sized: it keeps its
++    /// sizing functions (sizing it again sizes it as before), but has no size.
++    pub fn collapse_sized(&mut self) {
++        if self.collapse_after_sizing {
++            self.is_collapsed = true;
++            self.base_size = 0.0;
++            self.growth_limit = 0.0;
++        }
++    }
++
+     #[inline(always)]
+     /// Returns true if the track is flexible (has a Flex MaxTrackSizingFunction), else false.
+     pub fn is_flexible(&self) -> bool {
 diff --git a/src/compute/grid/types/named.rs b/src/compute/grid/types/named.rs
 index 70838fe7..674c80a0 100644
 --- a/src/compute/grid/types/named.rs

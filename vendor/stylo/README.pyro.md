@@ -344,6 +344,10 @@ nor keeps a scroll offset. Other mixes still turn `visible` into `auto` and `cli
 and flex-shrink and `align-self: auto` (Blink's `LayoutDeprecatedFlexibleBox`; WPT css-flexbox
 `flexbox-safe-overflow-position-006`, `balance/webkit-box-no-balance`).
 
+`values/specified/align.rs`: `anchor-center` parses whatever the anchor-positioning pref says (servo has no
+anchor positioning; stylo_taffy lays it out as `center`, which is what it is without a default anchor; WPT css-align
+`abspos/align-self-static-position-008`, `justify-self-static-position-001`).
+
 ## Updating or dropping the patch
 
 - When upstream has the change: delete this directory and the `[patch.crates-io]` entry.

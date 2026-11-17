@@ -1912,13 +1912,20 @@ impl LayoutPassState<'_> {
                             } else {
                                 line_has_in_flow_content
                             };
+                            // pyro: the static-position rectangle is the line box's block
+                            // extent, on the next line when content precedes the box, with no
+                            // inline extent at the line's start (Blink; WPT css-align
+                            // abspos/align-self-static-position-003/004/007).
+                            let line_height = line_bottom - line_top;
                             let y = if preceded { line_bottom } else { line_top };
+                            let x = if container_direction.is_rtl() {
+                                final_size.width - container_pb.right + span_offset.x
+                            } else {
+                                container_pb.left + span_offset.x
+                            };
                             (
-                                taffy::Line {
-                                    start: container_pb.left + span_offset.x,
-                                    end: final_size.width - container_pb.right + span_offset.x,
-                                },
-                                taffy::Line { start: y, end: y },
+                                taffy::Line { start: x, end: x },
+                                taffy::Line { start: y, end: y + line_height },
                             )
                         };
 

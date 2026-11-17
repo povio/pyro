@@ -2612,7 +2612,7 @@ diff -ruN a/values/generics/text.rs b/values/generics/text.rs
              self.sink.to_css(dest)?;
 diff -ruN a/values/specified/align.rs b/values/specified/align.rs
 --- a/values/specified/align.rs	2026-11-11 19:55:57
-+++ b/values/specified/align.rs	2026-11-16 18:58:01
++++ b/values/specified/align.rs	2026-11-17 01:17:02
 @@ -67,6 +67,10 @@
          const SPACE_EVENLY = 16;
          /// `anchor-center`
@@ -2660,7 +2660,7 @@ diff -ruN a/values/specified/align.rs b/values/specified/align.rs
              AlignFlags::LEFT => AlignFlags::RIGHT,
              AlignFlags::RIGHT => AlignFlags::LEFT,
              AlignFlags::SELF_START => AlignFlags::SELF_END,
-@@ -642,6 +652,8 @@
+@@ -642,14 +652,16 @@
          "end" => AlignFlags::END,
          "flex-start" => AlignFlags::FLEX_START,
          "flex-end" => AlignFlags::FLEX_END,
@@ -2669,7 +2669,18 @@ diff -ruN a/values/specified/align.rs b/values/specified/align.rs
          "center" => AlignFlags::CENTER,
          "self-start" => AlignFlags::SELF_START,
          "self-end" => AlignFlags::SELF_END,
-@@ -662,6 +674,8 @@
+         "left" if axis == AxisDirection::Inline => AlignFlags::LEFT,
+         "right" if axis == AxisDirection::Inline => AlignFlags::RIGHT,
+-        "anchor-center"
+-            if matches!(allow_anchor_center, AllowAnchorCenter::Yes)
+-                && crate::pref!("layout.css.anchor-positioning.enabled", gecko = true) =>
++        // pyro: parsed whatever the anchor-positioning pref says (without a default anchor it
++        // behaves as `center`; WPT css-align abspos/*-static-position-*)
++        "anchor-center" if matches!(allow_anchor_center, AllowAnchorCenter::Yes) =>
+         {
+             AlignFlags::ANCHOR_CENTER
+         },
+@@ -662,14 +674,14 @@
          "end",
          "flex-start",
          "flex-end",
@@ -2678,6 +2689,15 @@ diff -ruN a/values/specified/align.rs b/values/specified/align.rs
          "center",
          "self-start",
          "self-end",
+     ]);
+ 
+-    if crate::pref!("layout.css.anchor-positioning.enabled", gecko = true) {
+-        f(&["anchor-center"]);
+-    }
++    f(&["anchor-center"]);
+ 
+     if axis == AxisDirection::Inline {
+         f(&["left", "right"]);
 diff -ruN a/values/specified/background.rs b/values/specified/background.rs
 --- a/values/specified/background.rs	2026-11-11 19:55:57
 +++ b/values/specified/background.rs	2026-11-14 15:14:02

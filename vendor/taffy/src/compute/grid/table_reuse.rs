@@ -114,6 +114,7 @@ pub(super) struct Replay {
 fn same_sizing(a: &GridTrack, b: &GridTrack) -> bool {
     a.kind == b.kind
         && a.is_collapsed == b.is_collapsed
+        && a.collapse_after_sizing == b.collapse_after_sizing
         && a.min_track_sizing_function == b.min_track_sizing_function
         && a.max_track_sizing_function == b.max_track_sizing_function
 }
@@ -437,7 +438,7 @@ pub(super) fn can_record(
                 && track.content_alignment_adjustment == 0.0
                 && !(track.is_collapsed && track.kind == GridTrackKind::Track)
         })
-        && rows.iter().all(|track| !track.uses_percentage() && track.content_alignment_adjustment == 0.0 && !(track.is_collapsed && track.kind == GridTrackKind::Track))
+        && rows.iter().all(|track| !track.uses_percentage() && track.content_alignment_adjustment == 0.0 && !track.collapse_after_sizing && !(track.is_collapsed && track.kind == GridTrackKind::Track))
         && items.iter().all(|item| {
             item.span(crate::geometry::AbstractAxis::Block) == 1 && item.oof_candidates.is_empty()
         })
