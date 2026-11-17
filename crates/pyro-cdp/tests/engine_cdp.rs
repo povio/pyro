@@ -10658,3 +10658,38 @@ fn custom_property_changes_reach_descendants_that_skip_the_cascade() {
     assert_eq!(reads["b"], json!(["40px", "40px", "80px", "rgb(1, 2, 3)", "40px"]), "{r}");
     assert_eq!(reads["c"], json!(["", "10px", "0px", "rgb(1, 2, 3)", ""]), "{r}");
 }
+
+#[test]
+fn a_resized_query_container_restyles_its_subtree_and_leaves_the_rest() {
+    // Only a resized container's descendants restyle for its size: @container
+    // rules and cq units follow, nested containers too, and elements outside it
+    // keep their values (Chromium: the same reads).
+    let mut h = Harness::new();
+    load_html(
+        &mut h,
+        r#"<!doctype html><style>
+.c{container-type:inline-size} #a{width:300px} #b{width:300px}
+.k{color:rgb(0, 0, 0)} @container (min-width: 400px){.k{color:rgb(0, 128, 0)}}
+.u{width:50cqw;height:10px}
+#inner{width:50%} @container (min-width: 300px){#deep{color:rgb(0, 0, 255)}}
+</style>
+<div id=a class=c><p id=ka class=k>a</p><div id=ua class=u></div><div id=inner class=c><span id=deep>d</span></div></div>
+<div id=b class=c><p id=kb class=k>b</p><div id=ub class=u></div></div>"#,
+    );
+    let read = "(() => { const s = id => getComputedStyle(document.getElementById(id)); return [s('ka').color, document.getElementById('ua').getBoundingClientRect().width, s('deep').color, s('kb').color, document.getElementById('ub').getBoundingClientRect().width]; })()";
+    let r = h.page(
+        "Pyro.run",
+        json!({"steps": [
+            {"eval": {"expression": read, "as": "before"}},
+            {"eval": {"expression": "document.getElementById('a').style.width = '600px'; null"}},
+            {"eval": {"expression": read, "as": "wide"}},
+            {"eval": {"expression": "document.getElementById('a').style.width = '300px'; null"}},
+            {"eval": {"expression": read, "as": "back"}}
+        ]}),
+    );
+    assert!(r.get("error").is_none(), "{r}");
+    let reads = &r["result"]["reads"];
+    assert_eq!(reads["before"], json!(["rgb(0, 0, 0)", 150, "rgb(0, 0, 0)", "rgb(0, 0, 0)", 150]), "{r}");
+    assert_eq!(reads["wide"], json!(["rgb(0, 128, 0)", 300, "rgb(0, 0, 255)", "rgb(0, 0, 0)", 150]), "{r}");
+    assert_eq!(reads["back"], json!(["rgb(0, 0, 0)", 150, "rgb(0, 0, 0)", "rgb(0, 0, 0)", 150]), "{r}");
+}

@@ -2644,3 +2644,8 @@ Round 4 lane G:
 - Round 4 lane F, `dom_selection.rs`/`stylo.rs`: a visited link's `::selection` style is resolved with `:link` not matching it (`LINKS_AS_VISITED`, Chromium's visited style; WPT css-pseudo `selection-link-002`). `layout/list.rs`: `image(<color>)` markers (what `light-dark(none, none)` computes to) take the default size like gradients (css-color `light-dark-image-none`).
 - Round 4 lane F, `layout/inline/relative.rs`: `inline_span_positioned_chain` (the positioned inline boxes a node's content paints with). `stylo_to_parley.rs`: `upright` for `text-orientation: upright` in vertical modes; `font_metrics.rs`: upright `ch` without `vmtx` is the font's height (WPT css-values `ch-unit-002`, `-011`).
 - Round 4 lane F, `layout/inline/build.rs`: ruby annotation layouts take no tall upright advances (`upright = false`): `draw_annotation` centres them by width and draws their glyphs em-wide, as emphasis marks.
+- `resolve.rs`: when query containers change size, only their subtrees restyle and lay out again
+  (`restyle_container_subtrees`: full restyle hint on each, layout cache cleared and full damage for every node under
+  it, ancestors' layout caches cleared); before, any change restyled the whole document, cleared every layout cache
+  and damaged every node. Danex's lab canvas page view: elements restyled over 250 syncs 18,997 → 10,963, matched
+  8,860 → 4,226.

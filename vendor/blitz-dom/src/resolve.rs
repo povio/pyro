@@ -202,7 +202,8 @@ impl BaseDocument {
             self.resolve_layout();
             timer.record_time("layout");
             phase_profile::mark(4, &mut phase_t);
-            let container_sizes_changed = self.refresh_container_query_sizes();
+            let changed_containers = self.refresh_container_query_sizes();
+            let container_sizes_changed = !changed_containers.is_empty();
             // pyro: the active scroll markers and the scroll buttons' states follow the layout
             // and the scroll positions (`layout::scroll_markers`): a change styles them again.
             let scroll_states_changed = !container_sizes_changed && self.update_target_current();
@@ -214,12 +215,12 @@ impl BaseDocument {
             if !container_sizes_changed {
                 continue;
             }
-            self.nodes[root_node_id]
-                .set_restyle_hint(style::invalidation::element::restyle_hints::RestyleHint::restyle_subtree());
-            for (_, node) in self.nodes.iter_mut() {
-                node.clear_layout_cache();
-            }
-            self.mark_all_damaged();
+            // pyro: only the subtrees of the containers whose size changed (or that stopped being
+            // containers) can depend on it: container queries and container units resolve
+            // against an ancestor. They restyle and lay out again; the rest of the document keeps
+            // its styles and layout caches (a whole-document pass per change made each layout
+            // read after a React commit on a page of container-query cards cost a full restyle).
+            self.restyle_container_subtrees(&changed_containers);
         }
         self.nodes.bump_geometry_generation();
 
@@ -310,9 +311,60 @@ impl BaseDocument {
         timer.print_times(&format!("Resolve({}): ", self.id()));
     }
 
-    fn refresh_container_query_sizes(&self) -> bool {
+    /// pyro: restyles and lays out again the subtrees of `containers` (see the caller in
+    /// `resolve`): each one's own subtree gets a full restyle hint, every node under it (DOM,
+    /// pseudo-element and anonymous boxes, by parent or layout parent) its layout cache cleared
+    /// and full damage, and its ancestors their layout caches cleared (an `inline-size`
+    /// container's block size still follows its content).
+    fn restyle_container_subtrees(&mut self, containers: &[NodeId]) {
+        let set: std::collections::HashSet<NodeId> = containers.iter().copied().collect();
+        let under: Vec<NodeId> = self
+            .nodes
+            .iter()
+            .filter(|(id, _)| {
+                let mut cur = Some(*id);
+                let mut steps = 0;
+                while let Some(n) = cur {
+                    if set.contains(&n) {
+                        return true;
+                    }
+                    let Some(node) = self.nodes.get(n) else { return false };
+                    cur = node.parent.or_else(|| node.layout_parent.get());
+                    steps += 1;
+                    if steps > 4096 {
+                        return true;
+                    }
+                }
+                false
+            })
+            .map(|(id, _)| id)
+            .collect();
+        for id in under {
+            let node = &mut self.nodes[id];
+            node.clear_layout_cache();
+            node.insert_damage(ALL_DAMAGE);
+            // Damage carries `damaged_descendants` up its ancestors (`Node::mark_damaged`).
+            node.mark_damaged();
+        }
+        for &container in containers {
+            let Some(node) = self.nodes.get(container) else { continue };
+            node.mark_damaged();
+            let mut ancestor = node.parent.or_else(|| node.layout_parent.get());
+            self.nodes[container]
+                .set_restyle_hint(style::invalidation::element::restyle_hints::RestyleHint::restyle_subtree());
+            while let Some(id) = ancestor {
+                let Some(node) = self.nodes.get_mut(id) else { break };
+                node.clear_layout_cache();
+                ancestor = node.parent.or_else(|| node.layout_parent.get());
+            }
+        }
+    }
+
+    /// The query containers whose queried size changed since the last call, and the ones that
+    /// stopped being size containers.
+    fn refresh_container_query_sizes(&self) -> Vec<NodeId> {
         use style::values::specified::ContainerType;
-        let mut changed = false;
+        let mut changed_ids = Vec::new();
         let mut queried = self.nodes.container_query_sizes.lock().unwrap();
         queried.retain(|id, entry| {
             let Some(node) = self.nodes.get(*id) else { return false };
@@ -324,7 +376,9 @@ impl BaseDocument {
             let both = kind.intersects(ContainerType::SIZE);
             let inline = kind.intersects(ContainerType::INLINE_SIZE);
             if !both && !inline {
-                changed |= entry.size.width.is_some() || entry.size.height.is_some();
+                if entry.size.width.is_some() || entry.size.height.is_some() {
+                    changed_ids.push(*id);
+                }
                 return false;
             }
             entry.axes = euclid::default::Size2D::new(
@@ -365,11 +419,11 @@ impl BaseDocument {
             };
             if entry.size != size {
                 entry.size = size;
-                changed = true;
+                changed_ids.push(*id);
             }
             true
         });
-        changed
+        changed_ids
     }
 
     /// The layout `resolve_transforms` and `resolve_hit_overflow` place
