@@ -1326,10 +1326,7 @@ impl EngineHost {
                 let p: P = cmd.command.params()?;
                 let state = self.pages.get_mut(&cmd.page).ok_or_else(|| CdpError::server("page is gone"))?;
                 let locale = p.locale.filter(|l| !l.is_empty());
-                if locale.as_deref().is_some_and(|l| {
-                    pyro_net::http::HeaderValue::from_str(l).is_err()
-                        || !l.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_'))
-                }) {
+                if locale.as_deref().is_some_and(|l| !crate::target::valid_locale(l)) {
                     return Err(CdpError::invalid_params("Invalid locale name"));
                 }
                 state.locale_override = locale;
@@ -1365,25 +1362,7 @@ impl EngineHost {
                     timezone_id: String,
                 }
                 let p: P = cmd.command.params()?;
-                let requested = Some(p.timezone_id).filter(|t| !t.is_empty());
-                self.pages.get(&cmd.page).ok_or_else(|| CdpError::server("page is gone"))?;
-                // One VM per connection has one time zone. Not Chrome's "Timezone
-                // override is already in effect": Playwright ignores that text, and
-                // the page would silently run in the other page's zone.
-                let others = self.pages.iter().filter(|(key, _)| **key != cmd.page);
-                let other = others.filter_map(|(_, s)| s.timezone_override.clone()).next();
-                if let (Some(id), Some(other)) = (&requested, &other) {
-                    if id != other {
-                        return Err(CdpError::server(format!(
-                            "Cannot set timezone {id}: another page of this connection set {other}, \
-                             and the time zone applies to the whole connection"
-                        )));
-                    }
-                }
-                let effective = requested.clone().or(other);
-                self.apply_timezone(effective)?;
-                let state = self.pages.get_mut(&cmd.page).ok_or_else(|| CdpError::server("page is gone"))?;
-                state.timezone_override = requested;
+                self.override_timezone(cmd.page, Some(p.timezone_id).filter(|t| !t.is_empty()))?;
                 Ok(Some(serde_json::json!({})))
             }
             _ => Err(CdpError::unsupported(&cmd.command.method)),
@@ -1398,6 +1377,29 @@ fn context_net(options: crate::target::ContextOptions<'_>) -> Result<pyro_browse
 }
 
 impl EngineHost {
+    /// `Emulation.setTimezoneOverride` of `page` (None resets it). One VM per
+    /// connection has one time zone. Not Chrome's "Timezone override is
+    /// already in effect": Playwright ignores that text, and the page would
+    /// silently run in the other page's zone.
+    fn override_timezone(&mut self, page: PageKey, requested: Option<String>) -> CdpResult<()> {
+        self.pages.get(&page).ok_or_else(|| CdpError::server("page is gone"))?;
+        let others = self.pages.iter().filter(|(key, _)| **key != page);
+        let other = others.filter_map(|(_, s)| s.timezone_override.clone()).next();
+        if let (Some(id), Some(other)) = (&requested, &other) {
+            if id != other {
+                return Err(CdpError::server(format!(
+                    "Cannot set timezone {id}: another page of this connection set {other}, \
+                     and the time zone applies to the whole connection"
+                )));
+            }
+        }
+        let effective = requested.clone().or(other);
+        self.apply_timezone(effective)?;
+        let state = self.pages.get_mut(&page).ok_or_else(|| CdpError::server("page is gone"))?;
+        state.timezone_override = requested;
+        Ok(())
+    }
+
     /// Makes `id` the VM's time zone unless it already is: a change flushes
     /// JavaScriptCore's date caches and walks the heap's Date objects.
     fn apply_timezone(&mut self, id: Option<String>) -> CdpResult<()> {
@@ -1672,6 +1674,16 @@ impl Host for EngineHost {
         self.thread
             .browser
             .add_context_init_script(context, pyro_browser::InitScript { id, source: source.to_owned(), world: None });
+    }
+
+    fn set_locale(&mut self, page: PageKey, locale: &str) {
+        let Some(state) = self.pages.get_mut(&page) else { return };
+        state.locale_override = Some(locale.to_owned());
+        let _ = self.apply_identity(page);
+    }
+
+    fn set_timezone(&mut self, page: PageKey, timezone_id: &str) -> CdpResult<()> {
+        self.override_timezone(page, Some(timezone_id.to_owned()))
     }
 
     fn settle_page(&mut self, page: PageKey) {

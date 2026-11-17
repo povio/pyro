@@ -1031,16 +1031,20 @@ impl TemplateProcess {
         if differs(&profile.user_agent, &of_base.user_agent)
             || differs(&profile.proxy_server, &of_base.proxy_server)
             || differs(&profile.proxy_bypass_list, &of_base.proxy_bypass_list)
+            || differs(&profile.locale, &of_base.locale)
+            || differs(&profile.timezone_id, &of_base.timezone_id)
         {
             return Err(format!(
-                "a profile with a base has its base's userAgent, proxyServer and proxyBypassList \
-                 (profile {}): leave them out",
+                "a profile with a base has its base's userAgent, proxyServer, proxyBypassList, locale and \
+                 timezoneId (profile {}): leave them out",
                 self.label(base)
             ));
         }
         profile.user_agent.clone_from(&of_base.user_agent);
         profile.proxy_server.clone_from(&of_base.proxy_server);
         profile.proxy_bypass_list.clone_from(&of_base.proxy_bypass_list);
+        profile.locale.clone_from(&of_base.locale);
+        profile.timezone_id.clone_from(&of_base.timezone_id);
         Ok(profile)
     }
 
@@ -1157,6 +1161,11 @@ impl TemplateProcess {
             if !self.snapshot.browser.prepared_profile_active(base) {
                 return Err(format!("no profile {base} to start from"));
             }
+        }
+        let active =
+            browser.prepared_profiles().iter().enumerate().filter(|(id, _)| browser.prepared_profile_active(*id));
+        if let Some(conflict) = profile.timezone_conflict(active.map(|(_, p)| p)) {
+            return Err(conflict);
         }
         self.snapshot.profiles.push(ProfileState::new(&profile));
         if profile.base.is_none() {

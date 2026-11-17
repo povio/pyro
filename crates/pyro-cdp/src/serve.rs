@@ -599,6 +599,8 @@ pub fn browser_profile(options: &ServeOptions) -> Result<BrowserProfile, String>
             user_agent: None,
             proxy_server: None,
             proxy_bypass_list: None,
+            locale: None,
+            timezone_id: None,
         });
     }
     Ok(profile)
