@@ -983,9 +983,7 @@ impl DocumentMutator<'_> {
         changed: Range<usize>,
         removed_element: bool,
     ) {
-        // pyro: an element that came or went can change counters and quotes (`layout::counters`),
-        // and the scroll markers of the groups around it (`layout::scroll_markers`).
-        self.doc.counters_dirty = true;
+        // pyro: the scroll markers of the groups around a changed child (`layout::scroll_markers`).
         self.doc.scroll_markers_dirty = true;
         let parent = &self.doc.nodes[parent_id];
         let flags = parent.selector_flags().get();
@@ -1001,6 +999,11 @@ impl DocumentMutator<'_> {
         }
         let is_element = |id: &NodeId| self.doc.nodes[*id].is_element();
         let element_changed = removed_element || parent.children[changed.clone()].iter().any(is_element);
+        // pyro: an element that came or went can change counters and quotes (`layout::counters`);
+        // text alone cannot (a text probe measured in a loop no longer walks the whole document).
+        if element_changed {
+            self.doc.counters_dirty = true;
+        }
         // A change with no earlier element sibling restyles all children with one hint rather
         // than hinting each later sibling, so inserting or removing at the front stays linear.
         let front_change = flags.contains(ElementSelectorFlags::HAS_SLOW_SELECTOR_LATER_SIBLINGS)

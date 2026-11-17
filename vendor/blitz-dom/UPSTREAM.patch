@@ -26578,7 +26578,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
          if let Some(mut data) = node.try_stylo_element_data_mut().and_then(|s| s.get_mut()) {
              data.hint |= if is_style {
                  RestyleHint::RESTYLE_STYLE_ATTRIBUTE
-@@ -748,27 +965,49 @@
+@@ -748,27 +965,52 @@
      }
  
      /// Restyle an in-document element whose child list changed, `changed` being the position
@@ -26604,9 +26604,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
 +        changed: Range<usize>,
 +        removed_element: bool,
 +    ) {
-+        // pyro: an element that came or went can change counters and quotes (`layout::counters`),
-+        // and the scroll markers of the groups around it (`layout::scroll_markers`).
-+        self.doc.counters_dirty = true;
++        // pyro: the scroll markers of the groups around a changed child (`layout::scroll_markers`).
 +        self.doc.scroll_markers_dirty = true;
          let parent = &self.doc.nodes[parent_id];
          let flags = parent.selector_flags().get();
@@ -26624,9 +26622,14 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
              hint |= RestyleHint::RESTYLE_SELF;
 +            self.doc
 +                .invalidate_relative_selectors_for_ts_state(parent_id, TSStateForInvalidation::EMPTY);
-         }
++        }
 +        let is_element = |id: &NodeId| self.doc.nodes[*id].is_element();
 +        let element_changed = removed_element || parent.children[changed.clone()].iter().any(is_element);
++        // pyro: an element that came or went can change counters and quotes (`layout::counters`);
++        // text alone cannot (a text probe measured in a loop no longer walks the whole document).
++        if element_changed {
++            self.doc.counters_dirty = true;
+         }
          // A change with no earlier element sibling restyles all children with one hint rather
          // than hinting each later sibling, so inserting or removing at the front stays linear.
          let front_change = flags.contains(ElementSelectorFlags::HAS_SLOW_SELECTOR_LATER_SIBLINGS)
@@ -26641,7 +26644,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
              || flags.intersects(
                  ElementSelectorFlags::HAS_SLOW_SELECTOR
                      | ElementSelectorFlags::HAS_SLOW_SELECTOR_NTH_OF
-@@ -776,18 +1015,43 @@
+@@ -776,18 +1018,43 @@
              )
          {
              hint |= RestyleHint::RESTYLE_DESCENDANTS;
@@ -26688,7 +26691,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
                  if !children[..changed.start].iter().any(is_element) {
                      edge[0] = children[changed.end..].iter().copied().find(is_element);
                  }
-@@ -799,10 +1063,30 @@
+@@ -799,10 +1066,30 @@
                          .find(is_element);
                  }
              }
@@ -26720,7 +26723,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
          }
  
          let parent = &mut self.doc.nodes[parent_id];
-@@ -878,12 +1162,32 @@
+@@ -878,12 +1165,32 @@
          // would remove both the old and the newly-inserted entries from the
          // parent's child list, and anchor indices would be computed against a
          // child list that still contains the moved nodes.
@@ -26753,7 +26756,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
              let child = &mut self.doc.nodes[child_id];
              let child_was_in_doc = child.flags.is_in_document();
              self.mutations_occurred |= child_was_in_doc;
-@@ -892,12 +1196,13 @@
+@@ -892,12 +1199,13 @@
              };
  
              let old_parent = &mut self.doc.nodes[old_parent_id];
@@ -26769,7 +26772,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
                  devtools!(
                      self,
                      MutationRecord::NodeRemoved(NodeRemoved {
-@@ -911,19 +1216,29 @@
+@@ -911,19 +1219,29 @@
          }
  
          let new_parent = &mut self.doc.nodes[parent_id];
@@ -26802,7 +26805,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
                  child.set_restyle_hint(RestyleHint::restyle_subtree());
              }
  
-@@ -938,12 +1253,46 @@
+@@ -938,12 +1256,46 @@
                  );
              }
  
@@ -26849,7 +26852,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
  
          // Transfer :focus-within from the old ancestor chain to the new one (the
          // shared prefix stays). If the subtree left the document, the focus was
-@@ -975,6 +1324,23 @@
+@@ -975,6 +1327,23 @@
          self.maybe_record_node(parent_id);
      }
  
@@ -26873,7 +26876,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
      /// The nearest preceding sibling of `node_id` in `parent_id`'s children
      /// that devtools show (not a whitespace-only text node or anonymous block)
      #[cfg(feature = "devtools")]
-@@ -1223,11 +1589,34 @@
+@@ -1223,11 +1592,34 @@
                  _ if has_custom_widget => {}
                  "link" => self.eager_op_queue.push(SpecialOp::LoadStylesheet(node_id)),
                  "img" => self.eager_op_queue.push(SpecialOp::LoadImage(node_id)),
@@ -26909,7 +26912,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
                      self.eager_op_queue
                          .push(SpecialOp::ProcessButtonInput(node_id));
                      self.form_nodes.insert(node_id);
-@@ -1413,6 +1802,11 @@
+@@ -1413,6 +1805,11 @@
              }
          };
  
@@ -26921,7 +26924,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
          let guard = self.doc.guard.read();
          self.doc.stylist.remove_stylesheet(stylesheet, &guard);
          self.doc
-@@ -1420,21 +1814,75 @@
+@@ -1420,21 +1817,75 @@
              .force_stylesheet_origins_dirty(OriginSet::all());
  
          self.doc.nodes_to_stylesheet.remove(&node_id);
@@ -27001,7 +27004,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
                      let node = &mut self.doc.nodes[target_id];
                      node.element_data_mut().unwrap().special_data =
                          SpecialElementData::Image(Box::new(cached_image.clone()));
-@@ -1544,6 +1992,18 @@
+@@ -1544,6 +1995,18 @@
              return;
          }
  
@@ -27020,7 +27023,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
          // Add content of "value" attribute as a text node child if:
          //   - Tag name is
          if let ("input", Some("button" | "submit" | "reset"), Some(value)) =
-@@ -1579,6 +2039,20 @@
+@@ -1579,6 +2042,20 @@
      }
  }
  
@@ -27041,7 +27044,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
  /// Set 'checked' state on an input based on given attributevalue
  fn set_input_checked_state(element: &mut ElementData, value: String) {
      let Ok(checked) = value.parse() else {
-@@ -2377,6 +2851,50 @@
+@@ -2377,6 +2854,50 @@
          }
      }
  
@@ -27092,7 +27095,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
      fn qual_name(name: &str) -> crate::QualName {
          crate::QualName::new(None, crate::ns!(), crate::LocalName::from(name))
      }
-@@ -3088,3 +3606,254 @@
+@@ -3088,3 +3609,254 @@
          );
      }
  }

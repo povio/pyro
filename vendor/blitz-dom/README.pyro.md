@@ -2633,3 +2633,5 @@ Round 4 lane G:
   rounding kept walking the boxes it held before it was hidden, down to ones dropped since (Danex lab canvas: the
   canvas stage hidden in the sync that removed a sheet's child; pyro-render test
   `hidden_containing_block_drops_its_hoisted_boxes`).
+- `mutator.rs`: a child-list change marks counters and quotes dirty only when an element came or went; a text-only
+  change (`textContent` on a measuring probe) no longer walks the whole document in `resolve_generated_content`.
