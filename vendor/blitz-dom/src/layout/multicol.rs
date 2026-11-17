@@ -197,6 +197,11 @@ struct Breaks {
     /// The space between consecutive in-flow blocks (their margins): a column after a break in it
     /// starts at its end. Sorted by start.
     gaps: Vec<(f32, f32)>,
+    /// pyro: lines `text-box-trim` trims where they start or end a column (`layout::text_box`):
+    /// `(top, bottom, start trim, end trim)`, sorted by top.
+    trims: Vec<(f32, f32, f32, f32)>,
+    /// pyro: forced breaks (`break-before`/`break-after: column`, `page`, ...), sorted.
+    forced: Vec<f32>,
 }
 
 /// How a strip fills columns of one height.
@@ -232,6 +237,22 @@ fn containing(ranges: &[(f32, f32)], y: f32) -> Option<(f32, f32)> {
 }
 
 impl Breaks {
+    /// pyro: what the line that starts at `start` loses over its edge when it starts a column.
+    fn start_trim(&self, start: f32) -> f32 {
+        let index = self.trims.partition_point(|t| t.0 < start - EPSILON);
+        self.trims.get(index).filter(|t| (t.0 - start).abs() <= EPSILON).map_or(0.0, |t| t.2)
+    }
+
+    /// pyro: a column end of `limit`, moved to the bottom of the line it cuts when that line fits
+    /// above `limit` once its end is trimmed.
+    fn trimmed_limit(&self, limit: f32) -> f32 {
+        let index = self.trims.partition_point(|t| t.0 < limit);
+        match index.checked_sub(1).and_then(|i| self.trims.get(i)) {
+            Some(&(_, bottom, _, end)) if end > 0.0 && bottom > limit && bottom - end <= limit + EPSILON => bottom,
+            _ => limit,
+        }
+    }
+
     /// The break of a column that starts at `start` and holds up to `limit`: the furthest
     /// position after `start` and no further than `limit` that no range of `ranges` goes
     /// through, and how much further the range in the way reaches. `None`: a range taller than
@@ -267,7 +288,21 @@ impl Breaks {
             }
         };
         loop {
-            let limit = start + height;
+            // pyro: a column after a break starts below the half-leading its first line trims, and
+            // holds a line whose trimmed end fits.
+            if !run.columns.is_empty() {
+                start += self.start_trim(start);
+            }
+            let limit = self.trimmed_limit(start + height);
+            // pyro: a forced break before the column's end ends it there.
+            let forced = (run.columns.len() + 1 < max_columns)
+                .then(|| self.forced.iter().copied().find(|&f| f > start + EPSILON && f < self.end - EPSILON))
+                .flatten();
+            if let Some(f) = forced.filter(|&f| f <= limit.max(start + height) + EPSILON) {
+                run.columns.push((start, f));
+                start = f;
+                continue;
+            }
             if limit >= self.end - EPSILON || run.columns.len() + 1 >= max_columns {
                 run.columns.push((start, self.end.max(start)));
                 return run;
@@ -290,7 +325,7 @@ impl Breaks {
                 // Nothing but margins left.
                 return run;
             }
-            start = if next > start + EPSILON { next } else { limit };
+            start = if next > start + EPSILON { next } else { start + height };
         }
     }
 
@@ -818,7 +853,10 @@ impl BaseDocument {
     /// margin edge, its floats' margin edges).
     fn multicol_breaks(&self, container: crate::NodeId, start: f32, end: Option<f32>) -> Breaks {
         let mut found = Found::default();
-        self.collect_breaks(container, 0.0, &mut found, Some(start));
+        let trims = self.nodes[container]
+            .primary_styles()
+            .map_or((false, false), |style| super::text_box::fragment_trims(&style));
+        self.collect_breaks(container, 0.0, &mut found, Some(start), trims);
         let end = end.unwrap_or(found.flow_end).max(start);
         // Margins only: a float reaching into the space between two blocks (the second one
         // cleared it) is content there.
@@ -830,15 +868,39 @@ impl BaseDocument {
         found.gaps.sort_by(|a, b| a.0.total_cmp(&b.0));
         // What overflows a box of a fixed height is content of the strip too.
         let end = end.max(found.bottom);
-        Breaks { start, end, strict: merge(found.strict), loose: merge(found.loose), gaps: found.gaps }
+        found.trims.sort_by(|a, b| a.0.total_cmp(&b.0));
+        found.forced.append(&mut found.forced_after);
+        found.forced.sort_by(f32::total_cmp);
+        found.forced.dedup_by(|a, b| (*a - *b).abs() <= EPSILON);
+        Breaks {
+            start,
+            end,
+            strict: merge(found.strict),
+            loose: merge(found.loose),
+            gaps: found.gaps,
+            trims: found.trims,
+            forced: found.forced,
+        }
     }
 
     /// Adds what `parent`'s content keeps from breaks, and the margins between its blocks, to
     /// `found`: `parent`'s border box starts at strip position `top`. `container_content_top`:
     /// `parent` is the container, its content box's top at that (its own layout is written by its
     /// parent after its columns are made: what it holds now is a previous layout's or none).
-    fn collect_breaks(&self, parent: crate::NodeId, top: f32, found: &mut Found, container_content_top: Option<f32>) {
+    /// `trims`: whether lines here trim their block-start and block-end sides at column breaks.
+    fn collect_breaks(
+        &self,
+        parent: crate::NodeId,
+        top: f32,
+        found: &mut Found,
+        container_content_top: Option<f32>,
+        trims: (bool, bool),
+    ) {
         let node = &self.nodes[parent];
+        let trims = match (container_content_top, node.primary_styles()) {
+            (None, Some(style)) => super::text_box::fragment_trims_within(&style, trims),
+            _ => trims,
+        };
         if node.flags.is_inline_root() {
             let Some(text) = node.element_data().and_then(|e| e.inline_layout_data.as_deref()) else {
                 return;
@@ -864,6 +926,26 @@ impl BaseDocument {
                 return;
             };
             found.bottom = found.bottom.max(last_bottom);
+            if (trims.0 || trims.1)
+                && let Some(style) = node.primary_styles()
+            {
+                for line in text.layout.lines() {
+                    if line.text_range().is_empty() && line.items().next().is_none() {
+                        continue;
+                    }
+                    let m = line.metrics();
+                    let trim = |start: bool| {
+                        let on = if start { trims.0 } else { trims.1 };
+                        if on { super::text_box::fragment_line_trim(&line, &style, start) / scale } else { 0.0 }
+                    };
+                    found.trims.push((
+                        origin + m.block_min_coord / scale,
+                        origin + m.block_max_coord / scale,
+                        trim(true),
+                        trim(false),
+                    ));
+                }
+            }
             found.loose.extend_from_slice(&lines);
             found.strict.extend_from_slice(&lines);
             let (orphans, widows) = node.primary_styles().map_or((2, 2), |s| {
@@ -890,7 +972,15 @@ impl BaseDocument {
                 continue;
             }
             let layout = child.unrounded_layout();
-            let child_top = top + layout.location.y;
+            // pyro: breaks go by the flow: a relatively positioned box is fragmented where it would
+            // be, then moved (Blink).
+            let relative = match style.get_box().position {
+                style::computed_values::position::T::Relative => {
+                    super::inline::relative::relative_offset(&style, node.unrounded_layout().size, false).y
+                }
+                _ => 0.0,
+            };
+            let child_top = top + layout.location.y - relative;
             let child_bottom = child_top + layout.size.height;
             found.bottom = found.bottom.max(child_bottom);
             if container_content_top.is_some() {
@@ -898,6 +988,17 @@ impl BaseDocument {
                 found.flow_end = found.flow_end.max(child_bottom + layout.margin.bottom.max(0.0));
             }
             if style.clone_float() == Float::None {
+                // pyro: forced breaks between in-flow siblings (margins after them kept).
+                let forces = |b: style::values::computed::BreakBetween| {
+                    use style::values::computed::BreakBetween as B;
+                    matches!(b, B::Column | B::Page | B::Always | B::Left | B::Right)
+                };
+                if forces(style.get_box().break_before) {
+                    found.forced.push(child_top - layout.margin.top.max(0.0));
+                }
+                if forces(style.get_box().break_after) {
+                    found.forced_after.push(child_bottom + layout.margin.bottom.max(0.0));
+                }
                 if let Some((bottom, margin)) = previous.filter(|&(b, _)| child_top >= b) {
                     // The collapsed margin, no more (clearance is no margin).
                     let margin = margin.max(layout.margin.top).max(0.0);
@@ -914,7 +1015,7 @@ impl BaseDocument {
                 if style.get_box().break_inside != BreakWithin::Auto {
                     found.strict.push((child_top, child_bottom));
                 }
-                crate::util::ensure_stack(|| self.collect_breaks(child_id, child_top, found, None));
+                crate::util::ensure_stack(|| self.collect_breaks(child_id, child_top, found, None, trims));
             } else {
                 found.strict.push((child_top, child_bottom));
                 found.loose.push((child_top, child_bottom));
@@ -929,6 +1030,11 @@ struct Found {
     strict: Vec<(f32, f32)>,
     loose: Vec<(f32, f32)>,
     gaps: Vec<(f32, f32)>,
+    /// pyro: see [`Breaks::trims`].
+    trims: Vec<(f32, f32, f32, f32)>,
+    /// pyro: see [`Breaks::forced`]; `forced_after` from `break-after` (dropped after the last child).
+    forced: Vec<f32>,
+    forced_after: Vec<f32>,
     /// The floats' block ranges.
     floats: Vec<(f32, f32)>,
     /// The furthest bottom of a box or line.
@@ -962,7 +1068,7 @@ mod tests {
     use super::*;
 
     fn breaks(strict: Vec<(f32, f32)>, loose: Vec<(f32, f32)>, end: f32) -> Breaks {
-        Breaks { start: 0.0, end, strict: merge(strict), loose: merge(loose), gaps: Vec::new() }
+        Breaks { start: 0.0, end, strict: merge(strict), loose: merge(loose), gaps: Vec::new(), trims: Vec::new(), forced: Vec::new() }
     }
 
     #[test]

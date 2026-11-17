@@ -1184,7 +1184,9 @@ impl ElementCx<'_, '_> {
                             .iter()
                             .any(|image| !matches!(image, GenericImage::None))
                         || (!recording
-                            && (style.get_effects().opacity < 1.0 || !style.get_effects().backdrop_filter.0.is_empty())
+                            && (style.get_effects().opacity < 1.0
+                                || !style.get_effects().backdrop_filter.0.is_empty()
+                                || inline_filter(dom, &style, self.scale).is_some())
                             && paints_alone(dom, root, id))
                 })
         };
@@ -1509,10 +1511,13 @@ impl ElementCx<'_, '_> {
             }
             // pyro: its opacity, over all of its fragments as one group (CSS Color 4 §3.2, WPT
             // `t32-opacity-offscreen-multiple-boxes-*`), when nothing else paints in its areas.
-            let faded = opacity < 1.0 && alone;
+            // pyro: and its filter, over its fragments as one group too (WPT filter-effects
+            // `effect-reference-on-span`).
+            let filter = alone.then(|| node.primary_styles()).flatten().and_then(|style| inline_filter(dom, &style, self.scale));
+            let faded = (opacity < 1.0 || filter.is_some()) && alone;
             let areas = path_of(&mut pieces.iter().flatten());
             if faded {
-                scene.push_layer(Fill::NonZero, peniko::BlendMode::default(), opacity, transform, &areas, None, None);
+                scene.push_layer(Fill::NonZero, peniko::BlendMode::default(), opacity, transform, &areas, filter, None);
             }
             let box_layout = |rect: Rect, (border, padding): (taffy::Rect<f32>, taffy::Rect<f32>)| taffy::Layout {
                 size: taffy::Size {
@@ -1582,6 +1587,22 @@ impl ElementCx<'_, '_> {
         INLINE_EFFECTS.set(false);
         true
     }
+}
+
+/// pyro: the filter an inline element (not atomic) with style `style` paints its fragments through:
+/// one that moves nothing out of them (colour functions and colour-matrix SVG filters), else
+/// `None` (left unpainted, as before).
+fn inline_filter(
+    dom: &blitz_dom::BaseDocument,
+    style: &style::properties::ComputedValues,
+    scale: f64,
+) -> Option<std::sync::Arc<anyrender::filters::Filter>> {
+    let list = &style.get_effects().filter.0;
+    if list.is_empty() {
+        return None;
+    }
+    let filter = crate::filters::convert_filters(list, scale, &style.clone_color(), dom)?;
+    (crate::layers::filter_reach(&filter, Affine::IDENTITY) == Rect::ZERO).then(|| std::sync::Arc::new(filter))
 }
 
 /// pyro: rectangles covering what `rects` cover, no two of which overlap (empty ones left out).

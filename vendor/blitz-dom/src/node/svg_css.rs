@@ -253,6 +253,47 @@ pub(crate) fn svg_source(root: &Node) -> String {
     writer.finish()
 }
 
+/// pyro: a `calc()` of percentages and lengths in a `<filter>` or `<mask>` region attribute
+/// (`width="calc(25% + 0.25px)"`) as the number usvg reads: in `objectBoundingBox` units (the
+/// default) a percentage is a fraction of the box and a length a number of boxes, as Chromium
+/// resolves them; in user space only lengths. `None` for anything else.
+fn region_calc(data: &crate::node::ElementData, tag: &str, value: &str) -> Option<String> {
+    let units = match tag {
+        "filter" => "filterUnits",
+        "mask" => "maskUnits",
+        _ => return None,
+    };
+    let inner = value.trim().strip_prefix("calc(")?.strip_suffix(')')?;
+    let bounding_box = data.attr(markup5ever::LocalName::from(units)).is_none_or(|u| u.trim() != "userSpaceOnUse");
+    let mut total = 0.0f32;
+    let mut sign = 1.0f32;
+    let mut expect_term = true;
+    for token in inner.split_whitespace() {
+        if !expect_term {
+            sign = match token {
+                "+" => 1.0,
+                "-" => -1.0,
+                _ => return None,
+            };
+            expect_term = true;
+            continue;
+        }
+        let (number, scale) = if let Some(n) = token.strip_suffix('%') {
+            if !bounding_box {
+                return None;
+            }
+            (n, 0.01)
+        } else if let Some(n) = token.strip_suffix("px") {
+            (n, 1.0)
+        } else {
+            (token, 1.0)
+        };
+        total += sign * number.parse::<f32>().ok()? * scale;
+        expect_term = false;
+    }
+    (!expect_term).then(|| total.to_string())
+}
+
 /// The boxes of the elements named in `ids`, from a parsed tree.
 fn collect_boxes(tree: &usvg::Tree, ids: &HashMap<String, NodeId>) -> HashMap<NodeId, Boxes> {
     fn rect(r: usvg::Rect) -> Rect {
@@ -842,6 +883,14 @@ impl Writer<'_> {
                 continue;
             }
             if (temp_id.is_some() || self.shadow_copy.is_some()) && attr.name.ns == ns!() && local == "id" {
+                continue;
+            }
+            // pyro: a `calc()` filter or mask region, which usvg cannot read.
+            if attr.name.ns == ns!()
+                && matches!(local, "x" | "y" | "width" | "height")
+                && let Some(value) = region_calc(data, tag, &attr.value)
+            {
+                self.write_attr(&attr.name, &value, None);
                 continue;
             }
             self.write_attr(&attr.name, &attr.value, current_color.as_deref());

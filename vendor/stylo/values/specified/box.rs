@@ -2099,6 +2099,8 @@ pub enum BreakBetween {
     AvoidColumn,
     Left,
     Right,
+    /// pyro: `column` (CSS Fragmentation 3), forces a column break.
+    Column,
 }
 
 impl BreakBetween {
@@ -2114,7 +2116,7 @@ impl BreakBetween {
             BreakBetween::Auto | BreakBetween::Avoid | BreakBetween::Left | BreakBetween::Right => {
                 Ok(break_value)
             },
-            BreakBetween::Page | BreakBetween::AvoidPage | BreakBetween::AvoidColumn => {
+            BreakBetween::Page | BreakBetween::AvoidPage | BreakBetween::AvoidColumn | BreakBetween::Column => {
                 Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError))
             },
         }
@@ -2133,7 +2135,7 @@ impl BreakBetween {
                 self.to_css(dest)
             },
             BreakBetween::Page => dest.write_str("always"),
-            BreakBetween::Always | BreakBetween::AvoidPage | BreakBetween::AvoidColumn => Ok(()),
+            BreakBetween::Always | BreakBetween::AvoidPage | BreakBetween::AvoidColumn | BreakBetween::Column => Ok(()),
         }
     }
 }

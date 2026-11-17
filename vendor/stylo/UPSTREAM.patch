@@ -2848,7 +2848,7 @@ diff -ruN a/values/specified/basic_shape.rs b/values/specified/basic_shape.rs
  pub type BasicShape =
 diff -ruN a/values/specified/box.rs b/values/specified/box.rs
 --- a/values/specified/box.rs	2026-11-11 19:55:57
-+++ b/values/specified/box.rs	2026-11-17 02:11:17
++++ b/values/specified/box.rs	2026-11-17 08:54:47
 @@ -15,7 +15,7 @@
      GenericLineClamp, GenericOverflowClipMargin, GenericPerspective, GenericScrollbarInset,
      MaxLines, OverflowClipMarginBox,
@@ -3095,7 +3095,7 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
  /// A specified value for the `baseline-source` property.
  /// https://drafts.csswg.org/css-inline-3/#baseline-source
  #[derive(
-@@ -2013,6 +2095,8 @@
+@@ -2013,8 +2095,12 @@
      Auto,
      Page,
      Avoid,
@@ -3103,32 +3103,35 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
 +    AvoidColumn,
      Left,
      Right,
++    /// pyro: `column` (CSS Fragmentation 3), forces a column break.
++    Column,
  }
-@@ -2030,7 +2114,9 @@
+ 
+ impl BreakBetween {
+@@ -2030,7 +2116,9 @@
              BreakBetween::Auto | BreakBetween::Avoid | BreakBetween::Left | BreakBetween::Right => {
                  Ok(break_value)
              },
 -            BreakBetween::Page => Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError)),
-+            BreakBetween::Page | BreakBetween::AvoidPage | BreakBetween::AvoidColumn => {
++            BreakBetween::Page | BreakBetween::AvoidPage | BreakBetween::AvoidColumn | BreakBetween::Column => {
 +                Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError))
 +            },
          }
      }
  
-@@ -2047,7 +2133,7 @@
+@@ -2047,7 +2135,7 @@
                  self.to_css(dest)
              },
              BreakBetween::Page => dest.write_str("always"),
 -            BreakBetween::Always => Ok(()),
-+            BreakBetween::Always | BreakBetween::AvoidPage | BreakBetween::AvoidColumn => Ok(()),
++            BreakBetween::Always | BreakBetween::AvoidPage | BreakBetween::AvoidColumn | BreakBetween::Column => Ok(()),
          }
      }
  }
-@@ -2628,4 +2714,91 @@
- pub enum DirectionProperty {
+@@ -2629,3 +2717,90 @@
      Ltr,
      Rtl,
-+}
+ }
 +
 +/// pyro: the `scroll-marker-group` property (CSS Overflow 5): whether a scroll container
 +/// generates a `::scroll-marker-group` box, and on which side of its own box it goes.
@@ -3170,7 +3173,7 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
 +        /// The markers are tabs (the focus model).
 +        const TABS = 1 << 3;
 +    }
- }
++}
 +
 +impl ScrollMarkerGroup {
 +    fn validate_mixed_flags(&self) -> bool {

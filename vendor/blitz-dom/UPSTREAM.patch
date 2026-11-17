@@ -12269,7 +12269,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/mod.rs b/packages/blitz-dom/sr
 -mod build;
 +pub(crate) mod build;
  mod layout;
-+mod relative;
++pub(crate) mod relative;
  
 -pub(crate) use build::build_inline_layout_into;
 +pub(crate) use build::{build_inline_layout_into, span_edge_widths, span_edge_widths_in};
@@ -15288,7 +15288,7 @@ diff --git a/packages/blitz-dom/src/layout/multicol.rs b/packages/blitz-dom/src/
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/layout/multicol.rs
-@@ -0,0 +1,1108 @@
+@@ -0,0 +1,1214 @@
 +//! pyro: CSS Multi-column Layout (<https://drafts.csswg.org/css-multicol/>).
 +//!
 +//! A multi-column container lays its content out once, in a strip one column wide (its flow
@@ -15488,6 +15488,11 @@ new file mode 100644
 +    /// The space between consecutive in-flow blocks (their margins): a column after a break in it
 +    /// starts at its end. Sorted by start.
 +    gaps: Vec<(f32, f32)>,
++    /// pyro: lines `text-box-trim` trims where they start or end a column (`layout::text_box`):
++    /// `(top, bottom, start trim, end trim)`, sorted by top.
++    trims: Vec<(f32, f32, f32, f32)>,
++    /// pyro: forced breaks (`break-before`/`break-after: column`, `page`, ...), sorted.
++    forced: Vec<f32>,
 +}
 +
 +/// How a strip fills columns of one height.
@@ -15523,6 +15528,22 @@ new file mode 100644
 +}
 +
 +impl Breaks {
++    /// pyro: what the line that starts at `start` loses over its edge when it starts a column.
++    fn start_trim(&self, start: f32) -> f32 {
++        let index = self.trims.partition_point(|t| t.0 < start - EPSILON);
++        self.trims.get(index).filter(|t| (t.0 - start).abs() <= EPSILON).map_or(0.0, |t| t.2)
++    }
++
++    /// pyro: a column end of `limit`, moved to the bottom of the line it cuts when that line fits
++    /// above `limit` once its end is trimmed.
++    fn trimmed_limit(&self, limit: f32) -> f32 {
++        let index = self.trims.partition_point(|t| t.0 < limit);
++        match index.checked_sub(1).and_then(|i| self.trims.get(i)) {
++            Some(&(_, bottom, _, end)) if end > 0.0 && bottom > limit && bottom - end <= limit + EPSILON => bottom,
++            _ => limit,
++        }
++    }
++
 +    /// The break of a column that starts at `start` and holds up to `limit`: the furthest
 +    /// position after `start` and no further than `limit` that no range of `ranges` goes
 +    /// through, and how much further the range in the way reaches. `None`: a range taller than
@@ -15558,7 +15579,21 @@ new file mode 100644
 +            }
 +        };
 +        loop {
-+            let limit = start + height;
++            // pyro: a column after a break starts below the half-leading its first line trims, and
++            // holds a line whose trimmed end fits.
++            if !run.columns.is_empty() {
++                start += self.start_trim(start);
++            }
++            let limit = self.trimmed_limit(start + height);
++            // pyro: a forced break before the column's end ends it there.
++            let forced = (run.columns.len() + 1 < max_columns)
++                .then(|| self.forced.iter().copied().find(|&f| f > start + EPSILON && f < self.end - EPSILON))
++                .flatten();
++            if let Some(f) = forced.filter(|&f| f <= limit.max(start + height) + EPSILON) {
++                run.columns.push((start, f));
++                start = f;
++                continue;
++            }
 +            if limit >= self.end - EPSILON || run.columns.len() + 1 >= max_columns {
 +                run.columns.push((start, self.end.max(start)));
 +                return run;
@@ -15581,7 +15616,7 @@ new file mode 100644
 +                // Nothing but margins left.
 +                return run;
 +            }
-+            start = if next > start + EPSILON { next } else { limit };
++            start = if next > start + EPSILON { next } else { start + height };
 +        }
 +    }
 +
@@ -16109,7 +16144,10 @@ new file mode 100644
 +    /// margin edge, its floats' margin edges).
 +    fn multicol_breaks(&self, container: crate::NodeId, start: f32, end: Option<f32>) -> Breaks {
 +        let mut found = Found::default();
-+        self.collect_breaks(container, 0.0, &mut found, Some(start));
++        let trims = self.nodes[container]
++            .primary_styles()
++            .map_or((false, false), |style| super::text_box::fragment_trims(&style));
++        self.collect_breaks(container, 0.0, &mut found, Some(start), trims);
 +        let end = end.unwrap_or(found.flow_end).max(start);
 +        // Margins only: a float reaching into the space between two blocks (the second one
 +        // cleared it) is content there.
@@ -16121,15 +16159,39 @@ new file mode 100644
 +        found.gaps.sort_by(|a, b| a.0.total_cmp(&b.0));
 +        // What overflows a box of a fixed height is content of the strip too.
 +        let end = end.max(found.bottom);
-+        Breaks { start, end, strict: merge(found.strict), loose: merge(found.loose), gaps: found.gaps }
++        found.trims.sort_by(|a, b| a.0.total_cmp(&b.0));
++        found.forced.append(&mut found.forced_after);
++        found.forced.sort_by(f32::total_cmp);
++        found.forced.dedup_by(|a, b| (*a - *b).abs() <= EPSILON);
++        Breaks {
++            start,
++            end,
++            strict: merge(found.strict),
++            loose: merge(found.loose),
++            gaps: found.gaps,
++            trims: found.trims,
++            forced: found.forced,
++        }
 +    }
 +
 +    /// Adds what `parent`'s content keeps from breaks, and the margins between its blocks, to
 +    /// `found`: `parent`'s border box starts at strip position `top`. `container_content_top`:
 +    /// `parent` is the container, its content box's top at that (its own layout is written by its
 +    /// parent after its columns are made: what it holds now is a previous layout's or none).
-+    fn collect_breaks(&self, parent: crate::NodeId, top: f32, found: &mut Found, container_content_top: Option<f32>) {
++    /// `trims`: whether lines here trim their block-start and block-end sides at column breaks.
++    fn collect_breaks(
++        &self,
++        parent: crate::NodeId,
++        top: f32,
++        found: &mut Found,
++        container_content_top: Option<f32>,
++        trims: (bool, bool),
++    ) {
 +        let node = &self.nodes[parent];
++        let trims = match (container_content_top, node.primary_styles()) {
++            (None, Some(style)) => super::text_box::fragment_trims_within(&style, trims),
++            _ => trims,
++        };
 +        if node.flags.is_inline_root() {
 +            let Some(text) = node.element_data().and_then(|e| e.inline_layout_data.as_deref()) else {
 +                return;
@@ -16155,6 +16217,26 @@ new file mode 100644
 +                return;
 +            };
 +            found.bottom = found.bottom.max(last_bottom);
++            if (trims.0 || trims.1)
++                && let Some(style) = node.primary_styles()
++            {
++                for line in text.layout.lines() {
++                    if line.text_range().is_empty() && line.items().next().is_none() {
++                        continue;
++                    }
++                    let m = line.metrics();
++                    let trim = |start: bool| {
++                        let on = if start { trims.0 } else { trims.1 };
++                        if on { super::text_box::fragment_line_trim(&line, &style, start) / scale } else { 0.0 }
++                    };
++                    found.trims.push((
++                        origin + m.block_min_coord / scale,
++                        origin + m.block_max_coord / scale,
++                        trim(true),
++                        trim(false),
++                    ));
++                }
++            }
 +            found.loose.extend_from_slice(&lines);
 +            found.strict.extend_from_slice(&lines);
 +            let (orphans, widows) = node.primary_styles().map_or((2, 2), |s| {
@@ -16181,7 +16263,15 @@ new file mode 100644
 +                continue;
 +            }
 +            let layout = child.unrounded_layout();
-+            let child_top = top + layout.location.y;
++            // pyro: breaks go by the flow: a relatively positioned box is fragmented where it would
++            // be, then moved (Blink).
++            let relative = match style.get_box().position {
++                style::computed_values::position::T::Relative => {
++                    super::inline::relative::relative_offset(&style, node.unrounded_layout().size, false).y
++                }
++                _ => 0.0,
++            };
++            let child_top = top + layout.location.y - relative;
 +            let child_bottom = child_top + layout.size.height;
 +            found.bottom = found.bottom.max(child_bottom);
 +            if container_content_top.is_some() {
@@ -16189,6 +16279,17 @@ new file mode 100644
 +                found.flow_end = found.flow_end.max(child_bottom + layout.margin.bottom.max(0.0));
 +            }
 +            if style.clone_float() == Float::None {
++                // pyro: forced breaks between in-flow siblings (margins after them kept).
++                let forces = |b: style::values::computed::BreakBetween| {
++                    use style::values::computed::BreakBetween as B;
++                    matches!(b, B::Column | B::Page | B::Always | B::Left | B::Right)
++                };
++                if forces(style.get_box().break_before) {
++                    found.forced.push(child_top - layout.margin.top.max(0.0));
++                }
++                if forces(style.get_box().break_after) {
++                    found.forced_after.push(child_bottom + layout.margin.bottom.max(0.0));
++                }
 +                if let Some((bottom, margin)) = previous.filter(|&(b, _)| child_top >= b) {
 +                    // The collapsed margin, no more (clearance is no margin).
 +                    let margin = margin.max(layout.margin.top).max(0.0);
@@ -16205,7 +16306,7 @@ new file mode 100644
 +                if style.get_box().break_inside != BreakWithin::Auto {
 +                    found.strict.push((child_top, child_bottom));
 +                }
-+                crate::util::ensure_stack(|| self.collect_breaks(child_id, child_top, found, None));
++                crate::util::ensure_stack(|| self.collect_breaks(child_id, child_top, found, None, trims));
 +            } else {
 +                found.strict.push((child_top, child_bottom));
 +                found.loose.push((child_top, child_bottom));
@@ -16220,6 +16321,11 @@ new file mode 100644
 +    strict: Vec<(f32, f32)>,
 +    loose: Vec<(f32, f32)>,
 +    gaps: Vec<(f32, f32)>,
++    /// pyro: see [`Breaks::trims`].
++    trims: Vec<(f32, f32, f32, f32)>,
++    /// pyro: see [`Breaks::forced`]; `forced_after` from `break-after` (dropped after the last child).
++    forced: Vec<f32>,
++    forced_after: Vec<f32>,
 +    /// The floats' block ranges.
 +    floats: Vec<(f32, f32)>,
 +    /// The furthest bottom of a box or line.
@@ -16253,7 +16359,7 @@ new file mode 100644
 +    use super::*;
 +
 +    fn breaks(strict: Vec<(f32, f32)>, loose: Vec<(f32, f32)>, end: f32) -> Breaks {
-+        Breaks { start: 0.0, end, strict: merge(strict), loose: merge(loose), gaps: Vec::new() }
++        Breaks { start: 0.0, end, strict: merge(strict), loose: merge(loose), gaps: Vec::new(), trims: Vec::new(), forced: Vec::new() }
 +    }
 +
 +    #[test]
@@ -16434,7 +16540,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
      {
          let scroll_offset = *cb.scroll_offset();
          let viewport_scroll = tree.viewport_scroll();
-@@ -50,19 +53,51 @@
+@@ -50,19 +53,60 @@
          position.y += scroll_offset.y as f32 + viewport_scroll.y as f32;
      }
  
@@ -16449,9 +16555,18 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
          };
 +        // pyro: out of a multi-column container's strip into its columns (`layout::multicol`).
 +        if let Some(columns) = node.column_fragments() {
++            // A relatively positioned box is in the column of its place in the flow, moved from
++            // there (Blink): a box moved up over a column break stays in the column after it.
 +            let own = child.final_layout().location;
-+            let shown = columns.strip_to_columns(Point { x: position.x + own.x, y: position.y + own.y });
-+            position = Point { x: shown.x - own.x, y: shown.y - own.y };
++            let relative = match child.primary_styles() {
++                Some(style) if style.get_box().position == style::computed_values::position::T::Relative => {
++                    let size = node.final_layout().size;
++                    super::inline::relative::relative_offset(&style, size, false).y
++                }
++                _ => 0.0,
++            };
++            let (dx, dy) = columns.shift_at(position.y + own.y - relative);
++            position = Point { x: position.x + dx, y: position.y + dy };
 +        }
          let location = node.final_layout().location;
          let scroll_offset = *node.scroll_offset();
@@ -16486,7 +16601,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
      position
  }
  
-@@ -71,6 +106,8 @@
+@@ -71,6 +115,8 @@
  pub struct HoistedPaintChild {
      pub node_id: NodeId,
      pub z_index: i32,
@@ -16495,7 +16610,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
      /// `(geometry generation, offset from the stacking-context root)`, see
      /// [`Self::position`]. Generation `0` is never current.
      position: Cell<(u64, Point<f32>)>,
-@@ -81,10 +118,16 @@
+@@ -81,10 +127,16 @@
          Self {
              node_id,
              z_index,
@@ -16512,7 +16627,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
      /// The child's offset from the border box of its stacking-context root
      /// (`sc_root_id`), excluding the child's own `final_layout().location`.
      /// Computed at most once per geometry generation.
-@@ -113,6 +156,10 @@
+@@ -113,6 +165,10 @@
      /// `(geometry generation, bounding box of the hoisted children)`, see
      /// [`Self::hoisted_content_bbox`].
      hoisted_content_bbox: Cell<(u64, Rect<f32>)>,
@@ -16523,7 +16638,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
  }
  
  impl StackingContext {
-@@ -122,6 +169,7 @@
+@@ -122,6 +178,7 @@
              children,
              negative_z_count: 0,
              hoisted_content_bbox: Cell::new((0, Rect::ZERO)),
@@ -16531,7 +16646,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
          };
          sc.sort();
          sc
-@@ -164,7 +212,7 @@
+@@ -164,7 +221,7 @@
  
          // Children dropped by a DOM mutation since the last `resolve` yield
          // `None` and are left out, like hit testing skips them.
@@ -16540,7 +16655,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
          let mut area = rects.next().unwrap_or(Rect::ZERO);
          for pos in rects {
              area.left = area.left.min(pos.left);
-@@ -203,6 +251,79 @@
+@@ -203,6 +260,79 @@
  }
  
  impl BaseDocument {
@@ -16620,7 +16735,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
      /// Rebuild `paint_children` and `stacking_context` for the tree rooted at
      /// `root_id` from the laid-out box tree.
      ///
-@@ -210,11 +331,87 @@
+@@ -210,11 +340,87 @@
      /// (sorted by paint order) or, when they have a non-zero `z-index` and are
      /// positioned or flex/grid items, in the nearest ancestor stacking context.
      ///
@@ -16710,7 +16825,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
      }
  
      /// `stacking_context` is the entry list of the nearest ancestor stacking
-@@ -238,7 +435,23 @@
+@@ -238,7 +444,23 @@
              // node itself, so the role the caller resolved must match the one
              // this node was last built with.
              let role_unchanged = node.stacking_context.is_some() == stacking_context.is_none();
@@ -16734,7 +16849,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
                  && !node
                      .damage()
                      .unwrap_or(ALL_DAMAGE)
-@@ -252,6 +465,17 @@
+@@ -252,6 +474,17 @@
              }
          }
  
@@ -16752,7 +16867,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
          let Some(display) = self.nodes[node_id].display_style() else {
              return;
          };
-@@ -318,33 +542,74 @@
+@@ -318,33 +551,74 @@
  
              let is_layer_root =
                  stacking_context.is_none() || self.nodes[node_id].is_paint_layer_root();
@@ -16833,7 +16948,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
                      } else {
                          self.scratch.keyed_children.push((paint_order, child_id));
                      }
-@@ -352,10 +617,16 @@
+@@ -352,10 +626,16 @@
                      // Positioned descendants lifted out of the static boxes of
                      // this child's subtree join this node's positioned paint
                      // level, in tree order after the child.
@@ -16852,7 +16967,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
                                  self.scratch
                                      .keyed_children
                                      .push(((2, paint_order.1), entry.node_id));
-@@ -369,15 +640,31 @@
+@@ -369,15 +649,31 @@
                  while let Some(&(anchor, hoisted_id)) = hoisted_past_parent.get(next_hoisted)
                      && anchor == index
                  {
@@ -16886,7 +17001,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
  
              let mut paint_children = self.nodes[node_id]
                  .paint_children
-@@ -392,9 +679,14 @@
+@@ -392,9 +688,14 @@
                      .map(|(_, id)| id),
              );
  
@@ -16901,7 +17016,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
          }
  
          let node = &mut self.nodes[node_id];
-@@ -408,6 +700,109 @@
+@@ -408,6 +709,109 @@
          }
      }
  
@@ -17011,7 +17126,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
      /// The layout child of `node_id` whose subtree contains `id`, following
      /// `layout_parent`.
      fn layout_child_containing(&self, node_id: NodeId, id: NodeId) -> Option<NodeId> {
-@@ -426,15 +821,20 @@
+@@ -426,15 +830,20 @@
      /// the enclosing stacking context like any other z-indexed positioned
      /// child, the rest join `paint_children` at the same paint level as other
      /// positioned boxes (the caller's stable sort keeps tree order).
@@ -17033,7 +17148,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
                  true => None,
                  false => Some(entries),
              },
-@@ -443,11 +843,112 @@
+@@ -443,11 +852,112 @@
          let z_index = self.nodes[child_id].z_index();
          if z_index != 0 {
              entries.push(HoistedPaintChild::new(child_id, z_index));
@@ -17146,15 +17261,22 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
  }
  
  impl Node {
-@@ -471,18 +972,115 @@
+@@ -471,18 +981,115 @@
                      || e.sub_doc_data().is_some()
                      || e.text_input_data().is_some()
              })
 +            // pyro: a multi-column container paints its positioned descendants in its columns
 +            // (`layout::multicol`).
 +            || self.column_fragments().is_some()
-+    }
-+
+     }
+ 
+-    /// Whether this is a `position: relative` or `sticky` box.
+-    fn is_in_flow_positioned(&self) -> bool {
+-        self.primary_styles().is_some_and(|style| {
+-            matches!(
+-                style.clone_position(),
+-                Position::Relative | Position::Sticky
+-            )
 +    /// pyro: whether this box paints in the paint phases of an ancestor (CSS 2.1 Appendix E): a
 +    /// block box of the normal flow whose background goes with the other block backgrounds of
 +    /// its stacking context (step 4), under the floats of its subtree (step 5, lifted to the
@@ -17203,16 +17325,9 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
 +            parent.primary_styles().is_some_and(|parent_style| {
 +                matches!(parent_style.clone_display().inside(), DisplayInside::Flex | DisplayInside::Grid)
 +            })
-+        })
+         })
      }
  
--    /// Whether this is a `position: relative` or `sticky` box.
--    fn is_in_flow_positioned(&self) -> bool {
--        self.primary_styles().is_some_and(|style| {
--            matches!(
--                style.clone_position(),
--                Position::Relative | Position::Sticky
--            )
 +    /// pyro: whether this internal table box (row group, row, cell) paints in the phases of its
 +    /// table's painter (Blink: a table's collapsed borders go after the backgrounds of the blocks
 +    /// in its cells and before their inline content, floats and positioned boxes). Only a part
@@ -17253,9 +17368,9 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
 +                    })
 +                })
 +            })
-         })
-     }
- 
++        })
++    }
++
 +    /// pyro: whether this box is laid out at the inline level (an atomic inline: an inline
 +    /// block, an image): in its parent's paint phases it paints with the inline content.
 +    pub fn is_inline_level(&self) -> bool {
@@ -17269,7 +17384,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
      /// The offset from the border box of `painter_id` at which this node is
      /// painted, excluding its own `final_layout().location`, when it is in the
      /// paint list of `painter_id` without being laid out relative to it (a
-@@ -496,6 +1094,15 @@
+@@ -496,6 +1103,15 @@
      }
  }
  
@@ -17285,7 +17400,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
  #[inline(always)]
  fn position_to_order(pos: Position) -> i32 {
      match pos {
-@@ -539,3 +1146,106 @@
+@@ -539,3 +1155,106 @@
          )
      }
  }
@@ -23602,7 +23717,7 @@ diff --git a/packages/blitz-dom/src/layout/text_box.rs b/packages/blitz-dom/src/
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/layout/text_box.rs
-@@ -0,0 +1,192 @@
+@@ -0,0 +1,224 @@
 +//! pyro: `text-box-trim` and `text-box-edge` (CSS Inline 3 § 5).
 +//!
 +//! On a block container, `text-box-trim` trims the block-start side of its first formatted line
@@ -23656,6 +23771,38 @@ new file mode 100644
 +    let (start, end) = (trim.contains(TextBoxTrim::TRIM_START), trim.contains(TextBoxTrim::TRIM_END));
 +    let (trim_over, trim_under) = if line_inverted(style) { (end, start) } else { (start, end) };
 +    parley::TextBoxTrim { over: trim_over.then_some(over), under: trim_under.then_some(under) }
++}
++
++/// pyro: the sides (block-start, block-end) a multi-column container's columns trim at its column
++/// breaks (horizontal writing modes only): its own (Blink: the column boxes inherit
++/// `text-box-trim`).
++pub(crate) fn fragment_trims(style: &ComputedValues) -> (bool, bool) {
++    let trim = style.slow_clone_text_box_trim();
++    (trim.contains(TextBoxTrim::TRIM_START), trim.contains(TextBoxTrim::TRIM_END))
++}
++
++/// pyro: the sides a block with style `style`, inside a multi-column container, trims at column
++/// breaks, from those of its container (`outer`): on a side of its own `text-box-trim` only with
++/// `box-decoration-break: clone`, on others as its container (Blink: WPT css-inline
++/// `text-box-trim-multicol-004`/`005`).
++pub(crate) fn fragment_trims_within(style: &ComputedValues, outer: (bool, bool)) -> (bool, bool) {
++    let trim = style.slow_clone_text_box_trim();
++    let clone = style.get_border().box_decoration_break == style::values::computed::BoxDecorationBreak::Clone;
++    let side = |flag: TextBoxTrim, outer: bool| if trim.contains(flag) { clone } else { outer };
++    (side(TextBoxTrim::TRIM_START, outer.0), side(TextBoxTrim::TRIM_END, outer.1))
++}
++
++/// pyro: what a horizontal line of an inline root with style `root_style` loses over (`start`) or
++/// under its root inline box's `text-box-edge` metric when it starts or ends a column fragment
++/// (layout units, from the line's block-start or block-end side).
++pub(crate) fn fragment_line_trim(line: &parley::Line<'_, crate::node::TextBrush>, root_style: &ComputedValues, start: bool) -> f32 {
++    let (over, under) = edges(root_style);
++    let m = line.metrics();
++    if start {
++        (line.span_text_edge(0, over, true) - m.block_min_coord).max(0.0)
++    } else {
++        (m.block_max_coord - line.span_text_edge(0, under, false)).max(0.0)
++    }
 +}
 +
 +/// A side of a line trimmed for a block: the metric the line ends at, and whether that is its
@@ -28747,7 +28894,7 @@ diff --git a/packages/blitz-dom/src/node/svg_css.rs b/packages/blitz-dom/src/nod
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/node/svg_css.rs
-@@ -0,0 +1,2303 @@
+@@ -0,0 +1,2352 @@
 +//! pyro: an inline `<svg>` subtree as a standalone SVG document for usvg, with
 +//! the page's CSS applied.
 +//!
@@ -29001,6 +29148,47 @@ new file mode 100644
 +    writer.pass = Pass::Final;
 +    writer.write_node(root, 0);
 +    writer.finish()
++}
++
++/// pyro: a `calc()` of percentages and lengths in a `<filter>` or `<mask>` region attribute
++/// (`width="calc(25% + 0.25px)"`) as the number usvg reads: in `objectBoundingBox` units (the
++/// default) a percentage is a fraction of the box and a length a number of boxes, as Chromium
++/// resolves them; in user space only lengths. `None` for anything else.
++fn region_calc(data: &crate::node::ElementData, tag: &str, value: &str) -> Option<String> {
++    let units = match tag {
++        "filter" => "filterUnits",
++        "mask" => "maskUnits",
++        _ => return None,
++    };
++    let inner = value.trim().strip_prefix("calc(")?.strip_suffix(')')?;
++    let bounding_box = data.attr(markup5ever::LocalName::from(units)).is_none_or(|u| u.trim() != "userSpaceOnUse");
++    let mut total = 0.0f32;
++    let mut sign = 1.0f32;
++    let mut expect_term = true;
++    for token in inner.split_whitespace() {
++        if !expect_term {
++            sign = match token {
++                "+" => 1.0,
++                "-" => -1.0,
++                _ => return None,
++            };
++            expect_term = true;
++            continue;
++        }
++        let (number, scale) = if let Some(n) = token.strip_suffix('%') {
++            if !bounding_box {
++                return None;
++            }
++            (n, 0.01)
++        } else if let Some(n) = token.strip_suffix("px") {
++            (n, 1.0)
++        } else {
++            (token, 1.0)
++        };
++        total += sign * number.parse::<f32>().ok()? * scale;
++        expect_term = false;
++    }
++    (!expect_term).then(|| total.to_string())
 +}
 +
 +/// The boxes of the elements named in `ids`, from a parsed tree.
@@ -29592,6 +29780,14 @@ new file mode 100644
 +                continue;
 +            }
 +            if (temp_id.is_some() || self.shadow_copy.is_some()) && attr.name.ns == ns!() && local == "id" {
++                continue;
++            }
++            // pyro: a `calc()` filter or mask region, which usvg cannot read.
++            if attr.name.ns == ns!()
++                && matches!(local, "x" | "y" | "width" | "height")
++                && let Some(value) = region_calc(data, tag, &attr.value)
++            {
++                self.write_attr(&attr.name, &value, None);
 +                continue;
 +            }
 +            self.write_attr(&attr.name, &attr.value, current_color.as_deref());
