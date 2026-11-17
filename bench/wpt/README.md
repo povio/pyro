@@ -272,7 +272,7 @@ timeout with no result, for a page that was about to complete too.
 ## Timings
 
 `run.mjs` prints progress every 100 pages or 30 s. A watchdog replaces the browser when a worker is stuck on a page
-for its limit plus 75 s (outside the per-page guard: a context that never closes, a browser that never starts) and
+for its limit plus 75 s once the page has started (not while it waits for a solo page or a restart; outside the per-page guard: a context that never closes, a browser that never starts) and
 logs the page (`watchdogKills` in the results). `WPT_TRACE=FILE` appends `start`/`end` lines per page, to find a hang
 afterwards. The one apparent hang of a wptserve sample (2026-11-17, 213 pages at `--jobs 2`, no output for 11 min)
 was the old progress interval: the same pages in chunks of 20 took 670 s for 160 of them, and none hung.

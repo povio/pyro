@@ -350,13 +350,14 @@ async function worker() {
   const w = workers++;
   while (next < tests.length) {
     const t = tests[next++];
-    inflight.set(w, { url: t.url, since: Date.now(), limit: t.limit });
-    trace(`start ${w} ${t.url}`);
     let r;
     if (restarting) await restarting;
     const leave = RENDERS ? await enter(t) : () => {};
     if (restarting) await restarting;
     const gen = generation, panicsBefore = panics, tail = stderrTail;
+    // In flight from here: waiting for a solo page or a restart above is not being stuck.
+    inflight.set(w, { url: t.url, since: Date.now(), limit: t.limit });
+    trace(`start ${w} ${t.url}`);
     try { r = await guarded(slot, t, gen); }
     catch (e) {
       r = { status: 'error', error: String(e.message ?? e).split('\n')[0].slice(0, 200) };
@@ -377,7 +378,7 @@ async function worker() {
       }
       // The browser was replaced under this page (another slot's page hung it): run the page again.
       else if (lost && (t.retried ?? 0) < 3) { t.retried = (t.retried ?? 0) + 1; tests.push(t); continue; }
-    } finally { leave(); }
+    } finally { leave(); inflight.delete(w); }
     if (KIND === 'crashtest' && r.status !== 'crash' && r.status !== 'hang') {
       // A panic's lines may still be in the pipe when the page's last answer arrives.
       await sleep(10);
