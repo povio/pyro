@@ -1473,8 +1473,15 @@ impl Sequence {
             };
             let bounds = visible_box(&self.page, target).ok_or("element is not visible")?;
             let now = Instant::now();
+            // Only a moving animation or transition can move the box between
+            // frames with no DOM change; without one, two frames alike suffice.
+            let span = if stability.span.is_zero() || self.page.moving_animation_frame_interval().is_none() {
+                Duration::ZERO
+            } else {
+                stability.span
+            };
             match stability.previous {
-                Some((previous, at)) if previous == bounds && now.duration_since(at) >= stability.span => {
+                Some((previous, at)) if previous == bounds && now.duration_since(at) >= span => {
                     stability.ready = true;
                     return Ok(true);
                 }
