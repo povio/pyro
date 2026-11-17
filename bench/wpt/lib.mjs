@@ -66,7 +66,7 @@ const SERVER_HELPERS = /\/common\/security-features\//;
 // `excluded` counts what was left out and why (identical for every binary).
 // `reasons` (a Map, optional) receives each left-out file's reason, keyed by its path (coverage.mjs).
 // `wptserve`: the server is wptserve (run.mjs --server wptserve), so pages that need it are kept.
-export function discover(wpt, dirs, { sampleEncoding = 1, reasons, wptserve = false } = {}) {
+export function discover(wpt, dirs, { sampleEncoding = 1, reasons, wptserve = false, testdriver = false } = {}) {
   const tests = [];
   const excluded = {};
   let rel;
@@ -98,7 +98,7 @@ export function discover(wpt, dirs, { sampleEncoding = 1, reasons, wptserve = fa
         long = /<meta\s+name=["']?timeout["']?\s+content=["']?long/i.test(src);
       } else continue;
       if (!wptserve && /\.sub\.|\.https\.|\.h2\.|\.www\./.test(base)) { exclude('needs wptserve substitution/https/h2'); continue; }
-      if (/testdriver\.js|testdriver-vendor/.test(src)) { exclude('needs testdriver'); continue; }
+      if (!testdriver && /testdriver\.js|testdriver-vendor/.test(src)) { exclude('needs testdriver'); continue; }
       if (!wptserve && (/\.py\b/.test(code) || SERVER_PAGES.some((re) => re.test(rel)) || SERVER_HELPERS.test(code))) { exclude('needs wptserve python handler'); continue; }
       const viewport = LEGACY_VIEWPORT_DIRS.includes(d) ? {} : { viewport: WPTRUNNER_VIEWPORT };
       for (const v of variants) tests.push({ dir: d, url: url + v, long, ...viewport });
@@ -213,7 +213,7 @@ const SERVER_CONTENT = /\.py\b|[?&]pipe=|\.sub\.(html|htm|xht|xhtml|svg|css|js)\
 // test is compared with its own references only (the chain is not followed). `excluded` counts what was left out
 // and why; `info` counts what discovery noticed but kept.
 // `reasons` (a Map, optional) receives each left-out file's reason, keyed by its path (coverage.mjs).
-export function discoverReftests(wpt, dirs, { reasons, wptserve = false } = {}) {
+export function discoverReftests(wpt, dirs, { reasons, wptserve = false, testdriver = false } = {}) {
   const tests = [];
   const excluded = {};
   const info = {};
@@ -261,7 +261,7 @@ export function discoverReftests(wpt, dirs, { reasons, wptserve = false } = {}) 
       const ps = files.map((u) => parse(u.replace(/[?#].*$/, '')));
       if (ps.some((x) => !x)) { exclude('reference not in the checkout'); continue; }
       if (!wptserve && (files.some((u) => SERVER_NAME.test(u) || /[?&]pipe=/.test(u)) || ps.some((x) => SERVER_CONTENT.test(x.src)))) { exclude('needs wptserve (substitution, pipe, Python handler)'); continue; }
-      if (ps.some((x) => x.scripts.some((a) => /(^|\/)resources\/testdriver(-vendor)?\.js$/.test(a.src ?? '')))) { exclude('needs testdriver'); continue; }
+      if (!testdriver && ps.some((x) => x.scripts.some((a) => /(^|\/)resources\/testdriver(-vendor)?\.js$/.test(a.src ?? '')))) { exclude('needs testdriver'); continue; }
       if (metaOf(p.metas, 'device-pixel-ratio').length) { exclude('needs another device pixel ratio'); continue; }
       let fuzzy;
       try { fuzzy = parseFuzzy(metaOf(p.metas, 'fuzzy'), rel, refs.map((r) => r.url)); } catch { exclude('malformed fuzzy metadata'); continue; }

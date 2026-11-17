@@ -9,6 +9,7 @@
 //          [--baseline baseline.json [--gate]] [--shard I/N] [--reuse-context] [--repeat N]
 // --server wptserve: WPT's own server (wptserve.mjs) instead of serve.mjs, every context behind its host-mapping
 //   proxy; discovery then keeps the pages that need wptserve (names, Python handlers, pipes). README "wptserve".
+// --testdriver: with --server wptserve, testdriver pages too (testdriver.mjs).
 // --tests FILE: only these URLs (a JSON array of URLs, or a results or baseline file).
 // --repeat N: run every selected page N times (the gate's reruns), one result each; copies run side by side.
 // --baseline: per-page durations order the run longest first and balance --shard I/N (0-based).
@@ -29,6 +30,7 @@ import { DEFAULT_DIRS, REFTEST_DIRS, allDirs, discover, discoverReftests, plan, 
 import { REFTEST_CONTEXT, ahemEnv, reftestEnv, runReftest } from './reftest.mjs';
 import { CRASHTEST_DIRS, discoverCrashtests, runCrashtest } from './crashtest.mjs';
 import { startProxy, startWptserve } from './wptserve.mjs';
+import { installTestdriver } from './testdriver.mjs';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const require = createRequire(path.join(HERE, '..', 'package.json'));
 const { chromium } = require('playwright-core');
@@ -53,6 +55,10 @@ const GATE = argv.includes('--gate');
 const SERVER = opt('--server', 'static');
 if (!['static', 'wptserve'].includes(SERVER)) throw new Error(`--server ${SERVER}: expected static or wptserve`);
 const WPTSERVE = SERVER === 'wptserve';
+// --testdriver (with --server wptserve): testdriver pages run, testdriver-vendor.js driving the browser through the
+// runner (testdriver.mjs). README "testdriver".
+const TESTDRIVER = argv.includes('--testdriver');
+if (TESTDRIVER && !WPTSERVE) throw new Error('--testdriver needs --server wptserve');
 const BASELINE = opt('--baseline') && readJson(opt('--baseline'));
 const [SHARD, SHARDS] = (opt('--shard', '0/1')).split('/').map(Number);
 const REUSE = argv.includes('--reuse-context');
@@ -64,7 +70,7 @@ if (!(SHARD >= 0 && SHARD < SHARDS)) throw new Error(`--shard ${opt('--shard')}:
 if (!(REPEAT >= 1)) throw new Error(`--repeat ${opt('--repeat')}: expected N >= 1`);
 
 function selectTests() {
-  const { tests, excluded, info } = KIND === 'reftest' ? discoverReftests(WPT, DIRS, { wptserve: WPTSERVE }) : KIND === 'crashtest' ? discoverCrashtests(WPT, DIRS, { wptserve: WPTSERVE }) : discover(WPT, DIRS, { sampleEncoding: SAMPLE, wptserve: WPTSERVE });
+  const { tests, excluded, info } = KIND === 'reftest' ? discoverReftests(WPT, DIRS, { wptserve: WPTSERVE, testdriver: TESTDRIVER }) : KIND === 'crashtest' ? discoverCrashtests(WPT, DIRS, { wptserve: WPTSERVE, testdriver: TESTDRIVER }) : discover(WPT, DIRS, { sampleEncoding: SAMPLE, wptserve: WPTSERVE, testdriver: TESTDRIVER });
   let sel = tests;
   const M = opt('--match') && new RegExp(opt('--match'));
   if (M) sel = sel.filter((t) => M.test(t.url));
@@ -194,6 +200,7 @@ async function openPage(slot, t) {
     // WPT's test certificates.
     const served = proxy ? { proxy: { server: `http://127.0.0.1:${proxy.port}`, bypass: '<-loopback>' }, ignoreHTTPSErrors: true } : {};
     slot.ctx = await slot.browser.newContext({ ...viewport, ...served });
+    if (TESTDRIVER) await installTestdriver(slot.ctx);
     slot.page = await slot.ctx.newPage();
     slot.page.on('dialog', (d) => d.dismiss().catch(() => {}));
   }

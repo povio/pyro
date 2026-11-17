@@ -38,7 +38,7 @@ import {
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const [cmd, ...argv] = process.argv.slice(2);
-const FLAGS = ['--full', '--no-rerun', '--no-check', '--replace', '--prune', '--durations', '--reuse-context', '--accept-loss', '--suggest'];
+const FLAGS = ['--testdriver', '--full', '--no-rerun', '--no-check', '--replace', '--prune', '--durations', '--reuse-context', '--accept-loss', '--suggest'];
 const opt = (k, d) => { const i = argv.indexOf(k); return i >= 0 ? argv[i + 1] : d; };
 const flag = (k) => argv.includes(k);
 const positional = () => argv.filter((a, i) => !a.startsWith('--') && !(argv[i - 1]?.startsWith('--') && !FLAGS.includes(argv[i - 1])));
@@ -94,6 +94,7 @@ function run() {
   if (baseline) common.push('--baseline', BASELINE_FILE);
   for (const k of ['--dirs', '--server', '--match', '--timeout', '--long-timeout', '--sample-encoding']) if (opt(k)) common.push(k, opt(k));
   if (flag('--reuse-context')) common.push('--reuse-context');
+  if (flag('--testdriver')) common.push('--testdriver');
   const first = ['--out', out, '--jobs', String(jobs), ...common, ...(full ? [] : ['--gate'])];
   if (opt('--shard')) first.push('--shard', opt('--shard'));
   const flaky = readFlaky(FLAKY_FILE);

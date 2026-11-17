@@ -48,7 +48,11 @@ export async function startWptserve(wpt, { log = process.stderr } = {}) {
       'https-local': [ports.httpsLocal], 'https-public': [ports.httpsPublic],
       ws: [ports.ws], wss: [ports.wss], h2: [], 'webtransport-h3': [], dns: [],
     },
-    aliases: [{ 'url-path': '/resources/testharnessreport.js', 'local-dir': HERE }],
+    aliases: [
+      { 'url-path': '/resources/testharnessreport.js', 'local-dir': HERE },
+      // testdriver's vendor half (testdriver-vendor.js, testdriver.mjs), as wptrunner serves Chrome's.
+      { 'url-path': '/resources/testdriver-vendor.js', 'local-dir': HERE },
+    ],
   };
   const cfg = path.join(dir, 'config.json');
   fs.writeFileSync(cfg, JSON.stringify(config));

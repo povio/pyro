@@ -632,6 +632,27 @@ newest main build's `wpt-browser`. It only reports for now: per-kind counts in t
 results as `wpt-full-results`. A pull request that changes the workflow, `wptserve.mjs` or `fetch-wpt.sh` runs its
 `smoke` job instead (a few wptserve pages on lp-m1, and the runner's Python version).
 
+## testdriver
+
+`--testdriver` (with `--server wptserve`) runs the pages that load `/resources/testdriver.js`. wptserve serves our
+`testdriver-vendor.js` in place of the checkout's empty one (a file alias, as wptrunner serves Chrome's). It sets
+`test_driver_internal.in_automation` and sends each call to the runner through a binding on every context
+(`testdriver.mjs`), which performs it with Playwright's input APIs over CDP, as wptrunner performs WebDriver commands:
+
+- `click` (and with it `bless`): a mouse click at the element's in-view center, after scrolling it into view.
+- `send_keys`: focus, then the keys typed one by one (WebDriver's Private Use Area codes as key names, modifiers held
+  until pressed again or the end).
+- `action_sequence` (`new test_driver.Actions()`): tick by tick, pointer (mouse; touch and pen as mouse), key, wheel
+  and pause sources; element origins become the element's center.
+- Elements in frames: the frame's content-box offset in the page is added.
+
+Everything else (`set_permission`, `get_computed_role`/`label`, cookies, BiDi, virtual authenticators, ...) rejects
+as "not implemented", as testdriver.js does with no vendor. At a421f2fe 3,206 of the 3,462 files that load testdriver
+call only `click`, `send_keys`, `Actions` or `bless`; next by use: `set_permission` (165 calls), `get_computed_role`
+(114), `get_computed_label` (77). With `--dirs all --server wptserve --testdriver`: testharness 35,679 pages,
+reftests 28,307, crashtests 2,105 (every crashtest in the manifest). In a first local check, 6 of 10 testdriver pages
+in uievents, css/selectors and html/user-activation passed every subtest.
+
 ## Crashtests
 
 A WPT crashtest is a page that once crashed a browser: it passes when the browser loads it, paints it and is still

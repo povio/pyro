@@ -56,7 +56,7 @@ const TESTDRIVER = /testdriver\.js|testdriver-vendor/;
 
 /** Every crashtest under `dirs` that serve.mjs can serve, one entry per file (crashtests have no variants).
  *  `excluded` counts what was left out and why. */
-export function discoverCrashtests(wpt, dirs, { reasons, wptserve = false } = {}) {
+export function discoverCrashtests(wpt, dirs, { reasons, wptserve = false, testdriver = false } = {}) {
   const tests = [];
   const excluded = {};
   let rel;
@@ -70,7 +70,7 @@ export function discoverCrashtests(wpt, dirs, { reasons, wptserve = false } = {}
       const base = path.basename(f);
       if (!wptserve && SERVER_NAME.test(base)) { exclude('needs wptserve (substitution, https, h2, another host)'); continue; }
       const src = fs.readFileSync(f, 'utf8').replace(/<!--[\s\S]*?-->/g, '');
-      if (TESTDRIVER.test(src)) { exclude('needs testdriver'); continue; }
+      if (!testdriver && TESTDRIVER.test(src)) { exclude('needs testdriver'); continue; }
       if (!wptserve && SERVER_CONTENT.test(src)) { exclude('needs wptserve (substitution, pipe, Python handler)'); continue; }
       const long = /<meta\s+name=["']?timeout["']?\s+content=["']?long/i.test(src);
       tests.push({ dir: areaOf(rel), url: rel, long });
