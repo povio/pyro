@@ -1689,8 +1689,13 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                         // consume it, accept the overflow and mark the soft wrap opportunity after
                         // it: content that follows breaks there, and a box ending the paragraph
                         // ends its last line (Chromium) rather than leaving an empty line behind.
+                        // pyro: unless wrapping is disabled there (`white-space: pre`: the text after
+                        // the box stays on its line; WPT css-overflow `text-overflow-009`).
                         self.append_layout_inline_box(item.index, next_x);
-                        self.state.mark_line_break_opportunity();
+                        self.state.line.text_wrap_mode = box_wrap_mode;
+                        if box_wrap_mode == TextWrapMode::Wrap {
+                            self.state.mark_line_break_opportunity();
+                        }
                     } else if after_span_start {
                         // pyro: the line wraps before the start edges the box follows, or not
                         // at all when the line starts with them.

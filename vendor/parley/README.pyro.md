@@ -364,3 +364,10 @@ blitz-dom puts an inline-level absolutely positioned box on the start side of it
 - `src/shape/mod.rs` (`shifted_span`): text is shaped apart on either side of the edge of a span that `vertical-align`
   shifts, nested spans included (CSS Text 3 § 7.3; WPT css-text `boundary-shaping-002/006`: no `ffi` ligature across a
   raised `f`).
+
+A lone word joiner committed as text (the strut blitz-dom pushes for a line of atomic inlines) is no content for
+white space processing: a collapsible space after it at the start of the paragraph is still removed (it was kept
+after an inline box's start margin; WPT css-flexbox `grandchild-span-height`).
+
+An inline box that does not fit at the start of a line marks a wrap opportunity after it only where wrapping is
+enabled: under `white-space: pre` the text after it stays on its line (WPT css-overflow `text-overflow-009`).
