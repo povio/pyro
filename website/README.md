@@ -27,7 +27,7 @@ bun run deploy    # robodev deploy: builds and uploads dist/ (needs `bunx robode
 
 `/status/wpt.html` and `/status/wpt/<dir>.html` show every main build's WPT results (testharness, reftests,
 crashtests) against all of WPT at the pinned revision, with Chrome stable's results beside them. `bun run build`
-generates them from the `wpt-results` branch (`scripts/wpt-status.mjs`, fetched from origin, or `WPT_RESULTS_DIR=<checkout>`;
+generates them from the `wpt-results` branch (`tools/wpt-status.mjs`, fetched from origin, or `WPT_RESULTS_DIR=<checkout>`;
 without it the page is a placeholder): one VitePress page, `docs/status/wpt.md`, a JSON file per directory under
 `docs/public/status-data/`, and after the build a copy of that page's HTML per directory (a VitePress page each would
 carry the site's page map, ~500 MB in all). The data's format and how it is written: `bench/wpt/status-export.mjs`.
