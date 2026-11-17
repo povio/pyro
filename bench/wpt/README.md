@@ -621,6 +621,12 @@ pages, reftests 27,802 -> 28,219, crashtests 2,031 -> 2,076 (with `--dirs all`).
 - It needs Python 3.9+ with `tools/serve/requirements.txt` (today `cryptography`): `fetch-wpt.sh --venv DIR` makes
   `DIR/.git/pyro-venv`, which `wptserve.mjs` uses (`WPT_PYTHON` overrides). macOS's `/usr/bin/python3` is 3.9.6.
 - It covers what `serve.mjs` does by hand: `/resources/WebIDLParser.js`, `?pipe=trickle`, `xhr/resources/delay.py`.
+- Pages load from the origin their name asks for, as wptrunner loads them: `.https.` and `.serviceworker.` over https,
+  `.www.` from the www subdomain.
+- Known gap (2026-11-17): every https load fails in pyro with `net::ERR_FAILED: error reading a body from connection`.
+  wptserve's responses carry no `Content-Length` and end when the connection closes, and Python's TLS closes without
+  `close_notify`, which pyro's TLS stack treats as truncation (curl and Chrome accept it). The fix belongs in
+  pyro-net.
 
 The PR gate keeps `serve.mjs` and its plan until a CI run records baselines for the whole suite.
 
@@ -646,7 +652,8 @@ results as `wpt-full-results`. A pull request that changes the workflow, `wptser
   and pause sources; element origins become the element's center.
 - Elements in frames: the frame's content-box offset in the page is added.
 
-Everything else (`set_permission`, `get_computed_role`/`label`, cookies, BiDi, virtual authenticators, ...) rejects
+`set_permission` sends `Browser.setPermission` for the document's origin on the page's session (its browser context).
+Everything else (`get_computed_role`/`label`, cookies, BiDi, virtual authenticators, ...) rejects
 as "not implemented", as testdriver.js does with no vendor. At a421f2fe 3,206 of the 3,462 files that load testdriver
 call only `click`, `send_keys`, `Actions` or `bless`; next by use: `set_permission` (165 calls), `get_computed_role`
 (114), `get_computed_label` (77). With `--dirs all --server wptserve --testdriver`: testharness 35,562 pages,

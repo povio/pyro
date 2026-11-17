@@ -3,8 +3,8 @@
 // WebDriver. Each call goes to the runner through the binding run.mjs exposes on every context
 // (window.__pyroTestdriver, a function returning a promise of the runner's JSON answer). Elements cannot cross the
 // binding: they go as their center in this frame's viewport, and the runner adds the offsets of the frames around it.
-// Implemented: click, send_keys, action_sequence (pointer, key, wheel and none sources), and with them bless. The
-// rest keeps testdriver.js's own "not implemented" rejections.
+// Implemented: click, send_keys, action_sequence (pointer, key, wheel and none sources), and with them bless, and
+// set_permission. The rest keeps testdriver.js's own "not implemented" rejections.
 (function () {
   'use strict';
   const internal = window.test_driver_internal;
@@ -35,6 +35,9 @@
     if (document.activeElement !== el) el.focus();
     return call({ cmd: 'send_keys', keys: String(keys) });
   };
+
+  // The permission for this document's origin (WebDriver's Set Permission), in the page's browser context.
+  internal.set_permission = (params) => call({ cmd: 'set_permission', descriptor: params.descriptor, state: params.state, origin: location.origin });
 
   internal.action_sequence = (sources) => {
     // Element origins become this frame's viewport coordinates of the element's center.

@@ -29,7 +29,7 @@ import { fileURLToPath } from 'node:url';
 import { DEFAULT_DIRS, REFTEST_DIRS, allDirs, discover, discoverReftests, plan, shard, readBaselineAt, readJson } from './lib.mjs';
 import { REFTEST_CONTEXT, ahemEnv, reftestEnv, runReftest } from './reftest.mjs';
 import { CRASHTEST_DIRS, discoverCrashtests, runCrashtest } from './crashtest.mjs';
-import { startProxy, startWptserve } from './wptserve.mjs';
+import { BROWSER_HOST, startProxy, startWptserve } from './wptserve.mjs';
 import { installTestdriver } from './testdriver.mjs';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const require = createRequire(path.join(HERE, '..', 'package.json'));
@@ -109,6 +109,16 @@ if (!BASE && WPTSERVE) {
     server.once('exit', () => j(new Error('serve.mjs exited')));
   });
   BASE = `http://127.0.0.1:${line.match(/(\d+)$/)[1]}`;
+}
+
+// The origin a page loads from, as wptrunner picks it from the file name under wptserve: `.https.` (and
+// `.serviceworker.`) pages over https, `.www.` pages from the www subdomain. h2 is not served (wptserve --no-h2).
+function baseFor(url) {
+  if (!wptserve) return BASE;
+  const name = url.replace(/[?#].*$/, '').split('/').pop();
+  const https = /\.(https|serviceworker)\./.test(name);
+  const host = /\.www\./.test(name) ? `www.${BROWSER_HOST}` : BROWSER_HOST;
+  return https ? `https://${host}:${wptserve.ports.https}` : `http://${host}:${wptserve.ports.http}`;
 }
 
 // ---------- browser ----------
@@ -215,10 +225,10 @@ async function openPage(slot, t) {
 // `gen`: the browser (`generation`) the page runs in.
 async function runOne(slot, t, gen) {
   const page = await openPage(slot, t);
-  if (KIND === 'reftest') return runReftest(page, t, BASE, t.limit);
-  if (KIND === 'crashtest') return runCrashtest(page, t, BASE, t.limit);
+  if (KIND === 'reftest') return runReftest(page, t, baseFor(t.url), t.limit);
+  if (KIND === 'crashtest') return runCrashtest(page, t, baseFor(t.url), t.limit);
   const t0 = Date.now();
-  await page.goto(`${BASE}/${t.url}`, { waitUntil: 'commit', timeout: t.limit });
+  await page.goto(`${baseFor(t.url)}/${t.url}`, { waitUntil: 'commit', timeout: t.limit });
   // The wait also fails when the browser is gone, replaced because another slot's page hung it. It would fail until
   // the timeout and record a page that was about to complete as timed out with no result: the worker runs it again.
   const replaced = () => { if (gen !== generation) throw new Error('the browser was replaced under this page'); };

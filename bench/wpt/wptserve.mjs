@@ -74,7 +74,12 @@ export async function startWptserve(wpt, { log = process.stderr } = {}) {
       req.on('error', () => resolve(false));
       req.setTimeout(2000, () => { req.destroy(); resolve(false); });
     });
-    if (ok) break;
+    // Each server is a process of its own and https ones start later: wait until every port accepts.
+    const listening = ok && (await Promise.all(Object.values(ports).map((port) => new Promise((resolve) => {
+      const c = net.connect(port, '127.0.0.1', () => { c.destroy(); resolve(true); });
+      c.on('error', () => resolve(false));
+    })))).every(Boolean);
+    if (listening) break;
     if (Date.now() > deadline) { stop(); throw new Error(`wptserve did not answer in 60 s; log: ${path.join(dir, 'serve.log')}`); }
     await new Promise((r) => setTimeout(r, 250));
   }
@@ -100,13 +105,17 @@ export function startProxy() {
   });
   server.on('connect', (req, sock, head) => {
     const port = Number(req.url.split(':').pop()) || 443;
+    let open = false;
     const up = net.connect(port, '127.0.0.1', () => {
+      open = true;
       sock.write('HTTP/1.1 200 Connection Established\r\n\r\n');
       if (head.length) up.write(head);
       up.pipe(sock); sock.pipe(up);
     });
     const end = () => { up.destroy(); sock.destroy(); };
-    up.on('error', end); sock.on('error', end);
+    // A refused tunnel is answered (the browser reports a tunnel failure rather than waiting).
+    up.on('error', () => { if (!open && sock.writable) sock.end('HTTP/1.1 502 Bad Gateway\r\ncontent-length: 0\r\n\r\n'); else end(); });
+    sock.on('error', end);
   });
   // WebSocket upgrades over plain http (ws://) arrive as absolute-URI requests with Upgrade.
   server.on('upgrade', (req, sock, head) => {

@@ -94,6 +94,7 @@ async function actions(page, off, sources) {
 }
 
 export async function installTestdriver(context) {
+  const sessions = new WeakMap();
   await context.exposeBinding('__pyroTestdriver', async ({ page, frame }, json) => {
     try {
       const c = JSON.parse(json);
@@ -104,6 +105,10 @@ export async function installTestdriver(context) {
         await sendKeys(page, c.keys);
       } else if (c.cmd === 'actions') {
         await actions(page, off, c.sources);
+      } else if (c.cmd === 'set_permission') {
+        // Browser.setPermission on the page's session applies to the page's browser context.
+        const s = (sessions.get(page) ?? sessions.set(page, await context.newCDPSession(page)).get(page));
+        await s.send('Browser.setPermission', { permission: c.descriptor, setting: c.state, origin: c.origin });
       } else throw new Error(`testdriver: ${c.cmd} is not supported`);
       return JSON.stringify({ ok: true });
     } catch (e) {
