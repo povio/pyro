@@ -36,7 +36,7 @@ These steps settle: every locator action except `focus()` and `blur()`, `mouse(.
 
 ## Actions
 
-Every action first resolves its locator to exactly one element ([strict mode](/e2e/locators#strict-mode)), then waits until the element is attached and visible (a box with non-zero width and height). `click`, `dblclick`, `fill`, `check`, `uncheck`, `press` and `type` also need it enabled. Pointer actions scroll it into view and need it not covered by another element.
+Every action first resolves its locator to exactly one element ([strict mode](/e2e/locators#strict-mode)), then waits until the element is attached and visible (a box with non-zero width and height). `click`, `dblclick`, `fill`, `check` and `uncheck` also need it enabled; `press` and `type` do not (as in Playwright, they focus the element and send the keys, so an `aria-disabled` button still gets its keydown). Pointer actions scroll it into view and need it not covered by another element.
 
 All actions take `{ settle?: boolean; timeout?: number }`.
 

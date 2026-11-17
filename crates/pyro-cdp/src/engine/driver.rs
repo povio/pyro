@@ -255,18 +255,10 @@ enum Action {
 
 impl Action {
     /// Actions that need an enabled element (Playwright's actionability:
-    /// hover, focus, blur, wheel and drag do not).
+    /// hover, focus, blur, wheel and drag do not; `press` and `type` focus
+    /// the element and send the keys whatever its state).
     fn needs_enabled(self) -> bool {
-        matches!(
-            self,
-            Action::Click
-                | Action::DblClick
-                | Action::Fill
-                | Action::Check
-                | Action::Uncheck
-                | Action::Press
-                | Action::Type
-        )
+        matches!(self, Action::Click | Action::DblClick | Action::Fill | Action::Check | Action::Uncheck)
     }
 }
 

@@ -6061,6 +6061,29 @@ fn driver_within_row_in_frame_scopes_inner_locator() {
     assert_eq!(r["result"]["reads"], json!({"second": 2, "first": 1, "has": 2}), "{r}");
 }
 
+/// Danex 2: `press` and `type` do not check that the element is enabled
+/// (Playwright focuses it and sends the keys): an `aria-disabled` button
+/// gets the keydown. `fill` and `click` still wait for an enabled element.
+#[test]
+fn driver_press_ignores_aria_disabled() {
+    let mut h = Harness::new();
+    load_html(
+        &mut h,
+        r#"<!doctype html><title>start</title><button aria-disabled="true" onkeydown="document.title = 'pressed ' + event.key">Settled</button>"#,
+    );
+    let r = h.page(
+        "Pyro.run",
+        json!({"timeout": 2000, "steps": [
+            {"act": {"locator": {"role": "button", "name": "Settled"}, "action": "press", "value": "Enter"}},
+            {"eval": {"expression": "document.title", "as": "title"}},
+            {"eval": {"expression": "document.activeElement.textContent", "as": "focused"}},
+        ]}),
+    );
+    assert!(r.get("error").is_none(), "{r}");
+    assert_eq!(r["result"]["reads"]["title"], "pressed Enter", "{r}");
+    assert_eq!(r["result"]["reads"]["focused"], "Settled", "{r}");
+}
+
 const DRIVER_POINTER_PAGE: &str = r#"<!doctype html><body>
 <style>#scroller{overflow:auto;width:1000px} #wide{width:2500px;height:26px} #tall{height:300px;width:200px;overflow:auto}</style>
 <div id="target">Target</div><div id="target-out"></div>
