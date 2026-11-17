@@ -1033,3 +1033,5 @@ before overlapping radii are scaled down, as Blink's `CalcRadiiFor` (css-backgro
 `render.rs` (`inline_box_fragments`): the empty inline boxes of an invisible line box (parley's
 `LineMetrics::invisible`: only empty inline boxes on it) have no height and paint nothing, no outline either (WPT
 css-inline `empty-span-size-002`).
+- Round 4 lane B: `render.rs` `draw_svg` paints an inline `<svg>` whose source depends on its laid-out size
+  (`SvgImageData::viewport_dependent`) from blitz-dom `inline_svg_at_viewport` at its content box size.

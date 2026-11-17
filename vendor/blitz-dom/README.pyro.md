@@ -2524,3 +2524,9 @@ does not let margins collapse through it, even when its lines have no height (CS
   `lower-roman`), looked up in the item's shadow trees inside out before the document's (`CascadeData::counter_style`).
 - `node/element.rs`, `mutator.rs`: only the `id` attribute in no namespace is the element's ID (`xml:id` is not).
 - `layout/first_letter.rs`: the letter is a whole grapheme: a regional-indicator pair (a flag), an emoji ZWJ sequence.
+- Round 4 lane B: `node/svg_css.rs` notes when a `view-box` reference box (CSS `transform` percentages, clip-path
+  `view-box`, mask `view-box`) was the root's CSS box guessed before layout (a root sized in percentages or not at all:
+  300x150), `svg_source_for_viewport`; construct.rs keeps it as `SvgImageData::viewport_dependent`, and
+  `BaseDocument::inline_svg_at_viewport` serializes and parses such an `<svg>` again at its laid-out content box (cached
+  per node and size, dropped on reconstruction), which blitz-paint `draw_svg` paints (WPT css-transforms
+  `transform-percent-010`).

@@ -112,6 +112,10 @@ pub struct SvgImageData {
     /// pyro: the source of an SVG image with a `<foreignObject>`, which is rendered as a document
     /// of its own (`BaseDocument::svg_image_documents`) to draw its HTML content.
     pub foreign_source: Option<Arc<str>>,
+    /// pyro: an inline `<svg>` whose source depends on its laid-out size (a `view-box` reference box of a root
+    /// sized in percentages or not at all): painted from a source serialized again at that size
+    /// (`BaseDocument::inline_svg_at_viewport`).
+    pub viewport_dependent: bool,
 }
 
 impl SvgImageData {
@@ -165,6 +169,7 @@ impl SvgImageData {
             inline_source: None,
             source: None,
             foreign_source: None,
+            viewport_dependent: false,
         })
     }
 

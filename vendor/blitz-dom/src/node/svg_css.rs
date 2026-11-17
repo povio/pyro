@@ -163,6 +163,9 @@ struct Writer<'a> {
     next_id: usize,
     /// The nearest viewport's reference box size (`transform-box: view-box`).
     viewports: Vec<(f64, f64)>,
+    /// pyro: per entry of `viewports`, whether its size is the root's CSS box guessed before layout (a root
+    /// without a `viewBox` and without plain length sizes, or an `<svg>` sized in percentages in one)
+    viewport_guessed: Vec<bool>,
     /// The root's `perspective`, which its children's 3D transforms are seen through.
     root_perspective: Option<euclid::default::Transform3D<f64>>,
     /// Set while a text's shadow copy is written (see [`text_shadow`]).
@@ -215,6 +218,25 @@ pub fn foreign_object_href(id: NodeId) -> String {
 }
 
 /// The source of the `<svg>` subtree at `root` for usvg (see the module docs).
+thread_local! {
+    /// pyro: set while serializing when a `view-box` reference box was the root's CSS box guessed before
+    /// layout: the source then depends on the root's laid-out size ([`svg_source_for_viewport`]).
+    static VIEWPORT_DEPENDENT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// pyro: the root's laid-out content box size to serialize with ([`svg_source_for_viewport`]).
+    static ROOT_VIEWPORT: std::cell::Cell<Option<(f64, f64)>> = const { std::cell::Cell::new(None) };
+}
+
+/// pyro: [`svg_source`], and whether it depends on the root's laid-out size (a `view-box` reference box,
+/// percentages in `transform` say, of a root sized in percentages or not at all), serialized with the root's
+/// viewport `viewport` when given (WPT css-transforms `transform-percent-010`).
+pub(crate) fn svg_source_for_viewport(root: &Node, viewport: Option<(f64, f64)>) -> (String, bool) {
+    VIEWPORT_DEPENDENT.with(|d| d.set(false));
+    let old = ROOT_VIEWPORT.with(|v| v.replace(viewport));
+    let source = svg_source(root);
+    ROOT_VIEWPORT.with(|v| v.set(old));
+    (source, VIEWPORT_DEPENDENT.with(|d| d.replace(false)))
+}
+
 pub(crate) fn svg_source(root: &Node) -> String {
     let guard = root.element_data().and_then(|data| data.guard.as_ref()).map(|lock| lock.read());
     let mut writer = Writer {
@@ -229,6 +251,7 @@ pub(crate) fn svg_source(root: &Node) -> String {
         defs: String::new(),
         next_id: 0,
         viewports: Vec::new(),
+        viewport_guessed: Vec::new(),
         root_perspective: None,
         shadow_copy: None,
         imported: Vec::new(),
@@ -814,8 +837,9 @@ impl Writer<'_> {
         // Viewports for `transform-box: view-box`.
         let pushed_viewport = is_svg && tag == "svg";
         if pushed_viewport {
-            let viewport = self.viewport_size(data, styles.as_deref(), is_root);
+            let (viewport, guessed) = self.viewport_size(data, styles.as_deref(), is_root);
             self.viewports.push(viewport);
+            self.viewport_guessed.push(guessed);
             if is_root {
                 // In the root's box, which its user space is (without a `viewBox`).
                 self.root_perspective = styles.as_deref().and_then(|style| {
@@ -1056,6 +1080,7 @@ impl Writer<'_> {
         }
         if pushed_viewport {
             self.viewports.pop();
+            self.viewport_guessed.pop();
         }
     }
 
@@ -1074,7 +1099,17 @@ impl Writer<'_> {
 
     /// The reference box size of `transform-box: view-box` inside this `<svg>`:
     /// its `viewBox` size, else its own size.
-    fn viewport_size(&self, data: &ElementData, style: Option<&ComputedValues>, is_root: bool) -> (f64, f64) {
+    /// pyro: the size of the innermost viewport, for a `view-box` reference box; noted
+    /// ([`VIEWPORT_DEPENDENT`]) when it is the root's CSS box guessed before layout.
+    fn view_box_size(&self) -> (f64, f64) {
+        if self.viewport_guessed.last().copied().unwrap_or(false) {
+            VIEWPORT_DEPENDENT.with(|d| d.set(true));
+        }
+        self.viewports.last().copied().unwrap_or((300.0, 150.0))
+    }
+
+    /// The size, and whether it is the root's CSS box guessed before layout (see `viewport_guessed`).
+    fn viewport_size(&self, data: &ElementData, style: Option<&ComputedValues>, is_root: bool) -> ((f64, f64), bool) {
         if let Some(view_box) = data.attr(local_name!("viewBox")) {
             let numbers: Vec<f64> = view_box
                 .split(|c: char| c == ',' || c.is_ascii_whitespace())
@@ -1083,11 +1118,12 @@ impl Writer<'_> {
                 .collect();
             if let [_, _, w, h] = numbers[..] {
                 if w > 0.0 && h > 0.0 {
-                    return (w, h);
+                    return ((w, h), false);
                 }
             }
         }
         let parent = self.viewports.last().copied().unwrap_or((300.0, 150.0));
+        let parent_guessed = self.viewport_guessed.last().copied().unwrap_or(false);
         let length = |name: markup5ever::LocalName, basis: f64, css: Option<f64>, fallback: f64| {
             if let Some(px) = css {
                 return px;
@@ -1113,9 +1149,30 @@ impl Writer<'_> {
             }
         };
         let (fallback_w, fallback_h) = if is_root { (300.0, 150.0) } else { parent };
+        // A size that is not a plain length: the root's CSS box, which layout gives (`ROOT_VIEWPORT`, when the
+        // painter serializes again at the laid-out size), or one in percentages of such a box
+        let plain = |name: markup5ever::LocalName, css: Option<f64>| {
+            css.is_some()
+                || data
+                    .attr(name)
+                    .and_then(|v| v.trim().parse::<svgtypes::Length>().ok())
+                    .is_some_and(|len| len.unit != svgtypes::LengthUnit::Percent)
+        };
+        let guessed_axis = |name: markup5ever::LocalName, css: Option<f64>| {
+            !plain(name, css) && (is_root || parent_guessed)
+        };
+        let guessed = guessed_axis(local_name!("width"), css(true)) || guessed_axis(local_name!("height"), css(false));
+        if is_root && guessed {
+            if let Some(size) = ROOT_VIEWPORT.with(|v| v.get()) {
+                return (size, true);
+            }
+        }
         (
-            length(local_name!("width"), parent.0, css(true), fallback_w),
-            length(local_name!("height"), parent.1, css(false), fallback_h),
+            (
+                length(local_name!("width"), parent.0, css(true), fallback_w),
+                length(local_name!("height"), parent.1, css(false), fallback_h),
+            ),
+            guessed,
         )
     }
 
@@ -1232,7 +1289,7 @@ impl Writer<'_> {
         // The reference box.
         let reference = match style.get_box().transform_box {
             TransformBox::ViewBox => {
-                let (w, h) = self.viewports.last().copied().unwrap_or((300.0, 150.0));
+                let (w, h) = self.view_box_size();
                 Rect::new(0.0, 0.0, w, h)
             }
             TransformBox::FillBox | TransformBox::ContentBox => self.boxes(node, data, temp_id).fill,
@@ -1368,7 +1425,7 @@ impl Writer<'_> {
             | ShapeGeometryBox::ShapeBox(ShapeBox::ContentBox)
             | ShapeGeometryBox::ShapeBox(ShapeBox::PaddingBox) => Some(self.boxes(node, data, temp_id).fill),
             ShapeGeometryBox::ViewBox => {
-                let (w, h) = self.viewports.last().copied().unwrap_or((300.0, 150.0));
+                let (w, h) = self.view_box_size();
                 Some(Rect::new(0.0, 0.0, w, h))
             }
             // `border-box` (the default), `margin-box` and `stroke-box`.
@@ -1676,7 +1733,7 @@ impl Writer<'_> {
             MaskBox::Fill => boxes.fill,
             MaskBox::Stroke => boxes.stroke,
             MaskBox::View => {
-                let (w, h) = self.viewports.last().copied().unwrap_or((300.0, 150.0));
+                let (w, h) = self.view_box_size();
                 Rect::new(0.0, 0.0, w, h)
             }
             MaskBox::NoClip => return Ok(None),

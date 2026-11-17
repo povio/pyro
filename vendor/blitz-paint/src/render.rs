@@ -4034,6 +4034,14 @@ impl ElementCx<'_, '_> {
         // pyro: an inline `<svg>` without a `viewBox` lays its content out in its box, in user
         // units of a CSS px times its zoom (`zoom: 2` draws its content twice as large).
         let units = self.scale as f32 * self.style.effective_zoom.value();
+        // pyro: a source that depends on the laid-out size, serialized again at it (blitz-dom
+        // `inline_svg_at_viewport`; WPT css-transforms `transform-percent-010`)
+        let at_viewport = if svg.viewport_dependent {
+            self.context.dom.as_ref().inline_svg_at_viewport(self.node.id, width / units, height / units)
+        } else {
+            None
+        };
+        let svg = at_viewport.as_deref().unwrap_or(svg);
         let sized = svg.sized(width / units, height / units);
         let svg = sized.as_ref().unwrap_or(svg);
         let svg_size = svg.tree.size();

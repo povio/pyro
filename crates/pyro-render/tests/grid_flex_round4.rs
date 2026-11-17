@@ -103,3 +103,16 @@ fn ratio_only_replaced_items_stretch_fit_a_row() {
     );
     check(&img, &[(95, 50, GREEN), (105, 50, WHITE), (50, 95, GREEN), (50, 105, WHITE)]);
 }
+
+/// `transform: translate(50%, 50%)` in an `<svg>` sized `100%` resolves against the laid-out root (200px),
+/// not the 300x150 guessed before layout (blitz-dom `inline_svg_at_viewport`; WPT css-transforms
+/// `transform-percent-010`).
+#[test]
+fn view_box_percentages_use_the_laid_out_root_size() {
+    let img = render(
+        "<div style='width:200px;height:200px'><svg width='100%' height='100%' style='display:block'>\
+           <g style='transform:translate(50%,50%)'><rect x='-100' y='-100' width='200' height='200' fill='green'/></g>\
+         </svg></div>",
+    );
+    check(&img, &[(5, 5, GREEN), (195, 195, GREEN), (205, 100, WHITE)]);
+}
