@@ -3431,7 +3431,7 @@ index 037a2d1c..88347ca7 100644
      tracks.first_mut().unwrap().collapse();
      tracks.last_mut().unwrap().collapse();
 diff --git a/src/compute/grid/mod.rs b/src/compute/grid/mod.rs
-index f0109c6e..10650284 100644
+index f0109c6e..25730d6c 100644
 --- a/src/compute/grid/mod.rs
 +++ b/src/compute/grid/mod.rs
 @@ -36,15 +36,22 @@ pub(crate) use types::{GridCoordinate, GridLine, OriginZeroLine, MAX_GRID_TRACKS
@@ -3458,7 +3458,63 @@ index f0109c6e..10650284 100644
  struct GridContainerConstants {
      /// The container's `direction` style
      direction: Direction,
-@@ -225,6 +232,9 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -64,6 +71,9 @@ struct GridContainerConstants {
+     max_size: Size<Option<f32>>,
+     /// The container's border-box preferred size, if definite
+     preferred_size: Size<Option<f32>>,
++    /// pyro: the preferred height is the one the aspect ratio gives from the width (its final value is the
++    /// automatic one, which keeps the automatic minimum height)
++    height_from_ratio: bool,
+     /// The space reserved for scrollbars in each axis
+     scrollbar_gutter: Point<f32>,
+     /// Whether the container's overflow makes it a scroll container
+@@ -118,17 +128,27 @@ fn compute_container_constants<Tree: LayoutGridContainer>(
+         .maybe_resolve(parent_size, |val, basis| tree.calc(val, basis))
+         .maybe_apply_aspect_ratio(aspect_ratio)
+         .maybe_add(box_sizing_adjustment);
+-    let max_size = style
+-        .max_size()
+-        .maybe_resolve(parent_size, |val, basis| tree.calc(val, basis))
+-        .maybe_apply_aspect_ratio(aspect_ratio)
+-        .maybe_add(box_sizing_adjustment);
++    // pyro: a `max-width` does not cap an `auto` height through the ratio: the height the ratio gives from the
++    // (clamped) width is the automatic one, at least the rows' (`auto_height`; WPT css-grid
++    // `grid-content-distribution-029`)
++    let max_size = {
++        let max = style.max_size().maybe_resolve(parent_size, |val, basis| tree.calc(val, basis));
++        let transferred = max.maybe_apply_aspect_ratio(aspect_ratio);
++        Size { width: transferred.width, height: max.height }.maybe_add(box_sizing_adjustment)
++    };
++    // pyro: a height the preferred aspect ratio gives from the width is from the width between `min-width` and
++    // `max-width`, and its final value is `auto_height`'s below (which keeps the automatic minimum height; WPT
++    // css-grid `grid-content-distribution-029`)
++    let mut height_from_ratio = false;
+     let preferred_size = if inputs.sizing_mode == SizingMode::InherentSize {
+-        style
+-            .size()
+-            .maybe_resolve(parent_size, |val, basis| tree.calc(val, basis))
+-            .maybe_apply_aspect_ratio(style.aspect_ratio())
+-            .maybe_add(box_sizing_adjustment)
++        let raw = style.size().maybe_resolve(parent_size, |val, basis| tree.calc(val, basis));
++        let mut size = raw.maybe_apply_aspect_ratio(aspect_ratio).maybe_add(box_sizing_adjustment);
++        if let (Some(ratio), Some(width), None) = (aspect_ratio, raw.width, raw.height) {
++            let outer = (width + box_sizing_adjustment.width).maybe_clamp(min_size.width, max_size.width);
++            size.height = Some((outer - box_sizing_adjustment.width).max(0.0) / ratio + box_sizing_adjustment.height);
++            height_from_ratio = true;
++        }
++        size
+     } else {
+         Size::NONE
+     };
+@@ -196,6 +216,7 @@ fn compute_container_constants<Tree: LayoutGridContainer>(
+         min_size,
+         max_size,
+         preferred_size,
++        height_from_ratio,
+         scrollbar_gutter,
+         #[cfg(feature = "content_size")]
+         is_scroll_container,
+@@ -225,6 +246,9 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
  ) -> LayoutOutput {
      let LayoutInput { known_dimensions, run_mode, .. } = inputs;
  
@@ -3468,7 +3524,15 @@ index f0109c6e..10650284 100644
      let style = tree.get_grid_container_style(node);
      let constants = compute_container_constants(tree, &style, inputs);
      let GridContainerConstants {
-@@ -252,6 +262,12 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -237,6 +261,7 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+         min_size,
+         max_size,
+         preferred_size,
++        height_from_ratio,
+         scrollbar_gutter,
+         #[cfg(feature = "content_size")]
+         is_scroll_container,
+@@ -252,6 +277,12 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
          mut inner_node_size,
      } = constants;
  
@@ -3481,7 +3545,7 @@ index f0109c6e..10650284 100644
      // Note: we avoid accessing the grid rows/columns methods more than once as this can
      // cause an expensive-ish computation
      let grid_template_columns = style.grid_template_columns();
-@@ -302,31 +318,45 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -302,31 +333,45 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
  
      // Compute the number of rows and columns in the explicit grid *template*
      // (explicit tracks from grid_areas are computed separately below)
@@ -3543,7 +3607,7 @@ index f0109c6e..10650284 100644
  
      // Build the per-line names of the explicit grid from the name resolver's collected pairs
      let mut detailed_column_line_names = name_resolver.detailed_line_names(AbsoluteAxis::Horizontal);
-@@ -336,105 +366,327 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -336,105 +381,327 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
      // Absolutely positioned children do not take part in grid placement and do not create implicit tracks,
      // so they are excluded here. Each child's style is read and its named lines resolved exactly once; the
      // results drive both the grid size estimate and item placement below.
@@ -3952,7 +4016,7 @@ index f0109c6e..10650284 100644
      let initial_column_sum = columns.iter().map(|track| track.base_size).sum::<f32>();
      inner_node_size.width = inner_node_size.width.or_else(|| initial_column_sum.into());
  
-@@ -448,9 +700,28 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -448,9 +715,28 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
          return LayoutOutput::from_outer_size(Size { width, height: 0.0 });
      }
  
@@ -3982,7 +4046,7 @@ index f0109c6e..10650284 100644
      track_sizing_algorithm(
          tree,
          AbstractAxis::Block,
-@@ -464,9 +735,21 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -464,9 +750,21 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
          &mut columns,
          &mut items,
          |track: &GridTrack, _, _| Some(track.base_size),
@@ -4005,7 +4069,7 @@ index f0109c6e..10650284 100644
  
      debug_log!("initial_column_sum", dbg:initial_column_sum);
      debug_log!(dbg: columns.iter().map(|track| track.base_size).collect::<Vec<_>>());
-@@ -475,18 +758,39 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -475,18 +773,38 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
  
      // 6. Compute container size
      let resolved_style_size = known_dimensions.or(preferred_size);
@@ -4034,10 +4098,11 @@ index f0109c6e..10650284 100644
 -            .unwrap_or_else(|| initial_column_sum + content_box_inset.horizontal_axis_sum())
 -            .maybe_clamp(min_size.width, max_size.width)
 -            .max(padding_border_size.width),
-+        width,
-         height: resolved_style_size
-             .get(AbstractAxis::Block)
+-        height: resolved_style_size
+-            .get(AbstractAxis::Block)
 -            .unwrap_or_else(|| initial_row_sum + content_box_inset.vertical_axis_sum())
++        width,
++        height: (if height_from_ratio && known_dimensions.height.is_none() { None } else { resolved_style_size.get(AbstractAxis::Block) })
 +            .unwrap_or(auto_height)
              .maybe_clamp(min_size.height, max_size.height)
              .max(padding_border_size.height),
@@ -4051,7 +4116,7 @@ index f0109c6e..10650284 100644
      let mut container_content_box = Size {
          width: f32_max(0.0, container_border_box.width - content_box_inset.horizontal_axis_sum()),
          height: f32_max(0.0, container_border_box.height - content_box_inset.vertical_axis_sum()),
-@@ -511,12 +815,33 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -511,12 +829,33 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
      let has_percentage_column = columns.iter().any(|track| track.uses_percentage());
      let has_percentage_row = rows.iter().any(|track| track.uses_percentage());
      let parent_width_indefinite = outer_node_size.width.is_none();
@@ -4087,7 +4152,7 @@ index f0109c6e..10650284 100644
                  let grid_area_size = item.grid_area_size(
                      AbstractAxis::Inline,
                      &columns,
-@@ -554,7 +879,7 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -554,7 +893,7 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
      //   - Column sizing was re-run and any grid item crossing an intrinsically sized track's min content contribution height has changed
      // TODO: Only rerun sizing for tracks that actually require it rather than for all tracks if any need it.
      let parent_height_indefinite = outer_node_size.height.is_none();
@@ -4096,7 +4161,7 @@ index f0109c6e..10650284 100644
      let mut intrinsic_row_contribution_changed = false;
  
      if rerun_row_sizing {
-@@ -567,6 +892,7 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -567,6 +906,7 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
          });
      }
  
@@ -4104,7 +4169,7 @@ index f0109c6e..10650284 100644
      if rerun_column_sizing {
          // Re-run track sizing algorithm for Inline axis
          track_sizing_algorithm(
-@@ -582,15 +908,27 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -582,15 +922,27 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
              &mut rows,
              &mut items,
              |track: &GridTrack, _, _| Some(track.base_size),
@@ -4134,7 +4199,7 @@ index f0109c6e..10650284 100644
                      let grid_area_size = item.grid_area_size(
                          AbstractAxis::Block,
                          &rows,
-@@ -617,6 +955,10 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -617,6 +969,10 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
      }
  
      if rerun_row_sizing {
@@ -4145,7 +4210,7 @@ index f0109c6e..10650284 100644
          // Re-run track sizing algorithm for Block axis
          track_sizing_algorithm(
              tree,
-@@ -631,8 +973,16 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -631,8 +987,16 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
              &mut columns,
              &mut items,
              |track: &GridTrack, _, _| Some(track.base_size),
@@ -4163,7 +4228,7 @@ index f0109c6e..10650284 100644
      }
  
      if (intrinsic_column_contribution_changed && !has_percentage_column)
-@@ -661,6 +1011,14 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -661,6 +1025,14 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
                  f32_max(0.0, container_border_box.height - content_box_inset.vertical_axis_sum());
          }
      }
@@ -4178,7 +4243,7 @@ index f0109c6e..10650284 100644
  
      // If only the container's size has been requested
      if run_mode == RunMode::ComputeSize {
-@@ -693,6 +1051,54 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -693,6 +1065,54 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
          false,
      );
  
@@ -4233,7 +4298,7 @@ index f0109c6e..10650284 100644
      // 9. Size, Align, and Position Grid Items
  
      #[cfg_attr(not(feature = "content_size"), allow(unused_mut))]
-@@ -721,6 +1127,13 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -721,6 +1141,13 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
      };
  
      // Position in-flow children (stored in items vector)
@@ -4247,7 +4312,7 @@ index f0109c6e..10650284 100644
      for (index, item) in items.iter_mut().enumerate() {
          // Tracks are stored in logical order. In RTL the physical offsets are assigned
          // right-to-left, so an item's physical left edge is derived from its logical end
-@@ -739,25 +1152,97 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -739,25 +1166,97 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
                  columns[item.column_indexes.end as usize].offset
              },
          };
@@ -4363,7 +4428,7 @@ index f0109c6e..10650284 100644
  
          #[cfg(feature = "content_size")]
          {
-@@ -765,6 +1250,24 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -765,6 +1264,24 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
          }
      }
  
@@ -4388,7 +4453,7 @@ index f0109c6e..10650284 100644
      // Position hidden and absolutely positioned children, merging in the candidates bubbled out
      // of in-flow children's subtrees (`items` is sorted by `source_order`, i.e. child index)
      let mut order = items.len() as u32;
-@@ -841,7 +1344,7 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -841,7 +1358,7 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
              };
              drop(child_style);
  
@@ -4397,7 +4462,7 @@ index f0109c6e..10650284 100644
                  node: child,
                  order,
                  position,
-@@ -869,19 +1372,17 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -869,19 +1386,17 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
      // resolve the grid areas of out-of-flow boxes whose containing block is this grid
      let areas =
          name_resolver.populate_detailed_line_resolvers(&mut detailed_row_line_names, &mut detailed_column_line_names);
@@ -4425,7 +4490,7 @@ index f0109c6e..10650284 100644
              items: items.iter().map(DetailedGridItemsInfo::from_grid_item).collect(),
              areas,
          },
-@@ -926,25 +1427,38 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -926,25 +1441,38 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
          return output;
      }
  
@@ -4470,7 +4535,7 @@ index f0109c6e..10650284 100644
      };
  
      // A scroll container's own padding at the end of the content is part of its scrollable
-@@ -976,13 +1490,86 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -976,13 +1504,86 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
      let mut output = LayoutOutput::from_sizes_and_baselines(
          container_border_box,
          scrollable_overflow_rect,
@@ -4558,7 +4623,7 @@ index f0109c6e..10650284 100644
  /// Resolve the static-position rectangle (the grid area determined by the grid-placement
  /// properties) for an out-of-flow child of a positioned grid container.
  ///
-@@ -1298,6 +1885,10 @@ pub struct DetailedGridTracksInfo<S: CheapCloneStr = DefaultCheapStr> {
+@@ -1298,6 +1899,10 @@ pub struct DetailedGridTracksInfo<S: CheapCloneStr = DefaultCheapStr> {
      /// [`DetailedGridTracksInfo::iter_line_names`] for indices relative to the full grid
      /// (including implicit tracks). Empty if the grid has no named lines.
      pub line_names: GridLineNames<S>,
@@ -4569,7 +4634,7 @@ index f0109c6e..10650284 100644
  }
  
  impl<S: CheapCloneStr> DetailedGridTracksInfo<S> {
-@@ -1337,6 +1928,7 @@ impl<S: CheapCloneStr> DetailedGridTracksInfo<S> {
+@@ -1337,6 +1942,7 @@ impl<S: CheapCloneStr> DetailedGridTracksInfo<S> {
              collapsed_tracks,
              empty_axis_line,
              line_names,
@@ -4577,7 +4642,7 @@ index f0109c6e..10650284 100644
          }
      }
  
-@@ -1380,6 +1972,16 @@ impl<S: CheapCloneStr> DetailedGridTracksInfo<S> {
+@@ -1380,6 +1986,16 @@ impl<S: CheapCloneStr> DetailedGridTracksInfo<S> {
              out.write_char(']')
          }
  
@@ -4594,7 +4659,7 @@ index f0109c6e..10650284 100644
          if self.positions.is_empty() {
              return out.write_str("none");
          }
-@@ -1454,3 +2056,131 @@ impl DetailedGridItemsInfo {
+@@ -1454,3 +2070,131 @@ impl DetailedGridItemsInfo {
          }
      }
  }
@@ -7431,7 +7496,7 @@ index bb954acf..eb14e801 100644
  }
  
 diff --git a/src/compute/oof.rs b/src/compute/oof.rs
-index 2c6179a4..eff4e3e4 100644
+index 2c6179a4..95e91b3a 100644
 --- a/src/compute/oof.rs
 +++ b/src/compute/oof.rs
 @@ -23,7 +23,9 @@ use crate::{AxisStaticEdge, BoxSizing, Direction};
@@ -7458,7 +7523,16 @@ index 2c6179a4..eff4e3e4 100644
              // The fallback alignment of `baseline` is `start`
              AlignItemsKeyword::Start
              | AlignItemsKeyword::FlexStart
-@@ -566,12 +572,14 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
+@@ -559,6 +565,8 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
+         .maybe_resolve(area_size, |val, basis| tree.calc(val, basis))
+         .maybe_apply_aspect_ratio(aspect_ratio)
+         .maybe_add(box_sizing_adjustment);
++    // pyro: `min-width`/`min-height` are `auto` (the automatic minimum of a box with a preferred aspect ratio)
++    let min_is_auto = child_style.min_size().map(|min| min.is_auto());
+     let mut min_size = child_style
+         .min_size()
+         .maybe_resolve(area_size, |val, basis| tree.calc(val, basis))
+@@ -566,12 +574,14 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
          .maybe_add(box_sizing_adjustment)
          .or(padding_border_sum.map(Some))
          .maybe_max(padding_border_sum);
@@ -7474,7 +7548,7 @@ index 2c6179a4..eff4e3e4 100644
  
      let is_replaced = child_style.is_replaced();
      let is_table = child_style.is_table();
-@@ -592,15 +600,23 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
+@@ -592,15 +602,23 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
  
      // Static positions are relative to the containing block's border box: make them relative to
      // the inset-resolution area
@@ -7507,7 +7581,7 @@ index 2c6179a4..eff4e3e4 100644
      };
  
      let horizontal = OofAxis {
-@@ -649,8 +665,7 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
+@@ -649,8 +667,7 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
              &mut known_dimensions,
              size_style,
              area_size,
@@ -7517,7 +7591,7 @@ index 2c6179a4..eff4e3e4 100644
              SizingMode::ContentSize,
          );
          known_dimensions = known_dimensions.maybe_apply_aspect_ratio(aspect_ratio).maybe_clamp(min_size, max_size);
-@@ -691,6 +706,66 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
+@@ -691,8 +708,144 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
          }
      }
  
@@ -7581,10 +7655,88 @@ index 2c6179a4..eff4e3e4 100644
 +        }
 +    }
 +
++    // pyro: a size the preferred aspect ratio gives from the other axis's definite size is at least the
++    // content's (the automatic minimum size, css-sizing-4 §5.1), unless a scroll container or a minimum is
++    // set: the content height at the width, the min-content width at the height (WPT css-sizing
++    // `aspect-ratio/abspos-012`, `-013`)
++    if aspect_ratio.is_some() && !is_replaced && !is_table && !overflow.x.is_scroll_container() && !overflow.y.is_scroll_container() {
++        let raw = size_style.maybe_resolve(area_size, |val, basis| tree.calc(val, basis));
++        let no_min = |auto: bool, keyword: Dimension| auto && keyword.is_auto();
++        match (raw.width, raw.height, known_dimensions.width, known_dimensions.height) {
++            (Some(_), None, Some(width), Some(height)) if no_min(min_is_auto.height, min_keyword.height) => {
++                let content = tree.measure_child_size(
++                    candidate.node,
++                    Size { width: Some(width), height: None },
++                    area_size.map(Some),
++                    Size { width: AvailableSpace::Definite(width), height: available_space.height },
++                    SizingMode::ContentSize,
++                    AbsoluteAxis::Vertical,
++                    Line::FALSE,
++                );
++                known_dimensions.height = Some(height.max(content.maybe_min(max_size.height)));
++            }
++            (None, Some(_), Some(width), Some(height)) if no_min(min_is_auto.width, min_keyword.width) => {
++                let content = tree.measure_child_size(
++                    candidate.node,
++                    // (without the height, which the ratio would turn into the width again)
++                    Size::NONE,
++                    area_size.map(Some),
++                    Size { width: AvailableSpace::MinContent, height: AvailableSpace::Definite(height) },
++                    SizingMode::ContentSize,
++                    AbsoluteAxis::Horizontal,
++                    Line::FALSE,
++                );
++                known_dimensions.width = Some(width.max(content.maybe_min(max_size.width)));
++            }
++            _ => {}
++        }
++    }
++
      let final_size = match (known_dimensions.width, known_dimensions.height) {
          (Some(width), Some(height)) => Size { width, height },
++        // pyro: an automatic width and height with a preferred aspect ratio: the shrink-to-fit width between
++        // its (transferred) minimum and maximum, the height the ratio gives from it, at least the content's
++        // height at that width (the automatic minimum, unless a scroll container or a `min-height`; WPT
++        // css-sizing `aspect-ratio/abspos-008`)
++        (None, None) if aspect_ratio.is_some() && !is_replaced && !is_table => {
++            let ratio = aspect_ratio.unwrap();
++            let width = tree
++                .measure_child_size(
++                    candidate.node,
++                    Size::NONE,
++                    area_size.map(Some),
++                    available_space,
++                    SizingMode::ContentSize,
++                    AbsoluteAxis::Horizontal,
++                    Line::FALSE,
++                )
++                .maybe_clamp(min_size.width, max_size.width);
++            let height = ((width - box_sizing_adjustment.width).max(0.0) / ratio + box_sizing_adjustment.height)
++                .maybe_clamp(min_size.height, max_size.height);
++            let content_minimum = min_keyword.height.is_auto()
++                && min_is_auto.height
++                && !overflow.x.is_scroll_container()
++                && !overflow.y.is_scroll_container();
++            let height = if content_minimum {
++                let content = tree.measure_child_size(
++                    candidate.node,
++                    Size { width: Some(width), height: None },
++                    area_size.map(Some),
++                    Size { width: AvailableSpace::Definite(width), height: available_space.height },
++                    SizingMode::ContentSize,
++                    AbsoluteAxis::Vertical,
++                    Line::FALSE,
++                );
++                height.max(content.maybe_min(max_size.height))
++            } else {
++                height
++            };
++            Size { width, height }
++        }
          _ => {
-@@ -828,7 +903,8 @@ pub(crate) fn perform_oof_layout(
+             let measured_size = tree.measure_child_size_both(
+                 candidate.node,
+@@ -828,7 +981,8 @@ pub(crate) fn perform_oof_layout(
      // to the work list (Blink-style re-sweep).
      let mut worklist: Vec<OofCandidate> = Vec::new();
      for candidate in candidates {
@@ -7594,7 +7746,7 @@ index 2c6179a4..eff4e3e4 100644
              worklist.push(*candidate);
          } else {
              unclaimed.push(*candidate);
-@@ -851,17 +927,21 @@ pub(crate) fn perform_oof_layout(
+@@ -851,17 +1005,21 @@ pub(crate) fn perform_oof_layout(
              overflow,
              #[cfg(feature = "content_size")]
              contain,
@@ -7627,7 +7779,7 @@ index 2c6179a4..eff4e3e4 100644
          let location = layout.location;
          let final_size = layout.size;
  
-@@ -871,7 +951,7 @@ pub(crate) fn perform_oof_layout(
+@@ -871,7 +1029,7 @@ pub(crate) fn perform_oof_layout(
          if !surfaced.is_empty() {
              surfaced.translate(location);
              for surfaced_candidate in surfaced.iter() {

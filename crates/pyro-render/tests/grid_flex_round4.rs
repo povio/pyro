@@ -136,3 +136,35 @@ fn min_content_contributions_of_inflexible_items() {
     );
     check(&img, &[(95, 25, GREEN), (105, 25, WHITE)]);
 }
+
+/// A grid of `width: 100px; max-width: 50px; aspect-ratio: 2` around a 100px tall item is 50px wide and as
+/// tall as its row (its automatic minimum height), not 25px: the item is not centred out of it (WPT css-grid
+/// `alignment/grid-content-distribution-029`).
+#[test]
+fn ratio_grid_height_keeps_its_automatic_minimum() {
+    let img = render(
+        "<div style='display:grid;width:100px;aspect-ratio:2;max-width:50px;align-content:center'>\
+           <div style='width:100px;height:100px;background:green'></div></div>",
+    );
+    check(&img, &[(50, 5, GREEN), (50, 95, GREEN), (50, 105, WHITE)]);
+}
+
+/// Absolutely positioned boxes with a preferred aspect ratio: an automatic size is the shrink-to-fit width
+/// between the (transferred) limits and the height the ratio gives from it; a size the ratio gives from the
+/// other axis is at least the content's (WPT css-sizing `aspect-ratio/abspos-008`, `-012`, `-013`).
+#[test]
+fn abspos_ratio_sizes() {
+    let img = render(
+        "<div style='position:relative;height:100px'><div style='position:absolute;aspect-ratio:1/1;max-height:100%;background:green'>\
+           <div style='display:inline-block;width:200px;height:10px'></div></div></div>",
+    );
+    check(&img, &[(95, 95, GREEN), (105, 50, WHITE), (50, 105, WHITE)]);
+    let img = render(
+        "<div style='background:green;width:100px;aspect-ratio:2/1;position:absolute'><div style='height:100px'></div></div>",
+    );
+    check(&img, &[(50, 95, GREEN), (50, 105, WHITE)]);
+    let img = render(
+        "<div style='background:green;height:100px;aspect-ratio:1/2;position:absolute'><div style='width:100px'></div></div>",
+    );
+    check(&img, &[(95, 50, GREEN), (105, 50, WHITE)]);
+}

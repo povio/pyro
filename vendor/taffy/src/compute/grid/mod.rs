@@ -71,6 +71,9 @@ struct GridContainerConstants {
     max_size: Size<Option<f32>>,
     /// The container's border-box preferred size, if definite
     preferred_size: Size<Option<f32>>,
+    /// pyro: the preferred height is the one the aspect ratio gives from the width (its final value is the
+    /// automatic one, which keeps the automatic minimum height)
+    height_from_ratio: bool,
     /// The space reserved for scrollbars in each axis
     scrollbar_gutter: Point<f32>,
     /// Whether the container's overflow makes it a scroll container
@@ -125,17 +128,27 @@ fn compute_container_constants<Tree: LayoutGridContainer>(
         .maybe_resolve(parent_size, |val, basis| tree.calc(val, basis))
         .maybe_apply_aspect_ratio(aspect_ratio)
         .maybe_add(box_sizing_adjustment);
-    let max_size = style
-        .max_size()
-        .maybe_resolve(parent_size, |val, basis| tree.calc(val, basis))
-        .maybe_apply_aspect_ratio(aspect_ratio)
-        .maybe_add(box_sizing_adjustment);
+    // pyro: a `max-width` does not cap an `auto` height through the ratio: the height the ratio gives from the
+    // (clamped) width is the automatic one, at least the rows' (`auto_height`; WPT css-grid
+    // `grid-content-distribution-029`)
+    let max_size = {
+        let max = style.max_size().maybe_resolve(parent_size, |val, basis| tree.calc(val, basis));
+        let transferred = max.maybe_apply_aspect_ratio(aspect_ratio);
+        Size { width: transferred.width, height: max.height }.maybe_add(box_sizing_adjustment)
+    };
+    // pyro: a height the preferred aspect ratio gives from the width is from the width between `min-width` and
+    // `max-width`, and its final value is `auto_height`'s below (which keeps the automatic minimum height; WPT
+    // css-grid `grid-content-distribution-029`)
+    let mut height_from_ratio = false;
     let preferred_size = if inputs.sizing_mode == SizingMode::InherentSize {
-        style
-            .size()
-            .maybe_resolve(parent_size, |val, basis| tree.calc(val, basis))
-            .maybe_apply_aspect_ratio(style.aspect_ratio())
-            .maybe_add(box_sizing_adjustment)
+        let raw = style.size().maybe_resolve(parent_size, |val, basis| tree.calc(val, basis));
+        let mut size = raw.maybe_apply_aspect_ratio(aspect_ratio).maybe_add(box_sizing_adjustment);
+        if let (Some(ratio), Some(width), None) = (aspect_ratio, raw.width, raw.height) {
+            let outer = (width + box_sizing_adjustment.width).maybe_clamp(min_size.width, max_size.width);
+            size.height = Some((outer - box_sizing_adjustment.width).max(0.0) / ratio + box_sizing_adjustment.height);
+            height_from_ratio = true;
+        }
+        size
     } else {
         Size::NONE
     };
@@ -203,6 +216,7 @@ fn compute_container_constants<Tree: LayoutGridContainer>(
         min_size,
         max_size,
         preferred_size,
+        height_from_ratio,
         scrollbar_gutter,
         #[cfg(feature = "content_size")]
         is_scroll_container,
@@ -247,6 +261,7 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
         min_size,
         max_size,
         preferred_size,
+        height_from_ratio,
         scrollbar_gutter,
         #[cfg(feature = "content_size")]
         is_scroll_container,
@@ -779,8 +794,7 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
     };
     let mut container_border_box = Size {
         width,
-        height: resolved_style_size
-            .get(AbstractAxis::Block)
+        height: (if height_from_ratio && known_dimensions.height.is_none() { None } else { resolved_style_size.get(AbstractAxis::Block) })
             .unwrap_or(auto_height)
             .maybe_clamp(min_size.height, max_size.height)
             .max(padding_border_size.height),

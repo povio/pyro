@@ -565,6 +565,8 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
         .maybe_resolve(area_size, |val, basis| tree.calc(val, basis))
         .maybe_apply_aspect_ratio(aspect_ratio)
         .maybe_add(box_sizing_adjustment);
+    // pyro: `min-width`/`min-height` are `auto` (the automatic minimum of a box with a preferred aspect ratio)
+    let min_is_auto = child_style.min_size().map(|min| min.is_auto());
     let mut min_size = child_style
         .min_size()
         .maybe_resolve(area_size, |val, basis| tree.calc(val, basis))
@@ -766,8 +768,84 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
         }
     }
 
+    // pyro: a size the preferred aspect ratio gives from the other axis's definite size is at least the
+    // content's (the automatic minimum size, css-sizing-4 §5.1), unless a scroll container or a minimum is
+    // set: the content height at the width, the min-content width at the height (WPT css-sizing
+    // `aspect-ratio/abspos-012`, `-013`)
+    if aspect_ratio.is_some() && !is_replaced && !is_table && !overflow.x.is_scroll_container() && !overflow.y.is_scroll_container() {
+        let raw = size_style.maybe_resolve(area_size, |val, basis| tree.calc(val, basis));
+        let no_min = |auto: bool, keyword: Dimension| auto && keyword.is_auto();
+        match (raw.width, raw.height, known_dimensions.width, known_dimensions.height) {
+            (Some(_), None, Some(width), Some(height)) if no_min(min_is_auto.height, min_keyword.height) => {
+                let content = tree.measure_child_size(
+                    candidate.node,
+                    Size { width: Some(width), height: None },
+                    area_size.map(Some),
+                    Size { width: AvailableSpace::Definite(width), height: available_space.height },
+                    SizingMode::ContentSize,
+                    AbsoluteAxis::Vertical,
+                    Line::FALSE,
+                );
+                known_dimensions.height = Some(height.max(content.maybe_min(max_size.height)));
+            }
+            (None, Some(_), Some(width), Some(height)) if no_min(min_is_auto.width, min_keyword.width) => {
+                let content = tree.measure_child_size(
+                    candidate.node,
+                    // (without the height, which the ratio would turn into the width again)
+                    Size::NONE,
+                    area_size.map(Some),
+                    Size { width: AvailableSpace::MinContent, height: AvailableSpace::Definite(height) },
+                    SizingMode::ContentSize,
+                    AbsoluteAxis::Horizontal,
+                    Line::FALSE,
+                );
+                known_dimensions.width = Some(width.max(content.maybe_min(max_size.width)));
+            }
+            _ => {}
+        }
+    }
+
     let final_size = match (known_dimensions.width, known_dimensions.height) {
         (Some(width), Some(height)) => Size { width, height },
+        // pyro: an automatic width and height with a preferred aspect ratio: the shrink-to-fit width between
+        // its (transferred) minimum and maximum, the height the ratio gives from it, at least the content's
+        // height at that width (the automatic minimum, unless a scroll container or a `min-height`; WPT
+        // css-sizing `aspect-ratio/abspos-008`)
+        (None, None) if aspect_ratio.is_some() && !is_replaced && !is_table => {
+            let ratio = aspect_ratio.unwrap();
+            let width = tree
+                .measure_child_size(
+                    candidate.node,
+                    Size::NONE,
+                    area_size.map(Some),
+                    available_space,
+                    SizingMode::ContentSize,
+                    AbsoluteAxis::Horizontal,
+                    Line::FALSE,
+                )
+                .maybe_clamp(min_size.width, max_size.width);
+            let height = ((width - box_sizing_adjustment.width).max(0.0) / ratio + box_sizing_adjustment.height)
+                .maybe_clamp(min_size.height, max_size.height);
+            let content_minimum = min_keyword.height.is_auto()
+                && min_is_auto.height
+                && !overflow.x.is_scroll_container()
+                && !overflow.y.is_scroll_container();
+            let height = if content_minimum {
+                let content = tree.measure_child_size(
+                    candidate.node,
+                    Size { width: Some(width), height: None },
+                    area_size.map(Some),
+                    Size { width: AvailableSpace::Definite(width), height: available_space.height },
+                    SizingMode::ContentSize,
+                    AbsoluteAxis::Vertical,
+                    Line::FALSE,
+                );
+                height.max(content.maybe_min(max_size.height))
+            } else {
+                height
+            };
+            Size { width, height }
+        }
         _ => {
             let measured_size = tree.measure_child_size_both(
                 candidate.node,

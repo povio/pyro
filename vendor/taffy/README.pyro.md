@@ -639,3 +639,10 @@ false: a table cell's stretched height) leaves the box's own clamped `height` as
 `block_container_percentage_height` too; a percentage-height scroll container whose percentage does not resolve in
 a container that `block_container_restricts_percent_scrollers` (a cell of a table of non-`auto` height) is sized as
 of height 0, then clamped (css-tables `percentage-sizing-of-table-cell-007`). `tree/traits.rs`: the new hook.
+- Round 4 lane B (4): `compute/grid/mod.rs`: a preferred height the ratio gives from the width is from the width
+  between `min-width` and `max-width`, its final value the automatic one (at least the rows), and `max-width` is not
+  transferred to a maximum height (WPT css-grid `grid-content-distribution-029`). `compute/oof.rs`: an absolutely
+  positioned box with a preferred aspect ratio and automatic sizes takes the shrink-to-fit width between its
+  (transferred) limits and the ratio's height from it; a size the ratio gives from the other axis is at least the
+  content's when `min-*` is `auto` (css-sizing `aspect-ratio/abspos-008/012/013`; `abspos-017`'s `min-width: 0` keeps
+  the ratio).
