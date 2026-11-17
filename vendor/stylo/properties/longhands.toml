@@ -3804,6 +3804,18 @@ affects = "layout"
 type = "TopLayer"
 initial = "computed::TopLayer::None"
 
+# pyro: css-position-4 `overlay`, for Servo: whether an element in the top layer is rendered there
+# (`auto`). The UA sheet sets it on top-layer elements; a discrete transition keeps it, and the element in
+# the top layer, past their removal (pyro-dom, blitz-paint).
+[overlay]
+struct = "box"
+engine = "servo"
+spec = "https://drafts.csswg.org/css-position-4/#overlay"
+animation_type = "discrete"
+affects = "layout"
+type = "TopLayer"
+initial = "computed::TopLayer::None"
+
 [scroll-behavior]
 struct = "box"
 servo_pref = "layout.css.scroll-behavior.enabled"

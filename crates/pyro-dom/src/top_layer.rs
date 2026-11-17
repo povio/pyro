@@ -44,11 +44,15 @@ pub(crate) struct TopLayer {
     /// The element that showed each showing popover (`popovertarget`,
     /// `commandfor`, `showPopover({source})`).
     invokers: FxHashMap<NodeId, NodeId>,
+    /// Elements no longer modal or showing that stay in `order` while an `overlay` transition
+    /// runs (css-position-4 "remove from the top layer later"; [`Dom::keep_in_top_layer`]).
+    pending: FxHashSet<NodeId>,
 }
 
 impl TopLayer {
     /// Puts `el` on top of the top layer (out of its place first, if in it).
     fn enter(&mut self, el: NodeId) {
+        self.pending.remove(&el);
         self.exit(el);
         if let Some(rank) = self.rank.get_mut() {
             rank.insert(el, self.order.len());
@@ -58,6 +62,9 @@ impl TopLayer {
 
     /// Takes `el` out of the top layer's order; the ones above it move down.
     fn exit(&mut self, el: NodeId) {
+        if !self.pending.is_empty() && self.pending.contains(&el) {
+            return;
+        }
         let at = match self.rank.get_mut() {
             Some(rank) => rank.remove(&el),
             None => self.order.iter().position(|&e| e == el),
@@ -192,6 +199,36 @@ impl Dom {
         self.top_layer.invokers.get(&el).copied()
     }
 
+    /// Keeps `el` in the top layer when it next stops being modal or showing, until
+    /// [`Dom::finish_top_layer_exit`]: an `overlay` transition keeps it rendered there
+    /// (css-position-4 §4.1). Its popover stack and invoker go as usual.
+    pub fn keep_in_top_layer(&mut self, el: NodeId) {
+        if self.top_layer.rank_of(el).is_some() {
+            self.top_layer.pending.insert(el);
+        }
+    }
+
+    /// Takes `el`, kept by [`Dom::keep_in_top_layer`], out of the top layer if it is no longer
+    /// modal or showing. Whether it left.
+    pub fn finish_top_layer_exit(&mut self, el: NodeId) -> bool {
+        if !self.top_layer.pending.remove(&el) {
+            return false;
+        }
+        if self.top_layer.modal.contains(&el) || self.top_layer.popovers.contains(&el) {
+            return false;
+        }
+        self.top_layer.exit(el);
+        self.bump();
+        true
+    }
+
+    /// The elements [`Dom::keep_in_top_layer`] keeps in the top layer that are no longer modal or
+    /// showing.
+    pub fn top_layer_leaving(&self) -> Vec<NodeId> {
+        let tl = &self.top_layer;
+        tl.pending.iter().copied().filter(|e| !tl.modal.contains(e) && !tl.popovers.contains(e)).collect()
+    }
+
     /// The top layer, bottom first.
     pub fn top_layer(&self) -> &[NodeId] {
         &self.top_layer.order
@@ -263,11 +300,15 @@ impl Dom {
     /// HTML removing steps: a removed dialog is no longer modal and a removed
     /// popover is hidden (no events), as are those inside the removed subtree.
     pub(crate) fn top_layer_before_remove(&mut self, node: u32) {
-        if self.top_layer.modal.is_empty() && self.top_layer.popovers.is_empty() {
+        if self.top_layer.modal.is_empty() && self.top_layer.popovers.is_empty() && self.top_layer.pending.is_empty() {
             return;
         }
         for i in self.shadow_including_subtree(node) {
             let id = self.id_of(i);
+            if self.top_layer.pending.remove(&id) {
+                self.top_layer.exit(id);
+                self.bump();
+            }
             let was_modal = self.top_layer.modal.remove(&id);
             let was_showing = self.top_layer.popovers.remove(&id);
             if was_modal || was_showing {

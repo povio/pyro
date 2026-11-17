@@ -556,6 +556,7 @@ fn update(page: &Rc<PageDom>, defer: bool) {
             state.install_source(page, style);
         }
     }
+    finish_overlay_exits(page);
     schedule(page, planned, defer);
 }
 
@@ -728,7 +729,50 @@ pub(crate) fn style_flush(page: &Rc<PageDom>, read: Option<NodeId>) {
             style_read_hidden_content(state, &dom, style, el);
         }
     }
+    finish_overlay_exits(page);
     schedule(page, planned, true);
+}
+
+/// Whether hiding `el` (a popover or modal dialog) may start an `overlay` transition, which keeps
+/// it in the top layer until it ends: a transition of `overlay` (or `all`) with
+/// `transition-behavior: allow-discrete` (css-position-4 §4.1).
+pub(crate) fn may_transition_overlay(page: &Rc<PageDom>, el: NodeId) -> bool {
+    let (Ok(dom), Some(layout)) = (page.dom.try_borrow(), page.try_layout()) else { return false };
+    let style = layout.style();
+    let rules = page.animation_events.rules(&dom, style);
+    if !rules.animates() {
+        return false;
+    }
+    let style_of = |e: NodeId| style.stylo_style(&dom, e);
+    rules
+        .element(&dom, el, &style_of)
+        .transitions
+        .iter()
+        .any(|t| t.allow_discrete && matches!(t.property.as_str(), "overlay" | "all"))
+}
+
+/// The elements kept in the top layer after leaving it ([`pyro_dom::Dom::keep_in_top_layer`])
+/// whose `overlay` transition did not start or is over leave it now.
+fn finish_overlay_exits(page: &Rc<PageDom>) {
+    let leaving = match page.dom.try_borrow() {
+        Ok(dom) => dom.top_layer_leaving(),
+        Err(_) => return,
+    };
+    if leaving.is_empty() {
+        return;
+    }
+    let done: Vec<NodeId> = {
+        let transitions = page.animation_events.transitions.borrow();
+        leaving
+            .into_iter()
+            .filter(|&el| !transitions.iter().any(|t| t.el == el && t.name == "overlay" && t.live.get() && !t.ended.get()))
+            .collect()
+    };
+    if let Ok(mut dom) = page.dom.try_borrow_mut() {
+        for el in done {
+            dom.finish_top_layer_exit(el);
+        }
+    }
 }
 
 /// Script read layout (a box, an offset, a scroll position) of `el`: the
@@ -1183,6 +1227,12 @@ fn fire(page: &Rc<PageDom>, event: &Planned) {
     }
     if let Some(ended) = &event.ends {
         ended.set(true);
+    }
+    // An `overlay` transition that ends lets its element leave the top layer.
+    if event.transition && event.name == "overlay" && matches!(event.ty, "transitionend" | "transitioncancel") {
+        if let Ok(mut dom) = page.dom.try_borrow_mut() {
+            dom.finish_top_layer_exit(event.el);
+        }
     }
     if let Some((progress, step)) = &event.step {
         progress.set(progress.get().max(*step));

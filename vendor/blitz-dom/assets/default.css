@@ -1330,6 +1330,13 @@ dialog:popover-open {
     -moz-top-layer: top;
 }
 
+/* pyro: css-position-4 overlay: what is in the top layer is rendered there (a discrete
+   transition of it keeps an element there past its removal). Not `!important` as in the spec:
+   the sampled transition values rank below important declarations here. */
+dialog:modal, :popover-open {
+    overlay: auto;
+}
+
 :popover-open::backdrop {
     position: fixed;
     inset: 0;

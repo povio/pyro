@@ -1235,7 +1235,16 @@ impl BaseDocument {
     /// whole document (see [`Self::top_layer_nodes`]), not in its place.
     #[inline]
     pub fn is_in_top_layer(&self, id: NodeId) -> bool {
-        !self.top_layer.is_empty() && self.top_layer.contains(id)
+        !self.top_layer.is_empty() && self.top_layer.contains(id) && self.renders_in_top_layer(id)
+    }
+
+    /// pyro: whether top-layer element `id` is rendered in the top layer: its `overlay` is `auto`
+    /// (css-position-4 §4.1; the UA sheet sets it on `:modal` and `:popover-open`, and a discrete
+    /// transition of it keeps it on after the element leaves them, or off after it enters).
+    fn renders_in_top_layer(&self, id: NodeId) -> bool {
+        self.nodes.get(id).and_then(|n| n.primary_styles()).is_none_or(|style| {
+            style.get_box().overlay == style::values::computed::TopLayer::Auto
+        })
     }
 
     /// pyro: the elements of the top layer that are in the
@@ -1245,6 +1254,7 @@ impl BaseDocument {
             self.nodes
                 .get(id)
                 .is_some_and(|n| n.flags.is_in_document() && n.is_element())
+                && self.renders_in_top_layer(id)
         })
     }
 
