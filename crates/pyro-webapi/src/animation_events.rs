@@ -215,6 +215,7 @@ impl State {
         dom.has_animation_listeners()
             || self.listed.get()
             || dom.smil_seen()
+            || dom.inline_transitions_seen()
             || self.rules(dom, style).animates()
             || self.inline_animations(dom, style, doc)
     }
@@ -233,7 +234,10 @@ impl State {
         found
     }
     fn transitions_tracked(&self, dom: &pyro_dom::Dom, style: &pyro_dom::style::StyleEngine) -> bool {
-        dom.has_transition_listeners() || self.listed.get() || self.rules(dom, style).animates()
+        dom.has_transition_listeners()
+            || self.listed.get()
+            || dom.inline_transitions_seen()
+            || self.rules(dom, style).animates()
     }
     fn bump(&self) {
         self.generation.set(self.generation.get().wrapping_add(1));

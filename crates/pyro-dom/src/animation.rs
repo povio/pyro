@@ -160,6 +160,11 @@ pub fn transition_value(
         .unwrap_or_else(|_| if eased < 0.5 { from.clone() } else { to.clone() });
     let mut css = String::new();
     value.uncompute().to_css(&mut css).ok()?;
+    // At its end a value holding `currentColor` is the after-change one, which the caller
+    // serializes resolved (a shadow's colour).
+    if eased == 1.0 && css.to_ascii_lowercase().contains("currentcolor") {
+        return None;
+    }
     Some(css)
 }
 

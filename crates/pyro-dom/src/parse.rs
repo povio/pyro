@@ -405,6 +405,11 @@ impl<A: DomAccess> Sink<A> {
             local_name!("animate") if name.ns == markup5ever::ns!(svg) => d.smil_seen = true,
             _ => {}
         }
+        if !d.inline_transitions_seen
+            && attrs.iter().any(|a| a.name.local == local_name!("style") && a.value.contains("transition"))
+        {
+            d.inline_transitions_seen = true;
+        }
         let mut el = ElementData::new(name);
         el.set_attrs(
             attrs.into_iter().map(|a| crate::node::Attr { name: a.name, value: (&*a.value).into() }).collect(),

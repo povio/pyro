@@ -226,6 +226,9 @@ pub struct Dom {
     /// An SVG `<animate>` element was created: until then the page has no
     /// SMIL animations to look for (`Dom::smil_seen`).
     pub(crate) smil_seen: bool,
+    /// A `style` attribute that mentions `transition` was set or parsed: inline transitions to
+    /// track (`Dom::inline_transitions_seen`).
+    pub(crate) inline_transitions_seen: bool,
     pub(crate) media: crate::media_element::MediaQueue,
     live: u32,
     /// Bumped whenever a node is removed from its parent.
@@ -340,6 +343,7 @@ impl Dom {
             media_seen: false,
             canvas_seen: false,
             smil_seen: false,
+            inline_transitions_seen: false,
             media: Default::default(),
             mutation: MutationState::default(),
             live_ranges: Vec::new(),
@@ -443,6 +447,13 @@ impl Dom {
     /// Whether an SVG `<animate>` element was ever created in this DOM.
     pub fn smil_seen(&self) -> bool {
         self.smil_seen
+    }
+
+    /// Whether a `style` attribute that mentions `transition` was ever set or parsed in this
+    /// store: its elements' style changes may start transitions (React and UI kits set
+    /// `transition` inline).
+    pub fn inline_transitions_seen(&self) -> bool {
+        self.inline_transitions_seen
     }
     /// Natural (intrinsic) size of a loaded image element, in CSS px.
     pub fn natural_size(&self, el: NodeId) -> Option<(f64, f64)> {

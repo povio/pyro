@@ -737,7 +737,7 @@ pub fn changed_longhands_with(
     use style::values::animated::{Animate, Procedure};
     // Different, and values Stylo can animate between (`width: auto` to a
     // length starts none; properties Stylo animates discretely, `float` or
-    // `display`, still do). Animated values exist for physical longhands
+    // `display`, only with `allow_discrete`). Animated values exist for physical longhands
     // only: a logical one (`inline-size`) is mapped through the after-change
     // style's writing mode.
     let differs = |longhand: style::properties::LonghandId| {
@@ -748,7 +748,16 @@ pub fn changed_longhands_with(
                 AnimationValue::from_computed_values(physical, before),
                 AnimationValue::from_computed_values(physical, after),
             ) {
-                (Some(a), Some(b)) => allow_discrete || a.animate(&b, Procedure::Interpolate { progress: 0.5 }).is_ok(),
+                // (`display`, `position` and `overlay` animate discretely, where Stylo's
+                // `Animate` succeeds: they transition only with `allow-discrete`, as in Chromium,
+                // css-transitions-2 §2.1; WPT `display-interpolation`, `position-interpolation`,
+                // `overlay-interpolation`.)
+                (Some(a), Some(b)) => {
+                    use style::properties::LonghandId as L;
+                    allow_discrete
+                        || (!matches!(longhand, L::Display | L::Position | L::Overlay)
+                            && a.animate(&b, Procedure::Interpolate { progress: 0.5 }).is_ok())
+                }
                 _ => false,
             }
     };
