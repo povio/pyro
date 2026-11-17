@@ -6601,6 +6601,24 @@ fn visibility_hidden_is_not_visible_to_the_driver() {
     assert!(message.contains("not visible"), "{r}");
 }
 
+/// `Range.getBoundingClientRect()` over an element's children is the union
+/// of their boxes (Chromium): a `display: contents` element in a flex parent
+/// has no box of its own, and its range reports its child's.
+#[test]
+fn a_range_over_display_contents_children_unites_their_boxes() {
+    let mut h = Harness::new();
+    load_html(
+        &mut h,
+        r#"<body style="margin:0"><div style="margin:40px"><span style="display:inline-flex"><span id="c" style="display:contents"><span id="in" style="padding:0 3px">Ana Novak</span></span></span></div>
+<div style="display:flex;margin:40px"><span id="m" style="display:contents"><b id="x">x</b> text <i id="y">y</i></span></div></body>"#,
+    );
+    let r = eval_value(
+        &mut h,
+        "(() => { const rect = (b) => [b.x, b.y, b.width, b.height].map(Math.round).join();            const range = (id) => { const r = document.createRange(); r.selectNodeContents(document.getElementById(id)); return rect(r.getBoundingClientRect()); };            const x = x_ => document.getElementById(x_).getBoundingClientRect();            const [a, b] = [x('x'), x('y')];            return [range('c') === rect(x('in')), rect(x('in')) !== '0,0,0,0',                    range('m') === [a.x, a.y, b.right - a.x, Math.max(a.bottom, b.bottom) - a.y].map(Math.round).join()].join(); })()",
+    );
+    assert_eq!(r, json!("true,true,true"));
+}
+
 /// Observers that keep resizing what they observe do not turn the settle
 /// into a busy loop: it brings a few gathers forward, then the pacing
 /// applies again until it gives up and reports the observers as pending.
