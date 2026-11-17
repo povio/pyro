@@ -1276,9 +1276,27 @@ struct DragSeq {
 #[derive(Default)]
 struct PointerStability {
     frame: Option<Rc<Cell<bool>>>,
-    previous: Option<pyro_dom::layout::Rect>,
+    /// The box at the last frame that saw it change, and when.
+    previous: Option<(pyro_dom::layout::Rect, Instant)>,
     ready: bool,
+    /// How long the box must stay the same: [`STABLE_SPAN`] before the first
+    /// move, nothing beyond two frames alike before the press after it.
+    span: Duration,
 }
+
+impl PointerStability {
+    /// Before the first move: Playwright waits for a box that is the same in
+    /// two consecutive rendering frames (about 16 ms apart). Frames run back
+    /// to back here while a client drives the page, so a box counts as stable
+    /// only once it stayed put for a frame's time: a sheet sliding in is
+    /// hovered and clicked where it stops, not on its way.
+    fn before_move() -> PointerStability {
+        PointerStability { span: STABLE_SPAN, ..Default::default() }
+    }
+}
+
+/// See [`PointerStability::before_move`].
+const STABLE_SPAN: Duration = Duration::from_millis(16);
 
 /// The input events of an action still to dispatch, each in its own task so
 /// that, as in Chromium, the tasks, timers and animation frames one event's
@@ -1342,12 +1360,22 @@ impl Sequence {
                 return Ok(None);
             }
         }
-        if matches!(self.events.front(), Some(Input::Mouse { kind: MouseKind::Pressed, at: At::Element, .. }))
-            && !self.stable_before_press()?
+        // A stable box before the first move (`PointerStability::before_move`),
+        // and again before the press: what the move's hover handlers render
+        // (a control swapped in, a menu that shifts it) lands first.
+        if matches!(
+            self.events.front(),
+            Some(Input::Mouse { kind: MouseKind::Moved | MouseKind::Pressed, at: At::Element, .. })
+        ) && !self.stable_before_press()?
         {
             return Ok(None);
         }
         let Some(next) = self.events.pop_front() else { return Ok(Some(self.result())) };
+        if matches!(next, Input::Mouse { kind: MouseKind::Moved, at: At::Element, .. }) {
+            if let Some(stability) = &mut self.stability {
+                *stability = PointerStability::default();
+            }
+        }
         // The driver is the client driving the page: frames stay on the
         // short interval while a sequence runs.
         pyro_browser::note_client_activity();
@@ -1444,11 +1472,15 @@ impl Sequence {
                 pyro_webapi::layout_api::hit_test(&self.page, self.m.x, self.m.y).ok_or("no replacement at pointer")?
             };
             let bounds = visible_box(&self.page, target).ok_or("element is not visible")?;
-            if stability.previous == Some(bounds) {
-                stability.ready = true;
-                return Ok(true);
+            let now = Instant::now();
+            match stability.previous {
+                Some((previous, at)) if previous == bounds && now.duration_since(at) >= stability.span => {
+                    stability.ready = true;
+                    return Ok(true);
+                }
+                Some((previous, _)) if previous == bounds => {}
+                _ => stability.previous = Some((bounds, now)),
             }
-            stability.previous = Some(bounds);
         }
         let realm = self.page.main_world_realm().ok_or("page has no realm")?;
         stability.frame = Some(pyro_browser::request_native_frame(&realm).map_err(|error| error.to_string())?);
@@ -1503,6 +1535,9 @@ pub(super) struct Waiter {
 
 /// How often a `url` step looks again.
 const URL_POLL: Duration = Duration::from_millis(25);
+/// How soon an action step whose element was not ready is tried again when
+/// nothing in the DOM changes (see [`EngineHost::park_retry`]).
+const ACT_POLL: Duration = Duration::from_millis(100);
 
 /// The command running on the browser thread now (a page command, or a
 /// `Pyro.run` driven between commands), shared with the connection's
@@ -1653,7 +1688,14 @@ impl Waiter {
         }
         match &self.phase {
             Phase::Try if self.waits_on_log() => false,
-            Phase::Try if self.poll_at.is_some() => self.poll_at.is_some_and(|at| now >= at),
+            Phase::Try if self.poll_at.is_some_and(|at| now >= at) => true,
+            // An action step also goes again as soon as the DOM changes.
+            Phase::Try
+                if self.poll_at.is_some()
+                    && !matches!(self.job.steps.get(self.job.index), Some((Step::Act { .. }, _))) =>
+            {
+                false
+            }
             Phase::Try => match self.doc.upgrade() {
                 Some(doc) => doc.is_disposed() || doc.dom.borrow().version() != self.seen,
                 None => true,
@@ -3669,8 +3711,8 @@ fn pointer(page: &Rc<PageDom>, id: NodeId, what: Pointer, opts: PointerOpts) -> 
         Input::Mouse { kind, button, buttons, count, at }
     });
     let mut sequence = Sequence::new(page, id, opts, m, events);
-    if matches!(what, Pointer::Click | Pointer::DblClick) {
-        sequence.stability = Some(PointerStability::default());
+    if matches!(what, Pointer::Click | Pointer::DblClick | Pointer::Hover) {
+        sequence.stability = Some(PointerStability::before_move());
     }
     start(sequence)
 }
@@ -5687,7 +5729,8 @@ impl EngineHost {
     }
 
     /// A step that cannot finish yet: fails once past its deadline, else
-    /// parks until the document it searched changes.
+    /// parks until the document it searched changes (an action step also
+    /// until [`ACT_POLL`] passed; URL, route, hold and page steps poll only).
     fn park_retry(
         &self,
         mut w: Waiter,
@@ -5706,11 +5749,20 @@ impl EngineHost {
             w.seen = page.dom.borrow().version();
             w.doc = Rc::downgrade(page);
         }
-        w.poll_at = matches!(
+        w.poll_at = if matches!(
             step,
             Step::Url(_) | Step::Route { .. } | Step::Release { .. } | Step::Held { .. } | Step::Page { .. }
-        )
-        .then(|| Instant::now() + URL_POLL);
+        ) {
+            Some(Instant::now() + URL_POLL)
+        } else if matches!(step, Step::Act { .. }) {
+            // An element that is outside the viewport, covered or moving gets
+            // there through animations, transitions and scrolling as well as
+            // DOM changes: tried again on a timer too, as Playwright's retries
+            // are (20, 100, 100, then 500 ms apart).
+            Some(Instant::now() + ACT_POLL)
+        } else {
+            None
+        };
         w.reason = reason;
         w.phase = Phase::Try;
         Ok(Drive::Park(Box::new(w)))
