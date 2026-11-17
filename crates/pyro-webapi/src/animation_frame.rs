@@ -608,6 +608,14 @@ impl pyro_dom::animation::AnimationSource for Source {
 }
 
 impl PageDom {
+    /// Minimum interval between rendering opportunities while a timeline moves.
+    /// Layout samples animation geometry in these same clock steps; callbacks
+    /// closer together could mistake repeated samples for a stable element.
+    pub fn moving_animation_frame_interval(&self) -> Option<std::time::Duration> {
+        walk(self, crate::event::page_now_ms(self), true, &mut |_, _, _| {})
+            .then(|| std::time::Duration::from_millis(FRAME_MS as u64))
+    }
+
     /// The style update at the end of an animation frame (after its
     /// callbacks): the style changes since the last one start their
     /// transitions and animations now, as in a browser's frame. Every frame:
