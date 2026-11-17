@@ -2611,3 +2611,12 @@ Round 4 lane G:
   advance from `vmtx` (WPT css-values `ch-unit-017`, `-019`). Upright Latin text itself still advances horizontally
   (Chrome: by the font's height; `ch-unit-002`, `-011` left).
 - Round 4 lane F, `layout/list.rs`: a marker image without a natural size (a gradient `list-style-image`, an SVG with no `width`, `height` or `viewBox`) is a square of half the font's ascent, as Blink's `ListMarker` (WPT css-lists `list-style-image-gradients`, `-dynamic`).
+
+## Hoisted lists follow removals
+
+- `src/document.rs` (`unlist_hoisted_leaving`, `unlist_hoisted`, `remove_node_from_tree`), `src/mutator.rs`
+  (`remove_node`, `remove_and_drop_node_with`, the detach in `add_children_to_parent`): a subtree that leaves its
+  place takes its boxes out of the `hoisted_children` of any containing block outside it, and that block is marked
+  for relayout. A freed node also leaves its block's list and stops being the block of the boxes it held. Before,
+  only the block's own layout reset its list, so a block rounded without being laid out again kept a dropped
+  child's id (Danex lab canvas: `invalid SlotMap key` in `physicalise_and_round_inner`).
