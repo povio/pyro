@@ -264,11 +264,18 @@ const FIT_TOLERANCE: f32 = 0.001;
 
 /// Lay out the next line into `slot` (content-box relative, in CSS px)
 #[cfg(feature = "floats")]
-fn set_line_slot(state: &mut BreakerState, slot: &ContentSlot, scale: f32, slack: f32) {
+fn set_line_slot(state: &mut BreakerState, slot: &ContentSlot, scale: f32, slack: f32, mirror: bool) {
     // With huge insets, f32 rounding can make the slot slightly wider than the layout
     let max_advance = (slot.width * scale + slack).min(state.layout_max_advance());
     state.set_line_max_advance(max_advance);
-    state.set_line_x(slot.x * scale);
+    // pyro: the lines of `sideways-lr` run from the bottom, Taffy's right: a slot (left to
+    // right in Taffy's axes) starts that far from the line-left side.
+    let layout_width = state.layout_max_advance();
+    if mirror && layout_width < f32::MAX / 2.0 {
+        state.set_line_x((layout_width - (slot.x + slot.width) * scale).max(0.0));
+    } else {
+        state.set_line_x(slot.x * scale);
+    }
     state.set_line_y((slot.y * scale) as f64);
 }
 
@@ -1310,6 +1317,7 @@ impl LayoutPassState<'_> {
         };
         #[cfg(feature = "floats")]
         let slack = max_advance - width;
+        let mirror_slots = self.nodes[node_id].writing_mode().contains(stylo_taffy::WritingMode::WRITING_MODE_SIDEWAYS_LR);
 
         #[cfg(not(feature = "floats"))]
         {
@@ -1443,7 +1451,7 @@ impl LayoutPassState<'_> {
                     line_slot = block_ctx.find_content_slot(clear, 0.0, Clear::None, None);
                     has_active_floats = line_slot.segment_id.is_some();
                 }
-                set_line_slot(state, &line_slot, scale, slack);
+                set_line_slot(state, &line_slot, scale, slack, mirror_slots);
                 // Without floats every line after the first gets the same geometry, so breaking
                 // can continue after the lines kept from the last build, when the text changed
                 // after them (parley checks the rest: same width, indent and line geometry, LTR,
@@ -1491,7 +1499,7 @@ impl LayoutPassState<'_> {
                                 line_slot = retry_slot;
                                 has_active_floats = line_slot.segment_id.is_some();
                                 breaker.revert_to(saved_state);
-                                set_line_slot(breaker.state_mut(), &line_slot, scale, slack);
+                                set_line_slot(breaker.state_mut(), &line_slot, scale, slack, mirror_slots);
                                 line_start_state = has_active_floats.then(|| breaker.state().clone());
                                 continue;
                             }
@@ -1553,7 +1561,7 @@ impl LayoutPassState<'_> {
                                 line_slot =
                                     block_ctx.find_content_slot(min_y as f32, 0.0, Clear::None, None);
                                 has_active_floats = line_slot.segment_id.is_some();
-                                set_line_slot(state, &line_slot, scale, slack);
+                                set_line_slot(state, &line_slot, scale, slack, mirror_slots);
                             } else {
                                 state.set_line_x(0.0);
                                 state.set_line_max_advance(max_advance);
@@ -1646,7 +1654,7 @@ impl LayoutPassState<'_> {
                                 state.set_line_y(f64::from(line_y * scale));
                                 line_slot = block_ctx.find_content_slot(line_y, 0.0, Clear::None, None);
                                 has_active_floats = line_slot.segment_id.is_some();
-                                set_line_slot(state, &line_slot, scale, slack);
+                                set_line_slot(state, &line_slot, scale, slack, mirror_slots);
                                 state.append_inline_box_to_line(
                                     box_break_data.advance,
                                     f32::NEG_INFINITY,
@@ -1715,7 +1723,7 @@ impl LayoutPassState<'_> {
                                 line_slot =
                                     block_ctx.find_content_slot(min_y as f32, 0.0, Clear::None, None);
                                 has_active_floats = line_slot.segment_id.is_some();
-                                set_line_slot(state, &line_slot, scale, slack);
+                                set_line_slot(state, &line_slot, scale, slack, mirror_slots);
 
                                 // The float can't be unplaced, so the line can no longer be retried
                                 line_start_state = None;

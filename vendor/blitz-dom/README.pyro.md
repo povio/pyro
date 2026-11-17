@@ -2587,3 +2587,7 @@ Round 4 lane G:
   natural size contributes no width to a container's intrinsic sizing without a known containing block width (the
   default object width for a percentage width) and, when its ratio is only `aspect-ratio`'s, stretches to a definite
   width (`svg-intrinsic-size-006`).
+- Round 4 lane F, `sideways-lr` line slots (`layout/inline/layout.rs` `set_line_slot`): the lines of `sideways-lr` run
+  from the bottom (Taffy's right), so a float or initial-letter slot, left to right in Taffy's axes, starts its line
+  `layout width - (slot.x + slot.width)` from the line-left side (WPT css-inline `initial-letter-raise-initial-slr`,
+  `initial-letter-sunk-initial-slr`).
