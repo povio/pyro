@@ -579,8 +579,10 @@ fn shape_segment(
             // browsers (CSS Text 3 § 4.1.1): it is shaped as a code point no font maps, so it
             // draws the font's missing-glyph box even where the font maps it to an empty glyph
             // (TrueType fonts map U+0008 and U+001D to `.null`).
+            // pyro: a no-break space is shaped as a space, as Blink normalizes it before shaping:
+            // it kerns as the space does (macOS Times kerns space-T, not no-break-space-T).
             let ch = match ch {
-                '\t' => ' ',
+                '\t' | '\u{a0}' => ' ',
                 '\u{0}'..='\u{8}' | '\u{b}' | '\u{c}' | '\u{e}'..='\u{1f}' | '\u{7f}'..='\u{84}' | '\u{86}'..='\u{9f}' => '\u{FFFF}',
                 ch => ch,
             };
@@ -713,6 +715,9 @@ fn shapes_word_by_word(fonts: &mut Vec<(u64, u32, bool)>, font: &FontInstance) -
         use skrifa::raw::TopLevelTable as _;
         font_ref.table_data(skrifa::raw::tables::gsub::Gsub::TAG).is_none()
             && font_ref.table_data(skrifa::raw::tables::gpos::Gpos::TAG).is_none()
+            // A legacy `kern` table kerns across spaces in Chrome 147 (macOS Times and Helvetica:
+            // lines measure as v0.0.41's), so those fonts keep shaping whole runs.
+            && font_ref.table_data(skrifa::raw::types::Tag::new(b"kern")).is_none()
     });
     fonts.push((id, index, answer));
     answer
