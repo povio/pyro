@@ -134,3 +134,14 @@ fn an_inline_shadow_paints_over_the_earlier_text_of_its_line() {
         .count();
     assert_eq!(red, 0, "red text left uncovered");
 }
+
+/// `max-height` does not apply to a table cell: it grows to its content (WPT css-tables
+/// `table-cell-overflow-explicit-height-002`).
+#[test]
+fn a_cells_max_height_is_ignored() {
+    let img = render(
+        "<table style='border-spacing:0'><td style='padding:0;height:20px;max-height:20px;overflow:hidden'>\
+           <div style='width:50px;height:100px;background:green'></div></td></table>",
+    );
+    check(&img, &[(25, 10, GREEN), (25, 90, GREEN), (25, 110, WHITE)]);
+}

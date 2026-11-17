@@ -2552,3 +2552,5 @@ does not let margins collapse through it, even when its lines have no height (CS
 - `node/svg_css.rs`, `resolve.rs` (round 4 lane E): a `<foreignObject>` with a percentage `width`/`height` is drawn,
   and its root is laid out against the nearest `<svg>`'s viewport (`LayoutPassState::foreign_object_viewport`;
   css-transforms `view-box-mutation-003`).
+- `layout/table.rs`, `node/stylo_data.rs` (round 4 lane E): `max-height` does not apply to a table cell, as in
+  Chromium (css-tables `table-cell-overflow-explicit-height-002`).
