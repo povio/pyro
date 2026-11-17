@@ -47,8 +47,17 @@ export function consoleReporter() {
     test(test: TestCase) {
       const run = test.run!;
       const title = `${test.scope.file} > ${titlePath(test).join(' > ')}`;
-      if (run.status === 'pass') console.log(`${green('✓')} ${title} ${dim(`[${duration(run.ms)}]`)}`);
-      else console.log(`${red('✗')} ${title} ${dim(`[${duration(run.ms)}]`)}\n${indent(errorText(run.error))}`);
+      const tries = run.attempts > 1 ? ` ${yellow(`(run ${run.attempts} times)`)}` : '';
+      const shots = run.screenshots.length ? `\n${indent(run.screenshots.map((p) => `screenshot: ${p}`).join('\n'))}` : '';
+      if (run.status === 'pass') console.log(`${green('✓')} ${title}${tries} ${dim(`[${duration(run.ms)}]`)}${shots}`);
+      else if (run.status === 'skip') console.log(`${yellow('»')} ${title} ${dim(run.skipReason ? `(skipped: ${run.skipReason})` : '(skipped)')}`);
+      else console.log(`${red('✗')} ${title}${tries} ${dim(`[${duration(run.ms)}]`)}\n${indent(errorText(run.error))}${shots}`);
+    },
+    /** A test failed and runs again (`attempt` runs so far). */
+    retry(test: TestCase, attempt: number, error: unknown) {
+      const title = `${test.scope.file} > ${titlePath(test).join(' > ')}`;
+      const first = (error instanceof Error ? error.message : String(error)).split('\n')[0];
+      console.log(`${yellow('↻')} ${title} ${dim(`failed on run ${attempt}, runs again: ${first}`)}`);
     },
     loadFailure(file: string, error: unknown) {
       console.log(`${red('✗')} ${file} failed to load\n${indent(errorText(error))}`);
@@ -68,6 +77,8 @@ export function consoleReporter() {
       console.log(` ${green(`${s.passed} pass`)}`);
       if (s.failed) console.log(` ${red(`${s.failed} fail`)}`);
       if (s.skipped) console.log(` ${yellow(`${s.skipped} skip`)}`);
+      const flaky = s.tests.filter((t) => t.run?.status === 'pass' && t.run.attempts > 1).length;
+      if (flaky) console.log(` ${yellow(`${flaky} flaky (passed on a retry)`)}`);
       if (s.todo) console.log(` ${yellow(`${s.todo} todo`)}`);
       if (s.filtered) console.log(` ${dim(`${s.filtered} filtered out`)}`);
       if (s.notRun) console.log(` ${yellow(`${s.notRun} not run`)}`);
@@ -107,9 +118,13 @@ export function junitReport(s: Summary): string {
     const run = t.run;
     if (!run) continue; // filtered out or never started
     const head = `<testcase name="${xml(titlePath(t).join(' > '))}" classname="${xml(t.scope.file)}" time="${(run.ms / 1000).toFixed(3)}"`;
-    if (run.status === 'pass') add(t.scope.file, `${head} />`, 'pass', run.ms);
-    else if (run.status === 'fail') add(t.scope.file, `${head}>${failure(run.error)}</testcase>`, 'fail', run.ms);
-    else add(t.scope.file, `${head}><skipped${run.status === 'todo' ? ' message="todo"' : ''} /></testcase>`, 'skip', 0);
+    if (run.status === 'pass' && run.attempts > 1) add(t.scope.file, `${head}><properties><property name="flaky" value="${run.attempts}" /></properties></testcase>`, 'pass', run.ms);
+    else if (run.status === 'pass') add(t.scope.file, `${head} />`, 'pass', run.ms);
+    else if (run.status === 'fail') {
+      const attachments = run.screenshots.map((p) => `[[ATTACHMENT|${p}]]`).join('\n');
+      add(t.scope.file, `${head}>${failure(run.error)}${attachments ? `<system-out>${xml(attachments)}</system-out>` : ''}</testcase>`, 'fail', run.ms);
+    }
+    else add(t.scope.file, `${head}><skipped${run.status === 'todo' ? ' message="todo"' : run.skipReason ? ` message="${xml(run.skipReason)}"` : ''} /></testcase>`, 'skip', 0);
   }
   const tested = new Set(s.tests.filter((t) => t.run && t.run.status !== 'skip' && t.run.status !== 'todo').map((t) => t.run));
   for (const f of s.failures) {

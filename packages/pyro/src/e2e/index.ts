@@ -19,11 +19,11 @@
 // files share the run's queue: any test may run alongside any other unless it
 // is `test.serial` (or in a `describe.serial`).
 import type { Pyro } from '../index.js';
-import { registry, newScope, titlePath, type Fn, type Scope, type TestCase } from './registry.js';
+import { registry, newScope, titlePath, SKIP, type Fn, type Scope, type SkipSignal, type TestCase } from './registry.js';
 
 export { expect } from 'bun:test';
 
-type TimeoutArg = number | { timeout?: number };
+type TimeoutArg = number | { timeout?: number; retries?: number };
 type TestFn = (name: string, fn: Fn, timeout?: TimeoutArg) => void;
 type Flags = { serial?: boolean; skip?: boolean; todo?: boolean; only?: boolean };
 
@@ -40,6 +40,7 @@ function collector(what: string): Scope {
 }
 
 const timeoutOf = (arg?: TimeoutArg) => (typeof arg === 'number' ? arg : arg?.timeout);
+const retriesOf = (arg?: TimeoutArg) => (typeof arg === 'number' ? undefined : arg?.retries);
 
 function define(flags: Flags): TestFn {
   return (name, fn, timeout) => {
@@ -51,6 +52,7 @@ function define(flags: Flags): TestFn {
       scope,
       index: scope.children.length,
       timeout: timeoutOf(timeout),
+      retries: retriesOf(timeout),
       serial: flags.serial ?? false,
       skip: flags.skip ?? false,
       todo: (flags.todo ?? false) || !fn,
@@ -60,12 +62,34 @@ function define(flags: Flags): TestFn {
   };
 }
 
+/**
+ * Declared: a test that does not run (`test.skip(name, fn)`). Inside a
+ * running test or its `beforeEach`, as Playwright's: `test.skip()` ends the
+ * test as skipped, `test.skip(condition, reason?)` when `condition` holds
+ * (`test.skip(reason)` too). Its `afterEach` hooks and deferred work still run.
+ */
+type Skip = TestFn & ((condition?: unknown, reason?: string) => void);
+
+function skip(...args: unknown[]): void {
+  const running = registry().context.getStore();
+  if (typeof args[1] === 'function' || !running) {
+    return define({ skip: true })(args[0] as string, args[1] as Fn, args[2] as TimeoutArg);
+  }
+  if (!running.test) throw new Error('test.skip() skips the running test: call it inside a test or beforeEach, not in a beforeAll');
+  const [condition, reason] = args.length === 0 ? [true, undefined] : typeof args[0] === 'string' && args.length === 1 ? [true, args[0]] : [args[0], args[1]];
+  if (!condition) return;
+  const signal = new Error(reason === undefined ? 'skipped' : `skipped: ${String(reason)}`) as SkipSignal & { reason?: string };
+  signal[SKIP] = true;
+  if (reason !== undefined) signal.reason = String(reason);
+  throw signal;
+}
+
 type Test = TestFn & {
   /** Runs alone in its describe: after every test declared before it, before any declared after it. */
   serial: TestFn;
   /** Same as `test`: every test runs concurrently unless it is serial. */
   concurrent: TestFn;
-  skip: TestFn;
+  skip: Skip;
   todo: (name: string, fn?: Fn) => void;
   /** Runs only with `pyro e2e --only`. */
   only: TestFn;
@@ -76,7 +100,7 @@ type Test = TestFn & {
 export const test: Test = Object.assign(define({}), {
   serial: define({ serial: true }),
   concurrent: define({}),
-  skip: define({ skip: true }),
+  skip: skip as Skip,
   todo: (name: string, fn?: Fn) => define({ todo: true })(name, fn as Fn),
   only: define({ only: true }),
   if: (condition: unknown) => define({ skip: !condition }),

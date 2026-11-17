@@ -157,6 +157,9 @@ pyro e2e [options] [path | dir | glob | filter ...]
 | `--junit <file>` | | Both at once |
 | `-u`, `--update-snapshots` | | Write screenshot baselines instead of comparing |
 | `--bail [n]` | | Stop after `n` failures (1 without a number) |
+| `--retries <n>` | `0` | Run a failing test again, up to `n` more times; a test's own `{ retries }` wins. Newer than 0.0.39 |
+| `--screenshot <mode>` | `only-on-failure` | `only-on-failure`: PNGs of a failed test's open pages; `off`. Newer than 0.0.39 |
+| `--output <dir>` | `test-results` | Where those screenshots go |
 | `-h`, `--help` | | Print the usage |
 
 Options that take a value also accept `--option=value`. An unknown option or a bad value prints the usage and exits with code 2.
@@ -215,10 +218,11 @@ Everything below is exported from `@povio/pyro/e2e`. Signatures follow `bun:test
 |---|---|
 | `describe(name, fn)` | A group. `fn` must register its tests synchronously |
 | `describe.serial`, `.skip`, `.todo`, `.only`, `.if(cond)`, `.skipIf(cond)` | Modifiers, as below |
-| `test(name, fn, timeout?)`, `it` | A test. `timeout` is a number or `{ timeout }` |
+| `test(name, fn, timeout?)`, `it` | A test. `timeout` is a number or `{ timeout, retries }` |
 | `test.serial` | Runs alone in its describe (see [Serial tests](#serial-tests)) |
 | `test.concurrent` | Same as `test`: every test is concurrent unless it is serial |
 | `test.skip`, `test.todo(name, fn?)`, `test.only`, `test.if(cond)`, `test.skipIf(cond)` | As in `bun:test`; `.only` takes effect with `--only` |
+| `test.skip()`, `test.skip(condition, reason?)` | Inside a running test or its `beforeEach`, as in Playwright: ends the test as skipped (when `condition` holds). Its `afterEach` hooks and deferred cleanups still run. Newer than 0.0.39 |
 | `beforeAll`, `afterAll`, `beforeEach`, `afterEach` | Hooks of the describe (or file) they are declared in |
 | `setDefaultTimeout(ms)` | Default timeout of tests and hooks without their own |
 | `browser()` | The run's browser (a `Pyro`), launched on first use |
@@ -281,6 +285,12 @@ A test's timeout applies to the test function, and to each of its `beforeEach` h
 Each test prints a line as it finishes, with failures in full. The summary lists every failure, then counts of passed, failed, skipped, todo, filtered out and not run tests.
 
 The exit code is 1 when any test failed, a hook failed, a file failed to load, or queued tests never ran (after `--bail` or an interruption); 0 otherwise. An unhandled promise rejection or an uncaught exception during the run counts as a hook failure instead of ending the process. A spec that fails to load is reported and the other files still run.
+
+### Retries and failure screenshots
+
+`--retries n` (or `test(name, fn, { retries: n })`) runs a failing test again, up to `n` more times: its `beforeEach` hooks, the test, its `afterEach` hooks and deferred cleanups, on new pages. A test that passes on a retry counts as passed and is reported as flaky (`(run 2 times)`, and `N flaky (passed on a retry)` in the summary; JUnit gives its test case a `flaky` property). A failing `beforeAll` is not retried. A test that `test.skip()` skipped is not retried either.
+
+When a test fails, the runner saves a PNG of each page the test still has open, as the failure left it, before its `afterEach` hooks run: `test-results/<file>-<describe>-<test>.png` (`-page2`, ... for more pages, `-retry1`, ... for retries). The failure output lists them (`screenshot: test-results/...png`), and the JUnit report attaches them (`[[ATTACHMENT|path]]` in `system-out`). `--screenshot off` turns it off; `--output <dir>` moves them.
 
 `--bail [n]` stops starting tests after `n` failures. Running tests finish, open describes run their `afterAll` hooks and deferred cleanups, then the browser closes and teardown runs.
 

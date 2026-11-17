@@ -195,6 +195,11 @@ pyro e2e apps/fe/e2e --setup e2e/setup.ts --concurrency 16 --timeout 30000 \
 - Paths are files, directories (`*.test.*`, `*.spec.*`), globs or path
   filters. `-t` filters by name, `--only` runs `.only` tests, `--bail [n]`
   stops after n failures, `-u` writes screenshot baselines.
+- `test.skip()` / `test.skip(condition, reason)` inside a running test (or
+  its `beforeEach`) ends it as skipped, as in Playwright. `--retries n` (or
+  `{ retries: n }` as a test's options) runs a failing test again; one that
+  passes then is reported as flaky. A failed test's open pages are saved as
+  PNGs in `test-results/` (`--output <dir>`, `--screenshot off`).
 - `--shard i/n` splits the files by their durations in `--timings`
   (`{"version": 1, "files": {"<path>": ms}}`), longest first onto the least
   loaded shard; `--update-timings` records this run's. `--junit <file>` (or
