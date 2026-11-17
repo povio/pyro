@@ -10,6 +10,9 @@ import { pathToFileURL } from 'node:url';
 import { chain, isSkip, newScope, registry, titlePath, type Fn, type Scope, type TestCase, type TestRun } from './registry.js';
 import { consoleReporter, junitReport, type Failure, type Summary } from './report.js';
 import { resolveBinary } from '../binary.js';
+
+/** A test's pages and their real close, held until the test has ended (see `browser()`). */
+const held = new WeakMap<object, () => void>();
 import type { BrowserOptions, Setup } from './index.js';
 
 export type Options = {
@@ -322,7 +325,17 @@ export class Executor {
     const page = lp.page.bind(lp);
     lp.page = async (opts?: Parameters<typeof page>[0]) => {
       const p = await page(opts);
-      this.r.context.getStore()?.test?.run?.pages.add(p);
+      const run = this.r.context.getStore()?.test?.run;
+      if (run) {
+        run.pages.add(p);
+        // The test's own close is held until the test has ended: `await using
+        // page = …` closes it while the test's error propagates, before the
+        // failure screenshot, which then had no page to take. The runner
+        // closes it right after the screenshot (`closeHeld`).
+        const close = p.close.bind(p);
+        held.set(p, close);
+        p.close = () => {};
+      }
       return p;
     };
     return lp;
@@ -546,7 +559,7 @@ export class Executor {
     });
     for (const page of run.pages) {
       try {
-        page.close();
+        (held.get(page) ?? page.close.bind(page))();
       } catch {}
     }
     return error;
