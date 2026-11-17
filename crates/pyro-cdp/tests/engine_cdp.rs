@@ -6550,6 +6550,32 @@ fn settle_brings_paced_resize_observer_gathers_forward() {
     assert!(click["settleMs"].as_f64().unwrap() < 40.0, "{r}");
 }
 
+/// A ResizeObserver that resizes its target in every round (Chromium
+/// delivers it once per frame, and input does not wait for it) does not hold
+/// a click: the press waits for one delivered round, not for the loop to end.
+#[test]
+fn a_resize_observer_loop_does_not_hold_a_click() {
+    let mut h = Harness::new();
+    load_html(
+        &mut h,
+        r#"<!doctype html><div id="t" style="width:100px;height:20px"></div>
+<button id="b" onclick="document.title = 'clicked'">Go</button>
+<script>
+  const t = document.getElementById('t');
+  new ResizeObserver(() => { t.style.width = t.offsetWidth === 100 ? '101px' : '100px'; }).observe(t);
+</script>"#,
+    );
+    let r = h.page(
+        "Pyro.run",
+        json!({"timeout": 3000, "steps": [
+            {"act": {"locator": {"css": "#b"}, "action": "click", "settle": false}},
+            {"eval": {"expression": "document.title", "as": "title"}},
+        ]}),
+    );
+    assert!(r.get("error").is_none(), "{r}");
+    assert_eq!(r["result"]["reads"]["title"], "clicked", "{r}");
+}
+
 /// Playwright's visibility: `visibility: hidden` or `collapse` (own or
 /// inherited) is not visible to the `visible` filter, `read: visible` and the
 /// visible/hidden checks, and an action waits on it.

@@ -1476,6 +1476,11 @@ impl PageDom {
         self.resizes.pending_work()
     }
 
+    /// Rounds of ResizeObserver callbacks delivered so far.
+    pub fn resize_observer_deliveries(&self) -> u64 {
+        self.resizes.deliveries()
+    }
+
     /// Request a current gather for input actionability without bypassing
     /// the observer callback task or changing ordinary background pacing.
     pub fn request_resize_observer_update_for_input(&self) {

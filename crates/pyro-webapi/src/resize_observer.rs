@@ -48,8 +48,14 @@ pub(crate) struct BindingState {
     /// of the delayed wake that may perform it.
     next_gather: Cell<Option<Instant>>,
     wake_queued: RefCell<Option<Rc<()>>>,
+    /// Rounds of callbacks delivered so far (input readiness waits for one
+    /// round, not for observers that resize again in every round).
+    deliveries: Cell<u64>,
 }
 impl BindingState {
+    pub(crate) fn deliveries(&self) -> u64 {
+        self.deliveries.get()
+    }
     pub(crate) fn has_observers(&self) -> bool {
         !self.observers.borrow().is_empty()
     }
@@ -438,6 +444,7 @@ fn notify(page: &Rc<PageDom>) {
     if page.is_disposed() {
         return;
     }
+    page.resizes.deliveries.set(page.resizes.deliveries.get() + 1);
     let observers: Vec<_> = page.resizes.observers.borrow().iter().filter_map(Weak::upgrade).collect();
     for observer in observers {
         if !observer.live.get() {

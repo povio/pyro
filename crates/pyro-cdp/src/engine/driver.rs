@@ -1285,6 +1285,9 @@ pub(super) struct Sequence {
     events: std::collections::VecDeque<Input>,
     drag: Option<DragSeq>,
     stability: Option<PointerStability>,
+    /// The ResizeObserver deliveries counted when the press first waited on
+    /// resize work.
+    resize_round: Option<u64>,
 }
 
 impl Sequence {
@@ -1295,7 +1298,16 @@ impl Sequence {
         m: MouseInput,
         events: impl IntoIterator<Item = Input>,
     ) -> Sequence {
-        Sequence { page: page.clone(), id, opts, m, events: events.into_iter().collect(), drag: None, stability: None }
+        Sequence {
+            page: page.clone(),
+            id,
+            opts,
+            m,
+            events: events.into_iter().collect(),
+            drag: None,
+            stability: None,
+            resize_round: None,
+        }
     }
 
     /// Dispatches the next event. `Ok(None)`: more follow; `Ok(Some)`: the
@@ -1305,12 +1317,21 @@ impl Sequence {
         if page.is_disposed() {
             return Err("document is gone".into());
         }
+        // The sizes the current layout changed are delivered before the
+        // press, as Chromium's rendering update does before input reaches
+        // the page. One delivered round settles them: observers that resize
+        // something again in every round (Chromium delivers once per frame
+        // and never holds input for them) do not hold the press.
         if !self.opts.force
             && matches!(self.events.front(), Some(Input::Mouse { kind: MouseKind::Pressed, at: At::Element, .. }))
             && page.pending_resize_observer_work()
         {
-            page.request_resize_observer_update_for_input();
-            return Ok(None);
+            let delivered = page.resize_observer_deliveries();
+            let first = *self.resize_round.get_or_insert(delivered);
+            if delivered == first {
+                page.request_resize_observer_update_for_input();
+                return Ok(None);
+            }
         }
         if matches!(self.events.front(), Some(Input::Mouse { kind: MouseKind::Pressed, at: At::Element, .. }))
             && !self.stable_before_press()?
