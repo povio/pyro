@@ -264,7 +264,10 @@ fn compute_in_flow_root_layout(
             });
 
             // Block nodes automatically stretch fit their width to fit available space if available space is definite
-            let available_space_based_size = Size { width: root_available_space.width.into_option(), height: None };
+            // pyro: not a replaced root (`content: url()` on `:root`), which takes its natural size (WPT
+            // css-content `element-replacement-root`)
+            let stretch_width = if style.is_content_replaced() { None } else { root_available_space.width.into_option() };
+            let available_space_based_size = Size { width: stretch_width, height: None };
 
             let styled_based_known_dimensions = known_dimensions
                 .or(min_max_definite_size)

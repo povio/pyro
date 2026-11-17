@@ -574,3 +574,9 @@ falls back to plain `flex-start` (csswg-drafts#11937). Covered by `crates/pyro-r
 `compute/block.rs` (`ratio_min_content_width`, `BlockItem::calc_size_min_width`, the content minimum of a box whose
 height follows its ratio): `min-width`/`min-height: calc-size(auto, <calculation>)` is the calculation of the
 automatic minimum size those compute (WPT css-values `calc-size-flex-*`, `calc-size-aspect-ratio-003..005`).
+
+`util/resolve.rs` (`maybe_resolve_min_size`), `compute/block.rs`: a `min-width`/`min-height` `calc()` against an
+indefinite percentage basis resolves its percentages as zero, as in Blink (`calc(25px + 50%)` is 25px; a plain
+percentage stays none): WPT css-values `calc-min-height-block-1`, `calc-min-width-block-intrinsic-1`.
+`compute/mod.rs` (`compute_in_flow_root_layout`, `CoreStyle::is_content_replaced`): a root replaced by its `content: url()` is not stretched to
+the viewport's width; it takes its natural size (WPT css-content `element-replacement-root`).

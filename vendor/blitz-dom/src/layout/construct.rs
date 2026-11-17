@@ -626,8 +626,10 @@ fn collect_layout_children_with_wrap(
         }
 
         // pyro: an `<object>` showing an image is replaced content (`replaced::is_image_object`):
-        // its children, the fallback, generate no boxes.
-        if crate::layout::replaced::is_image_object(el) {
+        // its children, the fallback, generate no boxes. Nor do those of an element its
+        // `content: url()` replaces (`ElementData::content_image`; the root's were painted),
+        // also while the image loads or when it fails (WPT css-content `element-replacement-alt`).
+        if crate::layout::replaced::is_image_object(el) || el.content_image.is_some() {
             doc.iter_subtree_mut(container_node_id, |id: NodeId, doc: &mut BaseDocument| {
                 doc.nodes[id].remove_damage(CONSTRUCT_BOX | CONSTRUCT_DESCENDENT | CONSTRUCT_FC);
             });

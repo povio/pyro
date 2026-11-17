@@ -986,3 +986,5 @@ The target text defaults to `Mark` on `MarkText` unless a style declares either 
 of their own then. Covered by `highlights_paint_under_the_selection` in `crates/pyro-render/tests/selection_highlight.rs`.
 - `src/render.rs` (`inline_box_fragments`): a line's content ends where its items end, so a justified line's inline
   boxes take the justification (the line's `advance` does not; WPT css-text `text-justify-and-trailing-spaces-*`).
+- `src/render.rs` (`canvas_background_source`): a root that its `content: url()` replaces propagates no `body`
+  background to the canvas (WPT css-content `element-replacement-root-canvas-bg-from-body`).

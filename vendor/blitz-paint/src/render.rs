@@ -1708,8 +1708,12 @@ fn canvas_background_source(dom: &BaseDocument) -> Option<NodeId> {
                 > 0.0
     };
     let contained = |style: &ComputedValues| !style.get_box().slow_clone_contain().is_empty();
+    // pyro: a root its `content: url()` replaces renders no `body` (WPT css-content
+    // `element-replacement-root-canvas-bg-from-body`).
+    let replaced = root.element_data().is_some_and(|element| element.content_image.is_some());
     if has_background(&root_style)
         || contained(&root_style)
+        || replaced
         || !root.data.is_element_with_tag_name(&local_name!("html"))
     {
         return Some(root.id);

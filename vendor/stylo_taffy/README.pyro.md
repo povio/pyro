@@ -66,3 +66,4 @@ entry) once a Blitz release carries these commits and changes.
   `src/wrapper.rs` (`CoreStyle::calc_size_min`): `calc-size()` (vendor/stylo/README.pyro.md) is laid out as its
   basis (`auto` as `auto`, the keywords as themselves; a minimum as the automatic minimum); blitz-dom applies the
   calculation of `width`/`height`, Taffy that of `min-width: calc-size(auto, ...)` (`calc_size_min`).
+- `src/wrapper.rs` (`StyleFlags::IS_CONTENT_REPLACED`, `CoreStyle::is_content_replaced`): an element replaced by its `content: url()` image (blitz-dom sets the flag), which Taffy does not stretch as the root.

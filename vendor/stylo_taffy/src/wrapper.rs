@@ -48,6 +48,8 @@ bitflags! {
         /// pyro: the node is a `<fieldset>`: an inline one is an inline-block and a table-type one a
         /// block (HTML § 15.3.13).
         const IS_FIELDSET = 1 << 8;
+        /// pyro: the element is replaced by the image of its `content: url()`.
+        const IS_CONTENT_REPLACED = 1 << 9;
     }
 }
 
@@ -217,6 +219,11 @@ impl<T: Deref<Target = ComputedValues>> taffy::CoreStyle for TaffyStyloStyle<T> 
     #[inline]
     fn is_replaced(&self) -> bool {
         self.flags.contains(StyleFlags::IS_REPLACED)
+    }
+
+    #[inline]
+    fn is_content_replaced(&self) -> bool {
+        self.flags.contains(StyleFlags::IS_CONTENT_REPLACED)
     }
 
     #[inline]

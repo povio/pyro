@@ -134,6 +134,12 @@ pub trait CoreStyle {
     fn is_replaced(&self) -> bool {
         false
     }
+    /// pyro: whether the element is replaced by the image of its `content: url()` (as the root,
+    /// it takes the image's size instead of stretching to the viewport's width).
+    #[inline(always)]
+    fn is_content_replaced(&self) -> bool {
+        false
+    }
     /// Which box do size styles apply to
     #[inline(always)]
     fn box_sizing(&self) -> BoxSizing {

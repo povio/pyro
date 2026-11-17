@@ -66,3 +66,14 @@ fn a_cell_width_mixing_a_percentage_and_a_length_is_auto() {
     assert_eq!(calc.data, auto.data);
 }
 
+
+#[test]
+fn a_root_its_content_url_replaces_is_its_image() {
+    // The root is the image at its natural size; its body is not rendered, nor its background
+    // propagated to the canvas.
+    let img = render(
+        "<style>:root{content:url(green.png);width:auto}body{background:red}</style><p>text</p>",
+    );
+    assert_eq!(pixel(&img, 2, 2), [0, 128, 0]);
+    assert_eq!(pixel(&img, 10, 10), [255, 255, 255]);
+}

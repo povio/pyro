@@ -54,6 +54,24 @@ impl MaybeResolve<Option<f32>, Option<f32>> for LengthPercentageAuto {
     }
 }
 
+/// pyro: `min-width`/`min-height` against `context`: a `calc()` whose percentage basis is
+/// indefinite resolves its percentages as zero, as in Blink (`calc(25px + 50%)` is 25px; a plain
+/// percentage stays none). WPT css-values `calc-min-height-block-1`, `calc-min-width-block-intrinsic-1`.
+pub(crate) fn maybe_resolve_min_size(
+    min_size: Size<LengthPercentageAuto>,
+    context: Size<Option<f32>>,
+    calc: impl Fn(*const (), f32) -> f32,
+) -> Size<Option<f32>> {
+    let resolve = |value: LengthPercentageAuto, context: Option<f32>| {
+        #[cfg(feature = "calc")]
+        if context.is_none() && value.0.is_plain_calc() {
+            return Some(calc(value.0.calc_value(), 0.0));
+        }
+        value.maybe_resolve(context, &calc)
+    };
+    Size { width: resolve(min_size.width, context.width), height: resolve(min_size.height, context.height) }
+}
+
 impl MaybeResolve<Option<f32>, Option<f32>> for Dimension {
     /// Converts the given [`Dimension`] into an absolute length
     ///

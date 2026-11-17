@@ -957,7 +957,12 @@ impl BaseDocument {
             return;
         }
         let had = element.content_image.is_some();
-        if !had && !matches!(element.special_data, SpecialElementData::None) {
+        // pyro: an `<img>` or a `<video>` shows the image of its `content: url()` in place of its own
+        // (Blink; WPT css-content `element-replacement-image-src.tentative`,
+        // `element-replacement-on-replaced-element.tentative`).
+        let own_image = matches!(element.name.local.as_ref(), "img" | "video")
+            && matches!(element.special_data, SpecialElementData::Image(_));
+        if !had && !own_image && !matches!(element.special_data, SpecialElementData::None) {
             return;
         }
         let node = &mut self.nodes[node_id];

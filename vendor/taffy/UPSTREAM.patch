@@ -1,5 +1,5 @@
 diff --git a/src/compute/block.rs b/src/compute/block.rs
-index 3cd3e713..c031b682 100644
+index 3cd3e713..79d639c3 100644
 --- a/src/compute/block.rs
 +++ b/src/compute/block.rs
 @@ -6,8 +6,8 @@ use crate::style::{
@@ -188,7 +188,7 @@ index 3cd3e713..c031b682 100644
 +    // pyro: css-sizing-4 §5 ([`RatioSizes`])
 +    let sizes = resolve_sizes_with_aspect_ratio(
 +        style.size().maybe_resolve(parent_size, |val, basis| tree.calc(val, basis)),
-+        style.min_size().maybe_resolve(parent_size, |val, basis| tree.calc(val, basis)),
++        crate::util::maybe_resolve_min_size(style.min_size(), parent_size, |val, basis| tree.calc(val, basis)),
 +        style.max_size().maybe_resolve(parent_size, |val, basis| tree.calc(val, basis)),
 +        aspect_ratio,
 +        aspect_ratio_inset(&style, padding_border_size),
@@ -310,7 +310,7 @@ index 3cd3e713..c031b682 100644
 +    let ratio_inset = aspect_ratio_inset(&style, padding_border_size);
 +    let sizes = resolve_sizes_with_aspect_ratio(
 +        style.size().maybe_resolve(parent_size, |val, basis| tree.calc(val, basis)),
-+        style.min_size().maybe_resolve(parent_size, |val, basis| tree.calc(val, basis)),
++        crate::util::maybe_resolve_min_size(style.min_size(), parent_size, |val, basis| tree.calc(val, basis)),
 +        style.max_size().maybe_resolve(parent_size, |val, basis| tree.calc(val, basis)),
 +        aspect_ratio,
 +        ratio_inset,
@@ -582,7 +582,7 @@ index 3cd3e713..c031b682 100644
 +            // pyro: css-sizing-4 §5 ([`RatioSizes`])
 +            let sizes = resolve_sizes_with_aspect_ratio(
 +                child_style.size().maybe_resolve(node_inner_size, |val, basis| tree.calc(val, basis)),
-+                child_style.min_size().maybe_resolve(node_inner_size, |val, basis| tree.calc(val, basis)),
++                crate::util::maybe_resolve_min_size(child_style.min_size(), node_inner_size, |val, basis| tree.calc(val, basis)),
 +                child_style.max_size().maybe_resolve(node_inner_size, |val, basis| tree.calc(val, basis)),
 +                aspect_ratio,
 +                aspect_ratio_inset(&child_style, pb_sum),
@@ -6916,7 +6916,7 @@ index 70838fe7..674c80a0 100644
      pub(crate) fn area_column_count(&self) -> u16 {
          self.area_column_count
 diff --git a/src/compute/mod.rs b/src/compute/mod.rs
-index bb954acf..48415799 100644
+index bb954acf..d3c3c784 100644
 --- a/src/compute/mod.rs
 +++ b/src/compute/mod.rs
 @@ -80,13 +80,24 @@ pub fn compute_root_layout(
@@ -6970,7 +6970,19 @@ index bb954acf..48415799 100644
          }
      }
  }
-@@ -381,6 +401,9 @@ pub fn round_layout(tree: &mut impl RoundTree, node_id: NodeId) {
+@@ -244,7 +264,10 @@ fn compute_in_flow_root_layout(
+             });
+ 
+             // Block nodes automatically stretch fit their width to fit available space if available space is definite
+-            let available_space_based_size = Size { width: root_available_space.width.into_option(), height: None };
++            // pyro: not a replaced root (`content: url()` on `:root`), which takes its natural size (WPT
++            // css-content `element-replacement-root`)
++            let stretch_width = if style.is_content_replaced() { None } else { root_available_space.width.into_option() };
++            let available_space_based_size = Size { width: stretch_width, height: None };
+ 
+             let styled_based_known_dimensions = known_dimensions
+                 .or(min_max_definite_size)
+@@ -381,6 +404,9 @@ pub fn round_layout(tree: &mut impl RoundTree, node_id: NodeId) {
      /// Recursive function to apply rounding to all descendents
      fn round_layout_inner(tree: &mut impl RoundTree, node_id: NodeId, cumulative_x: f32, cumulative_y: f32) {
          let unrounded_layout = tree.get_unrounded_layout(node_id);
@@ -6980,7 +6992,7 @@ index bb954acf..48415799 100644
          let mut layout = unrounded_layout;
  
          let parent_x = cumulative_x;
-@@ -416,6 +439,7 @@ pub fn round_layout(tree: &mut impl RoundTree, node_id: NodeId) {
+@@ -416,6 +442,7 @@ pub fn round_layout(tree: &mut impl RoundTree, node_id: NodeId) {
          );
  
          tree.set_final_layout(node_id, &layout);
@@ -6988,7 +7000,7 @@ index bb954acf..48415799 100644
  
          // Recurse into in-flow children. Out-of-flow (absolute/fixed) children are skipped here:
          // they are instead visited via their containing block's hoisted child list below, which
-@@ -489,7 +513,8 @@ pub fn compute_hidden_layout(tree: &mut (impl LayoutPartialTree + CacheTree), no
+@@ -489,7 +516,8 @@ pub fn compute_hidden_layout(tree: &mut (impl LayoutPartialTree + CacheTree), no
  pub mod detailed_info {
      #[cfg(feature = "grid")]
      pub use super::grid::{
@@ -7476,7 +7488,7 @@ index a3f746b1..d435261a 100644
  
  /// Controls whether grid items are placed row-wise or column-wise. And whether the sparse or dense packing algorithm is used.
 diff --git a/src/style/mod.rs b/src/style/mod.rs
-index a9e57f33..9cb679e5 100644
+index a9e57f33..ed9c0839 100644
 --- a/src/style/mod.rs
 +++ b/src/style/mod.rs
 @@ -41,7 +41,7 @@ pub use self::grid::{
@@ -7520,7 +7532,20 @@ index a9e57f33..9cb679e5 100644
  /// The core set of styles that are shared between all CSS layout nodes
  ///
  /// Note that all methods come with a default implementation which simply returns the default value for that style property
-@@ -181,6 +206,25 @@ pub trait CoreStyle {
+@@ -109,6 +134,12 @@ pub trait CoreStyle {
+     fn is_replaced(&self) -> bool {
+         false
+     }
++    /// pyro: whether the element is replaced by the image of its `content: url()` (as the root,
++    /// it takes the image's size instead of stretching to the viewport's width).
++    #[inline(always)]
++    fn is_content_replaced(&self) -> bool {
++        false
++    }
+     /// Which box do size styles apply to
+     #[inline(always)]
+     fn box_sizing(&self) -> BoxSizing {
+@@ -181,6 +212,25 @@ pub trait CoreStyle {
      fn aspect_ratio(&self) -> Option<f32> {
          Style::<Self::CustomIdent>::DEFAULT.aspect_ratio
      }
@@ -7546,7 +7571,7 @@ index a9e57f33..9cb679e5 100644
  
      // Spacing Properties
      /// How large should the margin be on each side?
-@@ -227,6 +271,19 @@ pub trait OofItemStyle: CoreStyle {
+@@ -227,6 +277,19 @@ pub trait OofItemStyle: CoreStyle {
      fn is_table(&self) -> bool {
          false
      }
@@ -7566,7 +7591,7 @@ index a9e57f33..9cb679e5 100644
      /// Defines which row in the grid the box should start and end at, when the box's containing
      /// block is a grid container
      #[cfg(feature = "grid")]
-@@ -715,6 +772,10 @@ pub struct Style<S: CheapCloneStr = DefaultCheapStr> {
+@@ -715,6 +778,10 @@ pub struct Style<S: CheapCloneStr = DefaultCheapStr> {
      /// Whether a child is display:table or not. This affects children of block layouts.
      /// This should really be part of `Display`, but it is currently seperate because table layout isn't implemented
      pub item_is_table: bool,
@@ -7577,7 +7602,7 @@ index a9e57f33..9cb679e5 100644
      /// Is it a replaced element like an image or video? Implies `is_compressible_replaced`.
      /// <https://html.spec.whatwg.org/multipage/rendering.html#replaced-elements>
      pub item_is_replaced: bool,
-@@ -877,6 +938,8 @@ impl<S: CheapCloneStr> Style<S> {
+@@ -877,6 +944,8 @@ impl<S: CheapCloneStr> Style<S> {
          dummy: core::marker::PhantomData,
          display: Display::DEFAULT,
          item_is_table: false,
@@ -7586,7 +7611,7 @@ index a9e57f33..9cb679e5 100644
          item_is_replaced: false,
          item_is_compressible_replaced: false,
          box_sizing: BoxSizing::BorderBox,
-@@ -1128,6 +1191,10 @@ impl<T: CoreStyle> CoreStyle for &'_ T {
+@@ -1128,6 +1197,10 @@ impl<T: CoreStyle> CoreStyle for &'_ T {
          (*self).aspect_ratio()
      }
      #[inline(always)]
@@ -7597,7 +7622,7 @@ index a9e57f33..9cb679e5 100644
      fn margin(&self) -> Rect<LengthPercentageAuto> {
          (*self).margin()
      }
-@@ -1430,6 +1497,10 @@ impl<S: CheapCloneStr> GridContainerStyle for Style<S> {
+@@ -1430,6 +1503,10 @@ impl<S: CheapCloneStr> GridContainerStyle for Style<S> {
          self.grid_auto_columns.iter().copied()
      }
      #[inline(always)]
@@ -7608,7 +7633,7 @@ index a9e57f33..9cb679e5 100644
      fn grid_auto_flow(&self) -> GridAutoFlow {
          self.grid_auto_flow
      }
-@@ -1552,6 +1623,10 @@ impl<T: GridContainerStyle> GridContainerStyle for &'_ T {
+@@ -1552,6 +1629,10 @@ impl<T: GridContainerStyle> GridContainerStyle for &'_ T {
          (*self).grid_template_row_names()
      }
      #[inline(always)]
@@ -7619,7 +7644,7 @@ index a9e57f33..9cb679e5 100644
      fn grid_auto_flow(&self) -> GridAutoFlow {
          (*self).grid_auto_flow()
      }
-@@ -1636,6 +1711,8 @@ mod tests {
+@@ -1636,6 +1717,8 @@ mod tests {
              dummy: core::marker::PhantomData,
              display: Default::default(),
              item_is_table: false,
@@ -7944,3 +7969,44 @@ index 7d4adf22..406c9ec9 100644
      /// Compute the specified node's size or full layout given the specified constraints
      #[cfg(feature = "block_layout")]
      fn compute_block_child_layout(
+diff --git a/src/util/mod.rs b/src/util/mod.rs
+index 26c78e26..613e77d0 100644
+--- a/src/util/mod.rs
++++ b/src/util/mod.rs
+@@ -5,6 +5,7 @@ pub(crate) mod sys;
+ 
+ pub use math::MaybeMath;
+ pub use resolve::{MaybeResolve, ResolveOrZero};
++pub(crate) use resolve::maybe_resolve_min_size;
+ 
+ #[cfg(feature = "grid")]
+ mod front_back_vec_builder;
+diff --git a/src/util/resolve.rs b/src/util/resolve.rs
+index 1f578624..2d651a39 100644
+--- a/src/util/resolve.rs
++++ b/src/util/resolve.rs
+@@ -54,6 +54,24 @@ impl MaybeResolve<Option<f32>, Option<f32>> for LengthPercentageAuto {
+     }
+ }
+ 
++/// pyro: `min-width`/`min-height` against `context`: a `calc()` whose percentage basis is
++/// indefinite resolves its percentages as zero, as in Blink (`calc(25px + 50%)` is 25px; a plain
++/// percentage stays none). WPT css-values `calc-min-height-block-1`, `calc-min-width-block-intrinsic-1`.
++pub(crate) fn maybe_resolve_min_size(
++    min_size: Size<LengthPercentageAuto>,
++    context: Size<Option<f32>>,
++    calc: impl Fn(*const (), f32) -> f32,
++) -> Size<Option<f32>> {
++    let resolve = |value: LengthPercentageAuto, context: Option<f32>| {
++        #[cfg(feature = "calc")]
++        if context.is_none() && value.0.is_plain_calc() {
++            return Some(calc(value.0.calc_value(), 0.0));
++        }
++        value.maybe_resolve(context, &calc)
++    };
++    Size { width: resolve(min_size.width, context.width), height: resolve(min_size.height, context.height) }
++}
++
+ impl MaybeResolve<Option<f32>, Option<f32>> for Dimension {
+     /// Converts the given [`Dimension`] into an absolute length
+     ///

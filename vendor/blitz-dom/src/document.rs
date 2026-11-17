@@ -2159,6 +2159,10 @@ impl BaseDocument {
                     if element.custom_widget_data().is_some() {
                         continue;
                     }
+                    // pyro: the image of its `content: url()` stands for its own (`src`, `poster`).
+                    if element.content_image.as_ref().is_some_and(|(content, _)| content != url) {
+                        continue;
+                    }
                     // pyro: an `<object>` shows only some images (`replaced::object_shows_image`).
                     if element.name.local == local_name!("object")
                         && !crate::layout::replaced::object_shows_image(&image)

@@ -2395,3 +2395,9 @@ Checkboxes and radios are 13x13 by nature (the leaf measure in `layout/mod.rs`),
 sheet, so a flex parent stretches them and percentages size them (WPT css-flexbox `stretch-flex-item-*-input`). A
 fixed-layout table with a percentage width (empty ones, laid out as blocks, too) reports Blink's `kTableMaxWidth`
 (1,000,000 px) as its max-content width (WPT css-flexbox `fixed-table-layout-with-percentage-width-in-flex-item`).
+- `src/layout/construct.rs`: the children of an element its `content: url()` replaces (`is_content_image`) generate
+  no boxes, as an `<object>` showing an image (the root's children were laid out and painted over its image).
+- `src/layout/damage.rs` (`flush_content_image`), `src/document.rs` (`apply_loaded_image`): an `<img>` or `<video>`
+  shows the image of its `content: url()` in place of its `src`/`poster`, whichever loads last (Blink; WPT css-content
+  `element-replacement-image-src.tentative`). `src/node/node.rs` (`layout_style`) flags an element replaced by its
+  content image (`StyleFlags::IS_CONTENT_REPLACED`).

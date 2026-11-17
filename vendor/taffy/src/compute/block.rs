@@ -569,7 +569,7 @@ pub fn compute_block_layout(
     // pyro: css-sizing-4 §5 ([`RatioSizes`])
     let sizes = resolve_sizes_with_aspect_ratio(
         style.size().maybe_resolve(parent_size, |val, basis| tree.calc(val, basis)),
-        style.min_size().maybe_resolve(parent_size, |val, basis| tree.calc(val, basis)),
+        crate::util::maybe_resolve_min_size(style.min_size(), parent_size, |val, basis| tree.calc(val, basis)),
         style.max_size().maybe_resolve(parent_size, |val, basis| tree.calc(val, basis)),
         aspect_ratio,
         aspect_ratio_inset(&style, padding_border_size),
@@ -714,7 +714,7 @@ fn compute_inner(
     let ratio_inset = aspect_ratio_inset(&style, padding_border_size);
     let sizes = resolve_sizes_with_aspect_ratio(
         style.size().maybe_resolve(parent_size, |val, basis| tree.calc(val, basis)),
-        style.min_size().maybe_resolve(parent_size, |val, basis| tree.calc(val, basis)),
+        crate::util::maybe_resolve_min_size(style.min_size(), parent_size, |val, basis| tree.calc(val, basis)),
         style.max_size().maybe_resolve(parent_size, |val, basis| tree.calc(val, basis)),
         aspect_ratio,
         ratio_inset,
@@ -1230,7 +1230,7 @@ fn generate_item_list(
             // pyro: css-sizing-4 §5 ([`RatioSizes`])
             let sizes = resolve_sizes_with_aspect_ratio(
                 child_style.size().maybe_resolve(node_inner_size, |val, basis| tree.calc(val, basis)),
-                child_style.min_size().maybe_resolve(node_inner_size, |val, basis| tree.calc(val, basis)),
+                crate::util::maybe_resolve_min_size(child_style.min_size(), node_inner_size, |val, basis| tree.calc(val, basis)),
                 child_style.max_size().maybe_resolve(node_inner_size, |val, basis| tree.calc(val, basis)),
                 aspect_ratio,
                 aspect_ratio_inset(&child_style, pb_sum),
