@@ -14086,7 +14086,7 @@
   "css/css-tables/table-cell-overflow-auto-scrolled.html": {"status":"complete","ms":110,"n":1,"fail":[],"h":"0e440bf2"},
   "css/css-tables/table-cell-overflow-auto.html": {"status":"complete","ms":110,"n":1,"fail":[],"h":"0e440bf2"},
   "css/css-tables/table-cell-overflow-explicit-height-001.html": {"status":"complete","ms":120,"n":1,"fail":[],"h":"0e440bf2"},
-  "css/css-tables/table-cell-overflow-explicit-height-002.html": {"status":"complete","ms":120,"n":1,"pass":[]},
+  "css/css-tables/table-cell-overflow-explicit-height-002.html": {"status":"complete","ms":120,"n":1,"fail":[],"h":"0e440bf2"},
   "css/css-tables/table-cell-tiny-width-excess-width-distribution.html": {"status":"complete","ms":120,"n":1,"fail":[],"h":"0e440bf2"},
   "css/css-tables/table-cell-width-0-excess-width-distribution.html": {"status":"complete","ms":130,"n":1,"fail":[],"h":"0e440bf2"},
   "css/css-tables/table-cell-width-0.html": {"status":"complete","ms":120,"n":1,"fail":[],"h":"0e440bf2"},
