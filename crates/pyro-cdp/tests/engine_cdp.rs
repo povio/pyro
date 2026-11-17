@@ -10523,3 +10523,36 @@ fn computed_width_and_height_inside_display_none_are_the_computed_values() {
         "{r}"
     );
 }
+
+#[test]
+fn computed_style_inside_display_none_inherits_from_changed_ancestors() {
+    // Styles inside a display: none subtree are resolved once per element and
+    // inherited down from cached ancestors; a change to a hidden ancestor or a
+    // :has() subject still shows on the next read (Chromium: the same reads).
+    let mut h = Harness::new();
+    load_html(
+        &mut h,
+        r#"<!doctype html><style>.warm{color:rgb(200, 0, 0)} section:has(.x) b{text-decoration-line:underline}</style>
+<div style="display:none"><section id=s><p id=p><b id=b>t</b></p><i id=i></i></section></div>"#,
+    );
+    let read = "(() => { const s = getComputedStyle(document.getElementById('b')); return s.color + ' ' + s.textDecorationLine; })()";
+    let r = h.page(
+        "Pyro.run",
+        json!({"steps": [
+            {"eval": {"expression": "getComputedStyle(document.getElementById('p')).color", "as": "p"}},
+            {"eval": {"expression": read, "as": "a"}},
+            {"eval": {"expression": "document.getElementById('p').classList.add('warm'); null"}},
+            {"eval": {"expression": read, "as": "b"}},
+            {"eval": {"expression": "document.getElementById('i').className = 'x'; null"}},
+            {"eval": {"expression": read, "as": "c"}},
+            {"eval": {"expression": "document.getElementById('i').remove(); null"}},
+            {"eval": {"expression": read, "as": "d"}}
+        ]}),
+    );
+    assert!(r.get("error").is_none(), "{r}");
+    let reads = &r["result"]["reads"];
+    assert_eq!(reads["a"], json!("rgb(0, 0, 0) none"), "{r}");
+    assert_eq!(reads["b"], json!("rgb(200, 0, 0) none"), "{r}");
+    assert_eq!(reads["c"], json!("rgb(200, 0, 0) underline"), "{r}");
+    assert_eq!(reads["d"], json!("rgb(200, 0, 0) none"), "{r}");
+}

@@ -445,6 +445,13 @@ impl BlitzGeometry {
         let now = (dom.version(), style.observation_stamp(dom).1, viewport, style.invalidations());
         let last = self.synced.replace(Some(now));
         self.undisplayed.borrow_mut().clear();
+        RENDERER.with(|r| {
+            if let Ok(r) = r.try_borrow() {
+                if let Some(r) = r.as_ref() {
+                    r.clear_undisplayed(self.page);
+                }
+            }
+        });
         // The changes since the last sync, when the journal covers them and
         // neither sheets nor viewport changed: no whole-tree snapshot or diff.
         if let Some((version, generation, vp, invalidations)) = last {

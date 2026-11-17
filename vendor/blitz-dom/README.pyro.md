@@ -2623,3 +2623,8 @@ Round 4 lane G:
 - `animation.rs` `BaseDocument::starting_style`: an element's style with its `@starting-style` rules (its primary
   rules cascaded with `RuleCascadeFlags::STARTING_STYLE`), the before-change style pyro's transitions use for a box
   shown from `display: none` (css-transitions-2 §3.2).
+- `stylo.rs`: `resolve_undisplayed_style_cached` + `UndisplayedCaches` (re-exported): `getComputedStyle` inside
+  `display: none` passes Stylo's `UndisplayedStyleCache` (each hidden ancestor matched once, children inherit its
+  style) and keeps the thread-local `SelectorCaches` (`:has()` filter map and results) between reads. The embedder
+  clears them whenever the document changes (pyro: every sync and interaction-state change). axe-core over ~10,000
+  hidden canvas elements went from more than 40 s to well under a second.

@@ -1340,6 +1340,10 @@ impl Renderer {
         let Some(m) = self.mirrors.get_mut(&page) else { return };
         // Called on every geometry read: without news a pass would change nothing.
         let changed = changed || m.doc.needs_resolve();
+        if changed {
+            // Hover, focus or active moved, or something waits to restyle.
+            m.undisplayed.get_mut().clear();
+        }
         if changed && style_only {
             let generation = m.doc.root_node().tree().geometry_generation();
             m.doc.resolve_style(0.0);
@@ -1402,7 +1406,20 @@ impl Renderer {
         let id = m.node(key)?;
         match m.doc.get_node(id)?.primary_styles() {
             Some(s) => Some(((*s).clone(), false)),
-            None => m.doc.resolve_undisplayed_style(id).map(|s| (s, true)),
+            None => {
+                let mut caches = m.undisplayed.try_borrow_mut().ok()?;
+                m.doc.resolve_undisplayed_style_cached(id, &mut caches).map(|s| (s, true))
+            }
+        }
+    }
+
+    /// Forgets the `display: none` styles resolved on demand for `page`:
+    /// its document is about to change (every sync).
+    pub fn clear_undisplayed(&self, page: u64) {
+        if let Some(m) = self.mirrors.get(&page) {
+            if let Ok(mut caches) = m.undisplayed.try_borrow_mut() {
+                caches.clear();
+            }
         }
     }
 
