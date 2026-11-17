@@ -1241,8 +1241,32 @@ fn editing_key_action(page: &Rc<PageDom>, host: NodeId, k: &KeyInput) {
     }
 }
 
+/// Chromium's `SearchInputType::HandleKeydownEvent`: Escape empties an
+/// enabled, writable `<input type=search>` that has a value, fires `input`
+/// (the field has focus, so `change` waits for the blur) and then `search`.
+fn clear_search_field(page: &Rc<PageDom>, el: NodeId) -> bool {
+    {
+        let mut dom = page.dom.borrow_mut();
+        let search = local(&dom, el).as_deref() == Some("input")
+            && dom.input_type(el).ok() == Some(InputType::Search)
+            && !dom.is_disabled(el).unwrap_or(true)
+            && !dom.has_attribute(el, "readonly").unwrap_or(false);
+        if !search || dom.value(el).map_or(true, |v| v.is_empty()) || dom.set_value(el, "").is_err() {
+            return false;
+        }
+    }
+    fire_simple(page, el, "input", true, false);
+    fire_simple(page, el, "search", true, false);
+    true
+}
+
 /// Default actions for non-text keys on the focused element.
 fn default_key_action(page: &Rc<PageDom>, target: NodeId, k: &KeyInput) {
+    // Escape in a filled search field clears it first (Chromium's
+    // SearchInputType: `input`, then `search`); no close request follows.
+    if k.key == "Escape" && clear_search_field(page, target) {
+        return;
+    }
     // A close request: the newest open dialog or auto popover closes.
     if k.key == "Escape" && crate::popover::close_request(page) {
         return;

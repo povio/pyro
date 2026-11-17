@@ -6084,6 +6084,32 @@ fn driver_press_ignores_aria_disabled() {
     assert_eq!(r["result"]["reads"]["focused"], "Settled", "{r}");
 }
 
+/// Danex 8: Escape in a filled `<input type=search>` empties it and fires
+/// `input`, then `search` (Chromium's SearchInputType); an empty one lets
+/// the key through.
+#[test]
+fn driver_escape_clears_a_search_field() {
+    let mut h = Harness::new();
+    load_html(
+        &mut h,
+        r#"<!doctype html><input type="search" id="s"><div id="log"></div>
+<script>
+  const s = document.getElementById('s'), log = [];
+  for (const t of ['input', 'search', 'change']) s.addEventListener(t, () => { log.push(t + ':' + s.value); document.getElementById('log').textContent = log.join(','); });
+</script>"#,
+    );
+    let r = h.page(
+        "Pyro.run",
+        json!({"steps": [
+            {"act": {"locator": {"css": "#s"}, "action": "fill", "value": "abc"}},
+            {"act": {"locator": {"css": "#s"}, "action": "press", "value": "Escape"}},
+            {"eval": {"expression": "[document.getElementById('s').value, document.getElementById('log').textContent]", "as": "after"}},
+        ]}),
+    );
+    assert!(r.get("error").is_none(), "{r}");
+    assert_eq!(r["result"]["reads"]["after"], json!(["", "input:abc,input:,search:"]), "{r}");
+}
+
 const DRIVER_POINTER_PAGE: &str = r#"<!doctype html><body>
 <style>#scroller{overflow:auto;width:1000px} #wide{width:2500px;height:26px} #tall{height:300px;width:200px;overflow:auto}</style>
 <div id="target">Target</div><div id="target-out"></div>
