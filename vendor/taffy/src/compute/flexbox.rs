@@ -2875,9 +2875,13 @@ fn determine_used_cross_size(
                         false => max_size_ignoring_aspect_ratio.cross(constants.dir),
                     };
 
+                    // pyro: the stretched size never falls below the item's padding and border, so an
+                    // item overflowing its line aligns by the size it lays out at (WPT css-flexbox
+                    // `flexbox-align-self-vert-rtl-004`)
                     (line_cross_size - child.margin.cross_axis_sum(constants.dir))
                         .max(0.0)
                         .maybe_clamp(child.min_size.cross(constants.dir), max_cross)
+                        .max((child.padding + child.border).cross_axis_sum(constants.dir))
                 } else if !constants.is_row
                     && constants.is_wrap
                     && child.size_style.cross(constants.dir).is_auto()
