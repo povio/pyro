@@ -591,14 +591,14 @@ At a421f2fe, of 132,204 manifest items: testharness 39,989 (gate 3,537, runnable
 18,158, runnable 9,640), crashtest 2,105 (gate 2,031). Not run: testharness worker variants 4,320, wptserve names
 7,048, Python handlers 2,748, testdriver 2,701; reftests needing wptserve 418, testdriver 83, masonry 911; and
 test262 53,814, manual 3,047, visual 2,714, wdspec 685, print reftests 448, aamtest 190. `discoveredNotInManifest`
-lists what discovery takes that the manifest classifies otherwise (160 `-crash` and conformance-checker pages as
-testharness, 8 SVG reftests): none of them is in a gate directory but four crashtests the testharness gate has
-always run.
+lists what discovery takes that the manifest classifies otherwise (45 `-crash` pages as testharness, 4 SVG reftests):
+none of them is in a gate directory but four crashtests the testharness gate has always run. Top-level `tools/`,
+`resources/` and `conformance-checkers/` hold no tests (`lib.mjs` `NON_TEST_TOP`).
 
 `run.mjs --dirs all` runs every directory of a whole checkout (`allDirs()`: the kind's own directories first, so their
 pages keep their rules, then the fewest others that cover the rest). Testharness pages outside the ten older
-directories run in wptrunner's 800x600. It finds 23,192 testharness pages and 27,806 reftests: the `gate` and
-`runnable` counts above, plus the 168 in `discoveredNotInManifest`. A local sample of 1 in 40 of the pages no gate runs
+directories run in wptrunner's 800x600. It finds 23,077 testharness pages and 27,802 reftests: the `gate` and
+`runnable` counts above, plus the 49 in `discoveredNotInManifest`. A local sample of 1 in 40 of the pages no gate runs
 (2026-11-17, `--jobs 2`, load 33, CI browser of a028229b; not a baseline) found no crash, no hang and no browser
 restart: testharness 487 of 492 completed (5 timeouts, 285 s wall, 1.06 s per page), reftests 233 of 242 completed
 (9 timeouts, 108 s wall, 0.70 s per page). Timeouts are about half the page time.
@@ -608,8 +608,8 @@ restart: testharness 487 of 492 completed (5 timeouts, 285 s wall, 1.06 s per pa
 `run.mjs --server wptserve` (and `gate.mjs run --server wptserve`) serves the pages with WPT's own server instead of
 `serve.mjs` (`wptserve.mjs`): every origin a test names (`web-platform.test`, `www`/`www1`/`www2` and the IDN
 subdomains, `not-web-platform.test`; http, https with WPT's test certificates, ws, wss; no h2), the Python handlers,
-substitutions and all pipes. Discovery then keeps the pages that need them: at a421f2fe testharness 23,192 -> 31,707
-pages, reftests 27,806 -> 28,223, crashtests 2,031 -> 2,076 (with `--dirs all`). Testdriver pages stay out.
+substitutions and all pipes. Discovery then keeps the pages that need them: at a421f2fe testharness 23,077 -> 31,590
+pages, reftests 27,802 -> 28,219, crashtests 2,031 -> 2,076 (with `--dirs all`). Testdriver pages stay out.
 
 - wptserve binds 127.0.0.1 (`server_host`, `check_subdomains: false`), so no hosts file is needed. The browser
   reaches the names through a forward proxy (`startProxy()`) that every context gets as its `proxyServer`: it
@@ -649,8 +649,8 @@ results as `wpt-full-results`. A pull request that changes the workflow, `wptser
 Everything else (`set_permission`, `get_computed_role`/`label`, cookies, BiDi, virtual authenticators, ...) rejects
 as "not implemented", as testdriver.js does with no vendor. At a421f2fe 3,206 of the 3,462 files that load testdriver
 call only `click`, `send_keys`, `Actions` or `bless`; next by use: `set_permission` (165 calls), `get_computed_role`
-(114), `get_computed_label` (77). With `--dirs all --server wptserve --testdriver`: testharness 35,679 pages,
-reftests 28,307, crashtests 2,105 (every crashtest in the manifest). In a first local check, 6 of 10 testdriver pages
+(114), `get_computed_label` (77). With `--dirs all --server wptserve --testdriver`: testharness 35,562 pages,
+reftests 28,303, crashtests 2,105 (every crashtest in the manifest). In a first local check, 6 of 10 testdriver pages
 in uievents, css/selectors and html/user-activation passed every subtest.
 
 ## Crashtests

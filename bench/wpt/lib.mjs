@@ -17,11 +17,14 @@ export const DEFAULT_DIRS = [
 // directory of the checkout, the fewest that cover it: a directory that holds none of `keep` whole, else its
 // subdirectories, recursively. Files directly in a directory that is split this way are not covered (none are tests
 // at the pinned revision but WPT's root-level pages).
+// Top-level directories WPT's manifest holds no tests in (its tools, the harness's own self-tests, conformance-checker
+// samples): pages there are not tests.
+export const NON_TEST_TOP = ['tools', 'resources', 'conformance-checkers'];
 export function allDirs(wpt, keep) {
   const out = [...keep];
   const visit = (rel) => {
     for (const e of fs.readdirSync(path.join(wpt, rel), { withFileTypes: true })) {
-      if (!e.isDirectory() || e.name.startsWith('.')) continue;
+      if (!e.isDirectory() || e.name.startsWith('.') || (!rel && NON_TEST_TOP.includes(e.name))) continue;
       const d = rel ? `${rel}/${e.name}` : e.name;
       if (keep.includes(d)) continue;
       if (keep.some((k) => k.startsWith(d + '/'))) visit(d); else out.push(d);

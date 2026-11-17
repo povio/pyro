@@ -503,10 +503,8 @@
  },
  "discoveredNotInManifest": {
   "testharness": {
-   "count": 160,
+   "count": 45,
    "examples": [
-    "conformance-checkers/html-svg/struct-dom-01-b-isvalid.html",
-    "conformance-checkers/html-svg/struct-svg-02-f-isvalid.html",
     "css/CSS2/floats-clear/adjoining-float-new-fc-crash.html",
     "css/CSS2/floats/floats-saturated-position-crash.html",
     "css/CSS2/linebox/video-needs-layout-crash.html",
@@ -514,20 +512,18 @@
     "css/css-multicol/abspos-in-multicol-with-spanner-crash.html",
     "css/css-multicol/extremely-tall-multicol-with-extremely-tall-child-crash.html",
     "css/css-overflow/outline-with-opacity-crash.html",
-    "css/css-overflow/shrink-to-fit-auto-overflow-relayout-crash.html"
+    "css/css-overflow/shrink-to-fit-auto-overflow-relayout-crash.html",
+    "css/css-position/position-absolute-in-inline-crash.html",
+    "css/css-pseudo/first-letter-crash.html"
    ]
   },
   "reftest": {
-   "count": 8,
+   "count": 4,
    "examples": [
     "svg/pservers/reftests/gradient-inheritance-not-in-rendertree-01.tentative.svg",
     "svg/pservers/reftests/gradient-inheritance-not-in-rendertree-02.tentative.svg",
     "svg/pservers/reftests/pattern-inheritance-not-in-rendertree-01.tentative.svg",
-    "svg/pservers/reftests/pattern-inheritance-not-in-rendertree-02.tentative.svg",
-    "tools/lint/tests/dummy/about_blank.html",
-    "tools/lint/tests/dummy/ref/existent_relative.html",
-    "tools/lint/tests/dummy/ref/same_file_empty.html",
-    "tools/lint/tests/dummy/ref/same_file_path.html"
+    "svg/pservers/reftests/pattern-inheritance-not-in-rendertree-02.tentative.svg"
    ]
   },
   "crashtest": {

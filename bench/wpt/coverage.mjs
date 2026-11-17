@@ -10,7 +10,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import zlib from 'node:zlib';
 import { fileURLToPath } from 'node:url';
-import { DEFAULT_DIRS, REFTEST_DIRS, discover, discoverReftests } from './lib.mjs';
+import { DEFAULT_DIRS, NON_TEST_TOP, REFTEST_DIRS, discover, discoverReftests } from './lib.mjs';
 import { discoverCrashtests } from './crashtest.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -57,7 +57,7 @@ const WORKER = /\.(worker|sharedworker|serviceworker|sharedworker-module|service
 const SHADOWREALM = /\.any\.shadowrealm[\w-]*\.html|\.shadowrealm[\w-]*\.html/;
 
 const m = await manifest();
-const top = fs.readdirSync(WPT, { withFileTypes: true }).filter((e) => e.isDirectory() && !e.name.startsWith('.')).map((e) => e.name).sort();
+const top = fs.readdirSync(WPT, { withFileTypes: true }).filter((e) => e.isDirectory() && !e.name.startsWith('.') && !NON_TEST_TOP.includes(e.name)).map((e) => e.name).sort();
 
 const th = { reasons: new Map() }, rt = { reasons: new Map() }, ct = { reasons: new Map() };
 th.urls = new Set(discover(WPT, top, { reasons: th.reasons }).tests.map((t) => t.url));
