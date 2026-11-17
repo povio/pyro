@@ -111,16 +111,27 @@ pub trait AnimationSource {
     /// The value a running CSS transition of `longhand` gives `el` now, serialized
     /// ([`transition_value`]); `None` when none runs. `getComputedStyle` reports it: the layout
     /// engine samples no transitions.
-    fn transition_value(&self, _el: crate::NodeId, _longhand: &str) -> Option<String> {
+    fn transition_value(&self, _el: crate::NodeId, _longhand: &str) -> Option<TransitionValue> {
         None
     }
 }
 
 pub type SharedAnimationSource = Rc<dyn AnimationSource>;
 
+/// What a CSS transition gives `getComputedStyle` now ([`transition_value`]).
+#[derive(Clone, Debug)]
+pub enum TransitionValue {
+    /// The serialized value (`display`, whose computed value the caller does not read from a style).
+    Text(String),
+    /// The after-change style with the transitioning longhand set to its value now, for the caller
+    /// to serialize as it serializes any computed style.
+    Style(crate::timing::StyleSnapshot),
+}
+
 /// The value of `longhand` a CSS transition from the style `before` to `after` gives at iteration
-/// progress `progress` (before `easing`, CSS text; `None`: `ease`; `before_flag` for step easings),
-/// serialized as its declaration's value. Values that do not interpolate flip halfway.
+/// progress `progress` (before `easing`, CSS text; `None`: `ease`; `before_flag` for step easings).
+/// Values that do not interpolate flip halfway; at the ends the value is the end's own (not one
+/// interpolation normalized, as a `rotate3d()` axis or a `calc()` of a percentage and a length).
 pub fn transition_value(
     longhand: &str,
     before: &crate::timing::StyleSnapshot,
@@ -128,7 +139,7 @@ pub fn transition_value(
     progress: f64,
     before_flag: bool,
     easing: Option<&str>,
-) -> Option<String> {
+) -> Option<TransitionValue> {
     use style::properties::animated_properties::AnimationValue;
     use style::properties::PropertyDeclarationId;
     use style::values::animated::{Animate, Procedure};
@@ -149,23 +160,34 @@ pub fn transition_value(
     // (css-display-4 §2.1, Stylo's `Animate for Display`, which the discrete path skips).
     if longhand == "display" {
         let (a, b) = (before.computed_value_to_string(physical), after.computed_value_to_string(physical));
-        return Some(match (a == "none", b == "none") {
+        return Some(TransitionValue::Text(match (a == "none", b == "none") {
             (false, true) => if eased < 1.0 { a } else { b },
             (true, false) => if eased > 0.0 { b } else { a },
             _ => if eased < 0.5 { a } else { b },
-        });
+        }));
     }
-    let value = from
-        .animate(&to, Procedure::Interpolate { progress: eased })
-        .unwrap_or_else(|_| if eased < 0.5 { from.clone() } else { to.clone() });
-    let mut css = String::new();
-    value.uncompute().to_css(&mut css).ok()?;
-    // At its end a value holding `currentColor` is the after-change one, which the caller
-    // serializes resolved (a shadow's colour).
-    if eased == 1.0 && css.to_ascii_lowercase().contains("currentcolor") {
-        return None;
+    let discrete = || if eased < 0.5 { from.clone() } else { to.clone() };
+    let value = if eased == 1.0 {
+        to.clone()
+    } else if eased == 0.0 {
+        from.clone()
+    } else {
+        match from.animate(&to, Procedure::Interpolate { progress: eased }) {
+            // A transform interpolation Stylo defers (a matrix it cannot decompose) is discrete,
+            // as in Chromium.
+            Ok(v) if matches!(id, style::properties::LonghandId::Transform) && defers_matrix(&v) => discrete(),
+            Ok(v) => v,
+            Err(_) => discrete(),
+        }
+    };
+    let mut style = (**after).clone();
+    value.set_longhand_in_style(&mut style);
+    // A computed opacity is clamped to [0, 1] (an easing can overshoot).
+    if matches!(id, style::properties::LonghandId::Opacity) {
+        let opacity = style.get_effects().opacity.clamp(0.0, 1.0);
+        style.mutate_effects().set_opacity(opacity);
     }
-    Some(css)
+    Some(TransitionValue::Style(style::servo_arc::Arc::new(style)))
 }
 
 /// A computed easing from CSS text; `None`: not one.
@@ -193,4 +215,12 @@ pub fn same_computed_value(longhand: &str, a: &crate::timing::StyleSnapshot, b: 
     let Some(PropertyDeclarationId::Longhand(id)) = id.as_shorthand().err() else { return false };
     let id = PropertyDeclarationId::Longhand(id);
     a.computed_value_to_string(id) == b.computed_value_to_string(id)
+}
+
+/// Whether an interpolated transform is one Stylo defers (`interpolatematrix()`,
+/// `accumulatematrix()`: a matrix it cannot decompose), which Chromium does not interpolate.
+pub(crate) fn defers_matrix(value: &style::properties::animated_properties::AnimationValue) -> bool {
+    let mut css = String::new();
+    let _ = value.uncompute().to_css(&mut css);
+    css.contains("interpolatematrix") || css.contains("accumulatematrix")
 }

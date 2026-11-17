@@ -651,7 +651,7 @@ impl pyro_dom::animation::AnimationSource for Source {
         }
     }
 
-    fn transition_value(&self, el: NodeId, longhand: &str) -> Option<String> {
+    fn transition_value(&self, el: NodeId, longhand: &str) -> Option<pyro_dom::animation::TransitionValue> {
         let page = self.page.upgrade().filter(|page| !page.is_disposed())?;
         let now = self.now(&page);
         let state = &page.animation_events;

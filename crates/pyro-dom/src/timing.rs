@@ -748,15 +748,14 @@ pub fn changed_longhands_with(
                 AnimationValue::from_computed_values(physical, before),
                 AnimationValue::from_computed_values(physical, after),
             ) {
-                // (`display`, `position` and `overlay` animate discretely, where Stylo's
-                // `Animate` succeeds: they transition only with `allow-discrete`, as in Chromium,
-                // css-transitions-2 §2.1; WPT `display-interpolation`, `position-interpolation`,
-                // `overlay-interpolation`.)
+                // (A property Stylo animates discretely transitions only with `allow-discrete`,
+                // as in Chromium, css-transitions-2 §2.1, even where its `Animate` succeeds; WPT
+                // `*-no-interpolation`, `display-interpolation`.)
                 (Some(a), Some(b)) => {
-                    use style::properties::LonghandId as L;
                     allow_discrete
-                        || (!matches!(longhand, L::Display | L::Position | L::Overlay)
-                            && a.animate(&b, Procedure::Interpolate { progress: 0.5 }).is_ok())
+                        || (!longhand.is_discrete_animatable()
+                            && a.animate(&b, Procedure::Interpolate { progress: 0.5 })
+                                .is_ok_and(|v| !crate::animation::defers_matrix(&v)))
                 }
                 _ => false,
             }

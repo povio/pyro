@@ -3177,10 +3177,17 @@ impl Layout {
         let custom = name.starts_with("--");
         let name = if custom { Cow::Borrowed(name) } else { lowercase(name) };
         let name: &str = &name;
-        // pyro: a running CSS transition's value now (the layout engine samples none)
-        if !custom {
-            if let Some(v) = self.style.transition_value(el, name) {
-                return self.resolved_value(dom, el, name, &v).unwrap_or(v);
+        // pyro: a running CSS transition's value now (the layout engine samples none), serialized
+        // as this function serializes the after-change style with that value in it
+        if !custom && !self.style.style_overridden() {
+            match self.style.transition_value(el, name) {
+                Some(crate::animation::TransitionValue::Text(v)) => return v,
+                Some(crate::animation::TransitionValue::Style(style)) => {
+                    if let Some(v) = self.style.with_style_override(el, style, || self.computed_style_value(dom, el, name)) {
+                        return v;
+                    }
+                }
+                None => {}
             }
         }
         match name {

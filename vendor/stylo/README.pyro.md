@@ -384,3 +384,7 @@ blitz-dom reads it for iframes.
 
 Round 4 lane G: `overlay` (css-position-4) for the servo engine in `properties/longhands.toml`, of the existing
 `TopLayer` type (`none | auto`), discrete. blitz-dom renders a top-layer element there only while it is `auto`.
+
+Round 4 lane G: `AnimationValue::set_longhand_in_style` (helpers/animated_properties.mako.rs), `set_in_style_for_servo`
+without a style context (custom properties left as they are): pyro serializes a transitioning element's
+`getComputedStyle` from its after-change style with the transition's value in it.

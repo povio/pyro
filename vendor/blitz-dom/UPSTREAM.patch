@@ -444,7 +444,7 @@ diff --git a/packages/blitz-dom/src/animation.rs b/packages/blitz-dom/src/animat
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/animation.rs
-@@ -0,0 +1,937 @@
+@@ -0,0 +1,979 @@
 +//! pyro: animated values the embedder samples into the cascade.
 +//!
 +//! pyro keeps the timing of every animation (CSS animations, CSS transitions
@@ -751,6 +751,48 @@ new file mode 100644
 +                .into_iter()
 +                .any(|id| block.contains(PropertyDeclarationId::Longhand(id)))
 +            })
++    }
++
++    /// pyro: the starting style of element `id` (its style with its `@starting-style` rules,
++    /// css-transitions-2 §3.2): the before-change style of a box that had none (it was
++    /// `display: none`). `None`: no `@starting-style` rule applies to it, or it is not styled.
++    pub fn starting_style(&self, id: crate::NodeId) -> Option<ServoArc<ComputedValues>> {
++        let node = self.nodes.get(id)?;
++        let style = node.primary_styles().map(|s| (*s).clone())?;
++        if !style::rule_tree::RuleTree::has_starting_style(style.rules()) {
++            return None;
++        }
++        let _layout_thread_scope = crate::stylo::LayoutThreadScope::enter();
++        let guard = &self.guard;
++        let guards = StylesheetGuards { author: &guard.read(), ua_or_user: &guard.read() };
++        let shared = SharedStyleContext {
++            traversal_flags: TraversalFlags::empty(),
++            stylist: &self.stylist,
++            options: GLOBAL_STYLE_DATA.options.clone(),
++            guards,
++            visited_styles_enabled: false,
++            animations: self.animations.clone(),
++            current_time_for_animations: 0.0,
++            snapshot_map: &self.snapshots,
++            registered_speculative_painters: &crate::stylo::RegisteredPaintersImpl,
++        };
++        let mut thread_local = ThreadLocalStyleContext::new();
++        let mut context = StyleContext { shared: &shared, thread_local: &mut thread_local };
++        context.thread_local.current_dom_depth = TNode::depth(&node);
++        let mut resolver = StyleResolverForElement::new(
++            node,
++            &mut context,
++            RuleInclusion::All,
++            PseudoElementResolution::IfApplicable,
++        );
++        let inputs = CascadeInputs {
++            rules: Some(style.rules().clone()),
++            visited_rules: None,
++            flags: style.flags.for_cascade_inputs(),
++            included_cascade_flags: RuleCascadeFlags::STARTING_STYLE,
++        };
++        let starting = resolver.cascade_style_and_visited_with_default_parents(inputs).0;
++        (!starting.get_box().display.is_none()).then_some(starting)
 +    }
 +
 +    /// After a style traversal: resolves the keyframes of the elements whose
