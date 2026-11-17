@@ -2488,8 +2488,8 @@ does not let margins collapse through it, even when its lines have no height (CS
   space bridges to more); a preserved line break before any letter means no first letter; a `::before`/`::after`
   box with an atomic display does not pass on its container's first line.
 - `layout/mod.rs`: an `<input type=number>` is sized as a text field (it was an empty box); `size` does not apply.
-- `net.rs`: `@font-face` rules inside `@media`, passing `@supports` and `@layer` blocks load too (media lists are not
-  evaluated there); a `tech()` source needing a technology outside `SERVO_SUPPORTED` is skipped.
+- `net.rs`: `@font-face` rules inside `@media`, passing `@supports` and `@layer` blocks load too (a `@media` list must
+  match the document's device; imported sheets, which load without one, keep every face); a `tech()` source needing a technology outside `SERVO_SUPPORTED` is skipped.
   `document.rs` sets `layout.css.font-tech.enabled`.
 - `layout/inline/build.rs`, `stylo_to_parley.rs` (round 4 lane A): `<wbr>` is a U+200B soft wrap opportunity (it was
   nothing: no break at all, also under `keep-all`); a quirks-mode `<br>` carries its own `line-height` (parley's line
@@ -2513,3 +2513,14 @@ does not let margins collapse through it, even when its lines have no height (CS
   `jump-start-animation-before-phase`).
 - `node/svg_css.rs` (round 4 lane D): an SVG element with `display: contents` loses its own `text-decoration` (line
   decorations propagate through boxes; css-text-decor `text-decoration-propagation-display-contents`).
+- `stylo.rs`: `is_html_element`/`is_svg_element`/`is_mathml_element` answer by namespace (every element was HTML, none
+  SVG), so stylo's `display: contents` unboxing rules apply (an outer `<svg>`, other SVG and MathML elements: none).
+  `query_container_size`: a first query from a laid-out element outside the traversal (a lazy `::highlight()`/
+  `::backdrop` style) samples the content box at once (no later pass fills it).
+- `node/svg_css.rs`: `display: contents` on `<g>`, `<tspan>`, `<a>`, nested `<svg>` writes a bare wrapper with only the
+  inherited properties declared on it; a `<use>` keeps only its reference and position; other elements nothing.
+- `lang.rs`: a node assigned to a slot takes its language from the slot's host, not the slot.
+- `layout/list.rs`: `@counter-style` rules of every system format list markers (also over a predefined name such as
+  `lower-roman`), looked up in the item's shadow trees inside out before the document's (`CascadeData::counter_style`).
+- `node/element.rs`, `mutator.rs`: only the `id` attribute in no namespace is the element's ID (`xml:id` is not).
+- `layout/first_letter.rs`: the letter is a whole grapheme: a regional-indicator pair (a flag), an emoji ZWJ sequence.

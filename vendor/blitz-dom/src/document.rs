@@ -1811,6 +1811,7 @@ impl BaseDocument {
                 &self.shell_provider,
                 &self.guard.read(),
                 self.abort_signal.as_ref(),
+                Some(self.stylist.device()),
             );
             let element = &mut self.nodes[node_id].element_data_mut().unwrap();
             element.special_data = SpecialElementData::Stylesheet(stylesheet.clone());
@@ -1834,6 +1835,7 @@ impl BaseDocument {
             &self.shell_provider,
             &self.guard.read(),
             self.abort_signal.as_ref(),
+            Some(self.stylist.device()),
         );
 
         // Store data on element

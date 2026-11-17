@@ -328,6 +328,7 @@ impl NetHandler for ResourceHandler<NestedStylesheetHandler> {
             &self.shell_provider,
             &self.data.lock.read(),
             self.data.loader.abort_signal.as_ref(),
+            None,
         );
 
         let import_rule = self.data.import_rule.clone();
@@ -427,6 +428,7 @@ pub(crate) fn fetch_font_face(
     shell_provider: &Arc<dyn ShellProvider>,
     read_guard: &SharedRwLockReadGuard,
     abort_signal: Option<&AbortSignal>,
+    device: Option<&style::device::Device>,
 ) {
     fetch_font_face_rules(
         sheet.contents(read_guard).rules(read_guard).iter(),
@@ -437,6 +439,7 @@ pub(crate) fn fetch_font_face(
         shell_provider,
         read_guard,
         abort_signal,
+        device,
     )
 }
 
@@ -451,25 +454,42 @@ pub(crate) fn fetch_font_face_rules<'a>(
     shell_provider: &Arc<dyn ShellProvider>,
     read_guard: &'a SharedRwLockReadGuard,
     abort_signal: Option<&AbortSignal>,
+    device: Option<&style::device::Device>,
 ) {
     // pyro: `@font-face` rules nested in conditional group rules (`@media`, `@supports`) and
     // `@layer` blocks count too (css-conditional at-media-content-002 / at-supports-content-002).
-    // A `@supports` block whose condition fails is skipped; `@media` lists are not evaluated
-    // here (no device), so a face under a non-matching query still registers.
-    fn flatten<'a>(rules: impl Iterator<Item = &'a CssRule>, guard: &'a SharedRwLockReadGuard, out: &mut Vec<&'a CssRule>) {
+    // A `@supports` block whose condition fails is skipped, and so is a `@media` block whose
+    // list does not match the device (when there is one: imported sheets load without it).
+    fn flatten<'a>(
+        rules: impl Iterator<Item = &'a CssRule>,
+        guard: &'a SharedRwLockReadGuard,
+        device: Option<&style::device::Device>,
+        out: &mut Vec<&'a CssRule>,
+    ) {
         for rule in rules {
             match rule {
-                CssRule::Media(media) => flatten(media.rules.read_with(guard).0.iter(), guard, out),
-                CssRule::Supports(supports) if supports.enabled => {
-                    flatten(supports.rules.read_with(guard).0.iter(), guard, out)
+                CssRule::Media(media) => {
+                    let matches = device.is_none_or(|device| {
+                        media.media_queries.read_with(guard).evaluate(
+                            device,
+                            QuirksMode::NoQuirks,
+                            &mut style::stylesheets::CustomMediaEvaluator::none(),
+                        )
+                    });
+                    if matches {
+                        flatten(media.rules.read_with(guard).0.iter(), guard, device, out)
+                    }
                 }
-                CssRule::LayerBlock(layer) => flatten(layer.rules.read_with(guard).0.iter(), guard, out),
+                CssRule::Supports(supports) if supports.enabled => {
+                    flatten(supports.rules.read_with(guard).0.iter(), guard, device, out)
+                }
+                CssRule::LayerBlock(layer) => flatten(layer.rules.read_with(guard).0.iter(), guard, device, out),
                 _ => out.push(rule),
             }
         }
     }
     let mut flat = Vec::new();
-    flatten(rules, read_guard, &mut flat);
+    flatten(rules, read_guard, device, &mut flat);
     flat.into_iter()
         .filter_map(|rule| match rule {
             CssRule::FontFace(font_face) => {

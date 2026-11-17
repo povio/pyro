@@ -3723,6 +3723,12 @@ pub fn replace_parent_selector_with_implicit_scope(
 }
 
 impl CascadeData {
+    /// pyro: the `@counter-style` rule named `name` in this cascade data (an embedder resolving a
+    /// counter style name in a shadow tree before the document's).
+    pub fn counter_style(&self, name: &Atom) -> Option<&Arc<Locked<CounterStyleRule>>> {
+        self.extra_data.counter_styles.get(name)
+    }
+
     /// Creates an empty `CascadeData`.
     pub fn new() -> Self {
         Self {

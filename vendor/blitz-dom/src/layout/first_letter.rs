@@ -124,12 +124,26 @@ pub(crate) fn scan_text(text: &str) -> TextScan {
         while chars.next_if(|&(_, c)| extends_letter(c)).is_some() {}
         while chars.next_if(|&(_, c)| is_typographic_space(c)).is_some() {}
     }
-    match chars.next() {
+    let letter = match chars.next() {
         None => return TextScan::Letter(start..text.len()),
         Some((_, c)) if c.is_whitespace() => return TextScan::Skip,
-        Some(_) => {}
+        Some((_, c)) => c,
+    };
+    // pyro: the letter is one grapheme: a pair of regional indicators is one flag, and an emoji
+    // ZWJ sequence goes on after each joiner (WPT selectors `first-letter-flag-001`).
+    let regional = |c: char| ('\u{1F1E6}'..='\u{1F1FF}').contains(&c);
+    if regional(letter) {
+        chars.next_if(|&(_, c)| regional(c));
     }
-    while chars.next_if(|&(_, c)| extends_letter(c)).is_some() {}
+    loop {
+        let mut joined = false;
+        while let Some((_, c)) = chars.next_if(|&(_, c)| extends_letter(c)) {
+            joined = c == '\u{200D}';
+        }
+        if !(joined && chars.next_if(|&(_, c)| !c.is_whitespace()).is_some()) {
+            break;
+        }
+    }
     // pyro: punctuation after the letter, except opening punctuation and dashes; a typographic
     // space that is not a word separator bridges to more of it, but is not taken alone.
     loop {
@@ -709,6 +723,12 @@ mod tests {
         // A no-break or em space is content before the letter.
         assert_eq!(scan_text("\u{A0}A"), TextScan::Stop);
         assert_eq!(scan_text(" \u{2003}"), TextScan::Stop);
+    }
+
+    #[test]
+    fn a_flag_or_a_zwj_sequence_is_one_letter() {
+        assert_eq!(scan_text("\u{1F1EC}\u{1F1E7} UK"), TextScan::Letter(0..8));
+        assert_eq!(scan_text("\u{1F469}\u{200D}\u{1F4BB}x"), TextScan::Letter(0..11));
     }
 
     #[test]

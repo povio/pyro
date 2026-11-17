@@ -375,3 +375,4 @@ anchor positioning; stylo_taffy lays it out as `center`, which is what it is wit
 - `stylesheets/supports_rule.rs`, `font_face.rs`: `font-format()` matches collection/opentype/truetype/woff/woff2 and
   `font-tech()` matches `FontFaceSourceTechFlags::SERVO_SUPPORTED` (features-opentype, COLRv0/v1, variations,
   palettes) for servo (the pref `layout.css.font-tech.enabled` is set by the embedder).
+- `stylist.rs`: `CascadeData::counter_style(name)` (embedders resolve counter style names in shadow trees).

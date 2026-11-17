@@ -1914,7 +1914,7 @@ fn containing_block_claims(
     display: style::values::specified::box_::Display,
 ) -> (bool, bool) {
     use style::values::computed::{Perspective, Rotate, Scale, Translate};
-    use style::values::specified::box_::{Contain, ContainerType, WillChangeBits};
+    use style::values::specified::box_::{Contain, WillChangeBits};
     let b = style.get_box();
     let effects = style.get_effects();
     let filtered = !effects.filter.0.is_empty() || !effects.backdrop_filter.0.is_empty();
@@ -1934,7 +1934,6 @@ fn containing_block_claims(
                 | WillChangeBits::CONTAIN,
         )
         || b.contain.intersects(Contain::LAYOUT | Contain::PAINT)
-        || b.container_type.intersects(ContainerType::SIZE | ContainerType::INLINE_SIZE)
         || filtered;
     (fixed, absolute_only)
 }

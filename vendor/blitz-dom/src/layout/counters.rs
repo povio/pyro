@@ -887,17 +887,17 @@ fn digits_from(name: &str) -> Option<u32> {
     })
 }
 
-fn cyclic(value: i32, symbols: &[&str]) -> Option<String> {
+pub(super) fn cyclic(value: i32, symbols: &[&str]) -> Option<String> {
     let n = symbols.len() as i64;
     (n > 0).then(|| symbols[(i64::from(value) - 1).rem_euclid(n) as usize].to_string())
 }
 
-fn fixed(value: i32, symbols: &[&str]) -> Option<String> {
+pub(super) fn fixed(value: i32, symbols: &[&str]) -> Option<String> {
     let index = usize::try_from(i64::from(value) - 1).ok()?;
     symbols.get(index).map(|symbol| symbol.to_string())
 }
 
-fn symbolic(value: i32, symbols: &[&str]) -> Option<String> {
+pub(super) fn symbolic(value: i32, symbols: &[&str]) -> Option<String> {
     let n = symbols.len() as u32;
     if value < 1 || n == 0 {
         return None;
@@ -907,7 +907,7 @@ fn symbolic(value: i32, symbols: &[&str]) -> Option<String> {
     Some(symbol.repeat(value.div_ceil(n) as usize))
 }
 
-fn alphabetic(value: i32, symbols: &[&str]) -> Option<String> {
+pub(super) fn alphabetic(value: i32, symbols: &[&str]) -> Option<String> {
     let n = symbols.len() as i64;
     if value < 1 || n < 2 {
         return None;
@@ -922,7 +922,7 @@ fn alphabetic(value: i32, symbols: &[&str]) -> Option<String> {
     Some(parts.into_iter().rev().collect())
 }
 
-fn numeric(value: i32, symbols: &[&str]) -> Option<String> {
+pub(super) fn numeric(value: i32, symbols: &[&str]) -> Option<String> {
     let n = symbols.len() as i64;
     if n < 2 {
         return None;
@@ -940,7 +940,7 @@ fn numeric(value: i32, symbols: &[&str]) -> Option<String> {
     Some(if value < 0 { format!("-{digits}") } else { digits })
 }
 
-fn additive(value: i32, symbols: &[(u32, &str)]) -> Option<String> {
+pub(super) fn additive(value: i32, symbols: &[(u32, &str)]) -> Option<String> {
     let mut value = u32::try_from(value).ok().filter(|&value| value > 0)?;
     let mut text = String::new();
     for &(weight, symbol) in symbols {

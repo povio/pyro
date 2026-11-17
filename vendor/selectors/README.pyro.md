@@ -29,3 +29,6 @@ matches the compound (a shadow tree's first level steps to its host). Specificit
 buckets it as universal (`selector_map.rs` matches `:host()` only). Changes of the ancestors' classes or attributes
 do not invalidate it (their invalidation looks at the rules of their own trees); WPT `css/css-shadow`
 `host-context-specificity-*` and `css-scoping-shadow-host-namespace` style once.
+- `parser.rs` (`parse_selector`): inside `:is()`/`:where()`/`:not()` the default namespace is skipped only for the
+  subject compound; a compound followed by a combinator keeps `<default ns>|*` (Selectors 4 §4.2; WPT selectors
+  `is-default-ns-003`, `not-default-ns-003`).

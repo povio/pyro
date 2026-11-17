@@ -1013,18 +1013,18 @@ impl<'a> TElement for BlitzNode<'a> {
         })
     }
 
+    // pyro: by namespace (stylo's display: contents unboxing rules, CSS Display 3 appendix B,
+    // and `<use>` shadow trees depend on it; WPT css-display `display-contents-svg-elements`).
     fn is_html_element(&self) -> bool {
-        self.is_element()
+        self.element_data().is_some_and(|data| data.name.ns == markup5ever::ns!(html))
     }
 
-    // not implemented.....
     fn is_mathml_element(&self) -> bool {
-        false
+        self.element_data().is_some_and(|data| data.name.ns == markup5ever::ns!(mathml))
     }
 
-    // need to check the namespace
     fn is_svg_element(&self) -> bool {
-        false
+        self.element_data().is_some_and(|data| data.name.ns == markup5ever::ns!(svg))
     }
 
     fn style_attribute(&self) -> Option<ArcBorrow<'_, Locked<PropertyDeclarationBlock>>> {
@@ -1368,7 +1368,36 @@ impl<'a> TElement for BlitzNode<'a> {
         // Stylo can call while holding this element's mutable style data for
         // a pseudo. Eligibility comes from its fresh originating-element style;
         // axes and content-box dimensions are updated after traversal instead.
-        self.tree().container_query_sizes.lock().unwrap().entry(self.id).or_default().size
+        let mut sizes = self.tree().container_query_sizes.lock().unwrap();
+        if let Some(entry) = sizes.get(&self.id) {
+            return entry.size;
+        }
+        // pyro: a first query from a laid-out element outside the style traversal (a lazy pseudo
+        // style such as `::highlight()`/`::selection` resolved at paint) samples the size now:
+        // no later pass would fill it in (WPT container-queries/pseudo-elements-011,
+        // container-units-selection-pseudo). In a traversal this is the last layout's size; the
+        // refresh after the traversal corrects it.
+        let mut entry = crate::tree::ContainerQuerySize::default();
+        if self.element_data().is_some_and(|element| element.layout_data.is_some()) {
+            if let Some(values) = self.primary_styles() {
+                use style::values::specified::ContainerType;
+                let kind = values.get_box().slow_clone_container_type();
+                let both = kind.intersects(ContainerType::SIZE);
+                let inline = kind.intersects(ContainerType::INLINE_SIZE);
+                if both || inline {
+                    let horizontal = values.writing_mode.is_horizontal();
+                    entry.axes = euclid::default::Size2D::new(both || (inline && horizontal), both || (inline && !horizontal));
+                    let layout = self.final_layout();
+                    entry.size = euclid::default::Size2D::new(
+                        entry.axes.width.then(|| app_units::Au::from_f32_px(layout.content_box_width())),
+                        entry.axes.height.then(|| app_units::Au::from_f32_px(layout.content_box_height())),
+                    );
+                }
+            }
+        }
+        let size = entry.size;
+        sizes.insert(self.id, entry);
+        size
     }
 
     fn each_custom_state<F>(&self, mut callback: F)

@@ -83,3 +83,5 @@ Round 4 lane B: `aspect-ratio` is `None` on internal table boxes (rows, row grou
 `wrapper.rs` `aspect_ratio` and `convert.rs` `to_taffy_style` (css-sizing-4 §2; WPT css-sizing `aspect-ratio/table-element-001`).
 `StyleFlags::IS_INPUT` (set by blitz-dom for `<input>`): `overflow()` is `visible`, so an input is no scroll container
 for layout and keeps its content-based automatic minimum (Blink; WPT css-grid `stretch-grid-item-text-input-overflow`).
+- `convert.rs` (`establishes_fixed_containing_block`): `container-type` alone makes no containing block (a size
+  container has no layout containment in CSS Conditional 5, as in Blink).

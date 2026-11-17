@@ -35,6 +35,15 @@ pub(crate) fn language(node: &Node) -> Option<&str> {
             return Some(lang);
         }
         match current.parent {
+            // pyro: a node assigned to a slot takes its language from its node tree (the host the
+            // slot's shadow tree is attached to), not from the slot it renders in (WPT selectors
+            // i18n/lang-pseudo-class-across-shadow-boundaries).
+            Some(parent) if current.with(parent).is_assigned_slot() => {
+                match current.with(parent).containing_shadow_host_id() {
+                    Some(host) => current = current.with(host),
+                    None => current = current.with(parent),
+                }
+            }
             Some(parent) => current = current.with(parent),
             // `current` is the document.
             None => return default_language(current),

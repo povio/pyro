@@ -658,6 +658,20 @@ struct Rewrite {
     in_style: bool,
 }
 
+/// pyro: whether `node` is inside an SVG `<text>`.
+fn in_text(node: &Node) -> bool {
+    let mut parent = node.parent;
+    while let Some(id) = parent {
+        let p = &node.tree()[id];
+        match p.element_data() {
+            Some(data) if data.name.ns == ns!(svg) && &*data.name.local == "text" => return true,
+            Some(data) if data.name.ns == ns!(svg) => parent = p.parent,
+            _ => return false,
+        }
+    }
+    false
+}
+
 impl Writer<'_> {
     fn finish(&mut self) -> String {
         let mut out = std::mem::take(&mut self.out);
@@ -688,6 +702,58 @@ impl Writer<'_> {
     }
 
     fn write_element(&mut self, node: &Node, data: &ElementData, nesting: usize) {
+        // pyro: `display: contents` on an SVG element (CSS Display 3, appendix B): a `<g>`,
+        // `<tspan>`, `<a>` or nested `<svg>` is unboxed (its children render in its place, without
+        // its own attributes or effects); a `<use>` renders its reference without its own
+        // effects; any other element renders nothing (WPT css-display
+        // `display-contents-svg-elements`).
+        if nesting > 0
+            && data.name.ns == ns!(svg)
+            && node.primary_styles().is_some_and(|style| style.clone_display().is_contents())
+        {
+            match data.name.local.as_ref() {
+                "g" | "tspan" | "a" | "svg" => {
+                    // Its children still inherit from it: a bare wrapper (a `<tspan>` in text, else
+                    // a `<g>`) carries the inherited properties declared on it, nothing else
+                    // (WPT css-display `display-contents-svg-tspan-text-fill`).
+                    let wrapper = if matches!(data.name.local.as_ref(), "tspan" | "a") && in_text(node) { "tspan" } else { "g" };
+                    let mut declarations = String::new();
+                    if let (Some(style), Some(guard)) = (node.primary_styles(), &self.guard) {
+                        let author = author_longhands(&style, guard);
+                        for &(id, name) in STYLE_PROPERTIES {
+                            if id.inherited() && author.contains(&id) {
+                                let _ = write!(declarations, "{name}:{};", computed_value(&style, id));
+                            }
+                        }
+                    }
+                    let _ = write!(self.out, "<{wrapper}");
+                    if !declarations.is_empty() {
+                        self.out.push_str(" style=\"");
+                        encode_quoted_attribute_to_string(&declarations, &mut self.out);
+                        self.out.push('"');
+                    }
+                    self.out.push('>');
+                    for &child_id in &node.children {
+                        self.write_node(&node.tree()[child_id], nesting + 1);
+                    }
+                    let _ = write!(self.out, "</{wrapper}>");
+                }
+                "use" => {
+                    self.out.push_str("<use");
+                    for attr in data.attrs() {
+                        let name = attr.name.local.as_ref();
+                        if matches!(name, "href" | "x" | "y" | "width" | "height") {
+                            let _ = write!(self.out, " {}=\"", if name == "href" { "href" } else { name });
+                            encode_quoted_attribute_to_string(&attr.value, &mut self.out);
+                            self.out.push('"');
+                        }
+                    }
+                    self.out.push_str(" />");
+                }
+                _ => {}
+            }
+            return;
+        }
         // A `<text>`'s `text-shadow`: a copy of it before it, moved by the offset and painted
         // in the shadow's colour ([`text_shadow`]).
         if nesting > 0

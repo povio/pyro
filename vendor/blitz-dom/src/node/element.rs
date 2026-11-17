@@ -521,7 +521,7 @@ impl ElementData {
     pub fn new(name: QualName, attrs: Vec<Attribute>) -> Self {
         let id_attr_atom = attrs
             .iter()
-            .find(|attr| &attr.name.local == "id")
+            .find(|attr| &attr.name.local == "id" && attr.name.ns == markup5ever::ns!())
             .map(|attr| attr.value.as_ref())
             .map(|value: &str| Atom::from(value));
         let classes = attrs

@@ -2173,7 +2173,7 @@ diff -ruN a/stylesheets/supports_rule.rs b/stylesheets/supports_rule.rs
  /// supports_condition | declaration
 diff -ruN a/stylist.rs b/stylist.rs
 --- a/stylist.rs	2026-11-11 19:55:57
-+++ b/stylist.rs	2026-11-16 18:58:01
++++ b/stylist.rs	2026-11-17 12:03:44
 @@ -31,8 +31,8 @@
  use crate::parser::ParserContext;
  use crate::properties::StyleBuilder;
@@ -2199,12 +2199,10 @@ diff -ruN a/stylist.rs b/stylist.rs
      /// Returns the number of selectors.
      pub fn num_selectors(&self) -> usize {
          self.cascade_data
-@@ -1217,6 +1224,62 @@
-         }
- 
+@@ -1219,6 +1226,62 @@
          doc_author_rules_apply && f(&self.cascade_data.author)
-+    }
-+
+     }
+ 
 +    /// pyro: whether a rule that can make `pseudo` (`::before` or `::after`, eagerly
 +    /// cascaded for `element`) generate a box matches `element`, so that the full match and
 +    /// cascade of the pseudo-element can give a style that is kept. When this is `false`, every
@@ -2259,19 +2257,15 @@ diff -ruN a/stylist.rs b/stylist.rs
 +            }
 +        }
 +        false
-     }
- 
-     /// Execute callback for all applicable style rule data.
-@@ -1365,6 +1428,64 @@
-         Some(self.compute_pseudo_element_style_with_inputs(
-             cascade_inputs,
-             pseudo,
-+            guards,
-+            Some(originating_element_style),
-+            Some(element),
-+        ))
 +    }
 +
+     /// Execute callback for all applicable style rule data.
+     pub fn for_each_cascade_data_with_scope<'a, E, F>(&'a self, element: E, mut f: F)
+     where
+@@ -1371,6 +1434,64 @@
+         ))
+     }
+ 
 +    /// pyro: the style of a node that is a pseudo-element's box (`element.implemented_pseudo_element()`,
 +    /// which reaches its originating element through `pseudo_element_originating_element()`), whose
 +    /// rules are matched against the node itself in normal mode: state pseudo-classes after the
@@ -2324,13 +2318,20 @@ diff -ruN a/stylist.rs b/stylist.rs
 +        Some(self.compute_pseudo_element_style_with_inputs(
 +            inputs,
 +            &pseudo,
-             guards,
-             Some(originating_element_style),
-             Some(element),
-@@ -2864,8 +2985,84 @@
++            guards,
++            Some(originating_element_style),
++            Some(element),
++        ))
++    }
++
+     /// Computes a pseudo-element style lazily using the given CascadeInputs.
+     /// This can be used for truly lazy pseudo-elements or to avoid redoing
+     /// selector matching for eager pseudo-elements when we need to recompute
+@@ -2863,7 +2984,83 @@
+     fn clear(&mut self) {
          self.element_map.clear();
          self.pseudos_map.clear();
-     }
++    }
 +}
 +
 +/// pyro: the `::before` and `::after` rules (one pseudo-element level, in
@@ -2347,8 +2348,8 @@ diff -ruN a/stylist.rs b/stylist.rs
 +/// pseudo-element generate a box (see `BoxGeneratingPseudoRules`).
 +pub fn declarations_may_generate_pseudo_box(block: &PropertyDeclarationBlock) -> bool {
 +    BoxGeneratingPseudoRules::declarations_may_generate_box(block)
- }
- 
++}
++
 +#[derive(Clone, Debug, Default, MallocSizeOf)]
 +struct BoxGeneratingPseudoRules {
 +    before: SelectorMap<Rule>,
@@ -2401,29 +2402,37 @@ diff -ruN a/stylist.rs b/stylist.rs
 +    fn clear(&mut self) {
 +        self.before.clear();
 +        self.after.clear();
-+    }
+     }
 +
 +    fn shrink_if_needed(&mut self) {
 +        self.before.shrink_if_needed();
 +        self.after.shrink_if_needed();
 +    }
-+}
-+
+ }
+ 
  /// The id of a given layer, a sequentially-increasing identifier.
- #[derive(Clone, Copy, Debug, Eq, MallocSizeOf, PartialEq, PartialOrd, Ord)]
- pub struct LayerId(u16);
-@@ -3360,6 +3557,10 @@
-     /// The data coming from normal style rules that apply to elements at this
+@@ -3361,6 +3558,10 @@
      /// cascade level.
      normal_rules: ElementAndPseudoRules,
-+
+ 
 +    /// pyro: the rules of `normal_rules` that can make a `::before` or `::after`
 +    /// generate a box.
 +    box_generating_pseudo_rules: BoxGeneratingPseudoRules,
- 
++
      /// The `:host` pseudo rules that are the rightmost selector (without
      /// accounting for pseudo-elements), or `:scope` rules that may match
-@@ -3526,6 +3727,7 @@
+     /// the featureless host.
+@@ -3522,10 +3723,17 @@
+ }
+ 
+ impl CascadeData {
++    /// pyro: the `@counter-style` rule named `name` in this cascade data (an embedder resolving a
++    /// counter style name in a shadow tree before the document's).
++    pub fn counter_style(&self, name: &Atom) -> Option<&Arc<Locked<CounterStyleRule>>> {
++        self.extra_data.counter_styles.get(name)
++    }
++
+     /// Creates an empty `CascadeData`.
      pub fn new() -> Self {
          Self {
              normal_rules: ElementAndPseudoRules::default(),
@@ -2431,7 +2440,7 @@ diff -ruN a/stylist.rs b/stylist.rs
              featureless_host_rules: None,
              slotted_rules: None,
              part_rules: None,
-@@ -3730,8 +3932,27 @@
+@@ -3730,6 +3938,25 @@
      #[inline]
      pub fn normal_rules(&self, pseudo_elements: &[PseudoElement]) -> Option<&SelectorMap<Rule>> {
          self.normal_rules.rules(pseudo_elements)
@@ -2442,8 +2451,8 @@ diff -ruN a/stylist.rs b/stylist.rs
 +    #[inline]
 +    pub fn box_generating_pseudo_rules(&self, pseudo: &PseudoElement) -> Option<&SelectorMap<Rule>> {
 +        self.box_generating_pseudo_rules.map(pseudo)
-     }
- 
++    }
++
 +    /// pyro: whether any rule here is for `pseudo`, in any of the maps the rule
 +    /// collector reads for it.
 +    fn has_rules_for_pseudo(&self, pseudo: &PseudoElement) -> bool {
@@ -2454,12 +2463,10 @@ diff -ruN a/stylist.rs b/stylist.rs
 +                .is_some_and(|m| !m.is_empty())
 +            || self.slotted_rules(pseudos).is_some_and(|m| !m.is_empty())
 +            || self.part_rules(pseudos).is_some_and(|m| !m.is_empty())
-+    }
-+
+     }
+ 
      /// Returns the featureless pseudo rule map for a given pseudo-element.
-     #[inline]
-     pub fn featureless_host_rules(
-@@ -3850,6 +4071,7 @@
+@@ -3850,6 +4077,7 @@
  
      fn shrink_maps_if_needed(&mut self) {
          self.normal_rules.shrink_if_needed();
@@ -2467,7 +2474,7 @@ diff -ruN a/stylist.rs b/stylist.rs
          if let Some(ref mut host_rules) = self.featureless_host_rules {
              host_rules.shrink_if_needed();
          }
-@@ -3955,10 +4177,20 @@
+@@ -3955,10 +4183,20 @@
          quirks_mode: QuirksMode,
          mut collected_scope_dependencies: Option<&mut Vec<Dependency>>,
      ) -> Result<(), AllocErr> {
@@ -2489,7 +2496,7 @@ diff -ruN a/stylist.rs b/stylist.rs
              let pseudo_elements = selector.pseudo_elements();
              let inner_pseudo_element = pseudo_elements.first();
              if let Some(pseudo) = inner_pseudo_element {
-@@ -4102,6 +4334,15 @@
+@@ -4102,6 +4340,15 @@
                  // :scope may match featureless shadow host if the scope
                  // root is the shadow root.
                  // See https://github.com/w3c/csswg-drafts/issues/9025
@@ -2505,7 +2512,7 @@ diff -ruN a/stylist.rs b/stylist.rs
                  let rules = if matches_featureless_host_only {
                      self.featureless_host_rules.get_or_insert_with(Box::default)
                  } else if rule.selector.is_slotted() {
-@@ -4817,6 +5058,7 @@
+@@ -4817,6 +5064,7 @@
      /// Clears the cascade data, but not the invalidation data.
      fn clear_cascade_data(&mut self) {
          self.normal_rules.clear();
