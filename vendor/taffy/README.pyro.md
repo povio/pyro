@@ -580,3 +580,14 @@ indefinite percentage basis resolves its percentages as zero, as in Blink (`calc
 percentage stays none): WPT css-values `calc-min-height-block-1`, `calc-min-width-block-intrinsic-1`.
 `compute/mod.rs` (`compute_in_flow_root_layout`, `CoreStyle::is_content_replaced`): a root replaced by its `content: url()` is not stretched to
 the viewport's width; it takes its natural size (WPT css-content `element-replacement-root`).
+In a row's intrinsic size each item's share is clamped by its max main size and floored by its resolved minimum
+(an inflexible basis above `max-width` counts the max). A table in a row bases on its layout in the container's
+width (fit-content, percentage columns taking their share), whatever its `flex-basis` keyword, as in Blink.
+
+Forced clearance (a float adjoining the strut a cleared box's top margin would collapse into) is read before the
+box is laid out: the box's own floats, merged into that strut by its layout, forced clearance on it and moved it up
+to their bottom, over the box before it (`clear: both` blocks of a fixed height holding floats overlapped).
+
+A wrapping column's unstretched item with an automatic cross size shrinks to fit its line's cross size once that is
+known (fit-content, its main size kept; `determine_used_cross_size`), and a wrapping column without a cross size of
+its own in definite space fits its lines into that space, at least its widest line (`determine_container_cross_size`).

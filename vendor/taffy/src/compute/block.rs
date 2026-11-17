@@ -2189,6 +2189,12 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
 
             #[cfg(feature = "float_layout")]
             let clear_threshold = block_ctx.cleared_threshold(item.clear);
+            // pyro: whether a float placed before the item adjoins the strut its top margin would
+            // collapse into, read before the item's own floats join that strut: a cleared box's own
+            // float forced clearance on it, moving it up to that float's bottom over the box before
+            // it (`.c { clear: both; height: 50px }` blocks holding floats overlapped).
+            #[cfg(feature = "float_layout")]
+            let forced_clearance = block_ctx.has_adjoining_float(item.clear);
             #[cfg(feature = "float_layout")]
             let clear_pos = clear_threshold.unwrap_or(f32::NEG_INFINITY);
             #[cfg(not(feature = "float_layout"))]
@@ -2298,7 +2304,6 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
                     // adjoining the margin-collapse strut that the item's top margin would collapse into:
                     // if the margins were allowed to collapse they would pull the float down with the item,
                     // so clearance is inserted to separate the two, placing the item just below the float.
-                    let forced_clearance = block_ctx.has_adjoining_float(item.clear);
                     if forced_clearance || hypothetical_y < threshold {
                         has_clearance = true;
                         // Clearance stops the item's top margin collapsing with preceding margins. If those

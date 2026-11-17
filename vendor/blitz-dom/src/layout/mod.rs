@@ -1373,6 +1373,18 @@ impl LayoutPassState<'_> {
             style: None,
         };
         table_wrapper.style = table_wrapper.auto_column_widths(&inputs);
+        // pyro: a table's content size (a flex item's flex base size) is the width its columns give
+        // it (the grid's preferred width, which a content-size grid would drop: WPT css-flexbox
+        // `table-as-item-percent-width-cell-001`) and the height of its rows, its own `height` and
+        // `min-height` aside (Blink; WPT css-flexbox `table-as-item-min-height-1`)
+        let mut inputs = inputs;
+        if inputs.sizing_mode == taffy::SizingMode::ContentSize {
+            let mut style = table_wrapper.style.take().unwrap_or_else(|| table_wrapper.ctx.style.clone());
+            style.size.height = taffy::Dimension::auto();
+            style.min_size.height = taffy::LengthPercentageAuto::auto();
+            table_wrapper.style = Some(style);
+            inputs.sizing_mode = taffy::SizingMode::InherentSize;
+        }
         let mut output = compute_grid_layout(&mut table_wrapper, node_id, inputs);
         if let Some(min) = caption_min.filter(|min| *min > output.size.width) {
             if inputs.known_dimensions.width.is_none() {

@@ -2416,3 +2416,7 @@ More of lane IT (round 3):
   `table-intrinsic-size-002`; a fixed table with a larger `width` keeps to `max-width`, CSS2
   `max-width-applies-to-013`).
 - `src/layout/table.rs`: `CollapsedEdge::is_double`.
+
+A table's content-size measure (`SizingMode::ContentSize`, a flex base size) runs the grid as an inherent-size
+layout, so the width its columns give survives, with the table's own `height` and `min-height` dropped (WPT
+css-flexbox `table-as-item-min-height-1`, `table-as-item-percent-width-cell-001`).
