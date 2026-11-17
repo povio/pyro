@@ -98,7 +98,7 @@ export function startProxy() {
     let u;
     try { u = new URL(req.url); } catch { res.writeHead(400); res.end(); return; }
     const up = http.request({ host: '127.0.0.1', port: u.port || 80, method: req.method, path: u.pathname + u.search, headers: req.headers },
-      (r) => { res.writeHead(r.statusCode, r.rawHeaders); r.pipe(res); });
+      (r) => { res.writeHead(r.statusCode, r.statusMessage, r.rawHeaders); r.pipe(res); });
     up.on('error', () => { if (!res.headersSent) res.writeHead(502); res.end(); });
     res.on('close', () => up.destroy());
     req.pipe(up);
