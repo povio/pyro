@@ -2972,12 +2972,13 @@ impl ElementCx<'_, '_> {
                     self.node.id,
                     &text_layout.layout,
                     &text_layout.text,
-                    transform,
+                    |_| transform,
                     tops,
                     options,
                     &self.context.highlight_layers,
                     ranges,
                     &mut draw_text_context,
+                    |_| None,
                 ),
                 None => stroke_inline_text(
                     scene,
@@ -3141,7 +3142,16 @@ impl ElementCx<'_, '_> {
                 );
             }
         }
-        if let Some(&(sel_start, sel_end)) = self.context.selection_ranges.get(&self.node.id) {
+        // pyro: highlighted as on horizontal lines (`highlight`: the `::selection` style, the
+        // originating text's shadows under it), but in lines cut by an ellipsis and in upright
+        // text (whose glyphs leave the layout's inline positions); a recording paint draws none.
+        let highlight = self.context.highlight_ranges.get(&self.node.id).filter(|_| {
+            text_layout.ellipsis.is_none()
+                && text_layout.clamp.is_none()
+                && !all_upright
+                && self.context.draw_text_context.borrow().runs.is_none()
+        });
+        if let (Some(&(sel_start, sel_end)), None) = (self.context.selection_ranges.get(&self.node.id), highlight) {
             crate::text::draw_text_selection(
                 scene,
                 &text_layout.layout,
@@ -3151,6 +3161,22 @@ impl ElementCx<'_, '_> {
             );
         }
         let mut draw_text_context = self.context.draw_text_context.borrow_mut();
+        if let Some(ranges) = highlight {
+            crate::highlight::stroke_highlighted_text(
+                scene,
+                self.context.dom,
+                self.node.id,
+                &text_layout.layout,
+                &text_layout.text,
+                &line_transform,
+                None,
+                TextPaintOptions { scale: self.scale, brush_override: None, shadows: true },
+                &self.context.highlight_layers,
+                ranges,
+                &mut draw_text_context,
+                vertical,
+            );
+        }
         // pyro: `text-overflow` and line clamps cut the lines at the content box's inline size
         // (its physical height), as on horizontal lines (`stroke_inline_text`).
         let truncates = text_layout.ellipsis.is_some() || text_layout.clamp.is_some();
@@ -3168,7 +3194,7 @@ impl ElementCx<'_, '_> {
                 line_truncation_at(text_layout, &line, index, self.scale as f32, width)
             });
             draw_text_context.cut = truncation.as_ref().map(|truncation| truncation.cut);
-            crate::text::stroke_text(
+            if highlight.is_none() { crate::text::stroke_text(
                 scene,
                 std::iter::once(line.clone()),
                 self.context.dom,
@@ -3183,7 +3209,7 @@ impl ElementCx<'_, '_> {
                 &mut draw_text_context,
                 vertical,
                 Some(&text_layout.layout),
-            );
+            ); }
             draw_text_context.cut = None;
             if let Some(LineTruncation { x, ellipsis, text, .. }) = truncation {
                 let filter = draw_text_context.run_filter.take();

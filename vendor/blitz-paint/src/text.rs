@@ -1654,9 +1654,9 @@ pub(crate) fn stroke_text<'a, S: PaintScene>(
         brush_override,
         shadows: paint_shadows,
     } = options;
-    // pyro: text shadows are drawn in screenshots only (see `TextPaintOptions::shadows`), and not
-    // in vertical writing modes, whose lines are turned (a shadow's offset is physical).
-    let paint_shadows = paint_shadows && context.runs.is_none() && vertical.is_none();
+    // pyro: text shadows are drawn in screenshots only (see `TextPaintOptions::shadows`); in
+    // vertical writing modes their physical offsets are turned with the line (`draw_run`).
+    let paint_shadows = paint_shadows && context.runs.is_none();
     let options = TextPaintOptions { shadows: paint_shadows, ..options };
     let DrawTextContext {
         stack,
@@ -2206,6 +2206,16 @@ pub(crate) fn stroke_text<'a, S: PaintScene>(
                         f64::from(x1) + em,
                         baseline + f64::from(metrics.descent) + em * 0.5,
                     );
+                    // pyro: a shadow's offset is physical: turned into a vertical line's space.
+                    let turned;
+                    let shadow = match vertical {
+                        Some(vertical) => {
+                            let (x, y) = vertical.turned_offset((shadow.x as f32, shadow.y as f32));
+                            turned = TextShadow { x: f64::from(x), y: f64::from(y), ..shadow.clone() };
+                            &turned
+                        }
+                        None => shadow,
+                    };
                     draw_shadow(scene, shadow, scale, transform, ink, draw);
                 }
                 None => {

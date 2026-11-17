@@ -374,12 +374,14 @@ pub(crate) fn stroke_highlighted_text<S: PaintScene>(
     root: NodeId,
     layout: &Layout<TextBrush>,
     text: &str,
-    transform: Affine,
+    line_transform: impl Fn(usize) -> Affine,
     tops: Option<LineTops>,
     options: TextPaintOptions,
     layers: &[Layer],
     ranges: &[(usize, usize, usize)],
     context: &mut DrawTextContext,
+    // pyro: how the runs of a vertical line sit in it (lines turned by `line_transform`).
+    vertical: impl Fn(&parley::Line<'_, TextBrush>) -> Option<crate::text::VerticalLine>,
 ) {
     let scale = options.scale;
     let shift = context.text_shift;
@@ -387,9 +389,11 @@ pub(crate) fn stroke_highlighted_text<S: PaintScene>(
     cache.clear();
     cache.layers.clear();
     cache.layers.extend_from_slice(layers);
-    let [a, b, c, d, tx, ty] = transform.as_coeffs();
-    let translation_only = (a, b, c, d) == (1.0, 0.0, 0.0, 1.0);
-    for line in layout.lines() {
+    for (index, line) in layout.lines().enumerate() {
+        let transform = line_transform(index);
+        let turned = vertical(&line);
+        let [a, b, c, d, tx, ty] = transform.as_coeffs();
+        let translation_only = (a, b, c, d) == (1.0, 0.0, 0.0, 1.0);
         let pieces = line_pieces(doc, &line, ranges, &mut cache);
         if pieces.is_empty() {
             context.highlights = std::mem::take(&mut cache);
@@ -402,7 +406,7 @@ pub(crate) fn stroke_highlighted_text<S: PaintScene>(
                 root,
                 Some(text),
                 context,
-                None,
+                turned,
                 Some(layout),
             );
             cache = std::mem::take(&mut context.highlights);
@@ -446,7 +450,7 @@ pub(crate) fn stroke_highlighted_text<S: PaintScene>(
                 root,
                 Some(text),
                 context,
-                None,
+                turned,
                 Some(layout),
             );
             scene.pop_layer();
@@ -484,7 +488,7 @@ pub(crate) fn stroke_highlighted_text<S: PaintScene>(
             root,
             Some(text),
             context,
-            None,
+            turned,
             Some(layout),
         );
         scene.pop_layer();
@@ -513,7 +517,7 @@ pub(crate) fn stroke_highlighted_text<S: PaintScene>(
                     root,
                     Some(text),
                     context,
-                    None,
+                    turned,
                     Some(layout),
                 );
                 context.shadows_only = false;
@@ -530,7 +534,7 @@ pub(crate) fn stroke_highlighted_text<S: PaintScene>(
                 root,
                 Some(text),
                 context,
-                None,
+                turned,
                 Some(layout),
             );
             context.highlighting = false;

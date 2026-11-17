@@ -1071,3 +1071,4 @@ frame's whole transform, clipped to the content box (upstream applied the transl
 - Round 4 lane F: list marker images honour `image-orientation: none` (`unturn`, as `<img>`; WPT css-images
   `image-orientation-list-style-image`).
 - Round 4 lane F, `render.rs`: gradient list markers fill their box; SVG marker images are drawn into the marker box through `viewport_transform`, the root's background filling it.
+- Round 4 lane F, `render.rs`/`highlight.rs`/`text.rs`: vertical lines paint selections through the highlight path (`stroke_highlighted_text` takes per-line transforms and `VerticalLine`s; not upright or truncated lines), and text shadows are drawn in vertical lines with their physical offsets turned into the line's space (`VerticalLine::turned_offset`).
