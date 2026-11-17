@@ -1851,6 +1851,62 @@ fn input_boundary_events_carry_related_targets_and_follow_a_replaced_hovered_ele
 }
 
 #[test]
+fn input_press_and_release_reconcile_hover_after_an_overlay_covers_the_pointer() {
+    for open_at in ["before", "press", "click"] {
+        let mut h = Harness::new();
+        eval_value(
+            &mut h,
+            r#"
+            document.body.innerHTML='<button id="target" style="position:absolute;left:20px;top:20px;width:150px;height:50px">Open</button>';
+            globalThis.log=[];
+            for(const type of ['pointerleave','pointerenter','mouseleave','mouseenter','mousemove'])
+                document.addEventListener(type,e=>log.push([type,e.target.id,e.relatedTarget?.id]),true);
+            globalThis.cover=()=>{const c=document.createElement('div');c.id='cover';c.style.cssText='position:fixed;inset:0;background:white';document.body.append(c)};0
+        "#,
+        );
+        h.page(
+            "Input.dispatchMouseEvent",
+            json!({"type":"mouseMoved","x":50,"y":40}),
+        );
+        eval_value(
+            &mut h,
+            match open_at {
+                "press" => "log=[];document.getElementById('target').onpointerdown=cover;0",
+                "click" => "log=[];document.getElementById('target').onclick=cover;0",
+                _ => "log=[];cover();0",
+            },
+        );
+        for (kind, buttons) in [("mousePressed", 1), ("mouseReleased", 0)] {
+            let result = h.page(
+                "Input.dispatchMouseEvent",
+                json!({"type":kind,"x":50,"y":40,"button":"left","buttons":buttons,"clickCount":1}),
+            );
+            assert_eq!(result["result"], json!({}), "{result}");
+        }
+        if open_at == "click" {
+            h.run_for(30);
+            assert_eq!(
+                eval_value(&mut h, "log"),
+                json!([]),
+                "not in the mutating task"
+            );
+            h.run_for(150);
+        }
+        // Observed in Chromium: boundary events, without a synthetic move.
+        assert_eq!(
+            eval_value(&mut h, "log"),
+            json!([
+                ["pointerleave", "target", "cover"],
+                ["pointerenter", "cover", "target"],
+                ["mouseleave", "target", "cover"],
+                ["mouseenter", "cover", "target"]
+            ]),
+            "open_at={open_at}"
+        );
+    }
+}
+
+#[test]
 fn hyperlink_downloads_follow_set_download_behavior_like_chromium() {
     // Playwright 1.59 sets allowAndName per context and waits for
     // Browser.downloadWillBegin / downloadProgress on the browser session, then
