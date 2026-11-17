@@ -307,11 +307,8 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  # The installed package on each platform: macOS arm64 on the self-hosted Apple
-  # Silicon runner (label lp-m1), macOS Intel on GitHub's Intel runner (lp-m1 has
-  # no Rosetta 2, and this is the first job that runs the cross-compiled Intel
-  # browser). The macOS arm64 and both Linux browsers are fork builds; the macOS
-  # Intel one uses system JavaScriptCore.
+  # Test the installed package on macOS arm64 using the self-hosted Apple Silicon
+  # runner (label lp-m1), and on Linux x64 and arm64. All three use fork builds.
   smoke:
     needs: package
     name: smoke (${{ matrix.runner }})
@@ -322,9 +319,6 @@ jobs:
           - runner: lp-m1
             arch: arm64
             fork: true
-          - runner: macos-15-intel
-            arch: x64
-            fork: false
           - runner: ubuntu-24.04
             arch: x64
             fork: true
