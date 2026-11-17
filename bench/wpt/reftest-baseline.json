@@ -12791,7 +12791,7 @@
   "css/css-position/overlay/overlay-transition-backdrop-entry.html": {"status":"complete","ms":100,"n":1,"fail":[],"h":"0e440bf2"},
   "css/css-position/overlay/overlay-transition-backdrop.html": {"status":"complete","ms":50,"n":1,"fail":[],"h":"0e440bf2"},
   "css/css-position/overlay/overlay-transition-dialog.html": {"status":"complete","ms":100,"n":1,"pass":[]},
-  "css/css-position/overlay/overlay-transition-finished.html": {"status":"complete","ms":50,"n":1,"pass":[]},
+  "css/css-position/overlay/overlay-transition-finished.html": {"status":"complete","ms":50,"n":1,"fail":[],"h":"0e440bf2"},
   "css/css-position/overlay/overlay-transition-in-rendering.html": {"status":"complete","ms":50,"n":1,"fail":[],"h":"0e440bf2"},
   "css/css-position/overlay/overlay-transition-out-rendering.html": {"status":"complete","ms":50,"n":1,"fail":[],"h":"0e440bf2"},
   "css/css-position/position-absolute-center-001.html": {"status":"complete","ms":50,"n":1,"fail":[],"h":"0e440bf2"},
