@@ -3424,7 +3424,7 @@ diff --git a/packages/blitz-dom/src/dom_selection.rs b/packages/blitz-dom/src/do
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/dom_selection.rs
-@@ -0,0 +1,306 @@
+@@ -0,0 +1,324 @@
 +//! pyro: the page's selection, a DOM range the embedder keeps (pyro-webapi's document
 +//! selection), painted as highlighted text. The embedder sets it before a paint
 +//! ([`BaseDocument::set_dom_selection`]); blitz-paint reads it as the inline roots' selected byte
@@ -3434,6 +3434,12 @@ new file mode 100644
 +use std::collections::HashMap;
 +
 +use crate::{BaseDocument, NodeData};
++
++thread_local! {
++    /// pyro: while set, `:link` does not match a visited link (its highlight styles are resolved
++    /// as Chromium's visited style; `BaseDocument::selection_pseudo_style`).
++    pub(crate) static LINKS_AS_VISITED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
++}
 +
 +/// A selection's ends: text nodes, each with an offset in UTF-16 code units of its data, the
 +/// start first in tree order.
@@ -3521,7 +3527,10 @@ new file mode 100644
 +        let primary = node.primary_styles()?;
 +        let read_guard = self.guard.read();
 +        let guards = StylesheetGuards::same(&read_guard);
-+        self.stylist.lazily_compute_pseudo_element_style::<&crate::Node>(
++        // pyro: a visited link's style matches `:link` as not (`LINKS_AS_VISITED`).
++        let visited = self.is_visited_link(node_id);
++        let outer = LINKS_AS_VISITED.replace(visited);
++        let style = self.stylist.lazily_compute_pseudo_element_style::<&crate::Node>(
 +            &guards,
 +            node,
 +            &style::selector_parser::PseudoElement::Selection,
@@ -3529,7 +3538,16 @@ new file mode 100644
 +            &primary,
 +            true,
 +            None,
-+        )
++        );
++        LINKS_AS_VISITED.set(outer);
++        style
++    }
++
++    /// pyro: whether `node_id` is a visited link (`ElementData::flush_link_visited`).
++    pub fn is_visited_link(&self, node_id: NodeId) -> bool {
++        self.nodes
++            .get(node_id)
++            .is_some_and(|node| node.element_state().contains(style_dom::ElementState::VISITED))
 +    }
 +
 +    /// pyro: whether the author declaration of `longhand` that `style` uses is `currentcolor`
@@ -13874,7 +13892,7 @@ diff --git a/packages/blitz-dom/src/layout/list.rs b/packages/blitz-dom/src/layo
  ) -> Option<ListItemLayout> {
      let node = &doc.nodes[child_id];
  
-@@ -71,17 +147,113 @@
+@@ -71,17 +147,116 @@
          return None;
      };
  
@@ -13899,7 +13917,10 @@ diff --git a/packages/blitz-dom/src/layout/list.rs b/packages/blitz-dom/src/layo
 +    let image = match node.element_data().and_then(|element| image_marker(element, resolution)) {
 +        Some(Marker::Image { width, height }) if width.is_nan() || height.is_nan() => Some(default_size()),
 +        Some(marker) => Some(marker),
-+        None => matches!(styles.get_list().list_style_image, style::values::computed::Image::Gradient(_))
++        None => matches!(
++            styles.get_list().list_style_image,
++            style::values::computed::Image::Gradient(_) | style::values::computed::Image::Image(_)
++        )
 +            .then(default_size),
 +    };
 +    // pyro: the item's `::marker` style, on a node of its own (the marker text's brush), and
@@ -13993,7 +14014,7 @@ diff --git a/packages/blitz-dom/src/layout/list.rs b/packages/blitz-dom/src/layo
                  parley_style.font_family = font_family;
              }
  
-@@ -93,18 +265,34 @@
+@@ -93,18 +268,34 @@
                  true,
                  &parley_style,
              );
@@ -14028,7 +14049,7 @@ diff --git a/packages/blitz-dom/src/layout/list.rs b/packages/blitz-dom/src/layo
  
              ListItemLayoutPosition::Outside(Box::new(layout))
          }
-@@ -112,14 +300,314 @@
+@@ -112,14 +303,314 @@
  
      Some(ListItemLayout {
          marker,
@@ -14344,7 +14365,7 @@ diff --git a/packages/blitz-dom/src/layout/list.rs b/packages/blitz-dom/src/layo
          CounterStyle::None => return None,
          CounterStyle::Name(name) => match &*name.0 {
              "lower-alpha" => {
-@@ -132,13 +620,34 @@
+@@ -132,13 +623,34 @@
                  build_alpha_marker(index, &mut marker);
                  Marker::String(format!("{}. ", marker.to_ascii_uppercase()))
              }
@@ -14381,7 +14402,7 @@ diff --git a/packages/blitz-dom/src/layout/list.rs b/packages/blitz-dom/src/layo
          },
          CounterStyle::String(atom_string) => Marker::String(atom_string.as_ref().to_string()),
          CounterStyle::Symbols { symbols, .. } => {
-@@ -149,7 +658,7 @@
+@@ -149,7 +661,7 @@
                  Marker::Char('•')
              } else {
                  // Cycle through symbols based on index: 1st, 2nd, 1st, 2nd, etc.
@@ -14390,7 +14411,7 @@ diff --git a/packages/blitz-dom/src/layout/list.rs b/packages/blitz-dom/src/layo
                  // Symbol is String or Ident variant, extract the string value
                  let sym = &syms[idx];
                  let marker_str = match sym {
-@@ -171,6 +680,36 @@
+@@ -171,6 +683,36 @@
      None
  }
  
@@ -14427,7 +14448,7 @@ diff --git a/packages/blitz-dom/src/layout/list.rs b/packages/blitz-dom/src/layo
  const ALPHABET: [char; 26] = [
      'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's',
      't', 'u', 'v', 'w', 'x', 'y', 'z',
-@@ -204,24 +743,24 @@
+@@ -204,24 +746,24 @@
  
      #[test]
      fn test_marker_for_disc() {
@@ -14459,7 +14480,7 @@ diff --git a/packages/blitz-dom/src/layout/list.rs b/packages/blitz-dom/src/layo
          assert_eq!(result_1, Some(Marker::String("a. ".to_string())));
          assert_eq!(result_2, Some(Marker::String("b. ".to_string())));
          assert_eq!(result_extended_1, Some(Marker::String("aa. ".to_string())));
-@@ -230,10 +769,10 @@
+@@ -230,10 +772,10 @@
  
      #[test]
      fn test_marker_for_upper_alpha() {
@@ -36508,7 +36529,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
      ) -> bool {
          match *pseudo_class {
              NonTSPseudoClass::Active => self.element_state().contains(ElementState::ACTIVE),
-@@ -501,44 +801,79 @@
+@@ -501,44 +801,83 @@
                  .element_state()
                  .intersects(ElementState::VISITED_OR_UNVISITED),
              NonTSPseudoClass::Checked => self.element_state().contains(ElementState::CHECKED),
@@ -36551,9 +36572,13 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
 +            NonTSPseudoClass::CustomState(ref state) => self.has_lp_custom_state(&state.0),
 +            // pyro: every link, visited or not, as browsers match `:link` for an element's style
 +            // (only the colours a visited link paints come from `:visited`).
-+            NonTSPseudoClass::Link => self
-+                .element_state()
-+                .intersects(ElementState::VISITED_OR_UNVISITED),
++            // A visited link's highlight styles (`::selection`) take it as visited, as Chromium's
++            // visited style (WPT css-pseudo `selection-link-002`; `crate::dom_selection`).
++            NonTSPseudoClass::Link => {
++                self.element_state().intersects(ElementState::VISITED_OR_UNVISITED)
++                    && !(crate::dom_selection::LINKS_AS_VISITED.get()
++                        && self.element_state().contains(ElementState::VISITED))
++            }
 +            NonTSPseudoClass::PlaceholderShown => {
 +                self.element_state().contains(ElementState::PLACEHOLDER_SHOWN)
 +            }
@@ -36612,7 +36637,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
          }
      }
  
-@@ -547,6 +882,18 @@
+@@ -547,6 +886,18 @@
          pe: &PseudoElement,
          _context: &mut MatchingContext<Self::Impl>,
      ) -> bool {
@@ -36631,7 +36656,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
          let pseudo = match self.try_stylo_element_data().and_then(|s| s.get()) {
              Some(el) => el
                  .styles
-@@ -586,7 +933,8 @@
+@@ -586,7 +937,8 @@
      }
  
      fn is_html_slot_element(&self) -> bool {
@@ -36641,7 +36666,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
      }
  
      fn has_id(
-@@ -612,15 +960,21 @@
+@@ -612,15 +964,21 @@
          })
      }
  
@@ -36667,7 +36692,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
      }
  
      fn is_empty(&self) -> bool {
-@@ -641,6 +995,16 @@
+@@ -641,6 +999,16 @@
      }
  
      fn add_element_unique_hashes(&self, filter: &mut selectors::bloom::BloomFilter) -> bool {
@@ -36684,7 +36709,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
          each_relevant_element_hash(*self, |hash| filter.insert_hash(hash & BLOOM_HASH_MASK));
          true
      }
-@@ -651,19 +1015,46 @@
+@@ -651,19 +1019,46 @@
  
      type TraversalChildrenIterator = Traverser<'a>;
  
@@ -36735,7 +36760,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
      }
  
      fn traversal_children(&self) -> style::dom::LayoutIterator<Self::TraversalChildrenIterator> {
-@@ -674,18 +1065,18 @@
+@@ -674,18 +1069,18 @@
          })
      }
  
@@ -36759,7 +36784,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
      }
  
      fn style_attribute(&self) -> Option<ArcBorrow<'_, Locked<PropertyDeclarationBlock>>> {
-@@ -701,11 +1092,35 @@
+@@ -701,11 +1096,35 @@
      }
  
      fn has_part_attr(&self) -> bool {
@@ -36797,7 +36822,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
      }
  
      fn id(&self) -> Option<&style::Atom> {
-@@ -806,6 +1221,8 @@
+@@ -806,6 +1225,8 @@
      fn may_have_animations(&self) -> bool {
          self.element_data()
              .is_some_and(|data| data.may_have_animations.load(Ordering::Relaxed))
@@ -36806,7 +36831,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
      }
  
      fn set_may_have_animations(&self) {
-@@ -818,6 +1235,10 @@
+@@ -818,6 +1239,10 @@
          if !self.may_have_animations() {
              return false;
          }
@@ -36817,7 +36842,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
          let key = AnimationSetKey::new_for_non_pseudo(TNode::opaque(&TElement::as_node(self)));
          context
              .animations
-@@ -852,6 +1273,10 @@
+@@ -852,6 +1277,10 @@
          &self,
          context: &SharedStyleContext,
      ) -> Option<Arc<Locked<PropertyDeclarationBlock>>> {
@@ -36828,7 +36853,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
          let opaque = TNode::opaque(&TElement::as_node(self));
          context.animations.get_animation_declarations(
              &AnimationSetKey::new_for_non_pseudo(opaque),
-@@ -864,6 +1289,9 @@
+@@ -864,6 +1293,9 @@
          &self,
          context: &SharedStyleContext,
      ) -> Option<Arc<Locked<PropertyDeclarationBlock>>> {
@@ -36838,7 +36863,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
          let opaque = TNode::opaque(&TElement::as_node(self));
          context.animations.get_transition_declarations(
              &AnimationSetKey::new_for_non_pseudo(opaque),
-@@ -873,31 +1301,55 @@
+@@ -873,31 +1305,55 @@
      }
  
      fn shadow_root(&self) -> Option<<Self::ConcreteNode as TNode>::ConcreteShadowRoot> {
@@ -36902,7 +36927,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
      }
  
      fn is_html_document_body_element(&self) -> bool {
-@@ -917,122 +1369,292 @@
+@@ -917,27 +1373,197 @@
          root_element.children.contains(&self.id)
      }
  
@@ -36923,25 +36948,13 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
 +        let Some(elem) = node.data.downcast_element() else {
              return;
          };
--
--        let tag = &elem.name.local;
--
--        let mut push_style = |decl: PropertyDeclaration| {
 +        let mut push = |block: &'h Arc<Locked<PropertyDeclarationBlock>>| {
-             hints.push(ApplicableDeclarationBlock::from_declarations(
--                Arc::new(
--                    self.guard()
--                        .wrap(PropertyDeclarationBlock::with_one(decl, Importance::Normal)),
--                ),
++            hints.push(ApplicableDeclarationBlock::from_declarations(
 +                StyleSourceBorrow::from_declarations(block.borrow_arc()),
-                 CascadeLevel::new(CascadeOrigin::PresHints),
-                 LayerOrder::root(),
-             ));
-         };
--
--        fn parse_color_attr(value: &str) -> Option<(u8, u8, u8, f32)> {
--            if !value.starts_with('#') {
--                return None;
++                CascadeLevel::new(CascadeOrigin::PresHints),
++                LayerOrder::root(),
++            ));
++        };
 +        let own = elem.attrs.presentational_hints(|| node.build_presentational_hints(elem));
 +        own.own.iter().for_each(&mut push);
 +        let tag = &elem.name.local;
@@ -36950,68 +36963,25 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
 +            if let Some((table, table_elem)) = table {
 +                let of_table = table_elem.attrs.presentational_hints(|| table.build_presentational_hints(table_elem));
 +                of_table.cells.iter().for_each(&mut push);
-             }
++            }
 +        }
 +    }
- 
--            let value = &value[1..];
--            if value.len() == 3 {
--                let r = u8::from_str_radix(&value[0..1], 16).ok()?;
--                let g = u8::from_str_radix(&value[1..2], 16).ok()?;
--                let b = u8::from_str_radix(&value[2..3], 16).ok()?;
--                return Some((r, g, b, 1.0));
--            }
++
 +    fn local_name(&self) -> &LocalName {
 +        &self.element_data().expect("Not an element").name.local
 +    }
- 
--            if value.len() == 6 {
--                let r = u8::from_str_radix(&value[0..2], 16).ok()?;
--                let g = u8::from_str_radix(&value[2..4], 16).ok()?;
--                let b = u8::from_str_radix(&value[4..6], 16).ok()?;
--                return Some((r, g, b, 1.0));
--            }
++
 +    fn namespace(&self) -> &Namespace {
 +        &self.element_data().expect("Not an element").name.ns
 +    }
- 
--            None
++
 +    fn query_container_size(
 +        &self,
 +        display: &style::values::specified::Display,
 +    ) -> euclid::default::Size2D<Option<app_units::Au>> {
 +        if !self.flags.is_in_document() || display.is_none() || display.is_contents() || display.is_inline_flow() {
 +            return Default::default();
-         }
--
--        /// The HTML "rules for parsing dimension values" -- Stylo's
--        /// implementation of them -- packaged as a specified
--        /// `<length-percentage>`. `ignoring_zero` selects the spec's separate
--        /// "maps to the dimension property (ignoring zero)" mapping, where a
--        /// zero value is dropped rather than honoured.
--        ///
--        /// https://html.spec.whatwg.org/multipage/common-microsyntaxes.html#rules-for-parsing-dimension-values
--        fn parse_size_attr(
--            value: &str,
--            ignoring_zero: bool,
--        ) -> Option<style::values::specified::LengthPercentage> {
--            use style::servo::attr::{
--                LengthOrPercentageOrAuto, parse_length, parse_nonzero_length,
--            };
--            use style::values::specified::{LengthPercentage, NoCalcLength};
--            let parsed = if ignoring_zero {
--                parse_nonzero_length(value)
--            } else {
--                parse_length(value)
--            };
--            match parsed {
--                LengthOrPercentageOrAuto::Length(length) => Some(LengthPercentage::Length(
--                    NoCalcLength::from_px(length.to_f32_px()),
--                )),
--                LengthOrPercentageOrAuto::Percentage(fraction) => Some(
--                    LengthPercentage::Percentage(NoCalcPercentage::new(fraction)),
--                ),
--                LengthOrPercentageOrAuto::Auto => None,
++        }
 +        // Stylo can call while holding this element's mutable style data for
 +        // a pseudo. Eligibility comes from its fresh originating-element style;
 +        // axes and content-box dimensions are updated after traversal instead.
@@ -37040,26 +37010,13 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
 +                        entry.axes.height.then(|| app_units::Au::from_f32_px(layout.content_box_height())),
 +                    );
 +                }
-             }
-         }
++            }
++        }
 +        let size = entry.size;
 +        sizes.insert(self.id, entry);
 +        size
 +    }
- 
--        /// Parse the value of an SVG `width`/`height` presentation attribute.
--        /// Unlike the legacy HTML dimension attributes, these accept any CSS
--        /// <length-percentage> (e.g. `1em`), and a unitless number means user
--        /// units, which map to CSS px.
--        fn parse_svg_size_attr(value: &str) -> Option<style::values::specified::LengthPercentage> {
--            use style::values::specified::{LengthPercentage, NoCalcLength};
--            use style_traits::ParsingMode;
--
--            let value = value.trim();
--            if let Some(number) = value.strip_suffix('%') {
--                let val: f32 = number.trim().parse().ok()?;
--                return (val >= 0.0)
--                    .then(|| LengthPercentage::Percentage(NoCalcPercentage::new(val / 100.0)));
++
 +    fn each_custom_state<F>(&self, mut callback: F)
 +    where
 +        F: FnMut(&AtomIdent),
@@ -37073,32 +37030,10 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
 +        if let Some(attr) = value {
 +            for state in crate::has_invalidation::pyro_custom_states(Some(&attr.value)) {
 +                callback(AtomIdent::cast(&style::Atom::from(state)));
-             }
--
--            // Split into number and unit: the unit is the trailing run of
--            // ASCII alphabetic characters (this never eats into a scientific
--            // exponent such as `1e3`, which ends in a digit).
--            let number_len = value
--                .trim_end_matches(|c: char| c.is_ascii_alphabetic())
--                .len();
--            let (number, unit) = value.split_at(number_len);
--            let val: f32 = number.trim().parse().ok().filter(|v| *v >= 0.0)?;
--            let length = if unit.is_empty() {
--                NoCalcLength::from_px(val)
--            } else {
--                NoCalcLength::parse_dimension_with_flags(ParsingMode::DEFAULT, false, val, unit)
--                    .ok()?
--            };
--            Some(LengthPercentage::Length(length))
-         }
++            }
++        }
 +    }
- 
--        /// The rules for parsing a legacy font size: an integer from 1 to 7, either
--        /// absolute or relative (`+n`, `-n`) to the default size 3.
--        ///
--        /// https://html.spec.whatwg.org/multipage/rendering.html#rules-for-parsing-a-legacy-font-size
--        fn parse_legacy_font_size(value: &str) -> Option<u8> {
--            use style::str::{HTML_SPACE_CHARACTERS, read_numbers};
++
 +    fn has_selector_flags(&self, flags: ElementSelectorFlags) -> bool {
 +        self.selector_flags().get().contains(flags)
 +    }
@@ -37178,117 +37113,29 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
 +        None
 +    }
 +}
-+
+ 
 +impl Node {
 +    /// The declaration blocks the element's legacy attributes map to, one
 +    /// per declaration.
 +    fn build_presentational_hints(&self, elem: &ElementData) -> crate::node::PresentationalHints {
-+        let tag = &elem.name.local;
+         let tag = &elem.name.local;
 +        let mut own = Vec::new();
-+
-+        let mut push_style = |decl: PropertyDeclaration| {
+ 
+         let mut push_style = |decl: PropertyDeclaration| {
+-            hints.push(ApplicableDeclarationBlock::from_declarations(
+-                Arc::new(
+-                    self.guard()
+-                        .wrap(PropertyDeclarationBlock::with_one(decl, Importance::Normal)),
+-                ),
+-                CascadeLevel::new(CascadeOrigin::PresHints),
+-                LayerOrder::root(),
 +            own.push(Arc::new(
 +                self.guard()
 +                    .wrap(PropertyDeclarationBlock::with_one(decl, Importance::Normal)),
-+            ));
-+        };
-+
-+        fn parse_color_attr(value: &str) -> Option<(u8, u8, u8, f32)> {
-+            if !value.starts_with('#') {
-+                return None;
-+            }
-+
-+            let value = &value[1..];
-+            if value.len() == 3 {
-+                let r = u8::from_str_radix(&value[0..1], 16).ok()?;
-+                let g = u8::from_str_radix(&value[1..2], 16).ok()?;
-+                let b = u8::from_str_radix(&value[2..3], 16).ok()?;
-+                return Some((r, g, b, 1.0));
-+            }
-+
-+            if value.len() == 6 {
-+                let r = u8::from_str_radix(&value[0..2], 16).ok()?;
-+                let g = u8::from_str_radix(&value[2..4], 16).ok()?;
-+                let b = u8::from_str_radix(&value[4..6], 16).ok()?;
-+                return Some((r, g, b, 1.0));
-+            }
-+
-+            None
-+        }
-+
-+        /// The HTML "rules for parsing dimension values" -- Stylo's
-+        /// implementation of them -- packaged as a specified
-+        /// `<length-percentage>`. `ignoring_zero` selects the spec's separate
-+        /// "maps to the dimension property (ignoring zero)" mapping, where a
-+        /// zero value is dropped rather than honoured.
-+        ///
-+        /// https://html.spec.whatwg.org/multipage/common-microsyntaxes.html#rules-for-parsing-dimension-values
-+        fn parse_size_attr(
-+            value: &str,
-+            ignoring_zero: bool,
-+        ) -> Option<style::values::specified::LengthPercentage> {
-+            use style::servo::attr::{
-+                LengthOrPercentageOrAuto, parse_length, parse_nonzero_length,
-+            };
-+            use style::values::specified::{LengthPercentage, NoCalcLength};
-+            let parsed = if ignoring_zero {
-+                parse_nonzero_length(value)
-+            } else {
-+                parse_length(value)
-+            };
-+            match parsed {
-+                LengthOrPercentageOrAuto::Length(length) => Some(LengthPercentage::Length(
-+                    NoCalcLength::from_px(length.to_f32_px()),
-+                )),
-+                LengthOrPercentageOrAuto::Percentage(fraction) => Some(
-+                    LengthPercentage::Percentage(NoCalcPercentage::new(fraction)),
-+                ),
-+                LengthOrPercentageOrAuto::Auto => None,
-+            }
-+        }
-+
-+        /// Parse the value of an SVG `width`/`height` presentation attribute.
-+        /// Unlike the legacy HTML dimension attributes, these accept any CSS
-+        /// <length-percentage> (e.g. `1em`), and a unitless number means user
-+        /// units, which map to CSS px.
-+        fn parse_svg_size_attr(value: &str) -> Option<style::values::specified::LengthPercentage> {
-+            use style::values::specified::{LengthPercentage, NoCalcLength};
-+            use style_traits::ParsingMode;
-+
-+            let value = value.trim();
-+            if let Some(number) = value.strip_suffix('%') {
-+                let val: f32 = number.trim().parse().ok()?;
-+                return (val >= 0.0)
-+                    .then(|| LengthPercentage::Percentage(NoCalcPercentage::new(val / 100.0)));
-+            }
-+
-+            // Split into number and unit: the unit is the trailing run of
-+            // ASCII alphabetic characters (this never eats into a scientific
-+            // exponent such as `1e3`, which ends in a digit).
-+            let number_len = value
-+                .trim_end_matches(|c: char| c.is_ascii_alphabetic())
-+                .len();
-+            let (number, unit) = value.split_at(number_len);
-+            let val: f32 = number.trim().parse().ok().filter(|v| *v >= 0.0)?;
-+            let length = if unit.is_empty() {
-+                NoCalcLength::from_px(val)
-+            } else {
-+                NoCalcLength::parse_dimension_with_flags(ParsingMode::DEFAULT, false, val, unit)
-+                    .ok()?
-+            };
-+            Some(LengthPercentage::Length(length))
-+        }
-+
-+        /// The rules for parsing a legacy font size: an integer from 1 to 7, either
-+        /// absolute or relative (`+n`, `-n`) to the default size 3.
-+        ///
-+        /// https://html.spec.whatwg.org/multipage/rendering.html#rules-for-parsing-a-legacy-font-size
-+        fn parse_legacy_font_size(value: &str) -> Option<u8> {
-+            use style::str::{HTML_SPACE_CHARACTERS, read_numbers};
+             ));
+         };
  
-             let mut chars = value
-                 .trim_start_matches(HTML_SPACE_CHARACTERS)
-@@ -1083,6 +1705,37 @@
+@@ -1083,6 +1709,37 @@
                  .find(|declaration| matches!(declaration, PropertyDeclaration::FontFamily(_)))
          }
  
@@ -37326,7 +37173,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
          // `<input type=image>` is the only input type that is replaced
          // content, and it is the only one that takes the embedded-content
          // presentational attributes. The type attribute is matched ASCII
-@@ -1100,6 +1753,23 @@
+@@ -1100,6 +1757,23 @@
              let name = &attr.name.local;
              let value = attr.value.as_str();
  
@@ -37350,7 +37197,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
              if *name == local_name!("lang") {
                  if attr.name.ns == ns!(xml) {
                      lang = Some(value);
-@@ -1125,6 +1795,24 @@
+@@ -1125,6 +1799,24 @@
                  }
              }
  
@@ -37375,7 +37222,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
              if *name == local_name!("align") {
                  use style::values::specified::TextAlign;
                  let keyword = match value {
-@@ -1164,7 +1852,7 @@
+@@ -1164,7 +1856,7 @@
                          BaselineShift::Keyword(BaselineShiftKeyword::Top),
                      ))
                  } else if value.eq_ignore_ascii_case("middle") {
@@ -37384,7 +37231,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
                  } else if value.eq_ignore_ascii_case("bottom") {
                      Some((
                          AlignmentBaseline::Baseline,
-@@ -1270,7 +1958,9 @@
+@@ -1270,7 +1962,9 @@
              // presentation attributes that map to the CSS `width`/`height`
              // properties, so e.g. `width="1em"` must resolve against the
              // element's font-size like any other CSS length.
@@ -37395,7 +37242,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
                  && (*name == local_name!("width") || *name == local_name!("height"))
              {
                  if let Some(size) = parse_svg_size_attr(value) {
-@@ -1358,6 +2048,15 @@
+@@ -1358,6 +2052,15 @@
                  }
              }
  
@@ -37411,7 +37258,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
              if *name == local_name!("bgcolor") {
                  use style::values::specified::Color;
                  if let Some((r, g, b, a)) = parse_color_attr(value) {
-@@ -1373,148 +2072,59 @@
+@@ -1373,148 +2076,59 @@
              }
          }
  
@@ -37599,7 +37446,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
          None
      }
  }
-@@ -1527,6 +2137,37 @@
+@@ -1527,6 +2141,37 @@
      /// dedicated storage on the node (see `flush_image_layers_from_style`)
      /// because their style changed during this traversal.
      nodes_needing_style_image_flush: Mutex<Vec<NodeId>>,
@@ -37637,7 +37484,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  }
  
  impl<'a> RecalcStyle<'a> {
-@@ -1534,11 +2175,187 @@
+@@ -1534,11 +2179,187 @@
          RecalcStyle {
              context,
              nodes_needing_style_image_flush: Mutex::new(Vec::new()),
@@ -37825,7 +37672,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  impl<'dom> DomTraversal<BlitzNode<'dom>> for RecalcStyle<'_> {
      fn process_preorder<F: FnMut(BlitzNode<'dom>)>(
          &self,
-@@ -1546,14 +2363,218 @@
+@@ -1546,14 +2367,218 @@
          node: BlitzNode<'dom>,
          note_child: F,
      ) {
@@ -38044,7 +37891,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
              }
  
              if !data.damage.is_empty() {
-@@ -1597,6 +2618,12 @@
+@@ -1597,6 +2622,12 @@
      }
  }
  
@@ -38057,7 +37904,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  /// Flush updated pseudo-element (`::before`/`::after`) styles from the owning
  /// element's freshly-computed stylo data to the pseudo-element's anonymous node.
  ///
-@@ -1669,12 +2696,41 @@
+@@ -1669,12 +2700,41 @@
                      .push(pe_node_id);
              }
          }
@@ -38099,7 +37946,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  /// Whether a node's `background-image`/`mask-image` layers need flushing to
  /// dedicated storage on the node: the URLs referenced by the new style differ
  /// from the image data currently stored on the node.
-@@ -1689,11 +2745,12 @@
+@@ -1689,11 +2749,12 @@
              // (a style list of `none` layers and empty storage are in sync).
              return style_images
                  .iter()
@@ -38114,7 +37961,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
                  (Image::Url(ComputedUrl::Valid(url)), Some(data)) => **url != *data.url,
                  (Image::Url(ComputedUrl::Valid(_)), None) => true,
                  (_, Some(_)) => true,
-@@ -1707,6 +2764,26 @@
+@@ -1707,6 +2768,26 @@
              &style.get_background().background_image.0,
              &el.background_images,
          ) || out_of_sync(&style.get_svg().mask_image.0, &el.mask_images)
@@ -38141,7 +37988,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
      })
  }
  
-@@ -1737,3 +2814,734 @@
+@@ -1737,3 +2818,734 @@
  
      // let val = CSSInlineStyleDeclaration();
  }

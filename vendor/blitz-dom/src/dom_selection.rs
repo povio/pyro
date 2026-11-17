@@ -8,6 +8,12 @@ use std::collections::HashMap;
 
 use crate::{BaseDocument, NodeData};
 
+thread_local! {
+    /// pyro: while set, `:link` does not match a visited link (its highlight styles are resolved
+    /// as Chromium's visited style; `BaseDocument::selection_pseudo_style`).
+    pub(crate) static LINKS_AS_VISITED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
 /// A selection's ends: text nodes, each with an offset in UTF-16 code units of its data, the
 /// start first in tree order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -94,7 +100,10 @@ impl BaseDocument {
         let primary = node.primary_styles()?;
         let read_guard = self.guard.read();
         let guards = StylesheetGuards::same(&read_guard);
-        self.stylist.lazily_compute_pseudo_element_style::<&crate::Node>(
+        // pyro: a visited link's style matches `:link` as not (`LINKS_AS_VISITED`).
+        let visited = self.is_visited_link(node_id);
+        let outer = LINKS_AS_VISITED.replace(visited);
+        let style = self.stylist.lazily_compute_pseudo_element_style::<&crate::Node>(
             &guards,
             node,
             &style::selector_parser::PseudoElement::Selection,
@@ -102,7 +111,16 @@ impl BaseDocument {
             &primary,
             true,
             None,
-        )
+        );
+        LINKS_AS_VISITED.set(outer);
+        style
+    }
+
+    /// pyro: whether `node_id` is a visited link (`ElementData::flush_link_visited`).
+    pub fn is_visited_link(&self, node_id: NodeId) -> bool {
+        self.nodes
+            .get(node_id)
+            .is_some_and(|node| node.element_state().contains(style_dom::ElementState::VISITED))
     }
 
     /// pyro: whether the author declaration of `longhand` that `style` uses is `currentcolor`

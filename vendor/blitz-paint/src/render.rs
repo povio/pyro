@@ -3459,7 +3459,7 @@ impl ElementCx<'_, '_> {
     /// item's first line, its bottom on the baseline (the inline layout left room for it).
     fn draw_inside_marker_image(&self, scene: &mut impl PaintScene, pos: Point, width: f32, height: f32) {
         let image = self.element.list_style_images.first().and_then(Option::as_ref);
-        if image.is_none() && self.marker_gradient().is_none() {
+        if image.is_none() && !self.generated_marker() {
             return;
         }
         let Some(text_layout) = self.element.inline_layout_data.as_ref() else { return };
@@ -3747,9 +3747,23 @@ impl ElementCx<'_, '_> {
         }
     }
 
+    /// pyro: whether `list-style-image` is generated (a gradient, or `image(<color>)`, to which
+    /// `light-dark(none, none)` computes): a marker of the default size (`layout::list`).
+    fn generated_marker(&self) -> bool {
+        matches!(
+            self.style.get_list().list_style_image,
+            style::values::computed::Image::Gradient(_) | style::values::computed::Image::Image(_)
+        )
+    }
+
     fn draw_marker_gradient(&self, scene: &mut impl PaintScene, origin: Affine, width: f32, height: f32) {
-        let Some(gradient) = self.marker_gradient() else { return };
         let rect = Rect::new(0.0, 0.0, f64::from(width) * self.scale, f64::from(height) * self.scale);
+        if let style::values::computed::Image::Image(color) = &self.style.get_list().list_style_image {
+            let color = color.resolve_to_absolute(&self.style.clone_color()).as_srgb_color();
+            scene.fill(peniko::Fill::NonZero, self.transform * origin, color, None, &rect);
+            return;
+        }
+        let Some(gradient) = self.marker_gradient() else { return };
         let (gradient, brush_transform) =
             crate::gradient::to_peniko_gradient(gradient, rect, rect, self.scale, &self.style.clone_color());
         scene.fill(peniko::Fill::NonZero, self.transform * origin, &gradient, brush_transform, &rect);
@@ -3764,7 +3778,7 @@ impl ElementCx<'_, '_> {
         marker_layout: &parley::Layout<blitz_dom::node::TextBrush>,
     ) {
         let image = self.element.list_style_images.first().and_then(Option::as_ref);
-        if image.is_none() && self.marker_gradient().is_none() {
+        if image.is_none() && !self.generated_marker() {
             return;
         }
         let (baseline, line_x) = self.marker_baseline(marker_layout);

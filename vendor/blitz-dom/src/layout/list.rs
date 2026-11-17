@@ -166,7 +166,10 @@ fn node_list_item_child(
     let image = match node.element_data().and_then(|element| image_marker(element, resolution)) {
         Some(Marker::Image { width, height }) if width.is_nan() || height.is_nan() => Some(default_size()),
         Some(marker) => Some(marker),
-        None => matches!(styles.get_list().list_style_image, style::values::computed::Image::Gradient(_))
+        None => matches!(
+            styles.get_list().list_style_image,
+            style::values::computed::Image::Gradient(_) | style::values::computed::Image::Image(_)
+        )
             .then(default_size),
     };
     // pyro: the item's `::marker` style, on a node of its own (the marker text's brush), and

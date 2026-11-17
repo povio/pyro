@@ -264,7 +264,12 @@ fn selection_style(doc: &BaseDocument, node_id: NodeId) -> Option<LayerStyle> {
         // pyro: container units (`cqh`, ...) in an eager style resolve before layout gives the
         // containers sizes: computed again now (WPT css-conditional
         // `container-units-selection-pseudo`).
+        // pyro: and a visited link's, whose eager style matched `:link` (`selection_pseudo_style`
+        // takes it as visited).
         use style::computed_value_flags::ComputedValueFlags;
+        if doc.is_visited_link(id) {
+            return doc.selection_pseudo_style(id);
+        }
         if eager.flags.contains(ComputedValueFlags::USES_CONTAINER_UNITS) {
             if let Some(again) = doc.selection_pseudo_style(id) {
                 return Some(again);

@@ -2640,3 +2640,5 @@ Round 4 lane G:
   writing modes too (layout runs in logical axes). Multicol breaks (`collect_breaks`) count orphans and widows across
   the anonymous blocks around a split inline (`split_inline_neighbours`), as Chromium's block-in-inline. WPT
   css-position `position-absolute-in-inline-007b`, `-008b`.
+- Round 4 lane F, `layout/inline/relative.rs`: `inline_span_positioned_chain` (the positioned inline boxes a node's content paints with). `stylo_to_parley.rs`: `upright` for `text-orientation: upright` in vertical modes; `font_metrics.rs`: upright `ch` without `vmtx` is the font's height (WPT css-values `ch-unit-002`, `-011`).
+- Round 4 lane F, `dom_selection.rs`/`stylo.rs`: a visited link's `::selection` style is resolved with `:link` not matching it (`LINKS_AS_VISITED`, Chromium's visited style; WPT css-pseudo `selection-link-002`). `layout/list.rs`: `image(<color>)` markers (what `light-dark(none, none)` computes to) take the default size like gradients (css-color `light-dark-image-none`).

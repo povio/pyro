@@ -826,9 +826,13 @@ impl selectors::Element for BlitzNode<'_> {
             NonTSPseudoClass::CustomState(ref state) => self.has_lp_custom_state(&state.0),
             // pyro: every link, visited or not, as browsers match `:link` for an element's style
             // (only the colours a visited link paints come from `:visited`).
-            NonTSPseudoClass::Link => self
-                .element_state()
-                .intersects(ElementState::VISITED_OR_UNVISITED),
+            // A visited link's highlight styles (`::selection`) take it as visited, as Chromium's
+            // visited style (WPT css-pseudo `selection-link-002`; `crate::dom_selection`).
+            NonTSPseudoClass::Link => {
+                self.element_state().intersects(ElementState::VISITED_OR_UNVISITED)
+                    && !(crate::dom_selection::LINKS_AS_VISITED.get()
+                        && self.element_state().contains(ElementState::VISITED))
+            }
             NonTSPseudoClass::PlaceholderShown => {
                 self.element_state().contains(ElementState::PLACEHOLDER_SHOWN)
             }
