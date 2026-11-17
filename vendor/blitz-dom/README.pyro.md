@@ -2463,3 +2463,5 @@ does not let margins collapse through it, even when its lines have no height (CS
   case-insensitively (`svg|foreignObject` matches, `foreignobject` does not match an SVG element).
 - `layout/construct.rs` (`input_type_keyword`), `layout/mod.rs`: an `<input>`'s `type` is read case-insensitively
   and an empty or unknown value is the Text state (a text field), also after a change from `hidden`.
+- `resolve.rs` (`refresh_container_query_sizes`): an element inside an `<svg>` (a `<foreignObject>`, now a CSS box)
+  is no size query container.

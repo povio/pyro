@@ -315,7 +315,14 @@ impl BaseDocument {
                 && node.element_data().is_some_and(|element| element.layout_data.is_some())
                 && !display.is_none()
                 && !display.is_contents()
-                && !display.is_inline_flow();
+                && !display.is_inline_flow()
+                // pyro: an element inside an `<svg>` (a `<foreignObject>`, which has a CSS box of
+                // its own since it renders its content) is no size query container (CSS
+                // Conditional 5; WPT css-conditional `svg-foreignobject-no-size-container`).
+                && !(node.element_data().is_some_and(|el| el.name.ns == markup5ever::ns!(svg))
+                    && node.parent.and_then(|id| self.nodes.get(id)).is_some_and(|parent| {
+                        parent.element_data().is_some_and(|el| el.name.ns == markup5ever::ns!(svg))
+                    }));
             let mut ancestor = node.parent;
             while rendered {
                 let Some(id) = ancestor else { break };
