@@ -441,8 +441,11 @@ impl LayoutPassState<'_> {
                 return None;
             }
             let display = styles.clone_display();
+            // An inline replaced element is an atomic inline: it is contained (WPT css-sizing
+            // `contain-intrinsic-size-012`, an `<img>`).
+            let replaced = node.data.downcast_element().is_some_and(replaced::is_replaced);
             let contained = match display.outside() {
-                DisplayOutside::Inline => display.inside() != DisplayInside::Flow,
+                DisplayOutside::Inline => display.inside() != DisplayInside::Flow || replaced,
                 DisplayOutside::Block => true,
                 _ => false,
             } && display.inside() != DisplayInside::Table;
