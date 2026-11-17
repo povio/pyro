@@ -197,6 +197,7 @@ parley which characters justification passes over and which scripts it does not 
 - `shape/data.rs` (`CharacterFlags::is_empty_box_strut`): U+2061, parley's strut of an empty inline box.
 - `analysis.rs` (`Analysis::paragraph_levels`): the byte offset and base level of each later paragraph, when one
   differs from the first's (an `Auto` base direction).
-- `src/shape/shaper.rs` (`shapes_word_by_word`, round 4 lane D): in a font without `GSUB` and `GPOS` (legacy `kern`/
-  `morx` only, as the macOS Times) a run breaks at every space and no-break space, as Blink shapes word by word when the
-  font's OpenType lookups never take the space glyph: no kerning across spaces (WPT CSS2 `color-applies-to-*`).
+- `src/shape/shaper.rs` (`shapes_word_by_word`, round 4 lane D; narrowed by the v0.0.42 release check): a font without
+  `GSUB`, `GPOS` and a legacy `kern` table breaks runs at every space and no-break space. Chrome 147 kerns across spaces
+  in the macOS Times and Helvetica (legacy `kern`), so those fonts shape whole runs; a no-break space is shaped as a
+  space, as Blink normalizes it, so it kerns as the space does (WPT CSS2 `color-applies-to-*`).
