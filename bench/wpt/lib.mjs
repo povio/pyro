@@ -45,13 +45,15 @@ const SERVER_HELPERS = /\/common\/security-features\//;
 
 // Every testharness page under `dirs` that our static server can run, one entry per variant.
 // `excluded` counts what was left out and why (identical for every binary).
-export function discover(wpt, dirs, { sampleEncoding = 1 } = {}) {
+// `reasons` (a Map, optional) receives each left-out file's reason, keyed by its path (coverage.mjs).
+export function discover(wpt, dirs, { sampleEncoding = 1, reasons } = {}) {
   const tests = [];
   const excluded = {};
-  const exclude = (why) => { excluded[why] = (excluded[why] ?? 0) + 1; };
+  let rel;
+  const exclude = (why) => { excluded[why] = (excluded[why] ?? 0) + 1; reasons?.set(rel, why); };
   for (const d of dirs) {
     for (const f of walk(path.join(wpt, d))) {
-      const rel = path.relative(wpt, f).split(path.sep).join('/');
+      rel = path.relative(wpt, f).split(path.sep).join('/');
       const base = path.basename(f);
       // `code`: the source the wptserve check reads (markup without its comments).
       let src, code, url, variants = [''], long = false;
@@ -190,11 +192,13 @@ const SERVER_CONTENT = /\.py\b|[?&]pipe=|\.sub\.(html|htm|xht|xhtml|svg|css|js)\
 // in a non-test directory. A reference that has references of its own is a test of its own too; as in wptrunner, a
 // test is compared with its own references only (the chain is not followed). `excluded` counts what was left out
 // and why; `info` counts what discovery noticed but kept.
-export function discoverReftests(wpt, dirs) {
+// `reasons` (a Map, optional) receives each left-out file's reason, keyed by its path (coverage.mjs).
+export function discoverReftests(wpt, dirs, { reasons } = {}) {
   const tests = [];
   const excluded = {};
   const info = {};
-  const exclude = (why) => { excluded[why] = (excluded[why] ?? 0) + 1; };
+  let rel;
+  const exclude = (why, at = rel) => { excluded[why] = (excluded[why] ?? 0) + 1; reasons?.set(at, why); };
   const note = (why) => { info[why] = (info[why] ?? 0) + 1; };
   const parsed = new Map();
   const parse = (rel) => {
@@ -213,7 +217,7 @@ export function discoverReftests(wpt, dirs) {
   const noRefs = [];
   for (const d of dirs) {
     for (const f of walkMarkup(path.join(wpt, d))) {
-      const rel = path.relative(wpt, f).split(path.sep).join('/');
+      rel = path.relative(wpt, f).split(path.sep).join('/');
       const base = path.basename(f);
       const name = base.replace(/\.[^.]*$/, '');
       const flag = name.includes('-') ? name.slice(name.lastIndexOf('-') + 1).split('.')[0] : null;
@@ -258,7 +262,7 @@ export function discoverReftests(wpt, dirs) {
     }
   }
   // Markup without references: reference files (named or linked as one) and the rest (visual tests, support pages).
-  for (const { rel, isRefName } of noRefs) exclude(isRefName || referenced.has(rel) ? 'reference file' : 'no reference (visual test or support page)');
+  for (const x of noRefs) exclude(x.isRefName || referenced.has(x.rel) ? 'reference file' : 'no reference (visual test or support page)', x.rel);
   return { tests, excluded, info };
 }
 

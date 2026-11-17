@@ -573,6 +573,28 @@ Paint (the paint directories and CSS2's backgrounds, borders, colors, visufx, ui
 (339 of them `first-letter-punctuation-*`), tables 199, normal-flow 127, lists 120 (counters and the `*-applies-to`
 pages), generated-content 105, text 101, bidi-text 55, positioning 48 and fewer elsewhere.
 
+## Coverage
+
+`coverage.json` counts every test in WPT's own manifest (`MANIFEST.json`, version 9, as wpt.fyi publishes it per
+revision) at the pinned revision, by kind (the manifest's item type) and area (`css/<spec>`, `html/<section>`,
+`svg/<section>`, else the top-level directory). Each test is `gate` (CI runs it today), `runnable` (this runner's
+discovery takes it, but no CI plan runs it yet) or not run for a reason (`notRun`: discovery's reason, or the kind has
+no runner: print reftests, manual, visual, wdspec, aamtest, test262). `total = gate + runnable + sum(notRun)`; every
+URL counts once (variants separately). The status site reads it for its "not run" denominators.
+
+```sh
+bench/wpt/fetch-wpt.sh --all ~/wpt-full                     # the whole revision, about 1.1 GB, ~90 s
+bun bench/wpt/coverage.mjs --wpt ~/wpt-full                 # downloads the manifest from wpt.fyi once (40 MB)
+```
+
+At a421f2fe, of 132,204 manifest items: testharness 39,989 (gate 3,537, runnable 19,495), reftest 29,212 (gate
+18,158, runnable 9,640), crashtest 2,105 (gate 2,031). Not run: testharness worker variants 4,320, wptserve names
+7,048, Python handlers 2,748, testdriver 2,701; reftests needing wptserve 418, testdriver 83, masonry 911; and
+test262 53,814, manual 3,047, visual 2,714, wdspec 685, print reftests 448, aamtest 190. `discoveredNotInManifest`
+lists what discovery takes that the manifest classifies otherwise (160 `-crash` and conformance-checker pages as
+testharness, 8 SVG reftests): none of them is in a gate directory but four crashtests the testharness gate has
+always run.
+
 ## Crashtests
 
 A WPT crashtest is a page that once crashed a browser: it passes when the browser loads it, paints it and is still

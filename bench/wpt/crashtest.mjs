@@ -56,14 +56,15 @@ const TESTDRIVER = /testdriver\.js|testdriver-vendor/;
 
 /** Every crashtest under `dirs` that serve.mjs can serve, one entry per file (crashtests have no variants).
  *  `excluded` counts what was left out and why. */
-export function discoverCrashtests(wpt, dirs) {
+export function discoverCrashtests(wpt, dirs, { reasons } = {}) {
   const tests = [];
   const excluded = {};
-  const exclude = (why) => { excluded[why] = (excluded[why] ?? 0) + 1; };
+  let rel;
+  const exclude = (why) => { excluded[why] = (excluded[why] ?? 0) + 1; reasons?.set(rel, why); };
   const seen = new Set();
   for (const d of dirs) {
     for (const f of walk(path.join(wpt, d))) {
-      const rel = path.relative(wpt, f).split(path.sep).join('/');
+      rel = path.relative(wpt, f).split(path.sep).join('/');
       if (seen.has(rel) || !isCrashtestName(rel)) continue;
       seen.add(rel);
       const base = path.basename(f);
