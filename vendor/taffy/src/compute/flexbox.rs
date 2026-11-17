@@ -3025,6 +3025,13 @@ fn resolve_cross_axis_auto_margins(flex_lines: &mut [FlexLine], constants: &Algo
             .filter(|child| child.participates_in_last_baseline_alignment(constants.dir))
             .map(|child| child.last_baseline_descent)
             .fold(0.0, |acc, x| acc.max(x));
+        // pyro: in a column, the widest `baseline` item's outer cross size (`align_flex_items_along_cross_axis`)
+        let max_baseline_cross: f32 = line
+            .items
+            .iter()
+            .filter(|child| child.align_self.keyword == AlignItemsKeyword::Baseline)
+            .map(|child| child.outer_target_size.cross(constants.dir))
+            .fold(0.0, |acc, x| acc.max(x));
 
         for child in line.items.iter_mut() {
             let free_space = line_cross_size - child.outer_target_size.cross(constants.dir);
@@ -3057,6 +3064,7 @@ fn resolve_cross_axis_auto_margins(flex_lines: &mut [FlexLine], constants: &Algo
                     max_baseline,
                     max_baseline_to_bottom_distance,
                     max_last_descent,
+                    max_baseline_cross,
                     constants,
                 );
             }
@@ -3077,6 +3085,7 @@ fn align_flex_items_along_cross_axis(
     max_baseline: f32,
     max_baseline_to_bottom_distance: f32,
     max_last_descent: f32,
+    max_baseline_cross: f32,
     constants: &AlgoConstants,
 ) -> f32 {
     let cross_axis_should_reverse = constants.is_column && matches!(constants.layout_direction, Direction::Rtl);
@@ -3135,7 +3144,12 @@ fn align_flex_items_along_cross_axis(
                 // Until we support vertical writing modes, baseline alignment only makes sense if
                 // the constants.direction is row, so we treat it as flex-start alignment in columns.
                 let baseline_column_should_reverse = cross_axis_should_reverse && !constants.is_wrap;
-                if constants.is_wrap_reverse ^ baseline_column_should_reverse {
+                if baseline_column_should_reverse && !constants.is_wrap_reverse {
+                    // pyro: the items share a baseline synthesized at their line-left edges, and their
+                    // group goes to the cross start, the right (Chromium; WPT css-flexbox
+                    // `flexbox-align-self-vert-rtl-*`)
+                    free_space - (max_baseline_cross - child.outer_target_size.cross(constants.dir)).max(0.0)
+                } else if constants.is_wrap_reverse ^ baseline_column_should_reverse {
                     free_space
                 } else {
                     0.0
