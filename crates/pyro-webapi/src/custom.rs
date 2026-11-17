@@ -216,9 +216,7 @@ pub(crate) fn construct_html_element<'s>(s: &Scope<'s>, new_target: Object<'s>) 
 /// form-associated callbacks.
 fn upgrade<'s>(s: &Scope<'s>, page: &Rc<PageDom>, el: NodeId, ctor: Value<'s>) -> JsResult<()> {
     upgrade_with(s, page, el, ctor, |name| {
-        JsError::Type(
-            format!("Failed to upgrade \"{name}\": the constructor did not return the element it upgraded.").into(),
-        )
+        JsError::Type(format!("Failed to upgrade \"{name}\": the constructor did not return the element it upgraded.").into())
     })
 }
 
@@ -531,8 +529,7 @@ pub(crate) fn upgrade_clone(s: &Scope<'_>, page: &Rc<PageDom>, root: NodeId) {
                 d.filter_map(|n| {
                     let e = dom.element(n).ok()?;
                     let custom = e.flags
-                        & (pyro_dom::node::element_flags::CUSTOM_DEFINED
-                            | pyro_dom::node::element_flags::CUSTOM_FAILED)
+                        & (pyro_dom::node::element_flags::CUSTOM_DEFINED | pyro_dom::node::element_flags::CUSTOM_FAILED)
                         != 0;
                     (e.is_html() && !custom && e.local_name().contains('-')).then(|| (n, e.local_name().clone()))
                 })

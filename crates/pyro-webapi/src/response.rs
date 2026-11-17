@@ -61,9 +61,7 @@ impl JsClass for Response {
             let body = a.get(0);
             let body = if body.is_null() || body.is_undefined() { None } else { Some(body) };
             if body.is_some() && is_null_body_status(status) {
-                return Err(JsError::Type(
-                    format!("Response with null body status {status} cannot have a body").into(),
-                ));
+                return Err(JsError::Type(format!("Response with null body status {status} cannot have a body").into()));
             }
             if let Some(stream) = body.filter(|b| crate::streams::is_stream(s, *b).unwrap_or(false)) {
                 let page = crate::target::page_of(s)?;
@@ -107,9 +105,7 @@ impl JsClass for Response {
             let json = a.get(0).to_json(0)?.ok_or_else(|| JsError::Type("Value is not JSON serializable".into()))?;
             let (status, status_text, headers) = parse_init(s, a.get(1))?;
             if is_null_body_status(status) {
-                return Err(JsError::Type(
-                    format!("Response with null body status {status} cannot have a body").into(),
-                ));
+                return Err(JsError::Type(format!("Response with null body status {status} cannot have a body").into()));
             }
             if !headers.contains("content-type") {
                 headers.append_raw("content-type", "application/json");
@@ -226,10 +222,9 @@ fn parse_init(s: &Scope<'_>, init: Value<'_>) -> JsResult<(u16, String, HeadersD
     let status = get("status")?;
     let status = if status.is_undefined() { 200 } else { crate::util::to_u32(status)? };
     if !(200..=599).contains(&status) {
-        return Err(JsError::Range(
-            format!("Failed to construct 'Response': The status provided ({status}) is outside the range [200, 599].")
-                .into(),
-        ));
+        return Err(JsError::Range(format!(
+            "Failed to construct 'Response': The status provided ({status}) is outside the range [200, 599]."
+        ).into()));
     }
     let text = get("statusText")?;
     let status_text = if text.is_undefined() { String::new() } else { crate::headers::byte_string(text)? };
@@ -251,9 +246,9 @@ fn resolve(s: &Scope<'_>, target: &str) -> JsResult<String> {
         Some(b) => b.join(target),
         None => pyro_net::Url::parse(target),
     };
-    parsed.map(|u| u.to_string()).map_err(|_| {
-        JsError::Type(format!("Failed to execute 'redirect' on 'Response': Invalid URL '{target}'").into())
-    })
+    parsed
+        .map(|u| u.to_string())
+        .map_err(|_| JsError::Type(format!("Failed to execute 'redirect' on 'Response': Invalid URL '{target}'").into()))
 }
 
 fn construct<'s>(

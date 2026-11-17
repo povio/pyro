@@ -431,7 +431,8 @@ fn make<'s>(s: &Scope<'s>) -> JsResult<pyro_js::Object<'s>> {
     // Rooted while the factory runs (the functions are only referenced by
     // `native`, itself an argument).
     let root = Persistent::new(s, native.value());
-    let factory = s.eval(include_str!("navigator_extras.js"), Some("pyro://internal/navigator-extras.js"), 1)?;
+    let factory =
+        s.eval(include_str!("navigator_extras.js"), Some("pyro://internal/navigator-extras.js"), 1)?;
     let factory = factory.as_object().ok_or_else(|| JsError::Type("navigator extras factory".into()))?;
     let extras = factory.call(None, &[root.get(s)])?;
     extras.as_object().ok_or_else(|| JsError::Type("navigator extras".into()))

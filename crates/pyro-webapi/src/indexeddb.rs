@@ -22,9 +22,7 @@
 use crate::page::{PageDom, RemotePoster};
 use crate::structured_clone::{decode_message, encode_message, WireMessage};
 use crate::util::arg_string;
-use pyro_js::{
-    Args, ClassDef, IdentityKey, JsClass, JsError, JsResult, NoParent, Object, Persistent, RootedVec, Scope,
-};
+use pyro_js::{Args, ClassDef, IdentityKey, JsClass, JsError, JsResult, NoParent, Object, Persistent, RootedVec, Scope};
 use pyro_js::{Value, WeakRealm};
 use rustc_hash::FxHashMap;
 use std::{

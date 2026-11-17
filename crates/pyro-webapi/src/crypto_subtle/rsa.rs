@@ -23,9 +23,9 @@ use crypto_bigint::zeroize::Zeroize;
 use crypto_bigint::{BoxedUint, Choice, ConcatenatingMul, CtEq, Integer, Lcm, Limb, NonZero, Odd, RandomMod, Resize};
 use crypto_primes::hazmat::{SetBits, SmallFactorsSieveFactory};
 use crypto_primes::{is_prime, sieve_and_find, Flavor};
+use pyro_js::JsResult;
 use pkcs8::der::asn1::{BitStringRef, Null, UintRef};
 use pkcs8::der::{Decode, Encode};
-use pyro_js::JsResult;
 
 /// The largest modulus generated or imported (Chromium's limit).
 pub(super) const MAX_BITS: u32 = 16384;

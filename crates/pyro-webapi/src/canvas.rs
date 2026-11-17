@@ -901,12 +901,9 @@ fn fill_rule(a: &Args<'_>, i: usize, what: &str) -> JsResult<bool> {
     match dom_string(rule)?.as_str() {
         "nonzero" => Ok(false),
         "evenodd" => Ok(true),
-        other => Err(JsError::Type(
-            format!(
+        other => Err(JsError::Type(format!(
             "Failed to execute '{what}': The provided value '{other}' is not a valid enum value of type CanvasFillRule."
-        )
-            .into(),
-        )),
+        ).into())),
     }
 }
 
@@ -915,9 +912,7 @@ fn fill_rule(a: &Args<'_>, i: usize, what: &str) -> JsResult<bool> {
 fn path_arg(s: &Scope<'_>, c: &ContextData, a: &Args<'_>, what: &str) -> JsResult<(BezPath, usize)> {
     if a.get(0).is_object() {
         let Some(ops) = path2d_arg(s, c, a)? else {
-            return Err(JsError::Type(
-                format!("Failed to execute '{what}': parameter 1 is not of type 'Path2D'.").into(),
-            ));
+            return Err(JsError::Type(format!("Failed to execute '{what}': parameter 1 is not of type 'Path2D'.").into()));
         };
         let mut path = Path::default();
         replay(ops, &mut path, c.state.borrow().transform)?;
@@ -1061,9 +1056,9 @@ fn get_image_data<'s>(s: &Scope<'s>, c: &ContextData, a: Args<'s>) -> JsResult<V
         "srgb".to_owned()
     };
     if space != "srgb" && space != "display-p3" {
-        return Err(JsError::Type(
-            format!("The provided value '{space}' is not a valid enum value of type PredefinedColorSpace.").into(),
-        ));
+        return Err(JsError::Type(format!(
+            "The provided value '{space}' is not a valid enum value of type PredefinedColorSpace."
+        ).into()));
     }
     if !c.clean.get() {
         return Err(security_error());
@@ -1146,9 +1141,7 @@ fn doubles(a: &Args<'_>, n: usize, what: &str) -> JsResult<Vec<f64>> {
     a.require(n, what)?;
     let v = (0..n).map(|i| a.get(i).to_number()).collect::<JsResult<Vec<_>>>()?;
     if v.iter().any(|x| !x.is_finite()) {
-        return Err(JsError::Type(
-            format!("Failed to execute '{what}': The provided double value is non-finite.").into(),
-        ));
+        return Err(JsError::Type(format!("Failed to execute '{what}': The provided double value is non-finite.").into()));
     }
     Ok(v)
 }

@@ -708,9 +708,9 @@ fn fill_pointer<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>
         for i in 0..len {
             let event = events.get_index(i)?;
             if s.unwrap::<PointerEvent>(event).is_none() {
-                return Err(JsError::Type(
-                    format!("Failed to construct 'PointerEvent': {name} must hold PointerEvents.").into(),
-                ));
+                return Err(JsError::Type(format!(
+                    "Failed to construct 'PointerEvent': {name} must hold PointerEvents."
+                ).into()));
             }
             into.push(Persistent::new(s, event));
         }

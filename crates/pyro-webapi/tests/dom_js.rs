@@ -7027,7 +7027,9 @@ fn ids_read_once_do_not_accumulate() {
 /// answers as the text path does.
 #[test]
 fn names_passed_as_the_same_string_resolve_as_their_text_does() {
-    let e = env("<!doctype html><body><div id=d data-k=v></div><svg id=s viewBox='0 0 1 1'></svg></body>");
+    let e = env(
+        "<!doctype html><body><div id=d data-k=v></div><svg id=s viewBox='0 0 1 1'></svg></body>",
+    );
     let r = &e.main;
     eval(r, "globalThis.d = document.getElementById('d'); globalThis.s = document.getElementById('s'); 'ok'");
     // One literal, many calls: text path, resolving call, table hits.
@@ -7164,10 +7166,7 @@ fn a_wrapper_follows_its_node_into_another_document_and_back() {
     // The other document dropped; the node stays the wrapper's.
     eval(r, "globalThis.other = null; 'ok'");
     collect(&e);
-    assert_eq!(
-        eval(r, "[d.id, sp.id, d.firstChild === sp, document.getElementById('s') === sp].join()"),
-        "d,s,true,true"
-    );
+    assert_eq!(eval(r, "[d.id, sp.id, d.firstChild === sp, document.getElementById('s') === sp].join()"), "d,s,true,true");
 }
 
 /// Pure operations that read an argument only as a node take the lean

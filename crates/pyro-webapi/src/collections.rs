@@ -1010,9 +1010,10 @@ impl JsClass for DomTokenList {
                 ],
                 "blocking" => &["render"],
                 _ => {
-                    return Err(JsError::Type(
-                        format!("DOMTokenList has no supported tokens for the '{}' attribute.", t.attr).into(),
-                    ))
+                    return Err(JsError::Type(format!(
+                        "DOMTokenList has no supported tokens for the '{}' attribute.",
+                        t.attr
+                    ).into()))
                 }
             };
             Ok(s.boolean(supported.iter().any(|k| k.eq_ignore_ascii_case(&tok))))
@@ -1540,10 +1541,7 @@ impl JsClass for SvgTransformList {
         def.method("getItem", 1, |s, t, a| {
             let i = to_u32(a.get(0))? as usize;
             let Some(item) = t.items().get(i).copied() else {
-                return Err(JsError::dom(
-                    "IndexSizeError",
-                    format!("The index provided ({i}) is greater than the maximum bound."),
-                ));
+                return Err(JsError::dom("IndexSizeError", format!("The index provided ({i}) is greater than the maximum bound.")));
             };
             Ok(s.wrap::<SvgTransform>(item, None)?.value())
         });
@@ -1570,7 +1568,9 @@ impl JsClass for SvgTransform {
         }
         def.getter("type", |s, t| Ok(s.number(f64::from(t.kind))));
         def.getter("angle", |s, t| Ok(s.number(t.angle)));
-        def.getter("matrix", |s, t| Ok(s.wrap::<SvgMatrix>(t.matrix, None)?.value()));
+        def.getter("matrix", |s, t| {
+            Ok(s.wrap::<SvgMatrix>(t.matrix, None)?.value())
+        });
     }
 }
 
@@ -1600,12 +1600,7 @@ fn transform_list<'s>(s: &Scope<'s>, el: &NodeHold, attr: &'static str, slot: u6
 
 /// The element's `SVGAnimatedTransformList` of `attr` (`transform`, `gradientTransform`,
 /// `patternTransform`), the same object each time.
-pub fn animated_transform_list<'s>(
-    s: &Scope<'s>,
-    page: &PageDom,
-    id: NodeId,
-    attr: &'static str,
-) -> JsResult<Object<'s>> {
+pub fn animated_transform_list<'s>(s: &Scope<'s>, page: &PageDom, id: NodeId, attr: &'static str) -> JsResult<Object<'s>> {
     let key = coll_identity(page, 32, id);
     if let Some(o) = s.lookup_identity(key) {
         return Ok(o);

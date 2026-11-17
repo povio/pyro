@@ -13,9 +13,7 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use bytes::Bytes;
-use pyro_js::{
-    ClassDef, IdentityKey, JsClass, JsError, JsResult, NoParent, Object, Persistent, Scope, Value, WeakRealm,
-};
+use pyro_js::{ClassDef, IdentityKey, JsClass, JsError, JsResult, NoParent, Object, Persistent, Scope, Value, WeakRealm};
 
 use crate::file::{BlobData, File, FileListBuilder};
 use crate::target::page_of;

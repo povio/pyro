@@ -201,10 +201,7 @@ impl StorageNamespace {
     /// A fresh namespace whose IndexedDB data and caches are `indexed_db`'s
     /// and `caches`' (a worker shares its owner's databases and Cache
     /// Storage; workers have no Web Storage).
-    pub(crate) fn with_shared(
-        indexed_db: crate::indexeddb::Namespace,
-        caches: crate::cache_storage::Namespace,
-    ) -> Self {
+    pub(crate) fn with_shared(indexed_db: crate::indexeddb::Namespace, caches: crate::cache_storage::Namespace) -> Self {
         let namespace = Self::default();
         let mut inner = Rc::try_unwrap(namespace.0).ok().expect("fresh namespace");
         inner.indexed_db = indexed_db;

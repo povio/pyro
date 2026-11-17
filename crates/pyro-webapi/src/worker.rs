@@ -467,9 +467,9 @@ impl JsClass for Worker {
                             ))
                         }
                         other => {
-                            return Err(JsError::Type(
-                                format!("Failed to construct 'Worker': '{other}' is not a valid WorkerType.").into(),
-                            ))
+                            return Err(JsError::Type(format!(
+                                "Failed to construct 'Worker': '{other}' is not a valid WorkerType."
+                            ).into()))
                         }
                     }
                 }

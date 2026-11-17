@@ -64,7 +64,7 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use bytes::Bytes;
-use pyro_js::{JsError, JsResult, Object, Persistent, Scope, Value, WeakRealm};
+use pyro_js::{WeakRealm, JsError, JsResult, Object, Persistent, Scope, Value};
 use pyro_net::{Destination, NetClient, Request, RequestId, RequestMode, ResponseEvent, ResponseSink};
 use pyro_runtime::LoopHandle;
 use rustc_hash::FxHashMap;
@@ -1120,11 +1120,8 @@ fn update(page: &Rc<PageDom>, registration: &Rc<Registration>, script_url: pyro_
     request.max_body = Some(MAX_SCRIPT_BYTES);
     // A redirect would take the body from a URL the max scope was not computed for.
     request.redirect = pyro_net::RedirectMode::Error;
-    request.cache = if registration.update_via_cache == "all" {
-        pyro_net::CacheMode::Default
-    } else {
-        pyro_net::CacheMode::NoCache
-    };
+    request.cache =
+        if registration.update_via_cache == "all" { pyro_net::CacheMode::Default } else { pyro_net::CacheMode::NoCache };
     request.headers.insert("service-worker", pyro_net::http::HeaderValue::from_static("script"));
     page.apply_request_defaults(&mut request);
     #[derive(Default)]
@@ -1527,8 +1524,7 @@ fn module<'s>(s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<Object<'s>> {
         let id = a.get(0).to_number()? as u64;
         let registration = same_origin_registration(&page, a.get(1).to_number()? as u64);
         let done = registration.is_some_and(|r| unregister(&r));
-        Settle { page: Rc::downgrade(&page), id, realm: s.realm().downgrade() }
-            .done(Ok(format!("{{\"value\":{done}}}")));
+        Settle { page: Rc::downgrade(&page), id, realm: s.realm().downgrade() }.done(Ok(format!("{{\"value\":{done}}}")));
         Ok(s.undefined())
     })?;
     native.set_atom("unregister", f.value())?;

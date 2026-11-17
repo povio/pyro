@@ -681,9 +681,7 @@ fn worker_entries<'s>(
 /// In a worker, a `PerformanceTiming` attribute name is no timestamp.
 fn worker_name_timestamp(name: &str) -> Option<JsResult<f64>> {
     TIMING_ATTRIBUTES.contains(&name).then(|| {
-        Err(JsError::Type(
-            format!("Failed to execute 'measure' on 'Performance': '{name}' is not a mark in a worker.").into(),
-        ))
+        Err(JsError::Type(format!("Failed to execute 'measure' on 'Performance': '{name}' is not a mark in a worker.").into()))
     })
 }
 
@@ -777,10 +775,7 @@ pub(crate) fn worker_performance<'s>(
 
 /// The worker realm's observer module (`PerformanceObserver`,
 /// `PerformanceObserverEntryList`).
-pub(crate) fn worker_observer_module<'s>(
-    s: &Scope<'s>,
-    performance: pyro_js::Object<'s>,
-) -> JsResult<pyro_js::Object<'s>> {
+pub(crate) fn worker_observer_module<'s>(s: &Scope<'s>, performance: pyro_js::Object<'s>) -> JsResult<pyro_js::Object<'s>> {
     let p = s
         .unwrap::<WorkerPerformance>(performance.value())
         .ok_or_else(|| JsError::Type("PerformanceObserver is unavailable".into()))?;

@@ -846,9 +846,7 @@ fn rule_wrapper<'s>(s: &Scope<'s>, rule: &Rc<RuleNode>, owner: &SheetOwner) -> J
     match rule.kind {
         RuleKind::Style { .. } => s.wrap::<CssStyleRule>(data, Some(rule.identity)),
         RuleKind::Group { .. } => s.wrap::<CssGroupRule>(data, Some(rule.identity)),
-        RuleKind::Other { rule_type: COUNTER_STYLE_RULE, .. } => {
-            s.wrap::<CssCounterStyleRule>(data, Some(rule.identity))
-        }
+        RuleKind::Other { rule_type: COUNTER_STYLE_RULE, .. } => s.wrap::<CssCounterStyleRule>(data, Some(rule.identity)),
         RuleKind::Other { .. } => s.wrap::<CssOtherRule>(data, Some(rule.identity)),
     }
 }
@@ -1053,18 +1051,7 @@ impl JsClass for CssCounterStyleRule {
                 let valid = !name.is_empty()
                     && name.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_' || !c.is_ascii())
                     && !name.starts_with(|c: char| c.is_ascii_digit())
-                    && !matches!(
-                        name.to_ascii_lowercase().as_str(),
-                        "none"
-                            | "inherit"
-                            | "initial"
-                            | "unset"
-                            | "revert"
-                            | "revert-layer"
-                            | "default"
-                            | "decimal"
-                            | "disc"
-                    );
+                    && !matches!(name.to_ascii_lowercase().as_str(), "none" | "inherit" | "initial" | "unset" | "revert" | "revert-layer" | "default" | "decimal" | "disc");
                 if valid {
                     write(r, name, &block_declarations(&block));
                 }

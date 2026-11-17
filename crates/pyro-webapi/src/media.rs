@@ -46,8 +46,12 @@ use crate::page::{MediaFetchHandle, MediaRequest, MediaResponse, PageDom};
 use crate::util::*;
 use crate::window::WindowHost;
 
-static MODULE: LazyModule =
-    LazyModule { key: "lpMedia", source: include_str!("media.js"), url: "pyro://internal/media.js", natives: None };
+static MODULE: LazyModule = LazyModule {
+    key: "lpMedia",
+    source: include_str!("media.js"),
+    url: "pyro://internal/media.js",
+    natives: None,
+};
 
 /// Adds the lazy interface names to pyro-browser's `Window` class.
 pub(crate) fn define_globals<W>(def: &mut ClassDef<W>)
@@ -1151,12 +1155,9 @@ fn internal_pause(page: &Rc<PageDom>, node: NodeId) {
 fn finite(v: Value<'_>, what: &str) -> JsResult<f64> {
     let n = v.to_number()?;
     if !n.is_finite() {
-        return Err(JsError::Type(
-            format!(
-                "Failed to set the '{what}' property on 'HTMLMediaElement': The provided double value is non-finite."
-            )
-            .into(),
-        ));
+        return Err(JsError::Type(format!(
+            "Failed to set the '{what}' property on 'HTMLMediaElement': The provided double value is non-finite."
+        ).into()));
     }
     Ok(n)
 }

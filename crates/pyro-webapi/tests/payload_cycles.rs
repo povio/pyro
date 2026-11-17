@@ -1070,10 +1070,7 @@ const PROBE_NODE: &str = r#"(() => { const out = [];
 fn keep_node_and_close(lab: &Lab, keeper: &Realm, drops: &Rc<Cell<u32>>) {
     let (page, realm) = lab.open("<body><div id=d data-k=v class=c><span>t</span></div>");
     plant_sentinel(&realm, drops);
-    run(
-        &realm,
-        "globalThis.__el = document.getElementById('d'); __el.getAttribute('data-k'); __el.getAttribute('data-k');",
-    );
+    run(&realm, "globalThis.__el = document.getElementById('d'); __el.getAttribute('data-k'); __el.getAttribute('data-k');");
     transfer(&realm, keeper, "__el", "__el");
     lab.close(&page, &realm);
 }
