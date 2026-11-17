@@ -4,9 +4,11 @@
 // nor hung).
 // Usage: bun run.mjs --wpt DIR --bin label=/path/to/serve-compatible-binary --out results.json
 //          [--kind testharness|reftest|crashtest] [--base http://127.0.0.1:9415]   (default: start serve.mjs on a free port)
-//          [--dirs dom,url,...|all] [--jobs 6] [--timeout 15000] [--long-timeout 45000]
+//          [--server static|wptserve] [--dirs dom,url,...|all] [--jobs 6] [--timeout 15000] [--long-timeout 45000]
 //          [--sample-encoding N] [--match REGEX] [--tests FILE] [--list]
 //          [--baseline baseline.json [--gate]] [--shard I/N] [--reuse-context] [--repeat N]
+// --server wptserve: WPT's own server (wptserve.mjs) instead of serve.mjs, every context behind its host-mapping
+//   proxy; discovery then keeps the pages that need wptserve (names, Python handlers, pipes). README "wptserve".
 // --tests FILE: only these URLs (a JSON array of URLs, or a results or baseline file).
 // --repeat N: run every selected page N times (the gate's reruns), one result each; copies run side by side.
 // --baseline: per-page durations order the run longest first and balance --shard I/N (0-based).
@@ -26,6 +28,7 @@ import { fileURLToPath } from 'node:url';
 import { DEFAULT_DIRS, REFTEST_DIRS, allDirs, discover, discoverReftests, plan, shard, readJson } from './lib.mjs';
 import { REFTEST_CONTEXT, ahemEnv, reftestEnv, runReftest } from './reftest.mjs';
 import { CRASHTEST_DIRS, discoverCrashtests, runCrashtest } from './crashtest.mjs';
+import { startProxy, startWptserve } from './wptserve.mjs';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const require = createRequire(path.join(HERE, '..', 'package.json'));
 const { chromium } = require('playwright-core');
@@ -47,6 +50,9 @@ const TIMEOUT = Number(opt('--timeout', 15000));
 const LONG = Number(opt('--long-timeout', 45000));
 const SAMPLE = Number(opt('--sample-encoding', 1));
 const GATE = argv.includes('--gate');
+const SERVER = opt('--server', 'static');
+if (!['static', 'wptserve'].includes(SERVER)) throw new Error(`--server ${SERVER}: expected static or wptserve`);
+const WPTSERVE = SERVER === 'wptserve';
 const BASELINE = opt('--baseline') && readJson(opt('--baseline'));
 const [SHARD, SHARDS] = (opt('--shard', '0/1')).split('/').map(Number);
 const REUSE = argv.includes('--reuse-context');
@@ -58,7 +64,7 @@ if (!(SHARD >= 0 && SHARD < SHARDS)) throw new Error(`--shard ${opt('--shard')}:
 if (!(REPEAT >= 1)) throw new Error(`--repeat ${opt('--repeat')}: expected N >= 1`);
 
 function selectTests() {
-  const { tests, excluded, info } = KIND === 'reftest' ? discoverReftests(WPT, DIRS) : KIND === 'crashtest' ? discoverCrashtests(WPT, DIRS) : discover(WPT, DIRS, { sampleEncoding: SAMPLE });
+  const { tests, excluded, info } = KIND === 'reftest' ? discoverReftests(WPT, DIRS, { wptserve: WPTSERVE }) : KIND === 'crashtest' ? discoverCrashtests(WPT, DIRS, { wptserve: WPTSERVE }) : discover(WPT, DIRS, { sampleEncoding: SAMPLE, wptserve: WPTSERVE });
   let sel = tests;
   const M = opt('--match') && new RegExp(opt('--match'));
   if (M) sel = sel.filter((t) => M.test(t.url));
@@ -85,8 +91,12 @@ const WPT_REVISION = gitRev.status === 0 ? gitRev.stdout.trim() : null;
 
 // ---------- WPT server ----------
 let BASE = opt('--base');
-let server;
-if (!BASE) {
+let server, wptserve, proxy;
+if (!BASE && WPTSERVE) {
+  wptserve = await startWptserve(WPT);
+  proxy = await startProxy();
+  BASE = wptserve.base;
+} else if (!BASE) {
   server = spawn(process.execPath, [path.join(HERE, 'serve.mjs'), WPT, '0'], { stdio: ['ignore', 'pipe', 'inherit'] });
   const line = await new Promise((r, j) => {
     readline.createInterface({ input: server.stdout }).once('line', r);
@@ -142,7 +152,7 @@ async function startBrowser() {
   }
   throw new Error('browser did not start');
 }
-process.on('exit', () => { try { process.kill(-child.pid, 'SIGKILL'); } catch {} try { server?.kill('SIGKILL'); } catch {} });
+process.on('exit', () => { try { process.kill(-child.pid, 'SIGKILL'); } catch {} try { server?.kill('SIGKILL'); } catch {} wptserve?.stop(); });
 
 // Runs in the page: resolves once the harness completes (an add_completion_callback, no polling), or after `ms`.
 // `report` is the shim's object; until testharness.js and the shim have loaded, look again every 5 ms.
@@ -179,7 +189,11 @@ async function openPage(slot, t) {
   }
   if (!slot.browser) { slot.gen = generation; slot.browser = await chromium.connectOverCDP(endpoint, { timeout: 15000 }); }
   if (!slot.page) {
-    slot.ctx = await slot.browser.newContext(RENDERS ? REFTEST_CONTEXT : t.viewport ? { viewport: t.viewport, deviceScaleFactor: 1 } : undefined);
+    const viewport = RENDERS ? REFTEST_CONTEXT : t.viewport ? { viewport: t.viewport, deviceScaleFactor: 1 } : {};
+    // wptserve: its hosts through the proxy (no bypass: localhost too, as Chrome's host rules map every name), and
+    // WPT's test certificates.
+    const served = proxy ? { proxy: { server: `http://127.0.0.1:${proxy.port}`, bypass: '<-loopback>' }, ignoreHTTPSErrors: true } : {};
+    slot.ctx = await slot.browser.newContext({ ...viewport, ...served });
     slot.page = await slot.ctx.newPage();
     slot.page.on('dialog', (d) => d.dismiss().catch(() => {}));
   }
@@ -241,7 +255,9 @@ async function resetSlot(slot) {
 // A subtest name that holds a URL the page resolved (interpolation pages name their url() values) holds this
 // server's origin, whose port differs from run to run: named by wptserve's origin instead, so the name is the same
 // in every run (the baseline keys passes by name).
-const stableName = (s) => s.replaceAll(BASE, 'http://web-platform.test:8000');
+// Under wptserve every port is free-picked: each is named by wptserve's default for it.
+const PORT_NAMES = wptserve ? [[wptserve.ports.http, 8000], [wptserve.ports.http2, 8001], [wptserve.ports.https, 8443], [wptserve.ports.https2, 8444], [wptserve.ports.ws, 8888], [wptserve.ports.wss, 8889]] : [];
+const stableName = (s) => PORT_NAMES.reduce((x, [from, to]) => x.replaceAll(`:${from}`, `:${to}`), s.replaceAll(BASE, 'http://web-platform.test:8000'));
 const LINE = /^(.*?)\|(Pass|Fail|Timeout|Not Run|Optional Feature Unsupported)(?:\|(.*))?$/s;
 function parse(log) {
   const subs = [];

@@ -5,7 +5,7 @@
 // crashtests (one subtest, "crashtest"): crashtest-baseline.json, crashtest-flaky.json, wpt-crashtest-baseline.
 //
 //   bun bench/wpt/gate.mjs run --wpt DIR --bin PATH [--out FILE] [--jobs N] [--shard I/N] [--full]
-//                              [--dirs a,b] [--match RE] [--retest PREVIOUS.json] [--no-rerun] [--no-check]
+//                              [--dirs a,b|all] [--server static|wptserve] [--match RE] [--retest PREVIOUS.json] [--no-rerun] [--no-check]
 //                              [--summary FILE] [--reuse-context] [--timeout MS] [--long-timeout MS]
 //       Runs the gate's plan (every page with --full, or when there is no baseline for this WPT revision yet), then
 //       reruns every page whose result differs from the baseline at least twice more, at the same --jobs (with no
@@ -92,7 +92,7 @@ function run() {
   const jobs = Number(opt('--jobs', os.availableParallelism?.() ?? os.cpus().length));
   const common = ['--kind', KIND, '--wpt', wpt, '--bin', `gate=${path.resolve(bin)}`];
   if (baseline) common.push('--baseline', BASELINE_FILE);
-  for (const k of ['--dirs', '--match', '--timeout', '--long-timeout', '--sample-encoding']) if (opt(k)) common.push(k, opt(k));
+  for (const k of ['--dirs', '--server', '--match', '--timeout', '--long-timeout', '--sample-encoding']) if (opt(k)) common.push(k, opt(k));
   if (flag('--reuse-context')) common.push('--reuse-context');
   const first = ['--out', out, '--jobs', String(jobs), ...common, ...(full ? [] : ['--gate'])];
   if (opt('--shard')) first.push('--shard', opt('--shard'));

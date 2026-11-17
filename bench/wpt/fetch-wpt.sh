@@ -2,7 +2,9 @@
 # Fetches the WPT revision pinned in bench/wpt/wpt-revision.txt into DIR: one commit, no history, and only the paths
 # bench/wpt/wpt-paths.txt lists (the test directories plus the support files they load). About 290 MB with its git directory, under a minute.
 # Usage: bench/wpt/fetch-wpt.sh [--force] [--all] DIR   (WPT_REVISION=<sha> overrides the pin, WPT_REMOTE=<url> the repo)
-# --all checks out the whole revision (every test directory: the full-suite run and coverage.mjs; about 1.5 GB).
+# --all checks out the whole revision (every test directory: the full-suite run and coverage.mjs; about 1.1 GB).
+# --venv also makes DIR/.git/pyro-venv, a Python venv with wptserve's requirements (run.mjs --server wptserve;
+# WPT_PYTHON=<python 3.9+> picks the interpreter, default python3).
 # DIR is new or empty, or a checkout this script made (it moves that one to the pinned revision in place; git refuses
 # if local changes would be lost). A git checkout it did not make is used as it is when it is at the pinned
 # revision, and refused otherwise; --force deletes DIR first.
@@ -10,14 +12,16 @@ set -eu
 here="$(cd "$(dirname "$0")" && pwd)"
 force=
 all=
+venv=
 while :; do
   case "${1:-}" in
     --force) force=1; shift ;;
     --all) all=1; shift ;;
+    --venv) venv=1; shift ;;
     *) break ;;
   esac
 done
-dir="${1:?usage: fetch-wpt.sh [--force] [--all] DIR}"
+dir="${1:?usage: fetch-wpt.sh [--force] [--all] [--venv] DIR}"
 rev="${WPT_REVISION:-$(tr -d '[:space:]' < "$here/wpt-revision.txt")}"
 marker="$dir/.git/pyro-fetch-wpt"
 # Sparse-checkout patterns, anchored at the WPT root; comments and blank lines dropped (a bare "/" would match all).
@@ -42,11 +46,24 @@ if [ -n "$all" ]; then
 else
   patterns | git -C "$dir" sparse-checkout set --no-cone --stdin
 fi
+make_venv() {
+  [ -n "$venv" ] || return 0
+  v="$dir/.git/pyro-venv"
+  req="$dir/tools/serve/requirements.txt"
+  if [ -f "$v/.pyro-req" ] && cmp -s "$req" "$v/.pyro-req"; then return 0; fi
+  rm -rf "$v"
+  "${WPT_PYTHON:-python3}" -m venv "$v"
+  "$v/bin/pip" install -q --disable-pip-version-check -r "$req"
+  cp "$req" "$v/.pyro-req"
+  echo "wptserve venv in $v ($("$v/bin/python" --version))"
+}
 if [ "$(head_of)" = "$rev" ]; then
   echo "WPT $rev already in $dir"
+  make_venv
   exit 0
 fi
 # Blobless: the checkout then downloads only the files the sparse patterns select.
 git -C "$dir" fetch -q --depth 1 --filter=blob:none origin "$rev"
 git -C "$dir" -c advice.detachedHead=false checkout -q FETCH_HEAD
 echo "WPT $rev in $dir ($(du -sh "$dir" | cut -f1))"
+make_venv

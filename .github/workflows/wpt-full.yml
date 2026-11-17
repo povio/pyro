@@ -1,0 +1,224 @@
+name: WPT full
+
+# The whole WPT suite, nightly (bench/wpt/README.md, "Whole suite"): every testharness page, reftest and crashtest the
+# runner can run in every directory (run.mjs --dirs all), served by WPT's own server (--server wptserve: Python
+# handlers, substitutions, every origin, https), with the browser of the newest main build (wpt.yml's `wpt-browser`
+# artifact). It reports and uploads the results; it gates nothing yet (the pull request gate, wpt.yml, keeps its
+# plan). A pull request that changes this workflow or the wptserve glue runs the `smoke` job only: a handful of pages
+# through wptserve on lp-m1, which also checks the runner's Python.
+#
+# Sizes at a421f2fe (coverage.json, local samples): ~31,700 testharness pages at ~1.06 s, ~28,200 reftests at ~0.7 s,
+# ~2,100 crashtests; about 15 h of page time, 2 h on lp-m1's two machines at 4 jobs each, hence nightly rather
+# than every push.
+
+on:
+  schedule:
+    - cron: '17 1 * * *'
+  workflow_dispatch:
+    inputs:
+      runner:
+        description: Where the shards run (lp-m1 is free and idle at night; macos-15 is GitHub's hosted runner, billed)
+        type: choice
+        options: [lp-m1, macos-15]
+        default: lp-m1
+      runner-args:
+        description: Extra gate.mjs run arguments for every shard (e.g. --dirs css/css-grid to measure one directory)
+        type: string
+        default: ''
+      reruns:
+        description: Rerun every page once more (two runs per page, what a new baseline needs); doubles the time
+        type: boolean
+        default: false
+  pull_request:
+    paths:
+      - .github/workflows/wpt-full.yml
+      - bench/wpt/wptserve.mjs
+      - bench/wpt/fetch-wpt.sh
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: wpt-full-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # The newest main build's browser (wpt.yml uploads it as `wpt-browser` when its build job runs).
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      browser-run: ${{ steps.find.outputs.run }}
+      runner: ${{ steps.find.outputs.runner }}
+    steps:
+      - id: find
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUNNER: ${{ inputs.runner || 'lp-m1' }}
+        run: |
+          run=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=wpt-browser&per_page=100" \
+            -q '[.artifacts[] | select(.expired | not) | select(.workflow_run.head_branch == "main")][0].workflow_run.id')
+          if [ -z "$run" ] || [ "$run" = null ]; then echo "no wpt-browser artifact from main" >&2; exit 1; fi
+          echo "browser from run $run"
+          echo "run=$run" >> "$GITHUB_OUTPUT"
+          echo "runner=$RUNNER" >> "$GITHUB_OUTPUT"
+
+  # Pull requests: wptserve on lp-m1 (its Python, the venv, the proxy) over a few pages that need it.
+  smoke:
+    needs: prepare
+    if: github.event_name == 'pull_request'
+    runs-on: lp-m1
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: bench
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.4.3'
+      - working-directory: bench
+        run: bun install --frozen-lockfile
+      - name: Python
+        run: |
+          for p in python3 /usr/bin/python3; do echo "$p: $(command -v $p) $($p --version 2>&1)"; done
+          python3 -m pip --version || true
+          sw_vers -productVersion
+      - uses: actions/cache@v4
+        env:
+          PATH: /usr/bin:/bin:/usr/sbin:/sbin
+        with:
+          path: wpt-full
+          key: wpt-full-${{ hashFiles('bench/wpt/wpt-revision.txt', 'bench/wpt/fetch-wpt.sh') }}
+      - name: Fetch WPT (all of it) and wptserve's venv
+        env:
+          WPT_PYTHON: /usr/bin/python3
+        run: bench/wpt/fetch-wpt.sh --all --venv wpt-full
+      - uses: actions/download-artifact@v4
+        with:
+          name: wpt-browser
+          run-id: ${{ needs.prepare.outputs.browser-run }}
+          github-token: ${{ github.token }}
+      - run: tar -xzf browser.tgz
+      - name: Pages through wptserve
+        run: |
+          printf '%s\n' '["xhr/status-basic.htm","xhr/send-redirect.htm","fetch/api/basic/request-headers.any.html",' \
+            '"html/browsers/origin/relaxing-the-same-origin-restriction/document_domain_setter.html",' \
+            '"dom/nodes/Node-appendChild.html","html/dom/render-blocking/remove-attr-unblocks-rendering.optional.html"]' > smoke.json
+          bun bench/wpt/run.mjs --wpt wpt-full --bin pyro=browser/pyro --server wptserve --dirs all --tests smoke.json \
+            --jobs 2 --out smoke-results.json
+          bun -e 'const r = JSON.parse(require("fs").readFileSync("smoke-results.json")); for (const t of r.results) { const s = t.subtests ?? []; console.log(t.status, `${s.filter((x) => x.status === "Pass").length}/${s.length}`, t.url); } if (r.results.length < 6 || r.results.some((t) => t.status !== "complete")) process.exit(1);'
+
+  full:
+    needs: prepare
+    if: github.event_name != 'pull_request'
+    runs-on: ${{ needs.prepare.outputs.runner }}
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { kind: testharness, shard: 0, of: 4 }
+          - { kind: testharness, shard: 1, of: 4 }
+          - { kind: testharness, shard: 2, of: 4 }
+          - { kind: testharness, shard: 3, of: 4 }
+          - { kind: reftest, shard: 0, of: 3 }
+          - { kind: reftest, shard: 1, of: 3 }
+          - { kind: reftest, shard: 2, of: 3 }
+          - { kind: crashtest, shard: 0, of: 1 }
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: bench
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.4.3'
+      - working-directory: bench
+        run: bun install --frozen-lockfile
+      - uses: actions/cache@v4
+        env:
+          PATH: /usr/bin:/bin:/usr/sbin:/sbin
+        with:
+          path: wpt-full
+          key: wpt-full-${{ hashFiles('bench/wpt/wpt-revision.txt', 'bench/wpt/fetch-wpt.sh') }}
+      - name: Fetch WPT (all of it) and wptserve's venv
+        env:
+          WPT_PYTHON: /usr/bin/python3
+        run: bench/wpt/fetch-wpt.sh --all --venv wpt-full
+      - uses: actions/download-artifact@v4
+        with:
+          name: wpt-browser
+          run-id: ${{ needs.prepare.outputs.browser-run }}
+          github-token: ${{ github.token }}
+      - run: tar -xzf browser.tgz && browser/pyro version
+      - name: Run ${{ matrix.kind }} shard ${{ matrix.shard }} of ${{ matrix.of }}
+        env:
+          RUNNER_ARGS: ${{ inputs.runner-args }}
+          RERUNS: ${{ inputs.reruns }}
+          OUT: wpt-full-${{ matrix.kind }}-${{ matrix.shard }}.json
+        run: |
+          echo "$(sysctl -n machdep.cpu.brand_string), $(sysctl -n hw.ncpu) CPUs, $(( $(sysctl -n hw.memsize) / 1073741824 )) GB"
+          read -r -a extra <<< "$RUNNER_ARGS"
+          rerun=(--no-rerun)
+          if [ "$RERUNS" = true ]; then rerun=(); fi
+          # No baseline yet for the whole suite (a missing --baseline file): every page runs as in a full run.
+          bun bench/wpt/gate.mjs run --kind ${{ matrix.kind }} "${extra[@]}" --wpt wpt-full --bin browser/pyro \
+            --server wptserve --dirs all --baseline full-baseline-none.json --jobs 4 \
+            --shard ${{ matrix.shard }}/${{ matrix.of }} "${rerun[@]}" --out "$OUT" --no-check
+          gzip -9 "$OUT"
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: wpt-full-${{ matrix.kind }}-${{ matrix.shard }}
+          path: wpt-full-${{ matrix.kind }}-${{ matrix.shard }}.json.gz
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+
+  # Every shard's results in one artifact, and a summary per kind.
+  results:
+    needs: full
+    if: ${{ !cancelled() && needs.full.result != 'skipped' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: bench
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.4.3'
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: wpt-full-*
+          path: shards
+          merge-multiple: true
+      - name: Summary
+        run: |
+          gunzip shards/*.json.gz
+          bun -e '
+            const fs = require("fs");
+            const by = {};
+            for (const f of fs.readdirSync("shards")) {
+              const kind = f.split("-")[2];
+              const r = JSON.parse(fs.readFileSync("shards/" + f));
+              const k = (by[kind] ??= { pages: 0, complete: 0, allPass: 0, subtests: 0, pass: 0, wallS: 0, restarts: 0 });
+              for (const t of r.results) {
+                const s = t.subtests ?? [];
+                k.pages++; k.subtests += s.length; k.pass += s.filter((x) => x.status === "Pass").length;
+                if (t.status === "complete") k.complete++;
+                if (s.length && s.every((x) => x.status === "Pass")) k.allPass++;
+              }
+              k.wallS += Math.round((r.wallMs ?? 0) / 1000); k.restarts += r.restarts ?? 0;
+            }
+            let md = "## WPT, whole suite\n\n| kind | pages | completed | all subtests pass | subtests passing | shard wall s | browser restarts |\n|---|---:|---:|---:|---:|---:|---:|\n";
+            for (const [kind, k] of Object.entries(by)) md += `| ${kind} | ${k.pages} | ${k.complete} | ${k.allPass} | ${k.pass} / ${k.subtests} | ${k.wallS} | ${k.restarts} |\n`;
+            fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, md);
+            console.log(md);'
+          tar -czf wpt-full-results.tgz -C shards .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wpt-full-results
+          path: wpt-full-results.tgz
+          retention-days: 30
+          compression-level: 0

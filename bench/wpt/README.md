@@ -603,6 +603,35 @@ directories run in wptrunner's 800x600. It finds 23,192 testharness pages and 27
 restart: testharness 487 of 492 completed (5 timeouts, 285 s wall, 1.06 s per page), reftests 233 of 242 completed
 (9 timeouts, 108 s wall, 0.70 s per page). Timeouts are about half the page time.
 
+## wptserve
+
+`run.mjs --server wptserve` (and `gate.mjs run --server wptserve`) serves the pages with WPT's own server instead of
+`serve.mjs` (`wptserve.mjs`): every origin a test names (`web-platform.test`, `www`/`www1`/`www2` and the IDN
+subdomains, `not-web-platform.test`; http, https with WPT's test certificates, ws, wss; no h2), the Python handlers,
+substitutions and all pipes. Discovery then keeps the pages that need them: at a421f2fe testharness 23,192 -> 31,707
+pages, reftests 27,806 -> 28,223, crashtests 2,031 -> 2,076 (with `--dirs all`). Testdriver pages stay out.
+
+- wptserve binds 127.0.0.1 (`server_host`, `check_subdomains: false`), so no hosts file is needed. The browser
+  reaches the names through a forward proxy (`startProxy()`) that every context gets as its `proxyServer`: it
+  connects any host a request names to 127.0.0.1 on the same port, what wptrunner's `--host-resolver-rules` does for
+  Chrome. Contexts ignore certificate errors (WPT's test CA).
+- Every port is picked free per run; subtest names that hold one are recorded with wptserve's default port (8000,
+  8001, 8443, 8444, 8888, 8889), as `serve.mjs`'s origin already is.
+- `testharnessreport.js` is ours (a file alias in the generated config), as wptrunner serves its own.
+- It needs Python 3.9+ with `tools/serve/requirements.txt` (today `cryptography`): `fetch-wpt.sh --venv DIR` makes
+  `DIR/.git/pyro-venv`, which `wptserve.mjs` uses (`WPT_PYTHON` overrides). macOS's `/usr/bin/python3` is 3.9.6.
+- It covers what `serve.mjs` does by hand: `/resources/WebIDLParser.js`, `?pipe=trickle`, `xhr/resources/delay.py`.
+
+The PR gate keeps `serve.mjs` and its plan until a CI run records baselines for the whole suite.
+
+## Whole suite
+
+`.github/workflows/wpt-full.yml` runs everything nightly (01:17 UTC, and by hand): `gate.mjs run --dirs all
+--server wptserve` for each kind, 4 testharness, 3 reftest and 1 crashtest shards on lp-m1 (or macos-15), with the
+newest main build's `wpt-browser`. It only reports for now: per-kind counts in the job summary and every shard's
+results as `wpt-full-results`. A pull request that changes the workflow, `wptserve.mjs` or `fetch-wpt.sh` runs its
+`smoke` job instead (a few wptserve pages on lp-m1, and the runner's Python version).
+
 ## Crashtests
 
 A WPT crashtest is a page that once crashed a browser: it passes when the browser loads it, paints it and is still
