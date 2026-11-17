@@ -13,7 +13,26 @@ export const DEFAULT_DIRS = [
   'dom', 'html/dom', 'encoding', 'url', 'fetch/api/basic', 'xhr', 'css/selectors', 'uievents', 'shadow-dom', 'webstorage',
   ...PAINT_DIRS,
 ];
-// Testharness pages in these directories run as wptrunner runs every page: in an 800x600 viewport (run.mjs; the
+// `--dirs all` (run.mjs): `keep` (a kind's directories, so their pages keep their `dir` and its rules) and every other
+// directory of the checkout, the fewest that cover it: a directory that holds none of `keep` whole, else its
+// subdirectories, recursively. Files directly in a directory that is split this way are not covered (none are tests
+// at the pinned revision but WPT's root-level pages).
+export function allDirs(wpt, keep) {
+  const out = [...keep];
+  const visit = (rel) => {
+    for (const e of fs.readdirSync(path.join(wpt, rel), { withFileTypes: true })) {
+      if (!e.isDirectory() || e.name.startsWith('.')) continue;
+      const d = rel ? `${rel}/${e.name}` : e.name;
+      if (keep.includes(d)) continue;
+      if (keep.some((k) => k.startsWith(d + '/'))) visit(d); else out.push(d);
+    }
+  };
+  visit('');
+  return out;
+}
+// The directories whose testharness pages run in Playwright's 1280x720, the viewport their baseline was recorded with.
+const LEGACY_VIEWPORT_DIRS = DEFAULT_DIRS.filter((d) => !PAINT_DIRS.includes(d));
+// Testharness pages in every other directory run as wptrunner runs every page: in an 800x600 viewport (run.mjs; the
 // browser has Ahem for every page). The older directories keep the viewport their baseline was recorded with
 // (Playwright's 1280x720).
 const WPTRUNNER_VIEWPORT = { width: 800, height: 600 };
@@ -80,7 +99,7 @@ export function discover(wpt, dirs, { sampleEncoding = 1, reasons } = {}) {
       if (/\.sub\.|\.https\.|\.h2\.|\.www\./.test(base)) { exclude('needs wptserve substitution/https/h2'); continue; }
       if (/testdriver\.js|testdriver-vendor/.test(src)) { exclude('needs testdriver'); continue; }
       if (/\.py\b/.test(code) || SERVER_PAGES.some((re) => re.test(rel)) || SERVER_HELPERS.test(code)) { exclude('needs wptserve python handler'); continue; }
-      const viewport = PAINT_DIRS.includes(d) ? { viewport: WPTRUNNER_VIEWPORT } : {};
+      const viewport = LEGACY_VIEWPORT_DIRS.includes(d) ? {} : { viewport: WPTRUNNER_VIEWPORT };
       for (const v of variants) tests.push({ dir: d, url: url + v, long, ...viewport });
     }
   }

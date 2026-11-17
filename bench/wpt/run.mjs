@@ -4,7 +4,7 @@
 // nor hung).
 // Usage: bun run.mjs --wpt DIR --bin label=/path/to/serve-compatible-binary --out results.json
 //          [--kind testharness|reftest|crashtest] [--base http://127.0.0.1:9415]   (default: start serve.mjs on a free port)
-//          [--dirs dom,url,...] [--jobs 6] [--timeout 15000] [--long-timeout 45000]
+//          [--dirs dom,url,...|all] [--jobs 6] [--timeout 15000] [--long-timeout 45000]
 //          [--sample-encoding N] [--match REGEX] [--tests FILE] [--list]
 //          [--baseline baseline.json [--gate]] [--shard I/N] [--reuse-context] [--repeat N]
 // --tests FILE: only these URLs (a JSON array of URLs, or a results or baseline file).
@@ -23,7 +23,7 @@ import net from 'node:net';
 import path from 'node:path';
 import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
-import { DEFAULT_DIRS, REFTEST_DIRS, discover, discoverReftests, plan, shard, readJson } from './lib.mjs';
+import { DEFAULT_DIRS, REFTEST_DIRS, allDirs, discover, discoverReftests, plan, shard, readJson } from './lib.mjs';
 import { REFTEST_CONTEXT, ahemEnv, reftestEnv, runReftest } from './reftest.mjs';
 import { CRASHTEST_DIRS, discoverCrashtests, runCrashtest } from './crashtest.mjs';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -40,7 +40,8 @@ if (!['testharness', 'reftest', 'crashtest'].includes(KIND)) throw new Error(`--
 const KIND_DIRS = KIND === 'reftest' ? REFTEST_DIRS : KIND === 'crashtest' ? CRASHTEST_DIRS : DEFAULT_DIRS;
 // Reftests and crashtests render: the reftest environment and viewport, and a page whose browser died runs again alone.
 const RENDERS = KIND !== 'testharness';
-const DIRS = opt('--dirs', KIND_DIRS.join(',')).split(',');
+// --dirs all: every directory of the checkout (fetch-wpt.sh --all), the kind's own first.
+const DIRS = opt('--dirs') === 'all' ? (KIND_DIRS.includes('.') ? KIND_DIRS : allDirs(WPT, KIND_DIRS)) : opt('--dirs', KIND_DIRS.join(',')).split(',');
 const JOBS = Number(opt('--jobs', 6));
 const TIMEOUT = Number(opt('--timeout', 15000));
 const LONG = Number(opt('--long-timeout', 45000));

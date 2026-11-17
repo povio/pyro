@@ -595,6 +595,14 @@ lists what discovery takes that the manifest classifies otherwise (160 `-crash` 
 testharness, 8 SVG reftests): none of them is in a gate directory but four crashtests the testharness gate has
 always run.
 
+`run.mjs --dirs all` runs every directory of a whole checkout (`allDirs()`: the kind's own directories first, so their
+pages keep their rules, then the fewest others that cover the rest). Testharness pages outside the ten older
+directories run in wptrunner's 800x600. It finds 23,192 testharness pages and 27,806 reftests: the `gate` and
+`runnable` counts above, plus the 168 in `discoveredNotInManifest`. A local sample of 1 in 40 of the pages no gate runs
+(2026-11-17, `--jobs 2`, load 33, CI browser of a028229b; not a baseline) found no crash, no hang and no browser
+restart: testharness 487 of 492 completed (5 timeouts, 285 s wall, 1.06 s per page), reftests 233 of 242 completed
+(9 timeouts, 108 s wall, 0.70 s per page). Timeouts are about half the page time.
+
 ## Crashtests
 
 A WPT crashtest is a page that once crashed a browser: it passes when the browser loads it, paints it and is still
