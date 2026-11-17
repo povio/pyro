@@ -23,8 +23,8 @@ Guides: [Locators](/e2e/locators), [Steps and checks](/e2e/steps), [Requests and
 - **Waiting.** A step that cannot finish yet (no match, not visible, check not holding, request not seen) is retried whenever the page's DOM changes or its document is replaced. Nothing polls. It fails once its timeout passes.
 - **Timeouts.** Each step's timeout is its own `timeout` option, else the `timeout` of `page.run(steps, { timeout })`, else 5000 ms. The maximum is 600000 ms.
 - **Strictness.** A step that needs one element (actions, `read` other than `count`, and most checks) fails at once with `strict mode violation: <locator> matched N elements: …` when several elements match. Narrow the locator, or pick one with `nth`, `first` or `last`.
-- **Actionability.** An action needs exactly one match (unless you pick one with `nth`, `first` or `last`) that is visible, not covered at the point it acts on, and editable for `fill` and `type`. `click`, `dblclick`, `fill`, `check`, `uncheck`, `press` and `type` also need it enabled. `hover`, `focus`, `blur`, `wheel` and `drag` do not.
-- **Settle.** After an action (`settle` defaults to `true`), and after `route`, `viewport`, `media` and `mouse`, the next step waits until the page is quiet. Quiet means no queued task, no timer due within 50 ms, no pending animation frame, no `scroll` event or ResizeObserver callback owed by the next rendering update, no navigation short of `DOMContentLoaded`, and no request the action started still in flight. That wait is capped at 1 s. The run then goes on, and the step's result records `settled: false` and what was `pending`. See [Settling and auto-waiting](/guide/settling).
+- **Actionability.** An action needs exactly one match (unless you pick one with `nth`, `first` or `last`) that is visible, not covered at the point it acts on, and editable for `fill` and `type`. `click`, `dblclick`, `fill`, `check` and `uncheck` also need it enabled. `press`, `type`, `hover`, `focus`, `blur`, `wheel` and `drag` do not.
+- **Settle.** After an action (`settle` defaults to `true`), and after `route`, `viewport`, `media`, `mouse` and `keyboard`, the next step waits until the page is quiet. Quiet means no queued task, no timer due within 50 ms, no pending animation frame, no `scroll` event or ResizeObserver callback owed by the next rendering update, no navigation short of `DOMContentLoaded`, and no request the action started still in flight. That wait is capped at 1 s. The run then goes on, and the step's result records `settled: false` and what was `pending`. See [Settling and auto-waiting](/guide/settling).
 - **Input timing.** Each input event of a pointer action is dispatched in its own task, with an event-loop turn between events, as Chromium delivers input.
 
 ## Text matching {#text-match}
@@ -67,9 +67,24 @@ Each returns a [`Locator`](#locator).
 | `menuitem(name?, opts?)` | `role('menuitem', …)` |
 | `inFrame(frame: Locator)` | A [`FrameScope`](#frame-scope): locators inside that `<iframe>`'s document |
 
-`opts` is `{ exact?: boolean }` everywhere.
+`opts` is `{ exact?: boolean }`; for `role` and its shortcuts it is `RoleOptions`, which adds Playwright's `getByRole` states:
 
-For locator kinds without a builder (`xpath`, `or`, `and`, `of`, role states such as `checked` or `level`, `ariaRef`), construct one from its [wire spec](/reference/pyro-run#locator): `new Locator({ role: 'checkbox', checked: true })`.
+```ts
+type RoleOptions = {
+  exact?: boolean;
+  checked?: boolean | 'mixed';
+  pressed?: boolean | 'mixed';
+  disabled?: boolean;
+  expanded?: boolean;
+  selected?: boolean;
+  level?: number;          // heading level
+  includeHidden?: boolean;
+};
+heading('Billing', { level: 2 });
+tab(undefined, { selected: true });
+```
+
+For locator kinds without a builder (`xpath`, `of`, `ariaRef`), construct one from its [wire spec](/reference/pyro-run#locator): `new Locator({ xpath: '//h2' })`.
 
 ## Locator {#locator}
 
@@ -93,12 +108,14 @@ Every method returns a new locator or a step. The original is unchanged.
 | `nth(index: number)` | One match by index. Negative indexes count from the end |
 | `first()` | `nth(0)` |
 | `last()` | `nth(-1)` |
+| `or(other: Locator)` | Matches of this locator or of `other`, in document order |
+| `and(other: Locator)` | Matches of this locator that `other` matches too |
 
-Filters apply before `nth`. Calling a filter on a locator that already has `nth` throws `filter before first() / last() / nth()`. To filter after picking, use the wire `of` field.
+Each method applies to the matches so far, in the order written, as in Playwright: a second `hasText` narrows the first one's matches, and a filter after `first()` / `nth()` applies to the picked element (the wire `of` field).
 
 ### Locators inside this one {#inner}
 
-`locator(css)`, `role(role, name?, opts?)`, `button(name?, opts?)`, `link(name?, opts?)`, `textbox(name?, opts?)`, `text(t, opts?)`, `label(t, opts?)`, `placeholder(t, opts?)` and `testId(id)` search inside each match of this locator (the wire `within`). If this locator is inside a frame, the frame stays on the outermost locator.
+`locator(css)`, `role(role, name?, opts?)`, `button(name?, opts?)`, `link(name?, opts?)`, `textbox(name?, opts?)`, `heading(name?, opts?)`, `text(t, opts?)`, `label(t, opts?)`, `placeholder(t, opts?)` and `testId(id)` search inside each match of this locator (the wire `within`). If this locator is inside a frame, the frame stays on the outermost locator. In a CSS selector, `:scope` is the scope element: `css('#list').locator(':scope > li')`.
 
 ```ts
 dialog('Delete item').button('Delete').click();
@@ -193,9 +210,10 @@ check(dialog()).not.visible();
 | --- | --- | --- |
 | `.visible(opts?)` | One match, and it is visible | `{ actual: true }` |
 | `.hidden(opts?)` | No match, or the one match is not visible | `{ actual: false }` |
-| `.text(expected: string, opts?)` | Text equals `expected` (both whitespace-normalized) | `{ actual: "<text>" }` |
-| `.containsText(expected: string, opts?)` | Text contains `expected` (normalized) | `{ actual }` |
-| `.value(expected: string, opts?)` | Form control value equals `expected` | `{ actual }` |
+| `.text(expected: TextMatch, opts?)` | Text equals `expected` (both whitespace-normalized), or the RegExp matches the normalized text | `{ actual: "<text>" }` |
+| `.containsText(expected: TextMatch, opts?)` | Text contains `expected` (normalized), or the RegExp matches it | `{ actual }` |
+| `.value(expected: TextMatch, opts?)` | Form control value equals `expected`, or the RegExp matches it | `{ actual }` |
+| `.attribute(name: string, value?: TextMatch, opts?)` | The attribute equals `value`, or the RegExp matches it; without `value`, the attribute is present | `{ actual }` |
 | `.count(expected: number, opts?)` | Exactly `expected` matches | `{ actual }` |
 | `.checked(expected = true, opts?)` | Checked state of a checkbox or radio equals `expected` (the wire also takes `"mixed"`) | `{ actual }` |
 | `.css(property: string, expected: string, opts?)` | Computed `property` equals `expected` (for example `'rgb(1, 2, 3)'`) | `{ actual }` |
@@ -205,7 +223,7 @@ check(dialog()).not.visible();
 | `.disabled(opts?)` | `enabled(false)` | `{ actual }` |
 | `.not` | Negates the next assertion: `check(x).not.text('…')` | |
 
-`opts` is `{ timeout?: number }`. The wire also has `attribute` and `description` assertions with no builder; see [check](/reference/pyro-run#check).
+`opts` is `{ timeout?: number }`. The wire also has a `description` assertion with no builder; see [check](/reference/pyro-run#check).
 
 ### check.request() {#check-request}
 
@@ -238,10 +256,10 @@ Result: the matched request (see [request log](/reference/pyro-run#request-log))
 ### goto() {#goto}
 
 ```ts
-goto(url: string, waitUntil: 'load' | 'domcontentloaded' = 'load'): StepLike
+goto(url: string, opts?: 'load' | 'domcontentloaded' | { waitUntil?: 'load' | 'domcontentloaded'; timeout?: number }): StepLike
 ```
 
-Full navigation, waiting for `load` (or `DOMContentLoaded`). Fails with `the navigation failed before its document loaded` if the navigation fails first. Result: `{}`.
+Full navigation, waiting for `load` (or `DOMContentLoaded`). `timeout` bounds this step only: `goto(url, { timeout: 60_000 })`. Fails with `the navigation failed before its document loaded` if the navigation fails first. Result: `{}`.
 
 ### route() {#route}
 
@@ -427,6 +445,16 @@ await page.run([
   switchTo('main'),
 ]);
 ```
+
+### keyboard {#keyboard}
+
+```ts
+keyboard.press(key: string, opts?: KeyboardOptions): StepLike
+keyboard.type(text: string, opts?: KeyboardOptions): StepLike
+type KeyboardOptions = { modifiers?: string[]; settle?: boolean; timeout?: number };
+```
+
+Keys at the focused element (the body when nothing has focus), as Playwright's `page.keyboard`: nothing is focused first. `press` takes a key or a chord (`Escape`, `Shift+Tab`, `ControlOrMeta+A`); `type` sends one key press per character. An unknown key fails the run at once. Result: `{ settleMs }`.
 
 ## Screenshots {#screenshots}
 

@@ -6179,6 +6179,44 @@ fn driver_force_click_on_a_visually_hidden_checkbox() {
     assert!(r.get("error").is_none(), "{r}");
 }
 
+/// Native API gaps: RegExp expectations for text/containsText/value, the
+/// attribute check, the page-level `keyboard` step, `:scope` in a scoped
+/// CSS locator, heading `level`.
+#[test]
+fn driver_regex_checks_keyboard_step_scope_and_level() {
+    let mut h = Harness::new();
+    load_html(
+        &mut h,
+        r#"<!doctype html><h1>Top</h1><h2>Sub</h2><p id="t">Order   #123 placed</p><input id="v" value="ID-42" data-state="open">
+<ul id="list"><li>a<ul><li>nested</li></ul></li><li>b</li></ul><div id="keys"></div>
+<script>document.addEventListener('keydown', (e) => { document.getElementById('keys').textContent += e.key + '@' + (document.activeElement && document.activeElement.id) + ' '; });</script>"#,
+    );
+    let r = h.page(
+        "Pyro.run",
+        json!({"timeout": 2000, "steps": [
+            {"check": {"locator": {"css": "#t"}, "assert": "text", "expected": {"regex": "^Order #\\d+ placed$"}}},
+            {"check": {"locator": {"css": "#t"}, "assert": "containsText", "expected": {"regex": "#1\\d3", "flags": "i"}}},
+            {"check": {"locator": {"css": "#v"}, "assert": "value", "expected": {"regex": "^ID-\\d+$"}}},
+            {"check": {"locator": {"css": "#v"}, "assert": "value", "expected": {"regex": "^\\d"}, "not": true}},
+            {"check": {"locator": {"css": "#v"}, "assert": "attribute", "property": "data-state", "expected": "open"}},
+            {"check": {"locator": {"css": "#v"}, "assert": "attribute", "property": "data-state", "expected": {"regex": "^op"}}},
+            {"check": {"locator": {"css": "#v"}, "assert": "attribute", "property": "data-state", "expected": null, "not": true}},
+            {"check": {"locator": {"css": "#v"}, "assert": "attribute", "property": "data-gone", "expected": null}},
+            {"check": {"locator": {"role": "heading", "level": 2}, "assert": "text", "expected": "Sub"}},
+            {"check": {"locator": {"css": ":scope > li", "within": {"css": "#list"}}, "assert": "count", "expected": 2}},
+            {"act": {"locator": {"css": "#v"}, "action": "focus"}},
+            {"keyboard": {"press": "Shift+x"}},
+            {"act": {"locator": {"css": "#v"}, "action": "blur"}},
+            {"keyboard": {"type": "ab"}},
+            {"eval": {"expression": "document.getElementById('keys').textContent", "as": "keys"}},
+        ]}),
+    );
+    assert!(r.get("error").is_none(), "{r}");
+    assert_eq!(r["result"]["reads"]["keys"], "Shift@v x@v a@ b@ ", "{r}");
+    let r = h.page("Pyro.run", json!({"steps": [{"keyboard": {"press": "NoSuchKey"}}]}));
+    assert!(r["error"]["message"].as_str().unwrap_or_default().contains("Unknown key"), "{r}");
+}
+
 const DRIVER_POINTER_PAGE: &str = r#"<!doctype html><body>
 <style>#scroller{overflow:auto;width:1000px} #wide{width:2500px;height:26px} #tall{height:300px;width:200px;overflow:auto}</style>
 <div id="target">Target</div><div id="target-out"></div>

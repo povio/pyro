@@ -15,7 +15,7 @@ All are exported from `@povio/pyro`.
 
 | Builder | Matches |
 |---|---|
-| `role(role, name?, { exact? })` | Elements with this ARIA role (explicit or implicit) and, if given, this accessible name |
+| `role(role, name?, opts?)` | Elements with this ARIA role (explicit or implicit) and, if given, this accessible name; `opts` takes `exact` and the [role states](#role-states) |
 | `button(name?, opts?)` | `role('button', ...)` |
 | `link(name?, opts?)` | `role('link', ...)` |
 | `heading(name?, opts?)` | `role('heading', ...)` |
@@ -32,7 +32,7 @@ All are exported from `@povio/pyro`.
 | `placeholder(text, { exact? })` | An `input` or `textarea` whose `placeholder` matches |
 | `text(text, { exact? })` | The smallest elements whose text matches (see [Text matching](#text-matching)) |
 | `testId(id, attribute?)` | Elements whose `data-testid` equals `id`; pass `attribute` to use another one, for example `testId('row-1', 'data-test')` |
-| `css(selector)` | Elements matching a CSS selector |
+| `css(selector)` | Elements matching a CSS selector (`:scope` is the element of the scope, see below) |
 | `inFrame(frameLocator)` | A scope inside an iframe's document (see [Iframes](#iframes)) |
 
 `name` and `text` arguments take a string or a `RegExp`.
@@ -52,13 +52,15 @@ css('form#signup').label('Email')           // the Email field of that form
 |---|---|
 | `loc.locator(css)` | `css(...)` inside `loc` |
 | `loc.role(role, name?, opts?)` | `role(...)` inside `loc` |
-| `loc.button(...)`, `loc.link(...)`, `loc.textbox(...)` | the role shortcuts inside `loc` |
+| `loc.button(...)`, `loc.link(...)`, `loc.textbox(...)`, `loc.heading(...)` | the role shortcuts inside `loc` |
 | `loc.text(text, opts?)` | `text(...)` inside `loc` |
 | `loc.label(text, opts?)` | `label(...)` inside `loc` |
 | `loc.placeholder(text, opts?)` | `placeholder(...)` inside `loc` |
 | `loc.testId(id)` | `testId(id)` inside `loc` (default attribute) |
 
-Only `button`, `link` and `textbox` have method shortcuts. For other roles inside a scope use `loc.role('row', 'EXP-1')`.
+Only `button`, `link`, `textbox` and `heading` have method shortcuts. For other roles inside a scope use `loc.role('row', 'EXP-1')`.
+
+In a CSS selector inside a scope, `:scope` is the scope's element: `css('#list').locator(':scope > li')` finds the list's own items, not nested ones.
 
 The inner locator matches strictly inside the outer element, except `text()`: as in Playwright's `getByText`, the scope element itself can match. `css('td').text('Domestic', { exact: true })` finds the `<td>` whose text is "Domestic".
 
@@ -176,11 +178,7 @@ The wire format has a few locator fields that the native builders do not produce
 | Field | Meaning |
 |---|---|
 | `xpath` | An XPath expression, relative to `within` or the document: `new Locator({ xpath: '//h2' })` |
-| `or` | Joined with these locators' matches in document order: `new Locator({ css: 'h2', or: [{ css: 'h3' }] })` |
-| `and` | Kept only where each of these matches too |
-| `checked`, `pressed` (`true`, `false`, `'mixed'`), `disabled`, `expanded`, `selected`, `level` | Role states, as Playwright's `getByRole` options; they need `role`: `new Locator({ role: 'heading', level: 3 })` |
-| `includeHidden` | Lets a role locator match hidden elements. The accessible name of a `display: none` element can be empty, so match such elements by role or test id rather than by name |
-| `of` | Another locator's matches as the base set, so a filter or a pick can follow a pick: `new Locator({ of: { role: 'button', nth: 0 }, filter: { hasText: 'Bold' } })` |
+| `of` | Another locator's matches as the base set (what `.or()`, `.and()` and a filter after a pick produce): `new Locator({ of: { role: 'button', nth: 0 }, filter: { hasText: 'Bold' } })` |
 
 A `Locator` built this way has every method of the builders' locators (`.click()`, `.read()`, chaining). See [SDK: locators and steps](/reference/steps) and [Pyro.run wire format](/reference/pyro-run).
 

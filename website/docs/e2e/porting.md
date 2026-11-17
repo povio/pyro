@@ -120,9 +120,15 @@ The profile in that file boots the app at `/platform` with the tokens and stores
 | `locator.filter({ hasText })` / `{ hasNotText }` | `.hasText(...)` / `.hasNotText(...)` |
 | `locator.filter({ has })` / `{ hasNot }` | `.has(loc)` / `.hasNot(loc)` |
 | `locator.filter({ visible: true })` | `.visible()` |
-| `.first()`, `.last()`, `.nth(i)` | the same (after filters) |
+| `.first()`, `.last()`, `.nth(i)` | the same; filters after a pick apply to the picked element |
 | `page.frameLocator('#editor').getByRole(...)` | `css('#editor').frame().role(...)` |
-| `locator.and(...)`, `locator.or(...)`, XPath, `getByRole` state options | `new Locator({ ..., and / or / xpath / checked ... })` (see [Locators](/e2e/locators#locators-without-a-builder)) |
+| `locator.and(...)`, `locator.or(...)` | `.and(loc)`, `.or(loc)` |
+| `getByRole(role, { level, checked, pressed, selected, expanded, disabled, includeHidden })` | `role(role, name, { level, ... })`, `heading(name, { level: 2 })` |
+| `page.keyboard.press(key)`, `page.keyboard.type(text)` | `keyboard.press(key)`, `keyboard.type(text)` |
+| `expect(loc).toHaveText(/re/)`, `toContainText(/re/)`, `toHaveValue(/re/)` | `check(loc).text(/re/)`, `.containsText(/re/)`, `.value(/re/)` |
+| `expect(loc).toHaveAttribute(name, value?)` | `check(loc).attribute(name, value?)` |
+| `page.goto(url, { timeout })` | `goto(url, { timeout })` |
+| XPath | `new Locator({ xpath })` (see [Locators](/e2e/locators#locators-without-a-builder)) |
 
 ### Actions
 

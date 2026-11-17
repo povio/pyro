@@ -651,6 +651,16 @@ enum Step {
         steps: u32,
         settle: bool,
     },
+    /// Keys sent to the focused element (the body when none has focus), as
+    /// Playwright's `page.keyboard.press` / `keyboard.type`.
+    Keyboard {
+        /// A key or chord (`Escape`, `Shift+Tab`) for `press`.
+        press: Option<String>,
+        /// Text typed one key press per character.
+        text: Option<String>,
+        modifiers: input::Modifiers,
+        settle: bool,
+    },
     Check {
         locator: Locator,
         assert: Assert,
@@ -726,6 +736,7 @@ impl Step {
             Step::Request(_) => "request",
             Step::Act { .. } => "act",
             Step::Mouse { .. } => "mouse",
+            Step::Keyboard { .. } => "keyboard",
             Step::Check { .. } => "check",
             Step::Read { .. } => "read",
             Step::MatchScreenshot(_) => "matchScreenshot",
@@ -765,6 +776,8 @@ impl Step {
                 (Some(x), Some(y)) => format!("mouse {action:?} at {x},{y}"),
                 _ => format!("mouse {action:?}"),
             },
+            Step::Keyboard { press: Some(key), .. } => format!("keyboard press {key}"),
+            Step::Keyboard { .. } => "keyboard type".into(),
             Step::Check { locator, assert, .. } => format!("expect {assert:?} {}", locator.describe()),
             Step::Read { locator, read, .. } => format!("read {read:?} {}", locator.describe()),
             Step::MatchScreenshot(shot) => format!("matchScreenshot {}", shot.name),
@@ -3687,6 +3700,31 @@ fn mouse_step(
     Attempt::Done(json!({}))
 }
 
+/// A `keyboard` step: a key press (or chord), or text typed key by key, at
+/// the focused element (`press` and `type` of `page.keyboard`).
+fn keyboard_step(page: &Rc<PageDom>, press: Option<&str>, text: Option<&str>, modifiers: input::Modifiers) -> Attempt {
+    if let Some(key) = press {
+        // Checked when the step was read (`KeyboardParams::step`).
+        let Ok(keys) = super::keyboard::chord(key, modifiers) else {
+            return Attempt::Retry(format!("Unknown key: {key:?}"));
+        };
+        for (kind, k) in keys {
+            input::dispatch_key(page, kind, &k);
+        }
+    }
+    for c in text.unwrap_or_default().chars() {
+        match super::keyboard::type_char(c, modifiers) {
+            Some(keys) => {
+                for (kind, k) in keys {
+                    input::dispatch_key(page, kind, &k);
+                }
+            }
+            None => input::insert_text(page, c.encode_utf8(&mut [0; 4])),
+        }
+    }
+    Attempt::Done(json!({}))
+}
+
 /// Sets the files of an `<input type=file>`, then `input` and `change`.
 fn upload(page: &Rc<PageDom>, id: NodeId, files: &[UploadFile]) -> Attempt {
     if let Some(why) = not_a_file_input(page, id) {
@@ -3855,16 +3893,24 @@ fn expect(
                     };
                     (checked == want, checked.to_json())
                 }
+                // A `{"regex"}` expected value is tested as Playwright's
+                // `toHaveValue(re)` (the raw value) and `toHaveText(re)` /
+                // `toContainText(re)` (the whitespace-normalized text).
                 Assert::Value => {
-                    let want = expected.as_str().ok_or_else(|| CdpError::invalid_params("value needs a string"))?;
                     let have = dom.value(el).unwrap_or_default();
-                    (have == want, json!(have))
+                    let ok = match expected {
+                        Value::String(want) => have == *want,
+                        _ => check_regex(expected, "value")?.matches_raw(&have),
+                    };
+                    (ok, json!(have))
                 }
                 _ => {
-                    let want = expected.as_str().ok_or_else(|| CdpError::invalid_params("text needs a string"))?;
                     let have = normalize(&text_of(&dom, el));
-                    let ok =
-                        if assert == Assert::Text { have == normalize(want) } else { have.contains(&normalize(want)) };
+                    let ok = match expected {
+                        Value::String(want) if assert == Assert::Text => have == normalize(want),
+                        Value::String(want) => have.contains(&normalize(want)),
+                        _ => check_regex(expected, "text")?.matches(&have, false),
+                    };
                     (ok, json!(have))
                 }
             }
@@ -3875,6 +3921,14 @@ fn expect(
     } else {
         Attempt::Retry(format!("expected {}{:?} {expected}, got {actual}", if not { "not " } else { "" }, assert))
     })
+}
+
+/// A check's `{"regex": "...", "flags": "i"}` expected value.
+fn check_regex(expected: &Value, what: &str) -> CdpResult<Pattern> {
+    match expected {
+        Value::Object(_) => serde_json::from_value(expected.clone()).map_err(|e| CdpError::invalid_params(e.to_string())),
+        _ => Err(CdpError::invalid_params(format!("{what} needs a string or a {{\"regex\"}} pattern"))),
+    }
 }
 
 #[derive(Deserialize)]
@@ -3946,6 +4000,36 @@ struct MouseParams {
     /// Wait for the requests the action started (default: true).
     settle: Option<bool>,
     timeout: Option<u64>,
+}
+
+/// `{"keyboard": {"press": "Escape"}}` or `{"keyboard": {"type": "abc"}}`:
+/// keys at the focused element.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct KeyboardParams {
+    press: Option<String>,
+    #[serde(rename = "type")]
+    text: Option<String>,
+    /// Modifier keys held (`Shift`, `Control`, `Alt`, `Meta`, `ControlOrMeta`).
+    #[serde(default)]
+    modifiers: Vec<String>,
+    /// Wait for the requests the keys started (default: true).
+    settle: Option<bool>,
+    timeout: Option<u64>,
+}
+
+impl KeyboardParams {
+    fn step(self) -> CdpResult<(Step, Option<u64>)> {
+        if self.press.is_some() == self.text.is_some() {
+            return Err(CdpError::invalid_params("keyboard needs exactly one of press or type"));
+        }
+        if let Some(key) = self.press.as_deref().and_then(super::keyboard::unknown_key) {
+            return Err(CdpError::invalid_params(format!("Unknown key: \"{key}\"")));
+        }
+        let modifiers = modifiers_of(&self.modifiers)?;
+        let settle = self.settle.unwrap_or(true);
+        Ok((Step::Keyboard { press: self.press, text: self.text, modifiers, settle }, self.timeout))
+    }
 }
 
 fn mouse_button(name: Option<&str>) -> CdpResult<MouseButton> {
@@ -4093,6 +4177,7 @@ enum StepParams {
     Route(RouteParams),
     Act(ActParams),
     Mouse(MouseParams),
+    Keyboard(KeyboardParams),
     Check(ExpectParams),
     Read(QueryParams),
     Eval(EvalParams),
@@ -4642,6 +4727,7 @@ impl StepParams {
             StepParams::MatchScreenshot(p) => p.step(),
             StepParams::Act(p) => p.step(true),
             StepParams::Mouse(p) => p.step(),
+            StepParams::Keyboard(p) => p.step(),
             StepParams::Check(p) => p.step(),
             StepParams::Read(p) => {
                 let read = p.read()?;
@@ -4836,6 +4922,7 @@ impl EngineHost {
             | Step::Page { .. }
             | Step::Request(_)
             | Step::Mouse { .. }
+            | Step::Keyboard { .. }
             | Step::MatchScreenshot(_) => {
                 unreachable!("not a locator step")
             }
@@ -5230,6 +5317,7 @@ impl EngineHost {
                         step,
                         Step::Act { settle: true, .. }
                             | Step::Mouse { settle: true, .. }
+                            | Step::Keyboard { settle: true, .. }
                             | Step::Route { settle: true, .. }
                             | Step::Viewport { .. }
                             | Step::Media(_)
@@ -5450,6 +5538,12 @@ impl EngineHost {
                             if matches!(attempt, Attempt::Done(_)) {
                                 self.thread.browser.checkpoint();
                             }
+                            (attempt, Some(page))
+                        }
+                        Step::Keyboard { press, text, modifiers, .. } => {
+                            let page = self.main_document(w.job.page).map_err(|e| w.job.fail(e))?;
+                            let attempt = keyboard_step(&page, press.as_deref(), text.as_deref(), *modifiers);
+                            self.thread.browser.checkpoint();
                             (attempt, Some(page))
                         }
                         _ => {

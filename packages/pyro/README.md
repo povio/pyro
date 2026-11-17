@@ -78,14 +78,17 @@ test.concurrent('closes a position', async () => {
 - **Locators** are data: `css`, `testId`, `text`, `label`, `placeholder`,
   `role` (and `button`, `dialog`, `link`, …), chained inside one another
   (`dialog().button('OK')`), filtered (`.visible()`, `.hasText()`,
-  `.hasNotText()`, `.has()`, `.hasNot()`) and picked (`.first()`, `.last()`,
-  `.nth(i)`). Strings match case-insensitive substrings unless `{ exact: true }`;
+  `.hasNotText()`, `.has()`, `.hasNot()`; each narrows further), picked
+  (`.first()`, `.last()`, `.nth(i)`), combined (`.or()`, `.and()`) and
+  narrowed by role state (`heading('X', { level: 2 })`). Strings match case-insensitive substrings unless `{ exact: true }`;
   a `RegExp` (flags `i`, `m`, `s`) tests the whitespace-normalized text.
 - **Steps**: `.click()`, `.fill(v)`, `.press('Enter' | 'Shift+Tab' | …)`,
   `.check()`, `.uncheck()`, `.focus()`, `.read(as)`; `check(loc).visible()`,
   `.hidden()`, `.text()`, `.containsText()`, `.value()`, `.count()`,
-  `.checked()`, `.not.…`; `check.request(method, path).status(n)` /
-  `.count(n)`; `goto(url)`, `route(url)`, `evaluate(expr, as)`.
+  `.checked()`, `.attribute()`, `.not.…` (text and value checks take a
+  `RegExp` too); `check.request(method, path).status(n)` / `.count(n)`;
+  `goto(url, { timeout })`, `route(url)`, `keyboard.press(key)`,
+  `evaluate(expr, as)`.
 - **Waiting** happens in the browser. A step that does not hold yet is tried
   again when the DOM changes; an action settles before the next step (the
   page goes quiet: no queued task, no request the action started, no timeout
