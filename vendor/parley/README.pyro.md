@@ -361,3 +361,6 @@ blitz-dom puts an inline-level absolutely positioned box on the start side of it
   edges stay next to the content before it (WPT css-text `line-edge-white-space-collapse-001`). An empty box without
   edges keeps its strut next to the content before it (`line-break-anywhere-and-white-space-004`). Covered by
   `white_space_ending_a_line_leaves_the_span_edges_after_it_at_the_content`.
+- `src/shape/mod.rs` (`shifted_span`): text is shaped apart on either side of the edge of a span that `vertical-align`
+  shifts, nested spans included (CSS Text 3 § 7.3; WPT css-text `boundary-shaping-002/006`: no `ffi` ligature across a
+  raised `f`).

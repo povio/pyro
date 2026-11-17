@@ -176,7 +176,10 @@ pub(crate) fn shape_text<'a, B: Brush>(
                         || style.font_features != item_style.font_features
                         || !nearly_eq(style.letter_spacing, item_style.letter_spacing)
                         || !nearly_eq(style.word_spacing, item_style.word_spacing)
-                        || spacing_trim(style) != spacing_trim(item_style);
+                        || spacing_trim(style) != spacing_trim(item_style)
+                        // pyro: and where a span shifted by `vertical-align` starts or ends
+                        // (CSS Text 3 § 7.3, WPT css-text `boundary-shaping-002/006`).
+                        || shifted_span(styles, style_index) != shifted_span(styles, item_style_index);
                 }
 
                 if split {
@@ -632,4 +635,19 @@ fn any_font(query: &mut Query<'_>) -> Option<QueryFont> {
     );
 
     found
+}
+
+/// pyro: the nearest span around the text of style `index` (itself included) that `vertical-align`
+/// shifts, if any: text on either side of the edge of such a span is shaped apart.
+fn shifted_span<B: Brush>(styles: &[ResolvedStyle<B>], mut index: u16) -> Option<u16> {
+    loop {
+        let style = &styles[usize::from(index)];
+        if style.vertical_align != crate::style::VerticalAlign::BASELINE {
+            return Some(index);
+        }
+        if style.parent == index {
+            return None;
+        }
+        index = style.parent;
+    }
 }
