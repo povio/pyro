@@ -1374,11 +1374,14 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
                 };
 
                 cx.transform = self.scrolled_transform(node, cx.transform);
+                // pyro: an `<svg>` paints whatever its own visibility: what in it is visible
+                // (`visibility: visible` on a child, a filter's region) is (usvg drops the hidden
+                // shapes; WPT filter-effects `svg-visibility-hidden-element-with-filter-002`).
+                #[cfg(feature = "svg")]
+                cx.draw_svg(scene);
                 if !hidden {
                     cx.draw_image(scene);
                     cx.draw_content_gradient(scene);
-                    #[cfg(feature = "svg")]
-                    cx.draw_svg(scene);
                     #[cfg(feature = "custom-widget")]
                     cx.draw_custom_widget(scene);
                     cx.draw_sub_document(scene);

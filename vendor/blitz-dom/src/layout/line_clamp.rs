@@ -25,10 +25,26 @@ impl LayoutPassState<'_> {
     pub(crate) fn line_clamp_of(&self, node_id: NodeId) -> Option<u32> {
         use style::computed_value_flags::ComputedValueFlags;
         let style = self.nodes[node_id].primary_styles()?;
-        if !style.flags.contains(ComputedValueFlags::WEBKIT_LINE_CLAMP_APPLIES) {
+        let clamp = &style.get_box().line_clamp;
+        // pyro: and `line-clamp` (CSS Overflow 4, not the legacy shorthand) on a block container,
+        // laid out the same way (WPT css-inline `text-box-trim-line-clamp-*`).
+        let standard = !clamp.webkit_legacy && {
+            use style::values::specified::box_::{DisplayInside, DisplayOutside};
+            let display = style.get_box().display;
+            display.outside() == DisplayOutside::Block
+                && matches!(display.inside(), DisplayInside::Flow | DisplayInside::FlowRoot)
+                // (Not a multi-column container, nor a fieldset: WPT css-overflow `line-clamp-039`,
+                // `line-clamp-form-fieldset-001`.)
+                && !super::multicol::is_multicol_style(&style)
+                && self.nodes[node_id]
+                    .data
+                    .downcast_element()
+                    .is_none_or(|el| el.name.local != local_name!("fieldset"))
+        };
+        if !standard && !style.flags.contains(ComputedValueFlags::WEBKIT_LINE_CLAMP_APPLIES) {
             return None;
         }
-        let lines = style.get_box().line_clamp.max_lines.lines.into_rust()?;
+        let lines = clamp.max_lines.lines.into_rust()?;
         u32::try_from(lines.0).ok().filter(|&lines| lines > 0)
     }
 
@@ -66,6 +82,15 @@ impl LayoutPassState<'_> {
     /// loses its mark). Returns that line's bottom from the top of `root`'s border box.
     fn find_clamp_line(&mut self, root: NodeId, max_lines: u32) -> Option<f32> {
         let scale = self.doc.viewport.scale();
+        // pyro: the clamp line is the box's last formatted line: `text-box-trim: trim-end` trims
+        // its block-end side (WPT css-inline `text-box-trim-line-clamp-*`).
+        let trims_end = self.nodes[root].primary_styles().is_some_and(|style| {
+            style.slow_clone_text_box_trim().contains(style::values::computed::TextBoxTrim::TRIM_END)
+        });
+        // pyro: the standard `line-clamp` discards what follows the clamp line (`continue:
+        // discard`): later blocks' lines are not painted either.
+        let discards = self.nodes[root].primary_styles().is_some_and(|style| !style.get_box().line_clamp.webkit_legacy);
+        let mut discarded: Vec<NodeId> = Vec::new();
         let mut count = 0u32;
         // The block holding the clamp line, how many of its lines stay, and the line's bottom.
         let mut clamp_line: Option<(NodeId, u32, f32)> = None;
@@ -83,14 +108,21 @@ impl LayoutPassState<'_> {
                 let lines = text_layout.counted_lines;
                 if clamp_line.is_none() && count + lines >= max_lines && lines > 0 {
                     let kept = max_lines - count;
-                    let bottom = text_layout
-                        .layout
-                        .get(kept as usize - 1)
-                        .map_or(0.0, |line| line.metrics().block_max_coord / scale);
+                    let root_style = trims_end.then(|| node.primary_styles()).flatten();
+                    let text_layout = node.data.downcast_element().and_then(|el| el.inline_layout_data.as_ref()).unwrap();
+                    let bottom = text_layout.layout.get(kept as usize - 1).map_or(0.0, |line| {
+                        let trim = root_style
+                            .as_deref()
+                            .map_or(0.0, |style| super::text_box::fragment_line_trim(&line, style, false));
+                        (line.metrics().block_max_coord - trim) / scale
+                    });
                     clamp_line = Some((id, kept, top + text_layout.line_box_top + bottom));
                     clamped = lines > kept;
                 } else if clamp_line.is_some() && lines > 0 {
                     clamped = true;
+                    if discards {
+                        discarded.push(id);
+                    }
                 }
                 count = count.saturating_add(lines);
                 continue;
@@ -124,6 +156,13 @@ impl LayoutPassState<'_> {
         }
         let (id, kept, bottom) = clamp_line.filter(|_| clamped)?;
         self.set_clamp(id, kept);
+        for id in discarded {
+            if let Some(text_layout) =
+                self.nodes[id].data.downcast_element_mut().and_then(|el| el.inline_layout_data.as_mut())
+            {
+                text_layout.clamp = Some(LineClamp { lines: 0, ellipsis: Box::default() });
+            }
+        }
         Some(bottom)
     }
 

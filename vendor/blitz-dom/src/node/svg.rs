@@ -389,11 +389,16 @@ impl SvgImageData {
         let Ok(text) = std::str::from_utf8(source) else {
             return self;
         };
-        let viewed = url
+        let fragment = url
             .split_once('#')
             .map(|(_, fragment)| fragment)
-            .filter(|fragment| !fragment.is_empty() && !fragment.starts_with("svgView("))
-            .and_then(|fragment| with_view(text, fragment));
+            .filter(|fragment| !fragment.is_empty() && !fragment.starts_with("svgView("));
+        // pyro: the element the fragment names is the document's `:target` (WPT css-masking
+        // `mask-image-url-image-hash`): usvg's style sheets know no `:target`, so it is written
+        // as that id selector.
+        let targeted = fragment.and_then(|fragment| with_target(text, fragment));
+        let text = targeted.as_deref().unwrap_or(text);
+        let viewed = fragment.and_then(|fragment| with_view(text, fragment)).or(targeted.clone());
         let (mut svg, text) = match viewed {
             Some(viewed) => match crate::util::parse_svg_image(viewed.as_bytes()) {
                 Ok(svg) => (svg, viewed),
@@ -410,6 +415,14 @@ impl SvgImageData {
         }
         svg
     }
+}
+
+/// pyro: `source` with its style sheets' `:target` written as `#fragment`, when `fragment` is a
+/// plain identifier; `None` when nothing changes.
+fn with_target(source: &str, fragment: &str) -> Option<String> {
+    let plain = fragment.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        && !fragment.starts_with(|c: char| c.is_ascii_digit());
+    (plain && source.contains(":target")).then(|| source.replace(":target", &format!("#{fragment}")))
 }
 
 /// pyro: `source` with its root showing the `<view>` whose id is `fragment`: the root takes the

@@ -12501,7 +12501,7 @@ diff --git a/packages/blitz-dom/src/layout/line_clamp.rs b/packages/blitz-dom/sr
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/layout/line_clamp.rs
-@@ -0,0 +1,160 @@
+@@ -0,0 +1,199 @@
 +//! pyro: the legacy line clamp (`-webkit-line-clamp` on a `display: -webkit-box` box with
 +//! `-webkit-box-orient: vertical`; Stylo's `WEBKIT_LINE_CLAMP_APPLIES`), as Blink lays it out.
 +//!
@@ -12529,10 +12529,26 @@ new file mode 100644
 +    pub(crate) fn line_clamp_of(&self, node_id: NodeId) -> Option<u32> {
 +        use style::computed_value_flags::ComputedValueFlags;
 +        let style = self.nodes[node_id].primary_styles()?;
-+        if !style.flags.contains(ComputedValueFlags::WEBKIT_LINE_CLAMP_APPLIES) {
++        let clamp = &style.get_box().line_clamp;
++        // pyro: and `line-clamp` (CSS Overflow 4, not the legacy shorthand) on a block container,
++        // laid out the same way (WPT css-inline `text-box-trim-line-clamp-*`).
++        let standard = !clamp.webkit_legacy && {
++            use style::values::specified::box_::{DisplayInside, DisplayOutside};
++            let display = style.get_box().display;
++            display.outside() == DisplayOutside::Block
++                && matches!(display.inside(), DisplayInside::Flow | DisplayInside::FlowRoot)
++                // (Not a multi-column container, nor a fieldset: WPT css-overflow `line-clamp-039`,
++                // `line-clamp-form-fieldset-001`.)
++                && !super::multicol::is_multicol_style(&style)
++                && self.nodes[node_id]
++                    .data
++                    .downcast_element()
++                    .is_none_or(|el| el.name.local != local_name!("fieldset"))
++        };
++        if !standard && !style.flags.contains(ComputedValueFlags::WEBKIT_LINE_CLAMP_APPLIES) {
 +            return None;
 +        }
-+        let lines = style.get_box().line_clamp.max_lines.lines.into_rust()?;
++        let lines = clamp.max_lines.lines.into_rust()?;
 +        u32::try_from(lines.0).ok().filter(|&lines| lines > 0)
 +    }
 +
@@ -12570,6 +12586,15 @@ new file mode 100644
 +    /// loses its mark). Returns that line's bottom from the top of `root`'s border box.
 +    fn find_clamp_line(&mut self, root: NodeId, max_lines: u32) -> Option<f32> {
 +        let scale = self.doc.viewport.scale();
++        // pyro: the clamp line is the box's last formatted line: `text-box-trim: trim-end` trims
++        // its block-end side (WPT css-inline `text-box-trim-line-clamp-*`).
++        let trims_end = self.nodes[root].primary_styles().is_some_and(|style| {
++            style.slow_clone_text_box_trim().contains(style::values::computed::TextBoxTrim::TRIM_END)
++        });
++        // pyro: the standard `line-clamp` discards what follows the clamp line (`continue:
++        // discard`): later blocks' lines are not painted either.
++        let discards = self.nodes[root].primary_styles().is_some_and(|style| !style.get_box().line_clamp.webkit_legacy);
++        let mut discarded: Vec<NodeId> = Vec::new();
 +        let mut count = 0u32;
 +        // The block holding the clamp line, how many of its lines stay, and the line's bottom.
 +        let mut clamp_line: Option<(NodeId, u32, f32)> = None;
@@ -12587,14 +12612,21 @@ new file mode 100644
 +                let lines = text_layout.counted_lines;
 +                if clamp_line.is_none() && count + lines >= max_lines && lines > 0 {
 +                    let kept = max_lines - count;
-+                    let bottom = text_layout
-+                        .layout
-+                        .get(kept as usize - 1)
-+                        .map_or(0.0, |line| line.metrics().block_max_coord / scale);
++                    let root_style = trims_end.then(|| node.primary_styles()).flatten();
++                    let text_layout = node.data.downcast_element().and_then(|el| el.inline_layout_data.as_ref()).unwrap();
++                    let bottom = text_layout.layout.get(kept as usize - 1).map_or(0.0, |line| {
++                        let trim = root_style
++                            .as_deref()
++                            .map_or(0.0, |style| super::text_box::fragment_line_trim(&line, style, false));
++                        (line.metrics().block_max_coord - trim) / scale
++                    });
 +                    clamp_line = Some((id, kept, top + text_layout.line_box_top + bottom));
 +                    clamped = lines > kept;
 +                } else if clamp_line.is_some() && lines > 0 {
 +                    clamped = true;
++                    if discards {
++                        discarded.push(id);
++                    }
 +                }
 +                count = count.saturating_add(lines);
 +                continue;
@@ -12628,6 +12660,13 @@ new file mode 100644
 +        }
 +        let (id, kept, bottom) = clamp_line.filter(|_| clamped)?;
 +        self.set_clamp(id, kept);
++        for id in discarded {
++            if let Some(text_layout) =
++                self.nodes[id].data.downcast_element_mut().and_then(|el| el.inline_layout_data.as_mut())
++            {
++                text_layout.clamp = Some(LineClamp { lines: 0, ellipsis: Box::default() });
++            }
++        }
 +        Some(bottom)
 +    }
 +
@@ -28693,7 +28732,7 @@ diff --git a/packages/blitz-dom/src/node/svg.rs b/packages/blitz-dom/src/node/sv
  /// Map a `viewBox` onto a viewport of the given size per `preserveAspectRatio`.
  fn view_box_transform(
      view_box: usvg::NonZeroRect,
-@@ -263,3 +375,273 @@
+@@ -263,3 +375,286 @@
      let ty = (height - view_box.height() * sy) * align_y - view_box.y() * sy;
      usvg::Transform::from_row(sx, 0.0, 0.0, sy, tx, ty)
  }
@@ -28711,11 +28750,16 @@ diff --git a/packages/blitz-dom/src/node/svg.rs b/packages/blitz-dom/src/node/sv
 +        let Ok(text) = std::str::from_utf8(source) else {
 +            return self;
 +        };
-+        let viewed = url
++        let fragment = url
 +            .split_once('#')
 +            .map(|(_, fragment)| fragment)
-+            .filter(|fragment| !fragment.is_empty() && !fragment.starts_with("svgView("))
-+            .and_then(|fragment| with_view(text, fragment));
++            .filter(|fragment| !fragment.is_empty() && !fragment.starts_with("svgView("));
++        // pyro: the element the fragment names is the document's `:target` (WPT css-masking
++        // `mask-image-url-image-hash`): usvg's style sheets know no `:target`, so it is written
++        // as that id selector.
++        let targeted = fragment.and_then(|fragment| with_target(text, fragment));
++        let text = targeted.as_deref().unwrap_or(text);
++        let viewed = fragment.and_then(|fragment| with_view(text, fragment)).or(targeted.clone());
 +        let (mut svg, text) = match viewed {
 +            Some(viewed) => match crate::util::parse_svg_image(viewed.as_bytes()) {
 +                Ok(svg) => (svg, viewed),
@@ -28732,6 +28776,14 @@ diff --git a/packages/blitz-dom/src/node/svg.rs b/packages/blitz-dom/src/node/sv
 +        }
 +        svg
 +    }
++}
++
++/// pyro: `source` with its style sheets' `:target` written as `#fragment`, when `fragment` is a
++/// plain identifier; `None` when nothing changes.
++fn with_target(source: &str, fragment: &str) -> Option<String> {
++    let plain = fragment.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
++        && !fragment.starts_with(|c: char| c.is_ascii_digit());
++    (plain && source.contains(":target")).then(|| source.replace(":target", &format!("#{fragment}")))
 +}
 +
 +/// pyro: `source` with its root showing the `<view>` whose id is `fragment`: the root takes the
@@ -28971,7 +29023,7 @@ diff --git a/packages/blitz-dom/src/node/svg_css.rs b/packages/blitz-dom/src/nod
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/node/svg_css.rs
-@@ -0,0 +1,2352 @@
+@@ -0,0 +1,2446 @@
 +//! pyro: an inline `<svg>` subtree as a standalone SVG document for usvg, with
 +//! the page's CSS applied.
 +//!
@@ -29730,6 +29782,8 @@ new file mode 100644
 +        let mut rewrites: Vec<Rewrite> = Vec::new();
 +        let mut declarations = String::new();
 +        let mut temp_id = None;
++        // pyro: a clip path that must clip the element's markers too: a group around it.
++        let mut marker_clip: Option<String> = None;
 +        if let (Some(style), true) = (&styles, is_svg) {
 +            // `filter` is a declaration of the `style` attribute (which wins over the `<svg>`'s
 +            // own style sheets, as the page's value does), or the attribute when it has
@@ -29799,7 +29853,7 @@ new file mode 100644
 +            // Not on the root: its CSS box's.
 +            if !is_root {
 +                if author.contains(&LonghandId::ClipPath) {
-+                    self.clip_path_rewrite(node, data, style, &mut rewrites, &mut temp_id);
++                    marker_clip = self.clip_path_rewrite(node, data, tag, style, &mut rewrites, &mut temp_id);
 +                }
 +                if author.contains(&LonghandId::MaskImage) {
 +                    if !self.css_mask_rewrite(node, data, style, &mut rewrites, &mut temp_id) {
@@ -29832,6 +29886,9 @@ new file mode 100644
 +            && styles.as_ref().is_some_and(|style| {
 +                style.get_effects().mix_blend_mode == style::computed_values::mix_blend_mode::T::PlusLighter
 +            });
++        if let Some(clip) = &marker_clip {
++            let _ = write!(self.out, "<g clip-path=\"url(#{clip})\">");
++        }
 +        if plus_lighter {
 +            let id = self.new_id("compose");
 +            let _ = write!(self.out, "<g id=\"__pyro_compose_pluslighter_{}\">", &id["__pyro_compose_".len()..]);
@@ -29919,6 +29976,9 @@ new file mode 100644
 +            self.out.push('>');
 +        }
 +        if plus_lighter {
++            self.out.push_str("</g>");
++        }
++        if marker_clip.is_some() {
 +            self.out.push_str("</g>");
 +        }
 +        if pushed_viewport {
@@ -30182,23 +30242,42 @@ new file mode 100644
 +
 +    /// CSS `clip-path` on an SVG element: a reference as the attribute, a
 +    /// basic shape or a box as a `<clipPath>` made for it.
++    ///
++    /// pyro: returns the id of the clip path to put on a group around the element instead, when
++    /// the element has markers (a clip path clips the element with its markers, SVG 2 §11.6;
++    /// usvg puts the markers beside the clipped shape): an `objectBoundingBox` `<clipPath>` is
++    /// copied into user space in the shape's fill box (markers do not count in the bounding box).
 +    fn clip_path_rewrite(
 +        &mut self,
 +        node: &Node,
 +        data: &ElementData,
++        tag: &str,
 +        style: &ComputedValues,
 +        rewrites: &mut Vec<Rewrite>,
 +        temp_id: &mut Option<String>,
-+    ) {
++    ) -> Option<String> {
 +        let (shape, geometry_box) = match style.get_svg().clip_path.clone() {
 +            ClipPath::None => {
 +                rewrites.push(Rewrite { name: "clip-path", value: None, in_style: true });
-+                return;
++                return None;
 +            }
 +            ClipPath::Url(_) => {
 +                let value = computed_value(style, LonghandId::ClipPath);
++                let has_markers = matches!(tag, "path" | "line" | "polyline" | "polygon")
++                    && (data.attrs().iter().any(|attr| attr.name.local.starts_with("marker"))
++                        || data.attr(local_name!("style")).is_some_and(|s| s.contains("marker")));
++                let id = value.strip_prefix("url(#").and_then(|v| v.strip_suffix(')')).map(str::to_owned);
++                if has_markers && let Some(id) = id {
++                    let fill = self.boxes(node, data, temp_id).fill;
++                    if self.pass == Pass::Final
++                        && let Some(group_clip) = self.clip_in_user_space(&id, fill)
++                    {
++                        rewrites.push(Rewrite { name: "clip-path", value: None, in_style: true });
++                        return Some(group_clip);
++                    }
++                }
 +                rewrites.push(Rewrite { name: "clip-path", value: Some(value), in_style: true });
-+                return;
++                return None;
 +            }
 +            ClipPath::Shape(shape, geometry_box) => (Some(shape), geometry_box),
 +            ClipPath::Box(geometry_box) => (None, geometry_box),
@@ -30219,19 +30298,86 @@ new file mode 100644
 +        // this pass is for.
 +        let from_boxes = !matches!(geometry_box, ShapeGeometryBox::ViewBox);
 +        let (Some(reference), false) = (reference, from_boxes && self.pass == Pass::Boxes) else {
-+            return;
++            return None;
 +        };
 +        let element = match &shape {
 +            Some(shape) => match shape_element(shape, reference) {
 +                Some(element) => element,
 +                // An unsupported shape keeps the element unclipped.
-+                None => return,
++                None => return None,
 +            },
 +            None => rect_element(reference, 0.0, 0.0),
 +        };
 +        let id = self.new_id("clip");
 +        let _ = write!(self.defs, "<clipPath id=\"{id}\" clipPathUnits=\"userSpaceOnUse\">{element}</clipPath>");
 +        rewrites.push(Rewrite { name: "clip-path", value: Some(format!("url(#{id})")), in_style: true });
++        None
++    }
++
++    /// pyro: the `<clipPath>` of id `id` for a group around an element whose fill box is `fill`:
++    /// itself in user space, else a copy of it in user space mapping the bounding box units onto
++    /// `fill`. `None` without such an element.
++    fn clip_in_user_space(&mut self, id: &str, fill: Rect) -> Option<String> {
++        let mut stack = vec![self.root];
++        let mut found = None;
++        while let Some(node) = stack.pop() {
++            if node.element_data().is_some_and(|data| data.attr(local_name!("id")) == Some(id)) {
++                found = Some(node);
++                break;
++            }
++            stack.extend(node.children.iter().rev().map(|&child| &node.tree()[child]));
++        }
++        let node = found?;
++        let data = node.element_data()?;
++        if data.name.ns != ns!(svg) || &*data.name.local != "clipPath" {
++            return None;
++        }
++        if data.attr(markup5ever::LocalName::from("clipPathUnits")).map(str::trim) != Some("objectBoundingBox") {
++            return Some(id.to_string());
++        }
++        if fill.width() <= 0.0 || fill.height() <= 0.0 {
++            return None;
++        }
++        let saved = std::mem::take(&mut self.out);
++        self.write_node(node, 1);
++        let written = std::mem::replace(&mut self.out, saved);
++        let mut quote = None;
++        let end = written.char_indices().find_map(|(i, c)| {
++            match (quote, c) {
++                (None, '"') => quote = Some(c),
++                (Some(_), '"') => quote = None,
++                (None, '>') => return Some(i),
++                _ => {}
++            }
++            None
++        })?;
++        let (start_tag, rest) = written.split_at(end);
++        let mut start_tag = start_tag.trim_end_matches('/').trim_end().to_string();
++        let mut take_attr = |tag: &mut String, name: &str| -> Option<String> {
++            let key = format!(" {name}=\"");
++            let start = tag.find(&key)?;
++            let value_start = start + key.len();
++            let value_end = value_start + tag[value_start..].find('"')?;
++            let value = tag[value_start..value_end].to_string();
++            tag.replace_range(start..value_end + 1, "");
++            Some(value)
++        };
++        take_attr(&mut start_tag, "id");
++        take_attr(&mut start_tag, "clipPathUnits");
++        let own = take_attr(&mut start_tag, "transform").unwrap_or_default();
++        let copy = self.new_id("clip");
++        let _ = write!(
++            start_tag,
++            " id=\"{copy}\" clipPathUnits=\"userSpaceOnUse\" transform=\"matrix({} 0 0 {} {} {}) {own}\"",
++            fill.width(),
++            fill.height(),
++            fill.x0,
++            fill.y0
++        );
++        let rest = if rest.starts_with("/>") || rest == ">" { "></clipPath>".to_string() } else { rest.to_string() };
++        self.defs.push_str(&start_tag);
++        self.defs.push_str(&rest);
++        Some(copy)
 +    }
 +
 +    /// The fill and stroke `node` inherits as usvg reads them ([`own_paint`] of the nearest SVG
