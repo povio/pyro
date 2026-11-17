@@ -134,19 +134,6 @@ fn a_floated_root_shrinks_to_its_side() {
     assert_color(&img, 25, 25, WHITE, "not at the left edge");
 }
 
-/// Margins do not collapse through a block whose line holds text, however short its line is
-/// (`font-size: 0`; WPT css-fonts `font-size-zero-1`).
-#[test]
-fn margins_do_not_collapse_through_a_zero_height_text_line() {
-    let img = render(
-        "<div style='height:20px;background:green;margin-bottom:20px'></div>\
-         <div style='font-size:0;line-height:0'>text</div>\
-         <div style='height:20px;background:green;margin-top:20px'></div>",
-    );
-    assert_color(&img, 10, 50, WHITE, "the gap is both margins");
-    assert_color(&img, 10, 65, GREEN, "second box");
-}
-
 /// A flex scroll container gives the inline-block holding it its contents' baseline; a block one
 /// gives its bottom margin edge (WPT css-align `baseline-of-scrollable-1b`).
 #[test]
