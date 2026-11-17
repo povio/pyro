@@ -63,6 +63,37 @@ export type LocatorSpec = {
 
 export type Step = Record<string, unknown>;
 type Exact = { exact?: boolean };
+/** Playwright's `getByRole` options: the name match and the element's states. */
+export type RoleOptions = Exact & {
+  checked?: boolean | 'mixed';
+  pressed?: boolean | 'mixed';
+  disabled?: boolean;
+  expanded?: boolean;
+  selected?: boolean;
+  /** Heading level (`<h2>`, `aria-level`). */
+  level?: number;
+  /** Let elements hidden from the accessibility tree match. */
+  includeHidden?: boolean;
+};
+type Filter = NonNullable<LocatorSpec['filter']>;
+
+/** `spec` as the base set of a further step: wrapped (`of`) once it picked an `nth`, a `frame` kept outside. */
+const asBase = (spec: LocatorSpec): LocatorSpec => {
+  const { frame, ...inner } = spec;
+  return { of: inner, ...(frame ? { frame } : {}) };
+};
+
+/**
+ * `spec` narrowed by `filter`. Each filter narrows further, as Playwright's
+ * chained `filter()` calls: a condition the spec already has (a second
+ * `hasText`) applies to its matches instead of replacing it, and a filter
+ * after `nth` applies to the picked element.
+ */
+export function narrow(spec: LocatorSpec, filter: Filter): LocatorSpec {
+  const clash = spec.filter && Object.keys(filter).some((k) => k in spec.filter!);
+  if (spec.nth !== undefined || clash) return { ...asBase(spec), filter };
+  return { ...spec, filter: { ...spec.filter, ...filter } };
+}
 
 /** Anything that becomes one step of a run. */
 export interface StepLike {
@@ -96,10 +127,8 @@ export class Locator {
 
   // ---- narrowing (each returns a new locator) ----
 
-  private with(filter: NonNullable<LocatorSpec['filter']>): Locator {
-    // The browser filters the matches, then picks nth.
-    if (this.spec.nth !== undefined) throw new Error('filter before first() / last() / nth()');
-    return new Locator({ ...this.spec, filter: { ...this.spec.filter, ...filter } });
+  private with(filter: Filter): Locator {
+    return new Locator(narrow(this.spec, filter));
   }
   visible(visible = true): Locator {
     return this.with({ visible });
@@ -117,7 +146,7 @@ export class Locator {
     return this.with({ hasNot: inner.spec });
   }
   nth(index: number): Locator {
-    return new Locator({ ...this.spec, nth: index });
+    return new Locator({ ...(this.spec.nth === undefined ? this.spec : asBase(this.spec)), nth: index });
   }
   first(): Locator {
     return this.nth(0);

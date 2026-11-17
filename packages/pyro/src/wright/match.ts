@@ -1,7 +1,7 @@
 // Playwright's text, URL and selector rules, client side: what its matchers
 // send as `expectedText`, its URL globs, and the selector strings
 // `page.locator()` takes, turned into pyro locator specs.
-import type { LocatorSpec } from '../steps.js';
+import { narrow, type LocatorSpec } from '../steps.js';
 
 /** One entry of Playwright's `expectedText` (`serializeExpectedTextValues`). */
 export type ExpectedText = {
@@ -231,10 +231,8 @@ const base = (spec: LocatorSpec): LocatorSpec => {
   const { frame, ...picked } = spec;
   return { of: picked, ...(frame ? { frame } : {}) };
 };
-const filtered = (spec: LocatorSpec, filter: NonNullable<LocatorSpec['filter']>): LocatorSpec => {
-  const b = base(spec);
-  return { ...b, filter: { ...b.filter, ...filter } };
-};
+/** Each filter narrows further (a second `has-text` applies to the first one's matches). */
+const filtered = (spec: LocatorSpec, filter: NonNullable<LocatorSpec['filter']>): LocatorSpec => narrow(spec, filter);
 
 const PW_PSEUDOS = ['has-text', 'text', 'text-is', 'text-matches', 'visible', 'nth-match', 'light', 'left-of', 'right-of', 'above', 'below', 'near'];
 const LAYOUT = ['left-of', 'right-of', 'above', 'below', 'near'];

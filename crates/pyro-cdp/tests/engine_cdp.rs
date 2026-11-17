@@ -6096,6 +6096,20 @@ fn driver_exact_text_compares_the_whole_text() {
     assert_eq!(count(&mut h, json!({"text": {"regex": "^X"}, "within": {"css": "#e"}})), 2);
 }
 
+/// Danex 7: a second `hasText` narrows the first one's matches (as the SDK
+/// sends it: the first filter's locator as the base set, `of`).
+#[test]
+fn driver_chained_filters_narrow() {
+    let mut h = Harness::new();
+    load_html(&mut h, r#"<!doctype html><body><ul><li>apple red</li><li>apple green</li><li>pear red</li></ul>"#);
+    let count = |h: &mut Harness, locator: Value| {
+        h.page("Pyro.query", json!({"locator": locator, "read": "count"}))["result"]["value"].clone()
+    };
+    let first = json!({"css": "li", "filter": {"hasText": "apple"}});
+    assert_eq!(count(&mut h, json!({"of": first, "filter": {"hasText": "red"}})), 1);
+    assert_eq!(count(&mut h, json!({"of": {"css": "li", "nth": 0}, "filter": {"hasText": "green"}})), 0);
+}
+
 /// Danex 2: `press` and `type` do not check that the element is enabled
 /// (Playwright focuses it and sends the keys): an `aria-disabled` button
 /// gets the keydown. `fill` and `click` still wait for an enabled element.

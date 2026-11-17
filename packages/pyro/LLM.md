@@ -178,7 +178,8 @@ reuse them.
 | Inside another locator | `dialog().button('OK')`, `row('EXP-1001').button('Edit')`, `css('.card').text('Total')` |
 | Inside an iframe | `css('#editor').frame().button('Bold')`, `inFrame(css('#editor')).text('Hi')` |
 | Narrow the matches | `.visible()`, `.hasText('beta')`, `.hasNotText('alpha')`, `.has(button('Edit'))`, `.hasNot(…)` |
-| Pick one of several | `.first()`, `.last()`, `.nth(i)` (after the filters) |
+| Pick one of several | `.first()`, `.last()`, `.nth(i)` (later filters apply to the pick) |
+| Combine | `.or(loc)`, `.and(loc)`; role states `heading('X', { level: 2 })`, `tab(undefined, { selected: true })` |
 
 - Strings match **case-insensitive substrings** after whitespace
   normalization; pass `{ exact: true }` for a whole, case-sensitive match. A

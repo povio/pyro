@@ -64,7 +64,7 @@ The inner locator matches strictly inside the outer element, except `text()`: as
 
 ## Filters
 
-Filters narrow a locator's matches. Each returns a new locator. Several filters on one locator must all hold.
+Filters narrow a locator's matches. Each returns a new locator. Several filters on one locator must all hold, and each one narrows further: `css('li').hasText('apple').hasText('red')` keeps the items with both texts (a second `hasText` never replaces the first).
 
 | Filter | Keeps matches that |
 |---|---|
@@ -91,7 +91,28 @@ css('li').hasNot(button('Delete'))                // items without a Delete butt
 | `.last()` | The last match |
 | `.nth(i)` | The match at index `i`; a negative index counts from the end (`-1` is the last) |
 
-Filters run first, then the pick. The builders enforce that order: calling a filter after `.first()`, `.last()` or `.nth()` throws `filter before first() / last() / nth()` when you build the locator. A pick that is out of range matches nothing, so the step waits.
+Steps apply in the order you write them, as in Playwright: `css('li').hasText('a').first()` picks the first item with the text, while `css('li').first().hasText('a')` takes the first item and keeps it only if it has the text. A pick that is out of range matches nothing, so the step waits.
+
+## Combining locators
+
+| Method | Matches |
+|---|---|
+| `a.or(b)` | The elements of either, in document order (Playwright's `or`): `button('Save').or(text('Saved'))` |
+| `a.and(b)` | The elements of `a` that `b` matches too: `css('.chip').and(role('button', 'Remove'))` |
+
+## Role states
+
+`role()` and its shortcuts take Playwright's `getByRole` options besides `exact`:
+
+| Option | Keeps elements that |
+|---|---|
+| `level` | Are headings of this level (`<h2>`, `aria-level`): `heading(undefined, { level: 2 })` |
+| `checked` | Are checked (`true`), unchecked (`false`) or `'mixed'` |
+| `pressed` | Are pressed (`aria-pressed`): `true`, `false` or `'mixed'` |
+| `selected` | Are selected (`aria-selected`, a selected `<option>`) |
+| `expanded` | Are expanded (`aria-expanded`) |
+| `disabled` | Are disabled (natively, or `aria-disabled` on them or an ancestor) |
+| `includeHidden` | Also match when hidden from the accessibility tree |
 
 Use a pick only when any of several matches will do. To name one specific element, scope or filter the locator instead.
 

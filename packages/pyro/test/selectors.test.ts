@@ -4,7 +4,8 @@ import { parseSelector as p } from '../src/wright/match';
 
 test('engines and chains', () => {
   expect(p('button')).toEqual({ css: 'button' });
-  expect(p('text="Save"')).toEqual({ text: 'Save', exact: true });
+  expect(p('text="Save"')).toEqual({ text: 'Save', exact: true, legacyText: true });
+  expect(p('li >> internal:has-text="a"i >> internal:has-text="b"i')).toEqual({ of: { css: 'li', filter: { hasText: 'a' } }, filter: { hasText: 'b' } });
   expect(p('text=Save')).toEqual({ text: 'Save' });
   expect(p('text=/sa+ve/i')).toEqual({ text: { regex: 'sa+ve', flags: 'i' } });
   expect(p('form >> button')).toEqual({ css: 'button', within: { css: 'form' } });
