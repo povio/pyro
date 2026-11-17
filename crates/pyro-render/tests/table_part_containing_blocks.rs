@@ -125,3 +125,29 @@ fn line_without_text_has_no_strut_in_quirks_modes() {
     let img = render_quirks(body, false, false);
     assert_eq!(pixel(&img, 25, 52), RED);
 }
+
+/// `height: stretch` on an inline-block and a button fills their container's definite height.
+#[test]
+fn stretch_height_fills_definite_container_for_atomic_inlines() {
+    let img = render(
+        "<div style='height:120px;font:10px monospace'>\
+           <div style='display:inline-block;height:stretch;width:40px;background:green;vertical-align:top'></div>\
+           <button style='height:stretch;width:40px;background:green;border:0;vertical-align:top'></button>\
+         </div>",
+    );
+    check(&img, &[(20, 110, GREEN)]);
+    assert_eq!(pixel(&img, 20, 125), WHITE);
+}
+
+/// `min-height: min-content` grows a 10px inline-block to its content; `max-height:
+/// max-content` shrinks a 120px one to it.
+#[test]
+fn content_keywords_in_min_and_max_height_of_inline_blocks() {
+    let img = render(
+        "<div style='font:20px/40px monospace;color:transparent'>\
+           <div style='display:inline-block;vertical-align:top;width:40px;height:10px;min-height:min-content;background:green'>x</div>\
+           <div style='display:inline-block;vertical-align:top;width:40px;height:120px;max-height:max-content;background:green'>x</div>\
+         </div>",
+    );
+    check(&img, &[(20, 35, GREEN), (70, 35, GREEN), (70, 60, WHITE)]);
+}

@@ -605,3 +605,6 @@ last baseline; only a block one gives its bottom margin edge (WPT css-align `bas
 `util/resolve.rs` (lane SP): `LengthPercentageAuto::resolve_or_zero` resolves a `calc()` against an indefinite basis
 with its percentages as zero (Blink's `MinimumValueForLength`): a `calc(10% + 100px)` margin is 100px in an
 intrinsic size (WPT css-sizing `calc-margins-flex`). Padding keeps zero (css-flexbox `dynamic-isize-change-004`).
+`style/block.rs` (`BlockContainerStyle::own_height_keywords`), `compute/block.rs` (`compute_inner`, lane SP): a block
+container's own `min-height`/`max-height` content keywords clamp its height to its content (atomic inlines, floats,
+out-of-flow boxes; block items get them from their parent too).

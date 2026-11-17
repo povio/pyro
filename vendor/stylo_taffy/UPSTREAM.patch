@@ -369,10 +369,19 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
          let border_styles = self.style.get_border();
          self.rect(taffy::Rect {
              left: convert::border(
-@@ -343,12 +432,38 @@
+@@ -343,12 +432,47 @@
  // BlockContainerStyle impl
  #[cfg(feature = "block")]
  impl<T: Deref<Target = ComputedValues>> taffy::BlockContainerStyle for TaffyStyloStyle<T> {
++    #[inline]
++    fn own_height_keywords(&self) -> (taffy::Dimension, taffy::Dimension) {
++        let (min, max) = (
++            <Self as taffy::BlockItemStyle>::min_size_keyword(self),
++            <Self as taffy::BlockItemStyle>::max_size_keyword(self),
++        );
++        (min.height, max.height)
++    }
++
 +    #[inline]
 +    fn margin_trim(&self) -> taffy::Line<bool> {
 +        use style::values::computed::MarginTrim;
@@ -408,7 +417,7 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
      #[inline]
      fn align_content(&self) -> taffy::AlignContent {
          let display = self.effective_display();
-@@ -375,12 +490,27 @@
+@@ -375,12 +499,27 @@
  
      #[inline]
      fn justify_items(&self) -> taffy::AlignItems {
@@ -436,7 +445,7 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
      /// Item alignment in the layout writing mode's inline axis; `left`/`right` resolve against it.
      #[inline]
      fn inline_item_alignment(&self, input: stylo::AlignFlags) -> Option<taffy::AlignItems> {
-@@ -484,6 +614,40 @@
+@@ -484,6 +623,40 @@
          convert::is_table(self.effective_display())
      }
  
@@ -477,7 +486,7 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
      #[inline]
      fn align_self(&self) -> Option<taffy::AlignSelf> {
          self.oof_self_alignment(
-@@ -494,10 +658,11 @@
+@@ -494,10 +667,11 @@
  
      #[inline]
      fn justify_self(&self) -> Option<taffy::AlignSelf> {
@@ -493,7 +502,7 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
      }
  
      #[inline]
-@@ -508,14 +673,26 @@
+@@ -508,14 +682,26 @@
      #[cfg(feature = "floats")]
      #[inline]
      fn float(&self) -> taffy::Float {
@@ -522,7 +531,7 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
          self.layout_wm().logical_clear(clear)
      }
  }
-@@ -595,6 +772,26 @@
+@@ -595,6 +781,26 @@
          self.style.get_position().flex_shrink.0
      }
  
@@ -549,7 +558,7 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
      #[inline]
      fn align_self(&self) -> Option<taffy::AlignSelf> {
          self.self_alignment(
-@@ -874,6 +1071,66 @@
+@@ -874,6 +1080,66 @@
          convert::grid_auto_flow(self.style.get_position().grid_auto_flow)
      }
  
@@ -616,7 +625,7 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
      #[inline]
      fn gap(&self) -> taffy::Size<taffy::LengthPercentage> {
          let position_styles = self.style.get_position();
-@@ -927,6 +1184,56 @@
+@@ -927,6 +1193,56 @@
          self.grid_row_placement()
      }
  
@@ -673,7 +682,7 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
      #[inline]
      fn grid_column(&self) -> taffy::Line<taffy::GridPlacement<Atom>> {
          self.grid_column_placement()
-@@ -950,6 +1257,16 @@
+@@ -950,6 +1266,16 @@
  }
  
  impl<T: Deref<Target = ComputedValues>> taffy::OofItemStyle for TaffyStyloStyle<T> {

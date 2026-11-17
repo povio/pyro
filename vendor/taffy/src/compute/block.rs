@@ -732,6 +732,15 @@ fn compute_inner(
     // pyro: the automatic minimum size in the block axis of a box whose height follows its ratio is
     // its content height (css-sizing-4 §5.1), unless it is a scroll container.
     let calc_size_min_height = style.calc_size_min().height;
+    // pyro: `min-height`/`max-height` content keywords (`min-content`, `max-content`,
+    // `fit-content`): the content height, applied to the box's own height below. A block-level
+    // box's parent applies them too (`block_item_known_dimensions`); an atomic inline, a float or
+    // an out-of-flow box has only this (WPT css-sizing `hori-block-size-*-with-min-or-max-content`).
+    let content_keyword = |keyword: Dimension| keyword.is_sizing_keyword() && !keyword.is_stretch();
+    let height_keywords = {
+        let (min, max) = style.own_height_keywords();
+        (content_keyword(min), content_keyword(max))
+    };
     let min_height_is_content = height_follows_ratio
         && style.min_size().height.is_auto()
         && !style.overflow().y.is_scroll_container()
@@ -946,8 +955,15 @@ fn compute_inner(
             Some(height) => height,
             None if inputs.sizing_mode == SizingMode::ContentSize => intrinsic_outer_height,
             None => intrinsic_outer_height.maybe_clamp(min_size.height, max_size.height),
-        })
-        .maybe_max(Some(padding_border_size.height));
+        });
+    let container_outer_height = if inputs.sizing_mode == SizingMode::InherentSize {
+        let (min_keyword, max_keyword) = height_keywords;
+        let height = if max_keyword { container_outer_height.min(intrinsic_outer_height) } else { container_outer_height };
+        if min_keyword { height.max(intrinsic_outer_height) } else { height }
+    } else {
+        container_outer_height
+    }
+    .maybe_max(Some(padding_border_size.height));
     let final_outer_size = Size { width: container_outer_width, height: container_outer_height };
 
     // CSS2 §8.3.1: the bottom margin of a block with `height: auto` collapses with its last

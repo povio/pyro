@@ -1270,6 +1270,11 @@ impl<S: CheapCloneStr> BlockContainerStyle for Style<S> {
 #[cfg(feature = "block_layout")]
 impl<T: BlockContainerStyle> BlockContainerStyle for &'_ T {
     #[inline(always)]
+    fn own_height_keywords(&self) -> (Dimension, Dimension) {
+        (*self).own_height_keywords()
+    }
+
+    #[inline(always)]
     fn text_align(&self) -> TextAlign {
         (*self).text_align()
     }

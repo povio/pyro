@@ -2465,3 +2465,7 @@ does not let margins collapse through it, even when its lines have no height (CS
   and an empty or unknown value is the Text state (a text field), also after a change from `hidden`.
 - `resolve.rs` (`refresh_container_query_sizes`): an element inside an `<svg>` (a `<foreignObject>`, now a CSS box)
   is no size query container.
+- Lane SP: inline/layout.rs: `height: stretch` on atomic inlines (not replaced ones, `replaced.rs` has it) fills the
+  inline root's definite content height less margins (`inline_box_inputs` `stretch_height`); an inline root's own
+  `min-height`/`max-height` content keywords clamp its final height (css-sizing
+  `hori-block-size-small-or-larger-than-container-with-min-or-max-content-1`).

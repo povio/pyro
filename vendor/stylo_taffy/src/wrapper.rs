@@ -433,6 +433,15 @@ impl<T: Deref<Target = ComputedValues>> taffy::CoreStyle for TaffyStyloStyle<T> 
 #[cfg(feature = "block")]
 impl<T: Deref<Target = ComputedValues>> taffy::BlockContainerStyle for TaffyStyloStyle<T> {
     #[inline]
+    fn own_height_keywords(&self) -> (taffy::Dimension, taffy::Dimension) {
+        let (min, max) = (
+            <Self as taffy::BlockItemStyle>::min_size_keyword(self),
+            <Self as taffy::BlockItemStyle>::max_size_keyword(self),
+        );
+        (min.height, max.height)
+    }
+
+    #[inline]
     fn margin_trim(&self) -> taffy::Line<bool> {
         use style::values::computed::MarginTrim;
         let trim = *self.style.get_margin().get_margin_trim();
