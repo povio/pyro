@@ -2,21 +2,25 @@
 // One directory of the WPT status pages (/status/wpt.html, /status/wpt/<dir>.html), the directory taken from the
 // address. Its data is a JSON file per directory under /status-data/, written at build time by
 // bench/wpt/status-export.mjs from the wpt-results branch. The directory pages are copies of /status/wpt.html
-// (VitePress knows only that page), so the theme shows this component where it would show "not found" under
-// /status/wpt/ (index.ts).
-import { computed, onMounted, ref, watch } from 'vue';
+// (VitePress knows only that page; copyPages maps each copy to it, so it hydrates as rendered), and a directory
+// reached by a link shows this component where the theme would show "not found" (index.ts). The first render is
+// the root's, as the HTML was rendered; the address takes over once mounted.
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useData, useRoute, withBase } from 'vitepress';
 
 const route = useRoute();
 const { site } = useData();
+const mounted = ref(false);
 const dirPath = computed(() => {
+  if (!mounted.value) return '';
   const base = site.value.base.replace(/\/$/, '');
   const p = decodeURIComponent(route.path.slice(base.length)).replace(/\.html$/, '');
   return p.startsWith('/status/wpt/') ? p.slice('/status/wpt/'.length) : '';
 });
 const props = computed(() => ({ path: dirPath.value }));
 
-type Counts = [number, number, number, number, number, number, number]; // WPT, run, passed, sub passed, subs, Chrome passed, Chrome ran
+// WPT, run, passed, sub passed, subs, Chrome passed, Chrome ran, Chrome passed of the run pages, Chrome sub passed, Chrome subs
+type Counts = [number, number, number, number, number, number, number, number, number, number];
 type Test = { n: string; k: Kind; s: string | null; p?: number; t?: number; f?: string[]; c?: 0 | 1 };
 type Page = {
   path: string; sha: string; date: string; wpt: string;
@@ -65,12 +69,23 @@ async function load() {
   const present = kinds.value.map((k) => k.id);
   kind.value = present.includes(fromHash) ? fromHash : (present[0] ?? 'testharness');
 }
-onMounted(load);
+// The chart is drawn at its box's width in CSS px, so its labels stay 11 px on a phone.
+const chartBox = ref<HTMLElement | null>(null);
+const W = ref(640);
+let observer: ResizeObserver | null = null;
+onMounted(() => {
+  mounted.value = true;
+  if (dirPath.value === '') load();
+  observer = new ResizeObserver(([e]) => { W.value = Math.max(280, Math.round(e.contentRect.width)); });
+  watch(chartBox, (el, old) => { if (old) observer!.unobserve(old); if (el) observer!.observe(el); }, { immediate: true });
+});
+onBeforeUnmount(() => observer?.disconnect());
 watch(dirPath, load);
 watch(kind, (k) => { if (page.value) history.replaceState(history.state, '', `#${k}`); });
 
 const kinds = computed(() => KINDS.filter((k) => (page.value?.counts[k.id]?.[0] ?? 0) > 0));
-const counts = computed<Counts>(() => page.value?.counts[kind.value] ?? [0, 0, 0, 0, 0, 0, 0]);
+const counts = computed<Counts>(() => page.value?.counts[kind.value] ?? [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+const PASSING = { testharness: 'pages with every subtest passing', reftest: 'reftests passing', crashtest: 'crashtests passing' };
 const crumbs = computed(() => {
   const parts = props.value.path ? props.value.path.split('/') : [];
   return [{ name: 'wpt', path: '' }, ...parts.map((p, i) => ({ name: p, path: parts.slice(0, i + 1).join('/') }))];
@@ -118,7 +133,8 @@ const RANGES = [
   { label: '1 year', days: 366 },
   { label: 'All time', days: 0 },
 ];
-const W = 640, H = 220, L = 44, R = 12, T = 12, B = 28;
+const H = computed(() => (W.value < 500 ? 180 : 220));
+const L = 40, R = 8, T = 12, B = 24;
 const points = computed(() => {
   const h = (page.value?.history ?? []).filter((p) => p[2][kind.value]);
   if (!h.length) return [];
@@ -128,30 +144,33 @@ const points = computed(() => {
   return h
     .map(([date, sha, m]) => ({ t: new Date(date).getTime(), date, sha, v: m[kind.value]! }))
     .filter((p) => p.t >= from)
-    .map((p) => ({ ...p, y: p.v[1] ? (100 * p.v[0]) / p.v[1] : 0 }));
+    .map((p) => ({ ...p, y: p.v[1] ? (100 * p.v[0]) / p.v[1] : 0, ys: p.v[3] ? (100 * p.v[2]) / p.v[3] : null }));
 });
 const chart = computed(() => {
   const pts = points.value;
   if (!pts.length) return null;
+  const W_ = W.value, H_ = H.value;
   const chromePct = counts.value[6] ? (100 * counts.value[5]) / counts.value[0] : null;
-  const ys = pts.map((p) => p.y).concat(chromePct ?? []);
+  const subs = kind.value === 'testharness' ? pts.filter((p) => p.ys !== null) : [];
+  const ys = pts.map((p) => p.y).concat(chromePct ?? [], subs.map((p) => p.ys!));
   let lo = Math.max(0, Math.floor(Math.min(...ys) / 10) * 10 - (Math.min(...ys) % 10 < 2 ? 10 : 0));
   let hi = Math.min(100, Math.ceil(Math.max(...ys) / 10) * 10);
   if (hi - lo < 10) { lo = Math.max(0, hi - 10); hi = lo + 10; }
   const t0 = pts[0].t, t1 = pts[pts.length - 1].t;
-  const x = (t: number) => (t1 === t0 ? L + (W - L - R) : L + ((t - t0) / (t1 - t0)) * (W - L - R));
-  const y = (v: number) => T + (1 - (v - lo) / (hi - lo)) * (H - T - B);
+  const x = (t: number) => (t1 === t0 ? L + (W_ - L - R) : L + ((t - t0) / (t1 - t0)) * (W_ - L - R));
+  const y = (v: number) => T + (1 - (v - lo) / (hi - lo)) * (H_ - T - B);
   const step = hi - lo > 40 ? 20 : hi - lo > 20 ? 10 : 5;
   const ticks = [] as { y: number; label: string }[];
   for (let v = lo; v <= hi + 1e-9; v += step) ticks.push({ y: y(v), label: `${v}%` });
   const fmt = (t: number) => new Date(t).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
   let d = pts.map((p, i) => `${i ? 'L' : 'M'}${x(p.t).toFixed(1)},${y(p.y).toFixed(1)}`).join(' ');
-  if (pts.length === 1) d = `M${L},${y(pts[0].y).toFixed(1)} L${W - R},${y(pts[0].y).toFixed(1)}`;
+  if (pts.length === 1) d = `M${L},${y(pts[0].y).toFixed(1)} L${W_ - R},${y(pts[0].y).toFixed(1)}`;
+  const ds = subs.map((p, i) => `${i ? 'L' : 'M'}${x(p.t).toFixed(1)},${y(p.ys!).toFixed(1)}`).join(' ');
   return {
-    d, ticks,
+    d, ticks, ds,
     dots: pts.map((p) => ({ cx: x(p.t), cy: y(p.y), title: `${p.date.slice(0, 10)} ${p.sha}: ${p.y.toFixed(2)}% (${num(p.v[0])} of ${num(p.v[1])})` })),
     chrome: chromePct === null ? null : { y: y(chromePct), label: `Chrome ${chromePct.toFixed(1)}%` },
-    xLabels: t1 === t0 ? [{ x: W - R, label: fmt(t1), anchor: 'end' }] : [{ x: L, label: fmt(t0), anchor: 'start' }, { x: W - R, label: fmt(t1), anchor: 'end' }],
+    xLabels: t1 === t0 ? [{ x: W_ - R, label: fmt(t1), anchor: 'end' }] : [{ x: L, label: fmt(t0), anchor: 'start' }, { x: W_ - R, label: fmt(t1), anchor: 'end' }],
   };
 });
 </script>
@@ -178,7 +197,7 @@ const chart = computed(() => {
       <div class="stats">
         <div class="stat">
           <div class="big">{{ pct(counts[2], counts[0]) }}</div>
-          <div class="label">pass: {{ num(counts[2]) }} of {{ num(counts[0]) }} in WPT</div>
+          <div class="label">{{ PASSING[kind] }}: {{ num(counts[2]) }} of {{ num(counts[0]) }} in WPT</div>
         </div>
         <div class="stat">
           <div class="big">{{ num(counts[0] - counts[1]) }}</div>
@@ -186,15 +205,15 @@ const chart = computed(() => {
         </div>
         <div v-if="kind === 'testharness'" class="stat">
           <div class="big">{{ pct(counts[3], counts[4]) }}</div>
-          <div class="label">subtests: {{ num(counts[3]) }} of {{ num(counts[4]) }} in the pages run</div>
+          <div class="label">subtests passing: {{ num(counts[3]) }} of {{ num(counts[4]) }}, in the {{ num(counts[1]) }} pages run</div>
         </div>
         <div v-if="page.chrome && counts[6]" class="stat">
           <div class="big">{{ pct(counts[5], counts[0]) }}</div>
-          <div class="label">Chrome {{ page.chrome.version.split('.')[0] }}: {{ num(counts[5]) }} of {{ num(counts[0]) }}</div>
+          <div class="label">Chrome {{ page.chrome.version.split('.')[0] }}: {{ num(counts[5]) }} of {{ num(counts[0]) }} in WPT; {{ num(counts[7]) }} of the {{ num(counts[1]) }} pyro runs (pyro {{ num(counts[2]) }})</div>
         </div>
       </div>
 
-      <section class="history">
+      <section ref="chartBox" class="history">
         <div class="history-head">
           <h2>Score history</h2>
           <div class="ranges">
@@ -213,11 +232,12 @@ const chart = computed(() => {
             <line :x1="L" :x2="W - R" :y1="chart.chrome.y" :y2="chart.chrome.y" />
             <text :x="W - R" :y="chart.chrome.y - 5" text-anchor="end">{{ chart.chrome.label }}</text>
           </g>
+          <path v-if="chart.ds" class="line sub" :d="chart.ds" />
           <path class="line" :d="chart.d" />
           <circle v-for="(p, i) in chart.dots" :key="i" class="dot" :cx="p.cx" :cy="p.cy" r="3"><title>{{ p.title }}</title></circle>
         </svg>
         <p v-else class="muted">No history in this range.</p>
-        <p class="legend"><span class="sw pyro" /> pyro, tests passing of all in WPT <template v-if="chart?.chrome"><span class="sw chrome" /> Chrome stable</template></p>
+        <p class="legend"><span class="sw pyro" /> pyro, {{ PASSING[kind] }}, of all in WPT <template v-if="chart?.ds"><span class="sw sub" /> subtests passing, in the pages run</template> <template v-if="chart?.chrome"><span class="sw chrome" /> Chrome stable</template></p>
       </section>
 
       <p class="meta">
@@ -314,6 +334,8 @@ h2 { border-top: none !important; margin: 1.5rem 0 0.75rem !important; padding-t
 .dot { fill: var(--vp-c-bg); stroke: var(--vp-c-brand-1); stroke-width: 2; }
 .legend { font-size: 0.8rem; color: var(--vp-c-text-2); margin: 4px 0 0; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .sw { display: inline-block; width: 18px; height: 0; border-top: 2px solid var(--vp-c-brand-1); }
+.sw.sub { border-top: 2px dotted var(--vp-c-brand-3); margin-left: 10px; }
+.line.sub { stroke: var(--vp-c-brand-3); stroke-dasharray: 2 3; stroke-width: 2; }
 .sw.chrome { border-top: 2px dashed var(--vp-c-text-3); margin-left: 10px; }
 .meta { font-size: 0.85rem; color: var(--vp-c-text-2); }
 .scroll { overflow-x: auto; max-width: 100%; }

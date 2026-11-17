@@ -2,7 +2,7 @@ import { test, expect } from 'bun:test';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { manifestUrls, runFromBaselines, rollup, indexEntry, updateIndex, siteData, splitUrl, passes, writeSite, copyPages } from './status-export.mjs';
+import { manifestUrls, runFromBaselines, rollup, indexEntry, updateIndex, siteData, splitUrl, passes, writeSite, copyPages, pageKey } from './status-export.mjs';
 
 const manifest = {
   version: 9,
@@ -46,11 +46,11 @@ test('rollup: WPT is the denominator, not-run pages count, Chrome per page', () 
   const run = runFromBaselines(baselines, { sha: 's1', date: 'd' });
   const chrome = { tests: { 'css/x/r1.html': [1, 1, 'P'], 'css/x/r2.html': [0, 1, 'F'], 'dom/a.html': [3, 3, 'O'] } };
   const r = rollup(run, universe, chrome);
-  // [tests in WPT, run, passed, subtests passed, subtests, Chrome passed, Chrome ran]
-  expect(r.get('').reftest).toEqual([2, 1, 1, 1, 1, 1, 2]);
-  expect(r.get('css/x').reftest).toEqual([2, 1, 1, 1, 1, 1, 2]);
-  expect(r.get('dom').testharness).toEqual([3, 2, 0, 4, 7, 1, 1]);
-  expect(r.get('svg/crashtests').crashtest).toEqual([1, 0, 0, 0, 0, 0, 0]);
+  // [WPT, run, passed, sub passed, subs, Chrome passed, Chrome ran, Chrome passed of run, Chrome sub passed, Chrome subs]
+  expect(r.get('').reftest).toEqual([2, 1, 1, 1, 1, 1, 2, 1, 1, 2]);
+  expect(r.get('css/x').reftest).toEqual([2, 1, 1, 1, 1, 1, 2, 1, 1, 2]);
+  expect(r.get('dom').testharness).toEqual([3, 2, 0, 4, 7, 1, 1, 1, 3, 3]);
+  expect(r.get('svg/crashtests').crashtest).toEqual([1, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
 });
 
 test('a page pyro runs that the manifest lacks still counts once', () => {
@@ -109,5 +109,22 @@ test('writeSite: pages and data files, and a placeholder without data', () => {
   fs.writeFileSync(path.join(dist, 'status/wpt.html'), '<html>shell</html>');
   expect(copyPages(dist)).toBe(5);
   expect(fs.readFileSync(path.join(dist, 'status/wpt/svg/crashtests.html'), 'utf8')).toBe('<html>shell</html>');
+  fs.rmSync(tmp, { recursive: true });
+});
+
+test('copyPages: each copy maps itself to the status page module, so it hydrates as that page', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'wpt-pages-'));
+  fs.mkdirSync(path.join(tmp, 'status-data'), { recursive: true });
+  fs.mkdirSync(path.join(tmp, 'status'));
+  fs.mkdirSync(path.join(tmp, 'assets'));
+  fs.writeFileSync(path.join(tmp, 'status-data/dirs.json'), JSON.stringify(['css/x', 'a/B', 'a/b', 'odd/[dir]']));
+  fs.writeFileSync(path.join(tmp, 'status/wpt.html'), '<head><script>window.__VP_HASH_MAP__=JSON.parse("{\\"status_wpt.md\\":\\"Ab-1\\"}");</script></head><body>x</body>');
+  expect(copyPages(tmp)).toBe(4);
+  const page = fs.readFileSync(path.join(tmp, 'status/wpt/css/x.html'), 'utf8');
+  expect(page).toContain('</script><script>window.__VP_HASH_MAP__["status_wpt_css_x.md"]="Ab-1"</script></head>');
+  expect(fs.readFileSync(path.join(tmp, 'assets/status_wpt_css_x.md.Ab-1.lean.js'), 'utf8')).toBe('export * from "./status_wpt.md.Ab-1.lean.js";export { default } from "./status_wpt.md.Ab-1.lean.js";\n');
+  expect(pageKey('odd/[dir]')).toBe('status_wpt_odd__dir_.md');
+  // Two directories whose names differ only in case share a key (the map is case-insensitive): plain copies.
+  expect(fs.readFileSync(path.join(tmp, 'status/wpt/a/B.html'), 'utf8')).not.toContain('status_wpt_a_b');
   fs.rmSync(tmp, { recursive: true });
 });

@@ -674,7 +674,8 @@ jobs:
 
   # The docs site's WPT status pages (bench/wpt/status-export.mjs, /status/wpt.html): after a push to main whose three
   # gates passed, the build's results (its committed baselines, which those gates checked) go to the `wpt-results`
-  # branch as runs/<sha>.json.gz plus index.json. The push there rebuilds the site (docs.yml).
+  # branch as runs/<sha>.json.gz plus index.json, and Chrome stable's results when the WPT revision is new to it. The
+  # site rebuilds when this workflow completes (docs.yml, workflow_run).
   status:
     needs: [gate, reftest-gate, crashtest]
     if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.gate.result == 'success' && needs.reftest-gate.result == 'success' && needs.crashtest.result == 'success' }}
@@ -690,6 +691,8 @@ jobs:
       - name: Export the results to the wpt-results branch
         env:
           SHA: ${{ github.sha }}
+          # chrome/<rev>.json.gz for a new WPT revision: GitHub's compare API finds the nearest Chrome stable run.
+          GH_TOKEN: ${{ github.token }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -702,7 +705,7 @@ jobs:
             else
               git worktree add --detach "$RUNNER_TEMP/results" && git -C "$RUNNER_TEMP/results" checkout --orphan wpt-results-new && git -C "$RUNNER_TEMP/results" rm -rfq .
             fi
-            bun bench/wpt/status-export.mjs export --data "$RUNNER_TEMP/results" --sha "$SHA" --date "$date" --subject "$subject"
+            bun bench/wpt/status-export.mjs export --data "$RUNNER_TEMP/results" --sha "$SHA" --date "$date" --subject "$subject" --chrome
             git -C "$RUNNER_TEMP/results" add -A
             git -C "$RUNNER_TEMP/results" commit -qm "WPT results for ${SHA:0:10}"
             if git -C "$RUNNER_TEMP/results" push origin HEAD:refs/heads/wpt-results; then exit 0; fi

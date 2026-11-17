@@ -12,7 +12,8 @@
 //       a run from the committed baselines (on main they are what the gates passed with) + index.json
 //   bun status-export.mjs backfill --data DIR [--repo .] [--ref origin/main]
 //       one run per first-parent commit of REF that changed a baseline
-//   bun status-export.mjs chrome --data DIR --rev REV --run WPTFYI_RUN_ID
+//   bun status-export.mjs chrome --data DIR --rev REV [--run WPTFYI_RUN_ID]   (default: Chrome stable nearest to REV)
+//   export --chrome also writes chrome/<rev>.json.gz when the run's revision has none
 //   bun status-export.mjs site --data DIR --docs website/docs
 //       the page (docs/status/wpt.md) and every directory's data (docs/public/status-data/wpt/); after the build,
 //       copyPages writes one HTML file per directory (website/scripts/wpt-status.mjs)
@@ -117,8 +118,9 @@ export const splitUrl = (url) => {
   return i < 0 ? ['', url] : [base.slice(0, i), url.slice(i + 1)];
 };
 
-// counts: [tests in WPT, run, passed, subtests passed, subtests, Chrome passed, Chrome ran]
-const emptyCounts = () => [0, 0, 0, 0, 0, 0, 0];
+// counts: [tests in WPT, run, passed, subtests passed, subtests, Chrome passed, Chrome ran, Chrome passed of the
+// pages pyro ran, Chrome subtests passed, Chrome subtests]
+const emptyCounts = () => [0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
 function add(c, row, inUniverse, chrome) {
   if (inUniverse) c[0]++;
   if (row) {
@@ -130,7 +132,12 @@ function add(c, row, inUniverse, chrome) {
   }
   if (chrome) {
     c[6]++;
-    if (chromePasses(chrome)) c[5]++;
+    if (chromePasses(chrome)) {
+      c[5]++;
+      if (row) c[7]++;
+    }
+    c[8] += chrome[0];
+    c[9] += chrome[1];
   }
 }
 
@@ -186,8 +193,33 @@ export async function writeRun(data, run, meta) {
 }
 
 // ---------- chrome ----------
+// Chrome stable on wpt.fyi at the revision, else the stable run nearest to it in WPT's history (as chrome-compare.mjs
+// picks it: candidates within a week, by GitHub's compare distance; GH_TOKEN or GITHUB_TOKEN raises its rate limit).
+export async function nearestChromeRun(rev) {
+  const runsAt = (q) => fetchJson(`${WPTFYI}/runs?product=chrome&label=master&label=stable&max-count=30&${q}`).catch((e) => (/HTTP 404/.test(e.message) ? [] : Promise.reject(e)));
+  const [exact] = await runsAt(`sha=${rev.slice(0, 10)}`);
+  if (exact) return { run: exact, distance: 0 };
+  const GH = 'https://api.github.com/repos/web-platform-tests/wpt';
+  const token = process.env.GH_TOKEN || process.env.GITHUB_TOKEN;
+  const gh = async (u) => {
+    const r = await fetch(`${GH}/${u}`, { headers: token ? { authorization: `Bearer ${token}` } : {} });
+    if (!r.ok) throw new Error(`${GH}/${u}: HTTP ${r.status}`);
+    return r.json();
+  };
+  const t = new Date((await gh(`commits/${rev}`)).commit.committer.date).getTime();
+  const iso = (ms) => new Date(ms).toISOString();
+  let best = null;
+  for (const run of await runsAt(`from=${iso(t - 7 * 864e5)}&to=${iso(t + 7 * 864e5)}`)) {
+    const c = await gh(`compare/${rev}...${run.full_revision_hash}`);
+    const distance = c.ahead_by + c.behind_by;
+    if (!best || distance < best.distance) best = { run, distance };
+  }
+  if (!best) throw new Error(`no Chrome stable run on wpt.fyi within a week of ${rev}`);
+  return best;
+}
+
 export async function chromeResults(data, rev, runId) {
-  const run = await fetchJson(`${WPTFYI}/runs/${runId}`);
+  const run = runId ? await fetchJson(`${WPTFYI}/runs/${runId}`) : (await nearestChromeRun(rev)).run;
   const summary = await fetchJson(run.results_url);
   const universe = await ensureManifest(data, rev);
   const tests = {};
@@ -310,16 +342,37 @@ export function writeSite(dataDir, docs) {
   return pages.size;
 }
 
-// After the build: dist/status/wpt/<dir>.html for every directory, each a copy of dist/status/wpt.html.
+// After the build: dist/status/wpt/<dir>.html for every directory, each a copy of dist/status/wpt.html. So that the
+// router hydrates the copy as the page it was rendered from (no hydration mismatch), each copy adds itself to
+// VitePress's page map (__VP_HASH_MAP__, inlined in the HTML) under its own name, pointing at a module that
+// re-exports status/wpt.md's. A directory reached by a link instead has no entry: the theme shows WptStatus where
+// "not found" would be (theme/index.ts), rendered on the client, where nothing needs to match.
+const INVALID_CHAR = /[\u0000-\u001F"#$&*+,:;<=>?[\]^`{|}\u007F]/g; // vitepress sanitizeFileName (rollup's)
+export const pageKey = (d) => `status_wpt_${d.replace(/\//g, '_')}`.replace(INVALID_CHAR, '_') + '.md';
+
 export function copyPages(dist) {
   const dirsFile = path.join(dist, 'status-data', 'dirs.json');
   if (!fs.existsSync(dirsFile)) return 0;
-  const html = fs.readFileSync(path.join(dist, 'status', 'wpt.html'));
+  const html = fs.readFileSync(path.join(dist, 'status', 'wpt.html'), 'utf8');
+  const hash = html.match(/\\"status_wpt\.md\\":\\"([\w-]+)\\"/)?.[1];
+  const mapEnd = html.indexOf('</script>', html.indexOf('__VP_HASH_MAP__'));
   const dirs = JSON.parse(fs.readFileSync(dirsFile, 'utf8'));
+  const keys = new Map();
+  for (const d of dirs) keys.set(pageKey(d).toLowerCase(), (keys.get(pageKey(d).toLowerCase()) ?? 0) + 1);
   for (const d of dirs) {
     const f = path.join(dist, 'status', 'wpt', `${d}.html`);
     fs.mkdirSync(path.dirname(f), { recursive: true });
-    fs.writeFileSync(f, html);
+    const key = pageKey(d);
+    if (!hash || mapEnd < 0 || keys.get(key.toLowerCase()) > 1) {
+      fs.writeFileSync(f, html);
+      continue;
+    }
+    for (const ext of ['js', 'lean.js']) {
+      const target = `./status_wpt.md.${hash}.${ext}`;
+      fs.writeFileSync(path.join(dist, 'assets', `${key}.${hash}.${ext}`), `export * from ${JSON.stringify(target)};export { default } from ${JSON.stringify(target)};\n`);
+    }
+    const entry = `<script>window.__VP_HASH_MAP__[${JSON.stringify(key.toLowerCase())}]=${JSON.stringify(hash)}</script>`;
+    fs.writeFileSync(f, html.slice(0, mapEnd + 9) + entry + html.slice(mapEnd + 9));
   }
   return dirs.length;
 }
@@ -337,13 +390,22 @@ if (process.argv[1] && fs.realpathSync(process.argv[1]) === fileURLToPath(import
     const run = runFromBaselines(baselines, { sha: opt('--sha'), date: opt('--date'), source: 'ci' });
     await writeRun(data, run, opt('--subject') ? { subject: opt('--subject') } : {});
     console.log(`runs/${run.sha}.json.gz: ${KINDS.map((k) => `${k} ${Object.keys(run.kinds[k] ?? {}).length}`).join(', ')}`);
+    // A new WPT revision: Chrome's results for it. A failure leaves the run without a Chrome column, not unpublished.
+    if (argv.includes('--chrome') && run.wpt && !fs.existsSync(path.join(data, 'chrome', `${run.wpt}.json.gz`))) {
+      try {
+        const c = await chromeResults(data, run.wpt);
+        console.log(`chrome/${c.revision}.json.gz: Chrome ${c.run.version} at WPT ${c.run.revision.slice(0, 10)}, ${Object.keys(c.tests).length} pages`);
+      } catch (e) {
+        console.log(`::warning title=WPT status::no Chrome results for WPT ${run.wpt}: ${e.message}`);
+      }
+    }
   } else if (cmd === 'backfill') {
     for (const { run, meta } of backfill(data, opt('--repo', '.'), opt('--ref', 'origin/main'))) {
       await writeRun(data, run, meta);
       console.log(run.sha.slice(0, 10), run.date, meta.subject);
     }
   } else if (cmd === 'chrome') {
-    const c = await chromeResults(data, opt('--rev'), opt('--run'));
+    const c = await chromeResults(data, opt('--rev'), opt('--run'));  // no --run: the nearest stable run
     console.log(`chrome/${c.revision}.json.gz: Chrome ${c.run.version}, ${Object.keys(c.tests).length} pages`);
   } else if (cmd === 'site') {
     console.log(`${writeSite(data, opt('--docs'))} directory pages`);
