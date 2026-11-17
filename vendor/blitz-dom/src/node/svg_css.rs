@@ -836,6 +836,14 @@ impl Writer<'_> {
                     self.transform_rewrite(node, data, tag, style, &author, &mut rewrites, &mut temp_id, under_root);
                 }
             }
+            // pyro: an element without a box (`display: contents`) decorates nothing: line
+            // decorations propagate through boxes (CSS Text Decoration 3 § 2.1).
+            if !is_root
+                && style.clone_display().is_contents()
+                && (author.contains(&LonghandId::TextDecorationLine) || data.attr(local_name!("text-decoration")).is_some())
+            {
+                rewrites.push(Rewrite { name: "text-decoration", value: None, in_style: true });
+            }
             // Not on the root: its CSS box's.
             if !is_root {
                 if author.contains(&LonghandId::ClipPath) {
@@ -932,6 +940,19 @@ impl Writer<'_> {
             self.out.push('"');
         }
         let style_attr = style_attr.map(without_handled_declarations).filter(|v| !v.trim().is_empty());
+        // pyro: a rewritten `text-decoration` replaces the element's own declarations of it.
+        let style_attr = match style_attr {
+            Some(style) if rewrites.iter().any(|r| r.in_style && r.name == "text-decoration") => Some(
+                style
+                    .split(';')
+                    .filter(|d| !d.split(':').next().unwrap_or("").trim().to_ascii_lowercase().starts_with("text-decoration"))
+                    .filter(|d| !d.trim().is_empty())
+                    .map(|d| format!("{};", d.trim()))
+                    .collect::<String>(),
+            )
+            .filter(|v| !v.is_empty()),
+            other => other,
+        };
         match (style_attr, declarations.is_empty()) {
             (None, true) => {}
             (style_attr, _) => {

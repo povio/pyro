@@ -750,7 +750,7 @@ fn sample(
             for (i, (property, base)) in resolved.properties.iter().enumerate() {
                 let underlying = map.get(property).cloned().or_else(|| base.clone());
                 if let Some(value) =
-                    sample_property(resolved, i, progress, underlying.as_ref(), effect.composite)
+                    sample_property(resolved, i, progress, underlying.as_ref(), effect.composite, effect.before)
                 {
                     map.insert(property.clone(), value);
                 }
@@ -806,6 +806,7 @@ fn sample_property(
     progress: f64,
     underlying: Option<&AnimationValue>,
     effect_composite: Composite,
+    before: bool,
 ) -> Option<AnimationValue> {
     struct Frame<'a> {
         offset: f64,
@@ -883,7 +884,9 @@ fn sample_property(
         (progress - start.offset) / span
     };
     let transformed = match start.easing {
-        Some(f) => calculate(f, distance, false),
+        // pyro: with the effect's before flag, as Blink's keyframe easings take its limit
+        // direction (a `jump-start` step in the before phase stays at its start).
+        Some(f) => calculate(f, distance, before),
         None => distance,
     };
     Some(

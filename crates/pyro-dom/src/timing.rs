@@ -163,6 +163,32 @@ struct Rule {
     /// The root of the tree whose sheet holds the rule (a document or a shadow root): its
     /// selectors match that tree's elements only (CSS Scoping). `None`: every element.
     scope: Option<NodeId>,
+    /// `::part()` names the selectors end with (CSS Shadow Parts): the selectors match the host,
+    /// and the rule applies to the elements of the host's shadow tree whose `part` attribute
+    /// holds every name. Empty: an ordinary rule.
+    part: Vec<String>,
+}
+
+/// `selector` split at a trailing `::part(<names>)`: the host's selector (`*` when there is
+/// none) and the names; `None` without one.
+fn part_selector(selector: &str) -> Option<(String, Vec<String>)> {
+    let selector = selector.trim();
+    let start = selector.rfind("::part(")?;
+    let inner = selector[start + "::part(".len()..].strip_suffix(')')?;
+    let names: Vec<String> = inner.split_whitespace().map(str::to_owned).collect();
+    if names.is_empty() || inner.contains(['(', ')', ':']) {
+        return None;
+    }
+    let host = selector[..start].trim();
+    Some((if host.is_empty() { "*".to_owned() } else { host.to_owned() }, names))
+}
+
+/// Whether element `el`'s `part` attribute holds every one of `names`.
+fn has_parts(dom: &Dom, el: NodeId, names: &[String]) -> bool {
+    let Some(parts) = dom.element(el).ok().and_then(|e| e.attr_local(&markup5ever::local_name!("part"))) else {
+        return false;
+    };
+    names.iter().all(|name| parts.split_ascii_whitespace().any(|part| part == name))
 }
 
 /// One CSS animation an element's style asks for.
@@ -335,6 +361,16 @@ impl TimingRules {
                 None => document,
             };
             for idx in crate::stylo::select::query(dom, root, &rule.selectors, false) {
+                if !rule.part.is_empty() {
+                    // The host's shadow tree's elements with the parts.
+                    let Ok(Some(shadow)) = dom.shadow_root(dom.id_of(idx)) else { continue };
+                    for id in dom.descendants(shadow).into_iter().flatten() {
+                        if has_parts(dom, id, &rule.part) && seen.insert(id.index()) {
+                            out.push(id);
+                        }
+                    }
+                    continue;
+                }
                 if seen.insert(idx) {
                     out.push(dom.id_of(idx));
                 }
@@ -371,18 +407,29 @@ impl TimingRules {
             };
         // The rules that match, with their specificity, once for all longhands: those of the
         // element's own tree.
-        let tree = dom.id_of(dom.root_idx(idx));
+        let tree_root = dom.root_idx(idx);
+        let tree = dom.id_of(tree_root);
+        // A part's host: the host of the shadow tree it is in.
+        let host = dom.fragment_host(tree).ok().flatten().and_then(|host| dom.check(host).ok());
         let matching: Vec<(u32, usize, &Rule)> = self
             .rules
             .iter()
             .enumerate()
-            .filter(|(_, rule)| rule.scope.is_none_or(|scope| scope == tree))
             .filter_map(|(order, rule)| {
+                let (target, target_tree) = if rule.part.is_empty() {
+                    (idx, tree)
+                } else {
+                    let host = host.filter(|_| has_parts(dom, el, &rule.part))?;
+                    (host, dom.id_of(dom.root_idx(host)))
+                };
+                if !rule.scope.is_none_or(|scope| scope == target_tree) {
+                    return None;
+                }
                 let specificity = rule
                     .selectors
                     .slice()
                     .iter()
-                    .filter(|s| crate::stylo::select::matches(dom, idx, &List::from_one((*s).clone())))
+                    .filter(|s| crate::stylo::select::matches(dom, target, &List::from_one((*s).clone())))
                     .map(|s| s.specificity())
                     .max()?;
                 Some((specificity, order, rule))
@@ -822,8 +869,27 @@ fn rule_list(p: &mut Parser<'_>, src: &str, viewport: &Viewport, out: &mut Timin
                     if mentions(body) {
                         let declarations = declarations(body);
                         if !declarations.is_empty() {
-                            if let Some(selectors) = crate::stylo::select::parse(prelude) {
-                                out.rules.push(Rule { selectors, declarations, scope: None });
+                            // `::part()` selectors become rules of their own on the host.
+                            let mut plain = Vec::new();
+                            for selector in split_selectors(prelude) {
+                                match part_selector(selector) {
+                                    Some((host, part)) => {
+                                        if let Some(selectors) = crate::stylo::select::parse(&host) {
+                                            out.rules.push(Rule {
+                                                selectors,
+                                                declarations: declarations.clone(),
+                                                scope: None,
+                                                part,
+                                            });
+                                        }
+                                    }
+                                    None => plain.push(selector),
+                                }
+                            }
+                            if !plain.is_empty() {
+                                if let Some(selectors) = crate::stylo::select::parse(&plain.join(",")) {
+                                    out.rules.push(Rule { selectors, declarations, scope: None, part: Vec::new() });
+                                }
                             }
                         }
                     }
@@ -833,6 +899,24 @@ fn rule_list(p: &mut Parser<'_>, src: &str, viewport: &Viewport, out: &mut Timin
             Ok(())
         });
     }
+}
+
+/// The selectors of a selector list's text, split at its top-level commas.
+fn split_selectors(prelude: &str) -> Vec<&str> {
+    let (mut out, mut depth, mut start) = (Vec::new(), 0i32, 0);
+    for (i, c) in prelude.char_indices() {
+        match c {
+            '(' | '[' => depth += 1,
+            ')' | ']' => depth -= 1,
+            ',' if depth == 0 => {
+                out.push(&prelude[start..i]);
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    out.push(&prelude[start..]);
+    out
 }
 
 /// The longhands the keyframes of a `@keyframes` block declare (`p` is in
@@ -1014,6 +1098,15 @@ mod tests {
         let (_, list) = lists.iter().find(|(n, _)| *n == name).unwrap();
         assert_eq!(list.len(), 1, "{name}");
         &list[0]
+    }
+
+    #[test]
+    fn part_selectors_split_into_host_and_names() {
+        assert_eq!(split_selectors("#a::part(x), :is(b, c) d"), vec!["#a::part(x)", " :is(b, c) d"]);
+        assert_eq!(part_selector("#shadow::part(target)"), Some(("#shadow".to_owned(), vec!["target".to_owned()])));
+        assert_eq!(part_selector("::part(a b)"), Some(("*".to_owned(), vec!["a".to_owned(), "b".to_owned()])));
+        assert_eq!(part_selector("x::part(a):hover"), None);
+        assert_eq!(part_selector("div > p"), None);
     }
 
     #[test]

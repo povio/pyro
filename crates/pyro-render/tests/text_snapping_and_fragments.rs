@@ -121,3 +121,19 @@ fn svg_root_background_shorthand() {
     );
     assert_eq!(pixel(&img, 58, 58), GREEN);
 }
+
+/// An SVG element with `display: contents` has no box, so its own `text-decoration` draws
+/// nothing (WPT css-text-decor `text-decoration-propagation-display-contents`).
+#[test]
+fn display_contents_svg_text_has_no_decoration() {
+    let svg = |tspan_style: &str| {
+        render(&format!(
+            "<svg width='300' height='60'><text y='30' style='font-size:20px'>\
+             <tspan style='{tspan_style}'>Should have none</tspan></text></svg>"
+        ))
+    };
+    let contents = svg("text-decoration: underline; display: contents");
+    let plain = svg("");
+    assert_eq!(differing(&contents, &plain), 0, "display: contents tspan against a plain one");
+    assert_ne!(differing(&svg("text-decoration: underline"), &plain), 0, "an underline shows");
+}

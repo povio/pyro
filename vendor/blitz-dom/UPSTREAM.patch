@@ -412,7 +412,7 @@ diff --git a/packages/blitz-dom/src/animation.rs b/packages/blitz-dom/src/animat
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/animation.rs
-@@ -0,0 +1,926 @@
+@@ -0,0 +1,929 @@
 +//! pyro: animated values the embedder samples into the cascade.
 +//!
 +//! pyro keeps the timing of every animation (CSS animations, CSS transitions
@@ -1165,7 +1165,7 @@ new file mode 100644
 +            for (i, (property, base)) in resolved.properties.iter().enumerate() {
 +                let underlying = map.get(property).cloned().or_else(|| base.clone());
 +                if let Some(value) =
-+                    sample_property(resolved, i, progress, underlying.as_ref(), effect.composite)
++                    sample_property(resolved, i, progress, underlying.as_ref(), effect.composite, effect.before)
 +                {
 +                    map.insert(property.clone(), value);
 +                }
@@ -1221,6 +1221,7 @@ new file mode 100644
 +    progress: f64,
 +    underlying: Option<&AnimationValue>,
 +    effect_composite: Composite,
++    before: bool,
 +) -> Option<AnimationValue> {
 +    struct Frame<'a> {
 +        offset: f64,
@@ -1298,7 +1299,9 @@ new file mode 100644
 +        (progress - start.offset) / span
 +    };
 +    let transformed = match start.easing {
-+        Some(f) => calculate(f, distance, false),
++        // pyro: with the effect's before flag, as Blink's keyframe easings take its limit
++        // direction (a `jump-start` step in the before phase stays at its start).
++        Some(f) => calculate(f, distance, before),
 +        None => distance,
 +    };
 +    Some(
@@ -29515,7 +29518,7 @@ diff --git a/packages/blitz-dom/src/node/svg_css.rs b/packages/blitz-dom/src/nod
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/node/svg_css.rs
-@@ -0,0 +1,2468 @@
+@@ -0,0 +1,2489 @@
 +//! pyro: an inline `<svg>` subtree as a standalone SVG document for usvg, with
 +//! the page's CSS applied.
 +//!
@@ -30354,6 +30357,14 @@ new file mode 100644
 +                    self.transform_rewrite(node, data, tag, style, &author, &mut rewrites, &mut temp_id, under_root);
 +                }
 +            }
++            // pyro: an element without a box (`display: contents`) decorates nothing: line
++            // decorations propagate through boxes (CSS Text Decoration 3 § 2.1).
++            if !is_root
++                && style.clone_display().is_contents()
++                && (author.contains(&LonghandId::TextDecorationLine) || data.attr(local_name!("text-decoration")).is_some())
++            {
++                rewrites.push(Rewrite { name: "text-decoration", value: None, in_style: true });
++            }
 +            // Not on the root: its CSS box's.
 +            if !is_root {
 +                if author.contains(&LonghandId::ClipPath) {
@@ -30450,6 +30461,19 @@ new file mode 100644
 +            self.out.push('"');
 +        }
 +        let style_attr = style_attr.map(without_handled_declarations).filter(|v| !v.trim().is_empty());
++        // pyro: a rewritten `text-decoration` replaces the element's own declarations of it.
++        let style_attr = match style_attr {
++            Some(style) if rewrites.iter().any(|r| r.in_style && r.name == "text-decoration") => Some(
++                style
++                    .split(';')
++                    .filter(|d| !d.split(':').next().unwrap_or("").trim().to_ascii_lowercase().starts_with("text-decoration"))
++                    .filter(|d| !d.trim().is_empty())
++                    .map(|d| format!("{};", d.trim()))
++                    .collect::<String>(),
++            )
++            .filter(|v| !v.is_empty()),
++            other => other,
++        };
 +        match (style_attr, declarations.is_empty()) {
 +            (None, true) => {}
 +            (style_attr, _) => {

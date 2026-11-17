@@ -2508,3 +2508,8 @@ does not let margins collapse through it, even when its lines have no height (CS
   paragraph's tab stops; the first letter on a `::first-line` line inherits from the first-line style (the first-line
   style node is made first).
 - Round 4 lane B: `node/node.rs` sets `StyleFlags::IS_INPUT` on `<input>` elements (see vendor/stylo_taffy/README.pyro.md).
+- `animation.rs` (`sample_property`, round 4 lane D): keyframe easings take the effect's before flag, as Blink's take its
+  limit direction (a `jump-start` step in the before phase stays at its start; css-animations
+  `jump-start-animation-before-phase`).
+- `node/svg_css.rs` (round 4 lane D): an SVG element with `display: contents` loses its own `text-decoration` (line
+  decorations propagate through boxes; css-text-decor `text-decoration-propagation-display-contents`).
