@@ -29,6 +29,8 @@ pub fn set_ready_state(page: &Rc<PageDom>, doc: NodeId, state: &'static str) {
 pub fn dom_content_loaded(page: &Rc<PageDom>, doc: NodeId) {
     set_ready_state(page, doc, "interactive");
     flush_autofocus(page, doc);
+    // pyro: the faces the styles use start loading (`document.fonts`, early measurements).
+    page.start_font_loads();
     page.note_timing(|t| &mut t.dom_content_loaded_start);
     crate::input::fire_simple(page, doc, "DOMContentLoaded", true, false);
     page.note_timing(|t| &mut t.dom_content_loaded_end);
@@ -58,6 +60,7 @@ fn flush_autofocus(page: &Rc<PageDom>, doc: NodeId) {
 /// `doc` as their target).
 pub fn load(page: &Rc<PageDom>, doc: NodeId) {
     set_ready_state(page, doc, "complete");
+    page.start_font_loads();
     if let Some(w) = window_key(page, doc) {
         page.note_timing(|t| &mut t.load_start);
         let ev = EventCore::trusted(page, EventInterface::Event, "load", false, false);

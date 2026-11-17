@@ -131,6 +131,11 @@ impl LocalFiles {
                     if let Ok(mut failed) = fetch.failed.lock() {
                         failed.insert(fetch.key.clone());
                     }
+                    // pyro: no longer in flight (`document.fonts` waits on empty entries).
+                    let mut bodies = fetch.bodies.lock();
+                    if bodies.get(&fetch.key).is_some_and(|b| b.is_empty()) {
+                        bodies.remove(&fetch.key);
+                    }
                 }
             }),
         );

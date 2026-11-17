@@ -1083,6 +1083,22 @@ impl PageDom {
         self.layout().device_viewport().clone()
     }
 
+    /// pyro: starts the web font fetches of the geometry engine when the sheets declare web
+    /// fonts (`Layout::start_font_loads`), at `DOMContentLoaded` and `load`.
+    pub fn start_font_loads(&self) {
+        let Some(layout) = self.try_layout() else { return };
+        if let Ok(dom) = self.dom.try_borrow() {
+            layout.start_font_loads(&dom);
+        }
+    }
+
+    /// pyro: whether web fonts are still loading (`document.fonts`).
+    pub fn fonts_pending(&self) -> bool {
+        let Some(layout) = self.try_layout() else { return false };
+        let Ok(dom) = self.dom.try_borrow() else { return false };
+        layout.fonts_pending(&dom)
+    }
+
     /// Under mobile emulation, lays the document out first: the window and
     /// the page scale follow the document's width (Chrome lays out to answer
     /// them too). Nothing otherwise.

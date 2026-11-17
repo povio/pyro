@@ -309,6 +309,11 @@ pub trait GeometrySource {
     fn stale(&self) -> bool {
         false
     }
+    /// pyro: whether a web font the engine asked its network for has not arrived yet
+    /// (`document.fonts`: `status`, `ready`).
+    fn fonts_pending(&self) -> bool {
+        false
+    }
     /// One element's computed style as of the last sync (`None`: the engine
     /// has none for it, and the document's own cascade answers).
     fn element_style(&self, _key: u64) -> Option<style::servo_arc::Arc<style::properties::ComputedValues>> {

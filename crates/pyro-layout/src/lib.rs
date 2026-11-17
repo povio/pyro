@@ -698,6 +698,19 @@ impl GeometrySource for BlitzGeometry {
         self.resources.get() != self.arrivals()
     }
 
+    fn fonts_pending(&self) -> bool {
+        let loader = self.loader.borrow();
+        let Some(loader) = loader.as_ref() else { return false };
+        let bodies = loader.bodies().lock();
+        // An empty entry is a load in flight (`LocalFiles::network`); a failed one is removed.
+        bodies.iter().any(|(url, body)| {
+            body.is_empty() && {
+                let path = url.split(['?', '#']).next().unwrap_or("").to_ascii_lowercase();
+                [".woff2", ".woff", ".ttf", ".otf"].iter().any(|e| path.ends_with(e))
+            }
+        })
+    }
+
     fn sync(&self, dom: &Dom, layout: &Layout) {
         let t = profile::on().then(Instant::now);
         self.sync_inner(dom, layout.style(), false);

@@ -558,6 +558,37 @@ impl Layout {
         Some(source)
     }
 
+    /// pyro: whether the document's sheets declare a web font (`@font-face`).
+    pub fn declares_web_fonts(&self, dom: &Dom) -> bool {
+        const FONT_FACE: &str = "@font-face";
+        // Loaded sheets (`<link>`, `@import`ed texts), then `<style>` elements by their text.
+        if self.style.sheet_owners().into_iter().any(|owner| self.style.sheet_text(owner).is_some_and(|t| t.contains(FONT_FACE))) {
+            return true;
+        }
+        let Ok(mut nodes) = dom.descendants(self.style.document()) else { return false };
+        nodes.any(|id| {
+            dom.element(id).is_ok_and(|e| e.is_html() && &*e.name.local == "style")
+                && dom.child_text_content(id).contains(FONT_FACE)
+        })
+    }
+
+    /// pyro: starts the geometry engine's web font fetches when the document's sheets declare
+    /// web fonts: it lays the document out once, which asks for the faces its styles use (as a
+    /// browser starts loading a face when a style first uses it), so that measurements after
+    /// they arrive see them. Nothing without web fonts or a geometry source.
+    pub fn start_font_loads(&self, dom: &Dom) {
+        if self.external.as_ref().is_some_and(|s| s.active()) && self.declares_web_fonts(dom) {
+            self.synced_geometry_source(dom);
+        }
+    }
+
+    /// pyro: whether web fonts the geometry engine uses are still loading (it starts them
+    /// first, see [`Self::start_font_loads`]).
+    pub fn fonts_pending(&self, dom: &Dom) -> bool {
+        self.start_font_loads(dom);
+        self.external.as_ref().is_some_and(|s| s.fonts_pending())
+    }
+
     /// A rect query lays the document out anyway: sync the engine before
     /// the visibility check, so that check reads the styles of that one
     /// sync (it stamps the style engine) instead of running a style-only
