@@ -146,7 +146,7 @@ test('a failing beforeAll fails its tests, and afterAll still runs', async () =>
 test('defer runs after its test, or after its describe and its afterAll, latest first', async () => {
   const r = await e2e(['test/e2e-fixture/defer/defer.e2e.ts']);
   expect(r.code).toBe(0);
-  expect(r.names).toEqual(['in scoped > t', 'test defer', 'describe afterAll', 'describe defer 2', 'describe defer 1']);
+  expect(r.names).toEqual(['file test/e2e-fixture/defer/defer.e2e.ts', 'in scoped > t', 'test defer', 'describe afterAll', 'describe defer 2', 'describe defer 1']);
 }, 30000);
 
 test('a spec that does not load fails the run; the others still run', async () => {
