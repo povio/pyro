@@ -58,6 +58,10 @@ pub struct PrimitiveNotes {
     /// It is an `feFlood` element: a transparent black flood is that, not usvg's stand-in for a
     /// primitive it could not read (Figma's `<feFlood flood-opacity="0" result="BackgroundImageFix"/>`).
     pub flood: bool,
+    /// It is an `feImage` of an element of the document (`href="#id"`): a transparent black flood
+    /// is its result when usvg could not draw the element (a lone `<tspan>`), as in Chromium (WPT
+    /// filter-effects `svg-feimage-004`), not a stand-in to leave the filter out for.
+    pub element_image: bool,
 }
 
 /// pyro: what the document knows of the primitives of the filters of a tree (by the `<filter>`'s
@@ -395,7 +399,8 @@ fn convert(
                 if flood.opacity().get() == 0.0
                     && flood.color() == usvg::Color::black()
                     && !note.no_light
-                    && !note.flood =>
+                    && !note.flood
+                    && !note.element_image =>
             {
                 return None;
             }

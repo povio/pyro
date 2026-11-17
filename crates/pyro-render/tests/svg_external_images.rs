@@ -103,3 +103,14 @@ fn a_gradient_content_replaces_an_element_and_a_pseudo_element() {
         assert_eq!(pixel(img, 75, 25), [255, 255, 255]);
     }
 }
+
+#[test]
+fn an_fe_image_of_an_element_usvg_cannot_draw_is_transparent() {
+    // A lone `<tspan>` draws nothing: the filtered rect disappears (it is not left unfiltered).
+    let img = render(
+        "<svg width='100' height='100'><defs><filter id='f' x='0' y='0' width='1' height='1'><feImage href='#t'/></filter>\
+         <text><tspan id='t' x='0' y='20' fill='red'>X</tspan></text></defs>\
+         <rect width='100' height='100' fill='red' filter='url(#f)'/></svg>",
+    );
+    assert_eq!(pixel(&img, 50, 50), [255, 255, 255]);
+}

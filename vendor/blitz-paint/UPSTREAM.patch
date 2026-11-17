@@ -421,7 +421,7 @@ diff --git a/packages/blitz-paint/src/debug_overlay.rs b/packages/blitz-paint/sr
 diff --git a/packages/blitz-paint/src/filters.rs b/packages/blitz-paint/src/filters.rs
 --- a/packages/blitz-paint/src/filters.rs
 +++ b/packages/blitz-paint/src/filters.rs
-@@ -1,40 +1,827 @@
+@@ -1,40 +1,831 @@
  use blitz_dom::util::ToColorColor as _;
 +use blitz_dom::{BaseDocument, Node};
  use style::color::AbsoluteColor;
@@ -728,6 +728,7 @@ diff --git a/packages/blitz-paint/src/filters.rs b/packages/blitz-paint/src/filt
 +                        m.tainted |= n.tainted;
 +                        m.no_light |= n.no_light;
 +                        m.flood &= n.flood;
++                        m.element_image |= n.element_image;
 +                    }
 +                }
 +            }
@@ -874,7 +875,10 @@ diff --git a/packages/blitz-paint/src/filters.rs b/packages/blitz-paint/src/filt
 +                && !children(primitive)
 +                    .iter()
 +                    .any(|n| matches!(local_name(n), Some("feDistantLight" | "fePointLight" | "feSpotLight")));
-+            Some(anyrender_svg::PrimitiveNotes { tainted, no_light, flood: name == "feFlood" })
++            let element_image = name == "feImage"
++                && attr(primitive, "href")
++                    .is_some_and(|href| href.trim_start().starts_with('#'));
++            Some(anyrender_svg::PrimitiveNotes { tainted, no_light, flood: name == "feFlood", element_image })
 +        })
 +        .collect()
 +}

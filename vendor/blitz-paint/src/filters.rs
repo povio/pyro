@@ -288,6 +288,7 @@ pub(crate) fn svg_filter_notes(
                         m.tainted |= n.tainted;
                         m.no_light |= n.no_light;
                         m.flood &= n.flood;
+                        m.element_image |= n.element_image;
                     }
                 }
             }
@@ -434,7 +435,10 @@ fn primitive_notes(dom: &BaseDocument, filter: &Node) -> Vec<anyrender_svg::Prim
                 && !children(primitive)
                     .iter()
                     .any(|n| matches!(local_name(n), Some("feDistantLight" | "fePointLight" | "feSpotLight")));
-            Some(anyrender_svg::PrimitiveNotes { tainted, no_light, flood: name == "feFlood" })
+            let element_image = name == "feImage"
+                && attr(primitive, "href")
+                    .is_some_and(|href| href.trim_start().starts_with('#'));
+            Some(anyrender_svg::PrimitiveNotes { tainted, no_light, flood: name == "feFlood", element_image })
         })
         .collect()
 }

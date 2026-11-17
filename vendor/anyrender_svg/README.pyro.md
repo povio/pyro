@@ -114,3 +114,4 @@ Regenerate the patch from a pristine copy of the published crate:
 `git diff --no-index --no-prefix a b` with the published crate in `a` (without `.cargo_vcs_info.json`,
 `Cargo.toml.orig` and `.cargo-ok`) and this directory, without this file and the patch, in `b`, run from their
 parent; `git apply UPSTREAM.patch` in a pristine copy reproduces `src` and `Cargo.toml`.
+- `src/filter.rs` (`PrimitiveNotes::element_image`): an `feImage` of an element of the document that usvg could not draw (its transparent flood stand-in) is transparent, not a reason to leave the filter out (WPT filter-effects `svg-feimage-004`).

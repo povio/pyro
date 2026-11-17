@@ -15,10 +15,10 @@ index 14aded4..862cfe1 100644
  optional = true
 diff --git b/src/filter.rs b/src/filter.rs
 new file mode 100644
-index 0000000..073d561
+index 0000000..256d4c7
 --- /dev/null
 +++ b/src/filter.rs
-@@ -0,0 +1,1033 @@
+@@ -0,0 +1,1038 @@
 +// Copyright 2024 the Vello Authors
 +// SPDX-License-Identifier: Apache-2.0 OR MIT
 +
@@ -79,6 +79,10 @@ index 0000000..073d561
 +    /// It is an `feFlood` element: a transparent black flood is that, not usvg's stand-in for a
 +    /// primitive it could not read (Figma's `<feFlood flood-opacity="0" result="BackgroundImageFix"/>`).
 +    pub flood: bool,
++    /// It is an `feImage` of an element of the document (`href="#id"`): a transparent black flood
++    /// is its result when usvg could not draw the element (a lone `<tspan>`), as in Chromium (WPT
++    /// filter-effects `svg-feimage-004`), not a stand-in to leave the filter out for.
++    pub element_image: bool,
 +}
 +
 +/// pyro: what the document knows of the primitives of the filters of a tree (by the `<filter>`'s
@@ -416,7 +420,8 @@ index 0000000..073d561
 +                if flood.opacity().get() == 0.0
 +                    && flood.color() == usvg::Color::black()
 +                    && !note.no_light
-+                    && !note.flood =>
++                    && !note.flood
++                    && !note.element_image =>
 +            {
 +                return None;
 +            }

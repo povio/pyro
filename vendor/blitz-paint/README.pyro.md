@@ -998,3 +998,4 @@ of their own then. Covered by `highlights_paint_under_the_selection` in `crates/
 - `src/render/background.rs` (`table_part_rects`, `TablePartRects::rect`): column tracks in logical order, as
   `TableContext::columns` indexes them, so a column's background box in an `rtl` table is its own column's (WPT
   css-tables `paint/col-paint-htb-rtl`).
+- `src/filters.rs` (`primitive_notes`): notes `feImage href="#id"` primitives (`PrimitiveNotes::element_image`).
