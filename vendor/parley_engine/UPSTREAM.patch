@@ -427,14 +427,45 @@
      }
  
      /// Get a [`ShapedSlice`] of the run at `run_index`.
-@@ -218,6 +434,218 @@
+@@ -215,9 +431,252 @@
          }
-     }
- 
+         for shaped_cluster in self.shaped_clusters.iter_mut() {
+             shaped_cluster.style_index = remap[shaped_cluster.style_index as usize];
++        }
++    }
++
 +    /// pyro: sets the advance of the shaped cluster at `index` (a tab, once the line breaker knows
 +    /// the tab stop it reaches). A cluster whose glyphs are stored takes the difference on its
 +    /// last glyph; an inline glyph's advance is its cluster's.
 +    #[inline]
++    /// pyro: the vertical advance of an upright glyph of the font at `font_index` without
++    /// vertical metrics (no `vmtx` table) at `font_size`: its height, ascent + descent as the
++    /// font gives them (HarfBuzz's default vertical advance; no `chromium_ascent_adjustment`).
++    /// `None` for a font with vertical metrics.
++    pub fn default_vertical_advance(&self, font_index: usize, font_size: f32) -> Option<f32> {
++        use skrifa::raw::TableProvider;
++        let font = self.fonts.get(font_index)?;
++        let font_ref = skrifa::FontRef::from_index(font.font.data.as_ref(), font.font.index).ok()?;
++        if font_ref.vmtx().is_ok() {
++            return None;
++        }
++        let metrics = skrifa::metrics::Metrics::new(
++            &font_ref,
++            skrifa::instance::Size::new(font_size),
++            skrifa::instance::LocationRef::default(),
++        );
++        Some(metrics.ascent - metrics.descent)
++    }
++
++    /// pyro: makes the run at `run_index` upright with glyphs advancing by `advance`
++    /// ([`ShapedRun::upright_advance`]), its hyphen too.
++    pub fn set_run_upright_advance(&mut self, run_index: usize, advance: f32) {
++        if let Some(run) = self.runs.get_mut(run_index) {
++            run.upright_advance = Some(advance);
++            run.hyphen = run.hyphen.map(|(glyph, _)| (glyph, advance));
++        }
++    }
++
 +    pub fn set_cluster_advance(&mut self, index: u32, advance: f32) {
 +        let Some(cluster) = self.shaped_clusters.get_mut(index as usize) else {
 +            return;
@@ -458,7 +489,7 @@
 +        let cluster = self.shaped_clusters.get_mut(index as usize)?;
 +        if cluster.glyph_len() != 1 || (cluster.has_inline_glyph() && dx != 0.0) {
 +            return None;
-+        }
+         }
 +        let advance = cluster.advance;
 +        cluster.advance += d_advance;
 +        if cluster.has_inline_glyph() {
@@ -469,8 +500,8 @@
 +        glyph.x += dx;
 +        glyph.advance += d_advance;
 +        Some((x, advance))
-+    }
-+
+     }
+ 
 +    /// pyro: sets the justification opportunities of the character at `index` (see
 +    /// [`CharacterFlags::with_justification`](super::CharacterFlags)).
 +    #[inline]
@@ -559,6 +590,9 @@
 +        let font = self.fonts.get(run.font_index)?;
 +        let font_ref = skrifa::FontRef::from_index(font.font.data.as_ref(), font.font.index).ok()?;
 +        let glyph = font_ref.charmap().map(ch)?;
++        if let Some(advance) = run.upright_advance {
++            return Some((glyph.to_u32(), advance));
++        }
 +        // The same coords, in skrifa's type.
 +        let coords: alloc::vec::Vec<skrifa::instance::NormalizedCoord> = self.normalized_coords
 +            [run.normalized_coords_range.clone()]
@@ -646,7 +680,7 @@
      /// The character data of the text, in logical order.
      ///
      /// [`ShapedRun::characters_range`] indexes into this. The nth [`Character`] corresponds exactly
-@@ -273,7 +701,9 @@
+@@ -273,7 +732,9 @@
          font: &FontInstance,
          glyph_buffer: &harfrust::GlyphBuffer,
          normalized_coords: &[harfrust::NormalizedCoord],
@@ -657,7 +691,7 @@
          debug_assert_eq!(
              range.char_range.len(),
              text[range.byte_range.clone()].chars().count(),
-@@ -302,18 +732,36 @@
+@@ -302,18 +763,36 @@
                  index
              });
  
@@ -704,7 +738,7 @@
  
          // `HarfRust` returns glyphs in visual order, so we need to process them as such while
          // maintaining logical ordering of clusters.
-@@ -324,20 +772,23 @@
+@@ -324,20 +803,23 @@
  
          // Push all characters.
          let characters_start = self.characters.len();
@@ -734,27 +768,31 @@
                  grapheme_start: info.is_grapheme_start(),
              });
          }
-@@ -395,7 +846,9 @@
+@@ -395,7 +877,10 @@
              bidi_level: segment.bidi_level,
              advance: run_advance,
              font_metrics,
 +            hyphen: metrics.hyphen,
++            upright_advance: None,
          });
 +        metrics
      }
  }
  
-@@ -423,6 +876,9 @@
+@@ -423,6 +908,12 @@
      pub bidi_level: BidiLevel,
      /// Total advance of the run.
      pub advance: f32,
 +    /// pyro: the hyphen of the run's font (U+2010, else U+002D): its glyph and its advance at
 +    /// the run's size. The line breaker shows it where a line ends at a soft hyphen.
 +    pub hyphen: Option<(u32, f32)>,
++    /// pyro: the advance of every glyph of an upright run in a font without vertical metrics
++    /// (parley's `shape::upright`): the hyphens the line breaker shows advance by it too.
++    pub upright_advance: Option<f32>,
      /// The font metrics of this run.
      pub font_metrics: FontMetrics,
  }
-@@ -534,7 +990,15 @@
+@@ -534,7 +1025,15 @@
              y: -(glyph_pos.y_offset as f32) * scale_factor,
              advance: (glyph_pos.x_advance as f32) * scale_factor,
          };
@@ -771,7 +809,7 @@
              // Defer this potential zero-offset, single glyph cluster
              cluster.inline_glyph = Some(glyph);
          } else {
-@@ -647,9 +1111,16 @@
+@@ -647,9 +1146,16 @@
              char_end: text.chars().count().try_into().unwrap(),
              options: ShapeOptions {
                  font_size: 32.0,
@@ -788,7 +826,7 @@
              },
          }];
          shaper.shape_text(
-@@ -805,18 +1276,32 @@
+@@ -805,18 +1311,32 @@
                  char_end: 1,
                  options: ShapeOptions {
                      font_size: 32.0,

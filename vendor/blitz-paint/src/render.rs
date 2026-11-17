@@ -2929,8 +2929,17 @@ impl ElementCx<'_, '_> {
                 }
                 return;
             }
+            // pyro: positioned inline boxes paint after the in-flow content (`positioned_passes`;
+            // not with highlights or truncated lines).
+            let passes = match highlighted.is_none() && text_layout.ellipsis.is_none() && text_layout.clamp.is_none() {
+                true => self.positioned_passes(text_layout),
+                false => Vec::new(),
+            };
+            let main_pass = (!passes.is_empty()).then_some(None);
             for fragment in &fragments {
-                self.paint_inline_box_fragment(scene, fragment, transform, tops);
+                if self.fragment_in_pass(fragment.node, main_pass) {
+                    self.paint_inline_box_fragment(scene, fragment, transform, tops);
+                }
             }
 
             // Render text selection highlight (if any) using cached selection ranges
@@ -2980,7 +2989,31 @@ impl ElementCx<'_, '_> {
                     &mut draw_text_context,
                     |_| None,
                 ),
-                None => stroke_inline_text(
+                None => {
+                    draw_text_context.positioned_pass = main_pass;
+                    stroke_inline_text(
+                        scene,
+                        self.context.dom,
+                        self.node,
+                        text_layout,
+                        transform,
+                        options,
+                        &mut draw_text_context,
+                        tops,
+                        self.scale,
+                    );
+                    draw_text_context.positioned_pass = None;
+                }
+            }
+            // pyro: then each positioned inline box: its fragments, then its text.
+            drop(draw_text_context);
+            for &pass in passes.iter().skip(1) {
+                for fragment in fragments.iter().filter(|fragment| self.fragment_in_pass(fragment.node, Some(pass))) {
+                    self.paint_inline_box_fragment(scene, fragment, transform, tops);
+                }
+                let mut draw_text_context = self.context.draw_text_context.borrow_mut();
+                draw_text_context.positioned_pass = Some(pass);
+                stroke_inline_text(
                     scene,
                     self.context.dom,
                     self.node,
@@ -2990,8 +3023,10 @@ impl ElementCx<'_, '_> {
                     &mut draw_text_context,
                     tops,
                     self.scale,
-                ),
+                );
+                draw_text_context.positioned_pass = None;
             }
+            let mut draw_text_context = self.context.draw_text_context.borrow_mut();
             // pyro: ruby annotations and emphasis marks, over the text of each line.
             if !text_layout.annotations.is_empty() {
                 let recording = draw_text_context.runs.is_some();
@@ -3107,6 +3142,41 @@ impl ElementCx<'_, '_> {
 
     /// pyro: paints the lines of a vertical writing mode's inline layout, each with its
     /// transform from layout space (see [`Self::draw_vertical_inline_layout`]).
+    /// pyro: the paint passes of an inline root holding positioned inline boxes (relative or
+    /// sticky, not atomic): its in-flow content first (`None`), then each box with its content in
+    /// tree order (an outer box before the boxes in it), as CSS 2.1 Appendix E paints positioned
+    /// descendants after the in-flow content, so a box's text and shadows cover the root's later
+    /// text. Empty (one pass drawing all) without such boxes, or in a recording paint.
+    fn positioned_passes(&self, text_layout: &blitz_dom::node::TextLayout) -> Vec<Option<NodeId>> {
+        let doc = self.context.dom;
+        if !doc.inline_root_has_relative_spans(self.node.id) || self.context.draw_text_context.borrow().runs.is_some() {
+            return Vec::new();
+        }
+        let mut order: Vec<NodeId> = Vec::new();
+        for line in text_layout.layout.lines() {
+            for item in line.items() {
+                if let parley::PositionedLayoutItem::GlyphRun(run) = item {
+                    let chain = doc.inline_span_positioned_chain(run.style().brush.id, self.node.id);
+                    for id in chain.into_iter().rev() {
+                        if !order.contains(&id) {
+                            order.push(id);
+                        }
+                    }
+                }
+            }
+        }
+        if order.is_empty() {
+            return Vec::new();
+        }
+        std::iter::once(None).chain(order.into_iter().map(Some)).collect()
+    }
+
+    /// pyro: whether the inline box fragment of `node` paints in the positioned pass `pass`
+    /// (`positioned_passes`; every fragment without passes).
+    fn fragment_in_pass(&self, node: NodeId, pass: Option<Option<NodeId>>) -> bool {
+        pass.is_none_or(|pass| self.context.dom.inline_span_positioned_chain(node, self.node.id).first().copied() == pass)
+    }
+
     fn draw_turned_lines(
         &self,
         scene: &mut impl PaintScene,
@@ -3123,11 +3193,25 @@ impl ElementCx<'_, '_> {
             )
         };
 
+        // pyro: positioned inline boxes paint after the in-flow content (`positioned_passes`; not
+        // with highlights or truncated lines).
+        let passes = match self.context.highlight_ranges.get(&self.node.id).is_none()
+            && text_layout.ellipsis.is_none()
+            && text_layout.clamp.is_none()
+            && !wm.contains(WritingMode::WRITING_MODE_SIDEWAYS_LR)
+        {
+            true => self.positioned_passes(text_layout),
+            false => Vec::new(),
+        };
+        let main_pass = (!passes.is_empty()).then_some(None);
+
         // pyro: the boxes of inline elements, as on horizontal lines (`inline_box_fragments`), but
         // for `sideways-lr`, whose lines turn the other way (it keeps their background colours).
         if !wm.contains(WritingMode::WRITING_MODE_SIDEWAYS_LR) {
             for fragment in self.inline_box_fragments(text_layout, Affine::IDENTITY, None, Some(&line_transform)) {
-                self.paint_inline_box_fragment(scene, &fragment, line_transform(fragment.line), None);
+                if self.fragment_in_pass(fragment.node, main_pass) {
+                    self.paint_inline_box_fragment(scene, &fragment, line_transform(fragment.line), None);
+                }
             }
         } else if self.context.backgrounds {
             for (index, line) in text_layout.layout.lines().enumerate() {
@@ -3185,6 +3269,7 @@ impl ElementCx<'_, '_> {
             let inset = layout.border.top + layout.border.bottom + layout.padding.top + layout.padding.bottom;
             (layout.size.height - inset).max(0.0) * self.scale as f32
         });
+        draw_text_context.positioned_pass = main_pass;
         for (index, line) in text_layout.layout.lines().enumerate() {
             if text_layout.clamp.as_ref().is_some_and(|clamp| index >= clamp.lines as usize) {
                 break;
@@ -3263,6 +3348,34 @@ impl ElementCx<'_, '_> {
                     );
                 }
             }
+        }
+        draw_text_context.positioned_pass = None;
+        drop(draw_text_context);
+        // pyro: then each positioned inline box: its fragments, then its text.
+        for &pass in passes.iter().skip(1) {
+            for fragment in self.inline_box_fragments(text_layout, Affine::IDENTITY, None, Some(&line_transform)) {
+                if self.fragment_in_pass(fragment.node, Some(pass)) {
+                    self.paint_inline_box_fragment(scene, &fragment, line_transform(fragment.line), None);
+                }
+            }
+            let mut draw_text_context = self.context.draw_text_context.borrow_mut();
+            draw_text_context.positioned_pass = Some(pass);
+            for (index, line) in text_layout.layout.lines().enumerate() {
+                let turned = vertical(&line);
+                crate::text::stroke_text(
+                    scene,
+                    std::iter::once(line),
+                    self.context.dom,
+                    line_transform(index),
+                    TextPaintOptions { scale: self.scale, brush_override: None, shadows: true },
+                    self.node.id,
+                    Some(&text_layout.text),
+                    &mut draw_text_context,
+                    turned,
+                    Some(&text_layout.layout),
+                );
+            }
+            draw_text_context.positioned_pass = None;
         }
     }
 

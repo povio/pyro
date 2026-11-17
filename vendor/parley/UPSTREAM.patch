@@ -4257,7 +4257,7 @@ index e967f50..f77853e 100644
  
  pub use builder::{RangedBuilder, StyleRunBuilder, TreeBuilder};
 diff --git a/src/resolve/mod.rs b/src/resolve/mod.rs
-index f465832..6930815 100644
+index f465832..2e3615e 100644
 --- a/src/resolve/mod.rs
 +++ b/src/resolve/mod.rs
 @@ -15,7 +15,7 @@ use super::style::{
@@ -4269,7 +4269,7 @@ index f465832..6930815 100644
  use crate::util::nearly_eq;
  use crate::{LineBreak, LineHeight, OverflowWrap, VerticalAlign, layout};
  use crate::{TextWrapMode, WhiteSpaceCollapse, WordBreak};
-@@ -169,6 +169,17 @@ impl ResolveContext {
+@@ -169,6 +169,18 @@ impl ResolveContext {
              StyleProperty::OverflowWrap(value) => OverflowWrap(*value),
              StyleProperty::TextWrapMode(value) => TextWrapMode(*value),
              StyleProperty::WhiteSpaceCollapse(value) => WhiteSpaceCollapse(*value),
@@ -4282,12 +4282,13 @@ index f465832..6930815 100644
 +            StyleProperty::LanguageOverride(value) => LanguageOverride(*value),
 +            StyleProperty::TextSpacingTrim(value) => TextSpacingTrim(*value),
 +            StyleProperty::TextAutospace(value) => TextAutospace(*value),
++            StyleProperty::Upright(value) => Upright(*value),
 +            StyleProperty::TextJustify(value) => TextJustify(*value),
 +            StyleProperty::SpacingScales(value) => SpacingScales(*value),
          }
      }
  
-@@ -210,6 +221,19 @@ impl ResolveContext {
+@@ -210,6 +222,20 @@ impl ResolveContext {
              overflow_wrap: raw_style.overflow_wrap,
              text_wrap_mode: raw_style.text_wrap_mode,
              white_space_collapse: raw_style.white_space_collapse,
@@ -4300,6 +4301,7 @@ index f465832..6930815 100644
 +            language_override: raw_style.language_override,
 +            text_spacing_trim: raw_style.text_spacing_trim,
 +            text_autospace: raw_style.text_autospace,
++            upright: raw_style.upright,
 +            text_justify: raw_style.text_justify,
 +            spacing_scales: raw_style.spacing_scales,
 +            annotation_space: raw_style.annotation_space.scale(scale),
@@ -4307,7 +4309,7 @@ index f465832..6930815 100644
          }
      }
  
-@@ -400,6 +424,36 @@ pub(crate) enum ResolvedProperty<B: Brush> {
+@@ -400,6 +426,38 @@ pub(crate) enum ResolvedProperty<B: Brush> {
      TextWrapMode(TextWrapMode),
      /// Whitespace collapsing and hanging behavior.
      WhiteSpaceCollapse(WhiteSpaceCollapse),
@@ -4329,6 +4331,8 @@ index f465832..6930815 100644
 +    TextSpacingTrim(crate::style::TextSpacingTrim),
 +    /// pyro: where space is added between ideographs and other characters.
 +    TextAutospace(crate::style::TextAutospace),
++    /// pyro: upright glyphs in a vertical line.
++    Upright(bool),
 +    /// pyro: where justification adds space.
 +    TextJustify(crate::style::TextJustify),
 +    /// pyro: which of the letter and word spacing scale with the font size.
@@ -4344,7 +4348,7 @@ index f465832..6930815 100644
  }
  
  /// Flattened group of style properties.
-@@ -448,6 +502,33 @@ pub(crate) struct ResolvedStyle<B: Brush> {
+@@ -448,6 +506,35 @@ pub(crate) struct ResolvedStyle<B: Brush> {
      pub(crate) text_wrap_mode: TextWrapMode,
      /// Whitespace collapsing and hanging behavior.
      pub(crate) white_space_collapse: WhiteSpaceCollapse,
@@ -4367,6 +4371,8 @@ index f465832..6930815 100644
 +    pub(crate) text_spacing_trim: crate::style::TextSpacingTrim,
 +    /// pyro: where space is added between ideographs and other characters.
 +    pub(crate) text_autospace: crate::style::TextAutospace,
++    /// pyro: upright glyphs in a vertical line.
++    pub(crate) upright: bool,
 +    /// pyro: where justification adds space.
 +    pub(crate) text_justify: crate::style::TextJustify,
 +    /// pyro: which of the letter and word spacing scale with the font size.
@@ -4378,7 +4384,7 @@ index f465832..6930815 100644
  }
  
  impl<B: Brush> ResolvedStyle<B> {
-@@ -481,6 +562,17 @@ impl<B: Brush> ResolvedStyle<B> {
+@@ -481,6 +568,18 @@ impl<B: Brush> ResolvedStyle<B> {
              OverflowWrap(value) => self.overflow_wrap = value,
              TextWrapMode(value) => self.text_wrap_mode = value,
              WhiteSpaceCollapse(value) => self.white_space_collapse = value,
@@ -4391,12 +4397,13 @@ index f465832..6930815 100644
 +            LanguageOverride(value) => self.language_override = value,
 +            TextSpacingTrim(value) => self.text_spacing_trim = value,
 +            TextAutospace(value) => self.text_autospace = value,
++            Upright(value) => self.upright = value,
 +            TextJustify(value) => self.text_justify = value,
 +            SpacingScales(value) => self.spacing_scales = value,
          }
      }
  
-@@ -513,6 +605,17 @@ impl<B: Brush> ResolvedStyle<B> {
+@@ -513,6 +612,18 @@ impl<B: Brush> ResolvedStyle<B> {
              OverflowWrap(value) => self.overflow_wrap == *value,
              TextWrapMode(value) => self.text_wrap_mode == *value,
              WhiteSpaceCollapse(value) => self.white_space_collapse == *value,
@@ -4409,12 +4416,13 @@ index f465832..6930815 100644
 +            LanguageOverride(value) => self.language_override == *value,
 +            TextSpacingTrim(value) => self.text_spacing_trim == *value,
 +            TextAutospace(value) => self.text_autospace == *value,
++            Upright(value) => self.upright == *value,
 +            TextJustify(value) => self.text_justify == *value,
 +            SpacingScales(value) => self.spacing_scales == *value,
          }
      }
  
-@@ -527,6 +630,9 @@ impl<B: Brush> ResolvedStyle<B> {
+@@ -527,6 +638,9 @@ impl<B: Brush> ResolvedStyle<B> {
              overflow_wrap: self.overflow_wrap,
              text_wrap_mode: self.text_wrap_mode,
              white_space_collapse: self.white_space_collapse,
@@ -5086,20 +5094,21 @@ index 0000000..246bca1
 +    }
 +}
 diff --git a/src/shape/mod.rs b/src/shape/mod.rs
-index 060a32d..54d36c9 100644
+index 060a32d..dd0e1e0 100644
 --- a/src/shape/mod.rs
 +++ b/src/shape/mod.rs
-@@ -4,6 +4,9 @@
+@@ -4,6 +4,10 @@
  //! Text shaping implementation using `harfrust`for shaping
  //! and `icu` for text analysis.
  
 +mod autospace;
++mod upright;
 +mod justify;
 +
  use alloc::vec::Vec;
  use parley_engine::shape::{CharCluster, Coverage};
  use parley_engine::{
-@@ -15,6 +18,7 @@ use super::layout::Layout;
+@@ -15,6 +19,7 @@ use super::layout::Layout;
  use super::resolve::{ResolveContext, ResolvedStyle};
  use super::style::{Brush, FontFeature};
  use crate::inline_box::LayoutInlineBox;
@@ -5107,7 +5116,7 @@ index 060a32d..54d36c9 100644
  use crate::util::{nearly_eq, nearly_zero};
  use crate::{FontContext, FontData, Spacing};
  
-@@ -54,7 +58,12 @@ pub(crate) fn shape_text<'a, B: Brush>(
+@@ -54,7 +59,12 @@ pub(crate) fn shape_text<'a, B: Brush>(
      mut text: &str,
      layout: &mut Layout<B>,
      analysis_data_sources: &AnalysisDataSources,
@@ -5120,7 +5129,7 @@ index 060a32d..54d36c9 100644
      // If we have both empty text and no inline boxes, shape with a fake space
      // to generate metrics that can be used to size a cursor.
      if text.is_empty() && inline_boxes.is_empty() {
-@@ -98,6 +107,9 @@ pub(crate) fn shape_text<'a, B: Brush>(
+@@ -98,6 +108,9 @@ pub(crate) fn shape_text<'a, B: Brush>(
          })
          .collect();
  
@@ -5130,7 +5139,7 @@ index 060a32d..54d36c9 100644
      // Split when shaping-relevant style properties change and at inline boxes.
      let items = {
          // TODO: we currently walk characters here, but we could instead just walk boundaries of
-@@ -109,6 +121,8 @@ pub(crate) fn shape_text<'a, B: Brush>(
+@@ -109,6 +122,8 @@ pub(crate) fn shape_text<'a, B: Brush>(
  
          // Positioned at `item_start_char`, i.e., the first character not yet covered by an item.
          let mut chars = text.char_indices().enumerate().peekable();
@@ -5139,7 +5148,7 @@ index 060a32d..54d36c9 100644
          core::iter::from_fn(move || {
              if item_start_char == char_count {
                  return None;
-@@ -121,22 +135,24 @@ pub(crate) fn shape_text<'a, B: Brush>(
+@@ -121,22 +136,24 @@ pub(crate) fn shape_text<'a, B: Brush>(
              // never a split point.
              chars.next();
  
@@ -5166,7 +5175,7 @@ index 060a32d..54d36c9 100644
                          inline_box_iter.next();
                          split = true;
                      } else {
-@@ -145,41 +161,59 @@ pub(crate) fn shape_text<'a, B: Brush>(
+@@ -145,41 +162,59 @@ pub(crate) fn shape_text<'a, B: Brush>(
                  }
  
                  if split {
@@ -5230,7 +5239,7 @@ index 060a32d..54d36c9 100644
  
      scx.shape_text(
          text,
-@@ -190,6 +224,7 @@ pub(crate) fn shape_text<'a, B: Brush>(
+@@ -190,6 +225,7 @@ pub(crate) fn shape_text<'a, B: Brush>(
          &mut layout.data.shaped_text,
      );
  
@@ -5238,7 +5247,7 @@ index 060a32d..54d36c9 100644
      let mut inline_box_iter = inline_boxes
          .iter()
          .map(|b| &b.inline_box)
-@@ -201,19 +236,11 @@ pub(crate) fn shape_text<'a, B: Brush>(
+@@ -201,19 +237,11 @@ pub(crate) fn shape_text<'a, B: Brush>(
          let run_style_index = char_style_indices[shaped_run.range.char_range.start];
          let run_style = &styles[usize::from(run_style_index)];
  
@@ -5261,7 +5270,7 @@ index 060a32d..54d36c9 100644
                  inline_box_iter.next();
              } else {
                  break;
-@@ -228,25 +255,119 @@ pub(crate) fn shape_text<'a, B: Brush>(
+@@ -228,25 +256,121 @@ pub(crate) fn shape_text<'a, B: Brush>(
              // we probably shouldn't itemize on them; we should just ensure we don't ligate if
              // they're non-zero).
              run_style,
@@ -5288,6 +5297,8 @@ index 060a32d..54d36c9 100644
 +        layout.data.push_inline_box(box_idx, box_levels[box_idx]);
 +    }
 +
++    // pyro: CSS `text-orientation: upright`.
++    upright::apply(layout, styles);
 +    // pyro: CSS `text-autospace`.
 +    autospace::apply(layout, text, styles, inline_boxes);
 +    // pyro: CSS `text-justify`.
@@ -5393,7 +5404,7 @@ index 060a32d..54d36c9 100644
  }
  
  /// The font to use if a font query doesn't return any font candidates at all.
-@@ -259,6 +380,15 @@ enum LastResortFont {
+@@ -259,6 +383,15 @@ enum LastResortFont {
  
  struct FontSelector<'a, 'b, B: Brush> {
      query: &'b mut Query<'a>,
@@ -5409,7 +5420,7 @@ index 060a32d..54d36c9 100644
      fonts_id: Option<usize>,
      rcx: &'a ResolveContext,
      styles: &'a [ResolvedStyle<B>],
-@@ -284,11 +414,14 @@ impl<'a, 'b, B: Brush> FontSelector<'a, 'b, B> {
+@@ -284,11 +417,14 @@ impl<'a, 'b, B: Brush> FontSelector<'a, 'b, B> {
          rcx: &'a ResolveContext,
          styles: &'a [ResolvedStyle<B>],
          analysis_data_sources: &'a AnalysisDataSources,
@@ -5424,7 +5435,7 @@ index 060a32d..54d36c9 100644
              fonts_id: None,
              rcx,
              styles,
-@@ -360,12 +493,36 @@ impl<'a, 'b, B: Brush> parley_engine::FontSelector for FontSelector<'a, 'b, B> {
+@@ -360,12 +496,36 @@ impl<'a, 'b, B: Brush> parley_engine::FontSelector for FontSelector<'a, 'b, B> {
          // not *too* expensive, once the new borrow checker (Polonius) is stable, we could remove
          // this check and do the last-resort scan after the failed query:
          // <https://blog.rust-lang.org/2026/08/04/enabling-polonius-alpha-on-nightly/>.
@@ -5463,7 +5474,7 @@ index 060a32d..54d36c9 100644
                      fontique::QueryStatus::Stop
                  } else {
                      fontique::QueryStatus::Continue
-@@ -373,6 +530,12 @@ impl<'a, 'b, B: Brush> parley_engine::FontSelector for FontSelector<'a, 'b, B> {
+@@ -373,6 +533,12 @@ impl<'a, 'b, B: Brush> parley_engine::FontSelector for FontSelector<'a, 'b, B> {
              });
              yields_font
          });
@@ -5476,7 +5487,7 @@ index 060a32d..54d36c9 100644
          if !query_yields_font {
              if matches!(self.last_resort_font, LastResortFont::Unresolved) {
                  if let Some(font) = any_font(self.query) {
-@@ -473,3 +636,18 @@ fn any_font(query: &mut Query<'_>) -> Option<QueryFont> {
+@@ -473,3 +639,18 @@ fn any_font(query: &mut Query<'_>) -> Option<QueryFont> {
  
      found
  }
@@ -5495,8 +5506,61 @@ index 060a32d..54d36c9 100644
 +        index = style.parent;
 +    }
 +}
+diff --git a/src/shape/upright.rs b/src/shape/upright.rs
+new file mode 100644
+index 0000000..e8fc4f6
+--- /dev/null
++++ b/src/shape/upright.rs
+@@ -0,0 +1,47 @@
++//! pyro: upright glyphs in vertical lines (CSS `text-orientation: upright`). A glyph of a font
++//! without vertical metrics (`vmtx`) advances by the font's height (ascent + descent), as
++//! HarfBuzz's default vertical advance in Blink (WPT css-values `ch-unit-002`, `-011`); fonts with
++//! vertical metrics keep their advances (CJK faces: one em).
++
++use alloc::vec::Vec;
++
++use crate::layout::Layout;
++use crate::resolve::ResolvedStyle;
++use crate::style::Brush;
++
++pub(crate) fn apply<B: Brush>(layout: &mut Layout<B>, styles: &[ResolvedStyle<B>]) {
++    if !styles.iter().any(|style| style.upright) {
++        return;
++    }
++    let shaped_text = &layout.data.shaped_text;
++    let characters = shaped_text.characters();
++    let clusters = shaped_text.shaped_clusters();
++    let mut changes: Vec<(u32, f32)> = Vec::new();
++    let mut upright_runs: Vec<(usize, f32)> = Vec::new();
++    for (run_index, run) in shaped_text.runs().iter().enumerate() {
++        let Some(height) = shaped_text.default_vertical_advance(run.font_index, run.font_size) else {
++            continue;
++        };
++        let mut upright = false;
++        for index in run.shaped_clusters_range.clone() {
++            let cluster = &clusters[index as usize];
++            let Some(character) = characters.get(cluster.chars_range().start as usize) else { continue };
++            if !styles[character.style_index as usize].upright {
++                continue;
++            }
++            upright = true;
++            if cluster.advance != 0.0 {
++                changes.push((index, height));
++            }
++        }
++        if upright {
++            upright_runs.push((run_index, height));
++        }
++    }
++    for (index, advance) in changes {
++        layout.data.shaped_text.set_cluster_advance(index, advance);
++    }
++    for (run_index, advance) in upright_runs {
++        layout.data.shaped_text.set_run_upright_advance(run_index, advance);
++    }
++}
 diff --git a/src/style/mod.rs b/src/style/mod.rs
-index d9977df..5ec1fa6 100644
+index d9977df..9650a8b 100644
 --- a/src/style/mod.rs
 +++ b/src/style/mod.rs
 @@ -43,6 +43,158 @@ pub enum WhiteSpaceCollapse {
@@ -5725,7 +5789,7 @@ index d9977df..5ec1fa6 100644
  }
  
  /// A shift applied to a span (or [`InlineBox`]) after [`AlignmentBaseline`] alignment. Mirrors
-@@ -277,6 +460,29 @@ pub enum StyleProperty<'a, B: Brush> {
+@@ -277,6 +460,31 @@ pub enum StyleProperty<'a, B: Brush> {
      TextWrapMode(TextWrapMode),
      /// Whitespace collapsing and hanging behavior.
      WhiteSpaceCollapse(WhiteSpaceCollapse),
@@ -5748,6 +5812,8 @@ index d9977df..5ec1fa6 100644
 +    TextSpacingTrim(TextSpacingTrim),
 +    /// pyro: where space is added between ideographs and other characters.
 +    TextAutospace(TextAutospace),
++    /// pyro: upright glyphs in a vertical line (`text-orientation: upright`).
++    Upright(bool),
 +    /// pyro: where justification adds space.
 +    TextJustify(TextJustify),
 +    /// pyro: which of the letter and word spacing scale with the font size.
@@ -5755,7 +5821,7 @@ index d9977df..5ec1fa6 100644
  }
  
  /// Unresolved styles.
-@@ -334,6 +540,87 @@ pub struct TextStyle<'family, 'settings, B: Brush> {
+@@ -334,6 +542,90 @@ pub struct TextStyle<'family, 'settings, B: Brush> {
      pub text_wrap_mode: TextWrapMode,
      /// Whitespace collapsing and hanging behavior.
      pub white_space_collapse: WhiteSpaceCollapse,
@@ -5785,6 +5851,9 @@ index d9977df..5ec1fa6 100644
 +    /// pyro: where this style's text spaces ideographs from letters and numerals (CSS
 +    /// `text-autospace`).
 +    pub text_autospace: TextAutospace,
++    /// pyro: this style's glyphs stand upright in vertical lines (CSS `text-orientation:
++    /// upright`): a glyph without a vertical advance (`vmtx`) advances by the font's height.
++    pub upright: bool,
 +    /// pyro: where justification adds space in this style's text (CSS `text-justify`).
 +    pub text_justify: TextJustify,
 +    /// pyro: which of this style's letter and word spacing scale with its font size (CSS
@@ -5843,7 +5912,7 @@ index d9977df..5ec1fa6 100644
  }
  
  impl<B: Brush> Default for TextStyle<'static, 'static, B> {
-@@ -365,6 +652,19 @@ impl<B: Brush> Default for TextStyle<'static, 'static, B> {
+@@ -365,6 +657,20 @@ impl<B: Brush> Default for TextStyle<'static, 'static, B> {
              overflow_wrap: OverflowWrap::default(),
              text_wrap_mode: TextWrapMode::default(),
              white_space_collapse: WhiteSpaceCollapse::default(),
@@ -5856,6 +5925,7 @@ index d9977df..5ec1fa6 100644
 +            language_override: None,
 +            text_spacing_trim: TextSpacingTrim::default(),
 +            text_autospace: TextAutospace::default(),
++            upright: false,
 +            text_justify: TextJustify::default(),
 +            spacing_scales: SpacingScales::default(),
 +            annotation_space: AnnotationSpace::default(),

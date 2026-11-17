@@ -881,6 +881,10 @@ fn build_inline_layout_with(
         let style = node.primary_styles()?;
         let itext = style.get_inherited_text();
         let mut parley_style = stylo_to_parley::style(node_id, &style);
+        // pyro: an annotation is centred over its base by its layout's width and its glyphs are
+        // drawn em-wide (`draw_annotation`): no tall upright advances (parley `shape::upright`),
+        // as emphasis marks have none (WPT css-text-decor `text-emphasis-style-property-005`).
+        parley_style.upright = false;
         let (mut layout, under) = match kind {
             TextAnnotationKind::Ruby { .. } => {
                 let mut builder = layout_ctx.tree_builder(font_ctx, scale, true, &parley_style);

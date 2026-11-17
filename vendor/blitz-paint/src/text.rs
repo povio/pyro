@@ -150,7 +150,26 @@ impl VerticalLine {
         }
         let em = run.run().font_size();
         let height = (metrics.ascent + metrics.descent).max(1.0);
-        let ascent = (em * metrics.ascent / height) as f64;
+        // pyro: a glyph advancing by the font's height (`text-orientation: upright` in a font
+        // without vertical metrics, parley's `shape::upright`) hangs from its ascent.
+        let tall = self.all_upright.then(|| {
+            use skrifa::raw::TableProvider;
+            let font = run.run().font();
+            let font_ref = skrifa::FontRef::from_index(font.data.as_ref(), font.index).ok()?;
+            if font_ref.vmtx().is_ok() {
+                return None;
+            }
+            let metrics =
+                skrifa::metrics::Metrics::new(&font_ref, skrifa::instance::Size::new(em), skrifa::instance::LocationRef::default());
+            // (Only glyphs laid out so: an emphasis mark's line is upright, its advances are not.)
+            let advance = run.glyphs().next()?.advance;
+            let tall = metrics.ascent - metrics.descent;
+            ((advance - tall).abs() < 0.01).then_some(tall)
+        });
+        // pyro: the em box centred in a tall glyph's advance (as in an em-wide one: a ruby
+        // annotation and an emphasis mark of the same glyph sit alike).
+        let ascent = (em * metrics.ascent / height) as f64
+            + tall.flatten().map_or(0.0, |tall| f64::from(tall - em) / 2.0);
         (
             Affine::translate((0.0, (central + em / 2.0 - run.baseline()) as f64)),
             Some(Affine::new([0.0, -1.0, 1.0, 0.0, ascent, 0.0])),
@@ -691,6 +710,10 @@ pub(crate) struct DrawTextContext {
     spans_layout: usize,
     /// pyro: the glyph runs the next `stroke_text` draws (none: all).
     pub(crate) run_filter: Option<RunFilter>,
+    /// pyro: which runs this pass draws by the positioned inline box they paint with
+    /// (`BaseDocument::inline_span_positioned_chain`): `Some(None)` those in none (the root's
+    /// in-flow text), `Some(Some(span))` those of `span`; `None` all.
+    pub(crate) positioned_pass: Option<Option<NodeId>>,
     /// pyro: the node holding the `::first-line` style of the first line of the inline root the
     /// next `stroke_text` draws (blitz-dom `TextLayout::first_line`): its first line is drawn as if
     /// its content were in an inline box of that style, the elements on it with their styles on
@@ -1674,6 +1697,7 @@ pub(crate) fn stroke_text<'a, S: PaintScene>(
         spans,
         spans_layout,
         run_filter,
+        positioned_pass,
         first_line,
         first_line_styles,
         highlighting,
@@ -1682,6 +1706,7 @@ pub(crate) fn stroke_text<'a, S: PaintScene>(
         glyph_spans,
     } = context;
     let shadows_only = *shadows_only;
+    let positioned_pass = *positioned_pass;
     let glyph_spans = glyph_spans.as_ref();
     let shift = *text_shift;
     let cut = *cut;
@@ -1940,7 +1965,11 @@ pub(crate) fn stroke_text<'a, S: PaintScene>(
                 _ => (kept, drawn),
             };
             // pyro: `visibility` hides a run with its decorations and shadows; it keeps its place.
-            if stack.last().is_some_and(|entry| entry.hidden) {
+            // pyro: and a run of another pass's positioned inline box (`positioned_pass`).
+            let other_pass = positioned_pass.is_some_and(|pass| {
+                doc.inline_span_positioned_chain(style.brush.id, inline_root_id).first().copied() != pass
+            });
+            if other_pass || stack.last().is_some_and(|entry| entry.hidden) {
                 run_paints.push(RunPaint { fill_color, shadows: 0..0, kept: 0..0, kept_extent, drawn: false });
                 continue;
             }

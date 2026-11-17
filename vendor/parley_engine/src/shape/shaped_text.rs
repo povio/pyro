@@ -438,6 +438,34 @@ impl ShapedText {
     /// the tab stop it reaches). A cluster whose glyphs are stored takes the difference on its
     /// last glyph; an inline glyph's advance is its cluster's.
     #[inline]
+    /// pyro: the vertical advance of an upright glyph of the font at `font_index` without
+    /// vertical metrics (no `vmtx` table) at `font_size`: its height, ascent + descent as the
+    /// font gives them (HarfBuzz's default vertical advance; no `chromium_ascent_adjustment`).
+    /// `None` for a font with vertical metrics.
+    pub fn default_vertical_advance(&self, font_index: usize, font_size: f32) -> Option<f32> {
+        use skrifa::raw::TableProvider;
+        let font = self.fonts.get(font_index)?;
+        let font_ref = skrifa::FontRef::from_index(font.font.data.as_ref(), font.font.index).ok()?;
+        if font_ref.vmtx().is_ok() {
+            return None;
+        }
+        let metrics = skrifa::metrics::Metrics::new(
+            &font_ref,
+            skrifa::instance::Size::new(font_size),
+            skrifa::instance::LocationRef::default(),
+        );
+        Some(metrics.ascent - metrics.descent)
+    }
+
+    /// pyro: makes the run at `run_index` upright with glyphs advancing by `advance`
+    /// ([`ShapedRun::upright_advance`]), its hyphen too.
+    pub fn set_run_upright_advance(&mut self, run_index: usize, advance: f32) {
+        if let Some(run) = self.runs.get_mut(run_index) {
+            run.upright_advance = Some(advance);
+            run.hyphen = run.hyphen.map(|(glyph, _)| (glyph, advance));
+        }
+    }
+
     pub fn set_cluster_advance(&mut self, index: u32, advance: f32) {
         let Some(cluster) = self.shaped_clusters.get_mut(index as usize) else {
             return;
@@ -562,6 +590,9 @@ impl ShapedText {
         let font = self.fonts.get(run.font_index)?;
         let font_ref = skrifa::FontRef::from_index(font.font.data.as_ref(), font.font.index).ok()?;
         let glyph = font_ref.charmap().map(ch)?;
+        if let Some(advance) = run.upright_advance {
+            return Some((glyph.to_u32(), advance));
+        }
         // The same coords, in skrifa's type.
         let coords: alloc::vec::Vec<skrifa::instance::NormalizedCoord> = self.normalized_coords
             [run.normalized_coords_range.clone()]
@@ -847,6 +878,7 @@ impl ShapedText {
             advance: run_advance,
             font_metrics,
             hyphen: metrics.hyphen,
+            upright_advance: None,
         });
         metrics
     }
@@ -879,6 +911,9 @@ pub struct ShapedRun {
     /// pyro: the hyphen of the run's font (U+2010, else U+002D): its glyph and its advance at
     /// the run's size. The line breaker shows it where a line ends at a soft hyphen.
     pub hyphen: Option<(u32, f32)>,
+    /// pyro: the advance of every glyph of an upright run in a font without vertical metrics
+    /// (parley's `shape::upright`): the hyphens the line breaker shows advance by it too.
+    pub upright_advance: Option<f32>,
     /// The font metrics of this run.
     pub font_metrics: FontMetrics,
 }

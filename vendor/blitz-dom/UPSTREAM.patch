@@ -3945,7 +3945,7 @@ diff --git a/packages/blitz-dom/src/font_metrics.rs b/packages/blitz-dom/src/fon
              let font_ref = skrifa::FontRef::from_index(font.blob.as_ref(), font.index).ok()?;
              let location = font_ref.axes().location(
                  variations
-@@ -145,14 +284,55 @@
+@@ -145,14 +284,61 @@
                      .map(|v| (skrifa::Tag::from_be_bytes(v.tag.to_bytes()), v.value)),
              );
              let location_ref = LocationRef::from(&location);
@@ -3979,11 +3979,17 @@ diff --git a/packages/blitz-dom/src/font_metrics.rs b/packages/blitz-dom/src/fon
 +            let glyph = font_ref.charmap().map('0')?;
 +            if vertical {
 +                use skrifa::raw::TableProvider;
-+                if let Ok(vmtx) = font_ref.vmtx() {
-+                    let upem = Metrics::new(&font_ref, Size::unscaled(), LocationRef::default()).units_per_em;
-+                    let size = if size_adjust { font_size.px() * font.synthesis.size_adjust() } else { font_size.px() };
-+                    if let (Some(advance), true) = (vmtx.advance(glyph), upem != 0) {
-+                        return Some(f32::from(advance) * size / f32::from(upem));
++                let metrics = Metrics::new(&font_ref, Size::unscaled(), LocationRef::default());
++                let upem = metrics.units_per_em;
++                let size = if size_adjust { font_size.px() * font.synthesis.size_adjust() } else { font_size.px() };
++                if upem != 0 {
++                    // (Without vertical metrics, the font's height: parley's `shape::upright`.)
++                    let advance = match font_ref.vmtx() {
++                        Ok(vmtx) => vmtx.advance(glyph).map(f32::from),
++                        Err(_) => Some(metrics.ascent - metrics.descent),
++                    };
++                    if let Some(advance) = advance {
++                        return Some(advance * size / f32::from(upem));
 +                    }
 +                }
 +            }
@@ -4006,7 +4012,7 @@ diff --git a/packages/blitz-dom/src/font_metrics.rs b/packages/blitz-dom/src/fon
                  .unwrap_or((0.0, None, None));
  
          FontMetrics {
-@@ -165,15 +345,4 @@
+@@ -165,15 +351,4 @@
              script_script_percent_scale_down: None,
          }
      }
@@ -10000,7 +10006,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
          match marker {
              // Bullet glyphs live in the bundled bullet font. The position-outside
              // path already asks for it; without the same span here a marker like
-@@ -76,54 +515,497 @@
+@@ -76,54 +515,501 @@
              Marker::Char(char) => {
                  let mut marker_style = parley_style.clone();
                  marker_style.font_family = BULLET_FONT_FAMILY.into();
@@ -10376,6 +10382,10 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
 +        let style = node.primary_styles()?;
 +        let itext = style.get_inherited_text();
 +        let mut parley_style = stylo_to_parley::style(node_id, &style);
++        // pyro: an annotation is centred over its base by its layout's width and its glyphs are
++        // drawn em-wide (`draw_annotation`): no tall upright advances (parley `shape::upright`),
++        // as emphasis marks have none (WPT css-text-decor `text-emphasis-style-property-005`).
++        parley_style.upright = false;
 +        let (mut layout, under) = match kind {
 +            TextAnnotationKind::Ruby { .. } => {
 +                let mut builder = layout_ctx.tree_builder(font_ctx, scale, true, &parley_style);
@@ -10504,7 +10514,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
      ) {
          let node = &nodes[node_id];
  
-@@ -143,6 +1025,49 @@
+@@ -143,6 +1029,49 @@
                      }
                  }
  
@@ -10554,7 +10564,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
                  let display = node.display_style().unwrap_or(Display::inline());
                  let position = style
                      .map(|s| s.clone_position())
-@@ -161,41 +1086,44 @@
+@@ -161,41 +1090,44 @@
                          // node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
                      }
                      (DisplayOutside::None, DisplayInside::Contents) => {
@@ -10621,7 +10631,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
                              }
                              builder.push_inline_box(InlineBox {
                                  id: node_id.as_u64(),
-@@ -210,66 +1138,171 @@
+@@ -210,66 +1142,171 @@
                                      .primary_styles()
                                      .map(|s| stylo_to_parley::vertical_align(&s))
                                      .unwrap_or_default(),
@@ -10814,7 +10824,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
                          }
                          builder.push_inline_box(InlineBox {
                              id: node_id.as_u64(),
-@@ -284,6 +1317,8 @@
+@@ -284,6 +1321,8 @@
                                  .primary_styles()
                                  .map(|s| stylo_to_parley::vertical_align(&s))
                                  .unwrap_or_default(),
@@ -10823,7 +10833,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
                          });
                      }
                  };
-@@ -291,10 +1326,94 @@
+@@ -291,10 +1330,94 @@
              NodeData::Text(data) => {
                  // node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
                  // dbg!(&data.content);
@@ -10921,7 +10931,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
              }
              NodeData::Comment { .. } => {
                  // node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
-@@ -303,3 +1422,314 @@
+@@ -303,3 +1426,314 @@
          }
      }
  }
@@ -13432,7 +13442,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/relative.rs b/packages/blitz-d
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/layout/inline/relative.rs
-@@ -0,0 +1,140 @@
+@@ -0,0 +1,167 @@
 +//! pyro: relative positioning of inline boxes that are not atomic (CSS 2.1 § 9.4.3): such a box
 +//! has no layout box of its own, so the offset moves what its fragments hold where they are
 +//! painted (glyph runs, the boxes of its fragments) and the atomic inline boxes in it.
@@ -13562,6 +13572,33 @@ new file mode 100644
 +        };
 +        let offset = inline_span_offset_with(&self.nodes, node_id, root_id, cb, true);
 +        (offset.x, offset.y)
++    }
++
++    /// pyro: the positioned (relative or sticky) inline boxes that are not atomic from `node_id`
++    /// up to the inline root `root_id`, innermost first: their content paints with them, after
++    /// the in-flow content (CSS 2.1 Appendix E step 8), not in the root's text.
++    pub fn inline_span_positioned_chain(&self, node_id: NodeId, root_id: NodeId) -> Vec<NodeId> {
++        let root = &self.nodes[root_id];
++        let root_parent = root.is_anonymous().then_some(root.parent).flatten();
++        let mut chain = Vec::new();
++        let mut current = Some(node_id);
++        while let Some(id) = current {
++            if id == root_id || Some(id) == root_parent {
++                break;
++            }
++            let Some(node) = self.nodes.get(id) else { break };
++            if let Some(style) = node.primary_styles() {
++                let display = style.clone_display();
++                if !display.is_inline_flow() && !display.is_contents() {
++                    break;
++                }
++                if matches!(style.clone_position(), Position::Relative | Position::Sticky) && display.is_inline_flow() {
++                    chain.push(id);
++                }
++            }
++            current = node.parent;
++        }
++        chain
 +    }
 +
 +    /// pyro: whether some inline box (not atomic) the inline root `root_id` lays out is
@@ -39730,7 +39767,7 @@ diff --git a/packages/blitz-dom/src/stylo_to_parley.rs b/packages/blitz-dom/src/
      let line_break = match itext_styles.line_break {
          stylo::LineBreak::Loose => parley::LineBreak::Loose,
          stylo::LineBreak::Normal => parley::LineBreak::Normal,
-@@ -541,17 +809,64 @@
+@@ -541,17 +809,67 @@
          font_style,
          font_weight,
          font_variations: parley::FontVariations::List(Cow::Owned(font_variations)),
@@ -39787,6 +39824,9 @@ diff --git a/packages/blitz-dom/src/stylo_to_parley.rs b/packages/blitz-dom/src/
          line_break,
 +        text_spacing_trim: text_spacing_trim(style, &font_features),
 +        text_autospace: text_autospace(style),
++        upright: style.writing_mode.is_vertical()
++            && !style.writing_mode.is_sideways()
++            && style.writing_mode.contains(style::logical_geometry::WritingMode::UPRIGHT),
 +        text_justify: match itext_styles.text_justify {
 +            style::values::computed::TextJustify::Auto => parley::TextJustify::Auto,
 +            style::values::computed::TextJustify::None => parley::TextJustify::None,
@@ -39796,7 +39836,7 @@ diff --git a/packages/blitz-dom/src/stylo_to_parley.rs b/packages/blitz-dom/src/
  
          // Contains NodeId
          brush: TextBrush::from_id(span_id),
-@@ -569,6 +884,10 @@
+@@ -569,6 +887,10 @@
          strikethrough_offset: Default::default(),
          strikethrough_size: Default::default(),
          strikethrough_brush: Default::default(),

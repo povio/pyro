@@ -428,3 +428,4 @@ Covered by `crates/pyro-render/tests/text_inline_round4.rs` and `soft_hyphens.rs
   no `GPOS`), and both glyphs lose their parts (`shift_edge_cluster`, restored before the next break). Blink shapes line
   edges again where shaping was not safe to break, so its wrapped lines start at the content edge (macOS Times and
   Helvetica). WPT CSS2 `bidi-002` (RLO run broken after a space), css-text `hyphens-auto-001` (space|W pairs).
+- Round 4 lane F, `shape/upright.rs` + `StyleProperty::Upright`: upright glyphs (CSS `text-orientation: upright`) of a font without vertical metrics advance by the font's height (ascent + descent, HarfBuzz's default vertical advance), their hyphens too (WPT css-values `ch-unit-002`, `-011`).

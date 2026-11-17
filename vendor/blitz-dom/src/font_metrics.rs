@@ -310,11 +310,17 @@ impl BlitzFontMetricsProvider {
             let glyph = font_ref.charmap().map('0')?;
             if vertical {
                 use skrifa::raw::TableProvider;
-                if let Ok(vmtx) = font_ref.vmtx() {
-                    let upem = Metrics::new(&font_ref, Size::unscaled(), LocationRef::default()).units_per_em;
-                    let size = if size_adjust { font_size.px() * font.synthesis.size_adjust() } else { font_size.px() };
-                    if let (Some(advance), true) = (vmtx.advance(glyph), upem != 0) {
-                        return Some(f32::from(advance) * size / f32::from(upem));
+                let metrics = Metrics::new(&font_ref, Size::unscaled(), LocationRef::default());
+                let upem = metrics.units_per_em;
+                let size = if size_adjust { font_size.px() * font.synthesis.size_adjust() } else { font_size.px() };
+                if upem != 0 {
+                    // (Without vertical metrics, the font's height: parley's `shape::upright`.)
+                    let advance = match font_ref.vmtx() {
+                        Ok(vmtx) => vmtx.advance(glyph).map(f32::from),
+                        Err(_) => Some(metrics.ascent - metrics.descent),
+                    };
+                    if let Some(advance) = advance {
+                        return Some(advance * size / f32::from(upem));
                     }
                 }
             }
