@@ -2635,3 +2635,8 @@ Round 4 lane G:
   `hidden_containing_block_drops_its_hoisted_boxes`).
 - `mutator.rs`: a child-list change marks counters and quotes dirty only when an element came or went; a text-only
   change (`textContent` on a measuring probe) no longer walks the whole document in `resolve_generated_content`.
+- Split inline containing block (round 4 lane G): `split_inline_containing_block` takes the head piece's start edge and
+  top and the tail piece's end edge and bottom (CSS 2.1 § 10.1 4.1), not the union of both; it applies in vertical
+  writing modes too (layout runs in logical axes). Multicol breaks (`collect_breaks`) count orphans and widows across
+  the anonymous blocks around a split inline (`split_inline_neighbours`), as Chromium's block-in-inline. WPT
+  css-position `position-absolute-in-inline-007b`, `-008b`.

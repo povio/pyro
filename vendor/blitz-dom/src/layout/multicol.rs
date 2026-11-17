@@ -896,6 +896,21 @@ impl BaseDocument {
         }
     }
 
+    /// pyro: whether anonymous block `id` comes right after, and right before, a split inline's
+    /// block-level box among its parent's layout children.
+    fn split_inline_neighbours(&self, id: crate::NodeId) -> (bool, bool) {
+        let node = &self.nodes[id];
+        if !node.is_anonymous() {
+            return (false, false);
+        }
+        let Some(parent) = node.layout_parent.get() else { return (false, false) };
+        let children = self.nodes[parent].layout_children.borrow();
+        let Some(children) = children.as_deref() else { return (false, false) };
+        let Some(at) = children.iter().position(|&c| c == id) else { return (false, false) };
+        let split = |i: Option<usize>| i.and_then(|i| children.get(i)).is_some_and(|&c| self.nodes[c].is_split_inline());
+        (split(at.checked_sub(1)), split(Some(at + 1)))
+    }
+
     /// Adds what `parent`'s content keeps from breaks, and the margins between its blocks, to
     /// `found`: `parent`'s border box starts at strip position `top`. `container_content_top`:
     /// `parent` is the container, its content box's top at that (its own layout is written by its
@@ -966,8 +981,17 @@ impl BaseDocument {
                 (text.orphans.0.max(1) as usize, text.widows.0.max(1) as usize)
             });
             let n = lines.len();
-            found.strict.push((lines[0].0, lines[orphans.min(n) - 1].1));
-            found.strict.push((lines[n - widows.min(n)].0, lines[n - 1].1));
+            // The anonymous blocks around an inline split by block-level content hold lines of one
+            // inline formatting context with the block between them, a line of it too (Chromium's
+            // block-in-inline): orphans and widows count across them (WPT css-position
+            // `position-absolute-in-inline-007b`, `-008b`).
+            let (after_split, before_split) = self.split_inline_neighbours(parent);
+            if !after_split {
+                found.strict.push((lines[0].0, lines[orphans.min(n) - 1].1));
+            }
+            if !before_split {
+                found.strict.push((lines[n - widows.min(n)].0, lines[n - 1].1));
+            }
             return;
         }
         let children = node.layout_children.borrow();

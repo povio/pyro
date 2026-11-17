@@ -2603,11 +2603,12 @@ fn span_padding_box(
 
 impl LayoutPassState<'_> {
     /// pyro: whether the split inline `span` is the containing block of absolutely positioned
-    /// boxes (it is positioned) in a horizontal writing mode (`split_inline_containing_block`).
+    /// boxes (it is positioned; `split_inline_containing_block`, in the logical axes layout runs
+    /// in, so vertical writing modes too).
     pub(crate) fn split_inline_contains_absolute(&self, span: NodeId) -> bool {
         use style::computed_values::position::T as Position;
         self.nodes[span].primary_styles().is_some_and(|style| {
-            style.clone_position() != Position::Static && !style.writing_mode.is_vertical()
+            style.clone_position() != Position::Static
         })
     }
 
@@ -2713,8 +2714,12 @@ impl LayoutPassState<'_> {
             .get(at + 1)
             .and_then(|&after| piece(after, false))
             .unwrap_or((own_x, own_y + own.size.height, own_x, own_y + own.size.height));
-        let (x0, y0) = (head.0.min(tail.0), head.1.min(tail.1));
-        let (x1, y1) = (head.2.max(tail.2), head.3.max(tail.3));
+        // The start edge and the top of the first fragment, the end edge and the bottom of the last
+        // (CSS 2.1 § 10.1 4.1: left/top of the first box, right/bottom of the last, in `ltr`); the
+        // tail's line can start left of the head's (WPT `position-absolute-in-inline-007b`).
+        let (x0, x1) = if rtl { (tail.0, head.2) } else { (head.0, tail.2) };
+        let (y0, y1) = (head.1, tail.3);
+        let x1 = x1.max(x0);
         Some((
             taffy::Size { width: (x1 - x0).max(0.0), height: (y1 - y0).max(0.0) },
             taffy::Point { x: x0 + relative.x, y: y0 + relative.y },

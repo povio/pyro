@@ -13114,7 +13114,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
              oof_candidates,
              oof_positioning_area: Some(OofPositioningArea {
                  size: final_size - oof_position_inset.sum_axes(),
-@@ -1384,3 +2447,277 @@
+@@ -1384,3 +2447,282 @@
  fn f32_max(a: f32, b: f32) -> f32 {
      a.max(b)
  }
@@ -13274,11 +13274,12 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
 +
 +impl LayoutPassState<'_> {
 +    /// pyro: whether the split inline `span` is the containing block of absolutely positioned
-+    /// boxes (it is positioned) in a horizontal writing mode (`split_inline_containing_block`).
++    /// boxes (it is positioned; `split_inline_containing_block`, in the logical axes layout runs
++    /// in, so vertical writing modes too).
 +    pub(crate) fn split_inline_contains_absolute(&self, span: NodeId) -> bool {
 +        use style::computed_values::position::T as Position;
 +        self.nodes[span].primary_styles().is_some_and(|style| {
-+            style.clone_position() != Position::Static && !style.writing_mode.is_vertical()
++            style.clone_position() != Position::Static
 +        })
 +    }
 +
@@ -13384,8 +13385,12 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
 +            .get(at + 1)
 +            .and_then(|&after| piece(after, false))
 +            .unwrap_or((own_x, own_y + own.size.height, own_x, own_y + own.size.height));
-+        let (x0, y0) = (head.0.min(tail.0), head.1.min(tail.1));
-+        let (x1, y1) = (head.2.max(tail.2), head.3.max(tail.3));
++        // The start edge and the top of the first fragment, the end edge and the bottom of the last
++        // (CSS 2.1 § 10.1 4.1: left/top of the first box, right/bottom of the last, in `ltr`); the
++        // tail's line can start left of the head's (WPT `position-absolute-in-inline-007b`).
++        let (x0, x1) = if rtl { (tail.0, head.2) } else { (head.0, tail.2) };
++        let (y0, y1) = (head.1, tail.3);
++        let x1 = x1.max(x0);
 +        Some((
 +            taffy::Size { width: (x1 - x0).max(0.0), height: (y1 - y0).max(0.0) },
 +            taffy::Point { x: x0 + relative.x, y: y0 + relative.y },
@@ -16762,7 +16767,7 @@ diff --git a/packages/blitz-dom/src/layout/multicol.rs b/packages/blitz-dom/src/
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/layout/multicol.rs
-@@ -0,0 +1,1227 @@
+@@ -0,0 +1,1251 @@
 +//! pyro: CSS Multi-column Layout (<https://drafts.csswg.org/css-multicol/>).
 +//!
 +//! A multi-column container lays its content out once, in a strip one column wide (its flow
@@ -17661,6 +17666,21 @@ new file mode 100644
 +        }
 +    }
 +
++    /// pyro: whether anonymous block `id` comes right after, and right before, a split inline's
++    /// block-level box among its parent's layout children.
++    fn split_inline_neighbours(&self, id: crate::NodeId) -> (bool, bool) {
++        let node = &self.nodes[id];
++        if !node.is_anonymous() {
++            return (false, false);
++        }
++        let Some(parent) = node.layout_parent.get() else { return (false, false) };
++        let children = self.nodes[parent].layout_children.borrow();
++        let Some(children) = children.as_deref() else { return (false, false) };
++        let Some(at) = children.iter().position(|&c| c == id) else { return (false, false) };
++        let split = |i: Option<usize>| i.and_then(|i| children.get(i)).is_some_and(|&c| self.nodes[c].is_split_inline());
++        (split(at.checked_sub(1)), split(Some(at + 1)))
++    }
++
 +    /// Adds what `parent`'s content keeps from breaks, and the margins between its blocks, to
 +    /// `found`: `parent`'s border box starts at strip position `top`. `container_content_top`:
 +    /// `parent` is the container, its content box's top at that (its own layout is written by its
@@ -17731,8 +17751,17 @@ new file mode 100644
 +                (text.orphans.0.max(1) as usize, text.widows.0.max(1) as usize)
 +            });
 +            let n = lines.len();
-+            found.strict.push((lines[0].0, lines[orphans.min(n) - 1].1));
-+            found.strict.push((lines[n - widows.min(n)].0, lines[n - 1].1));
++            // The anonymous blocks around an inline split by block-level content hold lines of one
++            // inline formatting context with the block between them, a line of it too (Chromium's
++            // block-in-inline): orphans and widows count across them (WPT css-position
++            // `position-absolute-in-inline-007b`, `-008b`).
++            let (after_split, before_split) = self.split_inline_neighbours(parent);
++            if !after_split {
++                found.strict.push((lines[0].0, lines[orphans.min(n) - 1].1));
++            }
++            if !before_split {
++                found.strict.push((lines[n - widows.min(n)].0, lines[n - 1].1));
++            }
 +            return;
 +        }
 +        let children = node.layout_children.borrow();
