@@ -14,6 +14,8 @@ webstorage/
 custom-elements/
 css/css-font-loading/
 css/css-typed-om/
+css/css-scroll-snap/
+css/css-shapes/
 html/semantics/embedded-content/the-object-element/
 intersection-observer/
 workers/

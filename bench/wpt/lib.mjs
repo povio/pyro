@@ -13,8 +13,9 @@ export const PAINT_DIRS = [
 // testharness pages run in wptrunner's 800x600 viewport. custom-elements: 190 pages (customized built-ins, lane F3a);
 // css/css-font-loading: 23 pages without wptserve (FontFace, document.fonts, lane F1); css/css-typed-om: 362 pages
 // (CSS Typed OM, lane F1); scroll-animations: scroll-driven animations (ScrollTimeline, ViewTimeline,
-// animation-timeline, lane F2).
-export const FEATURE_DIRS = ['custom-elements', 'css/css-font-loading', 'css/css-typed-om', 'html/semantics/embedded-content/the-object-element', 'intersection-observer', 'workers', 'scroll-animations'];
+// animation-timeline, lane F2); css/css-scroll-snap: 148 pages (snapped programmatic scrolls, lane F1); css/css-shapes:
+// 148 pages (shape-outside, lane F1).
+export const FEATURE_DIRS = ['custom-elements', 'css/css-font-loading', 'css/css-typed-om', 'html/semantics/embedded-content/the-object-element', 'intersection-observer', 'workers', 'scroll-animations', 'css/css-scroll-snap', 'css/css-shapes'];
 export const DEFAULT_DIRS = [
   'dom', 'html/dom', 'encoding', 'url', 'fetch/api/basic', 'xhr', 'css/selectors', 'uievents', 'shadow-dom', 'webstorage',
   ...PAINT_DIRS,
@@ -136,6 +137,8 @@ export const LAYOUT_DIRS = [
   'css/cssom', 'css/cssom-view', 'css/mediaqueries', 'css/css-syntax', 'css/css-shadow', 'css/css-transitions',
   'css/css-animations', 'css/css-properties-values-api', 'css/css-grid', 'css/css-text', 'css/css-fonts',
   'css/css-inline', 'css/css-borders',
+  // pyro: css-shapes (238 reftests; shape-outside, lane F1).
+  'css/css-shapes',
 ];
 // scroll-animations: scroll-driven animations' reftests (lane F2; 33 pages, 18 pass).
 export const REFTEST_DIRS = [...PAINT_DIRS, 'css/selectors', 'html/dom', 'shadow-dom', 'dom', 'encoding', ...LAYOUT_DIRS, 'scroll-animations'];
