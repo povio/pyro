@@ -1451,6 +1451,184 @@ pub fn animated_enumeration<'s>(
     s.wrap::<SvgAnimatedEnumeration>(AnimatedEnumData { el: NodeHold::new(&page, id)?, e }, Some(key))
 }
 
+// ----- SVGAnimatedString, SVGAnimatedNumber, SVGAnimatedInteger, SVGAnimatedBoolean -------------
+
+/// Which number of an attribute an animated number or integer reflects: the whole attribute, or the
+/// first or second of a pair (`stdDeviation`, `order`, `radius`, ...), the second defaulting to the
+/// first when the attribute gives one number.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum SvgPart {
+    Whole,
+    First,
+    Second,
+}
+
+/// An SVG element's string, number, integer or boolean attribute: the attribute names (the first
+/// present one is read and written; `href` falls back to `xlink:href`), which number of it, the
+/// value of an absent or unparseable attribute, and the identity slot of the wrapper.
+pub struct SvgAttr {
+    pub attrs: &'static [&'static str],
+    pub part: SvgPart,
+    pub initial: f64,
+    pub slot: u64,
+}
+
+pub struct AnimatedAttrData {
+    el: NodeHold,
+    a: &'static SvgAttr,
+}
+
+impl AnimatedAttrData {
+    fn text(&self) -> Option<String> {
+        let dom = self.el.page.dom.borrow();
+        self.a.attrs.iter().find_map(|name| dom.get_attribute(self.el.id, name).ok().flatten().map(|v| v.to_string()))
+    }
+    /// The attribute to write: the first present one, else the first name.
+    fn write_name(&self) -> &'static str {
+        let dom = self.el.page.dom.borrow();
+        self.a.attrs.iter().copied().find(|name| dom.has_attribute(self.el.id, name).unwrap_or(false)).unwrap_or(self.a.attrs[0])
+    }
+    fn set(&self, value: &str) -> JsResult<()> {
+        let name = self.write_name();
+        self.el.page.dom.borrow_mut().set_attribute(self.el.id, name, value).js()
+    }
+    /// The attribute's numbers (separated by whitespace and/or a comma); `None` when it does not parse
+    /// as one number (or, for a pair, one or two).
+    fn numbers(&self) -> Option<Vec<f64>> {
+        let text = self.text()?;
+        let parts: Vec<&str> =
+            text.split(|c: char| c.is_ascii_whitespace() || c == ',').filter(|p| !p.is_empty()).collect();
+        let max = if self.a.part == SvgPart::Whole { 1 } else { 2 };
+        if parts.is_empty() || parts.len() > max {
+            return None;
+        }
+        parts.iter().map(|p| svg_number(p)).collect()
+    }
+    fn number(&self) -> f64 {
+        self.number_as(self.a.part)
+    }
+    /// Writes `v` as this part, keeping the other number of a pair.
+    fn set_number(&self, v: f64) -> JsResult<()> {
+        let text = match self.a.part {
+            SvgPart::Whole => fmt_number(v),
+            SvgPart::First => format!("{} {}", fmt_number(v), fmt_number(self.number_as(SvgPart::Second))),
+            SvgPart::Second => format!("{} {}", fmt_number(self.number_as(SvgPart::First)), fmt_number(v)),
+        };
+        self.set(&text)
+    }
+    fn number_as(&self, part: SvgPart) -> f64 {
+        match (self.numbers(), part) {
+            (Some(n), SvgPart::Second) => n.get(1).copied().unwrap_or(n[0]),
+            (Some(n), _) => n[0],
+            (None, _) => self.a.initial,
+        }
+    }
+}
+
+/// An SVG `<number>`: a CSS number without units (`1e3`, `.5`, `-2`); `None` for anything else.
+fn svg_number(text: &str) -> Option<f64> {
+    if text.is_empty() || text.contains(|c: char| !(c.is_ascii_digit() || matches!(c, '.' | '-' | '+' | 'e' | 'E'))) {
+        return None;
+    }
+    text.parse::<f64>().ok().filter(|v| v.is_finite())
+}
+
+fn fmt_number(v: f64) -> String {
+    if v == v.trunc() && v.abs() < 1e15 {
+        format!("{}", v as i64)
+    } else {
+        format!("{v}")
+    }
+}
+
+fn finite_float(v: Value<'_>, what: &str) -> JsResult<f64> {
+    let n = v.to_number()? as f32 as f64;
+    if !n.is_finite() {
+        return Err(JsError::Type(format!("Failed to set the 'baseVal' property on '{what}': The provided float value is non-finite.").into()));
+    }
+    Ok(n)
+}
+
+/// `SVGAnimatedString`: `baseVal` reflects the attribute; `animVal` is `baseVal`, as nothing animates it.
+pub struct SvgAnimatedString;
+impl JsClass for SvgAnimatedString {
+    const NAME: &'static str = "SVGAnimatedString";
+    type Data = AnimatedAttrData;
+    type Parent = NoParent;
+    fn define(def: &mut ClassDef<Self>) {
+        def.accessor("baseVal", |s, t| Ok(s.string(&t.text().unwrap_or_default())), |_s, t, v| t.set(&dom_string(v)?));
+        def.getter("animVal", |s, t| Ok(s.string(&t.text().unwrap_or_default())));
+    }
+}
+
+/// `SVGAnimatedNumber`: `baseVal` is the attribute's number (its initial value when absent or
+/// invalid); setting it writes the number (a non-finite value throws a TypeError).
+pub struct SvgAnimatedNumber;
+impl JsClass for SvgAnimatedNumber {
+    const NAME: &'static str = "SVGAnimatedNumber";
+    type Data = AnimatedAttrData;
+    type Parent = NoParent;
+    fn define(def: &mut ClassDef<Self>) {
+        def.accessor(
+            "baseVal",
+            |s, t| Ok(s.number(t.number() as f32 as f64)),
+            |_s, t, v| t.set_number(finite_float(v, "SVGAnimatedNumber")?),
+        );
+        def.getter("animVal", |s, t| Ok(s.number(t.number() as f32 as f64)));
+    }
+}
+
+/// `SVGAnimatedInteger`: as `SVGAnimatedNumber`, with WebIDL `long` values (a non-integer attribute
+/// value is its initial value).
+pub struct SvgAnimatedInteger;
+impl JsClass for SvgAnimatedInteger {
+    const NAME: &'static str = "SVGAnimatedInteger";
+    type Data = AnimatedAttrData;
+    type Parent = NoParent;
+    fn define(def: &mut ClassDef<Self>) {
+        fn int(t: &AnimatedAttrData) -> f64 {
+            let n = t.number();
+            if n == n.trunc() { n } else { t.a.initial }
+        }
+        def.accessor("baseVal", |s, t| Ok(s.number(int(t))), |_s, t, v| t.set_number(to_i32(v)? as f64));
+        def.getter("animVal", |s, t| Ok(s.number(int(t))));
+    }
+}
+
+/// `SVGAnimatedBoolean`: the attribute is `true` (or `false`, the value of anything else).
+pub struct SvgAnimatedBoolean;
+impl JsClass for SvgAnimatedBoolean {
+    const NAME: &'static str = "SVGAnimatedBoolean";
+    type Data = AnimatedAttrData;
+    type Parent = NoParent;
+    fn define(def: &mut ClassDef<Self>) {
+        fn get(t: &AnimatedAttrData) -> bool {
+            t.text().is_some_and(|v| v.trim() == "true")
+        }
+        def.accessor(
+            "baseVal",
+            |s, t| Ok(s.boolean(get(t))),
+            |_s, t, v| t.set(if v.to_bool() { "true" } else { "false" }),
+        );
+        def.getter("animVal", |s, t| Ok(s.boolean(get(t))));
+    }
+}
+
+/// The element's animated value for `a`, of class `C`, the same object each time.
+pub fn animated_attr<'s, C: JsClass<Data = AnimatedAttrData>>(
+    s: &Scope<'s>,
+    page: &PageDom,
+    id: NodeId,
+    a: &'static SvgAttr,
+) -> JsResult<Object<'s>> {
+    let key = coll_identity(page, a.slot, id);
+    if let Some(o) = s.lookup_identity(key) {
+        return Ok(o);
+    }
+    let page = page_rc(s)?;
+    s.wrap::<C>(AnimatedAttrData { el: NodeHold::new(&page, id)?, a }, Some(key))
+}
+
 // ----- SVGAnimatedTransformList ----------------------------------------------------
 
 /// One function of an SVG `transform` attribute: its `SVGTransform` type (1 matrix, 2 translate,
@@ -1615,6 +1793,10 @@ pub(crate) fn register(engine: &pyro_js::Engine) {
     engine.register::<SvgTransform>();
     engine.register::<SvgMatrix>();
     engine.register::<SvgAnimatedEnumeration>();
+    engine.register::<SvgAnimatedString>();
+    engine.register::<SvgAnimatedNumber>();
+    engine.register::<SvgAnimatedInteger>();
+    engine.register::<SvgAnimatedBoolean>();
     engine.register::<NodeList>();
     engine.register::<RadioNodeList>();
     engine.register::<HtmlCollection>();

@@ -710,6 +710,31 @@ pub enum ElClass {
     SvgRadialGradient,
     SvgFilter,
     SvgMarker,
+    SvgFeBlend,
+    SvgFeColorMatrix,
+    SvgFeComponentTransfer,
+    SvgFeFuncR,
+    SvgFeFuncG,
+    SvgFeFuncB,
+    SvgFeFuncA,
+    SvgFeComposite,
+    SvgFeConvolveMatrix,
+    SvgFeDiffuseLighting,
+    SvgFeDistantLight,
+    SvgFePointLight,
+    SvgFeSpotLight,
+    SvgFeDisplacementMap,
+    SvgFeDropShadow,
+    SvgFeFlood,
+    SvgFeGaussianBlur,
+    SvgFeImage,
+    SvgFeMerge,
+    SvgFeMergeNode,
+    SvgFeMorphology,
+    SvgFeOffset,
+    SvgFeSpecularLighting,
+    SvgFeTile,
+    SvgFeTurbulence,
     MathMl,
     Other,
 }
@@ -730,6 +755,31 @@ pub fn class_for(dom: &Dom, id: NodeId) -> ElClass {
             "radialGradient" => ElClass::SvgRadialGradient,
             "filter" => ElClass::SvgFilter,
             "marker" => ElClass::SvgMarker,
+            "feBlend" => ElClass::SvgFeBlend,
+            "feColorMatrix" => ElClass::SvgFeColorMatrix,
+            "feComponentTransfer" => ElClass::SvgFeComponentTransfer,
+            "feFuncR" => ElClass::SvgFeFuncR,
+            "feFuncG" => ElClass::SvgFeFuncG,
+            "feFuncB" => ElClass::SvgFeFuncB,
+            "feFuncA" => ElClass::SvgFeFuncA,
+            "feComposite" => ElClass::SvgFeComposite,
+            "feConvolveMatrix" => ElClass::SvgFeConvolveMatrix,
+            "feDiffuseLighting" => ElClass::SvgFeDiffuseLighting,
+            "feDistantLight" => ElClass::SvgFeDistantLight,
+            "fePointLight" => ElClass::SvgFePointLight,
+            "feSpotLight" => ElClass::SvgFeSpotLight,
+            "feDisplacementMap" => ElClass::SvgFeDisplacementMap,
+            "feDropShadow" => ElClass::SvgFeDropShadow,
+            "feFlood" => ElClass::SvgFeFlood,
+            "feGaussianBlur" => ElClass::SvgFeGaussianBlur,
+            "feImage" => ElClass::SvgFeImage,
+            "feMerge" => ElClass::SvgFeMerge,
+            "feMergeNode" => ElClass::SvgFeMergeNode,
+            "feMorphology" => ElClass::SvgFeMorphology,
+            "feOffset" => ElClass::SvgFeOffset,
+            "feSpecularLighting" => ElClass::SvgFeSpecularLighting,
+            "feTile" => ElClass::SvgFeTile,
+            "feTurbulence" => ElClass::SvgFeTurbulence,
             _ => ElClass::Svg,
         };
     }
@@ -909,6 +959,31 @@ pub fn wrap_element<'s>(s: &Scope<'s>, class: ElClass, d: NodeData, k: Option<Id
         SvgRadialGradient => s.wrap::<SvgRadialGradientElement>(d, k),
         SvgFilter => s.wrap::<SvgFilterElement>(d, k),
         SvgMarker => s.wrap::<SvgMarkerElement>(d, k),
+        SvgFeBlend => s.wrap::<SvgFeBlendElement>(d, k),
+        SvgFeColorMatrix => s.wrap::<SvgFeColorMatrixElement>(d, k),
+        SvgFeComponentTransfer => s.wrap::<SvgFeComponentTransferElement>(d, k),
+        SvgFeFuncR => s.wrap::<SvgFeFuncRElement>(d, k),
+        SvgFeFuncG => s.wrap::<SvgFeFuncGElement>(d, k),
+        SvgFeFuncB => s.wrap::<SvgFeFuncBElement>(d, k),
+        SvgFeFuncA => s.wrap::<SvgFeFuncAElement>(d, k),
+        SvgFeComposite => s.wrap::<SvgFeCompositeElement>(d, k),
+        SvgFeConvolveMatrix => s.wrap::<SvgFeConvolveMatrixElement>(d, k),
+        SvgFeDiffuseLighting => s.wrap::<SvgFeDiffuseLightingElement>(d, k),
+        SvgFeDistantLight => s.wrap::<SvgFeDistantLightElement>(d, k),
+        SvgFePointLight => s.wrap::<SvgFePointLightElement>(d, k),
+        SvgFeSpotLight => s.wrap::<SvgFeSpotLightElement>(d, k),
+        SvgFeDisplacementMap => s.wrap::<SvgFeDisplacementMapElement>(d, k),
+        SvgFeDropShadow => s.wrap::<SvgFeDropShadowElement>(d, k),
+        SvgFeFlood => s.wrap::<SvgFeFloodElement>(d, k),
+        SvgFeGaussianBlur => s.wrap::<SvgFeGaussianBlurElement>(d, k),
+        SvgFeImage => s.wrap::<SvgFeImageElement>(d, k),
+        SvgFeMerge => s.wrap::<SvgFeMergeElement>(d, k),
+        SvgFeMergeNode => s.wrap::<SvgFeMergeNodeElement>(d, k),
+        SvgFeMorphology => s.wrap::<SvgFeMorphologyElement>(d, k),
+        SvgFeOffset => s.wrap::<SvgFeOffsetElement>(d, k),
+        SvgFeSpecularLighting => s.wrap::<SvgFeSpecularLightingElement>(d, k),
+        SvgFeTile => s.wrap::<SvgFeTileElement>(d, k),
+        SvgFeTurbulence => s.wrap::<SvgFeTurbulenceElement>(d, k),
         MathMl => s.wrap::<MathMlElement>(d, k),
         Other => s.wrap::<Element>(d, k),
     }
@@ -1000,6 +1075,31 @@ pub fn interface_name(class: ElClass) -> &'static str {
         SvgRadialGradient => SvgRadialGradientElement::NAME,
         SvgFilter => SvgFilterElement::NAME,
         SvgMarker => SvgMarkerElement::NAME,
+        SvgFeBlend => SvgFeBlendElement::NAME,
+        SvgFeColorMatrix => SvgFeColorMatrixElement::NAME,
+        SvgFeComponentTransfer => SvgFeComponentTransferElement::NAME,
+        SvgFeFuncR => SvgFeFuncRElement::NAME,
+        SvgFeFuncG => SvgFeFuncGElement::NAME,
+        SvgFeFuncB => SvgFeFuncBElement::NAME,
+        SvgFeFuncA => SvgFeFuncAElement::NAME,
+        SvgFeComposite => SvgFeCompositeElement::NAME,
+        SvgFeConvolveMatrix => SvgFeConvolveMatrixElement::NAME,
+        SvgFeDiffuseLighting => SvgFeDiffuseLightingElement::NAME,
+        SvgFeDistantLight => SvgFeDistantLightElement::NAME,
+        SvgFePointLight => SvgFePointLightElement::NAME,
+        SvgFeSpotLight => SvgFeSpotLightElement::NAME,
+        SvgFeDisplacementMap => SvgFeDisplacementMapElement::NAME,
+        SvgFeDropShadow => SvgFeDropShadowElement::NAME,
+        SvgFeFlood => SvgFeFloodElement::NAME,
+        SvgFeGaussianBlur => SvgFeGaussianBlurElement::NAME,
+        SvgFeImage => SvgFeImageElement::NAME,
+        SvgFeMerge => SvgFeMergeElement::NAME,
+        SvgFeMergeNode => SvgFeMergeNodeElement::NAME,
+        SvgFeMorphology => SvgFeMorphologyElement::NAME,
+        SvgFeOffset => SvgFeOffsetElement::NAME,
+        SvgFeSpecularLighting => SvgFeSpecularLightingElement::NAME,
+        SvgFeTile => SvgFeTileElement::NAME,
+        SvgFeTurbulence => SvgFeTurbulenceElement::NAME,
         MathMl => MathMlElement::NAME,
         Other => Element::NAME,
     }
@@ -1108,6 +1208,31 @@ pub(crate) fn wrap_new_html_element<'s>(
         SvgRadialGradient => crate::node::wrap_new_node::<SvgRadialGradientElement>(s, page, el, new_target),
         SvgFilter => crate::node::wrap_new_node::<SvgFilterElement>(s, page, el, new_target),
         SvgMarker => crate::node::wrap_new_node::<SvgMarkerElement>(s, page, el, new_target),
+        SvgFeBlend => crate::node::wrap_new_node::<SvgFeBlendElement>(s, page, el, new_target),
+        SvgFeColorMatrix => crate::node::wrap_new_node::<SvgFeColorMatrixElement>(s, page, el, new_target),
+        SvgFeComponentTransfer => crate::node::wrap_new_node::<SvgFeComponentTransferElement>(s, page, el, new_target),
+        SvgFeFuncR => crate::node::wrap_new_node::<SvgFeFuncRElement>(s, page, el, new_target),
+        SvgFeFuncG => crate::node::wrap_new_node::<SvgFeFuncGElement>(s, page, el, new_target),
+        SvgFeFuncB => crate::node::wrap_new_node::<SvgFeFuncBElement>(s, page, el, new_target),
+        SvgFeFuncA => crate::node::wrap_new_node::<SvgFeFuncAElement>(s, page, el, new_target),
+        SvgFeComposite => crate::node::wrap_new_node::<SvgFeCompositeElement>(s, page, el, new_target),
+        SvgFeConvolveMatrix => crate::node::wrap_new_node::<SvgFeConvolveMatrixElement>(s, page, el, new_target),
+        SvgFeDiffuseLighting => crate::node::wrap_new_node::<SvgFeDiffuseLightingElement>(s, page, el, new_target),
+        SvgFeDistantLight => crate::node::wrap_new_node::<SvgFeDistantLightElement>(s, page, el, new_target),
+        SvgFePointLight => crate::node::wrap_new_node::<SvgFePointLightElement>(s, page, el, new_target),
+        SvgFeSpotLight => crate::node::wrap_new_node::<SvgFeSpotLightElement>(s, page, el, new_target),
+        SvgFeDisplacementMap => crate::node::wrap_new_node::<SvgFeDisplacementMapElement>(s, page, el, new_target),
+        SvgFeDropShadow => crate::node::wrap_new_node::<SvgFeDropShadowElement>(s, page, el, new_target),
+        SvgFeFlood => crate::node::wrap_new_node::<SvgFeFloodElement>(s, page, el, new_target),
+        SvgFeGaussianBlur => crate::node::wrap_new_node::<SvgFeGaussianBlurElement>(s, page, el, new_target),
+        SvgFeImage => crate::node::wrap_new_node::<SvgFeImageElement>(s, page, el, new_target),
+        SvgFeMerge => crate::node::wrap_new_node::<SvgFeMergeElement>(s, page, el, new_target),
+        SvgFeMergeNode => crate::node::wrap_new_node::<SvgFeMergeNodeElement>(s, page, el, new_target),
+        SvgFeMorphology => crate::node::wrap_new_node::<SvgFeMorphologyElement>(s, page, el, new_target),
+        SvgFeOffset => crate::node::wrap_new_node::<SvgFeOffsetElement>(s, page, el, new_target),
+        SvgFeSpecularLighting => crate::node::wrap_new_node::<SvgFeSpecularLightingElement>(s, page, el, new_target),
+        SvgFeTile => crate::node::wrap_new_node::<SvgFeTileElement>(s, page, el, new_target),
+        SvgFeTurbulence => crate::node::wrap_new_node::<SvgFeTurbulenceElement>(s, page, el, new_target),
         MathMl => crate::node::wrap_new_node::<MathMlElement>(s, page, el, new_target),
         Other => crate::node::wrap_new_node::<Element>(s, page, el, new_target),
     }
@@ -3307,6 +3432,309 @@ simple_class!(SvgMarkerElement, "SVGMarkerElement", SvgElement, |def| {
     svg_enum!(def, "markerUnits", MARKER_UNITS);
 });
 
+// SVG filter primitives (Filter Effects 1): their attributes as SVGAnimatedEnumeration, -String,
+// -Number, -Integer and -Boolean values (`collections`), following the specification's IDL.
+// Not implemented yet: `x`/`y`/`width`/`height` (SVGAnimatedLength), the number lists
+// (`values`, `tableValues`, `kernelMatrix`) and feImage's `preserveAspectRatio`.
+static FE_BLEND_MODE: collections::SvgEnum =
+    collections::SvgEnum { attr: "mode", keywords: &["normal", "multiply", "screen", "darken", "lighten", "overlay", "color-dodge", "color-burn", "hard-light", "soft-light", "difference", "exclusion", "hue", "saturation", "color", "luminosity"], initial: 1, slot: 40 };
+static FE_COLOR_MATRIX_TYPE: collections::SvgEnum =
+    collections::SvgEnum { attr: "type", keywords: &["matrix", "saturate", "hueRotate", "luminanceToAlpha"], initial: 1, slot: 41 };
+static FE_TRANSFER_TYPE: collections::SvgEnum =
+    collections::SvgEnum { attr: "type", keywords: &["identity", "table", "discrete", "linear", "gamma"], initial: 1, slot: 42 };
+static FE_COMPOSITE_OPERATOR: collections::SvgEnum =
+    collections::SvgEnum { attr: "operator", keywords: &["over", "in", "out", "atop", "xor", "arithmetic"], initial: 1, slot: 43 };
+static FE_CONVOLVE_EDGE_MODE: collections::SvgEnum =
+    collections::SvgEnum { attr: "edgeMode", keywords: &["duplicate", "wrap", "none"], initial: 1, slot: 44 };
+static FE_BLUR_EDGE_MODE: collections::SvgEnum =
+    collections::SvgEnum { attr: "edgeMode", keywords: &["duplicate", "wrap", "none"], initial: 3, slot: 45 };
+static FE_X_CHANNEL: collections::SvgEnum =
+    collections::SvgEnum { attr: "xChannelSelector", keywords: &["R", "G", "B", "A"], initial: 4, slot: 46 };
+static FE_Y_CHANNEL: collections::SvgEnum =
+    collections::SvgEnum { attr: "yChannelSelector", keywords: &["R", "G", "B", "A"], initial: 4, slot: 47 };
+static FE_MORPHOLOGY_OPERATOR: collections::SvgEnum =
+    collections::SvgEnum { attr: "operator", keywords: &["erode", "dilate"], initial: 1, slot: 48 };
+static FE_TURBULENCE_TYPE: collections::SvgEnum =
+    collections::SvgEnum { attr: "type", keywords: &["fractalNoise", "turbulence"], initial: 2, slot: 49 };
+static FE_STITCH_TILES: collections::SvgEnum =
+    collections::SvgEnum { attr: "stitchTiles", keywords: &["stitch", "noStitch"], initial: 2, slot: 50 };
+static FE_ATTR_100: collections::SvgAttr = collections::SvgAttr { attrs: &["in"], part: collections::SvgPart::Whole, initial: 0.0, slot: 100 };
+static FE_ATTR_101: collections::SvgAttr = collections::SvgAttr { attrs: &["in2"], part: collections::SvgPart::Whole, initial: 0.0, slot: 101 };
+static FE_ATTR_102: collections::SvgAttr = collections::SvgAttr { attrs: &["result"], part: collections::SvgPart::Whole, initial: 0.0, slot: 102 };
+static FE_ATTR_103: collections::SvgAttr = collections::SvgAttr { attrs: &["slope"], part: collections::SvgPart::Whole, initial: 1.0, slot: 103 };
+static FE_ATTR_104: collections::SvgAttr = collections::SvgAttr { attrs: &["intercept"], part: collections::SvgPart::Whole, initial: 0.0, slot: 104 };
+static FE_ATTR_105: collections::SvgAttr = collections::SvgAttr { attrs: &["amplitude"], part: collections::SvgPart::Whole, initial: 1.0, slot: 105 };
+static FE_ATTR_106: collections::SvgAttr = collections::SvgAttr { attrs: &["exponent"], part: collections::SvgPart::Whole, initial: 1.0, slot: 106 };
+static FE_ATTR_107: collections::SvgAttr = collections::SvgAttr { attrs: &["offset"], part: collections::SvgPart::Whole, initial: 0.0, slot: 107 };
+static FE_ATTR_108: collections::SvgAttr = collections::SvgAttr { attrs: &["k1"], part: collections::SvgPart::Whole, initial: 0.0, slot: 108 };
+static FE_ATTR_109: collections::SvgAttr = collections::SvgAttr { attrs: &["k2"], part: collections::SvgPart::Whole, initial: 0.0, slot: 109 };
+static FE_ATTR_110: collections::SvgAttr = collections::SvgAttr { attrs: &["k3"], part: collections::SvgPart::Whole, initial: 0.0, slot: 110 };
+static FE_ATTR_111: collections::SvgAttr = collections::SvgAttr { attrs: &["k4"], part: collections::SvgPart::Whole, initial: 0.0, slot: 111 };
+static FE_ATTR_112: collections::SvgAttr = collections::SvgAttr { attrs: &["order"], part: collections::SvgPart::First, initial: 3.0, slot: 112 };
+static FE_ATTR_113: collections::SvgAttr = collections::SvgAttr { attrs: &["order"], part: collections::SvgPart::Second, initial: 3.0, slot: 113 };
+static FE_ATTR_114: collections::SvgAttr = collections::SvgAttr { attrs: &["divisor"], part: collections::SvgPart::Whole, initial: 1.0, slot: 114 };
+static FE_ATTR_115: collections::SvgAttr = collections::SvgAttr { attrs: &["bias"], part: collections::SvgPart::Whole, initial: 0.0, slot: 115 };
+static FE_ATTR_116: collections::SvgAttr = collections::SvgAttr { attrs: &["targetX"], part: collections::SvgPart::Whole, initial: 0.0, slot: 116 };
+static FE_ATTR_117: collections::SvgAttr = collections::SvgAttr { attrs: &["targetY"], part: collections::SvgPart::Whole, initial: 0.0, slot: 117 };
+static FE_ATTR_118: collections::SvgAttr = collections::SvgAttr { attrs: &["kernelUnitLength"], part: collections::SvgPart::First, initial: 0.0, slot: 118 };
+static FE_ATTR_119: collections::SvgAttr = collections::SvgAttr { attrs: &["kernelUnitLength"], part: collections::SvgPart::Second, initial: 0.0, slot: 119 };
+static FE_ATTR_120: collections::SvgAttr = collections::SvgAttr { attrs: &["preserveAlpha"], part: collections::SvgPart::Whole, initial: 0.0, slot: 120 };
+static FE_ATTR_121: collections::SvgAttr = collections::SvgAttr { attrs: &["surfaceScale"], part: collections::SvgPart::Whole, initial: 1.0, slot: 121 };
+static FE_ATTR_122: collections::SvgAttr = collections::SvgAttr { attrs: &["diffuseConstant"], part: collections::SvgPart::Whole, initial: 1.0, slot: 122 };
+static FE_ATTR_123: collections::SvgAttr = collections::SvgAttr { attrs: &["azimuth"], part: collections::SvgPart::Whole, initial: 0.0, slot: 123 };
+static FE_ATTR_124: collections::SvgAttr = collections::SvgAttr { attrs: &["elevation"], part: collections::SvgPart::Whole, initial: 0.0, slot: 124 };
+static FE_ATTR_125: collections::SvgAttr = collections::SvgAttr { attrs: &["x"], part: collections::SvgPart::Whole, initial: 0.0, slot: 125 };
+static FE_ATTR_126: collections::SvgAttr = collections::SvgAttr { attrs: &["y"], part: collections::SvgPart::Whole, initial: 0.0, slot: 126 };
+static FE_ATTR_127: collections::SvgAttr = collections::SvgAttr { attrs: &["z"], part: collections::SvgPart::Whole, initial: 0.0, slot: 127 };
+static FE_ATTR_128: collections::SvgAttr = collections::SvgAttr { attrs: &["pointsAtX"], part: collections::SvgPart::Whole, initial: 0.0, slot: 128 };
+static FE_ATTR_129: collections::SvgAttr = collections::SvgAttr { attrs: &["pointsAtY"], part: collections::SvgPart::Whole, initial: 0.0, slot: 129 };
+static FE_ATTR_130: collections::SvgAttr = collections::SvgAttr { attrs: &["pointsAtZ"], part: collections::SvgPart::Whole, initial: 0.0, slot: 130 };
+static FE_ATTR_131: collections::SvgAttr = collections::SvgAttr { attrs: &["specularExponent"], part: collections::SvgPart::Whole, initial: 1.0, slot: 131 };
+static FE_ATTR_132: collections::SvgAttr = collections::SvgAttr { attrs: &["limitingConeAngle"], part: collections::SvgPart::Whole, initial: 0.0, slot: 132 };
+static FE_ATTR_133: collections::SvgAttr = collections::SvgAttr { attrs: &["scale"], part: collections::SvgPart::Whole, initial: 0.0, slot: 133 };
+static FE_ATTR_134: collections::SvgAttr = collections::SvgAttr { attrs: &["dx"], part: collections::SvgPart::Whole, initial: 2.0, slot: 134 };
+static FE_ATTR_135: collections::SvgAttr = collections::SvgAttr { attrs: &["dy"], part: collections::SvgPart::Whole, initial: 2.0, slot: 135 };
+static FE_ATTR_136: collections::SvgAttr = collections::SvgAttr { attrs: &["stdDeviation"], part: collections::SvgPart::First, initial: 2.0, slot: 136 };
+static FE_ATTR_137: collections::SvgAttr = collections::SvgAttr { attrs: &["stdDeviation"], part: collections::SvgPart::Second, initial: 2.0, slot: 137 };
+static FE_ATTR_138: collections::SvgAttr = collections::SvgAttr { attrs: &["stdDeviation"], part: collections::SvgPart::First, initial: 0.0, slot: 138 };
+static FE_ATTR_139: collections::SvgAttr = collections::SvgAttr { attrs: &["stdDeviation"], part: collections::SvgPart::Second, initial: 0.0, slot: 139 };
+static FE_ATTR_140: collections::SvgAttr = collections::SvgAttr { attrs: &["crossorigin"], part: collections::SvgPart::Whole, initial: 0.0, slot: 140 };
+static FE_ATTR_141: collections::SvgAttr = collections::SvgAttr { attrs: &["href", "xlink:href"], part: collections::SvgPart::Whole, initial: 0.0, slot: 141 };
+static FE_ATTR_142: collections::SvgAttr = collections::SvgAttr { attrs: &["radius"], part: collections::SvgPart::First, initial: 0.0, slot: 142 };
+static FE_ATTR_143: collections::SvgAttr = collections::SvgAttr { attrs: &["radius"], part: collections::SvgPart::Second, initial: 0.0, slot: 143 };
+static FE_ATTR_144: collections::SvgAttr = collections::SvgAttr { attrs: &["dx"], part: collections::SvgPart::Whole, initial: 0.0, slot: 144 };
+static FE_ATTR_145: collections::SvgAttr = collections::SvgAttr { attrs: &["dy"], part: collections::SvgPart::Whole, initial: 0.0, slot: 145 };
+static FE_ATTR_146: collections::SvgAttr = collections::SvgAttr { attrs: &["specularConstant"], part: collections::SvgPart::Whole, initial: 1.0, slot: 146 };
+static FE_ATTR_147: collections::SvgAttr = collections::SvgAttr { attrs: &["baseFrequency"], part: collections::SvgPart::First, initial: 0.0, slot: 147 };
+static FE_ATTR_148: collections::SvgAttr = collections::SvgAttr { attrs: &["baseFrequency"], part: collections::SvgPart::Second, initial: 0.0, slot: 148 };
+static FE_ATTR_149: collections::SvgAttr = collections::SvgAttr { attrs: &["numOctaves"], part: collections::SvgPart::Whole, initial: 1.0, slot: 149 };
+static FE_ATTR_150: collections::SvgAttr = collections::SvgAttr { attrs: &["seed"], part: collections::SvgPart::Whole, initial: 0.0, slot: 150 };
+simple_class!(SvgFeBlendElement, "SVGFEBlendElement", SvgElement, |def| {
+    def.constant("SVG_FEBLEND_MODE_UNKNOWN", 0.0);
+    def.constant("SVG_FEBLEND_MODE_NORMAL", 1.0);
+    def.constant("SVG_FEBLEND_MODE_MULTIPLY", 2.0);
+    def.constant("SVG_FEBLEND_MODE_SCREEN", 3.0);
+    def.constant("SVG_FEBLEND_MODE_DARKEN", 4.0);
+    def.constant("SVG_FEBLEND_MODE_LIGHTEN", 5.0);
+    def.constant("SVG_FEBLEND_MODE_OVERLAY", 6.0);
+    def.constant("SVG_FEBLEND_MODE_COLOR_DODGE", 7.0);
+    def.constant("SVG_FEBLEND_MODE_COLOR_BURN", 8.0);
+    def.constant("SVG_FEBLEND_MODE_HARD_LIGHT", 9.0);
+    def.constant("SVG_FEBLEND_MODE_SOFT_LIGHT", 10.0);
+    def.constant("SVG_FEBLEND_MODE_DIFFERENCE", 11.0);
+    def.constant("SVG_FEBLEND_MODE_EXCLUSION", 12.0);
+    def.constant("SVG_FEBLEND_MODE_HUE", 13.0);
+    def.constant("SVG_FEBLEND_MODE_SATURATION", 14.0);
+    def.constant("SVG_FEBLEND_MODE_COLOR", 15.0);
+    def.constant("SVG_FEBLEND_MODE_LUMINOSITY", 16.0);
+    def.getter("in1", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedString>(s, n.page(), n.id, &FE_ATTR_100)?.value()));
+    def.getter("in2", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedString>(s, n.page(), n.id, &FE_ATTR_101)?.value()));
+    svg_enum!(def, "mode", FE_BLEND_MODE);
+    def.getter("result", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedString>(s, n.page(), n.id, &FE_ATTR_102)?.value()));
+});
+simple_class!(SvgFeColorMatrixElement, "SVGFEColorMatrixElement", SvgElement, |def| {
+    def.constant("SVG_FECOLORMATRIX_TYPE_UNKNOWN", 0.0);
+    def.constant("SVG_FECOLORMATRIX_TYPE_MATRIX", 1.0);
+    def.constant("SVG_FECOLORMATRIX_TYPE_SATURATE", 2.0);
+    def.constant("SVG_FECOLORMATRIX_TYPE_HUEROTATE", 3.0);
+    def.constant("SVG_FECOLORMATRIX_TYPE_LUMINANCETOALPHA", 4.0);
+    def.getter("in1", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedString>(s, n.page(), n.id, &FE_ATTR_100)?.value()));
+    svg_enum!(def, "type", FE_COLOR_MATRIX_TYPE);
+    def.getter("result", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedString>(s, n.page(), n.id, &FE_ATTR_102)?.value()));
+});
+simple_class!(SvgFeComponentTransferElement, "SVGFEComponentTransferElement", SvgElement, |def| {
+    def.getter("in1", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedString>(s, n.page(), n.id, &FE_ATTR_100)?.value()));
+    def.getter("result", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedString>(s, n.page(), n.id, &FE_ATTR_102)?.value()));
+});
+simple_class!(SvgComponentTransferFunctionElement, "SVGComponentTransferFunctionElement", SvgElement, |def| {
+    def.constant("SVG_FECOMPONENTTRANSFER_TYPE_UNKNOWN", 0.0);
+    def.constant("SVG_FECOMPONENTTRANSFER_TYPE_IDENTITY", 1.0);
+    def.constant("SVG_FECOMPONENTTRANSFER_TYPE_TABLE", 2.0);
+    def.constant("SVG_FECOMPONENTTRANSFER_TYPE_DISCRETE", 3.0);
+    def.constant("SVG_FECOMPONENTTRANSFER_TYPE_LINEAR", 4.0);
+    def.constant("SVG_FECOMPONENTTRANSFER_TYPE_GAMMA", 5.0);
+    svg_enum!(def, "type", FE_TRANSFER_TYPE);
+    def.getter("slope", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedNumber>(s, n.page(), n.id, &FE_ATTR_103)?.value()));
+    def.getter("intercept", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedNumber>(s, n.page(), n.id, &FE_ATTR_104)?.value()));
+    def.getter("amplitude", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedNumber>(s, n.page(), n.id, &FE_ATTR_105)?.value()));
+    def.getter("exponent", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedNumber>(s, n.page(), n.id, &FE_ATTR_106)?.value()));
+    def.getter("offset", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedNumber>(s, n.page(), n.id, &FE_ATTR_107)?.value()));
+});
+simple_class!(SvgFeFuncRElement, "SVGFEFuncRElement", SvgComponentTransferFunctionElement);
+simple_class!(SvgFeFuncGElement, "SVGFEFuncGElement", SvgComponentTransferFunctionElement);
+simple_class!(SvgFeFuncBElement, "SVGFEFuncBElement", SvgComponentTransferFunctionElement);
+simple_class!(SvgFeFuncAElement, "SVGFEFuncAElement", SvgComponentTransferFunctionElement);
+simple_class!(SvgFeCompositeElement, "SVGFECompositeElement", SvgElement, |def| {
+    def.constant("SVG_FECOMPOSITE_OPERATOR_UNKNOWN", 0.0);
+    def.constant("SVG_FECOMPOSITE_OPERATOR_OVER", 1.0);
+    def.constant("SVG_FECOMPOSITE_OPERATOR_IN", 2.0);
+    def.constant("SVG_FECOMPOSITE_OPERATOR_OUT", 3.0);
+    def.constant("SVG_FECOMPOSITE_OPERATOR_ATOP", 4.0);
+    def.constant("SVG_FECOMPOSITE_OPERATOR_XOR", 5.0);
+    def.constant("SVG_FECOMPOSITE_OPERATOR_ARITHMETIC", 6.0);
+    def.getter("in1", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedString>(s, n.page(), n.id, &FE_ATTR_100)?.value()));
+    def.getter("in2", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedString>(s, n.page(), n.id, &FE_ATTR_101)?.value()));
+    svg_enum!(def, "operator", FE_COMPOSITE_OPERATOR);
+    def.getter("k1", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedNumber>(s, n.page(), n.id, &FE_ATTR_108)?.value()));
+    def.getter("k2", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedNumber>(s, n.page(), n.id, &FE_ATTR_109)?.value()));
+    def.getter("k3", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedNumber>(s, n.page(), n.id, &FE_ATTR_110)?.value()));
+    def.getter("k4", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedNumber>(s, n.page(), n.id, &FE_ATTR_111)?.value()));
+    def.getter("result", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedString>(s, n.page(), n.id, &FE_ATTR_102)?.value()));
+});
+simple_class!(SvgFeConvolveMatrixElement, "SVGFEConvolveMatrixElement", SvgElement, |def| {
+    def.constant("SVG_EDGEMODE_UNKNOWN", 0.0);
+    def.constant("SVG_EDGEMODE_DUPLICATE", 1.0);
+    def.constant("SVG_EDGEMODE_WRAP", 2.0);
+    def.constant("SVG_EDGEMODE_NONE", 3.0);
+    def.getter("in1", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedString>(s, n.page(), n.id, &FE_ATTR_100)?.value()));
+    def.getter("orderX", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedInteger>(s, n.page(), n.id, &FE_ATTR_112)?.value()));
+    def.getter("orderY", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedInteger>(s, n.page(), n.id, &FE_ATTR_113)?.value()));
+    def.getter("divisor", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedNumber>(s, n.page(), n.id, &FE_ATTR_114)?.value()));
+    def.getter("bias", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedNumber>(s, n.page(), n.id, &FE_ATTR_115)?.value()));
+    def.getter("targetX", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedInteger>(s, n.page(), n.id, &FE_ATTR_116)?.value()));
+    def.getter("targetY", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedInteger>(s, n.page(), n.id, &FE_ATTR_117)?.value()));
+    svg_enum!(def, "edgeMode", FE_CONVOLVE_EDGE_MODE);
+    def.getter("kernelUnitLengthX", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedNumber>(s, n.page(), n.id, &FE_ATTR_118)?.value()));
+    def.getter("kernelUnitLengthY", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedNumber>(s, n.page(), n.id, &FE_ATTR_119)?.value()));
+    def.getter("preserveAlpha", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedBoolean>(s, n.page(), n.id, &FE_ATTR_120)?.value()));
+    def.getter("result", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedString>(s, n.page(), n.id, &FE_ATTR_102)?.value()));
+});
+simple_class!(SvgFeDiffuseLightingElement, "SVGFEDiffuseLightingElement", SvgElement, |def| {
+    def.getter("in1", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedString>(s, n.page(), n.id, &FE_ATTR_100)?.value()));
+    def.getter("surfaceScale", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedNumber>(s, n.page(), n.id, &FE_ATTR_121)?.value()));
+    def.getter("diffuseConstant", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedNumber>(s, n.page(), n.id, &FE_ATTR_122)?.value()));
+    def.getter("kernelUnitLengthX", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedNumber>(s, n.page(), n.id, &FE_ATTR_118)?.value()));
+    def.getter("kernelUnitLengthY", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedNumber>(s, n.page(), n.id, &FE_ATTR_119)?.value()));
+    def.getter("result", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedString>(s, n.page(), n.id, &FE_ATTR_102)?.value()));
+});
+simple_class!(SvgFeDistantLightElement, "SVGFEDistantLightElement", SvgElement, |def| {
+    def.getter("azimuth", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedNumber>(s, n.page(), n.id, &FE_ATTR_123)?.value()));
+    def.getter("elevation", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedNumber>(s, n.page(), n.id, &FE_ATTR_124)?.value()));
+});
+simple_class!(SvgFePointLightElement, "SVGFEPointLightElement", SvgElement, |def| {
+    def.getter("x", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedNumber>(s, n.page(), n.id, &FE_ATTR_125)?.value()));
+    def.getter("y", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedNumber>(s, n.page(), n.id, &FE_ATTR_126)?.value()));
+    def.getter("z", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedNumber>(s, n.page(), n.id, &FE_ATTR_127)?.value()));
+});
+simple_class!(SvgFeSpotLightElement, "SVGFESpotLightElement", SvgElement, |def| {
+    def.getter("x", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedNumber>(s, n.page(), n.id, &FE_ATTR_125)?.value()));
+    def.getter("y", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedNumber>(s, n.page(), n.id, &FE_ATTR_126)?.value()));
+    def.getter("z", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedNumber>(s, n.page(), n.id, &FE_ATTR_127)?.value()));
+    def.getter("pointsAtX", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedNumber>(s, n.page(), n.id, &FE_ATTR_128)?.value()));
+    def.getter("pointsAtY", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedNumber>(s, n.page(), n.id, &FE_ATTR_129)?.value()));
+    def.getter("pointsAtZ", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedNumber>(s, n.page(), n.id, &FE_ATTR_130)?.value()));
+    def.getter("specularExponent", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedNumber>(s, n.page(), n.id, &FE_ATTR_131)?.value()));
+    def.getter("limitingConeAngle", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedNumber>(s, n.page(), n.id, &FE_ATTR_132)?.value()));
+});
+simple_class!(SvgFeDisplacementMapElement, "SVGFEDisplacementMapElement", SvgElement, |def| {
+    def.constant("SVG_CHANNEL_UNKNOWN", 0.0);
+    def.constant("SVG_CHANNEL_R", 1.0);
+    def.constant("SVG_CHANNEL_G", 2.0);
+    def.constant("SVG_CHANNEL_B", 3.0);
+    def.constant("SVG_CHANNEL_A", 4.0);
+    def.getter("in1", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedString>(s, n.page(), n.id, &FE_ATTR_100)?.value()));
+    def.getter("in2", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedString>(s, n.page(), n.id, &FE_ATTR_101)?.value()));
+    def.getter("scale", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedNumber>(s, n.page(), n.id, &FE_ATTR_133)?.value()));
+    svg_enum!(def, "xChannelSelector", FE_X_CHANNEL);
+    svg_enum!(def, "yChannelSelector", FE_Y_CHANNEL);
+    def.getter("result", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedString>(s, n.page(), n.id, &FE_ATTR_102)?.value()));
+});
+simple_class!(SvgFeDropShadowElement, "SVGFEDropShadowElement", SvgElement, |def| {
+    def.getter("in1", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedString>(s, n.page(), n.id, &FE_ATTR_100)?.value()));
+    def.getter("dx", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedNumber>(s, n.page(), n.id, &FE_ATTR_134)?.value()));
+    def.getter("dy", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedNumber>(s, n.page(), n.id, &FE_ATTR_135)?.value()));
+    def.getter("stdDeviationX", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedNumber>(s, n.page(), n.id, &FE_ATTR_136)?.value()));
+    def.getter("stdDeviationY", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedNumber>(s, n.page(), n.id, &FE_ATTR_137)?.value()));
+    def.getter("result", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedString>(s, n.page(), n.id, &FE_ATTR_102)?.value()));
+    def.method("setStdDeviation", 2, |s, n, a| {
+        a.require(2, "setStdDeviation")?;
+        let (x, y) = (a.get(0).to_number()? as f32, a.get(1).to_number()? as f32);
+        if !x.is_finite() || !y.is_finite() {
+            return Err(JsError::Type("Failed to execute 'setStdDeviation': The provided float value is non-finite.".into()));
+        }
+        n.page().dom.borrow_mut().set_attribute(n.id, "stdDeviation", &format!("{x} {y}")).js()?;
+        Ok(s.undefined())
+    });
+});
+simple_class!(SvgFeFloodElement, "SVGFEFloodElement", SvgElement, |def| {
+    def.getter("result", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedString>(s, n.page(), n.id, &FE_ATTR_102)?.value()));
+});
+simple_class!(SvgFeGaussianBlurElement, "SVGFEGaussianBlurElement", SvgElement, |def| {
+    def.constant("SVG_EDGEMODE_UNKNOWN", 0.0);
+    def.constant("SVG_EDGEMODE_DUPLICATE", 1.0);
+    def.constant("SVG_EDGEMODE_WRAP", 2.0);
+    def.constant("SVG_EDGEMODE_NONE", 3.0);
+    def.getter("in1", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedString>(s, n.page(), n.id, &FE_ATTR_100)?.value()));
+    def.getter("stdDeviationX", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedNumber>(s, n.page(), n.id, &FE_ATTR_138)?.value()));
+    def.getter("stdDeviationY", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedNumber>(s, n.page(), n.id, &FE_ATTR_139)?.value()));
+    svg_enum!(def, "edgeMode", FE_BLUR_EDGE_MODE);
+    def.getter("result", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedString>(s, n.page(), n.id, &FE_ATTR_102)?.value()));
+    def.method("setStdDeviation", 2, |s, n, a| {
+        a.require(2, "setStdDeviation")?;
+        let (x, y) = (a.get(0).to_number()? as f32, a.get(1).to_number()? as f32);
+        if !x.is_finite() || !y.is_finite() {
+            return Err(JsError::Type("Failed to execute 'setStdDeviation': The provided float value is non-finite.".into()));
+        }
+        n.page().dom.borrow_mut().set_attribute(n.id, "stdDeviation", &format!("{x} {y}")).js()?;
+        Ok(s.undefined())
+    });
+});
+simple_class!(SvgFeImageElement, "SVGFEImageElement", SvgElement, |def| {
+    def.getter("crossOrigin", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedString>(s, n.page(), n.id, &FE_ATTR_140)?.value()));
+    def.getter("href", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedString>(s, n.page(), n.id, &FE_ATTR_141)?.value()));
+    def.getter("result", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedString>(s, n.page(), n.id, &FE_ATTR_102)?.value()));
+});
+simple_class!(SvgFeMergeElement, "SVGFEMergeElement", SvgElement, |def| {
+    def.getter("result", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedString>(s, n.page(), n.id, &FE_ATTR_102)?.value()));
+});
+simple_class!(SvgFeMergeNodeElement, "SVGFEMergeNodeElement", SvgElement, |def| {
+    def.getter("in1", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedString>(s, n.page(), n.id, &FE_ATTR_100)?.value()));
+});
+simple_class!(SvgFeMorphologyElement, "SVGFEMorphologyElement", SvgElement, |def| {
+    def.constant("SVG_MORPHOLOGY_OPERATOR_UNKNOWN", 0.0);
+    def.constant("SVG_MORPHOLOGY_OPERATOR_ERODE", 1.0);
+    def.constant("SVG_MORPHOLOGY_OPERATOR_DILATE", 2.0);
+    def.getter("in1", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedString>(s, n.page(), n.id, &FE_ATTR_100)?.value()));
+    svg_enum!(def, "operator", FE_MORPHOLOGY_OPERATOR);
+    def.getter("radiusX", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedNumber>(s, n.page(), n.id, &FE_ATTR_142)?.value()));
+    def.getter("radiusY", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedNumber>(s, n.page(), n.id, &FE_ATTR_143)?.value()));
+    def.getter("result", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedString>(s, n.page(), n.id, &FE_ATTR_102)?.value()));
+});
+simple_class!(SvgFeOffsetElement, "SVGFEOffsetElement", SvgElement, |def| {
+    def.getter("in1", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedString>(s, n.page(), n.id, &FE_ATTR_100)?.value()));
+    def.getter("dx", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedNumber>(s, n.page(), n.id, &FE_ATTR_144)?.value()));
+    def.getter("dy", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedNumber>(s, n.page(), n.id, &FE_ATTR_145)?.value()));
+    def.getter("result", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedString>(s, n.page(), n.id, &FE_ATTR_102)?.value()));
+});
+simple_class!(SvgFeSpecularLightingElement, "SVGFESpecularLightingElement", SvgElement, |def| {
+    def.getter("in1", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedString>(s, n.page(), n.id, &FE_ATTR_100)?.value()));
+    def.getter("surfaceScale", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedNumber>(s, n.page(), n.id, &FE_ATTR_121)?.value()));
+    def.getter("specularConstant", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedNumber>(s, n.page(), n.id, &FE_ATTR_146)?.value()));
+    def.getter("specularExponent", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedNumber>(s, n.page(), n.id, &FE_ATTR_131)?.value()));
+    def.getter("kernelUnitLengthX", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedNumber>(s, n.page(), n.id, &FE_ATTR_118)?.value()));
+    def.getter("kernelUnitLengthY", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedNumber>(s, n.page(), n.id, &FE_ATTR_119)?.value()));
+    def.getter("result", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedString>(s, n.page(), n.id, &FE_ATTR_102)?.value()));
+});
+simple_class!(SvgFeTileElement, "SVGFETileElement", SvgElement, |def| {
+    def.getter("in1", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedString>(s, n.page(), n.id, &FE_ATTR_100)?.value()));
+    def.getter("result", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedString>(s, n.page(), n.id, &FE_ATTR_102)?.value()));
+});
+simple_class!(SvgFeTurbulenceElement, "SVGFETurbulenceElement", SvgElement, |def| {
+    def.constant("SVG_TURBULENCE_TYPE_UNKNOWN", 0.0);
+    def.constant("SVG_TURBULENCE_TYPE_FRACTALNOISE", 1.0);
+    def.constant("SVG_TURBULENCE_TYPE_TURBULENCE", 2.0);
+    def.constant("SVG_STITCHTYPE_UNKNOWN", 0.0);
+    def.constant("SVG_STITCHTYPE_STITCH", 1.0);
+    def.constant("SVG_STITCHTYPE_NOSTITCH", 2.0);
+    def.getter("baseFrequencyX", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedNumber>(s, n.page(), n.id, &FE_ATTR_147)?.value()));
+    def.getter("baseFrequencyY", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedNumber>(s, n.page(), n.id, &FE_ATTR_148)?.value()));
+    def.getter("numOctaves", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedInteger>(s, n.page(), n.id, &FE_ATTR_149)?.value()));
+    def.getter("seed", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedNumber>(s, n.page(), n.id, &FE_ATTR_150)?.value()));
+    svg_enum!(def, "stitchTiles", FE_STITCH_TILES);
+    svg_enum!(def, "type", FE_TURBULENCE_TYPE);
+    def.getter("result", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedString>(s, n.page(), n.id, &FE_ATTR_102)?.value()));
+});
+
 // SVG 2 `a`: the link attributes it shares with HTML's.
 simple_class!(SvgAElement, "SVGAElement", SvgGraphicsElement, |def| {
     reflect_str!(def, "rel", "rel");
@@ -3869,6 +4297,32 @@ pub(crate) fn register(engine: &pyro_js::Engine) {
     engine.register::<SvgRadialGradientElement>();
     engine.register::<SvgFilterElement>();
     engine.register::<SvgMarkerElement>();
+    engine.register::<SvgComponentTransferFunctionElement>();
+    engine.register::<SvgFeBlendElement>();
+    engine.register::<SvgFeColorMatrixElement>();
+    engine.register::<SvgFeComponentTransferElement>();
+    engine.register::<SvgFeFuncRElement>();
+    engine.register::<SvgFeFuncGElement>();
+    engine.register::<SvgFeFuncBElement>();
+    engine.register::<SvgFeFuncAElement>();
+    engine.register::<SvgFeCompositeElement>();
+    engine.register::<SvgFeConvolveMatrixElement>();
+    engine.register::<SvgFeDiffuseLightingElement>();
+    engine.register::<SvgFeDistantLightElement>();
+    engine.register::<SvgFePointLightElement>();
+    engine.register::<SvgFeSpotLightElement>();
+    engine.register::<SvgFeDisplacementMapElement>();
+    engine.register::<SvgFeDropShadowElement>();
+    engine.register::<SvgFeFloodElement>();
+    engine.register::<SvgFeGaussianBlurElement>();
+    engine.register::<SvgFeImageElement>();
+    engine.register::<SvgFeMergeElement>();
+    engine.register::<SvgFeMergeNodeElement>();
+    engine.register::<SvgFeMorphologyElement>();
+    engine.register::<SvgFeOffsetElement>();
+    engine.register::<SvgFeSpecularLightingElement>();
+    engine.register::<SvgFeTileElement>();
+    engine.register::<SvgFeTurbulenceElement>();
     engine.register::<DomImplementation>();
 }
 

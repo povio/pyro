@@ -243,3 +243,47 @@ fn trusted_types_script_and_attribute_sinks() {
         "TypeError|TypeError|TypeError|TypeError|TypeError|ok|TypeError|a = 1|b()|/y.js|c//TrustedScript|HTMLScriptElement textContent"
     );
 }
+
+/// Filter primitives have their Filter Effects interfaces: `in`/`result` as `SVGAnimatedString`s,
+/// numbers (pairs such as `stdDeviation` and `order` split into X and Y) as `SVGAnimatedNumber`s
+/// and `SVGAnimatedInteger`s with their initial values, booleans and enumerations, and
+/// `setStdDeviation` (WPT css/filter-effects idlharness, svgfeblendelement-mode-001).
+#[test]
+fn filter_primitives_reflect_animated_attributes() {
+    let env = Env::new("http://svg.test/");
+    assert_eq!(
+        env.eval(
+            r##"(() => {
+              const ns = "http://www.w3.org/2000/svg";
+              const blend = document.createElementNS(ns, "feBlend");
+              const out = [blend instanceof SVGFEBlendElement, blend.in1 === blend.in1, blend.mode.baseVal];
+              blend.setAttribute("in", "SourceAlpha");
+              blend.setAttribute("mode", "luminosity");
+              out.push(blend.in1.baseVal, blend.in1.animVal, blend.mode.baseVal === SVGFEBlendElement.SVG_FEBLEND_MODE_LUMINOSITY);
+              blend.result.baseVal = "r1";
+              out.push(blend.getAttribute("result"));
+              const blur = document.createElementNS(ns, "feGaussianBlur");
+              out.push(blur.stdDeviationX.baseVal, blur.edgeMode.baseVal);
+              blur.setAttribute("stdDeviation", "3");
+              out.push(blur.stdDeviationX.baseVal, blur.stdDeviationY.baseVal);
+              blur.stdDeviationY.baseVal = 1.5;
+              out.push(blur.getAttribute("stdDeviation"));
+              blur.setStdDeviation(4, 5);
+              out.push(blur.stdDeviationX.baseVal, blur.stdDeviationY.baseVal);
+              try { blur.stdDeviationX.baseVal = Infinity; out.push("no throw"); } catch (e) { out.push(e.constructor.name); }
+              const conv = document.createElementNS(ns, "feConvolveMatrix");
+              out.push(conv.orderX.baseVal, conv.orderY.baseVal, conv.preserveAlpha.baseVal);
+              conv.setAttribute("order", "5 2");
+              conv.setAttribute("preserveAlpha", "true");
+              out.push(conv.orderX.baseVal, conv.orderY.baseVal, conv.preserveAlpha.baseVal);
+              const func = document.createElementNS(ns, "feFuncA");
+              out.push(func instanceof SVGComponentTransferFunctionElement, func.slope.baseVal, func.type.baseVal);
+              const img = document.createElementNS(ns, "feImage");
+              img.setAttributeNS("http://www.w3.org/1999/xlink", "xlink:href", "#a");
+              out.push(img.href.baseVal, document.createElementNS(ns, "feTurbulence").numOctaves.baseVal);
+              return out.join("|");
+            })()"##
+        ),
+        "true|true|1|SourceAlpha|SourceAlpha|true|r1|0|3|3|3|3 1.5|4|5|TypeError|3|3|false|5|2|true|true|1|1|#a|1"
+    );
+}
