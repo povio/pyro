@@ -594,8 +594,10 @@ jobs:
         env:
           SHARD: ${{ strategy.job-index }}/${{ strategy.job-total }}
           RUNNER_ARGS: ${{ inputs.runner-args }}
-          # As on macOS: one page more than the 3-CPU runners the macOS baseline was first recorded on.
-          JOBS: '4'
+          # Pages mostly wait (timers): in the macOS gate run of 44260229617, at --jobs 4, 124 pages of 1-9 s were 66%
+          # of the page time, timeouts 1%, and the browser used 1.7 cores. Twice the runner's 4 CPUs, chosen before the
+          # Linux baseline is recorded so that it is recorded under this load.
+          JOBS: '8'
           OUT: wpt-linux-shard-${{ strategy.job-index }}.json
         run: |
           echo "$(nproc) CPUs, $(free -g | awk '/^Mem:/{print $2}') GB, $(. /etc/os-release && echo "$PRETTY_NAME")"
