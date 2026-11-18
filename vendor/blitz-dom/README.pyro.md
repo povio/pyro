@@ -2680,3 +2680,13 @@ Round 4 lane G:
   `positioned_inline_spans_are_paint_tree_entries_in_tree_order`.
 - Round 4 lane F, `document.rs` `show_image_alt_text` + `ElementData::image_broken`: an `<img>` that fails to load or has no usable source, with non-empty `alt`, is laid out as a non-replaced box holding its alt text (an anonymous text child; `replaced::is_replaced` false unless a `content` image replaces it); a later usable `src` makes it an image again (`mutator::load_image`). WPT css-overflow `overflow-img-scroll-non-replaced`.
 - Round 4 lane F, `ElementData::image_failed`: an `<img>` whose load failed; with alt text, `show_image_alt_text` puts a 16px inline-block span (marked `pyro-broken-image-icon`) before the text for blitz-paint's broken-image icon.
+  `merge_inline_span_entries`, `order_inline_span_entries`, `NodeFlags::INLINE_PASS_ENTRY`): each relative or sticky
+  inline box that is not atomic, whose text an inline root lays out (not a split inline, whose own box paints itself),
+  is listed as a positioned entry: z-sorted with a `z-index`, otherwise at the nearest layer root's positioned level, in
+  tree order with the positioned boxes around it, also those lifted to the layer root past their parents (CSS 2.1
+  Appendix E step 8). blitz-paint paints its content there (`draw_inline_pass_entry`); hit testing passes over the
+  entry (the root hit-tests its text). `Node::inline_sticky_containing_block_offset`: an absolutely positioned box whose
+  containing block is a sticky inline box moves with it when painted (not memoised with the hoisted position: it
+  changes on scroll). Not covered: atomic inline boxes in a positioned inline box still paint with the in-flow content.
+  WPT css-position `position-sticky-inline`, `position-sticky-nested-inline`; `crates/pyro-render/src/lib.rs`
+  `positioned_inline_spans_are_paint_tree_entries_in_tree_order`, `tests/positioned_inline_paint_order.rs`.

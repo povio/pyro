@@ -177,6 +177,11 @@ pub struct BlitzDomPainter<'dom, 'a> {
     /// start, end).
     pub(crate) highlight_layers: Vec<crate::highlight::Layer>,
     pub(crate) highlight_ranges: HashMap<NodeId, Vec<(usize, usize, usize)>>,
+    /// pyro: the content of positioned inline boxes listed in the paint tree
+    /// (`NodeFlags::INLINE_PASS_ENTRY`), left by their inline root for their own entry: the span's id ->
+    /// (its inline root, the root's transform, the root's content position), painted in the positioned
+    /// layer in tree order (CSS 2.1 Appendix E step 8; `draw_inline_pass_entry`).
+    pub(crate) inline_pass_entries: RefCell<HashMap<NodeId, (NodeId, Affine, Point)>>,
     /// Paint background colors and images (false: printing without them).
     pub backgrounds: bool,
     /// Print: text at its layout-unit x, not its box's whole-pixel x (Chromium keeps the fraction in the
@@ -268,6 +273,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             selection_ranges,
             highlight_layers,
             highlight_ranges,
+            inline_pass_entries: RefCell::new(HashMap::new()),
             backgrounds: true,
             fractional_text_x: false,
             composite_3d: false,
@@ -996,11 +1002,14 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         };
         // pyro: an inline root's own text decorations reach outside its box by as much as they
         // are thick (`text-decoration-thickness: 4em`).
+        // pyro: nor is one culled whose positioned inline boxes it leaves to their paint-tree entries
+        // (`inline_pass_entries`): a relative or sticky offset can move them into view.
         if outside(screen_bbox)
             && !(node.flags.is_inline_root() && {
                 let reach = crate::text::decoration_ink_reach(&styles) * self.scale;
                 reach > 0.0 && !outside(screen_bbox.inflate(reach, reach))
             })
+            && !(node.flags.is_inline_root() && self.dom.inline_root_has_relative_spans(node_id))
         {
             return;
         }
@@ -1657,6 +1666,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         // pyro: a positioned inline box's entry in the paint tree (`NodeFlags::INLINE_PASS_ENTRY`):
         // its inline root paints its content, after its own in-flow content.
         if node.flags.contains(blitz_dom::node::NodeFlags::INLINE_PASS_ENTRY) {
+            self.draw_inline_pass_entry(scene, node_id);
             return;
         }
 
@@ -1675,6 +1685,16 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             // NodeData::Doctype => {}
             NodeData::Comment { .. } => {} // NodeData::ProcessingInstruction { .. } => {}
         }
+    }
+
+    /// pyro: paints the content of the positioned inline box `span_id` that its inline root left for
+    /// its entry in the paint tree (`inline_pass_entries`): its fragments and text, as the root paints
+    /// them. Nothing when the root painted it itself (or was not painted).
+    fn draw_inline_pass_entry(&self, scene: &mut impl PaintScene, span_id: NodeId) {
+        let Some((root_id, transform, pos)) = self.inline_pass_entries.borrow_mut().remove(&span_id) else { return };
+        let Some(root) = self.dom.get_node(root_id) else { return };
+        let cx = self.element_cx(root, root.final_layout().clone(), transform, None);
+        cx.draw_inline_pass(scene, pos, span_id);
     }
 
     fn element_cx(
@@ -2867,6 +2887,8 @@ impl ElementCx<'_, '_> {
     }
 
     fn draw_inline_layout(&self, scene: &mut impl PaintScene, pos: Point) {
+        // (Where a positioned inline box left for its paint-tree entry is painted from: `draw_inline_pass`.)
+        let pos_before_offset = pos;
         if self.node.flags.is_inline_root() {
             // pyro: inline elements with a clip path or a mask (clip_path.rs).
             if self.draw_inline_effects(scene, pos) {
@@ -3038,9 +3060,19 @@ impl ElementCx<'_, '_> {
                     draw_text_context.positioned_pass = None;
                 }
             }
-            // pyro: then each positioned inline box: its fragments, then its text.
+            // pyro: then each positioned inline box: its fragments, then its text; a box listed in the
+            // paint tree (`NodeFlags::INLINE_PASS_ENTRY`) is left for its entry there, which paints it
+            // in the positioned layer in tree order (`draw_inline_pass_entry`).
             drop(draw_text_context);
             for &pass in passes.iter().skip(1) {
+                if let Some(span) = pass
+                    && self.context.dom.get_node(span).is_some_and(|node| {
+                        node.flags.contains(blitz_dom::node::NodeFlags::INLINE_PASS_ENTRY)
+                    })
+                {
+                    self.context.inline_pass_entries.borrow_mut().insert(span, (self.node.id, self.transform, pos_before_offset));
+                    continue;
+                }
                 for fragment in fragments.iter().filter(|fragment| self.fragment_in_pass(fragment.node, Some(pass))) {
                     self.paint_inline_box_fragment(scene, fragment, transform, tops);
                 }
@@ -3171,6 +3203,45 @@ impl ElementCx<'_, '_> {
                 * Affine::new([0.0, 1.0, -1.0, 0.0, origin * self.scale + flip, top * self.scale])
         };
         self.draw_turned_lines(scene, text_layout, line_transform);
+    }
+
+    /// pyro: paints the content of the positioned inline box `span` of this inline root, as
+    /// `draw_inline_layout` paints each positioned pass (its fragments, then its text), for its entry in
+    /// the paint tree (`draw_inline_pass_entry`). `pos` is the position `draw_inline_layout` was given.
+    fn draw_inline_pass(&self, scene: &mut impl PaintScene, pos: Point, span: NodeId) {
+        let Some(text_layout) = self.element.inline_layout_data.as_ref() else { return };
+        let subpixel_offset = text_layout.content_box_subpixel_offset;
+        let pos = Point {
+            x: pos.x + subpixel_offset.x as f64,
+            y: pos.y + subpixel_offset.y as f64 + text_layout.block_offset as f64,
+        };
+        let transform = self.transform * Affine::translate((pos.x * self.scale, pos.y * self.scale));
+        let (text_shift, tops) = self.text_placement(text_layout.block_offset as f64);
+        let fragments = self.inline_box_fragments(text_layout, transform, tops, None);
+        for fragment in fragments.iter().filter(|fragment| self.fragment_in_pass(fragment.node, Some(Some(span)))) {
+            self.paint_inline_box_fragment(scene, fragment, transform, tops);
+        }
+        let options = TextPaintOptions { scale: self.scale, brush_override: None, shadows: true };
+        let mut draw_text_context = self.context.draw_text_context.borrow_mut();
+        draw_text_context.text_shift = text_shift;
+        draw_text_context.line_tops = tops;
+        draw_text_context.first_line = text_layout.first_line;
+        draw_text_context.positioned_pass = Some(Some(span));
+        stroke_inline_text(
+            scene,
+            self.context.dom,
+            self.node,
+            text_layout,
+            transform,
+            options,
+            &mut draw_text_context,
+            tops,
+            self.scale,
+        );
+        draw_text_context.positioned_pass = None;
+        draw_text_context.text_shift = 0.0;
+        draw_text_context.line_tops = None;
+        draw_text_context.first_line = None;
     }
 
     /// pyro: paints the lines of a vertical writing mode's inline layout, each with its
@@ -4071,6 +4142,13 @@ impl ElementCx<'_, '_> {
         // pyro: so does one lifted here from a containing block that is no
         // layer root (a `backdrop-filter` box): it is placed by its offset.
         let child = &self.context.dom.as_ref().tree()[child_id];
+        // pyro: moved with a sticky inline containing block (`inline_sticky_containing_block_offset`).
+        let sticky = child.inline_sticky_containing_block_offset();
+        let parent_style_transform = if sticky.x == 0.0 && sticky.y == 0.0 {
+            parent_style_transform
+        } else {
+            parent_style_transform.pre_translate(kurbo::Vec2 { x: sticky.x as f64 * self.scale, y: sticky.y as f64 * self.scale })
+        };
         let lifted = child.lifted_paint_offset(self.node.id);
         let child_transform = if child.taffy_position() == taffy::Position::Fixed
             && Some(self.node.id) == self.context.root_element_id
@@ -4347,6 +4425,9 @@ impl ElementCx<'_, '_> {
         let mut open: Vec<(NodeId, Affine, bool)> = Vec::new();
         for hoisted_child in children {
             let position = hoisted_child.position(self.node.tree(), self.node.id);
+            // pyro: moved with a sticky inline containing block (not memoised: it changes on scroll).
+            let sticky = self.node.tree()[hoisted_child.node_id].inline_sticky_containing_block_offset();
+            let position = taffy::Point { x: position.x + sticky.x, y: position.y + sticky.y };
             let clips = self.hoisted_child_clips(hoisted_child, position, parent_style_transform);
             // Culled to every clip, pushed or not: what lies outside one is cut off either way.
             let child_clip_rect = clips.iter().fold(clip_rect, |rect, (_, transform, clip)| {

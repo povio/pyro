@@ -1091,3 +1091,9 @@ frame's whole transform, clipped to the content box (upstream applied the transl
   `NodeFlags::INLINE_PASS_ENTRY`) paints nothing yet; its inline root paints its content (`positioned_passes`).
 - Round 4 lane F, `render.rs`: a broken image showing its alt text is clipped as a box (not as replaced content).
 - Round 4 lane F, `render.rs` `draw_broken_image_icon` (+ `broken_image_icon.rs`: Chromium's `IDR_BROKENIMAGE` as Chrome draws it at 1x, captured over white and black for its alpha; Chromium BSD licence): the icon before a broken image's alt text, and for a sized broken image without alt text a 1px rgb(192, 192, 192) border with the icon 2px inside, as Chrome.
+- Round 4 lane G (`render.rs` `draw_inline_pass_entry`, `draw_inline_pass`, `inline_pass_entries`): a positioned
+  inline box listed in the paint tree (blitz-dom `NodeFlags::INLINE_PASS_ENTRY`) paints its fragments and text at its
+  entry, in the positioned layer in tree order: its horizontal inline root leaves that pass (its transform and content
+  position) for it instead of painting it after its own in-flow content, and is not culled while it has such boxes (an
+  offset can bring them into view). Vertical roots, highlighted or truncated text and line-by-line painting keep
+  painting every pass themselves. Hoisted boxes add `inline_sticky_containing_block_offset`.
