@@ -188,6 +188,29 @@ impl PageHooks for Hooks {
     fn navigate(&self, request: NavigationRequest) {
         let page = self.page;
         let loader = self.loader.clone();
+        // `window.open` of a new browsing context: HTML creates its initial
+        // about:blank document now, so the opener can script it before the
+        // embedder makes the page (`Browser::create_page_with`).
+        if let (Some(ticket), Some(host)) = (request.popup.as_ref(), self.frames.upgrade()) {
+            let new_context = request.method == "GET"
+                && host.matches(page, &loader)
+                && request.target.as_deref().is_some_and(|t| {
+                    !matches!(t.to_ascii_lowercase().as_str(), "" | "_self" | "_top" | "_parent")
+                        && host.named_frame(page, t).is_none()
+                })
+                && host.frame(page).is_some_and(|f| !f.sandbox.popups_blocked);
+            if new_context {
+                match host.prebuild_popup(page, ticket.session_storage(), ticket.name().to_owned()) {
+                    Ok(prebuilt) => {
+                        if let Some(dom) = &prebuilt.frame.page_dom {
+                            ticket.attach_page(dom);
+                        }
+                        ticket.set_prebuilt(Box::new(prebuilt));
+                    }
+                    Err(e) => eprintln!("pyro: cannot make the popup's initial document: {e:?}"),
+                }
+            }
+        }
         // HTML "navigate": a GET of the document's own URL with a fragment is
         // a fragment navigation, done at once (the URL has changed when the
         // link's `click()` returns) and never a reload.

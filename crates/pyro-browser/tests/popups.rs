@@ -95,8 +95,8 @@ fn popup_keeps_its_opener_and_a_copy_of_the_session_storage() {
              sessionStorage.setItem('BAZ','QUX');
              [p.closed, typeof p.fetch, typeof p.document, p.name, p.window === p, p.opener === window].join()"
         ),
-        "false,function,undefined,popname,true,true",
-        "the stand-in exists before the page does"
+        "false,function,object,popname,true,true",
+        "the stand-in reaches the popup's initial about:blank document at once"
     );
     settle(&mut t);
     let requests = events.popups();
@@ -188,7 +188,9 @@ fn stand_in_storage_before_the_page_exists_is_the_popups_area() {
               p.sessionStorage === sessionStorage, p.sessionStorage.getItem('K'), sessionStorage.getItem('K'),
               p.fetch('b') instanceof Promise].join()"
         ),
-        ",BAR,true,false,V,,true"
+        // The popup's own window answers (its initial document exists at
+        // once): its Storage objects and Promise are its own.
+        ",BAR,false,false,V,,false"
     );
     settle(&mut t);
     let b = create_popup(&mut t, &events);

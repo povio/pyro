@@ -1285,11 +1285,27 @@ impl Browser {
         };
         let nav = PageNav::new(id, frame.id.clone(), self.sched.clone(), self.observer.clone());
         let frames = FrameHost::new(self, id, context, frame.clone(), nav.clone());
+        self.push_page(id, context, frame, frames, nav);
+        self.navigate(
+            id,
+            NavigateOpts {
+                post: None,
+                url: "about:blank".into(),
+                reason: NavigationReason::InitialFrameNavigation,
+                cdp_request_id: None,
+                referrer: None,
+            },
+        )?;
+        Ok(id)
+    }
+
+    fn push_page(&mut self, id: PageId, context: ContextId, frame: Frame, frames: Rc<FrameHost>, nav: Rc<PageNav>) {
         let session_storage = frames.settings.borrow().session.clone();
         let init_scripts = self.contexts.iter().find(|c| c.id == context).unwrap().init_scripts.clone();
         frames.settings.borrow_mut().scripts = init_scripts.clone();
-        debug_assert!(self.pages.last().is_none_or(|last| last.id < id), "page ids increase");
-        self.pages.push(Page {
+        // A popup made ahead (`create_page_with`) took its id earlier.
+        let at = self.pages.partition_point(|p| p.id < id);
+        self.pages.insert(at, Page {
             id,
             context,
             root_dirty: Cell::new(true),
@@ -1323,17 +1339,50 @@ impl Browser {
             viewport: Default::default(),
             pending_resize: None,
         });
-        self.navigate(
-            id,
-            NavigateOpts {
-                post: None,
-                url: "about:blank".into(),
-                reason: NavigationReason::InitialFrameNavigation,
-                cdp_request_id: None,
-                referrer: None,
-            },
-        )?;
-        Ok(id)
+    }
+
+    /// The popup page the opener's `window.open` made ahead (its ticket's
+    /// prebuilt page, `PopupTicket::take_prebuilt`): it becomes a page of
+    /// `context` with its initial about:blank document as it is now, which
+    /// the opener may have scripted already. `None` when `prebuilt` is not
+    /// such a page or the context is gone.
+    pub fn create_page_with(&mut self, context: ContextId, prebuilt: Box<dyn std::any::Any>) -> Option<PageId> {
+        let prebuilt = prebuilt.downcast::<frames::PrebuiltPopup>().ok()?;
+        if !self.contexts.iter().any(|c| c.id == context) || prebuilt.host.context != context {
+            return None;
+        }
+        let frames::PrebuiltPopup { id, host, nav, frame } = *prebuilt;
+        self.push_page(id, context, frame, host, nav);
+        let p = self.page_mut(id)?;
+        let realms = p.frames.root.borrow().realms.clone();
+        p.main_frame.realms = realms;
+        p.main_frame.dom_content_loaded = true;
+        p.main_frame.loaded = true;
+        Some(id)
+    }
+
+    /// Reports the commit and load of `page`'s initial about:blank document
+    /// as it is now (a popup's, made by `window.open`; CDP clients wait for a
+    /// commit). False when the page shows another document.
+    pub fn announce_initial_document(&mut self, id: PageId) -> bool {
+        let Some(p) = self.page(id) else { return false };
+        if !p.nav.is_initial_blank() || p.main_frame.url != "about:blank" {
+            return false;
+        }
+        let (frame_id, loader_id) = (p.main_frame.id.clone(), p.main_frame.loader_id.clone());
+        let timestamp = self.timestamp();
+        self.emit(id, PageEvent::FrameNavigated {
+            frame_id: frame_id.clone(),
+            loader_id: loader_id.clone(),
+            url: "about:blank".into(),
+            reason: NavigationReason::InitialFrameNavigation,
+            cdp_request_id: None,
+            timestamp,
+            unreachable_url: None,
+        });
+        self.emit(id, PageEvent::FrameDomContentLoaded { frame_id: frame_id.clone(), loader_id: loader_id.clone(), timestamp });
+        self.emit(id, PageEvent::FrameLoaded { frame_id, loader_id, timestamp });
+        true
     }
 
     /// Makes `page` (just created in the opener's context) the popup that

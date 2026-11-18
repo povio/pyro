@@ -3883,7 +3883,8 @@ fn window_open_returns_a_minimal_popup_object() {
     let mut seen = Vec::new();
 
     let expr = "globalThis.w = window.open('data:text/html,<title>first</title>'); [typeof w, w.closed, typeof w.document, typeof w.opener, w.location.href, typeof PopupWindow].join()";
-    assert_eq!(value(&mut h, expr), json!("object,false,undefined,object,about:blank,undefined"));
+    // The initial about:blank document exists as soon as window.open returns (HTML).
+    assert_eq!(value(&mut h, expr), json!("object,false,object,object,about:blank,undefined"));
     let attached = attached_popup(&mut h, &mut seen);
     assert_eq!(attached["params"]["targetInfo"]["openerId"], json!(opener));
     assert_eq!(attached["params"]["targetInfo"]["canAccessOpener"], json!(true));
@@ -3926,6 +3927,11 @@ fn window_open_returns_a_minimal_popup_object() {
 
     // The client closing the popup reads as closed too.
     assert_eq!(value(&mut h, "globalThis.x = window.open(); x.closed"), json!(false));
+    // Its initial about:blank document is there at once and is the one the popup keeps.
+    assert_eq!(
+        value(&mut h, "x.document.body.innerHTML = '<p id=kept>kept</p>'; [x.document.URL, typeof x.ReadableStream, x.document.readyState].join()"),
+        json!("about:blank,function,complete")
+    );
     let attached = attached_popup(&mut h, &mut seen);
     let target = attached["params"]["targetInfo"]["targetId"].clone();
     // A popup with no URL still commits about:blank when resumed; Playwright's
@@ -3940,6 +3946,12 @@ fn window_open_returns_a_minimal_popup_object() {
         None => h.until_event(is_navigated),
     };
     assert_eq!(navigated["params"]["frame"]["url"], json!("about:blank"));
+    let r = h.call(Some(&blank), "Runtime.evaluate", json!({ "expression": "document.getElementById('kept').textContent + ':' + (window.opener !== null)", "returnByValue": true }));
+    assert_eq!(
+        r["result"]["result"]["value"],
+        json!("kept:true")
+    );
+    assert_eq!(value(&mut h, "x.document.getElementById('kept').textContent"), json!("kept"));
     h.call(None, "Target.closeTarget", json!({ "targetId": target }));
     assert_eq!(value(&mut h, "x.closed"), json!(true));
 

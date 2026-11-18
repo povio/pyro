@@ -190,7 +190,104 @@ pub(crate) struct FrameHost {
     /// that `iframe.contentWindow` stays one object that follows the frame.
     window_proxies: RefCell<BTreeMap<u64, pyro_js::Persistent>>,
 }
+/// A popup page made when `window.open` ran, before the embedder creates the
+/// page: its frame tree with the initial about:blank document and realms
+/// (HTML creates that document synchronously, so the opener can script it at
+/// once). [`Browser::create_page_with`] turns it into the page.
+pub(crate) struct PrebuiltPopup {
+    pub id: PageId,
+    pub host: Rc<FrameHost>,
+    pub nav: Rc<PageNav>,
+    pub frame: Frame,
+}
+
 impl FrameHost {
+    /// The popup page `window.open` asks for, made now in this page's
+    /// context: a top-level frame whose initial about:blank document has the
+    /// opener frame's origin and base URL and the session storage copied for
+    /// it, with its main-world realm (and the worlds init scripts name).
+    pub(crate) fn prebuild_popup(
+        self: &Rc<Self>,
+        opener: FrameKey,
+        session: pyro_webapi::StorageNamespace,
+        name: String,
+    ) -> Result<PrebuiltPopup, JsError> {
+        let from = self.frame(opener).ok_or(JsError::ContextDestroyed)?;
+        let id = PageId(self.next() as u32);
+        let frame = Frame {
+            id: FrameId(format!("{:032X}", self.next())),
+            parent: None,
+            owner: None,
+            name,
+            base_url: from.base_url.clone(),
+            sandbox: Default::default(),
+            url: "about:blank".into(),
+            loader_id: LoaderId(format!("{:032X}", self.next())),
+            realms: Vec::new(),
+            dom: None,
+            document: None,
+            page_dom: None,
+            network_idle: NetworkIdle::default(),
+            origin: from.origin.clone(),
+            opaque_origin: from.opaque_origin,
+            dom_content_loaded: false,
+            loaded: false,
+            unreachable: None,
+        };
+        let nav = PageNav::new(id, frame.id.clone(), self.sched.clone(), self.observer.clone());
+        let mut settings = self.settings.borrow().clone();
+        settings.session = session;
+        settings.viewport = Default::default();
+        settings.user_agent = None;
+        settings.extra_headers = Default::default();
+        let host = Rc::new(Self {
+            children: RefCell::new(BTreeMap::new()),
+            root: RefCell::new(frame.clone()),
+            root_nav: nav.clone(),
+            dom: Rc::new(RefCell::new(pyro_dom::Dom::new())),
+            settings: RefCell::new(settings),
+            page: id,
+            context: self.context,
+            layout_bodies: self.layout_bodies.clone(),
+            sched: self.sched.clone(),
+            handle: self.handle.clone(),
+            observer: self.observer.clone(),
+            next: self.next.clone(),
+            started: self.started,
+            retired: RefCell::new(Vec::new()),
+            class: Cell::new(self.class.get()),
+            // Its `window.opener` from the start (`Browser::adopt_popup` sets it again).
+            opener: RefCell::new(Some(Rc::downgrade(self))),
+            popup: RefCell::new(None),
+            window_proxies: RefCell::new(BTreeMap::new()),
+            focus: RefCell::new(crate::focus::FocusState::new(id)),
+        });
+        let key: FrameKey = id.into();
+        let dom = bindings::create(&host, key, "about:blank", &frame.loader_id)?;
+        // Nothing loads into it: it is complete as made (as in browsers).
+        dom.set_ready_state(dom.document(), "complete");
+        nav.commit_document("about:blank", HistoryHandling::Replace, Some((host.dom.clone(), dom.document())));
+        nav.set_page_dom(&dom);
+        {
+            let mut root = host.root.borrow_mut();
+            root.dom = Some(host.dom.clone());
+            root.document = Some(dom.document());
+            root.page_dom = Some(dom);
+        }
+        let scripts = host.settings.borrow().scripts.clone();
+        let mut worlds = vec![None];
+        for script in scripts {
+            if script.world.is_some() && !worlds.contains(&script.world) {
+                worlds.push(script.world);
+            }
+        }
+        for world in worlds {
+            host.make_realm(key, nav.clone(), world)?;
+        }
+        let frame = host.root.borrow().clone();
+        Ok(PrebuiltPopup { id, host, nav, frame })
+    }
+
     pub fn new(browser: &Browser, page: PageId, context: ContextId, root: Frame, nav: Rc<PageNav>) -> Rc<Self> {
         let state = browser.contexts.iter().find(|c| c.id == context).expect("context");
         let (local, services) = (state.local_storage.clone(), state.services.clone());

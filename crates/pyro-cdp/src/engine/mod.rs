@@ -1581,6 +1581,31 @@ impl Host for EngineHost {
         Ok((key, target_id))
     }
 
+    fn create_popup_page(
+        &mut self,
+        context: ContextKey,
+        handle: Option<&std::rc::Rc<dyn std::any::Any>>,
+    ) -> CdpResult<(PageKey, String, bool)> {
+        let ticket = handle.and_then(|h| h.clone().downcast::<pyro_webapi::PopupTicket>().ok());
+        let prebuilt = ticket.as_ref().and_then(|t| t.take_prebuilt());
+        let context_id = self.contexts.get(&context).map(|c| c.id);
+        if let (Some(prebuilt), Some(context_id)) = (prebuilt, context_id) {
+            if let Some(id) = self.thread.browser.create_page_with(context_id, prebuilt) {
+                let (key, target_id) = self.register_page(id, context);
+                self.flush();
+                return Ok((key, target_id, true));
+            }
+        }
+        self.create_page(context).map(|(page, id)| (page, id, false))
+    }
+
+    fn announce_initial_document(&mut self, page: PageKey) -> bool {
+        let Some(id) = self.pages.get(&page).map(|s| s.id) else { return false };
+        let announced = self.thread.browser.announce_initial_document(id);
+        self.flush();
+        announced
+    }
+
     fn take_prebooted(&mut self) -> Vec<crate::target::PrebootedEntry> {
         std::mem::take(&mut self.prebooted)
     }
