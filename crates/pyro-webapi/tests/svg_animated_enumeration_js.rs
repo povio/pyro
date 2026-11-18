@@ -127,3 +127,28 @@ fn design_mode_edits_the_document() {
         "off|false|on|true|false|true||\"\\n\"|0|off|false"
     );
 }
+
+/// Trusted Types, slice 1: `trustedTypes.createPolicy`, the Trusted* values (no constructor,
+/// stringify to their data), `isHTML`/`isScript`/`isScriptURL`, `emptyHTML`/`emptyScript`,
+/// `defaultPolicy`, `getAttributeType`/`getPropertyType`.
+#[test]
+fn trusted_types_policies_and_values() {
+    let env = Env::new("http://svg.test/");
+    assert_eq!(
+        env.eval(
+            r#"(() => {
+              const p = trustedTypes.createPolicy("p", { createHTML: (s, extra) => s + "|" + extra, createScriptURL: () => null });
+              const h = p.createHTML("a", "b");
+              const out = [String(h), h instanceof TrustedHTML, trustedTypes.isHTML(h), trustedTypes.isScript(h), JSON.stringify(h)];
+              out.push(JSON.stringify(String(p.createScriptURL("x"))), p.name, trustedTypes.defaultPolicy);
+              try { p.createScript("x"); out.push("no throw"); } catch (e) { out.push(e.name); }
+              try { new TrustedScript(); out.push("no throw"); } catch (e) { out.push(e.name); }
+              const d = trustedTypes.createPolicy("default", {});
+              out.push(trustedTypes.defaultPolicy === d, trustedTypes.emptyHTML === trustedTypes.emptyHTML, trustedTypes.isScript(trustedTypes.emptyScript));
+              out.push(trustedTypes.getAttributeType("script", "src"), trustedTypes.getAttributeType("div", "onclick"), trustedTypes.getPropertyType("iframe", "srcdoc"), trustedTypes.getPropertyType("div", "title"));
+              return out.join("|");
+            })()"#
+        ),
+        "a|b|true|true|false|\"a|b\"|\"\"|p||TypeError|TypeError|true|true|true|TrustedScriptURL|TrustedScript|TrustedHTML|"
+    );
+}

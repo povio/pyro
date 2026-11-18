@@ -872,6 +872,7 @@ impl JsClass for WorkerGlobalScope {
         // CSS Font Loading: `FontFace` and the worker's `FontFaceSet`.
         crate::font_loading::define_globals(def);
         crate::typed_om::define_globals(def);
+        crate::trusted_types::define_globals(def);
         def.getter("fonts", |s, g| crate::font_loading::fonts(s, &g.target.page));
         crate::storage_manager::define_globals(def);
         crate::websocket::define_worker_globals(def);
