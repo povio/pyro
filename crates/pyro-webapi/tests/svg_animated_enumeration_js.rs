@@ -152,3 +152,37 @@ fn trusted_types_policies_and_values() {
         "a|b|true|true|false|\"a|b\"|\"\"|p||TypeError|TypeError|true|true|true|TrustedScriptURL|TrustedScript|TrustedHTML|"
     );
 }
+
+/// Trusted Types, slice 2: a `<meta http-equiv="Content-Security-Policy">` that joins the head
+/// with `require-trusted-types-for 'script'` makes the HTML sinks take TrustedHTML or what the
+/// default policy makes of a string (a TypeError without one); `trusted-types` names policies.
+#[test]
+fn trusted_types_enforced_by_meta_csp() {
+    let env = Env::new("http://svg.test/");
+    // As in a browsing context: insertions process `<meta>` elements.
+    env.page.dom.borrow_mut().set_resource_tracking(true);
+    assert_eq!(
+        env.eval(
+            r#"(() => {
+              const out = [];
+              const div = document.createElement("div");
+              div.innerHTML = "<b>free</b>";
+              out.push(div.innerHTML);
+              const meta = document.createElement("meta");
+              meta.setAttribute("http-equiv", "Content-Security-Policy");
+              meta.setAttribute("content", "require-trusted-types-for 'script'; trusted-types p default");
+              document.head.appendChild(meta);
+              try { div.innerHTML = "<i>x</i>"; out.push("no throw"); } catch (e) { out.push(e.name); }
+              const p = trustedTypes.createPolicy("p", { createHTML: s => s });
+              div.innerHTML = p.createHTML("<u>ok</u>");
+              out.push(div.innerHTML);
+              try { trustedTypes.createPolicy("q", {}); out.push("no throw"); } catch (e) { out.push(e.name); }
+              trustedTypes.createPolicy("default", { createHTML: s => s.toUpperCase() });
+              div.insertAdjacentHTML("beforeend", "<s>a</s>");
+              out.push(div.innerHTML);
+              return out.join("|");
+            })()"#
+        ),
+        "<b>free</b>|TypeError|<u>ok</u>|TypeError|<u>ok</u><s>A</s>"
+    );
+}

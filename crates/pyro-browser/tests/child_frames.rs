@@ -265,7 +265,7 @@ fn detached_pending_navigation_is_cancelled_and_late_completion_cannot_resurrect
             charset: None,
             body: b"<iframe></iframe><script>globalThis.late=true</script>".to_vec(),
             content_disposition: None,
-            header_csp: false,
+            header_csp: None,
             refresh: None,
             content_language: None,
             referrer_policy: None,
@@ -736,4 +736,29 @@ fn intersection_observer_sees_targets_in_child_documents() {
     eval(&root, "seen.length=0; f.remove()");
     settle(&mut t);
     assert_eq!(eval(&root, "seen.map(s => s.split(':').slice(0, 2).join(':')).sort().join(' ')"), "far:false");
+}
+
+/// A `Content-Security-Policy` header's Trusted Types directives apply to the document
+/// (`require-trusted-types-for 'script'`: string HTML assignments throw) while its other
+/// directives are not enforced (`script-src 'none'` blocks nothing).
+#[test]
+fn csp_header_trusted_types_directives_apply_others_do_not() {
+    let mut t = crate::browser_thread().unwrap();
+    let page = t.browser.create_page().unwrap();
+    let loader = Rc::new(pyro_browser::StaticLoader::default());
+    loader.insert(
+        "http://site.test/",
+        "text/html",
+        "<script>globalThis.out = []; const d = document.createElement('div'); \
+         try { d.innerHTML = '<b>x</b>'; out.push('assigned'); } catch (e) { out.push(e.name); } \
+         try { trustedTypes.createPolicy('other', {}); out.push('created'); } catch (e) { out.push(e.name); } \
+         const p = trustedTypes.createPolicy('p', { createHTML: s => s }); d.innerHTML = p.createHTML('<i>y</i>'); out.push(d.innerHTML);</script>",
+        Duration::ZERO,
+    );
+    loader.set_csp("http://site.test/", "script-src 'none'; require-trusted-types-for 'script'; trusted-types p");
+    t.browser.set_loader(Some(loader.clone()));
+    t.browser.navigate(page, NavigateOpts::address_bar("http://site.test/")).unwrap();
+    settle(&mut t);
+    let root = main_realm(&t, page);
+    assert_eq!(eval(&root, "out.join('|')"), "TypeError|TypeError|<i>y</i>");
 }

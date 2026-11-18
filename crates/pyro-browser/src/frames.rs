@@ -1483,7 +1483,7 @@ impl Browser {
                 charset: None,
                 body: html.into_bytes(),
                 content_disposition: None,
-                header_csp: false,
+                header_csp: None,
                 refresh: None,
                 content_language: None,
                 referrer_policy: None,

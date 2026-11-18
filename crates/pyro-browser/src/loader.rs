@@ -139,7 +139,10 @@ pub struct Resource {
     pub content_disposition: Option<String>,
     /// The response carried a `Content-Security-Policy` header (the policy
     /// itself is not enforced; a document delivered with one hides nonces).
-    pub header_csp: bool,
+    /// pyro: the values of its `Content-Security-Policy` headers, joined by `,` (each a
+    /// policy). Only their Trusted Types directives are read (`Dom::set_trusted_types_policies`);
+    /// other directives are not enforced.
+    pub header_csp: Option<String>,
     /// The `Refresh` response header (HTML declarative refresh), if any.
     pub refresh: Option<String>,
     /// A document's `Content-Language` response header, if any (its
@@ -416,7 +419,7 @@ impl ResourceLoader for NetLoader {
                 mime: head.mime,
                 charset: head.charset,
                 content_disposition: None,
-                header_csp: false,
+                header_csp: None,
                 refresh: None,
                 content_language: None,
                 referrer_policy: None,
@@ -480,7 +483,7 @@ impl ResourceLoader for NetLoader {
                     charset: h.charset,
                     body: std::mem::take(&mut body),
                     content_disposition: None,
-                    header_csp: false,
+                    header_csp: None,
                     refresh: None,
                     content_language: None,
                     referrer_policy: None,
@@ -522,7 +525,15 @@ impl ResourceLoader for NetLoader {
                             .get(http::header::CONTENT_DISPOSITION)
                             .and_then(|v| v.to_str().ok())
                             .map(str::to_owned),
-                        header_csp: h.headers.contains_key(http::header::CONTENT_SECURITY_POLICY),
+                        header_csp: {
+                            let values: Vec<&str> = h
+                                .headers
+                                .get_all(http::header::CONTENT_SECURITY_POLICY)
+                                .iter()
+                                .filter_map(|v| v.to_str().ok())
+                                .collect();
+                            (!values.is_empty()).then(|| values.join(","))
+                        },
                         // Only a document honours it; other kinds skip the lookup.
                         refresh: document
                             .then(|| h.headers.get(http::header::REFRESH)?.to_str().ok().map(str::to_owned))
@@ -621,6 +632,8 @@ type StaticEntry = (String, Vec<u8>, Duration);
 #[derive(Default)]
 pub struct StaticLoader {
     entries: RefCell<std::collections::HashMap<String, StaticEntry>>,
+    /// The `Content-Security-Policy` header value served with a URL.
+    csp: RefCell<std::collections::HashMap<String, String>>,
     pub log: RefCell<Vec<String>>,
 }
 
@@ -630,6 +643,10 @@ impl StaticLoader {
     }
     pub fn insert_bytes(&self, url: &str, mime: &str, body: &[u8], delay: Duration) {
         self.entries.borrow_mut().insert(url.to_string(), (mime.to_string(), body.to_vec(), delay));
+    }
+    /// Serves `url` with a `Content-Security-Policy: {policy}` header.
+    pub fn set_csp(&self, url: &str, policy: &str) {
+        self.csp.borrow_mut().insert(url.to_string(), policy.to_string());
     }
 }
 
@@ -642,6 +659,7 @@ impl ResourceLoader for StaticLoader {
             request.url.clone()
         });
         let entry = self.entries.borrow().get(&request.url).cloned();
+        let csp = self.csp.borrow().get(&request.url).cloned();
         let url = request.url;
         let part = request.part;
         let delay = entry.as_ref().map_or(Duration::ZERO, |e| e.2);
@@ -678,7 +696,7 @@ impl ResourceLoader for StaticLoader {
                         charset: None,
                         body,
                         content_disposition: None,
-                        header_csp: false,
+                        header_csp: csp.clone(),
                         refresh: None,
                         content_language: None,
                         referrer_policy: None,
@@ -1169,7 +1187,7 @@ impl Browser {
             charset: None,
             body: Vec::new(),
             content_disposition: None,
-            header_csp: false,
+            header_csp: None,
             refresh: None,
             content_language: None,
             referrer_policy: None,
@@ -1265,8 +1283,9 @@ impl Browser {
         let dom = page_dom.dom.clone();
         let doc = page_dom.document();
         // A page that bypasses CSP (`Page.setBypassCSP`) records no policy.
-        if resource.header_csp && !self.page(page.page).is_some_and(|p| p.bypass_csp) {
+        if let Some(csp) = resource.header_csp.as_deref().filter(|_| !self.page(page.page).is_some_and(|p| p.bypass_csp)) {
             let _ = dom.borrow_mut().set_header_csp(doc, true);
+            let _ = dom.borrow_mut().set_trusted_types_policies(doc, csp);
         }
         if let Some(refresh) = resource.refresh.as_deref() {
             self.refresh_header(page, refresh);

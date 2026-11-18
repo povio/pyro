@@ -176,10 +176,12 @@
       const Ctor = kind === 'html' ? TrustedHTML : kind === 'script' ? TrustedScript : TrustedScriptURL;
       return d !== undefined && d.kind === Ctor ? d.value : null;
     },
-    // The default policy's value for a sink (null when there is none or it has no such member).
-    defaultPolicyValue(method, input, sink) {
+    // The default policy's value for a sink, called with the trusted type's name and the sink
+    // ("get Trusted Type compliant string"); undefined without a default policy, null when it
+    // has no such member.
+    defaultPolicyValue(method, input, typeName, sink) {
       if (defaultPolicy === null) return undefined;
-      return policyValue(policies.get(defaultPolicy), method, input, [sink], false);
+      return policyValue(policies.get(defaultPolicy), method, input, [typeName, sink], false);
     },
   };
 })

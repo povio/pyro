@@ -17,6 +17,9 @@ pub(crate) struct NonceState {
     csp_documents: FxHashSet<NodeId>,
     /// The nonce of each element whose attribute was emptied.
     hidden: FxHashMap<NodeId, Box<str>>,
+    /// The Trusted Types directives (`trusted-types`, `require-trusted-types-for`) of each
+    /// header-delivered policy of a document, one string per policy.
+    trusted_types: FxHashMap<NodeId, Vec<Box<str>>>,
 }
 
 impl Dom {
@@ -29,6 +32,42 @@ impl Dom {
             self.nonces.csp_documents.remove(&doc);
         }
         Ok(())
+    }
+
+    /// Records the Trusted Types directives of `doc`'s header-delivered policies (`csp`: the
+    /// `Content-Security-Policy` header values joined by `,`). No other directive is kept.
+    pub fn set_trusted_types_policies(&mut self, doc: NodeId, csp: &str) -> DomResult<()> {
+        self.check(doc)?;
+        self.nonces.trusted_types.remove(&doc);
+        self.add_csp_policies(doc, csp);
+        Ok(())
+    }
+
+    /// Adds the Trusted Types directives of the policies in `csp` to `doc`'s (a header, or a
+    /// `<meta http-equiv="Content-Security-Policy">` that joined the head).
+    pub(crate) fn add_csp_policies(&mut self, doc: NodeId, csp: &str) {
+        let policies: Vec<Box<str>> = csp
+            .split(',')
+            .filter_map(|policy| {
+                let kept: Vec<&str> = policy
+                    .split(';')
+                    .map(str::trim)
+                    .filter(|d| {
+                        let name = d.split_ascii_whitespace().next().unwrap_or("");
+                        name.eq_ignore_ascii_case("trusted-types") || name.eq_ignore_ascii_case("require-trusted-types-for")
+                    })
+                    .collect();
+                (!kept.is_empty()).then(|| kept.join("; ").into())
+            })
+            .collect();
+        if !policies.is_empty() {
+            self.nonces.trusted_types.entry(doc).or_default().extend(policies);
+        }
+    }
+
+    /// The Trusted Types directives of `doc`'s policies (headers and `<meta>`).
+    pub fn trusted_types_policies(&self, doc: NodeId) -> &[Box<str>] {
+        self.nonces.trusted_types.get(&doc).map_or(&[], |v| v.as_slice())
     }
 
     /// The nonce `el` had when its attribute was emptied on connection.

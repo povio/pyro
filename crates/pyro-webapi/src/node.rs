@@ -1021,7 +1021,9 @@ fn get_html<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) -> JsResult<Value<'s>>
 /// `setHTMLUnsafe(html)` on `Element` and `ShadowRoot`.
 fn set_html_unsafe<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) -> JsResult<Value<'s>> {
     a.require(1, "setHTMLUnsafe")?;
-    let html = dom_string(a.get(0))?;
+    let shadow = n.page().dom.borrow().node(n.id).is_ok_and(|node| matches!(node.kind, pyro_dom::node::NodeKind::Fragment(_)));
+    let sink = if shadow { "ShadowRoot setHTMLUnsafe" } else { "Element setHTMLUnsafe" };
+    let html = crate::trusted_types::compliant_string(s, n.page(), crate::trusted_types::Kind::Html, a.get(0), sink, false)?;
     crate::input::blur_before_removal(n.page(), n.id, true);
     pyro_dom::parse::set_html_unsafe(&mut n.page().dom.borrow_mut(), n.id, &html).js()?;
     Ok(s.undefined())
@@ -1080,8 +1082,8 @@ impl JsClass for ShadowRoot {
         def.accessor(
             "innerHTML",
             |s, n| Ok(s.string(&n.page().dom.borrow().inner_html(n.id).js()?)),
-            |_s, n, v| {
-                let html = null_to_empty(v)?;
+            |s, n, v| {
+                let html = crate::trusted_types::compliant_string(s, n.page(), crate::trusted_types::Kind::Html, v, "ShadowRoot innerHTML", true)?;
                 let mut dom = n.page().dom.borrow_mut();
                 let host = dom.fragment_host(n.id).js()?.ok_or(JsError::Type("detached shadow root".into()))?;
                 let frag = pyro_dom::parse::parse_fragment(&mut dom, host, &html).js()?;
@@ -1378,8 +1380,8 @@ impl JsClass for Element {
         def.accessor(
             "innerHTML",
             |s, n| Ok(s.string(&n.page().dom.borrow().inner_html(n.id).js()?)),
-            |_s, n, v| {
-                let html = null_to_empty(v)?;
+            |s, n, v| {
+                let html = crate::trusted_types::compliant_string(s, n.page(), crate::trusted_types::Kind::Html, v, "Element innerHTML", true)?;
                 crate::input::blur_before_removal(n.page(), n.id, true);
                 pyro_dom::parse::set_inner_html(&mut n.page().dom.borrow_mut(), n.id, &html).js()
             },
@@ -1387,8 +1389,8 @@ impl JsClass for Element {
         def.accessor(
             "outerHTML",
             |s, n| Ok(s.string(&n.page().dom.borrow().outer_html(n.id).js()?)),
-            |_s, n, v| {
-                let html = null_to_empty(v)?;
+            |s, n, v| {
+                let html = crate::trusted_types::compliant_string(s, n.page(), crate::trusted_types::Kind::Html, v, "Element outerHTML", true)?;
                 let has_parent = n.page().dom.borrow().parent(n.id).js()?.is_some();
                 if has_parent {
                     crate::input::blur_before_removal(n.page(), n.id, false);
@@ -1415,7 +1417,7 @@ impl JsClass for Element {
         def.method("insertAdjacentHTML", 2, |s, n, a| {
             a.require(2, "Element.insertAdjacentHTML")?;
             let pos = dom_string(a.get(0))?.to_ascii_lowercase();
-            let html = dom_string(a.get(1))?;
+            let html = crate::trusted_types::compliant_string(s, n.page(), crate::trusted_types::Kind::Html, a.get(1), "Element insertAdjacentHTML", false)?;
             let mut dom = n.page().dom.borrow_mut();
             let parent = dom.parent(n.id).js()?;
             let ctx = match pos.as_str() {
