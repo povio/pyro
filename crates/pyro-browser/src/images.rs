@@ -500,7 +500,16 @@ impl Browser {
         }
         entry.pending = false;
         let hold = entry._node.take();
+        let url = entry.url.clone();
         drop(state);
+        // The page's layout engine lays the element out from the same body
+        // (an `<object>` image's size), which it would otherwise fetch on its
+        // own and might not have when `load` fires and scripts measure.
+        if let Some(r) = result.as_ref().ok().filter(|r| (200..300).contains(&r.status) && r.body.len() <= MAX_IMAGE_BYTES) {
+            if let Some(p) = self.page(page.page) {
+                p.frames.layout_bodies.provide(&url, &r.body);
+            }
+        }
         let ok = result.is_ok_and(|r| {
             (200..300).contains(&r.status)
                 && (!image || {
