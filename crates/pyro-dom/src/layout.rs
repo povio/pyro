@@ -3777,10 +3777,26 @@ impl Layout {
                 while self.computed(dom, parent).display_contents {
                     parent = dom.parent_element(parent).ok().flatten()?;
                 }
+                // A sticky box's percentages resolve against the content box of its
+                // nearest scroll container, if it has one (as Chrome does).
+                let mut scroller = None;
+                if position == Position::Sticky {
+                    let mut a = Some(parent);
+                    while let Some(e) = a {
+                        let scrolls = style.computed_value(dom, e, "overflow-x").is_some_and(|o| !matches!(o.as_str(), "visible" | "clip"))
+                            || style.computed_value(dom, e, "overflow-y").is_some_and(|o| !matches!(o.as_str(), "visible" | "clip"));
+                        if scrolls {
+                            scroller = Some(e);
+                            break;
+                        }
+                        a = dom.parent_element(e).ok().flatten();
+                    }
+                }
+                let b = scroller.unwrap_or(parent);
                 let basis = if horizontal {
-                    self.client_width(dom, parent) - length(parent, "padding-left") - length(parent, "padding-right")
+                    self.client_width(dom, b) - length(b, "padding-left") - length(b, "padding-right")
                 } else {
-                    self.client_height(dom, parent) - length(parent, "padding-top") - length(parent, "padding-bottom")
+                    self.client_height(dom, b) - length(b, "padding-top") - length(b, "padding-bottom")
                 };
                 let resolve = |value: &str| -> Option<f64> {
                     let (px, percent) =
@@ -3832,6 +3848,15 @@ impl Layout {
                         Rect { x: 0.0, y: 0.0, width: self.inner_width() as f64, height: self.inner_height() as f64 }
                     }
                 };
+                // A specified inset (percentage or calc()) is the computed value
+                // absolutized against the containing block, also when the box is
+                // over-constrained; only `auto` reports the box's used position.
+                if value != "auto" {
+                    let basis = if horizontal { block.width } else { block.height };
+                    let (len, percent) =
+                        crate::computed::resolve_len(value, &crate::computed::LengthContext::fonts(16.0, 16.0))?;
+                    return px(len + percent / 100.0 * basis);
+                }
                 let r = self.bounding_client_rect(dom, el);
                 px(match name {
                     "top" => r.y - length(el, "margin-top") - block.y,

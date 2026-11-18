@@ -208,3 +208,25 @@ fn document_named_properties_appear_in_hot_code() {
         ",9,|true|9|true|true|true|9"
     );
 }
+
+/// Resolved insets with percentages (css/cssom/getComputedStyle-insets-*): an
+/// absolutely positioned box reports the computed value absolutized against
+/// its containing block even when over-constrained; a sticky box resolves
+/// against the content box of its scroll container.
+#[test]
+fn percentage_insets_resolve_against_the_right_box() {
+    let (_t, root) = page();
+    assert_eq!(
+        eval(
+            &root,
+            "(() => {
+               document.body.innerHTML = '<div id=cb style=\"position:relative;width:400px;height:200px\">' +
+                 '<div id=a style=\"position:absolute;top:10%;bottom:50%;height:150px\"></div></div>' +
+                 '<div id=sc style=\"width:400px;height:200px;overflow:hidden\"><div style=\"height:100px\">' +
+                 '<div id=s style=\"position:sticky;top:10%\"></div></div></div>';
+               const a = getComputedStyle(document.getElementById('a')), s = getComputedStyle(document.getElementById('s'));
+               return [a.top, a.bottom, s.top].join(); })()"
+        ),
+        "20px,100px,20px"
+    );
+}
