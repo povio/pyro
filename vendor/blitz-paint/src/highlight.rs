@@ -476,6 +476,44 @@ pub(crate) fn stroke_highlighted_text<S: PaintScene>(
             context.shadows_only = false;
             cache = std::mem::take(&mut context.highlights);
         }
+        // pyro: the glyphs outside the stretches where they reach into one (an italic glyph's
+        // overhang), under its background: Chromium paints the highlight over them (WPT css-pseudo
+        // `selection-background-painting-order`).
+        {
+            let mut spans: SmallVec<[(f32, f32); 4]> = pieces.iter().map(|p| (p.x0, p.x1)).collect();
+            spans.sort_by(|p, q| p.0.total_cmp(&q.0));
+            let mut gaps: SmallVec<[(f32, f32); 4]> = SmallVec::new();
+            let mut x = f32::NEG_INFINITY;
+            for (x0, x1) in &spans {
+                if *x0 > x {
+                    gaps.push((x, *x0));
+                }
+                x = x.max(*x1);
+            }
+            gaps.push((x, f32::INFINITY));
+            let mut inside = BezPath::new();
+            for rect in &rects {
+                inside.extend(Rect::new(rect.x0, -FAR, rect.x1, FAR).path_elements(0.1));
+            }
+            scene.push_clip_layer(Fill::NonZero, transform, &inside);
+            context.highlights = std::mem::take(&mut cache);
+            context.glyph_spans = Some(gaps);
+            stroke_text(
+                scene,
+                std::iter::once(line.clone()),
+                doc,
+                transform,
+                TextPaintOptions { shadows: false, ..options },
+                root,
+                Some(text),
+                context,
+                turned,
+                Some(layout),
+            );
+            context.glyph_spans = None;
+            cache = std::mem::take(&mut context.highlights);
+            scene.pop_layer();
+        }
         for (piece, rect) in pieces.iter().zip(&rects) {
             for background in &piece.backgrounds {
                 if background.components[3] > 0.0 && rect.width() > 0.0 {
