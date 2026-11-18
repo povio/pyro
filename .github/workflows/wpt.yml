@@ -121,11 +121,11 @@ jobs:
             echo "browser-key=$browser_key"
             echo "browser-cached=$(cached "$browser_key")"
           } | tee -a "$GITHUB_OUTPUT"
-      # The reftest shards run on the self-hosted runner (lp-m1), as every other macOS job: one shard there, since it
-      # runs one job at a time and more would only add their setup to its queue. A manual run can pick GitHub's macos-15
-      # runners (four shards side by side, about the two shards' time each before the layout directories doubled the
-      # reftests; billed as macOS minutes); their results matched lp-m1's but for one animation page's timing
-      # (bench/wpt/README.md, "Reftests"). None for `suites: testharness`.
+      # The reftest shards run on the self-hosted runner (lp-m1), as every other macOS job: two shards, one per lp-m1
+      # machine (worker-2-air, worker-3-m1), balanced by the baseline's durations as the testharness shards are. A
+      # manual run can pick GitHub's macos-15 runners (four shards side by side; billed as macOS minutes); their
+      # results matched lp-m1's but for one animation page's timing (bench/wpt/README.md, "Reftests"). None for
+      # `suites: testharness`.
       - name: Reftest shards
         id: reftest
         env:
@@ -136,7 +136,7 @@ jobs:
           if [ "$runner" = default ]; then runner=lp-m1; fi
           if [ "$SUITES" = testharness ] || [ "$SUITES" = crashtest ]; then shards='[]'
           elif [ "$runner" = macos-15 ]; then shards='[0, 1, 2, 3]'
-          else shards='[0]'; fi
+          else shards='[0, 1]'; fi
           { echo "runner=$runner"; echo "shards=$shards"; } | tee -a "$GITHUB_OUTPUT"
 
   # The patched JavaScriptCore, built (about 7 minutes) only when neither it nor the browser is cached.
