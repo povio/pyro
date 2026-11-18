@@ -145,6 +145,9 @@ pub(crate) struct State {
     rules_stamp: Cell<Option<Stamp>>,
     /// The style stamp `inline_animations` last looked at, and its answer.
     inline_stamp: Cell<Option<(Stamp, bool)>>,
+    /// The element and style stamp `style_read_hidden_content` last handled: a computed style
+    /// read property by property (a screenshot library copies ~350 per element) asks once.
+    hidden_read: Cell<Option<(NodeId, Stamp)>>,
     /// The style stamp of the last frame update.
     stamp: Cell<Option<Stamp>>,
     queued: Cell<bool>,
@@ -965,6 +968,11 @@ fn keep_hidden_content(
 /// nothing is kept. One engine lookup for a rendered element; a walk up to
 /// the hidden subtree's top for a hidden one.
 fn style_read_hidden_content(state: &State, dom: &pyro_dom::Dom, style: &pyro_dom::style::StyleEngine, el: NodeId) {
+    // Idempotent while the element and the styles stay the same.
+    let read = (el, style.observation_stamp(dom));
+    if state.hidden_read.replace(Some(read)) == Some(read) {
+        return;
+    }
     if style.engine_displayed(dom, el) != Some(false) {
         return;
     }
