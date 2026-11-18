@@ -46,7 +46,13 @@
   const setProperty = CSSStyleDeclaration.prototype.setProperty;
   const getPropertyValue = CSSStyleDeclaration.prototype.getPropertyValue;
   const computedStyle = globalThis.getComputedStyle;
-  const isElement = v => v !== null && typeof v === 'object' && v instanceof Element;
+  // An element of any realm (another document's, an iframe's): its native `nodeType`.
+  const nodeType = Object.getOwnPropertyDescriptor(Node.prototype, 'nodeType').get;
+  const isElement = v => {
+    if (v === null || typeof v !== 'object') return false;
+    if (v instanceof Element) return true;
+    try { return apply(nodeType, v, []) === 1; } catch (_) { return false; }
+  };
   const isObject = v => v !== null && (typeof v === 'object' || typeof v === 'function');
   const illegal = () => new TypeError('Illegal constructor');
   const brand = (map, o, what) => {

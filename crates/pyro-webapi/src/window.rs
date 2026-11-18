@@ -227,6 +227,14 @@ where
         Ok(crate::layout_api::match_media(s, w.page(), q)?.value())
     });
     def.method("getSelection", 0, |s, w, _a| crate::range::get_selection(s, w.page()));
+    // pyro: the legacy `find(string, caseSensitive, backwards, wrapAround)` (not in a standard):
+    // selects the next match within one text node after the selection (before it, backwards)
+    // and answers whether there was one.
+    def.method("find", 0, |s, w, a| {
+        let needle = if a.len() == 0 { String::new() } else { crate::util::dom_string(a.get(0))? };
+        let flag = |i: usize| a.len() > i && a.get(i).to_bool();
+        Ok(s.boolean(find_text(w.page(), &needle, flag(1), flag(2), flag(3))))
+    });
     def.method("open", 0, |s, w, a| window_open(s, w.page(), &a));
     def.getter("innerWidth", |s, w| Ok(s.number(window_size(w.page()).0 as f64)));
     def.getter("innerHeight", |s, w| Ok(s.number(window_size(w.page()).1 as f64)));
@@ -839,4 +847,65 @@ fn copy_session_storage(s: &Scope<'_>, page: &Rc<PageDom>) -> crate::storage::St
         // SecurityError (opaque origin) or a disposed page: the popup starts empty.
         _ => crate::storage::StorageNamespace::default(),
     }
+}
+
+/// `window.find`: the next match of `needle` (ASCII case-insensitive unless `case_sensitive`)
+/// within one text node of the document, after the selection's end (before its start when
+/// `backwards`), wrapping around when `wrap`. The match becomes the selection.
+fn find_text(page: &Rc<PageDom>, needle: &str, case_sensitive: bool, backwards: bool, wrap: bool) -> bool {
+    if needle.is_empty() {
+        return false;
+    }
+    let doc = page.document();
+    let texts: Vec<(pyro_dom::NodeId, Vec<u16>)> = {
+        let dom = page.dom.borrow();
+        let Ok(nodes) = dom.descendants(doc) else { return false };
+        nodes
+            .filter(|&n| dom.node_type(n).ok() == Some(pyro_dom::NodeType::Text))
+            .filter_map(|n| Some((n, dom.text_content_ref(n).ok()??.encode_utf16().collect())))
+            .collect()
+    };
+    let fold = |c: u16| if !case_sensitive && (b'A' as u16..=b'Z' as u16).contains(&c) { c + 32 } else { c };
+    let needle: Vec<u16> = needle.encode_utf16().map(fold).collect();
+    let matches = |text: &[u16], at: usize| text[at..at + needle.len()].iter().zip(&needle).all(|(&c, &n)| fold(c) == n);
+    // Where the search starts: the text node of the selection's end (start), and the offset in it.
+    let selection = crate::editing::selection_range(page);
+    let from = selection.and_then(|(start, end)| {
+        let point = if backwards { start } else { end };
+        texts.iter().position(|(n, _)| *n == point.0).map(|i| (i, point.1 as usize))
+    });
+    let count = texts.len();
+    let order: Vec<usize> = match (from, backwards) {
+        (Some((i, _)), false) => (i..count).chain((0..=i).filter(|_| wrap)).collect(),
+        (Some((i, _)), true) => (0..=i).rev().chain((i..count).rev().filter(|_| wrap)).collect(),
+        (None, false) => (0..count).collect(),
+        (None, true) => (0..count).rev().collect(),
+    };
+    for (step, &i) in order.iter().enumerate() {
+        let (node, text) = &texts[i];
+        if text.len() < needle.len() {
+            continue;
+        }
+        let last = text.len() - needle.len();
+        // Within the node the search starts from: only past (before) the selection.
+        let (lo, hi) = match from {
+            Some((at, offset)) if step == 0 && at == i => match backwards {
+                false => (offset, last),
+                true => (0, offset.saturating_sub(needle.len()).min(last)),
+            },
+            _ => (0, last),
+        };
+        if lo > hi {
+            continue;
+        }
+        let found = match backwards {
+            false => (lo..=hi).find(|&at| matches(text, at)),
+            true => (lo..=hi).rev().find(|&at| matches(text, at)),
+        };
+        if let Some(at) = found {
+            crate::editing::set_selection(page, (*node, at as u32), (*node, (at + needle.len()) as u32));
+            return true;
+        }
+    }
+    false
 }

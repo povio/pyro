@@ -75,3 +75,21 @@ fn mathml_elements_have_inline_style() {
         "true|true|height: 5px;|object"
     );
 }
+
+/// `window.find` selects the next match within a text node after the selection (wrapping on
+/// request); WPT editing crashtests call it.
+#[test]
+fn window_find_selects_matches() {
+    let env = Env::new("http://svg.test/");
+    assert_eq!(
+        env.eval(
+            r#"(() => {
+              document.body.innerHTML = "<p>one AAA two aaa</p>";
+              const out = [find("aaa"), getSelection().toString(), find("aaa"), getSelection().anchorOffset];
+              out.push(find("AAA", true), find("zzz"), find("aaa", false, false, true), getSelection().anchorOffset);
+              return out.join("|");
+            })()"#
+        ),
+        "true|AAA|true|12|false|false|true|4"
+    );
+}
