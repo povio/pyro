@@ -6464,7 +6464,7 @@
   "css/css-backgrounds/animations/background-color-animation-in-body.html": {"status":"complete","ms":30,"n":1,"fail":[],"h":"0e440bf2"},
   "css/css-backgrounds/animations/background-color-animation-non-zero-size-element-change-to-zero.html": {"status":"complete","ms":30,"n":1,"fail":[],"h":"0e440bf2"},
   "css/css-backgrounds/animations/background-color-animation-offset-position-not-stuck.html": {"status":"complete","ms":60,"n":1,"fail":[],"h":"0e440bf2"},
-  "css/css-backgrounds/animations/background-color-animation-pseudo-element.html": {"status":"complete","ms":30,"n":1,"pass":[]},
+  "css/css-backgrounds/animations/background-color-animation-pseudo-element.html": {"status":"complete","ms":30,"n":1,"fail":[],"h":"0e440bf2"},
   "css/css-backgrounds/animations/background-color-animation-single-keyframe.html": {"status":"complete","ms":30,"n":1,"fail":[],"h":"0e440bf2"},
   "css/css-backgrounds/animations/background-color-animation-three-keyframes1.html": {"status":"complete","ms":50,"n":1,"fail":[],"h":"0e440bf2"},
   "css/css-backgrounds/animations/background-color-animation-three-keyframes2.html": {"status":"complete","ms":30,"n":1,"fail":[],"h":"0e440bf2"},
