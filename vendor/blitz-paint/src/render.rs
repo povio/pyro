@@ -2179,6 +2179,18 @@ fn convert_rect(rect: &parley::BoundingBox) -> kurbo::Rect {
 }
 
 impl ElementCx<'_, '_> {
+    /// pyro: whether this element's used colour scheme is dark: its `color-scheme` names dark and
+    /// not light, or both (or neither) and the viewport prefers dark.
+    pub(crate) fn dark_color_scheme(&self) -> bool {
+        use style::values::specified::color::ColorSchemeFlags;
+        let bits = self.style.get_inherited_ui().color_scheme.bits;
+        let (dark, light) = (bits.contains(ColorSchemeFlags::DARK), bits.contains(ColorSchemeFlags::LIGHT));
+        if dark != light {
+            return dark;
+        }
+        self.context.dom.viewport().color_scheme == blitz_traits::shell::ColorScheme::Dark
+    }
+
     /// Paint overlay scrollbar thumbs for scroll containers: `overflow:
     /// scroll`, or `auto` when the content overflows (never `hidden`/`clip`,
     /// which scroll only programmatically). Thumbs appear on scroll and fade

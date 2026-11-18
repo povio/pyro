@@ -30911,7 +30911,7 @@ diff --git a/packages/blitz-dom/src/node/svg.rs b/packages/blitz-dom/src/node/sv
  }
  
  impl SvgImageData {
-@@ -106,13 +142,52 @@
+@@ -106,13 +142,68 @@
          };
          let doc = roxmltree::Document::parse_with_options(text, xml_options)
              .map_err(usvg::Error::ParsingFailed)?;
@@ -30948,6 +30948,22 @@ diff --git a/packages/blitz-dom/src/node/svg.rs b/packages/blitz-dom/src/node/sv
          })
      }
  
++    /// pyro: the image drawn for an element whose used colour scheme is dark (`dark`), when the
++    /// image uses `light-dark()` and its own `color-scheme` allows dark: parsed again with each
++    /// `light-dark()` its dark colour (WPT css-borders `border-image-color-scheme`). `None`
++    /// otherwise: the image as loaded is the light one.
++    pub fn for_color_scheme(&self, dark: bool) -> Option<SvgImageData> {
++        let source = self.source.as_deref().filter(|_| dark)?;
++        crate::svg_refs::find_bytes(source, b"light-dark(")?;
++        if !crate::svg_refs::allows_dark_scheme(source) {
++            return None;
++        }
++        let dark_source = crate::svg_refs::resolve_light_dark(source, true)?;
++        let mut svg = crate::util::parse_svg_image(&dark_source).ok()?;
++        svg.source = self.source.clone();
++        Some(svg)
++    }
++
 +    /// pyro: an inline `<svg>` without a `viewBox`, parsed again for a CSS box
 +    /// `width` x `height` (CSS px): its viewport is the box, so user units are
 +    /// CSS px and percentages (a `<use>` of a `<symbol>` sized `100%` by default)
@@ -30966,7 +30982,7 @@ diff --git a/packages/blitz-dom/src/node/svg.rs b/packages/blitz-dom/src/node/sv
      /// The intrinsic width in CSS px, present only when the root `<svg>`
      /// declared an absolute (non-percentage) `width`.
      pub fn intrinsic_width(&self) -> Option<f32> {
-@@ -121,6 +196,12 @@
+@@ -121,6 +212,12 @@
              .intrinsic_dimensions
              .width
              .is_some_and(|len| len.unit != LengthUnit::Percent);
@@ -30979,7 +30995,7 @@ diff --git a/packages/blitz-dom/src/node/svg.rs b/packages/blitz-dom/src/node/sv
          declared.then(|| self.tree.size().width())
      }
  
-@@ -132,6 +213,10 @@
+@@ -132,6 +229,10 @@
              .intrinsic_dimensions
              .height
              .is_some_and(|len| len.unit != LengthUnit::Percent);
@@ -30990,7 +31006,7 @@ diff --git a/packages/blitz-dom/src/node/svg.rs b/packages/blitz-dom/src/node/sv
          declared.then(|| self.tree.size().height())
      }
  
-@@ -230,6 +315,49 @@
+@@ -230,6 +331,49 @@
      }
  }
  
@@ -31040,7 +31056,7 @@ diff --git a/packages/blitz-dom/src/node/svg.rs b/packages/blitz-dom/src/node/sv
  /// Map a `viewBox` onto a viewport of the given size per `preserveAspectRatio`.
  fn view_box_transform(
      view_box: usvg::NonZeroRect,
-@@ -263,3 +391,288 @@
+@@ -263,3 +407,288 @@
      let ty = (height - view_box.height() * sy) * align_y - view_box.y() * sy;
      usvg::Transform::from_row(sx, 0.0, 0.0, sy, tx, ty)
  }
@@ -40757,7 +40773,7 @@ diff --git a/packages/blitz-dom/src/svg_refs.rs b/packages/blitz-dom/src/svg_ref
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/svg_refs.rs
-@@ -0,0 +1,393 @@
+@@ -0,0 +1,461 @@
 +//! pyro: SVG sources whose clip path, mask or filter references form a cycle longer than usvg
 +//! breaks. usvg sets a reference that closes a cycle of one or two elements to `none`
 +//! (`fix_recursive_links`), but follows a longer one without end and overflows the stack
@@ -41012,6 +41028,62 @@ new file mode 100644
 +    found
 +}
 +
++/// The first position of `needle` in `haystack`.
++pub(crate) fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
++    haystack.windows(needle.len()).position(|w| w == needle)
++}
++
++/// pyro: `source` with each `light-dark(a, b)` (which usvg does not parse: the paint fell back to
++/// black) replaced by `a`, or by `b` when `dark`. `None` when there is none.
++pub(crate) fn resolve_light_dark(source: &[u8], dark: bool) -> Option<Vec<u8>> {
++    const NAME: &[u8] = b"light-dark(";
++    find_bytes(source, NAME)?;
++    let mut out = Vec::with_capacity(source.len());
++    let mut rest = source;
++    while let Some(at) = find_bytes(rest, NAME) {
++        out.extend_from_slice(&rest[..at]);
++        let args = &rest[at + NAME.len()..];
++        // The top-level comma and the closing parenthesis.
++        let (mut depth, mut comma, mut end) = (0usize, None, None);
++        for (i, &b) in args.iter().enumerate() {
++            match b {
++                b'(' => depth += 1,
++                b')' if depth == 0 => {
++                    end = Some(i);
++                    break;
++                }
++                b')' => depth -= 1,
++                b',' if depth == 0 && comma.is_none() => comma = Some(i),
++                _ => {}
++            }
++        }
++        let (Some(comma), Some(end)) = (comma, end) else {
++            out.extend_from_slice(&rest[at..]);
++            rest = &[];
++            break;
++        };
++        let chosen = if dark { &args[comma + 1..end] } else { &args[..comma] };
++        out.extend_from_slice(chosen.trim_ascii());
++        rest = &args[end + 1..];
++    }
++    out.extend_from_slice(rest);
++    Some(out)
++}
++
++/// pyro: whether an SVG image's own `color-scheme` (on its root, as a property) lets it be dark.
++pub(crate) fn allows_dark_scheme(source: &[u8]) -> bool {
++    let mut rest = source;
++    while let Some(at) = find_bytes(rest, b"color-scheme") {
++        let tail = &rest[at + 12..];
++        let value = &tail[..tail.iter().position(|&b| matches!(b, b';' | b'"' | b'\'' | b'}')).unwrap_or(tail.len())];
++        if find_bytes(value, b"dark").is_some() {
++            return true;
++        }
++        rest = tail;
++    }
++    false
++}
++
 +/// pyro: `source` with the `divisor` of each `feConvolveMatrix` that is zero (an error, which
 +/// Chromium reads as the default) set to the default, the sum of the kernel's values (1 when that
 +/// is zero); usvg leaves such a primitive out of its filter. `None` when there is none.
@@ -41063,6 +41135,18 @@ new file mode 100644
 +
 +#[cfg(test)]
 +mod tests {
++    #[test]
++    fn light_dark_picks_one_colour() {
++        let src = b"<rect fill='light-dark(rgb(1, 2, 3), blue)' style='stroke: light-dark(red,green)'/>";
++        let light = super::resolve_light_dark(src, false).unwrap();
++        assert_eq!(light, b"<rect fill='rgb(1, 2, 3)' style='stroke: red'/>".to_vec());
++        let dark = super::resolve_light_dark(src, true).unwrap();
++        assert_eq!(dark, b"<rect fill='blue' style='stroke: green'/>".to_vec());
++        assert!(super::resolve_light_dark(b"<rect fill='red'/>", true).is_none());
++        assert!(super::allows_dark_scheme(b"<svg style='color-scheme: light dark'>"));
++        assert!(!super::allows_dark_scheme(b"<svg style='color-scheme: light'>"));
++    }
++
 +    use super::break_reference_cycles;
 +
 +    fn broken(svg: &str) -> String {
@@ -41453,7 +41537,7 @@ diff --git a/packages/blitz-dom/src/util.rs b/packages/blitz-dom/src/util.rs
  // Debug print an RcDom
  pub fn walk_tree(indent: usize, node: &Node) {
      // Skip all-whitespace text nodes entirely
-@@ -156,11 +295,35 @@
+@@ -156,11 +295,39 @@
  /// Parse an SVG image.
  #[cfg(feature = "svg")]
  pub(crate) fn parse_svg_image(source: &[u8]) -> Result<crate::node::SvgImageData, usvg::Error> {
@@ -41478,7 +41562,11 @@ diff --git a/packages/blitz-dom/src/util.rs b/packages/blitz-dom/src/util.rs
 +    let checked = crate::svg_refs::break_reference_cycles(source);
 +    // pyro: `feConvolveMatrix divisor="0"` is its default, as in Chromium (`crate::svg_refs`).
 +    let defaulted = crate::svg_refs::default_zero_divisors(&checked);
-+    let svg = crate::node::SvgImageData::from_data(defaulted.as_deref().unwrap_or(&checked), &options)?;
++    let defaulted = defaulted.as_deref().unwrap_or(&checked);
++    // pyro: `light-dark()` is its light colour; an element whose used colour scheme is dark draws
++    // [`crate::node::SvgImageData::for_color_scheme`].
++    let schemed = crate::svg_refs::resolve_light_dark(defaulted, false);
++    let svg = crate::node::SvgImageData::from_data(schemed.as_deref().unwrap_or(defaulted), &options)?;
 +    PARSED.with(|p| {
 +        let mut p = p.borrow_mut();
 +        if p.len() >= MAX_ENTRIES {
@@ -41490,7 +41578,7 @@ diff --git a/packages/blitz-dom/src/util.rs b/packages/blitz-dom/src/util.rs
  }
  
  pub trait ToColorColor {
-@@ -254,3 +417,93 @@
+@@ -254,3 +421,93 @@
          }
      };
  }

@@ -135,6 +135,8 @@ impl ElementCx<'_, '_> {
         // pyro: `image-orientation: none`: the pixels were turned by the EXIF orientation when
         // decoded; the border image slices the image as stored.
         let unturned;
+        #[cfg(feature = "svg")]
+        let schemed;
         let source = match source_image {
             GenericImage::None => return false,
             GenericImage::Gradient(gradient) => Source::Gradient(gradient),
@@ -149,7 +151,14 @@ impl ElementCx<'_, '_> {
                     ImageData::Raster(raster) => Source::Raster(raster),
                     #[cfg(feature = "svg")]
                     ImageData::Svg(svg) if !svg.intrinsic_dimensions.degenerate_view_box => {
-                        Source::Svg(svg)
+                        // pyro: `light-dark()` in the image follows this element's colour scheme.
+                        match svg.for_color_scheme(self.dark_color_scheme()) {
+                            Some(dark) => {
+                                schemed = dark;
+                                Source::Svg(&schemed)
+                            }
+                            None => Source::Svg(svg),
+                        }
                     }
                     _ => return false,
                 },

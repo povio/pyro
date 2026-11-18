@@ -173,6 +173,22 @@ impl SvgImageData {
         })
     }
 
+    /// pyro: the image drawn for an element whose used colour scheme is dark (`dark`), when the
+    /// image uses `light-dark()` and its own `color-scheme` allows dark: parsed again with each
+    /// `light-dark()` its dark colour (WPT css-borders `border-image-color-scheme`). `None`
+    /// otherwise: the image as loaded is the light one.
+    pub fn for_color_scheme(&self, dark: bool) -> Option<SvgImageData> {
+        let source = self.source.as_deref().filter(|_| dark)?;
+        crate::svg_refs::find_bytes(source, b"light-dark(")?;
+        if !crate::svg_refs::allows_dark_scheme(source) {
+            return None;
+        }
+        let dark_source = crate::svg_refs::resolve_light_dark(source, true)?;
+        let mut svg = crate::util::parse_svg_image(&dark_source).ok()?;
+        svg.source = self.source.clone();
+        Some(svg)
+    }
+
     /// pyro: an inline `<svg>` without a `viewBox`, parsed again for a CSS box
     /// `width` x `height` (CSS px): its viewport is the box, so user units are
     /// CSS px and percentages (a `<use>` of a `<symbol>` sized `100%` by default)

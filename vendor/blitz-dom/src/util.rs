@@ -315,7 +315,11 @@ pub(crate) fn parse_svg_image(source: &[u8]) -> Result<crate::node::SvgImageData
     let checked = crate::svg_refs::break_reference_cycles(source);
     // pyro: `feConvolveMatrix divisor="0"` is its default, as in Chromium (`crate::svg_refs`).
     let defaulted = crate::svg_refs::default_zero_divisors(&checked);
-    let svg = crate::node::SvgImageData::from_data(defaulted.as_deref().unwrap_or(&checked), &options)?;
+    let defaulted = defaulted.as_deref().unwrap_or(&checked);
+    // pyro: `light-dark()` is its light colour; an element whose used colour scheme is dark draws
+    // [`crate::node::SvgImageData::for_color_scheme`].
+    let schemed = crate::svg_refs::resolve_light_dark(defaulted, false);
+    let svg = crate::node::SvgImageData::from_data(schemed.as_deref().unwrap_or(defaulted), &options)?;
     PARSED.with(|p| {
         let mut p = p.borrow_mut();
         if p.len() >= MAX_ENTRIES {

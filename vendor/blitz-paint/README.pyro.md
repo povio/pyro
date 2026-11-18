@@ -1097,3 +1097,4 @@ frame's whole transform, clipped to the content box (upstream applied the transl
   position) for it instead of painting it after its own in-flow content, and is not culled while it has such boxes (an
   offset can bring them into view). Vertical roots, highlighted or truncated text and line-by-line painting keep
   painting every pass themselves. Hoisted boxes add `inline_sticky_containing_block_offset`.
+- Round 4 lane F, `light-dark()` in SVG images: usvg does not parse it (the paint fell back to black). An SVG image is parsed with each `light-dark(a, b)` as `a` (`svg_refs::resolve_light_dark`); `SvgImageData::for_color_scheme` parses the dark variant, which a border image draws when the element's used colour scheme is dark and the image's own `color-scheme` allows dark (blitz-paint `ElementCx::dark_color_scheme`). WPT css-borders `border-image-color-scheme`.
