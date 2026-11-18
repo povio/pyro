@@ -1100,24 +1100,25 @@ rule_class!(CssSupportsRule, "CSSSupportsRule", CssConditionRule);
 rule_class!(CssContainerRule, "CSSContainerRule", CssConditionRule);
 rule_class!(CssImportRule, "CSSImportRule", CssRule, |def| {
     define_rule_media(def);
-    def.getter("href", |s, r| {
-        let prelude = rule_prelude(r);
-        let mut p = cssparser::Parser::new(&prelude);
-        let href = match p.next() {
-            Ok(cssparser::Token::QuotedString(v)) | Ok(cssparser::Token::UnquotedUrl(v)) => v.to_string(),
-            Ok(cssparser::Token::Function(f)) if f.eq_ignore_ascii_case("url") => p
-                .parse_nested_block(|n| n.expect_string().map(|v| v.to_string()).map_err(cssparser::ParseError::<()>::from))
-                .unwrap_or_default(),
-            _ => String::new(),
-        };
-        Ok(s.string(&href))
-    });
+    def.getter("href", |s, r| Ok(s.string(&import_href(r))));
     // `layer` (anonymous: ""), `layer(name)`, or no layer (null).
     def.getter("layerName", |s, r| match import_parts(&rule_prelude(r)).0 {
         Some(name) => Ok(s.string(&name)),
         None => Ok(s.null()),
     });
-    def.getter("styleSheet", |s, _r| Ok(s.null()));
+    // The imported sheet once it loaded (one object per rule and realm).
+    def.getter("styleSheet", |s, r| {
+        let key = IdentityKey(r.node.identity.0 | (1 << 52), r.node.identity.1);
+        if let Some(o) = s.lookup_identity(key) {
+            return Ok(o.value());
+        }
+        let Some((page, url)) = import_url(r) else { return Ok(s.null()) };
+        let Some(text): Option<String> = page.imported_sheets.borrow().get(&url).cloned() else { return Ok(s.null()) };
+        let media = media_text(&pyro_dom::cssom::import_split(&rule_prelude(r)).1);
+        let rule = RuleData { owner: r.owner.hold()?, node: r.node.clone() };
+        let sheet = Constructed::imported(&page, url, &text, media, rule);
+        Ok(s.wrap::<CssStyleSheet>(SheetData { owner: SheetOwner::Constructed(sheet) }, Some(key))?.value())
+    });
     // The condition of `supports(...)`, or null.
     def.getter("supportsText", |s, r| match import_parts(&rule_prelude(r)).1 {
         Some(text) => Ok(s.string(&text)),
@@ -1368,6 +1369,14 @@ pub struct Constructed {
     /// Its media list's text: the rules apply inside this `@media`.
     media: RefCell<String>,
     disabled: Cell<bool>,
+    /// The sheet of an `@import` rule (`CSSImportRule.styleSheet`), not a
+    /// constructed one: its URL and the rule that imports it.
+    import: Option<ImportInfo>,
+}
+
+pub struct ImportInfo {
+    href: String,
+    rule: RuleData,
 }
 
 impl Constructed {
@@ -1388,7 +1397,35 @@ impl Constructed {
             }),
             media: RefCell::new(media_text(&media)),
             disabled: Cell::new(disabled),
+            import: None,
         })
+    }
+
+    /// The sheet `rule` imports from `href`, with the rules of `text`. It
+    /// applies nothing of its own: the style engine loads imports itself.
+    fn imported(page: &Rc<PageDom>, href: String, text: &str, media: String, rule: RuleData) -> Rc<Constructed> {
+        static NEXT_SHEET: AtomicU64 = AtomicU64::new(1 << 40);
+        let id = NEXT_SHEET.fetch_add(1, Ordering::Relaxed);
+        let mut namespaces = Vec::new();
+        let rules = parse_rules(text, &mut namespaces).into_iter().map(|r| RuleNode::new(r, Weak::new())).collect();
+        let sheet = Rc::new(Constructed {
+            id,
+            page: Rc::downgrade(page),
+            document: page.document(),
+            identity: IdentityKey(rule.node.identity.0 | (1 << 52), rule.node.identity.1),
+            model: Rc::new(SheetModel {
+                source: RefCell::new(text.to_owned()),
+                edited: Cell::new(false),
+                list: RuleList::default(),
+                namespaces: RefCell::new(namespaces),
+                checked: Cell::new(0),
+            }),
+            media: RefCell::new(media),
+            disabled: Cell::new(false),
+            import: Some(ImportInfo { href, rule }),
+        });
+        sheet.model.list.replace(rules);
+        sheet
     }
 
     /// The text the style engine applies: the rules (inside the sheet's
@@ -1413,6 +1450,9 @@ impl Constructed {
     }
 
     fn push(&self) {
+        if self.import.is_some() {
+            return;
+        }
         if let Some(page) = self.page.upgrade() {
             page.set_constructed_sheet_text(self.id, &self.applied_text());
         }
@@ -1468,7 +1508,7 @@ impl SheetOwner {
         }
     }
     fn is_constructed(&self) -> bool {
-        matches!(self, SheetOwner::Constructed(_))
+        matches!(self, SheetOwner::Constructed(c) if c.import.is_none())
     }
     fn wrapper<'s>(&self, s: &Scope<'s>) -> JsResult<Object<'s>> {
         match self {
@@ -1511,6 +1551,39 @@ pub struct MediaList;
 pub enum MediaOwner {
     Sheet(SheetOwner),
     Rule(RuleData),
+}
+
+/// The URL an `@import` rule names, as written.
+fn import_href(r: &RuleData) -> String {
+    let prelude = rule_prelude(r);
+    let mut p = cssparser::Parser::new(&prelude);
+    match p.next() {
+        Ok(cssparser::Token::QuotedString(v)) | Ok(cssparser::Token::UnquotedUrl(v)) => v.to_string(),
+        Ok(cssparser::Token::Function(f)) if f.eq_ignore_ascii_case("url") => p
+            .parse_nested_block(|n| n.expect_string().map(|v| v.to_string()).map_err(cssparser::ParseError::<()>::from))
+            .unwrap_or_default(),
+        _ => String::new(),
+    }
+}
+
+/// The page and absolute URL of the sheet an `@import` rule loads: its href
+/// resolved against the importing sheet's location.
+fn import_url(r: &RuleData) -> Option<(Rc<PageDom>, String)> {
+    let href = import_href(r);
+    match &r.owner {
+        SheetOwner::Node(h) => {
+            let url = crate::html::resolve_url(&h.page.dom.borrow(), h.id, &href);
+            Some((h.page.clone(), url))
+        }
+        SheetOwner::Constructed(c) => {
+            let page = c.page.upgrade()?;
+            let base = match &c.import {
+                Some(i) => i.href.clone(),
+                None => page.dom.borrow().document_data(c.document).ok()?.url.to_string(),
+            };
+            Some((page, url::Url::parse(&base).ok()?.join(&href).ok()?.to_string()))
+        }
+    }
 }
 
 /// The layer name (`Some("")` for an anonymous `layer`) and `supports()`
@@ -1702,7 +1775,13 @@ impl JsClass for StyleSheet {
             SheetOwner::Node(h) => Ok(crate::node::wrap_node(s, &h.page, h.id)?.value()),
             SheetOwner::Constructed(_) => Ok(s.null()),
         });
-        def.getter("parentStyleSheet", |s, _sh| Ok(s.null()));
+        def.getter("parentStyleSheet", |s, sh| match &sh.owner {
+            SheetOwner::Constructed(c) => match &c.import {
+                Some(i) => Ok(i.rule.owner.wrapper(s)?.value()),
+                None => Ok(s.null()),
+            },
+            SheetOwner::Node(_) => Ok(s.null()),
+        });
         def.getter("title", |s, sh| match &sh.owner {
             SheetOwner::Node(h) => {
                 let dom = h.page.dom.borrow();
@@ -1738,6 +1817,7 @@ impl JsClass for StyleSheet {
                 })
             }
             // A constructed sheet's location is its document's URL.
+            SheetOwner::Constructed(c) if c.import.is_some() => Ok(s.string(&c.import.as_ref().map(|i| i.href.clone()).unwrap_or_default())),
             SheetOwner::Constructed(c) => match c.page.upgrade() {
                 Some(page) => {
                     let dom = page.dom.borrow();
@@ -1783,7 +1863,13 @@ impl JsClass for CssStyleSheet {
             let key = sheet.identity;
             s.wrap_new::<CssStyleSheet>(SheetData { owner: SheetOwner::Constructed(sheet) }, nt, Some(key))
         });
-        def.getter("ownerRule", |s, _sh| Ok(s.null()));
+        def.getter("ownerRule", |s, sh| match &sh.owner {
+            SheetOwner::Constructed(c) => match &c.import {
+                Some(i) => Ok(rule_wrapper(s, &i.rule.node, &i.rule.owner)?.value()),
+                None => Ok(s.null()),
+            },
+            SheetOwner::Node(_) => Ok(s.null()),
+        });
         def.getter("cssRules", rules_value);
         def.getter("rules", rules_value);
         def.method("insertRule", 1, |s, sh, a| {
@@ -1826,7 +1912,12 @@ impl JsClass for CssStyleSheet {
         });
         def.method("replaceSync", 1, |s, sh, a| {
             let text = arg_string(&a, 0, "CSSStyleSheet.replaceSync")?;
-            let SheetOwner::Constructed(c) = &sh.owner else { return Err(not_constructed("replaceSync")) };
+            let Some(c) = (match &sh.owner {
+                SheetOwner::Constructed(c) if c.import.is_none() => Some(c),
+                _ => None,
+            }) else {
+                return Err(not_constructed("replaceSync"));
+            };
             c.replace(&text);
             Ok(s.undefined())
         });
@@ -1842,11 +1933,11 @@ impl JsClass for CssStyleSheet {
                 }
             };
             match &sh.owner {
-                SheetOwner::Constructed(c) => {
+                SheetOwner::Constructed(c) if c.import.is_none() => {
                     c.replace(&text);
                     deferred.resolve(s, constructed_wrapper(s, c)?.value())?;
                 }
-                SheetOwner::Node(_) => deferred.reject(s, not_constructed("replace").to_value(s))?,
+                _ => deferred.reject(s, not_constructed("replace").to_value(s))?,
             }
             Ok(promise)
         });

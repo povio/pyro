@@ -172,3 +172,26 @@ fn a_style_in_a_shadow_tree_or_a_frame_loads() {
     settle(&mut thread);
     assert_eq!(events(&thread, page), "shadow:load");
 }
+
+/// `CSSImportRule.styleSheet` is the imported sheet once it loaded: its rules,
+/// URL, owner rule and parent sheet; nested imports resolve against it
+/// (css/cssom/cssimportrule.html, idlharness.html).
+#[test]
+fn an_import_rule_exposes_the_sheet_it_loaded() {
+    let (thread, page, _loader) = load(
+        "<style id=s>@import url(/a.css) screen;</style>",
+        &[("/a.css", "@import 'b.css'; p { color: green }", 0), ("/b.css", "q {}", 0)],
+    );
+    assert_eq!(
+        eval(
+            &thread,
+            page,
+            "(() => { const rule = document.getElementById('s').sheet.cssRules[0], a = rule.styleSheet;
+               const b = a.cssRules[0].styleSheet;
+               return [a === rule.styleSheet, a.href, a.ownerRule === rule, a.parentStyleSheet === rule.parentStyleSheet,
+                       a.ownerNode, a.media.mediaText, a.cssRules.length, a.cssRules[1].cssText, b && b.href,
+                       b && b.cssRules[0].cssText].join('|'); })()"
+        ),
+        "true|http://site.test/a.css|true|true||screen|2|p { color: green; }|http://site.test/b.css|q { }"
+    );
+}

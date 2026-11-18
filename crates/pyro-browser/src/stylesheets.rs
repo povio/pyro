@@ -564,6 +564,13 @@ impl Browser {
         }
         if let Some(r) = result.as_ref().ok().filter(|r| ok && r.mime.eq_ignore_ascii_case("text/css")) {
             let (text, encoding) = pyro_dom::cssom::decode_stylesheet(&r.body, r.charset.as_deref(), &[environment]);
+            // CSSOM: `CSSImportRule.styleSheet` lists the imported rules.
+            if let Some(bindings) = self.doc(page).and_then(|d| d.main_frame.page_dom.clone()) {
+                bindings.provide_imported_sheet(url, &text);
+                if r.url != url {
+                    bindings.provide_imported_sheet(&r.url, &text);
+                }
+            }
             // The page's layouts take this sheet rather than fetching it
             // again (they read `file:` and `data:` URLs themselves), decoded
             // (they cannot know its environment encoding).

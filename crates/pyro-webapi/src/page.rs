@@ -311,6 +311,9 @@ pub struct PageDom {
     /// over: a later attribute change wins, as it updates the internal slot.
     nonces: RefCell<FxHashMap<NodeId, (Option<String>, String)>>,
     pub(crate) sheet_models: RefCell<FxHashMap<NodeId, Rc<crate::css::SheetModel>>>,
+    /// The text of each sheet a `<style>` imported, by its absolute URL (for
+    /// `CSSImportRule.styleSheet`); the embedder provides it as it loads.
+    pub(crate) imported_sheets: RefCell<FxHashMap<String, String>>,
     /// The constructed sheets each document or shadow root adopts
     /// (`adoptedStyleSheets`), in order; empty unless a script adopted one.
     pub(crate) adopted_sheets: RefCell<FxHashMap<NodeId, Vec<Rc<crate::css::Constructed>>>>,
@@ -806,6 +809,7 @@ impl PageDom {
             popover: Default::default(),
             nonces: RefCell::new(FxHashMap::default()),
             sheet_models: RefCell::new(FxHashMap::default()),
+            imported_sheets: RefCell::new(FxHashMap::default()),
             adopted_sheets: RefCell::new(FxHashMap::default()),
             css_font_faces: RefCell::new(None),
             font_loads: Cell::new(0),
@@ -2451,5 +2455,14 @@ impl PageDom {
     /// Borrow helper for bindings.
     pub fn with_dom<R>(&self, f: impl FnOnce(&mut Dom) -> R) -> R {
         f(&mut self.dom.borrow_mut())
+    }
+}
+
+impl PageDom {
+    /// A sheet a `<style>` imported loaded: `CSSImportRule.styleSheet` lists
+    /// its rules. `url` is the absolute URL the rule names (and, after a
+    /// redirect, the final one too).
+    pub fn provide_imported_sheet(&self, url: &str, text: &str) {
+        self.imported_sheets.borrow_mut().insert(url.to_owned(), text.to_owned());
     }
 }
