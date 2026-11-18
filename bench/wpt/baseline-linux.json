@@ -2959,7 +2959,7 @@
   "html/dom/elements/global-attributes/dataset-get.html": {"status":"complete","ms":10,"n":10,"fail":[],"h":"0c31c3cc"},
   "html/dom/elements/global-attributes/dataset-prototype.html": {"status":"complete","ms":10,"n":2,"fail":[],"h":"eebc45bd"},
   "html/dom/elements/global-attributes/dataset-set.html": {"status":"complete","ms":10,"n":11,"fail":[],"h":"72dfeb69"},
-  "html/dom/elements/global-attributes/dataset.html": {"status":"complete","ms":20,"n":8,"fail":["MathML elements should have a .dataset"],"h":"d2e0e6ec"},
+  "html/dom/elements/global-attributes/dataset.html": {"status":"complete","ms":20,"n":8,"fail":[],"h":"d2e0e6ec"},
   "html/dom/elements/global-attributes/dir-assorted.window.html": {"status":"complete","ms":10,"n":41,"fail":[],"h":"382f1488"},
   "html/dom/elements/global-attributes/dir-auto-div-append-child.html": {"status":"complete","ms":10,"n":1,"fail":[],"h":"5699a1a4"},
   "html/dom/elements/global-attributes/dir-auto-dynamic-changes.window.html": {"status":"complete","ms":20,"n":21,"fail":[],"h":"feb68302"},
