@@ -251,9 +251,12 @@ impl PageHooks for Hooks {
             if let Some(nav) =
                 nav.as_ref().filter(|_| !request.url.starts_with("javascript:") && !cross_origin_target)
             {
-                match nav.navigate_event("push", &request.url, true) {
+                // HTML "navigate" with history handling "auto": a navigation
+                // to the document's own URL replaces its entry.
+                let kind = if request.url == nav.url() { "replace" } else { "push" };
+                match nav.navigate_event(kind, &request.url, true) {
                     crate::nav::NavigateDecision::Cancel => return,
-                    crate::nav::NavigateDecision::Intercept => return nav.commit_intercepted(&request.url, "push"),
+                    crate::nav::NavigateDecision::Intercept => return nav.commit_intercepted(&request.url, kind),
                     crate::nav::NavigateDecision::Proceed => {}
                 }
             }
