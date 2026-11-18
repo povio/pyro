@@ -867,17 +867,8 @@ pub(super) fn resolve_standalone_heights<Tree: LayoutGridContainer>(
         if tree.get_grid_child_style(owner).subgrid_axis(AbsoluteAxis::Vertical) != AbsoluteAxis::Vertical {
             continue;
         }
-        let Some(context) = tree.subgrid_context(owner) else { continue };
-        if let Some(own) = context.own_rows {
+        if let Some(own) = tree.subgrid_context(owner).and_then(|context| context.own_rows) {
             item.standalone_size.height = own.area(item.owner_lines.height);
-        } else if let Some(spans) = context.rows.as_ref().and_then(|rows| rows.track_spans.as_ref()) {
-            // pyro: an owner whose rows are subgridded from a subgrid with rows of its own (`subgrid/
-            // standalone-axis-size-012`): the rows that one gave it when it was laid out
-            let lines = item.owner_lines.height;
-            let (start, end) = (lines.start.0.max(0) as usize, lines.end.0.max(0) as usize);
-            if start < end && end <= spans.len() {
-                item.standalone_size.height = Some((spans[end - 1].1 - spans[start].0).max(0.0));
-            }
         }
     }
 }

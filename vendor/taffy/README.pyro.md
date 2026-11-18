@@ -563,10 +563,9 @@ Column-only subgrids (css-grid-2 §9 standalone axis): a subgrid in its columns 
 column-only subgrid children at their definite (else max-content) height and gives their items the rows they span
 (`resolve_standalone_heights`, `GridItem::standalone_size.height`), so an orthogonal item's width follows its row
 (WPT `subgrid/standalone-axis-size-010`). A subgrid stretched over rows of fixed sizes is measured at their height,
-so a nested one sizes its own rows in what it gets (`-011`); an item whose subgrid takes its rows from one with rows of
-its own reads them from what that one gave it (`SubgridAxisContext::track_spans`, `-012`). The items of a nested
-subgrid in both its axes (no tracks of its own) belong to its parent subgrid's tracks, their owner lines shifted to
-where it lies there (`collect_virtual_items`), so chains of them reach the subgrid with rows of its own (`-013`).
+so a nested one sizes its own rows in what it gets (`-011`). The items of a nested subgrid in both its axes (no tracks
+of its own) belong to its parent subgrid's tracks, their owner lines shifted to where it lies there
+(`collect_virtual_items`), so they and chains of such subgrids reach the subgrid with rows of its own (`-012`, `-013`).
 `crates/pyro-render/tests/subgrid_edge_tracks.rs`.
 
 
