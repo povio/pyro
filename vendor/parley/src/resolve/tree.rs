@@ -404,14 +404,20 @@ impl<B: Brush> TreeStyleBuilder<B> {
         let parent_id = self.resolve_style_id(parent);
         let mut style = self.tree[span].style.clone();
         style.parent = parent_id;
-        let style_id = self.push_style(style);
+        let style_id = self.push_style(style, parent_id);
         self.tree[span].style_id = Some(style_id);
         style_id
     }
 
-    fn push_style(&mut self, style: ResolvedStyle<B>) -> u16 {
+    /// Adds `style` to the table and returns its index. pyro: a full table (style ids are `u16`:
+    /// one paragraph of more than 65,536 styled spans, such as empty spans that each put an
+    /// empty-box strut in the line) gives `fallback` instead of panicking ("too many styles"):
+    /// the span is then laid out in that style (its parent's, or its own without the variant).
+    fn push_style(&mut self, style: ResolvedStyle<B>, fallback: u16) -> u16 {
         let style_id = self.style_table.len();
-        assert!(style_id <= u16::MAX as usize, "too many styles");
+        if style_id > u16::MAX as usize {
+            return fallback;
+        }
         self.style_table.push(style);
         style_id as u16
     }
@@ -430,7 +436,7 @@ impl<B: Brush> TreeStyleBuilder<B> {
         let mut style = style.clone();
         style.letter_spacing = 0.0;
         style.word_spacing = 0.0;
-        let style_id = self.push_style(style);
+        let style_id = self.push_style(style, span_id);
         self.tree[span].unspaced_style_id = Some(style_id);
         style_id
     }
@@ -447,7 +453,7 @@ impl<B: Brush> TreeStyleBuilder<B> {
         let span_id = self.resolve_style_id(span);
         let mut style = self.style_table[usize::from(span_id)].clone();
         style.text_wrap_mode = TextWrapMode::Wrap;
-        let style_id = self.push_style(style);
+        let style_id = self.push_style(style, span_id);
         self.tree[span].wrappable_style_id = Some(style_id);
         style_id
     }

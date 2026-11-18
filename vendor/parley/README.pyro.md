@@ -163,6 +163,11 @@ space (a bidi formatting character, a zero-width joiner), as in browsers.
 
 All covered by `crates/pyro-render/tests/unicode_bidi.rs` (and `block_in_inline.rs` for the strut).
 
+`resolve/tree.rs` (`push_style`): a full style table (style ids are `u16`) gives the span its parent's style (or a
+variant its span's) instead of panicking with "too many styles"; each empty inline box's strut materialises its style,
+so a paragraph of 66,000 empty spans overflowed. Test: `first_line::more_inline_spans_than_style_ids_paint` in
+pyro-render.
+
 `layout/line_break.rs` (`BreakerState::item_index`): the index of the layout item to be laid out next, so that
 blitz-dom can tell a float it left for below a line from one past the point where that line wrapped (met again on
 the next line; WPT `floats-line-wrap-shifted-001`). Covered by `crates/pyro-render/tests/floats.rs`.
