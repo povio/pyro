@@ -91,3 +91,21 @@ fn nested_subgrid_item_is_measured_against_its_standalone_rows() {
     );
     assert_eq!(pixel(&img, 60, 50), BLUE, "the grid is wider than one 25px column");
 }
+
+/// The same through subgrids in both axes nested in the one with rows of its own (WPT css-grid
+/// `subgrid/standalone-axis-size-013`): the item still measures against a 25px row.
+#[test]
+fn deeply_nested_subgrid_item_is_measured_against_its_standalone_rows() {
+    let img = render(
+        "<div style='display:grid;width:min-content;background:blue;font:25px/1 monospace;color:transparent'>\
+           <div style='display:grid;grid-template-columns:subgrid;height:100px;grid-template-rows:repeat(4,1fr)'>\
+             <div style='display:grid;grid-template-columns:subgrid;grid-template-rows:subgrid'>\
+               <div style='display:grid;grid-template-columns:subgrid;grid-template-rows:subgrid'>\
+                 <div style='writing-mode:vertical-lr;line-height:25px'>X X X X</div>\
+               </div>\
+             </div>\
+           </div>\
+         </div>",
+    );
+    assert_eq!(pixel(&img, 60, 10), BLUE, "the grid is wider than one 25px column");
+}

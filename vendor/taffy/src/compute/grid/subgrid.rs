@@ -638,7 +638,25 @@ fn collect_virtual_items<Tree: LayoutGridContainer>(
                 }
             }
             let mapped_area = InBothAbsAxis { horizontal: item.column, vertical: item.row };
+            let before = out.len();
             collect_virtual_items(tree, item.node, &nested_context, mapped_area, nested, extra, parent, nested_maps, out, false);
+            // pyro: a nested subgrid in both its axes has no tracks of its own: its items belong to this subgrid's
+            // tracks, at its lines here (`resolve_standalone_heights`; WPT css-grid `subgrid/standalone-axis-size-013`)
+            if item.subgrid.width && item.subgrid.height && !relative.horizontal.reversed && !relative.vertical.reversed {
+                let shift = |lines: Line<OriginZeroLine>, by: OriginZeroLine| Line {
+                    start: OriginZeroLine(lines.start.0 + by.0),
+                    end: OriginZeroLine(lines.end.0 + by.0),
+                };
+                for virtual_item in &mut out[before..] {
+                    if virtual_item.subgrid_owner == Some(item.node) {
+                        virtual_item.subgrid_owner = Some(node);
+                        virtual_item.owner_lines = Size {
+                            width: shift(virtual_item.owner_lines.width, local.horizontal.start),
+                            height: shift(virtual_item.owner_lines.height, local.vertical.start),
+                        };
+                    }
+                }
+            }
             stretch_subgrid_item(&mut item, nested);
             excluded.width |= nested.width;
             excluded.height |= nested.height;
