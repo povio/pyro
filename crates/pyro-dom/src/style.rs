@@ -56,6 +56,9 @@ use crate::node::{NodeId, NodeKind, NIL};
 /// (StyleManager.zig:1998).
 pub const DEFAULT_FONT_SIZE: f64 = 16.0;
 
+/// The id of the sheet of script-added font faces among the document's adopted sheets.
+const SCRIPT_FONTS_SHEET: u64 = u64::MAX;
+
 // ---------------------------------------------------------------------------
 // Values
 // ---------------------------------------------------------------------------
@@ -879,6 +882,9 @@ pub struct StyleEngine {
     adopted: std::collections::BTreeMap<NodeId, Vec<u64>>,
     /// The text of each adopted constructed sheet.
     constructed: rustc_hash::FxHashMap<u64, Rc<str>>,
+    /// The `@font-face` rules of the faces scripts added to `document.fonts` (CSS Font Loading),
+    /// applied as a sheet the document adopts ahead of its own adopted sheets.
+    script_fonts: Option<Rc<str>>,
     /// The document's `CSS.registerProperty()` registrations, in order.
     registered_properties: Vec<RegisteredProperty>,
 }
@@ -949,6 +955,7 @@ impl StyleEngine {
             registered_properties: Vec::new(),
             adopted: Default::default(),
             constructed: Default::default(),
+            script_fonts: None,
             recalc_hook: RefCell::new(None),
             recalc_hooked_at: Cell::new(None),
         }
@@ -1483,21 +1490,30 @@ impl StyleEngine {
     /// is its child text content (HTML: "the child text content of the style
     /// element"), not the text of deeper descendants.
     pub fn for_each_author_sheet(&self, dom: &Dom, f: &mut dyn FnMut(&str)) {
+        self.for_each_author_sheet_owned(dom, &mut |_, text| f(text));
+    }
+
+    /// [`StyleEngine::for_each_author_sheet`] with each sheet's owner node (`None`: an adopted or
+    /// script-font sheet).
+    pub fn for_each_author_sheet_owned(&self, dom: &Dom, f: &mut dyn FnMut(Option<NodeId>, &str)) {
         for sheet in &self.sheets {
             if sheet.disabled || !dom.is_alive(sheet.owner) || !dom.is_connected(sheet.owner).unwrap_or(false) {
                 continue;
             }
             match &sheet.source {
-                SheetSource::Text(text) => f(text),
-                SheetSource::StyleElement => f(&dom.child_text_content(sheet.owner)),
+                SheetSource::Text(text) => f(Some(sheet.owner), text),
+                SheetSource::StyleElement => f(Some(sheet.owner), &dom.child_text_content(sheet.owner)),
             }
+        }
+        if let Some(text) = &self.script_fonts {
+            f(None, text);
         }
         for (scope, ids) in &self.adopted {
             if !dom.is_alive(*scope) || !dom.is_connected(*scope).unwrap_or(false) {
                 continue;
             }
             for text in ids.iter().filter_map(|id| self.constructed.get(id)) {
-                f(text);
+                f(None, text);
             }
         }
     }
@@ -1516,6 +1532,9 @@ impl StyleEngine {
                 SheetSource::StyleElement => f(scope, &dom.child_text_content(sheet.owner)),
             }
         }
+        if let Some(text) = &self.script_fonts {
+            f(self.doc, text);
+        }
         for (scope, ids) in &self.adopted {
             if !dom.is_alive(*scope) || !dom.is_connected(*scope).unwrap_or(false) {
                 continue;
@@ -1523,6 +1542,15 @@ impl StyleEngine {
             for text in ids.iter().filter_map(|id| self.constructed.get(id)) {
                 f(*scope, text);
             }
+        }
+    }
+
+    /// The `@font-face` rules of the faces scripts added to `document.fonts` (`None`: none).
+    pub fn set_script_fonts(&mut self, text: Option<Rc<str>>) {
+        if self.script_fonts != text {
+            self.script_fonts = text;
+            // Rendered as an adopted sheet, which the render delta does not track: a whole sync.
+            self.invalidate();
         }
     }
 
@@ -1558,13 +1586,15 @@ impl StyleEngine {
 
     /// The constructed sheets (id and text) `scope` adopts, in order.
     pub fn adopted_sheets(&self, scope: NodeId) -> Vec<(u64, Rc<str>)> {
-        let Some(ids) = self.adopted.get(&scope) else { return Vec::new() };
-        ids.iter().filter_map(|id| Some((*id, self.constructed.get(id)?.clone()))).collect()
+        let fonts = self.script_fonts.as_ref().filter(|_| scope == self.doc).map(|t| (SCRIPT_FONTS_SHEET, t.clone()));
+        let Some(ids) = self.adopted.get(&scope) else { return fonts.into_iter().collect() };
+        fonts.into_iter().chain(ids.iter().filter_map(|id| Some((*id, self.constructed.get(id)?.clone())))).collect()
     }
 
-    /// Whether any document or shadow root adopts a constructed sheet.
+    /// Whether any document or shadow root adopts a constructed sheet (or the document has
+    /// script-added font faces).
     pub fn has_adopted(&self) -> bool {
-        !self.adopted.is_empty()
+        !self.adopted.is_empty() || self.script_fonts.is_some()
     }
 
     /// A key that changes when the author sheets' texts may have: the sheet

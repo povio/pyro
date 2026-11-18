@@ -10,6 +10,7 @@ pub mod dom;
 pub mod error;
 pub mod events;
 mod flow_font;
+pub mod font_face;
 mod focus_nav;
 pub mod forms;
 pub(crate) mod gecko_only;

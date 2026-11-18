@@ -600,6 +600,11 @@ impl Layout {
         }
     }
 
+    /// pyro: the geometry engine's state of the font at `url` ([`GeometrySource::font_url_state`]).
+    pub fn font_url_state(&self, url: &str) -> Option<bool> {
+        self.external.as_ref().and_then(|s| s.font_url_state(url))
+    }
+
     /// pyro: whether web fonts the geometry engine uses are still loading (it starts them
     /// first, see [`Self::start_font_loads`]).
     pub fn fonts_pending(&self, dom: &Dom) -> bool {

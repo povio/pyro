@@ -1956,12 +1956,8 @@ impl JsClass for Document {
         def.method("close", 0, |s, n, _a| crate::html::document_close(s, n));
         def.method("write", 0, |s, n, a| crate::html::document_write(s, n, a, false));
         def.method("writeln", 0, |s, n, a| crate::html::document_write(s, n, a, true));
-        // A stand-in for the FontFaceSet: a set-like of one entry per `@font-face` rule of the
-        // document's sheets, each loaded (pages wait on `[...document.fonts][0].load()`; the
-        // set was not iterable). Fonts load in the renderer, which screenshots wait for.
-        def.getter("fonts", |s, _n| s.eval(DOCUMENT_FONTS, None, 1));
-        // pyro: what `document.fonts` waits on (web fonts the layout engine is still loading).
-        def.method("__pyroFontsPending", 0, |s, n, _a| Ok(s.boolean(n.page().fonts_pending())));
+        // CSS Font Loading: the document's `FontFaceSet` (font_loading.rs).
+        def.getter("fonts", |s, n| crate::font_loading::fonts(s, n.page()));
     }
 }
 
@@ -2006,61 +2002,3 @@ pub(crate) fn thread_leftover() -> Option<&'static str> {
     None
 }
 
-/// `document.fonts` (see the getter).
-const DOCUMENT_FONTS: &str = r#"(() => {
-  // Web fonts load in the layout engine: `status`, `ready`, `load()` and `check()` follow its
-  // fetches (`document.__pyroFontsPending`), at most 10 s.
-  const pending = () => { try { return !!document.__pyroFontsPending(); } catch (e) { return false; } };
-  const settled = () => new Promise((resolve) => {
-    const until = Date.now() + 10000;
-    const tick = () => (pending() && Date.now() < until ? setTimeout(tick, 5) : resolve());
-    tick();
-  });
-  const faces = [];
-  const face = (family) => {
-    const f = { family, style: 'normal', weight: 'normal', stretch: 'normal', unicodeRange: 'U+0-10FFFF',
-      variant: 'normal', featureSettings: 'normal', display: 'auto',
-      load() { return settled().then(() => f); } };
-    Object.defineProperty(f, 'status', { get: () => (pending() ? 'loading' : 'loaded'), enumerable: true });
-    Object.defineProperty(f, 'loaded', { get: () => settled().then(() => f), enumerable: true });
-    faces.push(f);
-  };
-  try {
-    for (const sheet of document.styleSheets) {
-      let rules;
-      try { rules = sheet.cssRules; } catch (e) { continue; }
-      for (const rule of rules) {
-        const text = String(rule.cssText || '');
-        if (rule.type === 5 || /^\s*@font-face\b/i.test(text)) {
-          const m = /font-family\s*:\s*([^;}]+)/i.exec(text);
-          face(m ? m[1].trim() : '');
-        }
-      }
-    }
-  } catch (e) {}
-  if (!faces.length) {
-    try {
-      for (const style of document.querySelectorAll('style')) {
-        const re = /@font-face\s*\{[^}]*?font-family\s*:\s*([^;}]+)/gi;
-        let m;
-        while ((m = re.exec(style.textContent))) face(m[1].trim());
-      }
-    } catch (e) {}
-  }
-  const set = {
-    size: faces.length,
-    check() { return !pending(); },
-    load() { return settled().then(() => faces.slice()); },
-    addEventListener() {}, removeEventListener() {}, dispatchEvent() { return true; },
-    forEach(callback, self) { faces.forEach((f) => callback.call(self, f, f, set)); },
-    has(f) { return faces.includes(f); },
-    add() { return set; }, delete() { return false; }, clear() {},
-    values() { return faces[Symbol.iterator](); },
-    keys() { return faces[Symbol.iterator](); },
-    entries() { return faces.map((f) => [f, f])[Symbol.iterator](); },
-    [Symbol.iterator]() { return faces[Symbol.iterator](); },
-  };
-  Object.defineProperty(set, 'status', { get: () => (pending() ? 'loading' : 'loaded'), enumerable: true });
-  set.ready = settled().then(() => set);
-  return set;
-})()"#;

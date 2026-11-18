@@ -10,8 +10,9 @@ export const PAINT_DIRS = [
   'css/css-color', 'css/css-transforms', 'css/CSS2',
 ];
 // Directories added to the gate with the round 4 feature lanes (a feature passes a good share of them): their
-// testharness pages run in wptrunner's 800x600 viewport. custom-elements: 190 pages (customized built-ins, lane F3a).
-export const FEATURE_DIRS = ['custom-elements'];
+// testharness pages run in wptrunner's 800x600 viewport. custom-elements: 190 pages (customized built-ins, lane F3a);
+// css/css-font-loading: 23 pages without wptserve (FontFace, document.fonts, lane F1).
+export const FEATURE_DIRS = ['custom-elements', 'css/css-font-loading'];
 export const DEFAULT_DIRS = [
   'dom', 'html/dom', 'encoding', 'url', 'fetch/api/basic', 'xhr', 'css/selectors', 'uievents', 'shadow-dom', 'webstorage',
   ...PAINT_DIRS,

@@ -323,6 +323,11 @@ pub trait GeometrySource {
     fn fonts_pending(&self) -> bool {
         false
     }
+    /// pyro: whether the engine has the font at `url` (`Some(true)`), is loading it
+    /// (`Some(false)`), or neither (`None`) (`FontFace.status` of a face the engine loads).
+    fn font_url_state(&self, _url: &str) -> Option<bool> {
+        None
+    }
     /// One element's computed style as of the last sync (`None`: the engine
     /// has none for it, and the document's own cascade answers).
     fn element_style(&self, _key: u64) -> Option<style::servo_arc::Arc<style::properties::ComputedValues>> {

@@ -182,6 +182,7 @@ where
     crate::websocket::define_globals(def);
     crate::indexeddb::define_globals(def);
     crate::editing_globals::define_globals(def);
+    crate::font_loading::define_globals(def);
     // `Highlight` and `HighlightRegistry` (CSS Custom Highlight API), made on first use.
     def.global_value_accessor(
         "Highlight",

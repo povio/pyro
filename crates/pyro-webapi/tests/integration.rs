@@ -17,6 +17,7 @@ mod events_dispatch_js;
 mod events_misc_js;
 mod fetch_js;
 mod focus_shadow_js;
+mod font_loading_js;
 mod form_data_js;
 mod forms_js;
 mod identity_js;

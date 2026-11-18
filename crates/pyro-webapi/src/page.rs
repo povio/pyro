@@ -306,6 +306,8 @@ pub struct PageDom {
     /// The constructed sheets each document or shadow root adopts
     /// (`adoptedStyleSheets`), in order; empty unless a script adopted one.
     pub(crate) adopted_sheets: RefCell<FxHashMap<NodeId, Vec<Rc<crate::css::Constructed>>>>,
+    /// The CSS-connected font faces of the document as of an author sheets key (`css_font_faces`).
+    css_font_faces: RefCell<Option<(pyro_dom::style::AuthorSheetsKey, Rc<Vec<pyro_dom::font_face::CssFace>>)>>,
     /// Files selected into `<input type=file>` (CDP DOM.setFileInputFiles).
     pub(crate) files: RefCell<FxHashMap<NodeId, Vec<crate::file::FileEntry>>>,
     /// Faux layout + style engine of the displayed document. Read it with
@@ -772,6 +774,7 @@ impl PageDom {
             nonces: RefCell::new(FxHashMap::default()),
             sheet_models: RefCell::new(FxHashMap::default()),
             adopted_sheets: RefCell::new(FxHashMap::default()),
+            css_font_faces: RefCell::new(None),
             files: RefCell::new(FxHashMap::default()),
             layout: RefCell::new(pyro_dom::layout::Layout::new(document)),
             frame_viewport: RefCell::new(None),
@@ -1095,6 +1098,49 @@ impl PageDom {
         if let Ok(dom) = self.dom.try_borrow() {
             layout.start_font_loads(&dom);
         }
+    }
+
+    /// pyro: the layout engine's state of the font at `url` (`FontFace.status`).
+    pub fn font_url_state(&self, url: &str) -> Option<bool> {
+        self.try_layout()?.font_url_state(url)
+    }
+
+    /// The `@font-face` rules of the document's sheets: its CSS-connected `FontFace`s, in order
+    /// (sheets in shadow trees left out, as in Chromium).
+    pub fn css_font_faces(&self) -> Rc<Vec<pyro_dom::font_face::CssFace>> {
+        let Some(layout) = self.try_layout() else { return Rc::default() };
+        let Ok(dom) = self.dom.try_borrow() else { return Rc::default() };
+        let style = layout.style();
+        let key = style.author_sheets_key(&dom);
+        if let Some((k, faces)) = &*self.css_font_faces.borrow() {
+            if *k == key {
+                return faces.clone();
+            }
+        }
+        let doc = self.document();
+        let base = dom.document_base_url(doc).ok().map(str::to_owned).unwrap_or_default();
+        let mut faces = Vec::new();
+        style.for_each_author_sheet_owned(&dom, &mut |owner, text| {
+            let Some(owner) = owner else { return };
+            if dom.root_node(owner, false).is_ok_and(|root| root != doc) {
+                return;
+            }
+            let link = dom.element(owner).is_ok_and(|e| &*e.name.local == "link");
+            let sheet_base = link
+                .then(|| dom.get_attribute(owner, "href").ok().flatten())
+                .flatten()
+                .and_then(|href| url::Url::parse(&base).ok()?.join(href.trim()).ok())
+                .map_or_else(|| base.clone(), |u| u.to_string());
+            pyro_dom::font_face::css_faces(text, &sheet_base, &mut faces);
+        });
+        let faces = Rc::new(faces);
+        *self.css_font_faces.borrow_mut() = Some((key, faces.clone()));
+        faces
+    }
+
+    /// The `@font-face` rules of the faces scripts added to `document.fonts`.
+    pub(crate) fn set_script_fonts(&self, css: Option<Rc<str>>) {
+        self.layout.borrow_mut().style_mut().set_script_fonts(css);
     }
 
     /// pyro: whether web fonts are still loading (`document.fonts`).

@@ -41,6 +41,7 @@ mod event_source;
 pub mod fetch;
 pub mod file;
 pub mod file_reader;
+pub mod font_loading;
 pub mod form_data;
 pub mod formdata;
 pub mod handlers;

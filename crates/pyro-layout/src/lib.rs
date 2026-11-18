@@ -750,6 +750,12 @@ impl GeometrySource for BlitzGeometry {
         })
     }
 
+    fn font_url_state(&self, url: &str) -> Option<bool> {
+        let loader = self.loader.borrow();
+        let bodies = loader.as_ref()?.bodies().lock();
+        bodies.get(url).map(|body| !body.is_empty())
+    }
+
     fn sync(&self, dom: &Dom, layout: &Layout) {
         let t = profile::on().then(Instant::now);
         self.sync_inner(dom, layout.style(), false);
