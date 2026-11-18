@@ -578,7 +578,7 @@ impl ProfileState {
     }
 }
 
-type Waiting = VecDeque<(Vec<u8>, Vec<OwnedFd>, Instant)>;
+type Waiting = VecDeque<(Vec<u8>, Vec<OwnedFd>, Option<usize>, Instant)>;
 
 /// A connection for another template: its socket, bytes, profile, fds and
 /// when it arrived.
@@ -780,8 +780,8 @@ fn run_template(options: &ServeOptions, socket: &Path) -> Result<(), TemplateErr
                     continue 'serve; // this process is now the derived template
                 }
             }
-            while let Some((buffered, fds, _)) = t.waiting.pop_front() {
-                if let Some(child) = t.fork_connection(&options.server, buffered, fds) {
+            while let Some((buffered, fds, profile, _)) = t.waiting.pop_front() {
+                if let Some(child) = t.fork_connection(&options.server, buffered, fds, profile) {
                     // Only the forked child gets here, and it is done.
                     exit_child(child);
                 }
@@ -927,7 +927,7 @@ impl TemplateProcess {
         let failed = profile.is_some_and(|id| self.snapshot.browser.prepared_profile_failure(id).is_some());
         match profile.and_then(|id| self.holders.get(id).cloned().flatten()).filter(|_| !failed) {
             Some(path) => self.forwards.push_back((path, buffered, profile, fds, Instant::now())),
-            None => self.waiting.push_back((buffered, fds, Instant::now())),
+            None => self.waiting.push_back((buffered, fds, profile, Instant::now())),
         }
     }
 
@@ -941,7 +941,7 @@ impl TemplateProcess {
             }
             if profile.is_some_and(|id| self.snapshot.browser.prepared_profile_failure(id).is_some()) {
                 // Failed meanwhile: its template may never listen.
-                self.waiting.push_back((buffered, fds, since));
+                self.waiting.push_back((buffered, fds, profile, since));
                 continue;
             }
             let raw: Vec<RawFd> = fds.iter().map(|f| f.as_raw_fd()).collect();
@@ -1457,14 +1457,20 @@ impl TemplateProcess {
 
     /// Forks a process for one connection. Returns in the parent with
     /// `None`; in the child, serves the connection and returns its exit code.
-    fn fork_connection(&mut self, config: &ServerConfig, buffered: Vec<u8>, fds: Vec<OwnedFd>) -> Option<i32> {
+    fn fork_connection(
+        &mut self,
+        config: &ServerConfig,
+        buffered: Vec<u8>,
+        fds: Vec<OwnedFd>,
+        profile: Option<usize>,
+    ) -> Option<i32> {
         match fork_process(&self.snapshot, "conn") {
             Forked::Parent(_) | Forked::Failed => None, // the parent's copies of the fds close here
             Forked::Child => {
                 self.leave_template();
                 unsafe { libc::close(self.conns.as_raw_fd()) };
                 crate::fork_stats::mark("taken");
-                Some(self.serve_child(config, buffered, fds, "conn", None))
+                Some(self.serve_child(config, buffered, fds, "conn", profile))
             }
         }
     }
@@ -1597,6 +1603,9 @@ impl TemplateProcess {
         };
         browser.set_fork_child(Box::new(RootRegistry { root, lease: RefCell::new(None) }));
         pyro_webapi::release_after_fork();
+        if let Some(profile) = profile {
+            browser.retain_prepared_snapshot(profile);
+        }
         let after = if fast_exit() { crate::serve::AfterServe::Exit } else { crate::serve::AfterServe::TearDown };
         crate::serve::serve_browser(browser, outbox, outbound, socket, &buffered, config.clone(), after, None);
         crate::fork_stats::mark("dropped");

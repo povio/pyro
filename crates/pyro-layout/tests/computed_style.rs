@@ -324,6 +324,94 @@ fn properties_stylo_does_not_parse_still_cascade() {
     assert_eq!(v("cc", "line-clamp"), "none", "not inherited");
 }
 
+#[test]
+fn scroll_margin_is_a_computed_length_with_the_normal_cascade() {
+    // `scroll-margin-*` are Gecko-only in upstream Stylo; the vendored one parses and computes them for servo
+    // too (vendor/stylo/README.pyro.md). SloSki's club roster styles its row actions with
+    // `[&_button]:scroll-mb-14` (a descendant rule, in rem) and a media query, and reads the computed value
+    // back: `56px` while the rule applies, `0px` (the initial value) when it does not.
+    let p = Page::new(
+        r#"<!doctype html><style>
+        :root { --gap: 12px }
+        .list button { scroll-margin-bottom: 3.5rem }
+        @media (min-width: 5000px) { .list button { scroll-margin-bottom: 1px } }
+        #em { font-size: 10px; scroll-margin-top: 2em }
+        #var { scroll-margin-left: var(--gap) }
+        #short { scroll-margin: 1px 2px 3px 4px }
+        #two { scroll-margin: 5px 6px }
+        #neg { scroll-margin-top: -4px }
+        #pct { scroll-margin-top: 50% }
+        #bad { scroll-margin-top: 9px; scroll-margin-top: banana }
+        #imp { scroll-margin-top: 1px !important }
+        #spec.s { scroll-margin-top: 2px } #spec { scroll-margin-top: 8px }
+        #parent { scroll-margin-top: 20px } #child { }
+        #inh { scroll-margin-top: inherit }
+        #ini { scroll-margin-top: 30px; scroll-margin-top: initial }
+        #vrl { writing-mode: vertical-rl; scroll-margin-block-start: 7px; scroll-margin-inline-start: 3px }
+        #rtl { direction: rtl; scroll-margin-inline-start: 11px; scroll-margin-inline-end: 13px }
+        #htb { scroll-margin-block: 5px 6px; scroll-margin-inline: 8px 9px }
+        </style><body>
+        <div class=list><button id=btn>x</button></div>
+        <div id=plain>p</div>
+        <div id=em>e</div><div id=var>v</div><div id=short>s</div><div id=two>t</div><div id=neg>n</div>
+        <div id=pct>p</div><div id=bad>b</div><div id=imp style="scroll-margin-top: 99px">i</div>
+        <div id=spec class=s>s</div>
+        <div id=parent><div id=child>c</div><div id=inh>h</div></div><div id=ini>i</div>
+        <div id=vrl>v</div><div id=rtl>r</div><div id=htb>h</div>
+        <div id=inl style="scroll-margin-right: 15px">i</div>
+        </body>"#,
+    );
+    let v = |css: &str, prop: &str| p.value(css, prop);
+    assert_eq!(v("#btn", "scroll-margin-bottom"), "56px", "a rem length, from a descendant rule");
+    assert_eq!(v("#btn", "scroll-margin-top"), "0px", "the other sides keep the initial value");
+    for side in ["top", "right", "bottom", "left", "block-start", "block-end", "inline-start", "inline-end"] {
+        assert_eq!(v("#plain", &format!("scroll-margin-{side}")), "0px", "initial scroll-margin-{side}");
+    }
+    assert_eq!(v("#em", "scroll-margin-top"), "20px", "em resolves against the element's font-size");
+    assert_eq!(v("#var", "scroll-margin-left"), "12px", "var() substitutes");
+    let sides = |id: &str| {
+        ["top", "right", "bottom", "left"].map(|s| v(&format!("#{id}"), &format!("scroll-margin-{s}"))).join(" ")
+    };
+    assert_eq!(sides("short"), "1px 2px 3px 4px");
+    assert_eq!(sides("two"), "5px 6px 5px 6px", "the two-value shorthand mirrors");
+    assert_eq!(v("#neg", "scroll-margin-top"), "-4px", "negative lengths are valid");
+    assert_eq!(v("#pct", "scroll-margin-top"), "0px", "a percentage is invalid, so the declaration is dropped");
+    assert_eq!(v("#bad", "scroll-margin-top"), "9px", "an invalid later declaration does not replace a valid one");
+    assert_eq!(v("#imp", "scroll-margin-top"), "1px", "!important beats the inline declaration");
+    assert_eq!(v("#spec", "scroll-margin-top"), "2px", "specificity decides before source order");
+    assert_eq!(v("#child", "scroll-margin-top"), "0px", "not inherited");
+    assert_eq!(v("#inh", "scroll-margin-top"), "20px", "inherit takes the parent's");
+    assert_eq!(v("#ini", "scroll-margin-top"), "0px", "initial");
+    assert_eq!(v("#inl", "scroll-margin-right"), "15px", "inline style");
+    // Logical longhands compute onto the physical sides the writing mode and direction name.
+    assert_eq!(v("#htb", "scroll-margin-top"), "5px");
+    assert_eq!(v("#htb", "scroll-margin-bottom"), "6px");
+    assert_eq!(v("#htb", "scroll-margin-left"), "8px");
+    assert_eq!(v("#htb", "scroll-margin-right"), "9px");
+    assert_eq!(v("#vrl", "scroll-margin-right"), "7px", "vertical-rl: block-start is the right side");
+    assert_eq!(v("#vrl", "scroll-margin-top"), "3px", "vertical-rl: inline-start is the top side");
+    assert_eq!(v("#rtl", "scroll-margin-right"), "11px", "rtl: inline-start is the right side");
+    assert_eq!(v("#rtl", "scroll-margin-left"), "13px");
+}
+
+#[test]
+fn scroll_margin_follows_media_queries_and_restyles() {
+    // The roster's mobile-only margin: the same rule, applied only below the breakpoint.
+    let p = Page::new(
+        "<!doctype html><style>@media (max-width: 100px) { #t { scroll-margin-bottom: 56px } }</style>\
+         <div id=t>t</div><div id=c class=off>c</div>\
+         <style>.on { scroll-margin-top: 4px }</style>",
+    );
+    // The page's viewport is wider than the query: the rule does not apply.
+    assert_eq!(p.value("#t", "scroll-margin-bottom"), "0px");
+    let c = p.find("#c");
+    assert_eq!(p.value("#c", "scroll-margin-top"), "0px");
+    p.dom.borrow_mut().set_attribute(c, "class", "on").unwrap();
+    assert_eq!(p.value("#c", "scroll-margin-top"), "4px", "a class change restyles");
+    p.dom.borrow_mut().set_attribute(c, "style", "scroll-margin-top: 6px").unwrap();
+    assert_eq!(p.value("#c", "scroll-margin-top"), "6px", "an inline change restyles");
+}
+
 /// pyro (lane G): a subgrid's `grid-template-columns` resolves to `subgrid` with the names of each of
 /// the lines it spans (its own), which only its layout knows (css-grid-2 §7.2.6.2).
 #[test]

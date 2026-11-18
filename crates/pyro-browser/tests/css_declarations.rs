@@ -121,3 +121,55 @@ fn rule_styles_share_the_declaration_block_model() {
         "4px/|margin: 4px; color: lime;"
     );
 }
+
+#[test]
+fn scroll_margin_reads_back_computed_and_inline() {
+    // SloSki's club roster styles its row action with `[&_button]:scroll-mb-14` and reads
+    // `getComputedStyle(button).scrollMarginBottom` back. The properties are Gecko-only in upstream Stylo, so
+    // the declaration was dropped and every read was `""` (the camel-cased attribute and `getPropertyValue`
+    // alike); they compute `56px` where the rule applies and the initial `0px` where it does not.
+    let (_t, root) = page();
+    assert_eq!(
+        eval(
+            &root,
+            "(() => { const style = document.head.appendChild(document.createElement('style'));
+             style.textContent = '.list button { scroll-margin-bottom: 3.5rem } \
+                                  @media (max-width: 1px) { .list button.mobile { scroll-margin-bottom: 9px } } \
+                                  .list button.root { scroll-margin-block-end: calc(1rem + 8px) }';
+             const list = document.body.appendChild(document.createElement('div'));
+             list.className = 'list';
+             const button = list.appendChild(document.createElement('button'));
+             const plain = document.body.appendChild(document.createElement('button'));
+             const root = list.appendChild(document.createElement('button'));
+             root.className = 'root';
+             const cs = getComputedStyle(button), none = getComputedStyle(plain);
+             return [cs.scrollMarginBottom, cs.getPropertyValue('scroll-margin-bottom'), cs['scroll-margin-bottom'],
+              cs.scrollMarginTop, cs.scrollMarginInlineStart, cs.getPropertyValue('scroll-margin-block-end'),
+              none.scrollMarginBottom, none.getPropertyValue('scroll-margin-bottom'),
+              getComputedStyle(root).scrollMarginBottom,
+              'scrollMarginBottom' in cs, [...cs].includes('scroll-margin-bottom')].join('|') })()"
+        ),
+        "56px|56px|56px|0px|0px|56px|0px|0px|24px|true|true"
+    );
+    // A restyle is seen; the shorthand and logical longhands compute onto their physical sides. A percentage and
+    // a bogus value are invalid, so they change nothing: the inline physical side stays unset (a logical
+    // declaration is not its alias) and the computed top is still the logical block-start's 7px.
+    assert_eq!(
+        eval(
+            &root,
+            "(() => { const el = document.body.appendChild(document.createElement('div'));
+             const cs = getComputedStyle(el), out = [cs.scrollMarginTop];
+             el.style.scrollMargin = '1px 2px 3px 4px';
+             out.push([cs.scrollMarginTop, cs.scrollMarginRight, cs.scrollMarginBottom, cs.scrollMarginLeft].join(' '));
+             out.push(el.style.scrollMarginLeft, el.style.cssText);
+             el.style.cssText = 'scroll-margin-inline: 5px 6px; scroll-margin-block-start: 7px';
+             out.push([cs.scrollMarginTop, cs.scrollMarginRight, cs.scrollMarginBottom, cs.scrollMarginLeft].join(' '));
+             el.style.scrollMarginTop = '50%';
+             out.push(el.style.scrollMarginTop);
+             el.style.setProperty('scroll-margin-top', 'bogus');
+             out.push(el.style.scrollMarginTop, cs.scrollMarginTop);
+             return out.join('|') })()"
+        ),
+        "0px|1px 2px 3px 4px|4px|scroll-margin: 1px 2px 3px 4px;|7px 6px 0px 5px|||7px"
+    );
+}

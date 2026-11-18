@@ -553,7 +553,71 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/css-box-4/#propdef-margin-trim"
  affects = "layout"
  
-@@ -3694,6 +3769,7 @@
+@@ -3393,7 +3468,6 @@
+ type = "Length"
+ initial = "computed::Length::zero()"
+ struct = "margin"
+-engine = "gecko"
+ logical_group = "scroll-margin"
+ gecko_ffi_name = "mScrollMargin.0"
+ spec = "https://drafts.csswg.org/css-scroll-snap-1/#propdef-scroll-margin-top"
+@@ -3403,7 +3477,6 @@
+ type = "Length"
+ initial = "computed::Length::zero()"
+ struct = "margin"
+-engine = "gecko"
+ logical_group = "scroll-margin"
+ gecko_ffi_name = "mScrollMargin.1"
+ spec = "https://drafts.csswg.org/css-scroll-snap-1/#propdef-scroll-margin-right"
+@@ -3413,7 +3486,6 @@
+ type = "Length"
+ initial = "computed::Length::zero()"
+ struct = "margin"
+-engine = "gecko"
+ logical_group = "scroll-margin"
+ gecko_ffi_name = "mScrollMargin.2"
+ spec = "https://drafts.csswg.org/css-scroll-snap-1/#propdef-scroll-margin-bottom"
+@@ -3423,7 +3495,6 @@
+ type = "Length"
+ initial = "computed::Length::zero()"
+ struct = "margin"
+-engine = "gecko"
+ logical_group = "scroll-margin"
+ gecko_ffi_name = "mScrollMargin.3"
+ spec = "https://drafts.csswg.org/css-scroll-snap-1/#propdef-scroll-margin-left"
+@@ -3433,7 +3504,6 @@
+ type = "Length"
+ initial = "computed::Length::zero()"
+ struct = "margin"
+-engine = "gecko"
+ logical = true
+ logical_group = "scroll-margin"
+ gecko_ffi_name = "mScrollMargin.4"
+@@ -3444,7 +3514,6 @@
+ type = "Length"
+ initial = "computed::Length::zero()"
+ struct = "margin"
+-engine = "gecko"
+ logical = true
+ logical_group = "scroll-margin"
+ gecko_ffi_name = "mScrollMargin.5"
+@@ -3455,7 +3524,6 @@
+ type = "Length"
+ initial = "computed::Length::zero()"
+ struct = "margin"
+-engine = "gecko"
+ logical = true
+ logical_group = "scroll-margin"
+ gecko_ffi_name = "mScrollMargin.6"
+@@ -3466,7 +3534,6 @@
+ type = "Length"
+ initial = "computed::Length::zero()"
+ struct = "margin"
+-engine = "gecko"
+ logical = true
+ logical_group = "scroll-margin"
+ gecko_ffi_name = "mScrollMargin.7"
+@@ -3694,6 +3761,7 @@
  [box-decoration-break]
  struct = "border"
  spec = "https://drafts.csswg.org/css-break/#propdef-box-decoration-break"
@@ -561,7 +625,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  animation_type = "discrete"
  affects = "layout"
  type = "BoxDecorationBreak"
-@@ -3770,7 +3846,6 @@
+@@ -3770,7 +3838,6 @@
  
  [column-fill]
  struct = "column"
@@ -569,7 +633,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/css-multicol/#propdef-column-fill"
  animation_type = "discrete"
  affects = "layout"
-@@ -3901,9 +3976,9 @@
+@@ -3901,9 +3968,9 @@
  type = "TextOrientation"
  initial = "computed::TextOrientation::Mixed"
  
@@ -580,7 +644,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/css-images/#propdef-image-orientation"
  animation_type = "discrete"
  affects = "layout"
-@@ -4287,9 +4362,64 @@
+@@ -4287,9 +4354,64 @@
  affects = "layout"
  gecko_ffi_name = "mBoxOrient"
  aliases = ["-webkit-box-orient"]
@@ -705,7 +769,27 @@ diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
 diff -ruN a/properties/shorthands.toml b/properties/shorthands.toml
 --- a/properties/shorthands.toml	2026-11-11 19:55:57
 +++ b/properties/shorthands.toml	2026-11-15 21:50:40
-@@ -209,7 +209,7 @@
+@@ -19,19 +19,16 @@
+ kind = "two_properties"
+
+ [scroll-margin]
+-engine = "gecko"
+ sub_properties = ["scroll-margin-top", "scroll-margin-right", "scroll-margin-bottom", "scroll-margin-left"]
+ spec = "https://drafts.csswg.org/css-scroll-snap-1/#propdef-scroll-margin"
+ kind = "four_sides"
+
+ [scroll-margin-block]
+-engine = "gecko"
+ sub_properties = ["scroll-margin-block-start", "scroll-margin-block-end"]
+ spec = "https://drafts.csswg.org/css-scroll-snap-1/#propdef-scroll-margin-block"
+ kind = "two_properties"
+
+ [scroll-margin-inline]
+-engine = "gecko"
+ sub_properties = ["scroll-margin-inline-start", "scroll-margin-inline-end"]
+ spec = "https://drafts.csswg.org/css-scroll-snap-1/#propdef-scroll-margin-inline"
+ kind = "two_properties"
+@@ -209,7 +206,7 @@
  kind = "two_properties"
  
  [container]
@@ -714,7 +798,7 @@ diff -ruN a/properties/shorthands.toml b/properties/shorthands.toml
  sub_properties = ["container-name", "container-type"]
  spec = "https://drafts.csswg.org/css-contain-3/#container-shorthand"
  
-@@ -218,19 +218,16 @@
+@@ -218,19 +215,16 @@
  spec = "https://drafts.csswg.org/css-inline-3/#transverse-alignment"
  
  [page-break-before]
@@ -734,7 +818,7 @@ diff -ruN a/properties/shorthands.toml b/properties/shorthands.toml
  flags = "IS_LEGACY_SHORTHAND"
  sub_properties = ["break-inside"]
  spec = "https://drafts.csswg.org/css-break-3/#page-break-properties"
-@@ -285,7 +282,6 @@
+@@ -285,7 +279,6 @@
  kind = "two_properties"
  
  [contain-intrinsic-size]
@@ -742,7 +826,7 @@ diff -ruN a/properties/shorthands.toml b/properties/shorthands.toml
  sub_properties = ["contain-intrinsic-width", "contain-intrinsic-height"]
  spec = "https://drafts.csswg.org/css-sizing-4/#intrinsic-size-override"
  kind = "two_properties"
-@@ -476,7 +472,6 @@
+@@ -476,7 +469,6 @@
  servo_pref = "layout.css.columns.enabled"
  
  [column-rule]
@@ -750,7 +834,7 @@ diff -ruN a/properties/shorthands.toml b/properties/shorthands.toml
  sub_properties = ["column-rule-width", "column-rule-style", "column-rule-color"]
  spec = "https://drafts.csswg.org/css-multicol/#propdef-column-rule"
  derive_serialize = true
-@@ -556,7 +551,6 @@
+@@ -556,7 +548,6 @@
  derive_serialize = true
  
  [-webkit-line-clamp]

@@ -19,19 +19,16 @@ rule_types_allowed = ["style", "keyframe", "page", "position-try"]
 kind = "two_properties"
 
 [scroll-margin]
-engine = "gecko"
 sub_properties = ["scroll-margin-top", "scroll-margin-right", "scroll-margin-bottom", "scroll-margin-left"]
 spec = "https://drafts.csswg.org/css-scroll-snap-1/#propdef-scroll-margin"
 kind = "four_sides"
 
 [scroll-margin-block]
-engine = "gecko"
 sub_properties = ["scroll-margin-block-start", "scroll-margin-block-end"]
 spec = "https://drafts.csswg.org/css-scroll-snap-1/#propdef-scroll-margin-block"
 kind = "two_properties"
 
 [scroll-margin-inline]
-engine = "gecko"
 sub_properties = ["scroll-margin-inline-start", "scroll-margin-inline-end"]
 spec = "https://drafts.csswg.org/css-scroll-snap-1/#propdef-scroll-margin-inline"
 kind = "two_properties"
