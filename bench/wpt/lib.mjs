@@ -137,7 +137,8 @@ export const LAYOUT_DIRS = [
   'css/css-animations', 'css/css-properties-values-api', 'css/css-grid', 'css/css-text', 'css/css-fonts',
   'css/css-inline', 'css/css-borders',
 ];
-export const REFTEST_DIRS = [...PAINT_DIRS, 'css/selectors', 'html/dom', 'shadow-dom', 'dom', 'encoding', ...LAYOUT_DIRS];
+// scroll-animations: scroll-driven animations' reftests (lane F2; 33 pages, 18 pass).
+export const REFTEST_DIRS = [...PAINT_DIRS, 'css/selectors', 'html/dom', 'shadow-dom', 'dom', 'encoding', ...LAYOUT_DIRS, 'scroll-animations'];
 // Reftests left out by path, with the reason discovery counts them under (`excluded`). A pattern is a prefix of the
 // page's URL or a whole URL.
 //   css/css-grid/grid-lanes/: masonry layout, which pyro (Taffy) does not implement and Chrome ships behind a flag:
