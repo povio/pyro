@@ -749,7 +749,13 @@ impl GeometrySource for BlitzGeometry {
     fn fonts_pending(&self) -> bool {
         let loader = self.loader.borrow();
         let Some(loader) = loader.as_ref() else { return false };
+        let asked = loader.asked_fonts();
         let bodies = loader.bodies().lock();
+        // pyro: only the fonts this document asked for (another page of the identity may have one
+        // in flight that this document does not use).
+        if let Some(asked) = asked {
+            return asked.iter().any(|url| bodies.get(url).is_some_and(|body| body.is_empty()));
+        }
         // An empty entry is a load in flight (`LocalFiles::network`); a failed one is removed.
         bodies.iter().any(|(url, body)| {
             body.is_empty() && {

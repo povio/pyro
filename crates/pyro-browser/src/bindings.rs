@@ -19,6 +19,8 @@ struct LayoutLoader {
     frame: FrameKey,
     loader: LoaderId,
     bodies: Arc<pyro_dom::layout::SubresourceBodies>,
+    /// The fonts this document's layout asked for (`document.fonts`, the load event).
+    asked_fonts: std::sync::Mutex<std::collections::HashSet<String>>,
 }
 
 impl pyro_dom::layout::SubresourceLoader for LayoutLoader {
@@ -40,6 +42,16 @@ impl pyro_dom::layout::SubresourceLoader for LayoutLoader {
 
     fn bodies(&self) -> &Arc<pyro_dom::layout::SubresourceBodies> {
         &self.bodies
+    }
+
+    fn font_asked(&self, url: &str) {
+        if let Ok(mut asked) = self.asked_fonts.lock() {
+            asked.insert(url.to_owned());
+        }
+    }
+
+    fn asked_fonts(&self) -> Option<Vec<String>> {
+        self.asked_fonts.lock().ok().map(|asked| asked.iter().cloned().collect())
     }
 }
 
@@ -739,6 +751,7 @@ pub(crate) fn create(
         frame: page,
         loader: loader.clone(),
         bodies: host.layout_bodies.clone(),
+        asked_fonts: Default::default(),
     }));
     bindings.set_storage_namespaces(settings.local, settings.session);
     let mut viewport = settings.viewport;

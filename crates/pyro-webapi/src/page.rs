@@ -313,6 +313,8 @@ pub struct PageDom {
     /// `FontFace` loads in flight (font_loading.js), and when the load event first waited on fonts.
     pub(crate) font_loads: Cell<u32>,
     font_delay_since: Cell<Option<std::time::Instant>>,
+    /// The font families elements name, as of a DOM version (`used_face_loading`).
+    used_font_families: RefCell<Option<(u64, std::collections::HashSet<String>)>>,
     /// Files selected into `<input type=file>` (CDP DOM.setFileInputFiles).
     pub(crate) files: RefCell<FxHashMap<NodeId, Vec<crate::file::FileEntry>>>,
     /// Faux layout + style engine of the displayed document. Read it with
@@ -800,6 +802,7 @@ impl PageDom {
             css_font_faces: RefCell::new(None),
             font_loads: Cell::new(0),
             font_delay_since: Cell::new(None),
+            used_font_families: RefCell::new(None),
             files: RefCell::new(FxHashMap::default()),
             layout: RefCell::new(pyro_dom::layout::Layout::new(document)),
             frame_viewport: RefCell::new(None),
@@ -1198,13 +1201,59 @@ impl PageDom {
     /// `FontFace` load in flight or a face the layout engine is fetching for the document's
     /// styles. At most 10 s, so a font that never answers cannot hold `load` back for good.
     pub fn fonts_delay_load(&self) -> bool {
-        let pending = self.font_loads.get() > 0 || self.fonts_pending();
+        // A face of the document's sheets delays the load event only once text uses its family:
+        // Chromium starts a face's load when layout first needs it, while the layout engine here
+        // fetches every `@font-face` source when the sheet arrives.
+        let pending = self.font_loads.get() > 0 || (self.fonts_pending() && self.used_face_loading());
         if !pending {
             return false;
         }
         let since = *self.font_delay_since.get().get_or_insert_with(std::time::Instant::now);
         self.font_delay_since.set(Some(since));
         since.elapsed() < std::time::Duration::from_secs(10)
+    }
+
+    /// Whether a face of the document's sheets that the layout engine is still fetching has a
+    /// family some element's `font-family` names.
+    fn used_face_loading(&self) -> bool {
+        let faces = self.css_font_faces();
+        let loading: Vec<String> = faces
+            .iter()
+            .filter(|face| {
+                face.sources.iter().any(|source| match source {
+                    pyro_dom::font_face::FontSource::Url(url, _) => self.font_url_state(url) == Some(false),
+                    pyro_dom::font_face::FontSource::Local(_) => false,
+                })
+            })
+            .map(|face| face.family.to_lowercase())
+            .collect();
+        if loading.is_empty() {
+            return false;
+        }
+        let Some(layout) = self.try_layout() else { return false };
+        let Ok(dom) = self.dom.try_borrow() else { return false };
+        let version = dom.version();
+        if let Some((v, used)) = &*self.used_font_families.borrow() {
+            if *v == version {
+                return loading.iter().any(|family| used.contains(family));
+            }
+        }
+        let mut used = std::collections::HashSet::new();
+        if let Ok(nodes) = dom.descendants(self.document()) {
+            for id in nodes {
+                if dom.element(id).is_err() {
+                    continue;
+                }
+                if let Some(families) = layout.style().computed_value(&dom, id, "font-family") {
+                    for family in families.split(',') {
+                        used.insert(family.trim().trim_matches(['"', '\'']).to_lowercase());
+                    }
+                }
+            }
+        }
+        let hit = loading.iter().any(|family| used.contains(family));
+        *self.used_font_families.borrow_mut() = Some((version, used));
+        hit
     }
 
     /// pyro: whether web fonts are still loading (`document.fonts`).

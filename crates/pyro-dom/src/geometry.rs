@@ -167,6 +167,15 @@ pub trait SubresourceLoader: Send + Sync {
     /// The bodies loaded for the documents that go out with this one's
     /// network identity, which they reuse ([`SubresourceBodies`]).
     fn bodies(&self) -> &std::sync::Arc<SubresourceBodies>;
+    /// pyro: this document's layout asked for the font at `url` (its fetch may be shared with the
+    /// identity's other documents).
+    fn font_asked(&self, _url: &str) {}
+    /// pyro: the fonts this document's layout asked for ([`Self::font_asked`]), `None` when the
+    /// loader does not keep track (then every font in flight for the identity counts as this
+    /// document's).
+    fn asked_fonts(&self) -> Option<Vec<String>> {
+        None
+    }
 }
 
 /// Sub-resource bodies loaded from the network for the layouts of the
