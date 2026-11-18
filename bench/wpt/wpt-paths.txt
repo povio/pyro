@@ -18,6 +18,7 @@ css/css-scroll-snap/
 css/css-shapes/
 html/semantics/embedded-content/the-object-element/
 html/semantics/forms/
+# css/cssom/ and css/css-cascade/ (also feature directories) are checked out with the layout directories below.
 intersection-observer/
 workers/
 scroll-animations/
