@@ -6423,7 +6423,7 @@
   "css/css-animations/animation-delay-008.html": {"status":"complete","ms":110,"n":1,"fail":[],"h":"0e440bf2"},
   "css/css-animations/animation-delay-009.html": {"status":"complete","ms":100,"n":1,"fail":[],"h":"0e440bf2"},
   "css/css-animations/animation-delay-010.html": {"status":"complete","ms":110,"n":1,"fail":[],"h":"0e440bf2"},
-  "css/css-animations/animation-delay-011.html": {"status":"complete","ms":50,"n":1,"pass":[]},
+  "css/css-animations/animation-delay-011.html": {"status":"complete","ms":50,"n":1,"fail":[],"h":"0e440bf2"},
   "css/css-animations/animation-delay-012.html": {"status":"complete","ms":60,"n":1,"fail":[],"h":"0e440bf2"},
   "css/css-animations/animation-duration-infinite.html": {"status":"complete","ms":110,"n":1,"fail":[],"h":"0e440bf2"},
   "css/css-animations/animation-important-002.html": {"status":"complete","ms":100,"n":1,"fail":[],"h":"0e440bf2"},
