@@ -656,8 +656,14 @@ machines), reftests 12-14 min per shard, crashtests 6 min. Of the testharness pa
 not complete and 80% to pages with no passing subtest (referrer-policy 130 min, wasm 38, html/semantics 34,
 content-security-policy 33, mixed-content 29). Reftests: webvtt alone 35 min (138 of 168 time out). 8 testharness
 hangs, 1 renderer panic in a reftest screenshot, 1 crashtest panic. 88 testharness pages in a row failed with
-`ERR_PROXY_CONNECTION_FAILED` after an EventSource page until the browser was replaced; the runner now replaces it
-at the first such failure. Reftest shard 0 lost its results to an artifact-service timeout; uploads run again.
+`ERR_PROXY_CONNECTION_FAILED`: the machine ran out of ephemeral ports.
+`html/editing/the-hidden-attribute/beforematch-scroll-to-text-fragment.html` (and the scroll-to-text-fragment pages
+that share `stash.js`) polls `stash.py` in a loop with no delay for a popup's results that never come in pyro,
+~1,000 requests a second for its 45 s; each opens a new connection from wptserve to its stash manager (a Python
+`multiprocessing` manager over TCP), and macOS's 16,384 ephemeral ports (49152-65535, TIME_WAIT 30 s) run out: about
+24,500 sockets in TIME_WAIT from that page alone. Pyro reuses its one connection to the proxy (3,644 requests on 1
+connection). The runner now waits until a connect works again and runs the failed page again. Widening the port range
+on the runners (`sysctl net.inet.ip.portrange.first=16384`) would remove the cause. Reftest shard 0 lost its results to an artifact-service timeout; uploads run again.
 
 At `--jobs 16` with reruns (run 44235329366, testharness shard 3 of 4): 13.5 min per pass, 28 min for both (51 min
 for one pass at 4), crashtests 11.5 min for both. Against the nightly's 4-job pass of the same shard: 18 pages

@@ -345,6 +345,20 @@ await startBrowser();
 const results = [];
 let next = 0, done = 0, restarts = 0;
 const t0 = Date.now();
+// Resolves once a TCP connect to the proxy (or the server) succeeds again, after at most 90 s.
+let portsDrained = null;
+async function drainPorts() {
+  const port = proxy?.port ?? Number(new URL(BASE).port);
+  const t0 = Date.now();
+  while (Date.now() - t0 < 90000) {
+    const ok = await new Promise((resolve) => {
+      const c = net.connect(port, '127.0.0.1', () => { c.destroy(); resolve(true); });
+      c.on('error', () => resolve(false));
+    });
+    if (ok) { await sleep(5000); return; }
+    await sleep(2000);
+  }
+}
 let workers = 0;
 async function worker() {
   const slot = {};
@@ -363,14 +377,16 @@ async function worker() {
     catch (e) {
       r = { status: 'error', error: String(e.message ?? e).split('\n')[0].slice(0, 200) };
       await resetSlot(slot);
-      // The browser's connection to the wptserve proxy wedged (seen once in a nightly: 88 pages in a row failed with
-      // ERR_PROXY_CONNECTION_FAILED after an EventSource page, until the browser was replaced): replace it now and run
-      // the page again, as for a browser lost under the page.
-      if (gen === generation && /ERR_PROXY_CONNECTION_FAILED/.test(r.error)) {
-        console.error(`${LABEL}: ${t.url}: proxy connection failed; replacing the browser`);
-        restarts++;
-        killBrowser();
-        await restartBrowser(gen);
+      // Out of ephemeral ports: a page polling a wptserve stash handler in a tight loop (the scroll-to-text-fragment
+      // pages wait for a popup's results that never come) makes ~1,000 requests a second, each a new connection from
+      // wptserve to its stash manager, and macOS's 16,384 ports sit in TIME_WAIT for 30 s. Every connect then fails
+      // (88 pages in a row in the first nightly, as ERR_PROXY_CONNECTION_FAILED). Wait until a connect works again,
+      // then run the page again.
+      if (/ERR_PROXY_CONNECTION_FAILED|EADDRNOTAVAIL/.test(r.error) && (t.retried ?? 0) < 3) {
+        console.error(`${LABEL}: ${t.url}: connections fail (ports exhausted?); waiting for them to drain`);
+        inflight.delete(w);
+        await (portsDrained ??= drainPorts().finally(() => { portsDrained = null; }));
+        t.retried = (t.retried ?? 0) + 1; tests.push(t); continue;
       }
       const lost = gen !== generation || /ECONNREFUSED|has been closed/.test(r.error);
       // Whether this page's browser died (or was replaced): a lost connection can arrive before its exit does.
