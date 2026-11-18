@@ -616,10 +616,10 @@ fn css_rule_values_survive_reentrant_gc() {
             r#"
       const sh=document.getElementById('s').sheet;
       for(let i=0;i<200;i++)sh.insertRule('.r'+i+'{}',i);
-      window.before=sh.cssRules.every((r,i)=>r.cssText==='.r'+i+' { }');
+      window.before=[...sh.cssRules].every((r,i)=>r.cssText==='.r'+i+' { }');
       Object.defineProperty(Object.prototype,'cssText',{set(v){reviewGC(); Object.defineProperty(this,'cssText',{value:v});}, configurable:true});
       const rr=sh.cssRules; delete Object.prototype.cssText;
-      before && rr.length === 200 && rr.every((r,i)=>r.cssText==='.r'+i+' { }')
+      before && rr.length === 200 && [...rr].every((r,i)=>r.cssText==='.r'+i+' { }')
     "#
         ),
         "true"
@@ -6449,6 +6449,41 @@ fn invalid_urls_throw_from_send_beacon_and_window_open_and_response_form_data_pa
     eval(&e.main, "globalThis.got='';new Response('a=1&b=%F0%9F%90%BC+c&a',{headers:{'Content-Type':'application/x-www-form-urlencoded;charset=shift_jis'}}).formData().then(f=>{got=[...f].join('|')+'|'+(f instanceof FormData)});new Response('a=1').formData().catch(x=>{got2=x.name})");
     assert_eq!(eval(&e.main, "got"), "a,1|b,\u{1F43C} c|a,|true");
     assert_eq!(eval(&e.main, "got2"), "TypeError");
+    e.page.dispose();
+}
+
+/// Rules wrap as their CSSOM interfaces (all CSSRule subclasses), `cssRules`
+/// is a live CSSRuleList, and `media` of `@media`/`@import` is a MediaList
+/// serialized by the style engine (css/cssom CSSRule-type, MediaList-parsing).
+#[test]
+fn css_rule_interfaces_rule_lists_and_rule_media() {
+    let e = env(concat!(
+        "<style id=s>@import url(x.css) layer(L) SCREEN; @namespace svg url(http://www.w3.org/2000/svg);",
+        " a{} @media PRINT { b{} } @supports (display:grid) {} @keyframes k {} @layer x, y; @page :first {}</style>"
+    ));
+    assert_eq!(
+        eval(
+            &e.main,
+            "const rs = document.getElementById('s').sheet.cssRules;
+             [rs instanceof CSSRuleList, rs.length, rs.item(0) === rs[0],
+              [...rs].map(r => r.constructor.name + ':' + (r instanceof CSSRule)).join(' '),
+              rs[0].href, rs[0].layerName, rs[0].media.mediaText, rs[1].prefix, rs[1].namespaceURI,
+              rs[3].media.mediaText, rs[3].media === rs[3].media, rs[6].nameList.join(), rs[7].selectorText,
+              CSSRule.MEDIA_RULE, rs[3].MEDIA_RULE, document.getElementById('s').sheet instanceof StyleSheet].join('|')"
+        ),
+        "true|8|true|CSSImportRule:true CSSNamespaceRule:true CSSStyleRule:true CSSMediaRule:true CSSSupportsRule:true \
+         CSSKeyframesRule:true CSSLayerStatementRule:true CSSPageRule:true|x.css|L|screen|svg|http://www.w3.org/2000/svg|\
+         print|true|x,y|:first|4|4|true"
+    );
+    assert_eq!(
+        eval(
+            &e.main,
+            "rs[3].media.mediaText = '  NOT  PRINT , bad$ '; rs[0].media.mediaText = 'tv';
+             rs[7].selectorText = 'named:FIRST'; rs[7].selectorText = 'bad::x';
+             [rs[3].media.mediaText, rs[3].conditionText, rs[0].cssText, rs[7].selectorText].join('|')"
+        ),
+        "not print, not all|not print, not all|@import url(x.css) layer(L) tv;|named:first"
+    );
     e.page.dispose();
 }
 

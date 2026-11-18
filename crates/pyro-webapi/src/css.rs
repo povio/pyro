@@ -623,7 +623,7 @@ impl RuleList {
 
 enum RuleKind {
     Style { selector: RefCell<String>, block: RefCell<String> },
-    Group { name: String, condition: String, list: RuleList },
+    Group { name: String, condition: RefCell<String>, list: RuleList },
     Other { rule_type: u16, text: RefCell<String> },
 }
 
@@ -645,7 +645,7 @@ impl RuleNode {
                 ParsedRule::Group { name, condition, rules } => {
                     let list = RuleList::default();
                     list.replace(rules.into_iter().map(|r| RuleNode::new(r, me.clone())).collect());
-                    RuleKind::Group { name, condition, list }
+                    RuleKind::Group { name, condition: RefCell::new(condition), list }
                 }
                 ParsedRule::Other { rule_type, text } => RuleKind::Other { rule_type, text: RefCell::new(text) },
             };
@@ -659,7 +659,7 @@ impl RuleNode {
             RuleKind::Style { selector, block } => format!("{} {{{}}}", selector.borrow(), block.borrow()),
             RuleKind::Group { name, condition, list } => {
                 let body = list.rules.borrow().iter().map(|r| r.source_text()).collect::<Vec<_>>().join("\n");
-                format!("@{name} {condition} {{\n{body}\n}}")
+                format!("@{name} {} {{\n{body}\n}}", condition.borrow())
             }
             RuleKind::Other { text, .. } => text.borrow().clone(),
         }
@@ -677,7 +677,7 @@ impl RuleNode {
                 }
             }
             RuleKind::Group { name, condition, list } => {
-                let mut out = format!("@{name} {condition} {{\n");
+                let mut out = format!("@{name} {} {{\n", condition.borrow());
                 for rule in list.rules.borrow().iter() {
                     out.push_str("  ");
                     out.push_str(&rule.css_text());
@@ -785,52 +785,56 @@ fn delete_from(list: &RuleList, index: usize) -> JsResult<()> {
     Ok(())
 }
 
-const RULES: &str = "__lpCssRules";
-const GENERATION: &str = "__lpCssRulesGeneration";
-
-/// The list as a JS array kept on its holder, so `cssRules` stays the same live
-/// object and rules keep their identity. Rebuilt only after a change.
-fn rules_array<'s>(
-    s: &Scope<'s>,
-    holder: Option<Object<'s>>,
-    list: &RuleList,
-    owner: &SheetOwner,
-) -> JsResult<Value<'s>> {
-    let generation = list.generation.get();
-    let mut array = None;
-    if let Some(holder) = holder {
-        array = s.get_hidden(holder, RULES)?.and_then(|v| v.as_object());
-        if array.is_some() {
-            let current = s.get_hidden(holder, GENERATION)?.and_then(|v| v.to_number().ok());
-            if current == Some(generation as f64) {
-                return Ok(array.map_or(s.undefined(), |a| a.value()));
-            }
-        }
+/// `cssRules` of a sheet (`group: None`) or of a grouping rule: a live
+/// `CSSRuleList`, one object per holder and realm.
+fn rule_list<'s>(s: &Scope<'s>, holder: IdentityKey, owner: &SheetOwner, group: Option<Rc<RuleNode>>) -> JsResult<Value<'s>> {
+    let key = IdentityKey(holder.0 | (1 << 54), holder.1);
+    if let Some(o) = s.lookup_identity(key) {
+        return Ok(o.value());
     }
-    let array = match array {
-        Some(array) => array,
-        None => s.array(&[])?,
-    };
-    if let Some(holder) = holder {
-        s.set_hidden(holder, RULES, array.value())?;
-        s.set_hidden(holder, GENERATION, s.number(generation as f64))?;
-    }
-    let rules = list.rules.borrow().clone();
-    array.set_atom("length", s.number(0.0))?;
-    for (i, rule) in rules.iter().enumerate() {
-        let wrapper = rule_wrapper(s, rule, owner)?;
-        array.set_index(i as u32, wrapper.value())?;
-    }
-    Ok(array.value())
+    Ok(s.wrap::<CssRuleList>(RuleListData { owner: owner.hold()?, group }, Some(key))?.value())
 }
 
-/// Keeps a list a script already holds current after an edit.
-fn sync_rules(s: &Scope<'_>, key: IdentityKey, list: &RuleList, owner: &SheetOwner) -> JsResult<()> {
-    let Some(holder) = s.lookup_identity(key) else { return Ok(()) };
-    if s.get_hidden(holder, RULES)?.is_some() {
-        rules_array(s, Some(holder), list, owner)?;
+pub struct RuleListData {
+    owner: SheetOwner,
+    group: Option<Rc<RuleNode>>,
+}
+
+impl RuleListData {
+    fn rules(&self) -> Vec<Rc<RuleNode>> {
+        match &self.group {
+            Some(node) => match &node.kind {
+                RuleKind::Group { list, .. } => list.rules.borrow().clone(),
+                _ => Vec::new(),
+            },
+            None => self.owner.model().list.rules.borrow().clone(),
+        }
     }
-    Ok(())
+}
+
+/// `CSSRuleList`: live, indexed.
+pub struct CssRuleList;
+impl JsClass for CssRuleList {
+    const NAME: &'static str = "CSSRuleList";
+    type Data = RuleListData;
+    type Parent = NoParent;
+    fn define(def: &mut ClassDef<Self>) {
+        def.getter("length", |s, l| Ok(s.number(l.rules().len() as f64)));
+        def.pure_method("item", 1, |s, l, a| match l.rules().get(to_u32(a.get(0))? as usize) {
+            Some(rule) => Ok(rule_wrapper(s, rule, &l.owner)?.value()),
+            None => Ok(s.null()),
+        });
+        def.indexed(|s, l, i| match l.rules().get(i as usize) {
+            Some(rule) => rule_wrapper(s, rule, &l.owner).map(|o| Some(o.value())),
+            None => Ok(None),
+        });
+        def.indexed_iterator();
+    }
+}
+
+/// The lowercase at-keyword of a rule kept as text (`import` of `@import ...`).
+fn at_name(text: &str) -> String {
+    text.trim_start_matches('@').split(|c: char| c.is_ascii_whitespace() || c == '{' || c == ';' || c == '(').next().unwrap_or("").to_ascii_lowercase()
 }
 
 fn rule_wrapper<'s>(s: &Scope<'s>, rule: &Rc<RuleNode>, owner: &SheetOwner) -> JsResult<Object<'s>> {
@@ -838,11 +842,34 @@ fn rule_wrapper<'s>(s: &Scope<'s>, rule: &Rc<RuleNode>, owner: &SheetOwner) -> J
         return Ok(o);
     }
     let data = RuleData { owner: owner.hold()?, node: rule.clone() };
-    match rule.kind {
-        RuleKind::Style { .. } => s.wrap::<CssStyleRule>(data, Some(rule.identity)),
-        RuleKind::Group { .. } => s.wrap::<CssGroupRule>(data, Some(rule.identity)),
-        RuleKind::Other { rule_type: COUNTER_STYLE_RULE, .. } => s.wrap::<CssCounterStyleRule>(data, Some(rule.identity)),
-        RuleKind::Other { .. } => s.wrap::<CssOtherRule>(data, Some(rule.identity)),
+    let key = Some(rule.identity);
+    match &rule.kind {
+        RuleKind::Style { .. } => s.wrap::<CssStyleRule>(data, key),
+        RuleKind::Group { name, .. } if name == "media" => s.wrap::<CssMediaRule>(data, key),
+        RuleKind::Group { name, .. } if name == "supports" => s.wrap::<CssSupportsRule>(data, key),
+        RuleKind::Group { .. } => s.wrap::<CssConditionRule>(data, key),
+        RuleKind::Other { rule_type: COUNTER_STYLE_RULE, .. } => s.wrap::<CssCounterStyleRule>(data, key),
+        RuleKind::Other { text, .. } => {
+            let text = text.borrow();
+            match at_name(&text).as_str() {
+                "import" => s.wrap::<CssImportRule>(data, key),
+                "font-face" => s.wrap::<CssFontFaceRule>(data, key),
+                "page" => s.wrap::<CssPageRule>(data, key),
+                "keyframes" | "-webkit-keyframes" => s.wrap::<CssKeyframesRule>(data, key),
+                "namespace" => s.wrap::<CssNamespaceRule>(data, key),
+                "font-feature-values" => s.wrap::<CssFontFeatureValuesRule>(data, key),
+                "layer" if text.trim_end().ends_with(';') => s.wrap::<CssLayerStatementRule>(data, key),
+                "layer" => s.wrap::<CssLayerBlockRule>(data, key),
+                "container" => s.wrap::<CssContainerRule>(data, key),
+                "property" => s.wrap::<CssPropertyRule>(data, key),
+                "font-palette-values" => s.wrap::<CssFontPaletteValuesRule>(data, key),
+                "starting-style" => s.wrap::<CssStartingStyleRule>(data, key),
+                "scope" => s.wrap::<CssScopeRule>(data, key),
+                "position-try" => s.wrap::<CssPositionTryRule>(data, key),
+                "view-transition" => s.wrap::<CssViewTransitionRule>(data, key),
+                _ => s.wrap::<CssRule>(data, key),
+            }
+        }
     }
 }
 
@@ -857,6 +884,23 @@ pub struct RuleData {
 }
 
 fn define_rule<C: JsClass<Data = RuleData>>(def: &mut ClassDef<C>) {
+    for (name, value) in [
+        ("STYLE_RULE", 1.0),
+        ("CHARSET_RULE", 2.0),
+        ("IMPORT_RULE", 3.0),
+        ("MEDIA_RULE", 4.0),
+        ("FONT_FACE_RULE", 5.0),
+        ("PAGE_RULE", 6.0),
+        ("KEYFRAMES_RULE", 7.0),
+        ("KEYFRAME_RULE", 8.0),
+        ("MARGIN_RULE", 9.0),
+        ("NAMESPACE_RULE", 10.0),
+        ("COUNTER_STYLE_RULE", 11.0),
+        ("SUPPORTS_RULE", 12.0),
+        ("FONT_FEATURE_VALUES_RULE", 14.0),
+    ] {
+        def.constant(name, value);
+    }
     def.getter("type", |s, r| {
         Ok(s.number(match &r.node.kind {
             RuleKind::Style { .. } => 1.0,
@@ -877,9 +921,8 @@ pub struct CssStyleRule;
 impl JsClass for CssStyleRule {
     const NAME: &'static str = "CSSStyleRule";
     type Data = RuleData;
-    type Parent = NoParent;
+    type Parent = CssRule;
     fn define(def: &mut ClassDef<Self>) {
-        define_rule(def);
         // The rule's declaration block ([PutForwards=cssText]); one object
         // per rule and realm.
         def.accessor(
@@ -935,16 +978,11 @@ pub struct CssGroupRule;
 impl JsClass for CssGroupRule {
     const NAME: &'static str = "CSSGroupingRule";
     type Data = RuleData;
-    type Parent = NoParent;
+    type Parent = CssRule;
     fn define(def: &mut ClassDef<Self>) {
-        define_rule(def);
-        def.getter("conditionText", |s, r| match &r.node.kind {
-            RuleKind::Group { condition, .. } => Ok(s.string(condition)),
-            _ => Ok(s.undefined()),
-        });
         def.getter("cssRules", |s, r| {
-            let RuleKind::Group { list, .. } = &r.node.kind else { return Ok(s.undefined()) };
-            rules_array(s, s.lookup_identity(r.node.identity), list, &r.owner)
+            let RuleKind::Group { .. } = &r.node.kind else { return Ok(s.undefined()) };
+            rule_list(s, r.node.identity, &r.owner, Some(r.node.clone()))
         });
         def.method("insertRule", 1, |s, r, a| {
             let rule = arg_string(&a, 0, "CSSGroupingRule.insertRule")?;
@@ -954,7 +992,6 @@ impl JsClass for CssGroupRule {
             let namespaces = model.namespaces.borrow().clone();
             insert_into(list, &namespaces, Rc::downgrade(&r.node), &rule, index, r.owner.is_constructed())?;
             r.owner.commit(&model);
-            sync_rules(s, r.node.identity, list, &r.owner)?;
             Ok(s.number(index as f64))
         });
         def.method("deleteRule", 1, |s, r, a| {
@@ -962,14 +999,15 @@ impl JsClass for CssGroupRule {
             let RuleKind::Group { list, .. } = &r.node.kind else { return Ok(s.undefined()) };
             delete_from(list, index)?;
             r.owner.commit(&r.owner.model());
-            sync_rules(s, r.node.identity, list, &r.owner)?;
             Ok(s.undefined())
         });
     }
 }
 
-pub struct CssOtherRule;
-impl JsClass for CssOtherRule {
+/// `CSSRule`, the base of every rule interface (also the class of a rule
+/// with no interface of its own).
+pub struct CssRule;
+impl JsClass for CssRule {
     const NAME: &'static str = "CSSRule";
     type Data = RuleData;
     type Parent = NoParent;
@@ -977,6 +1015,203 @@ impl JsClass for CssOtherRule {
         define_rule(def);
     }
 }
+
+/// The text of a rule kept as written (`@import ...;`), or "".
+fn rule_text(r: &RuleData) -> String {
+    match &r.node.kind {
+        RuleKind::Other { text, .. } => text.borrow().clone(),
+        _ => String::new(),
+    }
+}
+
+/// The prelude of a rule kept as text: between the at-keyword and `{` or `;`.
+fn rule_prelude(r: &RuleData) -> String {
+    let text = rule_text(r);
+    let body = text.trim_start_matches('@');
+    let body = body.find(|c: char| c.is_ascii_whitespace() || c == '{' || c == ';' || c == '(').map_or("", |i| &body[i..]);
+    let end = body.find(['{', ';']).unwrap_or(body.len());
+    body[..end].trim().to_owned()
+}
+
+/// A rule interface with no members of its own.
+macro_rules! rule_class {
+    ($name:ident, $js:literal, $parent:ty) => {
+        rule_class!($name, $js, $parent, |_def| {});
+    };
+    ($name:ident, $js:literal, $parent:ty, $body:expr) => {
+        pub struct $name;
+        impl JsClass for $name {
+            const NAME: &'static str = $js;
+            type Data = RuleData;
+            type Parent = $parent;
+            fn define(def: &mut ClassDef<Self>) {
+                let f: fn(&mut ClassDef<Self>) = $body;
+                f(def);
+            }
+        }
+    };
+}
+
+rule_class!(CssConditionRule, "CSSConditionRule", CssGroupRule, |def| {
+    def.getter("conditionText", |s, r| match &r.node.kind {
+        RuleKind::Group { condition, .. } => Ok(s.string(&condition.borrow())),
+        _ => Ok(s.string(&rule_prelude(r))),
+    });
+});
+
+/// `media` of `@media` and `@import` rules ([PutForwards=mediaText]): one
+/// `MediaList` per rule and realm.
+fn define_rule_media<C: JsClass<Data = RuleData>>(def: &mut ClassDef<C>) {
+    def.accessor(
+        "media",
+        |s, r| {
+            let key = IdentityKey(r.node.identity.0 | (1 << 53), r.node.identity.1);
+            if let Some(o) = s.lookup_identity(key) {
+                return Ok(o.value());
+            }
+            let data = RuleData { owner: r.owner.hold()?, node: r.node.clone() };
+            Ok(s.wrap::<MediaList>(MediaOwner::Rule(data), Some(key))?.value())
+        },
+        |_s, r, v| {
+            let data = RuleData { owner: r.owner.hold()?, node: r.node.clone() };
+            MediaList::set(&MediaOwner::Rule(data), &dom_string(v)?)
+        },
+    );
+}
+rule_class!(CssMediaRule, "CSSMediaRule", CssConditionRule, |def| define_rule_media(def));
+rule_class!(CssSupportsRule, "CSSSupportsRule", CssConditionRule);
+rule_class!(CssContainerRule, "CSSContainerRule", CssConditionRule);
+rule_class!(CssImportRule, "CSSImportRule", CssRule, |def| {
+    define_rule_media(def);
+    def.getter("href", |s, r| {
+        let prelude = rule_prelude(r);
+        let mut p = cssparser::Parser::new(&prelude);
+        let href = match p.next() {
+            Ok(cssparser::Token::QuotedString(v)) | Ok(cssparser::Token::UnquotedUrl(v)) => v.to_string(),
+            Ok(cssparser::Token::Function(f)) if f.eq_ignore_ascii_case("url") => p
+                .parse_nested_block(|n| n.expect_string().map(|v| v.to_string()).map_err(cssparser::ParseError::<()>::from))
+                .unwrap_or_default(),
+            _ => String::new(),
+        };
+        Ok(s.string(&href))
+    });
+    // `layer` (anonymous: ""), `layer(name)`, or no layer (null).
+    def.getter("layerName", |s, r| {
+        let prelude = rule_prelude(r);
+        for word in prelude.split_ascii_whitespace() {
+            if word.eq_ignore_ascii_case("layer") {
+                return Ok(s.string(""));
+            }
+        }
+        let lower = prelude.to_ascii_lowercase();
+        match lower.find("layer(") {
+            Some(i) => {
+                let rest = &prelude[i + 6..];
+                let name = rest[..rest.find(')').unwrap_or(rest.len())].trim();
+                Ok(s.string(&name.split('.').map(str::trim).collect::<Vec<_>>().join(".")))
+            }
+            None => Ok(s.null()),
+        }
+    });
+    def.getter("styleSheet", |s, _r| Ok(s.null()));
+});
+rule_class!(CssFontFaceRule, "CSSFontFaceRule", CssRule);
+/// A page selector list as `CSSPageRule.selectorText` serializes it
+/// (`name:first`, pseudo-pages lowercased), or `None` when it is invalid.
+fn page_selector(text: &str) -> Option<String> {
+    let mut out = Vec::new();
+    for part in text.split(',') {
+        let part = part.trim_matches(|c: char| c.is_ascii_whitespace());
+        let (name, pseudos) = part.split_at(part.find(':').unwrap_or(part.len()));
+        let ident = |n: &str| n.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_' || !c.is_ascii());
+        if !ident(name) || (name.is_empty() && pseudos.is_empty() && text.contains(',')) {
+            return None;
+        }
+        let mut serialized = name.to_owned();
+        for pseudo in pseudos.split(':').skip(1) {
+            let lower = pseudo.to_ascii_lowercase();
+            if !matches!(lower.as_str(), "first" | "left" | "right" | "blank") {
+                return None;
+            }
+            serialized.push(':');
+            serialized.push_str(&lower);
+        }
+        out.push(serialized);
+    }
+    Some(out.join(", "))
+}
+
+rule_class!(CssPageRule, "CSSPageRule", CssGroupRule, |def| {
+    def.accessor(
+        "selectorText",
+        |s, r| Ok(s.string(&rule_prelude(r))),
+        |_s, r, v| {
+            let Some(selector) = page_selector(&dom_string(v)?) else { return Ok(()) };
+            if let RuleKind::Other { text, .. } = &r.node.kind {
+                let block = {
+                    let t = text.borrow();
+                    t.find('{').map_or_else(|| "{ }".to_owned(), |i| t[i..].to_owned())
+                };
+                let prefix = if selector.is_empty() { String::new() } else { format!("{selector} ") };
+                *text.borrow_mut() = format!("@page {prefix}{block}");
+                r.owner.commit(&r.owner.model());
+            }
+            Ok(())
+        },
+    );
+});
+rule_class!(CssKeyframesRule, "CSSKeyframesRule", CssRule, |def| {
+    def.getter("name", |s, r| {
+        let prelude = rule_prelude(r);
+        Ok(s.string(prelude.trim_matches(|c| c == '"' || c == '\'')))
+    });
+});
+rule_class!(CssNamespaceRule, "CSSNamespaceRule", CssRule, |def| {
+    // `@namespace [prefix] (url(...) | "...")`.
+    fn parts(r: &RuleData) -> (String, String) {
+        let prelude = rule_prelude(r);
+        let mut p = cssparser::Parser::new(&prelude);
+        let (mut prefix, mut uri) = (String::new(), String::new());
+        while let Ok(token) = p.next().cloned() {
+            match token {
+                cssparser::Token::Ident(v) => prefix = v.to_string(),
+                cssparser::Token::QuotedString(v) | cssparser::Token::UnquotedUrl(v) => uri = v.to_string(),
+                cssparser::Token::Function(f) if f.eq_ignore_ascii_case("url") => {
+                    uri = p.parse_nested_block(|n| n.expect_string().map(|v| v.to_string()).map_err(cssparser::ParseError::<()>::from)).unwrap_or_default()
+                }
+                _ => {}
+            }
+        }
+        (prefix, uri)
+    }
+    def.getter("namespaceURI", |s, r| Ok(s.string(&parts(r).1)));
+    def.getter("prefix", |s, r| Ok(s.string(&parts(r).0)));
+});
+rule_class!(CssFontFeatureValuesRule, "CSSFontFeatureValuesRule", CssRule);
+rule_class!(CssLayerBlockRule, "CSSLayerBlockRule", CssGroupRule, |def| {
+    def.getter("name", |s, r| Ok(s.string(&rule_prelude(r))));
+});
+rule_class!(CssLayerStatementRule, "CSSLayerStatementRule", CssRule, |def| {
+    def.getter("nameList", |s, r| {
+        let names: Vec<_> = rule_prelude(r).split(',').map(|n| n.trim().to_owned()).filter(|n| !n.is_empty()).collect();
+        let values = names.iter().map(|n| s.string(n)).collect::<Vec<_>>();
+        let array = s.array(&values)?;
+        let freeze = s.global().get_atom("Object")?.as_object().expect("Object").get_atom("freeze")?;
+        freeze.as_object().expect("Object.freeze").call(None, &[array.value()])
+    });
+});
+rule_class!(CssPropertyRule, "CSSPropertyRule", CssRule, |def| {
+    def.getter("name", |s, r| Ok(s.string(&rule_prelude(r))));
+});
+rule_class!(CssFontPaletteValuesRule, "CSSFontPaletteValuesRule", CssRule, |def| {
+    def.getter("name", |s, r| Ok(s.string(&rule_prelude(r))));
+});
+rule_class!(CssStartingStyleRule, "CSSStartingStyleRule", CssGroupRule);
+rule_class!(CssScopeRule, "CSSScopeRule", CssGroupRule);
+rule_class!(CssPositionTryRule, "CSSPositionTryRule", CssRule, |def| {
+    def.getter("name", |s, r| Ok(s.string(&rule_prelude(r))));
+});
+rule_class!(CssViewTransitionRule, "CSSViewTransitionRule", CssRule);
 
 /// `CSSRule.type` of `@import`.
 const IMPORT_RULE: u16 = 3;
@@ -1025,9 +1260,8 @@ pub struct CssCounterStyleRule;
 impl JsClass for CssCounterStyleRule {
     const NAME: &'static str = "CSSCounterStyleRule";
     type Data = RuleData;
-    type Parent = NoParent;
+    type Parent = CssRule;
     fn define(def: &mut ClassDef<Self>) {
-        define_rule(def);
         // (prelude name, block) of `@counter-style <name> {<block>}`.
         fn parts(text: &str) -> Option<(String, String)> {
             let open = text.find('{')?;
@@ -1257,14 +1491,63 @@ fn media_queries(text: &str) -> Vec<String> {
 
 /// A media list's text as `mediaText` serializes it.
 fn media_text(text: &str) -> String {
-    media_queries(text).join(", ")
+    pyro_dom::cssom::serialize_media_list(text)
 }
 
 /// `CSSStyleSheet.media`: the `media` attribute of a sheet's owner, or a
 /// constructed sheet's list.
 pub struct MediaList;
+/// Whose media list a `MediaList` is: a sheet's (its owner's `media`), an
+/// `@media` rule's condition or an `@import` rule's media queries.
+pub enum MediaOwner {
+    Sheet(SheetOwner),
+    Rule(RuleData),
+}
+
+/// An `@import` prelude split before its media queries: the URL, `layer`
+/// and `supports()` parts, and the media query text.
+fn import_split(prelude: &str) -> (String, String) {
+    let mut p = cssparser::Parser::new(prelude);
+    let mut end = p.position();
+    let mut first = true;
+    loop {
+        let state = p.state();
+        let Ok(token) = p.next().cloned() else { break };
+        let keep = match &token {
+            _ if first => true,
+            cssparser::Token::Ident(i) => i.eq_ignore_ascii_case("layer"),
+            cssparser::Token::Function(f) => f.eq_ignore_ascii_case("layer") || f.eq_ignore_ascii_case("supports"),
+            _ => false,
+        };
+        if !keep {
+            p.reset(&state);
+            break;
+        }
+        if matches!(token, cssparser::Token::Function(_)) {
+            let _: Result<(), cssparser::ParseError<()>> = p.parse_nested_block(|n| {
+                while n.next().is_ok() {}
+                Ok(())
+            });
+        }
+        first = false;
+        end = p.position();
+    }
+    let head = prelude[..end.byte_index()].trim().to_owned();
+    let media = prelude[end.byte_index()..].trim().to_owned();
+    (head, media)
+}
+
 impl MediaList {
-    fn text(sh: &SheetOwner) -> String {
+    fn text(m: &MediaOwner) -> String {
+        let sh = match m {
+            MediaOwner::Sheet(sh) => sh,
+            MediaOwner::Rule(r) => {
+                return match &r.node.kind {
+                    RuleKind::Group { condition, .. } => media_text(&condition.borrow()),
+                    _ => media_text(&import_split(&rule_prelude(r)).1),
+                }
+            }
+        };
         match sh {
             SheetOwner::Node(h) => {
                 media_text(h.page.dom.borrow().get_attribute(h.id, "media").ok().flatten().unwrap_or(""))
@@ -1272,8 +1555,24 @@ impl MediaList {
             SheetOwner::Constructed(c) => c.media.borrow().clone(),
         }
     }
-    fn set(sh: &SheetOwner, text: &str) -> JsResult<()> {
+    fn set(m: &MediaOwner, text: &str) -> JsResult<()> {
         let text = media_text(text);
+        let sh = match m {
+            MediaOwner::Sheet(sh) => sh,
+            MediaOwner::Rule(r) => {
+                match &r.node.kind {
+                    RuleKind::Group { condition, .. } => *condition.borrow_mut() = text,
+                    RuleKind::Other { text: rule, .. } => {
+                        let (head, _) = import_split(&rule_prelude(r));
+                        let media = if text.is_empty() { String::new() } else { format!(" {text}") };
+                        *rule.borrow_mut() = format!("@import {head}{media};");
+                    }
+                    RuleKind::Style { .. } => return Ok(()),
+                }
+                r.owner.commit(&r.owner.model());
+                return Ok(());
+            }
+        };
         match sh {
             SheetOwner::Node(h) => h.page.dom.borrow_mut().set_attribute(h.id, "media", &text).js(),
             SheetOwner::Constructed(c) => {
@@ -1288,7 +1587,7 @@ impl MediaList {
 
 impl JsClass for MediaList {
     const NAME: &'static str = "MediaList";
-    type Data = SheetOwner;
+    type Data = MediaOwner;
     type Parent = NoParent;
     fn define(def: &mut ClassDef<Self>) {
         def.accessor(
@@ -1383,11 +1682,21 @@ fn sheet_options(a: Value<'_>) -> JsResult<(String, bool)> {
     Ok((media.trim().to_owned(), disabled))
 }
 
+/// `StyleSheet`, the base of `CSSStyleSheet` (its members are defined on
+/// `CSSStyleSheet`).
+pub struct StyleSheet;
+impl JsClass for StyleSheet {
+    const NAME: &'static str = "StyleSheet";
+    type Data = SheetData;
+    type Parent = NoParent;
+    fn define(_def: &mut ClassDef<Self>) {}
+}
+
 pub struct CssStyleSheet;
 impl JsClass for CssStyleSheet {
     const NAME: &'static str = "CSSStyleSheet";
     type Data = SheetData;
-    type Parent = NoParent;
+    type Parent = StyleSheet;
     fn define(def: &mut ClassDef<Self>) {
         def.constructor(0, |s, nt, a| {
             let (media, disabled) = sheet_options(a.get(0))?;
@@ -1424,9 +1733,9 @@ impl JsClass for CssStyleSheet {
                 if let Some(o) = s.lookup_identity(key) {
                     return Ok(o.value());
                 }
-                Ok(s.wrap::<MediaList>(sh.owner.hold()?, Some(key))?.value())
+                Ok(s.wrap::<MediaList>(MediaOwner::Sheet(sh.owner.hold()?), Some(key))?.value())
             },
-            |_s, sh, v| MediaList::set(&sh.owner, &dom_string(v)?),
+            |_s, sh, v| MediaList::set(&MediaOwner::Sheet(sh.owner.hold()?), &dom_string(v)?),
         );
         def.getter("href", |s, sh| match &sh.owner {
             SheetOwner::Node(h) => {
@@ -1475,7 +1784,6 @@ impl JsClass for CssStyleSheet {
             let namespaces = model.namespaces.borrow().clone();
             insert_into(&model.list, &namespaces, Weak::new(), &rule, index, sh.owner.is_constructed())?;
             sh.owner.commit(&model);
-            sync_rules(s, sh.owner.key(), &model.list, &sh.owner)?;
             Ok(s.number(index as f64))
         });
         def.method("addRule", 0, |s, sh, a| {
@@ -1490,7 +1798,6 @@ impl JsClass for CssStyleSheet {
             let rule = format!("{selector} {{ {block} }}");
             insert_into(&model.list, &namespaces, Weak::new(), &rule, index, sh.owner.is_constructed())?;
             sh.owner.commit(&model);
-            sync_rules(s, sh.owner.key(), &model.list, &sh.owner)?;
             Ok(s.number(-1.0))
         });
         def.method("deleteRule", 1, |s, sh, a| {
@@ -1498,7 +1805,6 @@ impl JsClass for CssStyleSheet {
             let model = sh.owner.model();
             delete_from(&model.list, index)?;
             sh.owner.commit(&model);
-            sync_rules(s, sh.owner.key(), &model.list, &sh.owner)?;
             Ok(s.undefined())
         });
         def.method("removeRule", 0, |s, sh, a| {
@@ -1506,14 +1812,12 @@ impl JsClass for CssStyleSheet {
             let model = sh.owner.model();
             delete_from(&model.list, index)?;
             sh.owner.commit(&model);
-            sync_rules(s, sh.owner.key(), &model.list, &sh.owner)?;
             Ok(s.undefined())
         });
         def.method("replaceSync", 1, |s, sh, a| {
             let text = arg_string(&a, 0, "CSSStyleSheet.replaceSync")?;
             let SheetOwner::Constructed(c) = &sh.owner else { return Err(not_constructed("replaceSync")) };
             c.replace(&text);
-            sync_rules(s, c.identity, &c.model.list, &sh.owner)?;
             Ok(s.undefined())
         });
         def.method("replace", 1, |s, sh, a| {
@@ -1523,7 +1827,6 @@ impl JsClass for CssStyleSheet {
             match &sh.owner {
                 SheetOwner::Constructed(c) => {
                     c.replace(&text);
-                    sync_rules(s, c.identity, &c.model.list, &sh.owner)?;
                     deferred.resolve(s, constructed_wrapper(s, c)?.value())?;
                 }
                 SheetOwner::Node(_) => deferred.reject(s, not_constructed("replace").to_value(s))?,
@@ -1534,8 +1837,7 @@ impl JsClass for CssStyleSheet {
 }
 
 fn rules_value<'s>(s: &Scope<'s>, sh: &SheetData) -> JsResult<Value<'s>> {
-    let model = sh.owner.model();
-    rules_array(s, s.lookup_identity(sh.owner.key()), &model.list, &sh.owner)
+    rule_list(s, sh.owner.key(), &sh.owner, None)
 }
 
 fn sheet_wrapper<'s>(s: &Scope<'s>, page: &Rc<PageDom>, owner: NodeId) -> JsResult<Object<'s>> {
@@ -1783,12 +2085,32 @@ pub(crate) fn set_adopted_style_sheets(s: &Scope<'_>, n: &NodeData, value: Value
 
 pub(crate) fn register(engine: &pyro_js::Engine) {
     engine.register::<CssStyleDeclaration>();
+    engine.register::<StyleSheet>();
     engine.register::<CssStyleSheet>();
     engine.register::<MediaList>();
     engine.register::<StyleSheetList>();
+    engine.register::<CssRuleList>();
+    engine.register::<CssRule>();
     engine.register::<CssStyleRule>();
     engine.register::<CssGroupRule>();
-    engine.register::<CssOtherRule>();
+    engine.register::<CssConditionRule>();
+    engine.register::<CssMediaRule>();
+    engine.register::<CssSupportsRule>();
+    engine.register::<CssContainerRule>();
+    engine.register::<CssImportRule>();
+    engine.register::<CssFontFaceRule>();
+    engine.register::<CssPageRule>();
+    engine.register::<CssKeyframesRule>();
+    engine.register::<CssNamespaceRule>();
+    engine.register::<CssFontFeatureValuesRule>();
+    engine.register::<CssLayerBlockRule>();
+    engine.register::<CssLayerStatementRule>();
+    engine.register::<CssPropertyRule>();
+    engine.register::<CssFontPaletteValuesRule>();
+    engine.register::<CssStartingStyleRule>();
+    engine.register::<CssScopeRule>();
+    engine.register::<CssPositionTryRule>();
+    engine.register::<CssViewTransitionRule>();
     engine.register::<CssCounterStyleRule>();
 }
 

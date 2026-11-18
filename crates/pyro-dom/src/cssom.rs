@@ -117,7 +117,8 @@ fn parse_at_rule(p: &mut Parser<'_>, name: &str, namespaces: &mut Namespaces) ->
     if matches!(lower.as_str(), "media" | "supports") {
         let mut inner = namespaces.clone();
         let (condition, rules) = parse_prelude_and_block(p, start, |n| parse_list(n, &mut inner, false));
-        return Some(ParsedRule::Group { name: lower, condition: collapse(&condition), rules: rules? });
+        let condition = if lower == "media" { serialize_media_list(&condition) } else { collapse(&condition) };
+        return Some(ParsedRule::Group { name: lower, condition, rules: rules? });
     }
     let (prelude, block) = parse_prelude_and_block(p, start, raw_block);
     let rule_type = match lower.as_str() {
@@ -392,5 +393,42 @@ mod tests {
             rules,
             [ParsedRule::Other { rule_type: 10, text: "@namespace x 'a';".into() }, style("[x|foo=\"\" i]", "")]
         );
+    }
+}
+
+/// A media query list as CSSOM serializes it (`MediaList.mediaText`): parsed
+/// by the style engine, so keywords lowercase, whitespace collapses and an
+/// invalid query becomes `not all`.
+pub fn serialize_media_list(text: &str) -> String {
+    use style::stylesheets::{CssRuleType, Origin, UrlExtraData};
+    use style_traits::ToCss;
+    crate::stylo::enable_features();
+    let Ok(url) = url::Url::parse("about:blank") else { return String::new() };
+    let url = UrlExtraData(style::servo_arc::Arc::new(url));
+    let mut context = style::parser::ParserContext::new(
+        Origin::Author,
+        &url,
+        Some(CssRuleType::Media),
+        style_traits::ParsingMode::DEFAULT,
+        style::context::QuirksMode::NoQuirks,
+        Default::default(),
+        None,
+        None,
+        Default::default(),
+    );
+    let mut parser = Parser::new(text);
+    style::media_queries::MediaList::parse(&mut context, &mut parser).to_css_string()
+}
+
+#[cfg(test)]
+mod media_list_tests {
+    #[test]
+    fn media_lists_serialize_as_cssom_does() {
+        use super::serialize_media_list as m;
+        assert_eq!(m("SCREEN"), "screen");
+        assert_eq!(m("  screen  ,  print  "), "screen, print");
+        assert_eq!(m("NOT  PRINT"), "not print");
+        assert_eq!(m("screen, bad$"), "screen, not all");
+        assert_eq!(m(""), "");
     }
 }
