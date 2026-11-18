@@ -1576,6 +1576,49 @@ impl Renderer {
     /// `key` in `page`'s persistent document (`getComputedStyle(el,
     /// pseudo)`; see `BaseDocument::pseudo_element_style`, which
     /// `generated_only` is passed to). `None`: not mirrored.
+    /// A script `ScrollTimeline` (`subject` `None`) or `ViewTimeline` of `page`, by keys (`source`
+    /// `None`: the viewport): its scroll offset now, its start and end offsets and its scroll
+    /// container's key (`Some(None)` for the viewport); `None` when inactive (see
+    /// `blitz_dom::scroll_timeline::timeline_state`). `axis`: 0 block, 1 inline, 2 x, 3 y; insets as
+    /// (0 auto, 1 px, 2 fraction, value).
+    pub fn timeline_state(
+        &self,
+        page: u64,
+        source: Option<u64>,
+        subject: Option<u64>,
+        axis: u8,
+        inset: [(u8, f64); 2],
+    ) -> Option<(f64, f64, f64, Option<u64>)> {
+        use blitz_dom::scroll_timeline::InsetValue;
+        use style::values::specified::animation::ScrollAxis;
+        let m = self.mirrors.get(&page)?;
+        let source = match source {
+            Some(key) => Some(m.node(key)?),
+            None => None,
+        };
+        let subject = match subject {
+            Some(key) => Some(m.node(key)?),
+            None => None,
+        };
+        let axis = match axis {
+            1 => ScrollAxis::Inline,
+            2 => ScrollAxis::X,
+            3 => ScrollAxis::Y,
+            _ => ScrollAxis::Block,
+        };
+        let inset = inset.map(|(kind, v)| match kind {
+            1 => InsetValue::Px(v),
+            2 => InsetValue::Fraction(v),
+            _ => InsetValue::Auto,
+        });
+        let (offset, start, end, src) = blitz_dom::scroll_timeline::timeline_state(&m.doc, source, subject, axis, inset)?;
+        let src = match src {
+            Some(id) => Some(m.key_of(id)?),
+            None => None,
+        };
+        Some((offset, start, end, src))
+    }
+
     pub fn element_pseudo_style(
         &self,
         page: u64,

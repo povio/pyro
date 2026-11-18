@@ -48,6 +48,8 @@ where
         "AnimationPlaybackEvent",
         "CSSAnimation",
         "CSSTransition",
+        "ScrollTimeline",
+        "ViewTimeline",
     );
 }
 
@@ -165,6 +167,31 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
         Ok(s.number(key as f64))
     })?;
     natives.set_atom("reportKey", report_key.value())?;
+    // `timelineState(source, subject, axis, insetStartKind, insetStart, insetEndKind, insetEnd)`: a
+    // script ScrollTimeline's (`subject` null) or ViewTimeline's `[offset, start, end, source]` now
+    // (`source` the scroll container, null for the viewport), or null when inactive.
+    let timeline_state = s.function("timelineState", |s, _this, a| {
+        let page = page_of(s)?;
+        let source = crate::node::opt_node_arg(s, a.get(0), "source")?;
+        let subject = crate::node::opt_node_arg(s, a.get(1), "subject")?;
+        let axis = a.get(2).to_number()? as u8;
+        let inset = [
+            (a.get(3).to_number()? as u8, a.get(4).to_number()?),
+            (a.get(5).to_number()? as u8, a.get(6).to_number()?),
+        ];
+        let state = {
+            let dom = page.dom.borrow();
+            let layout = page.layout();
+            let Some(geometry) = layout.synced_geometry_source(&dom) else { return Ok(s.null()) };
+            let key = |id: pyro_dom::NodeId| pyro_dom::snapshot::render_key(id);
+            let state = geometry.timeline_state(source.map(key), subject.map(key), axis, inset);
+            state.map(|(offset, start, end, src)| (offset, start, end, src.and_then(|k| pyro_dom::geometry::node_of(&dom, k))))
+        };
+        let Some((offset, start, end, src)) = state else { return Ok(s.null()) };
+        let src = crate::node::node_value(s, &page, src)?;
+        Ok(s.array(&[s.number(offset), s.number(start), s.number(end), src])?.value())
+    })?;
+    natives.set_atom("timelineState", timeline_state.value())?;
     Ok(natives)
 }
 

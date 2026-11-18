@@ -946,6 +946,16 @@ impl GeometrySource for BlitzGeometry {
         })
     }
 
+    fn timeline_state(
+        &self,
+        source: Option<u64>,
+        subject: Option<u64>,
+        axis: u8,
+        inset: [(u8, f64); 2],
+    ) -> Option<(f64, f64, f64, Option<u64>)> {
+        RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.timeline_state(self.page, source, subject, axis, inset))
+    }
+
     fn element_pseudo_style(
         &self,
         key: u64,

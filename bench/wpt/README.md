@@ -829,12 +829,12 @@ also hung on a cycle the parser made), `document.designMode` (`designMode-caret-
 `selectAll` and `find()` (`selectall-and-find-svg-text-on-selectstart`), and `<object>` load and error events
 (`container-queries/crashtests/chrome-bug-439886903-crash`).
 
-2,021 of 2,031 complete locally (with the font and Typed OM lanes; lane F3b: navigated-away iframe documents and IntersectionObserver across documents). These 10 are **known incomplete**: each needs a feature pyro does not have. They stay
+2,022 of 2,031 complete locally (with the font and Typed OM lanes; lane F3b: navigated-away iframe documents and IntersectionObserver across documents; lane F2: `ScrollTimeline`). These 9 are **known incomplete**: each needs a feature pyro does not have. They stay
 failing entries of the baseline, not flaky entries, and none of them crashes, panics or hangs:
 
 | page | needs |
 |---|---|
-| `scroll-animations/crashtests/` (4 pages) | scroll and view timelines (`animation-timeline`, `ScrollTimeline`) |
+| `scroll-animations/crashtests/` (3 pages: `clip-path-with-view-timeline`, `remove-pseudo-element-subject`, `scroll-timeline-resize`) | animations on scroll and view timelines in `getAnimations()` (`CSSAnimation.timeline`, `ready`) |
 | `service-workers/service-worker/messageport-transfer-crash.html` | `SharedWorker` |
 | `trusted-types/navigate-to-javascript-url-007-crash.html` | Trusted Types (`trustedTypes`) |
 | `streams/readable-byte-streams/crashtests/from-cross-realm.html` | a synchronous about:blank document in the window `window.open()` returns (Chrome times out on this page too, per wpt.fyi) |

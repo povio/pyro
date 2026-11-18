@@ -564,7 +564,144 @@
   Object.defineProperty(AnimationTimeline.prototype, Symbol.toStringTag, { value: 'AnimationTimeline', configurable: true });
   Object.defineProperty(DocumentTimeline.prototype, Symbol.toStringTag, { value: 'DocumentTimeline', configurable: true });
   const documentTimeline = new DocumentTimeline();
-  const timelineTime = tl => (tl === null ? null : tl.currentTime);
+  // (A scroll or view progress timeline's time is a percentage: animations on one stay unresolved
+  // for now.)
+  const timelineTime = tl => (tl === null || timelines.get(tl).scroll ? null : tl.currentTime);
+  // ----- scroll and view progress timelines (Scroll-driven Animations 1) ----
+
+  // A timeline's times are percentages (`CSSUnitValue`s, CSS Typed OM). The scroll position
+  // and the subject's place in its scrollport come from the engine's last layout
+  // (`timelineState`). Animations do not run on these timelines yet (their time stays
+  // unresolved, as on an inactive timeline); CSS animations with `animation-timeline` are
+  // driven by the engine.
+  const { timelineState } = native;
+  const AXES = ['block', 'inline', 'x', 'y'];
+  const percent = v => new CSSUnitValue(v, 'percent');
+  const pxValue = v => new CSSUnitValue(v, 'px');
+  const scrollingElement = () => document.scrollingElement;
+  const isScrollTimelineState = st => st && st.scroll === true;
+  function axisOf(options, what) {
+    if (!isObject(options) || options.axis === undefined) return 'block';
+    const axis = String(options.axis);
+    if (!AXES.includes(axis)) {
+      throw new TypeError(`Failed to construct '${what}': The provided value '${axis}' is not a valid enum value of type ScrollAxis.`);
+    }
+    return axis;
+  }
+  // One inset: 'auto', a length or a percentage (a CSSNumericValue or its text): [kind, value]
+  // with kind 0 auto, 1 px, 2 fraction of the scrollport.
+  function insetPart(v) {
+    if (v === undefined || v === null) return [0, 0];
+    if (typeof v === 'string') {
+      const t = v.trim().toLowerCase();
+      if (t === 'auto') return [0, 0];
+      let m = /^([+-]?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?)(px|%)$/.exec(t);
+      if (m) return m[2] === 'px' ? [1, Number(m[1])] : [2, Number(m[1]) / 100];
+      if (/^[+-]?0$/.test(t)) return [1, 0];
+      throw new TypeError(`'${v}' is not a valid inset`);
+    }
+    if (typeof CSSUnitValue === 'function' && v instanceof CSSUnitValue) {
+      if (v.unit === 'px') return [1, v.value];
+      if (v.unit === 'percent') return [2, v.value / 100];
+      if (v.unit === 'number' && v.value === 0) return [1, 0];
+    }
+    if (typeof CSSKeywordValue === 'function' && v instanceof CSSKeywordValue && v.value === 'auto') return [0, 0];
+    throw new TypeError('Invalid inset');
+  }
+  function insetOf(options) {
+    if (!isObject(options) || options.inset === undefined) return [[0, 0], [0, 0]];
+    const inset = options.inset;
+    if (typeof inset === 'string') {
+      const parts = inset.trim().split(/\s+/).filter(Boolean);
+      if (parts.length < 1 || parts.length > 2) throw new TypeError('Invalid inset');
+      const start = insetPart(parts[0]);
+      return [start, parts.length > 1 ? insetPart(parts[1]) : start];
+    }
+    if (Array.isArray(inset)) {
+      if (inset.length < 1 || inset.length > 2) throw new TypeError('Invalid inset');
+      const start = insetPart(inset[0]);
+      return [start, inset.length > 1 ? insetPart(inset[1]) : start];
+    }
+    throw new TypeError('Invalid inset');
+  }
+  function stateOf(st) {
+    const [[sk, sv], [ek, ev]] = st.inset;
+    if (st.subject === null && st.source === null) return null;
+    return timelineState(st.subject === null ? st.source : null, st.subject, AXES.indexOf(st.axis), sk, sv, ek, ev);
+  }
+  class ScrollTimeline extends AnimationTimeline {
+    constructor(options) {
+      const self = Reflect.construct(Object, [], new.target);
+      if (options !== undefined && options !== null && !isObject(options)) {
+        throw new TypeError("Failed to construct 'ScrollTimeline': The provided value is not of type 'ScrollTimelineOptions'.");
+      }
+      let source = scrollingElement();
+      if (isObject(options) && options.source !== undefined) {
+        if (options.source !== null && !isElement(options.source)) {
+          throw new TypeError("Failed to construct 'ScrollTimeline': Failed to read the 'source' property from 'ScrollTimelineOptions': The provided value is not of type 'Element'.");
+        }
+        source = options.source;
+      }
+      const axis = axisOf(options, 'ScrollTimeline');
+      timelines.set(self, { scroll: true, source, subject: null, axis, inset: [[0, 0], [0, 0]] });
+      return self;
+    }
+    get source() {
+      const st = brand(timelines, this, 'a ScrollTimeline');
+      if (st.subject !== null) {
+        const state = stateOf(st);
+        return state ? (state[3] === null ? scrollingElement() : state[3]) : null;
+      }
+      return st.source;
+    }
+    get axis() { return brand(timelines, this, 'a ScrollTimeline').axis; }
+    get currentTime() {
+      const st = brand(timelines, this, 'a ScrollTimeline');
+      if (!isScrollTimelineState(st)) return null;
+      const state = stateOf(st);
+      if (state === null) return null;
+      const [offset, start, end] = state;
+      if (!(end > start)) return st.subject === null ? null : percent(offset >= end ? 100 : 0);
+      return percent((offset - start) / (end - start) * 100);
+    }
+    get duration() {
+      brand(timelines, this, 'a ScrollTimeline');
+      return percent(100);
+    }
+  }
+  class ViewTimeline extends ScrollTimeline {
+    constructor(options) {
+      const self = Reflect.construct(Object, [], new.target);
+      if (options !== undefined && options !== null && !isObject(options)) {
+        throw new TypeError("Failed to construct 'ViewTimeline': The provided value is not of type 'ViewTimelineOptions'.");
+      }
+      let subject = null;
+      if (isObject(options) && options.subject !== undefined && options.subject !== null) {
+        if (!isElement(options.subject)) {
+          throw new TypeError("Failed to construct 'ViewTimeline': Failed to read the 'subject' property from 'ViewTimelineOptions': The provided value is not of type 'Element'.");
+        }
+        subject = options.subject;
+      }
+      const axis = axisOf(options, 'ViewTimeline');
+      const inset = insetOf(options);
+      timelines.set(self, { scroll: true, source: null, subject, axis, inset, view: true });
+      return self;
+    }
+    get subject() { return brand(timelines, this, 'a ViewTimeline').subject; }
+    get startOffset() {
+      const st = brand(timelines, this, 'a ViewTimeline');
+      const state = st.subject === null ? null : stateOf(st);
+      return state ? pxValue(state[1]) : null;
+    }
+    get endOffset() {
+      const st = brand(timelines, this, 'a ViewTimeline');
+      const state = st.subject === null ? null : stateOf(st);
+      return state ? pxValue(state[2]) : null;
+    }
+  }
+  Object.defineProperty(ScrollTimeline.prototype, Symbol.toStringTag, { value: 'ScrollTimeline', configurable: true });
+  Object.defineProperty(ViewTimeline.prototype, Symbol.toStringTag, { value: 'ViewTimeline', configurable: true });
+
 
   // ----- effects --------------------------------------------------------------
 
@@ -922,7 +1059,7 @@
     // CSS run gives no values (the engine's `Scripted.gone`).
     if (!e) {
       reportState(a.key, [
-        null, a.cssId, [], a.startTime, a.holdTime, a.rate, a.timeline ? timelines.get(a.timeline).origin : null,
+        null, a.cssId, [], a.startTime, a.holdTime, a.rate, a.timeline && !timelines.get(a.timeline).scroll ? timelines.get(a.timeline).origin : null,
         0, 0, 'none', 0, 1, 0, 'normal', null, 'replace', 1, 0,
       ]);
       return;
@@ -954,7 +1091,7 @@
       for (const { prop, value } of f.values.values()) text += `${prop}: ${value}; `;
       return [f.computed, f.easing.text === 'linear' ? null : f.easing.text, f.composite === 'auto' ? null : f.composite, text];
     });
-    const origin = a.timeline ? timelines.get(a.timeline).origin : null;
+    const origin = a.timeline && !timelines.get(a.timeline).scroll ? timelines.get(a.timeline).origin : null;
     reportState(a.key, [
       target, a.css !== undefined ? a.cssId : -1, frames, a.startTime, a.holdTime, a.rate, origin,
       t.delay, t.endDelay, t.fill === 'auto' ? 'none' : t.fill, t.iterationStart, t.iterations,
@@ -1432,6 +1569,7 @@
 
   return {
     Animation, AnimationEffect, KeyframeEffect, AnimationTimeline, DocumentTimeline, AnimationPlaybackEvent,
+    ScrollTimeline, ViewTimeline,
     CSSAnimation, CSSTransition,
     animate, elementAnimations, rootAnimations, cssSync, timeline: () => documentTimeline,
   };

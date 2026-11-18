@@ -361,6 +361,17 @@ pub trait GeometrySource {
     /// (`getComputedStyle(el, pseudo)`) as of the last sync; with
     /// `generated_only`, only a stored style of a pseudo-element its rules
     /// generate.
+    /// A script scroll or view progress timeline's state as of the last sync
+    /// (`pyro_render::Renderer::timeline_state`): scroll offset, start, end, scroll container key.
+    fn timeline_state(
+        &self,
+        _source: Option<u64>,
+        _subject: Option<u64>,
+        _axis: u8,
+        _inset: [(u8, f64); 2],
+    ) -> Option<(f64, f64, f64, Option<u64>)> {
+        None
+    }
     fn element_pseudo_style(
         &self,
         _key: u64,

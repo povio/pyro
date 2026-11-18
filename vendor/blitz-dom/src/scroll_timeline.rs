@@ -77,6 +77,70 @@ pub(crate) fn progress(doc: &BaseDocument, node: NodeId, style: &ComputedValues,
     Some((scroll.offset - start) / (end - start))
 }
 
+/// One inset of a script-made view progress timeline (`ViewTimeline` `inset`): `auto`, a length
+/// (px) or a percentage of the scrollport (0 to 1).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum InsetValue {
+    Auto,
+    Px(f64),
+    Fraction(f64),
+}
+
+/// What a script `ScrollTimeline` (`subject: None`) or `ViewTimeline` reads: the scroll offset of its
+/// scroll container now and the scroll offsets of its start and end (a scroll timeline: 0 and the
+/// scroll range; a view timeline: its cover range), and the scroll container (`None`: the viewport).
+/// `None` when inactive: no scroll container (a `source` that is not one), or no layout.
+pub fn timeline_state(
+    doc: &BaseDocument,
+    source: Option<NodeId>,
+    subject: Option<NodeId>,
+    axis: ScrollAxis,
+    inset: [InsetValue; 2],
+) -> Option<(f64, f64, f64, Option<NodeId>)> {
+    match subject {
+        None => {
+            // The root element scrolls as the viewport.
+            let source = source.filter(|&id| id != doc.root_element().id);
+            let axis_node = match source {
+                Some(id) => {
+                    let n = doc.get_node(id)?;
+                    if !is_scroll_container(n) {
+                        return None;
+                    }
+                    n
+                }
+                None => doc.root_element(),
+            };
+            let scroll = scroll_of(doc, source, vertical(axis_node, axis))?;
+            Some((scroll.offset, 0.0, scroll.max, source))
+        }
+        Some(subject) => {
+            let n = doc.get_node(subject)?;
+            n.primary_styles()?;
+            let source = nearest_scroll_container(doc, n);
+            let vertical = vertical(n, axis);
+            let lp = |v: InsetValue| match v {
+                InsetValue::Auto => LengthPercentageOrAuto::Auto,
+                InsetValue::Px(px) => LengthPercentageOrAuto::LengthPercentage(LengthPercentage::new_length(
+                    style::values::computed::Length::new(px as f32),
+                )),
+                InsetValue::Fraction(f) => LengthPercentageOrAuto::LengthPercentage(LengthPercentage::new_percent(
+                    style::values::computed::Percentage(f as f32),
+                )),
+            };
+            let resolved = Resolved {
+                kind: Kind::View { subject },
+                source,
+                vertical,
+                inset: Some(ViewTimelineInset { start: lp(inset[0]), end: lp(inset[1]) }),
+            };
+            let scroll = scroll_of(doc, source, vertical)?;
+            let ranges = view_ranges(doc, subject, &resolved, &scroll)?;
+            Some((scroll.offset, ranges.cover.0, ranges.cover.1, source))
+        }
+    }
+}
+
 /// Whether the animation at `index` of `style` is driven by a scroll or view progress timeline.
 pub fn timeline_driven(style: &ComputedValues, index: usize) -> bool {
     let ui = style.get_ui();
