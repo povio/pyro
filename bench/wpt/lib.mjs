@@ -16,8 +16,10 @@ export const PAINT_DIRS = [
 // animation-timeline, lane F2); css/css-scroll-snap: 148 pages (snapped programmatic scrolls, lane F1); css/css-shapes:
 // 148 pages (shape-outside, lane F1); html/semantics/forms: 396 pages without wptserve or testdriver (form controls,
 // constraint validation, text selection, form submission); css/cssom: 270 pages (CSSOM, getComputedStyle);
-// css/css-cascade: 106 pages (cascade layers, @scope, revert). Their reftests run in LAYOUT_DIRS too.
-export const FEATURE_DIRS = ['custom-elements', 'css/css-font-loading', 'css/css-typed-om', 'html/semantics/embedded-content/the-object-element', 'intersection-observer', 'workers', 'scroll-animations', 'css/css-scroll-snap', 'css/css-shapes', 'html/semantics/forms', 'css/cssom', 'css/css-cascade'];
+// css/css-cascade: 106 pages (cascade layers, @scope, revert). Their reftests run in LAYOUT_DIRS too. trusted-types:
+// 207 pages (policies, HTML/script/attribute sinks, eval and Function with JSC patch 0035, violation reports; lane
+// F3a), less the pages in TESTHARNESS_SKIP.
+export const FEATURE_DIRS = ['custom-elements', 'css/css-font-loading', 'css/css-typed-om', 'html/semantics/embedded-content/the-object-element', 'intersection-observer', 'workers', 'scroll-animations', 'css/css-scroll-snap', 'css/css-shapes', 'html/semantics/forms', 'css/cssom', 'css/css-cascade', 'trusted-types'];
 export const DEFAULT_DIRS = [
   'dom', 'html/dom', 'encoding', 'url', 'fetch/api/basic', 'xhr', 'css/selectors', 'uievents', 'shadow-dom', 'webstorage',
   ...PAINT_DIRS,
@@ -75,6 +77,26 @@ const SERVER_PAGES = [
 ];
 const SERVER_HELPERS = /\/common\/security-features\//;
 
+// Testharness pages left out by path (a file, every variant), each counted under its reason in `excluded` and named in
+// `reasons` (coverage.mjs), so the list shows in the gate's plan rather than as silent timeouts.
+//   trusted-types/: pages whose helpers (support/csp-violations.js, also through support/navigation-support.js) end
+//     each check on a connect-src violation, a fetch that CSP `connect-src 'none'` blocks. pyro acts on the Trusted
+//     Types directives of a CSP only, so the marker never comes and each page times out (45 s per variant).
+const CONNECT_SRC_MARKER = 'needs CSP connect-src violations (Trusted Types end marker)';
+export const TESTHARNESS_SKIP = [
+  'trusted-types/navigate-to-javascript-url-csp-headers.html',
+  'trusted-types/should-sink-type-mismatch-violation-be-blocked-by-csp-001.html',
+  'trusted-types/should-sink-type-mismatch-violation-be-blocked-by-csp-002-worker.html',
+  'trusted-types/should-sink-type-mismatch-violation-be-blocked-by-csp-003.html',
+  'trusted-types/should-trusted-type-policy-creation-be-blocked-by-csp-001.html',
+  'trusted-types/should-trusted-type-policy-creation-be-blocked-by-csp-002.html',
+  'trusted-types/should-trusted-type-policy-creation-be-blocked-by-csp-003.html',
+  'trusted-types/should-trusted-type-policy-creation-be-blocked-by-csp-004-worker.html',
+  'trusted-types/should-trusted-type-policy-creation-be-blocked-by-csp-005.html',
+  'trusted-types/trusted-types-navigation.html',
+  'trusted-types/trusted-types-reporting.html',
+].map((path) => ({ path, why: CONNECT_SRC_MARKER }));
+
 // Every testharness page under `dirs` that our static server can run, one entry per variant.
 // `excluded` counts what was left out and why (identical for every binary).
 // `reasons` (a Map, optional) receives each left-out file's reason, keyed by its path (coverage.mjs).
@@ -110,6 +132,8 @@ export function discover(wpt, dirs, { sampleEncoding = 1, reasons, wptserve = fa
         if (v.length) variants = v;
         long = /<meta\s+name=["']?timeout["']?\s+content=["']?long/i.test(src);
       } else continue;
+      const skip = TESTHARNESS_SKIP.find((x) => x.path === rel);
+      if (skip) { exclude(skip.why); continue; }
       if (!wptserve && /\.sub\.|\.https\.|\.h2\.|\.www\./.test(base)) { exclude('needs wptserve substitution/https/h2'); continue; }
       if (!testdriver && /testdriver\.js|testdriver-vendor/.test(src)) { exclude('needs testdriver'); continue; }
       if (!wptserve && (/\.py\b/.test(code) || SERVER_PAGES.some((re) => re.test(rel)) || SERVER_HELPERS.test(code))) { exclude('needs wptserve python handler'); continue; }
