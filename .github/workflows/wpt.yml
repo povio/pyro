@@ -936,8 +936,10 @@ jobs:
           read -r -a extra <<< "$RUNNER_ARGS"
           full=()
           if [ "$FULL" = true ]; then full=(--full); fi
-          # One page per CPU (layout and paint are CPU-bound). Earlier arguments win, so crashtest-args can override.
-          bun bench/wpt/gate.mjs run --kind crashtest "${extra[@]}" --wpt wpt --bin browser/pyro --jobs "$(sysctl -n hw.ncpu)" \
+          # Two pages per CPU, as the reftests: at one per CPU the M1s ran at 36%. Measured 2026-11-18 (runs 44305495715,
+          # 44307460716): --jobs 8 21.0 s, 36% of 8 CPUs; --jobs 16 15.5 s, 59%; all 1,979 pages pass in both, no reruns,
+          # no swap growth, no thermal limit. Earlier arguments win, so crashtest-args can override.
+          bun bench/wpt/gate.mjs run --kind crashtest "${extra[@]}" --wpt wpt --bin browser/pyro --jobs "$(( $(sysctl -n hw.ncpu) * 2 ))" \
             "${full[@]}" --out wpt-crashtest-shard-0.json --no-check
           # CPU share of the machine: (browser + runner CPU) / (wall x CPUs); event loop lag of the runner.
           bun -e 'const r = JSON.parse(require("fs").readFileSync(process.argv[1])); const n = require("os").cpus().length;
