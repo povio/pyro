@@ -780,7 +780,7 @@ jobs:
           # machines (runs 44292757214, 44295604936, 44298843277): --jobs 8 130 s per shard, 30% of 8 CPUs; 12 101-111 s,
           # 40%, same results; 16 88-89 s, 47%, same results but one first-run timeout that its reruns passed; no
           # swap growth, no thermal limit, Low Power Mode off. Earlier arguments win, so reftest-args can override.
-          bun bench/wpt/gate.mjs run --kind reftest "${extra[@]}" --wpt wpt --bin browser/pyro --jobs "$(( $(sysctl -n hw.ncpu) * 2 ))" \
+          bun bench/wpt/gate.mjs run --kind reftest "${extra[@]}" --wpt wpt --bin browser/pyro --jobs "$(( ${PYRO_CI_CPUS:-$(sysctl -n hw.ncpu)} * 2 ))" \
             --shard "$SHARD" "${full[@]}" --out "$OUT" --no-check
           # CPU share of the machine: (browser + runner CPU) / (wall x CPUs); event loop lag of the runner.
           bun -e 'const r = JSON.parse(require("fs").readFileSync(process.argv[1])); const n = require("os").cpus().length;
@@ -937,9 +937,10 @@ jobs:
           full=()
           if [ "$FULL" = true ]; then full=(--full); fi
           # Two pages per CPU, as the reftests: at one per CPU the M1s ran at 36%. Measured 2026-11-18 (runs 44305495715,
+          # A runner can cap its share with PYRO_CI_CPUS in its .env (the Mac Studio runner uses 4).
           # 44307460716): --jobs 8 21.0 s, 36% of 8 CPUs; --jobs 16 15.5 s, 59%; all 1,979 pages pass in both, no reruns,
           # no swap growth, no thermal limit. Earlier arguments win, so crashtest-args can override.
-          bun bench/wpt/gate.mjs run --kind crashtest "${extra[@]}" --wpt wpt --bin browser/pyro --jobs "$(( $(sysctl -n hw.ncpu) * 2 ))" \
+          bun bench/wpt/gate.mjs run --kind crashtest "${extra[@]}" --wpt wpt --bin browser/pyro --jobs "$(( ${PYRO_CI_CPUS:-$(sysctl -n hw.ncpu)} * 2 ))" \
             "${full[@]}" --out wpt-crashtest-shard-0.json --no-check
           # CPU share of the machine: (browser + runner CPU) / (wall x CPUs); event loop lag of the runner.
           bun -e 'const r = JSON.parse(require("fs").readFileSync(process.argv[1])); const n = require("os").cpus().length;
