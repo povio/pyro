@@ -1103,7 +1103,7 @@ frame's whole transform, clipped to the content box (upstream applied the transl
   such a box (badges: `inline_entry_owner`, the innermost positioned inline box around them) are skipped by the root
   (`draw_paint_child`) and painted at the box's entry after its text, moved by the sticky offsets of the inline boxes
   around them (`positioned_passes` also follows atomic inline boxes, from their parent). `tests/positioned_inline_paint_order.rs`.
-- Lane F1, `render/form_controls.rs` `draw_input`: a checkbox's or radio's accent is `accent-color` (text `color` for `auto`); a (partly) transparent one is precomposed over the used colour scheme's `Canvas` system colour (CSS UI 4 § 6.1). WPT css-ui `accent-color-*`, `transparent-accent-color-*`. Range and progress are not painted yet. A `:visited` rule's `accent-color` still applies (Chrome ignores it; `accent-color-visited` fails).
+- Lane F1, `render/form_controls.rs` `draw_input`: a checkbox's or radio's accent is `accent-color` (text `color` for `auto`); a (partly) transparent one is precomposed over the used colour scheme's `Canvas` system colour (CSS UI 4 § 6.1). WPT css-ui `accent-color-*`, `transparent-accent-color-*`. Range, progress and meter: `draw_bar_widget`.
 - Lane F1: `render/clip_path.rs` `svg_path_to_bezpath` moved to blitz-dom `shape_path.rs` (shared with `shape-outside` float layout).
 - Round 4 lane S4, `src/text.rs` `VerticalLine::central_for`: on a vertical line's central baseline, a run aligned by
   its box's edge (`vertical-align: top | bottom | text-top | text-bottom`, parley `GlyphRun::edge_aligned`) keeps the
@@ -1111,3 +1111,4 @@ frame's whole transform, clipped to the content box (upstream applied the transl
   run is centred half the x-height of the run that sets it over the central baseline (Blink aligns `middle` on the
   central baseline in vertical lines). Before, every run was re-centred on the line's one central baseline. WPT
   css-writing-modes `vertical-alignment-*` (24 of 24). `pyro-render/tests/vertical_align_orthogonal_sizes.rs`.
+- Lane F1, `render/form_controls.rs` `draw_bar_widget`: `<input type=range>`, `<progress>` and `<meter>` as headless Chrome draws them (measured): an 8px pill track (`#efefef`, dark `#3b3b3b`, disabled `#fafafa`) filled up to the value with the accent colour (default `#0075ff`, dark `#99c8ff`; a meter's optimum/suboptimal/even-less-good region `#107c10`/`#ffb900`/`#d83b01`), a 1px border over it (`#767676` at 50%, dark `#858585`, meter `#cbcbcb`), and for a range a 16px thumb of the accent colour at the value (min/max/step/value attributes; disabled `#cbcbcb`). An indeterminate progress bar shows the track only (Chrome animates a segment). Horizontal only; `appearance: none` is not honoured yet.

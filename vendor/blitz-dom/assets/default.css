@@ -88,6 +88,34 @@ input[type="radio"] {
     margin: 3px 3px 0 5px;
 }
 
+/* pyro: Chromium's range, progress and meter (html.css): a range is 129x16 by
+   nature (layout/mod.rs), themed without its field background; blitz-paint
+   `draw_bar_widget` paints all three. */
+input[type="range" i] {
+    margin: 2px;
+    padding: 0;
+    border: none;
+    background-color: transparent;
+    color: rgb(16, 16, 16);
+    cursor: default;
+}
+
+progress,
+meter {
+    display: inline-block;
+    box-sizing: border-box;
+    vertical-align: -0.2em;
+    block-size: 1em;
+}
+
+progress {
+    inline-size: 10em;
+}
+
+meter {
+    inline-size: 5em;
+}
+
 /* Chromium's UA sheet: text inputs are 2px-inset-bordered with 1px 2px
    padding (a 40x30 input's box is 48x36), textareas 1px solid with 2px. */
 input {
@@ -1069,7 +1097,7 @@ area {
 
 iframe:fullscreen {
     /* iframes in full-screen mode don't show a border. */
-    border: none !important;
+    border: none;
     padding: unset !important;
 }
 

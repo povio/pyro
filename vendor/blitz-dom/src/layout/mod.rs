@@ -1077,14 +1077,17 @@ impl LayoutPassState<'_> {
                         // sizes it (WPT css-flexbox `stretch-flex-item-checkbox-input`). The 13x13 is the
                         // border box: the content is what padding and border leave of it (the UA sheet's
                         // `input` padding and border would otherwise make a checkbox 21x19 and a radio 17x15).
-                        Some("checkbox" | "radio") => {
+                        // pyro: a range is 129x16 by nature (Blink's slider theme size), as its
+                        // border box (blitz-paint `draw_bar_widget` paints it).
+                        kind @ Some("checkbox" | "radio" | "range") => {
                             let style = node.layout_style();
                             let parent = inputs.parent_size.width;
                             let padding = style.padding().resolve_or_zero(parent, resolve_calc_value);
                             let border = style.border().resolve_or_zero(parent, resolve_calc_value);
+                            let (w, h) = if kind == Some("range") { (129.0, 16.0) } else { (13.0, 13.0) };
                             let natural = taffy::Size {
-                                width: (13.0 - padding.horizontal_axis_sum() - border.horizontal_axis_sum()).max(0.0),
-                                height: (13.0 - padding.vertical_axis_sum() - border.vertical_axis_sum()).max(0.0),
+                                width: (w - padding.horizontal_axis_sum() - border.horizontal_axis_sum()).max(0.0),
+                                height: (h - padding.vertical_axis_sum() - border.vertical_axis_sum()).max(0.0),
                             };
                             return ChildLayout::Done(compute_leaf_layout(
                                 inputs,
