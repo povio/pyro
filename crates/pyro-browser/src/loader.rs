@@ -80,6 +80,8 @@ pub enum ResourceKind {
     Video,
     /// A hyperlink download (`<a download>`).
     Download,
+    /// An `<object>` element's data (destination "object").
+    Object,
 }
 
 #[derive(Debug, Clone)]
@@ -298,7 +300,7 @@ impl ResourceLoader for NetLoader {
             ResourceKind::Font => pyro_net::Destination::Font,
             ResourceKind::Audio => pyro_net::Destination::Audio,
             ResourceKind::Video => pyro_net::Destination::Video,
-            ResourceKind::Download => pyro_net::Destination::Other,
+            ResourceKind::Download | ResourceKind::Object => pyro_net::Destination::Other,
         };
         // Resource Timing: the document that gets this fetch's entry.
         let timed = request.initiator.and_then(|i| Some((i, requesting_document(browser, &request)?)));

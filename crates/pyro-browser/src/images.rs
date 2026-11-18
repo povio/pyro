@@ -312,6 +312,139 @@ impl Browser {
         document != "null" && *document == crate::loader::origin_of(url)
     }
 
+    /// HTML `<object>` "obtain the resource": a connected, rendered `<object>` with a `data` URL fetches it;
+    /// a failed fetch (network error, a non-2xx status) fires `error`, any other response `load`
+    /// (what the content is drawn as is the renderer's). An object without `data` gets no
+    /// event (it shows its fallback content). Pending fetches delay the window's `load`.
+    pub(crate) fn object_event(&mut self, page: FrameKey, node: NodeId) {
+        let Some(state) = self.doc(page) else { return };
+        let Some(bindings) = state.main_frame.page_dom.clone() else { return };
+        let loader = state.main_frame.loader_id.clone();
+        let base = state.main_frame.base_url.clone();
+        let loaded = state.main_frame.loaded;
+        let (connected, data) = {
+            let dom = bindings.dom.borrow();
+            (dom.is_connected(node).unwrap_or(false), dom.get_attribute(node, "data").ok().flatten().map(str::to_owned))
+        };
+        // "If the element is not being rendered": fallback, nothing is fetched (an `<object>`
+        // in a `display: none` subtree neither loads nor delays the window's `load`).
+        let rendered = connected && {
+            let dom = bindings.dom.borrow();
+            bindings.layout().check_visibility(&dom, node, Default::default())
+        };
+        let source = match data.filter(|_| rendered) {
+            None => Source::None,
+            Some(v) if v.trim().is_empty() => Source::None,
+            Some(v) => {
+                let dom = bindings.dom.borrow();
+                url::Url::parse(&crate::loader::node_base_url(&dom, node).unwrap_or_else(|| base.clone()))
+                    .ok()
+                    .and_then(|b| b.join(v.trim()).ok())
+                    .map_or(Source::Invalid, |u| Source::Url(u.to_string()))
+            }
+        };
+        let current = state.images.entries.get(&node).map(|i| i.url.clone());
+        drop(state);
+        let url = match source {
+            Source::Url(url) if current.as_deref() == Some(url.as_str()) => return,
+            Source::Url(url) => url,
+            Source::None => {
+                self.doc_mut(page).expect("page").images.entries.remove(&node);
+                return;
+            }
+            Source::Invalid => {
+                self.doc_mut(page).expect("page").images.entries.remove(&node);
+                self.image_error_task(page, loader, &bindings, node);
+                return;
+            }
+        };
+        if bindings.dom.borrow_mut().add_ref(node).is_err() {
+            return;
+        }
+        let hold = Rc::new(ResourceNode { dom: bindings.dom.clone(), node });
+        let generation = {
+            let mut guard = self.doc_mut(page).expect("page");
+            let images = &mut guard.images;
+            images.generation += 1;
+            let generation = images.generation;
+            images.entries.insert(
+                node,
+                Image {
+                    _node: Some(hold),
+                    url: url.clone(),
+                    src: String::new(),
+                    density: 1.0,
+                    generation,
+                    pending: true,
+                    blocks_load: !loaded,
+                    cancel: None,
+                },
+            );
+            generation
+        };
+        let weak = Rc::downgrade(&bindings);
+        let finish = move |b: &mut Browser, result: Result<Resource, String>| {
+            let Some(bindings) = weak.upgrade() else { return };
+            b.finish_object(page, &loader, &bindings, node, generation, result);
+        };
+        if url.starts_with("blob:") {
+            let ok = bindings.blob_url(&url).is_some();
+            self.scheduler().post(TaskSource::Networking, move |b| {
+                finish(b, if ok { Ok(Resource { url: String::new(), status: 200, mime: String::new(), charset: None, body: Vec::new(), content_disposition: None, header_csp: false, refresh: None, content_language: None, referrer_policy: None, timing: None, partial: None }) } else { Err("revoked or unknown blob URL".into()) })
+            });
+            return;
+        }
+        let Some(resource_loader) = self.loader_for(page) else {
+            self.scheduler().post(TaskSource::Networking, move |b| finish(b, Err("no resource loader".into())));
+            return;
+        };
+        let frame = self.doc(page).expect("page").main_frame.clone();
+        let request = FetchRequest {
+            post: None,
+            url,
+            kind: ResourceKind::Object,
+            page: page.page,
+            referrer: Some(base),
+            frame_id: Some(frame.id.0.clone()),
+            loader_id: Some(frame.loader_id.0.clone()),
+            crossorigin: None,
+            initiator: Some(pyro_webapi::resource_timing::Initiator::Other),
+            module: None,
+            part: None,
+        };
+        let cancel = self.fetch_document_resource(page, &resource_loader, request, Box::new(finish));
+        if let Some(mut image) = self.doc_mut(page).and_then(|p| p.filter_map(|p| p.images.entries.get_mut(&node))) {
+            image.cancel = cancel;
+        }
+    }
+
+    fn finish_object(
+        &mut self,
+        page: FrameKey,
+        loader: &LoaderId,
+        bindings: &Rc<PageDom>,
+        node: NodeId,
+        generation: u64,
+        result: Result<Resource, String>,
+    ) {
+        self.drain_dom_resources(page);
+        let Some(mut state) = self.doc_mut(page).filter(|p| &p.main_frame.loader_id == loader) else { return };
+        let Some(entry) = state.images.entries.get_mut(&node).filter(|i| i.generation == generation && i.pending)
+        else {
+            return;
+        };
+        if let Some(cancel) = entry.cancel.take() {
+            cancel.disarm();
+        }
+        entry.pending = false;
+        let hold = entry._node.take();
+        drop(state);
+        let ok = result.is_ok_and(|r| (200..300).contains(&r.status));
+        pyro_webapi::lifecycle::resource_loaded(bindings, node, ok);
+        drop(hold);
+        self.maybe_fire_load(page);
+    }
+
     fn image_error_task(&self, page: FrameKey, loader: LoaderId, bindings: &Rc<PageDom>, node: NodeId) {
         if bindings.dom.borrow_mut().add_ref(node).is_err() {
             return;

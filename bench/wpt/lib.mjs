@@ -13,7 +13,7 @@ export const PAINT_DIRS = [
 // testharness pages run in wptrunner's 800x600 viewport. custom-elements: 190 pages (customized built-ins, lane F3a);
 // css/css-font-loading: 23 pages without wptserve (FontFace, document.fonts, lane F1); css/css-typed-om: 362 pages
 // (CSS Typed OM, lane F1).
-export const FEATURE_DIRS = ['custom-elements', 'css/css-font-loading', 'css/css-typed-om'];
+export const FEATURE_DIRS = ['custom-elements', 'css/css-font-loading', 'css/css-typed-om', 'html/semantics/embedded-content/the-object-element'];
 export const DEFAULT_DIRS = [
   'dom', 'html/dom', 'encoding', 'url', 'fetch/api/basic', 'xhr', 'css/selectors', 'uievents', 'shadow-dom', 'webstorage',
   ...PAINT_DIRS,

@@ -610,6 +610,10 @@ impl Browser {
                 if image_nodes.insert(event.node) {
                     self.image_event(target, event.node);
                 }
+            } else if event.kind == pyro_dom::script::ResourceKind::Object {
+                if image_nodes.insert(event.node) {
+                    self.object_event(target, event.node);
+                }
             } else if event.kind == pyro_dom::script::ResourceKind::Preload {
                 if preload_nodes.insert(event.node) {
                     self.preload_event(target, event.node);

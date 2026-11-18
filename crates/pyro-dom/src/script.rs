@@ -68,6 +68,8 @@ pub enum ResourceKind {
     StyleText,
     Iframe,
     Img,
+    /// `<object data>`: fetched for its `load`/`error` events (the renderer draws the content).
+    Object,
     /// `<link rel=modulepreload>` / `<link rel=preload>`: fetched ahead, with
     /// `load`/`error` on the link (bundlers' preload helpers await them).
     Preload,
@@ -158,6 +160,7 @@ impl Dom {
             }
             local_name!("iframe") | local_name!("frame") => ResourceKind::Iframe,
             local_name!("img") => ResourceKind::Img,
+            local_name!("object") if e.is_html() => ResourceKind::Object,
             // HTML: a refresh pragma acts when inserted into the document
             // tree (connected, not in a shadow tree), decided here because
             // the loader may see the event after the meta was removed.
@@ -308,7 +311,7 @@ impl Dom {
         if matches!(local, "name" | "content") && self.is_html_meta(idx) {
             self.process_viewport_meta(idx);
         }
-        let relevant = matches!(local, "src" | "href" | "rel" | "media" | "srcset" | "type" | "disabled");
+        let relevant = matches!(local, "src" | "href" | "rel" | "media" | "srcset" | "type" | "disabled" | "data");
         if !relevant {
             return;
         }

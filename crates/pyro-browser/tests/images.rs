@@ -311,3 +311,27 @@ fn canvas_origin_clean_uses_the_documents_actual_origin() {
     // about:srcdoc inherits the parent's origin: its same-origin image is clean.
     assert_eq!(in_frame(&thread, "about:srcdoc"), "255");
 }
+
+/// `<object data>` fetches its data: `load` for a fetched resource, `error` for a failed one, no
+/// event without `data` or when the object is not being rendered (`display: none`), and a
+/// pending object fetch delays the window's `load`.
+#[test]
+fn objects_fire_load_and_error_for_their_data() {
+    let (mut thread, page, loader) = setup(
+        "<script>globalThis.objects = []; for (const t of ['load', 'error']) document.addEventListener(t, e => { if (e.target.tagName === 'OBJECT') objects.push(e.target.id + ':' + t) }, true); addEventListener('load', () => objects.push('window:load'));</script>\
+         <object id=a data=/a.svg></object><object id=b data=/missing.svg></object><object id=c></object>\
+         <div style=display:none><object id=d data=/a.svg></object></div>",
+    );
+    loader.insert(
+        "http://site.test/a.svg",
+        "image/svg+xml",
+        "<svg xmlns='http://www.w3.org/2000/svg' width='24' height='16'/>",
+        Duration::from_millis(30),
+    );
+    thread.browser.navigate(page, NavigateOpts::address_bar("http://site.test/")).unwrap();
+    settle(&mut thread);
+    let events = eval(&thread, page, "objects.join('|')");
+    assert!(events.contains("a:load") && events.contains("b:error"), "{events}");
+    assert!(!events.contains("c:") && !events.contains("d:"), "{events}");
+    assert!(events.ends_with("window:load"), "{events}");
+}
