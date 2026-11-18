@@ -93,6 +93,10 @@ pub struct ElementData {
     /// of a generated `img` box (`content: url()` of `::before`/`::after`), or of an element
     /// whose own `content` is one image (it is laid out as an `<img>` of it).
     pub content_image: Option<(String, f32)>,
+    /// pyro: an `<img>` whose image failed to load (or has no source) and that has non-empty
+    /// `alt` text: it represents its alt text, laid out as a non-replaced box holding it
+    /// (HTML rendering § images; `BaseDocument::show_image_alt_text`).
+    pub image_broken: bool,
     /// pyro: this box (an element or a `::before`/`::after`) shows the gradient its `content` is
     /// in place of content, as an image without a natural size (`util::content_gradient`).
     pub content_gradient: bool,
@@ -414,6 +418,7 @@ impl Clone for ElementData {
             border_images: self.border_images.clone(),
             list_style_images: self.list_style_images.clone(),
             content_image: self.content_image.clone(),
+            image_broken: self.image_broken,
             content_gradient: self.content_gradient,
             reference_images: self.reference_images.clone(),
             inline_layout_data: self.inline_layout_data.clone(),
@@ -546,6 +551,7 @@ impl ElementData {
             border_images: ThinVec::new(),
             list_style_images: ThinVec::new(),
             content_image: None,
+            image_broken: false,
             content_gradient: false,
             reference_images: ThinVec::new(),
 

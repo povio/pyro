@@ -1839,10 +1839,12 @@ impl<'doc> DocumentMutator<'doc> {
         } else {
             local_name!("src")
         };
-        if object.is_some_and(|e| {
+        let object_without_image = object.is_some_and(|e| {
             !crate::layout::replaced::object_loads_image(e)
                 || e.attr(local_name!("data")).is_none_or(|data| data.trim().is_empty())
-        }) {
+        });
+        let object = object.is_some();
+        if object_without_image {
             let node = &mut self.doc.nodes[target_id];
             let had_image = match node.element_data_mut() {
                 Some(element) if matches!(element.special_data, SpecialElementData::Image(_)) => {
@@ -1871,6 +1873,26 @@ impl<'doc> DocumentMutator<'doc> {
             }
             return;
         }
+        // pyro: an `<img>` showing its alt text (`ElementData::image_broken`) is an image again
+        // while it loads a new source; one with no usable source shows its alt text.
+        let is_img = node.element_data().is_some_and(|e| e.name.local == local_name!("img"));
+        let usable = node.attr(attr.clone()).filter(|src| !src.is_empty()).is_some_and(|src| self.doc.resolve_url(src).is_some());
+        if is_img && node.element_data().is_some_and(|e| e.image_broken) && usable {
+            let alt_children = std::mem::take(&mut self.doc.nodes[target_id].children);
+            for child in alt_children {
+                self.doc.remove_node_from_tree(child);
+            }
+            if let Some(element) = self.doc.nodes[target_id].element_data_mut() {
+                element.image_broken = false;
+            }
+            self.doc.nodes[target_id].clear_layout_cache();
+            self.doc.nodes[target_id].insert_damage(ALL_DAMAGE);
+        }
+        if is_img && !usable {
+            self.doc.show_image_alt_text(target_id);
+            return;
+        }
+        let node = &self.doc.nodes[target_id];
         if let Some(raw_src) = node.attr(attr) {
             if !raw_src.is_empty() {
                 let Some(src) = self.doc.resolve_url(raw_src) else {
@@ -1883,7 +1905,7 @@ impl<'doc> DocumentMutator<'doc> {
                     #[cfg(feature = "tracing")]
                     tracing::info!("Loading image {src_string} from cache");
                     // pyro: an `<object>` shows only some images (`replaced::object_shows_image`).
-                    if object.is_some() && !crate::layout::replaced::object_shows_image(cached_image) {
+                    if object && !crate::layout::replaced::object_shows_image(cached_image) {
                         return;
                     }
                     let node = &mut self.doc.nodes[target_id];

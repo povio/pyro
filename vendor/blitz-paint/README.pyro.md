@@ -1089,3 +1089,4 @@ frame's whole transform, clipped to the content box (upstream applied the transl
 - Round 4 lane F, `render.rs` `line_truncation`: no `text-overflow` ellipsis while the text's editing host (nearest `contenteditable` other than `false`) has the focus (WPT css-overflow `text-overflow-ellipsis-editable-div-with-caret`).
 - Round 4 lane G (`render.rs` `render_node`): a positioned inline box's paint-tree entry (blitz-dom
   `NodeFlags::INLINE_PASS_ENTRY`) paints nothing yet; its inline root paints its content (`positioned_passes`).
+- Round 4 lane F, `render.rs`: a broken image showing its alt text is clipped as a box (not as replaced content).

@@ -1844,6 +1844,10 @@ fn to_peniko_image(image: &RasterImageData, quality: peniko::ImageQuality) -> pe
 
 /// pyro: an `<img>`, `<video>` or `<canvas>`: the elements the UA sheet gives `overflow: clip`.
 fn is_ua_clipped_replaced(element: &ElementData) -> bool {
+    // pyro: not a broken image showing its alt text: a box of text, clipped as any box.
+    if element.image_broken {
+        return false;
+    }
     let name = &element.name.local;
     *name == local_name!("img") || *name == local_name!("video") || *name == local_name!("canvas")
 }

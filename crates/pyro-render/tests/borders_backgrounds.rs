@@ -391,3 +391,20 @@ fn bevelled_border_sides_take_chrome_shades() {
     assert_near(pixel(&img, 1.0, 179.0, 100.0), [0, 128, 0], "groove top-right corner diagonal");
     assert_near(pixel(&img, 1.0, 279.0, 100.0), [0, 0, 213], "ridge top-right corner diagonal");
 }
+
+/// An `<img>` that fails to load (or has no source) and has `alt` text shows that text, as
+/// browsers do (HTML rendering § images); an empty `alt` shows nothing. It showed nothing at all.
+#[test]
+fn a_broken_image_shows_its_alt_text() {
+    let ink = |body: &str| {
+        let img = render(body, 1.0);
+        (0..60u32)
+            .flat_map(|y| (0..300u32).map(move |x| (x, y)))
+            .filter(|&(x, y)| pixel(&img, 1.0, f64::from(x), f64::from(y))[0] < 128)
+            .count()
+    };
+    let style = "style='font:40px/1 serif;color:black'";
+    assert!(ink(&format!("<img src='missing.png' alt='Broken' {style}>")) > 100, "failed load");
+    assert!(ink(&format!("<img alt='Broken' {style}>")) > 100, "no source");
+    assert_eq!(ink(&format!("<img src='missing.png' alt='' {style}>")), 0, "empty alt");
+}

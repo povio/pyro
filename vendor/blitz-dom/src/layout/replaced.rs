@@ -32,6 +32,12 @@ pub(crate) fn is_image_input(element: &ElementData) -> bool {
 /// ([`is_replaced_element`]), an image button ([`is_image_input`]) or an
 /// `<object>` showing an image ([`is_image_object`]).
 pub(crate) fn is_replaced(element: &ElementData) -> bool {
+    // pyro: a broken image with alt text is a box of that text (`ElementData::image_broken`),
+    // unless its `content` replaces it with an image (WPT css-content
+    // `element-replacement-image-alt`).
+    if element.image_broken && !is_content_image(element) {
+        return false;
+    }
     is_replaced_element(&element.name.local)
         || is_image_input(element)
         || is_image_object(element)

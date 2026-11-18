@@ -2052,6 +2052,38 @@ impl BaseDocument {
         })
     }
 
+    /// pyro: an `<img>` that represents no image (it failed to load, or has no usable source)
+    /// and has non-empty `alt` text is laid out as a non-replaced box holding that text, as
+    /// browsers show it (HTML rendering § images: "an inline box containing the text"; WPT
+    /// css-overflow `overflow-img-scroll-non-replaced`). Its text is an anonymous child.
+    pub fn show_image_alt_text(&mut self, node_id: NodeId) {
+        let Some(node) = self.nodes.get(node_id) else { return };
+        let Some(element) = node.element_data() else { return };
+        if element.name.local != local_name!("img") || element.image_broken {
+            return;
+        }
+        let Some(alt) = element.attr(local_name!("alt")).filter(|alt| !alt.is_empty()).map(str::to_owned) else {
+            return;
+        };
+        let node = &mut self.nodes[node_id];
+        if let Some(element) = node.element_data_mut() {
+            element.image_broken = true;
+            element.special_data = SpecialElementData::None;
+        }
+        node.clear_layout_cache();
+        {
+            let mut mutator = self.mutate();
+            let text = mutator.create_text_node(&alt);
+            mutator.append_children(node_id, &[text]);
+        }
+        let mut current = Some(node_id);
+        while let Some(id) = current {
+            self.nodes[id].insert_damage(ALL_DAMAGE);
+            self.nodes[id].clear_layout_cache();
+            current = self.nodes[id].parent;
+        }
+    }
+
     /// Whether the Document has pending requests for "critical" resources (that should block rendering)
     pub fn has_pending_critical_resources(&self) -> bool {
         !self.pending_critical_resources.is_empty()
@@ -2065,6 +2097,12 @@ impl BaseDocument {
             Err(err) => {
                 if let Some(url) = res.resolved_url.as_ref() {
                     let waiting_nodes = self.pending_images.remove(url).unwrap_or_default();
+                    // pyro: a broken `<img>` with alt text shows that text.
+                    for (node_id, image_type) in &waiting_nodes {
+                        if matches!(image_type, ImageType::Image) {
+                            self.show_image_alt_text(*node_id);
+                        }
+                    }
                     // pyro: a list item whose image fails keeps its `list-style-type` marker.
                     for (node_id, image_type) in &waiting_nodes {
                         if let (ImageType::ListStyle(idx), Some(node)) = (image_type, self.nodes.get_mut(*node_id)) {

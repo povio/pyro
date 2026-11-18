@@ -2675,3 +2675,4 @@ Round 4 lane G:
   step 8 paints them. Step 1 of 2: the entries paint nothing yet (blitz-paint skips them; the inline root still paints
   their content after its in-flow content) and hit testing passes over them. `crates/pyro-render/src/lib.rs`
   `positioned_inline_spans_are_paint_tree_entries_in_tree_order`.
+- Round 4 lane F, `document.rs` `show_image_alt_text` + `ElementData::image_broken`: an `<img>` that fails to load or has no usable source, with non-empty `alt`, is laid out as a non-replaced box holding its alt text (an anonymous text child; `replaced::is_replaced` false unless a `content` image replaces it); a later usable `src` makes it an image again (`mutator::load_image`). WPT css-overflow `overflow-img-scroll-non-replaced`.
