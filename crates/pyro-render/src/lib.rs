@@ -1328,6 +1328,9 @@ impl Renderer {
         let profiling = profiling::on();
         let mirrored = profiling.then(|| started.elapsed());
         let mirror::Mirror { doc, bridge, .. } = m;
+        // (Scroll-driven animations' values follow the layout: a style read lays the document out
+        // too, else a new view timeline subject samples the last layout, which lacks it.)
+        let style_only = style_only && !doc.has_scroll_driven_animations();
         let geometry_generation = doc.root_node().tree().geometry_generation();
         let (fetch, passes, resolved_latest) =
             bridge.settle(doc, started + self.fetch_timeout, self.first_layout_wait, style_only);
@@ -1395,6 +1398,8 @@ impl Renderer {
             // Hover, focus or active moved, or something waits to restyle.
             m.undisplayed.get_mut().clear();
         }
+        // (As in `sync_delta`: scroll-driven animations need the layout.)
+        let style_only = style_only && !m.doc.has_scroll_driven_animations();
         if changed && style_only {
             let generation = m.doc.root_node().tree().geometry_generation();
             m.doc.resolve_style(0.0);

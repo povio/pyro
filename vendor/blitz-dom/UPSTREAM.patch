@@ -444,7 +444,7 @@ diff --git a/packages/blitz-dom/src/animation.rs b/packages/blitz-dom/src/animat
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/animation.rs
-@@ -0,0 +1,1323 @@
+@@ -0,0 +1,1332 @@
 +//! pyro: animated values the embedder samples into the cascade.
 +//!
 +//! pyro keeps the timing of every animation (CSS animations, CSS transitions
@@ -1173,6 +1173,15 @@ new file mode 100644
 +    /// pyro: at each resolve, the scroll-driven animations at the scroll position now (scrolling
 +    /// changes no page state the page's frame would show): elements whose values change are
 +    /// marked for restyle.
++    /// pyro: whether a scroll-driven animation is sampled: its values depend on the layout (a
++    /// view timeline's subject's position), so a style-only resolve is not enough for them.
++    pub fn has_scroll_driven_animations(&self) -> bool {
++        self.sampled_animations.elements.values().any(|e| {
++            e.given.animations.iter().any(|x| x.timeline.is_some())
++                || e.given.pseudos.iter().any(|p| p.animations.iter().any(|x| x.timeline.is_some()))
++        })
++    }
++
 +    /// `true`: an element's values changed (marked for restyle).
 +    pub(crate) fn resample_scroll_driven(&mut self) -> bool {
 +        if self.sampled_animations.is_empty() {

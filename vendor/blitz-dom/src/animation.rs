@@ -726,6 +726,15 @@ impl BaseDocument {
     /// pyro: at each resolve, the scroll-driven animations at the scroll position now (scrolling
     /// changes no page state the page's frame would show): elements whose values change are
     /// marked for restyle.
+    /// pyro: whether a scroll-driven animation is sampled: its values depend on the layout (a
+    /// view timeline's subject's position), so a style-only resolve is not enough for them.
+    pub fn has_scroll_driven_animations(&self) -> bool {
+        self.sampled_animations.elements.values().any(|e| {
+            e.given.animations.iter().any(|x| x.timeline.is_some())
+                || e.given.pseudos.iter().any(|p| p.animations.iter().any(|x| x.timeline.is_some()))
+        })
+    }
+
     /// `true`: an element's values changed (marked for restyle).
     pub(crate) fn resample_scroll_driven(&mut self) -> bool {
         if self.sampled_animations.is_empty() {
