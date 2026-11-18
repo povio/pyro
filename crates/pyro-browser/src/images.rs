@@ -343,6 +343,67 @@ impl Browser {
                     .map_or(Source::Invalid, |u| Source::Url(u.to_string()))
             }
         };
+        drop(state);
+        self.fetch_for_load_event(page, node, &bindings, loader, base, loaded, source, false);
+    }
+
+    /// SVG `<image>` (SVG 2 §5.7): a connected one fetches its `href` (or
+    /// `xlink:href`) for its `load` and `error` events, as `<object>` does
+    /// (the renderer draws the image itself). No `href`, no event. Its fetch
+    /// delays the window's `load`. Instances of `<use>` load theirs.
+    pub(crate) fn svg_image_event(&mut self, page: FrameKey, node: NodeId) {
+        let Some(state) = self.doc(page) else { return };
+        let Some(bindings) = state.main_frame.page_dom.clone() else { return };
+        let loader = state.main_frame.loader_id.clone();
+        let base = state.main_frame.base_url.clone();
+        let loaded = state.main_frame.loaded;
+        let href = {
+            let dom = bindings.dom.borrow();
+            let connected = dom.is_connected(node).unwrap_or(false)
+                || dom.root_node(node, true).ok().is_some_and(|r| dom.is_connected(r).unwrap_or(false));
+            connected
+                .then(|| {
+                    dom.get_attribute(node, "href")
+                        .ok()
+                        .flatten()
+                        .or_else(|| dom.get_attribute_ns(node, Some("http://www.w3.org/1999/xlink"), "href").ok().flatten())
+                        .map(str::to_owned)
+                })
+                .flatten()
+        };
+        let source = match href {
+            None => Source::None,
+            Some(v) if v.trim().is_empty() => Source::None,
+            Some(v) => {
+                let dom = bindings.dom.borrow();
+                url::Url::parse(&crate::loader::node_base_url(&dom, node).unwrap_or_else(|| base.clone()))
+                    .ok()
+                    .and_then(|b| b.join(v.trim()).ok())
+                    .map_or(Source::Invalid, |u| Source::Url(u.to_string()))
+            }
+        };
+        drop(state);
+        self.fetch_for_load_event(page, node, &bindings, loader, base, loaded, source, true);
+    }
+
+    /// Fetches `source` for `node`'s `load` / `error` events only (`<object>`,
+    /// SVG `<image>`): a failed fetch or a non-2xx status is `error`, and with
+    /// `image` so is a body no image decoder takes (an empty one, or a PNG,
+    /// GIF, JPEG or WebP whose header does not parse).
+    #[allow(clippy::too_many_arguments)]
+    fn fetch_for_load_event(
+        &mut self,
+        page: FrameKey,
+        node: NodeId,
+        bindings: &Rc<PageDom>,
+        loader: LoaderId,
+        base: String,
+        loaded: bool,
+        source: Source,
+        image: bool,
+    ) {
+        let bindings = bindings.clone();
+        let Some(state) = self.doc(page) else { return };
         let current = state.images.entries.get(&node).map(|i| i.url.clone());
         drop(state);
         let url = match source {
@@ -385,7 +446,7 @@ impl Browser {
         let weak = Rc::downgrade(&bindings);
         let finish = move |b: &mut Browser, result: Result<Resource, String>| {
             let Some(bindings) = weak.upgrade() else { return };
-            b.finish_object(page, &loader, &bindings, node, generation, result);
+            b.finish_object(page, &loader, &bindings, node, generation, result, image);
         };
         if url.starts_with("blob:") {
             let ok = bindings.blob_url(&url).is_some();
@@ -426,6 +487,7 @@ impl Browser {
         node: NodeId,
         generation: u64,
         result: Result<Resource, String>,
+        image: bool,
     ) {
         self.drain_dom_resources(page);
         let Some(mut state) = self.doc_mut(page).filter(|p| &p.main_frame.loader_id == loader) else { return };
@@ -439,7 +501,17 @@ impl Browser {
         entry.pending = false;
         let hold = entry._node.take();
         drop(state);
-        let ok = result.is_ok_and(|r| (200..300).contains(&r.status));
+        let ok = result.is_ok_and(|r| {
+            (200..300).contains(&r.status)
+                && (!image || {
+                    let body = &r.body[..r.body.len().min(MAX_IMAGE_BYTES)];
+                    !body.is_empty()
+                        && (pyro_dom::image::dimensions(body).is_some()
+                            || r.mime == "image/svg+xml"
+                            || body.trim_ascii_start().starts_with(b"<svg")
+                            || !matches!(r.mime.as_str(), "image/png" | "image/gif" | "image/jpeg" | "image/webp"))
+                })
+        });
         pyro_webapi::lifecycle::resource_loaded(bindings, node, ok);
         drop(hold);
         self.maybe_fire_load(page);

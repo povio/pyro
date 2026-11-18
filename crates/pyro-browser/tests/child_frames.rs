@@ -808,3 +808,23 @@ fn svg_use_elements_get_live_instances() {
     eval(&root, "document.getElementById('r').dispatchEvent(new Event('click')); 'ok'");
     assert_eq!(eval(&root, "arg"), "object");
 }
+
+/// SVG `<image>` fires `error` for an `href` that fetches no decodable image
+/// (WPT svg/interact/image-load-error-events.html covers `load`); the clone in a `<use>` instance loads too
+/// and its handler sees the clone (WPT css/selectors/crashtests/chrome-bug-565742178.html).
+#[test]
+fn svg_images_fire_error_in_use_instances_too() {
+    let mut t = crate::browser_thread().unwrap();
+    let page = t.browser.create_page().unwrap();
+    let root = main_realm(&t, page);
+    eval(
+        &root,
+        "globalThis.log = []; document.body.innerHTML = '<svg><defs><g id=t>\\
+         <image href=\"data:image/png;base64,AAAA\" onerror=\"log.push(\\'error:\\' + (evt.target.getRootNode() === document))\"/></g></defs>\\
+         <use href=\"#t\"/></svg>'; 'ok'",
+    );
+    settle(&mut t);
+    let mut log: Vec<String> = eval(&root, "log.join()").split(',').map(str::to_owned).collect();
+    log.sort();
+    assert_eq!(log, ["error:false", "error:true"]);
+}

@@ -831,14 +831,13 @@ also hung on a cycle the parser made), `document.designMode` (`designMode-caret-
 (`designMode-document-will-be-blurred`) and Trusted Types with `javascript:` navigation
 (`navigate-to-javascript-url-007-crash`).
 
-2,028 of 2,031 complete locally (with the font and Typed OM lanes; lane F3b: navigated-away iframe documents and IntersectionObserver across documents, `SharedWorker`; lane F2: scroll-driven animations). These 3 are **known incomplete**: each needs a feature pyro does not have. They stay
+2,029 of 2,031 complete locally (with the font and Typed OM lanes; lane F3b: navigated-away iframe documents, IntersectionObserver across documents, `SharedWorker`, `<use>` instances; lane F2: scroll-driven animations). These 2 are **known incomplete**: each needs a feature pyro does not have. They stay
 failing entries of the baseline, not flaky entries, and none of them crashes, panics or hangs:
 
 | page | needs |
 |---|---|
 | `streams/readable-byte-streams/crashtests/from-cross-realm.html` | none in pyro: Chrome times out on it too (wpt.fyi); the popup's synchronous about:blank document it needs exists since lane F3b |
 | `editing/crashtests/inserthorizontalrule-in-textarea-in-editor-and-undo-on-error-events.html` | none in pyro: it waits for an `error` event at an `<object>` without `data`, which Chromium fires and HTML does not (no data shows the fallback content; `<object>` load and error events exist since lane F3a) |
-| `css/selectors/crashtests/chrome-bug-565742178.html` | `<use>` shadow trees with live clones (an `error` event from the cloned image) |
 
 ### CI
 

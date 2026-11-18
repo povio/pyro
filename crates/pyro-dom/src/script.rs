@@ -79,6 +79,9 @@ pub enum ResourceKind {
     /// SVG `<use>`: (re)builds its shadow tree of clones of the element its
     /// `href` names (the bindings' `svg_use`).
     SvgUse,
+    /// SVG `<image>`: fetched for its `load`/`error` events (the renderer
+    /// draws the image itself).
+    SvgImage,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -119,7 +122,8 @@ impl Dom {
     fn connected_for_resources(&self, i: u32) -> bool {
         // Nothing in a `<use>` instance loads or runs (SVG 2: its scripts do
         // not execute; it is not a document tree of its own).
-        (self.is_connected_idx(i) || self.is_fragment_parse_host(self.n(i).owner_doc)) && !self.in_ua_shadow_tree(i)
+        // (`push_resource` keeps a `<use>` instance's resources from loading.)
+        self.is_connected_idx(i) || self.is_fragment_parse_host(self.n(i).owner_doc)
     }
 
     /// Whether `take_resource_events` would return anything.
@@ -144,6 +148,9 @@ impl Dom {
         }
         if e.name.ns == ns!(svg) && e.name.local == local_name!("use") {
             return Some(ResourceKind::SvgUse);
+        }
+        if e.name.ns == ns!(svg) && e.name.local == local_name!("image") {
+            return Some(ResourceKind::SvgImage);
         }
         if !e.is_html() {
             return None;
@@ -393,6 +400,11 @@ impl Dom {
     }
 
     pub(crate) fn push_resource(&mut self, idx: u32, kind: ResourceKind, reason: ResourceReason) {
+        // Nothing in a `<use>` instance loads or runs but an SVG `<image>`,
+        // as in browsers (its `load`/`error` reach the instance's clone).
+        if kind != ResourceKind::SvgImage && self.n(idx).in_shadow_tree() && self.in_ua_shadow_tree(idx) {
+            return;
+        }
         let ev = ResourceEvent { node: self.id_of(idx), kind, reason };
         // Coalesce consecutive duplicates (e.g. many text appends to one <style>).
         if self.resources.events.last() != Some(&ev) {
