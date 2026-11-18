@@ -1789,15 +1789,29 @@ impl JsClass for Document {
             let page = n.page();
             Ok(s.string(&if page.document() == n.id { page.document_referrer() } else { String::new() }))
         });
-        def.getter("domain", |s, n| {
-            if s.realm().origin().as_deref() == Some("null") {
-                return Ok(s.string(""));
-            }
-            let url = n.page().dom.borrow().document_data(n.id).js()?.url.to_string();
-            Ok(s.string(
-                pyro_net::Url::parse(&url).ok().and_then(|u| u.host_str().map(str::to_owned)).as_deref().unwrap_or(""),
-            ))
-        });
+        // HTML `document.domain`. The getter is the origin's effective domain; the setter runs
+        // the checks (no browsing context, no effective domain, not a registrable domain suffix:
+        // SecurityError) and then has no effect, as every agent cluster is origin-keyed (Chromium's
+        // default; `Origin-Agent-Cluster: ?0` is not modelled).
+        def.accessor(
+            "domain",
+            |s, n| Ok(s.string(effective_domain(s, n).as_deref().unwrap_or(""))),
+            |s, n, v| {
+                let value = dom_string(v)?;
+                let security = |m: &str| JsError::dom("SecurityError", format!("Failed to set the 'domain' property on 'Document': {m}"));
+                if n.page().document() != n.id {
+                    return Err(security("Assignment is forbidden for documents without a browsing context."));
+                }
+                let Some(effective) = effective_domain(s, n) else {
+                    return Err(security("Assignment is forbidden for documents with an opaque origin."));
+                };
+                if !registrable_domain_suffix_or_equal(&value, &effective) {
+                    return Err(security(&format!("'{value}' is not a suffix of '{effective}'.")));
+                }
+                // The surrounding agent's agent cluster is origin-keyed: nothing changes.
+                Ok(())
+            },
+        );
         def.getter("location", |s, n| {
             Ok(if n.page().document() == n.id { s.global().get_atom("location")? } else { s.null() })
         });
@@ -2042,3 +2056,43 @@ pub(crate) fn thread_leftover() -> Option<&'static str> {
     None
 }
 
+
+/// The effective domain of the document's origin (its host), `None` for an opaque origin. The
+/// window's document has its realm's origin (an about:srcdoc or about:blank document inherits
+/// its creator's); another document, its URL's.
+fn effective_domain(s: &Scope<'_>, n: &NodeData) -> Option<String> {
+    let origin = s.realm().origin();
+    if origin.as_deref() == Some("null") {
+        return None;
+    }
+    let source = match origin {
+        Some(origin) if n.page().document() == n.id => origin.to_string(),
+        _ => n.page().dom.borrow().document_data(n.id).ok()?.url.to_string(),
+    };
+    pyro_net::Url::parse(&source).ok()?.host_str().map(str::to_owned)
+}
+
+/// HTML "is a registrable domain suffix of or is equal to" (`host_suffix` against the
+/// effective domain `original`).
+fn registrable_domain_suffix_or_equal(host_suffix: &str, original: &str) -> bool {
+    let Ok(parsed) = pyro_net::Url::parse(&format!("http://{host_suffix}/")) else { return false };
+    let Some(suffix) = parsed.host_str().map(str::to_owned) else { return false };
+    if suffix == original {
+        return true;
+    }
+    let is_domain = |h: &str| !(h.starts_with('[') || h.parse::<std::net::Ipv4Addr>().is_ok());
+    if !is_domain(&suffix) || !is_domain(original) {
+        return false;
+    }
+    if !original.ends_with(&format!(".{suffix}")) {
+        return false;
+    }
+    // A public suffix (`com`, `github.io`) cannot be the domain.
+    if pyro_psl::suffix_str(&suffix) == Some(suffix.as_str()) {
+        return false;
+    }
+    if pyro_psl::suffix_str(original).is_some_and(|ps| ps.ends_with(&suffix)) {
+        return false;
+    }
+    true
+}

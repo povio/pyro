@@ -186,3 +186,24 @@ fn trusted_types_enforced_by_meta_csp() {
         "<b>free</b>|TypeError|<u>ok</u>|TypeError|<u>ok</u><s>A</s>"
     );
 }
+
+/// `document.domain`: the origin's host; setting a registrable domain suffix passes the checks
+/// and changes nothing (origin-keyed agent clusters, Chromium's default), anything else is a
+/// SecurityError; a document without a browsing context cannot set it.
+#[test]
+fn document_domain_is_origin_keyed() {
+    let env = Env::new("http://a.example.com/");
+    assert_eq!(
+        env.eval(
+            r#"(() => {
+              const out = [document.domain];
+              const set = v => { try { document.domain = v; return "ok"; } catch (e) { return e.name; } };
+              out.push(set("example.com"), document.domain, set("a.example.com"), set("com"), set("other.com"), set("b.a.example.com"));
+              const doc = document.implementation.createHTMLDocument("");
+              try { doc.domain = "example.com"; out.push("no throw"); } catch (e) { out.push(e.name); }
+              return out.join("|");
+            })()"#
+        ),
+        "a.example.com|ok|a.example.com|ok|SecurityError|SecurityError|SecurityError|SecurityError"
+    );
+}

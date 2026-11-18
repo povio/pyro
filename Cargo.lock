@@ -3010,6 +3010,7 @@ dependencies = [
  "pyro-layout",
  "pyro-media",
  "pyro-net",
+ "pyro-psl",
  "pyro-render",
  "pyro-runtime",
  "rand_core 0.6.4",

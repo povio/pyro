@@ -686,7 +686,7 @@ impl Browser {
 
 /// The script of a `javascript:` URL (HTML "evaluate a javascript: URL": the
 /// percent-decoded rest of the URL), or `None` for any other URL.
-fn javascript_url_source(url: &str) -> Option<String> {
+pub(crate) fn javascript_url_source(url: &str) -> Option<String> {
     const SCHEME: &str = "javascript:";
     let rest = url.get(SCHEME.len()..).filter(|_| url[..SCHEME.len()].eq_ignore_ascii_case(SCHEME))?;
     Some(percent_encoding::percent_decode_str(rest).decode_utf8_lossy().into_owned())

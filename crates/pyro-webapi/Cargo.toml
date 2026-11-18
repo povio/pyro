@@ -36,6 +36,8 @@ pyro-js = { workspace = true }
 # features of pyro-media (on in the pyro binary).
 pyro-media = { workspace = true }
 pyro-net = { workspace = true }
+# `document.domain`: registrable domain suffixes.
+pyro-psl = { workspace = true }
 pyro-runtime = { workspace = true }
 markup5ever = "0.40"
 p256 = { version = "0.13", features = ["ecdh", "ecdsa", "pkcs8"] }
