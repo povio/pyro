@@ -35,6 +35,11 @@ on:
         description: Extra gate.mjs run arguments for every shard (e.g. --dirs css/css-grid to measure one directory)
         type: string
         default: ''
+      kinds:
+        description: Which kinds' shards run (e.g. testharness alone, to compare runner-args)
+        type: choice
+        options: [all, testharness, reftest, crashtest]
+        default: all
       reruns:
         description: Rerun every page once more (two runs per page, what a baseline needs; scheduled runs always do); doubles the time
         type: boolean
@@ -65,12 +70,18 @@ jobs:
     outputs:
       browser-run: ${{ steps.find.outputs.run }}
       runner: ${{ steps.find.outputs.runner }}
+      matrix: ${{ steps.find.outputs.matrix }}
     steps:
       - id: find
         env:
           GH_TOKEN: ${{ github.token }}
           RUNNER: ${{ inputs.runner || 'lp-m1' }}
+          KINDS: ${{ inputs.kinds || 'all' }}
         run: |
+          # The shards: 4 testharness, 2 reftest, 1 crashtest (about 8 minutes each), or one kind's.
+          matrix=$(jq -cn --arg k "$KINDS" '[range(4) | {kind: "testharness", shard: ., of: 4}] + [range(2) | {kind: "reftest", shard: ., of: 2}]
+            + [{kind: "crashtest", shard: 0, of: 1}] | map(select($k == "all" or .kind == $k))')
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
           run=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=wpt-browser&per_page=100" \
             -q '[.artifacts[] | select(.expired | not) | select(.workflow_run.head_branch == "main")][0].workflow_run.id')
           if [ -z "$run" ] || [ "$run" = null ]; then echo "no wpt-browser artifact from main" >&2; exit 1; fi
@@ -136,14 +147,7 @@ jobs:
       # One shard at a time, so it never holds both lp-m1 machines (see the top of this file).
       max-parallel: 1
       matrix:
-        include:
-          - { kind: testharness, shard: 0, of: 4 }
-          - { kind: testharness, shard: 1, of: 4 }
-          - { kind: testharness, shard: 2, of: 4 }
-          - { kind: testharness, shard: 3, of: 4 }
-          - { kind: reftest, shard: 0, of: 2 }
-          - { kind: reftest, shard: 1, of: 2 }
-          - { kind: crashtest, shard: 0, of: 1 }
+        include: ${{ fromJSON(needs.prepare.outputs.matrix) }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -186,7 +190,7 @@ jobs:
           # nearly idle, beside the others (run.mjs SLOW_JOBS): in a testharness shard they were 1.7% of the pages and
           # 47% of the page time, holding 16 workers for 45 s each.
           jobs=$(sysctl -n hw.ncpu); slow=8
-          if [ ${{ matrix.kind }} = testharness ]; then jobs=16; slow=24; fi
+          if [ ${{ matrix.kind }} = testharness ]; then jobs=16; slow=32; fi
           # The committed whole-suite baseline (bench/wpt/full/<kind>/) orders and balances the pages by duration, and
           # only the pages whose result differs from it run again (in run 44235329366, 8,875 of a shard's 8,892
           # reruns of every page matched their first run). For a WPT revision it does not cover, gate.mjs runs every

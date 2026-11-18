@@ -388,12 +388,13 @@ async function drainPorts() {
     await sleep(2000);
   }
 }
-// --slow-jobs N: pages that timed out in the baseline (`known: 'timeout'`, lib.mjs plan()) wait out their full
-// timeout, nearly idle (the 149 timeouts of a nightly testharness shard were 1.7% of its pages and 47% of its page
-// time). They go to a queue of their own served by N more workers, beside the --jobs workers, so they neither hold
-// those workers nor get a shorter cap: they still run to their timeout and stay in the results as they come out.
+// --slow-jobs N: pages that timed out in the baseline (`known: 'timeout'`, lib.mjs plan()) or took 5 s or more in it
+// (est, mostly testharness's own 10 s timeout ending the page) wait nearly idle. In a nightly testharness shard
+// (8,890 pages) they were 6% of the pages and 60% of the page time. They go to a queue of their own served by N more
+// workers, beside the --jobs workers, so they neither hold those workers nor get a shorter cap: they still run to
+// their timeout and stay in the results as they come out.
 const SLOW_JOBS = Number(opt('--slow-jobs', 0));
-const isSlow = (t) => SLOW_JOBS > 0 && t.known === 'timeout';
+const isSlow = (t) => SLOW_JOBS > 0 && !!t.known && (t.known === 'timeout' || t.est >= 5000);
 const queues = { main: { list: tests.filter((t) => !isSlow(t)), next: 0 }, slow: { list: tests.filter(isSlow), next: 0 } };
 let workers = 0;
 async function worker(q) {
@@ -465,7 +466,7 @@ async function worker(q) {
   }
   await resetSlot(slot);
 }
-if (queues.slow.list.length) console.error(`${LABEL}: ${queues.slow.list.length} page(s) that timed out in the baseline run on ${Math.min(SLOW_JOBS, queues.slow.list.length)} more worker(s)`);
+if (queues.slow.list.length) console.error(`${LABEL}: ${queues.slow.list.length} slow page(s) (timed out or 5 s+ in the baseline) run on ${Math.min(SLOW_JOBS, queues.slow.list.length)} more worker(s)`);
 await Promise.all([
   ...Array.from({ length: JOBS }, () => worker(queues.main)),
   ...Array.from({ length: Math.min(SLOW_JOBS, queues.slow.list.length) }, () => worker(queues.slow)),
