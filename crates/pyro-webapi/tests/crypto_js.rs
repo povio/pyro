@@ -25,7 +25,7 @@ fn run(env: &Env, body: &str) -> String {
 fn crypto_key_is_a_lazy_global_with_cached_slots() {
     let server = Server::new();
     let env = Env::new(&server.url);
-    assert_eq!(env.eval("typeof Object.getOwnPropertyDescriptor(globalThis,'CryptoKey').get"), "function");
+    assert_eq!(env.eval("(d => typeof (d.get || d.value) === 'function' && !d.enumerable)(Object.getOwnPropertyDescriptor(globalThis,'CryptoKey'))"), "true");
     let out = run(
         &env,
         r#"const out=[typeof CryptoKey, 'value' in Object.getOwnPropertyDescriptor(globalThis,'CryptoKey')];
@@ -373,7 +373,7 @@ fn crypto_keys_are_structured_cloneable() {
 fn compression_streams_round_trip_every_format() {
     let server = Server::new();
     let env = Env::new(&server.url);
-    assert_eq!(env.eval("typeof Object.getOwnPropertyDescriptor(globalThis,'CompressionStream').get"), "function");
+    assert_eq!(env.eval("(d => typeof (d.get || d.value) === 'function' && !d.enumerable)(Object.getOwnPropertyDescriptor(globalThis,'CompressionStream'))"), "true");
     let out = run(
         &env,
         r#"const out=[], te=new TextEncoder();

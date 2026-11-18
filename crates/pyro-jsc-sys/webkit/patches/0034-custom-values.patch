@@ -1,0 +1,65 @@
+Pyro patch 0034: custom values (a native getter whose property reads as a data property).
+
+JSObjectSetCustomValue (API/JSForkPrivate.h): JSObjectSetCustomAccessor with
+PropertyAttribute::CustomValue instead of CustomAccessor. The getter still runs on each read, but
+Object.getOwnPropertyDescriptor reports {value, writable, enumerable, configurable}, as WebIDL
+requires of an interface object on the global. Pyro makes such interfaces on their first read
+and then replaces the property with a plain value.
+
+diff --git a/Source/JavaScriptCore/API/JSFork.cpp b/Source/JavaScriptCore/API/JSFork.cpp
+index 0fa971c494..2d911cf7bb 100644
+--- a/Source/JavaScriptCore/API/JSFork.cpp
++++ b/Source/JavaScriptCore/API/JSFork.cpp
+@@ -165,6 +165,33 @@ bool JSObjectSetCustomAccessor(JSContextRef ctx, JSObjectRef object, JSStringRef
+     return jsObject->putDirectCustomAccessor(vm, name, accessor, attrs);
+ }
+ 
++// Pyro: JSObjectSetCustomAccessor as a custom value (PropertyAttribute::CustomValue): the getter
++// makes the property's value, which Object.getOwnPropertyDescriptor reports as a data property
++// ({value, writable, enumerable, configurable}), as a WebIDL interface object on the global is.
++bool JSObjectSetCustomValue(JSContextRef ctx, JSObjectRef object, JSStringRef propertyName, JSCustomGetterCallback getter, JSCustomSetterCallback setter, JSPropertyAttributes attributes)
++{
++    if (!ctx || !object || !propertyName || !getter)
++        return false;
++    JSGlobalObject* globalObject = toJS(ctx);
++    VM& vm = globalObject->vm();
++    JSLockHolder locker(vm);
++    JSObject* jsObject = toJS(object);
++    Identifier name = propertyName->identifier(&vm);
++    if (parseIndex(name))
++        return false;
++    unsigned attrs = static_cast<unsigned>(PropertyAttribute::CustomValue);
++    if (attributes & kJSPropertyAttributeDontEnum)
++        attrs |= static_cast<unsigned>(PropertyAttribute::DontEnum);
++    if (attributes & kJSPropertyAttributeDontDelete)
++        attrs |= static_cast<unsigned>(PropertyAttribute::DontDelete);
++    // Without `setter`, an assignment or Object.defineProperty replaces the custom value with a
++    // plain one (JSObject::put's CustomValue case), as for any writable data property.
++    GetValueFunc getValue(reinterpret_cast<EncodedJSValue (*)(JSGlobalObject*, EncodedJSValue, PropertyName)>(getter));
++    PutValueFunc putValue = setter ? PutValueFunc(reinterpret_cast<bool (*)(JSGlobalObject*, EncodedJSValue, EncodedJSValue, PropertyName)>(setter)) : PutValueFunc(nullptr);
++    CustomGetterSetter* accessor = CustomGetterSetter::create(vm, getValue, putValue);
++    return jsObject->putDirectCustomAccessor(vm, name, accessor, attrs);
++}
++
+ namespace JSC {
+ 
+ static JSC_DECLARE_CUSTOM_GETTER(constantAccessorGetter);
+diff --git a/Source/JavaScriptCore/API/JSForkPrivate.h b/Source/JavaScriptCore/API/JSForkPrivate.h
+index e4df01d2fe..3424f71449 100644
+--- a/Source/JavaScriptCore/API/JSForkPrivate.h
++++ b/Source/JavaScriptCore/API/JSForkPrivate.h
+@@ -116,6 +116,14 @@ typedef JSValueRef (*JSCustomGetterCallback)(JSContextRef ctx, JSValueRef thisVa
+ typedef bool (*JSCustomSetterCallback)(JSContextRef ctx, JSValueRef thisValue, JSValueRef value, const void* propertyNameUID);
+ JS_EXPORT bool JSObjectSetCustomAccessor(JSContextRef ctx, JSObjectRef object, JSStringRef propertyName, JSCustomGetterCallback getter, JSCustomSetterCallback setter, JSPropertyAttributes attributes);
+ 
++/* JSObjectSetCustomAccessor as a custom value: `getter` makes the value on each read (an
++   embedder replaces the property with a plain value on the first, for a lazily made interface
++   object), Object.getOwnPropertyDescriptor reports a data property, and `setter` takes
++   assignments; without `setter`, an assignment or Object.defineProperty replaces the property
++   with a plain value (it stays writable). Otherwise the same attributes and callbacks as
++   JSObjectSetCustomAccessor. */
++JS_EXPORT bool JSObjectSetCustomValue(JSContextRef ctx, JSObjectRef object, JSStringRef propertyName, JSCustomGetterCallback getter, JSCustomSetterCallback setter, JSPropertyAttributes attributes);
++
+ /* A non-configurable accessor property of `object` (the target, for a global proxy)
+    whose getter returns `value` for `object` and its global proxy, as a WebIDL
+    [LegacyUnforgeable] attribute of a value that never changes (a window's

@@ -101,6 +101,9 @@ pub(crate) struct AccessorSpec {
     /// Listed by `for..in` (WebIDL attributes are); see
     /// [`ClassDef::unenumerable_last_accessor`].
     pub enumerable: bool,
+    /// Reads as a data property (patch 0034's custom value): a lazily made interface object on
+    /// the global ([`ClassDef::global_value_accessor`]).
+    pub value: bool,
 }
 
 /// A member's Rust callback, type-erased, plus the invoker that knows its
@@ -416,6 +419,7 @@ impl<C: JsClass> ClassDef<C> {
             fast: None,
             set_h: None,
             enumerable: true,
+            value: false,
         });
         self
     }
@@ -447,6 +451,7 @@ impl<C: JsClass> ClassDef<C> {
             fast: Some(crate::accessors::fast_getter::<C>),
             set_h: None,
             enumerable: true,
+            value: false,
         });
         self
     }
@@ -492,6 +497,7 @@ impl<C: JsClass> ClassDef<C> {
             fast: None,
             set_h: None,
             enumerable: true,
+            value: false,
         });
         self
     }
@@ -520,6 +526,7 @@ impl<C: JsClass> ClassDef<C> {
             fast: Some(crate::accessors::fast_getter_this::<C>),
             set_h: None,
             enumerable: true,
+            value: false,
         });
         self
     }
@@ -539,6 +546,7 @@ impl<C: JsClass> ClassDef<C> {
             fast: None,
             set_h: Some(setter_invoke_h::<C>),
             enumerable: true,
+            value: false,
         });
         self
     }
@@ -563,7 +571,8 @@ impl<C: JsClass> ClassDef<C> {
             get_h: None,
             fast: None,
             set_h: Some(setter_invoke_h::<C>),
-            enumerable: true,
+            enumerable: false,
+            value: true,
         });
         self
     }
@@ -591,6 +600,7 @@ impl<C: JsClass> ClassDef<C> {
             fast: Some(crate::accessors::fast_getter::<C>),
             set_h: Some(setter_invoke_h::<C>),
             enumerable: true,
+            value: false,
         });
         self
     }
@@ -626,6 +636,7 @@ impl<C: JsClass> ClassDef<C> {
             fast: None,
             set_h: None,
             enumerable: true,
+            value: false,
         });
         self
     }
@@ -2119,8 +2130,33 @@ unsafe fn global_value_getter_invoke<C: JsClass>(
     args: Args<'_>,
     f: *const (),
 ) -> JsResult<sys::JSValueRef> {
-    let this = if !this.is_null() && unsafe { this_data::<C>(scope, this) }.is_err() { ptr::null_mut() } else { this };
-    unsafe { getter_invoke::<C>(scope, this, args, f) }
+    // A custom value (patch 0034) is called with the object holding the property, which for a
+    // global class's member installed on its prototype is not the global: the realm's global
+    // object is the receiver then.
+    let this = if !this.is_null() && unsafe { this_data::<C>(scope, this) }.is_err() {
+        let global = scope.global().raw;
+        if unsafe { this_data::<C>(scope, global) }.is_ok() { global } else { ptr::null_mut() }
+    } else {
+        this
+    };
+    // A lazy global replaces itself with a data property (`Object.defineProperty`), which, for a
+    // custom value (patch 0034), reads the current value first: that read is this getter again.
+    // While it runs, a nested read of the same property is `undefined`.
+    thread_local! {
+        static RUNNING: std::cell::RefCell<Vec<*const ()>> = const { std::cell::RefCell::new(Vec::new()) };
+    }
+    if RUNNING.with(|r| r.borrow().contains(&f)) {
+        return Ok(unsafe { sys::JSValueMakeUndefined(scope.ctx()) });
+    }
+    RUNNING.with(|r| r.borrow_mut().push(f));
+    let result = unsafe { getter_invoke::<C>(scope, this, args, f) };
+    RUNNING.with(|r| {
+        let mut r = r.borrow_mut();
+        if let Some(i) = r.iter().rposition(|&p| p == f) {
+            r.remove(i);
+        }
+    });
+    result
 }
 
 /// [`setter_invoke`] with the fallback of [`global_value_getter_invoke`].

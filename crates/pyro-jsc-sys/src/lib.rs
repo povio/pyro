@@ -984,6 +984,8 @@ pub mod spi {
         pub adopt_global_proxy: Option<JSGlobalContextAdoptGlobalProxyFn>,
         pub add_impure_property: Option<JSAddImpurePropertyFn>,
         pub set_custom_accessor: Option<JSObjectSetCustomAccessorFn>,
+        /// Patch 0034 (`JSObjectSetCustomValue`): a custom accessor that reads as a data property.
+        pub set_custom_value: Option<JSObjectSetCustomAccessorFn>,
         pub set_fast_getter: Option<JSObjectSetFastGetterFn>,
         pub set_constant_accessor: Option<JSObjectSetConstantAccessorFn>,
         pub set_lazy_constant_accessor: Option<JSObjectSetLazyConstantAccessorFn>,
@@ -1176,6 +1178,10 @@ pub mod spi {
             adopt_global_proxy: None,
             add_impure_property: resolve!("JSAddImpureProperty"),
             set_custom_accessor: resolve!("JSObjectSetCustomAccessor"),
+            #[cfg(any(pyro_jsc_custom_value, not(pyro_jsc_static)))]
+            set_custom_value: resolve!("JSObjectSetCustomValue"),
+            #[cfg(not(any(pyro_jsc_custom_value, not(pyro_jsc_static))))]
+            set_custom_value: None,
             set_fast_getter: resolve!("JSObjectSetFastGetter"),
             set_constant_accessor: resolve!("JSObjectSetConstantAccessor"),
             set_lazy_constant_accessor: resolve!("JSObjectSetLazyConstantAccessor"),

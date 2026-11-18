@@ -2758,7 +2758,9 @@ fn copy_global_members(scope: &Scope<'_>, id: ClassId) -> JsResult<()> {
     let names: Vec<&'static str> = {
         let reg = realm.engine.classes.borrow();
         let d = &reg.classes.get(id as usize).ok_or(JsError::Type("unknown class".into()))?.def;
-        d.methods.iter().map(|m| m.name).chain(d.accessors.iter().map(|a| a.name)).collect()
+        // Lazily made interface objects stay on the global alone (WebIDL: not prototype members);
+        // copying one would read it, which makes it.
+        d.methods.iter().map(|m| m.name).chain(d.accessors.iter().filter(|a| !a.value).map(|a| a.name)).collect()
     };
     let names_array = scope.array(&[])?;
     for (i, n) in names.iter().enumerate() {
@@ -2896,7 +2898,7 @@ fn install_members_raw(
         }
         (
             d.methods.iter().map(|m| (m.name, m.length, m.call, m.pure)).collect::<Vec<_>>(),
-            d.accessors.iter().map(|a| (a.name, a.get, a.set, a.slot, a.enumerable)).collect::<Vec<_>>(),
+            d.accessors.iter().map(|a| (a.name, a.get, a.set, a.slot, a.enumerable, a.value)).collect::<Vec<_>>(),
             d.constants.clone(),
             d.statics.iter().map(|m| (m.name, m.length, m.call)).collect::<Vec<_>>(),
             if d.indexed_iterable {
@@ -2940,6 +2942,7 @@ fn install_members_raw(
     let members = helper("members")?;
     // Where custom accessors go: for the global's own members, the object
     // behind its proxy.
+    let own_holder = matches!(part, MemberPart::Instance(_));
     let (holder, instance, interface) = match part {
         MemberPart::All => (proto.raw, true, true),
         MemberPart::Instance(holder) => (holder, true, false),
@@ -2954,7 +2957,7 @@ fn install_members_raw(
     batch.flush()?;
     let accessor = helper("accessor")?;
     let custom = sys::spi::get().set_custom_accessor;
-    for (name, get, set, slot, enumerable) in accessors {
+    for (name, get, set, slot, enumerable, value) in accessors {
         let attributes = if enumerable { sys::kJSPropertyAttributeNone } else { sys::kJSPropertyAttributeDontEnum };
         if let (Some(install), Some(slot)) = (custom, slot) {
             // A custom accessor: inline caches call the getter directly
@@ -2971,8 +2974,14 @@ fn install_members_raw(
             // dispatch takes the lean path for the global's payload, as does
             // one of a class that asked for that
             // (`ClassDef::attributes_without_jit_getters`).
-            let ok = match (crate::accessors::fast_entry(slot), sys::spi::get().set_fast_getter) {
-                (Some((entry, context, result)), Some(fast)) if !on_global && jit_getters => unsafe {
+            // Only where the property lives on the global itself (the object behind the window's
+            // proxy): a custom value on a prototype is called with the prototype.
+            let as_value = sys::spi::get().set_custom_value.filter(|_| value && own_holder);
+            let ok = match (as_value, crate::accessors::fast_entry(slot), sys::spi::get().set_fast_getter) {
+                // A lazily made interface object: a custom value, which reads as a data property.
+                // No setter: an assignment (or the getter's own replacement) makes it a plain value.
+                (Some(set_value), _, _) => unsafe { set_value(ctx, holder, n, getter, None, attributes) },
+                (None, Some((entry, context, result)), Some(fast)) if !on_global && jit_getters => unsafe {
                     fast(ctx, holder, n, getter, setter, attributes, Some(entry), context, result, true)
                 },
                 _ => unsafe { install(ctx, holder, n, getter, setter, attributes) },

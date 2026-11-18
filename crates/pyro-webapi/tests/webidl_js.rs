@@ -254,3 +254,4 @@ fn window_prototype_chains_through_the_named_properties_object() {
         "{result}"
     );
 }
+

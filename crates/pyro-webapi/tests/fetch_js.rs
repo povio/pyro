@@ -838,7 +838,7 @@ fn streams_are_lazy_globals_and_compose() {
     let server = Server::new();
     let env = Env::new(&server.url);
     // Names exist without making the classes; assignment replaces them.
-    assert_eq!(env.eval("typeof Object.getOwnPropertyDescriptor(globalThis,'ReadableStream').get"), "function");
+    assert_eq!(env.eval("(d => typeof (d.get || d.value) === 'function' && !d.enumerable)(Object.getOwnPropertyDescriptor(globalThis,'ReadableStream'))"), "true");
     assert_eq!(env.eval("CountQueuingStrategy=1; typeof CountQueuingStrategy"), "number");
     env.eval(
         r#"globalThis.state='pending';
@@ -846,7 +846,8 @@ fn streams_are_lazy_globals_and_compose() {
           const out=[];
           const descriptor=Object.getOwnPropertyDescriptor(globalThis,'ReadableStream');
           out.push(typeof ReadableStream);
-          out.push('value' in Object.getOwnPropertyDescriptor(globalThis,'ReadableStream') && !!descriptor.get);
+          // After the first read a plain data property (it was a getter, or a custom value, before).
+          out.push('value' in Object.getOwnPropertyDescriptor(globalThis,'ReadableStream') && !!(descriptor.get || descriptor.value));
           // start/pull/cancel, default reader, desiredSize.
           let pulls=0, canceled;
           const s=new ReadableStream({start(c){c.enqueue('a')},pull(c){if(++pulls==2)c.close();else c.enqueue('b')},cancel(r){canceled=r}});

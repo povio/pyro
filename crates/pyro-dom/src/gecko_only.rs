@@ -1,8 +1,7 @@
 //! Computed values of the few properties pyro-dom reads that Stylo's servo
 //! build (Blitz's, so the page's cascade) does not parse: they are
 //! `engine = "gecko"` in Stylo's `longhands.toml`, so their declarations are
-//! dropped with the sheet. `overflow-anchor` (scroll anchoring), `text-anchor`
-//! (SVG text boxes) and `line-clamp` (its `getComputedStyle` value) are
+//! dropped with the sheet. `line-clamp` (its `getComputedStyle` value) is
 //! resolved here from the same sheets: style rules (inside `@media` that
 //! matches, and inside `@supports`/`@layer`/`@container`/`@scope` as if they
 //! applied) and the `style` attribute, matched with Stylo's selector
@@ -22,8 +21,7 @@ use crate::node::NodeId;
 use crate::stylo::select::List;
 
 /// (name, inherited, initial value).
-const PROPERTIES: [(&str, bool, &str); 3] =
-    [("overflow-anchor", false, "auto"), ("text-anchor", true, "start"), ("line-clamp", false, "none")];
+const PROPERTIES: [(&str, bool, &str); 1] = [("line-clamp", false, "none")];
 
 /// Whether this module answers `name`.
 pub(crate) fn handles(name: &str) -> bool {
