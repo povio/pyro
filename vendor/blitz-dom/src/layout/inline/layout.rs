@@ -2318,7 +2318,15 @@ impl LayoutPassState<'_> {
         let first_baseline = exports_baseline
             .then(|| inline_layout.layout.lines().next().map(line_baseline))
             .flatten();
-        let last_line_index = trailing_empty_line.unwrap_or(line_count).checked_sub(1);
+        // pyro: the last line box that is not a phantom one (CSS Inline 3 § 4.1: one holding only
+        // floats or collapsed white space after a `<br>` has no baseline; WPT css-flexbox
+        // `flexbox-baseline-multi-line-vert-001` whose reference is such an inline-block).
+        let last_line_index = trailing_empty_line.unwrap_or(line_count).checked_sub(1).map(|mut last| {
+            while last > 0 && inline_layout.layout.get(last).is_some_and(|line| line.metrics().invisible) {
+                last -= 1;
+            }
+            last
+        });
         let last_baseline = exports_baseline
             .then(|| last_line_index.and_then(|i| inline_layout.layout.get(i)))
             .flatten()

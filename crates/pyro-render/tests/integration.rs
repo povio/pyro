@@ -31,6 +31,7 @@ mod flex_collapse;
 mod quirky_body_and_ratio_keywords;
 mod grid_flex_round4;
 mod flex_content_sizes;
+mod phantom_last_line_baseline;
 mod sideways_vertical_lr_baselines;
 mod table_part_containing_blocks;
 mod table_cell_percent_heights;

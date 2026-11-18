@@ -12697,7 +12697,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
 -                            }
 -                            has_active_floats = true;
 -                        }
- 
+-
 -                        if has_active_floats {
 -                            let min_y = state.line_y() / scale as f64;
 -                            line_slot =
@@ -12708,7 +12708,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
 -                            state.set_line_x(0.0);
 -                            state.set_line_max_advance(max_advance);
 -                        }
--
+ 
 -                        line_start_state = has_active_floats.then(|| breaker.state().clone());
 -                        continue;
 -                    }
@@ -13186,7 +13186,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
                              output.oof_candidates.translate(location);
                              oof_candidates.append(&mut output.oof_candidates);
                          }
-@@ -1297,8 +2275,45 @@
+@@ -1297,20 +2275,126 @@
          // println!("known_dimensions: w: {:?} h: {:?}", inputs.known_dimensions.width, inputs.known_dimensions.height);
          // println!("\n");
  
@@ -13234,7 +13234,18 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
          let exports_baseline = has_inline_content && !suppresses_baseline;
          let first_baseline = exports_baseline
              .then(|| inline_layout.layout.lines().next().map(line_baseline))
-@@ -1308,9 +2323,70 @@
+             .flatten();
+-        let last_line_index = trailing_empty_line.unwrap_or(line_count).checked_sub(1);
++        // pyro: the last line box that is not a phantom one (CSS Inline 3 § 4.1: one holding only
++        // floats or collapsed white space after a `<br>` has no baseline; WPT css-flexbox
++        // `flexbox-baseline-multi-line-vert-001` whose reference is such an inline-block).
++        let last_line_index = trailing_empty_line.unwrap_or(line_count).checked_sub(1).map(|mut last| {
++            while last > 0 && inline_layout.layout.get(last).is_some_and(|line| line.metrics().invisible) {
++                last -= 1;
++            }
++            last
++        });
+         let last_baseline = exports_baseline
              .then(|| last_line_index.and_then(|i| inline_layout.layout.get(i)))
              .flatten()
              .map(line_baseline);
@@ -13305,7 +13316,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
          }
  
          // Put layout back
-@@ -1360,14 +2436,19 @@
+@@ -1360,14 +2444,19 @@
                  )
              },
              baselines: taffy::Baselines {
@@ -13328,7 +13339,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
              oof_candidates,
              oof_positioning_area: Some(OofPositioningArea {
                  size: final_size - oof_position_inset.sum_axes(),
-@@ -1384,3 +2465,291 @@
+@@ -1384,3 +2473,291 @@
  fn f32_max(a: f32, b: f32) -> f32 {
      a.max(b)
  }

@@ -2662,3 +2662,7 @@ Round 4 lane G:
   css-flexbox `baseline-synthesis-003`, css-grid `grid-self-baseline-004`, `-horiz-007`, `-vertical-lr-002/-007`).
   `crates/pyro-render/tests/sideways_vertical_lr_baselines.rs`.
 - Round 4 lane F, `dom_selection.rs`: `set_selected_replaced` / `is_selected_replaced` (the replaced elements a selection holds, from the page: pyro-render passes them on).
+- Round 4 lane G, last baseline (`layout/inline/layout.rs` `last_line_index`): a root's last baseline is that of its
+  last line box that is not a phantom one (`LineMetrics::invisible`, CSS Inline 3 § 4.1): a line after a `<br>` holding
+  only a float and collapsed white space gave an inline-block the bottom of its first line as baseline (WPT
+  css-flexbox `flexbox-baseline-multi-line-vert-001/-002`). `crates/pyro-render/tests/phantom_last_line_baseline.rs`.
