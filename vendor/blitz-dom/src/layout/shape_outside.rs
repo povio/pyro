@@ -3,14 +3,14 @@
 //! (`BlockContext::place_shaped_floated_box`): line boxes beside the float wrap around the shape.
 //!
 //! Basic shapes (`circle()`, `ellipse()`, `inset()`, `polygon()`) in their reference box and the
-//! box keywords (the reference box itself, corners square), grown by `shape-margin`. Images,
-//! `path()` and `shape()` keep the margin box.
+//! box keywords (the reference box itself, corners square) and `path()`, grown by `shape-margin`.
+//! Images and `shape()` keep the margin box.
 
 use kurbo::{BezPath, PathEl, Point, Rect, Shape as _};
 use style::properties::ComputedValues;
 use style::values::computed::basic_shape::{BasicShape, ShapeOutside};
 use style::values::computed::{CSSPixelLength, LengthPercentage};
-use style::values::generics::basic_shape::{GenericBasicShape, GenericShapeRadius, ShapeBox};
+use style::values::generics::basic_shape::{GenericBasicShape, GenericPathOrShapeFunction, GenericShapeRadius, ShapeBox};
 use style::values::generics::position::GenericPositionOrAuto;
 
 /// One row of a float's margin box: `(top, bottom, extent)`, `extent` the float area's
@@ -108,6 +108,15 @@ fn area(style: &ComputedValues, margin_box: Rect, margin: [f64; 4], border: [f64
                     path.close_path();
                     path
                 }
+                GenericBasicShape::PathOrShape(GenericPathOrShapeFunction::Path(path)) => {
+                    // `path()`: SVG path data in CSS px from the reference box's origin.
+                    let mut d = String::new();
+                    let _ = path.path.to_css(&mut style_traits::CssWriter::new(&mut d), false);
+                    let mut bez = BezPath::from_svg(&d).ok()?;
+                    bez.apply_affine(kurbo::Affine::translate((r.x0, r.y0)));
+                    bez
+                }
+                // `shape()`: the margin box (not yet).
                 GenericBasicShape::PathOrShape(_) => return None,
             })
         }
