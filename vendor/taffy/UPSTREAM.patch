@@ -2783,7 +2783,7 @@ index a8dbbcf2..abac260d 100644
 +        .maybe_add(ratio_inset)
 +}
 diff --git a/src/compute/float.rs b/src/compute/float.rs
-index 82d0bd0a..6643f071 100644
+index 82d0bd0a..6dbada01 100644
 --- a/src/compute/float.rs
 +++ b/src/compute/float.rs
 @@ -104,6 +104,9 @@ struct Segment {
@@ -3008,7 +3008,7 @@ index 82d0bd0a..6643f071 100644
  
          let start_idx = self
              .segments
-@@ -796,15 +893,20 @@ impl FloatContext {
+@@ -796,29 +893,49 @@ impl FloatContext {
                  let slot_height = lower_segments
                      .find(|seg| seg.is_narrower_than(&combined))
                      .map_or(f32::INFINITY, |seg| seg.y.start - y);
@@ -3029,9 +3029,43 @@ index 82d0bd0a..6643f071 100644
 +                let any_wide = has_wide_float[0] || has_wide_float[1];
 +                let has_lead_float = has_float[lead as usize] && any_wide;
 +                let has_trail_float = has_float[trail as usize] && any_wide;
++                // pyro: beside a float, a negative margin on a side with no float does not widen the
++                // space for the border box (it would prop it up into the float's way): the box is no
++                // wider than the space, and one that its negative margins make wider moves down
++                // (Chromium, measured; WPT CSS2 `floats-wrap-bfc-with-margin-001`, `-002`)
++                let beside_float = has_lead_float || has_trail_float;
                  let mut fit_insets = FloatInsets::ZERO;
                  let mut stretch_insets = FloatInsets::ZERO;
-                 fit_insets[lead] =
+-                fit_insets[lead] =
+-                    if has_lead_float { insets[lead].max(margin_insets[lead]) } else { margin_insets[lead] };
++                fit_insets[lead] = if has_lead_float {
++                    insets[lead].max(margin_insets[lead])
++                } else if beside_float {
++                    margin_insets[lead].max(containing_block_insets[lead])
++                } else {
++                    margin_insets[lead]
++                };
+                 stretch_insets[lead] = fit_insets[lead];
+-                fit_insets[trail] = if has_trail_float {
++                fit_insets[trail] = if has_trail_float || beside_float {
+                     insets[trail].max(containing_block_insets[trail])
+                 } else {
+                     // A positive trailing margin may overflow the containing block edge (it does
+                     // not affect fit), but a negative one widens the space for the border box
+                     margin_insets[trail].min(containing_block_insets[trail])
+                 };
+-                stretch_insets[trail] =
+-                    if has_trail_float { insets[trail].max(margin_insets[trail]) } else { margin_insets[trail] };
++                stretch_insets[trail] = if has_trail_float {
++                    insets[trail].max(margin_insets[trail])
++                } else if beside_float {
++                    margin_insets[trail].max(containing_block_insets[trail])
++                } else {
++                    margin_insets[trail]
++                };
+                 BfcSlot {
+                     segment_id: Some(start_idx),
+                     x: fit_insets.left,
 diff --git a/src/compute/grid/alignment.rs b/src/compute/grid/alignment.rs
 index b84e8751..c2ff3566 100644
 --- a/src/compute/grid/alignment.rs

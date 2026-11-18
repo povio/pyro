@@ -294,3 +294,22 @@ fn a_float_moves_with_the_relatively_positioned_inline_it_is_in() {
     let f = laid.rect(0);
     assert!(close(f[0], 100.0) && close(f[1], 0.0), "{f:?}");
 }
+
+/// Beside a float, a negative margin on the side away from it does not widen the space for a box that
+/// avoids floats: in the 16px left beside a 14px float, `margin-right: -16px` leaves the box 16px wide,
+/// and `margin-right: -17px` makes it too wide, so it moves below the float, 47px wide (Chromium; WPT
+/// CSS2 `floats-wrap-bfc-with-margin-001`, `-002`).
+#[test]
+fn negative_margin_away_from_a_float_does_not_widen_its_space() {
+    let laid = lay_out(
+        "<div style='width:30px'><div style='float:left;width:14px;height:8px'></div>\
+           <div id=a style='display:flow-root;height:5px;margin-right:-16px'></div></div>\
+         <div style='width:30px'><div style='float:left;width:14px;height:8px'></div>\
+           <div id=b style='display:flow-root;height:5px;margin-right:-17px'></div></div>",
+        &["a", "b"],
+    );
+    let [ax, ay, aw, _] = laid.rect(0);
+    assert!(close(ax, 14.0) && close(ay, 0.0) && close(aw, 16.0), "beside the float: {:?}", laid.rect(0));
+    let [bx, by, bw, _] = laid.rect(1);
+    assert!(close(bx, 0.0) && close(by, 13.0) && close(bw, 47.0), "below the float: {:?}", laid.rect(1));
+}

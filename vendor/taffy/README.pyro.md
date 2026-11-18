@@ -312,9 +312,12 @@ Upstream's float and block-formatting-context fixes since v0.15.1 (#1384, #1385,
   margins to apply as if there were none (WPT `zero-width-floats`); beside a float of some width a zero-width float
   absorbs its side's margin, as before (WPT `zero-width-floats-positioning.tentative`).
 
-Not done: the browsers' rule that an auto width's negative margins do not widen the band it must fit in (WPT
-`floats-wrap-bfc-with-margin-001`, which every browser passes) contradicts `floats-wrap-bfc-with-margin-006/007.tentative`
-(every browser fails them, pyro passed them), so the band still widens by them. Nor `max-height` separating a
+Beside a float, negative margins on a side with no float no longer widen the band (`find_bfc_slot`): the box is no
+wider than the band, and one that they make wider moves down (Chromium, measured; WPT `floats-wrap-bfc-with-margin-001`,
+`-001a`, `-002`, which every browser passes). This loses `floats-wrap-bfc-with-margin-006/007.tentative`, which assert the
+opposite and every browser fails (`crates/pyro-render/tests/floats.rs`).
+
+Not done: `max-height` separating a
 last child's bottom margin (WPT `max-height-separates-margin`, Chromium and Gecko): `margin-collapse-038` (Safari only,
 which pyro passes) expects the margins to collapse. Covered by `crates/pyro-render/tests/floats.rs`.
 
