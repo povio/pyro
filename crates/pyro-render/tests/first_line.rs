@@ -192,3 +192,16 @@ fn first_line_skips_an_inline_block_before() {
         "<div><span style='color:#f00'>abcd</span></div>",
     );
 }
+
+/// A `::first-letter` box inside the `::first-line` box (here of a `<q>`'s open quote, with
+/// `vertical-align` and `opacity` so that it is painted on its own) is reparented through the
+/// first-line box without a panic (WPT text-decoration-first-line-layer-crash): an anonymous
+/// box in another one originates from the outer box.
+#[test]
+fn first_letter_in_first_line_box_paints() {
+    let image = render(
+        "<style>.c{float:right;text-decoration:overline}.c::first-letter{vertical-align:super;opacity:.1}\
+         .c::first-line{text-decoration:overline}</style><q class=c>appxgrxebpwykansiejjsh</q>",
+    );
+    assert!(image.data.chunks(4).any(|p| p[..3] != [255, 255, 255]), "the text is painted");
+}

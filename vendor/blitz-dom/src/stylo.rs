@@ -712,11 +712,16 @@ impl selectors::Element for BlitzNode<'_> {
     }
 
     // pyro: a scroll pseudo-element's box originates from the element it names, not from its
-    // parent in the tree (a marker's is its group, `layout::scroll_markers`).
+    // parent in the tree (a marker's is its group, `layout::scroll_markers`). An anonymous box
+    // nested in another one (a `::first-letter` box inside a `::first-line` box) originates
+    // from the outer box, and so on up to an element (`ultimate_originating_element` walks it).
     fn pseudo_element_originating_element(&self) -> Option<Self> {
         match self.scroll_pseudo() {
             Some((_, origin)) => Some(self.with(origin)),
-            None => selectors::Element::parent_element(self),
+            None => match TNode::parent_node(self) {
+                Some(parent) if parent.is_pseudo_element() => Some(parent),
+                _ => selectors::Element::parent_element(self),
+            },
         }
     }
 
@@ -2260,6 +2265,17 @@ impl crate::BaseDocument {
         self.invalidate_relative_selectors(node, ElementSelectorFlags::empty(), DomMutationOperation::Remove);
     }
 
+    /// pyro: whether a style sheet of the document's origins or of a shadow tree has a relative
+    /// selector (`:has()`).
+    fn uses_relative_selectors(&self) -> bool {
+        let data = self.stylist.cascade_data();
+        use style::stylesheets::Origin;
+        [Origin::UserAgent, Origin::User, Origin::Author]
+            .into_iter()
+            .any(|origin| data.borrow_for_origin(origin).relative_invalidation_map_attributes().used)
+            || self.nodes.shadow_roots.values().any(|root| root.styles.data.relative_invalidation_map_attributes().used)
+    }
+
     fn invalidate_relative_selectors(
         &self,
         node: BlitzNode<'_>,
@@ -2281,6 +2297,12 @@ impl crate::BaseDocument {
         }
         // pyro: `:host:has()` (`crate::shadow`).
         self.invalidate_host_relative_selectors(node);
+        // pyro: without a relative selector in any style sheet there is nothing to invalidate.
+        // Asked per element, Stylo walks the styles of every shadow-including ancestor, which
+        // is quadratic in deeply nested shadow trees (WPT many-slots-crash: 1,000 levels).
+        if inherited.is_empty() && !self.uses_relative_selectors() {
+            return;
+        }
         let prev = node.prev_sibling_element();
         let next = node.next_sibling_element();
         invalidator(node, SiblingTraversalMap::default()).invalidate_relative_selectors_for_dom_mutation(

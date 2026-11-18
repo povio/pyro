@@ -344,3 +344,19 @@ fn define_upgrades_the_elements_of_shadow_trees() {
         "true:true"
     );
 }
+
+/// A `connectedCallback` that connects another element of its own kind nests without end in
+/// HTML (each insertion runs its reactions before it returns); it ends as on a browser's stack
+/// overflow, at a fixed depth, instead of running forever (WPT many-slots-crash).
+#[test]
+fn self_inserting_connected_callbacks_end() {
+    let e = env(PAGE);
+    let r = &e.main;
+    let calls = eval(
+        r,
+        "var calls = 0; customElements.define('x-rec', class extends HTMLElement { \
+           connectedCallback() { calls++; this.attachShadow({ mode: 'open' }).appendChild(document.createElement('x-rec')); } \
+         }); document.body.appendChild(document.createElement('x-rec')); calls",
+    );
+    assert_eq!(calls, "256");
+}

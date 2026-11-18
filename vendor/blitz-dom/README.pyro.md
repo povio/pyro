@@ -1254,6 +1254,9 @@ and a `content-box` local background reached the scrollport's edge at the end (W
   `first_letter::origin` passes anonymous blocks (whose anonymous style computes `display: inline`) and inlines split
   around blocks on to their container, so a first line or first letter in a block-in-inline's first piece is styled.
   The `::first-letter` and `::first-line` nodes load their background images (`pending_style_image_nodes`).
+  An anonymous box inside another one (a `::first-letter` box in a `::first-line` box) has the outer box as its
+  originating element (`pseudo_element_originating_element` in `src/stylo.rs`), so reparenting it reaches an element
+  instead of panicking in Stylo's `ultimate_originating_element` (WPT text-decoration-first-line-layer-crash).
 - `src/dom_selection.rs` (new), `src/document.rs`, `src/lib.rs`: the embedder's selection (`DomSelection`, text
   nodes and UTF-16 offsets; pyro-render sets pyro-webapi's for a screenshot) replaces blitz's own in
   `get_text_selection_ranges`: the text nodes from the start to the end in tree order, mapped through each inline

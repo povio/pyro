@@ -341,6 +341,12 @@ pub(crate) fn run_reactions(page: &Rc<PageDom>) {
         }
     }
     let _done = Done(page.id());
+    // HTML runs the reactions a callback's DOM calls queue nested in that
+    // callback ([CEReactions]); here they run after it, in the next batch, so
+    // the batch count is how deep they would nest. A callback that inserts an
+    // element whose callback inserts another nests without end; as in a
+    // browser it ends with a stack overflow, here at a fixed depth.
+    let mut depth = 0;
     loop {
         let batch = {
             let Ok(mut dom) = page.dom.try_borrow_mut() else { return };
@@ -349,19 +355,25 @@ pub(crate) fn run_reactions(page: &Rc<PageDom>) {
         if batch.is_empty() {
             return;
         }
+        let overflow = depth >= MAX_REACTION_NESTING;
+        depth += 1;
         for (el, reaction) in batch {
             if page.is_disposed() {
                 return;
             }
-            run_reaction(page, el, reaction);
+            run_reaction(page, el, reaction, overflow);
         }
     }
 }
 
+/// How deep reactions nest (see [`run_reactions`]) before a callback throws
+/// a `RangeError` instead of running, as on a browser's stack overflow.
+const MAX_REACTION_NESTING: usize = 256;
+
 /// Calls the callback of one reaction on `el`. A move without
 /// `connectedMoveCallback` calls `disconnectedCallback` and then
 /// `connectedCallback` (HTML "enqueue a custom element callback reaction").
-fn run_reaction(page: &Rc<PageDom>, el: NodeId, reaction: CustomReaction) {
+fn run_reaction(page: &Rc<PageDom>, el: NodeId, reaction: CustomReaction, overflow: bool) {
     let Some(name) = page.dom.borrow().element(el).ok().map(|e| e.local_name().clone()) else { return };
     // The definition of the element's name, in the realm that defined it.
     let realms: Vec<RealmId> =
@@ -412,6 +424,10 @@ fn run_reaction(page: &Rc<PageDom>, el: NodeId, reaction: CustomReaction) {
         };
         for callback in callbacks {
             let Some(f) = callback.as_object() else { continue };
+            if overflow {
+                s.report_exception(&JsError::Range("Maximum call stack size exceeded.".into()));
+                continue;
+            }
             if let Err(e) = f.call(Some(obj), &args) {
                 s.report_exception(&e);
             }
