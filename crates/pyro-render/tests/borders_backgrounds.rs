@@ -385,4 +385,9 @@ fn bevelled_border_sides_take_chrome_shades() {
         assert_near(at(40.0, 65.0), bottom_inner, &format!("box at {x},{y}: bottom, inner half"));
         assert_near(at(5.0, 40.0), top_outer, &format!("box at {x},{y}: left, outer half"));
     }
+    // A groove's corner joins its sides' halves on the diagonal, the background not showing
+    // through: Chrome's top-right outer corner pixel is the even mix of the dark top half and the
+    // light right half (it was mixed with the white page).
+    assert_near(pixel(&img, 1.0, 179.0, 100.0), [0, 128, 0], "groove top-right corner diagonal");
+    assert_near(pixel(&img, 1.0, 279.0, 100.0), [0, 0, 213], "ridge top-right corner diagonal");
 }

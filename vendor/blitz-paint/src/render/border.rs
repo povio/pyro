@@ -812,7 +812,10 @@ impl ElementCx<'_, '_> {
             (Edge::Bottom, &border.border_bottom_color, border.border_bottom_style),
             (Edge::Left, &border.border_left_color, border.border_left_style),
         ];
+        // (outer half, inner half) of each side: one colour but for `groove`/`ridge`.
         let mut colors = [None; 4];
+        let mut inner_colors = [None; 4];
+        let mut halves = false;
         for (i, (edge, color, style)) in sides.iter().enumerate() {
             if self.edge_width(*edge) <= 0.0 || style.none_or_hidden() {
                 continue;
@@ -821,22 +824,44 @@ impl ElementCx<'_, '_> {
             // pyro: `inset`/`outset` sides are solid in their shades (a text field's border:
             // the background no longer shows through the corner joins; WPT css-pseudo
             // `selection-input-011`).
-            let color = match style {
-                BorderStyle::Solid => color,
-                BorderStyle::Inset | BorderStyle::Outset => beveled_edge_color(color, *edge, *style == BorderStyle::Inset),
+            // pyro: and `groove`/`ridge` sides, each half ring painted so in its shades.
+            let (color, inner) = match style {
+                BorderStyle::Solid => (color, color),
+                BorderStyle::Inset | BorderStyle::Outset => {
+                    let shade = beveled_edge_color(color, *edge, *style == BorderStyle::Inset);
+                    (shade, shade)
+                }
+                BorderStyle::Groove | BorderStyle::Ridge => {
+                    halves = true;
+                    grooved_edge_colors(color, *edge, *style == BorderStyle::Ridge)
+                }
                 _ => return false,
             };
-            if color.components[3] < 1.0 {
+            if color.components[3] < 1.0 || inner.components[3] < 1.0 {
                 return false;
             }
             colors[i] = Some(color);
+            inner_colors[i] = Some(inner);
         }
-        let present: SmallVec<[Color; 4]> = colors.iter().flatten().copied().collect();
+        let present: SmallVec<[Color; 8]> = colors.iter().chain(inner_colors.iter()).flatten().copied().collect();
         if present.len() < 2 || present.iter().all(|c| *c == present[0]) {
             return false;
         }
-        let bb = self.frame.border_box;
-        let w = self.frame.border_width;
+        if !halves {
+            self.overdraw_square_sides(scene, self.frame.border_box, self.frame.border_width, colors);
+            return true;
+        }
+        let outer = self.frame.border_slice(0.0, 0.5);
+        let inner = self.frame.border_slice(0.5, 1.0);
+        self.overdraw_square_sides(scene, outer.border_box, outer.border_width, colors);
+        self.overdraw_square_sides(scene, inner.border_box, inner.border_width, inner_colors);
+        true
+    }
+
+    /// pyro: one ring of square border sides (`bb` its outer edge, `w` its widths) in `colors`
+    /// (top, right, bottom, left; `None` for a side without a line), by overdraw
+    /// (`draw_square_solid_sides_overdrawn`).
+    fn overdraw_square_sides(&self, scene: &mut impl PaintScene, bb: Rect, w: Insets, colors: [Option<Color>; 4]) {
         // Blink's side order for sides of one opacity and style (`kSidePriority`).
         const ORDER: [usize; 4] = [0, 2, 1, 3];
         let mut painted = [false; 4];
@@ -886,7 +911,6 @@ impl ElementCx<'_, '_> {
             scene.fill(Fill::NonZero, self.transform, color, None, &path);
             painted[i] = true;
         }
-        true
     }
 
     /// The border width (in device pixels) of a single edge.

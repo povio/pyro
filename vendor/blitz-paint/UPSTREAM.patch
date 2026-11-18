@@ -12897,12 +12897,10 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
  
                  // A double border is two solid lines separated by a gap, splitting
                  // the border width into three equal parts (outer line / gap / inner
-@@ -313,6 +702,20 @@
-                     borders.push((color, self.frame.border_edge_shape(edge)));
-                 }
+@@ -315,6 +704,20 @@
              }
-+        }
-+
+         }
+ 
 +        if has_marks {
 +            let side = |color: &style::values::computed::Color, style: BorderStyle, edge: Edge| {
 +                (!style.none_or_hidden() && self.edge_width(edge) > 0.0)
@@ -12915,10 +12913,12 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
 +                side(&border.border_left_color, border.border_left_style, Edge::Left),
 +            ];
 +            self.draw_dotted_dashed_sides(scene, &self.frame, sides);
-         }
- 
++        }
++
          if borders.is_empty() {
-@@ -341,6 +744,151 @@
+             return;
+         }
+@@ -341,6 +744,175 @@
          }
      }
  
@@ -12990,7 +12990,10 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
 +            (Edge::Bottom, &border.border_bottom_color, border.border_bottom_style),
 +            (Edge::Left, &border.border_left_color, border.border_left_style),
 +        ];
++        // (outer half, inner half) of each side: one colour but for `groove`/`ridge`.
 +        let mut colors = [None; 4];
++        let mut inner_colors = [None; 4];
++        let mut halves = false;
 +        for (i, (edge, color, style)) in sides.iter().enumerate() {
 +            if self.edge_width(*edge) <= 0.0 || style.none_or_hidden() {
 +                continue;
@@ -12999,22 +13002,44 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
 +            // pyro: `inset`/`outset` sides are solid in their shades (a text field's border:
 +            // the background no longer shows through the corner joins; WPT css-pseudo
 +            // `selection-input-011`).
-+            let color = match style {
-+                BorderStyle::Solid => color,
-+                BorderStyle::Inset | BorderStyle::Outset => beveled_edge_color(color, *edge, *style == BorderStyle::Inset),
++            // pyro: and `groove`/`ridge` sides, each half ring painted so in its shades.
++            let (color, inner) = match style {
++                BorderStyle::Solid => (color, color),
++                BorderStyle::Inset | BorderStyle::Outset => {
++                    let shade = beveled_edge_color(color, *edge, *style == BorderStyle::Inset);
++                    (shade, shade)
++                }
++                BorderStyle::Groove | BorderStyle::Ridge => {
++                    halves = true;
++                    grooved_edge_colors(color, *edge, *style == BorderStyle::Ridge)
++                }
 +                _ => return false,
 +            };
-+            if color.components[3] < 1.0 {
++            if color.components[3] < 1.0 || inner.components[3] < 1.0 {
 +                return false;
 +            }
 +            colors[i] = Some(color);
++            inner_colors[i] = Some(inner);
 +        }
-+        let present: SmallVec<[Color; 4]> = colors.iter().flatten().copied().collect();
++        let present: SmallVec<[Color; 8]> = colors.iter().chain(inner_colors.iter()).flatten().copied().collect();
 +        if present.len() < 2 || present.iter().all(|c| *c == present[0]) {
 +            return false;
 +        }
-+        let bb = self.frame.border_box;
-+        let w = self.frame.border_width;
++        if !halves {
++            self.overdraw_square_sides(scene, self.frame.border_box, self.frame.border_width, colors);
++            return true;
++        }
++        let outer = self.frame.border_slice(0.0, 0.5);
++        let inner = self.frame.border_slice(0.5, 1.0);
++        self.overdraw_square_sides(scene, outer.border_box, outer.border_width, colors);
++        self.overdraw_square_sides(scene, inner.border_box, inner.border_width, inner_colors);
++        true
++    }
++
++    /// pyro: one ring of square border sides (`bb` its outer edge, `w` its widths) in `colors`
++    /// (top, right, bottom, left; `None` for a side without a line), by overdraw
++    /// (`draw_square_solid_sides_overdrawn`).
++    fn overdraw_square_sides(&self, scene: &mut impl PaintScene, bb: Rect, w: Insets, colors: [Option<Color>; 4]) {
 +        // Blink's side order for sides of one opacity and style (`kSidePriority`).
 +        const ORDER: [usize; 4] = [0, 2, 1, 3];
 +        let mut painted = [false; 4];
@@ -13064,13 +13089,12 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
 +            scene.fill(Fill::NonZero, self.transform, color, None, &path);
 +            painted[i] = true;
 +        }
-+        true
 +    }
 +
      /// The border width (in device pixels) of a single edge.
      fn edge_width(&self, edge: Edge) -> f64 {
          match edge {
-@@ -351,163 +899,152 @@
+@@ -351,163 +923,152 @@
          }
      }
  
@@ -13368,7 +13392,7 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
      }
  
      pub(crate) fn draw_table_borders(&self, scene: &mut impl PaintScene) {
-@@ -522,6 +1059,10 @@
+@@ -522,6 +1083,10 @@
          let Some(grid_info) = &mut *table.computed_grid_info.borrow_mut() else {
              return;
          };
@@ -13379,7 +13403,7 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
          let Some(border_style) = table.border_style.as_deref() else {
              return;
          };
-@@ -531,35 +1072,57 @@
+@@ -531,35 +1096,57 @@
          let cols = PhysicalTracks::from_tracks(&grid_info.columns);
          let rows = PhysicalTracks::from_tracks(&grid_info.rows);
  
@@ -13453,7 +13477,7 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
          };
  
          // Horizontal borders: the outer edges, then the gutters between adjacent row tracks.
-@@ -571,12 +1134,12 @@
+@@ -571,12 +1158,12 @@
              fill(left, bottom - border_width.height, right, bottom);
          }
          for (prev, next) in rows.iter().zip(rows.iter().skip(1)) {
@@ -13468,7 +13492,7 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
              if outer_border_style.border_left_style != BorderStyle::Hidden {
                  fill(left, y0, left + border_width.width, y1);
              }
-@@ -589,8 +1152,157 @@
+@@ -589,8 +1176,157 @@
          }
      }
  
@@ -13628,7 +13652,7 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
      /// ✅ solid - Defines a solid border
      /// ❌ double - Defines a double border
      /// ❌ groove - Defines a 3D grooved border. The effect depends on the border-color value
-@@ -600,33 +1312,92 @@
+@@ -600,33 +1336,92 @@
      /// ✅ none - Defines no border
      /// ✅ hidden - Defines a hidden border
      pub(crate) fn draw_outline(&self, scene: &mut impl PaintScene) {
