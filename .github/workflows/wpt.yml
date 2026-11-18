@@ -201,25 +201,33 @@ jobs:
       # their own entries would evict it from the repository's cache budget.
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: wpt-release-fast
+          shared-key: wpt-wptiter
           # Its post step deletes binaries it does not know from ~/.cargo/bin, rustup among them, which
           # broke the Rust install of the self-hosted runner (lp-m1).
           cache-bin: false
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-      # release-fast: the release profile with pyro-cdp and pyro-dom split into more codegen units (Cargo.toml), so the
-      # end of the build is not one core's work.
+          # Also the integration pull requests (integration/*), whose runs rebuild most often.
+          save-if: ${{ github.ref == 'refs/heads/main' || startsWith(github.head_ref, 'integration/') }}
+      # wptiter: release-fast (Cargo.toml) without LTO and with 16 codegen units, defined here so Cargo.toml and the
+      # release workflows keep their profiles. Same reftest results as release-fast (2026-11-18, at 1363c0eb9: the 792
+      # css-backgrounds and compositing reftests, 774 pass and 18 fail with either binary) and a much faster build,
+      # since every workspace and vendored crate rebuilds each run.
       - name: Build the browser against the patched JavaScriptCore
+        env:
+          CARGO_PROFILE_WPTITER_INHERITS: release-fast
+          CARGO_PROFILE_WPTITER_LTO: 'false'
+          CARGO_PROFILE_WPTITER_CODEGEN_UNITS: '16'
+          CARGO_PROFILE_WPTITER_INCREMENTAL: 'false'
         run: |
           export PYRO_JSC_DIR="$HOME/Library/Caches/pyro/jsc/$JSC_DIR"
           if [ -d patched-jsc ]; then
             mkdir -p "$(dirname "$PYRO_JSC_DIR")"
             mv patched-jsc "$PYRO_JSC_DIR"
           fi
-          cargo +stable build --locked --profile release-fast --package pyro
+          cargo +stable build --locked --profile wptiter --package pyro
       - name: Stage and check the browser
         run: |
           mkdir browser
-          cp target/release-fast/pyro browser/
+          cp target/wptiter/pyro browser/
           # The patched JavaScriptCore is inside the browser (a static archive): no library of that name is loaded.
           if otool -L browser/pyro | grep -F JavaScriptCore; then exit 1; fi
           codesign --verify --strict browser/pyro
