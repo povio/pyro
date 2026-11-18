@@ -562,7 +562,10 @@ Column-only subgrids (css-grid-2 §9 standalone axis): a subgrid in its columns 
 (`SubgridContext::own_rows`, `subgrid::record_own_rows`); before sizing its columns the parent lays out its
 column-only subgrid children at their definite (else max-content) height and gives their items the rows they span
 (`resolve_standalone_heights`, `GridItem::standalone_size.height`), so an orthogonal item's width follows its row
-(WPT `subgrid/standalone-axis-size-010`). Nested ones still see the rows of their last measure.
+(WPT `subgrid/standalone-axis-size-010`). A subgrid stretched over rows of fixed sizes is measured at their height,
+so a nested one sizes its own rows in what it gets (`-011`); an item whose subgrid takes its rows from one with rows of
+its own reads them from what that one gave it (`SubgridAxisContext::track_spans`, `-012`). Deeper chains (`-013`)
+still see the rows of their last measure. `crates/pyro-render/tests/subgrid_edge_tracks.rs`.
 
 
 **Flex content sizes (lane FO).** A block's content size (`SizingMode::ContentSize`) ignores its own `min-width`,

@@ -74,3 +74,20 @@ fn subgrid_percentage_gap_resolves_against_its_final_size() {
     assert_eq!(pixel(&img, 5, 22), WHITE, "half the gap before the second item");
     assert_eq!(pixel(&img, 5, 25), BLUE);
 }
+
+/// An item of a nested subgrid is measured against the rows of the subgrid that has rows of its own
+/// (four 1fr rows in a 100px row, 25px each): its vertical text "X X X X" wraps into four 25px columns,
+/// so the min-content grid is 100px wide (WPT css-grid `subgrid/standalone-axis-size-011`).
+#[test]
+fn nested_subgrid_item_is_measured_against_its_standalone_rows() {
+    let img = render(
+        "<div style='display:grid;width:min-content;height:100px;background:blue;font:25px/1 monospace;color:transparent'>\
+           <div style='display:grid;grid-template-columns:subgrid;grid-template-rows:100px'>\
+             <div style='display:grid;grid-template-columns:subgrid;grid-template-rows:repeat(4,1fr)'>\
+               <div style='writing-mode:vertical-lr;line-height:25px'>X X X X</div>\
+             </div>\
+           </div>\
+         </div>",
+    );
+    assert_eq!(pixel(&img, 60, 50), BLUE, "the grid is wider than one 25px column");
+}

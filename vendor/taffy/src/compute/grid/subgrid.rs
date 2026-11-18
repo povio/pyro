@@ -775,15 +775,45 @@ pub(super) fn resolve_standalone_heights<Tree: LayoutGridContainer>(
     tree: &mut Tree,
     items: &mut [GridItem],
     own_item_count: usize,
+    rows: &[GridTrack],
 ) {
     if !items[own_item_count..].iter().any(|item| item.excluded.height && item.subgrid_owner.is_some()) {
         return;
     }
     // The subgrid children in their columns only: laid out, each sizes its own rows and those of the subgrids
     // nested in it (`record_own_rows`)
-    let owners: Vec<NodeId> =
-        items[..own_item_count].iter().filter(|item| item.subgrid.width && !item.subgrid.height).map(|item| item.node).collect();
-    for owner in owners {
+    // pyro: an owner stretched over rows of fixed sizes is laid out at their height (css-grid-2 §9: its own rows are
+    // sized at the height it gets), not at its max-content height (WPT css-grid `subgrid/standalone-axis-size-011`)
+    let fixed_rows_height = |item: &GridItem| -> Option<f32> {
+        if !matches!(item.align_self.keyword, crate::AlignItemsKeyword::Stretch | crate::AlignItemsKeyword::Normal) {
+            return None;
+        }
+        let (start, end) = (item.row_indexes.start as usize + 1, item.row_indexes.end as usize);
+        if start >= end || end > rows.len() {
+            return None;
+        }
+        let calc = |val, basis| tree.calc(val, basis);
+        let mut sum = 0.0;
+        for track in &rows[start..end] {
+            let min = track.min_track_sizing_function.definite_value(None, calc)?;
+            let max = track.max_track_sizing_function.definite_value(None, calc)?;
+            if (min - max).abs() > f32::EPSILON {
+                return None;
+            }
+            sum += min;
+        }
+        let margin = item.margin.map(|margin| margin.resolve_to_option(0.0, calc));
+        if margin.top.is_none() || margin.bottom.is_none() {
+            return None;
+        }
+        Some((sum - margin.top.unwrap_or(0.0) - margin.bottom.unwrap_or(0.0)).max(0.0))
+    };
+    let owners: Vec<(NodeId, Option<f32>)> = items[..own_item_count]
+        .iter()
+        .filter(|item| item.subgrid.width && !item.subgrid.height)
+        .map(|item| (item.node, fixed_rows_height(item)))
+        .collect();
+    for (owner, stretched_height) in owners {
         let style = tree.get_grid_child_style(owner);
         // (an orthogonal subgrid's own columns are this grid's rows: not handled)
         if style.subgrid_axis(AbsoluteAxis::Vertical) != AbsoluteAxis::Vertical {
@@ -800,6 +830,7 @@ pub(super) fn resolve_standalone_heights<Tree: LayoutGridContainer>(
             }
         });
         drop(style);
+        let height = height.or(stretched_height);
         tree.measure_child_size(
             owner,
             Size { width: None, height },
@@ -818,8 +849,17 @@ pub(super) fn resolve_standalone_heights<Tree: LayoutGridContainer>(
         if tree.get_grid_child_style(owner).subgrid_axis(AbsoluteAxis::Vertical) != AbsoluteAxis::Vertical {
             continue;
         }
-        if let Some(own) = tree.subgrid_context(owner).and_then(|context| context.own_rows) {
+        let Some(context) = tree.subgrid_context(owner) else { continue };
+        if let Some(own) = context.own_rows {
             item.standalone_size.height = own.area(item.owner_lines.height);
+        } else if let Some(spans) = context.rows.as_ref().and_then(|rows| rows.track_spans.as_ref()) {
+            // pyro: an owner whose rows are subgridded from a subgrid with rows of its own (`subgrid/
+            // standalone-axis-size-012`): the rows that one gave it when it was laid out
+            let lines = item.owner_lines.height;
+            let (start, end) = (lines.start.0.max(0) as usize, lines.end.0.max(0) as usize);
+            if start < end && end <= spans.len() {
+                item.standalone_size.height = Some((spans[end - 1].1 - spans[start].0).max(0.0));
+            }
         }
     }
 }
