@@ -1654,6 +1654,11 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         clip_rect: Rect,
     ) {
         let node = &self.dom.as_ref().tree()[node_id];
+        // pyro: a positioned inline box's entry in the paint tree (`NodeFlags::INLINE_PASS_ENTRY`):
+        // its inline root paints its content, after its own in-flow content.
+        if node.flags.contains(blitz_dom::node::NodeFlags::INLINE_PASS_ENTRY) {
+            return;
+        }
 
         match &node.data {
             // pyro: once per tree level; a tree of any depth paints on a stack grown on

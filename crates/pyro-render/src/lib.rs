@@ -3568,6 +3568,39 @@ mod settle_resolution_tests {
         assert!(renderer.mirrors.get_mut(&1).unwrap().doc.paint_tree_matches_fresh_build());
     }
 
+    /// A positioned inline box that is not atomic is listed in the paint tree as a positioned entry,
+    /// in tree order with the positioned boxes around it (blitz-dom `positioned_inline_spans`), and
+    /// the tree rebuilt after it stops and starts being positioned equals a fresh build.
+    #[test]
+    fn positioned_inline_spans_are_paint_tree_entries_in_tree_order() {
+        let (snap, _) = fixture(
+            "<!doctype html><style>body{margin:0}</style><div id=root style='position:relative'>\
+             <span id=before style='position:absolute'>a</span>\
+             text <span id=box style='position:relative'>b</span> more\
+             <span id=after style='position:absolute'>c</span></div>",
+        );
+        let fetcher: Arc<dyn Fetcher> = Arc::new(NoFetch);
+        let mut renderer = Renderer::new();
+        renderer.sync_layout(&snap, &fetcher).unwrap();
+        let ids: Vec<_> = ["root", "before", "box", "after"].iter().map(|id| blitz_by_id(&renderer, 1, id)).collect();
+        let order = |renderer: &mut Renderer| {
+            let doc = &mut renderer.mirrors.get_mut(&1).unwrap().doc;
+            doc.ensure_paint_tree();
+            assert!(doc.paint_tree_matches_fresh_build());
+            let children = doc.get_node(ids[0]).unwrap().paint_children.borrow().clone().unwrap_or_default();
+            ids[1..].iter().filter_map(|id| children.iter().position(|child| child == id)).collect::<Vec<_>>()
+        };
+        let listed = order(&mut renderer);
+        assert_eq!(listed.len(), 3, "the span is listed with the positioned boxes");
+        assert!(listed[0] < listed[1] && listed[1] < listed[2], "in tree order: {listed:?}");
+        set_style(&mut renderer, 1, ids[2], "");
+        resolve(&mut renderer, 1);
+        assert_eq!(order(&mut renderer).len(), 2, "a static span is not listed");
+        set_style(&mut renderer, 1, ids[2], "position:sticky");
+        resolve(&mut renderer, 1);
+        assert_eq!(order(&mut renderer).len(), 3, "a sticky span is listed again");
+    }
+
     /// Floats are lifted out of the blocks that paint in their painter's phases (blitz-dom
     /// `Node::paints_in_ancestor_phases`): the paint tree rebuilt after changes to those blocks
     /// (one becomes a layer root, a flex container, the float stops floating) equals a fresh build.

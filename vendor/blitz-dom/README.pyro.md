@@ -2667,3 +2667,11 @@ Round 4 lane G:
   only a float and collapsed white space gave an inline-block the bottom of its first line as baseline (WPT
   css-flexbox `flexbox-baseline-multi-line-vert-001/-002`). `crates/pyro-render/tests/phantom_last_line_baseline.rs`.
 - Round 4 lane F, `node/svg_css.rs`: unused `paint_value` removed (selection fill/stroke read from declarations).
+- Round 4 lane G, positioned inline boxes in the paint tree (`layout/paint_tree.rs` `positioned_inline_spans`,
+  `push_inline_span_entry`, `NodeFlags::INLINE_PASS_ENTRY`): each relative or sticky inline box that is not atomic, whose
+  content an inline root lays out, is listed as a positioned entry (z-sorted with a `z-index`, otherwise at the
+  nearest layer root's positioned level) in tree order with the positioned boxes around it (not a split inline, whose
+  own box paints itself), as CSS 2.1 Appendix E
+  step 8 paints them. Step 1 of 2: the entries paint nothing yet (blitz-paint skips them; the inline root still paints
+  their content after its in-flow content) and hit testing passes over them. `crates/pyro-render/src/lib.rs`
+  `positioned_inline_spans_are_paint_tree_entries_in_tree_order`.

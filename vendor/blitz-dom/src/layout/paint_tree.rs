@@ -561,7 +561,17 @@ impl BaseDocument {
             };
             let keyed_base = self.scratch.keyed_children.len();
 
+            // pyro: the positioned inline boxes of this inline root, each before the layout child it
+            // precedes in tree order (`positioned_inline_spans`).
+            let inline_spans = self.positioned_inline_spans(node_id, &children);
+            let mut next_inline_span = 0;
             for (index, &child_id) in children.iter().enumerate() {
+                while let Some(&(anchor, span_id)) = inline_spans.get(next_inline_span)
+                    && anchor == index
+                {
+                    self.push_inline_span_entry(span_id, is_layer_root, &mut entries);
+                    next_inline_span += 1;
+                }
                 // pyro: where this child's group starts in both lists (see `place_hoisted`).
                 let keyed_group = self.scratch.keyed_children.len();
                 let entries_group = entries.len();
@@ -660,6 +670,9 @@ impl BaseDocument {
                     next_hoisted += 1;
                 }
             }
+            for &(_, span_id) in &inline_spans[next_inline_span..] {
+                self.push_inline_span_entry(span_id, is_layer_root, &mut entries);
+            }
             for &(_, hoisted_id) in &hoisted_past_parent[next_hoisted..] {
                 self.attach_hoisted_past_parent(
                     hoisted_id,
@@ -714,6 +727,70 @@ impl BaseDocument {
     /// one (CSS Positioned Layout 4 §4), so its z-indexed and fixed
     /// descendants stay in its subtree and paint with it above the document.
     #[inline]
+    /// pyro: the positioned (relative or sticky) inline boxes that are not atomic whose content the
+    /// inline root `root_id` lays out (those `inline_span_positioned_chain` finds for its glyph runs,
+    /// as the root's paint passes do), in tree order, each with the index of the first of the root's
+    /// layout `children` that follows it in tree order. Flags them `INLINE_PASS_ENTRY`, and clears the
+    /// flag of the other inline boxes there.
+    fn positioned_inline_spans(&mut self, root_id: NodeId, children: &[NodeId]) -> Vec<(usize, NodeId)> {
+        let root = &self.nodes[root_id];
+        let Some(layout) = root.element_data().and_then(|element| element.inline_layout_data.as_deref()) else {
+            return Vec::new();
+        };
+        if !layout.relative_spans {
+            return Vec::new();
+        }
+        let mut positioned: Vec<NodeId> = Vec::new();
+        for line in layout.layout.lines() {
+            for item in line.items() {
+                if let parley::PositionedLayoutItem::GlyphRun(run) = item {
+                    for id in self.inline_span_positioned_chain(run.style().brush.id, root_id) {
+                        if !positioned.contains(&id) {
+                            positioned.push(id);
+                        }
+                    }
+                }
+            }
+        }
+        // The spans of an anonymous inline root are descendants of its parent.
+        let root = &self.nodes[root_id];
+        let start = if root.is_anonymous() { root.parent.unwrap_or(root_id) } else { root_id };
+        let child_index: std::collections::HashMap<NodeId, usize> =
+            children.iter().enumerate().map(|(index, &id)| (id, index)).collect();
+        let mut out = Vec::with_capacity(positioned.len());
+        let mut anchor = 0;
+        let mut stack: Vec<NodeId> = self.nodes[start].children.iter().rev().copied().collect();
+        while let Some(id) = stack.pop() {
+            if let Some(&index) = child_index.get(&id) {
+                // A layout child (an atomic inline, an out-of-flow box): the spans after it come after it.
+                anchor = index + 1;
+                continue;
+            }
+            let node = &mut self.nodes[id];
+            // (A split inline has a box of its own, which paints itself: `NodeFlags::IS_SPLIT_INLINE`.)
+            if positioned.contains(&id) && !node.flags.contains(NodeFlags::IS_SPLIT_INLINE) {
+                node.flags.insert(NodeFlags::INLINE_PASS_ENTRY);
+                out.push((anchor, id));
+            } else {
+                node.flags.remove(NodeFlags::INLINE_PASS_ENTRY);
+            }
+            stack.extend(self.nodes[id].children.iter().rev().copied());
+        }
+        out
+    }
+
+    /// pyro: lists the positioned inline box `span_id` (`positioned_inline_spans`) as a positioned
+    /// child would be: in its stacking context's z-sorted list with a `z-index`, otherwise at the
+    /// positioned level of the nearest layer root, in tree order.
+    fn push_inline_span_entry(&mut self, span_id: NodeId, is_layer_root: bool, entries: &mut ThinVec<HoistedPaintChild>) {
+        let z_index = self.nodes[span_id].z_index();
+        if z_index != 0 || !is_layer_root {
+            entries.push(HoistedPaintChild::new(span_id, z_index));
+        } else {
+            self.scratch.keyed_children.push(((2, 0), span_id));
+        }
+    }
+
     fn is_paint_stacking_context_root(&self, id: NodeId, is_flex_or_grid_item: bool) -> bool {
         self.nodes[id].is_stacking_context_root(is_flex_or_grid_item) || self.is_in_top_layer(id)
     }

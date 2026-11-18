@@ -168,6 +168,11 @@ bitflags! {
         /// pseudo-element boxes beside those boxes already (`scroll_markers`), in this block or
         /// beside it: its own construction and inline layout do not place them again.
         const WRAPS_BOX_RUN = 1 << 28;
+        /// pyro: a positioned (relative or sticky) inline box that is not atomic, listed in the paint
+        /// tree as a positioned entry of its own (`BaseDocument::positioned_inline_spans`): its content
+        /// paints there, in tree order with the other positioned boxes (CSS 2.1 Appendix E step 8).
+        /// Hit testing passes over it (its inline root hit-tests its text).
+        const INLINE_PASS_ENTRY = 1 << 29;
     }
 }
 
@@ -2461,6 +2466,12 @@ impl Node {
     ) -> Option<HitResult> {
         use style::computed_values::pointer_events::T as PointerEvents;
         use style::computed_values::visibility::T as Visibility;
+
+        // pyro: a positioned inline box listed in the paint tree for its paint order alone: its
+        // inline root hit-tests its text (`NodeFlags::INLINE_PASS_ENTRY`).
+        if self.flags.contains(NodeFlags::INLINE_PASS_ENTRY) {
+            return None;
+        }
 
         // Don't hit on visbility:hidden elements
         if let Some(style) = self.primary_styles() {

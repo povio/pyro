@@ -6036,7 +6036,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              |scene| {
                  // If the element has a CSS `mask`, then push an isolation layer for the
                  // masked content. The mask is applied when the layer is popped below.
-@@ -608,630 +1271,3287 @@
+@@ -608,630 +1271,3292 @@
                  // Save it so that the mask can be drawn untransformed by scroll offsets.
                  let unscrolled_transform = cx.transform;
  
@@ -6799,6 +6799,11 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +        clip_rect: Rect,
 +    ) {
 +        let node = &self.dom.as_ref().tree()[node_id];
++        // pyro: a positioned inline box's entry in the paint tree (`NodeFlags::INLINE_PASS_ENTRY`):
++        // its inline root paints its content, after its own in-flow content.
++        if node.flags.contains(blitz_dom::node::NodeFlags::INLINE_PASS_ENTRY) {
++            return;
++        }
 +
 +        match &node.data {
 +            // pyro: once per tree level; a tree of any depth paints on a stack grown on
@@ -9890,7 +9895,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          let svg_size = svg.tree.size();
  
          let x = self.frame.content_box.origin().x;
-@@ -1253,9 +4573,20 @@
+@@ -1253,9 +4578,20 @@
  
          // Apply object-fit algorithm
          let container_size = taffy::Size { width, height };
@@ -9914,7 +9919,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          };
          let paint_size = compute_object_fit(container_size, Some(object_size), object_fit);
  
-@@ -1266,26 +4597,192 @@
+@@ -1266,26 +4602,192 @@
          let y_offset = object_position.vertical.resolve(
              CSSPixelLength::new(container_size.height - paint_size.height) / self.scale as f32,
          ) * self.scale as f32;
@@ -10109,7 +10114,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
      fn with_replaced_content_clip<S: PaintScene>(
          &self,
          scene: &mut S,
-@@ -1293,15 +4790,27 @@
+@@ -1293,15 +4795,27 @@
          paint_size: taffy::Size<f32>,
          x_offset: f32,
          y_offset: f32,
@@ -10138,7 +10143,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              BlendMode::default(),
              1.0,
              self.transform,
-@@ -1312,6 +4821,47 @@
+@@ -1312,6 +4826,47 @@
          );
      }
  
@@ -10186,7 +10191,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
      fn draw_image(&self, scene: &mut impl PaintScene) {
          if let Some(image) = self.element.raster_image_data() {
              let width = self.frame.content_box.width() as u32;
-@@ -1329,9 +4879,22 @@
+@@ -1329,9 +4884,22 @@
                  width: width as f32,
                  height: height as f32,
              };
@@ -10212,7 +10217,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              };
              let paint_size = compute_object_fit(container_size, Some(object_size), object_fit);
  
-@@ -1347,10 +4910,28 @@
+@@ -1347,10 +4915,28 @@
  
              let x_scale = paint_size.width as f64 / object_size.width as f64;
              let y_scale = paint_size.height as f64 / object_size.height as f64;
@@ -10241,7 +10246,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
  
              self.with_replaced_content_clip(
                  scene,
-@@ -1358,8 +4939,23 @@
+@@ -1358,8 +4944,23 @@
                  paint_size,
                  x_offset.px(),
                  y_offset.px(),
@@ -10266,7 +10271,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
                  },
              );
          }
-@@ -1383,22 +4979,27 @@
+@@ -1383,22 +4984,27 @@
              let width = self.frame.content_box.width() as u32;
              let height = self.frame.content_box.height() as u32;
  
@@ -10303,7 +10308,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          }
      }
  
-@@ -1427,6 +5028,14 @@
+@@ -1427,6 +5033,14 @@
      }
  }
  
@@ -10318,7 +10323,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
  fn insets_from_taffy_rect(input: taffy::Rect<f64>) -> Insets {
      Insets {
          x0: input.left,
-@@ -1438,6 +5047,13 @@
+@@ -1438,6 +5052,13 @@
  
  /// Convert Stylo and Taffy types into Kurbo types
  fn create_css_rect(style: &ComputedValues, layout: &Layout, scale: f64) -> CssBox {
@@ -10332,7 +10337,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
      // Resolve and rescale
      // We have to scale since document pixels are not same same as rendered pixels
      let width: f64 = layout.size.width as f64;
-@@ -1457,12 +5073,188 @@
+@@ -1457,12 +5078,188 @@
          }
      };
      let s_border = style.get_border();
