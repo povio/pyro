@@ -124,12 +124,26 @@ pub(crate) fn scan_text(text: &str) -> TextScan {
         while chars.next_if(|&(_, c)| extends_letter(c)).is_some() {}
         while chars.next_if(|&(_, c)| is_typographic_space(c)).is_some() {}
     }
-    match chars.next() {
+    let letter = match chars.next() {
         None => return TextScan::Letter(start..text.len()),
         Some((_, c)) if c.is_whitespace() => return TextScan::Skip,
-        Some(_) => {}
+        Some((_, c)) => c,
+    };
+    // pyro: the letter is one grapheme: a pair of regional indicators is one flag, and an emoji
+    // ZWJ sequence goes on after each joiner (WPT selectors `first-letter-flag-001`).
+    let regional = |c: char| ('\u{1F1E6}'..='\u{1F1FF}').contains(&c);
+    if regional(letter) {
+        chars.next_if(|&(_, c)| regional(c));
     }
-    while chars.next_if(|&(_, c)| extends_letter(c)).is_some() {}
+    loop {
+        let mut joined = false;
+        while let Some((_, c)) = chars.next_if(|&(_, c)| extends_letter(c)) {
+            joined = c == '\u{200D}';
+        }
+        if !(joined && chars.next_if(|&(_, c)| !c.is_whitespace()).is_some()) {
+            break;
+        }
+    }
     // pyro: punctuation after the letter, except opening punctuation and dashes; a typographic
     // space that is not a word separator bridges to more of it, but is not taken alone.
     loop {
@@ -237,6 +251,12 @@ pub(super) fn is_first_in_flow_child(doc: &BaseDocument, parent: NodeId, child: 
             let node = &doc.nodes[id];
             node.display_style().is_none_or(|display| display != Display::None)
                 && !node.primary_styles().is_some_and(|style| is_out_of_flow(&style))
+                // pyro: nor the anonymous block holding only an item's inside marker
+                // (`construct::place_inside_marker`): markers are no first letter (WPT css-pseudo
+                // `first-letter-exclude-block-child-marker`).
+                && !(node.is_anonymous()
+                    && node.children.is_empty()
+                    && node.element_data().is_some_and(|element| element.list_item_data.is_some()))
         })
     });
     first == Some(child)
@@ -269,6 +289,20 @@ fn find_letter(doc: &BaseDocument, root: NodeId) -> Option<(NodeId, std::ops::Ra
                 Some(Found::Stop)
             }
             NodeData::Text(data) => match scan_text(&data.content) {
+                // pyro: preserved white space before the letter is part of it (Blink's
+                // `FirstLetterLength`: "leading white-space is always included"; WPT css-inline
+                // `initial-letter-with-tab`).
+                TextScan::Letter(range)
+                    if node.parent.and_then(|parent| doc.nodes[parent].primary_styles()).is_some_and(|style| {
+                        use style::computed_values::white_space_collapse::T as Collapse;
+                        matches!(
+                            style.get_inherited_text().white_space_collapse,
+                            Collapse::Preserve | Collapse::BreakSpaces
+                        )
+                    }) =>
+                {
+                    Some(Found::Letter(node_id, 0..range.end))
+                }
                 TextScan::Letter(range) => Some(Found::Letter(node_id, range)),
                 TextScan::Stop => Some(Found::Stop),
                 TextScan::Empty | TextScan::Skip => None,
@@ -319,16 +353,28 @@ fn find_letter(doc: &BaseDocument, root: NodeId) -> Option<(NodeId, std::ops::Ra
 
 /// The first letter the inline root `root` styles when it builds its inline layout, creating or
 /// updating the node with its style. `None` when its first line has no `::first-letter`.
-pub(crate) fn split(doc: &mut BaseDocument, root: NodeId) -> Option<FirstLetterSplit> {
+pub(crate) fn split(doc: &mut BaseDocument, root: NodeId, first_line: Option<NodeId>) -> Option<FirstLetterSplit> {
     let (origin_id, eager) = origin(doc, root, &PseudoElement::FirstLetter)?;
     let (text, range) = find_letter(doc, root)?;
     let text_parent = doc.nodes[text].parent?;
-    let style = if text_parent == origin_id {
+    // pyro: on a line that `::first-line` styles, the letter inherits from the first-line box
+    // (CSS Pseudo 4 § 2.4; WPT css-inline `initial-letter-with-first-line`).
+    let first_line_parent = first_line.and_then(|first_line| {
+        if text_parent == root || text_parent == doc.first_line_parent(root) {
+            doc.nodes.get(first_line)?.primary_styles().map(|style| (*style).clone())
+        } else {
+            doc.first_line_style(root, first_line, text_parent, &mut Vec::new())
+        }
+    });
+    let style = if text_parent == origin_id && first_line_parent.is_none() {
         eager
     } else {
         // Inherit from the element holding the letter: the rules the cascade matched for the
         // originating element, cascaded again with that parent.
-        let parent_style: Arc<ComputedValues> = (*doc.nodes[text_parent].primary_styles()?).clone();
+        let parent_style: Arc<ComputedValues> = match first_line_parent {
+            Some(style) => style,
+            None => (*doc.nodes[text_parent].primary_styles()?).clone(),
+        };
         let read_guard = doc.guard.read();
         let guards = StylesheetGuards::same(&read_guard);
         doc.stylist.compute_pseudo_element_style_with_inputs(
@@ -683,6 +729,12 @@ mod tests {
         // A no-break or em space is content before the letter.
         assert_eq!(scan_text("\u{A0}A"), TextScan::Stop);
         assert_eq!(scan_text(" \u{2003}"), TextScan::Stop);
+    }
+
+    #[test]
+    fn a_flag_or_a_zwj_sequence_is_one_letter() {
+        assert_eq!(scan_text("\u{1F1EC}\u{1F1E7} UK"), TextScan::Letter(0..8));
+        assert_eq!(scan_text("\u{1F469}\u{200D}\u{1F4BB}x"), TextScan::Letter(0..11));
     }
 
     #[test]

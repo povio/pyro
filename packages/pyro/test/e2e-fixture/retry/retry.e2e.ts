@@ -34,3 +34,10 @@ test('a failure screenshots its page', async () => {
   await page.run([evaluate('document.body.innerHTML = "<h1 style=\\"color:red\\">failed here</h1>"')]);
   throw new Error('fails with a page open');
 });
+
+test('a failure screenshots the page it disposed', async () => {
+  // `await using` closes the page while the error propagates: the screenshot must still see it.
+  await using page = await (await browser()).page();
+  await page.run([evaluate('document.body.innerHTML = "<h1>disposed here</h1>"')]);
+  throw new Error('fails with an await using page');
+});

@@ -740,7 +740,13 @@ fn resolve_intrinsic_track_sizes<Tree: LayoutPartialTree>(
                     // a definite size still spreads over `0fr` tracks in full. This is what lets a `0fr`
                     // track holding a `min-height: 0` item collapse to zero, which the
                     // `grid-template-rows: 0fr` to `1fr` collapse animation pattern relies on.
-                    if is_flex {
+                    // pyro: an item spanning several tracks, a flexible one among them, has no automatic
+                    // minimum (css-grid-1 §6.6), and Blink gives the flexible tracks only its minimum
+                    // contribution under a min-/max-content constraint too (WPT css-grid
+                    // `grid-flex-spanning-items-001`)
+                    if is_flex && item.span(axis) > 1 {
+                        axis_minimum_size
+                    } else if is_flex {
                         let spanned_tracks = &axis_tracks[item.track_range_excluding_lines(axis)];
                         let inflexible_sizes: f32 = spanned_tracks
                             .iter()

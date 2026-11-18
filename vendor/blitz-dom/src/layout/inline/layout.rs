@@ -194,6 +194,13 @@ fn initial_letter_offset(letter: &crate::node::InitialLetter, ascent: f32, heigh
     (letter.line_height * letter.size - ascent - letter.descent, shift)
 }
 
+/// pyro: whether the lines of a root in writing mode `wm` align on a central baseline (vertical,
+/// text not sideways), and whether they are inverted (`vertical-lr`: line-over at block-end).
+fn vertical_line_kind(wm: stylo_taffy::WritingMode) -> (bool, bool) {
+    let central = wm.is_vertical() && !wm.is_sideways();
+    (central, central && wm.intersects(stylo_taffy::WritingMode::LINE_INVERTED))
+}
+
 /// A float met mid-line, laid out but not yet placed in the block formatting context
 #[cfg(feature = "floats")]
 struct PendingFloat {
@@ -257,11 +264,18 @@ const FIT_TOLERANCE: f32 = 0.001;
 
 /// Lay out the next line into `slot` (content-box relative, in CSS px)
 #[cfg(feature = "floats")]
-fn set_line_slot(state: &mut BreakerState, slot: &ContentSlot, scale: f32, slack: f32) {
+fn set_line_slot(state: &mut BreakerState, slot: &ContentSlot, scale: f32, slack: f32, mirror: bool) {
     // With huge insets, f32 rounding can make the slot slightly wider than the layout
     let max_advance = (slot.width * scale + slack).min(state.layout_max_advance());
     state.set_line_max_advance(max_advance);
-    state.set_line_x(slot.x * scale);
+    // pyro: the lines of `sideways-lr` run from the bottom, Taffy's right: a slot (left to
+    // right in Taffy's axes) starts that far from the line-left side.
+    let layout_width = state.layout_max_advance();
+    if mirror && layout_width < f32::MAX / 2.0 {
+        state.set_line_x((layout_width - (slot.x + slot.width) * scale).max(0.0));
+    } else {
+        state.set_line_x(slot.x * scale);
+    }
     state.set_line_y((slot.y * scale) as f64);
 }
 
@@ -374,6 +388,24 @@ impl LayoutPassState<'_> {
             return LayoutOutput::HIDDEN;
         };
         let options = AlignmentOptions { align_when_overflowing: false, last_line_alignment: None };
+        // pyro: preserved white space before the letter is in the box, before the ink, and a tab
+        // goes to the paragraph's tab stops (the root's space, not the letter's: Blink; WPT
+        // css-inline `initial-letter-with-tab`).
+        let leading_space = text.text.starts_with(|c: char| c.is_whitespace());
+        if leading_space {
+            let parent_size = self.nodes[node_id]
+                .parent
+                .and_then(|parent| self.nodes[parent].primary_styles())
+                .map(|s| s.get_font().font_size.used_size.0.px());
+            let own_size = self.nodes[node_id].primary_styles().map(|s| s.get_font().font_size.used_size.0.px());
+            if let (Some(parent_size), Some(own_size)) = (parent_size, own_size)
+                && own_size > 0.0
+            {
+                let (space, min_advance) = text.layout.tab_stops();
+                let ratio = parent_size / own_size;
+                text.layout.set_tab_stops(space * ratio, min_advance * ratio);
+            }
+        }
         text.layout.set_text_indent(0.0, IndentOptions::default());
         text.layout.break_all_lines(None);
         text.layout.align(parley::Alignment::Start, options);
@@ -385,6 +417,12 @@ impl LayoutPassState<'_> {
         let [left, top, right, bottom] = match glyph_ink_bounds(&text.layout) {
             Some([l, t, r, b]) => [out(l / scale, false), out(t / scale, false), out(r / scale, true), out(b / scale, true)],
             None => [0.0, 0.0, text.layout.width() / scale, text.layout.height() / scale],
+        };
+        let (left, right) = match leading_space {
+            // Right-to-left, the white space is on the ink's right.
+            true if text.layout.is_rtl() => (left, right.max(out(text.layout.full_width() / scale, true))),
+            true => (left.min(0.0), right),
+            false => (left, right),
         };
         text.layout.set_text_indent((indent - left) * scale, IndentOptions::default());
         text.layout.break_all_lines(None);
@@ -625,6 +663,12 @@ impl LayoutPassState<'_> {
         } else {
             Size::ZERO
         };
+        // pyro: what the box an aspect ratio is between is smaller by than the border box.
+        let ratio_box_inset = if style.box_sizing() == BoxSizing::ContentBox || style.aspect_ratio_of_content_box() {
+            pb_sum
+        } else {
+            Size::ZERO
+        };
 
         // Scrollbar gutters are reserved when the `overflow` property is set to `Overflow::Scroll`.
         // However, the axis are switched (transposed) because a node that scrolls vertically needs
@@ -660,6 +704,9 @@ impl LayoutPassState<'_> {
             let (min, max) = taffy::BlockContainerStyle::own_height_keywords(&style);
             (sizing_mode == SizingMode::InherentSize && content(min), sizing_mode == SizingMode::InherentSize && content(max))
         };
+        // pyro: the box's own height (`height` clamped), for a known height that is no basis for
+        // percentages (`LayoutInput::known_dimensions_are_definite`: a table cell's stretched height).
+        let mut own_height: Option<f32> = None;
         let (node_size, node_min_size, node_max_size, aspect_ratio) = match sizing_mode {
             SizingMode::ContentSize => {
                 let node_size = known_dimensions;
@@ -684,8 +731,16 @@ impl LayoutPassState<'_> {
                     .maybe_resolve(parent_size, resolve_calc_value)
                     .maybe_add(box_sizing_adjustment);
 
+                // pyro: the quirky html and body fill the viewport (`quirky_fill_height`)
+                let mut style_min_size = style_min_size;
+                if style_size.height.is_none() && known_dimensions.height.is_none() {
+                    if let Some(fill) = self.quirky_fill_height(node_id, parent_size) {
+                        style_min_size.height = Some(style_min_size.height.map_or(fill, |min| min.max(fill)));
+                    }
+                }
                 let node_size =
                     known_dimensions.or(style_size.maybe_clamp(style_min_size, style_max_size));
+                own_height = style_size.height.maybe_clamp(style_min_size.height, style_max_size.height);
                 (node_size, style_min_size, style_max_size, aspect_ratio)
             }
         };
@@ -753,9 +808,22 @@ impl LayoutPassState<'_> {
         // pyro: an anonymous block is no containing block: its atomic inlines stretch to the
         // height of the one around it too (`height: stretch` on an iframe; WPT css-sizing
         // `stretch/stretch-anonymous-block-001`).
+        // pyro: the quirky html and body's filled height (`quirky_fill_height`), their content box's
+        let quirky_fill = if sizing_mode == SizingMode::InherentSize
+            && known_dimensions.height.is_none()
+            && node_size.height.is_none()
+        {
+            self.quirky_fill_height(node_id, parent_size)
+                .map(|fill| (fill - content_box_inset.vertical_axis_sum()).max(0.0))
+        } else {
+            None
+        };
         let child_available_space = match (self.nodes[node_id].is_anonymous(), parent_size.height) {
             (true, Some(height)) => Size { height: AvailableSpace::Definite(height), ..available_space },
-            _ => available_space,
+            _ => match quirky_fill {
+                Some(height) => Size { height: AvailableSpace::Definite(height), ..available_space },
+                None => available_space,
+            },
         };
         // pyro: the height `height: stretch` fills (`inline_box_inputs`): this block's content
         // height when it is definite (an anonymous block's containing block's).
@@ -763,6 +831,8 @@ impl LayoutPassState<'_> {
             parent_size.height
         } else if known_dimensions.height.is_some() || node_size.height.is_some() {
             available_space.height.into_option()
+        } else if quirky_fill.is_some() {
+            quirky_fill
         } else {
             None
         };
@@ -781,6 +851,24 @@ impl LayoutPassState<'_> {
                 {
                     // pyro: the percentage height quirk (`quirks_skips_for_percent_height`)
                     parent_size.height
+                } else if known_dimensions.height.is_some()
+                    && !inputs.known_dimensions_are_definite.height
+                    && self.nodes[node_id].primary_styles().is_some_and(|style| {
+                        style.get_box().display.inside() == style::values::specified::box_::DisplayInside::TableCell
+                    })
+                {
+                    // pyro: a table cell's stretched height that is no basis
+                    // (`table::TableTreeWrapper::definite_height`): its own length `height` is.
+                    own_height
+                        .or(self.cell_percent_height.filter(|(cell, _)| *cell == node_id).map(|(_, height)| height))
+                        .map(|height| (height - content_box_inset.vertical_axis_sum()).max(0.0))
+                } else if known_dimensions.height.is_none() && node_size.height.is_none() {
+                    // pyro: a table cell measured for its row: its own length `height`
+                    // (`LayoutPassState::cell_percent_height`).
+                    match self.cell_percent_height.filter(|(cell, _)| *cell == node_id) {
+                        Some((_, height)) => Some((height - content_box_inset.vertical_axis_sum()).max(0.0)),
+                        None => available_space.height.into_option(),
+                    }
                 } else {
                     available_space.height.into_option()
                 },
@@ -798,6 +886,8 @@ impl LayoutPassState<'_> {
 
         // Update inline boxes
         let percent_span_edges = inline_layout.percent_span_edges;
+        // pyro: an in-flow atomic inline on a central baseline keeps its alphabetic baseline.
+        let mut alphabetic_atomics = false;
         for ibox in inline_layout.layout.inline_boxes_mut() {
             // pyro: a span's edge has its width from the build, unless its margin or padding
             // is a percentage: of the containing block's width (CSS 2.1 § 8.3, 8.4), zero for
@@ -896,7 +986,7 @@ impl LayoutPassState<'_> {
                     );
                 }
                 ibox.width = (margin.left + margin.right + output.size.width) * scale;
-                ibox.baseline = if exports_baseline {
+                let alphabetic = if exports_baseline {
                     let baseline = if uses_last_baseline && own_last_baseline {
                         output.baselines.last
                     } else if uses_last_baseline {
@@ -914,6 +1004,33 @@ impl LayoutPassState<'_> {
                     })
                 } else {
                     None
+                };
+                let (central_line, inverted_line) = vertical_line_kind(self.nodes[node_id].writing_mode());
+                // pyro: on a central baseline (Blink's `PhysicalBoxFragment::BaselineMetrics` with
+                // `kCentralBaseline`): the box's own central baseline, from its line-over side
+                // (block-end in `vertical-lr`, whose lines are inverted), or one synthesized in the
+                // middle of its margin box when it has no baseline at all (replaced, orthogonal,
+                // scroll-container and empty boxes). A box with only an alphabetic baseline (flex,
+                // grid, table, form controls) keeps it, and the lines holding one export no central
+                // baseline (`alphabetic_atomics`).
+                let dominant = if !central_line || !exports_baseline {
+                    None
+                } else if uses_last_baseline {
+                    output.baselines.dominant_last.or(output.baselines.dominant_first)
+                } else {
+                    output.baselines.dominant_first.or(output.baselines.dominant_last)
+                };
+                ibox.central = central_line && (dominant.is_some() || alphabetic.is_none());
+                alphabetic_atomics |= central_line && !ibox.central;
+                ibox.baseline = if ibox.central {
+                    let over = match dominant {
+                        Some(baseline) if inverted_line => margin.bottom + output.size.height - baseline,
+                        Some(baseline) => margin.top + baseline,
+                        None => (margin.top + margin.bottom + output.size.height) / 2.0,
+                    };
+                    Some(over * scale)
+                } else {
+                    alphabetic
                 };
                 // Vertical margins adjust the space the box reserves in the line. A box with a
                 // baseline splits that space into ascent (`margin.top + baseline`) and descent
@@ -1161,6 +1278,29 @@ impl LayoutPassState<'_> {
             .layout
             .set_text_indent(resolved_text_indent * scale, indent_options);
 
+        // pyro: `::first-line` styles that change layout (`TextLayout::first_line_layout`): the
+        // build gave them to the text up to where the first line ended last time (all of it at
+        // first); a first line that ends elsewhere at this width builds the text again with that end.
+        if inline_layout.first_line_layout {
+            for _ in 0..2 {
+                inline_layout.layout.break_all_lines(Some(width));
+                let end = inline_layout.layout.lines().next().map(|line| line.text_range().end);
+                if end.is_none() || end == inline_layout.first_line_end {
+                    break;
+                }
+                inline_layout.first_line_end = end;
+                let crate::BaseDocument { nodes, layout_ctx, font_ctx, viewport, .. } = &mut **self;
+                let mut font_ctx = font_ctx.lock().unwrap();
+                super::build_inline_layout_into(nodes, layout_ctx, &mut font_ctx, &mut inline_layout, viewport.scale(), node_id);
+                drop(font_ctx);
+                inline_layout.last_break = None;
+                inline_layout.final_lines = None;
+                inline_layout
+                    .layout
+                    .set_text_indent(resolved_text_indent * scale, indent_options);
+            }
+        }
+
         // Content sized to fit exactly (e.g. shrink-to-fit) can end up a few ulps wider than
         // `width`: the width goes through round trips in CSS px, and the line breaker sums
         // advances in a different order to `calculate_content_widths`. Give the line breaker a
@@ -1177,6 +1317,7 @@ impl LayoutPassState<'_> {
         };
         #[cfg(feature = "floats")]
         let slack = max_advance - width;
+        let mirror_slots = self.nodes[node_id].writing_mode().contains(stylo_taffy::WritingMode::WRITING_MODE_SIDEWAYS_LR);
 
         #[cfg(not(feature = "floats"))]
         {
@@ -1310,7 +1451,7 @@ impl LayoutPassState<'_> {
                     line_slot = block_ctx.find_content_slot(clear, 0.0, Clear::None, None);
                     has_active_floats = line_slot.segment_id.is_some();
                 }
-                set_line_slot(state, &line_slot, scale, slack);
+                set_line_slot(state, &line_slot, scale, slack, mirror_slots);
                 // Without floats every line after the first gets the same geometry, so breaking
                 // can continue after the lines kept from the last build, when the text changed
                 // after them (parley checks the rest: same width, indent and line geometry, LTR,
@@ -1358,7 +1499,7 @@ impl LayoutPassState<'_> {
                                 line_slot = retry_slot;
                                 has_active_floats = line_slot.segment_id.is_some();
                                 breaker.revert_to(saved_state);
-                                set_line_slot(breaker.state_mut(), &line_slot, scale, slack);
+                                set_line_slot(breaker.state_mut(), &line_slot, scale, slack, mirror_slots);
                                 line_start_state = has_active_floats.then(|| breaker.state().clone());
                                 continue;
                             }
@@ -1420,7 +1561,7 @@ impl LayoutPassState<'_> {
                                 line_slot =
                                     block_ctx.find_content_slot(min_y as f32, 0.0, Clear::None, None);
                                 has_active_floats = line_slot.segment_id.is_some();
-                                set_line_slot(state, &line_slot, scale, slack);
+                                set_line_slot(state, &line_slot, scale, slack, mirror_slots);
                             } else {
                                 state.set_line_x(0.0);
                                 state.set_line_max_advance(max_advance);
@@ -1513,7 +1654,7 @@ impl LayoutPassState<'_> {
                                 state.set_line_y(f64::from(line_y * scale));
                                 line_slot = block_ctx.find_content_slot(line_y, 0.0, Clear::None, None);
                                 has_active_floats = line_slot.segment_id.is_some();
-                                set_line_slot(state, &line_slot, scale, slack);
+                                set_line_slot(state, &line_slot, scale, slack, mirror_slots);
                                 state.append_inline_box_to_line(
                                     box_break_data.advance,
                                     f32::NEG_INFINITY,
@@ -1582,7 +1723,7 @@ impl LayoutPassState<'_> {
                                 line_slot =
                                     block_ctx.find_content_slot(min_y as f32, 0.0, Clear::None, None);
                                 has_active_floats = line_slot.segment_id.is_some();
-                                set_line_slot(state, &line_slot, scale, slack);
+                                set_line_slot(state, &line_slot, scale, slack, mirror_slots);
 
                                 // The float can't be unplaced, so the line can no longer be retried
                                 line_start_state = None;
@@ -1736,7 +1877,7 @@ impl LayoutPassState<'_> {
                 && let Some(line) = layout.get(0)
             {
                 let top = line.metrics().block_min_coord;
-                let edge = line.span_text_edge(0, trim.edge, trim.over);
+                let edge = line.span_text_edge(line.root_style(), trim.edge, trim.over);
                 // An inverted line (`vertical-lr`) has its under side at the block start.
                 text_box_shift = if trim.over { edge - top } else { line.metrics().block_max_coord - edge };
             }
@@ -1744,7 +1885,7 @@ impl LayoutPassState<'_> {
             if let Some(trim) = end
                 && let Some(line) = trailing_empty_line.unwrap_or(line_count).checked_sub(1).and_then(|i| layout.get(i))
             {
-                let edge = line.span_text_edge(0, trim.edge, trim.over);
+                let edge = line.span_text_edge(line.root_style(), trim.edge, trim.over);
                 end_trim = if trim.over { edge - line.metrics().block_min_coord } else { line.metrics().block_max_coord - edge };
             }
             // (Not above where a `<br>`'s clearance put the end of the content.)
@@ -1793,10 +1934,17 @@ impl LayoutPassState<'_> {
         };
         let final_size = Size {
             width: clamped_size.width,
+            // pyro: through the box the ratio is between (the content box under `box-sizing:
+            // content-box` or `aspect-ratio: auto <ratio>`), clamped by `min-height`/`max-height`
+            // (WPT css-sizing `aspect-ratio/block-aspect-ratio-027`).
             height: f32_max(
                 clamped_size.height,
                 aspect_ratio
-                    .map(|ratio| clamped_size.width / ratio)
+                    .map(|ratio| {
+                        let inset = ratio_box_inset;
+                        let height = (clamped_size.width - inset.width).max(0.0) / ratio + inset.height;
+                        height.maybe_clamp(node_min_size.height, node_max_size.height)
+                    })
                     .unwrap_or(0.0),
             ),
         }
@@ -1821,8 +1969,16 @@ impl LayoutPassState<'_> {
         // pyro: for a line clamp (`layout::line_clamp`), which a later layout of the box that
         // clamps sets again.
         inline_layout.line_box_top = line_box_top;
+        // pyro: invisible line boxes at the end (phantom lines: CSS Inline 3 § 4.1) count for no
+        // line clamp (WPT css-overflow `line-clamp-037`).
         inline_layout.counted_lines = match has_inline_content {
-            true => trailing_empty_line.unwrap_or(line_count) as u32,
+            true => {
+                let mut counted = trailing_empty_line.unwrap_or(line_count);
+                while counted > 1 && inline_layout.layout.get(counted - 1).is_some_and(|line| line.metrics().invisible) {
+                    counted -= 1;
+                }
+                counted as u32
+            }
             false => 0,
         };
         inline_layout.clamp = None;
@@ -2036,6 +2192,7 @@ impl LayoutPassState<'_> {
                             }
                             _ => taffy::Point::ZERO,
                         };
+                        let wm = self.nodes[node_id].writing_mode();
                         let node = &mut self.nodes[NodeId::from_u64(ibox.id)];
 
                         let is_relative = position == taffy::Position::Relative;
@@ -2053,11 +2210,30 @@ impl LayoutPassState<'_> {
                         };
 
                         let overflow = output.scrollable_overflow_rect;
+                        // pyro: the lines of `vertical-lr` are inverted (line-over at block-end):
+                        // the box goes to the other side of its line's slot. The lines of
+                        // `sideways-lr` run from the bottom: it goes to the other end of its line.
+                        let mut ibox_y = ibox.y;
+                        let mut ibox_x = ibox.x;
+                        // (A box that keeps its alphabetic baseline keeps its place too.)
+                        let central_box = || {
+                            inline_layout
+                                .layout
+                                .inline_boxes()
+                                .find(|candidate| candidate.id == ibox.id && candidate.kind == parley::InlineBoxKind::InFlow)
+                                .is_some_and(|candidate| candidate.central)
+                        };
+                        if vertical_line_kind(wm).1 && central_box() {
+                            let metrics = line.metrics();
+                            ibox_y = metrics.block_min_coord + metrics.block_max_coord - ibox.y - ibox.height;
+                        } else if wm.contains(stylo_taffy::WritingMode::WRITING_MODE_SIDEWAYS_LR) {
+                            ibox_x = container_content_size.width * scale - ibox.x - ibox.width;
+                        }
                         let location = taffy::Point {
-                            x: (ibox.x / scale) + margin.left + container_pb.left + inset_offset.x + span_offset.x,
+                            x: (ibox_x / scale) + margin.left + container_pb.left + inset_offset.x + span_offset.x,
                             // Parley positions the margin box; offset to the border box even
                             // when a negative top margin makes it extend above the margin box.
-                            y: (ibox.y / scale) + margin.top + line_box_top + inset_offset.y + span_offset.y,
+                            y: (ibox_y / scale) + margin.top + line_box_top + inset_offset.y + span_offset.y,
                         };
                         node.update_unrounded_layout(|layout| {
                             layout.size = size;
@@ -2135,7 +2311,7 @@ impl LayoutPassState<'_> {
         // (Sideways text keeps `first_baseline`/`last_baseline`, which inline-block alignment agrees with.)
         let (dominant_first, dominant_last) = {
             let wm = self.nodes[node_id].writing_mode();
-            if wm.is_vertical() && !wm.is_sideways() && exports_baseline {
+            if wm.is_vertical() && !wm.is_sideways() && exports_baseline && !alphabetic_atomics {
                 let dominant = |line: parley::Line<'_, _>| {
                     let m = line.metrics();
                     let central = (m.content_block_min_coord + m.content_block_max_coord) / 2.0;
@@ -2427,11 +2603,12 @@ fn span_padding_box(
 
 impl LayoutPassState<'_> {
     /// pyro: whether the split inline `span` is the containing block of absolutely positioned
-    /// boxes (it is positioned) in a horizontal writing mode (`split_inline_containing_block`).
+    /// boxes (it is positioned; `split_inline_containing_block`, in the logical axes layout runs
+    /// in, so vertical writing modes too).
     pub(crate) fn split_inline_contains_absolute(&self, span: NodeId) -> bool {
         use style::computed_values::position::T as Position;
         self.nodes[span].primary_styles().is_some_and(|style| {
-            style.clone_position() != Position::Static && !style.writing_mode.is_vertical()
+            style.clone_position() != Position::Static
         })
     }
 
@@ -2509,7 +2686,8 @@ impl LayoutPassState<'_> {
         // (x0, y0, x1, y1) of a piece, from the parent's border box.
         // (An anonymous block next to the box holds the head or the tail; when the span starts or
         // ends with a block-level box, its empty fragment is on that block's line all the same.)
-        let piece = |anonymous: NodeId, last: bool| -> Option<(f32, f32, f32, f32)> {
+        // (The flag says whether the piece is a fragment of the span, not a point.)
+        let piece = |anonymous: NodeId, last: bool| -> Option<(f32, f32, f32, f32, bool)> {
             let node = &self.nodes[anonymous];
             if !node.is_anonymous() {
                 return None;
@@ -2518,7 +2696,7 @@ impl LayoutPassState<'_> {
             let location = node.unrounded_layout().location;
             let origin = (location.x, location.y + text_layout.line_box_top);
             if let Some((x, y, width, height)) = span_padding_box(&self.nodes, text_layout, span, scale) {
-                return Some((origin.0 + x, origin.1 + y, origin.0 + x + width, origin.1 + y + height));
+                return Some((origin.0 + x, origin.1 + y, origin.0 + x + width, origin.1 + y + height, true));
             }
             let line = if last { text_layout.layout.lines().last() } else { text_layout.layout.lines().next() };
             let metrics = *line?.metrics();
@@ -2527,18 +2705,30 @@ impl LayoutPassState<'_> {
             // The end of the last line (in the line's direction), the start of the first.
             let x = if last != rtl { end } else { start };
             let (top, bottom) = (metrics.block_min_coord / scale, metrics.block_max_coord / scale);
-            Some((origin.0 + x, origin.1 + top, origin.0 + x, origin.1 + bottom))
+            Some((origin.0 + x, origin.1 + top, origin.0 + x, origin.1 + bottom, false))
         };
         let head = at
             .checked_sub(1)
             .and_then(|before| piece(children[before], true))
-            .unwrap_or((own_x, own_y, own_x, own_y));
+            .unwrap_or((own_x, own_y, own_x, own_y, false));
         let tail = children
             .get(at + 1)
             .and_then(|&after| piece(after, false))
-            .unwrap_or((own_x, own_y + own.size.height, own_x, own_y + own.size.height));
-        let (x0, y0) = (head.0.min(tail.0), head.1.min(tail.1));
-        let (x1, y1) = (head.2.max(tail.2), head.3.max(tail.3));
+            .unwrap_or((own_x, own_y + own.size.height, own_x, own_y + own.size.height, false));
+        // The start edge and the top of the first fragment, the end edge and the bottom of the last
+        // (CSS 2.1 § 10.1 4.1: left/top of the first box, right/bottom of the last, in `ltr`); the
+        // tail's line can start left of the head's (WPT `position-absolute-in-inline-007b`).
+        // An empty piece (a point) gives no inline edge when the other piece is a fragment: a span
+        // that ends (starts) with its block-level box spans its head (tail) alone (Chromium; WPT
+        // `abspos-in-block-in-inline-in-relpos-inline-002`).
+        let (first, last) = match (head.4, tail.4) {
+            (true, false) => (head, head),
+            (false, true) => (tail, tail),
+            _ => (head, tail),
+        };
+        let (x0, x1) = if rtl { (last.0, first.2) } else { (first.0, last.2) };
+        let (y0, y1) = (head.1, tail.3);
+        let x1 = x1.max(x0);
         Some((
             taffy::Size { width: (x1 - x0).max(0.0), height: (y1 - y0).max(0.0) },
             taffy::Point { x: x0 + relative.x, y: y0 + relative.y },

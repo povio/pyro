@@ -1,0 +1,27 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "requestidlecallback/basic.html": {"status":"complete","ms":210,"n":6,"fail":[],"h":"7cdc4cf5"},
+  "requestidlecallback/callback-after-removed-frame-with-pending-timeout.html": {"status":"complete","ms":320,"n":1,"fail":[],"h":"9fcccb26"},
+  "requestidlecallback/callback-exception.html": {"status":"complete","ms":10,"n":1,"fail":[],"h":"f156eafa"},
+  "requestidlecallback/callback-iframe.html": {"status":"complete","ms":20,"n":1,"fail":[],"h":"cc044402"},
+  "requestidlecallback/callback-invoked.html": {"status":"complete","ms":20,"n":1,"fail":[],"h":"bcf59b5d"},
+  "requestidlecallback/callback-multiple-calls.html": {"status":"complete","ms":310,"n":2,"fail":[],"h":"dc4aae0f"},
+  "requestidlecallback/callback-removed-frame.html": {"status":"complete","ms":1000,"n":1,"fail":[],"h":"4bb7b10a"},
+  "requestidlecallback/callback-suspended.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "requestidlecallback/callback-timeout-when-busy.html": {"status":"complete","ms":890,"n":2,"fail":[],"h":"669b27f3"},
+  "requestidlecallback/callback-timeout.html": {"status":"complete","ms":560,"n":2,"fail":[],"h":"e83d468d"},
+  "requestidlecallback/callback-xhr-sync.html": {"status":"complete","ms":10,"n":1,"fail":[],"h":"f08a7fde"},
+  "requestidlecallback/cancel-invoked.html": {"status":"complete","ms":2000,"n":3,"fail":[],"h":"a171849f"},
+  "requestidlecallback/deadline-max-rAF.html": {"status":"complete","ms":60,"n":1,"fail":[],"h":"defe1dd2"},
+  "requestidlecallback/deadline-max-timeout-dynamic.html": {"status":"complete","ms":40,"n":1,"pass":[]},
+  "requestidlecallback/deadline-max.html": {"status":"complete","ms":120,"n":1,"pass":[]},
+  "requestidlecallback/idlharness.window.html": {"status":"complete","ms":80,"n":29,"fail":["IdleDeadline interface: existence and properties of interface object","Window interface: calling cancelIdleCallback(unsigned long) on window with too few arguments must throw TypeError"],"h":"77eec30e"}
+ }
+}

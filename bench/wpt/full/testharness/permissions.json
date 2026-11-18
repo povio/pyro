@@ -1,0 +1,20 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "permissions/all-permissions.html": {"status":"complete","ms":10,"n":19,"pass":[]},
+  "permissions/edge-cases.https.html": {"status":"complete","ms":20,"n":1,"fail":[],"h":"4a73312a"},
+  "permissions/event-model.https.html": {"status":"complete","ms":10,"n":4,"pass":[]},
+  "permissions/midi-permission.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "permissions/non-fully-active.https.html": {"status":"complete","ms":10000,"n":2,"pass":[]},
+  "permissions/permissions-cg.https.html": {"status":"complete","ms":10000,"n":1,"pass":[]},
+  "permissions/permissions-query-permissions-policy-attribute.https.sub.html": {"status":"complete","ms":30,"n":4,"fail":["Permission.state is \"denied\" in cross-origin iframes."],"h":"304e2c9e"},
+  "permissions/permissionsstatus-name.html": {"status":"complete","ms":20,"n":1,"fail":[],"h":"2b98f046"},
+  "permissions/revocation.https.html": {"status":"complete","ms":20,"n":2,"pass":[]}
+ }
+}

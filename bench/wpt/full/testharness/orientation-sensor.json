@@ -1,0 +1,23 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "orientation-sensor/AbsoluteOrientationSensor-disabled-by-permissions-policy.https.html": {"status":"complete","ms":10,"n":3,"pass":[]},
+  "orientation-sensor/AbsoluteOrientationSensor-enabled-by-permissions-policy-attribute-redirect-on-load.https.html": {"status":"complete","ms":20,"n":2,"pass":[]},
+  "orientation-sensor/AbsoluteOrientationSensor-enabled-by-permissions-policy.https.html": {"status":"complete","ms":40,"n":3,"pass":[]},
+  "orientation-sensor/AbsoluteOrientationSensor-enabled-on-self-origin-by-permissions-policy.https.html": {"status":"complete","ms":10,"n":3,"pass":[]},
+  "orientation-sensor/AbsoluteOrientationSensor-iframe-access.https.html": {"status":"complete","ms":20,"n":4,"pass":[]},
+  "orientation-sensor/OrientationSensor_insecure_context.html": {"status":"complete","ms":10,"n":2,"fail":[],"h":"d08c27f4"},
+  "orientation-sensor/RelativeOrientationSensor-enabled-by-permissions-policy-attribute-redirect-on-load.https.html": {"status":"complete","ms":50,"n":2,"pass":[]},
+  "orientation-sensor/RelativeOrientationSensor-enabled-by-permissions-policy-attribute.https.html": {"status":"complete","ms":10,"n":2,"pass":[]},
+  "orientation-sensor/RelativeOrientationSensor-enabled-by-permissions-policy.https.html": {"status":"complete","ms":20,"n":3,"pass":[]},
+  "orientation-sensor/RelativeOrientationSensor-iframe-access.https.html": {"status":"complete","ms":20,"n":4,"pass":[]},
+  "orientation-sensor/RelativeOrientationSensor.https.html": {"status":"complete","ms":20,"n":22,"pass":["RelativeOrientationSensor: throw 'TypeError' if frequency is invalid."]},
+  "orientation-sensor/idlharness.https.window.html": {"status":"complete","ms":110,"n":29,"pass":["idl_test setup","idl_test validation"]}
+ }
+}

@@ -1014,6 +1014,7 @@ pub trait MatchMethods: TElement {
 
         // First of all, update the styles.
         let old_styles = data.set_styles(new_styles);
+        data.flags.remove(crate::data::ElementDataFlags::CUSTOM_PROPERTIES_ONLY_CHANGED);
 
         let new_primary_style = data.styles.primary.as_ref().unwrap();
 
@@ -1131,6 +1132,12 @@ pub trait MatchMethods: TElement {
             new_primary_style,
             None,
         );
+        #[cfg(feature = "servo")]
+        if old_primary_style.custom_properties() != new_primary_style.custom_properties()
+            && old_primary_style.inherited_except_custom_eq(new_primary_style)
+        {
+            data.flags.insert(crate::data::ElementDataFlags::CUSTOM_PROPERTIES_ONLY_CHANGED);
+        }
 
         if data.styles.pseudos.is_empty() && old_styles.pseudos.is_empty() {
             // This is the common case; no need to examine pseudos here.

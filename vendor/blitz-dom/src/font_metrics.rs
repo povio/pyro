@@ -51,13 +51,13 @@ impl core::fmt::Debug for BlitzFontMetricsProvider {
 impl FontMetricsProvider for BlitzFontMetricsProvider {
     fn query_font_metrics(
         &self,
-        _vertical: bool,
+        vertical: bool,
         font_styles: &FontStyles,
         font_size: CSSPixelLength,
         _flags: QueryFontMetricsFlags,
     ) -> FontMetrics {
         // The first available font: the first of the list that has U+0020.
-        let metrics = self.metrics_for(font_styles, font_size, ' ');
+        let metrics = self.metrics_for_axis(font_styles, font_size, ' ', vertical);
         // pyro: under `font-size-adjust` the font is used at the adjusted size: `ex`, `ch`, `ic`
         // and `cap` measure it there (`em` stays the computed size).
         if font_styles.font_size_adjust == style::values::computed::font::FontSizeAdjust::None {
@@ -168,6 +168,18 @@ impl BlitzFontMetricsProvider {
         font_size: CSSPixelLength,
         text_char: char,
     ) -> FontMetrics {
+        self.metrics_for_axis(font_styles, font_size, text_char, false)
+    }
+
+    /// pyro: [`Self::metrics_for`], with `ch` measured along the vertical axis when `vertical`
+    /// (upright text in a vertical writing mode: the "0" glyph's vertical advance).
+    pub(crate) fn metrics_for_axis(
+        &self,
+        font_styles: &FontStyles,
+        font_size: CSSPixelLength,
+        text_char: char,
+        vertical: bool,
+    ) -> FontMetrics {
         use parley::fontique::{Query, QueryFont, QueryStatus};
         use skrifa::instance::{LocationRef, Size};
         use skrifa::metrics::{GlyphMetrics, Metrics};
@@ -277,7 +289,53 @@ impl BlitzFontMetricsProvider {
             Some((ascent, metrics.x_height, metrics.cap_height))
         }
 
-        let zero_advance = advance_of(&mut query, '0', font_size.px(), &variations, size_adjust);
+        // pyro: `ch` is the "0" of the face that would render it by `unicode-range` (the first
+        // whose range covers U+0030, WPT css-values `ch-unit-018`), 0.5em when that face has no
+        // "0" glyph (CSS Values 4 § 6.1.1; `ch-unit-019`), not a fallback font's; in upright
+        // vertical text its vertical advance (`vmtx`; `ch-unit-017`).
+        let zero_advance = (|| {
+            // (Whatever glyphs it has.)
+            let mut first = None;
+            query.matches_with(|q_font: &QueryFont| {
+                if q_font.unicode_range.contains('0'.into()) {
+                    first = Some(q_font.clone());
+                    QueryStatus::Stop
+                } else {
+                    QueryStatus::Continue
+                }
+            });
+            let font = first?;
+            let font_ref = skrifa::FontRef::from_index(font.blob.as_ref(), font.index).ok()?;
+            use skrifa::MetadataProvider;
+            let glyph = font_ref.charmap().map('0')?;
+            if vertical {
+                use skrifa::raw::TableProvider;
+                let metrics = Metrics::new(&font_ref, Size::unscaled(), LocationRef::default());
+                let upem = metrics.units_per_em;
+                let size = if size_adjust { font_size.px() * font.synthesis.size_adjust() } else { font_size.px() };
+                if upem != 0 {
+                    // (Without vertical metrics, the font's height: parley's `shape::upright`.)
+                    let advance = match font_ref.vmtx() {
+                        Ok(vmtx) => vmtx.advance(glyph).map(f32::from),
+                        Err(_) => Some(metrics.ascent - metrics.descent),
+                    };
+                    if let Some(advance) = advance {
+                        return Some(advance * size / f32::from(upem));
+                    }
+                }
+            }
+            let size = if size_adjust { font_size.px() * font.synthesis.size_adjust() } else { font_size.px() };
+            let location = font_ref.axes().location(
+                variations.iter().map(|v| (skrifa::Tag::from_be_bytes(v.tag.to_bytes()), v.value)),
+            );
+            let location_ref = LocationRef::from(&location);
+            let upem = Metrics::new(&font_ref, Size::unscaled(), location_ref).units_per_em;
+            if upem == 0 {
+                return None;
+            }
+            let advance = GlyphMetrics::new(&font_ref, Size::unscaled(), location_ref).advance_width(glyph)?;
+            Some(advance * (size / upem as f32))
+        })();
         let ic_advance = advance_of(&mut query, '\u{6C34}', font_size.px(), &variations, size_adjust);
         let (ascent, x_height, cap_height) =
             metrics_of(&mut query, text_char, font_size.px(), &variations, size_adjust)

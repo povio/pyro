@@ -1,0 +1,43 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "webtransport/anticipated-concurrent-incoming-streams.https.any.html": {"status":"complete","ms":20,"n":18,"pass":[]},
+  "webtransport/anticipated-streams.https.any.html": {"status":"complete","ms":20,"n":8,"pass":[]},
+  "webtransport/back-forward-cache-with-closed-webtransport-connection-ccns.https.tentative.window.html": {"status":"complete","ms":440,"n":1,"pass":[]},
+  "webtransport/back-forward-cache-with-open-webtransport-connection-ccns.https.tentative.window.html": {"status":"complete","ms":560,"n":1,"pass":[]},
+  "webtransport/back-forward-cache-with-open-webtransport-connection.https.window.html": {"status":"complete","ms":30,"n":1,"pass":[]},
+  "webtransport/close.https.any.html": {"status":"complete","ms":30,"n":12,"pass":[]},
+  "webtransport/connect.https.any.html": {"status":"complete","ms":30,"n":15,"pass":[]},
+  "webtransport/constructor-certificate-hashes.https.sub.any.html": {"status":"complete","ms":30,"n":5,"pass":[]},
+  "webtransport/constructor-sharedarraybuffer.https.any.html": {"status":"complete","ms":20,"n":2,"pass":[]},
+  "webtransport/csp-fail.https.window.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "webtransport/csp-pass.https.window.html": {"status":"complete","ms":30,"n":1,"pass":[]},
+  "webtransport/datagram-bad-chunk.https.any.html": {"status":"complete","ms":30,"n":1,"pass":[]},
+  "webtransport/datagrams-writable.https.any.html": {"status":"complete","ms":30,"n":13,"pass":[]},
+  "webtransport/datagrams.https.any.html": {"status":"complete","ms":30,"n":11,"pass":[]},
+  "webtransport/draining.https.any.html": {"status":"complete","ms":20,"n":8,"pass":[]},
+  "webtransport/echo-large-bidirectional-streams.https.any.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "webtransport/headers.https.any.html": {"status":"complete","ms":20,"n":21,"pass":[]},
+  "webtransport/historical.https.sub.any.html": {"status":"complete","ms":20,"n":4,"pass":[]},
+  "webtransport/idlharness.https.sub.any.html": {"status":"complete","ms":50,"n":121,"pass":["idl_test validation"]},
+  "webtransport/incoming-multiple-streams.https.any.html": {"status":"complete","ms":20,"n":2,"pass":[]},
+  "webtransport/receive-stream-stats.https.any.html": {"status":"complete","ms":170,"n":4,"pass":[]},
+  "webtransport/reliability.https.any.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "webtransport/reliability.https.window.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "webtransport/send-stream-stats.https.any.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "webtransport/sendgroup.https.any.html": {"status":"complete","ms":170,"n":13,"pass":[]},
+  "webtransport/sendorder.https.any.html": {"status":"complete","ms":20,"n":3,"pass":[]},
+  "webtransport/sendstream-bad-chunk.https.any.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "webtransport/stats.https.any.html": {"status":"complete","ms":20,"n":8,"pass":[]},
+  "webtransport/stream-stats.https.any.html": {"status":"complete","ms":20,"n":11,"pass":[]},
+  "webtransport/streams-close.https.any.html": {"status":"complete","ms":20,"n":10,"pass":[]},
+  "webtransport/streams-reset-bidi-keeps-writing.https.any.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "webtransport/streams-stop-sending-bidi-keeps-reading.https.any.html": {"status":"complete","ms":30,"n":1,"pass":[]}
+ }
+}

@@ -140,6 +140,22 @@ impl Browser {
 }
 
 impl Browser {
+    /// `setTimeout`s due within `within` from now across `page`'s frames
+    /// ([`Window::timeouts_due_by`]); 0 once the page is gone.
+    pub fn page_timeouts_due(&self, page: PageId, within: std::time::Duration) -> usize {
+        let Some(p) = self.page(page) else { return 0 };
+        let deadline = crate::clock::now() + within;
+        let mut count = 0;
+        for key in p.frames.keys() {
+            let Some(doc) = self.doc(key) else { continue };
+            let Some(scope) = doc.main_frame.main_realm().and_then(|r| r.scope().ok()) else { continue };
+            if let Some(w) = scope.global_data::<Window>() {
+                count += w.timeouts_due_by(deadline);
+            }
+        }
+        count
+    }
+
     /// A point in the history of the requests `page`'s context makes: the
     /// ones started from now on are those [`Self::page_work_since`] counts
     /// for this reading.

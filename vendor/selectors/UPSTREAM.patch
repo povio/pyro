@@ -211,7 +211,7 @@ index 475e776..103d140 100644
              anchor.is_none_or(|a| a == element.opaque())
          },
 diff --git a/parser.rs b/parser.rs
-index cac3c1d..b054236 100644
+index cac3c1d..4dd4971 100644
 --- a/parser.rs
 +++ b/parser.rs
 @@ -1331,6 +1331,13 @@ impl<Impl: SelectorImpl> Selector<Impl> {
@@ -268,7 +268,35 @@ index cac3c1d..b054236 100644
              Nth(ref nth_data) => {
                  nth_data.write_start(dest)?;
                  if nth_data.is_function {
-@@ -3375,7 +3390,7 @@ where
+@@ -2806,8 +2821,27 @@ where
+         }
+     }
+     loop {
++        // pyro: inside :is() / :where() / :not() the default namespace is ignored only for the
++        // subject compound (Selectors 4 §4.2); a compound a combinator follows keeps it (WPT
++        // selectors is-default-ns-003, not-default-ns-003). Probe for that combinator.
++        let skip_default_ns = state.intersects(SelectorParsingState::SKIP_DEFAULT_NAMESPACE);
++        if skip_default_ns && parser.default_namespace().is_some() {
++            let start = input.state();
++            let mut probe_state = state;
++            let mut probe_builder = SelectorBuilder::default();
++            let followed = matches!(
++                parse_compound_selector(parser, &mut probe_state, input, &mut probe_builder),
++                Ok(false)
++            ) && !probe_state.intersects(SelectorParsingState::AFTER_PSEUDO)
++                && try_parse_combinator(input).is_ok();
++            input.reset(&start);
++            if followed {
++                state.remove(SelectorParsingState::SKIP_DEFAULT_NAMESPACE);
++            }
++        }
+         // Parse a sequence of simple selectors.
+         let empty = parse_compound_selector(parser, &mut state, input, &mut builder)?;
++        state.set(SelectorParsingState::SKIP_DEFAULT_NAMESPACE, skip_default_ns);
+         if empty {
+             return Err(ParseError::custom(if builder.has_combinators() {
+                 SelectorParseErrorKind::DanglingCombinator
+@@ -3375,7 +3409,7 @@ where
              let ignore_default_ns = state.intersects(SelectorParsingState::SKIP_DEFAULT_NAMESPACE)
                  || matches!(
                      result,
@@ -277,7 +305,7 @@ index cac3c1d..b054236 100644
                  );
              if !ignore_default_ns {
                  builder.push_simple_selector(Component::DefaultNamespace(url));
-@@ -3505,6 +3520,12 @@ where
+@@ -3505,6 +3539,12 @@ where
              }
              return Ok(Component::Host(Some(parse_inner_compound_selector(parser, input, state)?)));
          },

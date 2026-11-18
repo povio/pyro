@@ -844,6 +844,11 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         if matches!(node.taffy_display(), taffy::Display::None) {
             return;
         }
+        // pyro: an atomic inline that does not fit before a line's ellipsis is hidden whole
+        // (Blink's `LineTruncator::HideChild`).
+        if hidden_by_ellipsis(self.dom.as_ref(), node) {
+            return;
+        }
 
         // pyro: a top-layer element paints above the document
         // (`paint_top_layer`), not here.
@@ -1112,14 +1117,40 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             return;
         }
 
-        let backdrop_filter =
-            convert_filters(&effects.backdrop_filter.0, self.scale, &current_color, self.dom).map(Arc::new);
+        // pyro: a `url()` naming an SVG filter graph (one that is no colour chain) is the backdrop
+        // filter as that graph, in the element's user space (CSS px from its border box's corner),
+        // which the backdrop markers are pushed in (WPT filter-effects
+        // `backdrop-filter-svg-displacement`, `backdrop-filter-reference-filter-mutated`).
+        #[cfg(feature = "svg")]
+        let backdrop_graph = match crate::filters::filter_steps(
+            &effects.backdrop_filter.0,
+            self.scale,
+            &current_color,
+            self.dom,
+            ((cx.frame.border_box.width() / self.scale) as f32, (cx.frame.border_box.height() / self.scale) as f32),
+            node.element_data().map_or(&[][..], |element| &element.reference_images[..]),
+        )
+        .as_deref()
+        {
+            Some([crate::filters::FilterStep::Graph(graph)]) => Some(graph.filter.clone()),
+            _ => None,
+        };
+        #[cfg(not(feature = "svg"))]
+        let backdrop_graph: Option<Arc<anyrender::Filter>> = None;
+        let backdrop_space = match backdrop_graph {
+            Some(_) => Affine::translate(cx.frame.border_box.origin().to_vec2()) * Affine::scale(self.scale),
+            None => Affine::IDENTITY,
+        };
+        let backdrop_filter = backdrop_graph.or_else(|| {
+            convert_filters(&effects.backdrop_filter.0, self.scale, &current_color, self.dom).map(Arc::new)
+        });
         // pyro: `backdrop-filter`: the backdrop is captured here, before the element's own layers
         // (its clip-path, mask and blend mode are no backdrop root for it), and drawn first in its
         // effect group (`paint_effect_group`). See anyrender_vello_cpu's `backdrop`.
-        let backdrop_clip = backdrop_filter.as_ref().map(|_| cx.frame.border_box_path());
-        if let (Some(backdrop), Some(clip)) = (&backdrop_filter, &backdrop_clip) {
-            scene.push_layer(Fill::NonZero, BlendMode::default(), 0.0, cx.transform, clip, None, Some(backdrop.clone()));
+        // (The clip in the filter's space, which the markers' transform maps on: `backdrop_space`.)
+        let backdrop_clip = backdrop_filter.as_ref().map(|_| (backdrop_space.inverse() * cx.frame.border_box_path(), backdrop_space));
+        if let (Some(backdrop), Some((clip, space))) = (&backdrop_filter, &backdrop_clip) {
+            scene.push_layer(Fill::NonZero, BlendMode::default(), 0.0, cx.transform * *space, clip, None, Some(backdrop.clone()));
             scene.pop_layer();
         }
         let css_clip_layer_pushed = self.layer_manager.maybe_push_layer(
@@ -1528,8 +1559,8 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         );
         // pyro: the backdrop filter's draw, first in the group: under the element's content, and
         // inside its opacity and filter (see `render_element`).
-        if let (Some(backdrop), Some(clip)) = (backdrop_filter, &backdrop_clip) {
-            scene.push_layer(Fill::NonZero, BlendMode::default(), 1.0, transform, clip, None, Some(backdrop));
+        if let (Some(backdrop), Some((clip, space))) = (backdrop_filter, &backdrop_clip) {
+            scene.push_layer(Fill::NonZero, BlendMode::default(), 1.0, transform * *space, clip, None, Some(backdrop));
             scene.pop_layer();
         }
         scene.append_scene(group, Affine::IDENTITY);
@@ -1589,8 +1620,8 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             None,
             backdrop_filter.clone(),
         );
-        if let (Some(backdrop), Some(clip)) = (backdrop_filter, &backdrop_clip) {
-            scene.push_layer(Fill::NonZero, BlendMode::default(), 1.0, transform, clip, None, Some(backdrop));
+        if let (Some(backdrop), Some((clip, space))) = (backdrop_filter, &backdrop_clip) {
+            scene.push_layer(Fill::NonZero, BlendMode::default(), 1.0, transform * *space, clip, None, Some(backdrop));
             scene.pop_layer();
         }
         for step in steps.iter().rev() {
@@ -1913,6 +1944,17 @@ fn stroke_inline_text(
             let shift = tops.map_or(0.0, |tops| tops.shift(line.metrics()));
             let offset = (x as f64, (line.metrics().baseline - baseline) as f64 + shift);
             context.line_tops = None;
+            // pyro: on the first line, in the `::first-line` colour (the line's root style).
+            let mut options = options;
+            // (A line clamp's own ellipsis is shaped in the first line's style already.)
+            let text_overflow = text_layout.ellipsis.as_deref().is_some_and(|own| std::ptr::eq(own, ellipsis));
+            if index == 0 && text_overflow && options.brush_override.is_none() {
+                if let Some(first_line) = text_layout.first_line {
+                    options.brush_override = dom
+                        .get_node(first_line)
+                        .and_then(|node| node.primary_styles().map(|style| style.clone_color().as_srgb_color()));
+                }
+            }
             crate::text::stroke_text(
                 scene,
                 ellipsis.lines(),
@@ -1929,6 +1971,40 @@ fn stroke_inline_text(
             context.run_filter = filter;
         }
     }
+}
+
+/// pyro: whether `node` is an in-flow atomic inline of an inline root whose line ends with an
+/// ellipsis before the box's end edge (its start edge in right-to-left lines).
+fn hidden_by_ellipsis(dom: &BaseDocument, node: &Node) -> bool {
+    let tree = dom.tree();
+    let mut root = node.layout_parent.get();
+    let mut text_layout = None;
+    for _ in 0..8 {
+        let Some(id) = root else { return false };
+        let Some(candidate) = tree.get(id) else { return false };
+        if let Some(layout) = candidate.element_data().and_then(|el| el.inline_layout_data.as_deref()) {
+            text_layout = Some((candidate, layout));
+            break;
+        }
+        root = candidate.layout_parent.get();
+    }
+    let Some((root, text_layout)) = text_layout else { return false };
+    if text_layout.ellipsis.is_none() && text_layout.clamp.is_none() {
+        return false;
+    }
+    let id = node.id.as_u64();
+    let scale = dom.viewport().scale();
+    for (index, line) in text_layout.layout.lines().enumerate() {
+        let ibox = line.items().find_map(|item| match item {
+            parley::PositionedLayoutItem::InlineBox(ibox) if ibox.id == id && ibox.kind == parley::InlineBoxKind::InFlow => Some(ibox),
+            _ => None,
+        });
+        let Some(ibox) = ibox else { continue };
+        let Some(truncation) = line_truncation(root, text_layout, &line, index, scale) else { return false };
+        let cut = truncation.cut;
+        return if cut.keep_left { ibox.x + ibox.width > cut.edge + scale / 64.0 } else { ibox.x < cut.edge - scale / 64.0 };
+    }
+    false
 }
 
 /// pyro: what ends a line short: the atoms cut from it, and the ellipsis drawn at `x` (layout
@@ -1953,6 +2029,17 @@ fn line_truncation<'a>(
     // The lines were broken in the unrounded box: a line as wide as the box (a
     // box sized to its text) must not count as overflowing it by a rounding.
     let width = node.unrounded_layout().content_box_width() * scale;
+    line_truncation_at(text_layout, line, index, scale, width)
+}
+
+/// pyro: [`line_truncation`] at an inline size `width` (device px).
+fn line_truncation_at<'a>(
+    text_layout: &'a blitz_dom::node::TextLayout,
+    line: &parley::Line<'_, blitz_dom::node::TextBrush>,
+    index: usize,
+    scale: f32,
+    width: f32,
+) -> Option<LineTruncation<'a>> {
     let rtl = text_layout.layout.is_rtl();
     let (ellipsis, text, forced) = match text_layout.clamp.as_ref().filter(|clamp| index + 1 == clamp.lines as usize) {
         Some(clamp) => (&*clamp.ellipsis, "\u{2026}", true),
@@ -1979,6 +2066,9 @@ fn truncate_line(
     let epsilon = scale / 64.0;
     let metrics = line.metrics();
     let ellipsis_width = ellipsis.full_width();
+    // pyro: the line's own edges where floats shorten it (Blink truncates at the line box's end).
+    let width = if metrics.inline_max_coord > 0.0 { width.min(metrics.inline_max_coord) } else { width };
+    let start = metrics.inline_min_coord.clamp(0.0, width);
     // A line that ends with the ellipsis whether it overflows or not (`forced`: a line
     // clamp's) keeps all of its atoms when the ellipsis fits after them.
     if forced {
@@ -2015,10 +2105,10 @@ fn truncate_line(
         };
         Some((crate::text::TextCut { edge, keep_left: true }, edge))
     } else {
-        if !forced && metrics.offset + metrics.hanging_advance >= -epsilon {
+        if !forced && metrics.offset + metrics.hanging_advance >= start - epsilon {
             return None;
         }
-        let cut = crate::text::TextCut { edge: ellipsis_width, keep_left: false };
+        let cut = crate::text::TextCut { edge: start + ellipsis_width, keep_left: false };
         let start = runs().filter_map(|run| cut.kept(&run).1).map(|(x0, _)| x0).fold(None, |a: Option<f32>, x| Some(a.map_or(x, |a| a.min(x))));
         if let Some(start) = start {
             return Some((cut, start - ellipsis_width));
@@ -2272,11 +2362,17 @@ impl ElementCx<'_, '_> {
         // pyro: the first line's content is in the `::first-line` box (blitz-dom
         // `TextLayout::first_line`), outside the elements on it, which have their styles there.
         let first_line = text_layout.first_line.filter(|&id| dom.get_node(id).is_some());
-        let mut first_line_styles = Vec::new();
+        let mut first_line_styles = text_layout.first_line_styles.clone();
         let mut item_index = 0usize;
         for (line_index, line) in layout.lines().enumerate() {
             let first = fragments.len();
             let metrics = line.metrics();
+            // pyro: the empty inline boxes of an invisible line box have no height: nothing to
+            // paint (WPT css-inline `empty-span-size-*`).
+            if metrics.invisible {
+                item_index += line.items().count();
+                continue;
+            }
             // Collapsible white space hanging at the line's end is in no box (preserved and
             // ideographic spaces that hang are: `LineMetrics::collapsed_advance`). pyro: the line starts at its
             // `inline_min_coord`, past the floats before it (its items are placed from there): without
@@ -2326,7 +2422,7 @@ impl ElementCx<'_, '_> {
                 chain_of(&mut chain, style_index);
                 let on_first_line = first_line.filter(|_| line.text_range().start == 0);
                 if let Some(first_line) = on_first_line {
-                    chain.push((first_line, 0));
+                    chain.push((first_line, line.root_style()));
                 }
                 let depth = chain.len();
                 for (level, &(node, style_index)) in chain.iter().enumerate() {
@@ -2448,6 +2544,14 @@ impl ElementCx<'_, '_> {
             // and right (device px). Only where that shows: a box of one colour paints the same
             // either way.
             let effects = style.get_effects();
+            // pyro: an outer shadow reaching left of the box, over the text before it on its line
+            // (`InlineBoxFragment::reaches_back`).
+            let reaches_back = !rtl
+                && effects
+                    .box_shadow
+                    .0
+                    .iter()
+                    .any(|shadow| !shadow.inset && shadow.base.horizontal.px() - shadow.spread.px() - shadow.base.blur.px() < 0.0);
             let stitch = (!(first == index && last == index)
                 && style.get_border().box_decoration_break == style::values::computed::BoxDecorationBreak::Slice
                 && (!effects.box_shadow.0.is_empty()
@@ -2467,7 +2571,14 @@ impl ElementCx<'_, '_> {
                 let later = total - earlier - width;
                 if rtl { (later, earlier) } else { (earlier, later) }
             });
-            let (border, padding) = (style.get_border(), style.get_padding());
+            // pyro: on the first line, its edges as the element has them there (`em` widths follow
+            // the `::first-line` font size).
+            let line_style = fragment.style.clone();
+            let edge_style: &ComputedValues = match &line_style {
+                Some(line_style) => line_style,
+                None => &style,
+            };
+            let (border, padding) = (edge_style.get_border(), edge_style.get_padding());
             let side = |open: bool, width: f32| if open { 0.0 } else { width };
             // The used width: none where the side has no border style.
             let used = |width: &style::values::computed::BorderSideWidth, style: style::values::computed::BorderStyle| {
@@ -2532,6 +2643,8 @@ impl ElementCx<'_, '_> {
                     left,
                     right,
                     reaches_above: false,
+                    reaches_back: false,
+                    x0: fragment.x0,
                     style: fragment.style.clone(),
                     turned: true,
                 });
@@ -2592,6 +2705,8 @@ impl ElementCx<'_, '_> {
                 left,
                 right,
                 reaches_above: (rect.y0 as f32) < fragment.line_top,
+                reaches_back: reaches_back && left,
+                x0: fragment.x0,
                 style: fragment.style.clone(),
                 turned: false,
             });
@@ -2630,25 +2745,20 @@ impl ElementCx<'_, '_> {
         if let Some(style) = &fragment.style {
             cx.style = style.clone();
         }
-        // pyro: a turned (vertical) fragment's open sides are its top and bottom.
-        if fragment.turned {
-            if !left {
-                cx.frame.border_radii.top_left = Vec2::ZERO;
-                cx.frame.border_radii.top_right = Vec2::ZERO;
-            }
-            if !right {
-                cx.frame.border_radii.bottom_left = Vec2::ZERO;
-                cx.frame.border_radii.bottom_right = Vec2::ZERO;
-            }
-        } else {
-            if !left {
-                cx.frame.border_radii.top_left = Vec2::ZERO;
-                cx.frame.border_radii.bottom_left = Vec2::ZERO;
-            }
-            if !right {
-                cx.frame.border_radii.top_right = Vec2::ZERO;
-                cx.frame.border_radii.bottom_right = Vec2::ZERO;
-            }
+        // pyro: the open sides' corners are square, left out before overlapping radii are scaled
+        // down (a turned (vertical) fragment's open sides are its top and bottom).
+        if !(left && right) {
+            let keep = if fragment.turned { [left, left, right, right] } else { [left, right, right, left] };
+            let layout = Layout {
+                size: taffy::Size {
+                    width: (size.width / self.scale) as f32,
+                    height: (size.height / self.scale) as f32,
+                },
+                border: fragment.border,
+                padding: fragment.padding,
+                ..Layout::new()
+            };
+            cx.frame = create_css_rect_with_corners(&cx.style, &layout, self.scale, keep);
         }
         // The whole box, for a sliced box's shadows and background images, and the fragment's
         // piece of it: its border box, and for the outer shadows the space past its closed
@@ -2765,44 +2875,71 @@ impl ElementCx<'_, '_> {
                 && text_layout.ellipsis.is_none()
                 && text_layout.clamp.is_none()
                 && text_layout.annotations.is_empty()
-                && fragments.iter().any(|fragment| fragment.line > 0 && fragment.reaches_above);
+                && fragments
+                    .iter()
+                    .any(|fragment| (fragment.line > 0 && fragment.reaches_above) || fragment.reaches_back);
             if by_line {
                 let options = TextPaintOptions {
                     scale: self.scale,
                     brush_override: None,
                     shadows: true,
                 };
-                let mut next = 0;
                 for (index, line) in text_layout.layout.lines().enumerate() {
-                    // (A fragment's `background-clip: text` mask borrows the text context.)
-                    while let Some(fragment) = fragments.get(next).filter(|fragment| fragment.line == index) {
-                        self.paint_inline_box_fragment(scene, fragment, transform, tops);
-                        next += 1;
+                    let on_line = || fragments.iter().filter(move |fragment| fragment.line == index);
+                    // pyro: the text before the first box whose shadow reaches back over it, the
+                    // boxes before that box, then the rest (`InlineBoxFragment::reaches_back`).
+                    let edge = on_line().filter(|fragment| fragment.reaches_back).map(|fragment| fragment.x0).reduce(f32::min);
+                    let passes: &[Option<crate::text::TextCut>] = match edge {
+                        Some(edge) => &[
+                            Some(crate::text::TextCut { edge, keep_left: true }),
+                            Some(crate::text::TextCut { edge, keep_left: false }),
+                        ],
+                        None => &[None],
+                    };
+                    for (pass, cut) in passes.iter().enumerate() {
+                        // (A fragment's `background-clip: text` mask borrows the text context.)
+                        for fragment in on_line() {
+                            let before = edge.is_some_and(|edge| fragment.x0 < edge);
+                            if edge.is_none() || (pass == 0) == before {
+                                self.paint_inline_box_fragment(scene, fragment, transform, tops);
+                            }
+                        }
+                        let mut draw_text_context = self.context.draw_text_context.borrow_mut();
+                        let outer_cut = std::mem::replace(&mut draw_text_context.cut, *cut);
+                        draw_text_context.text_shift = text_shift;
+                        draw_text_context.line_tops = tops;
+                        draw_text_context.first_line = text_layout.first_line;
+                        crate::text::stroke_text(
+                            scene,
+                            std::iter::once(line),
+                            self.context.dom,
+                            transform,
+                            options,
+                            self.node.id,
+                            Some(&text_layout.text),
+                            &mut draw_text_context,
+                            None,
+                            Some(&text_layout.layout),
+                        );
+                        draw_text_context.text_shift = 0.0;
+                        draw_text_context.line_tops = None;
+                        draw_text_context.first_line = None;
+                        draw_text_context.cut = outer_cut;
                     }
-                    let mut draw_text_context = self.context.draw_text_context.borrow_mut();
-                    draw_text_context.text_shift = text_shift;
-                    draw_text_context.line_tops = tops;
-                    draw_text_context.first_line = text_layout.first_line;
-                    crate::text::stroke_text(
-                        scene,
-                        std::iter::once(line),
-                        self.context.dom,
-                        transform,
-                        options,
-                        self.node.id,
-                        Some(&text_layout.text),
-                        &mut draw_text_context,
-                        None,
-                        Some(&text_layout.layout),
-                    );
-                    draw_text_context.text_shift = 0.0;
-                    draw_text_context.line_tops = None;
-                    draw_text_context.first_line = None;
                 }
                 return;
             }
+            // pyro: positioned inline boxes paint after the in-flow content (`positioned_passes`;
+            // not with highlights or truncated lines).
+            let passes = match highlighted.is_none() && text_layout.ellipsis.is_none() && text_layout.clamp.is_none() {
+                true => self.positioned_passes(text_layout),
+                false => Vec::new(),
+            };
+            let main_pass = (!passes.is_empty()).then_some(None);
             for fragment in &fragments {
-                self.paint_inline_box_fragment(scene, fragment, transform, tops);
+                if self.fragment_in_pass(fragment.node, main_pass) {
+                    self.paint_inline_box_fragment(scene, fragment, transform, tops);
+                }
             }
 
             // Render text selection highlight (if any) using cached selection ranges
@@ -2844,14 +2981,39 @@ impl ElementCx<'_, '_> {
                     self.node.id,
                     &text_layout.layout,
                     &text_layout.text,
-                    transform,
+                    |_| transform,
                     tops,
                     options,
                     &self.context.highlight_layers,
                     ranges,
                     &mut draw_text_context,
+                    |_| None,
                 ),
-                None => stroke_inline_text(
+                None => {
+                    draw_text_context.positioned_pass = main_pass;
+                    stroke_inline_text(
+                        scene,
+                        self.context.dom,
+                        self.node,
+                        text_layout,
+                        transform,
+                        options,
+                        &mut draw_text_context,
+                        tops,
+                        self.scale,
+                    );
+                    draw_text_context.positioned_pass = None;
+                }
+            }
+            // pyro: then each positioned inline box: its fragments, then its text.
+            drop(draw_text_context);
+            for &pass in passes.iter().skip(1) {
+                for fragment in fragments.iter().filter(|fragment| self.fragment_in_pass(fragment.node, Some(pass))) {
+                    self.paint_inline_box_fragment(scene, fragment, transform, tops);
+                }
+                let mut draw_text_context = self.context.draw_text_context.borrow_mut();
+                draw_text_context.positioned_pass = Some(pass);
+                stroke_inline_text(
                     scene,
                     self.context.dom,
                     self.node,
@@ -2861,8 +3023,10 @@ impl ElementCx<'_, '_> {
                     &mut draw_text_context,
                     tops,
                     self.scale,
-                ),
+                );
+                draw_text_context.positioned_pass = None;
             }
+            let mut draw_text_context = self.context.draw_text_context.borrow_mut();
             // pyro: ruby annotations and emphasis marks, over the text of each line.
             if !text_layout.annotations.is_empty() {
                 let recording = draw_text_context.runs.is_some();
@@ -2978,6 +3142,41 @@ impl ElementCx<'_, '_> {
 
     /// pyro: paints the lines of a vertical writing mode's inline layout, each with its
     /// transform from layout space (see [`Self::draw_vertical_inline_layout`]).
+    /// pyro: the paint passes of an inline root holding positioned inline boxes (relative or
+    /// sticky, not atomic): its in-flow content first (`None`), then each box with its content in
+    /// tree order (an outer box before the boxes in it), as CSS 2.1 Appendix E paints positioned
+    /// descendants after the in-flow content, so a box's text and shadows cover the root's later
+    /// text. Empty (one pass drawing all) without such boxes, or in a recording paint.
+    fn positioned_passes(&self, text_layout: &blitz_dom::node::TextLayout) -> Vec<Option<NodeId>> {
+        let doc = self.context.dom;
+        if !doc.inline_root_has_relative_spans(self.node.id) || self.context.draw_text_context.borrow().runs.is_some() {
+            return Vec::new();
+        }
+        let mut order: Vec<NodeId> = Vec::new();
+        for line in text_layout.layout.lines() {
+            for item in line.items() {
+                if let parley::PositionedLayoutItem::GlyphRun(run) = item {
+                    let chain = doc.inline_span_positioned_chain(run.style().brush.id, self.node.id);
+                    for id in chain.into_iter().rev() {
+                        if !order.contains(&id) {
+                            order.push(id);
+                        }
+                    }
+                }
+            }
+        }
+        if order.is_empty() {
+            return Vec::new();
+        }
+        std::iter::once(None).chain(order.into_iter().map(Some)).collect()
+    }
+
+    /// pyro: whether the inline box fragment of `node` paints in the positioned pass `pass`
+    /// (`positioned_passes`; every fragment without passes).
+    fn fragment_in_pass(&self, node: NodeId, pass: Option<Option<NodeId>>) -> bool {
+        pass.is_none_or(|pass| self.context.dom.inline_span_positioned_chain(node, self.node.id).first().copied() == pass)
+    }
+
     fn draw_turned_lines(
         &self,
         scene: &mut impl PaintScene,
@@ -2994,11 +3193,25 @@ impl ElementCx<'_, '_> {
             )
         };
 
+        // pyro: positioned inline boxes paint after the in-flow content (`positioned_passes`; not
+        // with highlights or truncated lines).
+        let passes = match self.context.highlight_ranges.get(&self.node.id).is_none()
+            && text_layout.ellipsis.is_none()
+            && text_layout.clamp.is_none()
+            && !wm.contains(WritingMode::WRITING_MODE_SIDEWAYS_LR)
+        {
+            true => self.positioned_passes(text_layout),
+            false => Vec::new(),
+        };
+        let main_pass = (!passes.is_empty()).then_some(None);
+
         // pyro: the boxes of inline elements, as on horizontal lines (`inline_box_fragments`), but
         // for `sideways-lr`, whose lines turn the other way (it keeps their background colours).
         if !wm.contains(WritingMode::WRITING_MODE_SIDEWAYS_LR) {
             for fragment in self.inline_box_fragments(text_layout, Affine::IDENTITY, None, Some(&line_transform)) {
-                self.paint_inline_box_fragment(scene, &fragment, line_transform(fragment.line), None);
+                if self.fragment_in_pass(fragment.node, main_pass) {
+                    self.paint_inline_box_fragment(scene, &fragment, line_transform(fragment.line), None);
+                }
             }
         } else if self.context.backgrounds {
             for (index, line) in text_layout.layout.lines().enumerate() {
@@ -3013,7 +3226,16 @@ impl ElementCx<'_, '_> {
                 );
             }
         }
-        if let Some(&(sel_start, sel_end)) = self.context.selection_ranges.get(&self.node.id) {
+        // pyro: highlighted as on horizontal lines (`highlight`: the `::selection` style, the
+        // originating text's shadows under it), but in lines cut by an ellipsis and in upright
+        // text (whose glyphs leave the layout's inline positions); a recording paint draws none.
+        let highlight = self.context.highlight_ranges.get(&self.node.id).filter(|_| {
+            text_layout.ellipsis.is_none()
+                && text_layout.clamp.is_none()
+                && !all_upright
+                && self.context.draw_text_context.borrow().runs.is_none()
+        });
+        if let (Some(&(sel_start, sel_end)), None) = (self.context.selection_ranges.get(&self.node.id), highlight) {
             crate::text::draw_text_selection(
                 scene,
                 &text_layout.layout,
@@ -3023,11 +3245,43 @@ impl ElementCx<'_, '_> {
             );
         }
         let mut draw_text_context = self.context.draw_text_context.borrow_mut();
-        for (index, line) in text_layout.layout.lines().enumerate() {
-            let vertical = vertical(&line);
-            crate::text::stroke_text(
+        if let Some(ranges) = highlight {
+            crate::highlight::stroke_highlighted_text(
                 scene,
-                std::iter::once(line),
+                self.context.dom,
+                self.node.id,
+                &text_layout.layout,
+                &text_layout.text,
+                &line_transform,
+                None,
+                TextPaintOptions { scale: self.scale, brush_override: None, shadows: true },
+                &self.context.highlight_layers,
+                ranges,
+                &mut draw_text_context,
+                vertical,
+            );
+        }
+        // pyro: `text-overflow` and line clamps cut the lines at the content box's inline size
+        // (its physical height), as on horizontal lines (`stroke_inline_text`).
+        let truncates = text_layout.ellipsis.is_some() || text_layout.clamp.is_some();
+        let inline_size = truncates.then(|| {
+            let layout = self.context.dom.physical_unrounded_layout(self.node.id);
+            let inset = layout.border.top + layout.border.bottom + layout.padding.top + layout.padding.bottom;
+            (layout.size.height - inset).max(0.0) * self.scale as f32
+        });
+        draw_text_context.positioned_pass = main_pass;
+        for (index, line) in text_layout.layout.lines().enumerate() {
+            if text_layout.clamp.as_ref().is_some_and(|clamp| index >= clamp.lines as usize) {
+                break;
+            }
+            let vertical = vertical(&line);
+            let truncation = inline_size.and_then(|width| {
+                line_truncation_at(text_layout, &line, index, self.scale as f32, width)
+            });
+            draw_text_context.cut = truncation.as_ref().map(|truncation| truncation.cut);
+            if highlight.is_none() { crate::text::stroke_text(
+                scene,
+                std::iter::once(line.clone()),
                 self.context.dom,
                 line_transform(index),
                 TextPaintOptions {
@@ -3040,7 +3294,40 @@ impl ElementCx<'_, '_> {
                 &mut draw_text_context,
                 vertical,
                 Some(&text_layout.layout),
-            );
+            ); }
+            draw_text_context.cut = None;
+            if let Some(LineTruncation { x, ellipsis, text, .. }) = truncation {
+                let filter = draw_text_context.run_filter.take();
+                let baseline = ellipsis.lines().next().map_or(0.0, |l| l.metrics().baseline);
+                let offset = (x as f64, (line.metrics().baseline - baseline) as f64);
+                for ellipsis_line in ellipsis.lines() {
+                    let ellipsis_vertical = vertical.map(|_| {
+                        crate::text::VerticalLine::new(
+                            &ellipsis_line,
+                            self.style.writing_mode.intersects(WritingMode::TEXT_SIDEWAYS | WritingMode::VERTICAL_SIDEWAYS),
+                            self.style.writing_mode.contains(WritingMode::UPRIGHT),
+                        )
+                        .counterclockwise(self.style.writing_mode.contains(WritingMode::WRITING_MODE_SIDEWAYS_LR))
+                    });
+                    crate::text::stroke_text(
+                        scene,
+                        std::iter::once(ellipsis_line),
+                        self.context.dom,
+                        line_transform(index) * Affine::translate(offset),
+                        TextPaintOptions {
+                            scale: self.scale,
+                            brush_override: None,
+                            shadows: true,
+                        },
+                        self.node.id,
+                        Some(text),
+                        &mut draw_text_context,
+                        ellipsis_vertical,
+                        None,
+                    );
+                }
+                draw_text_context.run_filter = filter;
+            }
             // pyro: ruby annotations and emphasis marks, turned with their line.
             if !text_layout.annotations.is_empty() {
                 let recording = draw_text_context.runs.is_some();
@@ -3061,6 +3348,34 @@ impl ElementCx<'_, '_> {
                     );
                 }
             }
+        }
+        draw_text_context.positioned_pass = None;
+        drop(draw_text_context);
+        // pyro: then each positioned inline box: its fragments, then its text.
+        for &pass in passes.iter().skip(1) {
+            for fragment in self.inline_box_fragments(text_layout, Affine::IDENTITY, None, Some(&line_transform)) {
+                if self.fragment_in_pass(fragment.node, Some(pass)) {
+                    self.paint_inline_box_fragment(scene, &fragment, line_transform(fragment.line), None);
+                }
+            }
+            let mut draw_text_context = self.context.draw_text_context.borrow_mut();
+            draw_text_context.positioned_pass = Some(pass);
+            for (index, line) in text_layout.layout.lines().enumerate() {
+                let turned = vertical(&line);
+                crate::text::stroke_text(
+                    scene,
+                    std::iter::once(line),
+                    self.context.dom,
+                    line_transform(index),
+                    TextPaintOptions { scale: self.scale, brush_override: None, shadows: true },
+                    self.node.id,
+                    Some(&text_layout.text),
+                    &mut draw_text_context,
+                    turned,
+                    Some(&text_layout.layout),
+                );
+            }
+            draw_text_context.positioned_pass = None;
         }
     }
 
@@ -3256,7 +3571,10 @@ impl ElementCx<'_, '_> {
     /// pyro: an inside marker that is an image (`list-style-image`): at the start of the
     /// item's first line, its bottom on the baseline (the inline layout left room for it).
     fn draw_inside_marker_image(&self, scene: &mut impl PaintScene, pos: Point, width: f32, height: f32) {
-        let Some(image) = self.element.list_style_images.first().and_then(Option::as_ref) else { return };
+        let image = self.element.list_style_images.first().and_then(Option::as_ref);
+        if image.is_none() && !self.generated_marker() {
+            return;
+        }
         let Some(text_layout) = self.element.inline_layout_data.as_ref() else { return };
         let Some(line) = text_layout.layout.lines().next() else { return };
         let metrics = line.metrics();
@@ -3266,18 +3584,36 @@ impl ElementCx<'_, '_> {
         let x = pos.x + f64::from(line_x);
         let y = pos.y + f64::from(text_layout.block_offset + metrics.baseline / layout_scale - height);
         let origin = Affine::translate(((x * self.scale).round(), (y * self.scale).round()));
+        let Some(image) = image else {
+            self.draw_marker_gradient(scene, origin, width, height);
+            return;
+        };
         match &image.image {
             blitz_dom::node::ImageData::Raster(raster) if raster.width > 0 && raster.height > 0 => {
                 let quality = to_image_quality(self.style.clone_image_rendering());
+                // pyro: `image-orientation: none` turns the decoded pixels back (as `<img>`).
+                let unoriented = blitz_dom::util::image_unoriented(&self.style) && raster.orientation != 1;
+                let (shown_width, shown_height) = raster.shown_size(unoriented);
                 let size = Affine::scale_non_uniform(
-                    f64::from(width) * self.scale / f64::from(raster.width),
-                    f64::from(height) * self.scale / f64::from(raster.height),
+                    f64::from(width) * self.scale / f64::from(shown_width),
+                    f64::from(height) * self.scale / f64::from(shown_height),
                 );
-                scene.draw_image(to_peniko_image(raster, quality).as_ref(), self.transform * origin * size);
+                let unturn = if unoriented { Affine::new(raster.unturn()) } else { Affine::IDENTITY };
+                scene.draw_image(to_peniko_image(raster, quality).as_ref(), self.transform * origin * size * unturn);
             }
             #[cfg(feature = "svg")]
             blitz_dom::node::ImageData::Svg(svg) => {
-                anyrender_svg::render_svg_tree(scene, &svg.tree, self.transform * origin * Affine::scale(self.scale));
+                // pyro: drawn into the marker box (a sizeless image gets the default square), the
+                // root's background filling it as a browser's canvas.
+                let base = self.transform * origin * Affine::scale(self.scale);
+                if let Some(color) = svg.intrinsic_dimensions.root_background {
+                    let color = peniko::Color::from_rgba8(color.red, color.green, color.blue, color.alpha);
+                    let rect = Rect::new(0.0, 0.0, f64::from(width), f64::from(height));
+                    scene.fill(peniko::Fill::NonZero, base, color, None, &rect);
+                }
+                let viewport = svg.viewport_transform(width, height);
+                let viewport = Affine::new([viewport.sx, viewport.ky, viewport.kx, viewport.sy, viewport.tx, viewport.ty].map(f64::from));
+                anyrender_svg::render_svg_tree(scene, &svg.tree, base * viewport);
             }
             _ => {}
         }
@@ -3337,7 +3673,13 @@ impl ElementCx<'_, '_> {
             let line_x = first_line.as_ref().filter(|_| !rtl).map_or(0.0, |(text_layout, line)| {
                 marker_line_x(line) / text_layout.layout.scale()
             });
-            let y_offset = if let Some((text_layout, first_text_line)) = &first_line
+            let y_offset = if first_line.is_none() {
+                // pyro: no line of its own (its first line is in a block inside it, an anonymous
+                // one beside a nested list): on the baseline of that line, with its trim shift
+                // (WPT css-inline `text-box-trim-list-001`).
+                let own = layout.lines().next().map_or(0.0, |line| line.metrics().baseline) / layout.scale();
+                self.marker_baseline(layout).0 - own
+            } else if let Some((text_layout, first_text_line)) = &first_line
             {
                 // pyro: with the line, where it is painted (`LineTops`).
                 let shift = self
@@ -3378,6 +3720,30 @@ impl ElementCx<'_, '_> {
                 None,
                 None,
             );
+            // pyro: its emphasis marks, as over the item's text.
+            if let Some(item) = self.list_item.filter(|item| !item.annotations.is_empty()) {
+                let text = match marker {
+                    Marker::String(text) => text.clone(),
+                    Marker::Char(c) => c.to_string(),
+                    Marker::Image { .. } => String::new(),
+                };
+                let recording = draw_text_context.runs.is_some();
+                for line in layout.lines() {
+                    crate::text::draw_text_annotations(
+                        scene,
+                        &line,
+                        &item.annotations,
+                        &text,
+                        self.context.dom,
+                        transform,
+                        self.scale,
+                        recording,
+                        None,
+                        None,
+                        None,
+                    );
+                }
+            }
         }
     }
 
@@ -3485,6 +3851,37 @@ impl ElementCx<'_, '_> {
     /// (`ListMarker::InlineMarginsForOutside`): the image at its natural size, ending 7px before
     /// the item's border box, its bottom on the baseline of the item's first line (an inline
     /// replaced box on the marker's line), at whole device pixels.
+    /// pyro: a gradient `list-style-image` (no natural size: `layout::list` makes the marker a
+    /// square of half the font's ascent, as Blink).
+    fn marker_gradient(&self) -> Option<&style::values::computed::Gradient> {
+        match &self.style.get_list().list_style_image {
+            style::values::computed::Image::Gradient(gradient) => Some(gradient),
+            _ => None,
+        }
+    }
+
+    /// pyro: whether `list-style-image` is generated (a gradient, or `image(<color>)`, to which
+    /// `light-dark(none, none)` computes): a marker of the default size (`layout::list`).
+    fn generated_marker(&self) -> bool {
+        matches!(
+            self.style.get_list().list_style_image,
+            style::values::computed::Image::Gradient(_) | style::values::computed::Image::Image(_)
+        )
+    }
+
+    fn draw_marker_gradient(&self, scene: &mut impl PaintScene, origin: Affine, width: f32, height: f32) {
+        let rect = Rect::new(0.0, 0.0, f64::from(width) * self.scale, f64::from(height) * self.scale);
+        if let style::values::computed::Image::Image(color) = &self.style.get_list().list_style_image {
+            let color = color.resolve_to_absolute(&self.style.clone_color()).as_srgb_color();
+            scene.fill(peniko::Fill::NonZero, self.transform * origin, color, None, &rect);
+            return;
+        }
+        let Some(gradient) = self.marker_gradient() else { return };
+        let (gradient, brush_transform) =
+            crate::gradient::to_peniko_gradient(gradient, rect, rect, self.scale, &self.style.clone_color());
+        scene.fill(peniko::Fill::NonZero, self.transform * origin, &gradient, brush_transform, &rect);
+    }
+
     fn draw_marker_image(
         &self,
         scene: &mut impl PaintScene,
@@ -3493,7 +3890,10 @@ impl ElementCx<'_, '_> {
         height: f32,
         marker_layout: &parley::Layout<blitz_dom::node::TextBrush>,
     ) {
-        let Some(image) = self.element.list_style_images.first().and_then(Option::as_ref) else { return };
+        let image = self.element.list_style_images.first().and_then(Option::as_ref);
+        if image.is_none() && !self.generated_marker() {
+            return;
+        }
         let (baseline, line_x) = self.marker_baseline(marker_layout);
         let item_layout = self.node.final_layout();
         let subpixel = self.list_item.map_or(taffy::Point::ZERO, |item| item.content_box_subpixel_offset);
@@ -3501,18 +3901,36 @@ impl ElementCx<'_, '_> {
             - f64::from(width + 7.0);
         let y = pos.y + f64::from(subpixel.y + baseline - height);
         let origin = Affine::translate(((x * self.scale).round(), (y * self.scale).round()));
+        let Some(image) = image else {
+            self.draw_marker_gradient(scene, origin, width, height);
+            return;
+        };
         match &image.image {
             blitz_dom::node::ImageData::Raster(raster) if raster.width > 0 && raster.height > 0 => {
                 let quality = to_image_quality(self.style.clone_image_rendering());
+                // pyro: `image-orientation: none` turns the decoded pixels back (as `<img>`).
+                let unoriented = blitz_dom::util::image_unoriented(&self.style) && raster.orientation != 1;
+                let (shown_width, shown_height) = raster.shown_size(unoriented);
                 let size = Affine::scale_non_uniform(
-                    f64::from(width) * self.scale / f64::from(raster.width),
-                    f64::from(height) * self.scale / f64::from(raster.height),
+                    f64::from(width) * self.scale / f64::from(shown_width),
+                    f64::from(height) * self.scale / f64::from(shown_height),
                 );
-                scene.draw_image(to_peniko_image(raster, quality).as_ref(), self.transform * origin * size);
+                let unturn = if unoriented { Affine::new(raster.unturn()) } else { Affine::IDENTITY };
+                scene.draw_image(to_peniko_image(raster, quality).as_ref(), self.transform * origin * size * unturn);
             }
             #[cfg(feature = "svg")]
             blitz_dom::node::ImageData::Svg(svg) => {
-                anyrender_svg::render_svg_tree(scene, &svg.tree, self.transform * origin * Affine::scale(self.scale));
+                // pyro: drawn into the marker box (a sizeless image gets the default square), the
+                // root's background filling it as a browser's canvas.
+                let base = self.transform * origin * Affine::scale(self.scale);
+                if let Some(color) = svg.intrinsic_dimensions.root_background {
+                    let color = peniko::Color::from_rgba8(color.red, color.green, color.blue, color.alpha);
+                    let rect = Rect::new(0.0, 0.0, f64::from(width), f64::from(height));
+                    scene.fill(peniko::Fill::NonZero, base, color, None, &rect);
+                }
+                let viewport = svg.viewport_transform(width, height);
+                let viewport = Affine::new([viewport.sx, viewport.ky, viewport.kx, viewport.sy, viewport.tx, viewport.ty].map(f64::from));
+                anyrender_svg::render_svg_tree(scene, &svg.tree, base * viewport);
             }
             _ => {}
         }
@@ -4033,6 +4451,14 @@ impl ElementCx<'_, '_> {
         // pyro: an inline `<svg>` without a `viewBox` lays its content out in its box, in user
         // units of a CSS px times its zoom (`zoom: 2` draws its content twice as large).
         let units = self.scale as f32 * self.style.effective_zoom.value();
+        // pyro: a source that depends on the laid-out size, serialized again at it (blitz-dom
+        // `inline_svg_at_viewport`; WPT css-transforms `transform-percent-010`)
+        let at_viewport = if svg.viewport_dependent {
+            self.context.dom.as_ref().inline_svg_at_viewport(self.node.id, width / units, height / units)
+        } else {
+            None
+        };
+        let svg = at_viewport.as_deref().unwrap_or(svg);
         let sized = svg.sized(width / units, height / units);
         let svg = sized.as_ref().unwrap_or(svg);
         let svg_size = svg.tree.size();
@@ -4445,22 +4871,27 @@ impl ElementCx<'_, '_> {
             let width = self.frame.content_box.width() as u32;
             let height = self.frame.content_box.height() as u32;
 
-            // TODO: Support arbitrary transforms of subdocuments
-            let translation = self.transform.translation();
-            let initial_x = translation.x + self.frame.content_box.origin().x;
-            let initial_y = translation.y + self.frame.content_box.origin().y;
-            // let transform = self.transform.then_translate(Vec2 { x, y });
-
+            // pyro: the document is painted at its viewport's origin and placed with the frame's
+            // whole transform (rotated and scaled frames: WPT css-transforms
+            // `transform-iframe-002`, `transform-iframe-scroll-position`), clipped to its
+            // content box.
+            let origin = self.frame.content_box.origin();
+            let transform = self.transform * Affine::translate((origin.x, origin.y));
             let painter = BlitzDomPainter::new(
                 &sub_doc,
                 scale,
                 width,
                 height,
-                initial_x,
-                initial_y,
+                0.0,
+                0.0,
                 self.custom_widget_scenes,
             );
-            painter.paint_scene(scene);
+            let mut recording = anyrender::recording::Scene::new();
+            painter.paint_scene(&mut recording);
+            let clip = Rect::new(0.0, 0.0, width as f64, height as f64);
+            scene.push_clip_layer(Fill::NonZero, transform, &clip);
+            scene.append_scene(recording, transform);
+            scene.pop_layer();
         }
     }
 
@@ -4508,6 +4939,13 @@ fn insets_from_taffy_rect(input: taffy::Rect<f64>) -> Insets {
 
 /// Convert Stylo and Taffy types into Kurbo types
 fn create_css_rect(style: &ComputedValues, layout: &Layout, scale: f64) -> CssBox {
+    create_css_rect_with_corners(style, layout, scale, [true; 4])
+}
+
+/// pyro: [`create_css_rect`] with only the corners `keep` marks (top left, top right, bottom
+/// right, bottom left) rounded: the others are left out before overlapping radii are scaled down,
+/// as Blink's `CalcRadiiFor` does for the open sides of an inline box's fragment.
+fn create_css_rect_with_corners(style: &ComputedValues, layout: &Layout, scale: f64, keep: [bool; 4]) -> CssBox {
     // Resolve and rescale
     // We have to scale since document pixels are not same same as rendered pixels
     let width: f64 = layout.size.width as f64;
@@ -4540,11 +4978,12 @@ fn create_css_rect(style: &ComputedValues, layout: &Layout, scale: f64) -> CssBo
             resolve_radii(radius)
         }
     };
+    let kept = |keep: bool, radius: Vec2| if keep { radius } else { Vec2::ZERO };
     let border_radii = NonUniformRoundedRectRadii {
-        top_left: shaped(&s_border.border_top_left_radius, s_border.corner_top_left_shape.k),
-        top_right: shaped(&s_border.border_top_right_radius, s_border.corner_top_right_shape.k),
-        bottom_right: shaped(&s_border.border_bottom_right_radius, s_border.corner_bottom_right_shape.k),
-        bottom_left: shaped(&s_border.border_bottom_left_radius, s_border.corner_bottom_left_shape.k),
+        top_left: kept(keep[0], shaped(&s_border.border_top_left_radius, s_border.corner_top_left_shape.k)),
+        top_right: kept(keep[1], shaped(&s_border.border_top_right_radius, s_border.corner_top_right_shape.k)),
+        bottom_right: kept(keep[2], shaped(&s_border.border_bottom_right_radius, s_border.corner_bottom_right_shape.k)),
+        bottom_left: kept(keep[3], shaped(&s_border.border_bottom_left_radius, s_border.corner_bottom_left_shape.k)),
     };
 
     let frame = CssBox::new(border_box, border, padding, outline_width, border_radii);
@@ -4588,7 +5027,8 @@ struct EffectLayer {
     filter: Option<Arc<anyrender::Filter>>,
     backdrop_filter: Option<Arc<anyrender::Filter>>,
     /// pyro: the element's border box with its radii, in its space: what its backdrop shows in.
-    backdrop_clip: Option<kurbo::BezPath>,
+    /// (With the space it is in: the filter's, in the element's.)
+    backdrop_clip: Option<(kurbo::BezPath, Affine)>,
     /// pyro: the `filter` list as layers when an SVG filter in it is a graph (`filter` is then
     /// `None`): see `filters::filter_steps`.
     #[cfg(feature = "svg")]
@@ -4614,6 +5054,12 @@ struct InlineBoxFragment {
     right: bool,
     /// Whether its box reaches above its line box, over the line before.
     reaches_above: bool,
+    /// pyro: whether an outer shadow of its box reaches left of it, over the text before it on its
+    /// line: that text is painted first, as CSS 2.1 Appendix E paints a line's boxes and text in tree
+    /// order (WPT css-backgrounds `box-shadow-overlapping-001`).
+    reaches_back: bool,
+    /// pyro: its left edge in the line's coordinates (the text's).
+    x0: f32,
     /// pyro: its element's style on the first line, in place of its own (`::first-line`).
     style: Option<style::servo_arc::Arc<ComputedValues>>,
     /// pyro: a fragment of a vertical writing mode's turned line: `left` and `right` are its top

@@ -206,7 +206,9 @@ impl BaseDocument {
             // pyro: the active scroll markers and the scroll buttons' states follow the layout
             // and the scroll positions (`layout::scroll_markers`): a change styles them again.
             let scroll_states_changed = !container_sizes_changed && self.update_target_current();
-            if (!container_sizes_changed && !scroll_states_changed) || pass == 31 {
+            // pyro: a marker's content that reads counters was met: they are evaluated now.
+            let marker_counters = std::mem::take(&mut self.marker_counters_pending);
+            if (!container_sizes_changed && !scroll_states_changed && !marker_counters) || pass == 31 {
                 break;
             }
             if !container_sizes_changed {
@@ -265,7 +267,21 @@ impl BaseDocument {
         let mut subdoc_is_animating = false;
         for &node_id in &self.sub_document_nodes {
             let node = &mut self.nodes[node_id];
-            let size = node.final_layout().size;
+            // pyro: the frame's viewport is its content box (Blitz took the border box), and a
+            // frame document from the render snapshot keeps its scroll position.
+            let layout = node.final_layout();
+            let size = taffy::Size {
+                width: (layout.size.width - layout.border.left - layout.border.right - layout.padding.left - layout.padding.right)
+                    .max(0.0),
+                height: (layout.size.height - layout.border.top - layout.border.bottom - layout.padding.top - layout.padding.bottom)
+                    .max(0.0),
+            };
+            let frame_scroll = node
+                .attr(markup5ever::LocalName::from("data-pyro-frame-scroll"))
+                .and_then(|value| {
+                    let mut parts = value.split(' ').map(|part| part.parse::<f64>().ok().filter(|v| v.is_finite()));
+                    Some((parts.next()??, parts.next()??))
+                });
             if let Some(mut sub_doc) = node.subdoc_mut().map(|doc| doc.inner_mut()) {
                 // Set viewport
                 // viewport_mut handles change detection. So we just unconditionally set the values;
@@ -280,6 +296,9 @@ impl BaseDocument {
                 drop(sub_viewport);
 
                 sub_doc.resolve(current_time_for_animations);
+                if let Some((x, y)) = frame_scroll {
+                    sub_doc.set_viewport_scroll(crate::Point { x, y });
+                }
 
                 subdoc_is_animating |= sub_doc.is_animating();
             }
@@ -1089,8 +1108,17 @@ impl BaseDocument {
         // the tree construction left, with the nodes holding their styles made before the builds.
         for task in deferred_construction_nodes.iter_mut() {
             let ConstructionTaskData::InlineLayout(layout) = &mut task.data;
+            // pyro: the first line's style node first: a first letter on it inherits from it.
+            layout.first_line = match self.first_line_styles {
+                true => crate::layout::first_line::style_node_for(self, task.node_id),
+                false => None,
+            };
+            layout.first_line_styles = match layout.first_line {
+                Some(first_line) => crate::layout::first_line::layout_styles(self, task.node_id, first_line),
+                None => Vec::new(),
+            };
             layout.first_letter = match self.first_letter_styles {
-                true => crate::layout::first_letter::split(self, task.node_id),
+                true => crate::layout::first_letter::split(self, task.node_id, layout.first_line),
                 false => None,
             };
             // pyro: an initial letter box is laid out by the root's first line: it is the first
@@ -1098,10 +1126,6 @@ impl BaseDocument {
             if let Some(split) = layout.first_letter.as_ref().filter(|split| split.initial.is_some() || split.floated) {
                 crate::layout::first_letter::build_initial_letter_box(self, task.node_id, split.style_node);
             }
-            layout.first_line = match self.first_line_styles {
-                true => crate::layout::first_line::style_node_for(self, task.node_id),
-                false => None,
-            };
         }
 
         #[cfg(feature = "parallel-construct")]
@@ -1137,6 +1161,7 @@ impl BaseDocument {
                         layout: std::mem::take(&mut layout.layout),
                         first_letter: layout.first_letter.take(),
                         first_line: layout.first_line.take(),
+                        first_line_styles: std::mem::take(&mut layout.first_line_styles),
                         ..TextLayout::new()
                     };
                     build_inline_layout_into(
@@ -1268,7 +1293,12 @@ impl BaseDocument {
             {
                 state.layout_wm = state.layout_wm_of(crate::dom_node_id(fo));
             }
-            taffy::compute_root_layout_in(&mut state, fo, initial_containing_block, initial_containing_block);
+            // pyro: its percentage `width`/`height` resolve against the nearest `<svg>` viewport (WPT
+            // css-transforms `view-box-mutation-003`).
+            let viewport = state.foreign_object_viewport(crate::dom_node_id(fo)).map_or(initial_containing_block, |(w, h)| {
+                taffy::Size { width: taffy::AvailableSpace::Definite(w), height: taffy::AvailableSpace::Definite(h) }
+            });
+            taffy::compute_root_layout_in(&mut state, fo, viewport, viewport);
             #[cfg(feature = "writing-mode")]
             state.physicalise_and_round_layout(fo);
             #[cfg(not(feature = "writing-mode"))]

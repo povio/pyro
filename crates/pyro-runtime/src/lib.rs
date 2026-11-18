@@ -821,8 +821,11 @@ impl<S: LoopState + 'static> EventLoop<S> {
             if earliest_page.is_none_or(|p| r < p) {
                 let (_, task) = self.remote.pop_front().expect("remote front");
                 self.sched.inner.remote_pending.fetch_sub(1, Ordering::AcqRel);
+                begin_task();
                 task(state);
+                next_task();
                 state.after_task();
+                end_task();
                 return true;
             }
         }
@@ -834,8 +837,11 @@ impl<S: LoopState + 'static> EventLoop<S> {
         if local.is_some() {
             let next = self.sched.inner.tasks.borrow_mut().pop_front();
             if let Some((_, _, task)) = next {
+                begin_task();
                 task(state);
+                next_task();
                 state.after_task();
+                end_task();
                 return true;
             }
         }
@@ -849,8 +855,11 @@ impl<S: LoopState + 'static> EventLoop<S> {
             let task = self.sched.inner.timers.borrow().get(&id).map(|t| t.task.clone());
             let Some(task) = task else { continue }; // cleared
             self.sched.inner.remove_timer(id);
+            begin_task();
             task(state);
+            next_task();
             state.after_task();
+            end_task();
             return true;
         }
     }
@@ -906,8 +915,11 @@ impl<S: LoopState + 'static> EventLoop<S> {
                     self.sched.inner.remove_timer(id);
                 }
             }
+            begin_task();
             task(state);
+            next_task();
             state.after_task();
+            end_task();
             return true;
         }
     }
@@ -1193,6 +1205,31 @@ mod tests {
         assert_eq!(r, RunOutcome::Done, "{:?}", st.log);
         s.clear_timer(every);
         assert_eq!(s.scheduled(), 3, "{:?}", st.log);
+    }
+
+    /// `task_seq` is one number for the whole of a task (and another for its
+    /// checkpoint), a new one for the next task, and `None` between tasks.
+    #[test]
+    fn task_seq_is_stable_within_a_task_and_none_between_tasks() {
+        let mut lp = EventLoop::<St>::new();
+        let mut st = St::default();
+        let s = lp.scheduler();
+        assert_eq!(task_seq(), None);
+        let seen = Rc::new(RefCell::new(Vec::new()));
+        for _ in 0..2 {
+            let seen = seen.clone();
+            s.post(TaskSource::DomManipulation, move |_| {
+                let first = task_seq();
+                std::thread::sleep(Duration::from_millis(2));
+                seen.borrow_mut().push((first, task_seq()));
+            });
+        }
+        assert!(lp.run_one(&mut st));
+        assert!(lp.run_one(&mut st));
+        assert_eq!(task_seq(), None);
+        let seen = seen.borrow();
+        assert!(seen.iter().all(|(a, b)| a.is_some() && a == b), "{seen:?}");
+        assert_ne!(seen[0].0, seen[1].0);
     }
 
     /// A remote post while the loop sleeps on a far deadline wakes it promptly
@@ -2073,4 +2110,32 @@ mod tests {
             }
         }
     }
+}
+
+thread_local! {
+    static TASK_SEQ: Cell<u64> = const { Cell::new(0) };
+    static TASK_DEPTH: Cell<u32> = const { Cell::new(0) };
+}
+
+/// While a task of this thread's event loop runs (or its checkpoint), a
+/// number that changes at every task boundary; `None` between tasks. Code
+/// that must see one consistent state for the whole of a task keys its
+/// cache by it: the animation clock layout samples stays put within a task,
+/// as a browser samples its timelines once per frame and not at each query.
+pub fn task_seq() -> Option<u64> {
+    (TASK_DEPTH.with(Cell::get) > 0).then(|| TASK_SEQ.with(Cell::get))
+}
+
+fn next_task() {
+    TASK_SEQ.with(|seq| seq.set(seq.get().wrapping_add(1)));
+}
+
+fn begin_task() {
+    next_task();
+    TASK_DEPTH.with(|depth| depth.set(depth.get() + 1));
+}
+
+fn end_task() {
+    next_task();
+    TASK_DEPTH.with(|depth| depth.set(depth.get().saturating_sub(1)));
 }

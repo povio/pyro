@@ -88,6 +88,8 @@ pub(crate) fn init_stylo_prefs() {
     INIT.call_once(|| {
         style_config::set_pref!("layout.css.flexbox-balance.enabled", true);
         style_config::set_pref!("layout.css.text-box.enabled", true);
+        // pyro: `font-format()`/`font-tech()` in `@supports`, `tech()` in `@font-face` sources.
+        style_config::set_pref!("layout.css.font-tech.enabled", true);
         // pyro: `text-autospace` (parley spaces ideographs from letters and numerals).
         style_config::set_pref!("layout.css.text-autospace.enabled", true);
         // pyro: `text-combine-upright` (no text-autospace in such upright text; the layout ignores it).
@@ -537,6 +539,10 @@ pub struct BaseDocument {
     /// natural size (`BaseDocument::update_svg_image_documents`), painted by blitz-paint in place of
     /// the image's usvg tree, which has no HTML content. Set once such an image loaded.
     pub svg_image_documents: HashMap<NodeId, SvgImageDocument>,
+    /// pyro: inline `<svg>`s serialized again at their laid-out size (`inline_svg_at_viewport`), by node:
+    /// the size and the parse.
+    #[cfg(feature = "svg")]
+    pub(crate) viewport_svgs: RefCell<HashMap<NodeId, ((u32, u32), Option<Arc<crate::node::SvgImageData>>)>>,
     pub(crate) has_svg_image_documents: bool,
     /// A resolve ran since the paint tree was last built: `ensure_paint_tree`
     /// rebuilds the nodes flagged `PAINT_TREE_DIRTY` before the next paint or
@@ -624,6 +630,14 @@ pub struct BaseDocument {
     /// pyro: a style change or a child list change since the last evaluation can have changed
     /// counters or quotes (`layout::counters`).
     pub(crate) counters_dirty: bool,
+    /// pyro: a list item's `::marker` `content` reads a counter other than its number (sticky):
+    /// the counter walk evaluates marker contents too (`layout::counters`, `marker_texts`).
+    pub(crate) marker_counters: bool,
+    /// pyro: `marker_counters` was just set: the resolve runs one more pass, which evaluates them.
+    pub(crate) marker_counters_pending: bool,
+    /// pyro: the text of each list item's `::marker` `content` that reads counters, evaluated in
+    /// tree order (`layout::counters`).
+    pub(crate) marker_texts: HashMap<NodeId, String>,
     /// pyro: the number of each list item's marker, its `list-item` counter value
     /// (`layout::counters`): elements, and `::before` (true) / `::after` list items by their
     /// originating element.
@@ -827,6 +841,8 @@ impl BaseDocument {
             left_layout_lists: Vec::new(),
             svg_foreign_objects: HashMap::new(),
             svg_image_documents: HashMap::new(),
+            #[cfg(feature = "svg")]
+            viewport_svgs: RefCell::new(HashMap::new()),
             has_svg_image_documents: false,
             paint_tree_dirty: true,
             hit_overflow_dirty: true,
@@ -852,6 +868,9 @@ impl BaseDocument {
             text_box_trim_styles: false,
             generated_text: HashMap::new(),
             counters_dirty: true,
+            marker_counters: false,
+            marker_counters_pending: false,
+            marker_texts: HashMap::new(),
             list_item_numbers: Default::default(),
             top_layer: Default::default(),
             pending_critical_resources: HashSet::new(),
@@ -1279,7 +1298,83 @@ impl BaseDocument {
         if !self.top_layer.is_empty() {
             self.top_layer.remove(node_id);
         }
+        // pyro: a freed box leaves the hoisted list of its containing block, and the boxes it
+        // was the containing block of stop pointing at it: either id would be a stale key there.
+        if let Some(node) = self.nodes.get(node_id) {
+            let cb = node.oof_containing_block.take();
+            let hoisted = std::mem::take(&mut *node.hoisted_children.borrow_mut());
+            if let Some(cb) = cb {
+                self.unlist_hoisted(cb, node_id);
+            }
+            for id in hoisted {
+                if let Some(child) = self.nodes.get(id)
+                    && child.oof_containing_block.get() == Some(node_id)
+                {
+                    child.oof_containing_block.set(None);
+                    self.oof_hoisted.remove(&id);
+                }
+            }
+        }
         self.nodes.remove(node_id)
+    }
+
+    /// pyro: takes `id` out of the hoisted list of `containing_block` and lays that box out
+    /// again: it lists the boxes it laid out, and `id` is no longer one of them.
+    fn unlist_hoisted(&mut self, containing_block: NodeId, id: NodeId) {
+        self.oof_hoisted.remove(&id);
+        let Some(cb) = self.nodes.get_mut(containing_block) else { return };
+        let listed = {
+            let mut list = cb.hoisted_children.borrow_mut();
+            let before = list.len();
+            list.retain(|&child| child != id);
+            list.len() != before
+        };
+        if listed {
+            cb.insert_damage(crate::layout::damage::ONLY_RELAYOUT);
+        }
+    }
+
+    /// pyro: `root`'s subtree leaves its place in the tree (removed or moved). Its boxes that
+    /// a containing block outside it laid out leave that block's hoisted list: the block is
+    /// not laid out again when the subtree went with no damage inside the block (a detached
+    /// subtree's own damage reaches no ancestor), and an id it kept would outlive the box
+    /// (`invalid SlotMap key` in rounding once the box is dropped).
+    pub(crate) fn unlist_hoisted_leaving(&mut self, root: NodeId) {
+        if self.oof_hoisted.is_empty() {
+            return;
+        }
+        let mut leaving = Vec::new();
+        let mut stack = vec![root];
+        while let Some(id) = stack.pop() {
+            let Some(node) = self.nodes.get(id) else { continue };
+            if let Some(cb) = node.oof_containing_block.get() {
+                // Inside the subtree: `cb` is `id` or one of its ancestors up to `root`.
+                let mut inside = false;
+                let mut at = Some(id);
+                while let Some(a) = at {
+                    if a == cb {
+                        inside = true;
+                        break;
+                    }
+                    if a == root {
+                        break;
+                    }
+                    at = self.nodes.get(a).and_then(|n| n.parent);
+                }
+                if !inside {
+                    leaving.push((cb, id));
+                }
+            }
+            stack.extend(node.children.iter().copied());
+            stack.extend(node.before());
+            stack.extend(node.after());
+        }
+        for (cb, id) in leaving {
+            if let Some(node) = self.nodes.get(id) {
+                node.oof_containing_block.set(None);
+            }
+            self.unlist_hoisted(cb, id);
+        }
     }
 
     /// The nearest element ancestor of `node_id` that is still in the
@@ -1809,6 +1904,7 @@ impl BaseDocument {
                 &self.shell_provider,
                 &self.guard.read(),
                 self.abort_signal.as_ref(),
+                Some(self.stylist.device()),
             );
             let element = &mut self.nodes[node_id].element_data_mut().unwrap();
             element.special_data = SpecialElementData::Stylesheet(stylesheet.clone());
@@ -1832,6 +1928,7 @@ impl BaseDocument {
             &self.shell_provider,
             &self.guard.read(),
             self.abort_signal.as_ref(),
+            Some(self.stylist.device()),
         );
 
         // Store data on element
@@ -3031,6 +3128,30 @@ impl BaseDocument {
                 svg = svg.replace(&attr, &format!("href=\"{data}\""));
             }
         }
+        svg
+    }
+
+    /// pyro: an inline `<svg>` whose source depends on its laid-out size (`SvgImageData::viewport_dependent`),
+    /// serialized and parsed again for a content box of `width` x `height` CSS px (kept until the size
+    /// changes); `None` when that fails.
+    #[cfg(feature = "svg")]
+    pub fn inline_svg_at_viewport(&self, node_id: NodeId, width: f32, height: f32) -> Option<Arc<crate::node::SvgImageData>> {
+        let key = ((width * 64.0).round() as u32, (height * 64.0).round() as u32);
+        if let Some((size, svg)) = self.viewport_svgs.borrow().get(&node_id) {
+            if *size == key {
+                return svg.clone();
+            }
+        }
+        let node = self.get_node(node_id)?;
+        let (source, _) = node.svg_source_for_viewport(Some((width as f64, height as f64)));
+        let source = self.with_cross_svg_references(self.with_svg_sprites(self.with_svg_images(source, node_id)));
+        let svg = crate::util::parse_svg_image(source.as_bytes()).ok().map(|mut svg| {
+            if svg.intrinsic_dimensions.view_box.is_none() {
+                svg.inline_source = Some(source.as_str().into());
+            }
+            Arc::new(svg)
+        });
+        self.viewport_svgs.borrow_mut().insert(node_id, (key, svg.clone()));
         svg
     }
 

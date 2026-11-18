@@ -1,0 +1,33 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "inert/dynamic-inert-on-focused-element.html": {"status":"complete","ms":60,"n":6,"pass":[]},
+  "inert/inert-and-find-flat-tree.html": {"status":"complete","ms":10,"n":2,"pass":[]},
+  "inert/inert-and-find.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "inert/inert-canvas-fallback-content.html": {"status":"complete","ms":10,"n":12,"fail":[],"h":"9a1739f5"},
+  "inert/inert-does-not-match-disabled-selector.html": {"status":"complete","ms":20,"n":1,"fail":[],"h":"90d72bff"},
+  "inert/inert-focus-in-frames.html": {"status":"timeout","ms":10000,"n":1,"pass":[]},
+  "inert/inert-form-control.html": {"status":"complete","ms":10,"n":1,"fail":[],"h":"3daa02c9"},
+  "inert/inert-iframe-tabbing.html": {"status":"complete","ms":50,"n":6,"pass":["Sequential navigation can move within a no longer inert iframe","Sequential navigation can move within an inert iframe"]},
+  "inert/inert-in-shadow-dom.html": {"status":"complete","ms":10,"n":1,"fail":[],"h":"8021a83c"},
+  "inert/inert-inlines-around-selection-range-in-contenteditable.html": {"status":"complete","ms":10,"n":13,"pass":["a[bc<span inert>XYZ</span>de]f"]},
+  "inert/inert-label-focus.html": {"status":"complete","ms":30,"n":3,"fail":["Calling focus() on an inert label should still send focus to its target."],"h":"b1242bcc"},
+  "inert/inert-node-is-uneditable.html": {"status":"complete","ms":120,"n":3,"fail":[],"h":"c71eeaae"},
+  "inert/inert-node-is-unfocusable.html": {"status":"complete","ms":20,"n":6,"fail":[],"h":"5e6bc070"},
+  "inert/inert-on-non-html.html": {"status":"complete","ms":30,"n":27,"pass":["<foo-bar>non-inert</foo-bar>","<foo>non-inert</foo>","<math inert=\"\"><mi><span>non-inert</span></mi></math>","<math inert=\"\"><mi>non-inert</mi></math>","<math><mi inert=\"\"><span>non-inert</span></mi></math>","<math><mi inert=\"\">non-inert</mi></math>","<math><mi>non-inert</mi></math>","<span>non-inert</span>","<svg inert=\"\"><foreignObject><span>non-inert</span></foreignObject></svg>","<svg inert=\"\"><text>non-inert</text></svg>","<svg><foreignObject inert=\"\"><span>non-inert</span></foreignObject></svg>","<svg><text inert=\"\">non-inert</text></svg>","<svg><text>non-inert</text></svg>"]},
+  "inert/inert-on-slots.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "inert/inert-pseudo-element-hittest.html": {"status":"complete","ms":90,"n":2,"fail":[],"h":"dea00ec4"},
+  "inert/inert-scrollbar-hittest.html": {"status":"complete","ms":10000,"n":1,"pass":[]},
+  "inert/inert-svg-hittest.html": {"status":"complete","ms":80,"n":2,"pass":["Hit-testing doesn't reach contents of an inert SVG"]},
+  "inert/inert-with-fullscreen-element.html": {"status":"complete","ms":30,"n":3,"pass":[]},
+  "inert/inert-with-modal-dialog-002.html": {"status":"complete","ms":10,"n":3,"pass":[]},
+  "inert/inert-with-modal-dialog-003.html": {"status":"complete","ms":10,"n":3,"pass":[]},
+  "inert/nested-inert-unfocusable.html": {"status":"complete","ms":10,"n":3,"fail":[],"h":"ee43bc03"}
+ }
+}

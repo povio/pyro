@@ -610,3 +610,61 @@ container's own `min-height`/`max-height` content keywords clamp its height to i
 out-of-flow boxes; block items get them from their parent too).
 - `compute/grid/track_sizing.rs` (`initialize_track_sizes`): a `calc()` gutter against an indefinite size keeps its
   lengths, its percentages resolving to 0 (`gap: calc(20px + 5%)` of an inline grid; WPT css-grid `grid-gutters-009`).
+- Round 4 lane B: `compute/block.rs` `determine_content_based_container_width` counts percentage margins of the items as
+  zero in the contribution also under a definite available width (shrink-to-fit abspos/floats/inline-blocks; WPT
+  css-sizing `abspos-auto-sizing-fit-content-percentage-*`); a width the ratio gives from a definite height is the
+  item's `min-content`/`max-content`/`fit-content` width (`clamp_width_by_keywords`), and a height the ratio gives from
+  the width ignores the box's own content keyword min/max heights; a `min-width`/`min-height` keyword (which reads as
+  `auto` in `min_size`) turns off the ratio's content-based automatic minimum (`aspect-ratio/intrinsic-size-010`).
+  `tree/traits.rs` `LayoutBlockContainer::block_container_fill_height`: the least border-box height of an `auto`-height
+  block container that its children's `stretch` and percentage heights resolve against (the quirky html/body).
+- Round 4 lane B (2): `compute/grid/mod.rs` re-runs column/row sizing at the definite container size when the flexible
+  tracks' factors sum to less than one (the first pass counted the sum as one against the indefinite size; WPT css-grid
+  `grid-template-flexible-rerun-track-sizing`, `flex-sizing-rows-indefinite-height*`); `track_sizing.rs`: an item
+  spanning several tracks, a flexible one among them, gives them only its minimum contribution under a content
+  constraint (`grid-flex-spanning-items-001`). `compute/flexbox.rs`: `stretch` as the cross size makes the item's cross
+  size definite for its flex base and automatic minimum whatever `align-self` (css-sizing
+  `stretch/flexbox-auto-minimum-002`); a replaced item with a natural ratio in a row measures with the container's
+  width as its main parent size, so a ratio-only one stretch-fits it (css-flexbox `svg-root-as-flex-item-003`).
+- Round 4 lane B (3): `compute/flexbox.rs` `determine_container_main_size`, single-line row under a definite available
+  width (shrink-to-fit): an item's min-content contribution is its min-content size, at least its flex base size under a
+  min-content constraint (a content basis is the min-content size, §9.2.3 C) when it cannot shrink, at most that basis
+  when it cannot grow, then at least its resolved minimum (Blink's row algorithm; WPT css-flexbox
+  `intrinsic-size/row-001`, `row-004`). Before, inflexible items counted their max-content basis and shrinkable ones only
+  their resolved minimum.
+
+Round 4 lane E: `compute/block.rs`: a known height that is no percentage basis (`known_dimensions_are_definite`
+false: a table cell's stretched height) leaves the box's own clamped `height` as the basis
+(`block_container_restricts_percent_scrollers` boxes only); the intrinsic-width pass reads
+`block_container_percentage_height` too; a percentage-height scroll container whose percentage does not resolve in
+a container that `block_container_restricts_percent_scrollers` (a cell of a table of non-`auto` height) is sized as
+of height 0, then clamped (css-tables `percentage-sizing-of-table-cell-007`). `tree/traits.rs`: the new hook.
+- Round 4 lane B (4): `compute/grid/mod.rs`: a preferred height the ratio gives from the width is from the width
+  between `min-width` and `max-width`, its final value the automatic one (at least the rows), and `max-width` is not
+  transferred to a maximum height (WPT css-grid `grid-content-distribution-029`). `compute/oof.rs`: an absolutely
+  positioned box with a preferred aspect ratio and automatic sizes takes the shrink-to-fit width between its
+  (transferred) limits and the ratio's height from it; a size the ratio gives from the other axis is at least the
+  content's when `min-*` is `auto` (css-sizing `aspect-ratio/abspos-008/012/013`; `abspos-017`'s `min-width: 0` keeps
+  the ratio).
+- Round 4 lane F: `compute/block.rs` `perform_final_layout_on_in_flow_children`: a block container's
+  `Baselines::dominant_first`/`dominant_last` come from the children that give its first and last baselines (none from a
+  scroll container or a child without one), so an inline-block whose lines sit in a nested block still has a central
+  baseline in a vertical line. `compute/flexbox.rs` `calculate_children_base_lines`: in a container on a central baseline
+  (`FlexboxContainerStyle::block_baseline_synthesis` 0.5: vertical writing modes, text not sideways) an item's baseline is
+  its central one (`dominant_first`), else its baseline, else synthesized in its middle (WPT css-flexbox
+  `baseline-synthesis-004` with vertical lines that centre their atomic inlines). Such a row container exports the same
+  item's central baseline as its `dominant_first` (`FlexItem::dominant_baseline`; WPT `synthesize-vrl-baseline`).
+
+Round 4 lane G: flexbox transfers min/max sizes through an item's ratio via its ratio inset (`transfer_through_ratio`;
+WPT css-sizing `flex-aspect-ratio-025/026`), and a column container of indefinite width measures a non-replaced ratio
+item without its content-based height (no definite basis or height, no growing) for its hypothetical width
+(`flex-aspect-ratio-026`).
+- Round 4 lane G: grid items honour `min-width: min-content | max-content` (`GridItemStyle::grid_min_size_keyword`,
+  `grid_item::keyword_min_width`): in their known size and final clamp, their min-/max-content contributions and their
+  minimum contribution (WPT css-grid `grid-items/grid-intrinsic-maximums`).
+- Round 4 lane G (baselines): flexbox synthesizes a baseline at `height * block_baseline_synthesis` (0 in sideways
+  vertical-lr, the line-under side); a column table item's flex base size from its `height` is measured at that
+  height (captions added); grid `baseline.rs` synthesizes an orthogonal item's missing inline-axis baseline at its
+  physical left (line-under).
+- Flexbox: `baseline` items in an rtl column share a baseline at their line-left edges, their group at the cross
+  start (`max_baseline_cross` in `align_flex_items_along_cross_axis`; WPT `flexbox-align-self-vert-rtl-001..003,005`).

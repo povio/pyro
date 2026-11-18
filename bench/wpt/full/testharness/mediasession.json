@@ -1,0 +1,18 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "mediasession/artwork-url-encoding-euc-kr.html": {"status":"complete","ms":30,"n":1,"pass":[]},
+  "mediasession/media-session-artwork-fetch.https.html": {"status":"complete","ms":80,"n":4,"pass":["Play some audio","Setup service worker"]},
+  "mediasession/mediametadata.html": {"status":"complete","ms":20,"n":20,"pass":[]},
+  "mediasession/playbackstate.html": {"status":"complete","ms":30,"n":3,"pass":[]},
+  "mediasession/setactionhandler.html": {"status":"complete","ms":30,"n":18,"pass":["Test that setActionHandler() throws exception for unsupported actions"]},
+  "mediasession/setcameraactive.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "mediasession/setmicrophoneactive.html": {"status":"complete","ms":20,"n":1,"pass":[]}
+ }
+}

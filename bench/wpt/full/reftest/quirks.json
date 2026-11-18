@@ -1,0 +1,45 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "quirks/body-fills-html-quirk-float.html": {"status":"complete","ms":90,"n":1,"fail":[],"h":"0e440bf2"},
+  "quirks/body-fills-html-quirk-inline.html": {"status":"complete","ms":100,"n":1,"fail":[],"h":"0e440bf2"},
+  "quirks/body-fills-html-quirk-positioned.html": {"status":"complete","ms":100,"n":1,"fail":[],"h":"0e440bf2"},
+  "quirks/body-fills-html-quirk-vertical.html": {"status":"complete","ms":90,"n":1,"pass":[]},
+  "quirks/body-fills-html-quirk.html": {"status":"complete","ms":100,"n":1,"pass":[]},
+  "quirks/class-names-across-iframes.html": {"status":"complete","ms":100,"n":1,"fail":[],"h":"0e440bf2"},
+  "quirks/dd-dl-firefox-001.html": {"status":"complete","ms":90,"n":1,"fail":[],"h":"0e440bf2"},
+  "quirks/historical/list-item-bullet-size.html": {"status":"complete","ms":100,"n":1,"fail":[],"h":"0e440bf2"},
+  "quirks/historical/vertical-align-in-quirks.html": {"status":"complete","ms":110,"n":1,"fail":[],"h":"0e440bf2"},
+  "quirks/html-fills-viewport-quirk-vertical.html": {"status":"complete","ms":100,"n":1,"fail":[],"h":"0e440bf2"},
+  "quirks/html-fills-viewport-quirk.html": {"status":"complete","ms":100,"n":1,"fail":[],"h":"0e440bf2"},
+  "quirks/line-height-in-list-item.html": {"status":"complete","ms":100,"n":1,"pass":[]},
+  "quirks/line-height-limited-quirks-mode.html": {"status":"complete","ms":100,"n":1,"fail":[],"h":"0e440bf2"},
+  "quirks/line-height-preserved-segment-break.html": {"status":"complete","ms":100,"n":1,"fail":[],"h":"0e440bf2"},
+  "quirks/line-height-quirks-mode.html": {"status":"complete","ms":90,"n":1,"fail":[],"h":"0e440bf2"},
+  "quirks/line-height-trailing-collapsable-whitespace.html": {"status":"complete","ms":100,"n":1,"fail":[],"h":"0e440bf2"},
+  "quirks/percentage-height-quirk-excludes-flex-grid-001.html": {"status":"complete","ms":100,"n":1,"fail":[],"h":"0e440bf2"},
+  "quirks/percentage-height-quirk-excludes-flex-grid-002.html": {"status":"complete","ms":90,"n":1,"fail":[],"h":"0e440bf2"},
+  "quirks/percentage-height-quirk-excludes-flex-grid-003.html": {"status":"complete","ms":100,"n":1,"fail":[],"h":"0e440bf2"},
+  "quirks/percentage-height-quirk-min-height-001.html": {"status":"complete","ms":90,"n":1,"fail":[],"h":"0e440bf2"},
+  "quirks/percentage-height-quirk-min-height-002.html": {"status":"complete","ms":90,"n":1,"fail":[],"h":"0e440bf2"},
+  "quirks/percentage-height-quirk-min-height-003.html": {"status":"complete","ms":90,"n":1,"pass":[]},
+  "quirks/percentage-height-quirk-relpos-percent.html": {"status":"complete","ms":100,"n":1,"pass":[]},
+  "quirks/reference/percentage-height-quirk-excludes-flex-grid-002-ref.html": {"status":"complete","ms":90,"n":1,"fail":[],"h":"0e440bf2"},
+  "quirks/table-cell-width-calculation-abspos.html": {"status":"complete","ms":100,"n":1,"fail":[],"h":"0e440bf2"},
+  "quirks/tables-inherit-color-from-body-quirk-001.html": {"status":"complete","ms":100,"n":1,"pass":[]},
+  "quirks/tables-inherit-color-from-body-quirk-002.html": {"status":"complete","ms":50,"n":1,"pass":[]},
+  "quirks/tables-inherit-color-from-body-quirk-003.html": {"status":"complete","ms":50,"n":1,"pass":[]},
+  "quirks/tables-inherit-color-from-body-quirk-004.html": {"status":"complete","ms":100,"n":1,"pass":[]},
+  "quirks/tables-inherit-color-from-body-quirk-005.html": {"status":"complete","ms":100,"n":1,"pass":[]},
+  "quirks/tables-inherit-color-from-body-quirk-006.html": {"status":"complete","ms":100,"n":1,"pass":[]},
+  "quirks/tables-inherit-color-from-body-quirk-007.html": {"status":"complete","ms":110,"n":1,"pass":[]},
+  "quirks/text-decoration-doesnt-propagate-into-tables/quirks.html": {"status":"complete","ms":100,"n":1,"pass":[]},
+  "quirks/text-decoration-doesnt-propagate-into-tables/standards.html": {"status":"complete","ms":100,"n":1,"fail":[],"h":"0e440bf2"}
+ }
+}

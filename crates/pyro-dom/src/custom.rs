@@ -169,6 +169,12 @@ impl Dom {
     /// `name`. Inlined so the common case is one flag test.
     #[inline]
     pub(crate) fn attribute_changed(&mut self, i: u32, name: &QualName, old: Option<&str>, new: Option<&str>) {
+        if !self.inline_transitions_seen
+            && name.local == markup5ever::local_name!("style")
+            && new.is_some_and(|v| v.contains("transition"))
+        {
+            self.inline_transitions_seen = true;
+        }
         let observes = self.n(i).element().is_some_and(|e| e.flags & element_flags::OBSERVES_ATTRIBUTES != 0);
         if observes {
             self.observed_attribute_changed(i, name, old, new);

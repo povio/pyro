@@ -530,6 +530,11 @@ impl EngineHost {
         self.thread.browser.page_work(self.pages.get(&page)?.id)
     }
 
+    /// `setTimeout`s `page` has due within `within` (0 once it is gone).
+    pub fn page_timeouts_due(&self, page: PageKey, within: std::time::Duration) -> usize {
+        self.pages.get(&page).map_or(0, |state| self.thread.browser.page_timeouts_due(state.id, within))
+    }
+
     /// Whether a driver command (`Pyro.run`, `Pyro.act`, `Pyro.expect`) is parked
     /// on its page: its client is waiting for the page, however long ago the
     /// command arrived.

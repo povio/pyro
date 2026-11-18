@@ -1,0 +1,12 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "."
+ ],
+ "tests": {
+  "ai/language_detection/availability-detached-crash.https.html": {"status":"complete","ms":70,"n":1,"fail":[],"h":"22f2a845"}
+ }
+}

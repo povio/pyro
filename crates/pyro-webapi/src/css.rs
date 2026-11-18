@@ -624,7 +624,7 @@ impl RuleList {
 enum RuleKind {
     Style { selector: RefCell<String>, block: RefCell<String> },
     Group { name: String, condition: String, list: RuleList },
-    Other { rule_type: u16, text: String },
+    Other { rule_type: u16, text: RefCell<String> },
 }
 
 struct RuleNode {
@@ -647,7 +647,7 @@ impl RuleNode {
                     list.replace(rules.into_iter().map(|r| RuleNode::new(r, me.clone())).collect());
                     RuleKind::Group { name, condition, list }
                 }
-                ParsedRule::Other { rule_type, text } => RuleKind::Other { rule_type, text },
+                ParsedRule::Other { rule_type, text } => RuleKind::Other { rule_type, text: RefCell::new(text) },
             };
             RuleNode { identity, kind, parent }
         })
@@ -661,7 +661,7 @@ impl RuleNode {
                 let body = list.rules.borrow().iter().map(|r| r.source_text()).collect::<Vec<_>>().join("\n");
                 format!("@{name} {condition} {{\n{body}\n}}")
             }
-            RuleKind::Other { text, .. } => text.clone(),
+            RuleKind::Other { text, .. } => text.borrow().clone(),
         }
     }
 
@@ -686,7 +686,7 @@ impl RuleNode {
                 out.push('}');
                 out
             }
-            RuleKind::Other { text, .. } => text.clone(),
+            RuleKind::Other { text, .. } => text.borrow().clone(),
         }
     }
 }
@@ -841,6 +841,7 @@ fn rule_wrapper<'s>(s: &Scope<'s>, rule: &Rc<RuleNode>, owner: &SheetOwner) -> J
     match rule.kind {
         RuleKind::Style { .. } => s.wrap::<CssStyleRule>(data, Some(rule.identity)),
         RuleKind::Group { .. } => s.wrap::<CssGroupRule>(data, Some(rule.identity)),
+        RuleKind::Other { rule_type: COUNTER_STYLE_RULE, .. } => s.wrap::<CssCounterStyleRule>(data, Some(rule.identity)),
         RuleKind::Other { .. } => s.wrap::<CssOtherRule>(data, Some(rule.identity)),
     }
 }
@@ -966,6 +967,136 @@ impl JsClass for CssOtherRule {
 
 /// `CSSRule.type` of `@import`.
 const IMPORT_RULE: u16 = 3;
+
+/// `CSSRule.type` of `@counter-style`.
+const COUNTER_STYLE_RULE: u16 = 11;
+
+/// The `(name, value)` declarations of a rule block, split at top-level `;` (quotes and brackets
+/// kept whole).
+fn block_declarations(block: &str) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    let (mut depth, mut quote, mut start) = (0i32, None::<char>, 0usize);
+    let mut push = |piece: &str| {
+        if let Some((name, value)) = piece.split_once(':') {
+            out.push((name.trim().to_ascii_lowercase(), value.trim().to_string()));
+        }
+    };
+    let mut escaped = false;
+    for (i, c) in block.char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        match (quote, c) {
+            (_, '\\') => escaped = true,
+            (Some(q), c) if c == q => quote = None,
+            (Some(_), _) => {}
+            (None, '"' | '\'') => quote = Some(c),
+            (None, '(' | '[' | '{') => depth += 1,
+            (None, ')' | ']' | '}') => depth -= 1,
+            (None, ';') if depth == 0 => {
+                push(&block[start..i]);
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    push(&block[start..]);
+    out
+}
+
+/// `CSSCounterStyleRule` (CSS Counter Styles 3 §6): `name` and the descriptors read and write
+/// the rule's text; a change commits the sheet, so markers and counters follow it (WPT css-lists
+/// `list-marker-counter-style-mutation`).
+pub struct CssCounterStyleRule;
+impl JsClass for CssCounterStyleRule {
+    const NAME: &'static str = "CSSCounterStyleRule";
+    type Data = RuleData;
+    type Parent = NoParent;
+    fn define(def: &mut ClassDef<Self>) {
+        define_rule(def);
+        // (prelude name, block) of `@counter-style <name> {<block>}`.
+        fn parts(text: &str) -> Option<(String, String)> {
+            let open = text.find('{')?;
+            let close = text.rfind('}')?;
+            let name = text["@counter-style".len().min(open)..open].trim().to_string();
+            Some((name, text[open + 1..close].to_string()))
+        }
+        fn text_of(r: &RuleData) -> Option<std::cell::Ref<'_, String>> {
+            match &r.node.kind {
+                RuleKind::Other { text, .. } => Some(text.borrow()),
+                _ => None,
+            }
+        }
+        fn write(r: &RuleData, name: &str, declarations: &[(String, String)]) {
+            if let RuleKind::Other { text, .. } = &r.node.kind {
+                let body: String = declarations.iter().map(|(n, v)| format!(" {n}: {v};")).collect();
+                *text.borrow_mut() = format!("@counter-style {name} {{{body} }}");
+                r.owner.commit(&r.owner.model());
+            }
+        }
+        def.accessor(
+            "name",
+            |s, r| Ok(s.string(&text_of(r).and_then(|t| parts(&t)).map(|p| p.0).unwrap_or_default())),
+            |_s, r, v| {
+                let name = dom_string(v)?;
+                let name = name.trim();
+                let Some((_, block)) = text_of(r).and_then(|t| parts(&t)) else { return Ok(()) };
+                // A name that is no identifier, or a CSS-wide keyword or `none`, is ignored.
+                let valid = !name.is_empty()
+                    && name.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_' || !c.is_ascii())
+                    && !name.starts_with(|c: char| c.is_ascii_digit())
+                    && !matches!(name.to_ascii_lowercase().as_str(), "none" | "inherit" | "initial" | "unset" | "revert" | "revert-layer" | "default" | "decimal" | "disc");
+                if valid {
+                    write(r, name, &block_declarations(&block));
+                }
+                Ok(())
+            },
+        );
+        fn get_descriptor(r: &RuleData, descriptor: &str) -> String {
+            text_of(r)
+                .and_then(|t| parts(&t))
+                .and_then(|(_, block)| block_declarations(&block).into_iter().rev().find(|(n, _)| n == descriptor))
+                .map(|(_, v)| v)
+                .unwrap_or_default()
+        }
+        fn set_descriptor(r: &RuleData, descriptor: &str, value: &str) {
+            let value = value.trim();
+            // `system` cannot change after creation (CSSOM for counter styles); an empty value
+            // is invalid.
+            if value.is_empty() || descriptor == "system" {
+                return;
+            }
+            let Some((name, block)) = text_of(r).and_then(|t| parts(&t)) else { return };
+            let mut declarations: Vec<(String, String)> =
+                block_declarations(&block).into_iter().filter(|(n, _)| n != descriptor).collect();
+            declarations.push((descriptor.to_string(), value.to_string()));
+            write(r, &name, &declarations);
+        }
+        macro_rules! descriptor {
+            ($attr:literal, $descriptor:literal) => {
+                def.accessor(
+                    $attr,
+                    |s, r| Ok(s.string(&get_descriptor(r, $descriptor))),
+                    |_s, r, v| {
+                        set_descriptor(r, $descriptor, &dom_string(v)?);
+                        Ok(())
+                    },
+                );
+            };
+        }
+        descriptor!("system", "system");
+        descriptor!("symbols", "symbols");
+        descriptor!("additiveSymbols", "additive-symbols");
+        descriptor!("negative", "negative");
+        descriptor!("prefix", "prefix");
+        descriptor!("suffix", "suffix");
+        descriptor!("range", "range");
+        descriptor!("pad", "pad");
+        descriptor!("speakAs", "speak-as");
+        descriptor!("fallback", "fallback");
+    }
+}
 
 /// A sheet made by `new CSSStyleSheet()`: it has no owner node and applies
 /// where a document or shadow root adopts it (`adoptedStyleSheets`).
@@ -1645,6 +1776,7 @@ pub(crate) fn register(engine: &pyro_js::Engine) {
     engine.register::<CssStyleRule>();
     engine.register::<CssGroupRule>();
     engine.register::<CssOtherRule>();
+    engine.register::<CssCounterStyleRule>();
 }
 
 #[cfg(test)]

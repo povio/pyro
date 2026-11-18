@@ -165,6 +165,10 @@ pub struct ReplacedContext {
     /// boxes (a border box under `box-sizing: border-box`), not content boxes (css-sizing-4 §5.1;
     /// WPT css-sizing `aspect-ratio/replaced-element-031..033`)
     pub ratio_in_box_sizing_box: bool,
+    /// pyro: an inline `<svg>` root: with a natural ratio and no natural size, it contributes no
+    /// width to its container's intrinsic sizes, or the default object width when its width is a
+    /// percentage (Chromium and WebKit; WPT css-sizing `svg-intrinsic-size-006`).
+    pub svg_root: bool,
 }
 
 /// Whether a height/width value is violating it's min- and max- constraints
@@ -340,12 +344,14 @@ pub fn compute_replaced_layout(
                         .resolve_or_zero(parent_size.width, &resolve_calc_value)
                         .horizontal_axis_sum()
                 };
-                let stretch_fit_width = match available_space.width {
+                let stretch_fit_width = {
+                    match available_space.width {
                     AvailableSpace::Definite(width) => Some(width),
                     AvailableSpace::MaxContent => parent_size.width.map(|width| width - margins()),
                     AvailableSpace::MinContent => None,
-                }
-                .map(|width| (width - pb_sum.width).max(0.0));
+                    }
+                    .map(|width| (width - pb_sum.width).max(0.0))
+                };
                 if let Some(width) = stretch_fit_width {
                     Size {
                         width,
@@ -373,6 +379,32 @@ pub fn compute_replaced_layout(
                 .max(0.0),
         },
         None => inherent_size,
+    };
+    // pyro: `ReplacedContext::svg_root` without a natural size, under an intrinsic constraint.
+    let inherent_size = match aspect_ratio {
+        // A ratio from `aspect-ratio` alone makes it ratio-only too: it stretches to fit a definite
+        // width.
+        // Only a container's intrinsic sizing (no known containing block width) leaves it out; flex
+        // items measured in a known container are sized as before (WPT css-flexbox
+        // `svg-root-as-flex-item-002`, `flex-aspect-ratio-img-row-015`).
+        Some(ratio) if context.svg_root && intrinsic.width.is_none() && intrinsic.height.is_none() => {
+            match available_space.width {
+                AvailableSpace::Definite(width) if intrinsic_ratio.is_none() => {
+                    let width = (width - pb_sum.width).max(0.0);
+                    Size { width, height: width / ratio }
+                }
+                AvailableSpace::MinContent | AvailableSpace::MaxContent if parent_size.width.is_none() => {
+                    let width = if style.size().width.tag() == taffy::CompactLength::PERCENT_TAG {
+                        default_size.width
+                    } else {
+                        0.0
+                    };
+                    Size { width, height: width / ratio }
+                }
+                _ => inherent_size,
+            }
+        }
+        _ => inherent_size,
     };
 
     // Percentages are only resolved against zero in the inline axis.

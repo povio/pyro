@@ -2,6 +2,7 @@
 mod cell_occupancy;
 mod coordinates;
 mod grid_item;
+pub(super) use grid_item::keyword_min_width;
 mod grid_track;
 mod grid_track_counts;
 mod named;

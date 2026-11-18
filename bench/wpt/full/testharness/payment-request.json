@@ -1,0 +1,34 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "payment-request/PaymentMethodChangeEvent/methodName-attribute.https.html": {"status":"complete","ms":30,"n":2,"pass":[]},
+  "payment-request/PaymentRequestUpdateEvent/constructor.http.html": {"status":"complete","ms":10,"n":1,"fail":[],"h":"d3f5f511"},
+  "payment-request/PaymentRequestUpdateEvent/constructor.https.html": {"status":"complete","ms":10,"n":3,"pass":[]},
+  "payment-request/constructor_convert_method_data.https.html": {"status":"complete","ms":30,"n":3,"pass":[]},
+  "payment-request/delegate-request.https.sub.html": {"status":"complete","ms":10000,"n":4,"pass":[]},
+  "payment-request/historical.https.html": {"status":"complete","ms":20,"n":9,"pass":["allowPaymentRequest in HTMLIFrameElement"]},
+  "payment-request/onpaymentmethodchange-attribute.https.html": {"status":"complete","ms":30,"n":4,"pass":[]},
+  "payment-request/payment-request-abort-method.https.html": {"status":"complete","ms":10,"n":4,"pass":[]},
+  "payment-request/payment-request-canmakepayment-method.https.html": {"status":"complete","ms":20,"n":6,"pass":[]},
+  "payment-request/payment-request-constructor-thcrash.https.html": {"status":"complete","ms":10,"n":10,"pass":[]},
+  "payment-request/payment-request-ctor-currency-code-checks.https.sub.html": {"status":"complete","ms":30,"n":10,"pass":[]},
+  "payment-request/payment-request-ctor-pmi-handling.https.sub.html": {"status":"complete","ms":10,"n":4,"pass":[]},
+  "payment-request/payment-request-disallowed-when-hidden.https.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "payment-request/payment-request-hasenrolledinstrument-method.tentative.https.html": {"status":"complete","ms":30,"n":3,"pass":[]},
+  "payment-request/payment-request-id-attribute.https.html": {"status":"complete","ms":10,"n":2,"pass":[]},
+  "payment-request/payment-request-insecure.http.html": {"status":"complete","ms":10,"n":1,"fail":[],"h":"467b1efc"},
+  "payment-request/payment-request-onshippingoptionchange-attribute.https.html": {"status":"complete","ms":30,"n":4,"pass":[]},
+  "payment-request/payment-request-shippingAddress-attribute.https.html": {"status":"complete","ms":10,"n":2,"pass":[]},
+  "payment-request/payment-request-shippingOption-attribute.https.html": {"status":"complete","ms":10,"n":6,"pass":[]},
+  "payment-request/payment-request-show-method.https.html": {"status":"complete","ms":30,"n":4,"pass":[]},
+  "payment-request/payment-response/onpayerdetailchange-attribute.https.html": {"status":"complete","ms":10,"n":2,"pass":[]},
+  "payment-request/rejects_if_not_active.https.html": {"status":"complete","ms":40,"n":4,"pass":[]},
+  "payment-request/show-method-optional-promise-rejects.https.html": {"status":"complete","ms":30,"n":10,"pass":[]}
+ }
+}

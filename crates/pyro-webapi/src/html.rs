@@ -1301,7 +1301,15 @@ simple_class!(HtmlLinkElement, "HTMLLinkElement", HtmlElement, |def| {
 simple_class!(HtmlStyleElement, "HTMLStyleElement", HtmlElement, |def| {
     reflect_str!(def, "media", "media");
     reflect_str!(def, "type", "type");
-    reflect_bool!(def, "disabled", "disabled");
+    // Not a reflected attribute: its sheet's disabled flag (HTML § 4.2.6; a `<link>`'s is).
+    def.accessor(
+        "disabled",
+        |s, n| Ok(s.boolean(n.page().layout.borrow().style().sheet_disabled(n.id))),
+        |_s, n, v| {
+            n.page().layout.borrow_mut().style_mut().set_sheet_disabled(n.id, v.to_bool());
+            Ok(())
+        },
+    );
     reflect_tokens!(def, "blocking", "blocking");
     def.getter("sheet", crate::css::element_sheet);
 });
@@ -2875,6 +2883,8 @@ impl JsClass for SvgElement {
     }
 }
 simple_class!(SvgGraphicsElement, "SVGGraphicsElement", SvgElement, |def| {
+    // pyro: `transform` (SVG 2 `SVGAnimatedTransformList`, the attribute's list).
+    def.getter("transform", |s, n| Ok(collections::animated_transform_list(s, n.page(), n.id, "transform")?.value()));
     // No rasterizer, but geometry is attribute-defined: the user-space box
     // of shapes, paths, text and containers (pyro_dom::svg_geometry).
     def.method("getBBox", 0, |s, n, _a| {

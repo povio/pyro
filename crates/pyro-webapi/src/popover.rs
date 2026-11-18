@@ -385,6 +385,7 @@ pub(crate) fn show_popover(page: &Rc<PageDom>, el: NodeId, throw: bool, invoker:
     }
     let previous = focused(page);
     let stack = stack_of(ty);
+    overlay_style_flush(page, el);
     {
         let mut dom = page.dom.borrow_mut();
         dom.set_popover_showing(el, true).js()?;
@@ -405,6 +406,17 @@ pub(crate) fn show_popover(page: &Rc<PageDom>, el: NodeId, throw: bool, invoker:
     }
     queue_toggle(page, el, false, true, invoker);
     Ok(())
+}
+
+/// An element that may transition `overlay` (`animation_events::may_transition_overlay`) is
+/// styled before it enters or leaves the top layer, as Chromium styles it there: that style is
+/// the transition's before-change style. Whether it may.
+fn overlay_style_flush(page: &Rc<PageDom>, el: NodeId) -> bool {
+    let may = crate::animation_events::may_transition_overlay(page, el);
+    if may {
+        crate::animation_events::style_flush(page, Some(el));
+    }
+    may
 }
 
 /// HTML "hide popover".
@@ -445,7 +457,14 @@ pub(crate) fn hide_popover(
         }
         queue_toggle(page, el, true, false, source);
     }
-    page.dom.borrow_mut().set_popover_showing(el, false).js()?;
+    let keep = overlay_style_flush(page, el);
+    {
+        let mut dom = page.dom.borrow_mut();
+        if keep {
+            dom.keep_in_top_layer(el);
+        }
+        dom.set_popover_showing(el, false).js()?;
+    }
     remove_watcher(page, el);
     let previous = page.popover.previously_focused.borrow_mut().remove(&el);
     if let Some(prev) = previous.filter(|_| focus_previous) {
@@ -711,6 +730,7 @@ fn show_modal_dialog(page: &Rc<PageDom>, el: NodeId, throw: bool) -> JsResult<()
     }
     queue_toggle(page, el, false, true, None);
     let previous = focused(page);
+    overlay_style_flush(page, el);
     {
         let mut dom = page.dom.borrow_mut();
         dom.set_attribute(el, "open", "").js()?;
@@ -735,8 +755,12 @@ pub(crate) fn close_dialog(page: &Rc<PageDom>, el: NodeId, result: Option<String
         return;
     }
     queue_toggle(page, el, true, false, source);
+    let keep = overlay_style_flush(page, el);
     {
         let mut dom = page.dom.borrow_mut();
+        if keep {
+            dom.keep_in_top_layer(el);
+        }
         let _ = dom.remove_attribute(el, "open");
         let _ = dom.set_modal(el, false);
     }

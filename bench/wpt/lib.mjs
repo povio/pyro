@@ -13,7 +13,29 @@ export const DEFAULT_DIRS = [
   'dom', 'html/dom', 'encoding', 'url', 'fetch/api/basic', 'xhr', 'css/selectors', 'uievents', 'shadow-dom', 'webstorage',
   ...PAINT_DIRS,
 ];
-// Testharness pages in these directories run as wptrunner runs every page: in an 800x600 viewport (run.mjs; the
+// `--dirs all` (run.mjs): `keep` (a kind's directories, so their pages keep their `dir` and its rules) and every other
+// directory of the checkout, the fewest that cover it: a directory that holds none of `keep` whole, else its
+// subdirectories, recursively. Files directly in a directory that is split this way are not covered (none are tests
+// at the pinned revision but WPT's root-level pages).
+// Top-level directories WPT's manifest holds no tests in (its tools, the harness's own self-tests, conformance-checker
+// samples): pages there are not tests.
+export const NON_TEST_TOP = ['tools', 'resources', 'conformance-checkers'];
+export function allDirs(wpt, keep) {
+  const out = [...keep];
+  const visit = (rel) => {
+    for (const e of fs.readdirSync(path.join(wpt, rel), { withFileTypes: true })) {
+      if (!e.isDirectory() || e.name.startsWith('.') || (!rel && NON_TEST_TOP.includes(e.name))) continue;
+      const d = rel ? `${rel}/${e.name}` : e.name;
+      if (keep.includes(d)) continue;
+      if (keep.some((k) => k.startsWith(d + '/'))) visit(d); else out.push(d);
+    }
+  };
+  visit('');
+  return out;
+}
+// The directories whose testharness pages run in Playwright's 1280x720, the viewport their baseline was recorded with.
+const LEGACY_VIEWPORT_DIRS = DEFAULT_DIRS.filter((d) => !PAINT_DIRS.includes(d));
+// Testharness pages in every other directory run as wptrunner runs every page: in an 800x600 viewport (run.mjs; the
 // browser has Ahem for every page). The older directories keep the viewport their baseline was recorded with
 // (Playwright's 1280x720).
 const WPTRUNNER_VIEWPORT = { width: 800, height: 600 };
@@ -45,13 +67,16 @@ const SERVER_HELPERS = /\/common\/security-features\//;
 
 // Every testharness page under `dirs` that our static server can run, one entry per variant.
 // `excluded` counts what was left out and why (identical for every binary).
-export function discover(wpt, dirs, { sampleEncoding = 1 } = {}) {
+// `reasons` (a Map, optional) receives each left-out file's reason, keyed by its path (coverage.mjs).
+// `wptserve`: the server is wptserve (run.mjs --server wptserve), so pages that need it are kept.
+export function discover(wpt, dirs, { sampleEncoding = 1, reasons, wptserve = false, testdriver = false } = {}) {
   const tests = [];
   const excluded = {};
-  const exclude = (why) => { excluded[why] = (excluded[why] ?? 0) + 1; };
+  let rel;
+  const exclude = (why) => { excluded[why] = (excluded[why] ?? 0) + 1; reasons?.set(rel, why); };
   for (const d of dirs) {
     for (const f of walk(path.join(wpt, d))) {
-      const rel = path.relative(wpt, f).split(path.sep).join('/');
+      rel = path.relative(wpt, f).split(path.sep).join('/');
       const base = path.basename(f);
       // `code`: the source the wptserve check reads (markup without its comments).
       let src, code, url, variants = [''], long = false;
@@ -75,10 +100,13 @@ export function discover(wpt, dirs, { sampleEncoding = 1 } = {}) {
         if (v.length) variants = v;
         long = /<meta\s+name=["']?timeout["']?\s+content=["']?long/i.test(src);
       } else continue;
-      if (/\.sub\.|\.https\.|\.h2\.|\.www\./.test(base)) { exclude('needs wptserve substitution/https/h2'); continue; }
-      if (/testdriver\.js|testdriver-vendor/.test(src)) { exclude('needs testdriver'); continue; }
-      if (/\.py\b/.test(code) || SERVER_PAGES.some((re) => re.test(rel)) || SERVER_HELPERS.test(code)) { exclude('needs wptserve python handler'); continue; }
-      const viewport = PAINT_DIRS.includes(d) ? { viewport: WPTRUNNER_VIEWPORT } : {};
+      if (!wptserve && /\.sub\.|\.https\.|\.h2\.|\.www\./.test(base)) { exclude('needs wptserve substitution/https/h2'); continue; }
+      if (!testdriver && /testdriver\.js|testdriver-vendor/.test(src)) { exclude('needs testdriver'); continue; }
+      if (!wptserve && (/\.py\b/.test(code) || SERVER_PAGES.some((re) => re.test(rel)) || SERVER_HELPERS.test(code))) { exclude('needs wptserve python handler'); continue; }
+      // wasm/core/: the spec interpreter's tests, compiled and run in the page (CPU-bound, 0.5-10 s alone): beside 15
+      // other pages (wpt-full.yml --jobs 16) the larger SIMD ones outran the normal timeout, so they get the long one.
+      if (rel.startsWith('wasm/core/')) long = true;
+      const viewport = LEGACY_VIEWPORT_DIRS.includes(d) ? {} : { viewport: WPTRUNNER_VIEWPORT };
       for (const v of variants) tests.push({ dir: d, url: url + v, long, ...viewport });
     }
   }
@@ -190,11 +218,13 @@ const SERVER_CONTENT = /\.py\b|[?&]pipe=|\.sub\.(html|htm|xht|xhtml|svg|css|js)\
 // in a non-test directory. A reference that has references of its own is a test of its own too; as in wptrunner, a
 // test is compared with its own references only (the chain is not followed). `excluded` counts what was left out
 // and why; `info` counts what discovery noticed but kept.
-export function discoverReftests(wpt, dirs) {
+// `reasons` (a Map, optional) receives each left-out file's reason, keyed by its path (coverage.mjs).
+export function discoverReftests(wpt, dirs, { reasons, wptserve = false, testdriver = false } = {}) {
   const tests = [];
   const excluded = {};
   const info = {};
-  const exclude = (why) => { excluded[why] = (excluded[why] ?? 0) + 1; };
+  let rel;
+  const exclude = (why, at = rel) => { excluded[why] = (excluded[why] ?? 0) + 1; reasons?.set(at, why); };
   const note = (why) => { info[why] = (info[why] ?? 0) + 1; };
   const parsed = new Map();
   const parse = (rel) => {
@@ -213,7 +243,7 @@ export function discoverReftests(wpt, dirs) {
   const noRefs = [];
   for (const d of dirs) {
     for (const f of walkMarkup(path.join(wpt, d))) {
-      const rel = path.relative(wpt, f).split(path.sep).join('/');
+      rel = path.relative(wpt, f).split(path.sep).join('/');
       const base = path.basename(f);
       const name = base.replace(/\.[^.]*$/, '');
       const flag = name.includes('-') ? name.slice(name.lastIndexOf('-') + 1).split('.')[0] : null;
@@ -236,8 +266,8 @@ export function discoverReftests(wpt, dirs) {
       const files = [rel, ...refs.map((r) => r.url)];
       const ps = files.map((u) => parse(u.replace(/[?#].*$/, '')));
       if (ps.some((x) => !x)) { exclude('reference not in the checkout'); continue; }
-      if (files.some((u) => SERVER_NAME.test(u) || /[?&]pipe=/.test(u)) || ps.some((x) => SERVER_CONTENT.test(x.src))) { exclude('needs wptserve (substitution, pipe, Python handler)'); continue; }
-      if (ps.some((x) => x.scripts.some((a) => /(^|\/)resources\/testdriver(-vendor)?\.js$/.test(a.src ?? '')))) { exclude('needs testdriver'); continue; }
+      if (!wptserve && (files.some((u) => SERVER_NAME.test(u) || /[?&]pipe=/.test(u)) || ps.some((x) => SERVER_CONTENT.test(x.src)))) { exclude('needs wptserve (substitution, pipe, Python handler)'); continue; }
+      if (!testdriver && ps.some((x) => x.scripts.some((a) => /(^|\/)resources\/testdriver(-vendor)?\.js$/.test(a.src ?? '')))) { exclude('needs testdriver'); continue; }
       if (metaOf(p.metas, 'device-pixel-ratio').length) { exclude('needs another device pixel ratio'); continue; }
       let fuzzy;
       try { fuzzy = parseFuzzy(metaOf(p.metas, 'fuzzy'), rel, refs.map((r) => r.url)); } catch { exclude('malformed fuzzy metadata'); continue; }
@@ -258,7 +288,7 @@ export function discoverReftests(wpt, dirs) {
     }
   }
   // Markup without references: reference files (named or linked as one) and the rest (visual tests, support pages).
-  for (const { rel, isRefName } of noRefs) exclude(isRefName || referenced.has(rel) ? 'reference file' : 'no reference (visual test or support page)');
+  for (const x of noRefs) exclude(x.isRefName || referenced.has(x.rel) ? 'reference file' : 'no reference (visual test or support page)', x.rel);
   return { tests, excluded, info };
 }
 
@@ -302,6 +332,46 @@ export function formatBaseline(head, tests) {
   s += urls.map((u) => `  ${JSON.stringify(u)}: ${JSON.stringify(tests[u])}`).join(',\n');
   s += '\n }\n}\n';
   return s;
+}
+
+// A baseline is one file, or a directory of them, one per top-level WPT directory (`<dir>/<top>.json`, each in the
+// format above with the same head), for the whole suite's ~70,000 pages: each file stays small enough to diff and
+// to merge page by page (merge-baseline.mjs), and a change touches only its directories' files.
+export const topOf = (url) => url.split('/')[0];
+export function readBaselineAt(p) {
+  if (!fs.existsSync(p)) return null;
+  if (!fs.statSync(p).isDirectory()) return readJson(p);
+  const files = fs.readdirSync(p).filter((f) => f.endsWith('.json')).sort();
+  if (!files.length) return null;
+  let head = null;
+  const tests = {};
+  for (const f of files) {
+    const j = readJson(path.join(p, f));
+    if (!head) head = { ...j, tests: undefined };
+    else if (j.wpt?.revision !== head.wpt?.revision) throw new Error(`${path.join(p, f)} is for WPT ${j.wpt?.revision}, ${files[0]} for ${head.wpt?.revision}`);
+    for (const [u, e] of Object.entries(j.tests)) {
+      if (topOf(u) + '.json' !== f) throw new Error(`${path.join(p, f)} holds ${u}, which belongs in ${topOf(u)}.json`);
+      tests[u] = e;
+    }
+  }
+  delete head.tests;
+  return { ...head, tests };
+}
+// Writes `tests` to `p`: a directory (an existing one, or a path ending in '/') gets one file per top-level
+// directory, and loses the files of directories no page is in any more; anything else is one file.
+export function writeBaselineAt(p, head, tests) {
+  const dir = p.endsWith('/') || (fs.existsSync(p) && fs.statSync(p).isDirectory());
+  if (!dir) { fs.writeFileSync(p, formatBaseline(head, tests)); return; }
+  fs.mkdirSync(p, { recursive: true });
+  const groups = {};
+  for (const [u, e] of Object.entries(tests)) (groups[topOf(u)] ??= {})[u] = e;
+  for (const f of fs.readdirSync(p)) if (f.endsWith('.json') && !groups[f.slice(0, -5)]) fs.unlinkSync(path.join(p, f));
+  for (const [top, t] of Object.entries(groups)) {
+    const file = path.join(p, `${top}.json`);
+    const s = formatBaseline(head, t);
+    // A file whose pages did not change is left as it was.
+    if (!fs.existsSync(file) || fs.readFileSync(file, 'utf8') !== s) fs.writeFileSync(file, s);
+  }
 }
 
 // What every run of a page agrees on (a run and its reruns): it completed only if every run did, a subtest passed

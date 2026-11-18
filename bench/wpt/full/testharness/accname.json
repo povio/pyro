@@ -1,0 +1,27 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "accname/aria-owns.html": {"status":"complete","ms":50,"n":9,"fail":["A button using aria-owns to specify its label","A link using aria-owns to concatenate extra text","Computed name of parent heading excludes content relocated by aria-owns"],"h":"2099f387"},
+  "accname/basic.html": {"status":"complete","ms":30,"n":2,"fail":[],"h":"d029da9f"},
+  "accname/name/comp_hidden_not_referenced.html": {"status":"complete","ms":40,"n":8,"fail":["heading with name from content, containing element that is visibility:hidden with nested content that is visibility:visible"],"h":"8150a62a"},
+  "accname/name/comp_host_language_label.tentative.html": {"status":"complete","ms":50,"n":9,"fail":["svg: svg>circle>title[role=none] (role none set on title doesn't affect circle acc name)"],"h":"fd604f94"},
+  "accname/name/comp_label.html": {"status":"complete","ms":1100,"n":131,"fail":["button with leading nbsp char in aria-label is valid (and uses aria-label)","button's hidden referenced name (visibility:hidden) with hidden aria-labelledby traversal falls back to aria-label","label valid on dl element","nav with trailing nbsp char aria-label is valid (nbsp is preserved in name)"],"h":"aad87f66"},
+  "accname/name/comp_labeledby_non_standard.html": {"status":"complete","ms":20,"n":3,"fail":[],"h":"45e9e2f3"},
+  "accname/name/comp_labelledby_hidden_nodes.html": {"status":"complete","ms":70,"n":27,"fail":[],"h":"5cb33dff"},
+  "accname/name/comp_name_from_content.html": {"status":"complete","ms":270,"n":79,"fail":["button with alt counter on ::before","button with multiple alt counters and counter increments","heading name from content with text-transform:capitalize","heading name from content with text-transform:lowercase","heading name from content with text-transform:uppercase","heading with alt counter on ::before","heading with multiple alt counters and counter increments","link with alt counter on ::before","link with multiple alt counters and counter increments"],"h":"74f38983"},
+  "accname/name/comp_name_from_content_alt_counter_invalidation.html": {"status":"complete","ms":20,"n":3,"pass":[]},
+  "accname/name/comp_name_from_content_display_contents.html": {"status":"complete","ms":20,"n":4,"fail":[],"h":"e20d5adc"},
+  "accname/name/comp_name_from_heading.tentative.html": {"status":"complete","ms":30,"n":6,"pass":["group role, verify name is NOT from heading"]},
+  "accname/name/comp_name_from_pseudo_content_marker.tentative.html": {"status":"complete","ms":30,"n":10,"pass":["name from ol > listitem with custom ::marker with empty alt text","name from ul > listitem with custom ::marker with explicit empty alt text"]},
+  "accname/name/comp_text_node.html": {"status":"complete","ms":850,"n":50,"fail":["button with text node, with extra non-breaking space","button with text node, with leading/trailing non-breaking space","button with text node, with mixed space and non-breaking space","button with text node, with non-breaking space","div[role=heading] with text node, with extra non-breaking space","div[role=heading] with text node, with leading/trailing non-breaking space","div[role=heading] with text node, with mixed space and non-breaking space","div[role=heading] with text node, with non-breaking space","heading with text node, with extra non-breaking space","heading with text node, with leading/trailing non-breaking space","heading with text node, with mixed space and non-breaking space","heading with text node, with non-breaking space","link with text node, with extra non-breaking space","link with text node, with leading/trailing non-breaking space","link with text node, with mixed space and non-breaking space","link with text node, with non-breaking space","span[role=button] with text node, with extra non-breaking space","span[role=button] with text node, with leading/trailing non-breaking space","span[role=button] with text node, with mixed space and non-breaking space","span[role=button] with text node, with non-breaking space"],"h":"bd1227ca"},
+  "accname/name/comp_tooltip.tentative.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "accname/name/shadowdom/basic.html": {"status":"complete","ms":20,"n":2,"fail":[],"h":"2f21c2c0"},
+  "accname/name/shadowdom/slot.html": {"status":"complete","ms":20,"n":4,"pass":["aria-labelledby reference to element with default slotted text content","aria-labelledby reference to element with slotted text content"]}
+ }
+}

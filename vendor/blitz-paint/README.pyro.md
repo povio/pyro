@@ -1018,3 +1018,59 @@ painted from it, clipped to the content box, when drawn at the size it was laid 
 `text.rs` (`ink_gaps`): each glyph run's own `text-decoration-skip-ink` decides whether it cuts the lines over it
 (css-pseudo `marker-text-decoration-skip-ink`). `render.rs`: a list item's marker is painted before its inline
 content, so text that overlaps an outside marker covers it (css-pseudo `outside-marker-paint-order`).
+`text.rs`: `-webkit-text-stroke` strokes the glyphs over their fill (centred on the outline, any width > 0); an
+emphasis mark is centred on its character without the letter spacing after it (css-text `letter-spacing-211`); over
+selected text a line-through of its own colour takes the highlight's colour too (css-pseudo
+`selection-originating-decoration-color`), underlines and overlines of their own colour keep it.
+
+Round 4 lane D: `text.rs` (`quarter_pixel`): glyph origins go to a layout unit (1/64 px) before Skia's quarter-pixel
+grid, so a glyph inside a run bins as the same glyph starting a box whose edge a layout unit rounds (CSS2
+`display-008`). `render.rs` (`create_css_rect_with_corners`): an inline box fragment's open-side corners are left out
+before overlapping radii are scaled down, as Blink's `CalcRadiiFor` (css-backgrounds `border-radius-012`).
+`render/background.rs`: an SVG background image's root background fills its tile (`background-image-007`).
+## Invisible line boxes (WPT round 4, lane A)
+
+`render.rs` (`inline_box_fragments`): the empty inline boxes of an invisible line box (parley's
+`LineMetrics::invisible`: only empty inline boxes on it) have no height and paint nothing, no outline either (WPT
+css-inline `empty-span-size-002`).
+- Round 4 lane B: `render.rs` `draw_svg` paints an inline `<svg>` whose source depends on its laid-out size
+  (`SvgImageData::viewport_dependent`) from blitz-dom `inline_svg_at_viewport` at its content box size.
+
+## `::first-line` in layout (WPT round 4, lane A)
+
+`render.rs` (`inline_box_fragments`): the `::first-line` box's fragment uses the line's root style
+(`Line::root_style`, the first line's own font metrics), and a fragment's border and padding widths come from the
+element's style on the first line (seeded from blitz-dom's `TextLayout::first_line_styles`, full cascades: `em`
+widths follow the first-line font). `text.rs`: the strut of the first line is its root style's; the root's text on
+the first line takes `font-synthesis-*` from the `::first-line` style. An outside string marker of an item without a
+line of its own sits on `marker_baseline` (WPT css-inline `text-box-trim-list-001`).
+
+## Backdrop SVG filter graphs, inline shadows over earlier text (WPT round 4, lane E)
+
+`render.rs`: a `backdrop-filter: url()` naming an SVG filter graph (no colour chain) is that graph, its markers pushed
+in the element's user space (`backdrop_clip` carries the space; filter-effects
+`backdrop-filter-reference-filter-mutated`). An inline box whose outer shadow reaches left of it
+(`InlineBoxFragment::reaches_back`) paints after the text before it on its line: the line is painted by line, its
+text cut at the box (`TextCut`), as Appendix E orders a line's boxes and text (css-backgrounds
+`box-shadow-overlapping-001`).
+- Round 4 lane F (`render.rs`): `text-overflow` and line clamps cut vertical lines too (`draw_turned_lines`, at the
+  content box's physical height); the ellipsis of a line stops at the line's own end where floats shorten it
+  (`truncate_line`, parley `inline_min_coord`/`inline_max_coord`); an atomic inline that does not fit before its line's
+  ellipsis is not painted (`hidden_by_ellipsis`, Blink's `LineTruncator`). WPT css-overflow `text-overflow-006`, `-010`,
+  `text-overflow-ellipsis-vertical-001`, `-vertical-rtl-001`.
+
+Round 4 lane G: `draw_sub_document` records an iframe's document at its viewport's origin and appends it with the
+frame's whole transform, clipped to the content box (upstream applied the translation only). WPT css-transforms
+`transform-iframe-002`, `transform-iframe-scroll-position`.
+- Round 4 lane F: the first line's ellipsis takes the colour of the `::first-line` style (`TextLayout::first_line`; WPT
+  css-overflow `text-overflow-ellipsis-multiline-001`).
+- `render/multicol.rs` `draw_columns`: a vertical writing mode's logical columns (`vertical_column_fragments`) are
+  mapped to physical axes per column: the block range on x (from the right edge in `vertical-rl`), the offset swapped.
+- Round 4 lane F: `highlight.rs` recomputes a `::selection` style that uses container units
+  (`selection_pseudo_style`); `draw_marker` draws an outside marker's emphasis marks (`draw_text_annotations`).
+- Round 4 lane F: list marker images honour `image-orientation: none` (`unturn`, as `<img>`; WPT css-images
+  `image-orientation-list-style-image`).
+- Round 4 lane F, `render.rs`: gradient list markers fill their box; SVG marker images are drawn into the marker box through `viewport_transform`, the root's background filling it.
+- Round 4 lane F, `render.rs`/`highlight.rs`/`text.rs`: vertical lines paint selections through the highlight path (`stroke_highlighted_text` takes per-line transforms and `VerticalLine`s; not upright or truncated lines), and text shadows are drawn in vertical lines with their physical offsets turned into the line's space (`VerticalLine::turned_offset`).
+- Round 4 lane F, `render.rs`/`text.rs`: positioned inline boxes (relative or sticky, not atomic) paint after their inline root's in-flow content, each with its fragments then its text in tree order (`positioned_passes`, `DrawTextContext::positioned_pass`), as CSS 2.1 Appendix E step 8: a relative span's text and shadows cover the root's later text (WPT css-pseudo `highlight-painting-002` reference). Not with highlights, truncated lines or `sideways-lr`. Upright glyphs advancing by the font's height (parley `shape::upright`) have their em box centred in that advance.
+- Round 4 lane F, `highlight.rs`: a visited link's selection style comes from `selection_pseudo_style` (none when only `:link` rules matched). `render.rs`: `image(<color>)` list markers fill their box with the colour.

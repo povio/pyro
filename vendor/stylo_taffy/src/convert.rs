@@ -392,7 +392,7 @@ pub fn position(input: stylo::Position) -> taffy::Position {
 /// <https://developer.mozilla.org/en-US/docs/Web/CSS/CSS_positioned_layout/Containing_block#identifying_the_containing_block>
 pub fn establishes_fixed_containing_block(style: &stylo::ComputedValues) -> bool {
     use style::values::computed::{Perspective, Rotate, Scale, Translate};
-    use style::values::specified::box_::{Contain, ContainerType, WillChangeBits};
+    use style::values::specified::box_::{Contain, WillChangeBits};
 
     let box_style = style.get_box();
     if !box_style.transform.0.is_empty()
@@ -417,12 +417,8 @@ pub fn establishes_fixed_containing_block(style: &stylo::ComputedValues) -> bool
     {
         return true;
     }
-    if box_style
-        .container_type
-        .intersects(ContainerType::SIZE | ContainerType::INLINE_SIZE)
-    {
-        return true;
-    }
+    // pyro: a size container has no layout containment (css-conditional-5 dropped it; Blink), so
+    // `container-type` alone makes no containing block (WPT container-queries/no-layout-containment-*).
 
     let effects = style.get_effects();
     !effects.filter.0.is_empty() || !effects.backdrop_filter.0.is_empty()
@@ -1084,7 +1080,21 @@ pub fn to_taffy_style(style: &stylo::ComputedValues) -> taffy::Style<Atom> {
             width: self::max_size(&pos.max_width),
             height: self::max_size(&pos.max_height),
         },
-        aspect_ratio: self::aspect_ratio(pos.aspect_ratio),
+        // pyro: not on internal table boxes (css-sizing-4 §2; WPT css-sizing `aspect-ratio/table-element-001`)
+        aspect_ratio: if matches!(
+            display.inside(),
+            stylo::DisplayInside::TableRowGroup
+                | stylo::DisplayInside::TableColumn
+                | stylo::DisplayInside::TableColumnGroup
+                | stylo::DisplayInside::TableHeaderGroup
+                | stylo::DisplayInside::TableFooterGroup
+                | stylo::DisplayInside::TableRow
+                | stylo::DisplayInside::TableCell
+        ) {
+            None
+        } else {
+            self::aspect_ratio(pos.aspect_ratio)
+        },
 
         inset: self::inset_rect(style),
         margin: taffy::Rect {

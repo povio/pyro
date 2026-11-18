@@ -1,0 +1,17 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "web-based-payment-handler/can-make-payment-event-constructor.https.html": {"status":"complete","ms":50,"n":1,"fail":[],"h":"a28b7961"},
+  "web-based-payment-handler/can-make-payment-event.https.html": {"status":"complete","ms":70,"n":7,"pass":[]},
+  "web-based-payment-handler/idlharness.https.any.html": {"status":"complete","ms":70,"n":26,"pass":["CanMakePaymentEvent interface: existence and properties of interface object","Partial interface ServiceWorkerGlobalScope: member names are unique","Partial interface ServiceWorkerGlobalScope: original interface defined","Partial interface ServiceWorkerGlobalScope[2]: member names are unique","Partial interface ServiceWorkerGlobalScope[2]: original interface defined","Partial interface ServiceWorkerRegistration: member names are unique","Partial interface ServiceWorkerRegistration: original interface defined","PaymentRequestEvent interface: existence and properties of interface object","WorkerGlobalScope includes WindowOrWorkerGlobalScope: member names are unique","idl_test setup","idl_test validation"]},
+  "web-based-payment-handler/payment-request-event-constructor.https.html": {"status":"complete","ms":40,"n":1,"fail":[],"h":"6eb4f24f"},
+  "web-based-payment-handler/payment-request-event-constructor.https.serviceworker.html": {"status":"complete","ms":10100,"n":1,"pass":[]},
+  "web-based-payment-handler/untrusted-event.https.html": {"status":"complete","ms":10100,"n":1,"pass":[]}
+ }
+}

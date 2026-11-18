@@ -201,9 +201,10 @@ pub(crate) fn resolve_style_metrics<B: Brush>(
             metrics.under = metrics.under.max(metrics.descent + space.under);
         }
 
-        if index == 0 {
+        // pyro: the first line's root (`::first-line`, its own parent) is a root span box too.
+        if index == 0 || usize::from(style.parent) == index {
             // The root span box (the strut).
-            metrics.parent = 0;
+            metrics.parent = index as u16;
             metrics.baseline_offset = 0.;
             metrics.exact_baseline_offset = 0.;
             metrics.aligned_subtree_root = 0;
@@ -285,7 +286,7 @@ pub(crate) fn scale_style_metrics<B: Brush>(
             metrics.under = metrics.under.max(metrics.descent + under * scale);
         }
         metrics.parent = base.parent;
-        if index > 0 {
+        if index > 0 && usize::from(base.parent) != index {
             let align = style.vertical_align;
             if align.is_line_relative() {
                 metrics.aligned_subtree_root = index as u16;
@@ -496,21 +497,39 @@ pub(crate) fn inline_box_placement(
     parent_style: u16,
     style_metrics: &[StyleMetrics],
     quantize: bool,
+    // pyro: [`crate::Layout::set_central_baseline`].
+    central: bool,
 ) -> InlineBoxPlacement {
-    let ascent = inline_box.baseline.unwrap_or(inline_box.height);
+    // pyro: on a central baseline the box's `baseline` is its central one, which only baseline
+    // alignment uses; the other alignments take its synthesized alphabetic baseline (its
+    // line-under edge), as on an alphabetic line.
+    let central = central && inline_box.central;
+    let central_baseline = central
+        && inline_box.vertical_align.alignment == AlignmentBaseline::Baseline
+        && !inline_box.vertical_align.is_line_relative();
+    let ascent = if central && !central_baseline {
+        inline_box.height
+    } else {
+        inline_box.baseline.unwrap_or(inline_box.height)
+    };
     let descent = inline_box.height - ascent;
     let parent = style_metrics
         .get(usize::from(parent_style))
         .copied()
         .unwrap_or_default();
     let shift = shift_from_parent(inline_box.vertical_align, ascent, descent, None, &parent);
+    // pyro: on a central baseline the box's own (central) baseline goes to the middle of the
+    // parent's content area, over its alphabetic baseline by half of ascent minus descent. Not
+    // quantized: the content area's middle is where the dominant baseline of the line is
+    // measured and where the strut of a zero line height sits.
+    let central_shift = if central_baseline { (parent.ascent - parent.descent) / 2. } else { 0. };
     let baseline_offset = parent.exact_baseline_offset + shift;
     InlineBoxPlacement {
         aligned_subtree_root: parent.aligned_subtree_root,
         baseline_offset: if quantize {
-            baseline_offset.round()
+            baseline_offset.round() + central_shift
         } else {
-            baseline_offset
+            baseline_offset + central_shift
         },
         ascent,
         descent,

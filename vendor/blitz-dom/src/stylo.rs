@@ -307,7 +307,29 @@ impl crate::document::BaseDocument {
     /// (styling any unstyled ancestors along the way) without storing it on the
     /// node. Returns `None` for non-elements and elements outside the document.
     pub fn resolve_undisplayed_style(&self, node_id: NodeId) -> Option<Arc<ComputedValues>> {
-        Some(self.resolve_undisplayed_styles(node_id)?.primary().clone())
+        Some(self.resolve_undisplayed_styles(node_id, None)?.primary().clone())
+    }
+
+    /// pyro: [`Self::resolve_undisplayed_style`] with caches the caller keeps
+    /// while the document does not change: each undisplayed ancestor's style
+    /// (an element inherits its parent's instead of every read matching the
+    /// whole chain from the `display: none` root again) and the selector
+    /// caches (`:has()` filters and results, nth-index), built once instead
+    /// of walking the subtree again for every element read. The caller must
+    /// clear `caches` whenever the document's nodes, states or sheets change.
+    pub fn resolve_undisplayed_style_cached(
+        &self,
+        node_id: NodeId,
+        caches: &mut UndisplayedCaches,
+    ) -> Option<Arc<ComputedValues>> {
+        let node = self.nodes.get(node_id)?;
+        if !node.is_element() || !node.flags.is_in_document() {
+            return None;
+        }
+        if let Some(style) = caches.styles.get(&selectors::OpaqueElement::new(node)) {
+            return Some(style.clone());
+        }
+        Some(self.resolve_undisplayed_styles(node_id, Some(caches))?.primary().clone())
     }
 
     /// pyro: `false` while no style traversal has kept a
@@ -349,7 +371,7 @@ impl crate::document::BaseDocument {
         let (primary, eager) = match stored {
             Some(styles) => styles,
             None => {
-                let styles = self.resolve_undisplayed_styles(node_id)?;
+                let styles = self.resolve_undisplayed_styles(node_id, None)?;
                 let eager = if pseudo.is_eager() { styles.pseudos.get(pseudo).cloned() } else { None };
                 (styles.primary().clone(), eager)
             }
@@ -446,7 +468,11 @@ impl crate::document::BaseDocument {
 
     /// The styles [`Self::resolve_undisplayed_style`] resolves, eagerly
     /// cascaded pseudo-elements included.
-    fn resolve_undisplayed_styles(&self, node_id: NodeId) -> Option<style::data::ElementStyles> {
+    fn resolve_undisplayed_styles(
+        &self,
+        node_id: NodeId,
+        caches: Option<&mut UndisplayedCaches>,
+    ) -> Option<style::data::ElementStyles> {
         let node = self.nodes.get(node_id)?;
         if !node.is_element() || !node.flags.is_in_document() {
             return None;
@@ -471,16 +497,42 @@ impl crate::document::BaseDocument {
             registered_speculative_painters: &RegisteredPaintersImpl,
         };
         // The thread-local context's sequential task list asserts the LAYOUT state when dropped
+        let mut caches = caches;
         let styles = {
             let mut thread_local = ThreadLocalStyleContext::new();
-            let mut context = StyleContext {
-                shared: &shared,
-                thread_local: &mut thread_local,
+            if let Some(selectors) = caches.as_deref_mut().and_then(|c| c.selectors.take()) {
+                thread_local.selector_caches = selectors;
+            }
+            let styles = {
+                let mut context = StyleContext {
+                    shared: &shared,
+                    thread_local: &mut thread_local,
+                };
+                resolve_style(&mut context, node, RuleInclusion::All, None, caches.as_deref_mut().map(|c| &mut c.styles))
             };
-            resolve_style(&mut context, node, RuleInclusion::All, None, None)
+            if let Some(caches) = caches.as_deref_mut() {
+                caches.selectors = Some(std::mem::take(&mut thread_local.selector_caches));
+            }
+            styles
         };
 
         Some(styles)
+    }
+}
+
+/// pyro: what [`BaseDocument::resolve_undisplayed_style_cached`] keeps
+/// between reads while the document stays the same.
+#[derive(Default)]
+pub struct UndisplayedCaches {
+    styles: style::traversal::UndisplayedStyleCache,
+    selectors: Option<selectors::context::SelectorCaches>,
+}
+
+impl UndisplayedCaches {
+    /// Forgets everything: the document changed.
+    pub fn clear(&mut self) {
+        self.styles.clear();
+        self.selectors = None;
     }
 }
 
@@ -774,9 +826,13 @@ impl selectors::Element for BlitzNode<'_> {
             NonTSPseudoClass::CustomState(ref state) => self.has_lp_custom_state(&state.0),
             // pyro: every link, visited or not, as browsers match `:link` for an element's style
             // (only the colours a visited link paints come from `:visited`).
-            NonTSPseudoClass::Link => self
-                .element_state()
-                .intersects(ElementState::VISITED_OR_UNVISITED),
+            // A visited link's highlight styles (`::selection`) take it as visited, as Chromium's
+            // visited style (WPT css-pseudo `selection-link-002`; `crate::dom_selection`).
+            NonTSPseudoClass::Link => {
+                self.element_state().intersects(ElementState::VISITED_OR_UNVISITED)
+                    && !(crate::dom_selection::LINKS_AS_VISITED.get()
+                        && self.element_state().contains(ElementState::VISITED))
+            }
             NonTSPseudoClass::PlaceholderShown => {
                 self.element_state().contains(ElementState::PLACEHOLDER_SHOWN)
             }
@@ -1013,18 +1069,18 @@ impl<'a> TElement for BlitzNode<'a> {
         })
     }
 
+    // pyro: by namespace (stylo's display: contents unboxing rules, CSS Display 3 appendix B,
+    // and `<use>` shadow trees depend on it; WPT css-display `display-contents-svg-elements`).
     fn is_html_element(&self) -> bool {
-        self.is_element()
+        self.element_data().is_some_and(|data| data.name.ns == markup5ever::ns!(html))
     }
 
-    // not implemented.....
     fn is_mathml_element(&self) -> bool {
-        false
+        self.element_data().is_some_and(|data| data.name.ns == markup5ever::ns!(mathml))
     }
 
-    // need to check the namespace
     fn is_svg_element(&self) -> bool {
-        false
+        self.element_data().is_some_and(|data| data.name.ns == markup5ever::ns!(svg))
     }
 
     fn style_attribute(&self) -> Option<ArcBorrow<'_, Locked<PropertyDeclarationBlock>>> {
@@ -1368,7 +1424,36 @@ impl<'a> TElement for BlitzNode<'a> {
         // Stylo can call while holding this element's mutable style data for
         // a pseudo. Eligibility comes from its fresh originating-element style;
         // axes and content-box dimensions are updated after traversal instead.
-        self.tree().container_query_sizes.lock().unwrap().entry(self.id).or_default().size
+        let mut sizes = self.tree().container_query_sizes.lock().unwrap();
+        if let Some(entry) = sizes.get(&self.id) {
+            return entry.size;
+        }
+        // pyro: a first query from a laid-out element outside the style traversal (a lazy pseudo
+        // style such as `::highlight()`/`::selection` resolved at paint) samples the size now:
+        // no later pass would fill it in (WPT container-queries/pseudo-elements-011,
+        // container-units-selection-pseudo). In a traversal this is the last layout's size; the
+        // refresh after the traversal corrects it.
+        let mut entry = crate::tree::ContainerQuerySize::default();
+        if self.element_data().is_some_and(|element| element.layout_data.is_some()) {
+            if let Some(values) = self.primary_styles() {
+                use style::values::specified::ContainerType;
+                let kind = values.get_box().slow_clone_container_type();
+                let both = kind.intersects(ContainerType::SIZE);
+                let inline = kind.intersects(ContainerType::INLINE_SIZE);
+                if both || inline {
+                    let horizontal = values.writing_mode.is_horizontal();
+                    entry.axes = euclid::default::Size2D::new(both || (inline && horizontal), both || (inline && !horizontal));
+                    let layout = self.final_layout();
+                    entry.size = euclid::default::Size2D::new(
+                        entry.axes.width.then(|| app_units::Au::from_f32_px(layout.content_box_width())),
+                        entry.axes.height.then(|| app_units::Au::from_f32_px(layout.content_box_height())),
+                    );
+                }
+            }
+        }
+        let size = entry.size;
+        sizes.insert(self.id, entry);
+        size
     }
 
     fn each_custom_state<F>(&self, mut callback: F)

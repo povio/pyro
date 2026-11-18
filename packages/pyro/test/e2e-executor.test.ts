@@ -146,7 +146,7 @@ test('a failing beforeAll fails its tests, and afterAll still runs', async () =>
 test('defer runs after its test, or after its describe and its afterAll, latest first', async () => {
   const r = await e2e(['test/e2e-fixture/defer/defer.e2e.ts']);
   expect(r.code).toBe(0);
-  expect(r.names).toEqual(['in scoped > t', 'test defer', 'describe afterAll', 'describe defer 2', 'describe defer 1']);
+  expect(r.names).toEqual(['file test/e2e-fixture/defer/defer.e2e.ts', 'in scoped > t', 'test defer', 'describe afterAll', 'describe defer 2', 'describe defer 1']);
 }, 30000);
 
 test('a spec that does not load fails the run; the others still run', async () => {
@@ -254,17 +254,22 @@ test('retries, test.skip() at run time, and a screenshot of a failed test\'s pag
   expect(r.names).toContain('ran on');
   expect(r.out).toContain('skips itself at run time (skipped: not on this backend)');
   expect(r.out).toContain('1 skip');
-  expect(r.out).toContain('2 fail');
-  expect(r.names.filter((n) => n === 'afterEach').length).toBe(7);
+  expect(r.out).toContain('3 fail');
+  expect(r.names.filter((n) => n === 'afterEach').length).toBe(8);
   // The failed test's open page, as the failure left it.
   const shot = /screenshot: (\S+\.png)/.exec(r.out)?.[1];
   expect(shot).toBeDefined();
   const png = readFileSync(join(pkg, shot!));
   expect(png.subarray(1, 4).toString()).toBe('PNG');
   expect(shot).toContain('a-failure-screenshots-its-page');
+  // A page the test closed with `await using` (while its error propagated) is screenshot too.
+  const shots = [...r.out.matchAll(/screenshot: (\S+\.png)/g)].map((m) => m[1]);
+  const disposed = shots.find((s) => s.includes('a-failure-screenshots-the-page-it-disposed'));
+  expect(disposed).toBeDefined();
+  expect(readFileSync(join(pkg, disposed!)).subarray(1, 4).toString()).toBe('PNG');
   // test.skip() in a beforeEach skips every test (none fails, nothing is retried).
   const hooked = await e2e(['test/e2e-fixture/retry/retry.e2e.ts', '-j', '1', '--screenshot', 'off'], { E2E_SKIP_IN_HOOK: '1' });
   expect(hooked.code).toBe(0);
-  expect(hooked.out).toContain('5 skip');
+  expect(hooked.out).toContain('6 skip');
   expect(hooked.names.filter((n) => n !== 'afterEach')).toEqual([]);
 }, 60000);

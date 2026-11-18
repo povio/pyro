@@ -1,0 +1,29 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "shape-detection/detected-boundingBox-read-only.https.html": {"status":"complete","ms":20,"n":3,"pass":[]},
+  "shape-detection/detected-postMessage.https.html": {"status":"complete","ms":20,"n":3,"pass":[]},
+  "shape-detection/detection-Blob.https.window.html": {"status":"complete","ms":10,"n":3,"pass":[]},
+  "shape-detection/detection-HTMLImageElement-empty-src.https.html": {"status":"complete","ms":20,"n":3,"pass":[]},
+  "shape-detection/detection-HTMLImageElement-zero-dimension-image.https.html": {"status":"complete","ms":20,"n":3,"pass":[]},
+  "shape-detection/detection-HTMLImageElement.https.html": {"status":"complete","ms":10,"n":3,"pass":[]},
+  "shape-detection/detection-ImageBitmap-closed.https.window.html": {"status":"complete","ms":30,"n":3,"pass":[]},
+  "shape-detection/detection-ImageBitmap.https.html": {"status":"complete","ms":20,"n":3,"pass":[]},
+  "shape-detection/detection-ImageData-detached.https.html": {"status":"complete","ms":10,"n":3,"pass":[]},
+  "shape-detection/detection-SVGImageElement.https.window.html": {"status":"complete","ms":20,"n":3,"pass":[]},
+  "shape-detection/detection-VideoFrame.https.window.html": {"status":"complete","ms":10,"n":3,"pass":[]},
+  "shape-detection/detection-getSupportedFormats.https.html": {"status":"complete","ms":10,"n":2,"pass":[]},
+  "shape-detection/detection-security-test.https.html": {"status":"complete","ms":10000,"n":6,"pass":[]},
+  "shape-detection/detector-same-object.https.html": {"status":"complete","ms":20,"n":3,"pass":[]},
+  "shape-detection/idlharness.https.any.html": {"status":"complete","ms":40,"n":43,"pass":["idl_test setup","idl_test validation"]},
+  "shape-detection/single-barcode-detection.https.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "shape-detection/single-face-detection.https.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "shape-detection/single-text-detection.https.html": {"status":"complete","ms":10,"n":1,"pass":[]}
+ }
+}

@@ -73,10 +73,18 @@ pub(crate) fn align<B: Brush>(
 ) {
     layout.alignment = Some(alignment);
 
-    let is_rtl = layout.base_level.is_rtl();
+    let base_rtl = layout.base_level.is_rtl();
+    let plaintext = !layout.paragraph_levels.is_empty();
 
     // Apply alignment to line items
-    for line in &mut layout.lines {
+    for line_index in 0..layout.lines.len() {
+        // pyro: each line takes its paragraph's direction (`unicode-bidi: plaintext`).
+        let is_rtl = if plaintext {
+            layout.level_at(layout.lines[line_index].text_range.start).is_rtl()
+        } else {
+            base_rtl
+        };
+        let line = &mut layout.lines[line_index];
         line.justification.amount_per_opportunity = 0.;
 
         let indent = line.metrics.indent;
@@ -113,15 +121,24 @@ pub(crate) fn align<B: Brush>(
             alignment
         };
 
+        // pyro: the line's content is as wide as Blink's text items, each a whole number of layout
+        // units (1/64 CSS px, `ShapeResult::SnappedWidth` rounds up): a right- or centre-aligned
+        // line then starts where a shrink-to-fit box of the same text would.
+        let snapped_free_space = {
+            let unit = 64.0 / layout.scale;
+            let advance = line.metrics.advance - line.metrics.hanging_advance;
+            let snapped = ((advance * unit - 0.01).ceil() / unit).max(advance);
+            free_space - (snapped - advance)
+        };
         match (line_alignment, is_rtl) {
             (Alignment::Left, _) | (Alignment::Start, false) | (Alignment::End, true) => {
                 // Do nothing
             }
             (Alignment::Right, _) | (Alignment::Start, true) | (Alignment::End, false) => {
-                line.metrics.offset += free_space;
+                line.metrics.offset += snapped_free_space;
             }
             (Alignment::Center, _) => {
-                line.metrics.offset += free_space * 0.5;
+                line.metrics.offset += snapped_free_space * 0.5;
             }
             (Alignment::Justify, _) => {
                 // Justified alignment doesn't have any effect if free_space is negative or zero

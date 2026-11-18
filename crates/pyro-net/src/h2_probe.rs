@@ -184,12 +184,24 @@ impl<T: Connection> Connection for ProbeStream<T> {
     }
 }
 
+/// The end of a TLS connection without close_notify (rustls: `UnexpectedEof`) read as the end of the stream, as
+/// Chromium reads it. HTTP's own framing still catches a cut: a body shorter than its Content-Length, a chunked body
+/// without its last chunk, an HTTP/2 stream without END_STREAM. What this lets through is a body delimited by the
+/// connection's close (neither length nor chunks), which servers that skip close_notify end that way (wptserve,
+/// whose Python ssl module closes without it).
+fn eof_is_end(read: Poll<std::io::Result<()>>) -> Poll<std::io::Result<()>> {
+    match read {
+        Poll::Ready(Err(e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => Poll::Ready(Ok(())),
+        other => other,
+    }
+}
+
 impl<T: Read + Unpin> Read for ProbeStream<T> {
     fn poll_read(self: Pin<&mut Self>, cx: &mut Context<'_>, mut buf: ReadBufCursor<'_>) -> Poll<std::io::Result<()>> {
         let this = self.get_mut();
         let probe = match &mut this.probe {
             Some(probe) if !probe.done => probe,
-            _ => return Pin::new(&mut this.inner).poll_read(cx, buf),
+            _ => return eof_is_end(Pin::new(&mut this.inner).poll_read(cx, buf)),
         };
         // Until the preface frame is complete, read into a scratch buffer to
         // see the bytes (a cursor does not show what was written to it).
@@ -202,7 +214,7 @@ impl<T: Read + Unpin> Read for ProbeStream<T> {
                 buf.put_slice(filled);
                 Poll::Ready(Ok(()))
             }
-            other => other,
+            other => eof_is_end(other),
         }
     }
 }

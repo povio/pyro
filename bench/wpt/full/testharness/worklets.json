@@ -1,0 +1,26 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "worklets/animation-worklet-import.https.html": {"status":"complete","ms":10,"n":18,"pass":[]},
+  "worklets/animation-worklet-referrer.https.html": {"status":"complete","ms":170,"n":18,"pass":[]},
+  "worklets/animation-worklet-service-worker-interception.https.html": {"status":"complete","ms":60,"n":3,"pass":[]},
+  "worklets/audio-worklet-credentials.https.html": {"status":"complete","ms":40,"n":8,"pass":[]},
+  "worklets/audio-worklet-csp.https.html": {"status":"complete","ms":180,"n":24,"pass":[]},
+  "worklets/audio-worklet-referrer.https.html": {"status":"complete","ms":170,"n":18,"pass":[]},
+  "worklets/audio-worklet-service-worker-interception.https.html": {"status":"complete","ms":70,"n":3,"pass":[]},
+  "worklets/idlharness.https.any.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "worklets/layout-worklet-credentials.https.html": {"status":"complete","ms":30,"n":8,"pass":[]},
+  "worklets/layout-worklet-referrer.https.html": {"status":"complete","ms":180,"n":18,"pass":[]},
+  "worklets/layout-worklet-service-worker-interception.https.html": {"status":"complete","ms":70,"n":3,"pass":[]},
+  "worklets/paint-worklet-credentials.https.html": {"status":"complete","ms":20,"n":8,"pass":[]},
+  "worklets/paint-worklet-csp.https.html": {"status":"complete","ms":190,"n":24,"pass":[]},
+  "worklets/paint-worklet-import.https.html": {"status":"complete","ms":20,"n":18,"pass":[]},
+  "worklets/paint-worklet-referrer.https.html": {"status":"complete","ms":160,"n":18,"pass":[]}
+ }
+}

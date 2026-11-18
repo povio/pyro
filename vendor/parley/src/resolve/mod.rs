@@ -172,11 +172,13 @@ impl ResolveContext {
             StyleProperty::TabSize(value) => TabSize(scale_tab_size(*value, scale)),
             StyleProperty::SoftHyphen(value) => SoftHyphen(*value),
             StyleProperty::DictionaryBreaks(value) => DictionaryBreaks(*value),
+            StyleProperty::PhraseBreaks(value) => PhraseBreaks(*value),
             StyleProperty::FontSizeAdjusted(value) => FontSizeAdjusted(*value),
             StyleProperty::AutoOpticalSize(value) => AutoOpticalSize(*value),
             StyleProperty::LanguageOverride(value) => LanguageOverride(*value),
             StyleProperty::TextSpacingTrim(value) => TextSpacingTrim(*value),
             StyleProperty::TextAutospace(value) => TextAutospace(*value),
+            StyleProperty::Upright(value) => Upright(*value),
             StyleProperty::TextJustify(value) => TextJustify(*value),
             StyleProperty::SpacingScales(value) => SpacingScales(*value),
         }
@@ -223,11 +225,13 @@ impl ResolveContext {
             tab_size: scale_tab_size(raw_style.tab_size, scale),
             soft_hyphen: raw_style.soft_hyphen,
             dictionary_breaks: raw_style.dictionary_breaks,
+            phrase_breaks: raw_style.phrase_breaks,
             font_size_adjusted: raw_style.font_size_adjusted,
             auto_optical_size: raw_style.auto_optical_size,
             language_override: raw_style.language_override,
             text_spacing_trim: raw_style.text_spacing_trim,
             text_autospace: raw_style.text_autospace,
+            upright: raw_style.upright,
             text_justify: raw_style.text_justify,
             spacing_scales: raw_style.spacing_scales,
             annotation_space: raw_style.annotation_space.scale(scale),
@@ -428,6 +432,8 @@ pub(crate) enum ResolvedProperty<B: Brush> {
     SoftHyphen(crate::style::SoftHyphen),
     /// pyro: whether lines may break where dictionaries find word boundaries.
     DictionaryBreaks(bool),
+    /// pyro: whether lines break between phrases (CSS `word-break: auto-phrase`).
+    PhraseBreaks(bool),
     /// pyro: whether the font size is set by `font-size-adjust`.
     FontSizeAdjusted(bool),
     /// pyro: whether the first font variation is the automatic `opsz`.
@@ -438,6 +444,8 @@ pub(crate) enum ResolvedProperty<B: Brush> {
     TextSpacingTrim(crate::style::TextSpacingTrim),
     /// pyro: where space is added between ideographs and other characters.
     TextAutospace(crate::style::TextAutospace),
+    /// pyro: upright glyphs in a vertical line.
+    Upright(bool),
     /// pyro: where justification adds space.
     TextJustify(crate::style::TextJustify),
     /// pyro: which of the letter and word spacing scale with the font size.
@@ -504,6 +512,8 @@ pub(crate) struct ResolvedStyle<B: Brush> {
     pub(crate) soft_hyphen: crate::style::SoftHyphen,
     /// pyro: whether lines may break where dictionaries find word boundaries.
     pub(crate) dictionary_breaks: bool,
+    /// pyro: whether lines break between phrases ([`TextStyle::phrase_breaks`]).
+    pub(crate) phrase_breaks: bool,
     /// pyro: whether the font size is set by `font-size-adjust` ([`TextStyle::font_size_adjusted`]).
     pub(crate) font_size_adjusted: bool,
     /// pyro: whether the first font variation is the automatic `opsz`
@@ -515,6 +525,8 @@ pub(crate) struct ResolvedStyle<B: Brush> {
     pub(crate) text_spacing_trim: crate::style::TextSpacingTrim,
     /// pyro: where space is added between ideographs and other characters.
     pub(crate) text_autospace: crate::style::TextAutospace,
+    /// pyro: upright glyphs in a vertical line.
+    pub(crate) upright: bool,
     /// pyro: where justification adds space.
     pub(crate) text_justify: crate::style::TextJustify,
     /// pyro: which of the letter and word spacing scale with the font size.
@@ -559,11 +571,13 @@ impl<B: Brush> ResolvedStyle<B> {
             TabSize(value) => self.tab_size = value,
             SoftHyphen(value) => self.soft_hyphen = value,
             DictionaryBreaks(value) => self.dictionary_breaks = value,
+            PhraseBreaks(value) => self.phrase_breaks = value,
             FontSizeAdjusted(value) => self.font_size_adjusted = value,
             AutoOpticalSize(value) => self.auto_optical_size = value,
             LanguageOverride(value) => self.language_override = value,
             TextSpacingTrim(value) => self.text_spacing_trim = value,
             TextAutospace(value) => self.text_autospace = value,
+            Upright(value) => self.upright = value,
             TextJustify(value) => self.text_justify = value,
             SpacingScales(value) => self.spacing_scales = value,
         }
@@ -601,11 +615,13 @@ impl<B: Brush> ResolvedStyle<B> {
             TabSize(value) => self.tab_size == *value,
             SoftHyphen(value) => self.soft_hyphen == *value,
             DictionaryBreaks(value) => self.dictionary_breaks == *value,
+            PhraseBreaks(value) => self.phrase_breaks == *value,
             FontSizeAdjusted(value) => self.font_size_adjusted == *value,
             AutoOpticalSize(value) => self.auto_optical_size == *value,
             LanguageOverride(value) => self.language_override == *value,
             TextSpacingTrim(value) => self.text_spacing_trim == *value,
             TextAutospace(value) => self.text_autospace == *value,
+            Upright(value) => self.upright == *value,
             TextJustify(value) => self.text_justify == *value,
             SpacingScales(value) => self.spacing_scales == *value,
         }

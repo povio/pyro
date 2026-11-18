@@ -1,0 +1,16 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "."
+ ],
+ "tests": {
+  "web-locks/crashtests/after-worker-termination.https.html": {"status":"complete","ms":160,"n":1,"fail":[],"h":"22f2a845"},
+  "web-locks/crashtests/iframe-append-2.https.html": {"status":"complete","ms":50,"n":1,"fail":[],"h":"22f2a845"},
+  "web-locks/crashtests/iframe-append.https.html": {"status":"timeout","ms":15000,"n":0,"pass":[]},
+  "web-locks/crashtests/settle-after-steal.https.html": {"status":"timeout","ms":15000,"n":0,"pass":[]},
+  "web-locks/crashtests/worker-termination.https.html": {"status":"complete","ms":70,"n":1,"fail":[],"h":"22f2a845"}
+ }
+}

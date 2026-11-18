@@ -110,6 +110,10 @@ pub(crate) struct Mirror {
     /// Canvas and video elements given a bitmap by [`Mirror::set_canvases`],
     /// with it and, for a video, the poster image it replaced.
     canvases: Vec<CanvasEntry>,
+    /// Styles and selector caches of `display: none` subtrees resolved on
+    /// demand (`getComputedStyle`), kept until the embedder's next sync
+    /// ([`crate::Renderer::clear_undisplayed`]).
+    pub(crate) undisplayed: std::cell::RefCell<blitz_dom::UndisplayedCaches>,
 }
 
 /// A bitmap given to an element, and the poster image it replaced (videos).
@@ -249,6 +253,7 @@ impl Mirror {
             scrolled: Vec::new(),
             stuck: Vec::new(),
             canvases: Vec::new(),
+            undisplayed: Default::default(),
         };
         mirror.debug_check_keys();
         Ok(mirror)

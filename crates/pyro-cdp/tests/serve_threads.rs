@@ -467,6 +467,34 @@ async fn terminate_execution_stops_a_running_script() {
     let _ = s.shutdown().await;
 }
 
+/// A step times out on time while page JavaScript holds the thread (a page
+/// timer that runs for seconds, as axe-core does on a large page): the
+/// watchdog answers the run at the step's deadline, as Playwright's client
+/// side timeout would, and the page goes on once the script returns.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_step_times_out_on_time_while_page_javascript_holds_the_thread() {
+    let addr = serve(ServerConfig::default()).await;
+    let mut s = connect(addr).await;
+    let session = page_session(&mut s).await;
+    let busy = "document.body.innerHTML = '<button>Present</button>'; \
+        setTimeout(() => { const end = Date.now() + 3000; while (Date.now() < end) {} document.body.dataset.done = '1'; }, 50)";
+    call(&mut s, json!({"id":3,"method":"Runtime.evaluate","params":{"expression":busy},"sessionId":session})).await;
+    let wait = json!({"act":{"locator":{"css":"#never"},"action":"click","timeout":400}});
+    let sent = Instant::now();
+    send(&mut s, json!({"id":4,"method":"Pyro.run","params":{"steps":[wait]},"sessionId":session})).await;
+    let seen = read_until(&mut s, |m| m["id"] == 4).await;
+    let took = sent.elapsed();
+    let message = seen.last().unwrap()["error"]["message"].as_str().unwrap_or_default().to_owned();
+    assert!(message.starts_with("step 0 (Click "), "{message}");
+    assert!(message.contains("timed out after 400 ms"), "{message}");
+    assert!(took < Duration::from_millis(1500), "answered after {took:?} (the script ran 3 s)");
+    // The script was not stopped: the page finishes it and serves the next run.
+    let done = json!({"check":{"locator":{"css":"body[data-done='1']"},"assert":"count","expected":1,"timeout":10_000}});
+    let run = call(&mut s, json!({"id":5,"method":"Pyro.run","params":{"steps":[done]},"sessionId":session})).await;
+    assert!(run["result"]["results"].is_array(), "{run}");
+    let _ = s.shutdown().await;
+}
+
 /// `Pyro.cancelRun`: a run waiting on a missing element is answered at once
 /// with what it waited for, and the page serves what comes next.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

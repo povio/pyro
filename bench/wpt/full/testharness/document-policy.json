@@ -1,0 +1,18 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "document-policy/experimental-features/network-efficiency-guardrails-json.tentative.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "document-policy/experimental-features/network-efficiency-guardrails.tentative.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "document-policy/reporting/sync-xhr-report-only.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "document-policy/reporting/sync-xhr-reporting.html": {"status":"complete","ms":10000,"n":1,"pass":[]},
+  "document-policy/required-policy/no-document-policy.html": {"status":"complete","ms":20,"n":2,"pass":["Child frame should have no required policy by default."]},
+  "document-policy/required-policy/required-document-policy-nested.html": {"status":"complete","ms":40,"n":3,"pass":["test nested required document policy"]},
+  "document-policy/required-policy/required-document-policy.html": {"status":"complete","ms":20,"n":2,"pass":[]}
+ }
+}

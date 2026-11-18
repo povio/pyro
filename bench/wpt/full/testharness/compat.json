@@ -1,0 +1,21 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "compat/css-style-declaration-alias-enumeration.html": {"status":"complete","ms":10,"n":51,"fail":[],"h":"e3696f92"},
+  "compat/historical.html": {"status":"complete","ms":10,"n":3,"fail":[],"h":"0c316559"},
+  "compat/webkit-box-item-shrink-001.html": {"status":"complete","ms":20,"n":20,"pass":[".webkit-box 11",".webkit-box 16",".webkit-box 17",".webkit-box 18",".webkit-box 3",".webkit-box 5"]},
+  "compat/webkit-box-removing-triggering-anonymous-merge.html": {"status":"complete","ms":10,"n":1,"fail":[],"h":"89e4e429"},
+  "compat/webkit-box-vertically-centered.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "compat/webkit-device-pixel-ratio-serialization.html": {"status":"complete","ms":10,"n":5,"fail":["CSSMediaRule serialization of (-webkit-min-device-pixel-ratio: 1)"],"h":"194f0e5c"},
+  "compat/webkit-gradient-sign.html": {"status":"complete","ms":10,"n":2,"pass":["webkit-gradient-sign 1"]},
+  "compat/webkit-mask-box-enumeration.html": {"status":"complete","ms":10,"n":6,"pass":[]},
+  "compat/webkit-radial-gradient-radii.html": {"status":"complete","ms":10,"n":3,"fail":[],"h":"130352eb"},
+  "compat/webkit-text-fill-color-currentColor.html": {"status":"complete","ms":10,"n":1,"fail":[],"h":"b751385a"}
+ }
+}

@@ -688,9 +688,11 @@ fn collect_layout_children_with_wrap(
 
         #[cfg(feature = "svg")]
         if matches!(tag_name, "svg") {
-            let outer_html = doc.with_svg_sprites(
-                doc.with_svg_images(doc.get_node(container_node_id).unwrap().svg_source(), container_node_id),
-            );
+            // pyro: noting whether the source depends on the root's laid-out size
+            // (`SvgImageData::viewport_dependent`)
+            let (source, viewport_dependent) = doc.get_node(container_node_id).unwrap().svg_source_for_viewport(None);
+            doc.viewport_svgs.borrow_mut().remove(&container_node_id);
+            let outer_html = doc.with_svg_sprites(doc.with_svg_images(source, container_node_id));
             // pyro: with the resources it references in the page's other `<svg>`s.
             let outer_html = doc.with_cross_svg_references(outer_html);
 
@@ -716,6 +718,7 @@ fn collect_layout_children_with_wrap(
                     if svg.intrinsic_dimensions.view_box.is_none() {
                         svg.inline_source = Some(outer_html.as_str().into());
                     }
+                    svg.viewport_dependent = viewport_dependent;
                     doc.get_node_mut(container_node_id)
                         .unwrap()
                         .element_data_mut()
@@ -1238,7 +1241,11 @@ pub(crate) fn flush_pseudo_elements(doc: &mut BaseDocument, node_id: NodeId) {
     // pyro: an optgroup's label row, as Chromium's
     // `-internal-optgroup-label` box, in the `::before` slot when the
     // optgroup has no `::before` of its own.
-    let label = before_style.is_none().then(|| optgroup_label(doc, node_id)).flatten();
+    let label = before_style
+        .is_none()
+        .then(|| optgroup_label(doc, node_id))
+        .flatten()
+        .or_else(|| file_selector_button(doc, node_id));
     let (before_style, label_text) = match label {
         Some((style, text)) => (Some(style), Some(text)),
         None => (before_style, None),
@@ -1376,6 +1383,39 @@ fn optgroup_label(
         None,
     )?;
     Some((style, text))
+}
+
+/// pyro: the button of an `<input type=file>`, the box of its `::file-selector-button`
+/// ("Choose file", as Chromium's), in the `::before` slot (an input has no `::before`).
+fn file_selector_button(
+    doc: &BaseDocument,
+    node_id: NodeId,
+) -> Option<(style::servo_arc::Arc<style::properties::ComputedValues>, String)> {
+    use style::selector_parser::PseudoElement;
+    use style::stylist::RuleInclusion;
+    if cfg!(feature = "file-input") {
+        return None;
+    }
+    let node = &doc.nodes[node_id];
+    let el = node.data.downcast_element()?;
+    if el.name.local != local_name!("input")
+        || !el.attr(local_name!("type")).is_some_and(|t| t.eq_ignore_ascii_case("file"))
+    {
+        return None;
+    }
+    let parent_style = node.primary_styles()?;
+    let read_guard = doc.guard.read();
+    let guards = StylesheetGuards::same(&read_guard);
+    let style = doc.stylist.lazily_compute_pseudo_element_style::<&Node>(
+        &guards,
+        node,
+        &PseudoElement::FileSelectorButton,
+        RuleInclusion::All,
+        &parent_style,
+        false,
+        None,
+    )?;
+    Some((style, "Choose file".to_string()))
 }
 
 /// Handles the cases where there are text nodes or inline nodes that need to be wrapped in an anonymous block node

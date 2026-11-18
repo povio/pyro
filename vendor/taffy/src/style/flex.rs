@@ -4,6 +4,13 @@ use crate::geometry::Size;
 
 /// The set of styles required for a Flexbox container
 pub trait FlexboxContainerStyle: CoreStyle {
+    /// pyro: where an item without a baseline synthesizes one in the block axis, as a fraction of
+    /// its border box from its block-start edge: 1 (alphabetic: the line-under edge), 0.5 on a
+    /// central baseline (vertical writing modes whose text is not sideways).
+    #[inline(always)]
+    fn block_baseline_synthesis(&self) -> f32 {
+        1.0
+    }
     /// Which direction does the main axis flow in?
     #[inline(always)]
     fn flex_direction(&self) -> FlexDirection {

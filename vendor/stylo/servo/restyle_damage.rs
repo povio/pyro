@@ -66,7 +66,14 @@ impl ServoRestyleDamage {
             };
         }
 
-        let mut damage = compute_damage(old, new);
+        // pyro: the same style structs (a style that took only new inherited custom
+        // properties, `traversal::custom_properties_only_recascade`) differ in nothing
+        // the damage compares.
+        let mut damage = if old.same_style_structs(new) {
+            ServoRestyleDamage::empty()
+        } else {
+            compute_damage(old, new)
+        };
         if damage.contains(ServoRestyleDamage::RELAYOUT) {
             damage |= E::compute_layout_damage(old, new);
         }
@@ -88,10 +95,9 @@ impl ServoRestyleDamage {
             any_style_changed = true;
             custom_properties_changed = true;
         };
-        if custom_properties_changed {
-            // Paint worklets may depend on custom properties, so if they have changed we should repaint.
-            damage.insert(ServoRestyleDamage::REPAINT);
-        }
+        // pyro: no paint worklets read custom properties here, and what does read them
+        // (`var()` in a declaration) changes a computed value, which damages by itself; a
+        // REPAINT for every descendant of a custom property change walked them all again.
 
         let change = if any_style_changed {
             StyleChange::Changed {

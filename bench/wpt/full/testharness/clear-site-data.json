@@ -1,0 +1,22 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "clear-site-data/clear-cache-bfcache.https.html": {"status":"complete","ms":3400,"n":4,"pass":["BfCached document shouldn't be cached after receiving clear-cache header from another window.","BfCached document shouldn't be cached after receiving clear-cache header from the same origin."]},
+  "clear-site-data/clear-cache.https.html": {"status":"complete","ms":470,"n":13,"pass":["clear all: Fetch on docment with clear-cache header is unaffected","clear cache: Fetch on docment with clear-cache header is unaffected"]},
+  "clear-site-data/executionContexts.sub.html": {"status":"complete","ms":2100,"n":2,"pass":[]},
+  "clear-site-data/navigation-insecure.html": {"status":"complete","ms":40,"n":4,"fail":[],"h":"66006430"},
+  "clear-site-data/navigation.https.html": {"status":"complete","ms":10000,"n":4,"pass":["Clear datatypes on navigation: "]},
+  "clear-site-data/no-cors-fetch-iframe.https.sub.html": {"status":"complete","ms":1000,"n":1,"pass":[]},
+  "clear-site-data/resource.html": {"status":"complete","ms":70,"n":4,"fail":[],"h":"873da511"},
+  "clear-site-data/set-cookie-after-clear-all.https.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "clear-site-data/set-cookie-after-clear-cookies.https.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "clear-site-data/set-cookie-before-clear-cookies.https.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "clear-site-data/storage.https.html": {"status":"complete","ms":10000,"n":8,"pass":["Baseline: Service worker responds to request","Populate backends.","storage"]}
+ }
+}

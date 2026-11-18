@@ -1,0 +1,30 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "."
+ ],
+ "tests": {
+  "scroll-animations/animation-trigger/crashtests/selection-pseudo-crash.html": {"status":"complete","ms":90,"n":1,"fail":[],"h":"22f2a845"},
+  "scroll-animations/crashtests/change-timeline-from-finite-to-monotonic-crash-002.html": {"status":"complete","ms":50,"n":1,"fail":[],"h":"22f2a845"},
+  "scroll-animations/crashtests/change-timeline-from-finite-to-monotonic-crash.html": {"status":"complete","ms":50,"n":1,"fail":[],"h":"22f2a845"},
+  "scroll-animations/crashtests/clip-path-with-view-timeline.html": {"status":"timeout","ms":15000,"n":0,"pass":[]},
+  "scroll-animations/crashtests/effect-target-set-to-null.html": {"status":"complete","ms":60,"n":1,"fail":[],"h":"22f2a845"},
+  "scroll-animations/crashtests/invalid-animation-range.html": {"status":"complete","ms":80,"n":1,"fail":[],"h":"22f2a845"},
+  "scroll-animations/crashtests/keyframe-offset-out-of-range-crash.html": {"status":"complete","ms":60,"n":1,"fail":[],"h":"22f2a845"},
+  "scroll-animations/crashtests/remove-pseudo-element-subject.html": {"status":"timeout","ms":15000,"n":0,"pass":[]},
+  "scroll-animations/crashtests/scroll-timeline-becomes-scrollable-after-sampling.html": {"status":"timeout","ms":15000,"n":0,"pass":[]},
+  "scroll-animations/crashtests/scroll-timeline-completion-crash.html": {"status":"complete","ms":70,"n":1,"fail":[],"h":"22f2a845"},
+  "scroll-animations/crashtests/scroll-timeline-resize.html": {"status":"timeout","ms":15000,"n":0,"pass":[]},
+  "scroll-animations/crashtests/scroll-timeline-with-long-duration.html": {"status":"complete","ms":70,"n":1,"fail":[],"h":"22f2a845"},
+  "scroll-animations/crashtests/viewport-100vh.html": {"status":"complete","ms":50,"n":1,"fail":[],"h":"22f2a845"},
+  "scroll-animations/scroll-timelines/animation-with-delay-crash.html": {"status":"complete","ms":60,"n":1,"fail":[],"h":"22f2a845"},
+  "scroll-animations/scroll-timelines/animation-with-offsets-crash.html": {"status":"complete","ms":60,"n":1,"fail":[],"h":"22f2a845"},
+  "scroll-animations/scroll-timelines/null-scroll-source-crash.html": {"status":"complete","ms":70,"n":1,"fail":[],"h":"22f2a845"},
+  "scroll-animations/scroll-timelines/scroll-timeline-in-removed-iframe-crash.html": {"status":"complete","ms":60,"n":1,"fail":[],"h":"22f2a845"},
+  "scroll-animations/scroll-timelines/setting-scroll-timeline-with-null-source-crash.html": {"status":"complete","ms":60,"n":1,"fail":[],"h":"22f2a845"},
+  "scroll-animations/view-timelines/subject-br-crash.html": {"status":"complete","ms":60,"n":1,"fail":[],"h":"22f2a845"}
+ }
+}

@@ -105,6 +105,7 @@ fn start_server() -> Server {
                             hv("authorization").as_bytes(),
                         ),
 
+                        (_, "/reason") => respond(&mut stream, "200 UNICORNSWIN", &[], b"x"),
                         (_, "/plain") => respond(
                             &mut stream,
                             "200 OK",
@@ -861,6 +862,13 @@ pub(crate) fn start_tls_server() -> u16 {
 
 /// [`start_tls_server`] with the certificate and the PKCS#8 key given, both DER.
 fn start_tls_server_with(cert: &[u8], key: &[u8]) -> u16 {
+    let response: &[u8] = b"HTTP/1.1 200 OK\r\nContent-Length: 6\r\nConnection: close\r\n\r\nsecure";
+    start_tls_server_answering(cert, key, response, true)
+}
+
+/// A TLS server (the certificate and PKCS#8 key given, both DER) that answers every request with `response` and
+/// closes the connection, with TLS's close_notify first or, as Python's ssl module does, without it.
+fn start_tls_server_answering(cert: &[u8], key: &[u8], response: &'static [u8], close_notify: bool) -> u16 {
     use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
     let cert = CertificateDer::from(cert.to_vec());
     let key = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key.to_vec()));
@@ -891,9 +899,12 @@ fn start_tls_server_with(cert: &[u8], key: &[u8]) -> u16 {
                     line.clear();
                 }
                 if line == "\r\n" {
-                    let _ = tls.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 6\r\nConnection: close\r\n\r\nsecure");
-                    tls.conn.send_close_notify();
+                    let _ = tls.write_all(response);
+                    if close_notify {
+                        tls.conn.send_close_notify();
+                    }
                     let _ = tls.flush();
+                    let _ = tls.sock.shutdown(std::net::Shutdown::Both);
                 }
             });
         }
@@ -917,6 +928,45 @@ fn self_signed_certificate_fails_unless_errors_are_ignored() {
     c.set_ignore_certificate_errors(false);
     let (_, _, _, e) = collect(&c, Request::get(url, Destination::Fetch));
     assert_eq!(e.map(|e| e.error_text().to_owned()).as_deref(), Some("net::ERR_CERT_AUTHORITY_INVALID"));
+}
+
+/// A reason phrase that is not the standard one is the response's status text (XHR and fetch statusText), as in
+/// Chromium; a standard one, or none, gives the standard text.
+#[test]
+fn status_text_is_the_servers_reason_phrase() {
+    let s = start_server();
+    let c = NetClient::new(NetConfig::default()).unwrap();
+    let (_, head, _, e) = collect(&c, Request::get(url(&s, "/reason"), Destination::Fetch));
+    assert_eq!(e, None);
+    assert_eq!(head.unwrap().status_text, "UNICORNSWIN");
+    let (_, head, _, _) = collect(&c, Request::get(url(&s, "/plain"), Destination::Fetch));
+    assert_eq!(head.unwrap().status_text, "OK");
+}
+
+/// A body delimited by the connection's close (no Content-Length, not chunked) ends at the TCP close even when the
+/// server sent no TLS close_notify, as in Chromium: wptserve's https responses end that way (Python's ssl module
+/// closes without it). A body whose length was announced still fails when the connection ends before it.
+#[test]
+fn close_delimited_https_body_ends_without_close_notify() {
+    let cert = include_bytes!("data/self-signed.der");
+    let key = include_bytes!("data/self-signed.key.der");
+    let c = NetClient::new(NetConfig::default()).unwrap();
+    c.set_ignore_certificate_errors(true);
+
+    let response: &[u8] = b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nclose-delimited body";
+    let port = start_tls_server_answering(cert, key, response, false);
+    let url = Url::parse(&format!("https://127.0.0.1:{port}/")).unwrap();
+    let (k, _, b, e) = collect(&c, Request::get(url, Destination::Fetch));
+    assert_eq!(
+        (k, b, e),
+        (vec!["response 200".to_owned(), "finished".to_owned()], b"close-delimited body".to_vec(), None)
+    );
+
+    let response: &[u8] = b"HTTP/1.1 200 OK\r\nContent-Length: 50\r\n\r\ntruncated";
+    let port = start_tls_server_answering(cert, key, response, false);
+    let url = Url::parse(&format!("https://127.0.0.1:{port}/")).unwrap();
+    let (_, _, _, e) = collect(&c, Request::get(url, Destination::Fetch));
+    assert!(e.is_some(), "a body shorter than its Content-Length fails");
 }
 
 /// `openssl req -x509` of LibreSSL (macOS's /usr/bin/openssl) writes an X.509 version 1 certificate, which webpki

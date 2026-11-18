@@ -65,11 +65,18 @@ impl SvgIntrinsicDimensions {
             .and_then(|style| {
                 style.split(';').rev().find_map(|declaration| {
                     let (name, value) = declaration.split_once(':')?;
-                    (name.trim() == "background-color").then(|| value.trim())
+                    // pyro: or the `background` shorthand when it is a colour alone.
+                    let name = name.trim();
+                    let value = value.trim();
+                    match name {
+                        "background-color" => Some(value.parse::<svgtypes::Color>().ok()),
+                        "background" => Some(value.parse::<svgtypes::Color>().ok()),
+                        _ => None,
+                    }
                 })
             })
-            .or_else(|| root.attribute("background-color"))
-            .and_then(|value| value.parse::<svgtypes::Color>().ok());
+            .flatten()
+            .or_else(|| root.attribute("background-color").and_then(|value| value.parse::<svgtypes::Color>().ok()));
 
         Self {
             root_background,
@@ -105,6 +112,10 @@ pub struct SvgImageData {
     /// pyro: the source of an SVG image with a `<foreignObject>`, which is rendered as a document
     /// of its own (`BaseDocument::svg_image_documents`) to draw its HTML content.
     pub foreign_source: Option<Arc<str>>,
+    /// pyro: an inline `<svg>` whose source depends on its laid-out size (a `view-box` reference box of a root
+    /// sized in percentages or not at all): painted from a source serialized again at that size
+    /// (`BaseDocument::inline_svg_at_viewport`).
+    pub viewport_dependent: bool,
 }
 
 impl SvgImageData {
@@ -158,6 +169,7 @@ impl SvgImageData {
             inline_source: None,
             source: None,
             foreign_source: None,
+            viewport_dependent: false,
         })
     }
 

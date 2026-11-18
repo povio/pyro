@@ -206,16 +206,17 @@ advance. Covered by `crates/pyro-render/tests/tab_stops.rs`; WPT css-text `tab-s
 `text-align-justify-tabs-*`.
 
 Soft hyphens (CSS Text 3 § 5.4). A line that wraps right after U+00AD shows a hyphen there: the breaker keeps the
-last atom appended when it is a soft hyphen (`LineState::shy`, with the glyph and advance to show), and
-`start_new_line` gives its shaped cluster that glyph (`ShapedText::set_cluster_glyph`) and the line its advance. The
+last atom appended when it ends with a soft hyphen (`LineState::shy`, a `Shy` with the glyphs and advance to show), and
+`start_new_line` gives its shaped cluster those glyphs (`ShapedText::show_hyphen`, round 4: up to four glyphs, a
+`SoftHyphen::Chars` `hyphenate-character` string; after the cluster's own glyphs when HarfRust merged the soft hyphen
+into the cluster before it, which it does in a font without a space glyph) and the line its advance. The
 glyph is the font's hyphen (`ShapedRun::hyphen`: U+2010, else U+002D) or what the style's `SoftHyphen`
 (`style/mod.rs`, `StyleProperty::SoftHyphen`) names: a character of the run's font (`ShapedText::glyph_of`), nothing
 (`Hidden`), or no break at all (`NoBreak`: the opportunity after the soft hyphen is not marked). The opportunity is
 not marked either when the hyphen would not fit and the line can end earlier. `LayoutData::shown_hyphens` remembers
 the clusters changed, with what they were shaped as: a soft hyphen that a later break leaves inside a line gets its
-own glyph back when that line is committed. Upstream ended the line there and showed nothing. Not done: the hyphen
-in min-content widths, `hyphens: auto` (no dictionaries), a `hyphenate-character` of several characters (the font's
-hyphen is shown). Covered by `crates/pyro-render/tests/soft_hyphens.rs`; WPT css-text `hyphens/*`.
+own glyph back when that line is committed (`ShapedText::restore_cluster`). Upstream ended the line there and showed
+nothing. Not done: the hyphen in min-content widths. Covered by `crates/pyro-render/tests/soft_hyphens.rs`; WPT css-text `hyphens/*`.
 
 `LineMetrics::collapsed_advance` (`layout/line.rs`, `hanging_whitespace` in `layout/line_break.rs`): the part of a
 line's hanging advance that is collapsible white space at its very end (spaces, tabs and segment breaks of a
@@ -377,3 +378,54 @@ enabled: under `white-space: pre` the text after it stays on its line (WPT css-o
   with the first two as with `TextTop` / `TextBottom`, and stay on the baseline for `XMiddle`.
 - `layout/line_break.rs` (`reset_line`, `rescale_box_metrics`; lane SP): `Layout::set_line_height_quirk` (Quirks
   Mode §3.3): the root span box counts on a line only once text adds it; a line of inline boxes alone is their height.
+
+## Round 4 lane A (css-text, css-inline)
+
+- `word-break: auto-phrase` (`StyleProperty::PhraseBreaks`, `TextStyle::phrase_breaks` with `WordBreak::KeepAll`;
+  `analysis.rs` passes `LineBreakConfig::phrases`): parley_engine marks phrase breaks and `normal`'s other
+  opportunities as phrase fallbacks (`CharacterFlags::is_phrase_fallback`). `layout/line_break.rs`
+  (`BreakerState::phrase_boundary`): a line with no regular opportunity that fits breaks at its last phrase fallback
+  before any emergency break, so a phrase that does not fit breaks as under `normal` (Blink's retry of the line).
+  Min-content widths see only the phrase breaks. Soft hyphens under `auto-phrase` are phrase fallbacks too.
+- `analysis.rs` (`no_soft_hyphen_breaks`): a `SoftHyphen::NoBreak` style (`hyphens: none`) is no soft wrap
+  opportunity after its soft hyphens, so min-content widths keep the word whole.
+- `layout/line_break.rs` (`add_text_boxes`, `append_atom_to_line`): under the line height quirk text adds only the box
+  of its own style (an inline box without text of its own adds nothing, as in Blink), and a line break counts only on
+  a line without other content: blitz-dom gives a quirks-mode `<br>` its own line height, so a `<br>` alone sets its
+  line's height and one after text adds nothing (WPT css-inline `br-line-height-*-quirks`).
+- `builder.rs`, `layout/data.rs` (`paragraph_levels`, `level_at`), `layout/alignment.rs`, `layout/line_break.rs`
+  (`reset_trailing_whitespace_level`, `hanging_whitespace`): each paragraph of an `Auto` base direction (CSS
+  `unicode-bidi: plaintext`) aligns and hangs its lines in its own direction (WPT css-text `text-align-start-016`,
+  `-end-016`, `bidi-lines-001`). `Layout::is_rtl` stays the first paragraph's.
+
+- `layout/line_break.rs` (`add_text`), `layout/line.rs` (`LineMetrics::invisible`): an empty inline box's strut
+  (U+2061, `CharacterFlags::is_empty_box_strut`) adds the box's metrics but is no content, so a line of empty inline
+  boxes alone is an invisible line box (height 0; blitz-paint paints none of its boxes). `Layout::tab_stops` reads
+  back what `set_tab_stops` set.
+- `::first-line` in layout (`builder.rs` `TreeBuilder::set_first_line`, `resolve/tree.rs` `apply_first_line`,
+  `LayoutData::first_line_root`, `Line::root_style`): every style gets a first-line copy (appended, parents first)
+  whose font size scales by the first line's over the root's and whose line height, family, weight, style and
+  letter/word spacing take the first line's where they are the root's; text before the given byte end takes the
+  copies. The root's copy is its own parent and a root span box in `resolve_style_metrics` (the first line's
+  strut, `reset_line`); `Line::root_style` names it on line 0 for trim edges and struts.
+
+Covered by `crates/pyro-render/tests/text_inline_round4.rs` and `soft_hyphens.rs`.
+- `layout/alignment.rs` (`align`, round 4 lane D): right-, end- and centre-aligned lines take their content width rounded
+  up to a layout unit (1/64 CSS px), as Blink's snapped text item widths: such a line starts where a shrink-to-fit box
+  of the same text does (WPT CSS2 `positioning-float-002`, `float-applies-to-008`).
+- `layout/layout.rs` `Layout::set_central_baseline`, `layout/style_metrics.rs` `inline_box_placement`, `layout/line.rs`
+  `inline_box_top` (round 4 lane F): lines of vertical writing modes whose text is not sideways align on the central
+  baseline (Blink's `kCentralBaseline`). An in-flow box marked `InlineBox::central` (a new field) has its central baseline
+  in `baseline`: baseline alignment puts it on the middle of the parent span's content area (half of its ascent minus
+  descent over its alphabetic baseline, added after the quantized offset: where a zero line height's strut and the line's
+  dominant baseline are); other alignments take the box's synthesized alphabetic baseline (its under edge), as before.
+  Boxes not marked keep their alphabetic baseline. Text keeps its
+  alphabetic geometry (the strut's line-height box is the same around both). WPT css-inline
+  `initial-letter-raise-initial-vlr/-vrl`, `initial-letter-sunk-initial-vlr`; `crates/pyro-render/tests/vertical_lines_and_controls.rs`.
+- `layout/line_break.rs` (round 4 lane F): a line that wraps inside a run keeps no legacy `kern` pair across its end:
+  HarfBuzz splits a pair between the two glyphs (half on the first's advance, half on the second's offset and advance;
+  parley_engine `ShapedText::legacy_kern_across` recovers both from the `hmtx` advance, for fonts with a `kern` table and
+  no `GPOS`), and both glyphs lose their parts (`shift_edge_cluster`, restored before the next break). Blink shapes line
+  edges again where shaping was not safe to break, so its wrapped lines start at the content edge (macOS Times and
+  Helvetica). WPT CSS2 `bidi-002` (RLO run broken after a space), css-text `hyphens-auto-001` (space|W pairs).
+- Round 4 lane F, `shape/upright.rs` + `StyleProperty::Upright`: upright glyphs (CSS `text-orientation: upright`) of a font without vertical metrics advance by the font's height (ascent + descent, HarfBuzz's default vertical advance), their hyphens too (WPT css-values `ch-unit-002`, `-011`).

@@ -1,0 +1,48 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "url/IdnaTestV2.any.html": {"status":"complete","ms":60,"n":2676,"fail":["ToASCII(\"Ⴍ𿣍ꡨ֮.Ⴞ\")","ToASCII(\"Ⴍ𿣍ꡨ֮.ⴞ\")","ToASCII(\"ⴍ𿣍ꡨ֮.ⴞ\")","ToASCII(\"𾢬.ܩ.쯙5\")","ToASCII(\"𾢬.ܩ.쯙5\")","ToASCII(\"𾢬。ܩ。쯙5\")","ToASCII(\"𾢬。ܩ。쯙5\")"],"h":"adbbda65"},
+  "url/a-element-origin-xhtml.xhtml": {"status":"complete","ms":20,"n":414,"fail":[],"h":"d7b59d33"},
+  "url/a-element-origin.html": {"status":"complete","ms":20,"n":414,"fail":[],"h":"d7b59d33"},
+  "url/a-element-xhtml.xhtml?include=file": {"status":"complete","ms":20,"n":136,"fail":[],"h":"df46702c"},
+  "url/a-element-xhtml.xhtml?include=javascript": {"status":"complete","ms":10,"n":13,"fail":[],"h":"0faee962"},
+  "url/a-element-xhtml.xhtml?include=mailto": {"status":"complete","ms":20,"n":14,"fail":[],"h":"6ee800af"},
+  "url/a-element.html?include=file": {"status":"complete","ms":170,"n":137,"fail":[],"h":"6a189c3f"},
+  "url/a-element.html?include=javascript": {"status":"complete","ms":10,"n":14,"fail":[],"h":"b17d7425"},
+  "url/a-element.html?include=mailto": {"status":"complete","ms":20,"n":15,"fail":[],"h":"fda5ac4a"},
+  "url/failure.html": {"status":"complete","ms":360,"n":1175,"fail":[],"h":"ab38d7ec"},
+  "url/historical.any.html": {"status":"complete","ms":10,"n":8,"fail":[],"h":"e5a226c3"},
+  "url/idlharness.any.html": {"status":"complete","ms":30,"n":77,"fail":["URL interface: legacy window alias","URLSearchParams interface: iterable<USVString, USVString>"],"h":"da436c50"},
+  "url/javascript-urls.window.html": {"status":"complete","ms":10,"n":6,"fail":["javascript: URL that fails to parse due to invalid host"],"h":"31758217"},
+  "url/toascii.window.html": {"status":"complete","ms":30,"n":784,"fail":[],"h":"edacbc16"},
+  "url/url-constructor.any.html?exclude=(file|javascript|mailto)": {"status":"complete","ms":40,"n":739,"fail":[],"h":"a0e975fd"},
+  "url/url-constructor.any.html?include=file": {"status":"complete","ms":40,"n":136,"fail":[],"h":"ca858552"},
+  "url/url-constructor.any.html?include=mailto": {"status":"complete","ms":20,"n":14,"fail":[],"h":"7a2cd5e6"},
+  "url/url-origin.any.html": {"status":"complete","ms":20,"n":415,"fail":[],"h":"1a71e73c"},
+  "url/url-searchparams.any.html": {"status":"complete","ms":10,"n":4,"fail":[],"h":"bf4c8ad2"},
+  "url/url-setters-a-area.window.html?include=file": {"status":"complete","ms":10,"n":43,"fail":[],"h":"3b175dbe"},
+  "url/url-setters-a-area.window.html?include=javascript": {"status":"complete","ms":20,"n":13,"fail":[],"h":"07974b50"},
+  "url/url-setters-a-area.window.html?include=mailto": {"status":"complete","ms":10,"n":13,"fail":[],"h":"8da357ec"},
+  "url/url-setters.any.html?exclude=(file|javascript|mailto)": {"status":"complete","ms":20,"n":246,"fail":[],"h":"35689e1a"},
+  "url/url-setters.any.html?include=file": {"status":"complete","ms":10,"n":22,"fail":[],"h":"3123bfd6"},
+  "url/url-setters.any.html?include=javascript": {"status":"complete","ms":10,"n":7,"fail":[],"h":"65ad54db"},
+  "url/url-statics-canparse.any.html": {"status":"complete","ms":10,"n":8,"fail":[],"h":"c5b33da3"},
+  "url/url-statics-parse.any.html": {"status":"complete","ms":10,"n":8,"fail":[],"h":"8ac812c3"},
+  "url/url-tojson.any.html": {"status":"complete","ms":10,"n":1,"fail":[],"h":"e0bd32be"},
+  "url/urlsearchparams-append.any.html": {"status":"complete","ms":10,"n":4,"fail":[],"h":"eb17c874"},
+  "url/urlsearchparams-constructor.any.html": {"status":"complete","ms":10,"n":27,"fail":[],"h":"9ea0ebbb"},
+  "url/urlsearchparams-delete.any.html": {"status":"complete","ms":10,"n":8,"fail":[],"h":"0e9e7a90"},
+  "url/urlsearchparams-get.any.html": {"status":"complete","ms":10,"n":2,"fail":[],"h":"c45cfb3f"},
+  "url/urlsearchparams-getall.any.html": {"status":"complete","ms":10,"n":2,"fail":[],"h":"b5ff3d4f"},
+  "url/urlsearchparams-has.any.html": {"status":"complete","ms":10,"n":4,"fail":[],"h":"ea9a01d1"},
+  "url/urlsearchparams-size.any.html": {"status":"complete","ms":10,"n":4,"fail":[],"h":"8de95a58"},
+  "url/urlsearchparams-sort.any.html": {"status":"complete","ms":10,"n":17,"fail":[],"h":"2a4f8328"},
+  "url/urlsearchparams-stringifier.any.html": {"status":"complete","ms":10,"n":14,"fail":[],"h":"b87cdb24"}
+ }
+}

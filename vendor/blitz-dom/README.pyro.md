@@ -2487,3 +2487,160 @@ does not let margins collapse through it, even when its lines have no height (CS
   combining marks and typographic spaces, and after it all but opening punctuation and dashes (a non-word-separator
   space bridges to more); a preserved line break before any letter means no first letter; a `::before`/`::after`
   box with an atomic display does not pass on its container's first line.
+- `layout/mod.rs`: an `<input type=number>` is sized as a text field (it was an empty box); `size` does not apply.
+- `net.rs`: `@font-face` rules inside `@media`, passing `@supports` and `@layer` blocks load too (a `@media` list must
+  match the document's device; imported sheets, which load without one, keep every face); a `tech()` source needing a technology outside `SERVO_SUPPORTED` is skipped.
+  `document.rs` sets `layout.css.font-tech.enabled`.
+- `layout/inline/build.rs`, `stylo_to_parley.rs` (round 4 lane A): `<wbr>` is a U+200B soft wrap opportunity (it was
+  nothing: no break at all, also under `keep-all`); a quirks-mode `<br>` carries its own `line-height` (parley's line
+  height quirk sizes a line holding only it); `word-break: auto-phrase` maps to `keep-all` with parley's phrase
+  breaks; a `hyphenate-character` of two to four characters is `SoftHyphen::Chars`.
+- Round 4 lane B: `layout/mod.rs` `quirky_fill_height` (Quirks Mode §3.6/§3.7): in quirks mode the root html element and
+  a body child of it, in flow with `auto` height (flow, flow-root, flex or grid), fill the viewport less margins (the
+  body: less the html element's margins, border and padding too). Taffy block uses it through
+  `block_container_fill_height`, inline layout (`compute_inline_layout_inner`) as a least height and a definite height
+  for `stretch` and its children's available height, flex and grid through `quirky_fill_layout` (laid out again at the
+  filled height). WPT css-sizing `stretch/stretch-quirk-001`, css-flexbox `flexbox_quirks_body`.
+- `node/svg.rs` (round 4 lane D): an SVG image's root background is also read from a `background` shorthand that is a
+  lone colour.
+- `layout/first_letter.rs`, `resolve.rs`, `layout/inline/layout.rs` (round 4 lane A): preserved white space before
+  the first letter is part of it (Blink), and an initial letter's box keeps it before the ink, a tab going to the
+  paragraph's tab stops; the first letter on a `::first-line` line inherits from the first-line style (the first-line
+  style node is made first).
+- Round 4 lane B: `node/node.rs` sets `StyleFlags::IS_INPUT` on `<input>` elements (see vendor/stylo_taffy/README.pyro.md).
+- `animation.rs` (`sample_property`, round 4 lane D): keyframe easings take the effect's before flag, as Blink's take its
+  limit direction (a `jump-start` step in the before phase stays at its start; css-animations
+  `jump-start-animation-before-phase`).
+- `node/svg_css.rs` (round 4 lane D): an SVG element with `display: contents` loses its own `text-decoration` (line
+  decorations propagate through boxes; css-text-decor `text-decoration-propagation-display-contents`).
+- `stylo.rs`: `is_html_element`/`is_svg_element`/`is_mathml_element` answer by namespace (every element was HTML, none
+  SVG), so stylo's `display: contents` unboxing rules apply (an outer `<svg>`, other SVG and MathML elements: none).
+  `query_container_size`: a first query from a laid-out element outside the traversal (a lazy `::highlight()`/
+  `::backdrop` style) samples the content box at once (no later pass fills it).
+- `node/svg_css.rs`: `display: contents` on `<g>`, `<tspan>`, `<a>`, nested `<svg>` writes a bare wrapper with only the
+  inherited properties declared on it; a `<use>` keeps only its reference and position; other elements nothing.
+- `lang.rs`: a node assigned to a slot takes its language from the slot's host, not the slot.
+- `layout/list.rs`: `@counter-style` rules of every system format list markers (also over a predefined name such as
+  `lower-roman`), looked up in the item's shadow trees inside out before the document's (`CascadeData::counter_style`).
+- `node/element.rs`, `mutator.rs`: only the `id` attribute in no namespace is the element's ID (`xml:id` is not).
+- `layout/first_letter.rs`: the letter is a whole grapheme: a regional-indicator pair (a flag), an emoji ZWJ sequence.
+- Round 4 lane B: `node/svg_css.rs` notes when a `view-box` reference box (CSS `transform` percentages, clip-path
+  `view-box`, mask `view-box`) was the root's CSS box guessed before layout (a root sized in percentages or not at all:
+  300x150), `svg_source_for_viewport`; construct.rs keeps it as `SvgImageData::viewport_dependent`, and
+  `BaseDocument::inline_svg_at_viewport` serializes and parses such an `<svg>` again at its laid-out content box (cached
+  per node and size, dropped on reconstruction), which blitz-paint `draw_svg` paints (WPT css-transforms
+  `transform-percent-010`).
+- `layout/inline/build.rs`, `layout/inline/layout.rs`, `layout/first_line.rs` (`layout_styles`), `node/text.rs`
+  (round 4 lane A): `::first-line` font size, line height, family, weight, style and spacing apply in layout. The
+  build gives them to the text before `TextLayout::first_line_end` (all of it at first; parley's
+  `set_first_line`); `compute_inline_layout` breaks at the width and builds again when the first line ends
+  elsewhere (at most twice). The inline elements' styles on that line are cascaded again in full with the
+  first-line box as parent (`TextLayout::first_line_styles`): span edges with `em` widths follow it. A text-box-trim
+  edge and the first line's strut use the line's root style (`Line::root_style`). String markers of items without a
+  line of their own sit on `marker_baseline` (with the trim shift of the anonymous block holding the first line).
+- Round 4 lane B: `layout/mod.rs` (leaf layout of replaced elements): an iframe of `frame-sizing: content-height` (or
+  `content-block-size`) whose render tree element carries `data-pyro-frame-content-height` (pyro-dom's snapshot, from
+  the embedded document's root element height when that document opted in to responsive embedded sizing) has that
+  natural height (WPT css-sizing `responsive-iframe/*`).
+- `layout/table.rs`, `layout/mod.rs`, `layout/inline/layout.rs` (round 4 lane E): percentage heights of a table cell's
+  children follow CSS Tables 3 / Blink: unless the table's height (or the row's) is definite, the cell's stretched
+  height is no basis (`TableTreeWrapper::definite_height`); the cell's own length `height` is
+  (`LayoutPassState::cell_percent_height`, also in the baseline and intrinsic passes), else they are indefinite; in a
+  table of non-`auto` height a percentage-height scroll container counts as 0 (`restricted_cell`). css-tables
+  `percent-height-replaced-in-percent-cell-002..004`, `percent-height-table-cell-child`,
+  `table-cell-child-overflow-measure`, `percentage-sizing-of-table-cell-007`, `-children-006`.
+- `node/svg_css.rs`, `resolve.rs` (round 4 lane E): a `<foreignObject>` with a percentage `width`/`height` is drawn,
+  and its root is laid out against the nearest `<svg>`'s viewport (`LayoutPassState::foreign_object_viewport`;
+  css-transforms `view-box-mutation-003`).
+- `layout/table.rs`, `node/stylo_data.rs` (round 4 lane E): `max-height` does not apply to a table cell, as in
+  Chromium (css-tables `table-cell-overflow-explicit-height-002`).
+- Round 4 lane F, vertical lines (`layout/inline/layout.rs`, `layout/inline/build.rs`): a vertical, not sideways inline
+  root sets parley's central baseline; an atomic inline's baseline there is its dominant (central) baseline from its
+  line-over side (block-end in `vertical-lr`), or the middle of its margin box when it has no baseline at all (Blink's
+  `BaselineMetrics` with `kCentralBaseline`; parley `InlineBox::central`). A box with only an alphabetic baseline (flex,
+  grid, table, form controls: none exports a central one) keeps its alphabetic placement, and a root with such a box
+  exports no dominant baseline (`alphabetic_atomics`), so that an inline-block wrapping one aligns as the box would.
+  The lines of `vertical-lr` are inverted (line-over at block-end): central boxes go to the other side of their line's
+  slot (paint already turned the text that way); in `sideways-lr`, whose lines run from the bottom, boxes go to the other
+  end of the line. `::file-selector-button` (`layout/construct.rs`
+  `file_selector_button`, `mutator.rs`): with the `file-input` feature off, a file input gets the label text "No file
+  chosen" as a child and the box of its `::file-selector-button` ("Choose file", UA rules in `assets/default.css` after
+  Chromium) in its `::before` slot, as the optgroup label. Marker counters (`layout/list.rs`, `layout/counters.rs`,
+  `resolve.rs`): a `::marker` `content` that reads counters other than `counter(list-item)` is evaluated by the
+  counter walk in tree order (`BaseDocument::marker_texts`); the first one met turns the walk on and the resolve runs
+  one more pass (`marker_counters_pending`).
+
+Round 4 lane G:
+- Iframes (`src/iframe.rs`, `src/resolve.rs`): a `srcdoc` frame document from pyro's render snapshot resolves
+  against its `data-pyro-frame-url`; a sub-document's viewport is the iframe's content box (upstream took the border
+  box) and keeps the `data-pyro-frame-scroll` scroll position. WPT css-transforms `transform-iframe-002`,
+  `-scroll-position`, css-sizing `dynamic-available-size-iframe`.
+- Size containment (`src/layout/mod.rs` `size_contained_size`): an inline replaced element is contained (an atomic
+  inline). WPT css-sizing `contain-intrinsic-size-012/017/020`.
+- `overlay` (`src/layout/paint_tree.rs`, `assets/default.css`): a top-layer element is rendered there only while its
+  `overlay` is `auto`; `dialog:modal, :popover-open { overlay: auto }` (not `!important`: sampled transition values
+  rank below important declarations). WPT css-position `overlay-transition-backdrop`, `-in-rendering`,
+  `-out-rendering`.
+- Ratio sizes (round 4 lane G, step 2): inline layout takes a block container's ratio height through the ratio's box
+  (`ratio_box_inset`: content box under `box-sizing: content-box` or `auto <ratio>`), clamped by min/max-height (WPT
+  css-sizing `block-aspect-ratio-027`). `replaced.rs` `ReplacedContext::svg_root`: an inline `<svg>` with a ratio and no
+  natural size contributes no width to a container's intrinsic sizing without a known containing block width (the
+  default object width for a percentage width) and, when its ratio is only `aspect-ratio`'s, stretches to a definite
+  width (`svg-intrinsic-size-006`).
+- Round 4 lane F, `sideways-lr` line slots (`layout/inline/layout.rs` `set_line_slot`): the lines of `sideways-lr` run
+  from the bottom (Taffy's right), so a float or initial-letter slot, left to right in Taffy's axes, starts its line
+  `layout width - (slot.x + slot.width)` from the line-left side (WPT css-inline `initial-letter-raise-initial-slr`,
+  `initial-letter-sunk-initial-slr`).
+- Round 4 lane F: trailing invisible line boxes (phantom lines) do not count for `line-clamp` (`counted_lines`; WPT
+  css-overflow `line-clamp-037`).
+- Round 4 lane F: `::first-letter` passes over the anonymous block that holds only an item's inside marker
+  (`first_letter::is_first_in_flow_child`; WPT css-pseudo `first-letter-exclude-block-child-marker`).
+- Vertical multicol (round 4 lane G, step 3): `layout/multicol.rs` lays a vertical container out in its own logical
+  axes (`layout_style_in(self.layout_wm)`); `Node::column_fragments` leaves it out (geometry and hit tests see the
+  strip) and `Node::vertical_column_fragments` gives paint the logical columns. It is a paint-layer root like a
+  horizontal one (`paint_tree.rs`). WPT css-position `position-absolute-in-inline-008a/010/012`.
+- Round 4 lane F: `BaseDocument::selection_pseudo_style` (an eager `::selection` style computed again at paint when it
+  uses container units, which resolved before layout sized the containers; WPT css-conditional
+  `container-units-selection-pseudo`). Outside list markers carry their `text-emphasis` marks
+  (`ListItemLayout::annotations`, `inline::build::marker_emphasis` sharing `emphasis_layout` with inline text; WPT
+  css-pseudo `marker-content-024`).
+- `animation.rs`: `display` to or from `none` interpolates as Stylo's `Animate for Display` says (the other value
+  throughout, `none` only at its end), which the discrete fallback skipped (`transition-behavior: allow-discrete`).
+- Round 4 lane F, `font_metrics.rs`: `ch` is the "0" of the first available font (the first face whose `unicode-range`
+  covers U+0030, whatever glyphs it has; WPT `ch-unit-018`), 0.5em (1em upright) when it has none; in upright vertical text its vertical
+  advance from `vmtx` (WPT css-values `ch-unit-017`, `-019`). Upright Latin text itself still advances horizontally
+  (Chrome: by the font's height; `ch-unit-002`, `-011` left).
+- Round 4 lane F, `layout/list.rs`: a marker image without a natural size (a gradient `list-style-image`, an SVG with no `width`, `height` or `viewBox`) is a square of half the font's ascent, as Blink's `ListMarker` (WPT css-lists `list-style-image-gradients`, `-dynamic`).
+
+## Hoisted lists follow removals
+
+- `src/document.rs` (`unlist_hoisted_leaving`, `unlist_hoisted`, `remove_node_from_tree`), `src/mutator.rs`
+  (`remove_node`, `remove_and_drop_node_with`, the detach in `add_children_to_parent`): a subtree that leaves its
+  place takes its boxes out of the `hoisted_children` of any containing block outside it, and that block is marked
+  for relayout. A freed node also leaves its block's list and stops being the block of the boxes it held. Before,
+  only the block's own layout reset its list, so a block rounded without being laid out again kept a dropped
+  child's id (Danex lab canvas: `invalid SlotMap key` in `physicalise_and_round_inner`).
+- `animation.rs` `BaseDocument::starting_style`: an element's style with its `@starting-style` rules (its primary
+  rules cascaded with `RuleCascadeFlags::STARTING_STYLE`), the before-change style pyro's transitions use for a box
+  shown from `display: none` (css-transitions-2 §3.2).
+- `stylo.rs`: `resolve_undisplayed_style_cached` + `UndisplayedCaches` (re-exported): `getComputedStyle` inside
+  `display: none` passes Stylo's `UndisplayedStyleCache` (each hidden ancestor matched once, children inherit its
+  style) and keeps the thread-local `SelectorCaches` (`:has()` filter map and results) between reads. The embedder
+  clears them whenever the document changes (pyro: every sync and interaction-state change). axe-core over ~10,000
+  hidden canvas elements went from more than 40 s to well under a second.
+- `src/layout/mod.rs` (`lay_out_out_of_flow_boxes`): a box laid out hidden (`display: none`) clears its hoisted
+  list. Its output has no positioning area, so Taffy's out-of-flow pass returned without touching the list, and
+  rounding kept walking the boxes it held before it was hidden, down to ones dropped since (Danex lab canvas: the
+  canvas stage hidden in the sync that removed a sheet's child; pyro-render test
+  `hidden_containing_block_drops_its_hoisted_boxes`).
+- `mutator.rs`: a child-list change marks counters and quotes dirty only when an element came or went; a text-only
+  change (`textContent` on a measuring probe) no longer walks the whole document in `resolve_generated_content`.
+- Split inline containing block (round 4 lane G): `split_inline_containing_block` takes the head piece's start edge and
+  top and the tail piece's end edge and bottom (CSS 2.1 § 10.1 4.1), not the union of both; it applies in vertical
+  writing modes too (layout runs in logical axes). Multicol breaks (`collect_breaks`) count orphans and widows across
+  the anonymous blocks around a split inline (`split_inline_neighbours`), as Chromium's block-in-inline. WPT
+  css-position `position-absolute-in-inline-007b`, `-008b`.
+- Round 4 lane F, `layout/inline/relative.rs`: `inline_span_positioned_chain` (the positioned inline boxes a node's content paints with). `stylo_to_parley.rs`: `upright` for `text-orientation: upright` in vertical modes; `font_metrics.rs`: upright `ch` without `vmtx` is the font's height (WPT css-values `ch-unit-002`, `-011`).
+- Round 4 lane F, `dom_selection.rs`/`stylo.rs`: a visited link's `::selection` style is resolved with `:link` not matching it (`LINKS_AS_VISITED`, Chromium's visited style; WPT css-pseudo `selection-link-002`). `layout/list.rs`: `image(<color>)` markers (what `light-dark(none, none)` computes to) take the default size like gradients (css-color `light-dark-image-none`).
+- Round 4 lane F, `layout/inline/relative.rs`: `inline_span_positioned_chain` (the positioned inline boxes a node's content paints with). `stylo_to_parley.rs`: `upright` for `text-orientation: upright` in vertical modes; `font_metrics.rs`: upright `ch` without `vmtx` is the font's height (WPT css-values `ch-unit-002`, `-011`).
+- Round 4 lane F, `layout/inline/build.rs`: ruby annotation layouts take no tall upright advances (`upright = false`): `draw_annotation` centres them by width and draws their glyphs em-wide, as emphasis marks.

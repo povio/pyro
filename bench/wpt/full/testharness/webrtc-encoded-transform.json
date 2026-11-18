@@ -1,0 +1,42 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "webrtc-encoded-transform/RTCEncodedFrame-copy-construction.https.html": {"status":"complete","ms":20,"n":49,"pass":[]},
+  "webrtc-encoded-transform/RTCEncodedFrame-shared-buffer.https.html": {"status":"complete","ms":20,"n":2,"pass":[]},
+  "webrtc-encoded-transform/RTCRtpScriptTransform-encoded-transform.https.html": {"status":"complete","ms":80,"n":13,"pass":[]},
+  "webrtc-encoded-transform/RTCRtpScriptTransform-sender-worker-single-frame.https.html": {"status":"complete","ms":20,"n":2,"pass":[]},
+  "webrtc-encoded-transform/RTCRtpScriptTransform-write-rules.https.html": {"status":"complete","ms":70,"n":10,"pass":[]},
+  "webrtc-encoded-transform/idlharness.https.window.html?exclude=.*SFrame.*": {"status":"complete","ms":70,"n":53,"pass":["DedicatedWorkerGlobalScope includes AnimationFrameProvider: member names are unique","DedicatedWorkerGlobalScope includes MessageEventTarget: member names are unique","KeyFrameRequestEvent interface: existence and properties of interface object","Partial interface DedicatedWorkerGlobalScope: member names are unique","Partial interface DedicatedWorkerGlobalScope: original interface defined","Partial interface RTCRtpReceiver: member names are unique","Partial interface RTCRtpReceiver: original interface defined","Partial interface RTCRtpSender: member names are unique","Partial interface RTCRtpSender: original interface defined","Partial interface RTCRtpSender[2]: member names are unique","RTCRtpScriptTransformer interface: existence and properties of interface object","RTCTransformEvent interface: existence and properties of interface object","Worker includes AbstractWorker: member names are unique","Worker includes MessageEventTarget: member names are unique","WorkerGlobalScope includes WindowOrWorkerGlobalScope: member names are unique","idl_test validation"]},
+  "webrtc-encoded-transform/script-audio-transform.https.html": {"status":"complete","ms":30,"n":1,"pass":[]},
+  "webrtc-encoded-transform/script-change-transform.https.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "webrtc-encoded-transform/script-late-transform.https.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "webrtc-encoded-transform/script-metadata-transform.https.html": {"status":"timeout","ms":45000,"n":25,"pass":[]},
+  "webrtc-encoded-transform/script-transform-generateKeyFrame-simulcast.https.html": {"status":"complete","ms":30,"n":3,"pass":[]},
+  "webrtc-encoded-transform/script-transform-generateKeyFrame.https.html": {"status":"complete","ms":70,"n":10,"pass":[]},
+  "webrtc-encoded-transform/script-transform.https.html": {"status":"complete","ms":50,"n":4,"pass":[]},
+  "webrtc-encoded-transform/sframe-keys.https.html": {"status":"complete","ms":20,"n":2,"pass":[]},
+  "webrtc-encoded-transform/sframe-transform-buffer-source.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "webrtc-encoded-transform/sframe-transform-in-worker.https.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "webrtc-encoded-transform/sframe-transform.html": {"status":"complete","ms":10,"n":5,"pass":[]},
+  "webrtc-encoded-transform/tentative/RTCEncodedAudioFrame-audiolevel.html": {"status":"complete","ms":10,"n":2,"pass":[]},
+  "webrtc-encoded-transform/tentative/RTCEncodedAudioFrame-clone.https.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "webrtc-encoded-transform/tentative/RTCEncodedAudioFrame-metadata.https.html": {"status":"complete","ms":20,"n":4,"pass":[]},
+  "webrtc-encoded-transform/tentative/RTCEncodedAudioFrame-receive-cloned.https.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "webrtc-encoded-transform/tentative/RTCEncodedAudioFrame-send-incoming.https.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "webrtc-encoded-transform/tentative/RTCEncodedFrame-timestamps.html": {"status":"complete","ms":20,"n":4,"pass":[]},
+  "webrtc-encoded-transform/tentative/RTCEncodedVideoFrame-clone.https.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "webrtc-encoded-transform/tentative/RTCEncodedVideoFrame-constructor.html": {"status":"complete","ms":10,"n":4,"pass":[]},
+  "webrtc-encoded-transform/tentative/RTCEncodedVideoFrame-serviceworker-failure.https.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "webrtc-encoded-transform/tentative/RTCPeerConnection-insertable-streams-audio.https.html": {"status":"complete","ms":20,"n":8,"pass":[]},
+  "webrtc-encoded-transform/tentative/RTCPeerConnection-insertable-streams-errors.https.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "webrtc-encoded-transform/tentative/RTCPeerConnection-insertable-streams-video-frames.https.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "webrtc-encoded-transform/tentative/RTCPeerConnection-insertable-streams-video.https.html": {"status":"complete","ms":20,"n":6,"pass":[]},
+  "webrtc-encoded-transform/tentative/RTCPeerConnection-insertable-streams-worker.https.html": {"status":"complete","ms":20,"n":4,"pass":[]}
+ }
+}

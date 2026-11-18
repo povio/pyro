@@ -475,7 +475,9 @@ impl DocumentMutator<'_> {
         let tag = &element.name.local;
         let attr = &name.local;
 
-        if *attr == local_name!("id") {
+        // pyro: only the `id` attribute in no namespace is the element's ID (`xml:id` is not;
+        // WPT selectors historical-xmlid).
+        if *attr == local_name!("id") && name.ns == markup5ever::ns!() {
             element.id = Some(Atom::from(value))
         }
 
@@ -637,7 +639,7 @@ impl DocumentMutator<'_> {
                 .attribute_changed(&name.local, old_value, None);
         }
 
-        if name.local == local_name!("id") {
+        if name.local == local_name!("id") && name.ns == markup5ever::ns!() {
             element.id = None;
         }
 
@@ -749,6 +751,7 @@ impl DocumentMutator<'_> {
         // interaction state referencing removed nodes can retarget to the
         // nearest surviving ancestor.
         self.process_removed_subtree(node_id);
+        self.doc.unlist_hoisted_leaving(node_id);
 
         let node = &mut self.doc.nodes[node_id];
 
@@ -787,6 +790,7 @@ impl DocumentMutator<'_> {
         self.doc.invalidate_relative_selectors_for_removal(node_id);
         let node_is_in_document = self.doc.nodes[node_id].flags.is_in_document();
         self.process_removed_subtree(node_id);
+        self.doc.unlist_hoisted_leaving(node_id);
 
         let node = self.doc.drop_node_ignoring_parent_with(node_id, on_drop);
         self.mutations_occurred |= node_is_in_document;
@@ -979,9 +983,7 @@ impl DocumentMutator<'_> {
         changed: Range<usize>,
         removed_element: bool,
     ) {
-        // pyro: an element that came or went can change counters and quotes (`layout::counters`),
-        // and the scroll markers of the groups around it (`layout::scroll_markers`).
-        self.doc.counters_dirty = true;
+        // pyro: the scroll markers of the groups around a changed child (`layout::scroll_markers`).
         self.doc.scroll_markers_dirty = true;
         let parent = &self.doc.nodes[parent_id];
         let flags = parent.selector_flags().get();
@@ -997,6 +999,11 @@ impl DocumentMutator<'_> {
         }
         let is_element = |id: &NodeId| self.doc.nodes[*id].is_element();
         let element_changed = removed_element || parent.children[changed.clone()].iter().any(is_element);
+        // pyro: an element that came or went can change counters and quotes (`layout::counters`);
+        // text alone cannot (a text probe measured in a loop no longer walks the whole document).
+        if element_changed {
+            self.doc.counters_dirty = true;
+        }
         // A change with no earlier element sibling restyles all children with one hint rather
         // than hinting each later sibling, so inserting or removing at the front stays linear.
         let front_change = flags.contains(ElementSelectorFlags::HAS_SLOW_SELECTOR_LATER_SIBLINGS)
@@ -1181,6 +1188,9 @@ impl DocumentMutator<'_> {
                 focus_within_old_chain = Some(self.doc.maybe_node_element_ancestors(child.parent));
             }
 
+            if self.doc.nodes[child_id].parent.is_some() {
+                self.doc.unlist_hoisted_leaving(child_id);
+            }
             let child = &mut self.doc.nodes[child_id];
             let child_was_in_doc = child.flags.is_in_document();
             self.mutations_occurred |= child_was_in_doc;
@@ -1982,6 +1992,18 @@ impl<'doc> DocumentMutator<'doc> {
                 element.special_data = SpecialElementData::CheckboxInput(checked);
                 element.set_checkbox_input_checked(checked);
             }
+            return;
+        }
+
+        // pyro: a file input's label (Chromium's "No file chosen"); its button is the box of its
+        // `::file-selector-button` (`layout::construct::file_selector_button`).
+        #[cfg(not(feature = "file-input"))]
+        if tagname == "input"
+            && type_attr.is_some_and(|t| t.eq_ignore_ascii_case("file"))
+            && self.doc.nodes[target_id].children.is_empty()
+        {
+            let id = self.create_text_node("No file chosen");
+            self.append_children(target_id, &[id]);
             return;
         }
 

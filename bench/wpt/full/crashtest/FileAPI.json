@@ -1,0 +1,13 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "."
+ ],
+ "tests": {
+  "FileAPI/blob/Blob-stream-byob-crash.html": {"status":"complete","ms":280,"n":1,"fail":[],"h":"22f2a845"},
+  "FileAPI/blob/Blob-stream-sync-xhr-crash.html": {"status":"complete","ms":270,"n":1,"fail":[],"h":"22f2a845"}
+ }
+}

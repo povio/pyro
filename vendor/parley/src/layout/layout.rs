@@ -217,6 +217,11 @@ impl<B: Brush> Layout<B> {
     /// a space.
     ///
     /// Like the indent, this must be set before the content widths are read and the lines broken.
+    /// pyro: the `(space, min_advance)` [`Self::set_tab_stops`] set.
+    pub fn tab_stops(&self) -> (f32, f32) {
+        (self.data.tab_space, self.data.tab_min_advance)
+    }
+
     pub fn set_tab_stops(&mut self, space: f32, min_advance: f32) {
         self.data.tab_space = if space.is_finite() { space.max(0.0) } else { 0.0 };
         self.data.tab_min_advance = min_advance.max(0.0);
@@ -227,6 +232,17 @@ impl<B: Brush> Layout<B> {
     /// as they are. Set before the lines are broken.
     pub fn set_line_height_quirk(&mut self, quirk: bool) {
         self.data.line_height_quirk = quirk;
+    }
+
+    /// pyro: the lines align on a central dominant baseline (vertical writing modes whose text is
+    /// not sideways; Blink's `FontBaseline::kCentralBaseline`): an in-flow inline box's
+    /// [`InlineBox::baseline`](crate::InlineBox::baseline) is its central baseline, which a
+    /// baseline-aligned box puts on the central baseline of the span around it (the middle of that
+    /// span's content area), not on its alphabetic baseline.
+    /// Text keeps its alphabetic geometry: the strut's line-height box is the same around either
+    /// baseline. Set before the lines are broken.
+    pub fn set_central_baseline(&mut self, central: bool) {
+        self.data.central_baseline = central;
     }
 
     /// pyro: makes the layout's lines scale their text to fill them (CSS `text-fit`); `scale` is

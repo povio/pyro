@@ -898,6 +898,10 @@ pub enum WordBreak {
     /// dictionaries find in Southeast Asian scripts.
     #[parse(condition = "word_break_manual_enabled")]
     Manual,
+    /// pyro: `auto-phrase` (CSS Text 4): as `keep-all`, with soft wrap opportunities between
+    /// phrases the UA finds.
+    #[parse(condition = "word_break_manual_enabled")]
+    AutoPhrase,
 }
 
 /// Values for the `text-justify` CSS property.

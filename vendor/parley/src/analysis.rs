@@ -34,6 +34,8 @@ pub(crate) fn analyze_text<B: Brush>(
             line_break: style.line_break,
             language: style.locale,
             no_dictionary: !style.dictionary_breaks,
+            phrases: style.phrase_breaks,
+            no_soft_hyphen_breaks: style.soft_hyphen == crate::style::SoftHyphen::NoBreak,
         };
         if line_break != LineBreakConfig::default() {
             match lcx.line_break.last_mut() {

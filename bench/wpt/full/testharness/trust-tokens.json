@@ -1,0 +1,13 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "trust-tokens/end-to-end/has-trust-token-with-no-top-frame.tentative.https.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "trust-tokens/trust-token-parameter-validation.tentative.https.html": {"status":"complete","ms":10,"n":6,"pass":["Since localhost URLs are potentially trustworthy, setting an issuer to localhost should succeed."]}
+ }
+}

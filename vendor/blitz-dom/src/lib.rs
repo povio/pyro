@@ -83,6 +83,7 @@ pub use shadow::{ASSIGNED_SLOT_ATTR, SHADOW_HOST_ATTR};
 mod svg_refs;
 /// Implementations that interact with servo's style engine
 mod stylo;
+pub use stylo::UndisplayedCaches;
 mod stylo_device;
 mod stylo_to_cursor_icon;
 mod stylo_to_kurbo;

@@ -155,17 +155,50 @@ fn node_list_item_child(
     // pyro: inside the item too (a box at the start of its first line, `inline::build`), and
     // at the resolution of an `image-set()` option.
     let resolution = crate::util::image_resolution(&styles.get_list().list_style_image);
-    let image = node.element_data().and_then(|element| image_marker(element, resolution));
+    // pyro: a marker image without a natural size (a gradient, an SVG without `width` and
+    // `height`) is, as Blink's `ListMarker`, a square of half the font's ascent.
+    let default_size = || {
+        let provider = crate::font_metrics::BlitzFontMetricsProvider { font_ctx: doc.font_ctx.clone() };
+        let font = styles.get_font();
+        let ascent = provider.metrics_for(font, font.font_size.computed_size(), ' ').ascent.px();
+        Marker::Image { width: ascent / 2.0, height: ascent / 2.0 }
+    };
+    let image = match node.element_data().and_then(|element| image_marker(element, resolution)) {
+        Some(Marker::Image { width, height }) if width.is_nan() || height.is_nan() => Some(default_size()),
+        Some(marker) => Some(marker),
+        None => matches!(
+            styles.get_list().list_style_image,
+            style::values::computed::Image::Gradient(_) | style::values::computed::Image::Image(_)
+        )
+            .then(default_size),
+    };
     // pyro: the item's `::marker` style, on a node of its own (the marker text's brush), and
     // the marker's `content`: `none` leaves no marker, strings replace it (CSS Lists 3 § 3.2).
     let (marker_style, rule_style) = item_marker_style(doc, child_id, &styles);
-    let content = rule_style.as_ref().and_then(|style| marker_content(style, number));
+    // pyro: content that reads other counters is evaluated with the document's counters
+    // (`layout::counters`); the first such marker turns that evaluation on.
+    let content = match rule_style.as_ref() {
+        Some(style) if marker_reads_counters(style) => match doc.marker_texts.get(&child_id) {
+            Some(text) => Some(text.clone()),
+            None => {
+                if !doc.marker_counters {
+                    doc.marker_counters = true;
+                    doc.marker_counters_pending = true;
+                    doc.generated_counters = true;
+                    doc.counters_dirty = true;
+                }
+                None
+            }
+        },
+        Some(style) => marker_content(style, number),
+        None => None,
+    };
     let from_content = content.is_some();
     let style_node = marker_style_node(doc, child_id, marker_style.clone());
     let mut marker = match (content, image) {
         (Some(text), _) => Marker::String(text),
         (None, Some(image)) => image,
-        (None, None) => match custom_counter_marker(doc, list_style_type, number) {
+        (None, None) => match custom_counter_marker(doc, child_id, list_style_type, number) {
             Some(marker) => marker,
             None => marker_for_style(list_style_type, number)?,
         },
@@ -191,6 +224,7 @@ fn node_list_item_child(
     let text_style = marker_style.as_ref().unwrap_or(&styles);
     let brush = style_node.unwrap_or(child_id);
 
+    let mut annotations = Vec::new();
     let position = match list_style_position {
         ListStylePosition::Inside => {
             // pyro: a symbol marker inside the item is drawn from the bundled bullet font, unless
@@ -254,6 +288,14 @@ fn node_list_item_child(
             let mut layout = builder.build().0;
             let width = layout.calculate_content_widths().max;
             layout.break_all_lines(Some(width));
+            // pyro: its emphasis marks (`text-emphasis`), drawn as over the item's text.
+            annotations.extend(super::inline::build::marker_emphasis(
+                &doc.nodes,
+                &mut doc.layout_ctx,
+                &mut font_ctx,
+                doc.viewport.scale(),
+                brush,
+            ));
 
             ListItemLayoutPosition::Outside(Box::new(layout))
         }
@@ -266,6 +308,7 @@ fn node_list_item_child(
         tabular_nums,
         isolate,
         content_box_subpixel_offset: taffy::Point::ZERO,
+        annotations,
     })
 }
 
@@ -279,7 +322,11 @@ fn image_marker(element: &crate::node::ElementData, resolution: f32) -> Option<M
     let (width, height) = match &image.image {
         ImageData::Raster(raster) => (raster.width as f32 / resolution, raster.height as f32 / resolution),
         #[cfg(feature = "svg")]
-        ImageData::Svg(svg) => (svg.tree.size().width(), svg.tree.size().height()),
+        // pyro: no natural size at all → NaN (the caller's default size).
+        ImageData::Svg(svg) => match (svg.intrinsic_width(), svg.intrinsic_height()) {
+            (None, None) if svg.viewbox_aspect_ratio().is_none() => (f32::NAN, f32::NAN),
+            _ => (svg.tree.size().width(), svg.tree.size().height()),
+        },
         _ => return None,
     };
     Some(Marker::Image { width, height })
@@ -338,7 +385,7 @@ pub(crate) fn item_restyled(doc: &mut BaseDocument, item: NodeId) {
 }
 
 /// pyro: the `::marker` style of the list item `node_id`, when a rule matches its marker.
-fn marker_pseudo_style(
+pub(super) fn marker_pseudo_style(
     doc: &BaseDocument,
     node_id: NodeId,
     item_style: &style::servo_arc::Arc<style::properties::ComputedValues>,
@@ -366,6 +413,20 @@ fn marker_pseudo_style(
         true,
         None,
     )
+}
+
+/// pyro: whether a `::marker` style's `content` reads a counter other than `counter(list-item)`
+/// (`marker_content` evaluates that one alone).
+pub(super) fn marker_reads_counters(style: &style::servo_arc::Arc<style::properties::ComputedValues>) -> bool {
+    use style::values::generics::counters::{Content, ContentItem};
+    match &style.get_counters().content {
+        Content::Items(items) => items.items.iter().any(|item| match item {
+            ContentItem::Counter(name, _) => &*name.0 != "list-item",
+            ContentItem::Counters(..) => true,
+            _ => false,
+        }),
+        _ => false,
+    }
 }
 
 /// pyro: the text a `::marker` style's `content` gives the marker of the item at `index`: none
@@ -452,8 +513,8 @@ fn marker_style_node(
 /// another style (`system: extends <name>`): the item's number in the extended style, with the
 /// rule's `prefix` and `suffix` (the extended style's when it gives none). It is text in the
 /// item's font, also for an extended `disc` (CSS Counter Styles 3: only the predefined bullets
-/// may be drawn otherwise). Other systems are not supported (`None`: the marker of the name).
-fn custom_counter_marker(doc: &BaseDocument, list_style_type: &ListStyleType, number: i32) -> Option<Marker> {
+/// may be drawn otherwise). Rules of the other systems format the number with their own symbols.
+fn custom_counter_marker(doc: &BaseDocument, item: NodeId, list_style_type: &ListStyleType, number: i32) -> Option<Marker> {
     use style::counter_style::{Symbol, System};
     let CounterStyle::Name(name) = &list_style_type.0 else {
         return None;
@@ -465,20 +526,64 @@ fn custom_counter_marker(doc: &BaseDocument, list_style_type: &ListStyleType, nu
     ) {
         return None;
     }
-    let rule = doc
-        .stylist
-        .iter_extra_data_origins_rev()
-        .find_map(|(data, _)| data.counter_styles.get(&name.0).cloned())?;
+    // pyro: the item's shadow trees first, inside out (tree-scoped names, CSS Scoping 1 §3.5;
+    // WPT css-shadow scoped-reference-animation-002), then the document's origins.
+    let scoped = || {
+        let mut host = doc.nodes.get(item)?.containing_shadow_host_id();
+        while let Some(id) = host {
+            let node = &doc.nodes[id];
+            if let Some(rule) = node.shadow_cascade_data().and_then(|data| data.counter_style(&name.0)) {
+                return Some(rule.clone());
+            }
+            host = node.containing_shadow_host_id();
+        }
+        None
+    };
+    let rule = scoped().or_else(|| {
+        doc.stylist
+            .iter_extra_data_origins_rev()
+            .find_map(|(data, _)| data.counter_styles.get(&name.0).cloned())
+    })?;
     let guard = doc.guard.read();
     let rule = rule.read_with(&guard);
-    let System::Extends(base) = rule.resolved_system() else {
-        return None;
-    };
     let symbol = |symbol: &Symbol| match symbol {
         Symbol::String(text) => text.to_string(),
         Symbol::Ident(ident) => ident.0.to_string(),
     };
     let descriptors = rule.descriptors();
+    let System::Extends(base) = rule.resolved_system() else {
+        // pyro: the other systems format with the rule's own symbols (CSS Counter Styles 3 §3.1);
+        // a value out of their range takes `decimal` (the default `fallback`). Overriding a
+        // predefined name (`@counter-style lower-roman { ... }`) is allowed.
+        use super::counters::{additive, alphabetic, cyclic, fixed, numeric, symbolic};
+        let symbols: Vec<String> = descriptors.symbols.as_ref().map_or(Vec::new(), |s| s.0.iter().map(symbol).collect());
+        let symbols: Vec<&str> = symbols.iter().map(String::as_str).collect();
+        let text = match rule.resolved_system() {
+            System::Cyclic => cyclic(number, &symbols),
+            System::Numeric => numeric(number, &symbols),
+            System::Alphabetic => alphabetic(number, &symbols),
+            System::Symbolic => symbolic(number, &symbols),
+            System::Fixed { first_symbol_value } => {
+                let first = first_symbol_value.as_ref().and_then(|v| v.resolve()).unwrap_or(1);
+                fixed(number.saturating_sub(first - 1), &symbols)
+            }
+            System::Additive => {
+                let tuples: Vec<(u32, String)> = descriptors.additive_symbols.as_ref().map_or(Vec::new(), |list| {
+                    list.0
+                        .iter()
+                        .filter_map(|t| Some((u32::try_from(t.weight.resolve()?).ok()?, symbol(&t.symbol))))
+                        .collect()
+                });
+                let tuples: Vec<(u32, &str)> = tuples.iter().map(|(w, s)| (*w, s.as_str())).collect();
+                additive(number, &tuples)
+            }
+            System::Extends(_) => None,
+        };
+        let text = text.unwrap_or_else(|| number.to_string());
+        let prefix = descriptors.prefix.as_ref().map(symbol).unwrap_or_default();
+        let suffix = descriptors.suffix.as_ref().map(symbol).unwrap_or_else(|| ". ".into());
+        return Some(Marker::String(format!("{prefix}{text}{suffix}")));
+    };
     let bullet = matches!(&*base.0, "disc" | "circle" | "square" | "disclosure-open" | "disclosure-closed");
     let prefix = descriptors.prefix.as_ref().map(symbol).unwrap_or_default();
     let suffix = descriptors

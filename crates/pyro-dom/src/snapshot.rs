@@ -10,7 +10,8 @@
 //!   (the style engine holds the live text, CSSOM edits included);
 //! - a `<script>` is written without its text; `<noscript>` (scripting is on), `<template>`, comments and
 //!   processing instructions are left out, and so is an `<iframe>`'s `src`
-//!   (frames render as empty boxes); HTML markup leaves out event handler
+//!   (a frame shows the document [`Dom::set_frame_documents`] gave it as its
+//!   `srcdoc`, else nothing); HTML markup leaves out event handler
 //!   (`on*`) attributes, which keyed trees keep (`content: attr(onclick)`);
 //! - the tree is the flat tree: a shadow host is serialized with its shadow
 //!   tree in place of its children (marked with the [`STATE_NS`]
@@ -165,6 +166,7 @@ struct HtmlSink<'a> {
     out: String,
     mark: Option<&'a str>,
     scroll: &'a [(u64, (f64, f64))],
+    sticky: &'a [(u64, (f64, f64))],
 }
 
 impl Sink for HtmlSink<'_> {
@@ -183,7 +185,7 @@ impl Sink for HtmlSink<'_> {
         let html = name.ns == ns!(html);
         for a in attrs.iter().filter(|a| {
             &*a.name.ns != STATE_NS
-                && !matches!(&*a.name.local, "data-pyro-scroll-left" | "data-pyro-scroll-top")
+                && !matches!(&*a.name.local, "data-pyro-scroll-left" | "data-pyro-scroll-top" | "data-pyro-sticky")
                 && !(html && a.name.ns == ns!() && a.name.local.starts_with("on"))
         }) {
             out.push(' ');
@@ -208,6 +210,10 @@ impl Sink for HtmlSink<'_> {
         if let Some((_, (x, y))) = self.scroll.iter().find(|(id, _)| *id == key) {
             use std::fmt::Write;
             let _ = write!(out, " data-pyro-scroll-left=\"{x}\" data-pyro-scroll-top=\"{y}\"");
+        }
+        if let Some((_, (x, y))) = self.sticky.iter().find(|(id, _)| *id == key) {
+            use std::fmt::Write;
+            let _ = write!(out, " data-pyro-sticky=\"{x} {y}\"");
         }
         out.push('>');
     }
@@ -280,7 +286,20 @@ impl Dom {
         opts: &RenderHtml<'_>,
         scroll: &[(u64, (f64, f64))],
     ) -> DomResult<String> {
-        let mut sink = HtmlSink { out: String::with_capacity(64 * 1024), mark: opts.mark.map(|m| m.1), scroll };
+        self.render_html_positioned(doc, opts, scroll, &[])
+    }
+
+    /// [`Dom::render_html_scrolled`] that also marks how far each `position: sticky` element is
+    /// moved (CSS px, by render key) in a `data-pyro-sticky="x y"` attribute.
+    pub fn render_html_positioned(
+        &self,
+        doc: NodeId,
+        opts: &RenderHtml<'_>,
+        scroll: &[(u64, (f64, f64))],
+        sticky: &[(u64, (f64, f64))],
+    ) -> DomResult<String> {
+        let mut sink =
+            HtmlSink { out: String::with_capacity(64 * 1024), mark: opts.mark.map(|m| m.1), scroll, sticky };
         self.render_walk(doc, opts, &mut sink)?;
         Ok(sink.out)
     }
@@ -463,6 +482,32 @@ impl Dom {
                             if !v.is_empty() {
                                 attrs.push(RAttr { name: plain("value"), value: Cow::Owned(v), valueless: false });
                             }
+                        }
+                    }
+                    if html && matches!(local, "iframe" | "frame") {
+                        if let Some(frame) = self.frame_documents.get(&n) {
+                            attrs.push(RAttr { name: plain("srcdoc"), value: Cow::Borrowed(&frame.html), valueless: false });
+                            attrs.push(RAttr {
+                                name: plain("data-pyro-frame-url"),
+                                value: Cow::Borrowed(&frame.url),
+                                valueless: false,
+                            });
+                            if frame.scroll != (0.0, 0.0) {
+                                attrs.push(RAttr {
+                                    name: plain("data-pyro-frame-scroll"),
+                                    value: Cow::Owned(format!("{} {}", frame.scroll.0, frame.scroll.1)),
+                                    valueless: false,
+                                });
+                            }
+                        }
+                    }
+                    if html && local == "iframe" {
+                        if let Some(height) = self.frame_content_heights.get(&n) {
+                            attrs.push(RAttr {
+                                name: plain("data-pyro-frame-content-height"),
+                                value: Cow::Owned(height.to_string()),
+                                valueless: false,
+                            });
                         }
                     }
                     if html && local == "option" && self.option_selected(id).unwrap_or(false) {

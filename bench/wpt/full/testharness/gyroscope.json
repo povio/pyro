@@ -1,0 +1,18 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "gyroscope/Gyroscope-enabled-by-permissions-policy-attribute-redirect-on-load.https.html": {"status":"complete","ms":20,"n":2,"pass":[]},
+  "gyroscope/Gyroscope-enabled-by-permissions-policy-attribute.https.html": {"status":"complete","ms":10,"n":2,"pass":[]},
+  "gyroscope/Gyroscope-enabled-by-permissions-policy.https.html": {"status":"complete","ms":20,"n":3,"pass":[]},
+  "gyroscope/Gyroscope-supported-by-permissions-policy.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "gyroscope/Gyroscope.https.html": {"status":"complete","ms":20,"n":20,"pass":["Gyroscope: throw 'TypeError' if frequency is invalid."]},
+  "gyroscope/Gyroscope_insecure_context.html": {"status":"complete","ms":10,"n":1,"fail":[],"h":"fec9a362"},
+  "gyroscope/idlharness.https.window.html": {"status":"complete","ms":50,"n":16,"pass":["idl_test setup","idl_test validation"]}
+ }
+}

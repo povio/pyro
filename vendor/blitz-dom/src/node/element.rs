@@ -521,7 +521,7 @@ impl ElementData {
     pub fn new(name: QualName, attrs: Vec<Attribute>) -> Self {
         let id_attr_atom = attrs
             .iter()
-            .find(|attr| &attr.name.local == "id")
+            .find(|attr| &attr.name.local == "id" && attr.name.ns == markup5ever::ns!())
             .map(|attr| attr.value.as_ref())
             .map(|value: &str| Atom::from(value));
         let classes = attrs
@@ -1159,6 +1159,8 @@ pub struct ListItemLayout {
     /// `final_layout`. Paint draws text from the unrounded origin so that it keeps its sub-pixel
     /// position while box edges stay snapped. Set by the `writing-mode` layout pass; zero otherwise.
     pub content_box_subpixel_offset: taffy::Point<f32>,
+    /// pyro: an outside marker's emphasis marks (`text-emphasis`), drawn as over inline text.
+    pub annotations: Vec<crate::node::TextAnnotation>,
 }
 
 //We seperate chars from strings in order to optimise rendering - ie not needing to

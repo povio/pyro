@@ -1,0 +1,28 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "document-picture-in-picture/base-uri.https.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "document-picture-in-picture/beforeunload-is-disabled.https.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "document-picture-in-picture/clears-session-on-close.https.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "document-picture-in-picture/copy-document-mode-quirks.https.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "document-picture-in-picture/copy-document-mode.https.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "document-picture-in-picture/display-mode.https.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "document-picture-in-picture/focus-opener.https.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "document-picture-in-picture/iframe-document-pip.https.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "document-picture-in-picture/open-pip-window-from-pip-window.https.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "document-picture-in-picture/pip-move.https.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "document-picture-in-picture/pip-receives-focus.https.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "document-picture-in-picture/pip-resize.https.html": {"status":"complete","ms":10,"n":2,"pass":[]},
+  "document-picture-in-picture/propagate-user-activation-from-opener.https.html": {"status":"complete","ms":20,"n":3,"pass":[]},
+  "document-picture-in-picture/propagate-user-activation-to-opener.https.html": {"status":"complete","ms":20,"n":4,"pass":[]},
+  "document-picture-in-picture/requires-secure-context.html": {"status":"complete","ms":10,"n":1,"fail":[],"h":"64ea4342"},
+  "document-picture-in-picture/requires-width-and-height-to-both-be-specified.https.html": {"status":"complete","ms":10,"n":2,"pass":[]},
+  "document-picture-in-picture/returns-window-with-document.https.html": {"status":"complete","ms":20,"n":4,"pass":[]}
+ }
+}

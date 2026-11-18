@@ -1,0 +1,47 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "cookiestore/change_eventhandler_for_already_expired.https.window.html": {"status":"complete","ms":20,"n":2,"pass":[]},
+  "cookiestore/change_eventhandler_for_document_cookie.https.window.html": {"status":"complete","ms":20,"n":6,"pass":[]},
+  "cookiestore/change_eventhandler_for_http_cookie_and_set_cookie_headers.https.window.html": {"status":"complete","ms":10,"n":7,"pass":[]},
+  "cookiestore/change_eventhandler_for_no_change.https.window.html": {"status":"complete","ms":20,"n":2,"pass":[]},
+  "cookiestore/change_eventhandler_for_no_name_equals_in_value.https.window.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "cookiestore/change_eventhandler_for_no_name_multiple_values.https.window.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "cookiestore/cookieListItem_attributes.https.window.html": {"status":"complete","ms":10,"n":11,"pass":[]},
+  "cookiestore/cookieStoreManager_getSubscriptions_multiple.https.any.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "cookiestore/cookieStoreManager_getSubscriptions_single.https.any.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "cookiestore/cookieStore_delete.sub.https.html": {"status":"complete","ms":10000,"n":1,"pass":[]},
+  "cookiestore/cookieStore_delete_basic.https.any.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "cookiestore/cookieStore_delete_domain.sub.https.html": {"status":"complete","ms":20,"n":2,"pass":["cookieStore.delete() domain scoping"]},
+  "cookiestore/cookieStore_event_arguments.https.window.html": {"status":"complete","ms":10,"n":4,"pass":[]},
+  "cookiestore/cookieStore_event_delete.https.window.html": {"status":"complete","ms":10,"n":2,"pass":[]},
+  "cookiestore/cookieStore_event_overwrite.https.window.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "cookiestore/cookieStore_getAll_arguments.https.any.html": {"status":"complete","ms":20,"n":12,"pass":[]},
+  "cookiestore/cookieStore_getAll_set_basic.https.any.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "cookiestore/cookieStore_getAll_set_creation_url.https.any.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "cookiestore/cookieStore_get_arguments.https.any.html": {"status":"complete","ms":10,"n":12,"pass":[]},
+  "cookiestore/cookieStore_get_set_across_frames.https.html": {"status":"complete","ms":10,"n":2,"pass":[]},
+  "cookiestore/cookieStore_get_set_across_origins.sub.https.html": {"status":"complete","ms":10000,"n":4,"pass":[]},
+  "cookiestore/cookieStore_get_set_basic.https.any.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "cookiestore/cookieStore_get_set_creation_url.sub.https.html": {"status":"complete","ms":10000,"n":2,"pass":[]},
+  "cookiestore/cookieStore_get_set_ordering.https.any.html": {"status":"complete","ms":10,"n":2,"pass":[]},
+  "cookiestore/cookieStore_in_detached_frame.https.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "cookiestore/cookieStore_set_arguments.https.any.html": {"status":"complete","ms":40,"n":54,"pass":[]},
+  "cookiestore/cookieStore_set_domain_parsing.sub.https.html": {"status":"complete","ms":30,"n":5,"pass":["cookieStore.set with domain on IDNA host","cookieStore.set with mixed casing domain"]},
+  "cookiestore/cookieStore_set_domain_parsing.tentative.sub.https.html": {"status":"complete","ms":10000,"n":1,"pass":[]},
+  "cookiestore/cookieStore_set_maxAge.https.window.html": {"status":"complete","ms":10,"n":4,"pass":[]},
+  "cookiestore/cookieStore_set_path.https.window.html": {"status":"complete","ms":20,"n":3,"pass":[]},
+  "cookiestore/cookieStore_special_names.https.any.html": {"status":"complete","ms":10,"n":37,"pass":[]},
+  "cookiestore/cookieStore_subscriptions_empty.https.window.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "cookiestore/encoding.https.any.html": {"status":"complete","ms":10,"n":2,"pass":[]},
+  "cookiestore/httponly_cookies.https.window.html": {"status":"complete","ms":20,"n":4,"pass":[]},
+  "cookiestore/idlharness.https.any.html": {"status":"complete","ms":80,"n":84,"pass":["ExtendableCookieChangeEvent interface: existence and properties of interface object","Partial interface ServiceWorkerGlobalScope: member names are unique","Partial interface ServiceWorkerGlobalScope: original interface defined","Partial interface ServiceWorkerRegistration: member names are unique","Partial interface ServiceWorkerRegistration: original interface defined","Partial interface ServiceWorkerRegistration: valid exposure set","Partial interface Window: member names are unique","Partial interface Window: original interface defined","Partial interface Window[2]: member names are unique","Window includes AnimationFrameProvider: member names are unique","Window includes GlobalEventHandlers: member names are unique","Window includes WindowEventHandlers: member names are unique","Window includes WindowLocalStorage: member names are unique","Window includes WindowOrWorkerGlobalScope: member names are unique","Window includes WindowSessionStorage: member names are unique","WorkerGlobalScope includes WindowOrWorkerGlobalScope: member names are unique","idl_test setup","idl_test validation"]},
+  "cookiestore/serviceworker_cookieStore_subscriptions_reset.https.html": {"status":"complete","ms":20,"n":2,"pass":[]}
+ }
+}

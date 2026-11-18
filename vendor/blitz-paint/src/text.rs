@@ -150,7 +150,26 @@ impl VerticalLine {
         }
         let em = run.run().font_size();
         let height = (metrics.ascent + metrics.descent).max(1.0);
-        let ascent = (em * metrics.ascent / height) as f64;
+        // pyro: a glyph advancing by the font's height (`text-orientation: upright` in a font
+        // without vertical metrics, parley's `shape::upright`) hangs from its ascent.
+        let tall = self.all_upright.then(|| {
+            use skrifa::raw::TableProvider;
+            let font = run.run().font();
+            let font_ref = skrifa::FontRef::from_index(font.data.as_ref(), font.index).ok()?;
+            if font_ref.vmtx().is_ok() {
+                return None;
+            }
+            let metrics =
+                skrifa::metrics::Metrics::new(&font_ref, skrifa::instance::Size::new(em), skrifa::instance::LocationRef::default());
+            // (Only glyphs laid out so: an emphasis mark's line is upright, its advances are not.)
+            let advance = run.glyphs().next()?.advance;
+            let tall = metrics.ascent - metrics.descent;
+            ((advance - tall).abs() < 0.01).then_some(tall)
+        });
+        // pyro: the em box centred in a tall glyph's advance (as in an em-wide one: a ruby
+        // annotation and an emphasis mark of the same glyph sit alike).
+        let ascent = (em * metrics.ascent / height) as f64
+            + tall.flatten().map_or(0.0, |tall| f64::from(tall - em) / 2.0);
         (
             Affine::translate((0.0, (central + em / 2.0 - run.baseline()) as f64)),
             Some(Affine::new([0.0, -1.0, 1.0, 0.0, ascent, 0.0])),
@@ -201,6 +220,14 @@ fn snap_turned_band(transform: Affine, top: f64, size: f64) -> (f64, f64) {
     let snap = |y: f64| ((c * y + e + 0.5).floor() - e) / c;
     let (y0, y1) = (snap(top), snap(top + size));
     (y0.min(y1), (y1 - y0).abs())
+}
+
+/// pyro: a glyph origin `x` (device px) on Skia's quarter-pixel grid, taken to a layout unit
+/// (1/64 px) first: glyphs within a run then bin as those starting a box whose edge a layout unit
+/// rounds (text in two table cells against the same text in one line), where half-unit advances
+/// (1/128 px at 16px in a 2048-unit font) would put them on either side of a quarter's edge.
+fn quarter_pixel(x: f64) -> f64 {
+    (layout_unit(x) * 4.0).round() / 4.0
 }
 
 /// pyro: Blink's `LayoutUnit::FromFloatRound`: to the nearest 1/64 px.
@@ -683,6 +710,10 @@ pub(crate) struct DrawTextContext {
     spans_layout: usize,
     /// pyro: the glyph runs the next `stroke_text` draws (none: all).
     pub(crate) run_filter: Option<RunFilter>,
+    /// pyro: which runs this pass draws by the positioned inline box they paint with
+    /// (`BaseDocument::inline_span_positioned_chain`): `Some(None)` those in none (the root's
+    /// in-flow text), `Some(Some(span))` those of `span`; `None` all.
+    pub(crate) positioned_pass: Option<Option<NodeId>>,
     /// pyro: the node holding the `::first-line` style of the first line of the inline root the
     /// next `stroke_text` draws (blitz-dom `TextLayout::first_line`): its first line is drawn as if
     /// its content were in an inline box of that style, the elements on it with their styles on
@@ -1646,9 +1677,9 @@ pub(crate) fn stroke_text<'a, S: PaintScene>(
         brush_override,
         shadows: paint_shadows,
     } = options;
-    // pyro: text shadows are drawn in screenshots only (see `TextPaintOptions::shadows`), and not
-    // in vertical writing modes, whose lines are turned (a shadow's offset is physical).
-    let paint_shadows = paint_shadows && context.runs.is_none() && vertical.is_none();
+    // pyro: text shadows are drawn in screenshots only (see `TextPaintOptions::shadows`); in
+    // vertical writing modes their physical offsets are turned with the line (`draw_run`).
+    let paint_shadows = paint_shadows && context.runs.is_none();
     let options = TextPaintOptions { shadows: paint_shadows, ..options };
     let DrawTextContext {
         stack,
@@ -1666,6 +1697,7 @@ pub(crate) fn stroke_text<'a, S: PaintScene>(
         spans,
         spans_layout,
         run_filter,
+        positioned_pass,
         first_line,
         first_line_styles,
         highlighting,
@@ -1674,6 +1706,7 @@ pub(crate) fn stroke_text<'a, S: PaintScene>(
         glyph_spans,
     } = context;
     let shadows_only = *shadows_only;
+    let positioned_pass = *positioned_pass;
     let glyph_spans = glyph_spans.as_ref();
     let shift = *text_shift;
     let cut = *cut;
@@ -1932,7 +1965,11 @@ pub(crate) fn stroke_text<'a, S: PaintScene>(
                 _ => (kept, drawn),
             };
             // pyro: `visibility` hides a run with its decorations and shadows; it keeps its place.
-            if stack.last().is_some_and(|entry| entry.hidden) {
+            // pyro: and a run of another pass's positioned inline box (`positioned_pass`).
+            let other_pass = positioned_pass.is_some_and(|pass| {
+                doc.inline_span_positioned_chain(style.brush.id, inline_root_id).first().copied() != pass
+            });
+            if other_pass || stack.last().is_some_and(|entry| entry.hidden) {
                 run_paints.push(RunPaint { fill_color, shadows: 0..0, kept: 0..0, kept_extent, drawn: false });
                 continue;
             }
@@ -2028,9 +2065,15 @@ pub(crate) fn stroke_text<'a, S: PaintScene>(
             continue;
         }
 
-        // pyro: over selected text, decorations of the text's colour take the highlight's.
+        // pyro: over selected text, decorations of the text's colour take the highlight's, and so
+        // does a line-through of a colour of its own, drawn over the text as part of it (Blink;
+        // WPT css-pseudo `selection-originating-decoration-color`); an underline or overline of
+        // its own colour keeps it (css-text-decor `text-decoration-inset-marked-text-gap`).
         if highlighting {
-            for acc in deco_boxes.iter_mut().filter(|acc| acc.deco.current_color && !acc.selection) {
+            for acc in deco_boxes
+                .iter_mut()
+                .filter(|acc| (acc.deco.current_color || acc.deco.line == TextDecorationLine::LINE_THROUGH) && !acc.selection)
+            {
                 if let Some(color) = crate::highlight::highlight_of(doc, acc.node_id, highlights).and_then(|h| h.color) {
                     acc.deco.color = color;
                 }
@@ -2054,7 +2097,7 @@ pub(crate) fn stroke_text<'a, S: PaintScene>(
 
         // pyro: the root's own font on the line, for the decorations of the root (and of the
         // blocks it is in) where it has no text of its own.
-        let (strut_top, strut_bottom) = line.span_content_area(0);
+        let (strut_top, strut_bottom) = line.span_content_area(line.root_style());
         let line_baseline = line.metrics().baseline;
         let strut = StrutGeometry {
             baseline: line_baseline,
@@ -2092,7 +2135,12 @@ pub(crate) fn stroke_text<'a, S: PaintScene>(
             let synthesis = run.synthesis();
             // pyro: `font-synthesis-weight` and `font-synthesis-style` of the run's element
             // decide whether a missing bold or slanted face is faked.
-            let (fake_bold, fake_slant) = synthesis_allowed(doc, glyph_run.style().brush.id);
+            // pyro: the root's text on the first line, by its `::first-line` style.
+            let synthesis_node = match on_first_line {
+                Some(first_line) if glyph_run.style().brush.id == inline_root_id => first_line,
+                _ => glyph_run.style().brush.id,
+            };
+            let (fake_bold, fake_slant) = synthesis_allowed(doc, synthesis_node);
             let glyph_xform = synthesis
                 .skew()
                 .filter(|_| fake_slant)
@@ -2150,7 +2198,7 @@ pub(crate) fn stroke_text<'a, S: PaintScene>(
                     .map(|glyph| anyrender::Glyph {
                         id: glyph.id as _,
                         x: if quarter_x {
-                            (((tx + glyph.x as f64) * 4.0).round() / 4.0 - tx) as f32
+                            (quarter_pixel(tx + glyph.x as f64) - tx) as f32
                         } else {
                             glyph.x
                         },
@@ -2187,17 +2235,54 @@ pub(crate) fn stroke_text<'a, S: PaintScene>(
                         f64::from(x1) + em,
                         baseline + f64::from(metrics.descent) + em * 0.5,
                     );
+                    // pyro: a shadow's offset is physical: turned into a vertical line's space.
+                    let turned;
+                    let shadow = match vertical {
+                        Some(vertical) => {
+                            let (x, y) = vertical.turned_offset((shadow.x as f32, shadow.y as f32));
+                            turned = TextShadow { x: f64::from(x), y: f64::from(y), ..shadow.clone() };
+                            &turned
+                        }
+                        None => shadow,
+                    };
                     draw_shadow(scene, shadow, scale, transform, ink, draw);
                 }
-                None if fill_color.components[3] > 0.0 || runs.is_some() => {
-                    // Only drawn runs are recorded: the PDF matches each drawn glyph run to the
-                    // next recorded one, so a run recorded but not drawn would stop the matching.
-                    if let Some(runs) = runs.as_mut() {
-                        runs.push(crate::TextRun::new(glyph_run, source, unshifted, kept.clone(), kept_extent));
+                None => {
+                    // pyro: `-webkit-text-stroke`, an outline of the glyphs over their fill
+                    // (centred on the outline, as Skia strokes; WPT css-text
+                    // `text-stroke-width-subpixel`).
+                    let stroke = doc.get_node(glyph_run.style().brush.id).and_then(|node| node.primary_styles()).and_then(|style| {
+                        let itext = style.get_inherited_text();
+                        let width = itext._webkit_text_stroke_width.to_f32_px();
+                        let color = itext._webkit_text_stroke_color.resolve_to_absolute(&style.clone_color()).as_srgb_color();
+                        (width > 0.0 && color.components[3] > 0.0).then_some((width, color))
+                    });
+                    if fill_color.components[3] > 0.0 || runs.is_some() {
+                        // Only drawn runs are recorded: the PDF matches each drawn glyph run to
+                        // the next recorded one, so a run recorded but not drawn would stop the
+                        // matching.
+                        if let Some(runs) = runs.as_mut() {
+                            runs.push(crate::TextRun::new(glyph_run, source, unshifted, kept.clone(), kept_extent));
+                        }
+                        draw(scene, fill_color, transform);
                     }
-                    draw(scene, fill_color, transform);
+                    if let Some((width, color)) = stroke {
+                        let stroke = kurbo::Stroke::new(f64::from(width) * scale);
+                        scene.draw_glyphs(
+                            font,
+                            font_size,
+                            false,
+                            normalized_coords,
+                            kurbo::Vec2::default(),
+                            &stroke,
+                            &anyrender::Paint::from(color),
+                            1.0,
+                            transform,
+                            glyph_xform,
+                            glyphs(),
+                        );
+                    }
                 }
-                None => {}
             }
         };
 
@@ -2302,6 +2387,18 @@ pub(crate) fn draw_text_annotations<S: PaintScene>(
                             }
                         });
                         if marked && kept {
+                            // pyro: centred on the character, not on it and the letter spacing
+                            // after it (WPT css-text `letter-spacing-211`).
+                            let spacing = doc
+                                .get_node(node_id)
+                                .and_then(|node| node.primary_styles())
+                                .map_or(0.0, |style| {
+                                    let spacing = &style.get_inherited_text().letter_spacing.0;
+                                    let em = style.get_font().font_size.computed_size().px();
+                                    f64::from(spacing.resolve(style::values::computed::Length::new(em)).px().max(0.0))
+                                })
+                                * scale;
+                            let extent = (extent.0, (extent.1 - spacing).max(extent.0));
                             marks.push((index, extent, content));
                         }
                     }
@@ -2481,7 +2578,7 @@ fn draw_glyph_run<S: PaintScene>(
         glyph_run.positioned_glyphs().map(|glyph| anyrender::Glyph {
             id: glyph.id as _,
             x: if quarter_x {
-                (((tx + glyph.x as f64) * 4.0).round() / 4.0 - tx) as f32
+                (quarter_pixel(tx + glyph.x as f64) - tx) as f32
             } else {
                 glyph.x
             },

@@ -50,6 +50,10 @@ pub struct Analysis {
     ///
     /// Empty when `levels` is.
     pub(crate) object_levels: Vec<BidiLevel>,
+
+    /// pyro: the byte offset and base level of each paragraph after the first, when one's base
+    /// level differs from the first's (an `Auto` base direction, CSS `unicode-bidi: plaintext`).
+    pub(crate) paragraph_levels: Vec<(usize, BidiLevel)>,
 }
 
 impl Analysis {
@@ -66,7 +70,15 @@ impl Analysis {
         self.info.clear();
         self.levels.clear();
         self.object_levels.clear();
+        self.paragraph_levels.clear();
         self.paragraph_level = BidiLevel::new(0);
+    }
+
+    /// pyro: the byte offset and base level of each paragraph after the first, when a base level
+    /// differs from the first paragraph's ([`Self::paragraph_level`]); empty otherwise.
+    #[inline(always)]
+    pub fn paragraph_levels(&self) -> &[(usize, BidiLevel)] {
+        &self.paragraph_levels
     }
 
     /// pyro: the bidi level of each object of [`AnalysisOptions::objects`](crate::AnalysisOptions),
@@ -259,6 +271,7 @@ impl CharInfo {
     const EMOJI_PRESENTATION_SHIFT: u16 = 10;
     const EMOJI_MODIFIER_SHIFT: u16 = 11;
     const EMOJI_MODIFIER_BASE_SHIFT: u16 = 12;
+    const PHRASE_FALLBACK_SHIFT: u16 = 13;
 
     const VARIATION_SELECTOR_MASK: u16 = 1 << Self::VARIATION_SELECTOR_SHIFT;
     const REGION_INDICATOR_MASK: u16 = 1 << Self::REGION_INDICATOR_SHIFT;
@@ -273,6 +286,7 @@ impl CharInfo {
     const EMOJI_PRESENTATION_MASK: u16 = 1 << Self::EMOJI_PRESENTATION_SHIFT;
     const EMOJI_MODIFIER_MASK: u16 = 1 << Self::EMOJI_MODIFIER_SHIFT;
     const EMOJI_MODIFIER_BASE_MASK: u16 = 1 << Self::EMOJI_MODIFIER_BASE_SHIFT;
+    const PHRASE_FALLBACK_MASK: u16 = 1 << Self::PHRASE_FALLBACK_SHIFT;
 
     fn new(
         script: Script,
@@ -313,6 +327,20 @@ impl CharInfo {
     fn set_soft_wrap_opportunity(&mut self, value: bool) {
         self.flags = self.flags & !Self::SOFT_WRAP_OPPORTUNITY_MASK
             | (value as u16) << Self::SOFT_WRAP_OPPORTUNITY_SHIFT;
+    }
+
+    /// pyro: sets whether `word-break: normal` would have a soft wrap opportunity before the
+    /// character where `auto-phrase` has none ([`Self::is_phrase_fallback`]).
+    #[inline(always)]
+    fn set_phrase_fallback(&mut self, value: bool) {
+        self.flags = self.flags & !Self::PHRASE_FALLBACK_MASK | (value as u16) << Self::PHRASE_FALLBACK_SHIFT;
+    }
+
+    /// pyro: whether there is a soft wrap opportunity before the character only for a line whose
+    /// phrase does not fit (CSS `word-break: auto-phrase` falls back to `normal` there).
+    #[inline(always)]
+    pub fn is_phrase_fallback(self) -> bool {
+        self.flags & Self::PHRASE_FALLBACK_MASK != 0
     }
 
     /// Whether this character is a variation selector.
@@ -844,6 +872,8 @@ pub(crate) fn analyze_text(
 
     quotation_mark_breaks(text, options, &mut analysis.info);
     keep_all_hyphen_breaks(text, options, &mut analysis.info);
+    phrase_breaks(text, options, &data_sources, &mut analysis.info);
+    no_soft_hyphen_breaks(text, options, &mut analysis.info);
 
     if needs_bidi_resolution || options.base_direction == BaseDirection::Rtl {
         let class_of = |ch: char| {
@@ -857,13 +887,16 @@ pub(crate) fn analyze_text(
         let mut objects = options.objects.iter().peekable();
         let mut is_object = Vec::with_capacity(analysis.info.len() + options.objects.len());
         let mut stream = Vec::with_capacity(is_object.capacity());
+        let mut stream_bytes = Vec::with_capacity(is_object.capacity());
         for (index, ch) in text.char_indices() {
             while objects.next_if(|&&at| at <= index).is_some() {
                 stream.push(class_of(object));
                 is_object.push(true);
+                stream_bytes.push(index);
             }
             stream.push(class_of(ch));
             is_object.push(false);
+            stream_bytes.push(index);
         }
         for _ in objects {
             stream.push(class_of(object));
@@ -874,6 +907,7 @@ pub(crate) fn analyze_text(
         // paragraph level is the first one's.
         analysis.levels.clear();
         analysis.object_levels.clear();
+        analysis.paragraph_levels.clear();
         let mut start = 0;
         while start < stream.len() {
             let end = stream[start..]
@@ -883,6 +917,10 @@ pub(crate) fn analyze_text(
             analyzer.bidi.resolve(stream[start..end].iter().cloned(), options.base_direction);
             if start == 0 {
                 analysis.paragraph_level = analyzer.bidi.base_level();
+            } else {
+                analysis
+                    .paragraph_levels
+                    .push((stream_bytes.get(start).copied().unwrap_or(text.len()), analyzer.bidi.base_level()));
             }
             for (&level, &is_object) in analyzer.bidi.levels.iter().zip(&is_object[start..end]) {
                 if is_object {
@@ -892,6 +930,10 @@ pub(crate) fn analyze_text(
                 }
             }
             start = end;
+        }
+        let first = analysis.paragraph_level;
+        if analysis.paragraph_levels.iter().all(|&(_, level)| level == first) {
+            analysis.paragraph_levels.clear();
         }
     }
 }
@@ -924,6 +966,79 @@ fn keep_all_hyphen_breaks(text: &str, options: &AnalysisOptions<'_>, info: &mut 
         let (before, after) = (chars[index - 1].1, chars[index + 1].1);
         if before.is_alphanumeric() && after.is_alphabetic() {
             info[index + 1].set_soft_wrap_opportunity(true);
+        }
+    }
+}
+
+/// pyro: a soft hyphen whose style ends no line there (`hyphens: none`) is no soft wrap
+/// opportunity, so it does not narrow min-content sizes either; under `word-break: auto-phrase`
+/// it is a phrase fallback. Runs after [`phrase_breaks`].
+fn no_soft_hyphen_breaks(text: &str, options: &AnalysisOptions<'_>, info: &mut [CharInfo]) {
+    if !text.contains('\u{ad}')
+        || !options.line_break.iter().any(|(_, config)| config.no_soft_hyphen_breaks || config.phrases)
+    {
+        return;
+    }
+    for (index, (byte, ch)) in text.char_indices().enumerate() {
+        if ch != '\u{ad}' || index + 1 >= info.len() {
+            continue;
+        }
+        let config = options.line_break.iter().find(|(range, _)| range.contains(&byte)).map(|(_, config)| config);
+        if config.is_some_and(|config| config.no_soft_hyphen_breaks) {
+            info[index + 1].set_soft_wrap_opportunity(false);
+        } else if config.is_some_and(|config| config.phrases) && info[index + 1].is_soft_wrap_opportunity() {
+            // `word-break: auto-phrase` hyphenates only a line whose phrase does not fit (WPT
+            // `word-break-auto-phrase-006`, `-008`).
+            info[index + 1].set_soft_wrap_opportunity(false);
+            info[index + 1].set_phrase_fallback(true);
+        }
+    }
+}
+
+/// pyro: CSS `word-break: auto-phrase`. Text is broken as under `keep-all`, plus between phrases,
+/// which Chromium finds with a Japanese phrase model (BudouX). Without a model, a phrase here ends
+/// after a run of hiragana (the particles and inflections that close a Japanese phrase) where a
+/// kanji or katakana word starts: `東京へ|行きましょう`, `楽しい|ドライブ`. Where `normal` would
+/// break and `keep-all` does not, the character is marked as a phrase fallback: the line breaker
+/// breaks there only on a line whose phrase does not fit.
+fn phrase_breaks(
+    text: &str,
+    options: &AnalysisOptions<'_>,
+    data_sources: &AnalysisDataSources,
+    info: &mut [CharInfo],
+) {
+    if !options.line_break.iter().any(|(_, config)| config.phrases) {
+        return;
+    }
+    let hiragana = |ch: char| matches!(ch as u32, 0x3041..=0x309F);
+    let word_start = |ch: char| {
+        matches!(ch as u32, 0x30A1..=0x30FA | 0x3400..=0x4DBF | 0x4E00..=0x9FFF | 0xF900..=0xFAFF
+            | 0x20000..=0x3FFFD)
+    };
+    let starts: Vec<usize> = text.char_indices().map(|(byte, _)| byte).collect();
+    for (range, config) in options.line_break {
+        if !config.phrases || config.word_break != WordBreak::KeepAll || config.line_break == LineBreak::Anywhere {
+            continue;
+        }
+        let normal = LineBreakConfig { word_break: WordBreak::Normal, ..*config };
+        let first = starts.partition_point(|&byte| byte < range.start);
+        for pos in data_sources.line_segmenter(SegmenterKey::new(&normal)).segment_str(&text[range.clone()]) {
+            if pos == 0 || range.start + pos >= range.end {
+                continue;
+            }
+            let Ok(index) = starts[first..].binary_search(&(range.start + pos)).map(|at| first + at) else {
+                continue;
+            };
+            if info[index].is_soft_wrap_opportunity() {
+                continue;
+            }
+            let before = text[..range.start + pos].chars().next_back().unwrap_or(' ');
+            let after = text[range.start + pos..].chars().next().unwrap_or(' ');
+            if hiragana(before) && word_start(after) {
+                info[index].set_soft_wrap_opportunity(true);
+            } else {
+                info[index].set_phrase_fallback(true);
+            }
         }
     }
 }

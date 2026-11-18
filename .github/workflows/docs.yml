@@ -4,34 +4,54 @@ name: Docs
 # its Robodev Lite project (website/robodev/.robodev) when main changes.
 # The deploy needs the project's deploy key as the ROBODEV_DEPLOY_KEY secret
 # (Robodev project → Connect → Deploy keys); without it the deploy step is skipped.
+# The WPT status pages (/status/wpt.html) are generated from the wpt-results branch (bench/wpt/status-export.mjs),
+# so the site also rebuilds after each successful WPT run on main, whose `status` job pushes that branch. (A push to
+# wpt-results itself starts nothing: GitHub reads a push's workflows from the pushed branch, which has none.)
 
 on:
   pull_request:
     paths:
       - website/**
       - .github/workflows/docs.yml
+      - bench/wpt/status-export.mjs
   push:
     branches: [main]
     paths:
       - website/**
       - .github/workflows/docs.yml
+      - bench/wpt/status-export.mjs
+  workflow_run:
+    workflows: [WPT, WPT full]
+    types: [completed]
+    branches: [main]
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: docs-${{ github.ref }}
+  group: docs-${{ github.event_name == 'pull_request' && github.ref || 'deploy' }}
   cancel-in-progress: true
 
 jobs:
   build:
+    # WPT full exports from its own status job, which runs even when a shard failed.
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' || github.event.workflow_run.name == 'WPT full' }}
     runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: website
     steps:
       - uses: actions/checkout@v4
+      - name: Fetch the WPT results
+        working-directory: .
+        run: |
+          if git fetch --depth=1 origin wpt-results; then
+            git worktree add --detach "$RUNNER_TEMP/wpt-results" FETCH_HEAD
+            echo "WPT_RESULTS_DIR=$RUNNER_TEMP/wpt-results" >> "$GITHUB_ENV"
+          else
+            echo "::warning::no wpt-results branch; the status page is a placeholder"
+          fi
       - uses: oven-sh/setup-bun@v2
       - uses: actions/setup-node@v4
         with:

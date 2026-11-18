@@ -1344,6 +1344,10 @@ impl Renderer {
         let Some(m) = self.mirrors.get_mut(&page) else { return };
         // Called on every geometry read: without news a pass would change nothing.
         let changed = changed || m.doc.needs_resolve();
+        if changed {
+            // Hover, focus or active moved, or something waits to restyle.
+            m.undisplayed.get_mut().clear();
+        }
         if changed && style_only {
             let generation = m.doc.root_node().tree().geometry_generation();
             m.doc.resolve_style(0.0);
@@ -1391,12 +1395,47 @@ impl Renderer {
         page: u64,
         key: u64,
     ) -> Option<style::servo_arc::Arc<style::properties::ComputedValues>> {
+        self.element_style_resolved(page, key).map(|(style, _)| style)
+    }
+
+    /// [`Renderer::element_style`], and whether it was resolved on demand
+    /// (the element is in a `display: none` subtree, so Stylo kept none):
+    /// such a style holds until the document changes.
+    pub fn element_style_resolved(
+        &self,
+        page: u64,
+        key: u64,
+    ) -> Option<(style::servo_arc::Arc<style::properties::ComputedValues>, bool)> {
         let m = self.mirrors.get(&page)?;
         let id = m.node(key)?;
         match m.doc.get_node(id)?.primary_styles() {
-            Some(s) => Some((*s).clone()),
-            None => m.doc.resolve_undisplayed_style(id),
+            Some(s) => Some(((*s).clone(), false)),
+            None => {
+                let mut caches = m.undisplayed.try_borrow_mut().ok()?;
+                m.doc.resolve_undisplayed_style_cached(id, &mut caches).map(|s| (s, true))
+            }
         }
+    }
+
+    /// Forgets the `display: none` styles resolved on demand for `page`:
+    /// its document is about to change (every sync).
+    pub fn clear_undisplayed(&self, page: u64) {
+        if let Some(m) = self.mirrors.get(&page) {
+            if let Ok(mut caches) = m.undisplayed.try_borrow_mut() {
+                caches.clear();
+            }
+        }
+    }
+
+    /// The starting style (`@starting-style`) of the element keyed `key` in `page`'s persistent
+    /// document, as of the last sync (`blitz_dom::BaseDocument::starting_style`).
+    pub fn element_starting_style(
+        &self,
+        page: u64,
+        key: u64,
+    ) -> Option<style::servo_arc::Arc<style::properties::ComputedValues>> {
+        let m = self.mirrors.get(&page)?;
+        m.doc.starting_style(m.node(key)?)
     }
 
     /// Whether the element keyed `key` in `page`'s persistent document is
@@ -1618,6 +1657,26 @@ impl Renderer {
     /// The `position: sticky` elements of `page`'s persistent document as
     /// last synced (by key, with their sticky inputs): the set Blitz's style
     /// traversal keeps, not a pass over the document.
+    /// [`Self::sticky_elements`]' entry for the element keyed `key`, alone:
+    /// `None` unless it is a displayed `position: sticky` element. A rect
+    /// query needs only its ancestors', not every sticky box of the page.
+    pub fn sticky_element(&self, page: u64, key: u64) -> Option<StickyBox> {
+        let m = self.mirrors.get(&page)?;
+        let g = self.geometry.get(&page)?;
+        let doc = &m.doc;
+        let id = m.node(key)?;
+        let node = doc.get_node(id)?;
+        if !node.is_element() || !node.primary_styles().is_some_and(|s| !s.clone_display().is_none()) {
+            return None;
+        }
+        let b = g.element_box(doc, id)?;
+        (b.position == BoxPosition::Sticky).then(|| {
+            let (mut s, cb) = g.sticky_box(doc, id);
+            s.cb = cb.and_then(|cb| m.key_of(cb));
+            s
+        })
+    }
+
     pub fn sticky_elements(&self, page: u64) -> Option<Vec<(u64, StickyBox)>> {
         let m = self.mirrors.get(&page)?;
         let g = self.geometry.get(&page)?;
@@ -3219,6 +3278,30 @@ mod settle_resolution_tests {
         assert_eq!(advances, 0, "a color-only style read must not perform a full layout");
     }
 
+    /// Danex lab canvas: the containing block of an absolutely positioned chain turned
+    /// `display: none` in the sync that removed the innermost box. Laid out hidden, the block kept
+    /// its hoisted list, rounding walked it to the removed (dropped) box: `invalid SlotMap key`.
+    #[test]
+    fn hidden_containing_block_drops_its_hoisted_boxes() {
+        let source = "<!doctype html><div id=box style='position:relative;width:200px;height:200px'><div style='position:absolute;top:0;left:0;width:100px;height:100px'><div style='position:absolute;top:5px;left:5px;width:10px;height:10px'></div></div></div>";
+        let (snap, key) = fixture(source);
+        let tree = &snap.live.as_ref().unwrap().tree;
+        let index = tree.nodes.iter().position(|n| n.key == key).unwrap() as u32;
+        let inner = tree.nodes.iter().find(|n| n.parent == index && matches!(n.kind, TreeKind::Element { .. })).unwrap().key;
+        let (hidden, _) = fixture(&source.replace("position:relative;", "position:relative;display:none;"));
+        let kind = hidden.live.as_ref().unwrap().tree.nodes.iter().find(|n| n.key == key).unwrap().kind.clone();
+        let fetcher: Arc<dyn Fetcher> = Arc::new(NoFetch);
+        let mut renderer = Renderer::new();
+        renderer.sync_layout(&snap, &fetcher).unwrap();
+        let cb = renderer.mirrors[&1].node(key).unwrap();
+        assert_eq!(renderer.mirrors[&1].doc.get_node(cb).unwrap().hoisted_children.borrow().len(), 1);
+        let ops = [DeltaOp::Children { parent: Some(inner), kids: Vec::new(), nodes: Vec::new() }, DeltaOp::Node { key, kind }];
+        renderer.sync_delta(1, &ops, (200, 100, 1.0, false, false), false).unwrap();
+        let doc = &renderer.mirrors[&1].doc;
+        let hoisted = doc.get_node(cb).unwrap().hoisted_children.borrow().clone();
+        assert!(hoisted.is_empty(), "a display: none block keeps hoisted boxes {hoisted:?}");
+    }
+
     #[test]
     fn style_only_width_delta_keeps_dirty_geometry_for_the_next_full_sync() {
         let source = "<!doctype html><div id=box style='width:50px;height:20px'></div>";
@@ -3576,5 +3659,33 @@ impl blitz_dom::HtmlParserProvider for SvgImageParser {
 
     fn parse_svg_document(&self, svg: &str, config: DocumentConfig) -> Option<Box<dyn blitz_dom::Document>> {
         blitz_html::HtmlProvider.parse_svg_document(svg, config)
+    }
+
+    /// A frame's document (the render snapshot's `srcdoc`), with the page's own UA additions.
+    fn parse_document(&self, html: &str, mut config: DocumentConfig) -> Box<dyn blitz_dom::Document> {
+        config.ua_stylesheets.push(blitz_dom::UserAgentStylesheet::parse(NO_TRANSITIONS));
+        config.ua_stylesheets.push(blitz_dom::UserAgentStylesheet::parse(FILE_INPUT));
+        config.html_parser_provider = Some(Arc::new(SvgImageParser));
+        let mut doc = blitz_html::HtmlDocument::from_html(html, config);
+        // The frame's scrolled elements and moved sticky boxes, as the page has them.
+        for id in doc.query_selector_all("[data-pyro-scroll-left],[data-pyro-sticky]").unwrap_or_default() {
+            let Some(node) = doc.get_node_mut(id) else { continue };
+            let number = |s: &str| s.parse::<f64>().ok().filter(|v| v.is_finite());
+            let scroll = (
+                node.attr("data-pyro-scroll-left".into()).and_then(number),
+                node.attr("data-pyro-scroll-top".into()).and_then(number),
+            );
+            let sticky = node.attr("data-pyro-sticky".into()).and_then(|value| {
+                let mut parts = value.split(' ').map(number);
+                Some((parts.next()??, parts.next()??))
+            });
+            if let (Some(x), Some(y)) = scroll {
+                *node.scroll_offset_mut() = blitz_dom::Point { x, y };
+            }
+            if let Some((x, y)) = sticky {
+                node.set_sticky_offset(blitz_dom::Point { x, y });
+            }
+        }
+        Box::new(doc)
     }
 }

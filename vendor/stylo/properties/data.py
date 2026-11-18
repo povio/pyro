@@ -593,6 +593,7 @@ class Longhand(Property):
                 "MaskType",
                 "ObjectFit",
                 "BoxSizing",
+                "FrameSizing",
                 "FlexDirection",
                 "ListStylePosition",
                 "TextWrapStyle",

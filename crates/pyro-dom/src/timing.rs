@@ -163,6 +163,32 @@ struct Rule {
     /// The root of the tree whose sheet holds the rule (a document or a shadow root): its
     /// selectors match that tree's elements only (CSS Scoping). `None`: every element.
     scope: Option<NodeId>,
+    /// `::part()` names the selectors end with (CSS Shadow Parts): the selectors match the host,
+    /// and the rule applies to the elements of the host's shadow tree whose `part` attribute
+    /// holds every name. Empty: an ordinary rule.
+    part: Vec<String>,
+}
+
+/// `selector` split at a trailing `::part(<names>)`: the host's selector (`*` when there is
+/// none) and the names; `None` without one.
+fn part_selector(selector: &str) -> Option<(String, Vec<String>)> {
+    let selector = selector.trim();
+    let start = selector.rfind("::part(")?;
+    let inner = selector[start + "::part(".len()..].strip_suffix(')')?;
+    let names: Vec<String> = inner.split_whitespace().map(str::to_owned).collect();
+    if names.is_empty() || inner.contains(['(', ')', ':']) {
+        return None;
+    }
+    let host = selector[..start].trim();
+    Some((if host.is_empty() { "*".to_owned() } else { host.to_owned() }, names))
+}
+
+/// Whether element `el`'s `part` attribute holds every one of `names`.
+fn has_parts(dom: &Dom, el: NodeId, names: &[String]) -> bool {
+    let Some(parts) = dom.element(el).ok().and_then(|e| e.attr_local(&markup5ever::local_name!("part"))) else {
+        return false;
+    };
+    names.iter().all(|name| parts.split_ascii_whitespace().any(|part| part == name))
 }
 
 /// One CSS animation an element's style asks for.
@@ -236,6 +262,23 @@ pub struct TimingRules {
     /// `var()` declarations as substituted, parsed: by property and text
     /// (`None`: invalid at computed-value time).
     substituted: std::cell::RefCell<rustc_hash::FxHashMap<(&'static str, String), Option<Rc<Vec<(Longhand, Value)>>>>>,
+    /// [`TimingRules::animation_candidates`] as last computed, kept up to date
+    /// from the DOM's change journal.
+    candidates: std::cell::RefCell<CandidateCache>,
+    /// Whether an animation rule's selectors could change their matches on
+    /// a text change or a `style` attribute change (`:empty`, `:has()`,
+    /// `[style]`): computed once.
+    journal_unsafe: std::cell::OnceCell<bool>,
+}
+
+/// The animation candidates of one document at one DOM version.
+#[derive(Default)]
+struct CandidateCache {
+    /// DOM identity, version and document they were computed at.
+    at: Option<(u64, u64, NodeId)>,
+    elements: Vec<NodeId>,
+    /// The elements whose `style` attribute declares an animation.
+    inline: FxHashSet<NodeId>,
 }
 
 /// The cascaded value of each longhand for one element ([`TimingRules::lists`]):
@@ -313,11 +356,71 @@ impl TimingRules {
     /// The elements of `doc` that may run an animation: those a rule
     /// declaring an animation name matches, and those whose `style`
     /// attribute declares one.
+    ///
+    /// Cached per DOM version: after changes the journal shows to be text or
+    /// `style` attributes only (a measuring probe written and read in a loop),
+    /// the rules' matches stand and only those elements' inline declarations
+    /// are checked again, instead of querying every rule over the document
+    /// on each style flush.
     pub fn animation_candidates(&self, dom: &Dom, doc: NodeId) -> Vec<NodeId> {
         if self.keyframes.is_empty() {
             return Vec::new();
         }
-        self.candidates(dom, doc, Longhand::AnimationName, "animation")
+        let now = (dom.uid(), dom.version(), doc);
+        let mut cache = self.candidates.borrow_mut();
+        if cache.at == Some(now) {
+            return cache.elements.clone();
+        }
+        if let Some((uid, since, at_doc)) = cache.at {
+            if uid == now.0 && at_doc == doc && !self.journal_unsafe() && self.only_text_or_style_since(dom, since, &cache.inline) {
+                cache.at = Some(now);
+                return cache.elements.clone();
+            }
+        }
+        let elements = self.candidates(dom, doc, Longhand::AnimationName, "animation");
+        let inline = elements.iter().copied().filter(|&id| inline_declares(dom, id, "animation")).collect();
+        *cache = CandidateCache { at: Some(now), elements: elements.clone(), inline };
+        elements
+    }
+
+    /// Whether every change after `since` is a text change or a `style`
+    /// attribute change that leaves the element's inline animation
+    /// declaration as it was (in `inline` or not).
+    fn only_text_or_style_since(&self, dom: &Dom, since: u64, inline: &FxHashSet<NodeId>) -> bool {
+        let Some(changes) = dom.changes_since(since) else { return false };
+        let style = crate::dom::attr_name_hash("style");
+        for change in changes {
+            match change {
+                crate::dom::Change::Text(_) => {}
+                // A text or comment node inserted or removed (`textContent = …`): no selector sees
+                // it but `:empty` and `:has()` (journal_unsafe).
+                crate::dom::Change::Inserted(_, node) | crate::dom::Change::Removed(_, node, _) => {
+                    let id = dom.id_of(node);
+                    if dom.check(id).is_err() || dom.n(node).is_element() {
+                        return false;
+                    }
+                }
+                crate::dom::Change::Attr(idx, name, false) if name == style => {
+                    // A slot freed or reused later shows as a removal or insertion further on.
+                    let id = dom.id_of(idx);
+                    if inline_declares(dom, id, "animation") != inline.contains(&id) {
+                        return false;
+                    }
+                }
+                _ => return false,
+            }
+        }
+        true
+    }
+
+    fn journal_unsafe(&self) -> bool {
+        *self.journal_unsafe.get_or_init(|| {
+            use cssparser::ToCss;
+            self.rules.iter().any(|rule| {
+                let text = rule.selectors.to_css_string().to_ascii_lowercase();
+                text.contains(":empty") || text.contains(":has") || text.contains("[style")
+            })
+        })
     }
 
     fn candidates(&self, dom: &Dom, doc: NodeId, longhand: Longhand, inline_word: &str) -> Vec<NodeId> {
@@ -335,6 +438,16 @@ impl TimingRules {
                 None => document,
             };
             for idx in crate::stylo::select::query(dom, root, &rule.selectors, false) {
+                if !rule.part.is_empty() {
+                    // The host's shadow tree's elements with the parts.
+                    let Ok(Some(shadow)) = dom.shadow_root(dom.id_of(idx)) else { continue };
+                    for id in dom.descendants(shadow).into_iter().flatten() {
+                        if has_parts(dom, id, &rule.part) && seen.insert(id.index()) {
+                            out.push(id);
+                        }
+                    }
+                    continue;
+                }
                 if seen.insert(idx) {
                     out.push(dom.id_of(idx));
                 }
@@ -342,11 +455,7 @@ impl TimingRules {
         }
         if let Ok(descendants) = dom.descendants(doc) {
             for id in descendants {
-                let inline = dom
-                    .element(id)
-                    .ok()
-                    .and_then(|e| e.attr_local(&markup5ever::local_name!("style")))
-                    .is_some_and(|s| s.contains(inline_word));
+                let inline = inline_declares(dom, id, inline_word);
                 if inline && seen.insert(id.index()) {
                     out.push(id);
                 }
@@ -371,18 +480,29 @@ impl TimingRules {
             };
         // The rules that match, with their specificity, once for all longhands: those of the
         // element's own tree.
-        let tree = dom.id_of(dom.root_idx(idx));
+        let tree_root = dom.root_idx(idx);
+        let tree = dom.id_of(tree_root);
+        // A part's host: the host of the shadow tree it is in.
+        let host = dom.fragment_host(tree).ok().flatten().and_then(|host| dom.check(host).ok());
         let matching: Vec<(u32, usize, &Rule)> = self
             .rules
             .iter()
             .enumerate()
-            .filter(|(_, rule)| rule.scope.is_none_or(|scope| scope == tree))
             .filter_map(|(order, rule)| {
+                let (target, target_tree) = if rule.part.is_empty() {
+                    (idx, tree)
+                } else {
+                    let host = host.filter(|_| has_parts(dom, el, &rule.part))?;
+                    (host, dom.id_of(dom.root_idx(host)))
+                };
+                if !rule.scope.is_none_or(|scope| scope == target_tree) {
+                    return None;
+                }
                 let specificity = rule
                     .selectors
                     .slice()
                     .iter()
-                    .filter(|s| crate::stylo::select::matches(dom, idx, &List::from_one((*s).clone())))
+                    .filter(|s| crate::stylo::select::matches(dom, target, &List::from_one((*s).clone())))
                     .map(|s| s.specificity())
                     .max()?;
                 Some((specificity, order, rule))
@@ -690,7 +810,7 @@ pub fn changed_longhands_with(
     use style::values::animated::{Animate, Procedure};
     // Different, and values Stylo can animate between (`width: auto` to a
     // length starts none; properties Stylo animates discretely, `float` or
-    // `display`, still do). Animated values exist for physical longhands
+    // `display`, only with `allow_discrete`). Animated values exist for physical longhands
     // only: a logical one (`inline-size`) is mapped through the after-change
     // style's writing mode.
     let differs = |longhand: style::properties::LonghandId| {
@@ -701,7 +821,15 @@ pub fn changed_longhands_with(
                 AnimationValue::from_computed_values(physical, before),
                 AnimationValue::from_computed_values(physical, after),
             ) {
-                (Some(a), Some(b)) => allow_discrete || a.animate(&b, Procedure::Interpolate { progress: 0.5 }).is_ok(),
+                // (A property Stylo animates discretely transitions only with `allow-discrete`,
+                // as in Chromium, css-transitions-2 §2.1, even where its `Animate` succeeds; WPT
+                // `*-no-interpolation`, `display-interpolation`.)
+                (Some(a), Some(b)) => {
+                    allow_discrete
+                        || (!longhand.is_discrete_animatable()
+                            && a.animate(&b, Procedure::Interpolate { progress: 0.5 })
+                                .is_ok_and(|v| !crate::animation::defers_matrix(&v)))
+                }
                 _ => false,
             }
     };
@@ -822,8 +950,27 @@ fn rule_list(p: &mut Parser<'_>, src: &str, viewport: &Viewport, out: &mut Timin
                     if mentions(body) {
                         let declarations = declarations(body);
                         if !declarations.is_empty() {
-                            if let Some(selectors) = crate::stylo::select::parse(prelude) {
-                                out.rules.push(Rule { selectors, declarations, scope: None });
+                            // `::part()` selectors become rules of their own on the host.
+                            let mut plain = Vec::new();
+                            for selector in split_selectors(prelude) {
+                                match part_selector(selector) {
+                                    Some((host, part)) => {
+                                        if let Some(selectors) = crate::stylo::select::parse(&host) {
+                                            out.rules.push(Rule {
+                                                selectors,
+                                                declarations: declarations.clone(),
+                                                scope: None,
+                                                part,
+                                            });
+                                        }
+                                    }
+                                    None => plain.push(selector),
+                                }
+                            }
+                            if !plain.is_empty() {
+                                if let Some(selectors) = crate::stylo::select::parse(&plain.join(",")) {
+                                    out.rules.push(Rule { selectors, declarations, scope: None, part: Vec::new() });
+                                }
                             }
                         }
                     }
@@ -833,6 +980,24 @@ fn rule_list(p: &mut Parser<'_>, src: &str, viewport: &Viewport, out: &mut Timin
             Ok(())
         });
     }
+}
+
+/// The selectors of a selector list's text, split at its top-level commas.
+fn split_selectors(prelude: &str) -> Vec<&str> {
+    let (mut out, mut depth, mut start) = (Vec::new(), 0i32, 0);
+    for (i, c) in prelude.char_indices() {
+        match c {
+            '(' | '[' => depth += 1,
+            ')' | ']' => depth -= 1,
+            ',' if depth == 0 => {
+                out.push(&prelude[start..i]);
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    out.push(&prelude[start..]);
+    out
 }
 
 /// The longhands the keyframes of a `@keyframes` block declare (`p` is in
@@ -1017,6 +1182,15 @@ mod tests {
     }
 
     #[test]
+    fn part_selectors_split_into_host_and_names() {
+        assert_eq!(split_selectors("#a::part(x), :is(b, c) d"), vec!["#a::part(x)", " :is(b, c) d"]);
+        assert_eq!(part_selector("#shadow::part(target)"), Some(("#shadow".to_owned(), vec!["target".to_owned()])));
+        assert_eq!(part_selector("::part(a b)"), Some(("*".to_owned(), vec!["a".to_owned(), "b".to_owned()])));
+        assert_eq!(part_selector("x::part(a):hover"), None);
+        assert_eq!(part_selector("div > p"), None);
+    }
+
+    #[test]
     fn declarations_parse_as_the_cascade_parses_them() {
         let a = declared("animation", "anim 100s -99.9s 2");
         assert_eq!(
@@ -1118,4 +1292,12 @@ mod tests {
         assert_eq!(shown(Longhand::TransitionDuration, "0.150000001s"), "0.15s");
         assert_eq!(shown(Longhand::AnimationName, "a b"), "\"a b\"");
     }
+}
+
+/// Whether `id`'s `style` attribute mentions `word` (`animation`, `transition`).
+fn inline_declares(dom: &Dom, id: NodeId, word: &str) -> bool {
+    dom.element(id)
+        .ok()
+        .and_then(|e| e.attr_local(&markup5ever::local_name!("style")))
+        .is_some_and(|s| s.contains(word))
 }

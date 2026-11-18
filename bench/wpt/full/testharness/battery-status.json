@@ -1,0 +1,24 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "battery-status/api-defined.https.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "battery-status/battery-allowed-by-permissions-policy-attribute-redirect-on-load.https.sub.html": {"status":"complete","ms":10000,"n":2,"pass":[]},
+  "battery-status/battery-allowed-by-permissions-policy.https.sub.html": {"status":"complete","ms":20,"n":3,"pass":[]},
+  "battery-status/battery-allowed-in-same-origin-iframe.https.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "battery-status/battery-default-permissions-policy.https.sub.html": {"status":"complete","ms":30,"n":3,"pass":[]},
+  "battery-status/battery-disallowed-in-cross-origin-iframe.https.sub.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "battery-status/battery-promise-window.https.html": {"status":"complete","ms":10000,"n":1,"pass":[]},
+  "battery-status/battery-promise.https.html": {"status":"complete","ms":10,"n":2,"pass":[]},
+  "battery-status/idlharness.https.window.html": {"status":"complete","ms":140,"n":39,"pass":["Navigator includes NavigatorConcurrentHardware: member names are unique","Navigator includes NavigatorContentUtils: member names are unique","Navigator includes NavigatorCookies: member names are unique","Navigator includes NavigatorID: member names are unique","Navigator includes NavigatorLanguage: member names are unique","Navigator includes NavigatorOnLine: member names are unique","Navigator includes NavigatorPlugins: member names are unique","Partial interface Navigator: member names are unique","Partial interface Navigator: original interface defined","Partial interface Navigator[2]: member names are unique","Partial interface mixin NavigatorID: member names are unique","idl_test validation"]},
+  "battery-status/multiple-promises.https.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "battery-status/no-leak-on-detached-use.https.html": {"status":"complete","ms":20,"n":2,"pass":[]},
+  "battery-status/page-visibility.https.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "battery-status/restricted-level-precision.https.html": {"status":"complete","ms":10,"n":1,"pass":[]}
+ }
+}

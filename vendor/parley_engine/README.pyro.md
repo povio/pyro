@@ -103,7 +103,9 @@ tab's advance to the tab stop it reaches (parley's README.pyro.md, "Tab stops").
 
 `shape/shaped_text.rs`: `RunMetrics::hyphen` / `ShapedRun::hyphen` (the glyph and advance of the font's U+2010, else
 U+002D, kept with the run's cached metrics), `ShapedText::glyph_of` (any other character of a run's font) and
-`ShapedText::set_cluster_glyph`; `shape/data.rs`: `CharacterFlags::is_soft_hyphen`. parley's line breaker shows a
+`ShapedText::set_cluster_glyph`, `ShapedText::show_hyphen` / `restore_cluster` (round 4: several glyphs, appended to
+the glyph array, after the cluster's own when the soft hyphen was merged into it; `ClusterGlyphs` is what it had);
+`shape/data.rs`: `CharacterFlags::is_soft_hyphen`, `ShapedClusterFlags::with_glyph_len`. parley's line breaker shows a
 hyphen where a line ends at a soft hyphen (parley's README.pyro.md, "Soft hyphens").
 
 ## Dictionary line breaks
@@ -183,3 +185,22 @@ parley which characters justification passes over and which scripts it does not 
   `control-chars-*`).
 - `src/analysis.rs` (`keep_all_hyphen_breaks`): under `word-break: keep-all` the line may break after a hyphen-minus
   before a letter, as under `normal` (ICU4X's keep-all data drops HY ÷ AL; WPT `word-break-keep-all-u002d`).
+
+## Phrase breaks, soft hyphens that end no line, paragraph levels (round 4 lane A)
+
+- `analyzer.rs` (`LineBreakConfig::phrases`), `analysis.rs` (`phrase_breaks`): CSS `word-break: auto-phrase`.
+  Chromium finds phrases with BudouX; here a phrase ends after hiragana where a kanji or katakana word starts, where
+  `normal` would break (`東京へ|行きましょう`, `楽しい|ドライブ`). The rest of `normal`'s opportunities that `keep-all`
+  lacks become phrase fallbacks (`CharInfo::is_phrase_fallback`, `CharacterFlags::is_phrase_fallback`).
+- `analyzer.rs` (`LineBreakConfig::no_soft_hyphen_breaks`), `analysis.rs` (`no_soft_hyphen_breaks`): no soft wrap
+  opportunity after a soft hyphen of `hyphens: none`; under `auto-phrase` a phrase fallback.
+- `shape/data.rs` (`CharacterFlags::is_empty_box_strut`): U+2061, parley's strut of an empty inline box.
+- `analysis.rs` (`Analysis::paragraph_levels`): the byte offset and base level of each later paragraph, when one
+  differs from the first's (an `Auto` base direction).
+- `src/shape/shaper.rs` (`shapes_word_by_word`, round 4 lane D; narrowed by the v0.0.42 release check): a font without
+  `GSUB`, `GPOS` and a legacy `kern` table breaks runs at every space and no-break space. Chrome 147 kerns across spaces
+  in the macOS Times and Helvetica (legacy `kern`), so those fonts shape whole runs; a no-break space is shaped as a
+  space, as Blink normalizes it, so it kerns as the space does (WPT CSS2 `color-applies-to-*`).
+- `shape/shaped_text.rs` `legacy_kern_across`, `cluster_is_rtl` (round 4 lane F): see parley's README (legacy `kern`
+  pairs across line breaks).
+- Round 4 lane F, `shape/shaped_text.rs`: `default_vertical_advance`, `ShapedRun::upright_advance` / `set_run_upright_advance` (hyphens and `glyph_of` in upright runs).

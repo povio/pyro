@@ -1,0 +1,28 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "animation-worklet/animate-multiple-effects-on-different-targets-via-main-thread.https.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "animation-worklet/animation-worklet-inside-iframe.https.html": {"status":"complete","ms":10000,"n":1,"pass":[]},
+  "animation-worklet/animator-with-options.https.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "animation-worklet/cancel-non-accelerated-property.https.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "animation-worklet/idlharness.any.html": {"status":"complete","ms":130,"n":20,"pass":["AnimationWorkletGlobalScope interface: existence and properties of interface object","Partial namespace CSS: member names are unique","Partial namespace CSS: original namespace defined","Partial namespace CSS: valid exposure set","WorkletAnimationEffect interface: existence and properties of interface object","WorkletGroupEffect interface: existence and properties of interface object","idl_test setup","idl_test validation"]},
+  "animation-worklet/inactive-timeline.https.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "animation-worklet/multiple-effects-on-same-target-driven-by-individual-local-time.https.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "animation-worklet/playback-rate.https.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "animation-worklet/stateful-animator.https.html": {"status":"complete","ms":10,"n":6,"pass":[]},
+  "animation-worklet/worklet-animation-animator-name.https.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "animation-worklet/worklet-animation-creation.https.html": {"status":"complete","ms":10,"n":8,"pass":[]},
+  "animation-worklet/worklet-animation-get-computed-timing-progress-on-worklet-thread.https.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "animation-worklet/worklet-animation-local-time-null-1.https.html": {"status":"complete","ms":20,"n":4,"pass":[]},
+  "animation-worklet/worklet-animation-pause.https.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "animation-worklet/worklet-animation-with-effects-from-different-frames.https.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "animation-worklet/worklet-animation-with-fill-mode.https.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "animation-worklet/worklet-animation-with-invalid-effect.https.html": {"status":"complete","ms":10,"n":1,"pass":[]}
+ }
+}

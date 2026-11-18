@@ -1,0 +1,15 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "device-posture/device-posture-change-event.https.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "device-posture/device-posture-clear.https.html": {"status":"complete","ms":30,"n":1,"pass":[]},
+  "device-posture/device-posture-event-listener.https.html": {"status":"complete","ms":40,"n":1,"pass":[]},
+  "device-posture/idlharness.https.window.html": {"status":"complete","ms":90,"n":27,"fail":["DevicePosture interface object length","DevicePosture interface object name","DevicePosture interface: attribute onchange","DevicePosture interface: attribute type","DevicePosture interface: existence and properties of interface object","DevicePosture interface: existence and properties of interface prototype object","DevicePosture interface: existence and properties of interface prototype object's \"constructor\" property","DevicePosture interface: existence and properties of interface prototype object's @@unscopables property","DevicePosture interface: navigator.devicePosture must inherit property \"onchange\" with the proper type","DevicePosture interface: navigator.devicePosture must inherit property \"type\" with the proper type","DevicePosture must be primary interface of navigator.devicePosture","Navigator interface: attribute devicePosture","Stringification of navigator.devicePosture"],"h":"7297472a"}
+ }
+}

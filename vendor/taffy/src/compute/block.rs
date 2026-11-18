@@ -720,7 +720,16 @@ fn compute_inner(
         ratio_inset,
         box_sizing_adjustment,
     );
-    let (size, min_size, max_size) = (sizes.size, sizes.min_size, sizes.max_size);
+    let (size, mut min_size, max_size) = (sizes.size, sizes.min_size, sizes.max_size);
+    // pyro: the quirky html and body fill the viewport (`block_container_fill_height`)
+    let fill_height = if inputs.sizing_mode == SizingMode::InherentSize && size.height.is_none() {
+        tree.block_container_fill_height(node_id, parent_size)
+    } else {
+        None
+    };
+    if let Some(fill) = fill_height {
+        min_size.height = Some(min_size.height.map_or(fill, |min| min.max(fill)));
+    }
     // pyro: the height the aspect ratio gives a border box of a width, between `min-height` and
     // `max-height`, when the height follows the ratio.
     let ratio_height = |outer_width: f32| -> Option<f32> {
@@ -739,10 +748,14 @@ fn compute_inner(
     let content_keyword = |keyword: Dimension| keyword.is_sizing_keyword() && !keyword.is_stretch();
     let height_keywords = {
         let (min, max) = style.own_height_keywords();
-        (content_keyword(min), content_keyword(max))
+        // pyro: a height the preferred aspect ratio gives from the width is the box's intrinsic
+        // height: its content does not change it (WPT css-sizing `aspect-ratio/intrinsic-size-010`)
+        (content_keyword(min) && !height_follows_ratio, content_keyword(max) && !height_follows_ratio)
     };
+    // pyro: (a `min-height` keyword reads as `auto` in `min_size`)
     let min_height_is_content = height_follows_ratio
         && style.min_size().height.is_auto()
+        && style.own_height_keywords().0.is_auto()
         && !style.overflow().y.is_scroll_container()
         && !style.overflow().x.is_scroll_container();
 
@@ -773,6 +786,16 @@ fn compute_inner(
         height: known_dimensions
             .height
             .filter(|_| inputs.known_dimensions_are_definite.height)
+            // pyro: a known height that is no basis (a table cell's stretched height): the box's own
+            // `height` is (`LayoutInput::known_dimensions_are_definite`).
+            .or_else(|| {
+                (known_dimensions.height.is_some()
+                    && !inputs.known_dimensions_are_definite.height
+                    && inputs.sizing_mode == SizingMode::InherentSize
+                    && tree.block_container_restricts_percent_scrollers(node_id))
+                    .then(|| size.height.maybe_clamp(min_size.height, max_size.height))
+                    .flatten()
+            })
             // pyro: percentages resolve against the height the ratio gives
             .or_else(|| known_dimensions.width.and_then(ratio_height)),
     };
@@ -835,7 +858,11 @@ fn compute_inner(
         let percentage_height = percentage_basis_dimensions
             .height
             .or(if inputs.sizing_mode == SizingMode::InherentSize { size.height.maybe_max(min_size.height) } else { None })
+            // pyro: the quirky html and body (their filled height)
+            .or(fill_height)
             .or(if tree.block_container_passes_percentage_height(node_id) { parent_size.height } else { None })
+            // pyro: a multi-column strip's or a table cell's (`block_container_percentage_height`)
+            .or_else(|| tree.block_container_percentage_height(node_id))
             .maybe_sub(content_box_inset.vertical_axis_sum());
         let intrinsic_width = determine_content_based_container_width(tree, &items, available_width, percentage_height)
             + content_box_inset.horizontal_axis_sum();
@@ -882,6 +909,8 @@ fn compute_inner(
         // pyro
         .or_else(|| ratio_height(container_outer_width))
         .or(if inputs.sizing_mode == SizingMode::InherentSize { size.height.maybe_max(min_size.height) } else { None })
+        // pyro: the quirky html and body (their filled height)
+        .or(fill_height)
         // pyro: a box that is no containing block (an inline box laid out around its blocks)
         // hands its own containing block's height on.
         .or(if tree.block_container_passes_percentage_height(node_id) { parent_size.height } else { None })
@@ -908,6 +937,7 @@ fn compute_inner(
         last_child_bottom_margin_set,
         mut first_baseline,
         mut last_baseline,
+        mut dominant_baselines,
     ) = perform_final_layout_on_in_flow_children(
         tree,
         run_mode,
@@ -990,6 +1020,7 @@ fn compute_inner(
         let group_offset = compute_block_align_content_offset(align_content, free_space);
         first_baseline = first_baseline.map(|baseline| baseline + group_offset);
         last_baseline = last_baseline.map(|baseline| baseline + group_offset);
+        dominant_baselines = dominant_baselines.map(|b| b.map(|baseline| baseline + group_offset));
         for item in items.iter_mut() {
             if let Some(layout) = item.final_layout.as_mut() {
                 layout.location.y += group_offset;
@@ -1052,7 +1083,11 @@ fn compute_inner(
         size: final_outer_size,
         #[cfg(feature = "content_size")]
         scrollable_overflow_rect: crate::tree::ScrollableOverflow::ZERO,
-        baselines: Baselines::new(first_baseline, last_baseline),
+        baselines: Baselines {
+            dominant_first: dominant_baselines[0],
+            dominant_last: dominant_baselines[1],
+            ..Baselines::new(first_baseline, last_baseline)
+        },
         top_margin: if own_margins_collapse_with_children.start {
             first_child_top_margin_set
         } else {
@@ -1243,17 +1278,31 @@ fn generate_item_list(
             #[cfg(not(feature = "float_layout"))]
             let is_not_floated = true;
 
+            // pyro: a percentage-height scroll container in a table cell whose height is indefinite
+            // is sized as if its height were 0 (`block_container_restricts_percent_scrollers`).
+            let mut own_size = child_style.size().maybe_resolve(node_inner_size, |val, basis| tree.calc(val, basis));
+            if own_size.height.is_none()
+                && node_inner_size.height.is_none()
+                && child_style.size().height.into_raw().uses_percentage()
+                && (overflow.x.is_scroll_container() || overflow.y.is_scroll_container())
+                && tree.block_container_restricts_percent_scrollers(node)
+                && tree.block_container_percentage_height(node).is_none()
+            {
+                own_size.height = child_style.size().height.maybe_resolve(Some(0.0), |val, basis| tree.calc(val, basis));
+            }
             // pyro: css-sizing-4 §5 ([`RatioSizes`])
             let sizes = resolve_sizes_with_aspect_ratio(
-                child_style.size().maybe_resolve(node_inner_size, |val, basis| tree.calc(val, basis)),
+                own_size,
                 crate::util::maybe_resolve_min_size(child_style.min_size(), node_inner_size, |val, basis| tree.calc(val, basis)),
                 child_style.max_size().maybe_resolve(node_inner_size, |val, basis| tree.calc(val, basis)),
                 aspect_ratio,
                 aspect_ratio_inset(&child_style, pb_sum),
                 box_sizing_adjustment,
             );
+            // pyro: (a `min-width` keyword reads as `auto` in `min_size`)
             let min_width_is_content = sizes.width_from_ratio
                 && child_style.min_size().width.is_auto()
+                && child_style.min_size_keyword().width.is_auto()
                 && !child_style.is_compressible_replaced()
                 && !overflow.x.is_scroll_container()
                 && !overflow.y.is_scroll_container();
@@ -1320,6 +1369,7 @@ fn generate_item_list(
                         && !child_style.is_compressible_replaced()
                         && !child_style.breaks_lines_in_block_axis()
                         && child_style.min_size().height.is_auto()
+                        && child_style.min_size_keyword().height.is_auto()
                         && !overflow.x.is_scroll_container()
                         && !overflow.y.is_scroll_container()
                 })
@@ -1441,7 +1491,14 @@ fn determine_content_based_container_width(
         // pyro: in an intrinsic size a percentage resolves against zero, also inside `calc()`:
         // `calc(10% + 100px)` counts 100px (upstream dropped the whole margin; WPT
         // `calc-margins-block`).
-        let item_x_margin_sum = item
+        // pyro: also under a definite available width (a shrink-to-fit box: abspos, float,
+        // inline-block): percentages in the contribution are zero, and resolve only once the
+        // box's width is known (Blink `ComputeMinMaxMargins`; WPT css-sizing
+        // `abspos-auto-sizing-fit-content-percentage-*`). The available width the item is
+        // measured in still has them resolved against it.
+        let item_x_margin_sum =
+            item.margin.resolve_or_zero(Some(0.0), |val, basis| tree.calc(val, basis)).horizontal_axis_sum();
+        let item_x_available_margin_sum = item
             .margin
             .resolve_or_zero(available_space.width.into_option().or(Some(0.0)), |val, basis| tree.calc(val, basis))
             .horizontal_axis_sum();
@@ -1450,7 +1507,7 @@ fn determine_content_based_container_width(
                 match resolve_sizing_keyword(item.size_style.width, None, None, |val, basis| tree.calc(val, basis)) {
                     Some(SizingKeywordResolution::Measure(available_width)) => available_width,
                     Some(SizingKeywordResolution::Exact(width)) => AvailableSpace::Definite(width),
-                    None => available_space.width.maybe_sub(item_x_margin_sum),
+                    None => available_space.width.maybe_sub(item_x_available_margin_sum),
                 };
             let width = tree.measure_child_size(
                 item.node_id,
@@ -1589,9 +1646,11 @@ fn clamp_width_by_keywords(
                     }
                     intrinsic => measure(intrinsic),
                 };
-                // A width the preferred aspect ratio gives from a height is an intrinsic width
+                // pyro: a width the preferred aspect ratio gives from a definite height is the box's
+                // intrinsic width: its content does not widen it (css-sizing-4 §5.1; WPT css-sizing
+                // `aspect-ratio/intrinsic-size-010`)
                 if item.width_from_ratio {
-                    content_width.max(width)
+                    width
                 } else {
                     content_width
                 }
@@ -1783,7 +1842,7 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
     margin_trim: Line<bool>,
     #[cfg(feature = "content_size")] is_scroll_container: bool,
     block_ctx: &mut BlockContext<'_>,
-) -> (Rect<f32>, f32, CollapsibleMarginSet, CollapsibleMarginSet, Option<f32>, Option<f32>) {
+) -> (Rect<f32>, f32, CollapsibleMarginSet, CollapsibleMarginSet, Option<f32>, Option<f32>, [Option<f32>; 2]) {
     // Resolve container_inner_width for sizing child nodes using initial content_box_inset
     let container_inner_width = (container_outer_width - resolved_content_box_inset.horizontal_axis_sum()).max(0.0);
     #[cfg(feature = "content_size")]
@@ -1834,6 +1893,9 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
     let mut first_baseline: Option<f32> = None;
     // pyro: and its last baseline, the last baseline of its last in-flow child that has one.
     let mut last_baseline: Option<f32> = None;
+    // pyro: the same two in the dominant baseline (`Baselines::dominant_first`), from the
+    // children that give the first and last baselines (none where such a child has none).
+    let mut dominant_baselines: [Option<f32>; 2] = [None, None];
     // Whether the active margin set contains the margins of a self-collapsing element with
     // clearance. Such margins collapse with the margins of following siblings but the resulting
     // margin does not collapse with the bottom margin of the parent block.
@@ -2474,6 +2536,10 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
                 let child_baseline =
                     child_first_baseline(item_layout.baselines.first, item_layout.size.height, item.overflow.y);
                 first_baseline = child_baseline.map(|baseline| location.y - inset_offset.y + baseline);
+                if first_baseline.is_some() {
+                    dominant_baselines[0] =
+                        item_layout.baselines.dominant_first.map(|baseline| location.y - inset_offset.y + baseline);
+                }
             }
             // pyro: a block container's last baseline is the last baseline of its last in-flow
             // child that has one (an inline-block's, CSS 2.1 § 10.8.1, is its last line box's).
@@ -2496,6 +2562,12 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
             };
             if let Some(baseline) = child_last_baseline {
                 last_baseline = Some(location.y - inset_offset.y + baseline);
+                let dominant = if item.is_block_container && !item.overflow.y.is_scroll_container() {
+                    item_layout.baselines.dominant_last
+                } else {
+                    None
+                };
+                dominant_baselines[1] = dominant.map(|baseline| location.y - inset_offset.y + baseline);
             }
 
             // Used auto margins include float-avoidance offsets, unlike the alignment margins above.
@@ -2651,5 +2723,5 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
 
     committed_y_offset += resolved_content_box_inset.bottom + bottom_y_margin_offset;
     let content_height = f32_max(0.0, committed_y_offset);
-    (inflow_overflow_rect, content_height, first_child_top_margin_set, last_child_bottom_margin_set, first_baseline, last_baseline)
+    (inflow_overflow_rect, content_height, first_child_top_margin_set, last_child_bottom_margin_set, first_baseline, last_baseline, dominant_baselines)
 }

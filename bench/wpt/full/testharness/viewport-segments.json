@@ -1,0 +1,13 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "viewport-segments/viewport-segments-change-event.https.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "viewport-segments/viewport-segments-env-variables.https.html": {"status":"complete","ms":10,"n":1,"pass":[]}
+ }
+}

@@ -336,6 +336,14 @@ struct RunMetricsEntry {
     metrics: RunMetrics,
 }
 
+/// pyro: a shaped cluster's glyphs before [`ShapedText::show_hyphen`] changed them.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ClusterGlyphs {
+    glyph_offset: u32,
+    flags: u16,
+    advance: f32,
+}
+
 /// The result of shaping.
 ///
 /// After [analyzing][crate::Analysis] your text, [shape the text][crate::Shaper::shape_text],
@@ -430,6 +438,34 @@ impl ShapedText {
     /// the tab stop it reaches). A cluster whose glyphs are stored takes the difference on its
     /// last glyph; an inline glyph's advance is its cluster's.
     #[inline]
+    /// pyro: the vertical advance of an upright glyph of the font at `font_index` without
+    /// vertical metrics (no `vmtx` table) at `font_size`: its height, ascent + descent as the
+    /// font gives them (HarfBuzz's default vertical advance; no `chromium_ascent_adjustment`).
+    /// `None` for a font with vertical metrics.
+    pub fn default_vertical_advance(&self, font_index: usize, font_size: f32) -> Option<f32> {
+        use skrifa::raw::TableProvider;
+        let font = self.fonts.get(font_index)?;
+        let font_ref = skrifa::FontRef::from_index(font.font.data.as_ref(), font.font.index).ok()?;
+        if font_ref.vmtx().is_ok() {
+            return None;
+        }
+        let metrics = skrifa::metrics::Metrics::new(
+            &font_ref,
+            skrifa::instance::Size::new(font_size),
+            skrifa::instance::LocationRef::default(),
+        );
+        Some(metrics.ascent - metrics.descent)
+    }
+
+    /// pyro: makes the run at `run_index` upright with glyphs advancing by `advance`
+    /// ([`ShapedRun::upright_advance`]), its hyphen too.
+    pub fn set_run_upright_advance(&mut self, run_index: usize, advance: f32) {
+        if let Some(run) = self.runs.get_mut(run_index) {
+            run.upright_advance = Some(advance);
+            run.hyphen = run.hyphen.map(|(glyph, _)| (glyph, advance));
+        }
+    }
+
     pub fn set_cluster_advance(&mut self, index: u32, advance: f32) {
         let Some(cluster) = self.shaped_clusters.get_mut(index as usize) else {
             return;
@@ -492,6 +528,60 @@ impl ShapedText {
         }
     }
 
+    /// pyro: the legacy `kern` pair between the shaped clusters `left` and `right` (visually
+    /// adjacent, `left` first, in one run): HarfBuzz splits a pair's value between the two
+    /// glyphs, `k1` on the first one's advance and `k2` on the second one's offset and advance.
+    /// `Some((k1, k2))` for single-glyph clusters of a font with a `kern` table and no `GPOS`
+    /// whose pair kerned (Blink shapes a line's edges again where shaping was not safe to break,
+    /// so a line break leaves no pair across it).
+    pub fn legacy_kern_across(&self, left: u32, right: u32) -> Option<(f32, f32)> {
+        use skrifa::raw::TopLevelTable as _;
+        let run = self.runs.iter().find(|run| {
+            run.shaped_clusters_range.contains(&left) && run.shaped_clusters_range.contains(&right)
+        })?;
+        let glyph = |index: u32| -> Option<(u32, f32, f32)> {
+            let cluster = self.shaped_clusters.get(index as usize)?;
+            if cluster.glyph_len() != 1 {
+                return None;
+            }
+            if cluster.has_inline_glyph() {
+                return Some((cluster.glyph_offset, 0.0, cluster.advance));
+            }
+            let glyph = self.glyphs.get(cluster.glyph_offset as usize)?;
+            Some((glyph.id, glyph.x, glyph.advance))
+        };
+        let (right_x, (left_id, left_x, left_advance)) = (glyph(right)?.1, glyph(left)?);
+        if right_x == 0.0 {
+            return None;
+        }
+        let font = self.fonts.get(run.font_index)?;
+        let font_ref = skrifa::FontRef::from_index(font.font.data.as_ref(), font.font.index).ok()?;
+        if font_ref.table_data(skrifa::raw::types::Tag::new(b"kern")).is_none()
+            || font_ref.table_data(skrifa::raw::tables::gpos::Gpos::TAG).is_some()
+        {
+            return None;
+        }
+        let coords: alloc::vec::Vec<skrifa::instance::NormalizedCoord> = self.normalized_coords
+            [run.normalized_coords_range.clone()]
+        .iter()
+        .map(|coord| skrifa::instance::NormalizedCoord::from_bits(coord.to_bits()))
+        .collect();
+        let metrics =
+            skrifa::metrics::GlyphMetrics::new(&font_ref, skrifa::prelude::Size::unscaled(), coords.as_slice());
+        let units_per_em = { use skrifa::raw::TableProvider as _; font_ref.head().ok()?.units_per_em() };
+        (units_per_em != 0).then_some(())?;
+        let base = metrics.advance_width(skrifa::GlyphId::new(left_id))? * (run.font_size / f32::from(units_per_em));
+        Some((left_advance - base - left_x, right_x))
+    }
+
+    /// pyro: the bidi level of the run holding the shaped cluster at `index`.
+    pub fn cluster_is_rtl(&self, index: u32) -> Option<bool> {
+        self.runs
+            .iter()
+            .find(|run| run.shaped_clusters_range.contains(&index))
+            .map(|run| run.bidi_level.is_rtl())
+    }
+
     /// pyro: the glyph of `ch` in the font of the run at `run_index` and its advance at the run's
     /// size, if the font has the character (a `hyphenate-character` other than the font's hyphen).
     pub fn glyph_of(&self, run_index: usize, ch: char) -> Option<(u32, f32)> {
@@ -500,6 +590,9 @@ impl ShapedText {
         let font = self.fonts.get(run.font_index)?;
         let font_ref = skrifa::FontRef::from_index(font.font.data.as_ref(), font.font.index).ok()?;
         let glyph = font_ref.charmap().map(ch)?;
+        if let Some(advance) = run.upright_advance {
+            return Some((glyph.to_u32(), advance));
+        }
         // The same coords, in skrifa's type.
         let coords: alloc::vec::Vec<skrifa::instance::NormalizedCoord> = self.normalized_coords
             [run.normalized_coords_range.clone()]
@@ -511,6 +604,57 @@ impl ShapedText {
         let units_per_em = { use skrifa::raw::TableProvider as _; font_ref.head().ok()?.units_per_em() };
         (units_per_em != 0).then_some(())?;
         Some((glyph.to_u32(), metrics.advance_width(glyph)? * (run.font_size / f32::from(units_per_em))))
+    }
+
+    /// pyro: shows a hyphen on the shaped cluster at `index`: its glyphs become `hyphen`'s (glyph,
+    /// advance) pairs, after its own glyphs when `keep` (a soft hyphen that shaping merged into the
+    /// cluster before it), in visual order for `rtl` text. The new glyphs go to the end of the
+    /// glyph array. Returns what the cluster had, for [`Self::restore_cluster`].
+    pub fn show_hyphen(&mut self, index: u32, hyphen: &[(u32, f32)], keep: bool, rtl: bool) -> Option<ClusterGlyphs> {
+        let cluster = *self.shaped_clusters.get(index as usize)?;
+        let saved = ClusterGlyphs {
+            glyph_offset: cluster.glyph_offset,
+            flags: cluster.flags.bits(),
+            advance: cluster.advance,
+        };
+        let mut own = alloc::vec::Vec::new();
+        if keep {
+            if cluster.has_inline_glyph() {
+                own.push(Glyph { id: cluster.glyph_offset, x: 0., y: 0., advance: cluster.advance });
+            } else {
+                let start = cluster.glyph_offset as usize;
+                own.extend_from_slice(self.glyphs.get(start..start + usize::from(cluster.glyph_len()))?);
+            }
+        }
+        let added = hyphen.iter().map(|&(id, advance)| Glyph { id, x: 0., y: 0., advance });
+        let start = self.glyphs.len();
+        if rtl {
+            self.glyphs.extend(added.rev());
+            self.glyphs.extend(own);
+        } else {
+            self.glyphs.extend(own);
+            self.glyphs.extend(added);
+        }
+        let len = self.glyphs.len() - start;
+        if len == 0 || len > 255 {
+            self.glyphs.truncate(start);
+            return None;
+        }
+        let advance = if keep { cluster.advance } else { 0. } + hyphen.iter().map(|&(_, advance)| advance).sum::<f32>();
+        let cluster = &mut self.shaped_clusters[index as usize];
+        cluster.glyph_offset = start as u32;
+        cluster.flags = cluster.flags.with_glyph_len(len as u8).with_inline_glyph(false);
+        cluster.advance = advance;
+        Some(saved)
+    }
+
+    /// pyro: gives the shaped cluster at `index` back what [`Self::show_hyphen`] returned.
+    pub fn restore_cluster(&mut self, index: u32, saved: ClusterGlyphs) {
+        if let Some(cluster) = self.shaped_clusters.get_mut(index as usize) {
+            cluster.glyph_offset = saved.glyph_offset;
+            cluster.flags = super::data::ShapedClusterFlags::from_bits(saved.flags);
+            cluster.advance = saved.advance;
+        }
     }
 
     /// pyro: gives the one-glyph shaped cluster at `index` the glyph `id` with `advance`, and
@@ -665,7 +809,8 @@ impl ShapedText {
             .zip(&char_style_indices[range.char_range.clone()])
             .enumerate()
         {
-            let flags = CharacterFlags::new(ch, info.is_word_boundary(), info.is_soft_wrap_opportunity());
+            let flags = CharacterFlags::new(ch, info.is_word_boundary(), info.is_soft_wrap_opportunity())
+                .with_phrase_fallback(info.is_phrase_fallback());
             self.characters.push(Character {
                 text_byte_start: (range.byte_range.start + byte_offset) as u32,
                 style_index: *style_index,
@@ -733,6 +878,7 @@ impl ShapedText {
             advance: run_advance,
             font_metrics,
             hyphen: metrics.hyphen,
+            upright_advance: None,
         });
         metrics
     }
@@ -765,6 +911,9 @@ pub struct ShapedRun {
     /// pyro: the hyphen of the run's font (U+2010, else U+002D): its glyph and its advance at
     /// the run's size. The line breaker shows it where a line ends at a soft hyphen.
     pub hyphen: Option<(u32, f32)>,
+    /// pyro: the advance of every glyph of an upright run in a font without vertical metrics
+    /// (parley's `shape::upright`): the hyphens the line breaker shows advance by it too.
+    pub upright_advance: Option<f32>,
     /// The font metrics of this run.
     pub font_metrics: FontMetrics,
 }

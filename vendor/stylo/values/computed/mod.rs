@@ -106,7 +106,7 @@ pub use self::page::{PageName, PageOrientation, PageSize, PageSizeOrientation, P
 pub use self::param::LinkParameters;
 pub use self::percentage::{NonNegativePercentage, Percentage};
 pub use self::position::{
-    AnchorFunction, AnchorName, AspectRatio, BoxSizing, DashedIdentAndOrTryTactic, FlexDirection,
+    AnchorFunction, AnchorName, AspectRatio, BoxSizing, FrameSizing, DashedIdentAndOrTryTactic, FlexDirection,
     FlexWrap, GridAutoFlow, GridTemplateAreas, Inset, ObjectFit, Position, PositionAnchor,
     PositionOrAuto, PositionTryFallbacks, PositionTryOrder, PositionVisibility, ScopedName, ZIndex,
 };

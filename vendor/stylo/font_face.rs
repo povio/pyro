@@ -118,6 +118,14 @@ bitflags! {
 }
 
 impl FontFaceSourceTechFlags {
+    /// pyro: the technologies a servo embedder renders (OpenType layout, COLR v0/v1 colour
+    /// glyphs, variations, palettes): `font-tech()` in `@supports` and `tech()` sources.
+    pub const SERVO_SUPPORTED: Self = Self::FEATURES_OPENTYPE
+        .union(Self::COLOR_COLRV0)
+        .union(Self::COLOR_COLRV1)
+        .union(Self::VARIATIONS)
+        .union(Self::PALETTES);
+
     /// Parse a single font-technology keyword and return its flag.
     pub fn parse_one(input: &mut Parser) -> Result<Self, ParseError> {
         Ok(try_match_ident_ignore_ascii_case! { input,

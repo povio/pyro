@@ -1,0 +1,13 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "webgl/blitFramebuffer-presents-drawing-buffer.html": {"status":"complete","ms":110,"n":1,"pass":[]},
+  "webgl/clearBufferfv-presents-drawing-buffer.html": {"status":"complete","ms":100,"n":1,"pass":[]}
+ }
+}

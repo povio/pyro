@@ -2565,7 +2565,6 @@ affects = "paint"
 type = "Color"
 initial = "computed_value::T::currentcolor()"
 struct = "inherited_text"
-engine = "gecko"
 ignored_when_colors_disabled = true
 spec = "https://compat.spec.whatwg.org/#the-webkit-text-stroke-color"
 affects = "paint"
@@ -2574,7 +2573,6 @@ affects = "paint"
 type = "LineWidth"
 initial = "app_units::Au(0)"
 struct = "inherited_text"
-engine = "gecko"
 spec = "https://compat.spec.whatwg.org/#the-webkit-text-stroke-width"
 animation_type = "discrete"
 affects = "overflow"
@@ -3798,6 +3796,18 @@ affects = "layout"
 type = "TopLayer"
 initial = "computed::TopLayer::None"
 
+# pyro: css-position-4 `overlay`, for Servo: whether an element in the top layer is rendered there
+# (`auto`). The UA sheet sets it on top-layer elements; a discrete transition keeps it, and the element in
+# the top layer, past their removal (pyro-dom, blitz-paint).
+[overlay]
+struct = "box"
+engine = "servo"
+spec = "https://drafts.csswg.org/css-position-4/#overlay"
+animation_type = "discrete"
+affects = "layout"
+type = "TopLayer"
+initial = "computed::TopLayer::None"
+
 [scroll-behavior]
 struct = "box"
 servo_pref = "layout.css.scroll-behavior.enabled"
@@ -4159,6 +4169,17 @@ extra_prefixes = ["moz:layout.css.prefixes.box-sizing", "webkit"]
 servo_restyle_damage = "rebuild_box"
 type = "BoxSizing"
 initial = "computed::BoxSizing::ContentBox"
+
+# pyro: css-sizing-4 `frame-sizing` (responsive iframes), for Servo: blitz-dom gives an iframe the height of
+# its embedded document's content (`data-pyro-frame-content-height`, from pyro) for `content-height`.
+[frame-sizing]
+struct = "position"
+engine = "servo"
+spec = "https://drafts.csswg.org/css-sizing-4/#frame-sizing"
+animation_type = "discrete"
+affects = "layout"
+type = "FrameSizing"
+initial = "computed::FrameSizing::Auto"
 
 [object-fit]
 struct = "position"

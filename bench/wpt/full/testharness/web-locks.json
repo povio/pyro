@@ -1,0 +1,42 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "web-locks/bfcache/abort.tentative.https.html": {"status":"timeout","ms":45000,"n":4,"pass":[]},
+  "web-locks/bfcache/contention.https.window.html?context=document&contention=query": {"status":"complete","ms":300,"n":1,"pass":[]},
+  "web-locks/bfcache/contention.https.window.html?context=document&contention=request-if-available": {"status":"complete","ms":300,"n":1,"pass":[]},
+  "web-locks/bfcache/contention.https.window.html?context=nested-worker&contention=query": {"status":"timeout","ms":45000,"n":1,"pass":[]},
+  "web-locks/bfcache/contention.https.window.html?context=nested-worker&contention=request": {"status":"timeout","ms":45000,"n":1,"pass":[]},
+  "web-locks/bfcache/contention.https.window.html?context=shared-worker&contention=query": {"status":"complete","ms":300,"n":1,"pass":[]},
+  "web-locks/bfcache/contention.https.window.html?context=shared-worker&contention=request": {"status":"complete","ms":300,"n":1,"pass":[]},
+  "web-locks/bfcache/contention.https.window.html?context=shared-worker&contention=request-if-available": {"status":"complete","ms":330,"n":1,"pass":[]},
+  "web-locks/bfcache/contention.https.window.html?context=worker&contention=request": {"status":"timeout","ms":45000,"n":1,"pass":[]},
+  "web-locks/bfcache/contention.https.window.html?context=worker&contention=request-if-available": {"status":"timeout","ms":45000,"n":1,"pass":[]},
+  "web-locks/bfcache/held.tentative.https.html": {"status":"timeout","ms":45000,"n":4,"pass":[]},
+  "web-locks/bfcache/release.tentative.https.html": {"status":"timeout","ms":45000,"n":4,"pass":[]},
+  "web-locks/bfcache/sharedworker-multiple.tentative.https.html": {"status":"complete","ms":160,"n":2,"pass":[]},
+  "web-locks/clientids.https.html": {"status":"complete","ms":60,"n":1,"pass":[]},
+  "web-locks/frames.https.html": {"status":"complete","ms":40,"n":8,"pass":[]},
+  "web-locks/held.https.any.html": {"status":"complete","ms":50,"n":4,"pass":[]},
+  "web-locks/idlharness.https.any.html": {"status":"complete","ms":80,"n":47,"pass":["Navigator includes NavigatorConcurrentHardware: member names are unique","Navigator includes NavigatorContentUtils: member names are unique","Navigator includes NavigatorCookies: member names are unique","Navigator includes NavigatorID: member names are unique","Navigator includes NavigatorLanguage: member names are unique","Navigator includes NavigatorLocks: member names are unique","Navigator includes NavigatorOnLine: member names are unique","Navigator includes NavigatorPlugins: member names are unique","Partial interface Navigator: member names are unique","Partial interface mixin NavigatorID: member names are unique","WorkerNavigator includes NavigatorConcurrentHardware: member names are unique","WorkerNavigator includes NavigatorID: member names are unique","WorkerNavigator includes NavigatorLanguage: member names are unique","WorkerNavigator includes NavigatorLocks: member names are unique","WorkerNavigator includes NavigatorOnLine: member names are unique","idl_test setup","idl_test validation"]},
+  "web-locks/lock-attributes.https.any.html": {"status":"complete","ms":40,"n":2,"pass":[]},
+  "web-locks/mode-exclusive.https.any.html": {"status":"complete","ms":30,"n":2,"pass":[]},
+  "web-locks/mode-mixed.https.any.html": {"status":"complete","ms":60,"n":3,"pass":[]},
+  "web-locks/non-fully-active.https.html": {"status":"complete","ms":10100,"n":5,"pass":[]},
+  "web-locks/non-secure-context.any.html": {"status":"complete","ms":20,"n":1,"fail":[],"h":"377b9168"},
+  "web-locks/opaque-origin.https.html": {"status":"complete","ms":100,"n":4,"pass":[]},
+  "web-locks/query-empty.https.any.html": {"status":"complete","ms":30,"n":1,"pass":[]},
+  "web-locks/query-ordering.https.html": {"status":"complete","ms":50,"n":1,"pass":[]},
+  "web-locks/query.https.any.html": {"status":"complete","ms":10000,"n":9,"pass":[]},
+  "web-locks/secure-context.https.any.html": {"status":"complete","ms":40,"n":1,"pass":[]},
+  "web-locks/signal.https.any.html": {"status":"complete","ms":40,"n":13,"pass":[]},
+  "web-locks/steal.https.any.html": {"status":"complete","ms":40,"n":5,"pass":[]},
+  "web-locks/windows.https.window.html": {"status":"complete","ms":50,"n":2,"pass":[]},
+  "web-locks/workers.https.html": {"status":"complete","ms":40,"n":4,"pass":[]}
+ }
+}

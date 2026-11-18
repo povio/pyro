@@ -28,6 +28,10 @@ pub struct InlineBox {
     /// its span is right-to-left: its start edge is its right side and its end edge its left.
     /// A line that bidi reordering changed puts each edge on its side of the span's content there.
     pub rtl: bool,
+    /// pyro: on a central baseline ([`crate::Layout::set_central_baseline`]), whether
+    /// [`Self::baseline`] is the box's central baseline (put on the parent's central baseline
+    /// by baseline alignment) rather than its alphabetic one.
+    pub central: bool,
 }
 
 /// An [`InlineBox`] together with the style index of the span that contains it.

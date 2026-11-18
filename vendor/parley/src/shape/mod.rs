@@ -5,6 +5,7 @@
 //! and `icu` for text analysis.
 
 mod autospace;
+mod upright;
 mod justify;
 
 use alloc::vec::Vec;
@@ -266,6 +267,8 @@ pub(crate) fn shape_text<'a, B: Brush>(
         layout.data.push_inline_box(box_idx, box_levels[box_idx]);
     }
 
+    // pyro: CSS `text-orientation: upright`.
+    upright::apply(layout, styles);
     // pyro: CSS `text-autospace`.
     autospace::apply(layout, text, styles, inline_boxes);
     // pyro: CSS `text-justify`.

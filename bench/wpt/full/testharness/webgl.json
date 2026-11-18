@@ -1,0 +1,27 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "webgl/bufferSubData.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "webgl/compressed-tex-sub-image-2d-without-base-image.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "webgl/compressedTexSubImage2D.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "webgl/copyTexImage2D-unsized-effective-format.html": {"status":"complete","ms":20,"n":5,"pass":[]},
+  "webgl/drawingBufferToneMapping.html": {"status":"complete","ms":20,"n":8,"pass":[]},
+  "webgl/framebuffer-without-color-attachment.html": {"status":"complete","ms":20,"n":6,"pass":[]},
+  "webgl/getParameter-stencil-masks.html": {"status":"complete","ms":20,"n":5,"pass":[]},
+  "webgl/getUniformLocation-uniform-block-member.html": {"status":"complete","ms":20,"n":2,"pass":[]},
+  "webgl/idlharness.any.html": {"status":"complete","ms":120,"n":2099,"pass":["WebGL2RenderingContext includes WebGLRenderingContextBase: member names are unique","WebGLRenderingContext includes WebGLRenderingContextBase: member names are unique","idl_test setup","idl_test validation"]},
+  "webgl/texImage-half-float-type.html": {"status":"complete","ms":20,"n":4,"pass":[]},
+  "webgl/texImage2D-image-not-loaded.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "webgl/texImage2D-source-ignores-unpack-alignment.html": {"status":"complete","ms":20,"n":2,"pass":[]},
+  "webgl/texImage3D-size-limits.html": {"status":"complete","ms":20,"n":4,"pass":[]},
+  "webgl/texSubImage2D.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "webgl/uniformMatrixNfv.html": {"status":"complete","ms":10,"n":3,"pass":[]},
+  "webgl/webgl2-drawing-buffer-bits.html": {"status":"complete","ms":20,"n":2,"pass":[]}
+ }
+}

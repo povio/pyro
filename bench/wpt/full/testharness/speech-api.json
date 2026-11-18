@@ -1,0 +1,25 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "speech-api/SpeechGrammarList-item.https.html": {"status":"complete","ms":10,"n":2,"pass":[]},
+  "speech-api/SpeechRecognition-availableOnDevice.https.html": {"status":"complete","ms":10,"n":5,"pass":[]},
+  "speech-api/SpeechRecognition-basics.https.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "speech-api/SpeechRecognition-installOnDevice.https.html": {"status":"complete","ms":20,"n":5,"pass":[]},
+  "speech-api/SpeechRecognition-non-secure-context.http.html": {"status":"complete","ms":10,"n":8,"fail":[],"h":"366b2fa4"},
+  "speech-api/SpeechRecognition-onerror.https.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "speech-api/SpeechSynthesis-pause-resume.tentative.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "speech-api/SpeechSynthesis-speak-events.html": {"status":"complete","ms":10,"n":2,"pass":[]},
+  "speech-api/SpeechSynthesis-speak-twice.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "speech-api/SpeechSynthesisErrorEvent-constructor.html": {"status":"complete","ms":10,"n":8,"pass":[]},
+  "speech-api/SpeechSynthesisEvent-constructor.html": {"status":"complete","ms":10,"n":6,"pass":[]},
+  "speech-api/SpeechSynthesisEvent-properties.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "speech-api/historical.html": {"status":"complete","ms":10,"n":9,"fail":["SpeechRecognition's serviceURI attribute should not exist","SpeechRecognitionEvent's emma attribute should not exist","SpeechRecognitionEvent's interpretation attribute should not exist"],"h":"1ecaed6d"},
+  "speech-api/idlharness.https.window.html": {"status":"complete","ms":110,"n":255,"pass":["Partial interface Window: member names are unique","Partial interface Window: original interface defined","Partial interface Window[2]: member names are unique","Partial interface Window[3]: member names are unique","Window includes AnimationFrameProvider: member names are unique","Window includes GlobalEventHandlers: member names are unique","Window includes WindowEventHandlers: member names are unique","Window includes WindowLocalStorage: member names are unique","Window includes WindowOrWorkerGlobalScope: member names are unique","Window includes WindowSessionStorage: member names are unique","idl_test validation"]}
+ }
+}

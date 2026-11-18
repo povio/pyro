@@ -299,7 +299,9 @@ pub(crate) fn cell_layout_style(
         .into_option()
         .is_some();
     let collapsed = style.clone_border_collapse() == BorderCollapse::Collapse;
-    if !numeric_height && !collapsed {
+    // pyro: `max-height` does not apply to a table cell (Chromium ignores it).
+    let max_height = !matches!(style.get_position().max_height, style::values::computed::MaxSize::None);
+    if !numeric_height && !collapsed && !max_height {
         return None;
     }
     {
@@ -308,6 +310,9 @@ pub(crate) fn cell_layout_style(
         // A definite height here would prevent the cell from growing to fit.
         if numeric_height {
             derived.mutate_position().height = style::values::computed::Size::auto();
+        }
+        if max_height {
+            derived.mutate_position().max_height = style::values::computed::MaxSize::None;
         }
         // Collapsed borders live in the table's grid gutters. They must not
         // also consume space inside the cell's own formatting context.

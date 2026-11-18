@@ -1,0 +1,22 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "fetch/corb/img-html-correctly-labeled.sub.html": {"status":"complete","ms":120,"n":1,"fail":[],"h":"0e440bf2"},
+  "fetch/corb/img-png-mislabeled-as-html-nosniff.tentative.sub.html": {"status":"complete","ms":110,"n":1,"pass":[]},
+  "fetch/corb/img-png-mislabeled-as-html.sub.html": {"status":"complete","ms":110,"n":1,"fail":[],"h":"0e440bf2"},
+  "fetch/corb/img-svg-doctype-html-mimetype-empty.sub.html": {"status":"complete","ms":120,"n":1,"pass":[]},
+  "fetch/corb/img-svg-doctype-html-mimetype-svg.sub.html": {"status":"complete","ms":140,"n":1,"fail":[],"h":"0e440bf2"},
+  "fetch/corb/img-svg-labeled-as-dash.sub.html": {"status":"complete","ms":110,"n":1,"pass":[]},
+  "fetch/corb/img-svg-labeled-as-svg-xml.sub.html": {"status":"complete","ms":110,"n":1,"fail":[],"h":"0e440bf2"},
+  "fetch/corb/img-svg-xml-decl.sub.html": {"status":"complete","ms":120,"n":1,"fail":[],"h":"0e440bf2"},
+  "fetch/http-cache/basic-auth-cache-test.html": {"status":"timeout","ms":15000,"n":0,"pass":[]},
+  "fetch/orb/tentative/img-png-mislabeled-as-html.sub.html": {"status":"complete","ms":120,"n":1,"fail":[],"h":"0e440bf2"},
+  "fetch/orb/tentative/img-png-unlabeled.sub.html": {"status":"complete","ms":120,"n":1,"fail":[],"h":"0e440bf2"}
+ }
+}

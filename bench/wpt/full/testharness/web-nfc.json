@@ -1,0 +1,18 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "web-nfc/NDEFMessage_constructor.https.window.html": {"status":"complete","ms":40,"n":5,"pass":[]},
+  "web-nfc/NDEFReader_make-read-only.https.window.html": {"status":"complete","ms":70,"n":14,"pass":[]},
+  "web-nfc/NDEFReader_scan.https.html": {"status":"complete","ms":60,"n":18,"pass":[]},
+  "web-nfc/NDEFReader_scan_iframe.https.html": {"status":"complete","ms":50,"n":1,"pass":[]},
+  "web-nfc/NDEFReadingEvent_constructor.https.window.html": {"status":"complete","ms":60,"n":6,"pass":[]},
+  "web-nfc/NDEFRecord_constructor.https.window.html": {"status":"complete","ms":40,"n":25,"pass":[]},
+  "web-nfc/nfc_insecure_context.html": {"status":"complete","ms":20,"n":1,"fail":[],"h":"5ce6c1b3"}
+ }
+}

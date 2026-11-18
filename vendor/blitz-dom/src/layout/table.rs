@@ -37,6 +37,14 @@ pub struct TableTreeWrapper<'a, 'doc> {
     pub(crate) ctx: Arc<TableContext>,
     /// The table's style with the column widths of [`Self::auto_column_widths`].
     pub(crate) style: Option<taffy::Style<Atom>>,
+    /// pyro: whether the table's height is definite (a length, a percentage of a definite height,
+    /// or one its flex or grid parent gave it). Else a cell's stretched height is no basis for its
+    /// children's percentage heights: they resolve against the cell's own `height` when that is a
+    /// length, else are indefinite (CSS Tables 3 §row-layout, as Blink; WPT css-tables
+    /// `percent-height-table-cell-child`, `percent-height-replaced-in-percent-cell-003`).
+    pub(crate) definite_height: bool,
+    /// pyro: whether the table's `height` is not `auto` (`LayoutPassState::restricted_cell`).
+    pub(crate) restricted: bool,
 }
 
 impl TableTreeWrapper<'_, '_> {
@@ -3411,6 +3419,8 @@ fn collect_table_cells(
             // pyro: `max-width` does not apply to a table cell (CSS 2.1 leaves it undefined;
             // Chromium ignores it): the cell spans its column, as wide as the column grew.
             style.max_size.width = style_helpers::auto();
+            // pyro: nor does `max-height` (Chromium; WPT css-tables `table-cell-overflow-explicit-height-002`).
+            style.max_size.height = style_helpers::auto();
             crate::resolve::phase_profile::table_cell_collected();
             let length_width = if is_fixed { None } else { length_width };
             let percent_lengths = percent_width
@@ -3529,8 +3539,41 @@ impl taffy::LayoutPartialTree for TableTreeWrapper<'_, '_> {
         node_id: taffy::NodeId,
         inputs: taffy::tree::LayoutInput,
     ) -> taffy::LayoutOutput {
-        let cell = &self.ctx.cells[usize::from(node_id)];
+        let ctx = Arc::clone(&self.ctx);
+        let cell = &ctx.cells[usize::from(node_id)];
         let node_id = crate::taffy_node_id(cell.node_id);
+        // pyro: unless the table's height or the row's is definite, the cell's height (stretched to
+        // its row) is no basis for its children's percentages, nor the table for the cell's own
+        // (`Self::definite_height`).
+        let (inputs, own_basis) = self.cell_basis_inputs(cell, inputs);
+        let outer_basis = std::mem::replace(&mut self.doc.cell_percent_height, own_basis);
+        let outer_restricted = std::mem::replace(&mut self.doc.restricted_cell, self.restricted.then_some(cell.node_id));
+        let output = self.lay_out_cell(cell, node_id, inputs);
+        self.doc.cell_percent_height = outer_basis;
+        self.doc.restricted_cell = outer_restricted;
+        output
+    }
+}
+
+impl TableTreeWrapper<'_, '_> {
+    /// The inputs `cell` is laid out with, and the basis of its children's percentage heights
+    /// (`Self::definite_height`, `LayoutPassState::cell_percent_height`).
+    fn cell_basis_inputs(
+        &self,
+        cell: &TableCell,
+        mut inputs: taffy::tree::LayoutInput,
+    ) -> (taffy::tree::LayoutInput, Option<(NodeId, f32)>) {
+        let mut own_basis = None;
+        if !self.definite_height && self.ctx.rows.get(cell.row as usize).is_none_or(|row| row.height.is_none()) {
+            inputs.known_dimensions_are_definite.height = false;
+            inputs.parent_size.height = None;
+            // Its own length `height` (border box) is (the layout style has none: `stylo_data`).
+            own_basis = cell.height_base.map(|(height, _)| (cell.node_id, height));
+        }
+        (inputs, own_basis)
+    }
+
+    fn lay_out_cell(&mut self, cell: &TableCell, node_id: taffy::NodeId, inputs: taffy::tree::LayoutInput) -> taffy::LayoutOutput {
         // Cell contents don't size the columns of a fixed table.
         if self.ctx.is_fixed && inputs.known_dimensions.width.is_none() {
             let mut output = self.doc.compute_child_layout(node_id, inputs);
@@ -3661,8 +3704,14 @@ impl taffy::LayoutGridContainer for TableTreeWrapper<'_, '_> {
     ) -> Option<f32> {
         // (Its own layout, without the minimum height its `height` gives it in its row: an empty
         // cell has no content however tall it is.)
-        let cell = self.ctx.cells[usize::from(child_node_id)].node_id;
+        let ctx = Arc::clone(&self.ctx);
+        let (inputs, own_basis) = self.cell_basis_inputs(&ctx.cells[usize::from(child_node_id)], inputs);
+        let cell = ctx.cells[usize::from(child_node_id)].node_id;
+        let outer_basis = std::mem::replace(&mut self.doc.cell_percent_height, own_basis);
+        let outer_restricted = std::mem::replace(&mut self.doc.restricted_cell, self.restricted.then_some(cell));
         let output = self.doc.compute_child_layout(crate::taffy_node_id(cell), inputs);
+        self.doc.cell_percent_height = outer_basis;
+        self.doc.restricted_cell = outer_restricted;
         let node = &self.doc.nodes[cell];
         // A layout run since the cell's last final layout has its content that much lower.
         let offset = if node.flags.contains(NodeFlags::HAS_TABLE_BASELINE_OFFSET) {

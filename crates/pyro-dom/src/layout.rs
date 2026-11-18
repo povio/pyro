@@ -253,6 +253,9 @@ pub struct Layout {
     /// The `position: sticky` elements' inputs, with the sync they were
     /// read at.
     sticky: RefCell<Option<(u64, Rc<FxHashMap<NodeId, ExternalSticky>>)>>,
+    /// Sticky entries looked up one element at a time since the last sync
+    /// ([`Layout::sticky_shift`]), `None` for elements that are not sticky.
+    sticky_lazy: RefCell<Option<(u64, FxHashMap<NodeId, Option<ExternalSticky>>)>>,
     /// The hit-test index of the current layout and scroll position, and
     /// what decides when one is built (see [`HitIndex`]).
     hit_index: RefCell<HitIndexState>,
@@ -522,6 +525,7 @@ impl Layout {
             result: RefCell::new(None),
             text: RefCell::new(None),
             sticky: RefCell::new(None),
+            sticky_lazy: RefCell::new(None),
             hit_index: RefCell::default(),
         }
     }
@@ -556,6 +560,37 @@ impl Layout {
             }
         }
         Some(source)
+    }
+
+    /// pyro: whether the document's sheets declare a web font (`@font-face`).
+    pub fn declares_web_fonts(&self, dom: &Dom) -> bool {
+        const FONT_FACE: &str = "@font-face";
+        // Loaded sheets (`<link>`, `@import`ed texts), then `<style>` elements by their text.
+        if self.style.sheet_owners().into_iter().any(|owner| self.style.sheet_text(owner).is_some_and(|t| t.contains(FONT_FACE))) {
+            return true;
+        }
+        let Ok(mut nodes) = dom.descendants(self.style.document()) else { return false };
+        nodes.any(|id| {
+            dom.element(id).is_ok_and(|e| e.is_html() && &*e.name.local == "style")
+                && dom.child_text_content(id).contains(FONT_FACE)
+        })
+    }
+
+    /// pyro: starts the geometry engine's web font fetches when the document's sheets declare
+    /// web fonts: it lays the document out once, which asks for the faces its styles use (as a
+    /// browser starts loading a face when a style first uses it), so that measurements after
+    /// they arrive see them. Nothing without web fonts or a geometry source.
+    pub fn start_font_loads(&self, dom: &Dom) {
+        if self.external.as_ref().is_some_and(|s| s.active()) && self.declares_web_fonts(dom) {
+            self.synced_geometry_source(dom);
+        }
+    }
+
+    /// pyro: whether web fonts the geometry engine uses are still loading (it starts them
+    /// first, see [`Self::start_font_loads`]).
+    pub fn fonts_pending(&self, dom: &Dom) -> bool {
+        self.start_font_loads(dom);
+        self.external.as_ref().is_some_and(|s| s.fonts_pending())
     }
 
     /// A rect query lays the document out anyway: sync the engine before
@@ -1007,18 +1042,30 @@ impl Layout {
     }
 
     /// `offsetWidth` / `offsetHeight` (Element.zig:1915-1927).
+    /// Layout sizes, as Chromium's: a CSS transform on the element or an
+    /// ancestor scales its client rect, not its `offsetWidth`.
     pub fn offset_width(&self, dom: &Dom, el: NodeId) -> f64 {
         if !self.is_visible(dom, el) {
             return 0.0;
         }
-        self.layout_box(dom, el).map_or(0.0, |b| b.rect.width)
+        self.untransformed_size(dom, el).0
     }
 
     pub fn offset_height(&self, dom: &Dom, el: NodeId) -> f64 {
         if !self.is_visible(dom, el) {
             return 0.0;
         }
-        self.layout_box(dom, el).map_or(0.0, |b| b.rect.height)
+        self.untransformed_size(dom, el).1
+    }
+
+    /// The border box's size before transforms (the engine's quads keep it);
+    /// the laid-out rect's for boxes without quads (SVG content).
+    fn untransformed_size(&self, dom: &Dom, el: NodeId) -> (f64, f64) {
+        let Some(b) = self.layout_box(dom, el) else { return (0.0, 0.0) };
+        match self.box_quads(dom, el) {
+            Some(q) if q.transformed => (q.width, q.height),
+            _ => (b.rect.width, b.rect.height),
+        }
     }
 
     /// `offsetTop`/`offsetLeft`: border-box offset from the offset parent's
@@ -1174,7 +1221,7 @@ impl Layout {
         let result = self.text_result(dom);
         let &(r, fixed) = result.texts.get(&text)?;
         let (dx, dy) = self.ancestor_scroll_offset(dom, text);
-        let (kx, ky) = self.sticky_shift_in(dom, &self.sticky_map(dom), text);
+        let (kx, ky) = self.sticky_shift_lazy(dom, text);
         let (sx, sy) = if fixed { (0.0, 0.0) } else { (self.window_scroll.0 as f64, self.window_scroll.1 as f64) };
         Some(Rect { x: r.x - sx - dx + kx, y: r.y - sy - dy + ky, width: r.width, height: r.height })
     }
@@ -1358,7 +1405,7 @@ impl Layout {
         let source = self.synced_geometry_source(dom)?;
         let mut q = source.element_quads(crate::snapshot::render_key(el))?;
         let (dx, dy) = self.ancestor_scroll_offset(dom, el);
-        let (kx, ky) = self.sticky_shift_in(dom, &self.sticky_map(dom), el);
+        let (kx, ky) = self.sticky_shift_lazy(dom, el);
         let (sx, sy) = if q.fixed { (0.0, 0.0) } else { (self.window_scroll.0 as f64, self.window_scroll.1 as f64) };
         let (ox, oy) = (kx - sx - dx, ky - sy - dy);
         for quad in std::iter::once(&mut q.border).chain(q.fragments.iter_mut()) {
@@ -1409,11 +1456,34 @@ impl Layout {
                 return (dx, dy);
             }
             if let Some(&(x, y)) = self.element_scroll.get(&dom.id_of(parent)) {
-                dx += x as f64;
-                dy += y as f64;
+                let (kx, ky) = self.scroller_scale(dom, dom.id_of(parent), (x, y));
+                dx += x as f64 * kx;
+                dy += y as f64 * ky;
             }
             cur = parent;
         }
+    }
+
+    /// How much one CSS px of `scroller`'s scroll offset moves its content
+    /// in client px, per axis: 1 unless a transform on the scroller or an
+    /// ancestor scales it (a scroller inside a `scale(0.5)` stage moves its
+    /// content half as far as its `scrollTop`, as in Chromium).
+    fn scroller_scale(&self, dom: &Dom, scroller: NodeId, offset: (i32, i32)) -> (f64, f64) {
+        if offset == (0, 0) {
+            return (1.0, 1.0);
+        }
+        let Some(source) = self.synced_geometry_source(dom) else { return (1.0, 1.0) };
+        let Some(q) = source.element_quads(crate::snapshot::render_key(scroller)) else { return (1.0, 1.0) };
+        if !q.transformed {
+            return (1.0, 1.0);
+        }
+        let b = q.border;
+        let span = |i: usize| {
+            let v = [b[i], b[i + 2], b[i + 4], b[i + 6]];
+            v.iter().copied().fold(f64::MIN, f64::max) - v.iter().copied().fold(f64::MAX, f64::min)
+        };
+        let ratio = |client: f64, local: f64| if client > 0.0 && local > 0.0 { client / local } else { 1.0 };
+        (ratio(span(0), q.width), ratio(span(1), q.height))
     }
 
     fn bounding_client_rect_for_visible(&self, dom: &Dom, el: NodeId) -> Rect {
@@ -1424,7 +1494,7 @@ impl Layout {
             return r;
         }
         let Some(b) = self.layout_box(dom, el) else { return Rect::default() };
-        let (kx, ky) = self.sticky_shift_in(dom, &self.sticky_map(dom), el);
+        let (kx, ky) = self.sticky_shift_lazy(dom, el);
         let (sx, sy) = if b.fixed { (0.0, 0.0) } else { (self.window_scroll.0 as f64, self.window_scroll.1 as f64) };
         Rect { x: b.rect.x - sx - dx + kx, y: b.rect.y - sy - dy + ky, width: b.rect.width, height: b.rect.height }
     }
@@ -1476,8 +1546,9 @@ impl Layout {
             let parent = dom.n(dom.check(node).expect("node in the current hit-test tree")).parent;
             if parent != NIL {
                 if let Some(&(x, y)) = self.element_scroll.get(&dom.id_of(parent)) {
-                    offset.0 += x as f64;
-                    offset.1 += y as f64;
+                    let (kx, ky) = self.scroller_scale(dom, dom.id_of(parent), (x, y));
+                    offset.0 += x as f64 * kx;
+                    offset.1 += y as f64 * ky;
                 }
             }
             cache.insert(node, offset);
@@ -1549,6 +1620,50 @@ impl Layout {
 
     /// [`Layout::sticky_shift`] with the sticky elements `sticky`
     /// ([`Layout::sticky_map`]) and the engine's boxes as they are.
+    /// [`Self::sticky_shift_in`] for one rect query: when the whole sticky
+    /// map is not built for this sync, only the sticky entries of `node`'s
+    /// ancestors (and their containing blocks) are looked up, and kept until
+    /// the next sync. A text probe written and read in a loop on a page with
+    /// many sticky table heads no longer gets every sticky box after each
+    /// write.
+    fn sticky_shift_lazy(&self, dom: &Dom, node: NodeId) -> (f64, f64) {
+        let styled_without_sticky = self.external.as_ref().filter(|s| s.active()).is_some_and(|source| {
+            self.style.engine_styled(dom).is_some() && !source.has_sticky()
+        });
+        if styled_without_sticky {
+            return (0.0, 0.0);
+        }
+        let Some(source) = self.synced_geometry_source(dom).filter(|s| s.has_sticky()) else { return (0.0, 0.0) };
+        let key = self.syncs.get();
+        if let Some((k, m)) = self.sticky.borrow().as_ref() {
+            if *k == key {
+                let m = m.clone();
+                return self.sticky_shift_in(dom, &m, node);
+            }
+        }
+        {
+            let mut lazy = self.sticky_lazy.borrow_mut();
+            if lazy.as_ref().is_none_or(|(k, _)| *k != key) {
+                *lazy = Some((key, FxHashMap::default()));
+            }
+        }
+        let sticky_of = |n: NodeId| -> Option<ExternalSticky> {
+            if let Ok(lazy) = self.sticky_lazy.try_borrow() {
+                if let Some(hit) = lazy.as_ref().and_then(|(_, cache)| cache.get(&n)) {
+                    return *hit;
+                }
+            }
+            let found = source.sticky_element(crate::snapshot::render_key(n));
+            if let Ok(mut lazy) = self.sticky_lazy.try_borrow_mut() {
+                if let Some((_, cache)) = lazy.as_mut() {
+                    cache.insert(n, found);
+                }
+            }
+            found
+        };
+        self.sticky_shift_with(dom, node, &sticky_of, &|n| self.layout_box(dom, n))
+    }
+
     fn sticky_shift_in(&self, dom: &Dom, sticky: &FxHashMap<NodeId, ExternalSticky>, node: NodeId) -> (f64, f64) {
         if sticky.is_empty() {
             return (0.0, 0.0);
@@ -2736,6 +2851,37 @@ impl Layout {
     /// first. Recompute relative geometry after each move so an inner offset is
     /// not counted again by an outer container. Explicitly scrolled containers
     /// retain the previous reveal behavior even without an overflow declaration.
+    /// `target` (a client rect) inside `node`'s scrollport, in `node`'s own
+    /// CSS px: (left, width, top, height) from the padding box's top-left.
+    /// A transformed (scaled) container or ancestor shows its scroll offsets
+    /// scaled, so client distances divide by the container's scale, as
+    /// Blink's scroll into view maps the rect into the scroller's space.
+    fn rect_in_scrollport(&self, dom: &Dom, node: NodeId, target: Rect) -> (f64, f64, f64, f64) {
+        let container = self.bounding_client_rect(dom, node);
+        let scale = |client: f64, local: f64| if client > 0.0 && local > 0.0 { client / local } else { 1.0 };
+        let (width, height) = self.untransformed_size(dom, node);
+        let sx = scale(container.width, width);
+        let sy = scale(container.height, height);
+        (
+            (target.left() - container.left()) / sx - self.client_left(dom, node),
+            target.width / sx,
+            (target.top() - container.top()) / sy - self.client_top(dom, node),
+            target.height / sy,
+        )
+    }
+
+    /// Whether `node` is a scroll container on either axis (`hidden`,
+    /// `scroll` or `auto`): scroll into view scrolls every one, `hidden`
+    /// included, as Chromium does for script and for an action's reveal.
+    fn is_scroll_container(&self, dom: &Dom, node: NodeId) -> bool {
+        use style::values::specified::box_::Overflow as O;
+        let scroller = |o: O| matches!(o, O::Hidden | O::Scroll | O::Auto);
+        self.style.stylo_style(dom, node).is_some_and(|s| {
+            let b = s.get_box();
+            scroller(b.overflow_x) || scroller(b.overflow_y)
+        })
+    }
+
     fn reveal_in_scroll_ancestors(&mut self, dom: &Dom, el: NodeId) -> Vec<ScrollTarget> {
         let mut moved = Vec::new();
         let mut cur = dom.parent_element(el).ok().flatten();
@@ -2743,24 +2889,17 @@ impl Layout {
             if self.is_root_container(dom, node) {
                 break;
             }
-            let axes = self.style.overflow_axes(dom, node);
+            let any = self.is_scroll_container(dom, node);
+            let axes = ScrollAxes { x: any, y: any };
             let explicit = self.element_scroll.contains_key(&node);
             if axes.x || axes.y || explicit {
                 let target = self.bounding_client_rect(dom, el);
-                let container = self.bounding_client_rect(dom, node);
+                let (x, width, offset, height) = self.rect_in_scrollport(dom, node, target);
                 let left = (axes.x || explicit)
-                    .then(|| {
-                        nearest_scroll_offset(
-                            target.left() - container.left(),
-                            target.width,
-                            self.client_width(dom, node),
-                            self.scroll_left(node) as i64,
-                        )
-                    })
+                    .then(|| nearest_scroll_offset(x, width, self.client_width(dom, node), self.scroll_left(node) as i64))
                     .flatten();
-                let offset = target.top() - container.top();
                 let visible = self.client_height(dom, node);
-                let top = ((axes.y || explicit) && (offset < 0.0 || offset + target.height > visible)).then(|| {
+                let top = ((axes.y || explicit) && (offset < 0.0 || offset + height > visible)).then(|| {
                     (offset + self.scroll_top(node) as f64).trunc().clamp(i32::MIN as f64, i32::MAX as f64) as i32
                 });
                 if self.element_scroll_to(dom, node, left, top) {
@@ -2789,28 +2928,16 @@ impl Layout {
             let axes = self.style.overflow_axes(dom, node);
             if axes.x || axes.y {
                 let target = self.bounding_client_rect(dom, el);
-                let container = self.bounding_client_rect(dom, node);
+                let (x, width, y, height) = self.rect_in_scrollport(dom, node, target);
+                let x = x + self.client_left(dom, node);
+                let y = y + self.client_top(dom, node);
                 let left = axes
                     .x
-                    .then(|| {
-                        focus_scroll_offset(
-                            target.left() - container.left(),
-                            target.width,
-                            self.client_width(dom, node),
-                            self.scroll_left(node) as i64,
-                        )
-                    })
+                    .then(|| focus_scroll_offset(x, width, self.client_width(dom, node), self.scroll_left(node) as i64))
                     .flatten();
                 let top = axes
                     .y
-                    .then(|| {
-                        focus_scroll_offset(
-                            target.top() - container.top(),
-                            target.height,
-                            self.client_height(dom, node),
-                            self.scroll_top(node) as i64,
-                        )
-                    })
+                    .then(|| focus_scroll_offset(y, height, self.client_height(dom, node), self.scroll_top(node) as i64))
                     .flatten();
                 if self.element_scroll_to(dom, node, left, top) {
                     moved.push(ScrollTarget::Container(node));
@@ -2904,8 +3031,8 @@ impl Layout {
     /// Script-facing `Element.scrollIntoView(options)` with an explicit
     /// alignment per axis (`block` vertical, `inline` horizontal; CSSOM View
     /// "scroll an element into view"), changed targets in delivery order.
-    /// The default `{block: start, inline: nearest}` keeps
-    /// [`Layout::scroll_into_view_targets`]'s policy.
+    /// The default `{block: start, inline: nearest}` aligns in every scroll
+    /// container on the way too, as Chromium does.
     pub fn scroll_into_view_aligned_script_targets(
         &mut self,
         dom: &Dom,
@@ -2913,11 +3040,7 @@ impl Layout {
         block: ScrollAlign,
         inline: ScrollAlign,
     ) -> Vec<ScrollTarget> {
-        let moved = if block == ScrollAlign::Start && inline == ScrollAlign::Nearest {
-            self.scroll_into_view_targets(dom, el)
-        } else {
-            self.scroll_into_view_offset_targets(dom, el, inline.offset_fn(), block.offset_fn(), true)
-        };
+        let moved = self.scroll_into_view_offset_targets(dom, el, inline.offset_fn(), block.offset_fn(), true);
         self.set_scroll_target(dom, el);
         moved
     }
@@ -2998,44 +3121,34 @@ impl Layout {
             if self.is_root_container(dom, node) {
                 break;
             }
-            let axes = if script {
-                // A scroll container scrolls on both axes: the other axis's
-                // `visible` computes to `auto` and `clip` to `hidden`.
-                use style::values::specified::box_::Overflow as O;
-                let scroller = |o: O| matches!(o, O::Hidden | O::Scroll | O::Auto);
-                let any = self.style.stylo_style(dom, node).is_some_and(|s| {
-                    let b = s.get_box();
-                    scroller(b.overflow_x) || scroller(b.overflow_y)
-                });
-                ScrollAxes { x: any, y: any }
-            } else {
-                self.style.overflow_axes(dom, node)
-            };
+            // A scroll container scrolls on both axes: the other axis's
+            // `visible` computes to `auto` and `clip` to `hidden`. `hidden`
+            // scrolls for an action's reveal too (Chromium's
+            // DOM.scrollIntoViewIfNeeded brings a box past an overflow:
+            // hidden stage's edge in).
+            let any = self.is_scroll_container(dom, node);
+            let mut axes = ScrollAxes { x: any, y: any };
             let explicit = !script && self.element_scroll.contains_key(&node);
+            let target = self.bounding_client_rect(dom, el);
+            // From the scrollport (the padding box) in the container's own px, as
+            // Blink's scroll into view measures for script and for an action's reveal alike.
+            let (x, width, y, height) = self.rect_in_scrollport(dom, node, target);
+            if !script && any {
+                // An action's reveal leaves a visually hidden wrapper (a 1px
+                // overflow: hidden box around a native control) alone: on an
+                // axis that does not scroll for the user it scrolls only a box
+                // the target fits in, so a clipped control still falls back to
+                // its label instead of showing a sliver.
+                let user = self.style.overflow_axes(dom, node);
+                axes.x = user.x || width <= self.client_width(dom, node);
+                axes.y = user.y || height <= self.client_height(dom, node);
+            }
             if axes.x || axes.y || explicit {
-                let target = self.bounding_client_rect(dom, el);
-                let container = self.bounding_client_rect(dom, node);
                 let left = (axes.x || explicit)
-                    .then(|| {
-                        offset_x(
-                            // From the scrollport (the padding box), as Blink's scroll into view
-                            // measures for script and for an action's reveal alike.
-                            target.left() - container.left() - self.client_left(dom, node),
-                            target.width,
-                            self.client_width(dom, node),
-                            self.scroll_left(node) as i64,
-                        )
-                    })
+                    .then(|| offset_x(x, width, self.client_width(dom, node), self.scroll_left(node) as i64))
                     .flatten();
                 let top = (axes.y || explicit)
-                    .then(|| {
-                        offset_y(
-                            target.top() - container.top() - self.client_top(dom, node),
-                            target.height,
-                            self.client_height(dom, node),
-                            self.scroll_top(node) as i64,
-                        )
-                    })
+                    .then(|| offset_y(y, height, self.client_height(dom, node), self.scroll_top(node) as i64))
                     .flatten();
                 if self.element_scroll_to(dom, node, left, top) {
                     moved.push(ScrollTarget::Container(node));
@@ -3112,6 +3225,19 @@ impl Layout {
         let custom = name.starts_with("--");
         let name = if custom { Cow::Borrowed(name) } else { lowercase(name) };
         let name: &str = &name;
+        // pyro: a running CSS transition's value now (the layout engine samples none), serialized
+        // as this function serializes the after-change style with that value in it
+        if !custom && !self.style.style_overridden() {
+            match self.style.transition_value(el, name) {
+                Some(crate::animation::TransitionValue::Text(v)) => return v,
+                Some(crate::animation::TransitionValue::Style(style)) => {
+                    if let Some(v) = self.style.with_style_override(el, style, || self.computed_style_value(dom, el, name)) {
+                        return v;
+                    }
+                }
+                None => {}
+            }
+        }
         match name {
             "display" if self.style.has_display_none(dom, el) => return "none".into(),
             "display" => return self.style.computed_display(dom, el).unwrap_or_default(),
@@ -3167,7 +3293,9 @@ impl Layout {
         }
         if name == "width" || name == "height" {
             if !self.is_visible(dom, el) {
-                return "auto".into();
+                // No box (display: none, or inside one): the computed value,
+                // as Chromium reports it (`7px`, `50%`, `auto`).
+                return declared.unwrap_or_else(|| "auto".into());
             }
             // A declared absolute length is the used size the renderless layout cannot derive.
             if let Some(px) = declared.filter(|v| v.ends_with("px")) {

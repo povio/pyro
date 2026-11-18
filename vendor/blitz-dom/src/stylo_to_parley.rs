@@ -780,7 +780,7 @@ pub(crate) fn style(
     let word_break = match itext_styles.word_break {
         stylo::WordBreak::Normal => parley::WordBreak::Normal,
         stylo::WordBreak::BreakAll => parley::WordBreak::BreakAll,
-        stylo::WordBreak::KeepAll => parley::WordBreak::KeepAll,
+        stylo::WordBreak::KeepAll | stylo::WordBreak::AutoPhrase => parley::WordBreak::KeepAll,
         stylo::WordBreak::BreakWord | stylo::WordBreak::Manual => parley::WordBreak::Normal,
     };
     let dictionary_breaks = itext_styles.word_break != stylo::WordBreak::Manual;
@@ -823,6 +823,7 @@ pub(crate) fn style(
         text_wrap_mode,
         white_space_collapse: white_space_collapse(itext_styles.white_space_collapse),
         dictionary_breaks,
+        phrase_breaks: itext_styles.word_break == stylo::WordBreak::AutoPhrase,
         // pyro: `font-size-adjust` sets the size (a face's `size-adjust` is then not applied).
         font_size_adjusted: font_styles.font_size_adjust != style::values::computed::font::FontSizeAdjust::None,
         // pyro: the first variation is the automatic `opsz` (`font_variations`).
@@ -838,6 +839,15 @@ pub(crate) fn style(
                 match (chars.next(), chars.next()) {
                     (None, _) => parley::SoftHyphen::Hidden,
                     (Some(ch), None) => parley::SoftHyphen::Char(ch),
+                    _ if string.chars().count() <= 4 => {
+                        let mut chars = ['\0'; 4];
+                        let mut len = 0;
+                        for ch in string.chars() {
+                            chars[len] = ch;
+                            len += 1;
+                        }
+                        parley::SoftHyphen::Chars(chars, len as u8)
+                    }
                     _ => parley::SoftHyphen::Auto,
                 }
             }
@@ -851,6 +861,9 @@ pub(crate) fn style(
         line_break,
         text_spacing_trim: text_spacing_trim(style, &font_features),
         text_autospace: text_autospace(style),
+        upright: style.writing_mode.is_vertical()
+            && !style.writing_mode.is_sideways()
+            && style.writing_mode.contains(style::logical_geometry::WritingMode::UPRIGHT),
         text_justify: match itext_styles.text_justify {
             style::values::computed::TextJustify::Auto => parley::TextJustify::Auto,
             style::values::computed::TextJustify::None => parley::TextJustify::None,

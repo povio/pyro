@@ -1,0 +1,48 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "."
+ ],
+ "tests": {
+  "selection/crashtests/find-soft-hyphen-crash.html": {"status":"complete","ms":50,"n":1,"fail":[],"h":"22f2a845"},
+  "selection/crashtests/find-whole-word-crash.html": {"status":"complete","ms":50,"n":1,"fail":[],"h":"22f2a845"},
+  "selection/crashtests/find-with-moving-iframe.html": {"status":"complete","ms":60,"n":1,"fail":[],"h":"22f2a845"},
+  "selection/crashtests/move-track-from-video-after-selection-setBaseAndExtent-from-outside-video-to-before-track.html": {"status":"complete","ms":50,"n":1,"fail":[],"h":"22f2a845"},
+  "selection/crashtests/selectall-and-find-svg-text-on-selectstart.html": {"status":"timeout","ms":15000,"n":0,"pass":[]},
+  "selection/crashtests/selection-add-range-collapsed-in-unassigned-node-and-shadow-has-no-content.html": {"status":"complete","ms":70,"n":1,"fail":[],"h":"22f2a845"},
+  "selection/crashtests/selection-clip-crash.html": {"status":"complete","ms":70,"n":1,"fail":[],"h":"22f2a845"},
+  "selection/crashtests/selection-delete-list-item-crash.html": {"status":"complete","ms":60,"n":1,"fail":[],"h":"22f2a845"},
+  "selection/crashtests/selection-deleteFromDocument-after-audio-control-visible-when-selecting-audio-children.html": {"status":"complete","ms":50,"n":1,"fail":[],"h":"22f2a845"},
+  "selection/crashtests/selection-deleteFromDocument-after-extend-from-summary-to-outside-details.html": {"status":"complete","ms":60,"n":1,"fail":[],"h":"22f2a845"},
+  "selection/crashtests/selection-deleteFromDocument-starting-from-details-ends-in-data.html": {"status":"complete","ms":50,"n":1,"fail":[],"h":"22f2a845"},
+  "selection/crashtests/selection-detached-range-find-crash.html": {"status":"complete","ms":50,"n":1,"fail":[],"h":"22f2a845"},
+  "selection/crashtests/selection-details-editor-ui.html": {"status":"complete","ms":50,"n":1,"fail":[],"h":"22f2a845"},
+  "selection/crashtests/selection-extend-into-input-from-inside-button.html": {"status":"complete","ms":50,"n":1,"fail":[],"h":"22f2a845"},
+  "selection/crashtests/selection-extend-to-area-after-attaching-shadow-to-scrollingElement.html": {"status":"complete","ms":50,"n":1,"fail":[],"h":"22f2a845"},
+  "selection/crashtests/selection-from-svg-use-to-its-child.html": {"status":"complete","ms":50,"n":1,"fail":[],"h":"22f2a845"},
+  "selection/crashtests/selection-modify-around-details-not-having-summary.html": {"status":"complete","ms":310,"n":1,"fail":[],"h":"22f2a845"},
+  "selection/crashtests/selection-modify-around-input.html": {"status":"complete","ms":50,"n":1,"fail":[],"h":"22f2a845"},
+  "selection/crashtests/selection-modify-around-textarea.html": {"status":"complete","ms":50,"n":1,"fail":[],"h":"22f2a845"},
+  "selection/crashtests/selection-modify-extend-forward-on-option.html": {"status":"complete","ms":50,"n":1,"fail":[],"h":"22f2a845"},
+  "selection/crashtests/selection-modify-extend-foward-line-across-video-in-html.html": {"status":"complete","ms":60,"n":1,"fail":[],"h":"22f2a845"},
+  "selection/crashtests/selection-modify-line-boundary-around-empty-details.html": {"status":"complete","ms":50,"n":1,"fail":[],"h":"22f2a845"},
+  "selection/crashtests/selection-modify-line-boundary-around-shadow.html": {"status":"complete","ms":50,"n":1,"fail":[],"h":"22f2a845"},
+  "selection/crashtests/selection-modify-line-from-contenteditable-to-textarea.html": {"status":"complete","ms":50,"n":1,"fail":[],"h":"22f2a845"},
+  "selection/crashtests/selection-modify-line-from-optgroup-in-video-to-details-without-summary.html": {"status":"complete","ms":50,"n":1,"fail":[],"h":"22f2a845"},
+  "selection/crashtests/selection-modify-line-into-svg-use.html": {"status":"complete","ms":50,"n":1,"fail":[],"h":"22f2a845"},
+  "selection/crashtests/selection-modify-line-next-to-input-and-make-it-invisible.html": {"status":"complete","ms":50,"n":1,"fail":[],"h":"22f2a845"},
+  "selection/crashtests/selection-modify-line-next-to-textarea.html": {"status":"complete","ms":50,"n":1,"fail":[],"h":"22f2a845"},
+  "selection/crashtests/selection-modify-per-word-in-table-header-group.html": {"status":"complete","ms":50,"n":1,"fail":[],"h":"22f2a845"},
+  "selection/crashtests/selection-modify-word-left-with-selecting-editable-select.html": {"status":"complete","ms":50,"n":1,"fail":[],"h":"22f2a845"},
+  "selection/crashtests/selection-setBaseAndExtent-from-end-of-video-to-child-of-video.html": {"status":"complete","ms":50,"n":1,"fail":[],"h":"22f2a845"},
+  "selection/crashtests/selection-setBaseAndExtent-from-label-to-end-of-audio-and-hide-audio-controls.html": {"status":"complete","ms":50,"n":1,"fail":[],"h":"22f2a845"},
+  "selection/crashtests/selection-setBaseAndExtent-unassigned-nodes-backward.html": {"status":"complete","ms":50,"n":1,"fail":[],"h":"22f2a845"},
+  "selection/crashtests/selection-setBaseAndExtent-video-in-shadow-and-another-shadowroot.html": {"status":"complete","ms":50,"n":1,"fail":[],"h":"22f2a845"},
+  "selection/crashtests/table.html": {"status":"complete","ms":50,"n":1,"fail":[],"h":"22f2a845"},
+  "selection/range-larger-than-u32-crash.html": {"status":"complete","ms":50,"n":1,"fail":[],"h":"22f2a845"},
+  "selection/selection-select-all-move-input-crash.html": {"status":"complete","ms":50,"n":1,"fail":[],"h":"22f2a845"}
+ }
+}

@@ -1,0 +1,15 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "."
+ ],
+ "tests": {
+  "webmcp/imperative/abort-signal-after-iframe-removal-crash.https.html": {"status":"timeout","ms":15000,"n":0,"pass":[]},
+  "webmcp/imperative/cancel-reentrancy-crash.https.html": {"status":"complete","ms":50,"n":1,"fail":[],"h":"22f2a845"},
+  "webmcp/imperative/executeTool-same-document-navigation-crash.https.html": {"status":"complete","ms":50,"n":1,"fail":[],"h":"22f2a845"},
+  "webmcp/imperative/register-tool-input-schema-removes-iframe-crash.https.html": {"status":"timeout","ms":15000,"n":0,"pass":[]}
+ }
+}

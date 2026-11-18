@@ -79,9 +79,9 @@ pub(crate) fn fragment_line_trim(line: &parley::Line<'_, crate::node::TextBrush>
     let (over, under) = edges(root_style);
     let m = line.metrics();
     if start {
-        (line.span_text_edge(0, over, true) - m.block_min_coord).max(0.0)
+        (line.span_text_edge(line.root_style(), over, true) - m.block_min_coord).max(0.0)
     } else {
-        (m.block_max_coord - line.span_text_edge(0, under, false)).max(0.0)
+        (m.block_max_coord - line.span_text_edge(line.root_style(), under, false)).max(0.0)
     }
 }
 

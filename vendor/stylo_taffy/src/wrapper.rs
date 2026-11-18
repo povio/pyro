@@ -50,6 +50,9 @@ bitflags! {
         const IS_FIELDSET = 1 << 8;
         /// pyro: the element is replaced by the image of its `content: url()`.
         const IS_CONTENT_REPLACED = 1 << 9;
+        /// pyro: the element is an `<input>`: its `overflow` makes it no scroll container for layout (an
+        /// automatic minimum size of zero; Blink, WPT css-grid `stretch-grid-item-text-input-overflow`).
+        const IS_INPUT = 1 << 10;
     }
 }
 
@@ -250,7 +253,7 @@ impl<T: Deref<Target = ComputedValues>> taffy::CoreStyle for TaffyStyloStyle<T> 
 
     #[inline]
     fn overflow(&self) -> taffy::Point<taffy::Overflow> {
-        if self.flags.contains(StyleFlags::OVERFLOW_TO_VIEWPORT) {
+        if self.flags.intersects(StyleFlags::OVERFLOW_TO_VIEWPORT | StyleFlags::IS_INPUT) {
             return taffy::Point { x: taffy::Overflow::Visible, y: taffy::Overflow::Visible };
         }
         let box_styles = self.style.get_box();
@@ -338,6 +341,23 @@ impl<T: Deref<Target = ComputedValues>> taffy::CoreStyle for TaffyStyloStyle<T> 
     #[inline]
     fn aspect_ratio(&self) -> Option<f32> {
         let aspect_ratio = self.style.get_position().aspect_ratio;
+        // pyro: `aspect-ratio` does not apply to internal table boxes (css-sizing-4 §2; WPT
+        // css-sizing `aspect-ratio/table-element-001`).
+        {
+            use style::values::specified::box_::DisplayInside as I;
+            if matches!(
+                self.style.get_box().display.inside(),
+                I::TableRowGroup
+                    | I::TableColumn
+                    | I::TableColumnGroup
+                    | I::TableHeaderGroup
+                    | I::TableFooterGroup
+                    | I::TableRow
+                    | I::TableCell
+            ) {
+                return None;
+            }
+        }
         // pyro: `auto <ratio>` on a replaced element with a natural aspect ratio is `auto`: the
         // natural ratio, which its measure function applies.
         if aspect_ratio.auto && self.flags.contains(StyleFlags::HAS_NATURAL_RATIO) {
@@ -709,6 +729,21 @@ impl<T: Deref<Target = ComputedValues>> taffy::BlockItemStyle for TaffyStyloStyl
 // FlexboxContainerStyle impl
 #[cfg(feature = "flexbox")]
 impl<T: Deref<Target = ComputedValues>> taffy::FlexboxContainerStyle for TaffyStyloStyle<T> {
+    /// pyro: see `GridContainerStyle::baseline_synthesis` (only the central case differs).
+    #[inline]
+    fn block_baseline_synthesis(&self) -> f32 {
+        let wm = self.style.writing_mode;
+        // pyro: an alphabetic baseline is synthesized at the line-under edge: block-end, but
+        // block-start in `vertical-lr` (its line-under side is the left; WPT css-flexbox
+        // `baseline-synthesis-vert-lr-line-under`).
+        if wm.is_vertical() && !wm.is_sideways() {
+            0.5
+        } else if wm.is_vertical() && wm.is_vertical_lr() {
+            0.0
+        } else {
+            1.0
+        }
+    }
     #[inline]
     fn flex_direction(&self) -> taffy::FlexDirection {
         convert::flex_direction(self.style.get_position().flex_direction)
@@ -1188,6 +1223,11 @@ impl<T: Deref<Target = ComputedValues>> taffy::GridContainerStyle for TaffyStylo
 // GridItemStyle impl
 #[cfg(feature = "grid")]
 impl<T: Deref<Target = ComputedValues>> taffy::GridItemStyle for TaffyStyloStyle<T> {
+    #[inline]
+    fn grid_min_size_keyword(&self) -> taffy::Size<taffy::Dimension> {
+        <Self as taffy::BlockItemStyle>::min_size_keyword(self)
+    }
+
     #[inline]
     fn grid_row(&self) -> taffy::Line<taffy::GridPlacement<Atom>> {
         self.grid_row_placement()

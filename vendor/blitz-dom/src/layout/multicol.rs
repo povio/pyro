@@ -56,8 +56,9 @@ const MAX_COLUMNS: usize = 1000;
 const EPSILON: f32 = 1.0 / 128.0;
 
 /// Whether `style` makes its box a multi-column container: a `column-count` or `column-width`
-/// other than `auto` on a block container (`block`, `flow-root`, `inline-block`, `list-item`) in a
-/// horizontal writing mode.
+/// other than `auto` on a block container (`block`, `flow-root`, `inline-block`, `list-item`). In
+/// a vertical writing mode the container is laid out in its logical axes and its columns are shown
+/// only by paint (`Node::vertical_column_fragments`); geometry queries and hit tests see the strip.
 #[inline]
 pub(crate) fn is_multicol_style(style: &ComputedValues) -> bool {
     if !style.get_column().is_multicol() {
@@ -69,7 +70,7 @@ pub(crate) fn is_multicol_style(style: &ComputedValues) -> bool {
         DisplayInside::Flow => display.outside() == DisplayOutside::Block,
         _ => false,
     };
-    block_container && !style.writing_mode.is_vertical()
+    block_container
 }
 
 /// The columns of a multi-column container, in its border-box coordinates (CSS px, rounded to
@@ -449,7 +450,8 @@ impl LayoutPassState<'_> {
                 return LayoutOutput::HIDDEN;
             };
             let multicol = Multicol::of(&style);
-            let ls = node.layout_style();
+            // (In the container's own writing mode: its algorithm runs in its logical axes.)
+            let ls = node.layout_style_in(self.layout_wm);
             let clamps_block_size = !ls.min_size().height.is_auto() || !ls.max_size().height.is_auto();
             let parent_width = inputs.parent_size.width;
             let padding = ls.padding().resolve_or_zero(parent_width, resolve_calc_value);
@@ -768,7 +770,18 @@ impl Node {
     #[inline]
     pub fn column_fragments(&self) -> Option<&ColumnFragments> {
         let columns = self.element_data()?.layout_data.as_deref()?.columns.as_deref()?;
-        is_multicol_node(self).then_some(columns)
+        let style = self.primary_styles()?;
+        (is_multicol_style(&style) && !style.writing_mode.is_vertical()).then_some(columns)
+    }
+
+    /// pyro: the columns of this multi-column container of a vertical writing mode, in its logical
+    /// axes (inline = x, block = y), and whether its block axis runs right to left: paint shows
+    /// them (see [`is_multicol_style`]).
+    pub fn vertical_column_fragments(&self) -> Option<(&ColumnFragments, bool)> {
+        let columns = self.element_data()?.layout_data.as_deref()?.columns.as_deref()?;
+        let style = self.primary_styles()?;
+        let wm = style.writing_mode;
+        (is_multicol_style(&style) && wm.is_vertical()).then_some((columns, !wm.is_vertical_lr()))
     }
 
     /// `(x, y)` in this box's coordinates, moved from its columns into its strip when it is a
@@ -883,6 +896,21 @@ impl BaseDocument {
         }
     }
 
+    /// pyro: whether anonymous block `id` comes right after, and right before, a split inline's
+    /// block-level box among its parent's layout children.
+    fn split_inline_neighbours(&self, id: crate::NodeId) -> (bool, bool) {
+        let node = &self.nodes[id];
+        if !node.is_anonymous() {
+            return (false, false);
+        }
+        let Some(parent) = node.layout_parent.get() else { return (false, false) };
+        let children = self.nodes[parent].layout_children.borrow();
+        let Some(children) = children.as_deref() else { return (false, false) };
+        let Some(at) = children.iter().position(|&c| c == id) else { return (false, false) };
+        let split = |i: Option<usize>| i.and_then(|i| children.get(i)).is_some_and(|&c| self.nodes[c].is_split_inline());
+        (split(at.checked_sub(1)), split(Some(at + 1)))
+    }
+
     /// Adds what `parent`'s content keeps from breaks, and the margins between its blocks, to
     /// `found`: `parent`'s border box starts at strip position `top`. `container_content_top`:
     /// `parent` is the container, its content box's top at that (its own layout is written by its
@@ -953,8 +981,17 @@ impl BaseDocument {
                 (text.orphans.0.max(1) as usize, text.widows.0.max(1) as usize)
             });
             let n = lines.len();
-            found.strict.push((lines[0].0, lines[orphans.min(n) - 1].1));
-            found.strict.push((lines[n - widows.min(n)].0, lines[n - 1].1));
+            // The anonymous blocks around an inline split by block-level content hold lines of one
+            // inline formatting context with the block between them, a line of it too (Chromium's
+            // block-in-inline): orphans and widows count across them (WPT css-position
+            // `position-absolute-in-inline-007b`, `-008b`).
+            let (after_split, before_split) = self.split_inline_neighbours(parent);
+            if !after_split {
+                found.strict.push((lines[0].0, lines[orphans.min(n) - 1].1));
+            }
+            if !before_split {
+                found.strict.push((lines[n - widows.min(n)].0, lines[n - 1].1));
+            }
             return;
         }
         let children = node.layout_children.borrow();

@@ -1,0 +1,15 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "x-frame-options/deny.html": {"status":"complete","ms":60,"n":10,"fail":["`  DENY ` blocks same-origin framing","`DENY` blocks same-origin framing","`DENY` blocks same-origin framing with CSP default-src 'self'","`denY` blocks same-origin framing"],"h":"fae085f8"},
+  "x-frame-options/get-decode-split.html": {"status":"timeout","ms":10000,"n":8,"pass":[]},
+  "x-frame-options/invalid.html": {"status":"complete","ms":70,"n":18,"fail":[],"h":"ec441c9b"},
+  "x-frame-options/sameorigin.sub.html": {"status":"complete","ms":70,"n":10,"fail":["SAMEORIGIN blocks cross-origin nested in cross-origin framing","SAMEORIGIN blocks cross-origin nested in same-origin framing","SAMEORIGIN blocks same-origin nested in cross-origin framing"],"h":"cd132845"}
+ }
+}

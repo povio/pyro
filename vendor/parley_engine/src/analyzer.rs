@@ -54,6 +54,13 @@ pub struct LineBreakConfig {
     /// pyro: no breaks inside words found by dictionary (Thai, Lao, Khmer, Burmese): CSS
     /// `word-break: manual`.
     pub no_dictionary: bool,
+    /// pyro: CSS `word-break: auto-phrase` (with `word_break` keep-all): soft wrap opportunities
+    /// between Japanese phrases, and the opportunities of `normal` as phrase fallbacks
+    /// ([`crate::CharInfo::is_phrase_fallback`]).
+    pub phrases: bool,
+    /// pyro: no soft wrap opportunity after a soft hyphen (CSS `hyphens: none`, `word-break:
+    /// auto-phrase`), for min-content sizes too.
+    pub no_soft_hyphen_breaks: bool,
 }
 
 /// Options controlling [`Analyzer::analyze`].

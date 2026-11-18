@@ -1002,7 +1002,7 @@ pub mod white_space {
     }
 }
 
-#[cfg(feature = "gecko")]
+// pyro: also for servo (blitz-paint draws the stroke).
 pub mod _webkit_text_stroke {
     pub use crate::properties::generated::shorthands::_webkit_text_stroke::*;
 

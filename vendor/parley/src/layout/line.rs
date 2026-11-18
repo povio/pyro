@@ -22,6 +22,15 @@ pub struct Line<'a, B: Brush> {
 }
 
 impl<'a, B: Brush> Line<'a, B> {
+    /// pyro: the style of the line's root span box: the root's (`0`), or on the first line its
+    /// `::first-line` copy (`TreeBuilder::set_first_line`).
+    pub fn root_style(&self) -> u16 {
+        match self.index {
+            0 => self.layout.data.first_line_root.unwrap_or(0),
+            _ => 0,
+        }
+    }
+
     /// Returns the metrics for the line.
     pub fn metrics(&self) -> &LineMetrics {
         &self.data.metrics
@@ -146,7 +155,15 @@ impl<'a, B: Brush> Line<'a, B> {
                     .style_metrics()
                     .get(usize::from(layout_box.parent_style_index))
                     .map_or(0, |m| m.aligned_subtree_root);
-                let ascent = inline_box.baseline.unwrap_or(inline_box.height);
+                // pyro: as `inline_box_placement` takes it (central baselines).
+                let ascent = if self.layout.data.central_baseline
+                    && inline_box.central
+                    && inline_box.vertical_align.alignment != crate::AlignmentBaseline::Baseline
+                {
+                    inline_box.height
+                } else {
+                    inline_box.baseline.unwrap_or(inline_box.height)
+                };
                 self.data.metrics.baseline
                     - self.data.aligned_subtree_offset(
                         &self.layout.data.aligned_subtree_offsets,
@@ -293,6 +310,10 @@ pub struct LineMetrics {
     ///
     /// For horizontal text, this would be the bottom of the line's content.
     pub content_block_max_coord: f32,
+
+    /// pyro: the line is an invisible line box (CSS Inline 3 § 4.1): it holds no text and no
+    /// box with content, only empty inline boxes, so it has no height and they have none.
+    pub invisible: bool,
 }
 
 impl LineMetrics {

@@ -2142,6 +2142,12 @@ impl Io {
                 }
             };
             let status = resp.status();
+            // The server's reason phrase when it is not the standard one (hyper keeps only those): XHR and fetch
+            // report it as statusText, as Chromium does (`HTTP/1.1 204 UNICORNSWIN`).
+            let reason = resp
+                .extensions()
+                .get::<hyper::ext::ReasonPhrase>()
+                .map(|r| String::from_utf8_lossy(r.as_bytes()).into_owned());
             let resp_headers = own_headers(resp.headers());
             let protocol = resp.version();
             // A connection opened for this request reports its phases; the
@@ -2293,6 +2299,7 @@ impl Io {
                     body: body.clone(),
                 };
                 interceptor.response(paused, tx);
+                let net_status = status;
                 let (status, resp_headers, body) = match rx.await {
                     Ok(ResponseDecision::Continue) => (status, resp_headers, body),
                     Ok(ResponseDecision::Fulfill { status, headers, body }) => (
@@ -2303,7 +2310,10 @@ impl Io {
                     Ok(ResponseDecision::Fail(reason)) => return Err(NetError::Blocked(cdp_reason(&reason))),
                     Err(_) => return Err(NetError::Other("response interception dropped".into())),
                 };
-                let head = self.head(&url, status, resp_headers, kind, redirects > 0).over(protocol);
+                let mut head = self.head(&url, status, resp_headers, kind, redirects > 0).over(protocol);
+                if let Some(reason) = reason.filter(|_| head.status == net_status) {
+                    head.status_text = reason;
+                }
                 return self.deliver_body(id, &req, sink, head, body);
             }
             // Before the head takes the headers: the coding borrows them.
@@ -2321,7 +2331,10 @@ impl Io {
             }
             let shared_response = shared_store.map(|_| resp_headers.clone());
             let mut stored: Option<Vec<Bytes>> = (store.is_some() || shared_store.is_some()).then(Vec::new);
-            let head = self.head(&url, status, resp_headers, kind, redirects > 0).over(protocol);
+            let mut head = self.head(&url, status, resp_headers, kind, redirects > 0).over(protocol);
+            if let Some(reason) = reason {
+                head.status_text = reason;
+            }
             self.shared.emit(NetEvent::ResponseReceived {
                 id,
                 head: Box::new(head.clone()),
