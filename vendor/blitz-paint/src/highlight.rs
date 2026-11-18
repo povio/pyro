@@ -478,8 +478,9 @@ pub(crate) fn stroke_highlighted_text<S: PaintScene>(
         }
         // pyro: the glyphs outside the stretches where they reach into one (an italic glyph's
         // overhang), under its background: Chromium paints the highlight over them (WPT css-pseudo
-        // `selection-background-painting-order`).
-        {
+        // `selection-background-painting-order`). Not in vertical lines, whose turned runs place
+        // glyphs off their layout positions (`glyph_spans` would take selected ones too).
+        if turned.is_none() {
             let mut spans: SmallVec<[(f32, f32); 4]> = pieces.iter().map(|p| (p.x0, p.x1)).collect();
             spans.sort_by(|p, q| p.0.total_cmp(&q.0));
             let mut gaps: SmallVec<[(f32, f32); 4]> = SmallVec::new();
@@ -498,6 +499,7 @@ pub(crate) fn stroke_highlighted_text<S: PaintScene>(
             scene.push_clip_layer(Fill::NonZero, transform, &inside);
             context.highlights = std::mem::take(&mut cache);
             context.glyph_spans = Some(gaps);
+            context.glyphs_only = true;
             stroke_text(
                 scene,
                 std::iter::once(line.clone()),
@@ -511,6 +513,7 @@ pub(crate) fn stroke_highlighted_text<S: PaintScene>(
                 Some(layout),
             );
             context.glyph_spans = None;
+            context.glyphs_only = false;
             cache = std::mem::take(&mut context.highlights);
             scene.pop_layer();
         }

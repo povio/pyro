@@ -727,6 +727,8 @@ pub(crate) struct DrawTextContext {
     /// pyro: the next `stroke_text` draws the text's shadows alone (no glyphs, no decoration
     /// lines but their shadows): those of highlighted text, under the highlights' backgrounds.
     pub(crate) shadows_only: bool,
+    /// pyro: draw the glyphs alone, without decorations (`highlight`: unselected glyphs' overhang).
+    pub(crate) glyphs_only: bool,
     /// pyro: the next `stroke_text` draws only the glyphs whose middle is in one of these
     /// stretches (layout x): a highlight's shadows are cast by its glyphs alone.
     pub(crate) glyph_spans: Option<SmallVec<[(f32, f32); 4]>>,
@@ -1703,9 +1705,11 @@ pub(crate) fn stroke_text<'a, S: PaintScene>(
         highlighting,
         highlights,
         shadows_only,
+        glyphs_only,
         glyph_spans,
     } = context;
     let shadows_only = *shadows_only;
+    let undecorated = shadows_only || *glyphs_only;
     let positioned_pass = *positioned_pass;
     let glyph_spans = glyph_spans.as_ref();
     let shift = *text_shift;
@@ -2304,7 +2308,7 @@ pub(crate) fn stroke_text<'a, S: PaintScene>(
                 }
             }
         }
-        if !deco_boxes.is_empty() && !shadows_only {
+        if !deco_boxes.is_empty() && !undecorated {
             flush(scene, DecorationPhase::UnderOver);
         }
         for (glyph_run, paint) in glyph_runs.iter().zip(run_paints.iter()).filter(|(_, paint)| paint.drawn) {
@@ -2315,7 +2319,7 @@ pub(crate) fn stroke_text<'a, S: PaintScene>(
             }
             draw_run(scene, glyph_run, paint, None, runs);
         }
-        if !deco_boxes.is_empty() && !shadows_only {
+        if !deco_boxes.is_empty() && !undecorated {
             flush(scene, DecorationPhase::LineThrough);
         }
     }
