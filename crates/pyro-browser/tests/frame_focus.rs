@@ -79,7 +79,7 @@ fn removal_and_navigation_invalidate_targets_without_restoring_parent_input() {
     let current = t.browser.focused_frame(page).unwrap();
     assert_eq!(current.id, old.id);
     assert_ne!(current.loader_id, old.loader_id);
-    assert!(old.page_dom.unwrap().is_disposed());
+    assert!(old.page_dom.unwrap().is_detached());
     assert_eq!(eval(current.main_realm().unwrap(), "document.activeElement.tagName"), "BODY");
     eval(&r, "f.contentDocument.querySelector('input').focus();f.remove()");
     assert_eq!(t.browser.focused_frame(page).unwrap().id, t.browser.page(page).unwrap().main_frame.id);

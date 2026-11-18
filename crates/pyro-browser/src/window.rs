@@ -784,6 +784,24 @@ pub(crate) fn cancel_timers(realm: &Realm) {
     }
 }
 
+/// Drops what the window of a lingering realm (`Realm::linger`) roots in its
+/// own realm, besides its timers: the frame index definer, idle.js and the
+/// nested timer caller. Each would keep the realm's global alive from the
+/// global's own payload, which the collector cannot see through.
+pub(crate) fn release_roots(realm: &Realm) {
+    // A deferred realm was never made: entering it would make it now.
+    if realm.is_deferred() {
+        return;
+    }
+    cancel_timers(realm);
+    let Ok(scope) = realm.scope() else { return };
+    if let Some(w) = scope.global_data::<Window>() {
+        drop(w.frame_definer.borrow_mut().take());
+        drop(w.idle_module.borrow_mut().take());
+        drop(w.nested_timer_call.borrow_mut().take());
+    }
+}
+
 /// Keeps `define`, the step defining a frame index getter on the global
 /// (pyro-webapi's install.js `accessor`, which captured the descriptor
 /// intrinsic before page init scripts can replace it).

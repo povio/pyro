@@ -1845,17 +1845,44 @@ impl Browser {
             (p.main_frame.id.clone(), old, scripts.clone(), p.nav.clone(), (old_dom, replaced))
         };
         let (old_dom, replaced) = old_dom;
+        // A child frame's previous document stays usable while script of
+        // other documents holds it (its parent's, through a saved
+        // `contentDocument`): HTML only makes it not fully active. Its realms
+        // linger until nothing reaches them (`Realm::linger`); the engine
+        // disposes them after a collection finds them dead.
+        let linger = page.child.is_some() && old_dom.is_some();
         if let Some(dom) = &old_dom {
-            dom.dispose();
+            if linger {
+                dom.detach();
+            } else {
+                dom.dispose();
+            }
         }
+        let mut lingered = true;
         for r in old {
-            window::cancel_timers(&r.realm);
+            if linger {
+                window::release_roots(&r.realm);
+            } else {
+                window::cancel_timers(&r.realm);
+            }
             let id = r.realm.id();
             if let Some(dom) = &old_dom {
-                pyro_webapi::lifecycle::realm_disposed(dom, id);
+                if linger {
+                    pyro_webapi::lifecycle::realm_detached(dom, id);
+                } else {
+                    pyro_webapi::lifecycle::realm_disposed(dom, id);
+                }
             }
-            r.realm.dispose();
+            if !(linger && r.realm.linger()) {
+                lingered = false;
+                r.realm.dispose();
+            }
             self.emit(page.page, PageEvent::RealmDestroyed { frame_id: frame_id.clone(), realm: id });
+        }
+        if linger && !lingered {
+            if let Some(dom) = &old_dom {
+                dom.dispose();
+            }
         }
         if let Some(dom) = &old_dom {
             let _ = dom.dom.borrow_mut().set_document_active(dom.document(), false);

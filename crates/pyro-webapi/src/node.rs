@@ -1668,12 +1668,15 @@ impl JsClass for Document {
         def.getter("readyState", |s, n| Ok(s.string(crate::html::ready_state(n.page(), n.id))));
         def.getter("visibilityState", |s, n| Ok(s.string(if n.page().is_hidden() { "hidden" } else { "visible" })));
         def.getter("hidden", |s, n| Ok(s.boolean(n.page().is_hidden())));
-        def.getter("defaultView", |s, n| Ok(if n.page().document() == n.id { s.global().value() } else { s.null() }));
+        // A document its frame navigated away from has no browsing context.
+        def.getter("defaultView", |s, n| {
+            Ok(if n.page().document() == n.id && !n.page().is_detached() { s.global().value() } else { s.null() })
+        });
         def.getter("activeElement", |s, n| {
             let f = n.page().dom.borrow().active_element(n.id).js()?;
             node_value(s, n.page(), f)
         });
-        def.pure_method("hasFocus", 0, |s, n, _a| Ok(s.boolean(n.page().document() == n.id)));
+        def.pure_method("hasFocus", 0, |s, n, _a| Ok(s.boolean(n.page().document() == n.id && !n.page().is_detached())));
         def.getter("currentScript", |s, n| node_value(s, n.page(), n.page().current_script()));
         def.getter("implementation", |s, n| Ok(crate::html::dom_implementation(s, n)?.value()));
         def.getter("forms", |s, n| {

@@ -345,6 +345,65 @@ fn disposed_realm_throws_context_destroyed() {
     assert_eq!(eval_str(&other, "try { leakedNative() } catch (e) { e.message }"), "Execution context was destroyed.");
 }
 
+/// `Realm::linger`: a realm whose objects another realm holds stays usable
+/// (a navigated-away document), then goes once nothing reaches it.
+#[test]
+fn a_lingering_realm_works_while_reached_and_goes_when_not() {
+    let (e, r) = setup();
+    let other = e.create_realm(RealmOptions { name: "other".into(), ..Default::default() }).unwrap();
+    let drops = Rc::new(Cell::new(0));
+    expose::<Element>(&r, "n", node(3, &drops), None);
+    eval_str(&r, "globalThis.made = () => new Array(3).fill(n.nodeName).join()");
+    // In a frame of its own: the collector scans the live stack conservatively.
+    #[inline(never)]
+    fn hand_over(from: &Realm, to: &Realm) {
+        let s = from.scope().unwrap();
+        let so = to.scope().unwrap();
+        so.global().set("held", s.global().get("n").unwrap()).unwrap();
+        so.global().set("made", s.global().get("made").unwrap()).unwrap();
+    }
+    hand_over(&r, &other);
+    assert!(r.linger(), "this JavaScriptCore can linger");
+    assert!(r.is_lingering());
+    assert_eq!(e.lingering_realms(), 1);
+    for _ in 0..3 {
+        e.collect_garbage_now();
+        e.drain_finalized();
+    }
+    // Still reached: its methods, getters and functions work.
+    assert_eq!(eval_str(&other, "[held.ping(), held.nodeName, held.childAt(1), made()].join('|')"), "pong|n3|20|n3,n3,n3");
+    assert_eq!(eval_str(&other, "held instanceof Object"), "false", "the object keeps its own realm's prototypes");
+    assert_eq!(e.lingering_realms(), 1);
+    assert_eq!(drops.get(), 0);
+    eval_str(&other, "held = null; made = null");
+    for _ in 0..5 {
+        e.collect_garbage_now();
+        e.drain_finalized();
+    }
+    assert_eq!(e.lingering_realms(), 0, "nothing reaches the realm: disposed");
+    assert!(r.scope().is_err());
+    assert_eq!(drops.get(), 1, "its wrapper's payload went with it");
+}
+
+#[test]
+fn many_lingering_realms_are_released() {
+    let e = engine();
+    e.register::<Element>();
+    let drops = Rc::new(Cell::new(0));
+    for i in 0..50 {
+        let r = e.create_realm(RealmOptions::default()).unwrap();
+        expose::<Element>(&r, "n", node(i, &drops), None);
+        eval_str(&r, "globalThis.big = new Array(10000).fill(n); n.nodeName");
+        assert!(r.linger());
+    }
+    for _ in 0..5 {
+        e.collect_garbage_now();
+        e.drain_finalized();
+    }
+    assert_eq!(e.lingering_realms(), 0);
+    assert_eq!(drops.get(), 50);
+}
+
 #[test]
 fn console_and_exception_hooks() {
     #[derive(Default)]

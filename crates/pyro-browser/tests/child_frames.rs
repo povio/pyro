@@ -549,7 +549,7 @@ fn listeners_run_across_documents_with_one_event_object() {
 }
 
 #[test]
-fn cross_document_wrappers_survive_gc_and_throw_after_the_child_navigates() {
+fn cross_document_wrappers_survive_gc_and_the_child_navigating_away() {
     let (mut t, page, root) = cross_document_page();
     eval(&root, "nodes[0].mark=7;nodes[0].addEventListener('x',()=>globalThis.fired=true)");
     eval(&root, "globalThis.first=nodes[0];globalThis.stale=nodes;globalThis.staleDoc=d;delete globalThis.nodes");
@@ -558,11 +558,12 @@ fn cross_document_wrappers_survive_gc_and_throw_after_the_child_navigates() {
     let child = t.browser.frames(page).into_iter().find(|f| f.parent.is_some()).unwrap();
     t.browser.navigate_frame(page, &child.id, NavigateOpts::address_bar("about:blank")).unwrap();
     settle(&mut t);
-    let destroyed = "Execution context was destroyed";
-    for expr in ["stale[0]", "stale.length", "staleDoc.querySelector('span')", "first.dataset.x"] {
-        let message = eval(&root, &format!("try{{{expr};'no throw'}}catch(e){{String(e.message||e)}}"));
-        assert!(message.contains(destroyed), "{expr}: {message}");
-    }
+    // The document it left stays usable (HTML: not fully active), its
+    // wrappers and their expandos with it.
+    assert_eq!(
+        eval(&root, "[stale[0] === first, first.mark, stale.length > 0, !!staleDoc.querySelector('span'), staleDoc.defaultView].join()"),
+        "true,7,true,true,"
+    );
     assert_eq!(eval(&root, "f.contentDocument!==staleDoc && f.contentDocument.URL"), "about:blank");
     t.browser.engine.collect_garbage_now();
 }
@@ -626,4 +627,71 @@ fn content_window_is_one_window_proxy_that_follows_the_frame_to_its_next_documen
     eval(&root, "globalThis.g=document.createElement('iframe');document.body.appendChild(g)");
     settle(&mut t);
     assert_eq!(eval(&root, "g.contentWindow!==held && g.contentWindow===frames[1]"), "true");
+}
+
+/// WPT html/semantics/permission-element/geolocation-element/iframe-use-after-free-crash.html:
+/// a document its frame navigated away from stays usable through a reference
+/// script saved (HTML: it is only not fully active), and its realm goes once
+/// nothing reaches it.
+#[test]
+fn a_navigated_away_document_stays_usable_while_held() {
+    let mut t = crate::browser_thread().unwrap();
+    let page = t.browser.create_page().unwrap();
+    let root = main_realm(&t, page);
+    eval(&root, "globalThis.f=document.createElement('iframe'); f.srcdoc='<p id=old>old</p>'; document.body.appendChild(f)");
+    settle(&mut t);
+    eval(&root, "globalThis.saved = f.contentDocument; globalThis.savedWindow = f.contentWindow");
+    eval(&root, "f.srcdoc='<p id=new>new</p>'");
+    settle(&mut t);
+    assert_eq!(eval(&root, "f.contentDocument.querySelector('p').id + ':' + (f.contentDocument !== saved)"), "new:true");
+    assert_eq!(
+        eval(
+            &root,
+            "(() => { const g = saved.createElement('geolocation'); g.setAttribute('watch', ''); saved.body.appendChild(g); \
+             return [saved.querySelector('p').id, saved.body.lastChild === g, g.ownerDocument === saved, saved.defaultView, \
+              saved.body.childElementCount].join() })()"
+        ),
+        "old,true,true,,2"
+    );
+    let engine = &t.browser.engine;
+    for _ in 0..3 {
+        engine.collect_garbage_now();
+        engine.drain_finalized();
+    }
+    assert_eq!(engine.lingering_realms(), 1, "the saved document keeps its realm");
+    eval(&root, "saved = null; savedWindow = null");
+    for _ in 0..5 {
+        engine.collect_garbage_now();
+        engine.drain_finalized();
+    }
+    assert_eq!(engine.lingering_realms(), 0, "nothing reaches the old document: its realm is disposed");
+}
+
+/// The documents an iframe navigates through linger only while something
+/// reaches them: after 50 navigations nobody holds, none is left (fork mode
+/// and long e2e runs keep one engine for many pages).
+#[test]
+fn documents_of_a_navigating_frame_are_released() {
+    let mut t = crate::browser_thread().unwrap();
+    let page = t.browser.create_page().unwrap();
+    let root = main_realm(&t, page);
+    eval(&root, "globalThis.f=document.createElement('iframe'); f.srcdoc='<p>0</p>'; document.body.appendChild(f)");
+    settle(&mut t);
+    for i in 1..=50 {
+        eval(
+            &root,
+            &format!(
+                "f.srcdoc='<p id=p{i}>{i}</p><script>globalThis.big = new Array(10000).fill(document.body); \
+                 document.addEventListener(\"click\", () => big); requestAnimationFrame(() => big)</script>'"
+            ),
+        );
+        settle(&mut t);
+    }
+    assert_eq!(eval(&root, "f.contentDocument.querySelector('p').id"), "p50");
+    let engine = &t.browser.engine;
+    for _ in 0..5 {
+        engine.collect_garbage_now();
+        engine.drain_finalized();
+    }
+    assert_eq!(engine.lingering_realms(), 0, "every previous document was released");
 }

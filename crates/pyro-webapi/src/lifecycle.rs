@@ -242,6 +242,16 @@ pub fn resource_loaded(page: &Rc<PageDom>, el: NodeId, ok: bool) {
 /// Forgets per-realm state of a disposed realm (navigation, world removal):
 /// window listener holder and pinned wrappers.
 pub fn realm_disposed(page: &PageDom, realm: RealmId) {
+    realm_detached(page, realm);
+    page.unregister_realm(realm);
+    page.forget_realm_wrappers(realm);
+}
+
+/// `realm_disposed` for a realm that lingers after its document was
+/// detached ([`PageDom::detach`]): its loads and observers end and the
+/// bindings drop their roots into it, but its wrappers stay registered, so
+/// a node keeps its wrapper while script still reaches the document.
+pub fn realm_detached(page: &PageDom, realm: RealmId) {
     crate::fetch::cancel_realm(page, realm);
     crate::websocket::cancel_realm(realm);
     crate::xhr::cancel_realm(page, realm);
@@ -249,7 +259,6 @@ pub fn realm_disposed(page: &PageDom, realm: RealmId) {
     crate::mutation_observer::cancel_realm(page, realm);
     crate::intersection_observer::cancel_realm(page, realm);
     crate::resize_observer::cancel_realm(page, realm);
-    page.unregister_realm(realm);
     page.data_view_readers.borrow_mut().remove(&realm);
     page.header_helpers.borrow_mut().remove(&realm);
     page.url_params_helpers.borrow_mut().remove(&realm);
@@ -260,7 +269,6 @@ pub fn realm_disposed(page: &PageDom, realm: RealmId) {
     drop(page.define_properties.borrow_mut().remove(&realm));
     drop(page.event_unforgeables.borrow_mut().remove(&realm));
     page.pinned.borrow_mut().retain(|(r, _), _| *r != realm);
-    page.forget_realm_wrappers(realm);
 }
 
 /// The loader fetched the parser-blocking script `node` written to the

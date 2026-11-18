@@ -45,6 +45,8 @@ pub struct PageDom {
     pub dom: DomRef,
     id: u64,
     disposed: Cell<bool>,
+    /// [`PageDom::detach`] ran (`dispose` sets it too).
+    detached: Cell<bool>,
     /// Navigations of the document's frame this document started (links,
     /// forms, `location`, `navigation.navigate`): a form submission whose
     /// `formdata` event started one is dropped (`form_submission`).
@@ -662,6 +664,7 @@ impl PageDom {
             dom,
             id: NEXT_PAGE.fetch_add(1, Ordering::Relaxed),
             disposed: Cell::new(false),
+            detached: Cell::new(false),
             navigation_requests: Cell::new(0),
             document: Cell::new(document),
             scripting_disabled: Cell::new(false),
@@ -858,7 +861,7 @@ impl PageDom {
     /// removed. Callbacks of a document that is not fully active do not run
     /// ("check if we can run script").
     pub fn is_fully_active(&self) -> bool {
-        !self.disposed.get() && !self.hooks.borrow().as_ref().is_some_and(|h| h.frame_detached())
+        !self.disposed.get() && !self.detached.get() && !self.hooks.borrow().as_ref().is_some_and(|h| h.frame_detached())
     }
 
     /// Release document-owned binding state before disposing its realms.
@@ -869,6 +872,34 @@ impl PageDom {
         if self.disposed.replace(true) {
             return;
         }
+        if !self.detached.replace(true) {
+            self.release_activity();
+        }
+        self.realms.borrow_mut().clear();
+        drop(self.main_world.take());
+    }
+
+    /// The document's frame navigated away from it, but script of other
+    /// documents may still hold it: HTML keeps such a Document usable, only
+    /// not fully active. Everything the document does on its own ends here
+    /// (loads, timers' owners, observers, workers, ports, focus, its window
+    /// as an event target, the embedder hooks) and every root the bindings
+    /// held into its realms is dropped, so that the realms can linger
+    /// (`pyro_js::Realm::linger`) and go when nothing reaches them. DOM calls
+    /// on it keep working. [`PageDom::dispose`] later finishes it.
+    pub fn detach(&self) {
+        if self.disposed.get() || self.detached.replace(true) {
+            return;
+        }
+        self.release_activity();
+    }
+
+    /// Whether [`PageDom::detach`] (or `dispose`) ran.
+    pub fn is_detached(&self) -> bool {
+        self.detached.get()
+    }
+
+    fn release_activity(&self) {
         crate::input::clear_document_focus(self);
         self.clear_render_blocking(true);
         self.dom.borrow_mut().unwatch_iframes(self.document());
@@ -887,8 +918,6 @@ impl PageDom {
         crate::service_worker::client_gone(self);
         crate::indexeddb::dispose(self);
         crate::media::dispose(self);
-        self.realms.borrow_mut().clear();
-        drop(self.main_world.take());
         // Drop roots and embedder hooks outside RefCell borrows: destructors
         // can release wrappers or other resources owned by this page.
         drop(self.hooks.take());
