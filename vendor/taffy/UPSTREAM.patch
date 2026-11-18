@@ -1448,7 +1448,7 @@ index 86f630aa..45e5cc51 100644
      let keyword_width = if known_dimensions.width.is_none() {
          resolve_sizing_keyword(size_style.width, Some(stretch_size.width), Some(area_size.width), |val, basis| {
 diff --git a/src/compute/flexbox.rs b/src/compute/flexbox.rs
-index a8dbbcf2..89dac602 100644
+index a8dbbcf2..abac260d 100644
 --- a/src/compute/flexbox.rs
 +++ b/src/compute/flexbox.rs
 @@ -3,6 +3,7 @@ use crate::compute::common::alignment::{
@@ -2603,7 +2603,7 @@ index a8dbbcf2..89dac602 100644
  
          let justify_item = |(i, child): (usize, &mut FlexItem)| {
              child.offset_main =
-@@ -2420,6 +3023,19 @@ fn resolve_cross_axis_auto_margins(flex_lines: &mut [FlexLine], constants: &Algo
+@@ -2420,6 +3023,27 @@ fn resolve_cross_axis_auto_margins(flex_lines: &mut [FlexLine], constants: &Algo
              .filter(|child| child.participates_in_baseline_alignment(constants.dir))
              .map(|child| child.outer_target_size.cross(constants.dir) - child.baseline)
              .fold(0.0, |acc, x| acc.max(x));
@@ -2612,6 +2612,14 @@ index a8dbbcf2..89dac602 100644
 +            .iter()
 +            .filter(|child| child.participates_in_last_baseline_alignment(constants.dir))
 +            .map(|child| child.last_baseline_descent)
++            .fold(0.0, |acc, x| acc.max(x));
++        // pyro: in a wrap-reverse row, the last-baseline group's largest distance from its cross end (the
++        // top) to its last baseline (`align_flex_items_along_cross_axis`)
++        let max_last_ascent: f32 = line
++            .items
++            .iter()
++            .filter(|child| child.participates_in_last_baseline_alignment(constants.dir))
++            .map(|child| child.outer_target_size.cross(constants.dir) - child.last_baseline_descent)
 +            .fold(0.0, |acc, x| acc.max(x));
 +        // pyro: in a column, the widest `baseline` item's outer cross size (`align_flex_items_along_cross_axis`)
 +        let max_baseline_cross: f32 = line
@@ -2623,25 +2631,27 @@ index a8dbbcf2..89dac602 100644
  
          for child in line.items.iter_mut() {
              let free_space = line_cross_size - child.outer_target_size.cross(constants.dir);
-@@ -2451,6 +3067,8 @@ fn resolve_cross_axis_auto_margins(flex_lines: &mut [FlexLine], constants: &Algo
+@@ -2451,6 +3075,9 @@ fn resolve_cross_axis_auto_margins(flex_lines: &mut [FlexLine], constants: &Algo
                      free_space,
                      max_baseline,
                      max_baseline_to_bottom_distance,
 +                    max_last_descent,
++                    max_last_ascent,
 +                    max_baseline_cross,
                      constants,
                  );
              }
-@@ -2470,6 +3088,8 @@ fn align_flex_items_along_cross_axis(
+@@ -2470,6 +3097,9 @@ fn align_flex_items_along_cross_axis(
      free_space: f32,
      max_baseline: f32,
      max_baseline_to_bottom_distance: f32,
 +    max_last_descent: f32,
++    max_last_ascent: f32,
 +    max_baseline_cross: f32,
      constants: &AlgoConstants,
  ) -> f32 {
      let cross_axis_should_reverse = constants.is_column && matches!(constants.layout_direction, Direction::Rtl);
-@@ -2528,13 +3148,31 @@ fn align_flex_items_along_cross_axis(
+@@ -2528,13 +3158,36 @@ fn align_flex_items_along_cross_axis(
                  // Until we support vertical writing modes, baseline alignment only makes sense if
                  // the constants.direction is row, so we treat it as flex-start alignment in columns.
                  let baseline_column_should_reverse = cross_axis_should_reverse && !constants.is_wrap;
@@ -2665,6 +2675,11 @@ index a8dbbcf2..89dac602 100644
 +        AlignItemsKeyword::LastBaseline => {
 +            if constants.is_row && !constants.is_wrap_reverse {
 +                free_space - (max_last_descent - child.last_baseline_descent).max(0.0)
++            } else if constants.is_row {
++                // pyro: wrap-reverse puts the cross end at the top: the group aligns its last baselines
++                // from there (WPT css-flexbox `flexbox-align-self-baseline-horiz-001b`)
++                (max_last_ascent - (child.outer_target_size.cross(constants.dir) - child.last_baseline_descent))
++                    .max(0.0)
 +            } else if cross_axis_should_reverse {
 +                0.0
 +            } else {
@@ -2674,7 +2689,7 @@ index a8dbbcf2..89dac602 100644
          AlignItemsKeyword::Stretch => {
              if constants.is_wrap_reverse ^ cross_axis_should_reverse {
                  free_space
-@@ -2562,6 +3200,7 @@ fn align_flex_items_along_cross_axis(
+@@ -2562,6 +3215,7 @@ fn align_flex_items_along_cross_axis(
  fn determine_container_cross_size(
      flex_lines: &[FlexLine],
      node_size: Size<Option<f32>>,
@@ -2682,7 +2697,7 @@ index a8dbbcf2..89dac602 100644
      constants: &mut AlgoConstants,
  ) -> f32 {
      let total_cross_axis_gap = sum_axis_gaps(constants.gap.cross(constants.dir), flex_lines.len());
-@@ -2571,9 +3210,20 @@ fn determine_container_cross_size(
+@@ -2571,9 +3225,20 @@ fn determine_container_cross_size(
      let cross_scrollbar_gutter = constants.scrollbar_gutter.cross(constants.dir);
      let min_cross_size = constants.min_size.cross(constants.dir);
      let max_cross_size = constants.max_size.cross(constants.dir);
@@ -2704,7 +2719,7 @@ index a8dbbcf2..89dac602 100644
          .maybe_clamp(min_cross_size, max_cross_size)
          .max(padding_border_sum - cross_scrollbar_gutter);
      let inner_container_size = f32_max(outer_container_size - padding_border_sum, 0.0);
-@@ -2672,6 +3322,12 @@ fn calculate_flex_item(
+@@ -2672,6 +3337,12 @@ fn calculate_flex_item(
          let baseline_offset_cross =
              total_offset_cross + item.offset_cross + effective_line_offset_cross + item.margin.cross_start(direction);
          item.baseline = baseline_offset_cross + inner_baseline;
@@ -2717,7 +2732,7 @@ index a8dbbcf2..89dac602 100644
      } else {
          let baseline_offset_main = *total_offset_main + item.offset_main + item.margin.main_start(direction);
          item.baseline = baseline_offset_main + inner_baseline;
-@@ -2994,14 +3650,20 @@ fn collect_oof_candidates(
+@@ -2994,14 +3665,20 @@ fn collect_oof_candidates(
          let cross_edge_for = |keyword: AlignItemsKeyword| {
              let start_position = match keyword {
                  AlignItemsKeyword::Start | AlignItemsKeyword::Baseline => !cross_is_rtl,
@@ -2740,7 +2755,7 @@ index a8dbbcf2..89dac602 100644
                      if start_position {
                          AxisStaticEdge::Start
                      } else {
-@@ -3032,7 +3694,7 @@ fn collect_oof_candidates(
+@@ -3032,7 +3709,7 @@ fn collect_oof_candidates(
          let main = AxisStaticPosition { area: main_area, align: AxisStaticAlign::from_keyword(main_edge) };
  
          let static_position = if constants.is_row { Point { x: main, y: cross } } else { Point { x: cross, y: main } };
@@ -2749,7 +2764,7 @@ index a8dbbcf2..89dac602 100644
      }
  }
  
-@@ -3588,3 +4250,17 @@ impl AlgoConstants {
+@@ -3588,3 +4265,17 @@ impl AlgoConstants {
          Point { x: x ^ self.layout_direction.is_rtl(), y }
      }
  }

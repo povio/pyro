@@ -3029,6 +3029,14 @@ fn resolve_cross_axis_auto_margins(flex_lines: &mut [FlexLine], constants: &Algo
             .filter(|child| child.participates_in_last_baseline_alignment(constants.dir))
             .map(|child| child.last_baseline_descent)
             .fold(0.0, |acc, x| acc.max(x));
+        // pyro: in a wrap-reverse row, the last-baseline group's largest distance from its cross end (the
+        // top) to its last baseline (`align_flex_items_along_cross_axis`)
+        let max_last_ascent: f32 = line
+            .items
+            .iter()
+            .filter(|child| child.participates_in_last_baseline_alignment(constants.dir))
+            .map(|child| child.outer_target_size.cross(constants.dir) - child.last_baseline_descent)
+            .fold(0.0, |acc, x| acc.max(x));
         // pyro: in a column, the widest `baseline` item's outer cross size (`align_flex_items_along_cross_axis`)
         let max_baseline_cross: f32 = line
             .items
@@ -3068,6 +3076,7 @@ fn resolve_cross_axis_auto_margins(flex_lines: &mut [FlexLine], constants: &Algo
                     max_baseline,
                     max_baseline_to_bottom_distance,
                     max_last_descent,
+                    max_last_ascent,
                     max_baseline_cross,
                     constants,
                 );
@@ -3089,6 +3098,7 @@ fn align_flex_items_along_cross_axis(
     max_baseline: f32,
     max_baseline_to_bottom_distance: f32,
     max_last_descent: f32,
+    max_last_ascent: f32,
     max_baseline_cross: f32,
     constants: &AlgoConstants,
 ) -> f32 {
@@ -3167,6 +3177,11 @@ fn align_flex_items_along_cross_axis(
         AlignItemsKeyword::LastBaseline => {
             if constants.is_row && !constants.is_wrap_reverse {
                 free_space - (max_last_descent - child.last_baseline_descent).max(0.0)
+            } else if constants.is_row {
+                // pyro: wrap-reverse puts the cross end at the top: the group aligns its last baselines
+                // from there (WPT css-flexbox `flexbox-align-self-baseline-horiz-001b`)
+                (max_last_ascent - (child.outer_target_size.cross(constants.dir) - child.last_baseline_descent))
+                    .max(0.0)
             } else if cross_axis_should_reverse {
                 0.0
             } else {
