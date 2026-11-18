@@ -2073,12 +2073,15 @@ pub(crate) fn stroke_text<'a, S: PaintScene>(
         // does a line-through of a colour of its own, drawn over the text as part of it (Blink;
         // WPT css-pseudo `selection-originating-decoration-color`); an underline or overline of
         // its own colour keeps it (css-text-decor `text-decoration-inset-marked-text-gap`).
+        // pyro: all of them when the highlight has a decoration of its own (WPT css-pseudo
+        // `highlight-painting-004`: an underline of its own colour turns the selection's).
         if highlighting {
-            for acc in deco_boxes
-                .iter_mut()
-                .filter(|acc| (acc.deco.current_color || acc.deco.line == TextDecorationLine::LINE_THROUGH) && !acc.selection)
-            {
-                if let Some(color) = crate::highlight::highlight_of(doc, acc.node_id, highlights).and_then(|h| h.color) {
+            for acc in deco_boxes.iter_mut().filter(|acc| !acc.selection) {
+                let Some(highlight) = crate::highlight::highlight_of(doc, acc.node_id, highlights) else { continue };
+                let recolour = acc.deco.current_color
+                    || acc.deco.line == TextDecorationLine::LINE_THROUGH
+                    || highlight.decoration.is_some();
+                if let (true, Some(color)) = (recolour, highlight.color) {
                     acc.deco.color = color;
                 }
             }
