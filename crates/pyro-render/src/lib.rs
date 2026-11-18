@@ -3285,6 +3285,33 @@ mod settle_resolution_tests {
         assert_eq!(advances, 0, "a color-only style read must not perform a full layout");
     }
 
+    /// A text field switching between the plain text states (Danex's search box toggles
+    /// text/search) updates in place: the delta applies instead of rebuilding the document, and
+    /// the result matches a fresh build. A switch to another kind of control still does not fit.
+    #[test]
+    fn input_type_switch_within_text_fields_applies_as_a_delta() {
+        let source = "<!doctype html><style>input{width:80px} input[type=search]{width:140px}</style><input id=box type=text value=abc>";
+        let (snap, key) = fixture(source);
+        let (search, _) = fixture(&source.replace("type=text", "type=search"));
+        let (checkbox, _) = fixture(&source.replace("type=text", "type=checkbox"));
+        let kind_of = |s: &Snapshot| s.live.as_ref().unwrap().tree.nodes.iter().find(|n| n.key == key).unwrap().kind.clone();
+        let fetcher: Arc<dyn Fetcher> = Arc::new(NoFetch);
+        let mut renderer = Renderer::new();
+        renderer.sync_layout(&snap, &fetcher).unwrap();
+        let id = renderer.mirrors[&1].node(key).unwrap();
+        renderer
+            .sync_delta(1, &[DeltaOp::Node { key, kind: kind_of(&search) }], (200, 100, 1.0, false, false), false)
+            .expect("text -> search applies as a delta");
+        assert_eq!(renderer.mirrors[&1].node(key), Some(id), "the input is updated, not replaced");
+        let mut whole = Renderer::new();
+        whole.sync_layout(&search, &fetcher).unwrap();
+        assert_eq!(renderer.element_box(1, key).unwrap(), whole.element_box(1, key).unwrap());
+        assert!(
+            renderer.sync_delta(1, &[DeltaOp::Node { key, kind: kind_of(&checkbox) }], (200, 100, 1.0, false, false), false).is_err(),
+            "a checkbox is another control: the document is built again"
+        );
+    }
+
     /// Danex lab canvas: the containing block of an absolutely positioned chain turned
     /// `display: none` in the sync that removed the innermost box. Laid out hidden, the block kept
     /// its hoisted list, rounding walked it to the removed (dropped) box: `invalid SlotMap key`.

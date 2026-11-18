@@ -726,6 +726,13 @@ impl Mirror {
             let el = node.element_data()?;
             el.attrs.iter().find(|a| is_type(&a.name)).map(|a| a.value.to_ascii_lowercase())
         });
+        // pyro: within the plain text field states (no type, text, search, tel, url, email) the
+        // element keeps the same text input data, so a switch updates in place. Danex's search box
+        // toggles text/search as it is used, and each switch rebuilt the whole document.
+        let text_field = |t: &Option<String>| matches!(t.as_deref(), None | Some("text" | "search" | "tel" | "url" | "email"));
+        if text_field(&now) && text_field(&before) {
+            return false;
+        }
         now != before
     }
 }
