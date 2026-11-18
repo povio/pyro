@@ -151,61 +151,162 @@ fn srcset_has_width_descriptor(srcset: &str) -> bool {
     })
 }
 
-/// HTML "parse a sizes attribute": the source size in CSS px. Each
-/// comma-separated entry is a media condition followed by a length; the
-/// first whose condition matches (or that has none) wins. `100vw` when
-/// nothing applies.
+/// HTML "parse a sizes attribute": the source size in CSS px, through Stylo's
+/// `<source-size-list>` (CSS syntax: comments, functions closed at the end, `calc()`/`min()`/
+/// `max()`/`clamp()`, every length unit, media conditions with `not`/`and`/`or` and unknown ones
+/// that match nothing; no media types). The first entry whose condition matches gives the size,
+/// else the entry without one, else `100vw`. Font-relative units use the initial font (Stylo's
+/// fallback metrics: `ex` and `ch` are 0.5em).
 pub fn source_size(sizes: Option<&str>, viewport: &Viewport) -> f64 {
+    use style::context::QuirksMode;
+    use style::servo_arc::Arc;
+    use style::stylesheets::{CssRuleType, Origin, UrlExtraData};
     let default = f64::from(viewport.width);
     let Some(sizes) = sizes else { return default };
-    let cx = crate::computed::LengthContext {
-        viewport_width: f64::from(viewport.width),
-        viewport_height: f64::from(viewport.height),
-        ..crate::computed::LengthContext::fonts(16.0, 16.0)
-    };
-    // Split on top-level commas.
-    let mut entries = Vec::new();
-    let (mut depth, mut start) = (0i32, 0);
-    for (i, ch) in sizes.char_indices() {
+    crate::stylo::enable_features();
+    let Ok(url) = url::Url::parse("about:blank") else { return default };
+    let url = UrlExtraData(Arc::new(url));
+    let context = style::parser::ParserContext::new(
+        Origin::Author,
+        &url,
+        Some(CssRuleType::Style),
+        style_traits::ParsingMode::DEFAULT,
+        QuirksMode::NoQuirks,
+        Default::default(),
+        None,
+        None,
+        Default::default(),
+    );
+    // An entry whose size divides by zero is invalid (Chromium; Stylo would compute NaN, or
+    // clamp an infinity): left out before Stylo sees the list.
+    let kept: Vec<&str> = split_top_level_commas(sizes).into_iter().filter(|entry| !divides_by_zero(entry)).collect();
+    let sizes = kept.join(",");
+    let mut parser = cssparser::Parser::new(&sizes);
+    let list = style::values::specified::source_size_list::SourceSizeList::parse(&context, &mut parser);
+    let device = sizes_device(viewport);
+    f64::from(list.evaluate(&device, QuirksMode::NoQuirks).to_f32_px())
+}
+
+/// `s` split at its commas outside parentheses and brackets.
+fn split_top_level_commas(s: &str) -> Vec<&str> {
+    let (mut depth, mut start, mut out) = (0i32, 0, Vec::new());
+    for (i, ch) in s.char_indices() {
         match ch {
-            '(' => depth += 1,
-            ')' => depth -= 1,
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth -= 1,
             ',' if depth <= 0 => {
-                entries.push(&sizes[start..i]);
+                out.push(&s[start..i]);
                 start = i + 1;
             }
             _ => {}
         }
     }
-    entries.push(&sizes[start..]);
-    for entry in entries {
-        let entry = entry.trim();
-        if entry.is_empty() {
+    out.push(&s[start..]);
+    out
+}
+
+/// Whether `entry` divides by a literal zero (`/ 0`, `/ 0.0`, `/ -0`) inside a function.
+fn divides_by_zero(entry: &str) -> bool {
+    let b = entry.as_bytes();
+    let mut i = 0;
+    while let Some(off) = b[i..].iter().position(|&c| c == b'/') {
+        let mut j = i + off + 1;
+        if b.get(j) == Some(&b'*') {
+            // A comment.
+            i = j;
             continue;
         }
-        // The size is the last component value: a token, or a function.
-        let mut depth = 0i32;
-        let mut split = 0;
-        for (i, ch) in entry.char_indices().rev() {
-            match ch {
-                ')' => depth += 1,
-                '(' => depth -= 1,
-                c if c.is_ascii_whitespace() && depth == 0 => {
-                    split = i + 1;
-                    break;
-                }
-                _ => {}
-            }
+        while b.get(j).is_some_and(|c| c.is_ascii_whitespace()) {
+            j += 1;
         }
-        let (condition, size) = (entry[..split].trim(), &entry[split..]);
-        // A percentage or a negative length is not a source size value.
-        let Some((px, percent)) = crate::computed::resolve_len(size, &cx) else { continue };
-        if percent != 0.0 || px < 0.0 || size.contains('%') {
-            continue;
+        if matches!(b.get(j), Some(b'+' | b'-')) {
+            j += 1;
         }
-        if condition.is_empty() || crate::media::matches(condition, viewport) {
-            return px;
+        let start = j;
+        while b.get(j).is_some_and(|c| *c == b'0' || *c == b'.') {
+            j += 1;
         }
+        let zero = j > start && b[start..j].contains(&b'0');
+        if zero && !b.get(j).is_some_and(|c| c.is_ascii_alphanumeric()) {
+            return true;
+        }
+        i = i + off + 1;
     }
-    default
+    false
+}
+
+/// Font metrics for a sizes attribute's font-relative units: none known, so Stylo's fallbacks.
+#[derive(Debug)]
+struct NoFontMetrics;
+impl style::device::servo::FontMetricsProvider for NoFontMetrics {
+    fn query_font_metrics(
+        &self,
+        _vertical: bool,
+        _font: &style::properties::style_structs::Font,
+        _base_size: style::values::computed::CSSPixelLength,
+        _flags: style::values::computed::font::QueryFontMetricsFlags,
+    ) -> style::font_metrics::FontMetrics {
+        Default::default()
+    }
+    fn base_size_for_generic(
+        &self,
+        generic: style::values::computed::font::GenericFontFamily,
+    ) -> style::values::computed::Length {
+        let size = if generic == style::values::computed::font::GenericFontFamily::Monospace { 13.0 } else { 16.0 };
+        style::values::computed::Length::new(size)
+    }
+}
+
+/// A Stylo device for `viewport`'s media conditions and viewport units.
+fn sizes_device(viewport: &Viewport) -> style::device::Device {
+    use style::properties::ComputedValues;
+    use style::properties::style_structs::Font;
+    let size = euclid::Size2D::new(viewport.width as f32, viewport.height as f32);
+    let scale = viewport.device_scale_factor as f32;
+    style::device::Device::new(
+        ComputedValues::initial_values_with_font_override(Font::initial_values()),
+        Box::new(NoFontMetrics),
+        "Submit".into(),
+        style::device::servo::MediaData {
+            media_type: style::media_queries::MediaType::screen(),
+            viewport_size: size,
+            device_size: euclid::Size2D::new(size.width * scale, size.height * scale),
+            device_pixel_ratio: euclid::Scale::new(scale),
+            quirks_mode: style::context::QuirksMode::NoQuirks,
+            prefers_color_scheme: match viewport.color_scheme {
+                crate::media::ColorScheme::Dark => style::queries::values::PrefersColorScheme::Dark,
+                _ => style::queries::values::PrefersColorScheme::Light,
+            },
+            primary_pointer_capabilities: Default::default(),
+            all_pointer_capabilities: Default::default(),
+        },
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sizes_attribute_follows_css_syntax() {
+        let vp = Viewport::new(800, 600);
+        let size = |s: &str| source_size(Some(s), &vp);
+        assert_eq!(size("1px"), 1.0);
+        assert_eq!(size("/* */1px/* */"), 1.0);
+        assert_eq!(size("(min-width:0) calc(1px"), 1.0);
+        assert_eq!(size("(min-width:0) min(1px, 200vw"), 1.0);
+        assert_eq!(size("10vmin"), 60.0);
+        assert_eq!(size("10vmax"), 80.0);
+        // Media types are not media conditions; an unknown condition matches nothing.
+        assert_eq!(size("all 1px"), 800.0);
+        assert_eq!(size("(unknown-mf-name) 1px, 2px"), 2.0);
+        assert_eq!(size("not (unknown-mf-name) 1px, 2px"), 2.0);
+        assert_eq!(size("(min-width:0) or (unknown-mf-name) 1px"), 1.0);
+        // Percentages, negative lengths and divisions by zero are not source sizes.
+        assert_eq!(size("50%, 3px"), 3.0);
+        assert_eq!(size("-1px, 3px"), 3.0);
+        assert_eq!(size("calc(0px / 0), 3px"), 3.0);
+        assert_eq!(size("calc(-1px / 0)"), 800.0);
+        assert_eq!(source_size(None, &vp), 800.0);
+    }
 }
