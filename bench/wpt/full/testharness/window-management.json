@@ -1,0 +1,15 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "window-management/additional-windowing-controls.tentative.https.html": {"status":"complete","ms":10,"n":5,"pass":[]},
+  "window-management/multi-screen-fullscreen-companion.tentative.https.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "window-management/multi-screen-fullscreen-enter.tentative.https.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "window-management/multi-screen-window-open.tentative.https.html": {"status":"complete","ms":10,"n":1,"pass":[]}
+ }
+}

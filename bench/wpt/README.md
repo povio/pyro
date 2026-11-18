@@ -642,10 +642,51 @@ The PR gate keeps `serve.mjs` and its plan until a CI run records baselines for 
 ## Whole suite
 
 `.github/workflows/wpt-full.yml` runs everything nightly (01:17 UTC, and by hand): `gate.mjs run --dirs all
---server wptserve` for each kind, 4 testharness, 3 reftest and 1 crashtest shards on lp-m1 (or macos-15), with the
-newest main build's `wpt-browser`. It only reports for now: per-kind counts in the job summary and every shard's
-results as `wpt-full-results`. A pull request that changes the workflow, `wptserve.mjs` or `fetch-wpt.sh` runs its
-`smoke` job instead (a few wptserve pages on lp-m1, and the runner's Python version).
+--server wptserve --testdriver` for each kind, 4 testharness, 3 reftest and 1 crashtest shards on lp-m1 (or
+macos-15), with the newest main build's `wpt-browser`. Testharness shards run 16 pages side by side (the pages mostly
+wait: the browser used 12-14% of one core at 4), reftests and crashtests one per CPU. Scheduled runs rerun every
+page, record the whole suite's baselines (`wpt-full-baselines`: one directory per kind, one file per top-level WPT
+directory) and, on main, export them to the status site (`status` job: the commit's run on `wpt-results` becomes
+the gates' pages plus the whole suite's). A scheduled run queues behind a running manual one (only pull request runs
+cancel). Committed whole-suite baselines live in `bench/wpt/full/<kind>/`; a main push's export reads them too.
+Nothing gates on them yet.
+
+The first nightly (44215242259, `--jobs 4`, no reruns): testharness 4 shards of ~1 h (2.5 h wall on lp-m1's two
+machines), reftests 12-14 min per shard, crashtests 6 min. Of the testharness page time, 41% went to pages that did
+not complete and 80% to pages with no passing subtest (referrer-policy 130 min, wasm 38, html/semantics 34,
+content-security-policy 33, mixed-content 29). Reftests: webvtt alone 35 min (138 of 168 time out). 8 testharness
+hangs, 1 renderer panic in a reftest screenshot, 1 crashtest panic. 88 testharness pages in a row failed with
+`ERR_PROXY_CONNECTION_FAILED`: the machine ran out of ephemeral ports.
+`html/editing/the-hidden-attribute/beforematch-scroll-to-text-fragment.html` (and the scroll-to-text-fragment pages
+that share `stash.js`) polls `stash.py` in a loop with no delay for a popup's results that never come in pyro,
+~1,000 requests a second for its 45 s; each opens a new connection from wptserve to its stash manager (a Python
+`multiprocessing` manager over TCP), and macOS's 16,384 ephemeral ports (49152-65535, TIME_WAIT 30 s) run out: about
+24,500 sockets in TIME_WAIT from that page alone. Pyro reuses its one connection to the proxy (3,644 requests on 1
+connection). The runner now waits until a connect works again and runs the failed page again. Widening the port range
+on the runners (`sysctl net.inet.ip.portrange.first=16384`) would remove the cause. Reftest shard 0 lost its results to an artifact-service timeout; uploads run again.
+
+At `--jobs 16` with reruns (run 44235329366, testharness shard 3 of 4): 13.5 min per pass, 28 min for both (51 min
+for one pass at 4), crashtests 11.5 min for both. Against the nightly's 4-job pass of the same shard: 18 pages
+passed fewer subtests (1,284 of 422,251), nearly all `wasm/core/simd` pages that timed out under the load; `wasm/core/`
+pages get the long timeout since. Estimated wall for a scheduled run with reruns on lp-m1's two machines: ~85 min
+(4 x 28 testharness, 3 x ~16 reftest, 12 crashtest).
+
+The committed `bench/wpt/full/` comes from run 44235329366 (`--jobs 16`, reruns; 2026-11-18), `gate.mjs update
+--missing-shards` over its CI shard results: testharness shard 0 of 4 never finished (below), so its pages (8,887 of
+35,562) have no entry until a nightly records them; nothing gates on these files, and each nightly records its
+baselines from scratch. Shards: testharness 28-33 min each, reftests 15-17 min, crashtests 11.5 min (both runs each).
+Recorded: testharness 26,675 pages, 26,196 completed, 10,956 passing every subtest, 1,280,632 of 1,444,333 subtests;
+reftests 21,630 of 28,303 pass; crashtests 2,035 of 2,105 pass. 15 MB in all (testharness 11 MB, largest
+`editing.json` 3.3 MB).
+
+Testharness shard 0 of that run held its runner for 2 h: the stash-polling page exhausted the ports (that run had
+the browser-restart workaround, not the drain-wait), the restart could not listen on a port (`EADDRNOTAVAIL`), and
+with no browser every worker waited; the watchdog fired once and never again. Since then a failed listen retries for
+2 minutes, the watchdog acts again while a worker stays stuck, a run with no page finished for 10 min ends itself
+with the rest recorded as `runner stalled` (`WPT_STALL_MS`), and shard jobs time out after 60 min.
+
+A pull request that changes the workflow, `wptserve.mjs`, `fetch-wpt.sh` or the testdriver files runs its `smoke`
+job instead (a few wptserve and testdriver pages on lp-m1).
 
 ## testdriver
 

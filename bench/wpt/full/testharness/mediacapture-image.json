@@ -1,0 +1,28 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "mediacapture-image/ImageCapture-MediaTrackSupportedConstraints.https.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "mediacapture-image/ImageCapture-grabFrame.https.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "mediacapture-image/ImageCapture-track.https.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "mediacapture-image/MediaStreamTrack-applyConstraints-fast.html": {"status":"complete","ms":10,"n":3,"pass":[]},
+  "mediacapture-image/MediaStreamTrack-applyConstraints-reject.https.html": {"status":"complete","ms":20,"n":48,"pass":["MediaStreamTrack.applyConstraints(constraints) rejects with bad constraints, #0","MediaStreamTrack.applyConstraints(constraints) rejects with bad constraints, #1","MediaStreamTrack.applyConstraints(constraints) rejects with bad constraints, #10","MediaStreamTrack.applyConstraints(constraints) rejects with bad constraints, #11","MediaStreamTrack.applyConstraints(constraints) rejects with bad constraints, #12","MediaStreamTrack.applyConstraints(constraints) rejects with bad constraints, #13","MediaStreamTrack.applyConstraints(constraints) rejects with bad constraints, #14","MediaStreamTrack.applyConstraints(constraints) rejects with bad constraints, #15","MediaStreamTrack.applyConstraints(constraints) rejects with bad constraints, #16","MediaStreamTrack.applyConstraints(constraints) rejects with bad constraints, #17","MediaStreamTrack.applyConstraints(constraints) rejects with bad constraints, #18","MediaStreamTrack.applyConstraints(constraints) rejects with bad constraints, #19","MediaStreamTrack.applyConstraints(constraints) rejects with bad constraints, #2","MediaStreamTrack.applyConstraints(constraints) rejects with bad constraints, #20","MediaStreamTrack.applyConstraints(constraints) rejects with bad constraints, #21","MediaStreamTrack.applyConstraints(constraints) rejects with bad constraints, #22","MediaStreamTrack.applyConstraints(constraints) rejects with bad constraints, #23","MediaStreamTrack.applyConstraints(constraints) rejects with bad constraints, #3","MediaStreamTrack.applyConstraints(constraints) rejects with bad constraints, #4","MediaStreamTrack.applyConstraints(constraints) rejects with bad constraints, #5","MediaStreamTrack.applyConstraints(constraints) rejects with bad constraints, #6","MediaStreamTrack.applyConstraints(constraints) rejects with bad constraints, #7","MediaStreamTrack.applyConstraints(constraints) rejects with bad constraints, #8","MediaStreamTrack.applyConstraints(constraints) rejects with bad constraints, #9"]},
+  "mediacapture-image/MediaStreamTrack-applyConstraints.https.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "mediacapture-image/MediaStreamTrack-clone.https.html": {"status":"complete","ms":20,"n":3,"pass":[]},
+  "mediacapture-image/MediaStreamTrack-getCapabilities.https.html": {"status":"complete","ms":20,"n":4,"pass":["exercises MediaStreamTrack.getCapabilities() with PTZ permission denied","exercises MediaStreamTrack.getCapabilities() with PTZ permission granted"]},
+  "mediacapture-image/MediaStreamTrack-getConstraints.https.html": {"status":"complete","ms":10,"n":32,"pass":["MediaStreamTrack.getConstraints(), complete ","MediaStreamTrack.getConstraints(), key: brightness","MediaStreamTrack.getConstraints(), key: colorTemperature","MediaStreamTrack.getConstraints(), key: contrast","MediaStreamTrack.getConstraints(), key: exposureCompensation","MediaStreamTrack.getConstraints(), key: exposureMode","MediaStreamTrack.getConstraints(), key: exposureTime","MediaStreamTrack.getConstraints(), key: focusDistance","MediaStreamTrack.getConstraints(), key: focusMode","MediaStreamTrack.getConstraints(), key: iso","MediaStreamTrack.getConstraints(), key: pan","MediaStreamTrack.getConstraints(), key: saturation","MediaStreamTrack.getConstraints(), key: sharpness","MediaStreamTrack.getConstraints(), key: tilt","MediaStreamTrack.getConstraints(), key: whiteBalanceMode","MediaStreamTrack.getConstraints(), key: zoom"]},
+  "mediacapture-image/MediaStreamTrack-getSettings-fast.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "mediacapture-image/detached-HTMLCanvasElement.html": {"status":"complete","ms":300,"n":1,"pass":[]},
+  "mediacapture-image/getPhotoCapabilities.https.html": {"status":"complete","ms":10,"n":3,"pass":[]},
+  "mediacapture-image/getPhotoSettings.https.html": {"status":"complete","ms":20,"n":3,"pass":[]},
+  "mediacapture-image/idlharness.https.window.html": {"status":"complete","ms":100,"n":29,"pass":["Partial dictionary MediaTrackCapabilities: member names are unique","Partial dictionary MediaTrackCapabilities: original dictionary defined","Partial dictionary MediaTrackConstraintSet: member names are unique","Partial dictionary MediaTrackConstraintSet: original dictionary defined","Partial dictionary MediaTrackSettings: member names are unique","Partial dictionary MediaTrackSettings: original dictionary defined","Partial dictionary MediaTrackSupportedConstraints: member names are unique","Partial dictionary MediaTrackSupportedConstraints: original dictionary defined","idl_test validation"]},
+  "mediacapture-image/takePhoto-reject.https.html": {"status":"complete","ms":120,"n":6,"pass":[]},
+  "mediacapture-image/takePhoto-with-PhotoSettings.https.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "mediacapture-image/takePhoto-without-PhotoCapabilities.https.window.html": {"status":"complete","ms":10,"n":1,"pass":[]}
+ }
+}

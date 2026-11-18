@@ -1,0 +1,22 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "screen-capture/capture-controller-event-target.https.window.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "screen-capture/getallscreensmedia-exposure.tentative.https.window.html": {"status":"complete","ms":20,"n":2,"pass":[]},
+  "screen-capture/getdisplaymedia-after-discard.https.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "screen-capture/getdisplaymedia-framerate.https.html": {"status":"complete","ms":30,"n":1,"pass":[]},
+  "screen-capture/getdisplaymedia-restrictOwnAudio.https.html": {"status":"complete","ms":40,"n":3,"pass":[]},
+  "screen-capture/getdisplaymedia-settings.https.html": {"status":"complete","ms":30,"n":2,"pass":[]},
+  "screen-capture/historical.https.html": {"status":"complete","ms":10,"n":1,"fail":[],"h":"8df45173"},
+  "screen-capture/permissions-policy-audio+video.https.sub.html": {"status":"complete","ms":100,"n":5,"pass":[]},
+  "screen-capture/permissions-policy-audio.https.sub.html": {"status":"complete","ms":70,"n":5,"pass":[]},
+  "screen-capture/permissions-policy-video.https.sub.html": {"status":"complete","ms":60,"n":5,"pass":[]},
+  "screen-capture/tentative/getdisplaymedia-captured-surface-resolution.https.html": {"status":"complete","ms":20,"n":6,"pass":[]}
+ }
+}

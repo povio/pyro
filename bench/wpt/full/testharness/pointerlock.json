@@ -1,0 +1,26 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "pointerlock/idlharness.window.html": {"status":"complete","ms":70,"n":49,"fail":["Document interface: attribute onpointerlockchange","Document interface: attribute onpointerlockerror","Document interface: attribute pointerLockElement","Document interface: operation exitPointerLock()","Document interface: window.document must inherit property \"exitPointerLock()\" with the proper type","Document interface: window.document must inherit property \"onpointerlockchange\" with the proper type","Document interface: window.document must inherit property \"onpointerlockerror\" with the proper type","Document interface: window.document must inherit property \"pointerLockElement\" with the proper type","Element interface: calling requestPointerLock(optional PointerLockOptions) on window.document.documentElement with too few arguments must throw TypeError","Element interface: operation requestPointerLock(optional PointerLockOptions)","Element interface: window.document.documentElement must inherit property \"requestPointerLock(optional PointerLockOptions)\" with the proper type","ShadowRoot interface: attribute pointerLockElement"],"h":"4baefd77"},
+  "pointerlock/mouse_buttons_back_forward.html": {"status":"complete","ms":10000,"n":1,"pass":[]},
+  "pointerlock/pointerlock-maintains-mousedown.html?unadjustedmovement=false": {"status":"complete","ms":10000,"n":1,"pass":[]},
+  "pointerlock/pointerlock-requires-gesture.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "pointerlock/pointerlock_all_mouse_events_to_locktarget.html": {"status":"complete","ms":70,"n":1,"pass":[]},
+  "pointerlock/pointerlock_api_behavior.html": {"status":"complete","ms":60,"n":2,"pass":[]},
+  "pointerlock/pointerlock_promise.html": {"status":"timeout","ms":45000,"n":1,"pass":[]},
+  "pointerlock/pointerlock_remove_target.html": {"status":"complete","ms":60,"n":1,"pass":[]},
+  "pointerlock/pointerlock_remove_target_on_mouseup.html": {"status":"complete","ms":30,"n":1,"pass":[]},
+  "pointerlock/pointerlock_shadow.html": {"status":"complete","ms":60,"n":1,"pass":[]},
+  "pointerlock/pointerlock_suppress_mouse_boundary_events_when_locked.html": {"status":"complete","ms":70,"n":1,"pass":[]},
+  "pointerlock/pointerlock_unadjustedMovement.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "pointerlock/pointerlock_unadjustedMovement_update.html": {"status":"complete","ms":10,"n":2,"pass":[]},
+  "pointerlock/pointerlock_wheel_event_outside_target.html": {"status":"complete","ms":80,"n":2,"pass":[]},
+  "pointerlock/pointerlock_without_gesture.html": {"status":"complete","ms":30,"n":1,"pass":[]}
+ }
+}

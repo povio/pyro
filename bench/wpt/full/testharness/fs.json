@@ -1,0 +1,36 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "fs/FileSystemBaseHandle-IndexedDB-deferred-deserialization.https.any.html": {"status":"complete","ms":10,"n":2,"pass":[]},
+  "fs/FileSystemBaseHandle-IndexedDB.https.any.html": {"status":"complete","ms":10,"n":6,"pass":[]},
+  "fs/FileSystemBaseHandle-getUniqueId.https.any.html": {"status":"complete","ms":10,"n":11,"pass":[]},
+  "fs/FileSystemBaseHandle-isSameEntry.https.any.html": {"status":"complete","ms":10,"n":14,"pass":[]},
+  "fs/FileSystemBaseHandle-postMessage-Error.https.window.html": {"status":"complete","ms":10,"n":10,"pass":[]},
+  "fs/FileSystemBaseHandle-postMessage-MessagePort-frames.https.window.html": {"status":"complete","ms":20,"n":4,"pass":[]},
+  "fs/FileSystemBaseHandle-postMessage-MessagePort-windows.https.window.html": {"status":"complete","ms":20,"n":3,"pass":[]},
+  "fs/FileSystemBaseHandle-postMessage-frames.https.window.html": {"status":"complete","ms":20,"n":4,"pass":[]},
+  "fs/FileSystemBaseHandle-postMessage-insecure-context.https.window.html": {"status":"complete","ms":10000,"n":3,"pass":[]},
+  "fs/FileSystemBaseHandle-postMessage-windows.https.window.html": {"status":"complete","ms":10,"n":3,"pass":[]},
+  "fs/FileSystemBaseHandle-postMessage-workers.https.window.html": {"status":"complete","ms":20,"n":2,"pass":[]},
+  "fs/FileSystemDirectoryHandle-getDirectoryHandle.https.any.html": {"status":"complete","ms":20,"n":10,"pass":[]},
+  "fs/FileSystemDirectoryHandle-getFileHandle.https.any.html": {"status":"complete","ms":10,"n":13,"pass":[]},
+  "fs/FileSystemDirectoryHandle-iteration.https.any.html": {"status":"complete","ms":30,"n":6,"pass":[]},
+  "fs/FileSystemDirectoryHandle-resolve.https.any.html": {"status":"complete","ms":160,"n":5,"pass":[]},
+  "fs/FileSystemFileHandle-create-sync-access-handle.https.window.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "fs/FileSystemFileHandle-getFile.https.any.html": {"status":"complete","ms":10,"n":3,"pass":[]},
+  "fs/FileSystemFileHandle-writable-file-stream-back-forward-cache.https.tentative.window.html": {"status":"complete","ms":140,"n":2,"pass":[]},
+  "fs/FileSystemObserver-writable-file-stream.https.tentative.any.html": {"status":"complete","ms":20,"n":2,"pass":[]},
+  "fs/FileSystemObserver.https.tentative.any.html": {"status":"complete","ms":20,"n":16,"pass":[]},
+  "fs/FileSystemWritableFileStream-piped.https.any.html": {"status":"complete","ms":20,"n":8,"pass":[]},
+  "fs/FileSystemWritableFileStream.https.any.html": {"status":"complete","ms":20,"n":9,"pass":[]},
+  "fs/idlharness.https.any.html": {"status":"complete","ms":30,"n":43,"pass":["FileSystemSyncAccessHandle interface: existence and properties of interface object","Partial interface StorageManager: member names are unique","Partial interface StorageManager: original interface defined","idl_test setup","idl_test validation"]},
+  "fs/opaque-origin.https.window.html": {"status":"complete","ms":30,"n":3,"pass":[]},
+  "fs/opfs-shared-worker-coep.https.window.html": {"status":"complete","ms":90,"n":1,"pass":[]}
+ }
+}

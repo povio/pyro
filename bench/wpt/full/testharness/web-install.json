@@ -1,0 +1,15 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "web-install/navigator-install-bad-inputs.tentative.https.html": {"status":"complete","ms":100,"n":10,"pass":[]},
+  "web-install/navigator-install-not-defined.tentative.http.html": {"status":"complete","ms":70,"n":2,"fail":[],"h":"b0534db6"},
+  "web-install/navigator-install-sandboxed-iframe.tentative.https.html": {"status":"complete","ms":260,"n":3,"pass":[]},
+  "web-install/navigator-install-user-activation.tentative.https.html": {"status":"complete","ms":50,"n":3,"pass":[]}
+ }
+}

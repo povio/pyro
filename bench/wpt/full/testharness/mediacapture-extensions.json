@@ -1,0 +1,21 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "mediacapture-extensions/GUM-backgroundBlur.https.html": {"status":"complete","ms":30,"n":8,"pass":[]},
+  "mediacapture-extensions/GUM-faceFraming.https.html": {"status":"complete","ms":20,"n":4,"pass":[]},
+  "mediacapture-extensions/MediaStream-in-dedicated-worker.https.html": {"status":"complete","ms":10,"n":9,"pass":[]},
+  "mediacapture-extensions/MediaStreamTrack-audio-stats.https.html": {"status":"complete","ms":30,"n":10,"pass":[]},
+  "mediacapture-extensions/MediaStreamTrack-structured-clone.https.html": {"status":"complete","ms":20,"n":7,"pass":[]},
+  "mediacapture-extensions/MediaStreamTrack-transfer-to-worker-clone.https.html": {"status":"complete","ms":20,"n":2,"pass":[]},
+  "mediacapture-extensions/MediaStreamTrack-transfer-to-worker-data-holder.https.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "mediacapture-extensions/MediaStreamTrack-transfer-to-worker-mute.https.html": {"status":"complete","ms":30,"n":1,"pass":[]},
+  "mediacapture-extensions/MediaStreamTrack-transfer-to-worker-teardown.https.html": {"status":"complete","ms":20,"n":5,"pass":[]},
+  "mediacapture-extensions/MediaStreamTrack-video-stats.https.html": {"status":"complete","ms":20,"n":15,"pass":[]}
+ }
+}

@@ -1,0 +1,14 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "webrtc-identity/RTCPeerConnection-getIdentityAssertion.sub.https.html": {"status":"complete","ms":10,"n":12,"pass":[]},
+  "webrtc-identity/RTCPeerConnection-peerIdentity.https.html": {"status":"complete","ms":20,"n":6,"pass":[]},
+  "webrtc-identity/idlharness.https.window.html": {"status":"complete","ms":80,"n":49,"pass":["Partial dictionary MediaStreamConstraints: member names are unique","Partial dictionary MediaStreamConstraints: original dictionary defined","Partial dictionary RTCConfiguration: member names are unique","Partial dictionary RTCConfiguration: original dictionary defined","Partial dictionary RTCErrorInit: member names are unique","Partial dictionary RTCErrorInit: original dictionary defined","Partial interface MediaStreamTrack: member names are unique","Partial interface MediaStreamTrack: original interface defined","Partial interface RTCError: member names are unique","Partial interface RTCError: original interface defined","Partial interface RTCPeerConnection: member names are unique","Partial interface RTCPeerConnection: original interface defined","Partial interface RTCPeerConnection[2]: member names are unique","Partial interface RTCPeerConnection[3]: member names are unique","Partial interface RTCPeerConnection[4]: member names are unique","Partial interface RTCPeerConnection[5]: member names are unique","RTCIdentityProviderGlobalScope interface: existence and properties of interface object","RTCIdentityProviderRegistrar interface: existence and properties of interface object","WorkerGlobalScope includes WindowOrWorkerGlobalScope: member names are unique","idl_test setup","idl_test validation"]}
+ }
+}

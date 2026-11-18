@@ -1,0 +1,14 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "resize-observer/devicepixel.html": {"status":"complete","ms":100,"n":1,"fail":[],"h":"0e440bf2"},
+  "resize-observer/devicepixel2.html": {"status":"complete","ms":100,"n":1,"pass":[]},
+  "resize-observer/iframe-same-origin.html": {"status":"timeout","ms":15000,"n":0,"pass":[]}
+ }
+}

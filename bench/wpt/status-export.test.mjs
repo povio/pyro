@@ -131,3 +131,27 @@ test('copyPages: each copy maps itself to the status page module, so it hydrates
   expect(fs.readFileSync(path.join(tmp, 'status/wpt/a/B.html'), 'utf8')).not.toContain('status_wpt_a_b');
   fs.rmSync(tmp, { recursive: true });
 });
+
+test('the whole suite\'s split baselines fill in the pages the gates do not run; a gate page keeps its entry', async () => {
+  const { withFull, runFromBaselines } = await import('./status-export.mjs');
+  const { writeBaselineAt } = await import('./lib.mjs');
+  const os = await import('node:os');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'status-full-'));
+  try {
+    const head = { wpt: { repo: 'r', revision: 'rev1' } };
+    writeBaselineAt(path.join(dir, 'testharness') + '/', head, {
+      'dom/a.html': { status: 'complete', ms: 10, n: 2, pass: ['x'] },
+      'fetch/b.html': { status: 'complete', ms: 10, n: 1, pass: ['y'] },
+    });
+    const gate = { testharness: { ...head, tests: { 'dom/a.html': { status: 'complete', ms: 10, n: 2, fail: [], h: 'h' } } } };
+    const merged = withFull(gate, dir);
+    const run = runFromBaselines(merged, { sha: 's', date: 'd' });
+    expect(run.kinds.testharness['dom/a.html']).toEqual(['complete', 2, 2]);
+    expect(run.kinds.testharness['fetch/b.html']).toEqual(['complete', 1, 1]);
+    // Another WPT revision than the gate's: left out.
+    const other = withFull({ testharness: { wpt: { revision: 'rev2' }, tests: {} } }, dir);
+    expect(Object.keys(other.testharness.tests)).toEqual([]);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

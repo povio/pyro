@@ -1,0 +1,15 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "page-lifecycle/child-display-none.tentative.html": {"status":"complete","ms":10000,"n":1,"pass":[]},
+  "page-lifecycle/child-out-of-viewport.tentative.html": {"status":"complete","ms":10000,"n":1,"pass":[]},
+  "page-lifecycle/idlharness.html": {"status":"complete","ms":70,"n":19,"fail":["Document interface: attribute onfreeze","Document interface: attribute onresume","Document interface: attribute wasDiscarded","Document interface: document must inherit property \"onfreeze\" with the proper type","Document interface: document must inherit property \"onresume\" with the proper type","Document interface: document must inherit property \"wasDiscarded\" with the proper type"],"h":"dfb10138"},
+  "page-lifecycle/worker-dispay-none.tentative.html": {"status":"complete","ms":10000,"n":1,"pass":[]}
+ }
+}

@@ -1,0 +1,16 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "content-dpr/content-dpr-various-elements.html": {"status":"complete","ms":110,"n":1,"pass":[]},
+  "content-dpr/image-pseudo-element-content-dpr.html": {"status":"complete","ms":110,"n":1,"pass":[]},
+  "content-dpr/image-with-content-dpr-and-explicit-dimensions.html": {"status":"complete","ms":120,"n":1,"fail":[],"h":"0e440bf2"},
+  "content-dpr/tiled-background-image-with-content-dpr.html": {"status":"complete","ms":100,"n":1,"pass":[]},
+  "content-dpr/tiled-background-svg-image-with-content-dpr.html": {"status":"complete","ms":110,"n":1,"pass":[]}
+ }
+}

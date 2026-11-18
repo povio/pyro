@@ -1,0 +1,22 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "xml/attlist-defaults.html": {"status":"complete","ms":10,"n":27,"pass":["Explicit attribute value overrides ATTLIST CDATA default value","Explicit attribute value overrides ATTLIST Enumeration default value","Explicit attribute value overrides ATTLIST NOTATION default value"]},
+  "xml/eol-normalization.html": {"status":"complete","ms":20,"n":3,"fail":[],"h":"255042a9"},
+  "xml/onreadystatechange-crash-on-stop.xhtml": {"status":"complete","ms":10,"n":1,"fail":[],"h":"d02f3297"},
+  "xml/retain_undeclared_xmlns.html": {"status":"complete","ms":10,"n":4,"fail":[],"h":"7134c06a"},
+  "xml/xml-bom.html": {"status":"complete","ms":20,"n":5,"fail":[],"h":"eb3b5134"},
+  "xml/xml-innerHTML-unpaired-surrogate.html": {"status":"complete","ms":10,"n":2,"pass":["Valid surrogate pair in XML innerHTML is preserved"]},
+  "xml/xslt/document-element.window.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "xml/xslt/document-function.window.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "xml/xslt/fetch/xslt.https.sub.html": {"status":"complete","ms":120,"n":1,"pass":[]},
+  "xml/xslt/transformToDocument-xml-scripting-support-disabled.html": {"status":"complete","ms":10,"n":9,"pass":[]},
+  "xml/xslt/transformToFragment.tentative.window.html": {"status":"complete","ms":20,"n":1,"pass":[]}
+ }
+}

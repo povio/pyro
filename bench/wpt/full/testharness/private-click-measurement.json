@@ -1,0 +1,12 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "private-click-measurement/idlharness.window.html": {"status":"complete","ms":80,"n":17,"fail":["HTMLAnchorElement interface: attribute attributionSourceId","HTMLAnchorElement interface: document.createElement(\"a\") must inherit property \"attributionSourceId\" with the proper type"],"h":"141f7c9c"}
+ }
+}

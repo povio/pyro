@@ -1,0 +1,18 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "."
+ ],
+ "tests": {
+  "webaudio/the-audio-api/the-audiobuffer-interface/crashtests/copyFromChannel-bufferOffset-1.html": {"status":"complete","ms":60,"n":1,"fail":[],"h":"22f2a845"},
+  "webaudio/the-audio-api/the-audiobuffer-interface/crashtests/copyToChannel-bufferOffset-1.html": {"status":"complete","ms":60,"n":1,"fail":[],"h":"22f2a845"},
+  "webaudio/the-audio-api/the-audiocontext-interface/crashtests/currentTime-after-discard.html": {"status":"complete","ms":60,"n":1,"fail":[],"h":"22f2a845"},
+  "webaudio/the-audio-api/the-iirfilternode-interface/iir-filter-silent-block-crash.html": {"status":"complete","ms":50,"n":1,"fail":[],"h":"22f2a845"},
+  "webaudio/the-audio-api/the-mediaelementaudiosourcenode-interface/mediaElementAudioSource-mediaStreamAudioDestination-stream-crash.html": {"status":"complete","ms":50,"n":1,"fail":[],"h":"22f2a845"},
+  "webaudio/the-audio-api/the-mediaelementaudiosourcenode-interface/mediaElementAudioSource_closed_context-crash.html": {"status":"complete","ms":50,"n":1,"fail":[],"h":"22f2a845"},
+  "webaudio/the-audio-api/the-oscillatornode-interface/crashtests/stop-before-start.html": {"status":"complete","ms":50,"n":1,"fail":[],"h":"22f2a845"}
+ }
+}

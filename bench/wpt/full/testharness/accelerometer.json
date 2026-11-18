@@ -1,0 +1,20 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "accelerometer/Accelerometer-disabled-by-permissions-policy.https.html": {"status":"complete","ms":10,"n":9,"pass":[]},
+  "accelerometer/Accelerometer-enabled-by-permissions-policy-attribute-redirect-on-load.https.html": {"status":"complete","ms":20,"n":6,"pass":[]},
+  "accelerometer/Accelerometer-enabled-by-permissions-policy-attribute.https.html": {"status":"complete","ms":10,"n":6,"pass":[]},
+  "accelerometer/Accelerometer-enabled-on-self-origin-by-permissions-policy.https.html": {"status":"complete","ms":10,"n":9,"pass":[]},
+  "accelerometer/Accelerometer-supported-by-permissions-policy.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "accelerometer/Accelerometer.https.html": {"status":"complete","ms":110,"n":20,"pass":["Accelerometer: throw 'TypeError' if frequency is invalid."]},
+  "accelerometer/Accelerometer_insecure_context.html": {"status":"complete","ms":10,"n":3,"fail":[],"h":"f911e42c"},
+  "accelerometer/GravitySensor.https.html": {"status":"complete","ms":120,"n":20,"pass":["GravitySensor: throw 'TypeError' if frequency is invalid."]},
+  "accelerometer/LinearAccelerationSensor.https.html": {"status":"complete","ms":50,"n":20,"pass":["LinearAccelerationSensor: throw 'TypeError' if frequency is invalid."]}
+ }
+}

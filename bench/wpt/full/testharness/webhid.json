@@ -1,0 +1,15 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "webhid/hid-allowed-by-permissions-policy-attribute-redirect-on-load.https.sub.html": {"status":"complete","ms":10000,"n":4,"pass":[]},
+  "webhid/hid-allowed-by-permissions-policy-attribute.https.sub.html": {"status":"complete","ms":10000,"n":5,"pass":[]},
+  "webhid/idlharness.https.any.html": {"status":"complete","ms":220,"n":73,"pass":["Navigator includes NavigatorConcurrentHardware: member names are unique","Navigator includes NavigatorContentUtils: member names are unique","Navigator includes NavigatorCookies: member names are unique","Navigator includes NavigatorID: member names are unique","Navigator includes NavigatorLanguage: member names are unique","Navigator includes NavigatorOnLine: member names are unique","Navigator includes NavigatorPlugins: member names are unique","Partial interface Navigator: member names are unique","Partial interface Navigator: original interface defined","Partial interface Navigator[2]: member names are unique","Partial interface WorkerNavigator: member names are unique","Partial interface WorkerNavigator: original interface defined","Partial interface WorkerNavigator: valid exposure set","Partial interface mixin NavigatorID: member names are unique","WorkerNavigator includes NavigatorConcurrentHardware: member names are unique","WorkerNavigator includes NavigatorID: member names are unique","WorkerNavigator includes NavigatorLanguage: member names are unique","WorkerNavigator includes NavigatorOnLine: member names are unique","idl_test setup","idl_test validation"]},
+  "webhid/unload-iframe.https.window.html": {"status":"complete","ms":30,"n":2,"fail":[],"h":"29b0cd27"}
+ }
+}

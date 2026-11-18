@@ -1,0 +1,14 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "merchant-validation/constructor.tentative.http.html": {"status":"complete","ms":30,"n":1,"fail":[],"h":"ffcf8a91"},
+  "merchant-validation/constructor.tentative.https.html": {"status":"complete","ms":10,"n":11,"pass":[]},
+  "merchant-validation/onmerchantvalidation-attribute.https.html": {"status":"complete","ms":40,"n":4,"pass":[]}
+ }
+}

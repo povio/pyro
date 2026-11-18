@@ -1,0 +1,19 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "."
+ ],
+ "tests": {
+  "custom-elements/custom-button-abort-insertion-crash.html": {"status":"timeout","ms":15000,"n":0,"pass":[]},
+  "custom-elements/custom-image-abort-insertion-crash.html": {"status":"timeout","ms":15000,"n":0,"pass":[]},
+  "custom-elements/duplicate-attr-constructor-crash.html": {"status":"complete","ms":50,"n":1,"fail":[],"h":"22f2a845"},
+  "custom-elements/iframe-custom-id-setter-crash.html": {"status":"complete","ms":50,"n":1,"fail":[],"h":"22f2a845"},
+  "custom-elements/many-slots-crash.html": {"status":"hang","ms":30000,"n":0,"pass":[]},
+  "custom-elements/prevent-extensions-crash.html": {"status":"complete","ms":50,"n":1,"fail":[],"h":"22f2a845"},
+  "custom-elements/when-defined-reentry-crash.html": {"status":"complete","ms":50,"n":1,"fail":[],"h":"22f2a845"},
+  "custom-elements/xhtml-crash.xhtml": {"status":"complete","ms":50,"n":1,"fail":[],"h":"22f2a845"}
+ }
+}

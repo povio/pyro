@@ -1,0 +1,20 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "presentation-api/controlling-ua/PresentationConnectionCloseEvent.https.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "presentation-api/controlling-ua/PresentationRequest_mixedcontent.https.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "presentation-api/controlling-ua/PresentationRequest_mixedcontent_multiple.https.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "presentation-api/controlling-ua/PresentationRequest_sandboxing_error.https.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "presentation-api/controlling-ua/PresentationRequest_success.https.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "presentation-api/controlling-ua/defaultRequest.https.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "presentation-api/controlling-ua/getAvailability.https.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "presentation-api/controlling-ua/getAvailability_sandboxing_success.https.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "presentation-api/controlling-ua/startNewPresentation_error.https.html": {"status":"complete","ms":20,"n":1,"pass":[]}
+ }
+}

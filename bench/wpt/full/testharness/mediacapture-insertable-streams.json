@@ -1,0 +1,22 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "mediacapture-insertable-streams/MediaStreamTrackHandle-transfer-cross-agent-cluster.https.html": {"status":"complete","ms":280,"n":3,"pass":["A plain object can be posted to a cross-site iframe"]},
+  "mediacapture-insertable-streams/MediaStreamTrackHandle-transfer-to-shared-and-service-workers.https.html": {"status":"complete","ms":20,"n":4,"pass":["A plain object can be posted to a service worker"]},
+  "mediacapture-insertable-streams/MediaStreamTrackProcessor-with-window-tracks.https.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "mediacapture-insertable-streams/legacy/MediaStreamTrackGenerator-audio.https.html": {"status":"complete","ms":90,"n":5,"pass":[]},
+  "mediacapture-insertable-streams/legacy/MediaStreamTrackGenerator-in-service-worker.https.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "mediacapture-insertable-streams/legacy/MediaStreamTrackGenerator-in-shared-worker.https.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "mediacapture-insertable-streams/legacy/MediaStreamTrackGenerator-pipes-data-in-worker.https.html": {"status":"complete","ms":80,"n":1,"pass":[]},
+  "mediacapture-insertable-streams/legacy/MediaStreamTrackGenerator-video.https.html": {"status":"complete","ms":10,"n":7,"pass":[]},
+  "mediacapture-insertable-streams/legacy/MediaStreamTrackProcessor-backpressure.https.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "mediacapture-insertable-streams/tentative/MediaStreamTrackProcessor-audio.https.html": {"status":"complete","ms":80,"n":2,"pass":[]},
+  "mediacapture-insertable-streams/tentative/VideoTrackGenerator.https.html": {"status":"complete","ms":10,"n":8,"pass":[]}
+ }
+}

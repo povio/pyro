@@ -1,0 +1,30 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "js/behaviours/SetPrototypeOf-window.html": {"status":"complete","ms":20,"n":4,"fail":[],"h":"dd8b14f0"},
+  "js/builtins/Array.DefineOwnProperty.html": {"status":"complete","ms":180,"n":1,"fail":[],"h":"57a8fdf7"},
+  "js/builtins/Array.prototype.join-order.html": {"status":"complete","ms":10,"n":51,"fail":[],"h":"5a73eb47"},
+  "js/builtins/Math.min.html": {"status":"complete","ms":20,"n":6,"fail":[],"h":"2f08b13b"},
+  "js/builtins/Object.prototype.freeze.html": {"status":"complete","ms":180,"n":1,"fail":[],"h":"11300a68"},
+  "js/builtins/Object.prototype.getOwnPropertyNames.html": {"status":"complete","ms":10,"n":4,"fail":[],"h":"5dafb52e"},
+  "js/builtins/Object.prototype.hasOwnProperty-prototype-chain.html": {"status":"complete","ms":10,"n":3,"fail":[],"h":"58bd08c2"},
+  "js/builtins/Object.prototype.preventExtensions.html": {"status":"complete","ms":180,"n":1,"fail":[],"h":"c5ae9d62"},
+  "js/builtins/Object.prototype.seal.html": {"status":"complete","ms":10,"n":1,"fail":[],"h":"21670eec"},
+  "js/builtins/Promise-subclassing.html": {"status":"complete","ms":10,"n":8,"fail":[],"h":"d6cdf3b8"},
+  "js/builtins/WeakMap.prototype-properties.html": {"status":"complete","ms":190,"n":20,"fail":[],"h":"04cd1abd"},
+  "js/builtins/weakrefs/cleanup-prevented-with-reference.optional.any.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "js/builtins/weakrefs/finalizationregistry-cleanupCallback-gets-a-microtask.optional.any.html": {"status":"complete","ms":3100,"n":1,"pass":[]},
+  "js/builtins/weakrefs/finalizationregistry-cleanupCallback-throws-onerror-interaction.optional.window.html": {"status":"complete","ms":5000,"n":1,"fail":[],"h":"369ad16e"},
+  "js/builtins/weakrefs/gc-has-one-chance-to-call-cleanupCallback-queueMicrotask.optional.any.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "js/builtins/weakrefs/gc-has-one-chance-to-call-cleanupCallback.optional.any.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "js/builtins/weakrefs/holdings-multiple-values.optional.any.html": {"status":"complete","ms":40,"n":9,"pass":[]},
+  "js/builtins/weakrefs/reentrancy.optional.any.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "js/builtins/weakrefs/unregister-cleaned-up-cell.optional.any.html": {"status":"complete","ms":10,"n":1,"pass":[]}
+ }
+}

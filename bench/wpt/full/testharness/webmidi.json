@@ -1,0 +1,12 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "webmidi/idlharness.https.window.html": {"status":"complete","ms":60,"n":89,"pass":["Navigator includes NavigatorConcurrentHardware: member names are unique","Navigator includes NavigatorContentUtils: member names are unique","Navigator includes NavigatorCookies: member names are unique","Navigator includes NavigatorID: member names are unique","Navigator includes NavigatorLanguage: member names are unique","Navigator includes NavigatorOnLine: member names are unique","Navigator includes NavigatorPlugins: member names are unique","Partial interface Navigator: member names are unique","Partial interface Navigator: original interface defined","Partial interface Navigator[2]: member names are unique","Partial interface mixin NavigatorID: member names are unique","idl_test validation"]}
+ }
+}

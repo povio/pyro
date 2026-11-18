@@ -1,0 +1,26 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "secure-payment-confirmation/authentication-accepted-bbk-created.https.html": {"status":"complete","ms":20,"n":3,"pass":[]},
+  "secure-payment-confirmation/authentication-accepted-bbk-reused.https.html": {"status":"complete","ms":30,"n":3,"pass":[]},
+  "secure-payment-confirmation/authentication-accepted.https.html": {"status":"complete","ms":10,"n":2,"pass":[]},
+  "secure-payment-confirmation/authentication-auth-another-way.https.html": {"status":"complete","ms":10,"n":2,"pass":[]},
+  "secure-payment-confirmation/authentication-cross-origin.sub.https.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "secure-payment-confirmation/authentication-icon-data-url.https.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "secure-payment-confirmation/authentication-in-iframe.sub.https.html": {"status":"complete","ms":20,"n":2,"pass":[]},
+  "secure-payment-confirmation/authentication-invalid-payment-entity-logo.https.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "secure-payment-confirmation/authentication-optout.https.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "secure-payment-confirmation/authentication-rejected.https.html": {"status":"complete","ms":20,"n":2,"pass":[]},
+  "secure-payment-confirmation/constructor-validate-payment-method-data.https.html": {"status":"complete","ms":10,"n":22,"pass":[]},
+  "secure-payment-confirmation/constructor.https.html": {"status":"complete","ms":20,"n":10,"pass":[]},
+  "secure-payment-confirmation/enrollment-bbk-per-passkey.https.html": {"status":"complete","ms":30,"n":1,"pass":[]},
+  "secure-payment-confirmation/enrollment-bbk.https.html": {"status":"complete","ms":20,"n":3,"fail":[],"h":"934ce42a"},
+  "secure-payment-confirmation/enrollment-in-iframe.sub.https.html": {"status":"complete","ms":10,"n":3,"pass":[]}
+ }
+}

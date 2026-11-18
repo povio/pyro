@@ -1,0 +1,21 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "background-fetch/abort.https.window.html": {"status":"complete","ms":20,"n":3,"pass":[]},
+  "background-fetch/content-security-policy.https.window.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "background-fetch/fetch-uploads.https.window.html": {"status":"complete","ms":30,"n":3,"pass":[]},
+  "background-fetch/fetch.https.window.html": {"status":"complete","ms":50,"n":14,"pass":[]},
+  "background-fetch/get-ids.https.window.html": {"status":"complete","ms":20,"n":2,"pass":[]},
+  "background-fetch/idlharness.https.any.html": {"status":"complete","ms":180,"n":45,"pass":["BackgroundFetchEvent interface: existence and properties of interface object","BackgroundFetchUpdateUIEvent interface: existence and properties of interface object","Partial interface ServiceWorkerGlobalScope: member names are unique","Partial interface ServiceWorkerGlobalScope: original interface defined","Partial interface ServiceWorkerRegistration: member names are unique","Partial interface ServiceWorkerRegistration: original interface defined","WorkerGlobalScope includes WindowOrWorkerGlobalScope: member names are unique","idl_test setup","idl_test validation"]},
+  "background-fetch/match-request-body.https.window.html": {"status":"complete","ms":20,"n":8,"pass":[]},
+  "background-fetch/match.https.window.html": {"status":"complete","ms":30,"n":5,"pass":[]},
+  "background-fetch/mixed-content-and-allowed-schemes.https.window.html": {"status":"complete","ms":20,"n":8,"pass":[]},
+  "background-fetch/update-ui.https.window.html": {"status":"complete","ms":20,"n":3,"pass":[]}
+ }
+}

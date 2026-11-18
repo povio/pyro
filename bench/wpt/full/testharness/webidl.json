@@ -1,0 +1,45 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "webidl/current-realm.html": {"status":"complete","ms":40,"n":33,"fail":["FontFace's load()","getElementsByClassName","getElementsByTagName","getElementsByTagNameNS"],"h":"26e1b194"},
+  "webidl/ecmascript-binding/allow-shared.https.html": {"status":"complete","ms":30,"n":1,"pass":[]},
+  "webidl/ecmascript-binding/attributes-accessors-unique-function-objects.html": {"status":"complete","ms":40,"n":1,"fail":[],"h":"d55cf015"},
+  "webidl/ecmascript-binding/builtin-function-properties.any.html": {"status":"complete","ms":20,"n":3,"fail":[],"h":"23c16f2b"},
+  "webidl/ecmascript-binding/class-string-iterator-prototype-object.any.html": {"status":"complete","ms":30,"n":5,"fail":[],"h":"142213fb"},
+  "webidl/ecmascript-binding/class-string-named-properties-object.window.html": {"status":"complete","ms":20,"n":2,"fail":[],"h":"eb2a03f8"},
+  "webidl/ecmascript-binding/constructors.html": {"status":"complete","ms":30,"n":15,"fail":["Constructor in child window with bad NewTarget from child window that's a bound parent window function","Constructor in child window with bad NewTarget from child window that's a proxy for a parent window function","Constructor in child window with bad NewTarget from parent window","Constructor in parent window with bad NewTarget from child window","Constructor in parent window with bad NewTarget from parent window that's a bound child window function","Constructor in parent window with bad NewTarget from parent window that's a proxy for a child window function"],"h":"8c2fe432"},
+  "webidl/ecmascript-binding/default-toJSON-cross-realm.html": {"status":"complete","ms":40,"n":2,"pass":[]},
+  "webidl/ecmascript-binding/es-exceptions/DOMException-audioworklet.https.html": {"status":"complete","ms":20,"n":5,"pass":[]},
+  "webidl/ecmascript-binding/es-exceptions/DOMException-constants.any.html": {"status":"complete","ms":20,"n":51,"fail":[],"h":"07e246fc"},
+  "webidl/ecmascript-binding/es-exceptions/DOMException-constructor-behavior.any.html": {"status":"complete","ms":30,"n":46,"fail":[],"h":"3ec3831a"},
+  "webidl/ecmascript-binding/es-exceptions/DOMException-custom-bindings.any.html": {"status":"complete","ms":20,"n":15,"fail":[],"h":"14ee2b5e"},
+  "webidl/ecmascript-binding/es-exceptions/DOMException-is-error.any.html": {"status":"complete","ms":10,"n":1,"fail":[],"h":"a2a996b2"},
+  "webidl/ecmascript-binding/es-exceptions/exceptions.html": {"status":"complete","ms":20,"n":12,"fail":[],"h":"39a417ca"},
+  "webidl/ecmascript-binding/global-immutable-prototype.any.html": {"status":"complete","ms":10,"n":2,"fail":[],"h":"37332cbc"},
+  "webidl/ecmascript-binding/global-object-implicit-this-value-cross-realm.html": {"status":"complete","ms":60,"n":6,"fail":["Cross-realm global object's setter throws when called on incompatible object"],"h":"b2d63273"},
+  "webidl/ecmascript-binding/has-instance.html": {"status":"complete","ms":180,"n":3,"fail":["platform objects do not have Symbol.hasInstance installed"],"h":"b43d2214"},
+  "webidl/ecmascript-binding/interface-object-set-receiver.html": {"status":"complete","ms":20,"n":2,"fail":[],"h":"71c87777"},
+  "webidl/ecmascript-binding/interface-object.html": {"status":"complete","ms":20,"n":4,"fail":[],"h":"d372fedf"},
+  "webidl/ecmascript-binding/interface-prototype-object.html": {"status":"complete","ms":20,"n":1,"fail":[],"h":"a816961c"},
+  "webidl/ecmascript-binding/invalid-this-value-cross-realm.html": {"status":"complete","ms":40,"n":3,"fail":[],"h":"b88e847b"},
+  "webidl/ecmascript-binding/iterator-invalidation-foreach.html": {"status":"complete","ms":20,"n":3,"fail":[],"h":"d4dab4c8"},
+  "webidl/ecmascript-binding/legacy-callback-interface-object.html": {"status":"complete","ms":20,"n":8,"fail":[],"h":"65d65c88"},
+  "webidl/ecmascript-binding/legacy-factor-function-subclass.window.html": {"status":"complete","ms":10,"n":1,"fail":[],"h":"4ee5d059"},
+  "webidl/ecmascript-binding/legacy-factory-function-builtin-properties.window.html": {"status":"complete","ms":20,"n":1,"fail":[],"h":"00c9c425"},
+  "webidl/ecmascript-binding/legacy-platform-object/GetOwnProperty.html": {"status":"complete","ms":20,"n":3,"pass":["[[GetOwnProperty]] with getters and no setters"]},
+  "webidl/ecmascript-binding/legacy-platform-object/OwnPropertyKeys.html": {"status":"complete","ms":10,"n":5,"fail":["must enumerate own properties after indexed and named properties even when they're added first","must enumerate symbols after strings, regardless of which ones got added first"],"h":"ba5e32be"},
+  "webidl/ecmascript-binding/legacy-platform-object/Set.html": {"status":"complete","ms":20,"n":11,"fail":[],"h":"a0b8410c"},
+  "webidl/ecmascript-binding/observable-array-no-leak-of-internals.window.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "webidl/ecmascript-binding/observable-array-ownkeys.window.html": {"status":"complete","ms":10,"n":1,"fail":[],"h":"0eeca9c6"},
+  "webidl/ecmascript-binding/put-forwards.html": {"status":"complete","ms":20,"n":11,"fail":[],"h":"5874069f"},
+  "webidl/ecmascript-binding/sequence-conversion.html": {"status":"complete","ms":20,"n":8,"pass":["A holey array with fallback to an accessor on the prototype","A string array in sequence<sequence> or record","An array","An object with an overriden Symbol.iterator"]},
+  "webidl/ecmascript-binding/setter-argument.html": {"status":"complete","ms":10,"n":17,"fail":["Object attribute setter called with undefined should behave in the same way as no arguments","Object attribute setter should treat no arguments as undefined","[LegacyLenientSetter] setter called with undefined should behave in the same way as no arguments","[LegacyLenientSetter] setter should treat no arguments as undefined","[LegacyLenientThis] setter should not throw even if this value is invalid, regardless of the arguments count","[Replaceable] setter called with other value should just work","[Replaceable] setter called with undefined should behave in the same way as no arguments","[Replaceable] setter should treat no arguments as undefined"],"h":"1cd04981"},
+  "webidl/ecmascript-binding/window-named-properties-object.html": {"status":"complete","ms":70,"n":13,"fail":[],"h":"e2bf1561"}
+ }
+}

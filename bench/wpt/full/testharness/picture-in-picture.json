@@ -1,0 +1,25 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "picture-in-picture/css-selector.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "picture-in-picture/disable-picture-in-picture.html": {"status":"complete","ms":30,"n":6,"pass":[]},
+  "picture-in-picture/enter-picture-in-picture.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "picture-in-picture/idlharness.window.html": {"status":"complete","ms":80,"n":67,"pass":["Document includes DocumentOrShadowRoot: member names are unique","Document includes GlobalEventHandlers: member names are unique","Document includes NonElementParentNode: member names are unique","Document includes ParentNode: member names are unique","Document includes XPathEvaluatorBase: member names are unique","DocumentFragment includes NonElementParentNode: member names are unique","DocumentFragment includes ParentNode: member names are unique","Element includes ChildNode: member names are unique","Element includes NonDocumentTypeChildNode: member names are unique","Element includes ParentNode: member names are unique","Element includes Slottable: member names are unique","HTMLElement includes ElementContentEditable: member names are unique","HTMLElement includes GlobalEventHandlers: member names are unique","HTMLElement includes HTMLOrSVGOrMathMLElement: member names are unique","Partial interface Document: member names are unique","Partial interface Document: original interface defined","Partial interface Document[2]: member names are unique","Partial interface Document[3]: member names are unique","Partial interface Element: member names are unique","Partial interface HTMLVideoElement: member names are unique","Partial interface HTMLVideoElement: original interface defined","Partial interface mixin DocumentOrShadowRoot: member names are unique","Partial interface mixin DocumentOrShadowRoot: original interface mixin defined","Partial interface mixin DocumentOrShadowRoot[2]: member names are unique","ShadowRoot includes DocumentOrShadowRoot: member names are unique","idl_test validation"]},
+  "picture-in-picture/leave-picture-in-picture.html": {"status":"timeout","ms":20,"n":1,"pass":[]},
+  "picture-in-picture/mediastream.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "picture-in-picture/permissions-policy.https.sub.html": {"status":"complete","ms":10000,"n":5,"pass":[]},
+  "picture-in-picture/picture-in-picture-element.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "picture-in-picture/picture-in-picture-window.html": {"status":"complete","ms":20,"n":5,"pass":[]},
+  "picture-in-picture/request-picture-in-picture-consumes-user-activation.html": {"status":"complete","ms":10000,"n":1,"pass":[]},
+  "picture-in-picture/request-picture-in-picture-exits-existing.html": {"status":"timeout","ms":30,"n":4,"pass":[]},
+  "picture-in-picture/request-picture-in-picture.html": {"status":"complete","ms":20,"n":4,"pass":[]},
+  "picture-in-picture/shadow-dom.html": {"status":"complete","ms":20,"n":5,"pass":[]},
+  "picture-in-picture/unload-document-exits-picture-in-picture.html": {"status":"complete","ms":20,"n":1,"pass":[]}
+ }
+}

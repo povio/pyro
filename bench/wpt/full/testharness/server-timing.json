@@ -1,0 +1,17 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "server-timing/cross_origin.https.html": {"status":"complete","ms":40,"n":3,"pass":["Expected entry count for https://www1.web-platform.test:8443/server-timing/resources/blue.png: 0"]},
+  "server-timing/navigation-timing-trickle.https.html": {"status":"complete","ms":1100,"n":2,"pass":["navigation-timing-trickle 1"]},
+  "server-timing/navigation_timing_idl.https.html": {"status":"complete","ms":10,"n":1,"fail":[],"h":"0ed9b2ff"},
+  "server-timing/server_timing_header-parsing.https.html": {"status":"complete","ms":150,"n":85,"pass":["0.js - count (0 ?== 0)","71.js - count (0 ?== 0)","72.js - count (0 ?== 0)","73.js - count (0 ?== 0)","74.js - count (0 ?== 0)","75.js - count (0 ?== 0)","76.js - count (0 ?== 0)","77.js - count (0 ?== 0)","78.js - count (0 ?== 0)","79.js - count (0 ?== 0)","80.js - count (0 ?== 0)","81.js - count (0 ?== 0)","82.js - count (0 ?== 0)","83.js - count (0 ?== 0)"]},
+  "server-timing/server_timing_headers_not_visible_in_fetch.https.html": {"status":"complete","ms":10,"n":1,"fail":[],"h":"cde3a53b"},
+  "server-timing/service_worker_idl.https.html": {"status":"complete","ms":270,"n":1,"fail":[],"h":"8d4c780f"}
+ }
+}

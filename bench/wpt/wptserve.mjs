@@ -93,12 +93,23 @@ export async function startWptserve(wpt, { log = process.stderr } = {}) {
 
 // A forward proxy (absolute-URI requests and CONNECT tunnels) that sends every request to 127.0.0.1 on the port it
 // names: the browser's host mapping. Resolves { port, close }.
+// Hop-by-hop headers (RFC 9110 7.6.1) stay on their own connection: wptserve's `Connection: close` is not the
+// browser's business, and the proxy keeps its own connections to wptserve alive.
+const HOP = new Set(['connection', 'keep-alive', 'proxy-connection', 'proxy-authenticate', 'proxy-authorization', 'te', 'trailer', 'transfer-encoding', 'upgrade']);
+const endToEnd = (raw) => {
+  const out = [];
+  for (let i = 0; i < raw.length; i += 2) if (!HOP.has(raw[i].toLowerCase())) out.push(raw[i], raw[i + 1]);
+  return out;
+};
+
 export function startProxy() {
+  const agent = new http.Agent({ keepAlive: true, maxSockets: 256 });
   const server = http.createServer((req, res) => {
     let u;
     try { u = new URL(req.url); } catch { res.writeHead(400); res.end(); return; }
-    const up = http.request({ host: '127.0.0.1', port: u.port || 80, method: req.method, path: u.pathname + u.search, headers: req.headers },
-      (r) => { res.writeHead(r.statusCode, r.statusMessage, r.rawHeaders); r.pipe(res); });
+    const headers = Object.fromEntries(Object.entries(req.headers).filter(([k]) => !HOP.has(k)));
+    const up = http.request({ host: '127.0.0.1', port: u.port || 80, method: req.method, path: u.pathname + u.search, headers, agent },
+      (r) => { res.writeHead(r.statusCode, r.statusMessage, endToEnd(r.rawHeaders)); r.pipe(res); });
     up.on('error', () => { if (!res.headersSent) res.writeHead(502); res.end(); });
     res.on('close', () => up.destroy());
     req.pipe(up);

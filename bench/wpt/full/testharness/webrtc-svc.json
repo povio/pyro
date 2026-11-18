@@ -1,0 +1,15 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "webrtc-svc/RTCRtpParameters-scalability-av1.html": {"status":"complete","ms":10,"n":28,"pass":[]},
+  "webrtc-svc/RTCRtpParameters-scalability-h264.html": {"status":"complete","ms":10,"n":3,"pass":[]},
+  "webrtc-svc/RTCRtpParameters-scalability-vp9.html": {"status":"complete","ms":10,"n":28,"pass":[]},
+  "webrtc-svc/RTCRtpParameters-scalability.html": {"status":"complete","ms":10,"n":5,"pass":[]}
+ }
+}

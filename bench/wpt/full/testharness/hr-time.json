@@ -1,0 +1,21 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "hr-time/clamped-time-origin-isolated.https.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "hr-time/clamped-time-origin.html": {"status":"complete","ms":10000,"n":1,"pass":[]},
+  "hr-time/cross-origin-isolated-timing-attack.https.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "hr-time/idlharness.any.html": {"status":"complete","ms":60,"n":29,"fail":["Window interface: attribute performance"],"h":"3b6e3967"},
+  "hr-time/navigation-start-post-before-unload.html": {"status":"complete","ms":3000,"n":1,"fail":[],"h":"410428c4"},
+  "hr-time/performance-tojson.html": {"status":"complete","ms":20,"n":1,"fail":[],"h":"2611ceb3"},
+  "hr-time/raf-coarsened-time.https.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "hr-time/timeOrigin.html": {"status":"complete","ms":220,"n":3,"fail":[],"h":"43221dcb"},
+  "hr-time/timing-attack.html": {"status":"complete","ms":20,"n":1,"fail":[],"h":"4fee68a3"},
+  "hr-time/window-worker-timeOrigin.window.html": {"status":"complete","ms":20,"n":1,"fail":[],"h":"34b511bc"}
+ }
+}

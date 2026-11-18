@@ -1,0 +1,20 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "mediacapture-fromelement/HTMLCanvasElement-captureStream-settings.tentative.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "mediacapture-fromelement/HTMLCanvasElement-getImageData-noframe.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "mediacapture-fromelement/capture-muted.html": {"status":"complete","ms":10,"n":3,"pass":[]},
+  "mediacapture-fromelement/capture.html": {"status":"complete","ms":10,"n":6,"pass":["audio-only","video+audio","video-only"]},
+  "mediacapture-fromelement/creation.html": {"status":"complete","ms":10,"n":6,"pass":["audio-only","video+audio","video-only"]},
+  "mediacapture-fromelement/ended.html": {"status":"complete","ms":10,"n":6,"pass":["audio-only","video+audio","video-only"]},
+  "mediacapture-fromelement/historical.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "mediacapture-fromelement/idlharness.window.html": {"status":"complete","ms":100,"n":30,"pass":["Element includes ChildNode: member names are unique","Element includes NonDocumentTypeChildNode: member names are unique","Element includes ParentNode: member names are unique","Element includes Slottable: member names are unique","HTMLElement includes ElementContentEditable: member names are unique","HTMLElement includes GlobalEventHandlers: member names are unique","HTMLElement includes HTMLOrSVGOrMathMLElement: member names are unique","Partial interface Element: member names are unique","Partial interface HTMLCanvasElement: member names are unique","Partial interface HTMLCanvasElement: original interface defined","Partial interface HTMLMediaElement: member names are unique","Partial interface HTMLMediaElement: original interface defined","idl_test setup","idl_test validation"]},
+  "mediacapture-fromelement/src-reset.html": {"status":"complete","ms":10,"n":1,"pass":[]}
+ }
+}

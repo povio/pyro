@@ -1,0 +1,14 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "mst-content-hint/RTCRtpSendParameters-degradationEffect.html": {"status":"complete","ms":30,"n":1,"pass":[]},
+  "mst-content-hint/RTCRtpSendParameters-degradationPreference.html": {"status":"complete","ms":40,"n":6,"pass":[]},
+  "mst-content-hint/idlharness.window.html": {"status":"complete","ms":50,"n":9,"fail":["MediaStreamTrack interface: attribute contentHint","MediaStreamTrack interface: audioTrack must inherit property \"contentHint\" with the proper type","MediaStreamTrack interface: videoTrack must inherit property \"contentHint\" with the proper type","idl_test setup"],"h":"b0288118"}
+ }
+}

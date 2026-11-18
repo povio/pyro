@@ -1,0 +1,50 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "element-timing/background-image-data-uri.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "element-timing/background-image-multiple-elements.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "element-timing/background-image-stretched.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "element-timing/buffered-flag.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "element-timing/cross-origin-element.sub.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "element-timing/cross-origin-iframe-element.sub.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "element-timing/disconnect-image.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "element-timing/element-only-when-fully-active.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "element-timing/first-letter-background.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "element-timing/image-TAO.sub.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "element-timing/image-carousel.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "element-timing/image-clipped-svg.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "element-timing/image-not-added.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "element-timing/image-not-fully-visible.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "element-timing/image-rect-iframe.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "element-timing/image-with-css-scale.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "element-timing/image-with-rotation.html": {"status":"complete","ms":30,"n":1,"pass":[]},
+  "element-timing/images-repeated-resource.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "element-timing/invisible-images.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "element-timing/list-style-image.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "element-timing/multiple-background-images.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "element-timing/observe-background-image.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "element-timing/observe-child-element.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "element-timing/observe-elementtiming.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "element-timing/observe-multiple-images.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "element-timing/observe-shadow-image.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "element-timing/observe-shadow-text.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "element-timing/observe-text.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "element-timing/observe-video-poster.html": {"status":"complete","ms":30,"n":1,"pass":[]},
+  "element-timing/picture.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "element-timing/pseudo-background-image.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "element-timing/pseudo-content-image.html": {"status":"complete","ms":30,"n":1,"pass":[]},
+  "element-timing/pseudo-content-text.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "element-timing/retrievability.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "element-timing/same-origin-redirects.html": {"status":"complete","ms":30,"n":1,"pass":[]},
+  "element-timing/scroll-to-text.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "element-timing/text-not-observed-when-changed.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "element-timing/text-with-display-style.html": {"status":"complete","ms":30,"n":1,"pass":[]},
+  "element-timing/toJSON.html": {"status":"complete","ms":10,"n":1,"pass":[]}
+ }
+}

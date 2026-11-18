@@ -1,0 +1,22 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "imagebitmap-renderingcontext/bitmaprenderer-as-imagesource.html": {"status":"complete","ms":20,"n":3,"pass":["Test that createImageBitmap on a bitmaprenderer canvas that never consumes any source produces correct result"]},
+  "imagebitmap-renderingcontext/context-creation-offscreen-with-alpha.html": {"status":"complete","ms":20,"n":3,"pass":[]},
+  "imagebitmap-renderingcontext/context-creation-offscreen.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "imagebitmap-renderingcontext/context-creation.html": {"status":"complete","ms":30,"n":1,"pass":[]},
+  "imagebitmap-renderingcontext/context-preserves-canvas.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "imagebitmap-renderingcontext/toBlob-origin-clean-offscreen.sub.html": {"status":"complete","ms":10000,"n":1,"pass":[]},
+  "imagebitmap-renderingcontext/transferFromImageBitmap-ToBlob-transferControlToOffscreen.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "imagebitmap-renderingcontext/transferFromImageBitmap-TransferToImageBitmap-offscreen.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "imagebitmap-renderingcontext/transferFromImageBitmap-TransferToImageBitmap-transferControlToOffscreen.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "imagebitmap-renderingcontext/transferFromImageBitmap-null-offscreen.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "imagebitmap-renderingcontext/transferFromImageBitmap-null.html": {"status":"complete","ms":10,"n":1,"pass":[]}
+ }
+}

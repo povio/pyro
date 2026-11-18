@@ -1,0 +1,37 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "domxpath/booleans.html": {"status":"complete","ms":10,"n":7,"fail":[],"h":"816526cb"},
+  "domxpath/elements-are-parents-of-their-attributes.html": {"status":"complete","ms":10,"n":2,"fail":[],"h":"91314f4e"},
+  "domxpath/evaluate-non-node-set-result-type.html": {"status":"complete","ms":40,"n":6,"fail":[],"h":"e00954bd"},
+  "domxpath/evaluator-constructor.html": {"status":"complete","ms":10,"n":2,"fail":[],"h":"b0e0218d"},
+  "domxpath/evaluator-different-document.tentative.html": {"status":"complete","ms":10,"n":8,"fail":[],"h":"779d29f3"},
+  "domxpath/expression-cross-realm.tentative.html": {"status":"complete","ms":100,"n":4,"fail":[],"h":"02db7f4b"},
+  "domxpath/expression-different-document.tentative.html": {"status":"complete","ms":10,"n":8,"fail":[],"h":"2f41d2e7"},
+  "domxpath/fn-contains.html": {"status":"complete","ms":10,"n":1,"fail":[],"h":"98d54ec2"},
+  "domxpath/fn-id.html": {"status":"complete","ms":30,"n":8,"fail":[],"h":"97240ac2"},
+  "domxpath/fn-lang.html": {"status":"complete","ms":10,"n":7,"fail":[],"h":"ad56a7d9"},
+  "domxpath/fn-starts-with.html": {"status":"complete","ms":10,"n":1,"fail":[],"h":"548fb97c"},
+  "domxpath/fn-substring-after.html": {"status":"complete","ms":30,"n":1,"fail":[],"h":"a984f623"},
+  "domxpath/fn-substring-before.html": {"status":"complete","ms":10,"n":1,"fail":[],"h":"0e77dff3"},
+  "domxpath/fn-translate.html": {"status":"complete","ms":10,"n":1,"fail":[],"h":"21d1e9e9"},
+  "domxpath/fns-name-related.html": {"status":"complete","ms":20,"n":6,"fail":[],"h":"0bc78715"},
+  "domxpath/lexical-structure.html": {"status":"complete","ms":10,"n":2,"pass":["ExprWhitespace: Only #x20 #x9 #xD or #xA must be handled as a whitespace."]},
+  "domxpath/node-sets.html": {"status":"complete","ms":10,"n":1,"fail":[],"h":"7a8b565e"},
+  "domxpath/numbers.html": {"status":"complete","ms":20,"n":5,"fail":[],"h":"0b33e950"},
+  "domxpath/predicates.html": {"status":"complete","ms":10,"n":1,"fail":[],"h":"16959198"},
+  "domxpath/resolver-callback-interface.html": {"status":"complete","ms":10,"n":10,"pass":[]},
+  "domxpath/resolver-non-string-result.html": {"status":"complete","ms":30,"n":6,"fail":["object coercion (abrupt completion)","symbol"],"h":"ef3410f0"},
+  "domxpath/result-iterateNext.html": {"status":"complete","ms":10,"n":7,"fail":[],"h":"d4701dd5"},
+  "domxpath/text-html-elements.html": {"status":"complete","ms":10,"n":11,"fail":[],"h":"8c482e2e"},
+  "domxpath/xml_xpath_runner.html": {"status":"complete","ms":110,"n":1024,"fail":[],"h":"8f165e28"},
+  "domxpath/xpath-shadow-dom.html": {"status":"complete","ms":20,"n":2,"fail":[],"h":"77c3804e"},
+  "domxpath/xpathevaluatorbase-creatensresolver.html": {"status":"complete","ms":10,"n":4,"fail":[],"h":"db0a9983"}
+ }
+}

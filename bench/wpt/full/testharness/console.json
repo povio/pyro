@@ -1,0 +1,20 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "console/console-count-logging.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "console/console-is-a-namespace.any.html": {"status":"complete","ms":20,"n":4,"fail":["The prototype chain must be correct"],"h":"127e67a3"},
+  "console/console-label-conversion.any.html": {"status":"complete","ms":10,"n":10,"fail":[],"h":"29874403"},
+  "console/console-log-large-array.any.html": {"status":"complete","ms":30,"n":1,"fail":[],"h":"dd7f6a0f"},
+  "console/console-namespace-object-class-string.any.html": {"status":"complete","ms":10,"n":4,"pass":[]},
+  "console/console-number-format-specifiers-symbol.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "console/console-tests-historical.any.html": {"status":"complete","ms":10,"n":3,"fail":[],"h":"b04455f8"},
+  "console/console-timing-missing-label-warnings.tentative.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "console/idlharness.any.html": {"status":"complete","ms":20,"n":28,"fail":["console namespace: [[Prototype]] is Object.prototype"],"h":"61acdecd"}
+ }
+}

@@ -1,0 +1,17 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "fullscreen/rendering/backdrop-iframe.html": {"status":"timeout","ms":15000,"n":0,"pass":[]},
+  "fullscreen/rendering/backdrop-inherit.html": {"status":"timeout","ms":15000,"n":0,"pass":[]},
+  "fullscreen/rendering/backdrop-object.html": {"status":"timeout","ms":15000,"n":0,"pass":[]},
+  "fullscreen/rendering/exit-fullscreen-scroll-to-unscrollable-area-overflow-hidden.html": {"status":"timeout","ms":15000,"n":0,"pass":[]},
+  "fullscreen/rendering/exit-fullscreen-scroll-to-unscrollable-area-overflow-x-hidden.html": {"status":"timeout","ms":15000,"n":0,"pass":[]},
+  "fullscreen/rendering/fullscreen-root-fills-page.html": {"status":"timeout","ms":15000,"n":0,"pass":[]}
+ }
+}

@@ -1,0 +1,12 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "."
+ ],
+ "tests": {
+  "uievents/mouse/crashtests/retrieve_coords_after_moving_target_outside_subdoc_and_hide_the_subdoc.html": {"status":"complete","ms":50,"n":1,"fail":[],"h":"22f2a845"}
+ }
+}

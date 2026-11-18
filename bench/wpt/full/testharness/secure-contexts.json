@@ -1,0 +1,19 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "secure-contexts/basic-dedicated-worker.html": {"status":"complete","ms":20,"n":7,"fail":["HTTP nested worker","HTTPS worker from HTTPS subframe","Worker from data URL"],"h":"767ed448"},
+  "secure-contexts/basic-dedicated-worker.https.html": {"status":"complete","ms":20,"n":7,"fail":["HTTPS nested worker"],"h":"767ed448"},
+  "secure-contexts/basic-popup-and-iframe-tests.https.html": {"status":"complete","ms":10000,"n":5,"fail":["Test Window.isSecureContext in an iframe loading a javascript: URI"],"h":"b3bc4d0e"},
+  "secure-contexts/basic-shared-worker.html": {"status":"complete","ms":10,"n":5,"pass":[]},
+  "secure-contexts/basic-shared-worker.https.html": {"status":"complete","ms":20,"n":5,"pass":[]},
+  "secure-contexts/sandboxed-iframe-child.https.html": {"status":"complete","ms":50,"n":1,"fail":[],"h":"e0f0fe12"},
+  "secure-contexts/shared-worker-insecure-first.tentative.https.html": {"status":"complete","ms":30,"n":4,"pass":[]},
+  "secure-contexts/shared-worker-secure-first.tentative.https.html": {"status":"complete","ms":30,"n":4,"pass":[]}
+ }
+}
