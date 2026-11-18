@@ -824,7 +824,7 @@ complete:
   `insertRule`, srcdoc reload, `window.find`, and a `KeyframeEffect` target from another
   document.
 
-2,009 of 2,031 complete locally. These 22 are **known incomplete**: each needs a feature pyro does not have. They stay
+2,010 of 2,031 complete locally. These 21 are **known incomplete**: each needs a feature pyro does not have. They stay
 failing entries of the baseline, not flaky entries, and none of them crashes, panics or hangs:
 
 | page | needs |
@@ -837,9 +837,8 @@ failing entries of the baseline, not flaky entries, and none of them crashes, pa
 | `service-workers/service-worker/messageport-transfer-crash.html` | `SharedWorker` |
 | `trusted-types/navigate-to-javascript-url-007-crash.html` | Trusted Types (`trustedTypes`) |
 | `html/semantics/embedded-content/the-img-element/image-loading-lazy-subframe-detached-crash.html` | IntersectionObserver across pages (another frame's document) |
-| `streams/readable-byte-streams/crashtests/from-cross-realm.html` | a synchronous about:blank document in the window `window.open()` returns |
+| `streams/readable-byte-streams/crashtests/from-cross-realm.html` | a synchronous about:blank document in the window `window.open()` returns (Chrome times out on this page too, per wpt.fyi) |
 | `html/semantics/permission-element/geolocation-element/iframe-use-after-free-crash.html` | DOM calls on a navigated-away iframe document (its realm is disposed; browsers allow them) |
-| `navigation-api/navigate-event/navigate-form-onformdata-navigate-crash.html` | none in pyro: the page POSTs to itself on every load, so it never stops navigating |
 | `editing/crashtests/designMode-caret-change.html` | `document.designMode`. A first version made `selectall-containing-textarea-and-subscript` (passing today) loop: in a designMode document, `delete` after `selectAll` removed `<body>`, and the commands then changed the selection without end |
 | `editing/crashtests/designMode-document-will-be-blurred-by-focus-event-listener.html` | `document.designMode`, and a `focus` event at an iframe's Window from `contentWindow.focus()` |
 | `editing/crashtests/inserthorizontalrule-in-textarea-in-editor-and-undo-on-error-events.html` | `<object>` load and error events (this page relies on Chromium's `error` for an `<object>` without data) |
