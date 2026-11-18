@@ -45,6 +45,7 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use pyro_dom::timing::{displays_none, ElementTiming, StyleSnapshot, TimingRules};
+use pyro_dom::style::PseudoElement;
 use pyro_dom::NodeId;
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -69,6 +70,8 @@ pub(crate) struct Timeline {
     /// 1 for a transition.
     pub(crate) iterations: f64,
     el: NodeId,
+    /// Its target's `::before`/`::after` (`None`: the element itself).
+    pseudo: Option<PseudoElement>,
     /// The animation's name, or the transitioning longhand.
     name: String,
     /// Cleared to cancel the events not fired yet.
@@ -108,6 +111,9 @@ impl Timeline {
     }
     pub(crate) fn el(&self) -> NodeId {
         self.el
+    }
+    pub(crate) fn pseudo(&self) -> Option<PseudoElement> {
+        self.pseudo
     }
     pub(crate) fn name(&self) -> &str {
         &self.name
@@ -194,6 +200,8 @@ pub(crate) struct State {
 pub(crate) struct Run {
     pub id: u64,
     pub el: NodeId,
+    /// Its target's `::before`/`::after` (`None`: the element).
+    pub pseudo: Option<PseudoElement>,
     pub transition: bool,
     /// The animation's name, or the transitioning property.
     pub name: String,
@@ -303,6 +311,8 @@ impl State {
 /// One event to fire, `after` the moment it was planned.
 struct Planned {
     el: NodeId,
+    /// `pseudoElement` (`""`: the element).
+    pseudo: &'static str,
     ty: &'static str,
     transition: bool,
     name: String,
@@ -356,6 +366,7 @@ fn plan_animation(t: &mut Timeline, local: f64, rate: f64, held: bool, planned: 
         }
         Planned {
             el: t.el,
+            pseudo: pseudo_name(t.pseudo),
             ty,
             transition: false,
             name: t.name.clone(),
@@ -448,9 +459,19 @@ fn update(page: &Rc<PageDom>, defer: bool) {
         // Animations the styles ask for now.
         let mut wanted = Vec::new();
         let style_of = |e: NodeId| style.stylo_style(&dom, e);
+        let pseudo_rules = rules.has_pseudo_rules();
         for el in rules.animation_candidates(&dom, page.document()) {
             if dom.is_connected(el).unwrap_or(false) {
-                wanted.extend(rules.element(&dom, el, &style_of).animations.into_iter().map(|a| (el, a)));
+                wanted.extend(rules.element(&dom, el, &style_of).animations.into_iter().map(|a| (el, None, a)));
+                // Its `::before`/`::after`, while it generates a box.
+                if pseudo_rules {
+                    for pseudo in [PseudoElement::Before, PseudoElement::After] {
+                        let timing = rules.element_for(&dom, el, Some(pseudo), &style_of);
+                        if !timing.animations.is_empty() && style.pseudo_style(&dom, el, pseudo, false).is_some() {
+                            wanted.extend(timing.animations.into_iter().map(|a| (el, Some(pseudo), a)));
+                        }
+                    }
+                }
             }
         }
         let now_ms = crate::event::page_now_ms(page);
@@ -465,13 +486,15 @@ fn update(page: &Rc<PageDom>, defer: bool) {
         let mut animations = state.animations.borrow_mut();
         let before = animations.len();
         animations.retain(|known| {
-            let keep =
-                wanted.iter().any(|(el, a)| *el == known.el && known.timing.as_ref().is_some_and(|t| t.same_run(a)));
+            let keep = wanted.iter().any(|(el, pseudo, a)| {
+                *el == known.el && *pseudo == known.pseudo && known.timing.as_ref().is_some_and(|t| t.same_run(a))
+            });
             if !keep {
                 known.live.set(false);
                 if !known.ended.get() && dom.is_alive(known.el) && dom.is_connected(known.el).unwrap_or(false) {
                     planned.push(Planned {
                         el: known.el,
+                        pseudo: pseudo_name(known.pseudo),
                         ty: "animationcancel",
                         transition: false,
                         name: known.name.clone(),
@@ -487,10 +510,10 @@ fn update(page: &Rc<PageDom>, defer: bool) {
             keep
         });
         let mut changed = animations.len() != before;
-        for (el, animation) in wanted {
-            if let Some(known) = animations
-                .iter_mut()
-                .find(|known| known.el == el && known.timing.as_ref().is_some_and(|t| t.same_run(&animation)))
+        for (el, pseudo, animation) in wanted {
+            if let Some(known) = animations.iter_mut().find(|known| {
+                known.el == el && known.pseudo == pseudo && known.timing.as_ref().is_some_and(|t| t.same_run(&animation))
+            })
             {
                 // A change of how it plays: paused holds its local time,
                 // running again goes on from there, and its events follow
@@ -527,6 +550,7 @@ fn update(page: &Rc<PageDom>, defer: bool) {
                 duration_ms: animation.duration_ms,
                 iterations: animation.iterations,
                 el,
+                pseudo,
                 name: animation.name.clone(),
                 live: Rc::new(Cell::new(true)),
                 ended: Rc::new(Cell::new(false)),
@@ -611,6 +635,7 @@ pub(crate) fn scripted_state(
                     t.progress.set(0);
                     planned.push(Planned {
                         el: t.el,
+                        pseudo: pseudo_name(t.pseudo),
                         ty: "animationcancel",
                         transition: false,
                         name: t.name.clone(),
@@ -681,6 +706,7 @@ pub(crate) fn runs(page: &Rc<PageDom>) -> Vec<Run> {
             Run {
                 id: t.id,
                 el: t.el,
+                pseudo: t.pseudo,
                 transition,
                 name: t.name.clone(),
                 start_ms: t.start_ms,
@@ -1116,6 +1142,7 @@ struct Starting {
 fn cancel_event(el: NodeId, name: &str) -> Planned {
     Planned {
         el,
+        pseudo: "",
         ty: "transitioncancel",
         transition: true,
         name: name.to_owned(),
@@ -1205,6 +1232,7 @@ fn start_transitions(
                 duration_ms: transition.duration_ms,
                 iterations: 1.0,
                 el,
+                pseudo: None,
                 name: longhand.to_owned(),
                 live: Rc::new(Cell::new(true)),
                 ended: Rc::new(Cell::new(false)),
@@ -1219,6 +1247,7 @@ fn start_transitions(
             let (delay, duration) = (transition.delay_ms, transition.duration_ms);
             let event = |ty: &'static str, at_ms: f64, elapsed_ms: f64, ends: bool| Planned {
                 el,
+                pseudo: "",
                 ty,
                 transition: true,
                 name: longhand.to_owned(),
@@ -1304,6 +1333,16 @@ fn fire(page: &Rc<PageDom>, event: &Planned) {
             fields.animation_name = event.name.clone();
         }
         fields.elapsed_time = event.elapsed_s;
+        fields.pseudo_element = event.pseudo.to_owned();
     }
     crate::target::fire_at_node(page, event.el, &ev);
+}
+
+/// `pseudoElement` of an event of a timeline whose target is `pseudo`.
+fn pseudo_name(pseudo: Option<PseudoElement>) -> &'static str {
+    match pseudo {
+        None => "",
+        Some(PseudoElement::Before) => "::before",
+        Some(PseudoElement::After) => "::after",
+    }
 }

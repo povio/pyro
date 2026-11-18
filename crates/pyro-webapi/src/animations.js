@@ -1303,12 +1303,14 @@
     constructor() { throw illegal(); }
     get transitionProperty() { return brand(animations, this, 'a CSSTransition').cssName; }
   }
-  function cssRun([id, target, transition, name, start, delay, duration, iterations, direction, fill, easing, held]) {
+  function cssRun([id, target, transition, name, start, delay, duration, iterations, direction, fill, easing, held, pseudo]) {
     // The engine hands over computed easings; one it could not compute is
     // the initial `ease`, as an easing invalid at computed-value time is.
     let parsed;
     try { parsed = parseEasing(easing); } catch { parsed = parseEasing('ease'); }
     const timing = { delay, duration, iterations, fill, direction, easing: parsed.text };
+    // (A run on the target's `::before`/`::after`: its effect's pseudo-element.)
+    if (pseudo !== null && pseudo !== undefined) timing.pseudoElement = pseudo;
     const effect = new KeyframeEffect(target, null, timing);
     const object = Reflect.construct(Animation, [effect, documentTimeline], transition ? CSSTransition : CSSAnimation);
     const a = animations.get(object);
@@ -1340,7 +1342,7 @@
   // A frame of the engine's (animation_frame.rs, `FRAME_MS`).
   const FRAME_MS = 16;
   // The engine's runs now ([id, target, transition, name, start, delay,
-  // duration, iterations, direction, fill, easing, held]); those it dropped
+  // duration, iterations, direction, fill, easing, held, pseudo]); those it dropped
   // (canceled) leave the list.
   function cssSync(runs) {
     const seen = new Set();

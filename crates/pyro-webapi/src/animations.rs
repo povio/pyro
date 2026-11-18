@@ -263,6 +263,11 @@ fn with_css_runs<'s>(s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<Option<Objec
                 s.string(&run.fill),
                 s.string(&run.easing),
                 run.paused_at.map_or_else(|| s.null(), |t| s.number(t)),
+                match run.pseudo {
+                    None => s.null(),
+                    Some(pyro_dom::style::PseudoElement::Before) => s.string("::before"),
+                    Some(pyro_dom::style::PseudoElement::After) => s.string("::after"),
+                },
             ])?
             .value(),
         );

@@ -232,16 +232,6 @@ impl Pseudo {
             _ => None,
         }
     }
-
-    /// As `pseudoElement` reports it (`""` for the element).
-    pub(crate) fn name(self) -> &'static str {
-        match self {
-            Pseudo::None => "",
-            Pseudo::Marker => "::marker",
-            Pseudo::Before => "::before",
-            Pseudo::After => "::after",
-        }
-    }
 }
 
 impl Scripted {
@@ -449,6 +439,7 @@ enum Level {
     Marker,
     /// In effect on the element's `::before` (0) or `::after` (1), at the transitions or the
     /// animations level (`ElementAnimations::pseudos`).
+    #[allow(dead_code)] // (CSS transitions on pseudo-elements: the next step.)
     PseudoTransition(usize),
     PseudoAnimation(usize),
 }
@@ -570,6 +561,21 @@ fn walk_at(page: &PageDom, clock: Clock, transitions: bool, visit: &mut dyn FnMu
             },
         };
         let el = overrides.get(&t.id()).and_then(|s| s.el).unwrap_or(t.el());
+        // On the element's `::before`/`::after` (as its object's effect targets, once script
+        // reported it): its values in effect only.
+        let pseudo = match overrides.get(&t.id()) {
+            Some(s) if s.el.is_some() => s.pseudo,
+            _ => match t.pseudo() {
+                None => Pseudo::None,
+                Some(pyro_dom::style::PseudoElement::Before) => Pseudo::Before,
+                Some(pyro_dom::style::PseudoElement::After) => Pseudo::After,
+            },
+        };
+        let level = match (pseudo.generated_index(), level) {
+            (None, level) => level,
+            (Some(i), Level::Animation) => Level::PseudoAnimation(i),
+            (Some(_), _) => continue,
+        };
         visit(el, level, effect);
     }
     // Script animations, in the order they were made.
@@ -625,8 +631,10 @@ pub(crate) fn animates(
     el: NodeId,
     longhand: &str,
 ) -> bool {
-    let css =
-        state.animations().iter().any(|t| t.is_live() && t.el() == el && rules.keyframes_declare(t.name(), longhand));
+    // (Animations of the element itself, not of its pseudo-elements.)
+    let css = state.animations().iter().any(|t| {
+        t.is_live() && t.el() == el && t.pseudo().is_none() && rules.keyframes_declare(t.name(), longhand)
+    });
     if css {
         return true;
     }
@@ -634,6 +642,7 @@ pub(crate) fn animates(
     scripted.values().any(|s| {
         s.css.is_none()
             && s.el == Some(el)
+            && s.pseudo == Pseudo::None
             && s.keyframes
                 .frames
                 .iter()

@@ -239,6 +239,9 @@ struct BaseKey {
     /// The parent's style (inherited values), compared by address.
     parent: usize,
     base_style: ServoArc<ComputedValues>,
+    /// pyro: the keyframes are a `::before`/`::after`'s (with the originating element's style):
+    /// their values cascade as the pseudo-element's, inheriting from the element.
+    pseudo: Option<(style::selector_parser::PseudoElement, ServoArc<ComputedValues>)>,
 }
 
 /// An effect's keyframes resolved against the element's base style.
@@ -457,6 +460,7 @@ impl BaseDocument {
                         rules,
                         parent,
                         base_style,
+                        pseudo: None,
                     });
                     element.resolved.clear();
                 }
@@ -495,7 +499,7 @@ impl BaseDocument {
                         } else {
                             cascade_pseudo(node, &mut context, rules.clone(), &pseudo_style, pseudo, &style)
                         };
-                        ps.base = Some(BaseKey { rules, parent, base_style });
+                        ps.base = Some(BaseKey { rules, parent, base_style, pseudo: Some((pseudo.clone(), style.clone())) });
                         ps.resolved.clear();
                     }
                     let base = ps.base.clone().unwrap();
@@ -820,7 +824,10 @@ fn resolve<'a>(
                         &mut important_rules_changed,
                     )
                     .unwrap_or_else(|| base.rules.clone());
-                let style = cascade(node, context, rules, &base.base_style);
+                let style = match &base.pseudo {
+                    Some((pseudo, primary)) => cascade_pseudo(node, context, rules, &base.base_style, pseudo, primary),
+                    None => cascade(node, context, rules, &base.base_style),
+                };
                 for i in ids {
                     values[i] =
                         AnimationValue::from_computed_values(properties[i].0.as_borrowed(), &style);

@@ -21,6 +21,7 @@
 //! reports these properties from here too ([`TimingRules::computed_value`]),
 //! so what it says and what runs agree.
 
+use crate::style::PseudoElement;
 use std::rc::Rc;
 
 use cssparser::{ParseError, Parser, Token};
@@ -167,6 +168,32 @@ struct Rule {
     /// and the rule applies to the elements of the host's shadow tree whose `part` attribute
     /// holds every name. Empty: an ordinary rule.
     part: Vec<String>,
+    /// The `::before`/`::after` the selectors ended with (stripped): the rule applies to that
+    /// pseudo-element of the elements they match. `None`: to the elements.
+    pseudo: Option<PseudoElement>,
+}
+
+/// `selector` split at a trailing `::before`/`::after` (or the legacy one-colon forms): the
+/// originating element's selector (`*` when there is none) and the pseudo-element.
+fn pseudo_selector(selector: &str) -> Option<(String, PseudoElement)> {
+    let selector = selector.trim();
+    let lower = selector.to_ascii_lowercase();
+    for (suffix, pseudo) in [
+        ("::before", PseudoElement::Before),
+        ("::after", PseudoElement::After),
+        (":before", PseudoElement::Before),
+        (":after", PseudoElement::After),
+    ] {
+        if lower.ends_with(suffix) {
+            let host = selector[..selector.len() - suffix.len()].trim_end();
+            // (Not `::part(x)::before`, nor a pseudo-element before it.)
+            if host.ends_with(':') || host.contains("::") {
+                return None;
+            }
+            return Some((if host.is_empty() { "*".to_owned() } else { host.to_owned() }, pseudo));
+        }
+    }
+    None
 }
 
 /// `selector` split at a trailing `::part(<names>)`: the host's selector (`*` when there is
@@ -337,6 +364,11 @@ impl TimingRules {
         out
     }
 
+    /// Whether a rule declares animation or transition properties for a `::before`/`::after`.
+    pub fn has_pseudo_rules(&self) -> bool {
+        self.rules.iter().any(|rule| rule.pseudo.is_some())
+    }
+
     pub fn has_keyframes(&self, name: &str) -> bool {
         self.keyframes.contains(name)
     }
@@ -480,6 +512,12 @@ impl TimingRules {
     /// declaration (inline or rule), `var()` substituted with the custom
     /// properties of `style_of(el)`, `inherit` taken from the parent element.
     pub fn lists(&self, dom: &Dom, el: NodeId, style_of: StyleOf<'_>) -> TimingLists {
+        self.lists_for(dom, el, None, style_of)
+    }
+
+    /// [`Self::lists`] of `el`'s `pseudo` (`None`: of `el`): the rules for that pseudo-element
+    /// apply, its inline style is none, and it inherits from `el`.
+    pub fn lists_for(&self, dom: &Dom, el: NodeId, pseudo: Option<PseudoElement>, style_of: StyleOf<'_>) -> TimingLists {
         let mut out = TimingLists::default();
         let Ok(idx) = dom.check(el) else { return out };
         if !dom.n(idx).is_element() {
@@ -487,7 +525,7 @@ impl TimingRules {
         }
         let inline: Vec<Declared> =
             match dom.element(el).ok().and_then(|e| e.attr_local(&markup5ever::local_name!("style"))) {
-                Some(style) if mentions(style) => declarations(style),
+                Some(style) if pseudo.is_none() && mentions(style) => declarations(style),
                 _ => Vec::new(),
             };
         // The rules that match, with their specificity, once for all longhands: those of the
@@ -501,6 +539,9 @@ impl TimingRules {
             .iter()
             .enumerate()
             .filter_map(|(order, rule)| {
+                if rule.pseudo != pseudo {
+                    return None;
+                }
                 let (target, target_tree) = if rule.part.is_empty() {
                     (idx, tree)
                 } else {
@@ -551,6 +592,7 @@ impl TimingRules {
             out.0[longhand as usize] = match cascaded(longhand) {
                 None | Some(Value::Initial) => None,
                 Some(Value::List(list)) => Some(list.clone()),
+                Some(Value::Inherit) if pseudo.is_some() => self.lists(dom, el, style_of).0[longhand as usize].clone(),
                 Some(Value::Inherit) => dom
                     .parent_element(el)
                     .ok()
@@ -561,6 +603,9 @@ impl TimingRules {
                     match self.substitute(property, text, style.as_ref()) {
                         Some(values) => match values.iter().find(|(l, _)| *l == longhand) {
                             Some((_, Value::List(list))) => Some(list.clone()),
+                            Some((_, Value::Inherit)) if pseudo.is_some() => {
+                                self.lists(dom, el, style_of).0[longhand as usize].clone()
+                            }
                             Some((_, Value::Inherit)) => dom
                                 .parent_element(el)
                                 .ok()
@@ -606,8 +651,13 @@ impl TimingRules {
 
     /// What `el`'s style asks for (`style_of` as for [`Self::lists`]).
     pub fn element(&self, dom: &Dom, el: NodeId, style_of: StyleOf<'_>) -> ElementTiming {
+        self.element_for(dom, el, None, style_of)
+    }
+
+    /// [`Self::element`] for `el`'s `pseudo` (`None`: `el`).
+    pub fn element_for(&self, dom: &Dom, el: NodeId, pseudo: Option<PseudoElement>, style_of: StyleOf<'_>) -> ElementTiming {
         let mut out = ElementTiming::default();
-        let lists = self.lists(dom, el, style_of);
+        let lists = self.lists_for(dom, el, pseudo, style_of);
         if lists.is_empty() {
             return out;
         }
@@ -666,11 +716,23 @@ impl TimingRules {
     /// cascades and the `transition` and `animation` shorthands, as Chromium
     /// serializes them; `None` for other properties.
     pub fn computed_value(&self, dom: &Dom, el: NodeId, name: &str, style_of: StyleOf<'_>) -> Option<String> {
+        self.computed_value_for(dom, el, None, name, style_of)
+    }
+
+    /// [`Self::computed_value`] of `el`'s `pseudo` (`getComputedStyle(el, '::before')`).
+    pub fn computed_value_for(
+        &self,
+        dom: &Dom,
+        el: NodeId,
+        pseudo: Option<PseudoElement>,
+        name: &str,
+        style_of: StyleOf<'_>,
+    ) -> Option<String> {
         let name = name.strip_prefix("-webkit-").unwrap_or(name);
         if name != "transition" && name != "animation" && Longhand::by_name(name).is_none() {
             return None;
         }
-        let lists = self.lists(dom, el, style_of);
+        let lists = self.lists_for(dom, el, pseudo, style_of);
         Some(match name {
             "transition" => transition_shorthand(&lists),
             "animation" => animation_shorthand(&lists),
@@ -964,7 +1026,13 @@ fn rule_list(p: &mut Parser<'_>, src: &str, viewport: &Viewport, out: &mut Timin
                         if !declarations.is_empty() {
                             // `::part()` selectors become rules of their own on the host.
                             let mut plain = Vec::new();
+                            // `::before`/`::after` selectors too, by pseudo-element.
+                            let mut pseudos: [Vec<String>; 2] = Default::default();
                             for selector in split_selectors(prelude) {
+                                if let Some((host, pseudo)) = pseudo_selector(selector) {
+                                    pseudos[pseudo as usize].push(host);
+                                    continue;
+                                }
                                 match part_selector(selector) {
                                     Some((host, part)) => {
                                         if let Some(selectors) = crate::stylo::select::parse(&host) {
@@ -973,15 +1041,36 @@ fn rule_list(p: &mut Parser<'_>, src: &str, viewport: &Viewport, out: &mut Timin
                                                 declarations: declarations.clone(),
                                                 scope: None,
                                                 part,
+                                                pseudo: None,
                                             });
                                         }
                                     }
                                     None => plain.push(selector),
                                 }
                             }
+                            for (pseudo, hosts) in [PseudoElement::Before, PseudoElement::After].into_iter().zip(&pseudos) {
+                                if hosts.is_empty() {
+                                    continue;
+                                }
+                                if let Some(selectors) = crate::stylo::select::parse(&hosts.join(",")) {
+                                    out.rules.push(Rule {
+                                        selectors,
+                                        declarations: declarations.clone(),
+                                        scope: None,
+                                        part: Vec::new(),
+                                        pseudo: Some(pseudo),
+                                    });
+                                }
+                            }
                             if !plain.is_empty() {
                                 if let Some(selectors) = crate::stylo::select::parse(&plain.join(",")) {
-                                    out.rules.push(Rule { selectors, declarations, scope: None, part: Vec::new() });
+                                    out.rules.push(Rule {
+                                        selectors,
+                                        declarations,
+                                        scope: None,
+                                        part: Vec::new(),
+                                        pseudo: None,
+                                    });
                                 }
                             }
                         }
