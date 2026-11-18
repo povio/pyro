@@ -41,7 +41,16 @@ pub(crate) fn is_replaced(element: &ElementData) -> bool {
     is_replaced_element(&element.name.local)
         || is_image_input(element)
         || is_image_object(element)
+        || is_document_object(element)
         || is_content_image(element)
+}
+
+/// pyro: whether `element` is an `<object>` showing a nested document (the frame document the
+/// render snapshot gives it as `srcdoc`): replaced content laid out and painted like `<iframe>`,
+/// its children (the fallback) not rendered.
+pub(crate) fn is_document_object(element: &ElementData) -> bool {
+    element.name.local == local_name!("object")
+        && matches!(&element.special_data, crate::node::SpecialElementData::SubDocument(_))
 }
 
 /// pyro: whether `element` shows the one image of its own `content` property
@@ -67,8 +76,9 @@ pub(crate) fn is_image_object(element: &ElementData) -> bool {
 
 /// pyro: whether an `<object>` loads its `data` as an image: its `type` says
 /// an image, or without a `type` its URL's file extension names an image
-/// format. Other objects (`text/html`, plugins) keep their fallback content:
-/// nested documents in objects are not done.
+/// format. Other objects keep their fallback content, but for those hosting a
+/// document (pyro-dom `object_hosts_document`), whose frame document the render
+/// snapshot gives as `srcdoc` ([`is_document_object`]).
 pub(crate) fn object_loads_image(element: &ElementData) -> bool {
     match element.attr(local_name!("type")).map(str::trim) {
         Some(mime) if !mime.is_empty() => mime.get(..6).is_some_and(|m| m.eq_ignore_ascii_case("image/")),
@@ -143,9 +153,9 @@ pub(crate) fn natural_ratio(element: &ElementData) -> Option<f32> {
 }
 
 /// pyro: whether `element` is laid out as an atomic inline box when inline-level:
-/// an inline box tag ([`is_inline_box_element`]) or an `<object>` showing an image.
+/// an inline box tag ([`is_inline_box_element`]) or an `<object>` showing an image or a document.
 pub(crate) fn is_inline_box(element: &ElementData) -> bool {
-    is_inline_box_element(&element.name.local) || is_image_object(element)
+    is_inline_box_element(&element.name.local) || is_image_object(element) || is_document_object(element)
 }
 
 /// The intrinsic dimensions of a replaced element per CSS Images 3

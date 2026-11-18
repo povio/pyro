@@ -324,6 +324,11 @@ impl Browser {
         let loaded = state.main_frame.loaded;
         let (connected, data) = {
             let dom = bindings.dom.borrow();
+            // An `<object>` hosting a document is a frame container: its child navigable loads
+            // `data` and fires the element's `load` (frames.rs).
+            if dom.is_document_object(node) {
+                return;
+            }
             (dom.is_connected(node).unwrap_or(false), dom.get_attribute(node, "data").ok().flatten().map(str::to_owned))
         };
         // "If the element is not being rendered": fallback, nothing is fetched (an `<object>`

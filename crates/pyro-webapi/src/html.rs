@@ -3174,6 +3174,18 @@ simple_class!(HtmlObjectElement, "HTMLObjectElement", HtmlElement, |def| {
     reflect_url!(def, "codeBase", "codebase");
     reflect_str!(def, "codeType", "codetype");
     reflect_str_nn!(def, "border", "border");
+    // An object showing a document has a child navigable, as an iframe does (null otherwise).
+    def.getter("contentDocument", |s, n| {
+        if let Some(document) = n.page().frame_document_value(s, n.id)? {
+            return Ok(document);
+        }
+        let doc = n.page().frame_document(n.id);
+        node_value(s, n.page(), doc)
+    });
+    def.getter("contentWindow", |s, n| match n.page().frame_window(s, n.id)? {
+        Some(w) => Ok(w),
+        None => Ok(s.null()),
+    });
 });
 simple_class!(HtmlEmbedElement, "HTMLEmbedElement", HtmlElement, |def| {
     reflect_url!(def, "src", "src");

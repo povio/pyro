@@ -1391,9 +1391,11 @@ impl Browser {
             if !dom.is_connected(owner).unwrap_or(false) {
                 return;
             }
+            // An `<object>` hosting a document navigates to its `data` (it has no `srcdoc`).
+            let object = dom.is_document_object(owner);
             (
-                dom.get_attribute(owner, "srcdoc").ok().flatten().map(str::to_owned),
-                dom.get_attribute(owner, "src").ok().flatten().map(str::to_owned),
+                dom.get_attribute(owner, "srcdoc").ok().flatten().filter(|_| !object).map(str::to_owned),
+                dom.get_attribute(owner, if object { "data" } else { "src" }).ok().flatten().map(str::to_owned),
                 // `<base href>` aware.
                 crate::loader::node_base_url(&dom, owner),
             )

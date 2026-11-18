@@ -447,6 +447,8 @@ impl Dom {
                                 ("option", "selected") => html,
                                 ("link", "href") => href.is_some(),
                                 ("iframe" | "frame", "src" | "srcdoc") => html,
+                                // An `<object>` showing a frame document: its `data` is not an image.
+                                ("object", "data" | "srcdoc") => html && self.frame_documents.contains_key(&n),
                                 ("img", "src") => image_source.is_some(),
                                 _ => false,
                             };
@@ -484,7 +486,7 @@ impl Dom {
                             }
                         }
                     }
-                    if html && matches!(local, "iframe" | "frame") {
+                    if html && matches!(local, "iframe" | "frame" | "object") {
                         if let Some(frame) = self.frame_documents.get(&n) {
                             attrs.push(RAttr { name: plain("srcdoc"), value: Cow::Borrowed(&frame.html), valueless: false });
                             attrs.push(RAttr {
@@ -563,7 +565,7 @@ impl Dom {
                         stack.push(Step::Synthetic(n, self.value(id).unwrap_or_default(), TextKind::Textarea));
                         continue;
                     }
-                    if html && matches!(local, "iframe" | "frame") {
+                    if html && (matches!(local, "iframe" | "frame") || (local == "object" && self.frame_documents.contains_key(&n))) {
                         continue;
                     }
                     if let Some((kids, kids_scope, _)) = slot_kids {
@@ -768,7 +770,8 @@ impl Dom {
             let is_style = style_owner(i) == Some(i);
             // A frame's own attributes (its children are not rendered, it is).
             let is_frame = matches!(&self.n(i).kind, NodeKind::Element(e)
-                if e.is_html() && matches!(&*e.name.local, "iframe" | "frame"));
+                if e.is_html() && (matches!(&*e.name.local, "iframe" | "frame")
+                    || (&*e.name.local == "object" && self.frame_documents.contains_key(&i))));
             let own_attributes = is_style || is_frame || textarea_attributes.get(&i) == Some(&true);
             let place =
                 if own_attributes && self.n(i).parent != NIL { rendered(self.n(i).parent) } else { rendered(i) };

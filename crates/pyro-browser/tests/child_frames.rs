@@ -828,3 +828,37 @@ fn svg_images_fire_error_in_use_instances_too() {
     log.sort();
     assert_eq!(log, ["error:false", "error:true"]);
 }
+
+/// An `<object>` whose `data` is a document (`type="text/html"`, or an HTML file extension) has a
+/// child navigable as an iframe does: the document loads and scripts, `contentDocument` and
+/// `contentWindow` reach it, the element gets `load`; other objects keep none.
+#[test]
+fn an_object_showing_a_document_is_a_frame() {
+    let mut t = crate::browser_thread().unwrap();
+    let page = t.browser.create_page().unwrap();
+    let loader = Rc::new(pyro_browser::StaticLoader::default());
+    loader.insert(
+        "http://site.test/",
+        "text/html",
+        "<object id=a type='text/html' data='/inner.html'>fallback</object><object id=b data='/inner.htm'></object>\
+         <object id=c data='/pic.png'>img</object><object id=d type='text/html'>no data</object>\
+         <script>globalThis.loads = 0; for (const id of ['a', 'b']) document.getElementById(id).onload = () => loads++;</script>",
+        Duration::ZERO,
+    );
+    loader.insert("http://site.test/inner.html", "text/html", "<p id=p>inner</p><script>window.answer = 42</script>", Duration::ZERO);
+    loader.insert("http://site.test/inner.htm", "text/html", "<p id=p>second</p>", Duration::ZERO);
+    t.browser.set_loader(Some(loader.clone()));
+    t.browser.navigate(page, NavigateOpts::address_bar("http://site.test/")).unwrap();
+    settle(&mut t);
+    let root = main_realm(&t, page);
+    assert_eq!(
+        eval(
+            &root,
+            "const o = id => document.getElementById(id); \
+             [loads, o('a').contentDocument.getElementById('p').textContent, o('a').contentWindow.answer, \
+              o('a').contentWindow.parent === window, o('b').contentDocument.getElementById('p').textContent, \
+              o('c').contentDocument, o('d').contentWindow, window.length].join('|')"
+        ),
+        "2|inner|42|true|second|||2"
+    );
+}

@@ -5612,7 +5612,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
              ) {
                  create_text_editor(doc, container_node_id, false);
                  return;
-@@ -444,17 +653,72 @@
+@@ -444,17 +653,74 @@
              }
          }
  
@@ -5639,11 +5639,13 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
 -            // Remove contruction damage from subtree
 +        }
 +
-+        // pyro: an `<object>` showing an image is replaced content (`replaced::is_image_object`):
++        // pyro: an `<object>` showing an image or a document is replaced content (`replaced::is_image_object`,
++        // `is_document_object`):
 +        // its children, the fallback, generate no boxes. Nor do those of an element its
 +        // `content` image replaces (`util::content_replaces`; the root's were painted), also
 +        // while the image loads or when it fails (WPT css-content `element-replacement-alt`).
 +        if crate::layout::replaced::is_image_object(el)
++            || crate::layout::replaced::is_document_object(el)
 +            || (!doc.nodes[container_node_id].is_anonymous()
 +                && doc.nodes[container_node_id].primary_styles().is_some_and(|style| crate::util::content_replaces(&style)))
 +        {
@@ -5690,7 +5692,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
                      doc.get_node_mut(container_node_id)
                          .unwrap()
                          .element_data_mut()
-@@ -488,13 +752,37 @@
+@@ -488,13 +754,37 @@
          } else {
              (0, false)
          };
@@ -5730,7 +5732,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
              return;
          }
      }
-@@ -530,7 +818,9 @@
+@@ -530,7 +820,9 @@
                  .any(|child| {
                      let display = child.display_style().unwrap_or(Display::inline());
                      let node_kind = child.data.kind();
@@ -5741,7 +5743,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
                  });
  
              if !has_text_node_or_contents {
-@@ -553,9 +843,9 @@
+@@ -553,9 +845,9 @@
          }
  
          DisplayInside::Table => {
@@ -5753,7 +5755,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
              doc.nodes[container_node_id]
                  .flags
                  .insert(NodeFlags::IS_TABLE_ROOT);
-@@ -564,13 +854,10 @@
+@@ -564,13 +856,10 @@
                  .downcast_element_mut()
                  .unwrap()
                  .special_data = data;
@@ -5771,7 +5773,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
          }
  
          // Flow, FlowRoot and TableCell, plus internal table displays (row,
-@@ -581,9 +868,25 @@
+@@ -581,9 +870,25 @@
          // layout children (text nodes carry no style and cannot be laid out
          // as block/flex/grid items).
          _ => {
@@ -5797,7 +5799,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
              // Inline box whose in-flow content is block-level only: it is laid out as block
              // boxes, so paint must not draw its own box over them.
              if doc.nodes[container_node_id]
-@@ -597,7 +900,10 @@
+@@ -597,7 +902,10 @@
                      .insert(NodeFlags::IS_INLINE_WITH_ONLY_BLOCK_CHILDREN);
              }
  
@@ -5809,7 +5811,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
                  // Contents-transparent: a display:contents child may be
                  // holding the out-of-flow elements (otherwise the contents
                  // node itself would be pushed as a layout box).
-@@ -609,18 +915,39 @@
+@@ -609,18 +917,39 @@
              }
  
              // TODO: fix display:contents
@@ -5861,7 +5863,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
                  doc.nodes[container_node_id]
                      .flags
                      .insert(NodeFlags::IS_INLINE_ROOT);
-@@ -629,6 +956,14 @@
+@@ -629,6 +958,14 @@
                  return;
              }
  
@@ -5876,7 +5878,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
              // If the children are either all inline or all block then simply return the regular children
              // as the layout children
              if classification.all_block & !classification.has_contents {
-@@ -651,29 +986,234 @@
+@@ -651,29 +988,234 @@
      }
  }
  
@@ -6128,7 +6130,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
      let (before_style, after_style, before_node_id, after_node_id) = {
          let node = &doc.nodes[node_id];
  
-@@ -689,8 +1229,27 @@
+@@ -689,8 +1231,27 @@
              .as_ref()
              .and_then(|d| d.styles.pseudos.as_array()[0].clone());
  
@@ -6156,7 +6158,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
  
      // Sync pseudo element
      // TODO: Make incremental
-@@ -719,11 +1278,11 @@
+@@ -719,11 +1280,11 @@
                      .insert(NodeFlags::IS_IN_DOCUMENT);
              }
  
@@ -6173,7 +6175,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
  
              doc.nodes[new_node_id].record_out_of_flow(pe_style);
              let mut element_data = StyloElementData::default();
-@@ -733,6 +1292,11 @@
+@@ -733,6 +1294,11 @@
              *doc.nodes[new_node_id]
                  .stylo_element_data_mut()
                  .ensure_init_mut() = element_data;
@@ -6185,7 +6187,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
  
              let node = &mut doc.nodes[node_id];
              node.set_pe_by_index(idx, Some(new_node_id));
-@@ -750,53 +1314,110 @@
+@@ -750,53 +1316,110 @@
              // the style-pointer comparison below, as the pseudo-element's style may
              // already have been updated by `sync_pseudo_element_styles` during the
              // style traversal without the text having been updated.
@@ -6334,7 +6336,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
  /// Handles the cases where there are text nodes or inline nodes that need to be wrapped in an anonymous block node
  fn collect_complex_layout_children(
      doc: &mut BaseDocument,
-@@ -805,9 +1426,86 @@
+@@ -805,9 +1428,86 @@
      hide_whitespace: bool,
      needs_wrap: fn(NodeKind, DisplayOutside) -> bool,
  ) {
@@ -6423,7 +6425,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
  
          // Get Display style. Default to inline because nodes without styles are probably text nodes
          let contains_block = doc.nodes[child_id].is_or_contains_block();
-@@ -827,9 +1525,24 @@
+@@ -827,9 +1527,24 @@
          // Taffy knows how to deal with `Display::None` children.
          //
          // Also hide all-whitespace flexbox children as these should be ignored
@@ -6449,7 +6451,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
          // Recurse into `Display::Contents` nodes, wrapping hoisted text and
          // inline children as if they were direct children of this container
          else if display_inside == DisplayInside::Contents {
-@@ -844,23 +1557,95 @@
+@@ -844,23 +1559,95 @@
          else if needs_wrap(child_node_kind, display_outside) {
              out.push_wrapped(container_node_id, child_id, doc);
          }
@@ -6549,7 +6551,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
      let alignment = node
          .primary_styles()
          .map(|s| stylo_to_parley::text_align(s.clone_text_align()))
-@@ -875,6 +1660,22 @@
+@@ -875,6 +1662,22 @@
      } else {
          node.attr(local_name!("value")).unwrap_or("").to_string()
      };
@@ -6572,7 +6574,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
      let is_focussed = node.is_focussed();
      let element = &mut node.data.downcast_element_mut().unwrap();
      if !matches!(element.special_data, SpecialElementData::TextInput(_)) {
-@@ -894,6 +1695,9 @@
+@@ -894,6 +1697,9 @@
          unreachable!();
      };
  
@@ -6582,7 +6584,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
      let editor = &mut text_input_data.editor;
      editor.set_scale(doc.viewport.scale_f64() as f32);
      editor.set_width(None);
-@@ -923,6 +1727,69 @@
+@@ -923,6 +1729,69 @@
      editor.refresh_layout(&mut doc.font_ctx.lock().unwrap(), &mut doc.layout_ctx);
  }
  
@@ -6652,7 +6654,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
  fn create_checkbox_input(doc: &mut BaseDocument, input_element_id: NodeId) {
      let node = &mut doc.nodes[input_element_id];
  
-@@ -944,6 +1811,25 @@
+@@ -944,6 +1813,25 @@
  ) {
      flush_inline_pseudos_recursive(doc, inline_context_root_node_id);
  
@@ -6678,7 +6680,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
      iter_children_and_pseudos!(doc.nodes[inline_context_root_node_id], |child_id| {
          find_inline_layout_embedded_boxes_recursive(
              &mut doc.nodes,
-@@ -953,10 +1839,41 @@
+@@ -953,10 +1841,41 @@
          );
      });
  
@@ -6721,7 +6723,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
                  .display_style()
                  .unwrap_or(Display::inline());
              let do_recurse = match (display.outside(), display.inside()) {
-@@ -965,16 +1882,33 @@
+@@ -965,16 +1884,33 @@
                  (_, _) => false,
              };
              if do_recurse {
@@ -6756,7 +6758,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
      ) {
          let node = &mut nodes[node_id];
  
-@@ -992,50 +1926,89 @@
+@@ -992,50 +1928,89 @@
  
                  let display = node.display_style().unwrap_or(Display::inline());
  
@@ -20149,7 +20151,7 @@ diff --git a/packages/blitz-dom/src/layout/replaced.rs b/packages/blitz-dom/src/
  use markup5ever::{LocalName, local_name};
  use taffy::{
      AvailableSpace, BoxSizing, CoreStyle, LayoutInput, LayoutOutput, MaybeMath, MaybeResolve,
-@@ -16,6 +17,137 @@
+@@ -16,6 +17,147 @@
          || *tag_name == local_name!("iframe")
  }
  
@@ -20177,7 +20179,16 @@ diff --git a/packages/blitz-dom/src/layout/replaced.rs b/packages/blitz-dom/src/
 +    is_replaced_element(&element.name.local)
 +        || is_image_input(element)
 +        || is_image_object(element)
++        || is_document_object(element)
 +        || is_content_image(element)
++}
++
++/// pyro: whether `element` is an `<object>` showing a nested document (the frame document the
++/// render snapshot gives it as `srcdoc`): replaced content laid out and painted like `<iframe>`,
++/// its children (the fallback) not rendered.
++pub(crate) fn is_document_object(element: &ElementData) -> bool {
++    element.name.local == local_name!("object")
++        && matches!(&element.special_data, crate::node::SpecialElementData::SubDocument(_))
 +}
 +
 +/// pyro: whether `element` shows the one image of its own `content` property
@@ -20203,8 +20214,9 @@ diff --git a/packages/blitz-dom/src/layout/replaced.rs b/packages/blitz-dom/src/
 +
 +/// pyro: whether an `<object>` loads its `data` as an image: its `type` says
 +/// an image, or without a `type` its URL's file extension names an image
-+/// format. Other objects (`text/html`, plugins) keep their fallback content:
-+/// nested documents in objects are not done.
++/// format. Other objects keep their fallback content, but for those hosting a
++/// document (pyro-dom `object_hosts_document`), whose frame document the render
++/// snapshot gives as `srcdoc` ([`is_document_object`]).
 +pub(crate) fn object_loads_image(element: &ElementData) -> bool {
 +    match element.attr(local_name!("type")).map(str::trim) {
 +        Some(mime) if !mime.is_empty() => mime.get(..6).is_some_and(|m| m.eq_ignore_ascii_case("image/")),
@@ -20279,15 +20291,15 @@ diff --git a/packages/blitz-dom/src/layout/replaced.rs b/packages/blitz-dom/src/
 +}
 +
 +/// pyro: whether `element` is laid out as an atomic inline box when inline-level:
-+/// an inline box tag ([`is_inline_box_element`]) or an `<object>` showing an image.
++/// an inline box tag ([`is_inline_box_element`]) or an `<object>` showing an image or a document.
 +pub(crate) fn is_inline_box(element: &ElementData) -> bool {
-+    is_inline_box_element(&element.name.local) || is_image_object(element)
++    is_inline_box_element(&element.name.local) || is_image_object(element) || is_document_object(element)
 +}
 +
  /// The intrinsic dimensions of a replaced element per CSS Images 3
  /// (https://drafts.csswg.org/css-images/#intrinsic-dimensions): an intrinsic
  /// width, an intrinsic height, and an intrinsic aspect ratio, each of which
-@@ -35,6 +167,14 @@
+@@ -35,6 +177,14 @@
      /// used to fill in dimensions the intrinsic sizes leave unresolved. 300x150
      /// for most replaced elements; zero for an image with no loaded resource.
      pub default_object_size: taffy::Size<f32>,
@@ -20302,7 +20314,7 @@ diff --git a/packages/blitz-dom/src/layout/replaced.rs b/packages/blitz-dom/src/
  }
  
  /// Whether a height/width value is violating it's min- and max- constraints
-@@ -51,7 +191,7 @@
+@@ -51,7 +201,7 @@
  
  pub fn compute_replaced_layout(
      inputs: LayoutInput,
@@ -20311,7 +20323,7 @@ diff --git a/packages/blitz-dom/src/layout/replaced.rs b/packages/blitz-dom/src/
      resolve_calc_value: impl Fn(*const (), f32) -> f32,
      context: &ReplacedContext,
  ) -> LayoutOutput {
-@@ -154,6 +294,19 @@
+@@ -154,6 +304,19 @@
      let intrinsic = context.intrinsic_sizes;
      let style_aspect_ratio = style.aspect_ratio().filter(is_usable_ratio);
      let aspect_ratio: Option<f32> = style_aspect_ratio.or(intrinsic.ratio.filter(is_usable_ratio));
@@ -20331,7 +20343,7 @@ diff --git a/packages/blitz-dom/src/layout/replaced.rs b/packages/blitz-dom/src/
  
      // Concrete object size per the CSS default sizing algorithm with no
      // specified size (https://drafts.csswg.org/css-images/#default-sizing):
-@@ -187,10 +340,23 @@
+@@ -187,10 +350,23 @@
                  // A ratio-only replaced element stretches to fit the width it is laid out
                  // in: the available width if definite, else (under a max-content constraint)
                  // its containing block, per CSS2 §10.3.2.
@@ -20357,7 +20369,7 @@ diff --git a/packages/blitz-dom/src/layout/replaced.rs b/packages/blitz-dom/src/
                  };
                  if let Some(width) = stretch_fit_width {
                      Size {
-@@ -220,6 +386,32 @@
+@@ -220,6 +396,32 @@
          },
          None => inherent_size,
      };
@@ -20390,7 +20402,7 @@ diff --git a/packages/blitz-dom/src/layout/replaced.rs b/packages/blitz-dom/src/
  
      // Percentages are only resolved against zero in the inline axis.
      // See https://www.w3.org/TR/css-sizing-3/#replaced-percentage-min-contribution
-@@ -276,6 +468,48 @@
+@@ -276,6 +478,48 @@
          .maybe_max(min_size)
          .maybe_sub(box_sizing_adjustment);
  
@@ -20439,7 +20451,7 @@ diff --git a/packages/blitz-dom/src/layout/replaced.rs b/packages/blitz-dom/src/
      // For ContentSize mode, ignore preferred/min size styles in the axis being measured: the
      // parent layout algorithm applies them itself, and content-based measurement should return
      // the content size (the intrinsic size for replaced elements). Constraints in the opposite
-@@ -286,6 +520,13 @@
+@@ -286,6 +530,13 @@
              RequestedAxis::Horizontal => {
                  style_size.width = None;
                  min_size.width = None;
@@ -20453,7 +20465,7 @@ diff --git a/packages/blitz-dom/src/layout/replaced.rs b/packages/blitz-dom/src/
              }
              RequestedAxis::Vertical => {
                  style_size.height = None;
-@@ -295,6 +536,18 @@
+@@ -295,6 +546,18 @@
          }
      }
  
@@ -20472,7 +20484,7 @@ diff --git a/packages/blitz-dom/src/layout/replaced.rs b/packages/blitz-dom/src/
      // Known dimensions are the parent's current sizing inputs. Clamp them before transferring
      // an aspect ratio so provisional cross-axis sizes do not bypass replaced-element limits.
      if known_dimensions.width.is_some() | known_dimensions.height.is_some() {
-@@ -308,9 +561,8 @@
+@@ -308,9 +571,8 @@
  
          let content_box_known_dimensions = known_dimensions.maybe_sub(pb_sum);
          let transferred = content_box_known_dimensions
@@ -20484,7 +20496,7 @@ diff --git a/packages/blitz-dom/src/layout/replaced.rs b/packages/blitz-dom/src/
  
          // Known axes are authoritative (already resolved by the parent); only the axis
          // derived via aspect-ratio transfer (or falling back to the intrinsic size) is
-@@ -323,9 +575,7 @@
+@@ -323,9 +585,7 @@
      }
  
      let unclamped_size = if style_size.width.is_some() | style_size.height.is_some() {
@@ -27730,7 +27742,14 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
              self.load_image(node_id);
          } else if (tag, attr) == tag_and_attr!("canvas", "src") {
              self.load_custom_paint_src(node_id);
-@@ -456,11 +559,41 @@
+@@ -450,17 +553,48 @@
+             self.load_linked_stylesheet(node_id);
+         } else if (tag, attr) == tag_and_attr!("iframe", "src")
+             || (tag, attr) == tag_and_attr!("iframe", "srcdoc")
++            || (tag, attr) == tag_and_attr!("object", "srcdoc")
+         {
+             self.load_iframe(node_id);
+         }
      }
  
      pub fn clear_attribute(&mut self, node_id: NodeId, name: QualName) {
@@ -27772,7 +27791,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
          }
  
          if name.local == local_name!("id") && node_is_in_document {
-@@ -483,6 +616,9 @@
+@@ -483,6 +617,9 @@
          if !had_attr {
              return;
          }
@@ -27782,7 +27801,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
          self.mutations_occurred |= node_is_in_document;
          if node_is_in_document {
              devtools!(
-@@ -503,7 +639,7 @@
+@@ -503,7 +640,7 @@
                  .attribute_changed(&name.local, old_value, None);
          }
  
@@ -27791,7 +27810,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
              element.id = None;
          }
  
-@@ -522,6 +658,9 @@
+@@ -522,6 +659,9 @@
  
          if name.local == local_name!("href") {
              element.flush_link_state();
@@ -27801,17 +27820,21 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
          }
  
          if name.local == local_name!("open") {
-@@ -559,6 +698,9 @@
+@@ -559,6 +699,13 @@
          } else if (tag, attr) == tag_and_attr!("iframe", "srcdoc") && node_is_in_document {
              // Fall back to loading from the `src` attribute (if any)
              self.load_iframe(node_id);
++        } else if (tag, attr) == tag_and_attr!("object", "srcdoc") {
++            // pyro: the object's frame document is gone: its image or fallback again.
++            self.remove_sub_document(node_id);
++            self.load_image(node_id);
 +        } else if (tag, attr) == tag_and_attr!("object", "data") || (tag, attr) == tag_and_attr!("object", "type") {
 +            // pyro: an `<object>` without its image shows its fallback again (`load_image`).
 +            self.load_image(node_id);
          }
      }
  
-@@ -602,11 +744,14 @@
+@@ -602,11 +749,14 @@
  
      /// Remove the node from it's parent but don't drop it
      pub fn remove_node(&mut self, node_id: NodeId) {
@@ -27826,7 +27849,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
  
          let node = &mut self.doc.nodes[node_id];
  
-@@ -614,11 +759,12 @@
+@@ -614,11 +764,12 @@
          if let Some(parent_id) = node.parent.take() {
              self.mutations_occurred |= node_is_in_document;
              let parent = &mut self.doc.nodes[parent_id];
@@ -27841,7 +27864,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
                  devtools!(
                      self,
                      MutationRecord::NodeRemoved(NodeRemoved { parent_id, node_id })
-@@ -639,8 +785,12 @@
+@@ -639,8 +790,12 @@
          node_id: NodeId,
          on_drop: &mut dyn FnMut(NodeId),
      ) -> Option<Node> {
@@ -27854,7 +27877,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
  
          let node = self.doc.drop_node_ignoring_parent_with(node_id, on_drop);
          self.mutations_occurred |= node_is_in_document;
-@@ -648,13 +798,14 @@
+@@ -648,13 +803,14 @@
          // Update child_idx values
          if let Some(parent_id) = node.as_ref().and_then(|node| node.parent) {
              let parent = &mut self.doc.nodes[parent_id];
@@ -27871,7 +27894,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
                  devtools!(
                      self,
                      MutationRecord::NodeRemoved(NodeRemoved { parent_id, node_id })
-@@ -668,13 +819,19 @@
+@@ -668,13 +824,19 @@
      }
  
      pub fn remove_and_drop_all_children(&mut self, node_id: NodeId) {
@@ -27892,7 +27915,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
          }
  
          for child_id in children {
-@@ -697,6 +854,64 @@
+@@ -697,6 +859,64 @@
      /// is hinted: its snapshot lets Stylo's invalidator find the siblings and descendants
      /// whose selectors depend on the attribute. `style`, `class` and `id` reach layout only
      /// through the computed style (whose diff yields the damage); other attributes may not.
@@ -27957,7 +27980,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
      fn restyle_for_attribute_change(&mut self, node_id: NodeId, attr: &LocalName) {
          let node = &mut self.doc.nodes[node_id];
          let is_style = *attr == local_name!("style");
-@@ -727,6 +942,8 @@
+@@ -727,6 +947,8 @@
          // A table's `cellpadding` is a presentational hint on its cells, not on the table.
          let restyles_cells = *attr == local_name!("cellpadding")
              && node.data.is_element_with_tag_name(&local_name!("table"));
@@ -27966,7 +27989,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
          if let Some(mut data) = node.try_stylo_element_data_mut().and_then(|s| s.get_mut()) {
              data.hint |= if is_style {
                  RestyleHint::RESTYLE_STYLE_ATTRIBUTE
-@@ -748,27 +965,52 @@
+@@ -748,27 +970,52 @@
      }
  
      /// Restyle an in-document element whose child list changed, `changed` being the position
@@ -28032,7 +28055,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
              || flags.intersects(
                  ElementSelectorFlags::HAS_SLOW_SELECTOR
                      | ElementSelectorFlags::HAS_SLOW_SELECTOR_NTH_OF
-@@ -776,18 +1018,43 @@
+@@ -776,18 +1023,43 @@
              )
          {
              hint |= RestyleHint::RESTYLE_DESCENDANTS;
@@ -28079,7 +28102,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
                  if !children[..changed.start].iter().any(is_element) {
                      edge[0] = children[changed.end..].iter().copied().find(is_element);
                  }
-@@ -799,10 +1066,30 @@
+@@ -799,10 +1071,30 @@
                          .find(is_element);
                  }
              }
@@ -28111,7 +28134,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
          }
  
          let parent = &mut self.doc.nodes[parent_id];
-@@ -878,12 +1165,32 @@
+@@ -878,12 +1170,32 @@
          // would remove both the old and the newly-inserted entries from the
          // parent's child list, and anchor indices would be computed against a
          // child list that still contains the moved nodes.
@@ -28144,7 +28167,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
              let child = &mut self.doc.nodes[child_id];
              let child_was_in_doc = child.flags.is_in_document();
              self.mutations_occurred |= child_was_in_doc;
-@@ -892,12 +1199,13 @@
+@@ -892,12 +1204,13 @@
              };
  
              let old_parent = &mut self.doc.nodes[old_parent_id];
@@ -28160,7 +28183,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
                  devtools!(
                      self,
                      MutationRecord::NodeRemoved(NodeRemoved {
-@@ -911,19 +1219,29 @@
+@@ -911,19 +1224,29 @@
          }
  
          let new_parent = &mut self.doc.nodes[parent_id];
@@ -28193,7 +28216,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
                  child.set_restyle_hint(RestyleHint::restyle_subtree());
              }
  
-@@ -938,12 +1256,46 @@
+@@ -938,12 +1261,46 @@
                  );
              }
  
@@ -28240,7 +28263,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
  
          // Transfer :focus-within from the old ancestor chain to the new one (the
          // shared prefix stays). If the subtree left the document, the focus was
-@@ -975,6 +1327,23 @@
+@@ -975,6 +1332,23 @@
          self.maybe_record_node(parent_id);
      }
  
@@ -28264,7 +28287,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
      /// The nearest preceding sibling of `node_id` in `parent_id`'s children
      /// that devtools show (not a whitespace-only text node or anonymous block)
      #[cfg(feature = "devtools")]
-@@ -1223,11 +1592,34 @@
+@@ -1223,11 +1597,40 @@
                  _ if has_custom_widget => {}
                  "link" => self.eager_op_queue.push(SpecialOp::LoadStylesheet(node_id)),
                  "img" => self.eager_op_queue.push(SpecialOp::LoadImage(node_id)),
@@ -28287,7 +28310,13 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
 +                // pyro: an `<object>` loads the image its `data` names (`load_image`), and is a
 +                // form-associated element like those below.
 +                "object" => {
-+                    self.eager_op_queue.push(SpecialOp::LoadImage(node_id));
++                    // pyro: an `<object>` the render snapshot gives a frame document (`srcdoc`)
++                    // shows it as an iframe does.
++                    if element.attr(local_name!("srcdoc")).is_some() {
++                        self.eager_op_queue.push(SpecialOp::LoadIframe(node_id));
++                    } else {
++                        self.eager_op_queue.push(SpecialOp::LoadImage(node_id));
++                    }
 +                    self.eager_op_queue
 +                        .push(SpecialOp::ProcessButtonInput(node_id));
 +                    self.form_nodes.insert(node_id);
@@ -28300,7 +28329,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
                      self.eager_op_queue
                          .push(SpecialOp::ProcessButtonInput(node_id));
                      self.form_nodes.insert(node_id);
-@@ -1413,6 +1805,11 @@
+@@ -1413,6 +1816,11 @@
              }
          };
  
@@ -28312,7 +28341,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
          let guard = self.doc.guard.read();
          self.doc.stylist.remove_stylesheet(stylesheet, &guard);
          self.doc
-@@ -1420,21 +1817,98 @@
+@@ -1420,21 +1828,98 @@
              .force_stylesheet_origins_dirty(OriginSet::all());
  
          self.doc.nodes_to_stylesheet.remove(&node_id);
@@ -28415,7 +28444,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
                      let node = &mut self.doc.nodes[target_id];
                      node.element_data_mut().unwrap().special_data =
                          SpecialElementData::Image(Box::new(cached_image.clone()));
-@@ -1544,6 +2018,18 @@
+@@ -1544,6 +2029,18 @@
              return;
          }
  
@@ -28434,7 +28463,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
          // Add content of "value" attribute as a text node child if:
          //   - Tag name is
          if let ("input", Some("button" | "submit" | "reset"), Some(value)) =
-@@ -1579,6 +2065,20 @@
+@@ -1579,6 +2076,20 @@
      }
  }
  
@@ -28455,7 +28484,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
  /// Set 'checked' state on an input based on given attributevalue
  fn set_input_checked_state(element: &mut ElementData, value: String) {
      let Ok(checked) = value.parse() else {
-@@ -2377,6 +2877,50 @@
+@@ -2377,6 +2888,50 @@
          }
      }
  
@@ -28506,7 +28535,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
      fn qual_name(name: &str) -> crate::QualName {
          crate::QualName::new(None, crate::ns!(), crate::LocalName::from(name))
      }
-@@ -3088,3 +3632,254 @@
+@@ -3088,3 +3643,254 @@
          );
      }
  }

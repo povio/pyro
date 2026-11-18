@@ -70,10 +70,13 @@ impl Dom {
         (self.iframes.documents.contains(&doc) && self.is_connected_idx(idx)).then_some(doc)
     }
     fn iframe_element(&self, idx: u32) -> bool {
-        // `<frame>` creates a child navigable like `<iframe>` does.
-        self.n(idx)
-            .element()
-            .is_some_and(|e| matches!(e.name.local, local_name!("iframe") | local_name!("frame")) && e.is_html())
+        // `<frame>` creates a child navigable like `<iframe>` does, and so does an `<object>`
+        // whose `data` is a document.
+        self.n(idx).element().is_some_and(|e| {
+            e.is_html()
+                && (matches!(e.name.local, local_name!("iframe") | local_name!("frame"))
+                    || (e.name.local == local_name!("object") && object_hosts_document(e)))
+        })
     }
     fn iframe_event(&mut self, document: NodeId, idx: u32, change: IframeChange) {
         // A `<use>` instance's frames load nothing and its scripts never run.
@@ -183,7 +186,10 @@ impl Dom {
         if !self.iframe_element(idx) {
             return;
         }
+        let object = self.n(idx).element().is_some_and(|e| e.name.local == local_name!("object"));
         let attribute = match local {
+            "data" if object => IframeAttribute::Src,
+            "src" | "srcdoc" if object => return,
             "src" => IframeAttribute::Src,
             "srcdoc" => IframeAttribute::Srcdoc,
             "name" => IframeAttribute::Name,
@@ -193,5 +199,35 @@ impl Dom {
         if let Some(document) = self.iframe_document(idx) {
             self.iframe_event(document, idx, IframeChange::AttributeChanged(attribute));
         }
+    }
+}
+
+/// Whether an HTML `<object>` shows its `data` as a nested document (a child navigable, as an
+/// `<iframe>`'s `src`): its `type` is an HTML or XHTML document type, or without a `type` its
+/// URL's file extension names one. The type a response declares is not waited for: other objects
+/// keep showing an image or their fallback content (`blitz-dom` `object_loads_image`), as does one
+/// without `data`.
+pub fn object_hosts_document(e: &crate::node::ElementData) -> bool {
+    // Without `data` an object shows its fallback content.
+    if e.attr("data").is_none_or(|data| data.trim().is_empty()) {
+        return false;
+    }
+    match e.attr("type").map(str::trim) {
+        Some(mime) if !mime.is_empty() => {
+            let essence = mime.split(';').next().unwrap_or_default().trim();
+            essence.eq_ignore_ascii_case("text/html") || essence.eq_ignore_ascii_case("application/xhtml+xml")
+        }
+        _ => e.attr("data").is_some_and(|data| {
+            let path = data.split(['?', '#']).next().unwrap_or_default();
+            let extension = path.rsplit_once('.').map_or("", |(_, ext)| ext);
+            ["html", "htm", "xhtml", "xht"].iter().any(|known| extension.eq_ignore_ascii_case(known))
+        }),
+    }
+}
+
+impl Dom {
+    /// Whether `node` is an HTML `<object>` that hosts a nested document ([`object_hosts_document`]).
+    pub fn is_document_object(&self, node: NodeId) -> bool {
+        self.element(node).is_ok_and(|e| e.is_html() && e.name.local == local_name!("object") && object_hosts_document(e))
     }
 }

@@ -553,6 +553,7 @@ impl DocumentMutator<'_> {
             self.load_linked_stylesheet(node_id);
         } else if (tag, attr) == tag_and_attr!("iframe", "src")
             || (tag, attr) == tag_and_attr!("iframe", "srcdoc")
+            || (tag, attr) == tag_and_attr!("object", "srcdoc")
         {
             self.load_iframe(node_id);
         }
@@ -698,6 +699,10 @@ impl DocumentMutator<'_> {
         } else if (tag, attr) == tag_and_attr!("iframe", "srcdoc") && node_is_in_document {
             // Fall back to loading from the `src` attribute (if any)
             self.load_iframe(node_id);
+        } else if (tag, attr) == tag_and_attr!("object", "srcdoc") {
+            // pyro: the object's frame document is gone: its image or fallback again.
+            self.remove_sub_document(node_id);
+            self.load_image(node_id);
         } else if (tag, attr) == tag_and_attr!("object", "data") || (tag, attr) == tag_and_attr!("object", "type") {
             // pyro: an `<object>` without its image shows its fallback again (`load_image`).
             self.load_image(node_id);
@@ -1611,7 +1616,13 @@ impl<'doc> DocumentMutator<'doc> {
                 // pyro: an `<object>` loads the image its `data` names (`load_image`), and is a
                 // form-associated element like those below.
                 "object" => {
-                    self.eager_op_queue.push(SpecialOp::LoadImage(node_id));
+                    // pyro: an `<object>` the render snapshot gives a frame document (`srcdoc`)
+                    // shows it as an iframe does.
+                    if element.attr(local_name!("srcdoc")).is_some() {
+                        self.eager_op_queue.push(SpecialOp::LoadIframe(node_id));
+                    } else {
+                        self.eager_op_queue.push(SpecialOp::LoadImage(node_id));
+                    }
                     self.eager_op_queue
                         .push(SpecialOp::ProcessButtonInput(node_id));
                     self.form_nodes.insert(node_id);
