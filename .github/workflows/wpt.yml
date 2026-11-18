@@ -774,8 +774,12 @@ jobs:
           read -r -a extra <<< "$RUNNER_ARGS"
           full=()
           if [ "$FULL" = true ]; then full=(--full); fi
-          # Rendering is CPU-bound: one page per CPU. Earlier arguments win, so reftest-args can override --jobs.
-          bun bench/wpt/gate.mjs run --kind reftest "${extra[@]}" --wpt wpt --bin browser/pyro --jobs "$(sysctl -n hw.ncpu)" \
+          # Two pages per CPU: a reftest page mostly waits (2026-11-18, per-page stages: settle 69 ms of 100, mostly
+          # the two real 60 Hz frames, capture 22 ms), so at one per CPU the M1s ran at 30%. Measured on both lp-m1
+          # machines (runs 44292757214, 44295604936, 44298843277): --jobs 8 130 s per shard, 30% of 8 CPUs; 12 101-111 s,
+          # 40%, same results; 16 88-89 s, 47%, same results but one first-run timeout that its reruns passed; no
+          # swap growth, no thermal limit, Low Power Mode off. Earlier arguments win, so reftest-args can override.
+          bun bench/wpt/gate.mjs run --kind reftest "${extra[@]}" --wpt wpt --bin browser/pyro --jobs "$(( $(sysctl -n hw.ncpu) * 2 ))" \
             --shard "$SHARD" "${full[@]}" --out "$OUT" --no-check
           # CPU share of the machine: (browser + runner CPU) / (wall x CPUs); event loop lag of the runner.
           bun -e 'const r = JSON.parse(require("fs").readFileSync(process.argv[1])); const n = require("os").cpus().length;
