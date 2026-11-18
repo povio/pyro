@@ -128,7 +128,8 @@ fn parse_at_rule(p: &mut Parser<'_>, name: &str, namespaces: &mut Namespaces) ->
         "namespace" => 10,
         "counter-style" => 11,
         "font-feature-values" => 14,
-        "layer" | "container" | "property" | "font-palette-values" | "starting-style" | "scope" => 0,
+        "layer" | "container" | "property" | "font-palette-values" | "starting-style" | "scope" | "position-try"
+        | "view-transition" => 0,
         _ => return None,
     };
     if lower == "namespace" {
@@ -326,6 +327,20 @@ mod tests {
                 style("a", "color:red"),
                 style("[z]:not(q)", ""),
                 ParsedRule::Group { name: "media".into(), condition: "all".into(), rules: vec![style("d", "")] },
+            ]
+        );
+    }
+
+    /// `@position-try` and `@view-transition` are known at-rules (WPT css-anchor-position
+    /// chrome-377324991-crash inserts one with `insertRule`).
+    #[test]
+    fn position_try_and_view_transition_rules_are_kept() {
+        let rules = parse_rules("@position-try --opt {} @view-transition { navigation: auto }", &mut Vec::new());
+        assert_eq!(
+            rules,
+            [
+                ParsedRule::Other { rule_type: 0, text: "@position-try --opt {}".into() },
+                ParsedRule::Other { rule_type: 0, text: "@view-transition  { navigation: auto }".into() },
             ]
         );
     }

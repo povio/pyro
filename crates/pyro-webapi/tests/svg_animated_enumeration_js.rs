@@ -32,3 +32,46 @@ fn units_and_spread_method_reflect_as_animated_enumerations() {
         "true|true|1|2|2|userSpaceOnUse|TypeError|2|1|true|1|repeat|2"
     );
 }
+
+/// `SVGSVGElement` time control of the document's SMIL clock: `setCurrentTime` (finite only),
+/// `getCurrentTime`, `pauseAnimations`, `unpauseAnimations`, `animationsPaused` (WPT
+/// svg/animations end-of-time crashtests seek to huge times).
+#[test]
+fn svg_time_control_seeks_and_pauses() {
+    let env = Env::new("http://svg.test/");
+    assert_eq!(
+        env.eval(
+            r#"(() => {
+              const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+              const out = [svg.animationsPaused()];
+              svg.pauseAnimations();
+              svg.setCurrentTime(5);
+              out.push(svg.animationsPaused(), svg.getCurrentTime());
+              svg.setCurrentTime(18446744073709551557);
+              out.push(svg.getCurrentTime() > 1e18);
+              try { svg.setCurrentTime(NaN); out.push("no throw"); } catch (e) { out.push(e.constructor.name); }
+              svg.unpauseAnimations();
+              out.push(svg.animationsPaused());
+              return out.join("|");
+            })()"#
+        ),
+        "false|true|5|true|TypeError|false"
+    );
+}
+
+/// MathML elements are `MathMLElement`s with an inline `style` and `dataset` (WPT mathml
+/// dynamic-height-within-table-cell sets `style.height` on an `<mrow>`).
+#[test]
+fn mathml_elements_have_inline_style() {
+    let env = Env::new("http://svg.test/");
+    assert_eq!(
+        env.eval(
+            r#"(() => {
+              const mrow = document.createElementNS("http://www.w3.org/1998/Math/MathML", "mrow");
+              mrow.style.height = "5px";
+              return [mrow instanceof MathMLElement, mrow instanceof Element, mrow.getAttribute("style"), typeof mrow.dataset].join("|");
+            })()"#
+        ),
+        "true|true|height: 5px;|object"
+    );
+}

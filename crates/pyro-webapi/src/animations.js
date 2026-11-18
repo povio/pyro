@@ -38,7 +38,11 @@
   const isConnected = getter(Node.prototype, 'isConnected');
   const getRootNode = Node.prototype.getRootNode;
   const contains = Node.prototype.contains;
-  const inlineStyle = getter(HTMLElement.prototype, 'style');
+  const htmlInlineStyle = getter(HTMLElement.prototype, 'style');
+  const SVGElement_ = typeof SVGElement === 'function' ? SVGElement : null;
+  const svgInlineStyle = SVGElement_ !== null ? getter(SVGElement_.prototype, 'style') : null;
+  // The element's own `style` getter: HTMLElement's rejects an SVG element.
+  const inlineStyle = el => (SVGElement_ !== null && el instanceof SVGElement_ ? svgInlineStyle : htmlInlineStyle)(el);
   const setProperty = CSSStyleDeclaration.prototype.setProperty;
   const getPropertyValue = CSSStyleDeclaration.prototype.getPropertyValue;
   const computedStyle = globalThis.getComputedStyle;

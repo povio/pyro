@@ -709,6 +709,7 @@ pub enum ElClass {
     SvgRadialGradient,
     SvgFilter,
     SvgMarker,
+    MathMl,
     Other,
 }
 
@@ -730,6 +731,9 @@ pub fn class_for(dom: &Dom, id: NodeId) -> ElClass {
             "marker" => ElClass::SvgMarker,
             _ => ElClass::Svg,
         };
+    }
+    if e.namespace() == &markup5ever::ns!(mathml) {
+        return ElClass::MathMl;
     }
     if !e.is_html() {
         return ElClass::Other;
@@ -899,6 +903,7 @@ pub fn wrap_element<'s>(s: &Scope<'s>, class: ElClass, d: NodeData, k: Option<Id
         SvgRadialGradient => s.wrap::<SvgRadialGradientElement>(d, k),
         SvgFilter => s.wrap::<SvgFilterElement>(d, k),
         SvgMarker => s.wrap::<SvgMarkerElement>(d, k),
+        MathMl => s.wrap::<MathMlElement>(d, k),
         Other => s.wrap::<Element>(d, k),
     }
 }
@@ -2895,6 +2900,25 @@ impl JsClass for SvgElement {
         });
     }
 }
+/// MathML Core `MathMLElement`: an element in the MathML namespace, with
+/// `HTMLOrSVGElement`, `ElementCSSInlineStyle` and the event handlers.
+pub struct MathMlElement;
+impl JsClass for MathMlElement {
+    const NAME: &'static str = "MathMLElement";
+    type Data = NodeData;
+    type Parent = Element;
+    fn define(def: &mut ClassDef<Self>) {
+        crate::handlers::define_global(def);
+        def.getter("dataset", |s, n| Ok(collections::dataset(s, n.page(), n.id)?.value()));
+        // [PutForwards=cssText]
+        def.put_forwards("style", |s, n| Ok(crate::css::inline_style(s, n.page(), n.id)?.value()), "cssText");
+        def.method("focus", 0, focus_element);
+        def.method("blur", 0, |s, n, _a| {
+            crate::input::blur_element(n.page(), n.id);
+            Ok(s.undefined())
+        });
+    }
+}
 simple_class!(SvgGraphicsElement, "SVGGraphicsElement", SvgElement, |def| {
     // pyro: `transform` (SVG 2 `SVGAnimatedTransformList`, the attribute's list).
     def.getter("transform", |s, n| Ok(collections::animated_transform_list(s, n.page(), n.id, "transform")?.value()));
@@ -2907,7 +2931,30 @@ simple_class!(SvgGraphicsElement, "SVGGraphicsElement", SvgElement, |def| {
         crate::layout_api::rect_value(s, pyro_dom::svg_geometry::bbox(&dom, layout.style(), n.id))
     });
 });
-simple_class!(SvgSvgElement, "SVGSVGElement", SvgGraphicsElement);
+simple_class!(SvgSvgElement, "SVGSVGElement", SvgGraphicsElement, |def| {
+    // SVG time control (SVG 1.1 `SVGSVGElement`), of the document's SMIL clock (`smil`).
+    def.method("setCurrentTime", 1, |s, n, a| {
+        a.require(1, "SVGSVGElement.setCurrentTime")?;
+        let seconds = a.get(0).to_number()?;
+        if !seconds.is_finite() {
+            return Err(JsError::Type(
+                "Failed to execute 'setCurrentTime' on 'SVGSVGElement': The provided float value is non-finite.".into(),
+            ));
+        }
+        crate::smil::set_current_time(n.page(), seconds);
+        Ok(s.undefined())
+    });
+    def.method("getCurrentTime", 0, |s, n, _a| Ok(s.number(crate::smil::current_time(n.page()))));
+    def.method("pauseAnimations", 0, |s, n, _a| {
+        crate::smil::set_paused(n.page(), true);
+        Ok(s.undefined())
+    });
+    def.method("unpauseAnimations", 0, |s, n, _a| {
+        crate::smil::set_paused(n.page(), false);
+        Ok(s.undefined())
+    });
+    def.method("animationsPaused", 0, |s, n, _a| Ok(s.boolean(crate::smil::paused(n.page()))));
+});
 // SVG 2 elements with enumerated attributes, as `SVGAnimatedEnumeration`s
 // (`collections::SvgEnum`: the keywords, in the order of their values from 1).
 const UNITS: &[&str] = &["userSpaceOnUse", "objectBoundingBox"];
@@ -3532,6 +3579,7 @@ pub(crate) fn register(engine: &pyro_js::Engine) {
     engine.register::<HtmlParamElement>();
     engine.register::<HtmlTrackElement>();
     engine.register::<SvgElement>();
+    engine.register::<MathMlElement>();
     engine.register::<SvgGraphicsElement>();
     engine.register::<SvgSvgElement>();
     engine.register::<SvgAElement>();
