@@ -37,11 +37,16 @@
   const abortError = (message) => new DOMExceptionC(message, 'AbortError');
   const invalidState = (message) => new DOMExceptionC(message, 'InvalidStateError');
 
+  // Platform objects (a DOM node) cannot be the state: HTML serializes it
+  // with StructuredSerializeForStorage, which throws DataCloneError for them.
+  const structuredCloneF = typeof structuredClone === 'function' ? structuredClone : null;
   const serialize = (value) => {
     if (value === undefined) return undefined;
+    // Cloned once (getters run once), then kept as JSON.
+    const plain = structuredCloneF !== null ? structuredCloneF(value) : value;
     let json;
     try {
-      json = stringify(value);
+      json = stringify(plain);
     } catch (e) {
       json = undefined;
     }
@@ -84,20 +89,22 @@
       ownTag(this, 'NavigationHistoryEntry');
       entryData.set(this, { row, handlers: {} });
     }
+    // HTML: an entry of a document that is not fully active reads as
+    // "", "", null, -1 and false.
     get key() {
-      return entryData.get(this).row.key;
+      return native.active() ? entryData.get(this).row.key : '';
     }
     get id() {
-      return entryData.get(this).row.id;
+      return native.active() ? entryData.get(this).row.id : '';
     }
     get url() {
-      return entryData.get(this).row.url;
+      return native.active() ? entryData.get(this).row.url : null;
     }
     get index() {
-      return snapshot().list.indexOf(this);
+      return native.active() ? snapshot().list.indexOf(this) : -1;
     }
     get sameDocument() {
-      return entryData.get(this).row.same;
+      return native.active() && entryData.get(this).row.same;
     }
     getState() {
       return deserialize(entryData.get(this).row.state);
@@ -142,14 +149,16 @@
     get url() {
       return destinationData.get(this).url;
     }
+    // A destination entry of a document no longer fully active reads as
+    // "", "" and -1 (HTML).
     get key() {
-      return destinationData.get(this).key;
+      return native.active() ? destinationData.get(this).key : '';
     }
     get id() {
-      return destinationData.get(this).id;
+      return native.active() ? destinationData.get(this).id : '';
     }
     get index() {
-      return destinationData.get(this).index;
+      return native.active() ? destinationData.get(this).index : -1;
     }
     get sameDocument() {
       return destinationData.get(this).sameDocument;
@@ -200,6 +209,9 @@
     intercept(options) {
       const d = eventData.get(this);
       if (d === undefined) throw new TypeErrorC('Illegal invocation');
+      if (!native.active()) {
+        throw invalidState("Failed to execute 'intercept' on 'NavigateEvent': The document is not fully active.");
+      }
       if (!d.dispatching) {
         throw invalidState("Failed to execute 'intercept' on 'NavigateEvent': intercept() may only be called while the navigate event is being dispatched.");
       }
@@ -456,15 +468,16 @@
       ownTag(this, 'Navigation');
     }
     entries() {
-      return snapshot().list;
+      return native.active() ? snapshot().list : [];
     }
     get currentEntry() {
-      return current();
+      return native.active() ? current() : null;
     }
     get canGoBack() {
-      return snapshot().index > 0;
+      return native.active() && snapshot().index > 0;
     }
     get canGoForward() {
+      if (!native.active()) return false;
       const { index, list } = snapshot();
       return index >= 0 && index < list.length - 1;
     }
