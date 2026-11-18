@@ -56,6 +56,8 @@ impl From<StyloBackgroundClip> for BoxModelBox {
             // TODO: support BorderArea
             StyloBackgroundClip::BorderArea => Self::BorderBox,
             StyloBackgroundClip::Text => Self::BorderBox,
+            // pyro: the union of the text and the border area, cut by the text mask.
+            StyloBackgroundClip::BorderAreaText => Self::BorderBox,
 
             // pyro: `mask-clip`'s SVG boxes, for a box: fill-box is the content box, stroke-box
             // and view-box the border box.
@@ -95,6 +97,8 @@ pub(super) struct ImageLayerStyles<'a> {
     pub size: &'a BackgroundSize,
     pub clip: BoxModelBox,
     pub text_clip: bool,
+    /// pyro: `background-clip: border-area text`: the text mask takes in the border area too.
+    pub text_border_area: bool,
     /// pyro: `background-clip: border-area`: the area the border paints.
     pub border_area: bool,
     pub origin: BoxModelBox,
@@ -119,7 +123,12 @@ impl<'a> ImageLayerStyles<'a> {
             repeat: get_cyclic(&bg_styles.background_repeat.0, idx),
             size: get_cyclic(&bg_styles.background_size.0, idx),
             clip: (*get_cyclic(&bg_styles.background_clip.0, idx)).into(),
-            text_clip: *get_cyclic(&bg_styles.background_clip.0, idx) == StyloBackgroundClip::Text,
+            text_clip: matches!(
+                *get_cyclic(&bg_styles.background_clip.0, idx),
+                StyloBackgroundClip::Text | StyloBackgroundClip::BorderAreaText
+            ),
+            text_border_area: *get_cyclic(&bg_styles.background_clip.0, idx)
+                == StyloBackgroundClip::BorderAreaText,
             border_area: *get_cyclic(&bg_styles.background_clip.0, idx)
                 == StyloBackgroundClip::BorderArea,
             origin: (*get_cyclic(&bg_styles.background_origin.0, idx)).into(),
@@ -142,6 +151,7 @@ impl<'a> ImageLayerStyles<'a> {
             size: get_cyclic(&svg_styles.mask_size.0, idx),
             clip: (*get_cyclic(&svg_styles.mask_clip.0, idx)).into(),
             text_clip: false,
+            text_border_area: false,
             border_area: false,
             origin: (*get_cyclic(&svg_styles.mask_origin.0, idx)).into(),
             // There is no `mask-attachment` property
@@ -279,7 +289,10 @@ impl ElementCx<'_, '_> {
         );
 
         // Draw background color (if any)
-        let mut text_run = last_clip == StyloBackgroundClip::Text && text_clips;
+        // pyro: the run of layers cut to the text, and whether its mask takes in the border area.
+        let mut text_run = matches!(last_clip, StyloBackgroundClip::Text | StyloBackgroundClip::BorderAreaText)
+            && text_clips;
+        let mut run_border_area = last_clip == StyloBackgroundClip::BorderAreaText;
         if text_run {
             self.begin_text_clip_group(scene, canvas);
         }
@@ -318,13 +331,16 @@ impl ElementCx<'_, '_> {
         for idx in (0..layer_count).rev() {
             let layer = ImageLayerStyles::from_background(bg_styles, image_data, idx);
             let layer_text_clip = layer.text_clip && text_clips;
-            if layer_text_clip != text_run {
+            let layer_border_area = layer_text_clip && layer.text_border_area;
+            if layer_text_clip != text_run || (text_run && layer_border_area != run_border_area) {
                 if text_run {
-                    self.end_text_clip_group(scene, canvas, text_mask);
-                } else {
+                    self.end_text_clip_group(scene, canvas, text_mask, run_border_area);
+                }
+                if layer_text_clip {
                     self.begin_text_clip_group(scene, canvas);
                 }
                 text_run = layer_text_clip;
+                run_border_area = layer_border_area;
             }
             if layer_paints_nothing(&layer) {
                 continue;
@@ -364,7 +380,7 @@ impl ElementCx<'_, '_> {
             }
         }
         if text_run {
-            self.end_text_clip_group(scene, canvas, text_mask);
+            self.end_text_clip_group(scene, canvas, text_mask, run_border_area);
         }
         self.context.layer_manager.maybe_pop_layer(scene, blend_group);
     }
@@ -528,6 +544,7 @@ impl ElementCx<'_, '_> {
         scene: &mut impl PaintScene,
         canvas: Option<Rect>,
         text_mask: Option<(NodeId, Affine)>,
+        border_area: bool,
     ) {
         let area = canvas.map_or_else(|| self.frame.border_box_path(), |canvas| canvas.to_path(0.1));
         scene.push_layer(
@@ -541,6 +558,9 @@ impl ElementCx<'_, '_> {
         );
         let (node, transform) = text_mask.unwrap_or((self.node.id, self.transform));
         self.context.draw_text_mask(scene, node, transform, true);
+        if border_area {
+            scene.fill(Fill::NonZero, self.transform, Color::BLACK, None, &self.border_area_path());
+        }
         scene.pop_layer();
         scene.pop_layer();
     }
@@ -724,7 +744,10 @@ impl ElementCx<'_, '_> {
             !positioned(node_id) && self.context.dom.get_node(node_id).and_then(|node| node.primary_styles()).is_some_and(|style| {
                 let background = style.get_background();
                 background.background_image.0.iter().any(|image| !matches!(image, ComputedImage::None))
-                    || background.background_clip.0.last() == Some(&StyloBackgroundClip::Text)
+                    || matches!(
+                        background.background_clip.0.last(),
+                        Some(StyloBackgroundClip::Text | StyloBackgroundClip::BorderAreaText)
+                    )
             })
         };
         let column_images: Vec<[bool; 2]> =

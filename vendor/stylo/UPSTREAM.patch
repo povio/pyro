@@ -3658,7 +3658,7 @@ diff -ruN a/values/specified/align.rs b/values/specified/align.rs
          f(&["left", "right"]);
 diff -ruN a/values/specified/background.rs b/values/specified/background.rs
 --- a/values/specified/background.rs	2026-11-11 19:55:57
-+++ b/values/specified/background.rs	2026-11-14 15:14:02
++++ b/values/specified/background.rs	2026-11-18 13:46:01
 @@ -200,16 +200,12 @@
      // TODO(emilio): We should expose the svg values in SpecifiedValueInfo or so but only for
      // mask-clip... Maybe we need a newtype thing, or to rejigger the painting code / storage
@@ -3676,7 +3676,26 @@ diff -ruN a/values/specified/background.rs b/values/specified/background.rs
      #[value_info(skip)]
      NoClip,
      // TODO: text and border-area are supposed to combine in backgrounds-4...
-@@ -237,13 +233,9 @@
+@@ -219,8 +215,18 @@
+     #[parse(condition = "background_clip_border_area_enabled")]
+     #[value_info(skip)]
+     BorderArea,
++    /// pyro: `border-area text` (either order), which backgrounds-4 combines: the union of the
++    /// two areas. Only `parse_for_background` makes it.
++    #[parse(condition = "never_a_single_keyword")]
++    #[value_info(skip)]
++    #[css(keyword = "border-area text")]
++    BorderAreaText,
+ }
+ 
++fn never_a_single_keyword(_: &ParserContext) -> bool {
++    false
++}
++
+ bitflags! {
+     /// Whether a value is valid for background-clip, mask-clip, or both.
+     #[derive(Clone, Copy)]
+@@ -237,16 +243,13 @@
              Self::BorderBox => ClipValidity::BOTH,
              Self::PaddingBox => ClipValidity::BOTH,
              Self::ContentBox => ClipValidity::BOTH,
@@ -3690,7 +3709,27 @@ diff -ruN a/values/specified/background.rs b/values/specified/background.rs
              Self::NoClip => ClipValidity::MASK,
              Self::Text => ClipValidity::BACKGROUND,
              Self::BorderArea => ClipValidity::BACKGROUND,
-@@ -301,13 +293,10 @@
++            Self::BorderAreaText => ClipValidity::BACKGROUND,
+         }
+     }
+ 
+@@ -259,6 +262,15 @@
+         if !clip.validity().intersects(ClipValidity::BACKGROUND) {
+             return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError));
+         }
++        // pyro: `border-area` and `text` combine (backgrounds-4).
++        let other = match clip {
++            Self::BorderArea => Self::Text,
++            Self::Text => Self::BorderArea,
++            _ => return Ok(clip),
++        };
++        if input.try_parse(|input| Self::parse(context, input).ok().filter(|c| *c == other).ok_or(())).is_ok() {
++            return Ok(Self::BorderAreaText);
++        }
+         Ok(clip)
+     }
+ 
+@@ -301,13 +313,10 @@
      PaddingBox,
      ContentBox,
      // TODO(emilio): Same caveat as BackgroundClip regarding SpecifiedValueInfo.
@@ -3704,7 +3743,7 @@ diff -ruN a/values/specified/background.rs b/values/specified/background.rs
      #[value_info(skip)]
      ViewBox,
  }
-@@ -320,7 +309,6 @@
+@@ -320,7 +329,6 @@
          input: &mut Parser,
      ) -> Result<Self, ParseError> {
          let origin = Self::parse(input)?;
@@ -3712,7 +3751,7 @@ diff -ruN a/values/specified/background.rs b/values/specified/background.rs
          if matches!(origin, Self::FillBox | Self::StrokeBox | Self::ViewBox) {
              return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError));
          }
-@@ -334,11 +322,8 @@
+@@ -334,11 +342,8 @@
              BackgroundOrigin::BorderBox => Self::BorderBox,
              BackgroundOrigin::PaddingBox => Self::PaddingBox,
              BackgroundOrigin::ContentBox => Self::ContentBox,
@@ -3724,7 +3763,7 @@ diff -ruN a/values/specified/background.rs b/values/specified/background.rs
              BackgroundOrigin::ViewBox => Self::ViewBox,
          }
      }
-@@ -369,6 +354,5 @@
+@@ -369,6 +374,5 @@
  pub enum ImageLayerAttachment {
      Scroll,
      Fixed,

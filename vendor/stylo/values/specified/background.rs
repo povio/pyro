@@ -215,6 +215,16 @@ pub enum BackgroundClip {
     #[parse(condition = "background_clip_border_area_enabled")]
     #[value_info(skip)]
     BorderArea,
+    /// pyro: `border-area text` (either order), which backgrounds-4 combines: the union of the
+    /// two areas. Only `parse_for_background` makes it.
+    #[parse(condition = "never_a_single_keyword")]
+    #[value_info(skip)]
+    #[css(keyword = "border-area text")]
+    BorderAreaText,
+}
+
+fn never_a_single_keyword(_: &ParserContext) -> bool {
+    false
 }
 
 bitflags! {
@@ -239,6 +249,7 @@ impl BackgroundClip {
             Self::NoClip => ClipValidity::MASK,
             Self::Text => ClipValidity::BACKGROUND,
             Self::BorderArea => ClipValidity::BACKGROUND,
+            Self::BorderAreaText => ClipValidity::BACKGROUND,
         }
     }
 
@@ -250,6 +261,15 @@ impl BackgroundClip {
         let clip = Self::parse(context, input)?;
         if !clip.validity().intersects(ClipValidity::BACKGROUND) {
             return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError));
+        }
+        // pyro: `border-area` and `text` combine (backgrounds-4).
+        let other = match clip {
+            Self::BorderArea => Self::Text,
+            Self::Text => Self::BorderArea,
+            _ => return Ok(clip),
+        };
+        if input.try_parse(|input| Self::parse(context, input).ok().filter(|c| *c == other).ok_or(())).is_ok() {
+            return Ok(Self::BorderAreaText);
         }
         Ok(clip)
     }

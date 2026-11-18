@@ -428,3 +428,17 @@ fn a_broken_image_draws_the_broken_image_icon() {
     assert!((0..16).any(|d| green(at(12.0 + f64::from(d), 25.0))), "icon in the sized box");
     assert!((0..16).any(|d| green(at(10.0 + f64::from(d), 113.0))), "icon before the alt text");
 }
+
+/// `background-clip: border-area text` (either order) paints the union of the border area and
+/// the text, not the whole box (WPT `clip-border-area-text.html`).
+#[test]
+fn border_area_and_text_clip_combine() {
+    for clip in ["border-area text", "text border-area"] {
+        let img = render(
+            &format!("<div style='position:absolute;left:0;top:0;width:200px;height:100px;box-sizing:border-box;border:20px solid transparent;font:bold 40px/60px monospace;color:transparent;background:linear-gradient(blue,blue);background-clip:{clip}'>X</div>"),
+            1.0,
+        );
+        assert_near(pixel(&img, 1.0, 10.0, 50.0), BLUE, &format!("{clip}: the border"));
+        assert_near(pixel(&img, 1.0, 150.0, 50.0), WHITE, &format!("{clip}: the padding box past the text"));
+    }
+}

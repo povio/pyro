@@ -411,3 +411,4 @@ without a style context (custom properties left as they are): pyro serializes a 
   keeps the entry's kind and selector). Mounting a 1,089-element lab canvas tile 20 times: 23,950 → 22,008 M
   instructions.
 - Round 4 lane F, `values/specified/calc.rs` `parse_angle_percentage_of_turn` + `specified::AngleOrPercentage`: a math function mixing angles and percentages in a conic gradient stop resolves each percentage as that fraction of a full turn (`calc(0deg + 100%)` = 360deg), instead of failing (which dropped the background). WPT css-images `conic-gradient-calc-angle-percentage`.
+- Round 4 lane F, `specified::BackgroundClip::BorderAreaText`: `background-clip: border-area text` (either order) parses as one value, the union of the two areas (backgrounds-4), which blitz-paint paints as a text-clip run whose mask also takes in the border area. WPT css-backgrounds `clip-border-area-text`.
