@@ -66,3 +66,20 @@ fn an_svg_with_a_zero_width_keeps_its_natural_height() {
     assert_eq!(pixel(&img, 25, 10), [0, 255, 0], "inside 50x20");
     assert_eq!(pixel(&img, 25, 25), [255, 255, 255], "below 20");
 }
+
+/// A zero `height` beside a `width` is no natural height when a `viewBox` gives the ratio, as in
+/// Blink: 20px wide and 40px tall by the 1:2 `viewBox` (WPT css-grid
+/// `grid-item-aspect-ratio-stretch-4`). A zero `width` beside a height stays (`-stretch-3`).
+#[test]
+fn an_svg_with_a_zero_height_and_a_view_box_takes_the_ratio() {
+    let img = render(
+        "<img style='background:lime' src=\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20px' height='0px' viewBox='0 0 50 100'%3E%3C/svg%3E\">",
+    );
+    assert_eq!(pixel(&img, 10, 38), [0, 255, 0], "inside 20x40");
+    assert_eq!(pixel(&img, 10, 42), [255, 255, 255], "below 40");
+    let zero_width = render(
+        "<img style='background:lime;padding-left:1px' src=\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='0px' height='20px' viewBox='0 0 50 100'%3E%3C/svg%3E\">",
+    );
+    assert_eq!(pixel(&zero_width, 0, 10), [0, 255, 0], "the padding, 20px tall");
+    assert_eq!(pixel(&zero_width, 2, 10), [255, 255, 255], "no width");
+}

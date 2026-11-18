@@ -31820,7 +31820,7 @@ diff --git a/packages/blitz-dom/src/node/svg.rs b/packages/blitz-dom/src/node/sv
  }
  
  impl SvgImageData {
-@@ -106,13 +142,68 @@
+@@ -106,32 +142,114 @@
          };
          let doc = roxmltree::Document::parse_with_options(text, xml_options)
              .map_err(usvg::Error::ParsingFailed)?;
@@ -31891,7 +31891,27 @@ diff --git a/packages/blitz-dom/src/node/svg.rs b/packages/blitz-dom/src/node/sv
      /// The intrinsic width in CSS px, present only when the root `<svg>`
      /// declared an absolute (non-percentage) `width`.
      pub fn intrinsic_width(&self) -> Option<f32> {
-@@ -121,6 +212,12 @@
++        self.declared_width()
++    }
++
++    /// The intrinsic height in CSS px, present only when the root `<svg>`
++    /// declared an absolute (non-percentage) `height`.
++    pub fn intrinsic_height(&self) -> Option<f32> {
++        let height = self.declared_height();
++        height.filter(|&height| !self.zero_beside_ratio(height, self.declared_width()))
++    }
++
++    /// pyro: a zero `height` beside a non-zero `width` is no natural height when a `viewBox` gives
++    /// the ratio, as in Blink: `width="20px" height="0px" viewBox="0 0 50 100"` is 20px wide and
++    /// 40px tall (WPT css-grid `grid-item-aspect-ratio-stretch-4`), but a zero `width` beside a
++    /// height stays (`width="0px" height="20px"` is 0px wide: `-stretch-3`).
++    fn zero_beside_ratio(&self, length: f32, other: Option<f32>) -> bool {
++        length == 0.0 && other.is_some_and(|other| other > 0.0) && self.viewbox_aspect_ratio().is_some_and(|r| r.is_finite() && r > 0.0)
++    }
++
++    fn declared_width(&self) -> Option<f32> {
+         use svgtypes::LengthUnit;
+         let declared = self
              .intrinsic_dimensions
              .width
              .is_some_and(|len| len.unit != LengthUnit::Percent);
@@ -31904,7 +31924,12 @@ diff --git a/packages/blitz-dom/src/node/svg.rs b/packages/blitz-dom/src/node/sv
          declared.then(|| self.tree.size().width())
      }
  
-@@ -132,6 +229,10 @@
+-    /// The intrinsic height in CSS px, present only when the root `<svg>`
+-    /// declared an absolute (non-percentage) `height`.
+-    pub fn intrinsic_height(&self) -> Option<f32> {
++    fn declared_height(&self) -> Option<f32> {
+         use svgtypes::LengthUnit;
+         let declared = self
              .intrinsic_dimensions
              .height
              .is_some_and(|len| len.unit != LengthUnit::Percent);
@@ -31915,7 +31940,7 @@ diff --git a/packages/blitz-dom/src/node/svg.rs b/packages/blitz-dom/src/node/sv
          declared.then(|| self.tree.size().height())
      }
  
-@@ -230,6 +331,49 @@
+@@ -230,6 +348,49 @@
      }
  }
  
@@ -31965,7 +31990,7 @@ diff --git a/packages/blitz-dom/src/node/svg.rs b/packages/blitz-dom/src/node/sv
  /// Map a `viewBox` onto a viewport of the given size per `preserveAspectRatio`.
  fn view_box_transform(
      view_box: usvg::NonZeroRect,
-@@ -263,3 +407,288 @@
+@@ -263,3 +424,288 @@
      let ty = (height - view_box.height() * sy) * align_y - view_box.y() * sy;
      usvg::Transform::from_row(sx, 0.0, 0.0, sy, tx, ty)
  }

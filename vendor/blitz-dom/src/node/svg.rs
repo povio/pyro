@@ -207,6 +207,25 @@ impl SvgImageData {
     /// The intrinsic width in CSS px, present only when the root `<svg>`
     /// declared an absolute (non-percentage) `width`.
     pub fn intrinsic_width(&self) -> Option<f32> {
+        self.declared_width()
+    }
+
+    /// The intrinsic height in CSS px, present only when the root `<svg>`
+    /// declared an absolute (non-percentage) `height`.
+    pub fn intrinsic_height(&self) -> Option<f32> {
+        let height = self.declared_height();
+        height.filter(|&height| !self.zero_beside_ratio(height, self.declared_width()))
+    }
+
+    /// pyro: a zero `height` beside a non-zero `width` is no natural height when a `viewBox` gives
+    /// the ratio, as in Blink: `width="20px" height="0px" viewBox="0 0 50 100"` is 20px wide and
+    /// 40px tall (WPT css-grid `grid-item-aspect-ratio-stretch-4`), but a zero `width` beside a
+    /// height stays (`width="0px" height="20px"` is 0px wide: `-stretch-3`).
+    fn zero_beside_ratio(&self, length: f32, other: Option<f32>) -> bool {
+        length == 0.0 && other.is_some_and(|other| other > 0.0) && self.viewbox_aspect_ratio().is_some_and(|r| r.is_finite() && r > 0.0)
+    }
+
+    fn declared_width(&self) -> Option<f32> {
         use svgtypes::LengthUnit;
         let declared = self
             .intrinsic_dimensions
@@ -221,9 +240,7 @@ impl SvgImageData {
         declared.then(|| self.tree.size().width())
     }
 
-    /// The intrinsic height in CSS px, present only when the root `<svg>`
-    /// declared an absolute (non-percentage) `height`.
-    pub fn intrinsic_height(&self) -> Option<f32> {
+    fn declared_height(&self) -> Option<f32> {
         use svgtypes::LengthUnit;
         let declared = self
             .intrinsic_dimensions
