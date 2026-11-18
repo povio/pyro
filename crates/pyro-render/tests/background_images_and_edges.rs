@@ -285,12 +285,25 @@ fn a_link_to_the_document_itself_is_visited() {
     assert_near(pixel(&img, 1.0, 10.0, 10.0), GREEN, "href=\"\"");
     assert_near(pixel(&img, 1.0, 10.0, 30.0), RED, "another page");
 
-    // A `:link` rule that is not about colour still applies to the visited link.
+    // A `:link` rule that is not about colour still applies to the visited link; its colours do
+    // not (the visited style's are painted, as Chrome: `getComputedStyle` reports green).
+    let img = render(
+        "<style>a{display:block;width:40px;height:0;background:green}a:link{height:20px}</style><a href=''></a>",
+        1.0,
+    );
+    assert_near(pixel(&img, 1.0, 10.0, 10.0), GREEN, "a:link height on href=\"\"");
     let img = render(
         "<style>a{display:block;width:40px;height:20px;background:red}a:link{background:green}</style><a href=''></a>",
         1.0,
     );
-    assert_near(pixel(&img, 1.0, 10.0, 10.0), GREEN, "a:link on href=\"\"");
+    assert_near(pixel(&img, 1.0, 10.0, 10.0), RED, "a:link background on href=\"\"");
+
+    // A `:visited` rule's non-colour properties do nothing.
+    let img = render(
+        "<style>a{display:block;width:40px;height:20px;background:green}a:visited{height:0}</style><a href=''></a>",
+        1.0,
+    );
+    assert_near(pixel(&img, 1.0, 10.0, 10.0), GREEN, "a:visited height");
 
     // `:has(> :link)` matches around it, `:has(> :visited)` does not.
     let img = render(

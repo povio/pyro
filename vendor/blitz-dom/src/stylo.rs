@@ -175,7 +175,7 @@ impl crate::document::BaseDocument {
             stylist: &self.stylist,
             options: GLOBAL_STYLE_DATA.options.clone(),
             guards,
-            visited_styles_enabled: false,
+            visited_styles_enabled: true,
             animations: self.animations.clone(),
             current_time_for_animations: now,
             snapshot_map: &self.snapshots,
@@ -490,7 +490,7 @@ impl crate::document::BaseDocument {
             stylist: &self.stylist,
             options: GLOBAL_STYLE_DATA.options.clone(),
             guards,
-            visited_styles_enabled: false,
+            visited_styles_enabled: true,
             animations: self.animations.clone(),
             current_time_for_animations: 0.0,
             snapshot_map: &self.snapshots,
@@ -835,6 +835,8 @@ impl selectors::Element for BlitzNode<'_> {
             // visited style (WPT css-pseudo `selection-link-002`; `crate::dom_selection`).
             NonTSPseudoClass::Link => {
                 self.element_state().intersects(ElementState::VISITED_OR_UNVISITED)
+                    // Inside `:has()` every link is unvisited (as `:visited` below).
+                    && (context.visited_handling().matches_unvisited() || context.relative_selector_anchor().is_some())
                     && !(crate::dom_selection::LINKS_AS_VISITED.get()
                         && self.element_state().contains(ElementState::VISITED))
             }
@@ -858,8 +860,18 @@ impl selectors::Element for BlitzNode<'_> {
             // pyro: links to the document itself (`ElementData::flush_link_visited`), but not
             // inside `:has()`, where Chromium takes every link as unvisited (WPT
             // `css/selectors/has-visited.html`, `invalidation/link-pseudo-in-has.html`).
+            // The element's style matches every link as unvisited and its visited style (Stylo's
+            // `visited_styles_enabled`) the relevant link as visited, whose visited-dependent
+            // colours a visited link takes (`StyleBuilder::pyro_take_visited_dependent`).
             NonTSPseudoClass::Visited => {
-                self.element_state().contains(ElementState::VISITED)
+                self.element_state().intersects(ElementState::VISITED_OR_UNVISITED)
+                    && (context.visited_handling().matches_visited()
+                        || (crate::dom_selection::LINKS_AS_VISITED.get()
+                            && self.element_state().contains(ElementState::VISITED))
+                        // Invalidation (`:has()` insertion stand-ins) matches by the state, as
+                        // before visited styles: in its normal mode `:visited` would never match.
+                        || (context.matching_for_invalidation()
+                            && self.element_state().contains(ElementState::VISITED)))
                     && context.relative_selector_anchor().is_none()
             }
             NonTSPseudoClass::Autofill => false,
@@ -937,6 +949,8 @@ impl selectors::Element for BlitzNode<'_> {
         }
     }
 
+    // pyro: an `<a>` (any, as before; `:link`/`:visited` still need link state). Not keyed on the
+    // link state: that is set after insertion, which `:has()` invalidation would miss.
     fn is_link(&self) -> bool {
         self.data.is_element_with_tag_name(&local_name!("a"))
     }
@@ -1359,6 +1373,12 @@ impl<'a> TElement for BlitzNode<'a> {
             Some(None) => false,
             None => crate::lang::language(self).is_some_and(|lang| crate::lang::range_matches(lang, value)),
         }
+    }
+
+    // pyro: a link to the document itself (`ElementData::flush_link_visited`); its visited style
+    // gives its colours (`StyleAdjuster::adjust_for_links`).
+    fn is_visited_link(&self) -> bool {
+        self.element_state().contains(ElementState::VISITED)
     }
 
     fn is_html_document_body_element(&self) -> bool {
@@ -3306,7 +3326,8 @@ mod relative_selector_invalidation_tests {
         m.append_children(body, &[p, q]);
         drop(m);
         d.resolve(0.0);
-        assert_eq!(order(&d, a), 3, "a:visited wins over the earlier a:link");
+        // `order` is not visited-dependent: the visited style's `order: 3` stays out.
+        assert_eq!(order(&d, a), 1, "a:visited sets colours only");
         assert_eq!(z_index(&d, a), 5, "a:link applies to the visited link");
         assert_eq!(order(&d, p), 7, ":has(> :link) matches");
         assert_eq!(z_index(&d, p), 0, ":has(> :visited) does not");
@@ -3558,7 +3579,7 @@ mod box_generating_pseudo_tests {
             stylist: &doc.stylist,
             options: GLOBAL_STYLE_DATA.options.clone(),
             guards,
-            visited_styles_enabled: false,
+            visited_styles_enabled: true,
             animations: doc.animations.clone(),
             current_time_for_animations: 0.0,
             snapshot_map: &doc.snapshots,

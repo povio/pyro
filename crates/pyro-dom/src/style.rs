@@ -989,7 +989,13 @@ impl StyleEngine {
         el: NodeId,
     ) -> Option<style::servo_arc::Arc<style::properties::ComputedValues>> {
         self.owns(dom, el)?;
-        self.external_style(dom, el)
+        let style = self.external_style(dom, el)?;
+        // A visited link and its contents report their unvisited colours, as Chromium (the
+        // engine paints the visited ones; stylo `ComputedValues::pyro_unvisited_view`).
+        Some(match style.pyro_unvisited_view() {
+            Some(view) => style::servo_arc::Arc::new(view),
+            None => style,
+        })
     }
 
     /// Whether the layout engine records the elements whose computed style a

@@ -196,8 +196,10 @@ where
 
         let inside_link = parent_style.is_some_and(|s| s.visited_style().is_some());
 
+        // pyro: only a visited link (and its contents) has a visited style: an unvisited link
+        // never uses one, and a page's links are mostly unvisited (pyro has no history).
         let visited_rules = if self.context.shared.visited_styles_enabled
-            && (inside_link || self.element.is_link())
+            && (inside_link || self.element.is_visited_link())
         {
             if self.needs_visited_matching() {
                 let visited_matching_results =

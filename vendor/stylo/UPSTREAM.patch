@@ -1333,13 +1333,28 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  affects = ""
 diff -ruN a/properties/properties.mako.rs b/properties/properties.mako.rs
 --- a/properties/properties.mako.rs	2026-11-11 19:55:57
-+++ b/properties/properties.mako.rs	2026-11-17 23:56:40
-@@ -1645,7 +1645,46 @@
-     pseudo: Option<PseudoElement>,
++++ b/properties/properties.mako.rs	2026-11-18 23:31:01
+@@ -1621,6 +1621,12 @@
+     /// relevant link for this element. A element's "relevant link" is the
+     /// element being matched if it is a link or the nearest ancestor link.
+     visited_style: Option<Arc<ComputedValues>>,
++
++    /// pyro: for a visited link and its contents, whose visited-dependent properties hold the
++    /// visited style's values (`StyleBuilder::pyro_take_visited_dependent`), a style whose
++    /// visited-dependent properties are the unvisited ones (its other properties mean nothing):
++    /// what `getComputedStyle` reports ([`ComputedValues::pyro_unvisited_view`]).
++    pub pyro_unvisited: Option<Arc<ComputedValues>>,
  }
  
+ /// The struct that Servo uses to represent computed values.
+@@ -1643,6 +1649,45 @@
+ 
+     /// The pseudo-element that we're using.
+     pseudo: Option<PseudoElement>,
++}
++
 +#[cfg(feature = "servo")]
- impl ComputedValues {
++impl ComputedValues {
 +    /// pyro: whether every inherited style struct and every other inherited
 +    /// input (flags, zoom, writing mode) of `self` equals `other`'s: what a
 +    /// child inherits but custom properties.
@@ -1375,12 +1390,171 @@ diff -ruN a/properties/properties.mako.rs b/properties/properties.mako.rs
 +    pub fn has_visited_or_attr_references(&self) -> bool {
 +        self.inner.visited_style.is_some() || self.inner.attribute_references.is_some()
 +    }
-+}
+ }
+ 
+ impl ComputedValues {
+@@ -1883,6 +1928,7 @@
+                 writing_mode,
+                 rules,
+                 visited_style,
++                pyro_unvisited: None,
+                 effective_zoom,
+                 flags,
+             % for style_struct in data.active_style_structs():
+@@ -1891,6 +1937,19 @@
+             },
+             pseudo: pseudo.cloned(),
+         })
++    }
 +
-+impl ComputedValues {
-     /// Returns the pseudo-element that this style represents.
-     #[cfg(feature = "servo")]
-     pub fn pseudo(&self) -> Option<PseudoElement> {
++    /// pyro: this style as `getComputedStyle` reports it: for a visited link and its contents,
++    /// the visited-dependent properties unvisited (`pyro_unvisited`); `None` for any other.
++    pub fn pyro_unvisited_view(&self) -> Option<ComputedValues> {
++        let unvisited = self.pyro_unvisited.as_deref()?;
++        let mut view = ComputedValues { inner: self.inner.clone(), pseudo: self.pseudo.clone() };
++        % for property in data.longhands:
++        % if property.is_visited_dependent() and not property.logical:
++        view.mutate_${property.style_struct.name_lower}().copy_${property.ident}_from(unvisited.get_${property.style_struct.name_lower}());
++        % endif
++        % endfor
++        Some(view)
+     }
+ 
+     /// Get the initial computed values.
+@@ -1923,6 +1982,7 @@
+                 writing_mode: WritingMode::empty(),
+                 rules: None,
+                 visited_style: None,
++                pyro_unvisited: None,
+                 effective_zoom: crate::values::computed::Zoom::ONE,
+                 flags: ComputedValueFlags::empty(),
+             },
+@@ -2013,6 +2073,7 @@
+                 writing_mode: self.writing_mode.clone(),
+                 rules: self.rules.clone(),
+                 visited_style: self.visited_style.clone(),
++                pyro_unvisited: self.pyro_unvisited.clone(),
+                 flags,
+                 effective_zoom: self.effective_zoom.clone(),
+                 % for style_struct in data.active_style_structs():
+@@ -2027,6 +2088,7 @@
+     pub fn visited_style(&self) -> Option<&ComputedValues> {
+         self.visited_style.as_deref()
+     }
++
+ 
+     % for style_struct in data.active_style_structs():
+         /// Clone the ${style_struct.name} struct.
+@@ -2234,6 +2296,8 @@
+     /// for this element.  A element's "relevant link" is the element being
+     /// matched if it is a link or the nearest ancestor link.
+     pub visited_style: Option<Arc<ComputedValues>>,
++    /// pyro: see `ComputedValuesInner::pyro_unvisited`.
++    pub pyro_unvisited: Option<Arc<ComputedValues>>,
+     % for style_struct in data.active_style_structs():
+         ${style_struct.ident}: StyleStructRef<'a, style_structs::${style_struct.name}>,
+     % endfor
+@@ -2271,6 +2335,7 @@
+             color_scheme: inherited_style.get_inherited_ui().color_scheme_bits(),
+             flags: Cell::new(flags),
+             visited_style: None,
++            pyro_unvisited: None,
+             % for style_struct in data.active_style_structs():
+             % if style_struct.inherited:
+             ${style_struct.ident}: StyleStructRef::Borrowed(inherited_style.get_${style_struct.name_lower}()),
+@@ -2317,12 +2382,57 @@
+             color_scheme: style_to_derive_from.get_inherited_ui().color_scheme_bits(),
+             flags: Cell::new(style_to_derive_from.flags),
+             visited_style: None,
++            pyro_unvisited: None,
+             % for style_struct in data.active_style_structs():
+             ${style_struct.ident}: StyleStructRef::Borrowed(
+                 style_to_derive_from.get_${style_struct.name_lower}()
+             ),
+             % endfor
++        }
++    }
++
++    /// pyro: a visited link's (and its contents') used values of the visited-dependent properties
++    /// (the colours Chromium takes from `:visited` rules) come from its visited style. Every other
++    /// property keeps the style of the link as unvisited (CSS Selectors 4 § 7.2, privacy).
++    #[cfg(feature = "servo")]
++    pub fn pyro_take_visited_dependent(&mut self, visited: &ComputedValues) {
++        // The unvisited values first, for `getComputedStyle`: this element's, or for an inherited
++        // value its parent's unvisited one (contents of a visited link inherit its visited colour,
++        // and report the unvisited one as Chromium does).
++        let parent = self.inherited_style;
++        let mut unvisited = visited.clone();
++        % for property in data.longhands:
++        % if property.is_visited_dependent() and not property.logical:
++        {
++            let mine = &*self.${property.style_struct.ident};
++            % if property.style_struct.inherited:
++            let from_parent = parent.pyro_unvisited.as_deref().filter(|_| {
++                mine.${property.ident} == parent.get_${property.style_struct.name_lower}().${property.ident}
++            });
++            match from_parent {
++                Some(p) => unvisited.mutate_${property.style_struct.name_lower}().copy_${property.ident}_from(p.get_${property.style_struct.name_lower}()),
++                None => unvisited.mutate_${property.style_struct.name_lower}().copy_${property.ident}_from(mine),
++            }
++            % else:
++            unvisited.mutate_${property.style_struct.name_lower}().copy_${property.ident}_from(mine);
++            % endif
+         }
++        % endif
++        % endfor
++        self.pyro_unvisited = Some(Arc::new(unvisited));
++        % for property in data.longhands:
++        % if property.is_visited_dependent() and not property.logical:
++        {
++            let v = visited.get_${property.style_struct.name_lower}();
++            if !self.${property.style_struct.ident}.ptr_eq(v) {
++                % if not property.style_struct.inherited:
++                self.modified_reset = true;
++                % endif
++                self.${property.style_struct.ident}.mutate().copy_${property.ident}_from(v);
++            }
++        }
++        % endif
++        % endfor
+     }
+ 
+     /// Copy the reset properties from `style`.
+@@ -2550,7 +2660,8 @@
+ 
+     /// Turns this `StyleBuilder` into a proper `ComputedValues` instance.
+     pub fn build(self) -> Arc<ComputedValues> {
+-        ComputedValues::new(
++        let pyro_unvisited = self.pyro_unvisited;
++        let mut style = ComputedValues::new(
+             self.pseudo,
+             self.substitution_functions.custom_properties,
+             self.attribute_references,
+@@ -2562,7 +2673,13 @@
+             % for style_struct in data.active_style_structs():
+             self.${style_struct.ident}.build(),
+             % endfor
+-        )
++        );
++        if pyro_unvisited.is_some() {
++            if let Some(inner) = Arc::get_mut(&mut style) {
++                inner.inner.pyro_unvisited = pyro_unvisited;
++            }
++        }
++        style
+     }
+ 
+     /// Get the substitution function maps if necessary.
+@@ -2769,7 +2886,8 @@
+ #[cfg(feature = "gecko")]
+ size_of_test!(ComputedValues, 248);
+ #[cfg(feature = "servo")]
+-size_of_test!(ComputedValues, 232);
++// pyro: + `pyro_unvisited`.
++size_of_test!(ComputedValues, 240);
+ 
+ // FFI relies on this.
+ size_of_test!(Option<Arc<ComputedValues>>, 8);
 diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
 --- a/properties/shorthands.rs	2026-11-11 19:55:57
 +++ b/properties/shorthands.rs	2026-11-18 18:23:06
@@ -2676,7 +2850,7 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
      }
 diff -ruN a/style_adjuster.rs b/style_adjuster.rs
 --- a/style_adjuster.rs	2026-11-11 19:55:57
-+++ b/style_adjuster.rs	2026-11-18 23:08:06
++++ b/style_adjuster.rs	2026-11-19 00:06:38
 @@ -184,6 +184,84 @@
          self.style
              .mutate_box()
@@ -2877,7 +3051,7 @@ diff -ruN a/style_adjuster.rs b/style_adjuster.rs
      #[cfg(feature = "gecko")]
      fn adjust_for_marker_pseudo(&mut self, author_or_user_specified_properties: &LonghandIdSet) {
          use crate::values::computed::counters::Content;
-@@ -1064,6 +1238,11 @@
+@@ -1064,7 +1238,20 @@
          //     "Should always have an element around for non-pseudo styles"
          // );
  
@@ -2887,9 +3061,18 @@ diff -ruN a/style_adjuster.rs b/style_adjuster.rs
 +            self.adjust_for_webkit_box_child(layout_parent_style);
 +        }
          self.adjust_for_links(element);
++        // pyro: the colours of a visited link come from its visited style (only the
++        // visited-dependent properties; `StyleBuilder::pyro_take_visited_dependent`).
++        #[cfg(feature = "servo")]
++        if self.style.flags.get().contains(ComputedValueFlags::IS_RELEVANT_LINK_VISITED) {
++            if let Some(visited) = self.style.visited_style.clone() {
++                self.style.pyro_take_visited_dependent(&visited);
++            }
++        }
          self.adjust_for_prohibited_display_contents(element);
          #[cfg(feature = "gecko")]
-@@ -1090,6 +1269,12 @@
+         {
+@@ -1090,6 +1277,12 @@
          self.adjust_for_appearance(element);
          #[cfg(feature = "gecko")]
          self.adjust_for_marker_pseudo(author_or_user_specified_properties);
@@ -2904,8 +3087,20 @@ diff -ruN a/style_adjuster.rs b/style_adjuster.rs
          }
 diff -ruN a/style_resolver.rs b/style_resolver.rs
 --- a/style_resolver.rs	2026-11-11 19:55:57
-+++ b/style_resolver.rs	2026-11-11 20:10:18
-@@ -588,6 +588,47 @@
++++ b/style_resolver.rs	2026-11-18 23:42:41
+@@ -196,8 +196,10 @@
+ 
+         let inside_link = parent_style.is_some_and(|s| s.visited_style().is_some());
+ 
++        // pyro: only a visited link (and its contents) has a visited style: an unvisited link
++        // never uses one, and a page's links are mostly unvisited (pyro has no history).
+         let visited_rules = if self.context.shared.visited_styles_enabled
+-            && (inside_link || self.element.is_link())
++            && (inside_link || self.element.is_visited_link())
+         {
+             if self.needs_visited_matching() {
+                 let visited_matching_results =
+@@ -588,6 +590,47 @@
          );
          matching_context.extra_data.originating_element_style = Some(originating_element_style);
  
@@ -3066,7 +3261,7 @@ diff -ruN a/stylesheets/supports_rule.rs b/stylesheets/supports_rule.rs
  /// supports_condition | declaration
 diff -ruN a/stylist.rs b/stylist.rs
 --- a/stylist.rs	2026-11-11 19:55:57
-+++ b/stylist.rs	2026-11-17 12:03:44
++++ b/stylist.rs	2026-11-18 23:37:56
 @@ -31,8 +31,8 @@
  use crate::parser::ParserContext;
  use crate::properties::StyleBuilder;
@@ -3078,24 +3273,26 @@ diff -ruN a/stylist.rs b/stylist.rs
  };
  use crate::properties_and_values::registry::{
      PropertyRegistration, ScriptRegistry as CustomPropertyScriptRegistry,
-@@ -1042,6 +1042,13 @@
+@@ -1040,6 +1040,13 @@
+     #[inline]
+     pub fn iter_extra_data_origins_rev(&self) -> ExtraStyleDataIterator<'_> {
          ExtraStyleDataIterator(self.cascade_data.iter_origins_rev())
-     }
- 
++    }
++
 +    /// Whether active cascade data contains a container condition.
 +    pub fn has_container_queries(&self) -> bool {
 +        self.cascade_data
 +            .iter_origins()
 +            .any(|(data, _)| data.container_conditions.len() > 1)
-+    }
-+
-     /// Returns the number of selectors.
-     pub fn num_selectors(&self) -> usize {
-         self.cascade_data
-@@ -1219,6 +1226,62 @@
-         doc_author_rules_apply && f(&self.cascade_data.author)
      }
  
+     /// Returns the number of selectors.
+@@ -1217,6 +1224,62 @@
+         }
+ 
+         doc_author_rules_apply && f(&self.cascade_data.author)
++    }
++
 +    /// pyro: whether a rule that can make `pseudo` (`::before` or `::after`, eagerly
 +    /// cascaded for `element`) generate a box matches `element`, so that the full match and
 +    /// cascade of the pseudo-element can give a style that is kept. When this is `false`, every
@@ -3150,11 +3347,9 @@ diff -ruN a/stylist.rs b/stylist.rs
 +            }
 +        }
 +        false
-+    }
-+
+     }
+ 
      /// Execute callback for all applicable style rule data.
-     pub fn for_each_cascade_data_with_scope<'a, E, F>(&'a self, element: E, mut f: F)
-     where
 @@ -1371,6 +1434,64 @@
          ))
      }
@@ -3220,7 +3415,32 @@ diff -ruN a/stylist.rs b/stylist.rs
      /// Computes a pseudo-element style lazily using the given CascadeInputs.
      /// This can be used for truly lazy pseudo-elements or to avoid redoing
      /// selector matching for eager pseudo-elements when we need to recompute
-@@ -2863,7 +2984,83 @@
+@@ -1623,10 +1744,9 @@
+             &mut matching_context,
+         );
+ 
+-        if declarations.is_empty() && is_probe {
+-            return None;
+-        }
+-
++        // pyro: a probe with no rules as unvisited still has a style when rules match the
++        // relevant link as visited (`a:visited::selection`); decided after that pass.
++        let unvisited_empty = declarations.is_empty();
+         let rules = self.rule_tree.compute_rule_node(&mut declarations, guards);
+ 
+         let mut visited_rules = None;
+@@ -1667,6 +1787,10 @@
+             }
+         }
+ 
++        if unvisited_empty && is_probe && visited_rules.is_none() {
++            return None;
++        }
++
+         Some(CascadeInputs {
+             rules: Some(rules),
+             visited_rules,
+@@ -2863,6 +2987,82 @@
      fn clear(&mut self) {
          self.element_map.clear();
          self.pseudos_map.clear();
@@ -3295,27 +3515,26 @@ diff -ruN a/stylist.rs b/stylist.rs
 +    fn clear(&mut self) {
 +        self.before.clear();
 +        self.after.clear();
-     }
++    }
 +
 +    fn shrink_if_needed(&mut self) {
 +        self.before.shrink_if_needed();
 +        self.after.shrink_if_needed();
-+    }
+     }
  }
  
- /// The id of a given layer, a sequentially-increasing identifier.
-@@ -3361,6 +3558,10 @@
+@@ -3360,6 +3560,10 @@
+     /// The data coming from normal style rules that apply to elements at this
      /// cascade level.
      normal_rules: ElementAndPseudoRules,
- 
++
 +    /// pyro: the rules of `normal_rules` that can make a `::before` or `::after`
 +    /// generate a box.
 +    box_generating_pseudo_rules: BoxGeneratingPseudoRules,
-+
+ 
      /// The `:host` pseudo rules that are the rightmost selector (without
      /// accounting for pseudo-elements), or `:scope` rules that may match
-     /// the featureless host.
-@@ -3522,10 +3723,17 @@
+@@ -3522,10 +3726,17 @@
  }
  
  impl CascadeData {
@@ -3333,12 +3552,10 @@ diff -ruN a/stylist.rs b/stylist.rs
              featureless_host_rules: None,
              slotted_rules: None,
              part_rules: None,
-@@ -3730,6 +3938,25 @@
-     #[inline]
-     pub fn normal_rules(&self, pseudo_elements: &[PseudoElement]) -> Option<&SelectorMap<Rule>> {
+@@ -3732,6 +3943,25 @@
          self.normal_rules.rules(pseudo_elements)
-+    }
-+
+     }
+ 
 +    /// pyro: the rules of `normal_rules(&[pseudo])` that can make `pseudo` (`::before`
 +    /// or `::after`) generate a box. `None` for other pseudo-elements.
 +    #[inline]
@@ -3356,10 +3573,12 @@ diff -ruN a/stylist.rs b/stylist.rs
 +                .is_some_and(|m| !m.is_empty())
 +            || self.slotted_rules(pseudos).is_some_and(|m| !m.is_empty())
 +            || self.part_rules(pseudos).is_some_and(|m| !m.is_empty())
-     }
- 
++    }
++
      /// Returns the featureless pseudo rule map for a given pseudo-element.
-@@ -3850,6 +4077,7 @@
+     #[inline]
+     pub fn featureless_host_rules(
+@@ -3850,6 +4080,7 @@
  
      fn shrink_maps_if_needed(&mut self) {
          self.normal_rules.shrink_if_needed();
@@ -3367,7 +3586,7 @@ diff -ruN a/stylist.rs b/stylist.rs
          if let Some(ref mut host_rules) = self.featureless_host_rules {
              host_rules.shrink_if_needed();
          }
-@@ -3955,10 +4183,20 @@
+@@ -3955,10 +4186,20 @@
          quirks_mode: QuirksMode,
          mut collected_scope_dependencies: Option<&mut Vec<Dependency>>,
      ) -> Result<(), AllocErr> {
@@ -3389,7 +3608,7 @@ diff -ruN a/stylist.rs b/stylist.rs
              let pseudo_elements = selector.pseudo_elements();
              let inner_pseudo_element = pseudo_elements.first();
              if let Some(pseudo) = inner_pseudo_element {
-@@ -4102,6 +4340,15 @@
+@@ -4102,6 +4343,15 @@
                  // :scope may match featureless shadow host if the scope
                  // root is the shadow root.
                  // See https://github.com/w3c/csswg-drafts/issues/9025
@@ -3405,7 +3624,7 @@ diff -ruN a/stylist.rs b/stylist.rs
                  let rules = if matches_featureless_host_only {
                      self.featureless_host_rules.get_or_insert_with(Box::default)
                  } else if rule.selector.is_slotted() {
-@@ -4817,6 +5064,7 @@
+@@ -4817,6 +5067,7 @@
      /// Clears the cascade data, but not the invalidation data.
      fn clear_cascade_data(&mut self) {
          self.normal_rules.clear();

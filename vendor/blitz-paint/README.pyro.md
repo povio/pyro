@@ -1117,3 +1117,4 @@ frame's whole transform, clipped to the content box (upstream applied the transl
   `HAS_AUTHOR_OR_USER_SPECIFIED_BORDER_BACKGROUND` unset) has 1px corners where its `border-radius` is 0: Chromium's
   native look, not a computed radius. WPT css-ui `compute-kind-widget-generated/*` (153 pages).
   `pyro-render/tests/button_native_corners.rs`.
+- Lane F1, `highlight.rs` `selection_style`: a visited link's `::selection` style is computed lazily with it taken as visited before looking for an eager one (an eager one matched as unvisited is missing when only `:visited` rules apply).

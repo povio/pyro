@@ -263,6 +263,11 @@ fn selection_style(doc: &BaseDocument, node_id: NodeId) -> Option<LayerStyle> {
     }
     let style_of = |id: NodeId| {
         let node = doc.get_node(id)?;
+        // pyro: a visited link's is computed with it taken as visited (`selection_pseudo_style`):
+        // its eager style, matched as unvisited, is missing when only `:visited` rules apply.
+        if doc.is_visited_link(id) {
+            return doc.selection_pseudo_style(id);
+        }
         let eager = node.try_stylo_element_data().and_then(|data| {
             data.get().and_then(|data| data.styles.pseudos.get(&PseudoElement::Selection).cloned())
         })?;

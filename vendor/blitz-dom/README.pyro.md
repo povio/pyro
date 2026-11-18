@@ -1173,10 +1173,21 @@ matches by it, as the page a browser shows is in its history (WPT `css-color/cur
 Chromium treats every link there as unvisited (`MatchingContext::relative_selector_anchor`; WPT
 `css/selectors/invalidation/link-pseudo-in-has.html`, `css/selectors/has-visited.html`). There is no history, so other
 links stay unvisited, and the user agent sheet keeps one link colour (`a[href]`): only a page's own `:visited` rules
-change what such a link looks like. Limits: Stylo here computes no separate visited style
-(`visited_styles_enabled: false`), so those rules apply in full rather than to colours alone, `getComputedStyle`
-reports them (Chromium reports the unvisited values), a `:link` rule after a `:visited` one of the same specificity
-wins, and the state is decided when the element is created or its `href` changes, not again when `pushState` changes
+change what such a link looks like. Since lane F1 (run 12) Stylo computes visited styles as Gecko and Blink do
+(`visited_styles_enabled: true`; `is_visited_link` is the `VISITED` state; only a visited link and its contents get
+one, stylo `style_resolver.rs`): the element's style matches every link as unvisited (`:link` matches, `:visited`
+does not), its visited style matches the relevant link as visited, and a visited link and its contents paint only
+the visited-dependent colours (`color`, `background-color`, border, outline, column-rule, text-decoration and
+text-emphasis colours, `fill`, `stroke`, `caret-color`) from the visited style (stylo
+`StyleBuilder::pyro_take_visited_dependent`). `accent-color` and every other property of a `:visited` rule do nothing,
+and a `:link` rule's colours do not reach a visited link (WPT css-ui `accent-color-visited`, css-cascade
+`all-prop-unset-visited`, selectors `is-where-visited`). `getComputedStyle` reports the unvisited values (stylo
+`ComputedValues::pyro_unvisited_view`, read by pyro-dom `StyleManager::stylo_style`; WPT css-cascade
+`scope-visited-cssom`). Inside `:has()` every link is unvisited; `:has()` invalidation still matches `:visited` by
+the state (`matching_for_invalidation`; WPT `link-pseudo-in-has`). Highlight pseudo-elements of a visited link:
+`::selection` is computed lazily with it taken as visited (blitz-paint `highlight.rs`), lazy probes keep a style
+whose rules match only as visited (stylo `lazy_pseudo_rules`), and `style_declares` reads the visited style's rules
+for the visited-dependent colours (WPT css-pseudo `selection-link-001`, `target-text-008`). The state is decided when the element is created or its `href` changes, not again when `pushState` changes
 the document's URL. Tests: `a_link_to_the_document_itself_is_visited` in pyro-render's `background_images_and_edges.rs`,
 `a_link_to_the_document_is_a_link_and_unvisited_inside_has` in `src/stylo.rs`.
 

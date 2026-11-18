@@ -195,16 +195,40 @@ impl BaseDocument {
         style: &style::properties::ComputedValues,
         longhands: &[style::properties::LonghandId],
     ) -> bool {
+        use style::computed_value_flags::ComputedValueFlags;
+        use style::properties::LonghandId as L;
+        let guard = self.guard.read();
+        // pyro: a visited link's visited-dependent colours come from its visited style, whose
+        // rules (`:visited` ones) declare them too.
+        let visited = style
+            .visited_style()
+            .filter(|_| style.flags.contains(ComputedValueFlags::IS_RELEVANT_LINK_VISITED));
+        longhands.iter().any(|&longhand| {
+            let dependent = matches!(
+                longhand,
+                L::Color | L::BackgroundColor | L::TextDecorationColor | L::TextEmphasisColor | L::OutlineColor
+                    | L::CaretColor | L::Fill | L::Stroke
+            );
+            let rule_sets = std::iter::once(style).chain(visited.filter(|_| dependent));
+            rule_sets.into_iter().any(|style| self.rules_declare(&guard, style, longhand))
+        })
+    }
+
+    fn rules_declare(
+        &self,
+        guard: &style::shared_lock::SharedRwLockReadGuard,
+        style: &style::properties::ComputedValues,
+        longhand: style::properties::LonghandId,
+    ) -> bool {
         use style::properties::{CSSWideKeyword, PropertyDeclaration, PropertyDeclarationId};
         use style::stylesheets::Origin;
-        let guard = self.guard.read();
-        longhands.iter().any(|&longhand| {
+        {
             for node in style.rules().self_and_ancestors() {
                 if node.cascade_level().origin().origin() == Origin::UserAgent {
                     continue;
                 }
                 let Some(source) = node.style_source() else { continue };
-                let Some((declaration, _)) = source.read(&guard).get(PropertyDeclarationId::Longhand(longhand)) else {
+                let Some((declaration, _)) = source.read(guard).get(PropertyDeclarationId::Longhand(longhand)) else {
                     continue;
                 };
                 return match declaration {
@@ -217,7 +241,7 @@ impl BaseDocument {
                 };
             }
             false
-        })
+        }
     }
 
     /// pyro: the replaced elements the selection holds, painted with its tint from now on.

@@ -1244,6 +1244,14 @@ impl<'a, 'b: 'a> StyleAdjuster<'a, 'b> {
             self.adjust_for_webkit_box_child(layout_parent_style);
         }
         self.adjust_for_links(element);
+        // pyro: the colours of a visited link come from its visited style (only the
+        // visited-dependent properties; `StyleBuilder::pyro_take_visited_dependent`).
+        #[cfg(feature = "servo")]
+        if self.style.flags.get().contains(ComputedValueFlags::IS_RELEVANT_LINK_VISITED) {
+            if let Some(visited) = self.style.visited_style.clone() {
+                self.style.pyro_take_visited_dependent(&visited);
+            }
+        }
         self.adjust_for_prohibited_display_contents(element);
         #[cfg(feature = "gecko")]
         {
