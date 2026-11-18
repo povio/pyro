@@ -19,8 +19,9 @@ export const PAINT_DIRS = [
 // css/css-cascade: 106 pages (cascade layers, @scope, revert). Their reftests run in LAYOUT_DIRS too. trusted-types:
 // 207 pages (policies, HTML/script/attribute sinks, eval and Function with JSC patch 0035, violation reports; lane
 // F3a), less the pages in TESTHARNESS_SKIP. navigation-api: the Navigation API (lane F3b), less its pages that time
-// out (TESTHARNESS_SKIP).
-export const FEATURE_DIRS = ['custom-elements', 'css/css-font-loading', 'css/css-typed-om', 'html/semantics/embedded-content/the-object-element', 'intersection-observer', 'workers', 'scroll-animations', 'css/css-scroll-snap', 'css/css-shapes', 'html/semantics/forms', 'css/cssom', 'css/css-cascade', 'trusted-types', 'navigation-api'];
+// out (TESTHARNESS_SKIP). html/semantics/embedded-content/the-embed-element (14 pages) and the-iframe-element (117):
+// nested browsing contexts of <iframe>, <object> and <embed> (lane F3a).
+export const FEATURE_DIRS = ['custom-elements', 'css/css-font-loading', 'css/css-typed-om', 'html/semantics/embedded-content/the-object-element', 'intersection-observer', 'workers', 'scroll-animations', 'css/css-scroll-snap', 'css/css-shapes', 'html/semantics/forms', 'css/cssom', 'css/css-cascade', 'trusted-types', 'navigation-api', 'html/semantics/embedded-content/the-embed-element', 'html/semantics/embedded-content/the-iframe-element'];
 export const DEFAULT_DIRS = [
   'dom', 'html/dom', 'encoding', 'url', 'fetch/api/basic', 'xhr', 'css/selectors', 'uievents', 'shadow-dom', 'webstorage',
   ...PAINT_DIRS,
@@ -178,6 +179,8 @@ const NAVIGATION_API_SKIP = [
   ['navigation-api/per-entry-events/dispose-for-navigation-in-sibling-detach-frame.html', NAV_DETACH],
 ].map(([path, why]) => ({ path, why }));
 TESTHARNESS_SKIP.push(...NAVIGATION_API_SKIP);
+//   html/semantics/embedded-content/the-iframe-element/: waits for a sandboxed frame's video to fire `play` (autoplay).
+TESTHARNESS_SKIP.push({ path: 'html/semantics/embedded-content/the-iframe-element/sandbox_002.htm', why: 'needs media playback (autoplay play event)' });
 
 // Every testharness page under `dirs` that our static server can run, one entry per variant.
 // `excluded` counts what was left out and why (identical for every binary).
