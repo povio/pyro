@@ -1679,6 +1679,18 @@ pub(crate) fn navigation_module<'s>(s: &Scope<'s>, nav: &Rc<PageNav>) -> JsResul
         }
         Ok(s.array(&values)?.value())
     });
+    // active() -> whether the document is fully active (its frame not
+    // removed, not navigated away): the methods reject InvalidStateError
+    // otherwise.
+    {
+        let with_nav = with_nav.clone();
+        let f = s.function("active", move |s, _this, _a| {
+            let active =
+                with_nav().ok().is_some_and(|nav| nav.page_dom.borrow().upgrade().is_some_and(|p| p.is_fully_active()));
+            Ok(s.boolean(active))
+        })?;
+        natives.set_atom("active", f.value())?;
+    }
     // resolve(url) -> the absolute URL, or SyntaxError.
     native!("resolve", |s, nav, a| Ok(s.string(parse(&nav, a.get(0))?.as_str())));
     // navigate(url, replace, stateJSON?) -> whether it stayed in the

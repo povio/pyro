@@ -301,18 +301,21 @@
   let lastEntry = null;
   const pendingTraversals = [];
 
+  // HTML "abort the ongoing navigation" / "reject the finished promise":
+  // `navigateerror` fires while `navigation.transition` is still this one,
+  // then the transition's `finished` rejects and it is cleared.
   const fail = (o, error) => {
     if (ongoing === o) ongoing = null;
-    if (o.transition !== null) {
-      if (transition === o.transition) transition = null;
-      o.transitionFinished.reject(error);
-    }
     if (!o.controller.signal.aborted) o.controller.abort(error);
     const ev = new ErrorEventC('navigateerror', { error, message: error && error.message !== undefined ? String(error.message) : String(error) });
     dispatch.call(navigation, ev);
     if (o.result !== null) {
       o.result.committed.reject(error);
       o.result.finished.reject(error);
+    }
+    if (o.transition !== null) {
+      o.transitionFinished.reject(error);
+      if (transition === o.transition) transition = null;
     }
   };
 
@@ -387,10 +390,13 @@
       () => {
         if (ongoing !== o) return;
         ongoing = null;
-        if (o.transition !== null && transition === o.transition) transition = null;
+        // HTML: `navigatesuccess` fires with `navigation.transition` still
+        // set; then the method's and the transition's `finished` resolve and
+        // the transition is cleared.
         dispatch.call(navigation, new EventC('navigatesuccess'));
-        if (o.transitionFinished !== null) o.transitionFinished.resolve();
         if (o.result !== null) o.result.finished.resolve(entry);
+        if (o.transitionFinished !== null) o.transitionFinished.resolve();
+        if (o.transition !== null && transition === o.transition) transition = null;
       },
       (error) => {
         if (ongoing === o) fail(o, error);
@@ -426,6 +432,7 @@
   };
 
   const traverse = (key, info) => {
+    if (!native.active()) return rejectedResult(invalidState('The document is not fully active.'));
     const answer = native.traverse(key);
     if (answer === 'missing') {
       return rejectedResult(invalidState("Failed to execute 'traverseTo' on 'Navigation': Invalid key"));
@@ -492,6 +499,7 @@
       if (target.startsWith('javascript:')) {
         return rejectedResult(new DOMExceptionC('A navigation to a javascript: URL cannot be done with navigation.navigate().', 'NotSupportedError'));
       }
+      if (!native.active()) return rejectedResult(invalidState("Failed to execute 'navigate' on 'Navigation': The document is not fully active."));
       const replace = history === 'replace' || (history === 'auto' && target === location.href);
       return start(replace ? 'replace' : 'push', target, options.info, state);
     }
@@ -503,17 +511,20 @@
       } catch (e) {
         return rejectedResult(e);
       }
+      if (!native.active()) return rejectedResult(invalidState("Failed to execute 'reload' on 'Navigation': The document is not fully active."));
       return start('reload', location.href, options.info, state);
     }
     traverseTo(key, options) {
       return traverse(String(key), (options ?? {}).info);
     }
     back(options) {
+      if (!native.active()) return rejectedResult(invalidState("Failed to execute 'back' on 'Navigation': The document is not fully active."));
       const { index, list } = snapshot();
       if (index <= 0) return rejectedResult(invalidState("Failed to execute 'back' on 'Navigation': Cannot go back."));
       return traverse(list[index - 1].key, (options ?? {}).info);
     }
     forward(options) {
+      if (!native.active()) return rejectedResult(invalidState("Failed to execute 'forward' on 'Navigation': The document is not fully active."));
       const { index, list } = snapshot();
       if (index < 0 || index >= list.length - 1) {
         return rejectedResult(invalidState("Failed to execute 'forward' on 'Navigation': Cannot go forward."));
