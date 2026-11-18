@@ -10,10 +10,18 @@ name: WPT full
 # Sizes at a421f2fe (coverage.json, local samples): ~31,700 testharness pages at ~1.06 s, ~28,200 reftests at ~0.7 s,
 # ~2,100 crashtests; about 15 h of page time, 2 h on lp-m1's two machines at 4 jobs each, hence nightly rather
 # than every push.
+#
+# It must not starve the pull request runs (wpt.yml), which share lp-m1's two machines:
+# - It starts at 03:07 UTC, the quietest hour in the run history (2026-11-13..18: no other workflow started between
+#   03:00 and 04:00 on four of six days; 01:17 overlapped late pushes and blocked a pull request run for 2 h).
+# - Its shards run one at a time (max-parallel: 1), so one lp-m1 machine always stays free for other jobs.
+# - The shards are small (15 of them, about 15 minutes each): GitHub hands a free runner to the job that has waited
+#   longest, so a pull request job queued meanwhile goes before the next shard, which is how the nightly yields.
+# About 4 h in all, done before the working day's pushes start (07:00 UTC).
 
 on:
   schedule:
-    - cron: '17 1 * * *'
+    - cron: '7 3 * * *'
   workflow_dispatch:
     inputs:
       runner:
@@ -41,9 +49,11 @@ permissions:
   contents: read
   actions: read
 
+# A pull request's new push cancels its smoke run; a nightly or manual run is never cancelled by the next one (the
+# 2026-11-17 manual run was cancelled by the schedule): the next waits.
 concurrency:
   group: wpt-full-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   # The newest main build's browser (wpt.yml uploads it as `wpt-browser` when its build job runs).
@@ -116,18 +126,27 @@ jobs:
     needs: prepare
     if: github.event_name != 'pull_request'
     runs-on: ${{ needs.prepare.outputs.runner }}
-    timeout-minutes: 180
+    timeout-minutes: 90
     strategy:
       fail-fast: false
+      # One shard at a time, so it never holds both lp-m1 machines (see the top of this file).
+      max-parallel: 1
       matrix:
         include:
-          - { kind: testharness, shard: 0, of: 4 }
-          - { kind: testharness, shard: 1, of: 4 }
-          - { kind: testharness, shard: 2, of: 4 }
-          - { kind: testharness, shard: 3, of: 4 }
-          - { kind: reftest, shard: 0, of: 3 }
-          - { kind: reftest, shard: 1, of: 3 }
-          - { kind: reftest, shard: 2, of: 3 }
+          - { kind: testharness, shard: 0, of: 8 }
+          - { kind: testharness, shard: 1, of: 8 }
+          - { kind: testharness, shard: 2, of: 8 }
+          - { kind: testharness, shard: 3, of: 8 }
+          - { kind: testharness, shard: 4, of: 8 }
+          - { kind: testharness, shard: 5, of: 8 }
+          - { kind: testharness, shard: 6, of: 8 }
+          - { kind: testharness, shard: 7, of: 8 }
+          - { kind: reftest, shard: 0, of: 6 }
+          - { kind: reftest, shard: 1, of: 6 }
+          - { kind: reftest, shard: 2, of: 6 }
+          - { kind: reftest, shard: 3, of: 6 }
+          - { kind: reftest, shard: 4, of: 6 }
+          - { kind: reftest, shard: 5, of: 6 }
           - { kind: crashtest, shard: 0, of: 1 }
     steps:
       - uses: actions/checkout@v6
