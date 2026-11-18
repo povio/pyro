@@ -1116,7 +1116,17 @@ impl JsClass for Element {
         // CSS Typed OM: the element's computed values as a StylePropertyMapReadOnly.
         def.method("computedStyleMap", 0, |s, n, _a| {
             let el = crate::node::wrap_node(s, n.page(), n.id)?.value();
-            crate::typed_om::computed_style_map(s, n.page(), el)
+            // The computed (not resolved) value of a property, from the style engine.
+            let (page, id) = (n.page().clone(), n.id);
+            let get = s.function("computedValue", move |s, _this, a| {
+                let name = crate::util::dom_string(a.get(0))?;
+                let (Ok(layout), Ok(dom)) = (page.layout.try_borrow(), page.dom.try_borrow()) else { return Ok(s.null()) };
+                Ok(match layout.style().computed_value(&dom, id, &name) {
+                    Some(v) if !v.is_empty() => s.string(&v),
+                    _ => s.null(),
+                })
+            })?;
+            crate::typed_om::computed_style_map(s, n.page(), el, get.value())
         });
         def.pure_getter_typed("tagName", pyro_js::GetterResult::String, |s, n| {
             let dom = n.page().dom.borrow();

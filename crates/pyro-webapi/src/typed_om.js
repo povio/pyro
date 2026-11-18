@@ -1308,10 +1308,13 @@
   };
   const attributeStyleMap = (el) => declarationMap(declOf(el));
   // `element.computedStyleMap()`: the element's computed values (`getComputedStyle`).
-  const computedStyleMap = (el) => {
+  const RESOLVED = /^((min-|max-)?(width|height|inline-size|block-size)|(margin|padding|inset)(-(top|right|bottom|left|block|inline|block-start|block-end|inline-start|inline-end))?|top|right|bottom|left)$/;
+  const computedStyleMap = (el, computedValue) => {
     const cs = () => getComputedStyle(el);
     return new StylePropertyMapReadOnly(ILLEGAL, {
-      get: (name) => cs().getPropertyValue(name),
+      // Computed values: for the properties whose getComputedStyle value is a resolved (used) one,
+      // the style engine's computed value; getComputedStyle's for the rest.
+      get: (name) => (RESOLVED.test(name) ? computedValue(name) : null) ?? cs().getPropertyValue(name),
       names: () => {
         const s = cs();
         const names = [];

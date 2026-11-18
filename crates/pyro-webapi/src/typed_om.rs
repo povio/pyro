@@ -87,8 +87,13 @@ pub(crate) fn declaration_map<'s>(s: &Scope<'s>, page: &Rc<PageDom>, style: Valu
 }
 
 /// `element.computedStyleMap()`.
-pub(crate) fn computed_style_map<'s>(s: &Scope<'s>, page: &Rc<PageDom>, element: Value<'s>) -> JsResult<Value<'s>> {
-    MODULE.helper(s, page, "computedStyleMap", &[element])
+pub(crate) fn computed_style_map<'s>(
+    s: &Scope<'s>,
+    page: &Rc<PageDom>,
+    element: Value<'s>,
+    computed_value: Value<'s>,
+) -> JsResult<Value<'s>> {
+    MODULE.helper(s, page, "computedStyleMap", &[element, computed_value])
 }
 
 fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
