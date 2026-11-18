@@ -1902,6 +1902,12 @@ impl JsClass for Document {
         });
         def.method("elementFromPoint", 2, crate::html::element_from_point);
         def.method("elementsFromPoint", 2, crate::html::elements_from_point);
+        def.method("startViewTransition", 0, |s, n, a| {
+            let doc = wrap_node(s, n.page(), n.id)?.value();
+            let root = n.page().dom.borrow().document_element(n.id).js()?;
+            let root = node_value(s, n.page(), root)?;
+            crate::view_transition::start(s, n.page(), doc, root, a.get(0))
+        });
         def.method("getSelection", 0, |s, _n, _a| {
             s.global().get_atom("getSelection")?.as_object().map_or(Ok(s.null()), |f| f.call(None, &[]))
         });

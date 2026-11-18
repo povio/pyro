@@ -46,6 +46,7 @@ pub mod formdata;
 pub mod handlers;
 pub mod headers;
 pub mod highlights;
+pub mod view_transition;
 pub mod html;
 pub mod identity;
 mod image_decode;
