@@ -207,3 +207,39 @@ fn document_domain_is_origin_keyed() {
         "a.example.com|ok|a.example.com|ok|SecurityError|SecurityError|SecurityError|SecurityError"
     );
 }
+
+/// Trusted Types, script sinks: with `require-trusted-types-for 'script'`, a `<script>`'s text
+/// (`text`, `textContent`, `innerText`) takes TrustedScript, its `src` TrustedScriptURL, and
+/// `setAttribute` of an event handler content attribute, `iframe srcdoc` or `script src` the
+/// matching type, else what the default policy makes of the string (a TypeError without one).
+#[test]
+fn trusted_types_script_and_attribute_sinks() {
+    let env = Env::new("http://svg.test/");
+    env.page.dom.borrow_mut().set_resource_tracking(true);
+    assert_eq!(
+        env.eval(
+            r#"(() => {
+              const meta = document.createElement("meta");
+              meta.setAttribute("http-equiv", "Content-Security-Policy");
+              meta.setAttribute("content", "require-trusted-types-for 'script'");
+              document.head.appendChild(meta);
+              const out = [];
+              const t = f => { try { f(); return "ok"; } catch (e) { return e.name; } };
+              const s = document.createElement("script");
+              const d = document.createElement("div");
+              out.push(t(() => s.text = "1"), t(() => s.textContent = "1"), t(() => s.innerText = "1"), t(() => s.src = "/x.js"));
+              out.push(t(() => d.setAttribute("onclick", "x()")), t(() => d.setAttribute("title", "free")), t(() => document.createElement("iframe").setAttribute("srcdoc", "<p>")));
+              const p = trustedTypes.createPolicy("p", { createScript: v => v, createScriptURL: v => v });
+              s.text = p.createScript("a = 1");
+              d.setAttribute("onclick", p.createScript("b()"));
+              s.src = p.createScriptURL("/y.js");
+              out.push(s.text, d.getAttribute("onclick"), s.getAttribute("src"));
+              trustedTypes.createPolicy("default", { createScript: (v, type, sink) => v + "//" + type + "|" + sink });
+              s.textContent = "c";
+              out.push(s.textContent);
+              return out.join("|");
+            })()"#
+        ),
+        "TypeError|TypeError|TypeError|TypeError|TypeError|ok|TypeError|a = 1|b()|/y.js|c//TrustedScript|HTMLScriptElement textContent"
+    );
+}

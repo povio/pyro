@@ -1533,7 +1533,11 @@ simple_class!(HtmlStyleElement, "HTMLStyleElement", HtmlElement, |def| {
 });
 simple_class!(HtmlScriptElement, "HTMLScriptElement", HtmlElement, |def| {
     reflect_tokens!(def, "blocking", "blocking");
-    reflect_url!(def, "src", "src");
+    // `src` reflects its URL; setting it is a Trusted Types sink (TrustedScriptURL).
+    def.pure_accessor_typed("src", pyro_js::GetterResult::String, reflect_url!(@get "src"), |s, n, v| {
+        let url = crate::trusted_types::compliant_string(s, n.page(), crate::trusted_types::Kind::ScriptUrl, v, "HTMLScriptElement src", false)?;
+        n.page().dom.borrow_mut().set_attribute(n.id, "src", &url).js()
+    });
     reflect_str!(def, "type", "type");
     reflect_str!(def, "charset", "charset");
     reflect_cors!(def, "crossOrigin", "crossorigin");
@@ -1559,8 +1563,8 @@ simple_class!(HtmlScriptElement, "HTMLScriptElement", HtmlElement, |def| {
     def.accessor(
         "text",
         |s, n| Ok(s.string(&n.page().dom.borrow().script_info(n.id).js()?.inline_text)),
-        |_s, n, v| {
-            let arg0 = dom_string(v)?;
+        |s, n, v| {
+            let arg0 = crate::trusted_types::compliant_string(s, n.page(), crate::trusted_types::Kind::Script, v, "HTMLScriptElement text", false)?;
             n.page().dom.borrow_mut().set_text_content(n.id, &arg0).js()
         },
     );

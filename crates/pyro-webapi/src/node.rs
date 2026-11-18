@@ -424,7 +424,7 @@ impl JsClass for Node {
                 let dom = n.page().dom.borrow();
                 Ok(dom.text_content_ref(n.id).js()?.map_or(s.null(), |t| s.string(&t)))
             },
-            |_s, n, v| {
+            |s, n, v| {
                 // `DOMString?`: undefined converts to null, which sets "".
                 // The value converts first (an object's toString runs before
                 // the blur, as in the spec), then a focused element inside
@@ -434,6 +434,11 @@ impl JsClass for Node {
                 // GC can then free the old one.
                 let blur = || crate::input::blur_before_removal(n.page(), n.id, true);
                 let set = |text: &str| n.page().dom.borrow_mut().set_text_content(n.id, text).js();
+                // A `<script>`'s text is a Trusted Types sink when the document requires them.
+                if crate::trusted_types::requires_for_script(n.page()) && crate::trusted_types::is_html_script(n.page(), n.id) {
+                    let text = crate::trusted_types::compliant_string(s, n.page(), crate::trusted_types::Kind::Script, v, "HTMLScriptElement textContent", true)?;
+                    return set(&text);
+                }
                 // A string (the usual value) needs no nullish test first.
                 if v.is_string() {
                     blur();
@@ -1285,9 +1290,12 @@ impl JsClass for Element {
         });
         def.method("setAttribute", 2, |s, n, a| {
             a.require(2, "Element.setAttribute")?;
-            let (name, value) = (a.get(0), a.get(1));
+            let (name, value_arg) = (a.get(0), a.get(1));
             let name = n.page().names.arg(s, &name)?;
-            let value = str_of(&value)?;
+            let value = match crate::trusted_types::attribute_value(s, n.page(), n.id, &setattribute_local(n, name.text()), None, value_arg)? {
+                Some(trusted) => std::borrow::Cow::Owned(trusted),
+                None => str_of(&value_arg)?,
+            };
             match &name {
                 NameArg::Name(name) => n.page().dom.borrow_mut().set_attribute_named(n.id, name, &value),
                 NameArg::Text(name) => n.page().dom.borrow_mut().set_attribute(n.id, name, &value),
@@ -1301,7 +1309,11 @@ impl JsClass for Element {
             a.require(3, "Element.setAttributeNS")?;
             let ns = opt_dom_string(a.get(0))?;
             let name = dom_string(a.get(1))?;
-            let value = dom_string(a.get(2))?;
+            let local = name.rsplit(':').next().unwrap_or(&name).to_owned();
+            let value = match crate::trusted_types::attribute_value(s, n.page(), n.id, &local, ns.as_deref(), a.get(2))? {
+                Some(trusted) => trusted,
+                None => dom_string(a.get(2))?,
+            };
             n.page().dom.borrow_mut().set_attribute_ns(n.id, ns.as_deref(), &name, &value).js()?;
             if ns.is_none() {
                 crate::input::blur_if_focus_disabled(n.page(), n.id, &name);
@@ -2095,4 +2107,17 @@ fn registrable_domain_suffix_or_equal(host_suffix: &str, original: &str) -> bool
         return false;
     }
     true
+}
+
+/// The local name `setAttribute(name)` sets: `name` lowercased on an HTML element of an HTML
+/// document (DOM), else as given.
+fn setattribute_local<'a>(n: &NodeData, name: &'a str) -> std::borrow::Cow<'a, str> {
+    let dom = n.page().dom.borrow();
+    let html = dom.element(n.id).is_ok_and(|e| e.is_html())
+        && dom.node_document(n.id).ok().and_then(|d| dom.document_data(d).ok()).is_some_and(|d| d.kind == pyro_dom::DocumentKind::Html);
+    if html && name.bytes().any(|b| b.is_ascii_uppercase()) {
+        std::borrow::Cow::Owned(name.to_ascii_lowercase())
+    } else {
+        std::borrow::Cow::Borrowed(name)
+    }
 }

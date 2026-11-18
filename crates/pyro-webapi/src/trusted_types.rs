@@ -63,8 +63,14 @@ fn policies_of(page: &PageDom) -> Vec<String> {
 /// (HTML parsing, script text and URLs, `javascript:` navigation) then take Trusted Types values,
 /// or what the default policy makes of a string.
 pub(crate) fn requires_for_script(page: &PageDom) -> bool {
+    requires_for_script_in(page, page.document())
+}
+
+/// [`requires_for_script`] for the document `doc` (an element's node document, which an
+/// adopted element changed).
+pub(crate) fn requires_for_script_in(page: &PageDom, doc: pyro_dom::NodeId) -> bool {
     let dom = page.dom.borrow();
-    dom.trusted_types_policies(page.document()).iter().any(|policy| {
+    dom.trusted_types_policies(doc).iter().any(|policy| {
         policy.split(';').any(|directive| {
             let mut tokens = directive.split_ascii_whitespace();
             tokens.next().is_some_and(|d| d.eq_ignore_ascii_case("require-trusted-types-for"))
@@ -93,6 +99,65 @@ pub fn javascript_url_script(s: &Scope<'_>, page: &Rc<PageDom>, source: &str) ->
     }
 }
 
+/// Whether `el` is an HTML `<script>` (its text and `src` are Trusted Types sinks).
+pub(crate) fn is_html_script(page: &PageDom, el: pyro_dom::NodeId) -> bool {
+    page.dom.borrow().element(el).is_ok_and(|e| e.is_html() && &*e.name.local == "script")
+}
+
+/// Trusted Types "get Trusted Types-compliant attribute value": the kind an attribute of `el`
+/// takes and its sink name (an event handler content attribute of the element: TrustedScript,
+/// "Element onclick"; `iframe srcdoc`: TrustedHTML; HTML `script src` and SVG `script href`:
+/// TrustedScriptURL), `None` for any other. `local` is compared as given (setAttribute lowercases
+/// it first for an HTML element; setAttributeNS does not).
+pub(crate) fn attribute_kind(page: &PageDom, el: pyro_dom::NodeId, local: &str, ns: Option<&str>) -> Option<(Kind, String)> {
+    let dom = page.dom.borrow();
+    let e = dom.element(el).ok()?;
+    let tag = &*e.name.local;
+    let html = e.is_html();
+    let svg = e.namespace() == &markup5ever::ns!(svg);
+    let mathml = e.namespace() == &markup5ever::ns!(mathml);
+    match ns.filter(|ns| !ns.is_empty()) {
+        None if (html || svg || mathml) && !local.bytes().any(|b| b.is_ascii_uppercase()) && {
+            // The element's event handler content attributes: GlobalEventHandlers, and
+            // WindowEventHandlers on `<body>` and `<frameset>`.
+            let ty = local.strip_prefix("on").unwrap_or("");
+            crate::handlers::GLOBAL.contains(&ty)
+                || (html && matches!(tag, "body" | "frameset") && crate::handlers::WINDOW.contains(&ty))
+        } =>
+        {
+            Some((Kind::Script, format!("Element {local}")))
+        }
+        None if html && tag == "iframe" && local == "srcdoc" => Some((Kind::Html, "HTMLIFrameElement srcdoc".into())),
+        None if html && tag == "script" && local == "src" => Some((Kind::ScriptUrl, "HTMLScriptElement src".into())),
+        None if svg && tag == "script" && local == "href" => Some((Kind::ScriptUrl, "SVGScriptElement href".into())),
+        Some("http://www.w3.org/1999/xlink") if svg && tag == "script" && local == "href" => {
+            Some((Kind::ScriptUrl, "SVGScriptElement href".into()))
+        }
+        _ => None,
+    }
+}
+
+/// An attribute value set through `setAttribute`/`setAttributeNS`, made compliant when the
+/// attribute is a Trusted Types sink and the document requires Trusted Types.
+pub(crate) fn attribute_value(
+    s: &Scope<'_>,
+    page: &Rc<PageDom>,
+    el: pyro_dom::NodeId,
+    local: &str,
+    ns: Option<&str>,
+    value: Value<'_>,
+) -> JsResult<Option<String>> {
+    // The element's node document's policies (an adopted element follows its new document).
+    let Ok(doc) = page.dom.borrow().node_document(el) else { return Ok(None) };
+    if !requires_for_script_in(page, doc) {
+        return Ok(None);
+    }
+    match attribute_kind(page, el, local, ns) {
+        Some((kind, sink)) => compliant_string_in(s, page, doc, kind, value, &sink, false).map(Some),
+        None => Ok(None),
+    }
+}
+
 /// The Trusted Types a sink takes.
 #[derive(Clone, Copy)]
 pub(crate) enum Kind {
@@ -114,8 +179,21 @@ pub(crate) fn compliant_string(
     sink: &str,
     null_is_empty: bool,
 ) -> JsResult<String> {
+    compliant_string_in(s, page, page.document(), kind, value, sink, null_is_empty)
+}
+
+/// [`compliant_string`] under the policies of the document `doc`.
+pub(crate) fn compliant_string_in(
+    s: &Scope<'_>,
+    page: &Rc<PageDom>,
+    doc: pyro_dom::NodeId,
+    kind: Kind,
+    value: Value<'_>,
+    sink: &str,
+    null_is_empty: bool,
+) -> JsResult<String> {
     let plain = |value: Value<'_>| if null_is_empty { crate::util::null_to_empty(value) } else { crate::util::dom_string(value) };
-    if !requires_for_script(page) {
+    if !requires_for_script_in(page, doc) {
         return plain(value);
     }
     let module = MODULE.module(s, page)?;
