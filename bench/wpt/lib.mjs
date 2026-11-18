@@ -20,8 +20,10 @@ export const PAINT_DIRS = [
 // 207 pages (policies, HTML/script/attribute sinks, eval and Function with JSC patch 0035, violation reports; lane
 // F3a), less the pages in TESTHARNESS_SKIP. navigation-api: the Navigation API (lane F3b), less its pages that time
 // out (TESTHARNESS_SKIP). html/semantics/embedded-content/the-embed-element (14 pages) and the-iframe-element (117):
-// nested browsing contexts of <iframe>, <object> and <embed> (lane F3a).
-export const FEATURE_DIRS = ['custom-elements', 'css/css-font-loading', 'css/css-typed-om', 'html/semantics/embedded-content/the-object-element', 'intersection-observer', 'workers', 'scroll-animations', 'css/css-scroll-snap', 'css/css-shapes', 'html/semantics/forms', 'css/cssom', 'css/css-cascade', 'trusted-types', 'navigation-api', 'html/semantics/embedded-content/the-embed-element', 'html/semantics/embedded-content/the-iframe-element'];
+// nested browsing contexts of <iframe>, <object> and <embed> (lane F3a). html/webappapis: 312 pages without wptserve
+// (timers, atob, structured clone, event handlers, microtasks, document.open/write); html/semantics/scripting-1: 401
+// pages (script elements: types, execution order, modules, templates).
+export const FEATURE_DIRS = ['custom-elements', 'css/css-font-loading', 'css/css-typed-om', 'html/semantics/embedded-content/the-object-element', 'intersection-observer', 'workers', 'scroll-animations', 'css/css-scroll-snap', 'css/css-shapes', 'html/semantics/forms', 'css/cssom', 'css/css-cascade', 'trusted-types', 'navigation-api', 'html/semantics/embedded-content/the-embed-element', 'html/semantics/embedded-content/the-iframe-element', 'html/webappapis', 'html/semantics/scripting-1'];
 export const DEFAULT_DIRS = [
   'dom', 'html/dom', 'encoding', 'url', 'fetch/api/basic', 'xhr', 'css/selectors', 'uievents', 'shadow-dom', 'webstorage',
   ...PAINT_DIRS,

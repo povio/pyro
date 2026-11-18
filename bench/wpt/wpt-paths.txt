@@ -20,6 +20,8 @@ html/semantics/embedded-content/the-object-element/
 html/semantics/embedded-content/the-embed-element/
 html/semantics/embedded-content/the-iframe-element/
 html/semantics/forms/
+html/webappapis/
+html/semantics/scripting-1/
 # css/cssom/ and css/css-cascade/ (also feature directories) are checked out with the layout directories below.
 intersection-observer/
 workers/
@@ -89,9 +91,11 @@ images/
 interfaces/
 fetch/api/resources/
 html/resources/
-# workers/semantics/structured-clone/*.html and workers/*-in-data-url-context (feature dir workers):
-html/webappapis/structured-clone/
+# workers/semantics/structured-clone/*.html and workers/*-in-data-url-context (feature dir workers; they also load
+# html/webappapis/structured-clone/, checked out with html/webappapis/ above):
 service-workers/service-worker/resources/
+# html/webappapis/atob/base64.any.js:
+fetch/data-urls/resources/base64.json
 # scroll-animations/scroll-timelines/scroll-timeline-snapshotting.html, custom-elements/form-associated/form-disabled-callback.html:
 css/css-scroll-snap/support/
 html/semantics/forms/form-submission-0/resources/
