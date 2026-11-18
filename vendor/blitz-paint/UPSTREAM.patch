@@ -8265,12 +8265,12 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +            }
 +        }
 +        // pyro: highlighted as on horizontal lines (`highlight`: the `::selection` style, the
-+        // originating text's shadows under it), but in lines cut by an ellipsis and in upright
-+        // text (whose glyphs leave the layout's inline positions); a recording paint draws none.
++        // originating text's shadows under it), but in lines cut by an ellipsis; a recording
++        // paint draws none. Upright text too: its glyphs keep their layout advances (parley
++        // `shape::upright`; WPT css-pseudo `active-selection-031`).
 +        let highlight = self.context.highlight_ranges.get(&self.node.id).filter(|_| {
 +            text_layout.ellipsis.is_none()
 +                && text_layout.clamp.is_none()
-+                && !all_upright
 +                && self.context.draw_text_context.borrow().runs.is_none()
 +        });
 +        if let (Some(&(sel_start, sel_end)), None) = (self.context.selection_ranges.get(&self.node.id), highlight) {

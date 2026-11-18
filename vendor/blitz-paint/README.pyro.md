@@ -1076,3 +1076,4 @@ frame's whole transform, clipped to the content box (upstream applied the transl
 - Round 4 lane F, `highlight.rs`: a visited link's selection style comes from `selection_pseudo_style` (none when only `:link` rules matched). `render.rs`: `image(<color>)` list markers fill their box with the colour.
 - Round 4 lane F, `render.rs`/`highlight.rs`: a text control's selection paints in its `::selection` colours (`control_selection_colors`: background, and the selected text redrawn in the highlight colour inside the selection, the rest outside it), not the fixed light blue (WPT css-pseudo `selection-textarea-011`).
 - Round 4 lane F, `render.rs`: an inline `<svg>` with selected text paints `inline_svg_with_selection`'s source (not in recording paints).
+- Round 4 lane F, `render.rs`: upright vertical lines take the highlight path too (`::selection` colours; WPT css-pseudo `active-selection-031`).
