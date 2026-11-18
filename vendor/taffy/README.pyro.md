@@ -676,3 +676,7 @@ item without its content-based height (no definite basis or height, no growing) 
   physical left (line-under).
 - Flexbox: `baseline` items in an rtl column share a baseline at their line-left edges, their group at the cross
   start (`max_baseline_cross` in `align_flex_items_along_cross_axis`; WPT `flexbox-align-self-vert-rtl-001..003,005`).
+- `compute/grid/track_sizing.rs` (`track_sizing_algorithm`, round 4 lane G): a percentage gutter resolves against the
+  container's size alone; track percentages keep the minimum size as a fallback basis. While an inline grid with
+  only a `min-width` sizes itself its percentage gap counts as zero, then overflows (Chromium, measured; WPT css-grid
+  `subgrid/grid-gap-003`; `crates/pyro-render/tests/subgrid_edge_tracks.rs`).

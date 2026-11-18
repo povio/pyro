@@ -125,3 +125,17 @@ fn subgrid_in_both_axes_item_is_measured_against_its_parents_rows() {
     );
     assert_eq!(pixel(&img, 60, 10), BLUE, "the grid is wider than one 25px column");
 }
+
+/// A grid's percentage column gap resolves against its width alone, not its minimum: an inline grid
+/// with `min-width: 10px` sizes its two 20px columns as 40px (Chromium; a 20% gap of the minimum
+/// would add 2px), and its gap of 8px then overflows (WPT css-grid `subgrid/grid-gap-003`).
+#[test]
+fn percentage_gap_ignores_the_grid_minimum_width() {
+    let img = render(
+        "<div style='display:inline-grid;grid-template-columns:auto auto;column-gap:20%;min-width:10px;background:blue'>\
+           <i style='display:block;width:20px;height:10px'></i><i style='display:block;width:20px;height:10px'></i>\
+         </div>",
+    );
+    assert_eq!(pixel(&img, 39, 5), BLUE);
+    assert_eq!(pixel(&img, 41, 5), WHITE, "the grid is 40px wide");
+}
