@@ -362,6 +362,15 @@ async function worker() {
     catch (e) {
       r = { status: 'error', error: String(e.message ?? e).split('\n')[0].slice(0, 200) };
       await resetSlot(slot);
+      // The browser's connection to the wptserve proxy wedged (seen once in a nightly: 88 pages in a row failed with
+      // ERR_PROXY_CONNECTION_FAILED after an EventSource page, until the browser was replaced): replace it now and run
+      // the page again, as for a browser lost under the page.
+      if (gen === generation && /ERR_PROXY_CONNECTION_FAILED/.test(r.error)) {
+        console.error(`${LABEL}: ${t.url}: proxy connection failed; replacing the browser`);
+        restarts++;
+        killBrowser();
+        await restartBrowser(gen);
+      }
       const lost = gen !== generation || /ECONNREFUSED|has been closed/.test(r.error);
       // Whether this page's browser died (or was replaced): a lost connection can arrive before its exit does.
       const died = gen !== generation || (lost ? await exited(child) : child.exitCode != null || !!child.signalCode);

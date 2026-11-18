@@ -41,9 +41,11 @@ permissions:
   contents: read
   actions: read
 
+# A pull request's new push cancels its smoke run. Scheduled and manual runs queue behind a running one instead (the
+# 01:17 nightly used to cancel a manual run 4 h in); a third run replaces the queued one.
 concurrency:
   group: wpt-full-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   # The newest main build's browser (wpt.yml uploads it as `wpt-browser` when its build job runs).
@@ -164,19 +166,38 @@ jobs:
           read -r -a extra <<< "$RUNNER_ARGS"
           rerun=(--no-rerun)
           if [ "$RERUNS" = true ]; then rerun=(); fi
+          # Pages side by side: testharness pages mostly wait (timers, timeouts; the browser used 12-14% of one core at
+          # --jobs 4 in the first nightly, ~1 h per shard), so 16; reftests and crashtests render, one per CPU.
+          jobs=$(sysctl -n hw.ncpu)
+          if [ ${{ matrix.kind }} = testharness ]; then jobs=16; fi
           # No baseline yet for the whole suite (a missing --baseline file): every page runs as in a full run.
           bun bench/wpt/gate.mjs run --kind ${{ matrix.kind }} "${extra[@]}" --wpt wpt-full --bin browser/pyro \
-            --server wptserve --testdriver --dirs all --baseline full-baseline-none.json --jobs 4 \
+            --server wptserve --testdriver --dirs all --baseline full-baseline-none.json --jobs "$jobs" \
             --shard ${{ matrix.shard }}/${{ matrix.of }} "${rerun[@]}" --out "$OUT" --no-check
           gzip -9 "$OUT"
+      # Twice: GitHub's artifact service timed out on reftest shard 0's upload in the first nightly (5 attempts in
+      # 50 s), which lost the shard's 12 minutes of results.
       - uses: actions/upload-artifact@v4
+        id: upload
         if: ${{ !cancelled() }}
+        continue-on-error: true
         with:
           name: wpt-full-${{ matrix.kind }}-${{ matrix.shard }}
           path: wpt-full-${{ matrix.kind }}-${{ matrix.shard }}.json.gz
           if-no-files-found: error
           retention-days: 30
           compression-level: 0
+      - if: ${{ !cancelled() && steps.upload.outcome == 'failure' }}
+        run: sleep 60
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && steps.upload.outcome == 'failure' }}
+        with:
+          name: wpt-full-${{ matrix.kind }}-${{ matrix.shard }}
+          path: wpt-full-${{ matrix.kind }}-${{ matrix.shard }}.json.gz
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+          overwrite: true
 
   # Every shard's results in one artifact, and a summary per kind.
   results:
