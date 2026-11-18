@@ -118,6 +118,35 @@ pub struct SvgImageData {
     pub viewport_dependent: bool,
 }
 
+/// pyro: an SVG image's source with its root `<svg>`'s CSS background colour (a `background` or
+/// `background-color` declaration of its `style` attribute) drawn as a full-size `<rect>` under its
+/// content: an image's root element paints its background over the whole canvas, which usvg does
+/// not (WPT css-ui `box-sizing-*`, whose images are only that). `None` when there is none.
+fn root_background_painted(text: &str, doc: &roxmltree::Document) -> Option<String> {
+    let root = doc.root_element();
+    let style = root.attribute("style")?;
+    let color = style.split(';').find_map(|declaration| {
+        let (name, value) = declaration.split_once(':')?;
+        let name = name.trim();
+        (name.eq_ignore_ascii_case("background") || name.eq_ignore_ascii_case("background-color"))
+            .then(|| value.trim())
+            .filter(|value| value.parse::<svgtypes::Color>().is_ok())
+    })?;
+    // Under the first child (an empty root has nothing to paint over the background anyway; the
+    // background alone is then inserted before the closing tag).
+    let at = match root.first_child() {
+        Some(child) => child.range().start,
+        None => {
+            let end = root.range().end;
+            let closing = text[..end].rfind("</")?;
+            if closing <= root.range().start { return None; }
+            closing
+        }
+    };
+    let rect = format!("<rect xmlns=\"http://www.w3.org/2000/svg\" width=\"100%\" height=\"100%\" fill=\"{}\"/>", color.replace('"', ""));
+    Some(format!("{}{}{}", &text[..at], rect, &text[at..]))
+}
+
 impl SvgImageData {
     /// Parse an SVG image from raw data, capturing both the rendered
     /// [`usvg::Tree`] and the declared root dimensions from a single XML
@@ -142,8 +171,21 @@ impl SvgImageData {
         };
         let doc = roxmltree::Document::parse_with_options(text, xml_options)
             .map_err(usvg::Error::ParsingFailed)?;
-        let intrinsic_dimensions = SvgIntrinsicDimensions::from_xmltree(&doc);
-        let tree = match usvg::Tree::from_xmltree(&doc, options) {
+        // pyro: the root's CSS background paints the image's canvas (usvg draws none).
+        let with_background = root_background_painted(text, &doc);
+        let parsed;
+        let (text, doc) = match &with_background {
+            Some(source) => {
+                let xml_options = roxmltree::ParsingOptions { allow_dtd: true, ..Default::default() };
+                parsed = roxmltree::Document::parse_with_options(source, xml_options)
+                    .map_err(usvg::Error::ParsingFailed)?;
+                (source.as_str(), &parsed)
+            }
+            None => (text, &doc),
+        };
+        let doc = doc;
+        let intrinsic_dimensions = SvgIntrinsicDimensions::from_xmltree(doc);
+        let tree = match usvg::Tree::from_xmltree(doc, options) {
             Ok(tree) => tree,
             // pyro: a root `width` or `height` of zero is a natural size of zero, not an invalid image
             // (browsers lay it out at that size, its `viewBox` ratio kept, and draw its content in the box

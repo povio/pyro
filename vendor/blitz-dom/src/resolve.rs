@@ -829,6 +829,20 @@ impl BaseDocument {
         let border_box = Rect::new(0.0, 0.0, size.width as f64 * scale, size.height as f64 * scale);
         let mut out = overflow.union(border_box);
         if let Some(style) = self.nodes[node_id].primary_styles() {
+            // pyro: layout containment makes the box's overflowing contents ink overflow, and paint
+            // containment clips them: neither reaches an ancestor's scrollable overflow (CSS Contain
+            // 2 § 3.2, § 3.4; Taffy's `compute_scrollable_overflow_contribution` agrees). WPT
+            // css-contain `contain-layout-ink-overflow-*`.
+            use style::values::specified::box_::Contain;
+            if style.get_box().slow_clone_contain().intersects(Contain::LAYOUT | Contain::PAINT)
+                && !{
+                    use style::values::specified::box_::{DisplayInside, DisplayOutside};
+                    let display = style.clone_display();
+                    display.outside() == DisplayOutside::Inline && display.inside() == DisplayInside::Flow
+                }
+            {
+                return border_box;
+            }
             let (x, y) = (style.clone_overflow_x() != Overflow::Visible, style.clone_overflow_y() != Overflow::Visible);
             if (x || y) && !self.body_overflow_goes_to_viewport(node_id) {
                 if x {

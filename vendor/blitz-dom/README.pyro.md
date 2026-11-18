@@ -2763,3 +2763,14 @@ Covered by `an_rtl_span_in_an_ltr_line_contains_by_the_lines_direction` in
 across `text-transform` case mappings that change the length: a character mapped to several (`ß` to `SS`) covers them
 all, and a combining mark the transform removed (Greek uppercase drops the acute) covers none (WPT css-text
 `text-transform-upperlower-105`, `-106`). Covered by `offsets_follow_case_mappings_that_change_the_length`.
+- Round 4 lane S4, `node/svg.rs` (`root_background_painted`): an SVG image whose root `<svg>` has a CSS background
+  colour in its `style` attribute paints it over the whole canvas (a full-size `<rect>` under its content; usvg draws
+  none). WPT css-ui `box-sizing-*` (19 pages).
+- Round 4 lane S4, `resolve.rs` `overflow_contribution`: a box of layout or paint containment (not a non-atomic inline)
+  contributes only its border box to its ancestors' scrollable overflow (CSS Contain 2 § 3.2, § 3.4). WPT css-contain
+  `contain-layout-ink-overflow-*`.
+- Round 4 lane S4, `layout/counters.rs` (`Walk::barriers`, `Walk::read`): style containment scopes counters and quotes
+  to the element's subtree, its `::before`/`::after` included (CSS Contain 2 § 3.3): an increment or set there of a
+  counter made outside makes a new counter (`counter()` and `counters()` still read the outer one), and the quote
+  depth is restored after the subtree. WPT css-contain `contain-style-counters-*`, `counter-scoping-*`,
+  `quote-scoping-*`. `pyro-render/tests/containment_and_svg_background.rs`.
