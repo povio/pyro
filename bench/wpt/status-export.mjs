@@ -8,8 +8,10 @@
 //                            pyro does not run counts as "not run" and percentages never cover only the run subset
 //   chrome/<rev>.json.gz     Chrome stable's results on wpt.fyi nearest to that revision, per URL
 //
-//   bun status-export.mjs export --data DIR --sha SHA --date ISO [--baselines bench/wpt]
-//       a run from the committed baselines (on main they are what the gates passed with) + index.json
+//   bun status-export.mjs export --data DIR --sha SHA --date ISO [--baselines bench/wpt] [--full DIR]
+//       a run from the committed baselines (on main they are what the gates passed with) + index.json. The whole
+//       suite's baselines (wpt-full.yml, one directory per kind with a file per top-level directory: --full, default
+//       <baselines>/full) add every page the gates do not run; a page in both takes the gate's entry.
 //   bun status-export.mjs backfill --data DIR [--repo .] [--ref origin/main]
 //       one run per first-parent commit of REF that changed a baseline
 //   bun status-export.mjs chrome --data DIR --rev REV [--run WPTFYI_RUN_ID]   (default: Chrome stable nearest to REV)
@@ -26,6 +28,7 @@ import path from 'node:path';
 import zlib from 'node:zlib';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { readBaselineAt } from './lib.mjs';
 
 export const KINDS = ['testharness', 'reftest', 'crashtest'];
 const BASELINE_FILES = { testharness: 'baseline.json', reftest: 'reftest-baseline.json', crashtest: 'crashtest-baseline.json' };
@@ -91,6 +94,31 @@ export function pageOf(kind, e) {
   const row = [e.status, passed, e.n];
   if (kind === 'testharness' && e.fail?.length) row.push(e.fail);
   return row;
+}
+
+// The gates' committed baselines in `dir`, by kind.
+export function gateBaselines(dir) {
+  const out = {};
+  for (const [kind, f] of Object.entries(BASELINE_FILES)) if (fs.existsSync(path.join(dir, f))) out[kind] = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8'));
+  return out;
+}
+
+// `baselines` with the whole suite's (fullDir/<kind>/, lib.mjs readBaselineAt) under them: a page only the whole
+// suite runs takes its entry, a page the gate runs keeps the gate's (checked on every push, and served as the gate
+// serves it). A whole-suite baseline for another WPT revision than the gate's is left out.
+export function withFull(baselines, fullDir) {
+  const out = { ...baselines };
+  for (const kind of KINDS) {
+    const full = fs.existsSync(path.join(fullDir, kind)) ? readBaselineAt(path.join(fullDir, kind)) : null;
+    if (!full) continue;
+    const gate = baselines[kind];
+    if (gate && gate.wpt?.revision !== full.wpt?.revision) {
+      console.log(`::warning title=WPT status::whole-suite ${kind} baseline is for WPT ${full.wpt?.revision}, the gate's for ${gate.wpt?.revision}: left out`);
+      continue;
+    }
+    out[kind] = { ...(gate ?? full), tests: { ...full.tests, ...(gate?.tests ?? {}) } };
+  }
+  return out;
 }
 
 export function runFromBaselines(baselines, meta) {
@@ -393,8 +421,7 @@ if (process.argv[1] && fs.realpathSync(process.argv[1]) === fileURLToPath(import
   const HERE = path.dirname(fileURLToPath(import.meta.url));
   if (cmd === 'export') {
     const dir = opt('--baselines', HERE);
-    const baselines = {};
-    for (const [kind, f] of Object.entries(BASELINE_FILES)) if (fs.existsSync(path.join(dir, f))) baselines[kind] = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8'));
+    const baselines = withFull(gateBaselines(dir), opt('--full', path.join(dir, 'full')));
     const run = runFromBaselines(baselines, { sha: opt('--sha'), date: opt('--date'), source: 'ci' });
     await writeRun(data, run, opt('--subject') ? { subject: opt('--subject') } : {});
     console.log(`runs/${run.sha}.json.gz: ${KINDS.map((k) => `${k} ${Object.keys(run.kinds[k] ?? {}).length}`).join(', ')}`);

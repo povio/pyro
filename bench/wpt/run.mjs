@@ -64,7 +64,8 @@ const [SHARD, SHARDS] = (opt('--shard', '0/1')).split('/').map(Number);
 const REUSE = argv.includes('--reuse-context');
 const REPEAT = Number(opt('--repeat', 1));
 // A run over part of the suite: the gate does not report baseline pages it did not run as missing.
-const RESTRICTED = DIRS.join(',') !== KIND_DIRS.join(',') || !!opt('--match') || !!opt('--tests') || SAMPLE !== 1;
+// --dirs all is every page there is: not a restricted run (a whole-suite baseline can start from it).
+const RESTRICTED = (opt('--dirs') !== 'all' && DIRS.join(',') !== KIND_DIRS.join(',')) || !!opt('--match') || !!opt('--tests') || SAMPLE !== 1;
 if (GATE && !BASELINE) throw new Error('--gate needs --baseline');
 if (!(SHARD >= 0 && SHARD < SHARDS)) throw new Error(`--shard ${opt('--shard')}: expected I/N with 0 <= I < N`);
 if (!(REPEAT >= 1)) throw new Error(`--repeat ${opt('--repeat')}: expected N >= 1`);

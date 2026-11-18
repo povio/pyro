@@ -642,10 +642,25 @@ The PR gate keeps `serve.mjs` and its plan until a CI run records baselines for 
 ## Whole suite
 
 `.github/workflows/wpt-full.yml` runs everything nightly (01:17 UTC, and by hand): `gate.mjs run --dirs all
---server wptserve` for each kind, 4 testharness, 3 reftest and 1 crashtest shards on lp-m1 (or macos-15), with the
-newest main build's `wpt-browser`. It only reports for now: per-kind counts in the job summary and every shard's
-results as `wpt-full-results`. A pull request that changes the workflow, `wptserve.mjs` or `fetch-wpt.sh` runs its
-`smoke` job instead (a few wptserve pages on lp-m1, and the runner's Python version).
+--server wptserve --testdriver` for each kind, 4 testharness, 3 reftest and 1 crashtest shards on lp-m1 (or
+macos-15), with the newest main build's `wpt-browser`. Testharness shards run 16 pages side by side (the pages mostly
+wait: the browser used 12-14% of one core at 4), reftests and crashtests one per CPU. Scheduled runs rerun every
+page, record the whole suite's baselines (`wpt-full-baselines`: one directory per kind, one file per top-level WPT
+directory) and, on main, export them to the status site (`status` job: the commit's run on `wpt-results` becomes
+the gates' pages plus the whole suite's). A scheduled run queues behind a running manual one (only pull request runs
+cancel). Committed whole-suite baselines live in `bench/wpt/full/<kind>/`; a main push's export reads them too.
+Nothing gates on them yet.
+
+The first nightly (44215242259, `--jobs 4`, no reruns): testharness 4 shards of ~1 h (2.5 h wall on lp-m1's two
+machines), reftests 12-14 min per shard, crashtests 6 min. Of the testharness page time, 41% went to pages that did
+not complete and 80% to pages with no passing subtest (referrer-policy 130 min, wasm 38, html/semantics 34,
+content-security-policy 33, mixed-content 29). Reftests: webvtt alone 35 min (138 of 168 time out). 8 testharness
+hangs, 1 renderer panic in a reftest screenshot, 1 crashtest panic. 88 testharness pages in a row failed with
+`ERR_PROXY_CONNECTION_FAILED` after an EventSource page until the browser was replaced; the runner now replaces it
+at the first such failure. Reftest shard 0 lost its results to an artifact-service timeout; uploads run again.
+
+A pull request that changes the workflow, `wptserve.mjs`, `fetch-wpt.sh` or the testdriver files runs its `smoke`
+job instead (a few wptserve and testdriver pages on lp-m1).
 
 ## testdriver
 
