@@ -1,4 +1,9 @@
 {
  "//": "What the WPT reftest gate does not check, each with its reason (README.md, Reftests): flaky.json's format, for reftest pages. Keys are page URLs, or patterns where * matches anything. An entry is the whole page ({reason}) or only its completion ({reason, allowIncomplete: true}). Adding or widening an entry needs the wpt-accept-loss label.",
- "tests": {}
+ "tests": {
+  "css/css-backgrounds/animations/background-color-transition-currentcolor.html": {
+   "reason": "Timing: the page's reftest-wait is removed only after two rAFs, a transition's anim.ready and one more rAF; in CI run 44298843277 (--jobs 16, lp-m1) it was not removed within 10 s on the first run (setup 2 ms, goto 6 ms, settle 10,002 ms, no browser restart, the only incomplete page of the shard) and passed both reruns. Today's CI runs: 8 of 9 executions pass (5 at --jobs 8, 1 at 12, 2 reruns at 16); locally 80 of 80 (--repeat 40 at --jobs 16 and 8, load 100). Its pass stays gated whenever it completes.",
+   "allowIncomplete": true
+  }
+ }
 }
