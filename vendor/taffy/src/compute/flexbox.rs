@@ -3148,10 +3148,12 @@ fn align_flex_items_along_cross_axis(
                 // Until we support vertical writing modes, baseline alignment only makes sense if
                 // the constants.direction is row, so we treat it as flex-start alignment in columns.
                 let baseline_column_should_reverse = cross_axis_should_reverse && !constants.is_wrap;
-                if baseline_column_should_reverse && !constants.is_wrap_reverse {
+                if (baseline_column_should_reverse && !constants.is_wrap_reverse)
+                    || (constants.is_wrap_reverse && !cross_axis_should_reverse)
+                {
                     // pyro: the items share a baseline synthesized at their line-left edges, and their
                     // group goes to the cross start, the right (Chromium; WPT css-flexbox
-                    // `flexbox-align-self-vert-rtl-*`)
+                    // `flexbox-align-self-vert-rtl-*`, and `align-baseline` for an ltr wrap-reverse column)
                     free_space - (max_baseline_cross - child.outer_target_size.cross(constants.dir)).max(0.0)
                 } else if constants.is_wrap_reverse ^ baseline_column_should_reverse {
                     free_space
