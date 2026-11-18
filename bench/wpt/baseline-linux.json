@@ -3114,7 +3114,7 @@
   "html/dom/render-blocking/script-inserted-inline-module-with-import.html": {"status":"complete","ms":1000,"n":1,"pass":[]},
   "html/dom/render-blocking/script-inserted-module-script.html": {"status":"complete","ms":1100,"n":2,"fail":[],"h":"488ea0c7"},
   "html/dom/render-blocking/script-inserted-script.html": {"status":"complete","ms":1000,"n":2,"fail":[],"h":"4f93ae83"},
-  "html/dom/render-blocking/script-inserted-style-element.html": {"status":"complete","ms":1000,"n":2,"pass":["Render-blocking stylesheet is applied"]},
+  "html/dom/render-blocking/script-inserted-style-element.html": {"status":"complete","ms":1000,"n":2,"fail":[],"h":"bb70c92c"},
   "html/dom/render-blocking/script-inserted-stylesheet-link.html": {"status":"complete","ms":1000,"n":2,"fail":[],"h":"bb70c92c"},
   "html/dom/render-blocking/stylesheet-link-href-change-keeps-blocking.html": {"status":"complete","ms":2000,"n":1,"fail":[],"h":"65955263"},
   "html/dom/self-origin.any.html": {"status":"complete","ms":10,"n":1,"fail":[],"h":"0e31b96e"},
