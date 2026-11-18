@@ -3944,7 +3944,7 @@ fn expect(
                 Assert::Css => {
                     let property = property.ok_or_else(|| CdpError::invalid_params("css needs a property"))?;
                     let want = expected.as_str().ok_or_else(|| CdpError::invalid_params("css needs a string"))?;
-                    let have = page.layout().computed_style_value(&dom, el, property);
+                    let have = page.layout().computed_style_value(&dom, el, &css_property(property));
                     (have == want, json!(have))
                 }
                 Assert::Attribute | Assert::Description => {
@@ -4882,11 +4882,22 @@ fn frame_ref(r: &str) -> bool {
         .is_some_and(|(f, e)| [f, e].iter().all(|s| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit())))
 }
 
+/// The CSS property a `read css` / `check css` step names: the CSS spelling (`scroll-margin-bottom`) as it is, or the
+/// camel-cased CSSOM attribute `getComputedStyle(el)[name]` takes (`scrollMarginBottom`, `cssFloat`,
+/// `webkitTransform`). A custom property (`--fooBar`) is case-sensitive and stays as written.
+fn css_property(name: &str) -> std::borrow::Cow<'_, str> {
+    if name.starts_with("--") || !name.bytes().any(|b| b.is_ascii_uppercase()) {
+        std::borrow::Cow::Borrowed(name)
+    } else {
+        std::borrow::Cow::Owned(pyro_webapi::css::camel_to_css(name))
+    }
+}
+
 fn read_value(page: &PageDom, el: NodeId, read: Read, property: Option<&str>) -> Value {
     match read {
         Read::Count => Value::Null,
         Read::Css => match property {
-            Some(p) => json!(page.layout().computed_style_value(&page.dom.borrow(), el, p)),
+            Some(p) => json!(page.layout().computed_style_value(&page.dom.borrow(), el, &css_property(p))),
             None => Value::Null,
         },
         Read::Name => {

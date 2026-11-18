@@ -523,7 +523,11 @@ fn world_eval(realm: &pyro_js::Realm, source: &str) -> String {
 fn two_worlds_page(html: &str) -> (BrowserThread, PageId) {
     let mut thread = crate::browser_thread().unwrap();
     let page = thread.browser.create_page().unwrap();
-    let script = |id: &str, world: &str, source: &str| InitScript { id: id.into(), world: Some(world.into()), source: source.into() };
+    let script = |id: &str, world: &str, source: &str| InitScript {
+        id: id.into(),
+        world: Some(world.into()),
+        source: source.into(),
+    };
     thread.browser.add_init_script(page, script("l", "lazy", " \n"));
     thread.browser.add_init_script(page, script("m", "made", "void 0"));
     let loader = Rc::new(StaticLoader::default());
@@ -565,7 +569,10 @@ fn review_a_frame_added_after_a_deferred_world_was_made_gets_its_index() {
     assert_eq!(world_eval(&lazy, "window.length"), "0");
     eval(&thread, page, "document.body.appendChild(document.createElement('iframe')); 1");
     settle(&mut thread);
-    assert_eq!(world_eval(&lazy, "[window.length, typeof window[0], Object.keys(window).includes('0')].join()"), "1,object,true");
+    assert_eq!(
+        world_eval(&lazy, "[window.length, typeof window[0], Object.keys(window).includes('0')].join()"),
+        "1,object,true"
+    );
     eval(&thread, page, "document.querySelector('iframe').remove(); 1");
     settle(&mut thread);
     assert_eq!(world_eval(&lazy, "[window.length, typeof window[0]].join()"), "0,undefined");
@@ -655,6 +662,39 @@ fn review_every_announced_deferred_world_is_destroyed_with_its_document_and_page
     assert!(thread.browser.close_page(page));
     settle(&mut thread);
     for id in created {
-        assert!(life.0.borrow().contains(&(false, id)), "realm {id:?} announced but never destroyed: {:?}", life.0.borrow());
+        assert!(
+            life.0.borrow().contains(&(false, id)),
+            "realm {id:?} announced but never destroyed: {:?}",
+            life.0.borrow()
+        );
     }
+}
+
+/// A failed module fetch is a null entry in the document's module map. A
+/// later preload/import must keep that failure until a new document loads.
+#[test]
+fn failed_modulepreload_is_retained_until_navigation() {
+    let mut thread = crate::browser_thread().unwrap();
+    let page = thread.browser.create_page().unwrap();
+    let loader = Rc::new(StaticLoader::default());
+    loader.insert("http://site.test/", "text/html", r#"<!doctype html><html><head>
+<link id="pre" rel="modulepreload" href="/recover.js">
+<script>globalThis.out = []; document.getElementById('pre').addEventListener('error', () => out.push('pre:error'));</script>
+</head><body></body></html>"#, Duration::ZERO);
+    thread.browser.set_loader(Some(loader.clone()));
+    thread.browser.navigate(page, NavigateOpts::address_bar("http://site.test/")).unwrap();
+    settle(&mut thread);
+    assert_eq!(eval(&thread, page, "out.join()"), "pre:error");
+    loader.insert("http://site.test/recover.js", "text/javascript", "export const value = 42;", Duration::ZERO);
+    eval(&thread, page, "const late = document.createElement('link'); late.rel = 'modulepreload'; late.href = '/recover.js'; late.addEventListener('load', () => out.push('late:load')); late.addEventListener('error', () => out.push('late:error')); document.head.appendChild(late);
+        import('/recover.js').then(() => out.push('import:loaded'), error => out.push('import:' + (error instanceof TypeError) + ':' + /Failed to fetch dynamically imported module/.test(error.message)));");
+    settle(&mut thread);
+    assert_eq!(eval(&thread, page, "out.sort().join()"), "import:true:true,late:error,pre:error");
+    assert_eq!(loader.log.borrow().iter().filter(|url| *url == "http://site.test/recover.js").count(), 1);
+    thread.browser.navigate(page, NavigateOpts::address_bar("http://site.test/")).unwrap();
+    settle(&mut thread);
+    eval(&thread, page, "import('/recover.js').then(module => out.push('import:' + module.value));");
+    settle(&mut thread);
+    assert_eq!(eval(&thread, page, "out.join()"), "import:42");
+    assert_eq!(loader.log.borrow().iter().filter(|url| *url == "http://site.test/recover.js").count(), 2);
 }

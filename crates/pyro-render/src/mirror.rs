@@ -94,7 +94,7 @@ pub(crate) struct Mirror {
     /// The document facts it was built with ([`crate::Snapshot::xml_document`],
     /// [`crate::Snapshot::content_language`]).
     pub(crate) facts: (bool, Option<String>, bool, bool),
-    pub(crate) viewport: (u32, u32, u64, bool, bool),
+    pub(crate) viewport: (u32, u32, u64, bool, bool, crate::InputCapabilities),
     sheets: HashMap<String, String>,
     tree: Arc<Tree>,
     nodes: FxHashMap<u64, Entry>,
@@ -200,7 +200,7 @@ impl Mirror {
         bridge: crate::net::Bridge,
         scope: String,
         sheets: HashMap<String, String>,
-        viewport: (u32, u32, u64, bool, bool),
+        viewport: (u32, u32, u64, bool, bool, crate::InputCapabilities),
     ) -> Result<Mirror, Rebuild> {
         let base_url = config.base_url.clone().unwrap_or_default();
         let facts = (config.xml_document, config.content_language.clone(), config.quirks_mode, config.line_height_quirk);

@@ -44,6 +44,7 @@ use anyrender::{ImageRenderer, PaintScene};
 use anyrender_vello_cpu::VelloCpuImageRenderer;
 use blitz_dom::{DocumentConfig, StyleThreading};
 use blitz_traits::shell::{ColorScheme, Viewport as BlitzViewport};
+pub use blitz_traits::shell::{InputCapabilities, Pointer};
 use kurbo::{Affine, Rect};
 use parley::fontique::Blob;
 use parley::FontContext;
@@ -197,6 +198,8 @@ pub struct Snapshot {
     pub height: u32,
     pub device_scale_factor: f64,
     pub dark: bool,
+    /// Primary pointer precision and hover support for interaction media queries.
+    pub input: InputCapabilities,
     /// `print` media (CDP `Emulation.setEmulatedMedia`): `@media print`
     /// rules apply instead of `screen` ones.
     pub print: bool,
@@ -1268,7 +1271,8 @@ impl Renderer {
         let mut timings = Timings::default();
         let m = self.mirrors.get_mut(&page).ok_or(RenderError::NoElement)?;
         let (w, h, dpr, dark, print) = viewport;
-        if m.viewport != (w, h, dpr.to_bits(), dark, print) {
+        if (m.viewport.0, m.viewport.1, m.viewport.2, m.viewport.3, m.viewport.4) != (w, h, dpr.to_bits(), dark, print)
+        {
             return Err(RenderError::BadArea("the viewport changed".into()));
         }
         m.apply_delta(ops).map_err(|_| RenderError::BadArea("the delta does not fit the document".into()))?;
@@ -1381,6 +1385,19 @@ impl Renderer {
         let m = self.mirrors.get(&page)?;
         let id = m.node(key)?;
         Some(m.doc.resolved_style_value(id, property))
+    }
+
+    /// Resolves a sampled transform against the mirrored element's layout,
+    /// leaving the mirror's own style unchanged.
+    pub fn resolved_transform_value(
+        &self,
+        page: u64,
+        key: u64,
+        style: &style::properties::ComputedValues,
+    ) -> Option<String> {
+        let m = self.mirrors.get(&page)?;
+        let id = m.node(key)?;
+        Some(m.doc.resolved_transform_value(id, style))
     }
 
     /// The computed style of the element keyed `key` in `page`'s persistent
@@ -2975,16 +2992,18 @@ fn bounds_of(doc: &blitz_dom::BaseDocument, id: blitz_dom::NodeId, dpr: f64, sna
 fn viewport_of(snap: &Snapshot) -> BlitzViewport {
     let dpr = snap.device_scale_factor.clamp(0.1, 16.0);
     let physical = |css: u32| (css.max(1) as f64 * dpr).round() as u32;
-    BlitzViewport::new(
+    let mut viewport = BlitzViewport::new(
         physical(snap.width),
         physical(snap.height),
         dpr as f32,
         if snap.dark { ColorScheme::Dark } else { ColorScheme::Light },
-    )
+    );
+    viewport.input = snap.input;
+    viewport
 }
 
-fn viewport_key(snap: &Snapshot) -> (u32, u32, u64, bool, bool) {
-    (snap.width, snap.height, snap.device_scale_factor.to_bits(), snap.dark, snap.print)
+fn viewport_key(snap: &Snapshot) -> (u32, u32, u64, bool, bool, InputCapabilities) {
+    (snap.width, snap.height, snap.device_scale_factor.to_bits(), snap.dark, snap.print, snap.input)
 }
 
 fn media_type(print: bool) -> style::media_queries::MediaType {

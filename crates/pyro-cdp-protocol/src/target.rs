@@ -620,6 +620,17 @@ impl<H: Host> Browser<H> {
         self.fork = Some(registry);
     }
 
+    /// A connection explicitly forked for one profile needs only that
+    /// snapshot. Close inherited sibling documents and their contexts so
+    /// their timers and requests cannot run alongside the acquired page.
+    /// Profile registrations stay intact; the root still owns their leases.
+    pub fn retain_prepared_snapshot(&mut self, profile: usize) {
+        let others: HashSet<usize> = self.prepared.iter().filter(|e| e.profile != profile).map(|e| e.profile).collect();
+        for id in others {
+            self.close_waiting_pages(id);
+        }
+    }
+
     pub fn prepared_profile_active(&self, id: usize) -> bool {
         id < self.prepared_profiles.len() && !self.retired_profiles.contains(&id)
     }

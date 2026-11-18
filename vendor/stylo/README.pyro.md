@@ -27,6 +27,14 @@ crate (`diff -ruN`).
   only), with `rebuild_box` restyle damage. Taffy's block layout reads it through stylo_taffy
   (vendor/taffy/README.pyro.md).
 
+- `properties/longhands.toml`, `properties/shorthands.toml`: `scroll-margin-top`, `-right`, `-bottom`, `-left`,
+  `-block-start`, `-block-end`, `-inline-start`, `-inline-end` and the `scroll-margin`, `scroll-margin-block` and
+  `scroll-margin-inline` shorthands are parsed and computed for servo too (upstream: gecko only, so the declarations
+  were dropped and `getComputedStyle(el).scrollMarginBottom` read `""`). They are not inherited and make no
+  restyle damage beyond a repaint. pyro-dom's `getComputedStyle` answers them from Stylo (lengths in px, `var()`,
+  `em`/`rem`, `@media`, logical sides by writing mode); nothing reads them for scrolling yet. `scroll-padding-*` is
+  still gecko only.
+
 - `properties/longhands.toml`, `properties/shorthands.toml`: `contain-intrinsic-width`, `-height`,
   `-inline-size`, `-block-size` and the `contain-intrinsic-size` shorthand are parsed and computed for servo
   too (upstream: gecko only), with `rebuild_box` restyle damage. blitz-dom's layout reads them for boxes

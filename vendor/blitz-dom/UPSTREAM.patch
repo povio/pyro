@@ -5374,9 +5374,8 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
 +            } else if !whitespace(id) {
 +                start = first;
 +                break;
-             }
--            has_string.then_some(text)
-         }
++            }
++        }
 +        let mut end = last;
 +        for index in last + 1..sequence.len() {
 +            let id = sequence[index].0;
@@ -5384,8 +5383,9 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
 +                end = index;
 +            } else if !whitespace(id) {
 +                break;
-+            }
-+        }
+             }
+-            has_string.then_some(text)
+         }
 +        for entry in &mut sequence[start..=end] {
 +            entry.1 = true;
 +        }
@@ -6025,16 +6025,16 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
      let editor = &mut text_input_data.editor;
      editor.set_scale(doc.viewport.scale_f64() as f32);
      editor.set_width(None);
-@@ -923,6 +1727,65 @@
+@@ -923,6 +1727,69 @@
      editor.refresh_layout(&mut doc.font_ctx.lock().unwrap(), &mut doc.layout_ctx);
  }
  
 +/// pyro: the `placeholder` attribute of an `<input>` or `<textarea>` laid out
 +/// in its `::placeholder` style, as Chromium paints it while the value is
 +/// empty: a single-line input's text loses its line breaks (HTML), and the UA
-+/// sheet's `line-height: initial !important` makes its line `normal` (Stylo
-+/// applies no author `line-height` to `::placeholder` either). `None` when the
-+/// element has no placeholder text.
++/// sheet makes a single-line input's placeholder line `normal`. A textarea's
++/// placeholder uses the editor's line height, including for content sizing.
++/// `None` when the element has no placeholder text.
 +fn input_placeholder(
 +    doc: &mut BaseDocument,
 +    node_id: NodeId,
@@ -6071,7 +6071,11 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
 +        None => &input_style,
 +    };
 +    let mut text_style = stylo_to_parley::style(node_id, style);
-+    text_style.line_height = parley::LineHeight::NORMAL;
++    text_style.line_height = if is_multiline {
++        stylo_to_parley::style(node_id, &input_style).line_height
++    } else {
++        parley::LineHeight::NORMAL
++    };
 +    let mut color = style.clone_color();
 +    color.alpha *= style.get_effects().opacity;
 +    let mut placeholder = Box::new(crate::node::InputPlaceholder {
@@ -6091,7 +6095,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
  fn create_checkbox_input(doc: &mut BaseDocument, input_element_id: NodeId) {
      let node = &mut doc.nodes[input_element_id];
  
-@@ -944,6 +1807,25 @@
+@@ -944,6 +1811,25 @@
  ) {
      flush_inline_pseudos_recursive(doc, inline_context_root_node_id);
  
@@ -6117,7 +6121,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
      iter_children_and_pseudos!(doc.nodes[inline_context_root_node_id], |child_id| {
          find_inline_layout_embedded_boxes_recursive(
              &mut doc.nodes,
-@@ -953,10 +1835,41 @@
+@@ -953,10 +1839,41 @@
          );
      });
  
@@ -6160,7 +6164,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
                  .display_style()
                  .unwrap_or(Display::inline());
              let do_recurse = match (display.outside(), display.inside()) {
-@@ -965,16 +1878,33 @@
+@@ -965,16 +1882,33 @@
                  (_, _) => false,
              };
              if do_recurse {
@@ -6195,7 +6199,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
      ) {
          let node = &mut nodes[node_id];
  
-@@ -992,50 +1922,89 @@
+@@ -992,50 +1926,89 @@
  
                  let display = node.display_style().unwrap_or(Display::inline());
  
@@ -15279,7 +15283,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
          let node = &mut self.nodes[dom_node_id(node_id)];
  
          let font_styles = node.primary_styles().map(|style| {
-@@ -239,8 +843,40 @@
+@@ -239,8 +843,43 @@
              (font_size, line_height)
          });
          let font_size = font_styles.map(|s| s.0);
@@ -15313,6 +15317,9 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 +
 +        // pyro: the root `<svg>` of an SVG document keeps usvg's size (see the `Svg` arm below).
 +        let is_root_element = node.is_root_element();
++        let content_sized = node.primary_styles().is_some_and(|style| {
++            style.get_ui().field_sizing == style::values::computed::FieldSizing::Content
++        });
 +        // pyro: `frame-sizing: content-height` (see the iframe step below)
 +        let frame_sizing_content_height = node.primary_styles().is_some_and(|style| {
 +            use style::values::computed::FrameSizing;
@@ -15321,7 +15328,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
          match &mut node.data {
              NodeData::Text(data) => {
                  // With the new "inline context" architecture all text nodes should be wrapped in an "inline layout context"
-@@ -255,7 +891,7 @@
+@@ -255,7 +894,7 @@
                  #[cfg(not(feature = "tracing"))]
                  let _ = data;
  
@@ -15330,22 +15337,60 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
                  // unreachable!();
  
                  // compute_leaf_layout(inputs, &node.style, |known_dimensions, available_space| {
-@@ -292,9 +928,11 @@
+@@ -287,15 +926,47 @@
+                         .attr(local_name!("cols"))
+                         .and_then(|val| val.parse::<f32>().ok());
+
++                    // `field-sizing: content` measures the editor's shaped text (or its
++                    // placeholder), not the HTML rows/cols hints. Use a private layout for
++                    // intrinsic measurement: a min-content probe must not change the editor
++                    // that paint and caret geometry share.
++                    let mut content_layout = content_sized
++                        .then(|| {
++                            element_data.text_input_data().and_then(|input| {
++                                input.shown_placeholder().map(|p| p.layout.clone())
++                                    .or_else(|| input.editor.try_layout().cloned())
++                            })
++                        })
++                        .flatten();
+                     let output = compute_leaf_layout(
+                         inputs,
                          &node.layout_style(),
                          resolve_calc_value,
-                         |_known_size, _available_space| taffy::Size {
+-                        |_known_size, _available_space| taffy::Size {
 -                            width: cols
 -                                .map(|cols| cols * font_size.unwrap_or(16.0) * 0.6)
 -                                .unwrap_or(300.0),
-+                            width: if compressible_min_content {
-+                                0.0
-+                            } else {
-+                                cols.map(|cols| cols * font_size.unwrap_or(16.0) * 0.6).unwrap_or(300.0)
-+                            },
-                             height: resolved_line_height.unwrap_or(16.0) * rows,
+-                            height: resolved_line_height.unwrap_or(16.0) * rows,
++                        |_known_size, available_space| {
++                            if content_sized {
++                                let line_height = resolved_line_height.unwrap_or(16.0);
++                                if let Some(layout) = content_layout.as_mut() {
++                                    let width = match available_space.width {
++                                        taffy::AvailableSpace::Definite(width) => Some(width.max(0.0) * scale),
++                                        taffy::AvailableSpace::MinContent => Some(0.0),
++                                        taffy::AvailableSpace::MaxContent => None,
++                                    };
++                                    layout.break_all_lines(width);
++                                    return taffy::Size {
++                                        width: (layout.width() / scale).max(1.0),
++                                        height: (layout.height() / scale).max(line_height),
++                                    };
++                                }
++                                return taffy::Size { width: 1.0, height: line_height };
++                            }
++                            taffy::Size {
++                                width: if compressible_min_content {
++                                    0.0
++                                } else {
++                                    cols.map(|cols| cols * font_size.unwrap_or(16.0) * 0.6).unwrap_or(300.0)
++                                },
++                                height: resolved_line_height.unwrap_or(16.0) * rows,
++                            }
                          },
                      );
-@@ -322,60 +960,173 @@
+                     if inputs.run_mode == RunMode::PerformLayout {
+@@ -322,60 +993,173 @@
                                  &mut doc.font_ctx.lock().unwrap(),
                                  &mut doc.layout_ctx,
                              );
@@ -15552,7 +15597,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
                      // Width/height attributes are presentational hints mapped to the CSS
                      // width/height properties by
                      // `synthesize_presentational_hints_for_legacy_attributes`, so they
-@@ -407,39 +1158,50 @@
+@@ -407,39 +1191,50 @@
                              }
                              #[cfg(feature = "svg")]
                              ImageData::Svg(svg) => {
@@ -15624,7 +15669,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
                              // A canvas's content attributes determine its intrinsic size,
                              // overriding the widget-reported one; the widget-reported size
                              // in turn overrides the tag's fallback.
-@@ -472,6 +1234,90 @@
+@@ -472,6 +1267,90 @@
                          _ => unreachable!(),
                      };
  
@@ -15715,7 +15760,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
                      #[cfg(feature = "writing-mode")]
                      let (intrinsic_sizes, default_object_size) =
                          if node.writing_mode().is_vertical() {
-@@ -488,124 +1334,538 @@
+@@ -488,124 +1367,538 @@
                              (intrinsic_sizes, default_object_size)
                          };
  
@@ -16340,7 +16385,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  }
  
  impl TraversePartialTree for LayoutPassState<'_> {
-@@ -667,7 +1927,11 @@
+@@ -667,7 +1960,11 @@
      }
  
      fn set_unrounded_layout(&mut self, node_id: NodeId, layout: &Layout) {
@@ -16353,7 +16398,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      fn resolve_calc_value(&self, calc_ptr: *const (), parent_size: f32) -> f32 {
-@@ -698,17 +1962,26 @@
+@@ -698,17 +1995,26 @@
  
      fn clear_hoisted_children(&mut self, node_id: NodeId) {
          let containing_block = dom_node_id(node_id);
@@ -16382,7 +16427,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      fn add_hoisted_children(&mut self, node_id: NodeId, hoisted: &[NodeId]) {
-@@ -721,6 +1994,7 @@
+@@ -721,6 +2027,7 @@
              self.node_from_id(hoisted_id)
                  .oof_containing_block
                  .set(Some(containing_block));
@@ -16390,7 +16435,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
          }
      }
  
-@@ -732,6 +2006,122 @@
+@@ -732,6 +2039,122 @@
      }
  }
  
@@ -16513,7 +16558,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  impl taffy::CacheTree for LayoutPassState<'_> {
      #[inline]
      fn cache_get(
-@@ -739,10 +2129,12 @@
+@@ -739,10 +2162,12 @@
          node_id: NodeId,
          inputs: &taffy::LayoutInput,
      ) -> Option<taffy::LayoutOutput> {
@@ -16530,7 +16575,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      #[inline]
-@@ -752,9 +2144,11 @@
+@@ -752,9 +2177,11 @@
          inputs: &taffy::LayoutInput,
          layout_output: taffy::LayoutOutput,
      ) {
@@ -16545,7 +16590,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      #[inline]
-@@ -782,16 +2176,103 @@
+@@ -782,16 +2209,103 @@
          self.child_layout_style(self.node_from_id(child_node_id))
      }
  
@@ -16653,7 +16698,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  }
  
-@@ -844,6 +2325,30 @@
+@@ -844,6 +2358,30 @@
              element.detailed_layout_info = DetailedLayoutInfo::Grid(Box::new(detailed_grid_info));
          }
      }
@@ -16684,7 +16729,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  }
  
  impl RoundTree for LayoutPassState<'_> {
-@@ -852,7 +2357,19 @@
+@@ -852,7 +2390,19 @@
      }
  
      fn set_final_layout(&mut self, node_id: NodeId, layout: &Layout) {
@@ -16705,7 +16750,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      fn is_out_of_flow(&self, node_id: NodeId) -> bool {
-@@ -868,6 +2385,30 @@
+@@ -868,6 +2418,30 @@
      fn get_hoisted_child_id(&self, node_id: NodeId, index: usize) -> NodeId {
          taffy_node_id(self.node_from_id(node_id).hoisted_children.borrow()[index])
      }
@@ -16736,7 +16781,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  }
  
  pub(crate) struct TaffyDebugTree<'doc>(pub(crate) &'doc BaseDocument);
-@@ -972,3 +2513,93 @@
+@@ -972,3 +2546,93 @@
          })
      }
  }
@@ -30808,7 +30853,7 @@ diff --git a/packages/blitz-dom/src/node/svg_css.rs b/packages/blitz-dom/src/nod
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/node/svg_css.rs
-@@ -0,0 +1,2615 @@
+@@ -0,0 +1,2617 @@
 +//! pyro: an inline `<svg>` subtree as a standalone SVG document for usvg, with
 +//! the page's CSS applied.
 +//!
@@ -31165,16 +31210,15 @@ new file mode 100644
 +}
 +
 +/// The longhands that author-level declarations (style sheets, `style`
-+/// attributes, animations; not the UA sheet, nor presentational hints but
-+/// those of `clip-path` and `transform-origin`) set on the element.
++/// attributes, animations and SVG presentation attributes) set on the element.
 +fn author_longhands(style: &ComputedValues, guard: &SharedRwLockReadGuard) -> Vec<LonghandId> {
 +    let mut set = Vec::new();
 +    for node in style.rules().self_and_ancestors() {
 +        let Some(source) = node.style_source() else {
 +            continue;
 +        };
-+        // Presentational hints count for the properties stylo.rs maps from SVG
-+        // presentation attributes that usvg cannot read itself.
++        // Serialize computed presentation values too: usvg cannot resolve their
++        // custom properties, and must see the result of the page's cascade.
 +        let hints_only = match node.cascade_level().origin() {
 +            CascadeOrigin::UA | CascadeOrigin::User => continue,
 +            CascadeOrigin::PresHints => true,
@@ -31182,7 +31226,10 @@ new file mode 100644
 +        };
 +        for declaration in source.read(guard).declarations() {
 +            if let PropertyDeclarationId::Longhand(id) = declaration.id() {
-+                if hints_only && !matches!(id, LonghandId::ClipPath | LonghandId::TransformOrigin) {
++                if hints_only
++                    && !matches!(id, LonghandId::ClipPath | LonghandId::TransformOrigin)
++                    && !STYLE_PROPERTIES.iter().any(|&(property, _)| property == id)
++                {
 +                    continue;
 +                }
 +                if !set.contains(&id) {
@@ -35807,6 +35854,39 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 +        assert!(!is_layout_child(&doc.nodes[y]));
 +    }
 +}
+diff --git a/packages/blitz-dom/src/resolved_style.rs b/packages/blitz-dom/src/resolved_style.rs
+--- a/packages/blitz-dom/src/resolved_style.rs
++++ b/packages/blitz-dom/src/resolved_style.rs
+@@ -342,6 +342,21 @@
+     /// `transform-origin`, `grid-template-rows`/`columns`) resolve to *used* values, so [`resolve`](Self::resolve) should be called
+     /// before this method to ensure layout is up to date.
+     pub fn resolved_style_value(&self, node_id: NodeId, property_name: &str) -> String {
++        self.resolved_style_value_with_style(node_id, property_name, None)
++    }
++
++    /// Resolve a sampled transform against the existing layout without mutating
++    /// the document (used for CSS transition transform readback).
++    pub fn resolved_transform_value(&self, node_id: NodeId, style: &ComputedValues) -> String {
++        self.resolved_style_value_with_style(node_id, "transform", Some(style))
++    }
++
++    fn resolved_style_value_with_style(
++        &self,
++        node_id: NodeId,
++        property_name: &str,
++        sampled_style: Option<&ComputedValues>,
++    ) -> String {
+         let Some(node) = self.get_node(node_id) else {
+             return String::new();
+         };
+@@ -364,6 +379,7 @@
+             },
+         };
+
++        let styles = sampled_style.unwrap_or(styles);
+         let display = styles.clone_display();
+         // Non-atomic inline elements are laid out as style spans within their
+         // inline root's text layout rather than as boxes of their own, so their
 diff --git a/packages/blitz-dom/src/scrolling.rs b/packages/blitz-dom/src/scrolling.rs
 --- a/packages/blitz-dom/src/scrolling.rs
 +++ b/packages/blitz-dom/src/scrolling.rs
@@ -37219,21 +37299,26 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
          // `<input type=image>` is the only input type that is replaced
          // content, and it is the only one that takes the embedded-content
          // presentational attributes. The type attribute is matched ASCII
-@@ -1100,6 +1757,23 @@
+@@ -1100,6 +1757,28 @@
              let name = &attr.name.local;
              let value = attr.value.as_str();
  
-+            // pyro: an SVG element's `clip-path` and `transform-origin` attributes are
-+            // the CSS properties' presentation attributes (a basic shape, CSS lengths
-+            // and keywords): blitz-dom's SVG serializer (`node/svg_css.rs`) writes their
-+            // computed values for usvg, which knows neither form. Its `overflow` is the
-+            // property's too: `overflow="visible"` on an inline `<svg>` overrides the UA
-+            // sheet's `hidden` (its viewport clip, blitz-paint's `draw_svg`).
++            // SVG presentation attributes enter the author cascade with zero
++            // specificity. This also resolves custom properties and currentColor
++            // before SVG serialization, text measurement, and getComputedStyle.
++            // Geometry attributes have their own mapping below.
 +            if elem.name.ns == ns!(svg)
 +                && attr.name.ns == ns!()
-+                && (*name == local_name!("clip-path")
-+                    || *name == local_name!("transform-origin")
-+                    || *name == local_name!("overflow"))
++                && matches!(&**name,
++                    "clip-path" | "transform-origin" | "overflow"
++                    | "fill" | "fill-opacity" | "fill-rule"
++                    | "stroke" | "stroke-width" | "stroke-opacity" | "stroke-linecap"
++                    | "stroke-linejoin" | "stroke-miterlimit" | "stroke-dasharray" | "stroke-dashoffset"
++                    | "opacity" | "color" | "visibility" | "display"
++                    | "font-family" | "font-size" | "font-weight" | "font-style" | "font-stretch"
++                    | "letter-spacing" | "word-spacing" | "text-anchor" | "text-decoration"
++                    | "dominant-baseline" | "alignment-baseline" | "baseline-shift"
++                    | "paint-order" | "vector-effect" | "shape-rendering" | "text-rendering")
 +            {
 +                for declaration in parse_svg_presentation_attr(&**name, value) {
 +                    push_style(declaration);
@@ -37243,7 +37328,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
              if *name == local_name!("lang") {
                  if attr.name.ns == ns!(xml) {
                      lang = Some(value);
-@@ -1125,6 +1799,24 @@
+@@ -1125,6 +1804,24 @@
                  }
              }
  
@@ -37268,7 +37353,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
              if *name == local_name!("align") {
                  use style::values::specified::TextAlign;
                  let keyword = match value {
-@@ -1164,7 +1856,7 @@
+@@ -1164,7 +1861,7 @@
                          BaselineShift::Keyword(BaselineShiftKeyword::Top),
                      ))
                  } else if value.eq_ignore_ascii_case("middle") {
@@ -37277,7 +37362,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
                  } else if value.eq_ignore_ascii_case("bottom") {
                      Some((
                          AlignmentBaseline::Baseline,
-@@ -1270,7 +1962,9 @@
+@@ -1270,7 +1967,9 @@
              // presentation attributes that map to the CSS `width`/`height`
              // properties, so e.g. `width="1em"` must resolve against the
              // element's font-size like any other CSS length.
@@ -37288,7 +37373,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
                  && (*name == local_name!("width") || *name == local_name!("height"))
              {
                  if let Some(size) = parse_svg_size_attr(value) {
-@@ -1358,6 +2052,15 @@
+@@ -1358,6 +2057,15 @@
                  }
              }
  
@@ -37304,7 +37389,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
              if *name == local_name!("bgcolor") {
                  use style::values::specified::Color;
                  if let Some((r, g, b, a)) = parse_color_attr(value) {
-@@ -1373,148 +2076,59 @@
+@@ -1373,148 +2081,59 @@
              }
          }
  
@@ -37492,7 +37577,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
          None
      }
  }
-@@ -1527,6 +2141,37 @@
+@@ -1527,6 +2146,37 @@
      /// dedicated storage on the node (see `flush_image_layers_from_style`)
      /// because their style changed during this traversal.
      nodes_needing_style_image_flush: Mutex<Vec<NodeId>>,
@@ -37530,7 +37615,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  }
  
  impl<'a> RecalcStyle<'a> {
-@@ -1534,11 +2179,187 @@
+@@ -1534,11 +2184,187 @@
          RecalcStyle {
              context,
              nodes_needing_style_image_flush: Mutex::new(Vec::new()),
@@ -37718,7 +37803,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  impl<'dom> DomTraversal<BlitzNode<'dom>> for RecalcStyle<'_> {
      fn process_preorder<F: FnMut(BlitzNode<'dom>)>(
          &self,
-@@ -1546,14 +2367,218 @@
+@@ -1546,14 +2372,218 @@
          node: BlitzNode<'dom>,
          note_child: F,
      ) {
@@ -37937,7 +38022,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
              }
  
              if !data.damage.is_empty() {
-@@ -1597,6 +2622,12 @@
+@@ -1597,6 +2627,12 @@
      }
  }
  
@@ -37950,7 +38035,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  /// Flush updated pseudo-element (`::before`/`::after`) styles from the owning
  /// element's freshly-computed stylo data to the pseudo-element's anonymous node.
  ///
-@@ -1669,12 +2700,41 @@
+@@ -1669,12 +2705,41 @@
                      .push(pe_node_id);
              }
          }
@@ -37992,7 +38077,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  /// Whether a node's `background-image`/`mask-image` layers need flushing to
  /// dedicated storage on the node: the URLs referenced by the new style differ
  /// from the image data currently stored on the node.
-@@ -1689,11 +2749,12 @@
+@@ -1689,11 +2754,12 @@
              // (a style list of `none` layers and empty storage are in sync).
              return style_images
                  .iter()
@@ -38007,7 +38092,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
                  (Image::Url(ComputedUrl::Valid(url)), Some(data)) => **url != *data.url,
                  (Image::Url(ComputedUrl::Valid(_)), None) => true,
                  (_, Some(_)) => true,
-@@ -1707,6 +2768,26 @@
+@@ -1707,6 +2773,26 @@
              &style.get_background().background_image.0,
              &el.background_images,
          ) || out_of_sync(&style.get_svg().mask_image.0, &el.mask_images)
@@ -38034,7 +38119,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
      })
  }
  
-@@ -1737,3 +2818,734 @@
+@@ -1737,3 +2823,734 @@
  
      // let val = CSSInlineStyleDeclaration();
  }
@@ -38772,7 +38857,34 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
 diff --git a/packages/blitz-dom/src/stylo_device.rs b/packages/blitz-dom/src/stylo_device.rs
 --- a/packages/blitz-dom/src/stylo_device.rs
 +++ b/packages/blitz-dom/src/stylo_device.rs
-@@ -63,10 +63,11 @@
+@@ -7,7 +7,7 @@
+ use std::sync::{Arc, Mutex};
+
+ use bitflags::bitflags;
+-use blitz_traits::shell::{ColorScheme, Viewport};
++use blitz_traits::shell::{ColorScheme, Pointer, Viewport};
+ use parley::FontContext;
+ use selectors::matching::QuirksMode;
+ use style::device::Device;
+@@ -40,6 +40,8 @@
+         const COLOR_SCHEME = 0b0000_0100;
+         /// The media type (e.g. screen/print) changed.
+         const MEDIA_TYPE = 0b0000_1000;
++        /// Primary pointer precision or hover support changed.
++        const INPUT = 0b0001_0000;
+     }
+ }
+
+@@ -57,23 +59,36 @@
+         if old.color_scheme != new.color_scheme {
+             changes |= Self::COLOR_SCHEME;
+         }
++        if old.input != new.input {
++            changes |= Self::INPUT;
++        }
+         changes
+     }
+ }
  
  pub(crate) fn make_device(
      viewport: &Viewport,
@@ -38785,7 +38897,15 @@ diff --git a/packages/blitz-dom/src/stylo_device.rs b/packages/blitz-dom/src/sty
      let viewport_size = euclid::Size2D::new(width, height);
      let device_size = euclid::Size2D::new(width, height) * viewport.scale();
      let device_pixel_ratio = euclid::Scale::new(viewport.scale());
-@@ -74,6 +75,7 @@
+
++    let mut pointer = match viewport.input.pointer {
++        Pointer::None => PointerCapabilities::empty(),
++        Pointer::Fine => PointerCapabilities::FINE,
++        Pointer::Coarse => PointerCapabilities::COARSE,
++    };
++    if viewport.input.hover {
++        pointer |= PointerCapabilities::HOVER;
++    }
      Device::new(
          ComputedValues::initial_values_with_font_override(Font::initial_values()),
          Box::new(BlitzFontMetricsProvider { font_ctx }),
@@ -38793,6 +38913,17 @@ diff --git a/packages/blitz-dom/src/stylo_device.rs b/packages/blitz-dom/src/sty
          MediaData {
              media_type,
              viewport_size,
+@@ -84,8 +99,8 @@
+                 ColorScheme::Light => PrefersColorScheme::Light,
+                 ColorScheme::Dark => PrefersColorScheme::Dark,
+             },
+-            primary_pointer_capabilities: PointerCapabilities::default(),
+-            all_pointer_capabilities: PointerCapabilities::default(),
++            primary_pointer_capabilities: pointer,
++            all_pointer_capabilities: pointer,
+         },
+     )
+ }
 diff --git a/packages/blitz-dom/src/stylo_to_kurbo.rs b/packages/blitz-dom/src/stylo_to_kurbo.rs
 --- a/packages/blitz-dom/src/stylo_to_kurbo.rs
 +++ b/packages/blitz-dom/src/stylo_to_kurbo.rs

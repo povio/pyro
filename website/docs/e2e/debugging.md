@@ -183,7 +183,7 @@ Other ways to look:
 - `css('...').read('box', 'box')`, `read('v', 'visible')`, `read('n', 'name')`, `read('c', 'count')` show how the browser sees one element.
 - `check(loc).count(n)` with a wrong `n` fails with the real count.
 - A `matchScreenshot` with a throwaway name writes a PNG of the state (and fails, which is fine while debugging).
-- `page.send(method, params)` sends any CDP command on the page's session, for example `page.send('DOM.getDocument')`.
+- `page.send(method, params)` sends any CDP command on the page's session, for example `page.send('DOM.getDocument')`. Browser-level permission commands use `await page.grantPermissions(['clipboardSanitizedWrite'], { origin: 'https://app.example' })` and `await page.resetPermissions()` instead. These methods target the page's own browser context, including when it runs in a fork. Permission names are CDP `PermissionType` values; an empty list denies permissions for that origin.
 
 ### Console output
 

@@ -82,3 +82,18 @@ fn queued_traversal_does_not_apply_a_forward_entry_replaced_by_push_state() {
     assert_eq!(eval(&t, page, "location.hash+'|'+history.state.newEntry"), "#one|true");
     assert_eq!(t.browser.page(page).unwrap().main_frame.url, "about:blank#one");
 }
+
+#[test]
+fn repeated_reload_before_navigation_fetches_once() {
+    let mut t = crate::browser_thread().unwrap();
+    let page = t.browser.create_page().unwrap();
+    let loader = Rc::new(StaticLoader::default());
+    loader.insert("http://site.test/", "text/html", "<p>page</p>", Duration::ZERO);
+    t.browser.set_loader(Some(loader.clone()));
+    t.browser.navigate(page, NavigateOpts::address_bar("http://site.test/")).unwrap();
+    settle(&mut t);
+    loader.log.borrow_mut().clear();
+    eval(&t, page, "location.reload();location.reload()");
+    settle(&mut t);
+    assert_eq!(loader.log.borrow().len(), 1);
+}

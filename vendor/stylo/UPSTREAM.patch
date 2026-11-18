@@ -385,8 +385,8 @@ diff -ruN a/properties/helpers.mako.rs b/properties/helpers.mako.rs
                          % if property.is_zoom_dependent():
                              if !context.builder.effective_zoom_for_inheritance.is_one() {
 diff -ruN a/properties/longhands.toml b/properties/longhands.toml
---- a/properties/longhands.toml	2026-11-11 19:55:57
-+++ b/properties/longhands.toml	2026-11-17 16:53:18
+--- a/properties/longhands.toml
++++ b/properties/longhands.toml
 @@ -473,7 +473,6 @@
  type = "BreakBetween"
  initial = "computed::BreakBetween::Auto"
@@ -403,7 +403,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/css-break/#propdef-break-before"
  animation_type = "discrete"
  affects = "layout"
-@@ -491,9 +489,26 @@
+@@ -491,11 +489,28 @@
  type = "BreakWithin"
  initial = "computed::BreakWithin::Auto"
  struct = "box"
@@ -417,20 +417,22 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +initial = "From::from(2)"
 +struct = "inherited_text"
 +spec = "https://drafts.csswg.org/css-break/#propdef-orphans"
-+animation_type = "discrete"
+ animation_type = "discrete"
 +servo_restyle_damage = "repaint"
-+affects = "layout"
-+
+ affects = "layout"
+
 +[widows]
 +type = "PositiveInteger"
 +initial = "From::from(2)"
 +struct = "inherited_text"
 +spec = "https://drafts.csswg.org/css-break/#propdef-widows"
- animation_type = "discrete"
++animation_type = "discrete"
 +servo_restyle_damage = "repaint"
- affects = "layout"
- 
++affects = "layout"
++
  [caption-side]
+ type = "table::CaptionSide"
+ initial = "computed::table::CaptionSide::Top"
 @@ -591,7 +606,6 @@
  type = "Color"
  initial = "computed_value::T::currentcolor()"
@@ -526,10 +528,12 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  struct = "list"
  animation_type = "discrete"
  spec = "https://drafts.csswg.org/css-lists/#propdef-list-style-image"
-@@ -1427,6 +1441,17 @@
+@@ -1425,6 +1439,17 @@
+ struct = "position"
+ boxed = true
  spec = "https://drafts.csswg.org/css-images-3/#the-object-position"
- affects = "layout"
- 
++affects = "layout"
++
 +# pyro: `object-view-box: none | <basic-shape-rect>` (CSS Images 5): the part of a replaced
 +# element's content that is its view, as a `clip-path` value of `none` or one rectangle.
 +[object-view-box]
@@ -539,18 +543,13 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +parse_method = "parse_object_view_box"
 +animation_type = "discrete"
 +spec = "https://drafts.csswg.org/css-images-5/#the-object-view-box"
-+affects = "layout"
-+
+ affects = "layout"
+
  [offset-anchor]
- type = "PositionOrAuto"
- initial = "computed::PositionOrAuto::auto()"
-@@ -1854,7 +1879,27 @@
- struct = "box"
- engine = "gecko"
- spec = "https://drafts.csswg.org/css-scroll-snap-1/#scroll-snap-stop"
-+animation_type = "discrete"
-+affects = "paint"
-+
+@@ -1857,6 +1882,26 @@
+ animation_type = "discrete"
+ affects = "paint"
+
 +[scroll-marker-group]
 +type = "ScrollMarkerGroup"
 +initial = "computed::ScrollMarkerGroup::NONE"
@@ -566,12 +565,14 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +initial = "computed::ScrollTargetGroup::None"
 +struct = "box"
 +engine = "servo"
- animation_type = "discrete"
++animation_type = "discrete"
 +servo_restyle_damage = "repaint"
 +spec = "https://drafts.csswg.org/css-overflow-5/#scroll-target-group"
- affects = "paint"
- 
++affects = "paint"
++
  [scroll-snap-type]
+ type = "ScrollSnapType"
+ initial = "computed::ScrollSnapType::none()"
 @@ -2117,7 +2162,6 @@
  type = "TransformBox"
  initial = "computed::TransformBox::ViewBox"
@@ -641,12 +642,10 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  affects = "overflow"
  
  [text-underline-offset]
-@@ -3171,6 +3235,15 @@
- boxed = true
- logical_group = "border-radius"
+@@ -3173,6 +3237,15 @@
  logical = true
-+affects = "paint"
-+
+ affects = "paint"
+
 +[border-shape]
 +type = "basic_shape::BorderShape"
 +initial = "generics::basic_shape::BorderShape::None"
@@ -654,9 +653,11 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +animation_type = "none"
 +boxed = true
 +spec = "https://drafts.csswg.org/css-borders-4/#propdef-border-shape"
- affects = "paint"
- 
++affects = "paint"
++
  [corner-top-left-shape]
+ type = "CornerShape"
+ initial = "computed::CornerShape::round()"
 @@ -3383,9 +3456,9 @@
  type = "MarginTrim"
  initial = "computed::MarginTrim::empty()"
@@ -668,7 +669,71 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/css-box-4/#propdef-margin-trim"
  affects = "layout"
  
-@@ -3694,6 +3767,7 @@
+@@ -3393,7 +3466,6 @@
+ type = "Length"
+ initial = "computed::Length::zero()"
+ struct = "margin"
+-engine = "gecko"
+ logical_group = "scroll-margin"
+ gecko_ffi_name = "mScrollMargin.0"
+ spec = "https://drafts.csswg.org/css-scroll-snap-1/#propdef-scroll-margin-top"
+@@ -3403,7 +3475,6 @@
+ type = "Length"
+ initial = "computed::Length::zero()"
+ struct = "margin"
+-engine = "gecko"
+ logical_group = "scroll-margin"
+ gecko_ffi_name = "mScrollMargin.1"
+ spec = "https://drafts.csswg.org/css-scroll-snap-1/#propdef-scroll-margin-right"
+@@ -3413,7 +3484,6 @@
+ type = "Length"
+ initial = "computed::Length::zero()"
+ struct = "margin"
+-engine = "gecko"
+ logical_group = "scroll-margin"
+ gecko_ffi_name = "mScrollMargin.2"
+ spec = "https://drafts.csswg.org/css-scroll-snap-1/#propdef-scroll-margin-bottom"
+@@ -3423,7 +3493,6 @@
+ type = "Length"
+ initial = "computed::Length::zero()"
+ struct = "margin"
+-engine = "gecko"
+ logical_group = "scroll-margin"
+ gecko_ffi_name = "mScrollMargin.3"
+ spec = "https://drafts.csswg.org/css-scroll-snap-1/#propdef-scroll-margin-left"
+@@ -3433,7 +3502,6 @@
+ type = "Length"
+ initial = "computed::Length::zero()"
+ struct = "margin"
+-engine = "gecko"
+ logical = true
+ logical_group = "scroll-margin"
+ gecko_ffi_name = "mScrollMargin.4"
+@@ -3444,7 +3512,6 @@
+ type = "Length"
+ initial = "computed::Length::zero()"
+ struct = "margin"
+-engine = "gecko"
+ logical = true
+ logical_group = "scroll-margin"
+ gecko_ffi_name = "mScrollMargin.5"
+@@ -3455,7 +3522,6 @@
+ type = "Length"
+ initial = "computed::Length::zero()"
+ struct = "margin"
+-engine = "gecko"
+ logical = true
+ logical_group = "scroll-margin"
+ gecko_ffi_name = "mScrollMargin.6"
+@@ -3466,7 +3532,6 @@
+ type = "Length"
+ initial = "computed::Length::zero()"
+ struct = "margin"
+-engine = "gecko"
+ logical = true
+ logical_group = "scroll-margin"
+ gecko_ffi_name = "mScrollMargin.7"
+@@ -3694,6 +3759,7 @@
  [box-decoration-break]
  struct = "border"
  spec = "https://drafts.csswg.org/css-break/#propdef-box-decoration-break"
@@ -676,7 +741,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  animation_type = "discrete"
  affects = "layout"
  type = "BoxDecorationBreak"
-@@ -3730,6 +3804,18 @@
+@@ -3730,6 +3796,18 @@
  type = "TopLayer"
  initial = "computed::TopLayer::None"
  
@@ -695,7 +760,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  [scroll-behavior]
  struct = "box"
  servo_pref = "layout.css.scroll-behavior.enabled"
-@@ -3770,7 +3856,6 @@
+@@ -3770,7 +3848,6 @@
  
  [column-fill]
  struct = "column"
@@ -703,7 +768,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/css-multicol/#propdef-column-fill"
  animation_type = "discrete"
  affects = "layout"
-@@ -3901,9 +3986,9 @@
+@@ -3901,9 +3978,9 @@
  type = "TextOrientation"
  initial = "computed::TextOrientation::Mixed"
  
@@ -714,10 +779,11 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/css-images/#propdef-image-orientation"
  animation_type = "discrete"
  affects = "layout"
-@@ -4093,6 +4178,17 @@
+@@ -4092,6 +4169,17 @@
+ servo_restyle_damage = "rebuild_box"
  type = "BoxSizing"
  initial = "computed::BoxSizing::ContentBox"
- 
++
 +# pyro: css-sizing-4 `frame-sizing` (responsive iframes), for Servo: blitz-dom gives an iframe the height of
 +# its embedded document's content (`data-pyro-frame-content-height`, from pyro) for `content-height`.
 +[frame-sizing]
@@ -728,17 +794,22 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +affects = "layout"
 +type = "FrameSizing"
 +initial = "computed::FrameSizing::Auto"
-+
+
  [object-fit]
  struct = "position"
- spec = "https://drafts.csswg.org/css-images/#propdef-object-fit"
-@@ -4287,9 +4383,64 @@
+@@ -4249,7 +4337,7 @@
+
+ [field-sizing]
+ struct = "ui"
+-engine = "gecko"
++servo_restyle_damage = "rebuild_box"
+ spec = "https://drafts.csswg.org/css-ui/#field-sizing"
+ animation_type = "discrete"
  affects = "layout"
- gecko_ffi_name = "mBoxOrient"
- aliases = ["-webkit-box-orient"]
-+type = "BoxOrient"
-+initial = "computed::BoxOrient::Horizontal"
-+
+@@ -4290,6 +4378,61 @@
+ type = "BoxOrient"
+ initial = "computed::BoxOrient::Horizontal"
+
 +# pyro: `-webkit-box-orient` for the servo engine (the gecko one is `-moz-box-orient`'s alias):
 +# with `display: -webkit-box` and `-webkit-line-clamp` it makes the legacy line clamp apply
 +# (`StyleAdjuster::adjust_for_webkit_box`).
@@ -749,9 +820,9 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +animation_type = "discrete"
 +affects = "layout"
 +servo_restyle_damage = "rebuild_box"
- type = "BoxOrient"
- initial = "computed::BoxOrient::Horizontal"
- 
++type = "BoxOrient"
++initial = "computed::BoxOrient::Horizontal"
++
 +# pyro: the other legacy `-webkit-box` properties for the servo engine (the gecko ones are the
 +# `-moz-box-*` aliases): `StyleAdjuster::adjust_for_webkit_box` maps them onto flex layout.
 +[-webkit-box-align]
@@ -914,9 +985,29 @@ diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
  
                  if has_clip && *clip != From::from(*origin) {
 diff -ruN a/properties/shorthands.toml b/properties/shorthands.toml
---- a/properties/shorthands.toml	2026-11-11 19:55:57
-+++ b/properties/shorthands.toml	2026-11-17 10:09:54
-@@ -209,7 +209,7 @@
+--- a/properties/shorthands.toml
++++ b/properties/shorthands.toml
+@@ -19,19 +19,16 @@
+ kind = "two_properties"
+
+ [scroll-margin]
+-engine = "gecko"
+ sub_properties = ["scroll-margin-top", "scroll-margin-right", "scroll-margin-bottom", "scroll-margin-left"]
+ spec = "https://drafts.csswg.org/css-scroll-snap-1/#propdef-scroll-margin"
+ kind = "four_sides"
+
+ [scroll-margin-block]
+-engine = "gecko"
+ sub_properties = ["scroll-margin-block-start", "scroll-margin-block-end"]
+ spec = "https://drafts.csswg.org/css-scroll-snap-1/#propdef-scroll-margin-block"
+ kind = "two_properties"
+
+ [scroll-margin-inline]
+-engine = "gecko"
+ sub_properties = ["scroll-margin-inline-start", "scroll-margin-inline-end"]
+ spec = "https://drafts.csswg.org/css-scroll-snap-1/#propdef-scroll-margin-inline"
+ kind = "two_properties"
+@@ -209,7 +206,7 @@
  kind = "two_properties"
  
  [container]
@@ -925,7 +1016,7 @@ diff -ruN a/properties/shorthands.toml b/properties/shorthands.toml
  sub_properties = ["container-name", "container-type"]
  spec = "https://drafts.csswg.org/css-contain-3/#container-shorthand"
  
-@@ -218,19 +218,16 @@
+@@ -218,19 +215,16 @@
  spec = "https://drafts.csswg.org/css-inline-3/#transverse-alignment"
  
  [page-break-before]
@@ -945,7 +1036,7 @@ diff -ruN a/properties/shorthands.toml b/properties/shorthands.toml
  flags = "IS_LEGACY_SHORTHAND"
  sub_properties = ["break-inside"]
  spec = "https://drafts.csswg.org/css-break-3/#page-break-properties"
-@@ -285,7 +282,6 @@
+@@ -285,7 +279,6 @@
  kind = "two_properties"
  
  [contain-intrinsic-size]
@@ -953,7 +1044,7 @@ diff -ruN a/properties/shorthands.toml b/properties/shorthands.toml
  sub_properties = ["contain-intrinsic-width", "contain-intrinsic-height"]
  spec = "https://drafts.csswg.org/css-sizing-4/#intrinsic-size-override"
  kind = "two_properties"
-@@ -476,7 +472,6 @@
+@@ -476,7 +469,6 @@
  servo_pref = "layout.css.columns.enabled"
  
  [column-rule]
@@ -961,7 +1052,7 @@ diff -ruN a/properties/shorthands.toml b/properties/shorthands.toml
  sub_properties = ["column-rule-width", "column-rule-style", "column-rule-color"]
  spec = "https://drafts.csswg.org/css-multicol/#propdef-column-rule"
  derive_serialize = true
-@@ -550,13 +545,11 @@
+@@ -550,13 +542,11 @@
  derive_value_info = false
  
  [-webkit-text-stroke]

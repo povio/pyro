@@ -7,7 +7,7 @@
 use std::sync::{Arc, Mutex};
 
 use bitflags::bitflags;
-use blitz_traits::shell::{ColorScheme, Viewport};
+use blitz_traits::shell::{ColorScheme, Pointer, Viewport};
 use parley::FontContext;
 use selectors::matching::QuirksMode;
 use style::device::Device;
@@ -40,6 +40,8 @@ bitflags! {
         const COLOR_SCHEME = 0b0000_0100;
         /// The media type (e.g. screen/print) changed.
         const MEDIA_TYPE = 0b0000_1000;
+        /// Primary pointer precision or hover support changed.
+        const INPUT = 0b0001_0000;
     }
 }
 
@@ -57,6 +59,9 @@ impl DeviceChanges {
         if old.color_scheme != new.color_scheme {
             changes |= Self::COLOR_SCHEME;
         }
+        if old.input != new.input {
+            changes |= Self::INPUT;
+        }
         changes
     }
 }
@@ -72,6 +77,14 @@ pub(crate) fn make_device(
     let device_size = euclid::Size2D::new(width, height) * viewport.scale();
     let device_pixel_ratio = euclid::Scale::new(viewport.scale());
 
+    let mut pointer = match viewport.input.pointer {
+        Pointer::None => PointerCapabilities::empty(),
+        Pointer::Fine => PointerCapabilities::FINE,
+        Pointer::Coarse => PointerCapabilities::COARSE,
+    };
+    if viewport.input.hover {
+        pointer |= PointerCapabilities::HOVER;
+    }
     Device::new(
         ComputedValues::initial_values_with_font_override(Font::initial_values()),
         Box::new(BlitzFontMetricsProvider { font_ctx }),
@@ -86,8 +99,8 @@ pub(crate) fn make_device(
                 ColorScheme::Light => PrefersColorScheme::Light,
                 ColorScheme::Dark => PrefersColorScheme::Dark,
             },
-            primary_pointer_capabilities: PointerCapabilities::default(),
-            all_pointer_capabilities: PointerCapabilities::default(),
+            primary_pointer_capabilities: pointer,
+            all_pointer_capabilities: pointer,
         },
     )
 }

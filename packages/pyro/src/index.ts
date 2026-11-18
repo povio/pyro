@@ -786,9 +786,34 @@ export class Page {
     await this.cdp.send('Page.addScriptToEvaluateOnNewDocument', { source }, this.sessionId);
   }
 
-  /** Any other CDP command on this page. */
+  /**
+   * Any other CDP command on this page's session. Browser-level commands
+   * (`Browser.grantPermissions`, ...) are not page-session commands: use
+   * `grantPermissions` / `resetPermissions`.
+   */
   send<T = any>(method: string, params: object = {}): Promise<T> {
     return this.cdp.send(method, params, this.sessionId);
+  }
+
+  /**
+   * Grants `permissions` (CDP `PermissionType`s such as `clipboardSanitizedWrite`,
+   * `clipboardReadWrite`, `geolocation`) to this page's browser context, for
+   * `origin` or every origin. What the context does not list is denied for
+   * the origin, so an empty list denies everything there. Only this page's
+   * context changes: it is sent on the page's own connection with its
+   * `browserContextId`, never another's.
+   */
+  async grantPermissions(permissions: readonly string[], opts: { origin?: string } = {}): Promise<void> {
+    await this.cdp.send('Browser.grantPermissions', {
+      browserContextId: this.browserContextId,
+      permissions,
+      ...(opts.origin === undefined ? {} : { origin: opts.origin }),
+    });
+  }
+
+  /** Clears every permission this page's browser context was granted or set. */
+  async resetPermissions(): Promise<void> {
+    await this.cdp.send('Browser.resetPermissions', { browserContextId: this.browserContextId });
   }
 
   /** Closes the page and its context without waiting. */

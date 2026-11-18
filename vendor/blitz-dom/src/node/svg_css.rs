@@ -354,16 +354,15 @@ fn collect_boxes(tree: &usvg::Tree, ids: &HashMap<String, NodeId>) -> HashMap<No
 }
 
 /// The longhands that author-level declarations (style sheets, `style`
-/// attributes, animations; not the UA sheet, nor presentational hints but
-/// those of `clip-path` and `transform-origin`) set on the element.
+/// attributes, animations and SVG presentation attributes) set on the element.
 fn author_longhands(style: &ComputedValues, guard: &SharedRwLockReadGuard) -> Vec<LonghandId> {
     let mut set = Vec::new();
     for node in style.rules().self_and_ancestors() {
         let Some(source) = node.style_source() else {
             continue;
         };
-        // Presentational hints count for the properties stylo.rs maps from SVG
-        // presentation attributes that usvg cannot read itself.
+        // Serialize computed presentation values too: usvg cannot resolve their
+        // custom properties, and must see the result of the page's cascade.
         let hints_only = match node.cascade_level().origin() {
             CascadeOrigin::UA | CascadeOrigin::User => continue,
             CascadeOrigin::PresHints => true,
@@ -371,7 +370,10 @@ fn author_longhands(style: &ComputedValues, guard: &SharedRwLockReadGuard) -> Ve
         };
         for declaration in source.read(guard).declarations() {
             if let PropertyDeclarationId::Longhand(id) = declaration.id() {
-                if hints_only && !matches!(id, LonghandId::ClipPath | LonghandId::TransformOrigin) {
+                if hints_only
+                    && !matches!(id, LonghandId::ClipPath | LonghandId::TransformOrigin)
+                    && !STYLE_PROPERTIES.iter().any(|&(property, _)| property == id)
+                {
                     continue;
                 }
                 if !set.contains(&id) {
