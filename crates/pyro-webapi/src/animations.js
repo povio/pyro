@@ -61,6 +61,7 @@
     return st;
   };
   const invalidState = msg => new DOMEx(msg, 'InvalidStateError');
+  const requestFrame = typeof globalThis.requestAnimationFrame === 'function' ? globalThis.requestAnimationFrame : null;
   const abortError = () => new DOMEx('The user aborted a request.', 'AbortError');
 
   // ----- timing functions ---------------------------------------------------
@@ -582,7 +583,7 @@
   // (`timelineState`). Animations do not run on these timelines yet (their time stays
   // unresolved, as on an inactive timeline); CSS animations with `animation-timeline` are
   // driven by the engine.
-  const { timelineState } = native;
+  const { timelineState, pushScroll } = native;
   const AXES = ['block', 'inline', 'x', 'y'];
   const percent = v => new CSSUnitValue(v, 'percent');
   const pxValue = v => new CSSUnitValue(v, 'px');
@@ -1029,6 +1030,9 @@
     let tries = 0;
     const attempt = () => {
       if (a.pendingGen !== gen || a.pending !== kind) return;
+      // (On a progress-based timeline the task runs at the frame: the timeline takes its scroll
+      // position first.)
+      if (progressBased(a)) pushScroll();
       // The timeline must be active for the task to run. A progress-based one may become active
       // later (laid out, shown, made scrollable): tried again at the next frames for a while, and
       // at every scroll (`progressChanged`).
@@ -1041,7 +1045,11 @@
       }
       if (kind === 'play') runPendingPlay(a); else runPendingPause(a);
     };
-    schedule(0, attempt);
+    // A progress-based timeline's pending task runs after the next frame, as the timeline moves.
+    // (At the start of that frame, before its callbacks that script requested later, as the
+    // frame's "update animations" step.)
+    if (progressBased(a) && requestFrame !== null) apply(requestFrame, globalThis, [attempt]);
+    else schedule(0, attempt);
   }
 
   // Animations on progress-based timelines whose state may change as the page scrolls (their
@@ -1059,18 +1067,23 @@
   function progressChanged() {
     if (progressQueued) return;
     progressQueued = true;
-    schedule(0, () => {
+    // After the next frame: a scroll moves the timelines then (their times hold still until it).
+    const later = fn => (requestFrame !== null ? apply(requestFrame, globalThis, [() => schedule(0, fn)]) : schedule(16, fn));
+    later(() => {
       progressQueued = false;
+      // (A frame passed since the scroll: scroll timelines take its scroll position.)
+      pushScroll();
       for (const a of [...progressWatched]) {
-        if (!isRelevant(a) && a.pending === null) {
-          progressWatched.delete(a);
+        if (a.pending !== null) {
+          if (timelineTime(a.timeline) !== null) {
+            if (a.pending === 'play') runPendingPlay(a); else runPendingPause(a);
+          }
           continue;
         }
-        if (a.pending !== null && timelineTime(a.timeline) !== null) {
-          if (a.pending === 'play') runPendingPlay(a); else runPendingPause(a);
-          continue;
-        }
+        // (Its finished state first: one that left its range finishes now.) An idle one stops
+        // being watched; a finished one stays (scrolling back plays it again).
         updateFinished(a, false, false);
+        if (playStateOf(a) === 'idle' || !a.effect) progressWatched.delete(a);
       }
     });
   }
@@ -1200,7 +1213,7 @@
       }
     }
     if (!finished && a.finished.settled) a.finished = deferred();
-    if (progressBased(a) && isRelevant(a)) watchProgress(a);
+    if (progressBased(a) && playStateOf(a) !== 'idle') watchProgress(a);
     // Only animations getAnimations() may list stay referenced from here.
     if (isRelevant(a)) live.add(a.self); else live.delete(a.self);
     plan(a);
@@ -1721,9 +1734,9 @@
     a.cssId = id;
     if (scrollDriven) {
       a.scrollDriven = true;
-      // (Its `animation-range` is the engine's: the object's range stays `normal` until timeline
-      // times are frame-stable, as in browsers, where a scroll moves them at the next frame.)
-      void rangeStartText; void rangeEndText;
+      // (Its `animation-range`, as the engine places it.)
+      try { a.rangeStart = parseRange(rangeStartText, false, 'rangeStart'); } catch { a.rangeStart = 'normal'; }
+      try { a.rangeEnd = parseRange(rangeEndText, true, 'rangeEnd'); } catch { a.rangeEnd = 'normal'; }
       a.startTime = timeline !== null && timelineTime(timeline) !== null ? (rangeOffsets(a) || [0, 100])[0] : null;
       a.holdTime = held !== null && a.startTime !== null ? null : (a.startTime === null ? 0 : null);
       a.ready = deferred();

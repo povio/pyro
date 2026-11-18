@@ -735,7 +735,7 @@ pub(crate) fn stamp(page: &PageDom, now: f64) -> u64 {
         || page.animation_events.scripted.try_borrow().is_ok_and(|s| s.values().any(|s| s.scroll.is_some() && !s.gone));
     if driven {
         if let Some(layout) = page.try_layout() {
-            generation ^= layout.scroll_generation().wrapping_mul(0xD6E8_FEB8_6659_FD93).rotate_left(7);
+            generation ^= layout.timeline_scroll_generation().wrapping_mul(0xD6E8_FEB8_6659_FD93).rotate_left(7);
         }
     }
     if moving {
@@ -912,6 +912,12 @@ impl PageDom {
     /// One flag and stamp check for a document that neither animates nor
     /// transitions, or did not change.
     pub fn update_animations(self: &Rc<Self>) {
+        // Scroll timelines take the frame's scroll position (their times hold still until a frame).
+        if let Some(layout) = self.try_layout() {
+            if layout.push_scroll() {
+                layout.set_scroll_pushed_at(crate::event::page_now_ms(self));
+            }
+        }
         crate::animation_events::before_render(self);
     }
 
@@ -920,6 +926,11 @@ impl PageDom {
     /// style changes since the last frame start their transitions and
     /// animations first, as at a rendering opportunity.
     pub fn animation_frame(self: &Rc<Self>) -> AnimationFrame {
+        if let Some(layout) = self.try_layout() {
+            if layout.push_scroll() {
+                layout.set_scroll_pushed_at(crate::event::page_now_ms(self));
+            }
+        }
         crate::animation_events::before_render(self);
         frame(self, crate::event::page_now_ms(self), true)
     }

@@ -182,6 +182,8 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
         let state = {
             let dom = page.dom.borrow();
             let layout = page.layout();
+            // (A frame's time without a frame: the scroll offsets of now.)
+            layout.push_scroll_if_due(page.timeline_now_ms());
             let Some(geometry) = layout.synced_geometry_source(&dom) else { return Ok(s.null()) };
             let key = |id: pyro_dom::NodeId| pyro_dom::snapshot::render_key(id);
             let state = geometry.timeline_state(source.map(key), subject.map(key), axis, inset);
@@ -203,6 +205,17 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
         .value())
     })?;
     natives.set_atom("timelineState", timeline_state.value())?;
+    // `pushScroll()`: scroll timelines take the scroll position of now (after a frame passed).
+    let push_scroll = s.function("pushScroll", |s, _this, _a| {
+        let page = page_of(s)?;
+        if let Some(layout) = page.try_layout() {
+            if layout.push_scroll() {
+                layout.set_scroll_pushed_at(page.timeline_now_ms());
+            }
+        }
+        Ok(s.undefined())
+    })?;
+    natives.set_atom("pushScroll", push_scroll.value())?;
     Ok(natives)
 }
 

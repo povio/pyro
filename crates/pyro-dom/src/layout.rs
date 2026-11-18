@@ -228,6 +228,10 @@ pub struct Layout {
     contents_width: std::cell::Cell<Option<f32>>,
     window_scroll: (u32, u32),
     scroll_generation: u64,
+    /// The `scroll_generation` last told to the geometry source for scroll timelines, and when
+    /// (page clock, ms) ([`Self::push_scroll`]).
+    scroll_pushed: std::cell::Cell<Option<u64>>,
+    scroll_pushed_at: std::cell::Cell<f64>,
     /// Each scrolled element's `scrollLeft` and `scrollTop`: negative on an axis whose scroll
     /// origin is at its end (right-to-left, `row-reverse`, `column-reverse`, ...), as CSSOM View
     /// and Blitz's scroll offsets have them.
@@ -519,6 +523,8 @@ impl Layout {
             contents_width: std::cell::Cell::new(None),
             window_scroll: (0, 0),
             scroll_generation: 0,
+            scroll_pushed: std::cell::Cell::new(None),
+            scroll_pushed_at: std::cell::Cell::new(f64::NEG_INFINITY),
             element_scroll: FxHashMap::default(),
             scroll_targets: FxHashMap::default(),
             scroll_anchors: FxHashMap::default(),
@@ -2478,7 +2484,6 @@ impl Layout {
         }
         self.window_scroll = (new_x, new_y);
         self.scroll_generation = self.scroll_generation.wrapping_add(1);
-        self.push_scroll();
         true
     }
 
@@ -2497,12 +2502,42 @@ impl Layout {
         self.scroll_generation as u64
     }
 
-    /// Tells the geometry source the scroll offsets now (scroll-driven animations follow them).
-    fn push_scroll(&self) {
+    /// Tells the geometry source the scroll offsets now, when they changed since it was last told:
+    /// scroll-driven animations follow them. Called at the end of each animation frame (and when a
+    /// frame's time passed without one, `push_scroll_if_due`), not at each scroll: a scroll moves
+    /// scroll timelines at the next frame, as in browsers (their times hold still until then).
+    /// `true`: told.
+    pub fn push_scroll(&self) -> bool {
+        if self.scroll_pushed.get() == Some(self.scroll_generation as u64) {
+            return false;
+        }
+        self.scroll_pushed.set(Some(self.scroll_generation as u64));
         if let Some(source) = self.external.as_ref() {
             let window = (self.window_scroll.0 as f64, self.window_scroll.1 as f64);
             source.set_scroll(self.scrolled_elements(), window);
         }
+        true
+    }
+
+    /// [`Self::push_scroll`] when `now_ms` (the page clock) is a frame (16 ms) or more past the last
+    /// push: without frames (nothing requested one) scroll timelines still follow within one.
+    pub fn push_scroll_if_due(&self, now_ms: f64) {
+        let last = self.scroll_pushed_at.get();
+        if now_ms - last >= 16.0 {
+            if self.push_scroll() {
+                self.scroll_pushed_at.set(now_ms);
+            }
+        }
+    }
+
+    /// Records when the scroll offsets were last told ([`Self::push_scroll`]).
+    pub fn set_scroll_pushed_at(&self, now_ms: f64) {
+        self.scroll_pushed_at.set(now_ms);
+    }
+
+    /// Changes whenever the scroll offsets scroll timelines follow change ([`Self::push_scroll`]).
+    pub fn timeline_scroll_generation(&self) -> u64 {
+        self.scroll_pushed.get().unwrap_or(0)
     }
 
     /// `scrollTop` (Element.zig:1757-1761).
@@ -2572,7 +2607,6 @@ impl Layout {
         }
         self.element_scroll.insert(el, (x, y));
         self.scroll_generation = self.scroll_generation.wrapping_add(1);
-        self.push_scroll();
         self.capture_scroll_anchor(dom, el);
         true
     }
@@ -2797,7 +2831,6 @@ impl Layout {
                     if next != current {
                         self.element_scroll.insert(el, next);
                         self.scroll_generation = self.scroll_generation.wrapping_add(1);
-                        self.push_scroll();
                         if !moved.contains(&ScrollTarget::Container(el)) {
                             moved.push(ScrollTarget::Container(el));
                         }
@@ -2810,7 +2843,6 @@ impl Layout {
                     if next != self.window_scroll {
                         self.window_scroll = next;
                         self.scroll_generation = self.scroll_generation.wrapping_add(1);
-                        self.push_scroll();
                         if !moved.contains(&ScrollTarget::Viewport) {
                             moved.push(ScrollTarget::Viewport);
                         }
@@ -2937,7 +2969,6 @@ impl Layout {
             if ny != y {
                 self.element_scroll.insert(el, (x, ny));
                 self.scroll_generation = self.scroll_generation.wrapping_add(1);
-        self.push_scroll();
                 moved.push(ScrollTarget::Container(el));
             }
         }
@@ -3013,7 +3044,6 @@ impl Layout {
             if (nx, ny) != (x, y) {
                 self.element_scroll.insert(el, (nx, ny));
                 self.scroll_generation = self.scroll_generation.wrapping_add(1);
-        self.push_scroll();
                 if !moved.contains(&ScrollTarget::Container(el)) {
                     moved.push(ScrollTarget::Container(el));
                 }
@@ -3031,7 +3061,6 @@ impl Layout {
             if clamped != self.window_scroll {
                 self.window_scroll = clamped;
                 self.scroll_generation = self.scroll_generation.wrapping_add(1);
-        self.push_scroll();
                 moved.push(ScrollTarget::Viewport);
             }
         }
