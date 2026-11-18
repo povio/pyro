@@ -795,7 +795,7 @@ impl Browser {
 }
 
 impl FrameHost {
-    fn same_origin(&self, a: FrameKey, b: FrameKey) -> bool {
+    pub(crate) fn same_origin(&self, a: FrameKey, b: FrameKey) -> bool {
         let (Some(a), Some(b)) = (self.frame(a), self.frame(b)) else { return false };
         if a.origin == "null" || b.origin == "null" {
             a.origin == b.origin && a.opaque_origin == b.opaque_origin

@@ -227,16 +227,30 @@ impl PageHooks for Hooks {
         // a fragment navigation, done at once (the URL has changed when the
         // link's `click()` returns) and never a reload.
         let own_frame = request.target.as_deref().is_none_or(|t| t.is_empty() || t.eq_ignore_ascii_case("_self"));
-        let nav = own_frame
-            .then(|| self.frames.upgrade().filter(|host| host.matches(page, &loader)).and_then(|host| host.nav(page)))
-            .flatten();
+        // The frame the navigation is for: this one, or a frame of this page
+        // the target names (`<a target>`, `<form target>`). Its `navigate`
+        // event fires and its fragment navigations stay in its document, as
+        // HTML "navigate" runs on the target navigable.
+        let mut cross_origin_target = false;
+        let nav = self.frames.upgrade().filter(|host| host.matches(page, &loader)).and_then(|host| {
+            let key = if own_frame {
+                Some(page)
+            } else {
+                request.target.as_deref().and_then(|t| host.named_frame(page, t))
+            };
+            cross_origin_target = key.is_some_and(|key| !host.same_origin(page, key));
+            key.and_then(|key| host.nav(key))
+        });
         if request.method == "GET" && request.body.is_none() {
             if nav.as_ref().is_some_and(|nav| nav.navigate_to_fragment(&request.url)) {
                 return;
             }
             // Navigation API: the document's `navigate` event may cancel
-            // or intercept the load.
-            if let Some(nav) = nav.as_ref().filter(|_| !request.url.starts_with("javascript:")) {
+            // or intercept the load. A cross-document navigation a
+            // cross-origin document starts fires none (HTML "navigate").
+            if let Some(nav) =
+                nav.as_ref().filter(|_| !request.url.starts_with("javascript:") && !cross_origin_target)
+            {
                 match nav.navigate_event("push", &request.url, true) {
                     crate::nav::NavigateDecision::Cancel => return,
                     crate::nav::NavigateDecision::Intercept => return nav.commit_intercepted(&request.url, "push"),
@@ -245,7 +259,7 @@ impl PageHooks for Hooks {
             }
         }
         // `document.open()` before the task runs drops it (stop loading).
-        let stops = nav.map(|nav| nav.stop_count());
+        let stops = nav.filter(|_| own_frame).map(|nav| nav.stop_count());
         self.sched.post(TaskSource::Navigation, move |b| {
             if !b.doc(page).is_some_and(|p| {
                 p.main_frame.loader_id == loader && stops.is_none_or(|stops| p.nav.stop_count() == stops)
