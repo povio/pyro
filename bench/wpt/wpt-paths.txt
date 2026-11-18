@@ -76,6 +76,21 @@ html/resources/
 # workers/semantics/structured-clone/*.html and workers/*-in-data-url-context (feature dir workers):
 html/webappapis/structured-clone/
 service-workers/service-worker/resources/
+# scroll-animations/scroll-timelines/scroll-timeline-snapshotting.html, custom-elements/form-associated/form-disabled-callback.html:
+css/css-scroll-snap/support/
+html/semantics/forms/form-submission-0/resources/
+# Helpers pages of the older gate directories load from elsewhere (bench/wpt sweep 2026-11-18; Python handlers
+# need wptserve and are left out):
+cors/support.js
+fullscreen/trusted-click.js
+html/anonymous-iframe/resources/common.js
+html/cross-origin-embedder-policy/credentialless/resources/common.js
+html/semantics/interestfor/resources/invoker-utils.js
+mimesniff/mime-types/resources/mime-types.json
+permissions-policy/resources/permissions-policy.js
+visual-viewport/viewport_support.js
+wai-aria/scripts/aria-utils.js
+webrtc/RTCPeerConnection-helper.js
 html/interaction/focus/the-autofocus-attribute/resources/
 loading/resources/
 css/support/
