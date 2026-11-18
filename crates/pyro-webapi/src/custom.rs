@@ -14,7 +14,13 @@
 //! synchronously ([`ParserHooks`], HTML "create an element for a token"),
 //! and runs the reactions its insertions queue before it parses on.
 //!
-//! Not supported: customized built-in elements (`is`), scoped registries,
+//! Customized built-in elements (`define(name, C, {extends})`, `<button
+//! is=name>`, `createElement("button", {is})`): a definition's local name is
+//! the element it extends; an element's is value names its definition
+//! (`ElementData::is_value`), and every HTML element interface's constructor
+//! runs the HTML element constructor steps.
+//!
+//! Not supported: scoped registries,
 //! and `formStateRestoreCallback` (there is no session history or autofill
 //! restore to call it).
 
@@ -54,6 +60,9 @@ struct Definition {
     observed: Vec<LocalName>,
     form_associated: bool,
     disable_internals: bool,
+    /// The element's local name: the definition's name, or the element it extends (a customized
+    /// built-in element).
+    local_name: LocalName,
 }
 
 /// The custom element registries of a page's realms, kept on the page
@@ -85,6 +94,33 @@ impl Registry {
         }
         self.defs.get(&(realm, name.clone())).map(|d| d.ctor.get(s))
     }
+
+    /// DOM "look up a custom element definition" in `realm` for an HTML element whose local name
+    /// is `local` and whose is value is `is`: the name of the autonomous definition of `local`,
+    /// else of the customized built-in definition `is` of `local`.
+    fn def_key(&self, realm: RealmId, local: &LocalName, is: Option<&LocalName>) -> Option<LocalName> {
+        if self.defs.is_empty() {
+            return None;
+        }
+        let of = |name: &LocalName| self.defs.get(&(realm, name.clone())).is_some_and(|d| d.local_name == *local);
+        if of(local) {
+            return Some(local.clone());
+        }
+        is.filter(|is| of(is)).cloned()
+    }
+
+    /// The constructor of [`Self::def_key`]'s definition.
+    fn ctor_for<'s>(&self, s: &Scope<'s>, realm: RealmId, local: &LocalName, is: Option<&LocalName>) -> Option<Value<'s>> {
+        let name = self.def_key(realm, local, is)?;
+        self.defs.get(&(realm, name)).map(|d| d.ctor.get(s))
+    }
+}
+
+/// `el`'s local name and is value.
+fn element_names(page: &PageDom, el: NodeId) -> Option<(LocalName, Option<LocalName>)> {
+    let dom = page.dom.borrow();
+    let e = dom.element(el).ok()?;
+    Some((e.local_name().clone(), e.is_value.clone()))
 }
 
 fn with_registry<R>(page: &PageDom, f: impl FnOnce(&mut Registry) -> R) -> R {
@@ -171,17 +207,29 @@ fn definition_flags(page: &PageDom, realm: RealmId, name: &LocalName) -> (bool, 
     r.defs.get(&(realm, name.clone())).map_or((false, false), |d| (!d.observed.is_empty(), d.form_associated))
 }
 
-/// `HTMLElement` constructor (only valid via a defined custom element class).
-pub(crate) fn construct_html_element<'s>(s: &Scope<'s>, new_target: Object<'s>) -> JsResult<Object<'s>> {
+/// HTML "HTML element constructors" (`[HTMLConstructor]`), run by the
+/// constructor of the HTML element interface `active` (`HTMLElement`,
+/// `HTMLButtonElement`, ...): only valid for a defined custom element class,
+/// whose definition must be autonomous for `HTMLElement` and extend an
+/// element of `active`'s interface otherwise.
+pub(crate) fn construct_html_element<'s>(s: &Scope<'s>, new_target: Object<'s>, active: &str) -> JsResult<Object<'s>> {
     let page = page_of(s)?;
     let realm = s.realm_id();
     let def_name = with_registry(&page, |r| {
         r.defs
             .iter()
             .find(|((rid, _), d)| *rid == realm && d.ctor.get(s).strict_equals(new_target.value()))
-            .map(|((_, n), _)| n.clone())
+            .map(|((_, n), d)| (n.clone(), d.local_name.clone()))
     });
-    let Some(name) = def_name else { return Err(JsError::Type("Illegal constructor".into())) };
+    let Some((name, local_name)) = def_name else { return Err(JsError::Type("Illegal constructor".into())) };
+    let illegal = || JsError::Type("Illegal constructor".into());
+    if local_name == name {
+        if active != "HTMLElement" {
+            return Err(illegal());
+        }
+    } else if crate::html::interface_name_for_html(&local_name) != active {
+        return Err(illegal());
+    }
     let upgrading = with_registry(&page, |r| r.stack.pop());
     let proto = new_target.get_atom("prototype")?;
     match upgrading {
@@ -192,12 +240,17 @@ pub(crate) fn construct_html_element<'s>(s: &Scope<'s>, new_target: Object<'s>) 
         }
         None => {
             // `new C()` (and the parser's construction): a new element in
-            // state "custom", its constructor running.
+            // state "custom", its constructor running; a customized built-in
+            // element is the element it extends, with the definition's name as
+            // its is value.
             let doc = page.document();
             let (observes, face) = definition_flags(&page, realm, &name);
             let el = {
                 let mut dom = page.dom.borrow_mut();
-                let el = dom.create_element(doc, &name).js()?;
+                let el = dom.create_element(doc, &local_name).js()?;
+                if local_name != name {
+                    dom.set_is_value(el, Some(name.clone())).js()?;
+                }
                 dom.prepare_custom_element(el, observes, face).js()?;
                 dom.set_custom_defined(el).js()?;
                 if face {
@@ -205,6 +258,9 @@ pub(crate) fn construct_html_element<'s>(s: &Scope<'s>, new_target: Object<'s>) 
                 }
                 el
             };
+            if local_name != name {
+                return crate::html::wrap_new_html_element(s, &page, el, new_target);
+            }
             wrap_new_node::<crate::html::HtmlElement>(s, &page, el, new_target)
         }
     }
@@ -240,7 +296,8 @@ fn upgrade_with<'s>(
     mismatch: impl FnOnce(&LocalName) -> JsError,
 ) -> JsResult<()> {
     let realm = s.realm_id();
-    let name = page.dom.borrow().element(el).js()?.local_name().clone();
+    let (local, is) = element_names(page, el).ok_or_else(|| JsError::Type("not an element".into()))?;
+    let name = with_registry(page, |r| r.def_key(realm, &local, is.as_ref())).unwrap_or(local);
     let (observed, face) = {
         let r = page.custom_elements.borrow();
         r.defs.get(&(realm, name.clone())).map_or((Vec::new(), false), |d| (d.observed.clone(), d.form_associated))
@@ -374,11 +431,15 @@ const MAX_REACTION_NESTING: usize = 256;
 /// `connectedMoveCallback` calls `disconnectedCallback` and then
 /// `connectedCallback` (HTML "enqueue a custom element callback reaction").
 fn run_reaction(page: &Rc<PageDom>, el: NodeId, reaction: CustomReaction, overflow: bool) {
-    let Some(name) = page.dom.borrow().element(el).ok().map(|e| e.local_name().clone()) else { return };
+    let Some((local, is)) = element_names(page, el) else { return };
     // The definition of the element's name, in the realm that defined it.
-    let realms: Vec<RealmId> =
-        with_registry(page, |r| r.defs.keys().filter(|(_, n)| *n == name).map(|(realm, _)| *realm).collect());
-    for realm_id in realms {
+    let realms: Vec<(RealmId, LocalName)> = with_registry(page, |r| {
+        let mut realms: Vec<RealmId> = r.defs.keys().map(|(realm, _)| *realm).collect();
+        realms.sort_unstable();
+        realms.dedup();
+        realms.into_iter().filter_map(|realm| Some((realm, r.def_key(realm, &local, is.as_ref())?))).collect()
+    });
+    for (realm_id, name) in realms {
         let realm = page.realms.borrow().get(&realm_id).and_then(|r| r.upgrade());
         let Some(realm) = realm.filter(|r| !r.is_disposed()) else { continue };
         let Ok(s) = realm.scope() else { continue };
@@ -460,20 +521,23 @@ pub(crate) fn run_upgrades(page: &Rc<PageDom>) {
 }
 
 fn try_upgrade(page: &Rc<PageDom>, el: NodeId) {
-    let (name, doc) = {
+    let (local, name, doc) = {
         let dom = page.dom.borrow();
         if !dom.awaits_upgrade(el) {
             return;
         }
         let (Ok(element), Ok(doc)) = (dom.element(el), dom.node_document(el)) else { return };
-        (element.local_name().clone(), doc)
+        (element.local_name().clone(), element.is_value.clone(), doc)
     };
     // "Look up a custom element definition": the registry is the one of the
     // node document's window (the page's own world before an isolated one).
     let Some(owner) = document_page(page, doc) else { return };
     let main = owner.main_world_realm().map(|r| r.id());
     let realm_id = with_registry(&owner, |r| {
-        let mut realms: Vec<RealmId> = r.defs.keys().filter(|(_, n)| *n == name).map(|(realm, _)| *realm).collect();
+        let mut realms: Vec<RealmId> = r.defs.keys().map(|(realm, _)| *realm).collect();
+        realms.sort_unstable();
+        realms.dedup();
+        realms.retain(|&realm| r.def_key(realm, &local, name.as_ref()).is_some());
         realms.sort_by_key(|id| Some(*id) != main);
         realms.first().copied()
     });
@@ -481,7 +545,7 @@ fn try_upgrade(page: &Rc<PageDom>, el: NodeId) {
     let realm = owner.realms.borrow().get(&realm_id).and_then(|r| r.upgrade());
     let Some(realm) = realm.filter(|r| !r.is_disposed()) else { return };
     let Ok(s) = realm.scope() else { return };
-    let Some(ctor) = with_registry(&owner, |r| r.ctor(&s, realm_id, &name)) else { return };
+    let Some(ctor) = with_registry(&owner, |r| r.ctor_for(&s, realm_id, &local, name.as_ref())) else { return };
     if let Err(e) = upgrade(&s, &owner, el, ctor) {
         s.report_exception(&e);
     }
@@ -515,7 +579,8 @@ pub(crate) fn create_element_value<'s>(
             None
         } else {
             let dom = page.dom.borrow();
-            registry.ctor(s, s.realm_id(), dom.element(el).js()?.local_name())
+            let e = dom.element(el).js()?;
+            registry.ctor_for(s, s.realm_id(), e.local_name(), e.is_value.as_ref())
         }
     };
     if let Some(ctor) = ctor {
@@ -535,7 +600,7 @@ pub(crate) fn upgrade_clone(s: &Scope<'_>, page: &Rc<PageDom>, root: NodeId) {
     if page.custom_elements.borrow().defs.is_empty() {
         return;
     }
-    let candidates: Vec<(NodeId, LocalName)> = {
+    let candidates: Vec<(NodeId, (LocalName, Option<LocalName>))> = {
         let dom = page.dom.borrow();
         if dom.node_document(root).ok() != Some(page.document()) {
             return;
@@ -547,14 +612,15 @@ pub(crate) fn upgrade_clone(s: &Scope<'_>, page: &Rc<PageDom>, root: NodeId) {
                     let custom = e.flags
                         & (pyro_dom::node::element_flags::CUSTOM_DEFINED | pyro_dom::node::element_flags::CUSTOM_FAILED)
                         != 0;
-                    (e.is_html() && !custom && e.local_name().contains('-')).then(|| (n, e.local_name().clone()))
+                    (e.is_html() && !custom && (e.is_value.is_some() || e.local_name().contains('-')))
+                        .then(|| (n, (e.local_name().clone(), e.is_value.clone())))
                 })
                 .collect()
             })
             .unwrap_or_default()
     };
-    for (el, name) in candidates {
-        let Some(ctor) = with_registry(page, |r| r.ctor(s, s.realm_id(), &name)) else { continue };
+    for (el, (local, name)) in candidates {
+        let Some(ctor) = with_registry(page, |r| r.ctor_for(s, s.realm_id(), &local, name.as_ref())) else { continue };
         if let Err(e) = upgrade(s, page, el, ctor) {
             s.report_exception(&e);
         }
@@ -595,13 +661,13 @@ impl ParserCustomElements for ParserHooks {
                 return ParserConstruct::NotDefined;
             }
             let Ok(e) = dom.element(el) else { return ParserConstruct::NotDefined };
-            e.local_name().clone()
+            (e.local_name().clone(), e.is_value.clone())
         };
         let Some(realm) = page.main_world_realm().filter(|r| !r.is_disposed()) else {
             return ParserConstruct::NotDefined;
         };
         let Ok(s) = realm.scope() else { return ParserConstruct::NotDefined };
-        let Some(ctor) = with_registry(&page, |r| r.ctor(&s, realm.id(), &name)) else {
+        let Some(ctor) = with_registry(&page, |r| r.ctor_for(&s, realm.id(), &name.0, name.1.as_ref())) else {
             return ParserConstruct::NotDefined;
         };
         // "Perform a microtask checkpoint" (no script runs here).
@@ -660,6 +726,24 @@ impl JsClass for CustomElementRegistry {
                 return Err(JsError::dom("SyntaxError", format!("Failed to execute 'define' on 'CustomElementRegistry': \"{name}\" is not a valid custom element name")));
             }
             let key = (s.realm_id(), LocalName::from(name.as_str()));
+            // ElementDefinitionOptions `extends`: a customized built-in element of that HTML element.
+            let mut local_name = key.1.clone();
+            if let Some(options) = a.opt(2).filter(|v| !v.is_undefined() && !v.is_null()) {
+                let Some(options) = options.as_object() else {
+                    return Err(JsError::Type("Failed to execute 'define' on 'CustomElementRegistry': The provided value is not of type 'ElementDefinitionOptions'.".into()));
+                };
+                let extends = options.get_atom("extends")?;
+                if !extends.is_undefined() {
+                    let extends = dom_string(extends)?;
+                    if valid_name(&extends) {
+                        return Err(JsError::dom("NotSupportedError", format!("Failed to execute 'define' on 'CustomElementRegistry': \"{extends}\" is a valid custom element name")));
+                    }
+                    if !crate::html::is_known_html_element(&extends) {
+                        return Err(JsError::dom("NotSupportedError", format!("Failed to execute 'define' on 'CustomElementRegistry': \"{extends}\" is an HTMLUnknownElement")));
+                    }
+                    local_name = LocalName::from(extends.as_str());
+                }
+            }
             let exists = with_registry(page, |r| {
                 r.defs.contains_key(&key) || r.defs.iter().any(|(k, d)| k.0 == key.0 && d.ctor.get(s).strict_equals(ctor))
             });
@@ -730,6 +814,7 @@ impl JsClass for CustomElementRegistry {
                 observed: observed.clone(),
                 form_associated,
                 disable_internals,
+                local_name: local_name.clone(),
             };
             let install_hooks = with_registry(page, |r| !std::mem::replace(&mut r.parser_hooks, true));
             let previous = with_registry(page, |r| r.defs.insert(key.clone(), definition));
@@ -748,7 +833,17 @@ impl JsClass for CustomElementRegistry {
             // Upgrade existing elements of the document and its shadow trees, in shadow-including
             // tree order (a component's shadow tree holds the components it uses, which may be
             // defined after it).
-            let existing: Vec<NodeId> = page.dom.borrow().upgrade_candidates_named(page.document(), &key.1);
+            let existing: Vec<NodeId> = page
+                .dom
+                .borrow()
+                .upgrade_candidates_named(page.document(), &key.1)
+                .into_iter()
+                .filter(|&el| {
+                    element_names(page, el).is_some_and(|(local, is)| {
+                        with_registry(page, |r| r.def_key(key.0, &local, is.as_ref())).as_ref() == Some(&key.1)
+                    })
+                })
+                .collect();
             for el in existing {
                 if let Err(e) = upgrade(s, page, el, ctor) {
                     s.report_exception(&e);
@@ -795,7 +890,7 @@ impl JsClass for CustomElementRegistry {
         });
         def.method("upgrade", 1, |s, page, a| {
             let root = crate::node::node_arg(s, a.get(0), "CustomElementRegistry.upgrade")?;
-            let candidates: Vec<(NodeId, LocalName)> = {
+            let candidates: Vec<(NodeId, (LocalName, Option<LocalName>))> = {
                 let dom = page.dom.borrow();
                 let undefined =
                     pyro_dom::node::element_flags::CUSTOM_DEFINED | pyro_dom::node::element_flags::CUSTOM_FAILED;
@@ -805,14 +900,14 @@ impl JsClass for CustomElementRegistry {
                             dom.element(n)
                                 .ok()
                                 .filter(|e| e.flags & undefined == 0)
-                                .map(|e| (n, e.local_name().clone()))
+                                .map(|e| (n, (e.local_name().clone(), e.is_value.clone())))
                         })
                         .collect()
                     })
                     .unwrap_or_default()
             };
-            for (el, name) in candidates {
-                let ctor = with_registry(page, |r| r.ctor(s, s.realm_id(), &name));
+            for (el, (local, name)) in candidates {
+                let ctor = with_registry(page, |r| r.ctor_for(s, s.realm_id(), &local, name.as_ref()));
                 if let Some(c) = ctor {
                     upgrade(s, page, el, c)?;
                 }

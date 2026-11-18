@@ -9,9 +9,13 @@ export const PAINT_DIRS = [
   'css/css-backgrounds', 'css/css-text-decor', 'css/filter-effects', 'css/compositing', 'css/css-masking',
   'css/css-color', 'css/css-transforms', 'css/CSS2',
 ];
+// Directories added to the gate with the round 4 feature lanes (a feature passes a good share of them): their
+// testharness pages run in wptrunner's 800x600 viewport. custom-elements: 190 pages (customized built-ins, lane F3a).
+export const FEATURE_DIRS = ['custom-elements'];
 export const DEFAULT_DIRS = [
   'dom', 'html/dom', 'encoding', 'url', 'fetch/api/basic', 'xhr', 'css/selectors', 'uievents', 'shadow-dom', 'webstorage',
   ...PAINT_DIRS,
+  ...FEATURE_DIRS,
 ];
 // `--dirs all` (run.mjs): `keep` (a kind's directories, so their pages keep their `dir` and its rules) and every other
 // directory of the checkout, the fewest that cover it: a directory that holds none of `keep` whole, else its
@@ -34,7 +38,7 @@ export function allDirs(wpt, keep) {
   return out;
 }
 // The directories whose testharness pages run in Playwright's 1280x720, the viewport their baseline was recorded with.
-const LEGACY_VIEWPORT_DIRS = DEFAULT_DIRS.filter((d) => !PAINT_DIRS.includes(d));
+const LEGACY_VIEWPORT_DIRS = DEFAULT_DIRS.filter((d) => !PAINT_DIRS.includes(d) && !FEATURE_DIRS.includes(d));
 // Testharness pages in every other directory run as wptrunner runs every page: in an 800x600 viewport (run.mjs; the
 // browser has Ahem for every page). The older directories keep the viewport their baseline was recorded with
 // (Playwright's 1280x720).

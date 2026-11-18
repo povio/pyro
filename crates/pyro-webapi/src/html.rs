@@ -239,13 +239,7 @@ macro_rules! reflect_action {
 
 macro_rules! simple_class {
     ($name:ident, $js:literal, $parent:ty) => {
-        pub struct $name;
-        impl JsClass for $name {
-            const NAME: &'static str = $js;
-            type Data = NodeData;
-            type Parent = $parent;
-            fn define(_def: &mut ClassDef<Self>) {}
-        }
+        simple_class!($name, $js, $parent, |_def| {});
     };
     ($name:ident, $js:literal, $parent:ty, $body:expr) => {
         pub struct $name;
@@ -254,6 +248,11 @@ macro_rules! simple_class {
             type Data = NodeData;
             type Parent = $parent;
             fn define(def: &mut ClassDef<Self>) {
+                // HTML element interfaces are `[HTMLConstructor]`: constructible by a customized
+                // built-in element's class (`class extends HTMLButtonElement`).
+                if $js.starts_with("HTML") {
+                    def.constructor(0, |s, nt, _a| crate::custom::construct_html_element(s, nt, $js));
+                }
                 let f: fn(&mut ClassDef<Self>) = $body;
                 f(def);
             }
@@ -738,8 +737,13 @@ pub fn class_for(dom: &Dom, id: NodeId) -> ElClass {
     if !e.is_html() {
         return ElClass::Other;
     }
+    html_class_for_local(&e.name.local)
+}
+
+/// The interface class of an HTML element named `local` (HTML "element interface").
+pub fn html_class_for_local(local: &str) -> ElClass {
     use ElClass::*;
-    match &*e.name.local {
+    match local {
         "html" => Html,
         "head" => Head,
         "body" => Body,
@@ -908,6 +912,205 @@ pub fn wrap_element<'s>(s: &Scope<'s>, class: ElClass, d: NodeData, k: Option<Id
     }
 }
 
+
+/// The name of the interface of `class` (`HTMLButtonElement`, ...).
+pub fn interface_name(class: ElClass) -> &'static str {
+    use ElClass::*;
+    match class {
+        Html => HtmlHtmlElement::NAME,
+        Head => HtmlHeadElement::NAME,
+        Body => HtmlBodyElement::NAME,
+        Title => HtmlTitleElement::NAME,
+        Meta => HtmlMetaElement::NAME,
+        Link => HtmlLinkElement::NAME,
+        Style => HtmlStyleElement::NAME,
+        Script => HtmlScriptElement::NAME,
+        Div => HtmlDivElement::NAME,
+        Span => HtmlSpanElement::NAME,
+        Paragraph => HtmlParagraphElement::NAME,
+        Heading => HtmlHeadingElement::NAME,
+        Anchor => HtmlAnchorElement::NAME,
+        Image => HtmlImageElement::NAME,
+        Input => HtmlInputElement::NAME,
+        TextArea => HtmlTextAreaElement::NAME,
+        Select => HtmlSelectElement::NAME,
+        Option => HtmlOptionElement::NAME,
+        OptGroup => HtmlOptGroupElement::NAME,
+        Button => HtmlButtonElement::NAME,
+        Form => HtmlFormElement::NAME,
+        Label => HtmlLabelElement::NAME,
+        FieldSet => HtmlFieldSetElement::NAME,
+        Legend => HtmlLegendElement::NAME,
+        UList => HtmlUListElement::NAME,
+        OList => HtmlOListElement::NAME,
+        Li => HtmlLiElement::NAME,
+        Table => HtmlTableElement::NAME,
+        TableSection => HtmlTableSectionElement::NAME,
+        TableRow => HtmlTableRowElement::NAME,
+        TableCell => HtmlTableCellElement::NAME,
+        TableCaption => HtmlTableCaptionElement::NAME,
+        TableCol => HtmlTableColElement::NAME,
+        IFrame => HtmlIFrameElement::NAME,
+        Template => HtmlTemplateElement::NAME,
+        Slot => HtmlSlotElement::NAME,
+        Canvas => HtmlCanvasElement::NAME,
+        Video => HtmlVideoElement::NAME,
+        Audio => HtmlAudioElement::NAME,
+        Br => HtmlBrElement::NAME,
+        Hr => HtmlHrElement::NAME,
+        Pre => HtmlPreElement::NAME,
+        Quote => HtmlQuoteElement::NAME,
+        DList => HtmlDListElement::NAME,
+        Dialog => HtmlDialogElement::NAME,
+        Details => HtmlDetailsElement::NAME,
+        Progress => HtmlProgressElement::NAME,
+        Meter => HtmlMeterElement::NAME,
+        Output => HtmlOutputElement::NAME,
+        DataList => HtmlDataListElement::NAME,
+        Picture => HtmlPictureElement::NAME,
+        Source => HtmlSourceElement::NAME,
+        Time => HtmlTimeElement::NAME,
+        Data => HtmlDataElement::NAME,
+        Base => HtmlBaseElement::NAME,
+        Object => HtmlObjectElement::NAME,
+        Embed => HtmlEmbedElement::NAME,
+        Area => HtmlAreaElement::NAME,
+        Map => HtmlMapElement::NAME,
+        Mod => HtmlModElement::NAME,
+        Menu => HtmlMenuElement::NAME,
+        Marquee => HtmlMarqueeElement::NAME,
+        FrameSet => HtmlFrameSetElement::NAME,
+        Frame => HtmlFrameElement::NAME,
+        Font => HtmlFontElement::NAME,
+        Directory => HtmlDirectoryElement::NAME,
+        Param => HtmlParamElement::NAME,
+        Track => HtmlTrackElement::NAME,
+        Unknown => HtmlUnknownElement::NAME,
+        Generic => HtmlElement::NAME,
+        Svg => SvgElement::NAME,
+        SvgGraphics => SvgGraphicsElement::NAME,
+        SvgA => SvgAElement::NAME,
+        SvgRoot => SvgSvgElement::NAME,
+        SvgClipPath => SvgClipPathElement::NAME,
+        SvgMask => SvgMaskElement::NAME,
+        SvgPattern => SvgPatternElement::NAME,
+        SvgLinearGradient => SvgLinearGradientElement::NAME,
+        SvgRadialGradient => SvgRadialGradientElement::NAME,
+        SvgFilter => SvgFilterElement::NAME,
+        SvgMarker => SvgMarkerElement::NAME,
+        MathMl => MathMlElement::NAME,
+        Other => Element::NAME,
+    }
+}
+
+/// The interface name of an HTML element named `local`.
+pub fn interface_name_for_html(local: &str) -> &'static str {
+    interface_name(html_class_for_local(local))
+}
+
+/// Whether `local` names an HTML element whose interface is not `HTMLUnknownElement` (what
+/// `customElements.define`'s `extends` may name).
+pub fn is_known_html_element(local: &str) -> bool {
+    !matches!(html_class_for_local(local), ElClass::Unknown)
+}
+
+/// The wrapper of `el`, made by `new C()` of a customized built-in element: its element
+/// interface with `new_target`'s prototype.
+pub(crate) fn wrap_new_html_element<'s>(
+    s: &Scope<'s>,
+    page: &Rc<PageDom>,
+    el: NodeId,
+    new_target: Object<'s>,
+) -> JsResult<Object<'s>> {
+    let class = class_for(&page.dom.borrow(), el);
+    use ElClass::*;
+    match class {
+        Html => crate::node::wrap_new_node::<HtmlHtmlElement>(s, page, el, new_target),
+        Head => crate::node::wrap_new_node::<HtmlHeadElement>(s, page, el, new_target),
+        Body => crate::node::wrap_new_node::<HtmlBodyElement>(s, page, el, new_target),
+        Title => crate::node::wrap_new_node::<HtmlTitleElement>(s, page, el, new_target),
+        Meta => crate::node::wrap_new_node::<HtmlMetaElement>(s, page, el, new_target),
+        Link => crate::node::wrap_new_node::<HtmlLinkElement>(s, page, el, new_target),
+        Style => crate::node::wrap_new_node::<HtmlStyleElement>(s, page, el, new_target),
+        Script => crate::node::wrap_new_node::<HtmlScriptElement>(s, page, el, new_target),
+        Div => crate::node::wrap_new_node::<HtmlDivElement>(s, page, el, new_target),
+        Span => crate::node::wrap_new_node::<HtmlSpanElement>(s, page, el, new_target),
+        Paragraph => crate::node::wrap_new_node::<HtmlParagraphElement>(s, page, el, new_target),
+        Heading => crate::node::wrap_new_node::<HtmlHeadingElement>(s, page, el, new_target),
+        Anchor => crate::node::wrap_new_node::<HtmlAnchorElement>(s, page, el, new_target),
+        Image => crate::node::wrap_new_node::<HtmlImageElement>(s, page, el, new_target),
+        Input => crate::node::wrap_new_node::<HtmlInputElement>(s, page, el, new_target),
+        TextArea => crate::node::wrap_new_node::<HtmlTextAreaElement>(s, page, el, new_target),
+        Select => crate::node::wrap_new_node::<HtmlSelectElement>(s, page, el, new_target),
+        Option => crate::node::wrap_new_node::<HtmlOptionElement>(s, page, el, new_target),
+        OptGroup => crate::node::wrap_new_node::<HtmlOptGroupElement>(s, page, el, new_target),
+        Button => crate::node::wrap_new_node::<HtmlButtonElement>(s, page, el, new_target),
+        Form => crate::node::wrap_new_node::<HtmlFormElement>(s, page, el, new_target),
+        Label => crate::node::wrap_new_node::<HtmlLabelElement>(s, page, el, new_target),
+        FieldSet => crate::node::wrap_new_node::<HtmlFieldSetElement>(s, page, el, new_target),
+        Legend => crate::node::wrap_new_node::<HtmlLegendElement>(s, page, el, new_target),
+        UList => crate::node::wrap_new_node::<HtmlUListElement>(s, page, el, new_target),
+        OList => crate::node::wrap_new_node::<HtmlOListElement>(s, page, el, new_target),
+        Li => crate::node::wrap_new_node::<HtmlLiElement>(s, page, el, new_target),
+        Table => crate::node::wrap_new_node::<HtmlTableElement>(s, page, el, new_target),
+        TableSection => crate::node::wrap_new_node::<HtmlTableSectionElement>(s, page, el, new_target),
+        TableRow => crate::node::wrap_new_node::<HtmlTableRowElement>(s, page, el, new_target),
+        TableCell => crate::node::wrap_new_node::<HtmlTableCellElement>(s, page, el, new_target),
+        TableCaption => crate::node::wrap_new_node::<HtmlTableCaptionElement>(s, page, el, new_target),
+        TableCol => crate::node::wrap_new_node::<HtmlTableColElement>(s, page, el, new_target),
+        IFrame => crate::node::wrap_new_node::<HtmlIFrameElement>(s, page, el, new_target),
+        Template => crate::node::wrap_new_node::<HtmlTemplateElement>(s, page, el, new_target),
+        Slot => crate::node::wrap_new_node::<HtmlSlotElement>(s, page, el, new_target),
+        Canvas => crate::node::wrap_new_node::<HtmlCanvasElement>(s, page, el, new_target),
+        Video => crate::node::wrap_new_node::<HtmlVideoElement>(s, page, el, new_target),
+        Audio => crate::node::wrap_new_node::<HtmlAudioElement>(s, page, el, new_target),
+        Br => crate::node::wrap_new_node::<HtmlBrElement>(s, page, el, new_target),
+        Hr => crate::node::wrap_new_node::<HtmlHrElement>(s, page, el, new_target),
+        Pre => crate::node::wrap_new_node::<HtmlPreElement>(s, page, el, new_target),
+        Quote => crate::node::wrap_new_node::<HtmlQuoteElement>(s, page, el, new_target),
+        DList => crate::node::wrap_new_node::<HtmlDListElement>(s, page, el, new_target),
+        Dialog => crate::node::wrap_new_node::<HtmlDialogElement>(s, page, el, new_target),
+        Details => crate::node::wrap_new_node::<HtmlDetailsElement>(s, page, el, new_target),
+        Progress => crate::node::wrap_new_node::<HtmlProgressElement>(s, page, el, new_target),
+        Meter => crate::node::wrap_new_node::<HtmlMeterElement>(s, page, el, new_target),
+        Output => crate::node::wrap_new_node::<HtmlOutputElement>(s, page, el, new_target),
+        DataList => crate::node::wrap_new_node::<HtmlDataListElement>(s, page, el, new_target),
+        Picture => crate::node::wrap_new_node::<HtmlPictureElement>(s, page, el, new_target),
+        Source => crate::node::wrap_new_node::<HtmlSourceElement>(s, page, el, new_target),
+        Time => crate::node::wrap_new_node::<HtmlTimeElement>(s, page, el, new_target),
+        Data => crate::node::wrap_new_node::<HtmlDataElement>(s, page, el, new_target),
+        Base => crate::node::wrap_new_node::<HtmlBaseElement>(s, page, el, new_target),
+        Object => crate::node::wrap_new_node::<HtmlObjectElement>(s, page, el, new_target),
+        Embed => crate::node::wrap_new_node::<HtmlEmbedElement>(s, page, el, new_target),
+        Area => crate::node::wrap_new_node::<HtmlAreaElement>(s, page, el, new_target),
+        Map => crate::node::wrap_new_node::<HtmlMapElement>(s, page, el, new_target),
+        Mod => crate::node::wrap_new_node::<HtmlModElement>(s, page, el, new_target),
+        Menu => crate::node::wrap_new_node::<HtmlMenuElement>(s, page, el, new_target),
+        Marquee => crate::node::wrap_new_node::<HtmlMarqueeElement>(s, page, el, new_target),
+        FrameSet => crate::node::wrap_new_node::<HtmlFrameSetElement>(s, page, el, new_target),
+        Frame => crate::node::wrap_new_node::<HtmlFrameElement>(s, page, el, new_target),
+        Font => crate::node::wrap_new_node::<HtmlFontElement>(s, page, el, new_target),
+        Directory => crate::node::wrap_new_node::<HtmlDirectoryElement>(s, page, el, new_target),
+        Param => crate::node::wrap_new_node::<HtmlParamElement>(s, page, el, new_target),
+        Track => crate::node::wrap_new_node::<HtmlTrackElement>(s, page, el, new_target),
+        Unknown => crate::node::wrap_new_node::<HtmlUnknownElement>(s, page, el, new_target),
+        Generic => crate::node::wrap_new_node::<HtmlElement>(s, page, el, new_target),
+        Svg => crate::node::wrap_new_node::<SvgElement>(s, page, el, new_target),
+        SvgGraphics => crate::node::wrap_new_node::<SvgGraphicsElement>(s, page, el, new_target),
+        SvgA => crate::node::wrap_new_node::<SvgAElement>(s, page, el, new_target),
+        SvgRoot => crate::node::wrap_new_node::<SvgSvgElement>(s, page, el, new_target),
+        SvgClipPath => crate::node::wrap_new_node::<SvgClipPathElement>(s, page, el, new_target),
+        SvgMask => crate::node::wrap_new_node::<SvgMaskElement>(s, page, el, new_target),
+        SvgPattern => crate::node::wrap_new_node::<SvgPatternElement>(s, page, el, new_target),
+        SvgLinearGradient => crate::node::wrap_new_node::<SvgLinearGradientElement>(s, page, el, new_target),
+        SvgRadialGradient => crate::node::wrap_new_node::<SvgRadialGradientElement>(s, page, el, new_target),
+        SvgFilter => crate::node::wrap_new_node::<SvgFilterElement>(s, page, el, new_target),
+        SvgMarker => crate::node::wrap_new_node::<SvgMarkerElement>(s, page, el, new_target),
+        MathMl => crate::node::wrap_new_node::<MathMlElement>(s, page, el, new_target),
+        Other => crate::node::wrap_new_node::<Element>(s, page, el, new_target),
+    }
+}
+
 // ----- Element extras (layout-dependent members) --------------------------------
 
 pub(crate) fn define_element_extras(def: &mut ClassDef<Element>) {
@@ -1036,7 +1239,7 @@ impl JsClass for HtmlElement {
     type Parent = Element;
     fn define(def: &mut ClassDef<Self>) {
         crate::handlers::define_global(def);
-        def.constructor(0, |s, nt, _a| crate::custom::construct_html_element(s, nt));
+        def.constructor(0, |s, nt, _a| crate::custom::construct_html_element(s, nt, "HTMLElement"));
         reflect_str!(def, "title", "title");
         reflect_str!(def, "lang", "lang");
         reflect_enum!(def, "dir", "dir", DIR);

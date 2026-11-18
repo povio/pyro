@@ -1818,8 +1818,13 @@ impl JsClass for Document {
                 .transpose()?
                 .filter(|v| !v.is_undefined())
             {
-                let arg0 = dom_string(is)?;
-                n.page().dom.borrow_mut().set_attribute(el, "is", &arg0).js()?;
+                // DOM "create an element" with the options' `is`: the element's is value (no
+                // `is` attribute), for an HTML element.
+                let is = dom_string(is)?;
+                let mut dom = n.page().dom.borrow_mut();
+                if dom.element(el).js()?.is_html() {
+                    dom.set_is_value(el, Some(pyro_dom::LocalName::from(is.as_str()))).js()?;
+                }
             }
             crate::html::upgrade_if_custom(s, n.page(), n.id, el)
         });
@@ -1828,6 +1833,15 @@ impl JsClass for Document {
             let ns = opt_dom_string(a.get(0))?;
             let q = dom_string(a.get(1))?;
             let el = n.page().dom.borrow_mut().create_element_ns(n.id, ns.as_deref(), &q).js()?;
+            if let Some(is) =
+                a.opt(2).and_then(|o| o.as_object()).map(|o| o.get_atom("is")).transpose()?.filter(|v| !v.is_undefined())
+            {
+                let is = dom_string(is)?;
+                let mut dom = n.page().dom.borrow_mut();
+                if dom.element(el).js()?.is_html() {
+                    dom.set_is_value(el, Some(pyro_dom::LocalName::from(is.as_str()))).js()?;
+                }
+            }
             crate::html::upgrade_if_custom(s, n.page(), n.id, el)
         });
         def.method("createTextNode", 1, |s, n, a| {

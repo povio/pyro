@@ -148,6 +148,17 @@ fn append_text(dom: &mut Dom, parent: u32, before: u32, text: &str) {
     dom.queue_child_list(parent, &[t], &[], prev, before);
 }
 
+/// HTML "insert an element at the adjusted insertion location": "if it is not possible to insert
+/// element at the adjusted insertion location, abort these steps". A custom element's
+/// constructor, run before the insertion, may have made the parser's insertion parent its own
+/// descendant (`this.appendChild(form)` for the form it was going into): inserting it would make
+/// a cycle (WPT custom-elements custom-button-abort-insertion-crash).
+fn cannot_insert(d: &Dom, parent: u32, child: &NodeOrText<u32>) -> bool {
+    // A node the parser just made has no children: only one a script filled can be an ancestor.
+    matches!(child, NodeOrText::AppendNode(n)
+        if (d.n(*n).first_child != NIL || *n == parent) && d.is_host_including_inclusive_ancestor(*n, parent))
+}
+
 fn insert_node(dom: &mut Dom, parent: u32, before: u32, child: NodeOrText<u32>) {
     match child {
         NodeOrText::AppendText(t) => append_text(dom, parent, before, &t),
@@ -199,7 +210,13 @@ impl<A: DomAccess> TreeSink for Sink<A> {
         // borrow: until a window defines a name, one set test per element.
         let template = flags.template;
         let created = self.dom.with(|d| {
-            if self.sync_custom && !template && d.parser_may_construct(self.doc, &name) {
+            // HTML "create an element for a token": the token's `is` attribute is the is value
+            // of an HTML element.
+            let is = (name.ns == markup5ever::ns!(html))
+                .then(|| attrs.iter().find(|a| a.name.ns == ns!() && &*a.name.local == "is"))
+                .flatten()
+                .map(|a| &*a.value);
+            if self.sync_custom && !template && d.parser_may_construct(self.doc, &name, is) {
                 return Err((name, attrs));
             }
             Ok(self.new_element(d, name, attrs, template))
@@ -234,7 +251,9 @@ impl<A: DomAccess> TreeSink for Sink<A> {
     fn append(&self, parent: &u32, child: NodeOrText<u32>) {
         self.settle_custom(*parent, &child);
         let queued = self.dom.with(|d| {
-            insert_node(d, *parent, NIL, child);
+            if !cannot_insert(d, *parent, &child) {
+                insert_node(d, *parent, NIL, child);
+            }
             d.custom_reactions_queued()
         });
         if queued {
@@ -308,7 +327,7 @@ impl<A: DomAccess> TreeSink for Sink<A> {
         let queued = self.dom.with(|d| {
             // The constructor may have moved the sibling.
             let parent = d.n(*sibling).parent;
-            if parent != NIL {
+            if parent != NIL && !cannot_insert(d, parent, &new_node) {
                 insert_node(d, parent, *sibling, new_node);
             }
             d.custom_reactions_queued()
@@ -411,6 +430,12 @@ impl<A: DomAccess> Sink<A> {
             d.inline_transitions_seen = true;
         }
         let mut el = ElementData::new(name);
+        if el.is_html() {
+            el.is_value = attrs
+                .iter()
+                .find(|a| a.name.ns == ns!() && &*a.name.local == "is")
+                .map(|a| html5ever::LocalName::from(&*a.value));
+        }
         el.set_attrs(
             attrs.into_iter().map(|a| crate::node::Attr { name: a.name, value: (&*a.value).into() }).collect(),
         );
@@ -439,7 +464,17 @@ impl<A: DomAccess> Sink<A> {
     /// with it until the parser inserts it (`Sink::settle_custom`).
     #[inline(never)]
     fn new_custom_element(&self, name: QualName, attrs: Vec<Attribute>, template: bool) -> u32 {
-        let created = self.dom.with(|d| self.new_element(d, name, Vec::new(), template));
+        let is = attrs
+            .iter()
+            .find(|a| a.name.ns == ns!() && &*a.name.local == "is")
+            .map(|a| html5ever::LocalName::from(&*a.value));
+        let created = self.dom.with(|d| {
+            let created = self.new_element(d, name, Vec::new(), template);
+            if let Some(e) = d.n_mut(created).element_mut() {
+                e.is_value = is;
+            }
+            created
+        });
         self.pending_custom.borrow_mut().push((created, attrs));
         self.has_pending_custom.set(true);
         created
@@ -477,8 +512,8 @@ impl<A: DomAccess> Sink<A> {
         let n = *n;
         let attrs: Vec<(QualName, String)> = attrs.into_iter().map(|a| (a.name, a.value.to_string())).collect();
         let hooks = self.dom.with(|d| {
-            let name = d.n(n).element().map(|e| e.name.clone())?;
-            (d.n(parent).owner_doc == self.doc).then(|| d.parser_custom_elements(self.doc, &name)).flatten()
+            let (name, is) = d.n(n).element().map(|e| (e.name.clone(), e.is_value.clone()))?;
+            (d.n(parent).owner_doc == self.doc).then(|| d.parser_custom_elements(self.doc, &name, is.as_ref())).flatten()
         });
         let constructed = match hooks {
             Some(hooks) => {

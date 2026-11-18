@@ -270,6 +270,10 @@ pub struct ElementData {
     /// An HTML `<style>`: the `Dom::style_text_revision` at which its child
     /// text content last changed (0: not since it was created).
     pub(crate) style_text_revision: u64,
+    /// DOM "is value": the name of the customized built-in element definition this element is
+    /// for (`<button is=x-b>`, `createElement("button", {is})`), set when it is created and
+    /// never changed by its `is` attribute after that.
+    pub is_value: Option<LocalName>,
 }
 
 pub mod element_flags {
@@ -308,7 +312,13 @@ impl ElementData {
             control: None,
             flags: 0,
             style_text_revision: 0,
+            is_value: None,
         }
+    }
+    /// Whether a custom element definition named `name` may be this element's: an autonomous one
+    /// of its local name, or a customized built-in one of its is value.
+    pub fn may_be_defined_as(&self, name: &LocalName) -> bool {
+        self.name.local == *name || self.is_value.as_ref() == Some(name)
     }
     pub fn local_name(&self) -> &LocalName {
         &self.name.local

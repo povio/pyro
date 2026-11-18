@@ -1929,7 +1929,7 @@ impl Dom {
         }
         false
     }
-    fn is_host_including_inclusive_ancestor(&self, anc: u32, mut node: u32) -> bool {
+    pub(crate) fn is_host_including_inclusive_ancestor(&self, anc: u32, mut node: u32) -> bool {
         loop {
             if self.is_inclusive_ancestor(anc, node) {
                 return true;
@@ -2763,8 +2763,11 @@ impl Dom {
                 });
                 // HTML script cloning steps: "already started" is copied.
                 let started = e.flags & crate::node::element_flags::SCRIPT_ALREADY_STARTED;
+                // DOM "clone a single node": the copy has the same is value.
+                let is_value = e.is_value.clone();
                 let id = self.create_element_raw(self.id_of(doc), name)?;
                 let el = self.n_mut(id.idx).element_mut().unwrap();
+                el.is_value = is_value;
                 el.set_attr_state(attrs);
                 el.control = control;
                 el.flags |= started;
