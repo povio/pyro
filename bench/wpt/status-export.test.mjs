@@ -122,7 +122,10 @@ test('copyPages: each copy maps itself to the status page module, so it hydrates
   expect(copyPages(tmp)).toBe(4);
   const page = fs.readFileSync(path.join(tmp, 'status/wpt/css/x.html'), 'utf8');
   expect(page).toContain('</script><script>window.__VP_HASH_MAP__["status_wpt_css_x.md"]="Ab-1"</script></head>');
-  expect(fs.readFileSync(path.join(tmp, 'assets/status_wpt_css_x.md.Ab-1.lean.js'), 'utf8')).toBe('export * from "./status_wpt.md.Ab-1.lean.js";export { default } from "./status_wpt.md.Ab-1.lean.js";\n');
+  expect(fs.readFileSync(path.join(tmp, 'assets/status_wpt_css_x.md.Ab-1.lean.js'), 'utf8')).toBe(
+    'import * as m from "./status_wpt.md.Ab-1.lean.js";export default m.default;' +
+      'export const __pageData = { ...m.__pageData, relativePath: "status/wpt/css/x.md", filePath: "status/wpt/css/x.md" };\n',
+  );
   expect(pageKey('odd/[dir]')).toBe('status_wpt_odd__dir_.md');
   // Two directories whose names differ only in case share a key (the map is case-insensitive): plain copies.
   expect(fs.readFileSync(path.join(tmp, 'status/wpt/a/B.html'), 'utf8')).not.toContain('status_wpt_a_b');

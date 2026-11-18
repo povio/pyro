@@ -16,7 +16,7 @@
 //   export --chrome also writes chrome/<rev>.json.gz when the run's revision has none
 //   bun status-export.mjs site --data DIR --docs website/docs
 //       the page (docs/status/wpt.md) and every directory's data (docs/public/status-data/wpt/); after the build,
-//       copyPages writes one HTML file per directory (website/scripts/wpt-status.mjs)
+//       copyPages writes one HTML file per directory (website/tools/wpt-status.mjs)
 //
 // A run is made from the baselines, not from the shard results: a push to main passes its gates only when the
 // baselines record what the run found (an unrecorded gain fails as stale), so they are that build's results, and
@@ -345,8 +345,9 @@ export function writeSite(dataDir, docs) {
 // After the build: dist/status/wpt/<dir>.html for every directory, each a copy of dist/status/wpt.html. So that the
 // router hydrates the copy as the page it was rendered from (no hydration mismatch), each copy adds itself to
 // VitePress's page map (__VP_HASH_MAP__, inlined in the HTML) under its own name, pointing at a module that
-// re-exports status/wpt.md's. A directory reached by a link instead has no entry: the theme shows WptStatus where
-// "not found" would be (theme/index.ts), rendered on the client, where nothing needs to match.
+// re-exports status/wpt.md's with the copy's own relativePath. A directory reached by a link instead has no entry:
+// the theme shows WptStatus where "not found" would be (theme/index.ts), rendered on the client, where nothing needs
+// to match.
 const INVALID_CHAR = /[\u0000-\u001F"#$&*+,:;<=>?[\]^`{|}\u007F]/g; // vitepress sanitizeFileName (rollup's)
 export const pageKey = (d) => `status_wpt_${d.replace(/\//g, '_')}`.replace(INVALID_CHAR, '_') + '.md';
 
@@ -369,7 +370,14 @@ export function copyPages(dist) {
     }
     for (const ext of ['js', 'lean.js']) {
       const target = `./status_wpt.md.${hash}.${ext}`;
-      fs.writeFileSync(path.join(dist, 'assets', `${key}.${hash}.${ext}`), `export * from ${JSON.stringify(target)};export { default } from ${JSON.stringify(target)};\n`);
+      // Its own relativePath: the router rewrites the address bar to the page data's path after loading
+      // (vitepress client/app/router.js), which would turn every copy's URL into /status/wpt.html.
+      const rel = JSON.stringify(`status/wpt/${d}.md`);
+      fs.writeFileSync(
+        path.join(dist, 'assets', `${key}.${hash}.${ext}`),
+        `import * as m from ${JSON.stringify(target)};export default m.default;` +
+          `export const __pageData = { ...m.__pageData, relativePath: ${rel}, filePath: ${rel} };\n`,
+      );
     }
     const entry = `<script>window.__VP_HASH_MAP__[${JSON.stringify(key.toLowerCase())}]=${JSON.stringify(hash)}</script>`;
     fs.writeFileSync(f, html.slice(0, mapEnd + 9) + entry + html.slice(mapEnd + 9));
