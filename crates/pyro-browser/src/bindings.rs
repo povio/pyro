@@ -679,7 +679,11 @@ impl Browser {
                 }
             } else if event.kind == pyro_dom::script::ResourceKind::Img {
                 if image_nodes.insert(event.node) {
-                    self.image_event(target, event.node);
+                    // HTML: setting `src`/`srcset` restarts the request even for the same URL
+                    // (a relevant mutation; a CORS or referrer policy state change is found by
+                    // `image_event_with` itself).
+                    let restart = event.reason == pyro_dom::script::ResourceReason::SourceChanged;
+                    self.image_event_with(target, event.node, restart);
                 }
             } else if event.kind == pyro_dom::script::ResourceKind::Object {
                 if image_nodes.insert(event.node) {

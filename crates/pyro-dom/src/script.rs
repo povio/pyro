@@ -91,6 +91,9 @@ pub enum ResourceKind {
 pub enum ResourceReason {
     Connected,
     AttrChanged,
+    /// An `<img>`'s `src` or `srcset` was set (even to its value): HTML "update the image data"
+    /// restarts the request (a relevant mutation).
+    SourceChanged,
     Removed,
     ChildrenChanged,
 }
@@ -330,7 +333,11 @@ impl Dom {
         if matches!(local, "name" | "content") && self.is_html_meta(idx) {
             self.process_viewport_meta(idx);
         }
-        let relevant = matches!(local, "src" | "href" | "rel" | "media" | "srcset" | "type" | "disabled" | "data");
+        // An `<img>`'s CORS settings and referrer policy are relevant mutations too (HTML "update
+        // the image data" restarts with them).
+        let relevant = matches!(local, "src" | "href" | "rel" | "media" | "srcset" | "type" | "disabled" | "data")
+            || (matches!(local, "crossorigin" | "referrerpolicy")
+                && self.n(idx).element().is_some_and(|e| e.is_html() && e.name.local == local_name!("img")));
         if !relevant {
             return;
         }
@@ -342,7 +349,7 @@ impl Dom {
             if matches!(local, "src" | "srcset")
                 && self.n(idx).element().is_some_and(|e| e.is_html() && e.name.local == local_name!("img"))
             {
-                self.push_resource(idx, ResourceKind::Img, ResourceReason::AttrChanged);
+                self.push_resource(idx, ResourceKind::Img, ResourceReason::SourceChanged);
             }
             return;
         }
@@ -350,7 +357,12 @@ impl Dom {
             if k == ResourceKind::Script && !script_src {
                 return;
             }
-            self.push_resource(idx, k, ResourceReason::AttrChanged);
+            let reason = if k == ResourceKind::Img && matches!(local, "src" | "srcset") {
+                ResourceReason::SourceChanged
+            } else {
+                ResourceReason::AttrChanged
+            };
+            self.push_resource(idx, k, reason);
         } else if local == "rel" {
             // rel removed "stylesheet": the old sheet must go.
             if self.n(idx).element().is_some_and(|e| e.is_html() && e.name.local == local_name!("link")) {

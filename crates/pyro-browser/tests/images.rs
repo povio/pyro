@@ -363,3 +363,23 @@ fn natural_and_rendered_sizes_of_images() {
     );
     assert_eq!(eval(&thread, page, "const f = document.getElementById('f'); f.removeAttribute('src'); [f.width, f.height].join()"), "0,0");
 }
+
+/// HTML relevant mutations: setting `src` (even to its value) or changing the CORS settings state
+/// restarts the request and fires `load` again; a `sizes` change without `w` descriptors or a
+/// `crossorigin` value of the same state does not.
+#[test]
+fn relevant_mutations_restart_the_request() {
+    let (mut thread, page, loader) = setup("<img id=a src=/a.png>");
+    loader.insert_bytes("http://site.test/a.png", "image/png", &png(3, 2), Duration::ZERO);
+    thread.browser.navigate(page, NavigateOpts::address_bar("http://site.test/")).unwrap();
+    settle(&mut thread);
+    let step = |thread: &mut BrowserThread, js: &str| {
+        eval(thread, page, &format!("events.length = 0; {{ const a = document.getElementById('a'); {js} }}"));
+        settle(thread);
+        eval(thread, page, "events.join('|')")
+    };
+    assert_eq!(step(&mut thread, "a.src = a.getAttribute('src');"), "a:load:true:3x2");
+    assert_eq!(step(&mut thread, "a.crossOrigin = 'anonymous';"), "a:load:true:3x2");
+    assert_eq!(step(&mut thread, "a.crossOrigin = 'foo';"), "");
+    assert_eq!(step(&mut thread, "a.sizes = '10px';"), "");
+}

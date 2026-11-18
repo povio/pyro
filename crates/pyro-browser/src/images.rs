@@ -57,6 +57,40 @@ struct Image {
     pending: bool,
     blocks_load: bool,
     cancel: Option<ResourceCancellation>,
+    /// The request's CORS settings and referrer policy states: a change restarts it.
+    request_state: (u8, String),
+    /// Whether the finished request gave an image (`load`) or not (`error`): what a restart of
+    /// the same request fires again without fetching (HTML's list of available images).
+    outcome: Option<bool>,
+}
+
+/// An `<img>`'s CORS settings attribute state (0 no CORS, 1 anonymous, 2 use-credentials) and
+/// referrer policy attribute state (a known keyword, else ""): a change of either is a relevant
+/// mutation.
+fn image_request_state(dom: &pyro_dom::Dom, node: NodeId) -> (u8, String) {
+    let cors = match dom.get_attribute(node, "crossorigin").ok().flatten() {
+        None => 0,
+        Some(v) if v.eq_ignore_ascii_case("use-credentials") => 2,
+        Some(_) => 1,
+    };
+    const POLICIES: [&str; 8] = [
+        "no-referrer",
+        "no-referrer-when-downgrade",
+        "same-origin",
+        "origin",
+        "strict-origin",
+        "origin-when-cross-origin",
+        "strict-origin-when-cross-origin",
+        "unsafe-url",
+    ];
+    let referrer = dom
+        .get_attribute(node, "referrerpolicy")
+        .ok()
+        .flatten()
+        .map(|v| v.to_ascii_lowercase())
+        .filter(|v| POLICIES.contains(&v.as_str()))
+        .unwrap_or_default();
+    (cors, referrer)
 }
 
 #[derive(Default)]
@@ -134,6 +168,12 @@ fn svg_size(body: &[u8]) -> Option<(f64, f64)> {
 
 impl Browser {
     pub(crate) fn image_event(&mut self, page: FrameKey, node: NodeId) {
+        self.image_event_with(page, node, false);
+    }
+
+    /// [`Browser::image_event`]; `restart`: a relevant mutation, which starts a new request (and
+    /// fires `load` again) even when the URL is the one already loaded.
+    pub(crate) fn image_event_with(&mut self, page: FrameKey, node: NodeId, restart: bool) {
         let Some(state) = self.doc(page) else { return };
         let Some(bindings) = state.main_frame.page_dom.clone() else { return };
         let loader = state.main_frame.loader_id.clone();
@@ -161,14 +201,30 @@ impl Browser {
                     .map_or(Source::Invalid, |u| Source::Url(u.to_string())),
             }
         };
-        let current = state.images.entries.get(&node).map(|i| (i.url.clone(), i.pending));
+        let request_state = image_request_state(&bindings.dom.borrow(), node);
+        let current =
+            state.images.entries.get(&node).map(|i| (i.url.clone(), i.pending, i.request_state == request_state, i.outcome));
         drop(state);
         let url = match source {
-            Source::Url(url) if current.as_ref().is_some_and(|(u, _)| *u == url) => {
+            Source::Url(url) if current.as_ref().is_some_and(|(u, pending, same, _)| *u == url && *same && (!restart || *pending)) => {
                 // Same request: a `decode()` made since waits for nothing.
-                if current.is_some_and(|(_, pending)| !pending) {
+                if current.is_some_and(|(_, pending, _, _)| !pending) {
                     bindings.settle_image_decodes(node);
                 }
+                return;
+            }
+            // A restarted request for the image already loaded: HTML's list of available
+            // images gives it again without fetching, and `load` (or `error`) fires again.
+            Source::Url(url) if current.as_ref().is_some_and(|(u, pending, same, outcome)| *u == url && *same && !pending && outcome.is_some()) => {
+                let ok = current.and_then(|(_, _, _, outcome)| outcome).unwrap_or(false);
+                let weak = Rc::downgrade(&bindings);
+                self.scheduler().post(TaskSource::DomManipulation, move |_b| {
+                    if let Some(bindings) = weak.upgrade() {
+                        bindings.settle_image_decodes(node);
+                        pyro_webapi::lifecycle::resource_loaded(&bindings, node, ok);
+                    }
+                });
+                let _ = url;
                 return;
             }
             Source::Url(url) => url,
@@ -210,6 +266,8 @@ impl Browser {
                     pending: true,
                     blocks_load: !loaded,
                     cancel: None,
+                    request_state,
+                    outcome: None,
                 },
             );
             generation
@@ -334,6 +392,11 @@ impl Browser {
         if let Some(r) = raster.filter(|r| r.body.len() <= MAX_IMAGE_BYTES && bindings.wants_image_bytes()) {
             let clean = self.image_origin_clean(page, &r.url);
             bindings.set_image_bytes(node, r.body, clean);
+        }
+        if let Some(mut state) = self.doc_mut(page) {
+            if let Some(image) = state.images.entries.get_mut(&node).filter(|i| i.generation == generation) {
+                image.outcome = Some(outcome.is_some());
+            }
         }
         // A later owner-thread task: no DOM/state borrow survives dispatch.
         pyro_webapi::lifecycle::resource_loaded(bindings, node, outcome.is_some());
@@ -564,6 +627,8 @@ impl Browser {
                     pending: true,
                     blocks_load: !loaded,
                     cancel: None,
+                    request_state: Default::default(),
+                    outcome: None,
                 },
             );
             generation
