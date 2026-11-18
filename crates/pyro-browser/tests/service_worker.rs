@@ -124,6 +124,19 @@ caches.open('worker').then((c) => c.put('/from-worker', new Response('worker put
 "#;
 
 /// A dedicated worker that answers on transferred ports and streams.
+/// Counts its connections; each port gets `<name>:<n>` and echoes messages,
+/// and a port's `close` request ends the worker.
+const SHARED_WORKER: &str = r#"
+let connections = 0;
+onconnect = (e) => {
+  connections++;
+  const port = e.ports[0];
+  if (e.source !== port || !(self instanceof SharedWorkerGlobalScope)) return;
+  port.onmessage = (m) => (m.data === 'close' ? close() : port.postMessage('echo:' + m.data));
+  port.postMessage(self.name + ':' + connections);
+};
+"#;
+
 const PORTS_WORKER: &str = r#"
 onmessage = async (e) => {
   if (e.data.kind === 'port') {
@@ -244,6 +257,7 @@ impl Server {
                     "/html.js" => respond(&mut stream, "200 OK", &[("Content-Type", "text/html")], SW.as_bytes()),
                     "/throws.js" => respond(&mut stream, "200 OK", &js, b"throw new Error('top level')"),
                     "/ports-worker.js" => respond(&mut stream, "200 OK", &js, PORTS_WORKER.as_bytes()),
+                    "/shared-worker.js" => respond(&mut stream, "200 OK", &js, SHARED_WORKER.as_bytes()),
                     "/real" | "/api/passthrough" => {
                         respond(&mut stream, "200 OK", &[("Content-Type", "text/plain")], b"from network")
                     }
@@ -1147,4 +1161,40 @@ fn service_worker_intercepted_fetch_preserves_client_network_observations() {
     assert_eq!(responses[0].status.as_u16(), 201);
     assert_eq!(finishes, 1);
     assert_eq!(server.hits("/api/observed"), 0);
+}
+
+/// `SharedWorker`: one worker per (origin, URL, name) that every document of
+/// the browser thread connects to through its own port; a new name is a new
+/// worker; `close()` ends it and the next construction starts it again.
+#[test]
+fn shared_workers_are_shared_between_documents_by_url_and_name() {
+    let (server, mut thread) = setup();
+    let a = open(&mut thread, &server, "/page");
+    let b = open(&mut thread, &server, "/page2");
+    let connect = "globalThis.got = []; globalThis.sw = new SharedWorker('/shared-worker.js', 'one'); \
+        sw.port.onmessage = (e) => got.push(e.data); 'ok'";
+    eval(&thread, a, connect);
+    until(&mut thread, a, "got.length === 1");
+    eval(&thread, b, connect);
+    until(&mut thread, b, "got.length === 1");
+    assert_eq!(eval(&thread, a, "got.join()"), "one:1");
+    assert_eq!(eval(&thread, b, "got.join() + ':' + (sw instanceof EventTarget) + ':' + (sw.port instanceof MessagePort)"), "one:2:true:true");
+    eval(&thread, b, "sw.port.postMessage('hi'); 'ok'");
+    until(&mut thread, b, "got.length === 2");
+    assert_eq!(eval(&thread, b, "got[1]"), "echo:hi");
+    // Another name, another worker.
+    eval(&thread, a, "globalThis.other = []; const o = new SharedWorker('/shared-worker.js', {name: 'two'}); o.port.onmessage = (e) => other.push(e.data); 'ok'");
+    until(&mut thread, a, "other.length === 1");
+    assert_eq!(eval(&thread, a, "other.join()"), "two:1");
+    // close() ends it; the next one starts afresh.
+    eval(&thread, a, "sw.port.postMessage('close'); 'ok'");
+    spin(&mut thread, a);
+    spin(&mut thread, a);
+    eval(&thread, a, connect);
+    until(&mut thread, a, "got.length === 1");
+    assert_eq!(eval(&thread, a, "got.join()"), "one:1");
+    assert_eq!(
+        eval(&thread, a, "(() => { try { new SharedWorker('/shared-worker.js', {type: 'module'}); } catch (e) { return e.name } })()"),
+        "NotSupportedError"
+    );
 }

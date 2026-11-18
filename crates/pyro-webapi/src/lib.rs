@@ -105,6 +105,7 @@ pub mod websocket;
 pub mod window;
 pub mod window_message;
 pub mod worker;
+pub(crate) mod shared_worker;
 mod worker_scope;
 pub mod xhr;
 pub mod xpath;
@@ -156,6 +157,7 @@ pub fn register(engine: &pyro_js::Engine) {
     message_channel::register(engine);
     media_source::register(engine);
     worker::register(engine);
+    shared_worker::register(engine);
     custom::register(engine);
     internals::register(engine);
     file::register(engine);

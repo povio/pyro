@@ -112,14 +112,26 @@ with `JSC_useMachForExceptions=false` (POSIX signal handlers, inherited by a for
 it waits until a connection takes the snapshot, and a `setup` step that waits for it
 times out.
 
+## SharedWorker
+
+`new SharedWorker(url, name | {name})` (`crates/pyro-webapi/src/shared_worker.rs`) runs
+on the same machinery as a dedicated worker, with a `SharedWorkerGlobalScope`. One
+worker serves every document of the browser thread (one CDP connection) that asks
+for the same origin, script URL and name. Each construction makes a `MessageChannel`:
+`port` is one end, and the other moves to the worker, whose `connect` event carries
+it (`ports[0]`, `source`). The worker runs until it calls `close()`, its script
+fails to load (`error` at every connected `SharedWorker`), or the last document that
+connected to it goes away.
+
 ## Not supported
 
 - Module workers have no import maps of their own, and `import.meta.resolve` follows
   the engine. Without the engine's module loader (system JavaScriptCore),
   `{type: 'module'}` throws NotSupportedError.
-- `SharedWorker` stays undefined: `typeof` feature detection is what sites use, and
-  a constructor that throws would send them down a path that then fails. Service
-  workers reuse this machinery (threads, the cross-VM message format and
+- Module shared workers (`new SharedWorker(url, {type: 'module'})`) throw
+  NotSupportedError. Uncaught errors inside a shared worker reach its console only,
+  as in browsers, and it has no inspector target.
+- Service workers reuse this machinery (threads, the cross-VM message format and
   cross-thread ports): see [Service workers](SERVICE_WORKER.md).
 - Host objects other than Blob, File, FileList, CryptoKey, ImageBitmap and
   OffscreenCanvas do not cross (DataCloneError), ImageData included.

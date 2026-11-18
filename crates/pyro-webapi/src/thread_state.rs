@@ -47,6 +47,8 @@ pub const STATICS: &[&str] = &[
     "service_worker_scope::NEXT_KEY",
     "service_worker_scope::PENDING",
     "service_worker_scope::QUERIES",
+    "shared_worker::BY_ID",
+    "shared_worker::WORKERS",
     "structured_clone::CLONE_SOURCE",
     "structured_clone::WIRE_BLOBS",
     "structured_clone::WIRE_CANVASES",
@@ -68,7 +70,7 @@ pub const STATICS: &[&str] = &[
 /// first static that still holds something of them; the thread must then not
 /// serve another client.
 pub fn reset_thread() -> Result<(), &'static str> {
-    let checks: [fn() -> Option<&'static str>; 20] = [
+    let checks: [fn() -> Option<&'static str>; 21] = [
         crate::dom_pages_leftover,
         crate::abort::thread_leftover,
         crate::canvas::thread_leftover,
@@ -83,6 +85,7 @@ pub fn reset_thread() -> Result<(), &'static str> {
         crate::resource_timing::thread_leftover,
         crate::service_worker::thread_leftover,
         crate::service_worker_scope::thread_leftover,
+        crate::shared_worker::thread_leftover,
         crate::structured_clone::thread_leftover,
         crate::target::thread_leftover,
         crate::webaudio::thread_leftover,

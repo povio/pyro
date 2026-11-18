@@ -3509,8 +3509,8 @@ fn worker_constructor_checks_and_load_failure_without_a_network() {
     e.page.set_hooks(Some(tasks.clone()));
     let r = &e.main;
     let base = e.page.pinned_count();
-    // These fail before a worker exists; `SharedWorker` stays absent (`ServiceWorker` is the
-    // service worker interface, made on first use).
+    // These fail before a worker exists (`ServiceWorker` is the service worker interface,
+    // made on first use).
     assert_eq!(
         eval(
             r,
@@ -3520,9 +3520,9 @@ fn worker_constructor_checks_and_load_failure_without_a_network() {
               err(() => new Worker('https://example.test/w.js')), typeof SharedWorker, 'ServiceWorker' in window].join()",
         ),
         if pyro_js::Capabilities::detect().modules {
-            "SyntaxError,TypeError,TypeError,ok,TypeError,SecurityError,undefined,true"
+            "SyntaxError,TypeError,TypeError,ok,TypeError,SecurityError,function,true"
         } else {
-            "SyntaxError,TypeError,TypeError,NotSupportedError,TypeError,SecurityError,undefined,true"
+            "SyntaxError,TypeError,TypeError,NotSupportedError,TypeError,SecurityError,function,true"
         }
     );
     assert_eq!(e.page.pinned_count(), base, "a rejected construction leaves nothing behind");
