@@ -102,18 +102,49 @@ pub(super) fn overflow_clip_path(frame: &CssBox, style: &style::properties::Comp
             OverflowClipMarginBox::ContentBox => frame.content_box_path(),
         };
     }
-    // The box's own radii: the border radii less the widths between the border edge and it.
+    // pyro: as Chromium: the padding box's shape (the plain overflow clip) moved out to the edge
+    // by the signed distance (the border widths for `border-box`, minus the padding for
+    // `content-box`, plus the margin), its radii adjusted as Blink's
+    // `FloatRoundedRect::OutsetWithCornerCorrection` (CSS Backgrounds 3 corner shaping: a radius
+    // shrinks by an inset; past the outset it grows by it, a smaller one by the cubic easing
+    // with its coverage). WPT css-overflow `overflow-clip-margin-border-radius-002` (a content
+    // box without radius rounded by its margin), `overflow-clip-margin-visual-box-and-value-
+    // with-border-radius` (15px corner, `border-box 5px`: 15.56px).
     let inner = |r: Vec2, dx: f64, dy: f64| {
         let r = Vec2::new(r.x - dx, r.y - dy);
         if r.x <= 0.0 || r.y <= 0.0 { Vec2::ZERO } else { r }
     };
-    let radii = NonUniformRoundedRectRadii {
-        top_left: inner(frame.border_radii.top_left, insets.x0, insets.y0),
-        top_right: inner(frame.border_radii.top_right, insets.x1, insets.y0),
-        bottom_right: inner(frame.border_radii.bottom_right, insets.x1, insets.y1),
-        bottom_left: inner(frame.border_radii.bottom_left, insets.x0, insets.y1),
+    let b = frame.border_width;
+    let padding = frame.padding_box;
+    let outsets = Insets::new(
+        b.x0 - insets.x0 + margin,
+        b.y0 - insets.y0 + margin,
+        b.x1 - insets.x1 + margin,
+        b.y1 - insets.y1 + margin,
+    );
+    let size = padding.size();
+    let adjusted = |r: Vec2, ox: f64, oy: f64| {
+        if (r.x == 0.0 && r.y == 0.0) || (ox == 0.0 && oy == 0.0) || size.width <= 0.0 || size.height <= 0.0 {
+            return r;
+        }
+        let coverage = 2.0 * (r.x / size.width).min(r.y / size.height);
+        let dimension = |radius: f64, outset: f64| {
+            if radius > outset || coverage > 1.0 {
+                radius + outset
+            } else {
+                let ratio = radius / outset;
+                radius + outset * (1.0 - (1.0 - ratio).powi(3) * (1.0 - coverage.powi(3)))
+            }
+        };
+        let r = Vec2::new(dimension(r.x, ox), dimension(r.y, oy));
+        if r.x <= 0.0 || r.y <= 0.0 { Vec2::ZERO } else { r }
     };
-    let radii = spread_radii(&radii, rect.size(), margin);
+    let radii = NonUniformRoundedRectRadii {
+        top_left: adjusted(inner(frame.border_radii.top_left, b.x0, b.y0), outsets.x0, outsets.y0),
+        top_right: adjusted(inner(frame.border_radii.top_right, b.x1, b.y0), outsets.x1, outsets.y0),
+        bottom_right: adjusted(inner(frame.border_radii.bottom_right, b.x1, b.y1), outsets.x1, outsets.y1),
+        bottom_left: adjusted(inner(frame.border_radii.bottom_left, b.x0, b.y1), outsets.x0, outsets.y1),
+    };
     CssBox::new(rect.inflate(margin, margin), Insets::ZERO, Insets::ZERO, 0.0, radii)
         .contoured_like(frame)
         .border_box_path()
