@@ -516,6 +516,33 @@ fn parsed_attr<T>(n: &NodeData, attr: &str, parse: fn(&str) -> Option<T>) -> JsR
 }
 
 /// An integer attribute in `min..=2147483647`, else `default`.
+/// `img.width` (`width`) or `img.height`: see the accessors.
+fn img_dimension(n: &NodeData, width: bool) -> JsResult<f64> {
+    let page = n.page();
+    let connected = page.dom.borrow().is_connected(n.id).unwrap_or(false);
+    if connected {
+        crate::animation_events::layout_flush(page, n.id);
+        let rendered = page.layout().rendered_content_size(&page.dom.borrow(), n.id);
+        if let Some((w, h)) = rendered {
+            return Ok((if width { w } else { h }).trunc());
+        }
+    }
+    let attr = int_attr(n, if width { "width" } else { "height" }, 0, -1.0)?;
+    if attr >= 0.0 {
+        return Ok(attr);
+    }
+    // Without a source (its `src` removed, no `srcset`) the image has none: 0 at once.
+    let dom = page.dom.borrow();
+    let sourceless = dom.get_attribute(n.id, "src").ok().flatten().is_none()
+        && dom.get_attribute(n.id, "srcset").ok().flatten().is_none()
+        && dom.parent(n.id).ok().flatten().and_then(|p| dom.element(p).ok()).is_none_or(|p| &*p.name.local != "picture");
+    if sourceless {
+        return Ok(0.0);
+    }
+    let natural = dom.reported_natural_size(n.id);
+    Ok(natural.map_or(0.0, |(w, h)| (if width { w } else { h }).trunc()))
+}
+
 fn int_attr(n: &NodeData, attr: &str, min: i64, default: impl Into<f64>) -> JsResult<f64> {
     let value = parsed_attr(n, attr, parse_html_int)?.filter(|v| (min..=MAX_REFLECTED_INT).contains(v));
     Ok(value.map_or_else(|| default.into(), |v| v as f64))
@@ -1832,8 +1859,10 @@ simple_class!(HtmlImageElement, "HTMLImageElement", HtmlElement, |def| {
     reflect_enum!(def, "decoding", "decoding", DECODING);
     reflect_enum!(def, "referrerPolicy", "referrerpolicy", REFERRER_POLICY);
     reflect_bool!(def, "isMap", "ismap");
-    reflect_ulong!(def, "width", "width", 0);
-    reflect_ulong!(def, "height", "height", 0);
+    // HTML: the rendered width and height when the image is being rendered, else (as browsers
+    // do) the content attribute when it parses, else the density-corrected natural size, else 0.
+    def.accessor("width", |s, n| Ok(s.number(img_dimension(n, true)?)), |_s, n, v| set_ulong(n, "width", to_u32(v)?, 0));
+    def.accessor("height", |s, n| Ok(s.number(img_dimension(n, false)?)), |_s, n, v| set_ulong(n, "height", to_u32(v)?, 0));
     reflect_str!(def, "name", "name");
     reflect_url!(def, "lowsrc", "lowsrc");
     reflect_str!(def, "align", "align");
@@ -1843,8 +1872,8 @@ simple_class!(HtmlImageElement, "HTMLImageElement", HtmlElement, |def| {
     reflect_str_nn!(def, "border", "border");
     // Natural size from the loaded file's header (no pixel decoding); 0
     // while loading, for broken images and for unparsed formats.
-    def.getter("naturalWidth", |s, n| Ok(s.number(n.page().dom.borrow().natural_size(n.id).map_or(0.0, |(w, _)| w))));
-    def.getter("naturalHeight", |s, n| Ok(s.number(n.page().dom.borrow().natural_size(n.id).map_or(0.0, |(_, h)| h))));
+    def.getter("naturalWidth", |s, n| Ok(s.number(n.page().dom.borrow().reported_natural_size(n.id).map_or(0.0, |(w, _)| w))));
+    def.getter("naturalHeight", |s, n| Ok(s.number(n.page().dom.borrow().reported_natural_size(n.id).map_or(0.0, |(_, h)| h))));
     def.getter("complete", |s, n| Ok(s.boolean(n.page().image_complete(n.id))));
     def.getter("currentSrc", |s, n| {
         let viewport = n.page().viewport();

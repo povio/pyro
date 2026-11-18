@@ -83,6 +83,41 @@ enum Source {
 }
 
 /// SVG natural size from numeric (px or unitless) root width/height.
+/// An SVG image's natural dimensions as `naturalWidth`/`naturalHeight` report them (CSS Images 3
+/// "natural dimensions", with HTML's density correction of the image's own dimensions): a missing
+/// one comes from the other through the `viewBox` ratio, or is the default object size's (300 x
+/// 150); without either, the ratio fitted into the default object size, or that size.
+fn svg_reported_size(body: &[u8], density: f64) -> Option<((f64, f64), bool)> {
+    let text = std::str::from_utf8(body.get(..body.len().min(4096))?).ok()?;
+    let start = text.find("<svg")?;
+    let tag = &text[start..start + text[start..].find('>')?];
+    let raw = |name: &str| {
+        let i = tag.find(&format!(" {name}="))? + name.len() + 2;
+        let quote = tag[i..].chars().next()?;
+        let rest = &tag[i + 1..];
+        Some(rest[..rest.find(quote)?].trim().to_owned())
+    };
+    // An absolute length (px or unitless); percentages and negative values are none.
+    let length = |name: &str| raw(name)?.trim_end_matches("px").parse::<f64>().ok().filter(|v| *v >= 0.0);
+    let ratio = raw("viewBox").and_then(|v| {
+        let n: Vec<f64> = v.split(|c: char| c == ',' || c.is_ascii_whitespace()).filter(|s| !s.is_empty()).filter_map(|s| s.parse().ok()).collect();
+        (n.len() == 4 && n[2] > 0.0 && n[3] > 0.0).then(|| n[2] / n[3])
+    });
+    let d = if density > 0.0 { density } else { 1.0 };
+    let (width, height) = (length("width"), length("height"));
+    let intrinsic = width.is_some() || height.is_some();
+    Some((match (width, height, ratio) {
+        (Some(w), Some(h), _) => (w / d, h / d),
+        (Some(w), None, Some(r)) => (w / d, w / r / d),
+        (Some(w), None, None) => (w / d, 150.0),
+        (None, Some(h), Some(r)) => (h * r / d, h / d),
+        (None, Some(h), None) => (300.0, h / d),
+        (None, None, Some(r)) if r > 2.0 => (300.0, 300.0 / r),
+        (None, None, Some(r)) => (150.0 * r, 150.0),
+        (None, None, None) => (300.0, 150.0),
+    }, intrinsic))
+}
+
 fn svg_size(body: &[u8]) -> Option<(f64, f64)> {
     let text = std::str::from_utf8(body.get(..body.len().min(4096))?).ok()?;
     let start = text.find("<svg")?;
@@ -142,7 +177,7 @@ impl Browser {
                 self.doc_mut(page).expect("page").images.entries.remove(&node);
                 bindings.set_image_state(node, None, false);
                 bindings.keep_loading_image(node, false);
-                bindings.dom.borrow_mut().set_natural_size(node, None);
+                { let mut dom = bindings.dom.borrow_mut(); dom.set_natural_size(node, None); dom.set_reported_natural_size(node, None); }
                 if invalid {
                     self.image_error_task(page, loader, &bindings, node);
                 }
@@ -183,7 +218,7 @@ impl Browser {
         // (`None` would clear the image and reject pending `decode()`s).
         bindings.set_image_state(node, Some(raw_src.as_deref().unwrap_or("")), true);
         bindings.keep_loading_image(node, true);
-        bindings.dom.borrow_mut().set_natural_size(node, None);
+        { let mut dom = bindings.dom.borrow_mut(); dom.set_natural_size(node, None); dom.set_reported_natural_size(node, None); }
         let weak = Rc::downgrade(&bindings);
         let finish = move |b: &mut Browser, result| {
             let Some(bindings) = weak.upgrade() else { return };
@@ -264,6 +299,7 @@ impl Browser {
         // corrupt.
         let mut decodable = false;
         let mut raster = None;
+        let mut reported = None;
         let outcome = result.ok().filter(|r| (200..300).contains(&r.status) && !r.body.is_empty()).and_then(|r| {
             let body = &r.body[..r.body.len().min(MAX_IMAGE_BYTES)];
             if let Some((w, h)) = pyro_dom::image::dimensions(body) {
@@ -273,6 +309,7 @@ impl Browser {
             }
             if r.mime == "image/svg+xml" || body.trim_ascii_start().starts_with(b"<svg") {
                 decodable = true;
+                reported = svg_reported_size(body, density);
                 return Some(svg_size(body));
             }
             decodable = !matches!(r.mime.as_str(), "image/png" | "image/gif" | "image/jpeg" | "image/webp");
@@ -282,7 +319,15 @@ impl Browser {
         // The density-corrected natural size (HTML): a `2x` candidate of 200 px is 100 px wide.
         let natural =
             outcome.flatten().map(|(w, h)| if density > 0.0 && density != 1.0 { (w / density, h / density) } else { (w, h) });
-        bindings.dom.borrow_mut().set_natural_size(node, natural);
+        // An SVG with one natural dimension is laid out at its completed, density-corrected
+        // size; one with none keeps sizing from its ratio in layout.
+        let natural = natural.or(reported.filter(|(_, intrinsic)| *intrinsic).map(|(size, _)| size));
+        let reported = reported.map(|(size, _)| size);
+        {
+            let mut dom = bindings.dom.borrow_mut();
+            dom.set_natural_size(node, natural);
+            dom.set_reported_natural_size(node, reported);
+        }
         bindings.image_loaded(node, &src, decodable);
         // Canvas drawing decodes the pixels from the bytes, when the
         // document may draw images (it has a canvas or used canvas APIs).

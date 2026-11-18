@@ -1163,6 +1163,15 @@ impl Layout {
         }
     }
 
+    /// The content box size of a rendered element (HTML `img.width`: "the rendered width"),
+    /// `None` when it is not being rendered.
+    pub fn rendered_content_size(&self, dom: &Dom, el: NodeId) -> Option<(f64, f64)> {
+        if !self.is_visible(dom, el) {
+            return None;
+        }
+        self.content_size(dom, el)
+    }
+
     /// `clientTop` / `clientLeft`: the top and left border widths.
     pub fn client_top(&self, dom: &Dom, el: NodeId) -> f64 {
         self.client_border(dom, el, TOP)

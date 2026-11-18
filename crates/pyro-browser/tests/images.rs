@@ -335,3 +335,31 @@ fn objects_fire_load_and_error_for_their_data() {
     assert!(!events.contains("c:") && !events.contains("d:"), "{events}");
     assert!(events.ends_with("window:load"), "{events}");
 }
+
+/// `naturalWidth`/`naturalHeight` of SVG images follow CSS Images 3 (a missing dimension from the
+/// ratio, else the default object size's), and `width`/`height` read the rendered size, or when
+/// not rendered the attribute, else the natural size; a sourceless image reads 0.
+#[test]
+fn natural_and_rendered_sizes_of_images() {
+    let (mut thread, page, loader) = setup(
+        "<img id=a src=/none.svg style='display:none'><img id=b src=/ratio.svg style='display:none'><img id=c src=/w.svg>\
+         <img id=d src=/a.png style='width:7px'>\
+         <img id=e src=/a.png width=9 style='display:none'><img id=f src=/a.png style='display:none'>",
+    );
+    let svg = |attrs: &str| format!("<svg xmlns='http://www.w3.org/2000/svg' {attrs}/>");
+    loader.insert("http://site.test/none.svg", "image/svg+xml", &svg(""), Duration::ZERO);
+    loader.insert("http://site.test/ratio.svg", "image/svg+xml", &svg("viewBox='0 0 30 10'"), Duration::ZERO);
+    loader.insert("http://site.test/w.svg", "image/svg+xml", &svg("width='60'"), Duration::ZERO);
+    loader.insert_bytes("http://site.test/a.png", "image/png", &png(3, 2), Duration::ZERO);
+    thread.browser.navigate(page, NavigateOpts::address_bar("http://site.test/")).unwrap();
+    settle(&mut thread);
+    assert_eq!(
+        eval(
+            &thread,
+            page,
+            "[...document.images].map(i => [i.id, i.naturalWidth, i.naturalHeight, i.width, i.height].join(' ')).join('|')"
+        ),
+        "a 300 150 300 150|b 300 100 300 100|c 60 150 60 150|d 3 2 7 4|e 3 2 9 2|f 3 2 3 2"
+    );
+    assert_eq!(eval(&thread, page, "const f = document.getElementById('f'); f.removeAttribute('src'); [f.width, f.height].join()"), "0,0");
+}

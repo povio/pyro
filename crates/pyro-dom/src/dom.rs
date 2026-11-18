@@ -285,6 +285,9 @@ pub struct Dom {
     pub(crate) nonces: crate::nonce::NonceState,
     /// Natural sizes of loaded `<img>` elements, set by the embedder.
     natural_sizes: rustc_hash::FxHashMap<NodeId, (f64, f64)>,
+    /// `naturalWidth`/`naturalHeight` where they differ from what layout uses: an SVG image's
+    /// natural dimensions completed against the default object size (CSS Images 3).
+    reported_natural_sizes: rustc_hash::FxHashMap<NodeId, (f64, f64)>,
     /// The source an `<img>` selected from its `srcset` or its `<picture>`'s `<source>`s (the URL
     /// as written), set by the image loader: what a render snapshot gives as the image's `src`.
     image_sources: rustc_hash::FxHashMap<NodeId, String>,
@@ -360,6 +363,7 @@ impl Dom {
             details: Default::default(),
             nonces: Default::default(),
             natural_sizes: Default::default(),
+            reported_natural_sizes: Default::default(),
             image_sources: Default::default(),
             window_names: Default::default(),
             attr_nodes: Default::default(),
@@ -459,6 +463,23 @@ impl Dom {
     pub fn natural_size(&self, el: NodeId) -> Option<(f64, f64)> {
         self.check(el).ok()?;
         self.natural_sizes.get(&el).copied()
+    }
+    /// `naturalWidth` and `naturalHeight` of an image element: [`Dom::set_reported_natural_size`]'s
+    /// value, else its [`Dom::natural_size`].
+    pub fn reported_natural_size(&self, el: NodeId) -> Option<(f64, f64)> {
+        self.check(el).ok()?;
+        self.reported_natural_sizes.get(&el).or_else(|| self.natural_sizes.get(&el)).copied()
+    }
+    /// Records or clears what `naturalWidth`/`naturalHeight` report when it is not the layout's
+    /// natural size (an SVG without natural dimensions reports the default object size).
+    pub fn set_reported_natural_size(&mut self, el: NodeId, size: Option<(f64, f64)>) {
+        if self.check(el).is_err() {
+            return;
+        }
+        match size {
+            Some(s) => self.reported_natural_sizes.insert(el, s),
+            None => self.reported_natural_sizes.remove(&el),
+        };
     }
     /// Records or clears an image element's natural size. A change bumps
     /// the version so layout and style caches recompute; it is journaled
