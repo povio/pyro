@@ -2039,6 +2039,7 @@ impl Browser {
             || state.stylesheets.styles_pending()
             || state.images.blocking_load() != 0
             || state.main_frame.page_dom.as_ref().is_some_and(|d| d.media_delays_load())
+            || state.main_frame.page_dom.as_ref().is_some_and(|d| d.fonts_delay_load())
         {
             return;
         }

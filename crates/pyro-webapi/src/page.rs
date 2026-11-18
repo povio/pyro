@@ -310,6 +310,9 @@ pub struct PageDom {
     pub(crate) adopted_sheets: RefCell<FxHashMap<NodeId, Vec<Rc<crate::css::Constructed>>>>,
     /// The CSS-connected font faces of the document as of an author sheets key (`css_font_faces`).
     css_font_faces: RefCell<Option<(pyro_dom::style::AuthorSheetsKey, Rc<Vec<pyro_dom::font_face::CssFace>>)>>,
+    /// `FontFace` loads in flight (font_loading.js), and when the load event first waited on fonts.
+    pub(crate) font_loads: Cell<u32>,
+    font_delay_since: Cell<Option<std::time::Instant>>,
     /// Files selected into `<input type=file>` (CDP DOM.setFileInputFiles).
     pub(crate) files: RefCell<FxHashMap<NodeId, Vec<crate::file::FileEntry>>>,
     /// Faux layout + style engine of the displayed document. Read it with
@@ -795,6 +798,8 @@ impl PageDom {
             sheet_models: RefCell::new(FxHashMap::default()),
             adopted_sheets: RefCell::new(FxHashMap::default()),
             css_font_faces: RefCell::new(None),
+            font_loads: Cell::new(0),
+            font_delay_since: Cell::new(None),
             files: RefCell::new(FxHashMap::default()),
             layout: RefCell::new(pyro_dom::layout::Layout::new(document)),
             frame_viewport: RefCell::new(None),
@@ -1187,6 +1192,19 @@ impl PageDom {
     /// The `@font-face` rules of the faces scripts added to `document.fonts`.
     pub(crate) fn set_script_fonts(&self, css: Option<Rc<str>>) {
         self.layout.borrow_mut().style_mut().set_script_fonts(css);
+    }
+
+    /// Whether web fonts delay the document's load event, as font loads do in Chromium: a
+    /// `FontFace` load in flight or a face the layout engine is fetching for the document's
+    /// styles. At most 10 s, so a font that never answers cannot hold `load` back for good.
+    pub fn fonts_delay_load(&self) -> bool {
+        let pending = self.font_loads.get() > 0 || self.fonts_pending();
+        if !pending {
+            return false;
+        }
+        let since = *self.font_delay_since.get().get_or_insert_with(std::time::Instant::now);
+        self.font_delay_since.set(Some(since));
+        since.elapsed() < std::time::Duration::from_secs(10)
     }
 
     /// pyro: whether web fonts are still loading (`document.fonts`).

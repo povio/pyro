@@ -163,6 +163,15 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
         Ok(s.boolean(page.fonts_pending()))
     })?;
     natives.set_atom("enginePending", f.value())?;
+    // loading(delta): a `FontFace` load of the document started (+1) or ended (-1); loads in
+    // flight delay the load event (PageDom::fonts_delay_load).
+    let f = s.function("loading", |s, _this, a| {
+        let page = crate::target::page_of(s)?;
+        let delta = a.get(0).to_number()? as i64;
+        page.font_loads.set((i64::from(page.font_loads.get()) + delta).max(0) as u32);
+        Ok(s.undefined())
+    })?;
+    natives.set_atom("loading", f.value())?;
     // register(entries): the document set's script-added faces, each [family, [[descriptor,
     // value]...], buffer-or-null, [[kind, url]...]], become the style engine's font faces.
     let f = s.function("register", |s, _this, a| {

@@ -4,7 +4,7 @@
 // returns { FontFace, FontFaceSet, FontFaceSetLoadEvent, fonts }.
 (native => {
   'use strict';
-  const { descriptor, sources, isFont, fontQuery, cssFaces, urlState, enginePending, register } = native;
+  const { descriptor, sources, isFont, fontQuery, cssFaces, urlState, enginePending, register, loading } = native;
   const apply = Reflect.apply;
   const ET = EventTarget;
   const Ev = Event;
@@ -86,6 +86,19 @@
   // internals font matching and the renderer read (FontFace's static block).
   let setLoading, setDone, setChanged;
   const FF_internal = {};
+
+  // Resolves once the layout engine is not fetching any of `sources` (asking first starts its
+  // loads for the faces the document's styles use), at most 10 s.
+  const engineSettled = (sources) => new PromiseCtor((resolve) => {
+    try { enginePending(); } catch (e) {}
+    const until = Date.now() + 10000;
+    const tick = () => {
+      let pending = false;
+      try { pending = (sources || []).some(([kind, url]) => kind === 'url' && urlState(url) === 'loading'); } catch (e) {}
+      if (pending && Date.now() < until) setTimer(tick, 5); else resolve();
+    };
+    tick();
+  });
 
   // Each face's sets (a face in a set reports its loads to it).
   const faceSets = new WeakMap();
@@ -204,6 +217,11 @@
       this.#started = true;
       this.#status = 'loading';
       for (const set of setsOf(this)) setLoading(set, this);
+      // A load the document's load event waits for, as Chromium's font loads.
+      const counted = inWindow && !!loading;
+      if (counted) { try { loading(1); } catch (e) {} }
+      const done = () => { if (counted) { try { loading(-1); } catch (e) {} } };
+      this.#loaded.promise.then(done, done);
       const list = this.#sources || [];
       const next = (i) => {
         if (i >= list.length) { this.#fail(networkError()); return; }
@@ -217,7 +235,15 @@
           (response) => (response.ok ? response.arrayBuffer() : null),
           () => null,
         ]).then((buffer) => {
-          if (buffer && isFont(buffer)) { this.#data = buffer; this.#succeed(); }
+          if (buffer && isFont(buffer)) {
+            this.#data = buffer;
+            // A CSS-connected face is loaded once the layout engine has it too (its own fetch
+            // of the same font): measurements after `load()` see the face, as in Chromium,
+            // where there is only one load. (A script-added face goes to the engine as its
+            // bytes.)
+            if (inWindow && this.#css) engineSettled(this.#sources).then(() => this.#succeed());
+            else this.#succeed();
+          }
           else next(i + 1);
         }, () => next(i + 1));
       };
