@@ -107,6 +107,9 @@ struct Segment {
     /// pyro: whether a float of some width occupies the left (slot 0) / right (slot 1) inset (a
     /// zero-width float sets `has_float` only).
     has_wide_float: [bool; 2],
+    /// pyro: the insets line boxes take here when a float's `shape-outside` leaves them more room
+    /// than its margin box (`None`: `insets`). Floats are placed by their margin boxes alone.
+    shape: Option<FloatInsets>,
 }
 
 impl Segment {
@@ -342,6 +345,7 @@ impl FloatContext {
                 insets: old_segment.insets,
                 has_float: old_segment.has_float,
                 has_wide_float: old_segment.has_wide_float,
+                shape: old_segment.shape,
                 y: divide_at_y..old_segment.y.end,
             };
         if !old_segment.y.contains(&divide_at_y) || old_segment.y.start == divide_at_y {
@@ -395,7 +399,8 @@ impl FloatContext {
             return;
         }
         self.has_floats = true;
-        let empty = |y: Range<f32>| Segment { y, insets: FloatInsets::ZERO, has_float: [false; 2], has_wide_float: [false; 2] };
+        let empty =
+            |y: Range<f32>| Segment { y, insets: FloatInsets::ZERO, has_float: [false; 2], has_wide_float: [false; 2], shape: None };
         // The segments cover the letter's extent.
         match (self.segments.first().map(|first| first.y.start), self.segments.last().map(|last| last.y.end)) {
             (Some(first), Some(last)) => {
@@ -421,6 +426,9 @@ impl FloatContext {
         };
         for segment in self.segments.iter_mut().filter(|segment| segment.y.start >= y && segment.y.end <= end_y) {
             segment.insets[direction] = segment.insets[direction].max(edge);
+            if let Some(shape) = &mut segment.shape {
+                shape[direction] = shape[direction].max(edge);
+            }
             segment.has_float[slot] = true;
             segment.has_wide_float[slot] |= size.width > 0.0;
         }
@@ -464,6 +472,58 @@ impl FloatContext {
             FloatDirection::Right => self.right_floats.push(placed_floated_box),
         }
         pos
+    }
+
+    /// pyro: the float area of a float just placed by [`Self::place_floated_box`] at `pos` (its
+    /// margin box's top-left) with margin box `size`, from its `shape-outside`: `bands` are
+    /// `(top, bottom, extent)` rows relative to the margin box, `extent` the shape's
+    /// `(left, right)` in that row (`None`: the shape is not in that row). Line boxes beside the
+    /// float then wrap around the shape instead of the margin box (CSS Shapes 1 § 3); later
+    /// floats are still placed by its margin box. `insets_before` are the line insets on the
+    /// float's side before it was placed, by y range (`containing_block_inset` where none was).
+    pub fn shape_float(
+        &mut self,
+        pos: Point<f32>,
+        size: Size<f32>,
+        direction: FloatDirection,
+        bands: &[(f32, f32, Option<(f32, f32)>)],
+        insets_before: &[(Range<f32>, f32)],
+        containing_block_inset: f32,
+    ) {
+        let (top, bottom) = (pos.y, pos.y + size.height);
+        let cuts: Vec<f32> = bands.iter().flat_map(|b| [top + b.0, top + b.1]).filter(|&y| y > top && y < bottom).collect();
+        for at in cuts {
+            if let Some(idx) = self.segments.iter().position(|segment| segment.y.start < at && at < segment.y.end) {
+                self.subdivide_segment(idx, at);
+                self.shift_last_placed_floats(idx);
+            }
+        }
+        let before = |y: f32| insets_before.iter().find(|(r, _)| r.start <= y && y < r.end).map(|(_, v)| *v);
+        for segment in self.segments.iter_mut().filter(|segment| segment.y.start >= top && segment.y.end <= bottom) {
+            let mid = (segment.y.start + segment.y.end) / 2.0 - top;
+            let extent = bands.iter().find(|b| b.0 <= mid && mid < b.1).and_then(|b| b.2);
+            let base = before(segment.y.start).unwrap_or(containing_block_inset).max(containing_block_inset);
+            let edge = match (extent, direction) {
+                (None, _) => base,
+                (Some((_, right)), FloatDirection::Left) => base.max(pos.x + right.max(0.0)),
+                (Some((left, _)), FloatDirection::Right) => {
+                    base.max(self.available_width - (pos.x + left.min(size.width)))
+                }
+            };
+            let mut shape = segment.shape.unwrap_or(segment.insets);
+            shape[direction] = edge.min(segment.insets[direction]);
+            segment.shape = Some(shape);
+        }
+    }
+
+    /// pyro: the line insets on `direction`'s side over `top..bottom` by segment (for
+    /// [`Self::shape_float`], taken before the float is placed).
+    pub fn line_insets_between(&self, top: f32, bottom: f32, direction: FloatDirection) -> Vec<(Range<f32>, f32)> {
+        self.segments
+            .iter()
+            .filter(|segment| segment.y.end > top && segment.y.start < bottom)
+            .map(|segment| (segment.y.clone(), segment.shape.unwrap_or(segment.insets)[direction]))
+            .collect()
     }
 
     /// Inner implementation of float placement, split into a separate function so that it can early-return
@@ -611,6 +671,7 @@ impl FloatContext {
                     insets: FloatInsets::ZERO,
                     has_float: [false; 2],
                     has_wide_float: [false; 2],
+                    shape: None,
                 });
             }
 
@@ -622,7 +683,13 @@ impl FloatContext {
             has_float[slot] = true;
             let mut has_wide_float = [false; 2];
             has_wide_float[slot] = floated_box.width > 0.0;
-            self.segments.push(Segment { y: start_y..(start_y + floated_box.height), insets, has_float, has_wide_float });
+            self.segments.push(Segment {
+                y: start_y..(start_y + floated_box.height),
+                insets,
+                has_float,
+                has_wide_float,
+                shape: None,
+            });
 
             // Update last_placed_float
             let start_idx = self.segments.len() - 1;
@@ -673,6 +740,7 @@ impl FloatContext {
                         insets,
                         has_float: [false; 2],
                         has_wide_float: [false; 2],
+                        shape: None,
                     });
                 }
                 self.segments.len() - 1
@@ -704,6 +772,9 @@ impl FloatContext {
         let placed_inset_plus_width = placed_inset + floated_box.width;
         for segment in &mut self.segments[start_idx..=end_idx] {
             segment.insets[direction] = placed_inset_plus_width;
+            if let Some(shape) = &mut segment.shape {
+                shape[direction] = shape[direction].max(placed_inset_plus_width);
+            }
             segment.has_float[slot] = true;
             segment.has_wide_float[slot] |= floated_box.width > 0.0;
         }
@@ -787,12 +858,15 @@ impl FloatContext {
 
                 // Combine the insets of every segment beside the content's height, then extend
                 // the slot down over any further segments that don't narrow it
-                let mut insets = containing_block_insets.max(segment.insets);
+                // pyro: line boxes wrap around a float's shape (`Segment::shape`)
+                let line_insets = |segment: &Segment| segment.shape.unwrap_or(segment.insets);
+                let mut insets = containing_block_insets.max(line_insets(segment));
                 let mut slot_height = f32::INFINITY;
                 for segment in &self.segments[start_idx + 1..] {
+                    let segment_insets = line_insets(segment);
                     if segment.y.start < end_y {
-                        insets = insets.max(segment.insets);
-                    } else if segment.insets.left > insets.left || segment.insets.right > insets.right {
+                        insets = insets.max(segment_insets);
+                    } else if segment_insets.left > insets.left || segment_insets.right > insets.right {
                         slot_height = segment.y.start - y;
                         break;
                     }
@@ -1009,3 +1083,4 @@ impl FloatIntrinsicWidthCalculator {
         }
     }
 }
+

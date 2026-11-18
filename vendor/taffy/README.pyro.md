@@ -685,3 +685,4 @@ item without its content-based height (no definite basis or height, no growing) 
   container's size alone; track percentages keep the minimum size as a fallback basis. While an inline grid with
   only a `min-width` sizes itself its percentage gap counts as zero, then overflows (Chromium, measured; WPT css-grid
   `subgrid/grid-gap-003`; `crates/pyro-render/tests/subgrid_edge_tracks.rs`).
+- Lane F1 (CSS Shapes), `compute/float.rs` + `compute/block.rs` + `tree/traits.rs`: a float's `shape-outside` float area. `Segment::shape` holds the insets line boxes take where a float's area leaves them more room than its margin box. `FloatContext::shape_float` / `BlockContext::place_shaped_floated_box` set them from rows of the margin box with the area's horizontal extent (`LayoutBlockContainer::float_shape_bands`, implemented by blitz-dom). `find_content_slot` reads them; floats are still placed by margin boxes (CSS Shapes 1 § 3).

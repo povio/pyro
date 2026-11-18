@@ -37,6 +37,7 @@ pub mod multicol;
 pub(crate) mod paint_tree;
 pub(crate) mod replaced;
 pub(crate) mod scroll_markers;
+pub(crate) mod shape_outside;
 pub mod table;
 pub(crate) mod table_fixup;
 pub(crate) mod text_box;
@@ -2207,6 +2208,16 @@ impl taffy::LayoutBlockContainer for LayoutPassState<'_> {
 
     fn get_block_child_style(&self, child_node_id: NodeId) -> Self::BlockItemStyle<'_> {
         self.child_layout_style(self.node_from_id(child_node_id))
+    }
+
+    fn float_shape_bands(
+        &self,
+        child_node_id: NodeId,
+        margin_box: taffy::Size<f32>,
+        margin: taffy::Rect<f32>,
+    ) -> Option<Vec<shape_outside::Band>> {
+        let style = self.node_from_id(child_node_id).primary_styles()?;
+        shape_outside::float_bands_for(&style, margin_box, margin)
     }
 
     fn block_child_width_fits_content(&self, child_node_id: NodeId) -> bool {

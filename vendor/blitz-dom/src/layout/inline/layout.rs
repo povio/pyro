@@ -347,14 +347,16 @@ impl LayoutPassState<'_> {
         } = float;
 
         // Note: `pos` is content-box relative
-        let pos = block_ctx.place_floated_box(
-            crate::taffy_node_id(node_id).into(),
-            output.size + margin.sum_axes(),
-            min_y,
-            direction,
-            clear,
-            false,
-        );
+        let margin_box = output.size + margin.sum_axes();
+        // pyro: a float with a `shape-outside` float area (CSS Shapes 1)
+        let bands = self.nodes[node_id]
+            .primary_styles()
+            .and_then(|style| crate::layout::shape_outside::float_bands_for(&style, margin_box, margin));
+        let id = crate::taffy_node_id(node_id).into();
+        let pos = match bands {
+            Some(bands) => block_ctx.place_shaped_floated_box(id, margin_box, min_y, direction, clear, false, &bands),
+            None => block_ctx.place_floated_box(id, margin_box, min_y, direction, clear, false),
+        };
 
         // pyro: relatively positioned inline boxes around the float move it as they move the rest
         // of their content (CSS 2.1 § 9.4.3), not where it is placed (WPT
