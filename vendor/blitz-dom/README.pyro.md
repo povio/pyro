@@ -2652,3 +2652,12 @@ Round 4 lane G:
 - Round 4 lane F, `document.rs`: `set_text_input_selection` (UTF-16 range of a text input's value, as the page DOM has it: pyro-render applies the focused control's selection once laid out).
 - Round 4 lane F, `dom_selection.rs`/`node/svg_css.rs`: `inline_svg_with_selection` serializes an inline `<svg>` again with its selected text wrapped in `<tspan>`s carrying the `::selection` `fill`/`stroke`/`stroke-width`, read from the declarations (`declared_css`: stylo's cascade keeps only colours for highlight pseudo-elements) (WPT css-pseudo `textpath-selection-011`). `svg_css` is `pub(crate)` for it.
 - Round 4 lane F, `layout/first_letter.rs`: an Indic conjunct (consonant, virama, consonant…, Unicode 15.1 grapheme rule GB9c) is one first letter (WPT css-pseudo `first-letter-hi-001`, `-002`).
+- Round 4 lane G, sideways `vertical-lr` lines (`layout/inline/layout.rs` `sideways_inverted_lines`): `vertical-lr` with
+  `text-orientation: sideways` has its line-over side (the glyphs' tops) at block-end, so its alphabetic baseline and
+  line-under side are toward the left. Paint already turned such lines within their slot; now layout turns them the
+  same way: in-flow inline boxes go to the other side of their line, an atomic inline's baseline is taken from its
+  line-over side (`margin box − alphabetic`), and the root's first and last baselines are exported turned
+  (`block_min + block_max − baseline`). Before, boxes and exported baselines kept horizontal geometry: an inline-block
+  synthesized at its right edge, and a zero-height line holding one had its baseline 10px from the left (WPT
+  css-flexbox `baseline-synthesis-003`, css-grid `grid-self-baseline-004`, `-horiz-007`, `-vertical-lr-002/-007`).
+  `crates/pyro-render/tests/sideways_vertical_lr_baselines.rs`.

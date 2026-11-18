@@ -647,7 +647,7 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
      #[inline]
      fn align_self(&self) -> Option<taffy::AlignSelf> {
          self.self_alignment(
-@@ -874,6 +1115,66 @@
+@@ -874,6 +1115,70 @@
          convert::grid_auto_flow(self.style.get_position().grid_auto_flow)
      }
  
@@ -699,7 +699,11 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
 +        } else {
 +            1.0
 +        };
-+        taffy::Size { width: 1.0, height: block }
++        // pyro: in the inline axis of a horizontal grid, the line-under edge of the vertical lines it
++        // would hold (sideways `vertical-lr`: the left, `sideways_inverted_lines` in blitz-dom), so
++        // the start in `ltr` (WPT css-grid `grid-self-baseline-006`)
++        let inline = if wm.is_vertical() || !wm.is_bidi_ltr() { 1.0 } else { 0.0 };
++        taffy::Size { width: inline, height: block }
 +    }
 +
 +    /// pyro: a subgrid's `normal` gap is its parent's.
@@ -714,7 +718,7 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
      #[inline]
      fn gap(&self) -> taffy::Size<taffy::LengthPercentage> {
          let position_styles = self.style.get_position();
-@@ -922,11 +1223,66 @@
+@@ -922,11 +1227,66 @@
  // GridItemStyle impl
  #[cfg(feature = "grid")]
  impl<T: Deref<Target = ComputedValues>> taffy::GridItemStyle for TaffyStyloStyle<T> {
@@ -781,7 +785,7 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
      #[inline]
      fn grid_column(&self) -> taffy::Line<taffy::GridPlacement<Atom>> {
          self.grid_column_placement()
-@@ -950,6 +1306,16 @@
+@@ -950,6 +1310,16 @@
  }
  
  impl<T: Deref<Target = ComputedValues>> taffy::OofItemStyle for TaffyStyloStyle<T> {

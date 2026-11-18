@@ -62,6 +62,8 @@ entry) once a Blitz release carries these commits and changes.
   (`inline-flex`/`inline-grid` stay), a table or table-internal one a block (WPT css-display `table-display-on-fieldset`, `display-inline-on-block-container`).
 - `src/wrapper.rs`: `GridContainerStyle::baseline_synthesis` (vendor/taffy/README.pyro.md, grid baseline alignment):
   synthesized baselines on the line-under edge, in the middle for vertical writing modes with central baselines.
+  In the inline axis of a horizontal grid, the left (the start in `ltr`), as for the sideways `vertical-lr` lines such
+  an axis would hold (blitz-dom `sideways_inverted_lines`; WPT css-grid `grid-self-baseline-006`, `-007`, `-horiz-005`).
 - `src/convert.rs` (`dimension`, `min_size`, `min_size_keyword`, `calc_size_function`, `calc_size_auto`),
   `src/wrapper.rs` (`CoreStyle::calc_size_min`): `calc-size()` (vendor/stylo/README.pyro.md) is laid out as its
   basis (`auto` as `auto`, the keywords as themselves; a minimum as the automatic minimum); blitz-dom applies the

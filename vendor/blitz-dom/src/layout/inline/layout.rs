@@ -201,6 +201,16 @@ fn vertical_line_kind(wm: stylo_taffy::WritingMode) -> (bool, bool) {
     (central, central && wm.intersects(stylo_taffy::WritingMode::LINE_INVERTED))
 }
 
+/// pyro: whether the lines of a root in writing mode `wm` are sideways and inverted (`vertical-lr`
+/// with `text-orientation: sideways`): their glyphs' tops, the line-over side, face block-end, so
+/// their alphabetic baseline and line-under side are toward block-start. Parley lays a line out
+/// over-side first and paint turns it within its slot (`draw_vertical_inline_layout`); its inline
+/// boxes and the baselines the root exports are turned the same way (WPT css-flexbox
+/// `baseline-synthesis-003`, css-grid `grid-self-baseline-004`).
+fn sideways_inverted_lines(wm: stylo_taffy::WritingMode) -> bool {
+    wm.is_vertical() && wm.is_sideways() && wm.intersects(stylo_taffy::WritingMode::LINE_INVERTED)
+}
+
 /// A float met mid-line, laid out but not yet placed in the block formatting context
 #[cfg(feature = "floats")]
 struct PendingFloat {
@@ -1029,6 +1039,10 @@ impl LayoutPassState<'_> {
                         None => (margin.top + margin.bottom + output.size.height) / 2.0,
                     };
                     Some(over * scale)
+                } else if sideways_inverted_lines(self.nodes[node_id].writing_mode()) {
+                    // From the line-over side, block-end (`sideways_inverted_lines`).
+                    let margin_box = margin.top + margin.bottom + output.size.height;
+                    alphabetic.map(|alphabetic| margin_box * scale - alphabetic)
                 } else {
                     alphabetic
                 };
@@ -2223,7 +2237,7 @@ impl LayoutPassState<'_> {
                                 .find(|candidate| candidate.id == ibox.id && candidate.kind == parley::InlineBoxKind::InFlow)
                                 .is_some_and(|candidate| candidate.central)
                         };
-                        if vertical_line_kind(wm).1 && central_box() {
+                        if (vertical_line_kind(wm).1 && central_box()) || sideways_inverted_lines(wm) {
                             let metrics = line.metrics();
                             ibox_y = metrics.block_min_coord + metrics.block_max_coord - ibox.y - ibox.height;
                         } else if wm.contains(stylo_taffy::WritingMode::WRITING_MODE_SIDEWAYS_LR) {
@@ -2294,8 +2308,12 @@ impl LayoutPassState<'_> {
             }
         }
 
-        let line_baseline =
-            |line: parley::Line<'_, _>| (line.metrics().baseline / scale) + line_box_top;
+        let sideways_inverted = sideways_inverted_lines(self.nodes[node_id].writing_mode());
+        let line_baseline = |line: parley::Line<'_, _>| {
+            let m = line.metrics();
+            let baseline = if sideways_inverted { m.block_min_coord + m.block_max_coord - m.baseline } else { m.baseline };
+            (baseline / scale) + line_box_top
+        };
         let exports_baseline = has_inline_content && !suppresses_baseline;
         let first_baseline = exports_baseline
             .then(|| inline_layout.layout.lines().next().map(line_baseline))
@@ -2308,7 +2326,7 @@ impl LayoutPassState<'_> {
         // pyro: in a vertical writing mode with a central dominant baseline (text not sideways; Blink's
         // `ComputedStyle::GetFontBaseline`), the baselines from the block-start edge, for grid baseline
         // alignment. The lines of `vertical-lr` are painted turned within their slot (line-over at block-end).
-        // (Sideways text keeps `first_baseline`/`last_baseline`, which inline-block alignment agrees with.)
+        // (Sideways text keeps `first_baseline`/`last_baseline`, turned in `vertical-lr`: `sideways_inverted_lines`.)
         let (dominant_first, dominant_last) = {
             let wm = self.nodes[node_id].writing_mode();
             if wm.is_vertical() && !wm.is_sideways() && exports_baseline && !alphabetic_atomics {
