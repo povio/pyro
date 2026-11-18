@@ -1457,21 +1457,42 @@ impl Dom {
         Ok(())
     }
 
-    /// `ValidityState` flags (constraint validation, HTML §4.10.20.1).
+    /// `ValidityState` flags (constraint validation, HTML §4.10.20.1) of a
+    /// candidate for constraint validation: none for an element that is
+    /// barred from it (`:invalid`, `checkValidity()`).
     pub fn validity(&self, id: NodeId) -> DomResult<Validity> {
-        let mut v = Validity::default();
         if !self.will_validate(id)? {
-            return Ok(v);
+            return Ok(Validity::default());
         }
+        self.validity_flags(id)
+    }
+
+    /// The flags a `ValidityState` object reports: computed for a disabled,
+    /// read-only or `<datalist>` control too (it suffers from a mismatch
+    /// whether or not it is barred), except that only a mutable control
+    /// suffers from being missing.
+    pub fn validity_flags(&self, id: NodeId) -> DomResult<Validity> {
+        let mut v = Validity::default();
         let i = self.check(id)?;
         if self.is_face_idx(i) {
-            return Ok(self.face_validity_idx(i));
+            return Ok(if self.will_validate(id)? { self.face_validity_idx(i) } else { v });
+        }
+        let Some(local) = self.html_local(i) else { return Ok(v) };
+        let listed = match &**local {
+            "input" => !matches!(self.input_type_idx(i), InputType::Hidden | InputType::Reset | InputType::Button),
+            "select" | "textarea" => true,
+            "button" => self.button_type_is_submit_idx(i),
+            _ => false,
+        };
+        if !listed {
+            return Ok(v);
         }
         let e = self.n(i).element().unwrap();
+        let mutable = !self.is_disabled_idx(i) && !(e.attr_local(&local_name!("readonly")).is_some() && &**local != "select");
         let local = self.html_local(i).map(|l| l.to_string()).unwrap_or_default();
         v.custom_error =
             e.control.as_ref().is_some_and(|c| c.custom_validity.as_deref().is_some_and(|m| !m.is_empty()));
-        let required = e.attr_local(&local_name!("required")).is_some();
+        let required = mutable && e.attr_local(&local_name!("required")).is_some();
         let value = self.value(id)?;
         match local.as_str() {
             "input" => {

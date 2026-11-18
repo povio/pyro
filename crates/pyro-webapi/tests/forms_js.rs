@@ -307,6 +307,24 @@ fn color_input_value_follows_alpha_and_colorspace() {
     e.page.dispose();
 }
 
+/// A `ValidityState` reports mismatches of a disabled or read-only control
+/// too, though it is barred from constraint validation; only a mutable one
+/// suffers from being missing (html/semantics/forms/constraints/form-validation-validity-*).
+#[test]
+fn validity_flags_of_barred_controls() {
+    let e = env("<body></body>");
+    assert_eq!(
+        e.eval(
+            "const i = document.createElement('input'); i.pattern = 'a'; i.value = 'b'; i.required = true; i.disabled = true;
+             const t = document.createElement('textarea'); t.required = true; t.readOnly = true;
+             [i.willValidate, i.validity.patternMismatch, i.validity.valid, i.checkValidity(), i.validationMessage === '',
+              t.validity.valueMissing, t.validity.valid].join()"
+        ),
+        "false,true,false,true,true,false,true"
+    );
+    e.page.dispose();
+}
+
 /// The `autocomplete` IDL attribute of form controls returns the attribute's
 /// autofill value (html/semantics/forms/the-form-element/form-autocomplete.html).
 #[test]
