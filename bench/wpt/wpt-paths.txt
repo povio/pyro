@@ -17,6 +17,7 @@ css/css-typed-om/
 css/css-scroll-snap/
 css/css-shapes/
 html/semantics/embedded-content/the-object-element/
+html/semantics/forms/
 intersection-observer/
 workers/
 scroll-animations/

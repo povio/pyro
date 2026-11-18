@@ -14,8 +14,9 @@ export const PAINT_DIRS = [
 // css/css-font-loading: 23 pages without wptserve (FontFace, document.fonts, lane F1); css/css-typed-om: 362 pages
 // (CSS Typed OM, lane F1); scroll-animations: scroll-driven animations (ScrollTimeline, ViewTimeline,
 // animation-timeline, lane F2); css/css-scroll-snap: 148 pages (snapped programmatic scrolls, lane F1); css/css-shapes:
-// 148 pages (shape-outside, lane F1).
-export const FEATURE_DIRS = ['custom-elements', 'css/css-font-loading', 'css/css-typed-om', 'html/semantics/embedded-content/the-object-element', 'intersection-observer', 'workers', 'scroll-animations', 'css/css-scroll-snap', 'css/css-shapes'];
+// 148 pages (shape-outside, lane F1); html/semantics/forms: 396 pages without wptserve or testdriver (form controls,
+// constraint validation, text selection, form submission).
+export const FEATURE_DIRS = ['custom-elements', 'css/css-font-loading', 'css/css-typed-om', 'html/semantics/embedded-content/the-object-element', 'intersection-observer', 'workers', 'scroll-animations', 'css/css-scroll-snap', 'css/css-shapes', 'html/semantics/forms'];
 export const DEFAULT_DIRS = [
   'dom', 'html/dom', 'encoding', 'url', 'fetch/api/basic', 'xhr', 'css/selectors', 'uievents', 'shadow-dom', 'webstorage',
   ...PAINT_DIRS,
