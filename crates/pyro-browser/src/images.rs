@@ -324,11 +324,6 @@ impl Browser {
         let loaded = state.main_frame.loaded;
         let (connected, data) = {
             let dom = bindings.dom.borrow();
-            // An `<object>` hosting a document is a frame container: its child navigable loads
-            // `data` and fires the element's `load` (frames.rs).
-            if dom.is_document_object(node) {
-                return;
-            }
             (dom.is_connected(node).unwrap_or(false), dom.get_attribute(node, "data").ok().flatten().map(str::to_owned))
         };
         // "If the element is not being rendered": fallback, nothing is fetched (an `<object>`
@@ -337,6 +332,9 @@ impl Browser {
             let dom = bindings.dom.borrow();
             bindings.layout().check_visibility(&dom, node, Default::default())
         };
+        if connected && !rendered && data.is_some() {
+            self.note_hidden_object(page, node);
+        }
         let source = match data.filter(|_| rendered) {
             None => Source::None,
             Some(v) if v.trim().is_empty() => Source::None,
@@ -346,6 +344,83 @@ impl Browser {
                     .ok()
                     .and_then(|b| b.join(v.trim()).ok())
                     .map_or(Source::Invalid, |u| Source::Url(u.to_string()))
+            }
+        };
+        drop(state);
+        self.fetch_for_load_event(page, node, &bindings, loader, base, loaded, source, false);
+    }
+
+    /// Remembers the `<object>`/`<embed>` `node`, not fetched while not being rendered.
+    fn note_hidden_object(&self, page: FrameKey, node: NodeId) {
+        if let Some(p) = self.page(page.page) {
+            let mut hidden = p.frames.hidden_objects.borrow_mut();
+            if !hidden.iter().any(|(_, n)| *n == node) {
+                hidden.push((page, node));
+            }
+        }
+    }
+
+    /// HTML runs an `<object>`'s or `<embed>`'s steps again when its rendering changes: those not
+    /// fetched while not being rendered that are rendered now are fetched (`object_event`,
+    /// `embed_event`, which remember them again when they are still not rendered).
+    pub(crate) fn fetch_rendered_objects(&mut self, host: &Rc<crate::frames::FrameHost>) {
+        if host.hidden_objects.borrow().is_empty() {
+            return;
+        }
+        let hidden = std::mem::take(&mut *host.hidden_objects.borrow_mut());
+        for (page, node) in hidden {
+            let Some(bindings) = self.doc(page).and_then(|p| p.main_frame.page_dom.clone()) else { continue };
+            let (connected, embed, rendered) = {
+                let dom = bindings.dom.borrow();
+                let connected = dom.is_connected(node).unwrap_or(false);
+                let embed = dom.element(node).is_ok_and(|e| &*e.name.local == "embed");
+                (connected, embed, connected && bindings.layout().check_visibility(&dom, node, Default::default()))
+            };
+            if !connected {
+                continue;
+            }
+            if !rendered {
+                host.hidden_objects.borrow_mut().push((page, node));
+            } else if embed {
+                self.embed_event(page, node);
+            } else {
+                self.object_event(page, node);
+            }
+        }
+    }
+
+    /// `<embed src>` (HTML "the embed element"): a rendered one fetches its `src`; the response's
+    /// Content-Type decides whether it shows a document (a child navigable, which fires its
+    /// `load`), else `load` fires when the fetch is done. An `<embed>` whose `type` or URL already
+    /// names a document is a frame container from the start (frames.rs).
+    pub(crate) fn embed_event(&mut self, page: FrameKey, node: NodeId) {
+        let Some(state) = self.doc(page) else { return };
+        let Some(bindings) = state.main_frame.page_dom.clone() else { return };
+        let loader = state.main_frame.loader_id.clone();
+        let base = state.main_frame.base_url.clone();
+        let loaded = state.main_frame.loaded;
+        let (connected, src) = {
+            let dom = bindings.dom.borrow();
+            (dom.is_connected(node).unwrap_or(false), dom.get_attribute(node, "src").ok().flatten().map(str::to_owned))
+        };
+        let rendered = connected && {
+            let dom = bindings.dom.borrow();
+            bindings.layout().check_visibility(&dom, node, Default::default())
+        };
+        if connected && !rendered && src.is_some() {
+            self.note_hidden_object(page, node);
+        }
+        let source = match src.filter(|_| rendered) {
+            None => Source::None,
+            Some(v) if v.trim().is_empty() => Source::None,
+            Some(v) => {
+                let dom = bindings.dom.borrow();
+                url::Url::parse(&crate::loader::node_base_url(&dom, node).unwrap_or_else(|| base.clone()))
+                    .ok()
+                    .and_then(|b| b.join(v.trim()).ok())
+                    // A `javascript:` URL in `src` does nothing (no fetch, no `load`).
+                    .filter(|u| u.scheme() != "javascript")
+                    .map_or(Source::None, |u| Source::Url(u.to_string()))
             }
         };
         drop(state);
@@ -521,7 +596,17 @@ impl Browser {
         if !image {
             if let Some(r) = result.as_ref().ok().filter(|r| (200..300).contains(&r.status)) {
                 let essence = r.mime.split(';').next().unwrap_or_default().trim().to_ascii_lowercase();
-                if matches!(essence.as_str(), "text/html" | "application/xhtml+xml") {
+                // Without a Content-Type, the element's `type` or URL says.
+                let document = if essence.is_empty() {
+                    bindings.dom.borrow().element(node).is_ok_and(pyro_dom::iframe::object_hosts_document)
+                } else {
+                    matches!(essence.as_str(), "text/html" | "application/xhtml+xml")
+                };
+                if document {
+                    // A later fetch of the same URL (after a `type` change) runs again.
+                    if let Some(mut state) = self.doc_mut(page) {
+                        state.images.entries.remove(&node);
+                    }
                     bindings.dom.borrow_mut().set_object_document(node);
                     drop(hold);
                     self.drain_dom_resources(page);
@@ -530,7 +615,9 @@ impl Browser {
                 }
             }
         }
-        let ok = result.is_ok_and(|r| {
+        // An `<embed>` fires `load` once its fetch is done, whatever came back.
+        let embed = !image && bindings.dom.borrow().element(node).is_ok_and(|e| &*e.name.local == "embed");
+        let ok = embed || result.is_ok_and(|r| {
             (200..300).contains(&r.status)
                 && (!image || {
                     let body = &r.body[..r.body.len().min(MAX_IMAGE_BYTES)];

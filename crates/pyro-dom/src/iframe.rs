@@ -82,21 +82,48 @@ impl Dom {
             e.is_html()
                 && (matches!(e.name.local, local_name!("iframe") | local_name!("frame"))
                     || (is_object_or_embed(e)
-                        && (object_hosts_document(e) || self.iframes.document_objects.contains(&self.id_of(idx)))
-                        && !self.in_media_element(idx)))
+                        && self.iframes.document_objects.contains(&self.id_of(idx))
+                        && !self.nested_in_content(idx)))
         })
     }
-    /// Whether `idx` has an ancestor media element: an `<object>` or `<embed>` in one represents
-    /// nothing (HTML "the embed element", "the object element").
-    fn in_media_element(&self, idx: u32) -> bool {
+    /// Whether `idx` has an ancestor media element, or an ancestor `<object>` that shows a document
+    /// rather than its fallback content: an `<object>` or `<embed>` there represents nothing (HTML
+    /// "the embed element", "the object element").
+    fn nested_in_content(&self, idx: u32) -> bool {
         let mut i = self.n(idx).parent;
         while i != NIL {
-            if self.n(i).element().is_some_and(|e| e.is_html() && matches!(e.name.local, local_name!("video") | local_name!("audio"))) {
-                return true;
+            if let Some(e) = self.n(i).element().filter(|e| e.is_html()) {
+                if matches!(e.name.local, local_name!("video") | local_name!("audio")) {
+                    return true;
+                }
+                if e.name.local == local_name!("object") && self.iframe_element(i) {
+                    return true;
+                }
             }
             i = self.n(i).parent;
         }
         false
+    }
+    /// The `<object>`/`<embed>` elements under the object `idx`, whose showing a document or not
+    /// changed: each one's child navigable comes or goes with it.
+    fn refresh_nested_objects(&mut self, idx: u32) {
+        let mut nested = Vec::new();
+        let mut i = self.next_shadow_including(idx, idx);
+        while i != NIL {
+            if self.n(i).element().is_some_and(is_object_or_embed) {
+                nested.push(i);
+            }
+            i = self.next_shadow_including(i, idx);
+        }
+        let Some(document) = self.iframe_document(idx) else { return };
+        for i in nested {
+            let node = self.id_of(i);
+            match (self.iframes.object_frames.contains(&node), self.iframe_element(i)) {
+                (false, true) => self.iframe_event(document, i, IframeChange::Connected),
+                (true, false) => self.iframe_event(document, i, IframeChange::Disconnected),
+                _ => {}
+            }
+        }
     }
     fn iframe_event(&mut self, document: NodeId, idx: u32, change: IframeChange) {
         // A `<use>` instance's frames load nothing and its scripts never run.
@@ -238,11 +265,9 @@ impl Dom {
     }
 }
 
-/// Whether an HTML `<object>` shows its `data` (an `<embed>` its `src`) as a nested document (a child navigable, as an
-/// `<iframe>`'s `src`): its `type` is an HTML or XHTML document type, or without a `type` its
-/// URL's file extension names one. Other objects are fetched first and become one when the
-/// response's Content-Type is a document ([`Dom::set_object_document`]); until then they show an
-/// image or their fallback content (`blitz-dom` `object_loads_image`), as one without `data` does.
+/// Whether an HTML `<object>` (by its `data`) or `<embed>` (by its `src`) names a document when its
+/// response has no Content-Type: its `type` is an HTML or XHTML document type, or without a `type`
+/// its URL's file extension names one (HTML "the object element": the Content-Type decides first).
 pub fn object_hosts_document(e: &crate::node::ElementData) -> bool {
     let url = e.attr(resource_attribute(e));
     // Without `data` an object shows its fallback content (an embed without `src`, nothing).
@@ -276,9 +301,8 @@ fn resource_attribute(e: &crate::node::ElementData) -> &'static str {
 }
 
 impl Dom {
-    /// Whether `node` is an HTML `<object>` or `<embed>` showing a nested document: by its `type`
-    /// or URL ([`object_hosts_document`]), or by its response's Content-Type
-    /// ([`Dom::set_object_document`]).
+    /// Whether `node` is an HTML `<object>` or `<embed>` showing a nested document: its fetched
+    /// resource was one ([`Dom::set_object_document`]).
     pub fn is_document_object(&self, node: NodeId) -> bool {
         self.check(node).is_ok_and(|idx| self.n(idx).element().is_some_and(is_object_or_embed) && self.iframe_element(idx))
     }
@@ -291,9 +315,10 @@ impl Dom {
             return;
         }
         self.iframes.document_objects.insert(node);
-        if !self.iframes.object_frames.contains(&node) {
+        if !self.iframes.object_frames.contains(&node) && self.iframe_element(idx) {
             if let Some(document) = self.iframe_document(idx) {
                 self.iframe_event(document, idx, IframeChange::Connected);
+                self.refresh_nested_objects(idx);
             }
         }
     }
@@ -314,6 +339,9 @@ impl Dom {
                 self.iframe_event(document, idx, IframeChange::AttributeChanged(IframeAttribute::Src))
             }
             _ => {}
+        }
+        if was != now {
+            self.refresh_nested_objects(idx);
         }
     }
 }

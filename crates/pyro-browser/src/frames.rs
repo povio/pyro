@@ -189,6 +189,13 @@ pub(crate) struct FrameHost {
     /// proxy, which every later document's realm adopts (`make_realm`), so
     /// that `iframe.contentWindow` stays one object that follows the frame.
     window_proxies: RefCell<BTreeMap<u64, pyro_js::Persistent>>,
+    /// `<object>`/`<embed>` elements showing a document that were not being rendered when they
+    /// would have got their child navigable (`display: none`): they get it once rendered
+    /// ([`FrameHost::connect_rendered_objects`]).
+    pending_objects: RefCell<Vec<(FrameKey, LoaderId, NodeId)>>,
+    /// `<object>`/`<embed>` elements not fetched because they were not being rendered: fetched
+    /// once rendered (`Browser::fetch_rendered_objects`).
+    pub(crate) hidden_objects: RefCell<Vec<(FrameKey, NodeId)>>,
 }
 /// A popup page made when `window.open` ran, before the embedder creates the
 /// page: its frame tree with the initial about:blank document and realms
@@ -260,6 +267,8 @@ impl FrameHost {
             opener: RefCell::new(Some(Rc::downgrade(self))),
             popup: RefCell::new(None),
             window_proxies: RefCell::new(BTreeMap::new()),
+            pending_objects: RefCell::new(Vec::new()),
+            hidden_objects: RefCell::new(Vec::new()),
             focus: RefCell::new(crate::focus::FocusState::new(id)),
         });
         let key: FrameKey = id.into();
@@ -324,6 +333,8 @@ impl FrameHost {
             opener: RefCell::new(None),
             popup: RefCell::new(None),
             window_proxies: RefCell::new(BTreeMap::new()),
+            pending_objects: RefCell::new(Vec::new()),
+            hidden_objects: RefCell::new(Vec::new()),
             focus: RefCell::new(crate::focus::FocusState::new(page)),
         })
     }
@@ -560,6 +571,25 @@ impl FrameHost {
             }
         }
     }
+    /// The pending `<object>`/`<embed>` elements (not rendered when connected) that are rendered
+    /// now get their child navigable; those no longer connected, or no longer showing a document,
+    /// are dropped. HTML runs the element's steps again when its rendering changes.
+    pub fn connect_rendered_objects(self: &Rc<Self>) {
+        if self.pending_objects.borrow().is_empty() {
+            return;
+        }
+        let pending = std::mem::take(&mut *self.pending_objects.borrow_mut());
+        for (parent, loader, node) in pending {
+            let keep = {
+                let dom = self.dom.borrow();
+                dom.is_connected(node).unwrap_or(false) && dom.is_document_object(node)
+            };
+            if keep && self.owner(node).is_none() {
+                // Puts it back when it is still not rendered.
+                let _ = self.connected(parent, &loader, node);
+            }
+        }
+    }
     pub fn connected(self: &Rc<Self>, parent: FrameKey, loader: &LoaderId, node: NodeId) -> Result<(), JsError> {
         if !self.matches(parent, loader) || self.owner(node).is_some() {
             return Ok(());
@@ -576,6 +606,10 @@ impl FrameHost {
             if dom.is_document_object(node) {
                 if let Some(page_dom) = ancestor.page_dom.as_ref() {
                     if !page_dom.layout().check_visibility(&dom, node, Default::default()) {
+                        let mut pending = self.pending_objects.borrow_mut();
+                        if !pending.iter().any(|(_, _, n)| *n == node) {
+                            pending.push((parent, loader.clone(), node));
+                        }
                         return Ok(());
                     }
                 }

@@ -639,6 +639,8 @@ impl Browser {
 
     pub(crate) fn drain_dom_resources(&mut self, page: FrameKey) {
         let Some(host) = self.page(page.page).map(|p| p.frames.clone()) else { return };
+        host.connect_rendered_objects();
+        self.fetch_rendered_objects(&host);
         // Runs at every checkpoint: leave early when nothing is queued.
         let (iframe_events, resource_events) = {
             let dom = host.dom.borrow();
@@ -682,6 +684,10 @@ impl Browser {
             } else if event.kind == pyro_dom::script::ResourceKind::Object {
                 if image_nodes.insert(event.node) {
                     self.object_event(target, event.node);
+                }
+            } else if event.kind == pyro_dom::script::ResourceKind::Embed {
+                if image_nodes.insert(event.node) {
+                    self.embed_event(target, event.node);
                 }
             } else if event.kind == pyro_dom::script::ResourceKind::Preload {
                 if preload_nodes.insert(event.node) {

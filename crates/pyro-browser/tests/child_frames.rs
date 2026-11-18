@@ -902,3 +902,37 @@ fn object_content_type_and_attribute_changes_decide_its_navigable() {
     settle(&mut t);
     assert_eq!(eval(&root, "[text('a'), text('b'), text('c'), frameTexts()].join('|')"), "none|doc|other|doc,doc,other");
 }
+
+/// An `<object>` is fetched first even when its `type` says text/html: a failed fetch fires
+/// `error` and leaves the fallback (no child navigable); one not being rendered is not fetched
+/// until it is, then shows its document.
+#[test]
+fn object_fallback_on_failure_and_document_once_rendered() {
+    let mut t = crate::browser_thread().unwrap();
+    let page = t.browser.create_page().unwrap();
+    let loader = Rc::new(pyro_browser::StaticLoader::default());
+    loader.insert(
+        "http://site.test/",
+        "text/html",
+        "<object id=missing type='text/html' data='/missing.html'>fallback</object>\
+         <object id=hidden style='display:none' data='/doc.html'></object>\
+         <script>globalThis.events = []; for (const id of ['missing', 'hidden']) for (const t of ['load', 'error']) \
+           document.getElementById(id).addEventListener(t, () => events.push(id + ':' + t));</script>",
+        Duration::ZERO,
+    );
+    loader.insert("http://site.test/doc.html", "text/html", "<p id=p>doc</p>", Duration::ZERO);
+    t.browser.set_loader(Some(loader.clone()));
+    t.browser.navigate(page, NavigateOpts::address_bar("http://site.test/")).unwrap();
+    settle(&mut t);
+    let root = main_realm(&t, page);
+    assert_eq!(
+        eval(&root, "globalThis.o = id => document.getElementById(id); [events.join(), o('missing').contentDocument, o('hidden').contentDocument, window.length].join('|')"),
+        "missing:error|||0"
+    );
+    eval(&root, "o('hidden').style.display = 'inline';");
+    settle(&mut t);
+    assert_eq!(
+        eval(&root, "[events.join(), o('hidden').contentDocument?.getElementById('p')?.textContent, window.length].join('|')"),
+        "missing:error,hidden:load|doc|1"
+    );
+}
