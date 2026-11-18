@@ -2210,11 +2210,11 @@ fn truncate_line(
     if forced {
         let (start, end) = (metrics.offset, metrics.offset + metrics.advance);
         if !rtl && end - metrics.hanging_advance + ellipsis_width <= width + epsilon {
-            let cut = crate::text::TextCut { edge: f32::INFINITY, keep_left: true };
+            let cut = crate::text::TextCut { edge: f32::INFINITY, keep_left: true, split: None };
             return Some((cut, end - metrics.hanging_advance));
         }
         if rtl && start + metrics.hanging_advance - ellipsis_width >= -epsilon {
-            let cut = crate::text::TextCut { edge: f32::NEG_INFINITY, keep_left: false };
+            let cut = crate::text::TextCut { edge: f32::NEG_INFINITY, keep_left: false, split: None };
             return Some((cut, start + metrics.hanging_advance - ellipsis_width));
         }
     }
@@ -2228,7 +2228,7 @@ fn truncate_line(
         if !forced && metrics.offset + metrics.advance - metrics.hanging_advance <= width + epsilon {
             return None;
         }
-        let cut = crate::text::TextCut { edge: width - ellipsis_width, keep_left: true };
+        let cut = crate::text::TextCut { edge: width - ellipsis_width, keep_left: true, split: None };
         let end = runs().filter_map(|run| cut.kept(&run).1).map(|(_, x1)| x1).fold(None, |a: Option<f32>, x| Some(a.map_or(x, |a| a.max(x))));
         if let Some(end) = end {
             return Some((cut, end));
@@ -2239,12 +2239,12 @@ fn truncate_line(
         let Some(edge) = first.and_then(|run| crate::text::TextCut::end_atom(&run, false)).map(|(_, x1)| x1) else {
             return Some((cut, metrics.offset));
         };
-        Some((crate::text::TextCut { edge, keep_left: true }, edge))
+        Some((crate::text::TextCut { edge, keep_left: true, split: None }, edge))
     } else {
         if !forced && metrics.offset + metrics.hanging_advance >= start - epsilon {
             return None;
         }
-        let cut = crate::text::TextCut { edge: start + ellipsis_width, keep_left: false };
+        let cut = crate::text::TextCut { edge: start + ellipsis_width, keep_left: false, split: None };
         let start = runs().filter_map(|run| cut.kept(&run).1).map(|(x0, _)| x0).fold(None, |a: Option<f32>, x| Some(a.map_or(x, |a| a.min(x))));
         if let Some(start) = start {
             return Some((cut, start - ellipsis_width));
@@ -2253,7 +2253,7 @@ fn truncate_line(
         let Some(edge) = last.and_then(|run| crate::text::TextCut::end_atom(&run, true)).map(|(x0, _)| x0) else {
             return Some((cut, metrics.offset + metrics.advance - ellipsis_width));
         };
-        Some((crate::text::TextCut { edge, keep_left: false }, edge - ellipsis_width))
+        Some((crate::text::TextCut { edge, keep_left: false, split: None }, edge - ellipsis_width))
     }
 }
 
@@ -2694,12 +2694,22 @@ impl ElementCx<'_, '_> {
             let effects = style.get_effects();
             // pyro: an outer shadow reaching left of the box, over the text before it on its line
             // (`InlineBoxFragment::reaches_back`).
+            // pyro: and so does a box pulled back over that text by a negative left margin (its
+            // background over the text, the text after it over its background: WPT CSS2
+            // `css1/c5504-imrgn-l-005`).
+            let pulled_back = match &style.get_margin().margin_left {
+                style::values::generics::length::GenericMargin::LengthPercentage(margin) => {
+                    margin.resolve(CSSPixelLength::new(0.0)).px() < 0.0
+                }
+                _ => false,
+            };
             let reaches_back = !rtl
-                && effects
-                    .box_shadow
-                    .0
-                    .iter()
-                    .any(|shadow| !shadow.inset && shadow.base.horizontal.px() - shadow.spread.px() - shadow.base.blur.px() < 0.0);
+                && (pulled_back
+                    || effects
+                        .box_shadow
+                        .0
+                        .iter()
+                        .any(|shadow| !shadow.inset && shadow.base.horizontal.px() - shadow.spread.px() - shadow.base.blur.px() < 0.0));
             let stitch = (!(first == index && last == index)
                 && style.get_border().box_decoration_break == style::values::computed::BoxDecorationBreak::Slice
                 && (!effects.box_shadow.0.is_empty()
@@ -2781,6 +2791,7 @@ impl ElementCx<'_, '_> {
                     (self.transform * Affine::translate((bounds.x0, bounds.y0)), bounds.size())
                 };
                 painted_fragments.push(InlineBoxFragment {
+                    text_start: None,
                     node: fragment.node,
                     line: fragment.line,
                     transform,
@@ -2854,6 +2865,14 @@ impl ElementCx<'_, '_> {
                 right,
                 reaches_above: (rect.y0 as f32) < fragment.line_top,
                 reaches_back: reaches_back && left,
+                text_start: (pulled_back && left && !rtl)
+                    .then(|| {
+                        text_layout.layout.inline_boxes().find(|ibox| {
+                            ibox.id == fragment.node.as_u64() && ibox.kind == parley::InlineBoxKind::SpanStart
+                        })
+                    })
+                    .flatten()
+                    .map(|ibox| ibox.index),
                 x0: fragment.x0,
                 style: fragment.style.clone(),
                 turned: false,
@@ -3038,12 +3057,22 @@ impl ElementCx<'_, '_> {
                     let on_line = || fragments.iter().filter(move |fragment| fragment.line == index);
                     // pyro: the text before the first box whose shadow reaches back over it, the
                     // boxes before that box, then the rest (`InlineBoxFragment::reaches_back`).
-                    let edge = on_line().filter(|fragment| fragment.reaches_back).map(|fragment| fragment.x0).reduce(f32::min);
+                    let first_back = on_line()
+                        .filter(|fragment| fragment.reaches_back)
+                        .min_by(|a, b| a.x0.total_cmp(&b.x0));
+                    let edge = first_back.map(|fragment| fragment.x0);
+                    // pyro: a box pulled back by a negative margin splits the line's text where its
+                    // element's text starts, in tree order (`InlineBoxFragment::text_start`).
+                    let split = first_back.and_then(|fragment| fragment.text_start);
+                    let cuts;
                     let passes: &[Option<crate::text::TextCut>] = match edge {
-                        Some(edge) => &[
-                            Some(crate::text::TextCut { edge, keep_left: true }),
-                            Some(crate::text::TextCut { edge, keep_left: false }),
-                        ],
+                        Some(edge) => {
+                            cuts = [
+                                Some(crate::text::TextCut { edge, keep_left: true, split }),
+                                Some(crate::text::TextCut { edge, keep_left: false, split }),
+                            ];
+                            &cuts
+                        }
                         None => &[None],
                     };
                     for (pass, cut) in passes.iter().enumerate() {
@@ -5431,6 +5460,10 @@ struct InlineBoxFragment {
     /// line: that text is painted first, as CSS 2.1 Appendix E paints a line's boxes and text in tree
     /// order (WPT css-backgrounds `box-shadow-overlapping-001`).
     reaches_back: bool,
+    /// pyro: where its element's text starts (a byte offset in the root's text) when a negative
+    /// left margin pulls it back over the text before it: that text is what is painted first then,
+    /// wherever it reaches, not the text left of the fragment.
+    text_start: Option<usize>,
     /// pyro: its left edge in the line's coordinates (the text's).
     x0: f32,
     /// pyro: its element's style on the first line, in place of its own (`::first-line`).

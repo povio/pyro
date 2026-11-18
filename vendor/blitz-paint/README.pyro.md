@@ -1121,3 +1121,12 @@ frame's whole transform, clipped to the content box (upstream applied the transl
 - Round 4 lane S4, `render.rs` `combined_text_compression` (in `node_transform`): a `text-combine-upright: all` box
   (Stylo's `adjust_for_text_combine_upright`) whose text is wider than its 1em square is scaled horizontally to fit,
   from the line's start edge (right in right-to-left text). `pyro-render/tests/text_combine_upright.rs`.
+
+## Inline boxes pulled back by a negative margin (WPT round 4, lane S1)
+
+`src/render.rs` (`InlineBoxFragment::text_start`, the line-by-line passes of `draw_inline_layout`), `src/text.rs`
+(`TextCut::split`): an inline box pulled back over the text before it on its line by a negative left margin is
+painted as CSS 2.1 Appendix E paints a line in tree order: the line's text before the box's element (by its position
+in the text, wherever it is on the line), then the box, then the rest, so its background covers that text and its
+own text covers its background (WPT CSS2 `css1/c5504-imrgn-l-005`). As `reaches_back` (outer shadows) does, with the
+text split by position, not by the box's edge. Covered by `crates/pyro-render/tests/inline_negative_margin_order.rs`.

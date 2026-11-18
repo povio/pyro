@@ -29,6 +29,7 @@ mod filter_image_function;
 mod first_line;
 mod flex_collapse;
 mod font_coverage_hidden;
+mod inline_negative_margin_order;
 mod object_document;
 mod quirky_body_and_ratio_keywords;
 mod grid_flex_round4;

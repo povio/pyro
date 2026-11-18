@@ -971,6 +971,9 @@ impl LineTops {
 pub(crate) struct TextCut {
     pub edge: f32,
     pub keep_left: bool,
+    /// pyro: a byte offset in the root's text: the cut keeps the atoms before it (`keep_left`) or
+    /// from it, wherever they are on the line, in place of those left or right of `edge`.
+    pub split: Option<usize>,
 }
 
 impl TextCut {
@@ -983,13 +986,13 @@ impl TextCut {
         let advances: Vec<f32> = run.glyphs().map(|g| g.advance).collect();
         let (mut pen, mut index) = (run.offset(), 0);
         let (mut range, mut extent) = (None::<std::ops::Range<usize>>, None::<(f32, f32)>);
-        for (_, count) in run.atom_texts() {
+        for (text, count) in run.atom_texts() {
             let Some(glyphs) = advances.get(index..index + count) else { break };
             let advance: f32 = glyphs.iter().sum();
-            let keep = if self.keep_left {
-                pen + advance <= self.edge + EPSILON
-            } else {
-                pen >= self.edge - EPSILON
+            let keep = match self.split {
+                Some(split) => (text.start < split) == self.keep_left,
+                None if self.keep_left => pen + advance <= self.edge + EPSILON,
+                None => pen >= self.edge - EPSILON,
             };
             if keep {
                 let r = range.get_or_insert(index..index);
