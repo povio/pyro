@@ -811,7 +811,15 @@ impl ElementCx<'_, '_> {
                 continue;
             }
             let color = color.resolve_to_absolute(&current_color).as_srgb_color();
-            if *style != BorderStyle::Solid || color.components[3] < 1.0 {
+            // pyro: `inset`/`outset` sides are solid in their shades (a text field's border:
+            // the background no longer shows through the corner joins; WPT css-pseudo
+            // `selection-input-011`).
+            let color = match style {
+                BorderStyle::Solid => color,
+                BorderStyle::Inset | BorderStyle::Outset => beveled_edge_color(color, *edge, *style == BorderStyle::Inset),
+                _ => return false,
+            };
+            if color.components[3] < 1.0 {
                 return false;
             }
             colors[i] = Some(color);

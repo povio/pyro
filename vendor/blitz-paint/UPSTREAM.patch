@@ -12797,7 +12797,7 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
          if borders.is_empty() {
              return;
          }
-@@ -338,7 +734,144 @@
+@@ -338,7 +734,152 @@
              }
              scene.fill(Fill::NonZero, self.transform, color, None, &path);
              start = next;
@@ -12878,7 +12878,15 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
 +                continue;
 +            }
 +            let color = color.resolve_to_absolute(&current_color).as_srgb_color();
-+            if *style != BorderStyle::Solid || color.components[3] < 1.0 {
++            // pyro: `inset`/`outset` sides are solid in their shades (a text field's border:
++            // the background no longer shows through the corner joins; WPT css-pseudo
++            // `selection-input-011`).
++            let color = match style {
++                BorderStyle::Solid => color,
++                BorderStyle::Inset | BorderStyle::Outset => beveled_edge_color(color, *edge, *style == BorderStyle::Inset),
++                _ => return false,
++            };
++            if color.components[3] < 1.0 {
 +                return false;
 +            }
 +            colors[i] = Some(color);
@@ -12942,7 +12950,7 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
      }
  
      /// The border width (in device pixels) of a single edge.
-@@ -351,163 +884,152 @@
+@@ -351,163 +892,152 @@
          }
      }
  
@@ -13240,7 +13248,7 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
      }
  
      pub(crate) fn draw_table_borders(&self, scene: &mut impl PaintScene) {
-@@ -522,6 +1044,10 @@
+@@ -522,6 +1052,10 @@
          let Some(grid_info) = &mut *table.computed_grid_info.borrow_mut() else {
              return;
          };
@@ -13251,7 +13259,7 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
          let Some(border_style) = table.border_style.as_deref() else {
              return;
          };
-@@ -531,35 +1057,57 @@
+@@ -531,35 +1065,57 @@
          let cols = PhysicalTracks::from_tracks(&grid_info.columns);
          let rows = PhysicalTracks::from_tracks(&grid_info.rows);
  
@@ -13325,7 +13333,7 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
          };
  
          // Horizontal borders: the outer edges, then the gutters between adjacent row tracks.
-@@ -571,12 +1119,12 @@
+@@ -571,12 +1127,12 @@
              fill(left, bottom - border_width.height, right, bottom);
          }
          for (prev, next) in rows.iter().zip(rows.iter().skip(1)) {
@@ -13340,7 +13348,7 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
              if outer_border_style.border_left_style != BorderStyle::Hidden {
                  fill(left, y0, left + border_width.width, y1);
              }
-@@ -589,8 +1137,157 @@
+@@ -589,8 +1145,157 @@
          }
      }
  
@@ -13500,7 +13508,7 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
      /// ✅ solid - Defines a solid border
      /// ❌ double - Defines a double border
      /// ❌ groove - Defines a 3D grooved border. The effect depends on the border-color value
-@@ -600,33 +1297,92 @@
+@@ -600,33 +1305,92 @@
      /// ✅ none - Defines no border
      /// ✅ hidden - Defines a hidden border
      pub(crate) fn draw_outline(&self, scene: &mut impl PaintScene) {
