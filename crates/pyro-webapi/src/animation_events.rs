@@ -148,6 +148,8 @@ impl Timeline {
 /// Per-document state (`PageDom::animation_events`).
 #[derive(Default)]
 pub(crate) struct State {
+    /// The running task's animation clock reading ([`State::task_now`]).
+    task_clock: Cell<Option<(u64, f64)>>,
     /// The sheets' key and the rules read from them.
     rules: RefCell<Option<Rc<TimingRules>>>,
     /// The style stamp the rules' key was last computed at.
@@ -225,6 +227,22 @@ pub(crate) struct Run {
 }
 
 impl State {
+    /// The animation clock (page time, ms) of the running task: its first reading, held for the
+    /// rest of the task, so that the CSS animations and transitions a task starts start at the
+    /// time the frame samples them (their time is 0 until the clock moves, as a browser's pending
+    /// start time; a later reading in the task would put them before their start).
+    pub(crate) fn task_now(&self, page: &PageDom) -> f64 {
+        let Some(seq) = pyro_runtime::task_seq() else { return crate::event::page_now_ms(page) };
+        match self.task_clock.get() {
+            Some((at, now)) if at == seq => now,
+            _ => {
+                let now = crate::event::page_now_ms(page);
+                self.task_clock.set(Some((seq, now)));
+                now
+            }
+        }
+    }
+
     /// Whether timelines are kept: the sheets animate or transition (their
     /// values are sampled into the layout engine's cascade), a listener could
     /// observe their events, or `getAnimations()` lists them.
@@ -480,7 +498,7 @@ fn update(page: &Rc<PageDom>, defer: bool) {
                 }
             }
         }
-        let now_ms = crate::event::page_now_ms(page);
+        let now_ms = state.task_now(page);
         if !wanted.is_empty() || crate::smil::present(page, &dom) {
             state.install_source(page, style);
         }
@@ -629,7 +647,7 @@ pub(crate) fn scripted_state(
     if page.is_disposed() || page.scripting_disabled() {
         return;
     }
-    let now_ms = crate::event::page_now_ms(page);
+    let now_ms = page.animation_events.task_now(page);
     let mut planned = Vec::new();
     {
         let Ok(mut animations) = page.animation_events.animations.try_borrow_mut() else { return };
@@ -768,7 +786,8 @@ pub(crate) fn style_flush(page: &Rc<PageDom>, read: Option<NodeId>) {
         let style = layout.style();
         !page.is_disposed()
             && !page.scripting_disabled()
-            && (dom.smil_seen() || state.rules(&dom, style).animates())
+            // (Inline animations of a sheet's `@keyframes` too: `tracking`.)
+            && (dom.smil_seen() || state.tracking(&dom, style, page.document()))
             && state.stamp.get() != Some(style.observation_stamp(&dom))
     };
     if pending {
@@ -788,7 +807,7 @@ pub(crate) fn style_flush(page: &Rc<PageDom>, read: Option<NodeId>) {
         track_style_changes(state, &dom, style);
         // The flush itself: syncing styles registers new `<style>` sheets.
         style.engine_styled(&dom);
-        let now_ms = crate::event::page_now_ms(page);
+        let now_ms = state.task_now(page);
         transitions_from_changes(state, &dom, style, now_ms, &mut planned);
         if let Some(el) = read {
             style_read_hidden_content(state, &dom, style, el);

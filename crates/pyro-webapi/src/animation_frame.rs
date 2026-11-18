@@ -776,19 +776,11 @@ pub(crate) fn animates(
 /// The page's [`pyro_dom::animation::AnimationSource`]: what the layout
 /// engine samples at each sync (no transitions).
 pub(crate) fn source(page: &Rc<PageDom>) -> pyro_dom::animation::SharedAnimationSource {
-    Rc::new(Source { page: Rc::downgrade(page), clock: Cell::new(None), stamp: Cell::new(None) })
+    Rc::new(Source { page: Rc::downgrade(page), stamp: Cell::new(None) })
 }
 
 struct Source {
     page: Weak<PageDom>,
-    /// The time layout samples the animations at during the current task
-    /// (`pyro_runtime::task_seq`): read once per task, as a browser
-    /// samples its timelines once per frame. Read at each query instead, a
-    /// task asking for geometry again and again (a range over a large
-    /// `display: contents` subtree, one rect per text node) synced the
-    /// whole layout again every 16 ms while an infinite animation ran,
-    /// minutes for a large page.
-    clock: Cell<Option<(u64, f64)>>,
     /// The stamp last computed in this task, with the animation and
     /// `<animate>` generations it saw: every style and layout query asks
     /// for it, and computing it walks every animation of the page (axe-core
@@ -798,15 +790,8 @@ struct Source {
 
 impl Source {
     fn now(&self, page: &PageDom) -> f64 {
-        let Some(seq) = pyro_runtime::task_seq() else { return crate::event::page_now_ms(page) };
-        match self.clock.get() {
-            Some((at, now)) if at == seq => now,
-            _ => {
-                let now = crate::event::page_now_ms(page);
-                self.clock.set(Some((seq, now)));
-                now
-            }
-        }
+        // (The task's clock reading the CSS animations and transitions it starts start at.)
+        page.animation_events.task_now(page)
     }
 }
 
