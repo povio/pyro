@@ -896,6 +896,16 @@ pub fn timeline_text(style: &StyleSnapshot, index: usize) -> String {
     ui.animation_timeline_at(index % count).to_css_string()
 }
 
+/// The `animation-range-start` and `animation-range-end` of the animation at `index` of `style`,
+/// serialized (`normal`, `contain 0%`, `cover 100%`, `20%`).
+pub fn range_text(style: &StyleSnapshot, index: usize) -> (String, String) {
+    use style_traits::ToCss;
+    let ui = style.get_ui();
+    let s = ui.animation_range_start_count().max(1);
+    let e = ui.animation_range_end_count().max(1);
+    (ui.animation_range_start_at(index % s).to_css_string(), ui.animation_range_end_at(index % e).to_css_string())
+}
+
 pub fn displays_none(style: &StyleSnapshot) -> bool {
     style.get_box().display.is_none()
 }

@@ -1594,7 +1594,7 @@ impl Renderer {
         subject: Option<u64>,
         axis: u8,
         inset: [(u8, f64); 2],
-    ) -> Option<(f64, f64, f64, Option<u64>)> {
+    ) -> Option<(f64, f64, f64, Option<u64>, (f64, f64), f64)> {
         use blitz_dom::scroll_timeline::InsetValue;
         use style::values::specified::animation::ScrollAxis;
         let m = self.mirrors.get(&page)?;
@@ -1617,12 +1617,12 @@ impl Renderer {
             2 => InsetValue::Fraction(v),
             _ => InsetValue::Auto,
         });
-        let (offset, start, end, src) = blitz_dom::scroll_timeline::timeline_state(&m.doc, source, subject, axis, inset)?;
-        let src = match src {
+        let r = blitz_dom::scroll_timeline::timeline_ranges(&m.doc, source, subject, axis, inset)?;
+        let src = match r.source {
             Some(id) => Some(m.key_of(id)?),
             None => None,
         };
-        Some((offset, start, end, src))
+        Some((r.offset, r.start, r.end, src, r.contain, r.subject_size))
     }
 
     pub fn element_pseudo_style(

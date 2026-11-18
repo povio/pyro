@@ -378,7 +378,7 @@ pub trait GeometrySource {
         _subject: Option<u64>,
         _axis: u8,
         _inset: [(u8, f64); 2],
-    ) -> Option<(f64, f64, f64, Option<u64>)> {
+    ) -> Option<(f64, f64, f64, Option<u64>, (f64, f64), f64)> {
         None
     }
     fn element_pseudo_style(

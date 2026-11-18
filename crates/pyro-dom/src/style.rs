@@ -1089,7 +1089,7 @@ impl StyleEngine {
         let external = self.external.borrow();
         let (engine, _) = external.as_ref()?;
         let key = crate::snapshot::render_key;
-        engine.timeline_state(source.map(key), subject.map(key), axis, inset).map(|(o, s, e, _)| (o, s, e))
+        engine.timeline_state(source.map(key), subject.map(key), axis, inset).map(|(o, s, e, ..)| (o, s, e))
     }
 
     /// The animated values for a sync of the layout engine, now; `None`

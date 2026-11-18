@@ -637,6 +637,80 @@
     if (st.subject === null && st.source === null) return null;
     return timelineState(st.subject === null ? st.source : null, st.subject, AXES.indexOf(st.axis), sk, sv, ek, ev);
   }
+  // ----- animation ranges (rangeStart / rangeEnd) -------------------------
+
+  const RANGE_NAMES = ['cover', 'contain', 'entry', 'exit', 'entry-crossing', 'exit-crossing', 'scroll'];
+  // A range boundary: 'normal', or { rangeName (null: none), offset: [value, unit] } with unit
+  // 'percent' or 'px'.
+  function parseRange(v, isEnd, what) {
+    const dflt = isEnd ? [100, 'percent'] : [0, 'percent'];
+    if (v === undefined || v === null) return 'normal';
+    const lp = t => {
+      const m = /^([+-]?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?)(%|px)$/i.exec(t);
+      if (m) return [Number(m[1]), m[2] === '%' ? 'percent' : 'px'];
+      if (/^[+-]?0$/.test(t)) return [0, 'px'];
+      return null;
+    };
+    if (typeof v === 'string') {
+      const t = v.trim().toLowerCase();
+      if (t === 'normal') return 'normal';
+      const parts = t.split(/\s+/);
+      if (parts.length === 1) {
+        if (RANGE_NAMES.includes(parts[0])) return { rangeName: parts[0], offset: dflt };
+        const o = lp(parts[0]);
+        if (o) return { rangeName: null, offset: o };
+      } else if (parts.length === 2 && RANGE_NAMES.includes(parts[0])) {
+        const o = lp(parts[1]);
+        if (o) return { rangeName: parts[0], offset: o };
+      }
+      throw new TypeError(`Failed to set the '${what}' property: '${v}' is not a valid timeline range`);
+    }
+    if (typeof CSSUnitValue === 'function' && v instanceof CSSUnitValue) {
+      if (v.unit === 'percent' || v.unit === 'px') return { rangeName: null, offset: [v.value, v.unit] };
+      throw new TypeError(`Failed to set the '${what}' property: invalid unit`);
+    }
+    if (isObject(v)) {
+      const name = v.rangeName === undefined || v.rangeName === null ? null : String(v.rangeName);
+      if (name !== null && !RANGE_NAMES.includes(name)) throw new TypeError(`'${name}' is not a valid timeline range name`);
+      let offset = dflt;
+      if (v.offset !== undefined) {
+        if (typeof CSSUnitValue === 'function' && v.offset instanceof CSSUnitValue && (v.offset.unit === 'percent' || v.offset.unit === 'px')) {
+          offset = [v.offset.value, v.offset.unit];
+        } else throw new TypeError('Invalid range offset');
+      }
+      return { rangeName: name, offset };
+    }
+    throw new TypeError(`Failed to set the '${what}' property: invalid timeline range`);
+  }
+  function rangeValue(r) {
+    if (r === 'normal') return 'normal';
+    return { rangeName: r.rangeName, offset: new CSSUnitValue(r.offset[0], r.offset[1]) };
+  }
+  // The animation's attachment range as percentages of its progress-based timeline ([start, end];
+  // [0, 100] for 'normal'); null while the timeline is inactive.
+  function rangeOffsets(a) {
+    const st = timelines.get(a.timeline);
+    const rs = a.rangeStart === undefined ? 'normal' : a.rangeStart;
+    const re = a.rangeEnd === undefined ? 'normal' : a.rangeEnd;
+    if (rs === 'normal' && re === 'normal') return [0, 100];
+    const state = stateOf(st);
+    if (state === null) return null;
+    const [, start, end, , c0, c1, size] = state;
+    const length = end - start;
+    if (!(length > 0)) return [0, 100];
+    const named = {
+      cover: [start, end], contain: [c0, c1], entry: [start, c0], exit: [c1, end],
+      'entry-crossing': [start, start + size], 'exit-crossing': [end - size, end], scroll: [start, end],
+    };
+    const at = (r, dflt) => {
+      if (r === 'normal') return dflt;
+      const [lo, hi] = r.rangeName === null || st.subject === null ? [start, end] : named[r.rangeName];
+      const px = r.offset[1] === 'percent' ? lo + (hi - lo) * r.offset[0] / 100 : lo + r.offset[0];
+      return (px - start) / length * 100;
+    };
+    return [at(rs, 0), at(re, 100)];
+  }
+
   class ScrollTimeline extends AnimationTimeline {
     constructor(options) {
       const self = Reflect.construct(Object, [], new.target);
@@ -754,12 +828,15 @@
     const t = effect.timing;
     const anim = effect.animation;
     if (!anim || !progressBased(anim)) return t;
+    // (Spread over the animation's attachment range, `rangeStart` to `rangeEnd`.)
+    const range = rangeOffsets(anim) || [0, 100];
+    const span = Math.max(range[1] - range[0], 0);
     if (t.duration === 'auto') {
-      return { ...t, delay: 0, endDelay: 0, duration: t.iterations > 0 && t.iterations !== Infinity ? 100 / t.iterations : 0 };
+      return { ...t, delay: 0, endDelay: 0, duration: t.iterations > 0 && t.iterations !== Infinity ? span / t.iterations : 0 };
     }
     const total = t.delay + t.duration * t.iterations + t.endDelay;
     if (!(total > 0) || total === Infinity) return { ...t, delay: 0, endDelay: 0, duration: 0 };
-    const k = 100 / total;
+    const k = span / total;
     return { ...t, delay: t.delay * k, endDelay: t.endDelay * k, duration: t.duration * k };
   }
 
@@ -1005,7 +1082,8 @@
     // start time), unless script seeked it.
     if (progressBased(a) && a.autoAlign) {
       applyPendingRate(a);
-      a.startTime = a.rate >= 0 ? 0 : 100;
+      const range = rangeOffsets(a) || [0, 100];
+      a.startTime = a.rate >= 0 ? range[0] : range[1];
       a.holdTime = null;
       a.autoAlign = false;
       a.pending = null;
@@ -1397,6 +1475,18 @@
       a.autoAlign = false;
       seekTo(a, v === null ? null : timeArg(a, v, 'currentTime'));
     }
+    get rangeStart() { return rangeValue(brand(animations, this, 'an Animation').rangeStart || 'normal'); }
+    set rangeStart(v) {
+      const a = brand(animations, this, 'an Animation');
+      a.rangeStart = parseRange(v, false, 'rangeStart');
+      rangeChanged(a);
+    }
+    get rangeEnd() { return rangeValue(brand(animations, this, 'an Animation').rangeEnd || 'normal'); }
+    set rangeEnd(v) {
+      const a = brand(animations, this, 'an Animation');
+      a.rangeEnd = parseRange(v, true, 'rangeEnd');
+      rangeChanged(a);
+    }
     get playbackRate() { return brand(animations, this, 'an Animation').rate; }
     set playbackRate(v) {
       const a = brand(animations, this, 'an Animation');
@@ -1566,20 +1656,21 @@
     const cs = computedStyle(el);
     return /^(auto|scroll|hidden)$/.test(cs.overflowX) || /^(auto|scroll|hidden)$/.test(cs.overflowY);
   };
-  function nearestScroller(el) {
-    for (let p = el.parentElement; p !== null; p = p.parentElement) {
+  // (A pseudo-element's nearest scroll container may be its originating element: `self`.)
+  function nearestScroller(el, includeSelf) {
+    for (let p = includeSelf ? el : el.parentElement; p !== null; p = p.parentElement) {
       if (p === document.documentElement || p === document.body) break;
       if (isScrollContainer(p)) return p;
     }
     return scrollingElement();
   }
-  function cssTimeline(text, target) {
+  function cssTimeline(text, target, pseudo) {
     const t = String(text).trim();
     const axisIn = s => (/\b(inline|x|y)\b/.exec(s) || ['block'])[0];
     let m = /^scroll\((.*)\)$/.exec(t);
     if (m) {
       const args = m[1];
-      const source = /\bself\b/.test(args) ? target : /\broot\b/.test(args) ? scrollingElement() : nearestScroller(target);
+      const source = /\bself\b/.test(args) ? target : /\broot\b/.test(args) ? scrollingElement() : nearestScroller(target, pseudo !== null && pseudo !== undefined);
       return new ScrollTimeline({ source, axis: axisIn(args) });
     }
     m = /^view\((.*)\)$/.exec(t);
@@ -1618,10 +1709,11 @@
     if (pseudo !== null && pseudo !== undefined) timing.pseudoElement = pseudo;
     const scrollDriven = timelineText !== null && timelineText !== undefined;
     if (scrollDriven && timing.duration === 0) timing.duration = 'auto';
+    const [timelineValue, rangeStartText, rangeEndText] = scrollDriven ? timelineText : [null, 'normal', 'normal'];
     const effect = new KeyframeEffect(target, null, timing);
     // A scroll-driven one: on its scroll or view timeline, its `auto` duration filling it, its
     // start time at the timeline's start.
-    const timeline = scrollDriven ? cssTimeline(timelineText, target) : documentTimeline;
+    const timeline = scrollDriven ? cssTimeline(timelineValue, target, pseudo) : documentTimeline;
     const object = Reflect.construct(Animation, [effect, timeline], transition ? CSSTransition : CSSAnimation);
     const a = animations.get(object);
     a.css = transition ? CSS_TRANSITION : CSS_ANIMATION;
@@ -1629,7 +1721,10 @@
     a.cssId = id;
     if (scrollDriven) {
       a.scrollDriven = true;
-      a.startTime = timeline !== null && timelineTime(timeline) !== null ? 0 : null;
+      // (Its `animation-range` is the engine's: the object's range stays `normal` until timeline
+      // times are frame-stable, as in browsers, where a scroll moves them at the next frame.)
+      void rangeStartText; void rangeEndText;
+      a.startTime = timeline !== null && timelineTime(timeline) !== null ? (rangeOffsets(a) || [0, 100])[0] : null;
       a.holdTime = held !== null && a.startTime !== null ? null : (a.startTime === null ? 0 : null);
       a.ready = deferred();
       if (a.startTime !== null) settle(a.ready, object, false); else { a.pending = null; schedulePending(a, 'play'); a.autoAlign = true; }
@@ -1704,16 +1799,31 @@
 
   // ----- Animatable and DocumentOrShadowRoot -------------------------------
 
+  // A new range on a progress-based timeline: an auto-aligned start time follows it.
+  function rangeChanged(a) {
+    if (progressBased(a) && a.startTime !== null && a.holdTime === null && !a.scripted) {
+      const range = rangeOffsets(a) || [0, 100];
+      a.startTime = a.rate >= 0 ? range[0] : range[1];
+    }
+    updateFinished(a, false, false);
+  }
+
   function animate(target, keyframes, options) {
     const effect = new KeyframeEffect(target, keyframes, options);
     let timeline = documentTimeline;
     let id = '';
+    let rangeStart = 'normal';
+    let rangeEnd = 'normal';
     if (isObject(options)) {
       if (options.id !== undefined) id = String(options.id);
       if (options.timeline !== undefined) timeline = options.timeline;
+      if (options.rangeStart !== undefined) rangeStart = parseRange(options.rangeStart, false, 'rangeStart');
+      if (options.rangeEnd !== undefined) rangeEnd = parseRange(options.rangeEnd, true, 'rangeEnd');
     }
     const animation = new Animation(effect, timeline);
     animations.get(animation).id = id;
+    animations.get(animation).rangeStart = rangeStart;
+    animations.get(animation).rangeEnd = rangeEnd;
     animation.play();
     return animation;
   }

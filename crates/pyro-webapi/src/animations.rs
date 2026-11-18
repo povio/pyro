@@ -185,11 +185,22 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
             let Some(geometry) = layout.synced_geometry_source(&dom) else { return Ok(s.null()) };
             let key = |id: pyro_dom::NodeId| pyro_dom::snapshot::render_key(id);
             let state = geometry.timeline_state(source.map(key), subject.map(key), axis, inset);
-            state.map(|(offset, start, end, src)| (offset, start, end, src.and_then(|k| pyro_dom::geometry::node_of(&dom, k))))
+            state.map(|(offset, start, end, src, contain, size)| {
+                (offset, start, end, src.and_then(|k| pyro_dom::geometry::node_of(&dom, k)), contain, size)
+            })
         };
-        let Some((offset, start, end, src)) = state else { return Ok(s.null()) };
+        let Some((offset, start, end, src, contain, size)) = state else { return Ok(s.null()) };
         let src = crate::node::node_value(s, &page, src)?;
-        Ok(s.array(&[s.number(offset), s.number(start), s.number(end), src])?.value())
+        Ok(s.array(&[
+            s.number(offset),
+            s.number(start),
+            s.number(end),
+            src,
+            s.number(contain.0),
+            s.number(contain.1),
+            s.number(size),
+        ])?
+        .value())
     })?;
     natives.set_atom("timelineState", timeline_state.value())?;
     Ok(natives)
@@ -309,7 +320,7 @@ fn with_css_runs<'s>(s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<Option<Objec
                     Some(pyro_dom::style::PseudoElement::After) => s.string("::after"),
                 },
                 match &run.timeline {
-                    Some(text) => s.string(text),
+                    Some((text, start, end)) => s.array(&[s.string(text), s.string(start), s.string(end)])?.value(),
                     None => s.null(),
                 },
             ])?

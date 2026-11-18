@@ -97,10 +97,39 @@ pub fn timeline_state(
     axis: ScrollAxis,
     inset: [InsetValue; 2],
 ) -> Option<(f64, f64, f64, Option<NodeId>)> {
+    timeline_ranges(doc, source, subject, axis, inset).map(|s| (s.offset, s.start, s.end, s.source))
+}
+
+/// [`timeline_state`] with a view timeline's contain range and subject size (a scroll timeline: its
+/// whole range and 0), for an animation's attachment range (`rangeStart`/`rangeEnd`).
+#[derive(Clone, Copy, Debug)]
+pub struct TimelineRanges {
+    pub offset: f64,
+    pub start: f64,
+    pub end: f64,
+    pub source: Option<NodeId>,
+    pub contain: (f64, f64),
+    pub subject_size: f64,
+}
+
+pub fn timeline_ranges(
+    doc: &BaseDocument,
+    source: Option<NodeId>,
+    subject: Option<NodeId>,
+    axis: ScrollAxis,
+    inset: [InsetValue; 2],
+) -> Option<TimelineRanges> {
     match subject {
         None => {
-            // The root element scrolls as the viewport.
-            let source = source.filter(|&id| id != doc.root_element().id);
+            // The root element scrolls as the viewport, and so does a body that is not a scroll
+            // container of its own (the quirks-mode `document.scrollingElement`).
+            let source = source.filter(|&id| {
+                id != doc.root_element().id
+                    && doc.get_node(id).is_none_or(|n| {
+                        !(n.data.is_element_with_tag_name(&markup5ever::local_name!("body"))
+                            && (!is_scroll_container(n) || is_viewport_propagated_body(doc, n)))
+                    })
+            });
             let axis_node = match source {
                 Some(id) => {
                     let n = doc.get_node(id)?;
@@ -112,7 +141,14 @@ pub fn timeline_state(
                 None => doc.root_element(),
             };
             let scroll = scroll_of(doc, source, vertical(axis_node, axis))?;
-            Some((scroll.offset, 0.0, scroll.max, source))
+            Some(TimelineRanges {
+                offset: scroll.offset,
+                start: 0.0,
+                end: scroll.max,
+                source,
+                contain: (0.0, scroll.max),
+                subject_size: 0.0,
+            })
         }
         Some(subject) => {
             let n = doc.get_node(subject)?;
@@ -136,7 +172,15 @@ pub fn timeline_state(
             };
             let scroll = scroll_of(doc, source, vertical)?;
             let ranges = view_ranges(doc, subject, &resolved, &scroll)?;
-            Some((scroll.offset, ranges.cover.0, ranges.cover.1, source))
+            let subject_size = ranges.entry_crossing.1 - ranges.entry_crossing.0;
+            Some(TimelineRanges {
+                offset: scroll.offset,
+                start: ranges.cover.0,
+                end: ranges.cover.1,
+                source,
+                contain: ranges.contain,
+                subject_size,
+            })
         }
     }
 }

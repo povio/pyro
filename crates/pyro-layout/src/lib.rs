@@ -958,7 +958,7 @@ impl GeometrySource for BlitzGeometry {
         subject: Option<u64>,
         axis: u8,
         inset: [(u8, f64); 2],
-    ) -> Option<(f64, f64, f64, Option<u64>)> {
+    ) -> Option<(f64, f64, f64, Option<u64>, (f64, f64), f64)> {
         RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.timeline_state(self.page, source, subject, axis, inset))
     }
 
