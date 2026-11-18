@@ -106,6 +106,7 @@ pub mod window;
 pub mod window_message;
 pub mod worker;
 pub(crate) mod shared_worker;
+pub mod svg_use;
 mod worker_scope;
 pub mod xhr;
 pub mod xpath;

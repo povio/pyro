@@ -73,6 +73,9 @@ images/
 interfaces/
 fetch/api/resources/
 html/resources/
+# workers/semantics/structured-clone/*.html and workers/*-in-data-url-context (feature dir workers):
+html/webappapis/structured-clone/
+service-workers/service-worker/resources/
 html/interaction/focus/the-autofocus-attribute/resources/
 loading/resources/
 css/support/

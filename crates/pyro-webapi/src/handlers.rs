@@ -158,8 +158,13 @@ pub(crate) fn content_attribute_changed(
             // document, form owner and element are on the scope chain.
             let scoped =
                 format!("with(this.ownerDocument||document){{with(this.form||{{}}){{with(this){{{body}\n}}}}}}");
-            let f =
-                ctor.as_object().expect("Function constructor").construct(&[s.string("event"), s.string(&scoped)])?;
+            // An SVG element's handler names its argument `evt` (SVG 2, as browsers do).
+            let svg = {
+                let dom = target.page.dom.borrow();
+                dom.key_node(target.key).and_then(|n| dom.element(n).ok()).is_some_and(|e| &*e.name.ns == "http://www.w3.org/2000/svg")
+            };
+            let param = if svg { "evt" } else { "event" };
+            let f = ctor.as_object().expect("Function constructor").construct(&[s.string(param), s.string(&scoped)])?;
             f.value()
         }
         None => s.null(),

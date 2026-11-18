@@ -76,6 +76,9 @@ pub enum ResourceKind {
     /// `<meta http-equiv=refresh>`: its insertion schedules a declarative
     /// refresh (the loader handles `Connected` events only).
     Meta,
+    /// SVG `<use>`: (re)builds its shadow tree of clones of the element its
+    /// `href` names (the bindings' `svg_use`).
+    SvgUse,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -114,7 +117,9 @@ impl Dom {
     /// connected document's would: the loader resolves each event's document
     /// when it handles it, after the parsed nodes moved to their real one.
     fn connected_for_resources(&self, i: u32) -> bool {
-        self.is_connected_idx(i) || self.is_fragment_parse_host(self.n(i).owner_doc)
+        // Nothing in a `<use>` instance loads or runs (SVG 2: its scripts do
+        // not execute; it is not a document tree of its own).
+        (self.is_connected_idx(i) || self.is_fragment_parse_host(self.n(i).owner_doc)) && !self.in_ua_shadow_tree(i)
     }
 
     /// Whether `take_resource_events` would return anything.
@@ -136,6 +141,9 @@ impl Dom {
         let e = self.n(idx).element()?;
         if e.name.ns == ns!(svg) && e.name.local == local_name!("script") {
             return Some(ResourceKind::Script);
+        }
+        if e.name.ns == ns!(svg) && e.name.local == local_name!("use") {
+            return Some(ResourceKind::SvgUse);
         }
         if !e.is_html() {
             return None;

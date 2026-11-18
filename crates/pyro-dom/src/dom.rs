@@ -726,6 +726,11 @@ impl Dom {
         self.shadow_roots
     }
 
+    /// Whether `host`'s shadow root is a user-agent one (rendered as if absent).
+    pub(crate) fn has_ua_shadow_idx(&self, sr: u32) -> bool {
+        matches!(&self.n(sr).kind, NodeKind::Fragment(f) if f.flags & crate::node::shadow_flags::USER_AGENT != 0)
+    }
+
     /// Records a tree, attribute or character-data mutation.
     #[track_caller]
     pub(crate) fn bump_tree(&mut self) {
@@ -1442,6 +1447,18 @@ impl Dom {
         Ok(self.id_of(sr))
     }
 
+    /// The user-agent shadow root of `host` (closed; script cannot reach it):
+    /// SVG `<use>` element instances. Made on first use, on any element.
+    pub fn ua_shadow_root(&mut self, host: NodeId) -> DomResult<NodeId> {
+        let h = self.check(host)?;
+        let existing = self.n(h).element().ok_or(DomError::Type("not an element"))?.shadow_root;
+        if existing != NIL {
+            return Ok(self.id_of(existing));
+        }
+        let sr = self.new_shadow_root(h, ShadowRootMode::Closed, crate::node::shadow_flags::USER_AGENT);
+        Ok(self.id_of(sr))
+    }
+
     fn new_shadow_root(&mut self, h: u32, mode: ShadowRootMode, mut flags: u8) -> u32 {
         // A custom host makes it available to its internals; a
         // precustomized one (its constructor running) is the bindings' to
@@ -1512,6 +1529,20 @@ impl Dom {
 
     /// Whether `i`'s root is a shadow root (a bit kept by `tree_scope`).
     #[inline]
+    /// Whether `i` is in a user-agent shadow tree (a `<use>` instance), at
+    /// any depth of shadow trees.
+    pub(crate) fn in_ua_shadow_tree(&self, mut i: u32) -> bool {
+        while self.n(i).in_shadow_tree() {
+            let root = self.root_idx(i);
+            match &self.n(root).kind {
+                NodeKind::Fragment(f) if f.flags & crate::node::shadow_flags::USER_AGENT != 0 => return true,
+                NodeKind::Fragment(f) if f.host != NIL => i = f.host,
+                _ => return false,
+            }
+        }
+        false
+    }
+
     pub(crate) fn in_shadow_tree(&self, i: u32) -> bool {
         let r = self.n(i).in_shadow_tree();
         debug_assert_eq!(r, matches!(&self.n(self.root_idx(i)).kind, NodeKind::Fragment(f) if f.shadow.is_some()));

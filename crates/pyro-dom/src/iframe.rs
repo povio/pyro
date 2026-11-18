@@ -76,6 +76,10 @@ impl Dom {
             .is_some_and(|e| matches!(e.name.local, local_name!("iframe") | local_name!("frame")) && e.is_html())
     }
     fn iframe_event(&mut self, document: NodeId, idx: u32, change: IframeChange) {
+        // A `<use>` instance's frames load nothing and its scripts never run.
+        if self.in_ua_shadow_tree(idx) {
+            return;
+        }
         let node = self.id_of(idx);
         self.add_ref(node).expect("live iframe");
         self.iframes.events.entry(document).or_default().push(IframeEvent { node, change });

@@ -535,7 +535,9 @@ impl Dom {
                     if slot_kids.as_ref().is_some_and(|(_, _, assigned)| *assigned) {
                         attrs.push(marker(ASSIGNED_SLOT_ATTR));
                     }
-                    if e.shadow_root != NIL {
+                    // A user-agent shadow root (`<use>` instance) renders as if absent.
+                    let rendered_shadow = e.shadow_root != NIL && !self.has_ua_shadow_idx(e.shadow_root);
+                    if rendered_shadow {
                         attrs.push(marker(SHADOW_HOST_ATTR));
                     }
                     let tag = self.serialized_tag(n);
@@ -566,7 +568,7 @@ impl Dom {
                     }
                     if let Some((kids, kids_scope, _)) = slot_kids {
                         push_children(&mut stack, kids, kids_scope);
-                    } else if e.shadow_root != NIL {
+                    } else if rendered_shadow {
                         hosts.push((n, scope));
                         self.push_adopted(&mut stack, opts, e.shadow_root, &mut emitted);
                         push_children(&mut stack, self.child_idx_iter(e.shadow_root).collect(), hosts.len() - 1);
@@ -591,6 +593,7 @@ impl Dom {
     /// content gives its sheet text.
     pub fn render_delta(&self, doc: NodeId, since: u64, opts: &RenderHtml<'_>) -> Option<RenderDelta> {
         let d = self.check(doc).ok()?;
+        // (User-agent shadow trees too: their nodes are not in the render tree.)
         if self.shadow_root_count() != 0 || opts.mark.is_some() || opts.adopted.is_some() {
             return None;
         }

@@ -674,6 +674,8 @@ impl Browser {
                 // Script-inserted (or `src`-changed) scripts: "already
                 // started" makes repeats of one element no-ops.
                 self.script_event(target, event.node);
+            } else if event.kind == pyro_dom::script::ResourceKind::SvgUse {
+                pyro_webapi::svg_use::update(&bindings, event.node);
             } else if event.kind == pyro_dom::script::ResourceKind::Meta {
                 // A refresh pragma acts on insertion only.
                 if event.reason == pyro_dom::script::ResourceReason::Connected {

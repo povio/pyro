@@ -45,6 +45,9 @@ pub struct PageDom {
     pub dom: DomRef,
     id: u64,
     disposed: Cell<bool>,
+    /// SVG `<use>` elements with an instance, and a fingerprint of what each
+    /// mirrors (`svg_use`).
+    pub(crate) use_hosts: RefCell<Vec<(NodeId, u64)>>,
     /// [`PageDom::detach`] ran (`dispose` sets it too).
     detached: Cell<bool>,
     /// Navigations of the document's frame this document started (links,
@@ -686,6 +689,7 @@ impl PageDom {
             dom,
             id: NEXT_PAGE.fetch_add(1, Ordering::Relaxed),
             disposed: Cell::new(false),
+            use_hosts: RefCell::new(Vec::new()),
             detached: Cell::new(false),
             navigation_requests: Cell::new(0),
             document: Cell::new(document),
@@ -1746,6 +1750,7 @@ impl PageDom {
         crate::custom::run_upgrades(self);
         crate::message_channel::reconcile_ports(self);
         crate::mutation_observer::after_task(self);
+        crate::svg_use::after_task(self);
         crate::intersection_observer::after_task(self);
         crate::resize_observer::after_task(self);
         self.frame_resize_after_task();

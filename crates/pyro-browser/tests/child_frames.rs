@@ -762,3 +762,49 @@ fn csp_header_trusted_types_directives_apply_others_do_not() {
     let root = main_realm(&t, page);
     assert_eq!(eval(&root, "out.join('|')"), "TypeError|TypeError|<i>y</i>");
 }
+
+/// SVG `<use>` instances: a closed user-agent shadow root with a deep clone
+/// of the referenced element, rebuilt when the reference or its subtree
+/// changes; nothing of it is reachable from script; an SVG handler's
+/// argument is `evt`.
+#[test]
+fn svg_use_elements_get_live_instances() {
+    let mut t = crate::browser_thread().unwrap();
+    let page = t.browser.create_page().unwrap();
+    let root = main_realm(&t, page);
+    eval(
+        &root,
+        "document.body.innerHTML = '<svg><defs><g id=t><rect id=r width=10 height=10 onclick=\"window.arg = typeof evt\"/></g>\
+           <circle id=c r=5 /></defs><use id=u href=\"#t\"/></svg>'; 'ok'",
+    );
+    settle(&mut t);
+    let instance = |t: &BrowserThread| {
+        let dom = t.browser.page(page).unwrap().main_frame.page_dom.clone().unwrap();
+        let d = dom.dom.borrow();
+        let doc = dom.document();
+        let host = d.get_element_by_id(doc, "u").unwrap().unwrap();
+        d.shadow_root(host).unwrap().map(|sr| {
+            d.children(sr).unwrap().map(|c| d.outer_html(c).unwrap()).collect::<Vec<_>>().join("")
+        })
+    };
+    assert_eq!(instance(&t).as_deref(), Some(r#"<g id="t"><rect id="r" width="10" height="10" onclick="window.arg = typeof evt"></rect></g>"#));
+    assert_eq!(eval(&root, "[u.shadowRoot, document.getElementById('r').getRootNode() === document].join()"), ",true");
+    // The referenced subtree changes: the instance follows after the task.
+    eval(&root, "document.getElementById('r').setAttribute('width', '20'); 'ok'");
+    settle(&mut t);
+    assert!(instance(&t).unwrap().contains(r#"width="20""#));
+    // Another reference, then none.
+    eval(&root, "u.setAttribute('href', '#c'); 'ok'");
+    settle(&mut t);
+    assert_eq!(instance(&t).as_deref(), Some(r#"<circle id="c" r="5"></circle>"#));
+    eval(&root, "u.setAttribute('href', '#missing'); 'ok'");
+    settle(&mut t);
+    assert_eq!(instance(&t).as_deref(), Some(""));
+    // A cycle makes no instance.
+    eval(&root, "document.getElementById('t').append(u); u.setAttribute('href', '#t'); 'ok'");
+    settle(&mut t);
+    assert_eq!(instance(&t).as_deref(), Some(""));
+    // SVG handlers take `evt`.
+    eval(&root, "document.getElementById('r').dispatchEvent(new Event('click')); 'ok'");
+    assert_eq!(eval(&root, "arg"), "object");
+}

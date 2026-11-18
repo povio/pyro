@@ -215,6 +215,9 @@ pub mod shadow_flags {
     /// custom element (state "precustomized" or "custom"), so
     /// `ElementInternals.shadowRoot` returns it.
     pub const AVAILABLE_TO_INTERNALS: u8 = 32;
+    /// A user-agent shadow root (an SVG `<use>` instance): not rendered (the
+    /// renderer resolves `<use>` itself) and not reachable from script.
+    pub const USER_AGENT: u8 = 64;
 }
 
 /// Mutable form-control state that is not reflected in attributes.
