@@ -1410,7 +1410,43 @@ impl Browser {
                     .map(|u| u.to_string())
                     .unwrap_or_else(|_| raw.clone())
             };
-            if url == "about:blank" && frame.url == "about:blank" && !frame.dom_content_loaded {
+            if let Some(source) = crate::bindings::javascript_url_source(&url) {
+                // HTML "navigate to a javascript: URL" with initialInsertion: a task runs the
+                // Trusted Types pre-navigation check and the script in the frame's initial
+                // document, which stays; its load follows. Author code in that check (a default
+                // policy) may remove the container: then nothing runs and no load is fired.
+                let parent_key = frame.parent.as_ref().and_then(|id| host.key(id));
+                self.sched.post(pyro_runtime::TaskSource::Navigation, move |b| {
+                    let connected = |b: &Browser| {
+                        b.page(key.page).is_some_and(|p| p.frames.dom.borrow().is_connected(owner).unwrap_or(false))
+                    };
+                    let Some(doc) = b.doc(key) else { return };
+                    let realm = doc.main_frame.main_realm().cloned();
+                    drop(doc);
+                    // The check runs under the inserting document's policies (the request's
+                    // policy container is snapshotted from it).
+                    let checker = parent_key.and_then(|k| b.doc(k)).and_then(|d| {
+                        Some((d.main_frame.main_realm().cloned()?, d.main_frame.page_dom.clone()?))
+                    });
+                    if let (Some(realm), Some((parent_realm, parent_dom))) = (realm, checker) {
+                        if let (Ok(scope), Ok(parent_scope)) = (realm.scope(), parent_realm.scope()) {
+                            let script = pyro_webapi::trusted_types::javascript_url_script(&parent_scope, &parent_dom, &source);
+                            if !connected(b) {
+                                return;
+                            }
+                            if let Some(script) = script {
+                                if let Err(e) = scope.eval(&script, None, 1) {
+                                    scope.report_exception(&e);
+                                }
+                            }
+                        }
+                    }
+                    if connected(b) {
+                        b.finish_blank_document(key);
+                    }
+                });
+                Ok(())
+            } else if url == "about:blank" && frame.url == "about:blank" && !frame.dom_content_loaded {
                 // A script that opened the initial document since (append,
                 // then `contentDocument.open()`) finishes it with `close()`.
                 if host.nav(key).map_or(true, |nav| nav.is_initial_blank()) {
