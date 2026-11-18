@@ -937,6 +937,7 @@ fn compute_inner(
         last_child_bottom_margin_set,
         mut first_baseline,
         mut last_baseline,
+        mut dominant_baselines,
     ) = perform_final_layout_on_in_flow_children(
         tree,
         run_mode,
@@ -1019,6 +1020,7 @@ fn compute_inner(
         let group_offset = compute_block_align_content_offset(align_content, free_space);
         first_baseline = first_baseline.map(|baseline| baseline + group_offset);
         last_baseline = last_baseline.map(|baseline| baseline + group_offset);
+        dominant_baselines = dominant_baselines.map(|b| b.map(|baseline| baseline + group_offset));
         for item in items.iter_mut() {
             if let Some(layout) = item.final_layout.as_mut() {
                 layout.location.y += group_offset;
@@ -1081,7 +1083,11 @@ fn compute_inner(
         size: final_outer_size,
         #[cfg(feature = "content_size")]
         scrollable_overflow_rect: crate::tree::ScrollableOverflow::ZERO,
-        baselines: Baselines::new(first_baseline, last_baseline),
+        baselines: Baselines {
+            dominant_first: dominant_baselines[0],
+            dominant_last: dominant_baselines[1],
+            ..Baselines::new(first_baseline, last_baseline)
+        },
         top_margin: if own_margins_collapse_with_children.start {
             first_child_top_margin_set
         } else {
@@ -1836,7 +1842,7 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
     margin_trim: Line<bool>,
     #[cfg(feature = "content_size")] is_scroll_container: bool,
     block_ctx: &mut BlockContext<'_>,
-) -> (Rect<f32>, f32, CollapsibleMarginSet, CollapsibleMarginSet, Option<f32>, Option<f32>) {
+) -> (Rect<f32>, f32, CollapsibleMarginSet, CollapsibleMarginSet, Option<f32>, Option<f32>, [Option<f32>; 2]) {
     // Resolve container_inner_width for sizing child nodes using initial content_box_inset
     let container_inner_width = (container_outer_width - resolved_content_box_inset.horizontal_axis_sum()).max(0.0);
     #[cfg(feature = "content_size")]
@@ -1887,6 +1893,9 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
     let mut first_baseline: Option<f32> = None;
     // pyro: and its last baseline, the last baseline of its last in-flow child that has one.
     let mut last_baseline: Option<f32> = None;
+    // pyro: the same two in the dominant baseline (`Baselines::dominant_first`), from the
+    // children that give the first and last baselines (none where such a child has none).
+    let mut dominant_baselines: [Option<f32>; 2] = [None, None];
     // Whether the active margin set contains the margins of a self-collapsing element with
     // clearance. Such margins collapse with the margins of following siblings but the resulting
     // margin does not collapse with the bottom margin of the parent block.
@@ -2527,6 +2536,10 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
                 let child_baseline =
                     child_first_baseline(item_layout.baselines.first, item_layout.size.height, item.overflow.y);
                 first_baseline = child_baseline.map(|baseline| location.y - inset_offset.y + baseline);
+                if first_baseline.is_some() {
+                    dominant_baselines[0] =
+                        item_layout.baselines.dominant_first.map(|baseline| location.y - inset_offset.y + baseline);
+                }
             }
             // pyro: a block container's last baseline is the last baseline of its last in-flow
             // child that has one (an inline-block's, CSS 2.1 § 10.8.1, is its last line box's).
@@ -2549,6 +2562,12 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
             };
             if let Some(baseline) = child_last_baseline {
                 last_baseline = Some(location.y - inset_offset.y + baseline);
+                let dominant = if item.is_block_container && !item.overflow.y.is_scroll_container() {
+                    item_layout.baselines.dominant_last
+                } else {
+                    None
+                };
+                dominant_baselines[1] = dominant.map(|baseline| location.y - inset_offset.y + baseline);
             }
 
             // Used auto margins include float-avoidance offsets, unlike the alignment margins above.
@@ -2704,5 +2723,5 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
 
     committed_y_offset += resolved_content_box_inset.bottom + bottom_y_margin_offset;
     let content_height = f32_max(0.0, committed_y_offset);
-    (inflow_overflow_rect, content_height, first_child_top_margin_set, last_child_bottom_margin_set, first_baseline, last_baseline)
+    (inflow_overflow_rect, content_height, first_child_top_margin_set, last_child_bottom_margin_set, first_baseline, last_baseline, dominant_baselines)
 }

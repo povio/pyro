@@ -261,25 +261,6 @@ struct SpanEnd {
 /// characters of its `unicode-bidi` (with `bidi`), its start edge with `start`, and the strut
 /// when it has an edge. With `end`, its end edge goes in the returned [`SpanEnd`].
 #[allow(clippy::too_many_arguments)]
-/// pyro: whether the inline root `root_id` is in a multi-column container of a vertical writing
-/// mode.
-fn in_vertical_multicol(nodes: &crate::NodeTree, root_id: NodeId) -> bool {
-    let mut current = Some(root_id);
-    while let Some(id) = current {
-        let node = &nodes[id];
-        if let Some(style) = node.primary_styles() {
-            if !style.writing_mode.is_vertical() {
-                return false;
-            }
-            if style.get_column().is_multicol() {
-                return true;
-            }
-        }
-        current = node.parent;
-    }
-    false
-}
-
 /// pyro: whether an inline box with `style` has a border or padding over or under it (left or
 /// right of it in a vertical writing mode).
 fn has_block_edges(style: &style::properties::ComputedValues) -> bool {
@@ -342,6 +323,7 @@ fn open_span(
         baseline: None,
         vertical_align: Default::default(),
         rtl,
+        central: false,
     };
     // pyro: a right-to-left span with one edge has the other too, empty (see
     // `build_inline_layout_recursive`).
@@ -432,6 +414,10 @@ fn build_inline_layout_with(
             .parent
             .and_then(|parent_id| nodes[parent_id].primary_styles())
     });
+    // pyro: vertical lines of text that is not sideways align on the central baseline.
+    let central_baseline = root_node_style
+        .as_deref()
+        .is_some_and(|s| s.writing_mode.is_vertical() && !s.writing_mode.is_sideways());
 
     let mut parley_style = root_node_style
         .as_ref()
@@ -858,6 +844,7 @@ fn build_inline_layout_with(
         text_layout.layout.set_tab_stops(space, ch / 2.0);
     }
     text_layout.layout.set_line_height_quirk(nodes.line_height_quirk);
+    text_layout.layout.set_central_baseline(central_baseline);
     // pyro: the shaped text's content widths, for every layout of it (`TextLayout::
     // content_widths`): a function of the shaped clusters alone while no in-flow inline box, whose
     // size each layout sets, takes part in them. Measured with no text indent; the layout sets its
@@ -873,7 +860,7 @@ fn build_inline_layout_with(
     // (Not in a multi-column container of a vertical writing mode, which is laid out as one
     // column (`layout::multicol`): what the offset moves out of its column would show there,
     // where the next column covers it.)
-    text_layout.relative_spans = bidi_scan.relative && !in_vertical_multicol(nodes, inline_context_root_node_id);
+    text_layout.relative_spans = bidi_scan.relative;
     text_layout.percent_span_edges = bidi_scan.percent_edges;
     text_layout.span_block_edges = bidi_scan.block_edges;
     return true;
@@ -894,6 +881,10 @@ fn build_inline_layout_with(
         let style = node.primary_styles()?;
         let itext = style.get_inherited_text();
         let mut parley_style = stylo_to_parley::style(node_id, &style);
+        // pyro: an annotation is centred over its base by its layout's width and its glyphs are
+        // drawn em-wide (`draw_annotation`): no tall upright advances (parley `shape::upright`),
+        // as emphasis marks have none (WPT css-text-decor `text-emphasis-style-property-005`).
+        parley_style.upright = false;
         let (mut layout, under) = match kind {
             TextAnnotationKind::Ruby { .. } => {
                 let mut builder = layout_ctx.tree_builder(font_ctx, scale, true, &parley_style);
@@ -919,31 +910,7 @@ fn build_inline_layout_with(
                 let under = matches!(itext.ruby_position, RubyPosition::Under | RubyPosition::AlternateUnder);
                 (builder.build().0, under)
             }
-            TextAnnotationKind::Emphasis => {
-                let mark = emphasis_mark(&itext.text_emphasis_style)?;
-                parley_style.font_size *= 0.5;
-                parley_style.line_height = parley::LineHeight::FontSizeRelative(1.0);
-                parley_style.letter_spacing = 0.0;
-                parley_style.word_spacing = 0.0;
-                let mut builder = layout_ctx.tree_builder(font_ctx, scale, true, &parley_style);
-                builder.push_text(mark);
-                // `auto` is `over right`, but `under right` for Chinese. In a vertical writing
-                // mode the right side is over the line (pyro: under it in `sideways-lr`).
-                let position = itext.text_emphasis_position;
-                let under = if style.writing_mode.is_vertical() {
-                    let sideways_lr = style
-                        .writing_mode
-                        .contains(style::logical_geometry::WritingMode::WRITING_MODE_SIDEWAYS_LR);
-                    position.contains(TextEmphasisPosition::LEFT) != sideways_lr
-                } else if position.contains(TextEmphasisPosition::AUTO) {
-                    let lang: &str = &style.get_font()._x_lang.0;
-                    let lang = lang.to_ascii_lowercase();
-                    lang == "zh" || lang.starts_with("zh-")
-                } else {
-                    position.contains(TextEmphasisPosition::UNDER)
-                };
-                (builder.build().0, under)
-            }
+            TextAnnotationKind::Emphasis => emphasis_layout(layout_ctx, font_ctx, scale, &style, parley_style)?,
         };
         layout.break_all_lines(None);
         Some(TextAnnotation { node_id, kind, under, layout: Box::new(layout) })
@@ -1176,6 +1143,7 @@ fn build_inline_layout_with(
                                     .map(|s| stylo_to_parley::vertical_align(&s))
                                     .unwrap_or_default(),
                                 rtl: false,
+                                central: false,
                             });
                         } else if annotations.is_ruby_annotation(tag_name) {
                             // pyro: a ruby annotation of the text since its base started, drawn
@@ -1249,6 +1217,7 @@ fn build_inline_layout_with(
                                 baseline: None,
                                 vertical_align: Default::default(),
                                 rtl,
+                                central: false,
                             };
                             // pyro: a right-to-left span's edges trade sides on the line (its end
                             // edge goes left of its content): the line needs the span's content
@@ -1353,6 +1322,7 @@ fn build_inline_layout_with(
                                 .map(|s| stylo_to_parley::vertical_align(&s))
                                 .unwrap_or_default(),
                             rtl: false,
+                            central: false,
                         });
                     }
                 };
@@ -1402,6 +1372,7 @@ fn build_inline_layout_with(
                             baseline: None,
                             vertical_align: Default::default(),
                             rtl: false,
+                            central: false,
                         });
                         let tail = &content[split.range.end..];
                         let text = text_transformer.transform(tail, parent_text_transform, builder);
@@ -1712,4 +1683,57 @@ fn word_after(nodes: &crate::NodeTree, node_id: NodeId) -> String {
         }
     }
     out
+}
+
+/// pyro: the one-mark layout of an element's `text-emphasis` in `parley_style` (its style's) at
+/// half its size, and whether the marks go under the line; `None` without marks.
+fn emphasis_layout(
+    layout_ctx: &mut LayoutContext<TextBrush>,
+    font_ctx: &mut FontContext,
+    scale: f32,
+    style: &style::properties::ComputedValues,
+    mut parley_style: parley::TextStyle<'_, '_, TextBrush>,
+) -> Option<(parley::Layout<TextBrush>, bool)> {
+    use style::values::computed::text::TextEmphasisPosition;
+    let itext = style.get_inherited_text();
+
+    let mark = emphasis_mark(&itext.text_emphasis_style)?;
+    parley_style.font_size *= 0.5;
+    parley_style.line_height = parley::LineHeight::FontSizeRelative(1.0);
+    parley_style.letter_spacing = 0.0;
+    parley_style.word_spacing = 0.0;
+    let mut builder = layout_ctx.tree_builder(font_ctx, scale, true, &parley_style);
+    builder.push_text(mark);
+    // `auto` is `over right`, but `under right` for Chinese. In a vertical writing
+    // mode the right side is over the line (pyro: under it in `sideways-lr`).
+    let position = itext.text_emphasis_position;
+    let under = if style.writing_mode.is_vertical() {
+        let sideways_lr = style
+            .writing_mode
+            .contains(style::logical_geometry::WritingMode::WRITING_MODE_SIDEWAYS_LR);
+        position.contains(TextEmphasisPosition::LEFT) != sideways_lr
+    } else if position.contains(TextEmphasisPosition::AUTO) {
+        let lang: &str = &style.get_font()._x_lang.0;
+        let lang = lang.to_ascii_lowercase();
+        lang == "zh" || lang.starts_with("zh-")
+    } else {
+        position.contains(TextEmphasisPosition::UNDER)
+    };
+    Some((builder.build().0, under))
+}
+
+/// pyro: the emphasis marks of an outside list marker whose text has `node_id`'s style
+/// (`layout::list`), as [`build_annotation`] builds an element's.
+pub(crate) fn marker_emphasis(
+    nodes: &crate::NodeTree,
+    layout_ctx: &mut LayoutContext<TextBrush>,
+    font_ctx: &mut FontContext,
+    scale: f32,
+    node_id: NodeId,
+) -> Option<TextAnnotation> {
+    let style = nodes[node_id].primary_styles()?;
+    let parley_style = stylo_to_parley::style(node_id, &style);
+    let (mut layout, under) = emphasis_layout(layout_ctx, font_ctx, scale, &style, parley_style)?;
+    layout.break_all_lines(None);
+    Some(TextAnnotation { node_id, kind: TextAnnotationKind::Emphasis, under, layout: Box::new(layout) })
 }

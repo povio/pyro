@@ -381,3 +381,18 @@ Round 4 lane B: `frame-sizing` (css-sizing-4 responsive iframes) for the servo e
 `values/specified/position.rs` `FrameSizing` (`auto | content-width | content-height | content-block-size |
 content-inline-size`, re-exported in the specified and computed value modules, a Copy type in `properties/data.py`).
 blitz-dom reads it for iframes.
+
+Round 4 lane G: `overlay` (css-position-4) for the servo engine in `properties/longhands.toml`, of the existing
+`TopLayer` type (`none | auto`), discrete. blitz-dom renders a top-layer element there only while it is `auto`.
+
+Round 4 lane G: `AnimationValue::set_longhand_in_style` (helpers/animated_properties.mako.rs), `set_in_style_for_servo`
+without a style context (custom properties left as they are): pyro serializes a transitioning element's
+`getComputedStyle` from its after-change style with the transition's value in it.
+- Custom property changes (`data.rs` `ElementDataFlags::CUSTOM_PROPERTIES_ONLY_CHANGED`, `matching.rs`
+  `finish_restyle`, `traversal.rs` `custom_properties_only_recascade`, `properties.mako.rs` helpers): an element whose
+  restyle changed its custom properties and no other inherited value marks itself; its children that declare no custom
+  property, use no `var()`/`env()`, and have no eager pseudo-elements, visited style, `attr()` references or
+  `display: contents` take their old style with the new inherited custom properties instead of cascading again.
+  `servo/restyle_damage.rs`: identical style structs compute no damage, and a custom-property-only change adds no
+  REPAINT (no paint worklets here; a `var()` whose value changes damages through the computed value). A custom property
+  written on a scroller over a 3,000-cell table: 820 → 495 ms per 200 writes (Chromium 472).

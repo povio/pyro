@@ -9003,6 +9003,28 @@ fn native_click_waits_for_hover_triggered_render_updates_before_pressing() {
     assert!(r.get("error").is_none(), "{r}");
 }
 
+/// Within one task the layout samples a running animation once (as Chromium
+/// samples its timelines once per frame): a box read twice 60 ms apart in
+/// the same task is in the same place. Sampled at each query, a task asking
+/// for geometry over and over re-synced the layout every 16 ms (Danex's
+/// dev-mode targets ran for minutes over a large view).
+#[test]
+fn a_running_animation_is_sampled_once_per_task() {
+    let mut h = Harness::new();
+    load_html(
+        &mut h,
+        "<!doctype html><style>@keyframes move{from{transform:translateX(0)}to{transform:translateX(1000px)}}#box{width:10px;height:10px;animation:move 1s linear infinite}</style><div id=box></div>",
+    );
+    let r = h.page("Pyro.run", json!({"timeout": 2000, "steps": [
+        {"eval": {"expression": "new Promise(resolve => setTimeout(() => { const b = document.querySelector('#box'); const a = b.getBoundingClientRect().x; const end = performance.now() + 60; while (performance.now() < end) {} const c = b.getBoundingClientRect().x; requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(() => resolve([a, c, b.getBoundingClientRect().x]), 60))); }, 20))", "as": "xs"}}
+    ]}));
+    assert!(r.get("error").is_none(), "{r}");
+    let xs = r["result"]["reads"]["xs"].as_array().cloned().unwrap_or_default();
+    assert_eq!(xs.len(), 3, "{r}");
+    assert_eq!(xs[0], xs[1], "same task, same sample: {r}");
+    assert_ne!(xs[0], xs[2], "a later task samples again: {r}");
+}
+
 #[test]
 fn click_waits_for_pending_resize_observer_popover_position() {
     let mut h = Harness::new();
@@ -10388,4 +10410,251 @@ fn animation_frames_advance_moving_geometry_after_client_activity() {
         assert!(xs.windows(2).all(|pair| pair[1].as_f64().unwrap() > pair[0].as_f64().unwrap()),
             "scripted={scripted}: {xs:?}");
     }
+}
+
+#[test]
+fn scroll_into_view_and_actions_scroll_every_container_inside_a_scaled_layer() {
+    // Danex's lab canvas: a scaled world in an overflow: hidden stage, a
+    // scroller inside it. Chromium 147 (measured, 800x600): scrollIntoView()
+    // scrolls the scroller 683 of its own px (its content moves 683 * 0.6
+    // client px) and the window 142, leaving the target at the top; an
+    // overflow: hidden stage scrolls too (760 for a box past its edge);
+    // offsetWidth ignores the transform; click and hover scroll and hit.
+    let mut h = Harness::new();
+    h.page(
+        "Emulation.setDeviceMetricsOverride",
+        json!({"width": 800, "height": 600, "deviceScaleFactor": 1, "mobile": false}),
+    );
+    let rows: String = (0..20).map(|_| "<div style=\"height:40px;border-bottom:1px solid\"></div>").collect();
+    load_html(
+        &mut h,
+        &format!(
+            r#"<!doctype html><body style="margin:0">
+<div id=stage style="position:absolute;left:0;top:0;width:2000px;height:1500px;transform:scale(0.6);transform-origin:0 0">
+<div id=sc style="position:absolute;left:100px;top:100px;width:400px;height:300px;overflow:auto">{rows}<button id=target style="height:40px">target</button><div style="height:123px"></div></div>
+</div>
+<div id=clip style="position:absolute;left:200px;top:0;width:500px;height:300px;overflow:hidden">
+<div style="position:absolute;left:0;top:0;transform:translate(40px,30px) scale(0.5);transform-origin:0 0"><div style="position:absolute;left:1600px;top:0;width:400px;height:100px"><button id=far>far</button></div></div>
+</div><output id=out></output>"#
+        ),
+    );
+    let read = "[document.getElementById('sc').scrollTop, scrollY, Math.round(document.getElementById('target').getBoundingClientRect().top), document.getElementById('sc').offsetWidth, document.getElementById('sc').getBoundingClientRect().width]";
+    let r = h.page(
+        "Pyro.run",
+        json!({"steps": [
+            {"eval": {"expression": "document.getElementById('target').scrollIntoView(); null"}},
+            {"eval": {"expression": read, "as": "after"}}
+        ]}),
+    );
+    assert!(r.get("error").is_none(), "{r}");
+    assert_eq!(r["result"]["reads"]["after"], json!([683, 142, 0, 400, 240]), "{r}");
+    let r = h.page(
+        "Pyro.run",
+        json!({"timeout": 2000, "steps": [
+            {"eval": {"expression": "document.getElementById('sc').scrollTop = 0; scrollTo(0, 0); for (const id of ['target', 'far']) document.getElementById(id).addEventListener('click', () => document.getElementById('out').textContent += id + ' '); null"}},
+            {"act": {"locator": {"css": "#target"}, "action": "click"}},
+            {"act": {"locator": {"css": "#far"}, "action": "click"}},
+            {"check": {"locator": {"css": "#out"}, "assert": "text", "expected": "target far "}},
+            {"eval": {"expression": "[document.getElementById('sc').scrollTop > 0, document.getElementById('clip').scrollLeft > 0]", "as": "scrolled"}}
+        ]}),
+    );
+    assert!(r.get("error").is_none(), "{r}");
+    assert_eq!(r["result"]["reads"]["scrolled"], json!([true, true]), "{r}");
+}
+
+#[test]
+fn computed_style_inside_display_none_follows_every_change() {
+    // Styles resolved on demand inside a display: none subtree are cached
+    // until the next sync; each kind of change still shows (Chromium: the
+    // same reads).
+    let mut h = Harness::new();
+    load_html(
+        &mut h,
+        r#"<!doctype html><style>.on .item{color:rgb(1, 2, 3)} .menu:has(.picked) .item{background-color:rgb(4, 5, 6)}</style>
+<div id=menu class=menu style="display:none"><span id=item class=item>a</span><span id=other>b</span></div>"#,
+    );
+    let read = "(() => { const s = getComputedStyle(document.getElementById('item')); return s.color + ' ' + s.backgroundColor + ' ' + s.width; })()";
+    let r = h.page(
+        "Pyro.run",
+        json!({"steps": [
+            {"eval": {"expression": read, "as": "a"}},
+            {"eval": {"expression": read, "as": "a2"}},
+            {"eval": {"expression": "document.getElementById('menu').classList.add('on'); null"}},
+            {"eval": {"expression": read, "as": "b"}},
+            {"eval": {"expression": "document.getElementById('other').classList.add('picked'); null"}},
+            {"eval": {"expression": read, "as": "c"}},
+            {"eval": {"expression": "document.head.append(Object.assign(document.createElement('style'), {textContent: '#item{color:rgb(9, 9, 9)}'})); null"}},
+            {"eval": {"expression": read, "as": "d"}},
+            {"eval": {"expression": "document.getElementById('item').style.color = 'rgb(7, 7, 7)'; null"}},
+            {"eval": {"expression": read, "as": "e"}}
+        ]}),
+    );
+    assert!(r.get("error").is_none(), "{r}");
+    let reads = &r["result"]["reads"];
+    assert_eq!(reads["a"], reads["a2"], "{r}");
+    assert_eq!(reads["a"], json!("rgb(0, 0, 0) rgba(0, 0, 0, 0) auto"), "{r}");
+    assert_eq!(reads["b"], json!("rgb(1, 2, 3) rgba(0, 0, 0, 0) auto"), "{r}");
+    assert_eq!(reads["c"], json!("rgb(1, 2, 3) rgb(4, 5, 6) auto"), "{r}");
+    assert_eq!(reads["d"], json!("rgb(9, 9, 9) rgb(4, 5, 6) auto"), "{r}");
+    assert_eq!(reads["e"], json!("rgb(7, 7, 7) rgb(4, 5, 6) auto"), "{r}");
+}
+
+#[test]
+fn computed_width_and_height_inside_display_none_are_the_computed_values() {
+    // Chromium 147 (measured): an element without a box reports its
+    // computed width/height (`7px` from a :has() rule, `50%`, `3em` as
+    // `48px`, `auto`), not `auto` for every declaration.
+    let mut h = Harness::new();
+    load_html(
+        &mut h,
+        r#"<!doctype html><style>.menu:has(.picked) .a{width:7px} .b{width:50%;height:3em} .c{font-size:10px;width:calc(2em + 1px)}</style>
+<div class=menu style="display:none"><i class=picked></i><span id=a class=a></span><span id=b class=b></span><span id=c class=c></span><span id=d style="width:3px"></span><span id=e></span></div>"#,
+    );
+    let r = h.page(
+        "Pyro.run",
+        json!({"steps": [
+            {"eval": {"expression": "['a','b','c','d','e'].map(id => { const s = getComputedStyle(document.getElementById(id)); return s.width + ' ' + s.height; })", "as": "sizes"}}
+        ]}),
+    );
+    assert!(r.get("error").is_none(), "{r}");
+    assert_eq!(
+        r["result"]["reads"]["sizes"],
+        json!(["7px auto", "50% 48px", "21px auto", "3px auto", "auto auto"]),
+        "{r}"
+    );
+}
+
+#[test]
+fn computed_style_inside_display_none_inherits_from_changed_ancestors() {
+    // Styles inside a display: none subtree are resolved once per element and
+    // inherited down from cached ancestors; a change to a hidden ancestor or a
+    // :has() subject still shows on the next read (Chromium: the same reads).
+    let mut h = Harness::new();
+    load_html(
+        &mut h,
+        r#"<!doctype html><style>.warm{color:rgb(200, 0, 0)} section:has(.x) b{text-decoration-line:underline}</style>
+<div style="display:none"><section id=s><p id=p><b id=b>t</b></p><i id=i></i></section></div>"#,
+    );
+    let read = "(() => { const s = getComputedStyle(document.getElementById('b')); return s.color + ' ' + s.textDecorationLine; })()";
+    let r = h.page(
+        "Pyro.run",
+        json!({"steps": [
+            {"eval": {"expression": "getComputedStyle(document.getElementById('p')).color", "as": "p"}},
+            {"eval": {"expression": read, "as": "a"}},
+            {"eval": {"expression": "document.getElementById('p').classList.add('warm'); null"}},
+            {"eval": {"expression": read, "as": "b"}},
+            {"eval": {"expression": "document.getElementById('i').className = 'x'; null"}},
+            {"eval": {"expression": read, "as": "c"}},
+            {"eval": {"expression": "document.getElementById('i').remove(); null"}},
+            {"eval": {"expression": read, "as": "d"}}
+        ]}),
+    );
+    assert!(r.get("error").is_none(), "{r}");
+    let reads = &r["result"]["reads"];
+    assert_eq!(reads["a"], json!("rgb(0, 0, 0) none"), "{r}");
+    assert_eq!(reads["b"], json!("rgb(200, 0, 0) none"), "{r}");
+    assert_eq!(reads["c"], json!("rgb(200, 0, 0) underline"), "{r}");
+    assert_eq!(reads["d"], json!("rgb(200, 0, 0) none"), "{r}");
+}
+
+/// 1,000 write/read pairs on a hidden measuring probe (Danex's textWidth: set
+/// font and text, read getBoundingClientRect) on a page with an animation
+/// rule, sticky elements (one in seven) and `elements` elements, in ms.
+fn probe_pairs_ms(h: &mut Harness, elements: usize) -> f64 {
+    let cells: String = (0..elements).map(|i| format!("<span class=c{}>{i}</span>", i % 7)).collect();
+    load_html(
+        h,
+        &format!(
+            r#"<!doctype html><style>@keyframes spin{{to{{transform:rotate(1turn)}}}} .c3.on{{animation:spin 1s}} .c5{{position:sticky;top:0}}</style><div id=grid>{cells}</div>"#
+        ),
+    );
+    let r = h.page(
+        "Pyro.run",
+        json!({"timeout": 120000, "steps": [{"eval": {"as": "ms", "expression": "(() => {
+            const probe = document.createElement('span');
+            probe.style.cssText = 'position:absolute;visibility:hidden;white-space:pre;left:-9999px;top:0';
+            document.body.append(probe);
+            probe.getBoundingClientRect();
+            const t = performance.now(); let w = 0;
+            for (let i = 0; i < 1000; i++) {
+                probe.style.fontSize = i % 7 ? '13px' : '12px';
+                probe.textContent = 'DX09-' + i + ' 129.951';
+                w += probe.getBoundingClientRect().width;
+            }
+            return w > 0 ? performance.now() - t : -1;
+        })()"}}]}),
+    );
+    assert!(r.get("error").is_none(), "{r}");
+    r["result"]["reads"]["ms"].as_f64().unwrap()
+}
+
+#[test]
+fn measuring_probe_write_read_pairs_stay_cheap() {
+    // Each pair used to query every animation rule over the whole document
+    // (and walk it for counters), so its cost grew with the page. Compared
+    // with a small page rather than against a fixed budget, so that machine
+    // load cancels out.
+    let mut h = Harness::new();
+    probe_pairs_ms(&mut h, 30);
+    let small = probe_pairs_ms(&mut h, 30);
+    let big = probe_pairs_ms(&mut h, 3000);
+    eprintln!("probe pairs: 30 elements {small} ms, 3,000 elements {big} ms");
+    assert!(small > 0.0 && big > 0.0, "{small} {big}");
+    // Debug build: 13.4x before the journal-driven candidates, 4.8x after (the rest is the layout each read
+    // flushes, which still grows with the page).
+    assert!(big < small * 8.0 + 100.0, "1,000 probe pairs: {big} ms on 3,000 elements vs {small} ms on 30");
+}
+
+#[test]
+fn animations_start_after_text_only_changes_from_a_class_or_inline_style() {
+    // The candidate cache skips the rule query across text and `style`
+    // changes; a class or an inline animation added afterwards still starts.
+    let mut h = Harness::new();
+    load_html(
+        &mut h,
+        r#"<!doctype html><style>@keyframes spin{to{transform:rotate(1turn)}} .on{animation:spin 1s}</style><p id=p>a</p><i id=i></i><b id=b></b>"#,
+    );
+    let r = h.page(
+        "Pyro.run",
+        json!({"steps": [
+            {"eval": {"expression": "window.started = []; document.addEventListener('animationstart', e => started.push(e.target.id)); for (let k = 0; k < 50; k++) { p.textContent = 'x' + k; p.style.color = k % 2 ? 'red' : 'blue'; p.getBoundingClientRect(); } null"}},
+            {"eval": {"expression": "i.className = 'on'; b.style.animation = 'spin 2s'; null"}},
+            {"eval": {"expression": "new Promise(r => requestAnimationFrame(() => requestAnimationFrame(() => r(started.slice().sort()))))", "as": "started"}}
+        ]}),
+    );
+    assert!(r.get("error").is_none(), "{r}");
+    assert_eq!(r["result"]["reads"]["started"], json!(["b", "i"]), "{r}");
+}
+
+#[test]
+fn custom_property_changes_reach_descendants_that_skip_the_cascade() {
+    // A custom property set on a container: descendants that use no var() take
+    // the new value without cascading again, yet read it, and var() users and
+    // children that declare their own custom properties still compute from it
+    // (Chromium: the same reads, before and after).
+    let mut h = Harness::new();
+    load_html(
+        &mut h,
+        r#"<!doctype html><style>.w{width:var(--w, 10px)} .own{--o: calc(var(--w, 0px) * 2)} .use-o{width:var(--o, 1px)}</style>
+<div id=sc><p id=plain><span id=deep>x</span></p><div id=w class=w></div><div class=own><div id=o class=use-o></div></div><p id=after style="color:rgb(1, 2, 3)"><b id=b>b</b></p></div>"#,
+    );
+    let read = "(() => { const v = id => getComputedStyle(document.getElementById(id)); return [v('deep').getPropertyValue('--w'), v('w').width, v('o').width, v('b').color, v('b').getPropertyValue('--w')]; })()";
+    let r = h.page(
+        "Pyro.run",
+        json!({"steps": [
+            {"eval": {"expression": read, "as": "before"}},
+            {"eval": {"expression": "sc.style.setProperty('--w', '30px'); document.getElementById('w').getBoundingClientRect(); null"}},
+            {"eval": {"expression": read, "as": "a"}},
+            {"eval": {"expression": "sc.style.setProperty('--w', '40px'); null"}},
+            {"eval": {"expression": read, "as": "b"}},
+            {"eval": {"expression": "sc.style.removeProperty('--w'); null"}},
+            {"eval": {"expression": read, "as": "c"}}
+        ]}),
+    );
+    assert!(r.get("error").is_none(), "{r}");
+    let reads = &r["result"]["reads"];
+    assert_eq!(reads["before"], json!(["", "10px", "0px", "rgb(1, 2, 3)", ""]), "{r}");
+    assert_eq!(reads["a"], json!(["30px", "30px", "60px", "rgb(1, 2, 3)", "30px"]), "{r}");
+    assert_eq!(reads["b"], json!(["40px", "40px", "80px", "rgb(1, 2, 3)", "40px"]), "{r}");
+    assert_eq!(reads["c"], json!(["", "10px", "0px", "rgb(1, 2, 3)", ""]), "{r}");
 }

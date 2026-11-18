@@ -251,6 +251,12 @@ pub(super) fn is_first_in_flow_child(doc: &BaseDocument, parent: NodeId, child: 
             let node = &doc.nodes[id];
             node.display_style().is_none_or(|display| display != Display::None)
                 && !node.primary_styles().is_some_and(|style| is_out_of_flow(&style))
+                // pyro: nor the anonymous block holding only an item's inside marker
+                // (`construct::place_inside_marker`): markers are no first letter (WPT css-pseudo
+                // `first-letter-exclude-block-child-marker`).
+                && !(node.is_anonymous()
+                    && node.children.is_empty()
+                    && node.element_data().is_some_and(|element| element.list_item_data.is_some()))
         })
     });
     first == Some(child)

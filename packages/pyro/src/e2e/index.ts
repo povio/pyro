@@ -205,6 +205,16 @@ export function setupResult<T = unknown>(): T {
   return r.setupResult as T;
 }
 
+/**
+ * The spec file running now, relative to the working directory: in a test, its
+ * hooks, and a file's or describe's `beforeAll`/`afterAll`. Undefined outside a
+ * spec file (the setup module, the run's own hooks).
+ */
+export function currentFile(): string | undefined {
+  const running = registry().context.getStore();
+  return running?.test?.scope.file ?? (running?.scope.file || undefined);
+}
+
 /** The test running now (in a test or its `beforeEach`/`afterEach`). */
 export function testInfo(): { file: string; name: string; titlePath: string[] } | undefined {
   const test = registry().context.getStore()?.test;

@@ -1940,6 +1940,8 @@ impl JsClass for Document {
         // document's sheets, each loaded (pages wait on `[...document.fonts][0].load()`; the
         // set was not iterable). Fonts load in the renderer, which screenshots wait for.
         def.getter("fonts", |s, _n| s.eval(DOCUMENT_FONTS, None, 1));
+        // pyro: what `document.fonts` waits on (web fonts the layout engine is still loading).
+        def.method("__pyroFontsPending", 0, |s, n, _a| Ok(s.boolean(n.page().fonts_pending())));
     }
 }
 
@@ -1986,12 +1988,21 @@ pub(crate) fn thread_leftover() -> Option<&'static str> {
 
 /// `document.fonts` (see the getter).
 const DOCUMENT_FONTS: &str = r#"(() => {
+  // Web fonts load in the layout engine: `status`, `ready`, `load()` and `check()` follow its
+  // fetches (`document.__pyroFontsPending`), at most 10 s.
+  const pending = () => { try { return !!document.__pyroFontsPending(); } catch (e) { return false; } };
+  const settled = () => new Promise((resolve) => {
+    const until = Date.now() + 10000;
+    const tick = () => (pending() && Date.now() < until ? setTimeout(tick, 5) : resolve());
+    tick();
+  });
   const faces = [];
   const face = (family) => {
     const f = { family, style: 'normal', weight: 'normal', stretch: 'normal', unicodeRange: 'U+0-10FFFF',
-      variant: 'normal', featureSettings: 'normal', display: 'auto', status: 'loaded',
-      load() { return Promise.resolve(f); } };
-    f.loaded = Promise.resolve(f);
+      variant: 'normal', featureSettings: 'normal', display: 'auto',
+      load() { return settled().then(() => f); } };
+    Object.defineProperty(f, 'status', { get: () => (pending() ? 'loading' : 'loaded'), enumerable: true });
+    Object.defineProperty(f, 'loaded', { get: () => settled().then(() => f), enumerable: true });
     faces.push(f);
   };
   try {
@@ -2017,9 +2028,9 @@ const DOCUMENT_FONTS: &str = r#"(() => {
     } catch (e) {}
   }
   const set = {
-    ready: Promise.resolve(), status: 'loaded', size: faces.length,
-    check() { return true; },
-    load() { return Promise.resolve(faces.slice()); },
+    size: faces.length,
+    check() { return !pending(); },
+    load() { return settled().then(() => faces.slice()); },
     addEventListener() {}, removeEventListener() {}, dispatchEvent() { return true; },
     forEach(callback, self) { faces.forEach((f) => callback.call(self, f, f, set)); },
     has(f) { return faces.includes(f); },
@@ -2029,6 +2040,7 @@ const DOCUMENT_FONTS: &str = r#"(() => {
     entries() { return faces.map((f) => [f, f])[Symbol.iterator](); },
     [Symbol.iterator]() { return faces[Symbol.iterator](); },
   };
-  set.ready = Promise.resolve(set);
+  Object.defineProperty(set, 'status', { get: () => (pending() ? 'loading' : 'loaded'), enumerable: true });
+  set.ready = settled().then(() => set);
   return set;
 })()"#;

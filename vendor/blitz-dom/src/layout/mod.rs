@@ -441,8 +441,11 @@ impl LayoutPassState<'_> {
                 return None;
             }
             let display = styles.clone_display();
+            // An inline replaced element is an atomic inline: it is contained (WPT css-sizing
+            // `contain-intrinsic-size-012`, an `<img>`).
+            let replaced = node.data.downcast_element().is_some_and(replaced::is_replaced);
             let contained = match display.outside() {
-                DisplayOutside::Inline => display.inside() != DisplayInside::Flow,
+                DisplayOutside::Inline => display.inside() != DisplayInside::Flow || replaced,
                 DisplayOutside::Block => true,
                 _ => false,
             } && display.inside() != DisplayInside::Table;
@@ -547,6 +550,16 @@ impl LayoutPassState<'_> {
     #[inline(never)]
     fn lay_out_out_of_flow_boxes(&mut self, node_id: NodeId, output: &mut taffy::tree::LayoutOutput) {
         let dom_id = dom_node_id(node_id);
+        // pyro: a box laid out hidden (`display: none`) has no positioning area, so Taffy's pass
+        // returns without touching its hoisted list: the boxes it laid out before it was hidden
+        // stayed listed, and rounding walked them, down to ones since dropped (`invalid SlotMap
+        // key`, Danex lab canvas: the canvas stage hidden in the sync that removed a sheet's child).
+        if output.oof_positioning_area.is_none()
+            && self.nodes[dom_id].primary_styles().is_none_or(|style| style.get_box().display.is_none())
+        {
+            self.clear_hoisted_children(node_id);
+            return;
+        }
         // pyro: a positioned inline box split around block-level content (`NodeFlags::IS_SPLIT_INLINE`)
         // lays out no absolutely positioned box itself: their containing block is the box its
         // fragments bound, which the tail after its box ends, so its parent lays them out once both
@@ -1230,6 +1243,8 @@ impl LayoutPassState<'_> {
                     // A `<video>` with known metadata is sized by its video
                     // track, whatever its poster's size.
                     let is_video = element_data.name.local == local_name!("video");
+                    // pyro: `ReplacedContext::svg_root`.
+                    let svg_root = element_data.name.local == local_name!("svg");
                     // The token is the density-corrected natural size (a `srcset` candidate's `2x`),
                     // which a loaded raster image's pixel size is not.
                     let raster = matches!(&element_data.special_data, SpecialElementData::Image(d) if matches!(&**d, ImageData::Raster(_)));
@@ -1326,6 +1341,7 @@ impl LayoutPassState<'_> {
                         intrinsic_sizes,
                         default_object_size,
                         ratio_in_box_sizing_box,
+                        svg_root,
                     };
 
                     let mut style = node.layout_style();

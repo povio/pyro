@@ -905,8 +905,17 @@
     if (a.css !== undefined && !a.scripted) return;
     const e = a.effect;
     if (a.key === undefined) {
-      if (!e) return;
+      if (!e && a.css === undefined) return;
       a.key = reportKey();
+    }
+    // A CSS animation's or transition's object whose effect script removed shows nothing: its
+    // CSS run gives no values (the engine's `Scripted.gone`).
+    if (!e) {
+      reportState(a.key, [
+        null, a.cssId, [], a.startTime, a.holdTime, a.rate, a.timeline ? timelines.get(a.timeline).origin : null,
+        0, 0, 'none', 0, 1, 0, 'normal', null, 'replace', 1, 0,
+      ]);
+      return;
     }
     // (An effect on a list item's `::marker` is reported with the item, flagged: the engine
     // samples it into the marker's style. Other pseudo-elements' effects show nothing.)

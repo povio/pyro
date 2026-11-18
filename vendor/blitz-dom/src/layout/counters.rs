@@ -144,6 +144,9 @@ struct Walk {
     /// boxes by their originating element.
     items: HashMap<NodeId, i32>,
     pseudo_items: HashMap<(NodeId, bool), i32>,
+    /// pyro: the text of each list item's `::marker` content that reads counters
+    /// (`BaseDocument::marker_texts`).
+    marker_texts: HashMap<NodeId, String>,
 }
 
 impl Walk {
@@ -348,6 +351,15 @@ impl BaseDocument {
         let mut walk = Walk::default();
         walk_element(self, root_id, document_id, &mut walk);
         let texts = walk.texts;
+        // pyro: an item whose marker text changed has its marker built again (by its parent).
+        let marker_texts = walk.marker_texts;
+        let mut remarked: Vec<NodeId> = marker_texts
+            .iter()
+            .filter(|(id, text)| self.marker_texts.get(*id) != Some(*text))
+            .map(|(id, _)| *id)
+            .collect();
+        remarked.extend(self.marker_texts.keys().filter(|id| !marker_texts.contains_key(*id)).copied());
+        self.marker_texts = marker_texts;
 
         // pyro: an item whose number changed has its marker built again by its list
         // (`list::collect_list_item_children`, run by its parent's construction).
@@ -364,6 +376,7 @@ impl BaseDocument {
             }
         }
         self.list_item_numbers = numbers;
+        renumbered.extend(remarked);
         for item in renumbered {
             let parent = self.nodes.get(item).and_then(|node| node.parent);
             for target in [Some(item), parent].into_iter().flatten() {
@@ -454,6 +467,24 @@ fn walk_element(doc: &BaseDocument, node_id: NodeId, parent: NodeId, walk: &mut 
             item_value(doc, node_id, &style, parent, walk);
             let value = walk.list_item(parent, node_id);
             walk.items.insert(node_id, value);
+            // pyro: its `::marker`, before its `::before`, in its scope.
+            if doc.marker_counters {
+                if let Some(marker) = super::list::marker_pseudo_style(doc, node_id, &style)
+                    .filter(|marker| super::list::marker_reads_counters(marker))
+                {
+                    let text = walk
+                        .content(&marker, node_id)
+                        .unwrap_or_default()
+                        .into_iter()
+                        .filter_map(|piece| match piece {
+                            Piece::Text(text) => Some(text),
+                            Piece::Image(..) => None,
+                        })
+                        .collect::<String>();
+                    walk.leave(pseudo_scope());
+                    walk.marker_texts.insert(node_id, text);
+                }
+            }
         }
     }
     drop(style);

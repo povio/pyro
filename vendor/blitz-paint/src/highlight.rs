@@ -257,9 +257,25 @@ fn selection_style(doc: &BaseDocument, node_id: NodeId) -> Option<LayerStyle> {
         current = node.parent;
     }
     let style_of = |id: NodeId| {
-        doc.get_node(id)?.try_stylo_element_data().and_then(|data| {
+        let node = doc.get_node(id)?;
+        let eager = node.try_stylo_element_data().and_then(|data| {
             data.get().and_then(|data| data.styles.pseudos.get(&PseudoElement::Selection).cloned())
-        })
+        })?;
+        // pyro: container units (`cqh`, ...) in an eager style resolve before layout gives the
+        // containers sizes: computed again now (WPT css-conditional
+        // `container-units-selection-pseudo`).
+        // pyro: and a visited link's, whose eager style matched `:link` (`selection_pseudo_style`
+        // takes it as visited).
+        use style::computed_value_flags::ComputedValueFlags;
+        if doc.is_visited_link(id) {
+            return doc.selection_pseudo_style(id);
+        }
+        if eager.flags.contains(ComputedValueFlags::USES_CONTAINER_UNITS) {
+            if let Some(again) = doc.selection_pseudo_style(id) {
+                return Some(again);
+            }
+        }
+        Some(eager)
     };
     Some(resolve_layer(doc, node_id, style_of, Some((HIGHLIGHT, HIGHLIGHT_TEXT))))
 }
@@ -363,12 +379,14 @@ pub(crate) fn stroke_highlighted_text<S: PaintScene>(
     root: NodeId,
     layout: &Layout<TextBrush>,
     text: &str,
-    transform: Affine,
+    line_transform: impl Fn(usize) -> Affine,
     tops: Option<LineTops>,
     options: TextPaintOptions,
     layers: &[Layer],
     ranges: &[(usize, usize, usize)],
     context: &mut DrawTextContext,
+    // pyro: how the runs of a vertical line sit in it (lines turned by `line_transform`).
+    vertical: impl Fn(&parley::Line<'_, TextBrush>) -> Option<crate::text::VerticalLine>,
 ) {
     let scale = options.scale;
     let shift = context.text_shift;
@@ -376,9 +394,11 @@ pub(crate) fn stroke_highlighted_text<S: PaintScene>(
     cache.clear();
     cache.layers.clear();
     cache.layers.extend_from_slice(layers);
-    let [a, b, c, d, tx, ty] = transform.as_coeffs();
-    let translation_only = (a, b, c, d) == (1.0, 0.0, 0.0, 1.0);
-    for line in layout.lines() {
+    for (index, line) in layout.lines().enumerate() {
+        let transform = line_transform(index);
+        let turned = vertical(&line);
+        let [a, b, c, d, tx, ty] = transform.as_coeffs();
+        let translation_only = (a, b, c, d) == (1.0, 0.0, 0.0, 1.0);
         let pieces = line_pieces(doc, &line, ranges, &mut cache);
         if pieces.is_empty() {
             context.highlights = std::mem::take(&mut cache);
@@ -391,7 +411,7 @@ pub(crate) fn stroke_highlighted_text<S: PaintScene>(
                 root,
                 Some(text),
                 context,
-                None,
+                turned,
                 Some(layout),
             );
             cache = std::mem::take(&mut context.highlights);
@@ -435,7 +455,7 @@ pub(crate) fn stroke_highlighted_text<S: PaintScene>(
                 root,
                 Some(text),
                 context,
-                None,
+                turned,
                 Some(layout),
             );
             scene.pop_layer();
@@ -473,7 +493,7 @@ pub(crate) fn stroke_highlighted_text<S: PaintScene>(
             root,
             Some(text),
             context,
-            None,
+            turned,
             Some(layout),
         );
         scene.pop_layer();
@@ -502,7 +522,7 @@ pub(crate) fn stroke_highlighted_text<S: PaintScene>(
                     root,
                     Some(text),
                     context,
-                    None,
+                    turned,
                     Some(layout),
                 );
                 context.shadows_only = false;
@@ -519,7 +539,7 @@ pub(crate) fn stroke_highlighted_text<S: PaintScene>(
                 root,
                 Some(text),
                 context,
-                None,
+                turned,
                 Some(layout),
             );
             context.highlighting = false;

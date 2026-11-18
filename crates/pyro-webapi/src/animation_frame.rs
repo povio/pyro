@@ -25,6 +25,7 @@
 //! moves), and a screenshot or screencast frame asks at the moment it is
 //! taken.
 
+use std::cell::Cell;
 use std::rc::{Rc, Weak};
 use std::sync::Arc;
 
@@ -250,7 +251,11 @@ pub(crate) fn report(page: &Rc<PageDom>, seq: u64, state: Option<ReportedState>)
                 );
             }
             None => {
-                scripted.remove(&seq);
+                if let Some(id) = scripted.remove(&seq).and_then(|s| s.css) {
+                    if let Ok(mut removed) = events.effect_removed.try_borrow_mut() {
+                        removed.insert(id);
+                    }
+                }
             }
         }
     }
@@ -589,26 +594,96 @@ pub(crate) fn animates(
 /// The page's [`pyro_dom::animation::AnimationSource`]: what the layout
 /// engine samples at each sync (no transitions).
 pub(crate) fn source(page: &Rc<PageDom>) -> pyro_dom::animation::SharedAnimationSource {
-    Rc::new(Source { page: Rc::downgrade(page) })
+    Rc::new(Source { page: Rc::downgrade(page), clock: Cell::new(None), stamp: Cell::new(None) })
 }
 
 struct Source {
     page: Weak<PageDom>,
+    /// The time layout samples the animations at during the current task
+    /// (`pyro_runtime::task_seq`): read once per task, as a browser
+    /// samples its timelines once per frame. Read at each query instead, a
+    /// task asking for geometry again and again (a range over a large
+    /// `display: contents` subtree, one rect per text node) synced the
+    /// whole layout again every 16 ms while an infinite animation ran,
+    /// minutes for a large page.
+    clock: Cell<Option<(u64, f64)>>,
+    /// The stamp last computed in this task, with the animation and
+    /// `<animate>` generations it saw: every style and layout query asks
+    /// for it, and computing it walks every animation of the page (axe-core
+    /// asks some 10^5 times in one run on a large page).
+    stamp: Cell<Option<((u64, u64, u64), u64)>>,
+}
+
+impl Source {
+    fn now(&self, page: &PageDom) -> f64 {
+        let Some(seq) = pyro_runtime::task_seq() else { return crate::event::page_now_ms(page) };
+        match self.clock.get() {
+            Some((at, now)) if at == seq => now,
+            _ => {
+                let now = crate::event::page_now_ms(page);
+                self.clock.set(Some((seq, now)));
+                now
+            }
+        }
+    }
 }
 
 impl pyro_dom::animation::AnimationSource for Source {
     fn stamp(&self) -> u64 {
-        match self.page.upgrade() {
-            Some(page) if !page.is_disposed() => stamp(&page, crate::event::page_now_ms(&page)),
-            _ => 0,
+        let Some(page) = self.page.upgrade().filter(|page| !page.is_disposed()) else { return 0 };
+        let Some(seq) = pyro_runtime::task_seq() else { return stamp(&page, crate::event::page_now_ms(&page)) };
+        let key = |page: &PageDom| (seq, page.animation_events.generation.get(), crate::smil::version(page));
+        if let Some((at, value)) = self.stamp.get() {
+            if at == key(&page) {
+                return value;
+            }
         }
+        let value = stamp(&page, self.now(&page));
+        // Keyed by the generations after the walk (it reads `<animate>`).
+        self.stamp.set(Some((key(&page), value)));
+        value
     }
 
     fn frame(&self) -> AnimationFrame {
         match self.page.upgrade() {
-            Some(page) if !page.is_disposed() => frame(&page, crate::event::page_now_ms(&page), false),
+            Some(page) if !page.is_disposed() => frame(&page, self.now(&page), false),
             _ => AnimationFrame::default(),
         }
+    }
+
+    fn transition_value(&self, el: NodeId, longhand: &str) -> Option<pyro_dom::animation::TransitionValue> {
+        let page = self.page.upgrade().filter(|page| !page.is_disposed())?;
+        let now = self.now(&page);
+        let state = &page.animation_events;
+        let (_, transitions) = state.try_timelines()?;
+        let t = transitions.iter().rev().find(|t| t.is_live() && t.el() == el && t.name() == longhand)?;
+        // (One script controls through its `CSSTransition` object follows that object: left out.)
+        if t.has_ended()
+            || state.scripted.try_borrow().ok()?.values().any(|s| s.css == Some(t.id()))
+            || state.effect_removed.try_borrow().ok()?.contains(&t.id())
+        {
+            return None;
+        }
+        let (before, after) = t.styles.as_ref()?;
+        // A transition the style no longer runs to (removed, or the value changed again before the
+        // next style change event) is not reported.
+        {
+            let dom = page.dom.try_borrow().ok()?;
+            // (An element going `display: none` has no style of the engine's to compare.)
+            if let Some(current) = page.try_layout()?.style().stylo_style(&dom, el) {
+                if !pyro_dom::animation::same_computed_value(longhand, &current, after) {
+                    return None;
+                }
+            }
+        }
+        // In whole frames: a transition started since the last frame is at its start, as in a
+        // browser, whose timeline time moves only at frames.
+        let local = ((now - t.start_ms()) / FRAME_MS).floor().max(0.0) * FRAME_MS;
+        if local >= t.delay_ms + t.duration_ms {
+            return None;
+        }
+        let p = progress(&transition_timing(t), local, 1.0)?;
+        pyro_dom::animation::transition_value(longhand, before, after, p.progress, p.before, Some(t.easing().unwrap_or("ease")))
     }
 }
 

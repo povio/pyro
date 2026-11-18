@@ -26,6 +26,22 @@ diff -ruN a/color/mix.rs b/color/mix.rs
      ToShmem,
      ToAnimatedValue,
      ToComputedValue,
+diff -ruN a/data.rs b/data.rs
+--- a/data.rs	2026-11-11 19:55:57
++++ b/data.rs	2026-11-17 23:56:40
+@@ -48,6 +48,12 @@
+         /// The former gives us stronger transitive guarantees that allows us to
+         /// apply the style sharing cache to cousins.
+         const PRIMARY_STYLE_REUSED_VIA_RULE_NODE = 1 << 2;
++
++        /// pyro: this restyle changed the element's custom properties and no
++        /// other inherited value: a child that neither declares custom
++        /// properties nor uses `var()` takes its old style with the new
++        /// inherited custom properties instead of cascading again.
++        const CUSTOM_PROPERTIES_ONLY_CHANGED = 1 << 3;
+     }
+ }
+ 
 diff -ruN a/device/servo.rs b/device/servo.rs
 --- a/device/servo.rs	2026-11-14 22:08:19
 +++ b/device/servo.rs	2026-11-14 22:08:19
@@ -183,6 +199,30 @@ diff -ruN a/invalidation/viewport_units.rs b/invalidation/viewport_units.rs
      let usage = data.styles.viewport_unit_usage();
      let uses_viewport_units = usage != ViewportUnitUsage::None;
      if uses_viewport_units {
+diff -ruN a/matching.rs b/matching.rs
+--- a/matching.rs	2026-11-11 19:55:57
++++ b/matching.rs	2026-11-17 23:56:40
+@@ -1014,6 +1014,7 @@
+ 
+         // First of all, update the styles.
+         let old_styles = data.set_styles(new_styles);
++        data.flags.remove(crate::data::ElementDataFlags::CUSTOM_PROPERTIES_ONLY_CHANGED);
+ 
+         let new_primary_style = data.styles.primary.as_ref().unwrap();
+ 
+@@ -1131,6 +1132,12 @@
+             new_primary_style,
+             None,
+         );
++        #[cfg(feature = "servo")]
++        if old_primary_style.custom_properties() != new_primary_style.custom_properties()
++            && old_primary_style.inherited_except_custom_eq(new_primary_style)
++        {
++            data.flags.insert(crate::data::ElementDataFlags::CUSTOM_PROPERTIES_ONLY_CHANGED);
++        }
+ 
+         if data.styles.pseudos.is_empty() && old_styles.pseudos.is_empty() {
+             // This is the common case; no need to examine pseudos here.
 diff -ruN a/properties/computed_value_flags.rs b/properties/computed_value_flags.rs
 --- a/properties/computed_value_flags.rs	2026-11-11 19:55:57
 +++ b/properties/computed_value_flags.rs	2026-11-17 00:11:39
@@ -288,6 +328,41 @@ diff -ruN a/properties/data.py b/properties/data.py
                  "text-combine-upright",
                  "text-emphasis-color",
                  "text-emphasis-position",
+diff -ruN a/properties/helpers/animated_properties.mako.rs b/properties/helpers/animated_properties.mako.rs
+--- a/properties/helpers/animated_properties.mako.rs	2026-11-11 19:55:57
++++ b/properties/helpers/animated_properties.mako.rs	2026-11-17 22:01:14
+@@ -510,6 +510,31 @@
+     }
+ }
+ 
++impl AnimationValue {
++    /// pyro: [`Self::set_in_style_for_servo`] for longhands, without a style context (a custom
++    /// property's value is left as it is): `getComputedStyle` of a transitioning element.
++    pub fn set_longhand_in_style(&self, style: &mut ComputedValues) {
++        match self {
++            % for prop in data.longhands:
++            % if prop.animatable and not prop.logical:
++            AnimationValue::${prop.camel_case}(value) => {
++                let value: longhands::${prop.ident}::computed_value::T =
++                % if prop.animation_type != "discrete":
++                    ToAnimatedValue::from_animated_value(value.clone());
++                % else:
++                    value.clone();
++                % endif
++                style.mutate_${prop.style_struct.name_lower}().set_${prop.ident}(value);
++            }
++            % else:
++            AnimationValue::${prop.camel_case}(..) => unreachable!(),
++            % endif
++            % endfor
++            AnimationValue::Custom(..) => {},
++        }
++    }
++}
++
+ fn animate_discrete<T: Clone>(this: &T, other: &T, procedure: Procedure) -> Result<T, ()> {
+     if let Procedure::Interpolate { progress } = procedure {
+         Ok(if progress < 0.5 { this.clone() } else { other.clone() })
 diff -ruN a/properties/helpers.mako.rs b/properties/helpers.mako.rs
 --- a/properties/helpers.mako.rs	2026-11-11 19:55:57
 +++ b/properties/helpers.mako.rs	2026-11-11 19:55:57
@@ -311,7 +386,7 @@ diff -ruN a/properties/helpers.mako.rs b/properties/helpers.mako.rs
                              if !context.builder.effective_zoom_for_inheritance.is_one() {
 diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 --- a/properties/longhands.toml	2026-11-11 19:55:57
-+++ b/properties/longhands.toml	2026-11-17 14:08:59
++++ b/properties/longhands.toml	2026-11-17 16:53:18
 @@ -473,7 +473,6 @@
  type = "BreakBetween"
  initial = "computed::BreakBetween::Auto"
@@ -451,12 +526,10 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  struct = "list"
  animation_type = "discrete"
  spec = "https://drafts.csswg.org/css-lists/#propdef-list-style-image"
-@@ -1425,6 +1439,17 @@
- struct = "position"
- boxed = true
+@@ -1427,6 +1441,17 @@
  spec = "https://drafts.csswg.org/css-images-3/#the-object-position"
-+affects = "layout"
-+
+ affects = "layout"
+ 
 +# pyro: `object-view-box: none | <basic-shape-rect>` (CSS Images 5): the part of a replaced
 +# element's content that is its view, as a `clip-path` value of `none` or one rectangle.
 +[object-view-box]
@@ -466,13 +539,18 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +parse_method = "parse_object_view_box"
 +animation_type = "discrete"
 +spec = "https://drafts.csswg.org/css-images-5/#the-object-view-box"
- affects = "layout"
- 
++affects = "layout"
++
  [offset-anchor]
-@@ -1857,6 +1882,26 @@
- animation_type = "discrete"
- affects = "paint"
- 
+ type = "PositionOrAuto"
+ initial = "computed::PositionOrAuto::auto()"
+@@ -1854,7 +1879,27 @@
+ struct = "box"
+ engine = "gecko"
+ spec = "https://drafts.csswg.org/css-scroll-snap-1/#scroll-snap-stop"
++animation_type = "discrete"
++affects = "paint"
++
 +[scroll-marker-group]
 +type = "ScrollMarkerGroup"
 +initial = "computed::ScrollMarkerGroup::NONE"
@@ -488,14 +566,12 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +initial = "computed::ScrollTargetGroup::None"
 +struct = "box"
 +engine = "servo"
-+animation_type = "discrete"
+ animation_type = "discrete"
 +servo_restyle_damage = "repaint"
 +spec = "https://drafts.csswg.org/css-overflow-5/#scroll-target-group"
-+affects = "paint"
-+
+ affects = "paint"
+ 
  [scroll-snap-type]
- type = "ScrollSnapType"
- initial = "computed::ScrollSnapType::none()"
 @@ -2117,7 +2162,6 @@
  type = "TransformBox"
  initial = "computed::TransformBox::ViewBox"
@@ -600,7 +676,26 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  animation_type = "discrete"
  affects = "layout"
  type = "BoxDecorationBreak"
-@@ -3770,7 +3844,6 @@
+@@ -3730,6 +3804,18 @@
+ type = "TopLayer"
+ initial = "computed::TopLayer::None"
+ 
++# pyro: css-position-4 `overlay`, for Servo: whether an element in the top layer is rendered there
++# (`auto`). The UA sheet sets it on top-layer elements; a discrete transition keeps it, and the element in
++# the top layer, past their removal (pyro-dom, blitz-paint).
++[overlay]
++struct = "box"
++engine = "servo"
++spec = "https://drafts.csswg.org/css-position-4/#overlay"
++animation_type = "discrete"
++affects = "layout"
++type = "TopLayer"
++initial = "computed::TopLayer::None"
++
+ [scroll-behavior]
+ struct = "box"
+ servo_pref = "layout.css.scroll-behavior.enabled"
+@@ -3770,7 +3856,6 @@
  
  [column-fill]
  struct = "column"
@@ -608,7 +703,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/css-multicol/#propdef-column-fill"
  animation_type = "discrete"
  affects = "layout"
-@@ -3901,9 +3974,9 @@
+@@ -3901,9 +3986,9 @@
  type = "TextOrientation"
  initial = "computed::TextOrientation::Mixed"
  
@@ -619,7 +714,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/css-images/#propdef-image-orientation"
  animation_type = "discrete"
  affects = "layout"
-@@ -4093,6 +4166,17 @@
+@@ -4093,6 +4178,17 @@
  type = "BoxSizing"
  initial = "computed::BoxSizing::ContentBox"
  
@@ -637,7 +732,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  [object-fit]
  struct = "position"
  spec = "https://drafts.csswg.org/css-images/#propdef-object-fit"
-@@ -4287,9 +4371,64 @@
+@@ -4287,9 +4383,64 @@
  affects = "layout"
  gecko_ffi_name = "mBoxOrient"
  aliases = ["-webkit-box-orient"]
@@ -702,6 +797,56 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  [-moz-box-pack]
  struct = "xul"
  engine = "gecko"
+diff -ruN a/properties/properties.mako.rs b/properties/properties.mako.rs
+--- a/properties/properties.mako.rs	2026-11-11 19:55:57
++++ b/properties/properties.mako.rs	2026-11-17 23:56:40
+@@ -1645,7 +1645,46 @@
+     pseudo: Option<PseudoElement>,
+ }
+ 
++#[cfg(feature = "servo")]
+ impl ComputedValues {
++    /// pyro: whether every inherited style struct and every other inherited
++    /// input (flags, zoom, writing mode) of `self` equals `other`'s: what a
++    /// child inherits but custom properties.
++    pub fn inherited_except_custom_eq(&self, other: &Self) -> bool {
++        self.inner.flags.maybe_inherited() == other.inner.flags.maybe_inherited()
++            && self.inner.effective_zoom == other.inner.effective_zoom
++            && self.inner.writing_mode == other.inner.writing_mode
++        % for style_struct in data.active_style_structs():
++        % if style_struct.inherited:
++            && (Arc::ptr_eq(&self.inner.${style_struct.ident}, &other.inner.${style_struct.ident})
++                || *self.inner.${style_struct.ident} == *other.inner.${style_struct.ident})
++        % endif
++        % endfor
++    }
++
++    /// pyro: whether every style struct of `self` is the very one of `other`.
++    pub fn same_style_structs(&self, other: &Self) -> bool {
++        true
++        % for style_struct in data.active_style_structs():
++            && Arc::ptr_eq(&self.inner.${style_struct.ident}, &other.inner.${style_struct.ident})
++        % endfor
++    }
++
++    /// pyro: this style with the inherited custom properties of `parent`
++    /// (see `ElementDataFlags::CUSTOM_PROPERTIES_ONLY_CHANGED`).
++    pub fn with_inherited_custom_properties_of(&self, parent: &ComputedValues) -> Arc<ComputedValues> {
++        let mut values = self.clone();
++        values.inner.custom_properties.inherited = parent.inner.custom_properties.inherited.clone();
++        Arc::new(values)
++    }
++
++    /// pyro: whether this style has a visited style or `attr()` references.
++    pub fn has_visited_or_attr_references(&self) -> bool {
++        self.inner.visited_style.is_some() || self.inner.attribute_references.is_some()
++    }
++}
++
++impl ComputedValues {
+     /// Returns the pseudo-element that this style represents.
+     #[cfg(feature = "servo")]
+     pub fn pseudo(&self) -> Option<PseudoElement> {
 diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
 --- a/properties/shorthands.rs	2026-11-11 19:55:57
 +++ b/properties/shorthands.rs	2026-11-17 10:10:29
@@ -1291,8 +1436,38 @@ diff -ruN a/servo/media_features.rs b/servo/media_features.rs
 +]);
 diff -ruN a/servo/restyle_damage.rs b/servo/restyle_damage.rs
 --- a/servo/restyle_damage.rs	2026-11-11 19:55:57
-+++ b/servo/restyle_damage.rs	2026-11-11 19:55:57
-@@ -161,6 +161,9 @@
++++ b/servo/restyle_damage.rs	2026-11-17 23:56:40
+@@ -66,7 +66,14 @@
+             };
+         }
+ 
+-        let mut damage = compute_damage(old, new);
++        // pyro: the same style structs (a style that took only new inherited custom
++        // properties, `traversal::custom_properties_only_recascade`) differ in nothing
++        // the damage compares.
++        let mut damage = if old.same_style_structs(new) {
++            ServoRestyleDamage::empty()
++        } else {
++            compute_damage(old, new)
++        };
+         if damage.contains(ServoRestyleDamage::RELAYOUT) {
+             damage |= E::compute_layout_damage(old, new);
+         }
+@@ -88,10 +95,9 @@
+             any_style_changed = true;
+             custom_properties_changed = true;
+         };
+-        if custom_properties_changed {
+-            // Paint worklets may depend on custom properties, so if they have changed we should repaint.
+-            damage.insert(ServoRestyleDamage::REPAINT);
+-        }
++        // pyro: no paint worklets read custom properties here, and what does read them
++        // (`var()` in a declaration) changes a computed value, which damages by itself; a
++        // REPAINT for every descendant of a custom property change walked them all again.
+ 
+         let change = if any_style_changed {
+             StyleChange::Changed {
+@@ -161,6 +167,9 @@
          || old_box.original_display != new_box.original_display
          || old_box.has_transform_or_perspective() != new_box.has_transform_or_perspective()
          || old.get_effects().filter.0.is_empty() != new.get_effects().filter.0.is_empty()
@@ -1302,15 +1477,15 @@ diff -ruN a/servo/restyle_damage.rs b/servo/restyle_damage.rs
  }
  
  fn augmented_restyle_damage_rebuild_stacking_context(
-@@ -169,6 +172,18 @@
+@@ -169,8 +178,20 @@
  ) -> bool {
      restyle_damage_rebuild_stacking_context(old, new)
          || old.guarantees_stacking_context() != new.guarantees_stacking_context()
 +        // pyro: a mask makes a stacking context in Blitz's paint tree
 +        // (`applies_atomic_paint_effect`); `mask-image` is otherwise `repaint` damage.
 +        || has_mask_image(old) != has_mask_image(new)
-+}
-+
+ }
+ 
 +fn has_mask_image(style: &ComputedValues) -> bool {
 +    style
 +        .get_svg()
@@ -1318,9 +1493,11 @@ diff -ruN a/servo/restyle_damage.rs b/servo/restyle_damage.rs
 +        .0
 +        .iter()
 +        .any(|image| !matches!(image, crate::values::generics::image::GenericImage::None))
- }
- 
++}
++
  fn compute_damage(old: &ComputedValues, new: &ComputedValues) -> ServoRestyleDamage {
+     // Damage flags higher up the if-else chain imply damage flags lower down the if-else chain,
+     // so we can skip the diffing process for later flags if an earlier flag is true
 diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
 --- a/servo/selector_parser.rs	2026-11-11 19:55:57
 +++ b/servo/selector_parser.rs	2026-11-16 21:15:31
@@ -2543,6 +2720,93 @@ diff -ruN a/stylist.rs b/stylist.rs
          if let Some(ref mut slotted_rules) = self.slotted_rules {
              slotted_rules.clear();
          }
+diff -ruN a/traversal.rs b/traversal.rs
+--- a/traversal.rs	2026-11-11 19:55:57
++++ b/traversal.rs	2026-11-17 23:56:40
+@@ -331,6 +331,71 @@
+     }
+ 
+     styles
++}
++
++/// pyro: whether [`custom_properties_only_recascade`] may stand for this
++/// element's cascade: none of its rules declares a custom property or uses
++/// `var()`/`env()`, and it has no eager pseudo-elements, visited style,
++/// `attr()` references or `display: contents`.
++#[cfg(feature = "servo")]
++fn custom_properties_only_recascade_possible<E: TElement>(context: &StyleContext<E>, data: &ElementData) -> bool {
++    use crate::properties::PropertyDeclaration;
++    let Some(old) = data.styles.get_primary() else { return false };
++    if !data.styles.pseudos.is_empty() || old.has_visited_or_attr_references() || old.is_display_contents() {
++        return false;
++    }
++    let Some(rules) = old.rules.as_ref() else { return false };
++    let guards = &context.shared.guards;
++    rules.self_and_ancestors().all(|node| {
++        let Some(source) = node.style_source() else { return true };
++        let guard = node.cascade_level().guard(guards);
++        !source.read(guard).declarations().iter().any(|d| {
++            matches!(d, PropertyDeclaration::Custom(..) | PropertyDeclaration::WithVariables(..))
++        })
++    })
++}
++
++#[cfg(not(feature = "servo"))]
++fn custom_properties_only_recascade_possible<E: TElement>(_context: &StyleContext<E>, _data: &ElementData) -> bool {
++    false
++}
++
++/// pyro: the new styles of an element recascaded only because its parent's
++/// custom properties changed and nothing else it inherits
++/// (`ElementDataFlags::CUSTOM_PROPERTIES_ONLY_CHANGED`): when none of its rules
++/// declares a custom property or uses `var()`/`env()`, and it has no eager
++/// pseudo-elements, visited style or `attr()` references, its old style with the
++/// parent's inherited custom properties is what a cascade would compute.
++#[cfg(feature = "servo")]
++fn custom_properties_only_recascade<E: TElement>(
++    context: &StyleContext<E>,
++    element: E,
++    data: &ElementData,
++) -> Option<crate::style_resolver::ResolvedElementStyles> {
++    let parent = element.traversal_parent()?;
++    let parent_data = parent.borrow_data()?;
++    if !parent_data.flags.contains(crate::data::ElementDataFlags::CUSTOM_PROPERTIES_ONLY_CHANGED) {
++        return None;
++    }
++    let parent_style = parent_data.styles.get_primary()?;
++    let old = data.styles.get_primary()?;
++    let _ = context;
++    Some(crate::style_resolver::ResolvedElementStyles {
++        primary: crate::style_resolver::PrimaryStyle {
++            style: crate::style_resolver::ResolvedStyle(old.with_inherited_custom_properties_of(parent_style)),
++            reused_via_rule_node: false,
++        },
++        pseudos: Default::default(),
++    })
++}
++
++#[cfg(not(feature = "servo"))]
++fn custom_properties_only_recascade<E: TElement>(
++    _context: &StyleContext<E>,
++    _element: E,
++    _data: &ElementData,
++) -> Option<crate::style_resolver::ResolvedElementStyles> {
++    None
+ }
+ 
+ /// Calculates the style for a single node.
+@@ -568,6 +633,11 @@
+ 
+             resolver.cascade_styles_with_default_parents(cascade_inputs)
+         },
++        CascadeOnly if data.has_styles() && element.traversal_parent().is_some_and(|p| {
++            p.borrow_data().is_some_and(|d| d.flags.contains(crate::data::ElementDataFlags::CUSTOM_PROPERTIES_ONLY_CHANGED))
++        }) && custom_properties_only_recascade_possible(context, data) => {
++            custom_properties_only_recascade(context, element, data).expect("checked")
++        },
+         CascadeOnly => {
+             // Skipping full matching, load cascade inputs from previous values.
+             let cascade_inputs = ElementCascadeInputs::new_from_element_data(data);
 diff -ruN a/values/animated/effects.rs b/values/animated/effects.rs
 --- a/values/animated/effects.rs	2026-11-11 19:55:57
 +++ b/values/animated/effects.rs	2026-11-14 18:55:29

@@ -123,6 +123,10 @@ struct FlexItem {
 
     /// The position of the bottom edge of this item
     baseline: f32,
+    /// pyro: on a central baseline (`AlgoConstants::block_baseline_synthesis` 0.5, rows), the
+    /// position of this item's central baseline (synthesized in its middle without one), for the
+    /// container's `Baselines::dominant_first`.
+    dominant_baseline: Option<f32>,
     /// pyro: the distance from this item's last baseline to its outer cross-end edge, for `last baseline`
     last_baseline_descent: f32,
 
@@ -198,6 +202,9 @@ struct FlexLine<'a> {
 /// Values that can be cached during the flexbox algorithm
 #[derive(Clone)]
 struct AlgoConstants {
+    /// pyro: where items without a baseline synthesize one in the block axis
+    /// (`FlexboxContainerStyle::block_baseline_synthesis`): 0.5 on a central baseline.
+    block_baseline_synthesis: f32,
     /// The direction of the current segment being laid out
     dir: FlexDirection,
     /// The layout direction of the current segment being laid out
@@ -615,6 +622,15 @@ fn compute_preliminary(tree: &mut impl LayoutFlexboxContainer, node: NodeId, inp
         }
     });
 
+    // pyro: and its central baseline, from the same item (rows on a central baseline).
+    let first_dominant_baseline = first_line.filter(|_| !constants.is_column).and_then(|line| {
+        line.items
+            .iter()
+            .find(|item| item.participates_in_baseline_alignment(constants.dir))
+            .or_else(|| line.items.iter().next())
+            .and_then(|child| child.dominant_baseline)
+    });
+
     let mut output = LayoutOutput::from_sizes_and_baselines(
         constants.container_size,
         {
@@ -635,7 +651,7 @@ fn compute_preliminary(tree: &mut impl LayoutFlexboxContainer, node: NodeId, inp
                 crate::tree::ScrollableOverflow::ZERO
             }
         },
-        Baselines::from_first(first_vertical_baseline),
+        Baselines { dominant_first: first_dominant_baseline, ..Baselines::from_first(first_vertical_baseline) },
     );
     output.oof_candidates = candidates;
     output.oof_positioning_area =
@@ -814,6 +830,7 @@ fn compute_constants(
     available_space: Size<AvailableSpace>,
 ) -> AlgoConstants {
     let dir = style.flex_direction();
+    let block_baseline_synthesis = style.block_baseline_synthesis();
     let is_row = dir.is_row();
     let is_column = dir.is_column();
     let flex_wrap = style.flex_wrap();
@@ -903,6 +920,7 @@ fn compute_constants(
     let inner_container_size = Size::zero();
 
     AlgoConstants {
+        block_baseline_synthesis,
         dir,
         layout_direction,
         is_row,
@@ -1104,6 +1122,7 @@ fn generate_anonymous_flex_items(
                 content_flex_fraction: 0.0,
 
                 baseline: 0.0,
+                dominant_baseline: None,
                 last_baseline_descent: 0.0,
 
                 offset_main: 0.0,
@@ -1227,8 +1246,8 @@ fn determine_flex_base_size(
         // Available space for child sizing (excluding the child's margins)
         // Min/max sizes transferred through the aspect ratio are taken into account here
         // https://github.com/w3c/csswg-drafts/issues/10997
-        let transferred_min_size = child.min_size.maybe_apply_aspect_ratio(child.aspect_ratio);
-        let transferred_max_size = child.max_size.maybe_apply_aspect_ratio(child.aspect_ratio);
+        let transferred_min_size = transfer_through_ratio(child.min_size, child.aspect_ratio, child.ratio_inset);
+        let transferred_max_size = transfer_through_ratio(child.max_size, child.aspect_ratio, child.ratio_inset);
         let child_min_cross = transferred_min_size.cross(dir);
         let child_max_cross = transferred_max_size.cross(dir);
 
@@ -1334,9 +1353,24 @@ fn determine_flex_base_size(
                     None => None,
                 }
             } else {
-                if let Some(flex_basis) = flex_basis.or(main_size.filter(|_| flex_basis_style.is_auto())) {
+                if let Some(mut basis) = flex_basis.or(main_size.filter(|_| flex_basis_style.is_auto())) {
+                    // pyro: a table's `height` is its grid's and its captions add to it: a column
+                    // flex base size from it is the table's height laid out with it (WPT css-flexbox
+                    // `table-as-item-stretch-cross-size-5`; an explicit flex basis is the box's).
+                    if flex_basis.is_none() && child.is_table && !dir.is_row() {
+                        let height = tree.measure_child_size(
+                            child.node,
+                            child_known_dimensions,
+                            child_parent_size,
+                            available_space,
+                            SizingMode::InherentSize,
+                            dir.main_axis(),
+                            Line::FALSE,
+                        );
+                        basis = basis.max(height);
+                    }
                     child.flex_basis_is_definite = true;
-                    break 'flex_basis flex_basis;
+                    break 'flex_basis basis;
                 };
 
                 // A main size that is a sizing keyword either resolves to an exact size or
@@ -1474,7 +1508,7 @@ fn determine_flex_base_size(
                 }
             }
         }
-        let transferred_max_size = child.max_size.maybe_apply_aspect_ratio(child.aspect_ratio);
+        let transferred_max_size = transfer_through_ratio(child.max_size, child.aspect_ratio, child.ratio_inset);
 
         // Note that it is important that the `parent_size` parameter in the main axis is not set for this
         // function call as it used for resolving percentages, and percentage size in an axis should not contribute
@@ -1579,7 +1613,7 @@ fn determine_flex_base_size(
                 child.max_size.set_main(dir, Some(max.max(min_content)));
             }
         }
-        let transferred_max_size = child.max_size.maybe_apply_aspect_ratio(child.aspect_ratio);
+        let transferred_max_size = transfer_through_ratio(child.max_size, child.aspect_ratio, child.ratio_inset);
 
         // Sizes transferred through the aspect ratio clamp the hypothetical main size,
         // but do not participate in resolving flexible lengths or clamping the final size.
@@ -2122,9 +2156,9 @@ fn determine_container_main_size(
                                     // `determine_flex_base_size` does: an item measured wider than its
                                     // max-width wraps onto fewer lines and under-reports its height.
                                     let transferred_min_size =
-                                        item.min_size.maybe_apply_aspect_ratio(item.aspect_ratio);
+                                        transfer_through_ratio(item.min_size, item.aspect_ratio, item.ratio_inset);
                                     let transferred_max_size =
-                                        item.max_size.maybe_apply_aspect_ratio(item.aspect_ratio);
+                                        transfer_through_ratio(item.max_size, item.aspect_ratio, item.ratio_inset);
                                     ckd.set_cross(
                                         dir,
                                         ckd.cross(dir).maybe_clamp(
@@ -2506,8 +2540,8 @@ fn determine_hypothetical_cross_size(
 
         // Sizes transferred through the aspect ratio clamp the hypothetical cross size
         // https://github.com/w3c/csswg-drafts/issues/10997
-        let transferred_min_cross = child.min_size.maybe_apply_aspect_ratio(child.aspect_ratio).cross(constants.dir);
-        let transferred_max_cross = child.max_size.maybe_apply_aspect_ratio(child.aspect_ratio).cross(constants.dir);
+        let transferred_min_cross = transfer_through_ratio(child.min_size, child.aspect_ratio, child.ratio_inset).cross(constants.dir);
+        let transferred_max_cross = transfer_through_ratio(child.max_size, child.aspect_ratio, child.ratio_inset).cross(constants.dir);
 
         let child_cross = child
             .size
@@ -2543,6 +2577,17 @@ fn determine_hypothetical_cross_size(
             _ => child_available_cross,
         };
 
+        // pyro: in a column container of indefinite width, a non-replaced item with a preferred
+        // aspect ratio whose height comes from its content (no definite basis or height, no
+        // growing) takes its own width, not one that height gives through the ratio (Chromium;
+        // WPT css-sizing `aspect-ratio/flex-aspect-ratio-026`; `-013/014` keep theirs).
+        let main_known = !(child.aspect_ratio.is_some()
+            && !child.is_replaced
+            && !constants.is_row
+            && child.size.main(constants.dir).is_none()
+            && !child.flex_basis_is_definite
+            && child.flex_grow == 0.0
+            && constants.node_inner_size.cross(constants.dir).is_none());
         let child_inner_cross = child_cross.unwrap_or_else(|| {
             tree.compute_child_layout(
                 child.node,
@@ -2552,7 +2597,13 @@ fn determine_hypothetical_cross_size(
                     axis: constants.dir.cross_axis().into(),
                     known_dimensions: Size {
                         width: if constants.is_row { child.target_size.width.into() } else { child_cross },
-                        height: if constants.is_row { child_cross } else { child.target_size.height.into() },
+                        height: if constants.is_row {
+                            child_cross
+                        } else if main_known {
+                            child.target_size.height.into()
+                        } else {
+                            None
+                        },
                     },
                     known_dimensions_are_definite: item_known_dimension_definiteness(constants, child),
                     parent_size: constants.node_inner_size,
@@ -2660,8 +2711,16 @@ fn calculate_children_base_lines(
                 child.last_baseline_descent = height - last_baseline + child.margin.bottom;
                 continue;
             }
-            let baseline = child_first_baseline(measured_size_and_baselines.baselines.first, height, child.overflow.y)
-                .unwrap_or(height);
+            // pyro: on a central baseline (vertical writing modes, text not sideways), an item's
+            // central baseline, else its baseline, else one synthesized in its middle (Blink).
+            let baselines = &measured_size_and_baselines.baselines;
+            let baseline = if constants.block_baseline_synthesis == 0.5 {
+                child_first_baseline(baselines.dominant_first.or(baselines.first), height, child.overflow.y)
+                    .unwrap_or(height * 0.5)
+            } else {
+                child_first_baseline(baselines.first, height, child.overflow.y)
+                    .unwrap_or(height * constants.block_baseline_synthesis)
+            };
 
             child.baseline = baseline + child.margin.top;
         }
@@ -2966,6 +3025,13 @@ fn resolve_cross_axis_auto_margins(flex_lines: &mut [FlexLine], constants: &Algo
             .filter(|child| child.participates_in_last_baseline_alignment(constants.dir))
             .map(|child| child.last_baseline_descent)
             .fold(0.0, |acc, x| acc.max(x));
+        // pyro: in a column, the widest `baseline` item's outer cross size (`align_flex_items_along_cross_axis`)
+        let max_baseline_cross: f32 = line
+            .items
+            .iter()
+            .filter(|child| child.align_self.keyword == AlignItemsKeyword::Baseline)
+            .map(|child| child.outer_target_size.cross(constants.dir))
+            .fold(0.0, |acc, x| acc.max(x));
 
         for child in line.items.iter_mut() {
             let free_space = line_cross_size - child.outer_target_size.cross(constants.dir);
@@ -2998,6 +3064,7 @@ fn resolve_cross_axis_auto_margins(flex_lines: &mut [FlexLine], constants: &Algo
                     max_baseline,
                     max_baseline_to_bottom_distance,
                     max_last_descent,
+                    max_baseline_cross,
                     constants,
                 );
             }
@@ -3018,6 +3085,7 @@ fn align_flex_items_along_cross_axis(
     max_baseline: f32,
     max_baseline_to_bottom_distance: f32,
     max_last_descent: f32,
+    max_baseline_cross: f32,
     constants: &AlgoConstants,
 ) -> f32 {
     let cross_axis_should_reverse = constants.is_column && matches!(constants.layout_direction, Direction::Rtl);
@@ -3076,7 +3144,12 @@ fn align_flex_items_along_cross_axis(
                 // Until we support vertical writing modes, baseline alignment only makes sense if
                 // the constants.direction is row, so we treat it as flex-start alignment in columns.
                 let baseline_column_should_reverse = cross_axis_should_reverse && !constants.is_wrap;
-                if constants.is_wrap_reverse ^ baseline_column_should_reverse {
+                if baseline_column_should_reverse && !constants.is_wrap_reverse {
+                    // pyro: the items share a baseline synthesized at their line-left edges, and their
+                    // group goes to the cross start, the right (Chromium; WPT css-flexbox
+                    // `flexbox-align-self-vert-rtl-*`)
+                    free_space - (max_baseline_cross - child.outer_target_size.cross(constants.dir)).max(0.0)
+                } else if constants.is_wrap_reverse ^ baseline_column_should_reverse {
                     free_space
                 } else {
                     0.0
@@ -3243,6 +3316,12 @@ fn calculate_flex_item(
         let baseline_offset_cross =
             total_offset_cross + item.offset_cross + effective_line_offset_cross + item.margin.cross_start(direction);
         item.baseline = baseline_offset_cross + inner_baseline;
+        item.dominant_baseline = (constants.block_baseline_synthesis == 0.5).then(|| {
+            let baselines = &layout_output.baselines;
+            baseline_offset_cross
+                + child_first_baseline(baselines.dominant_first.or(baselines.first), size.height, item.overflow.y)
+                    .unwrap_or(size.height * 0.5)
+        });
     } else {
         let baseline_offset_main = *total_offset_main + item.offset_main + item.margin.main_start(direction);
         item.baseline = baseline_offset_main + inner_baseline;
@@ -4164,4 +4243,18 @@ impl AlgoConstants {
         let (x, y) = if self.is_column { (cross, main) } else { (main, cross) };
         Point { x: x ^ self.layout_direction.is_rtl(), y }
     }
+}
+
+/// pyro: a size transferred through an item's preferred aspect ratio, which is between the boxes
+/// `ratio_inset` smaller than the border boxes these sizes are (css-sizing-4 §5.1; WPT css-sizing
+/// `aspect-ratio/flex-aspect-ratio-025/026`: `auto 19/1` under `box-sizing: border-box`).
+#[inline]
+fn transfer_through_ratio(size: Size<Option<f32>>, ratio: Option<f32>, ratio_inset: Size<f32>) -> Size<Option<f32>> {
+    if ratio.is_none() || ratio_inset == Size::ZERO {
+        return size.maybe_apply_aspect_ratio(ratio);
+    }
+    size.maybe_sub(ratio_inset)
+        .map(|size| size.map(|size| size.max(0.0)))
+        .maybe_apply_aspect_ratio(ratio)
+        .maybe_add(ratio_inset)
 }

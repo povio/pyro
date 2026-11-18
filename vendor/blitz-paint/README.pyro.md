@@ -1053,3 +1053,24 @@ in the element's user space (`backdrop_clip` carries the space; filter-effects
 (`InlineBoxFragment::reaches_back`) paints after the text before it on its line: the line is painted by line, its
 text cut at the box (`TextCut`), as Appendix E orders a line's boxes and text (css-backgrounds
 `box-shadow-overlapping-001`).
+- Round 4 lane F (`render.rs`): `text-overflow` and line clamps cut vertical lines too (`draw_turned_lines`, at the
+  content box's physical height); the ellipsis of a line stops at the line's own end where floats shorten it
+  (`truncate_line`, parley `inline_min_coord`/`inline_max_coord`); an atomic inline that does not fit before its line's
+  ellipsis is not painted (`hidden_by_ellipsis`, Blink's `LineTruncator`). WPT css-overflow `text-overflow-006`, `-010`,
+  `text-overflow-ellipsis-vertical-001`, `-vertical-rtl-001`.
+
+Round 4 lane G: `draw_sub_document` records an iframe's document at its viewport's origin and appends it with the
+frame's whole transform, clipped to the content box (upstream applied the translation only). WPT css-transforms
+`transform-iframe-002`, `transform-iframe-scroll-position`.
+- Round 4 lane F: the first line's ellipsis takes the colour of the `::first-line` style (`TextLayout::first_line`; WPT
+  css-overflow `text-overflow-ellipsis-multiline-001`).
+- `render/multicol.rs` `draw_columns`: a vertical writing mode's logical columns (`vertical_column_fragments`) are
+  mapped to physical axes per column: the block range on x (from the right edge in `vertical-rl`), the offset swapped.
+- Round 4 lane F: `highlight.rs` recomputes a `::selection` style that uses container units
+  (`selection_pseudo_style`); `draw_marker` draws an outside marker's emphasis marks (`draw_text_annotations`).
+- Round 4 lane F: list marker images honour `image-orientation: none` (`unturn`, as `<img>`; WPT css-images
+  `image-orientation-list-style-image`).
+- Round 4 lane F, `render.rs`: gradient list markers fill their box; SVG marker images are drawn into the marker box through `viewport_transform`, the root's background filling it.
+- Round 4 lane F, `render.rs`/`highlight.rs`/`text.rs`: vertical lines paint selections through the highlight path (`stroke_highlighted_text` takes per-line transforms and `VerticalLine`s; not upright or truncated lines), and text shadows are drawn in vertical lines with their physical offsets turned into the line's space (`VerticalLine::turned_offset`).
+- Round 4 lane F, `render.rs`/`text.rs`: positioned inline boxes (relative or sticky, not atomic) paint after their inline root's in-flow content, each with its fragments then its text in tree order (`positioned_passes`, `DrawTextContext::positioned_pass`), as CSS 2.1 Appendix E step 8: a relative span's text and shadows cover the root's later text (WPT css-pseudo `highlight-painting-002` reference). Not with highlights, truncated lines or `sideways-lr`. Upright glyphs advancing by the font's height (parley `shape::upright`) have their em box centred in that advance.
+- Round 4 lane F, `highlight.rs`: a visited link's selection style comes from `selection_pseudo_style` (none when only `:link` rules matched). `render.rs`: `image(<color>)` list markers fill their box with the colour.

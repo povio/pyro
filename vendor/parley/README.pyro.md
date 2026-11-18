@@ -413,3 +413,19 @@ Covered by `crates/pyro-render/tests/text_inline_round4.rs` and `soft_hyphens.rs
 - `layout/alignment.rs` (`align`, round 4 lane D): right-, end- and centre-aligned lines take their content width rounded
   up to a layout unit (1/64 CSS px), as Blink's snapped text item widths: such a line starts where a shrink-to-fit box
   of the same text does (WPT CSS2 `positioning-float-002`, `float-applies-to-008`).
+- `layout/layout.rs` `Layout::set_central_baseline`, `layout/style_metrics.rs` `inline_box_placement`, `layout/line.rs`
+  `inline_box_top` (round 4 lane F): lines of vertical writing modes whose text is not sideways align on the central
+  baseline (Blink's `kCentralBaseline`). An in-flow box marked `InlineBox::central` (a new field) has its central baseline
+  in `baseline`: baseline alignment puts it on the middle of the parent span's content area (half of its ascent minus
+  descent over its alphabetic baseline, added after the quantized offset: where a zero line height's strut and the line's
+  dominant baseline are); other alignments take the box's synthesized alphabetic baseline (its under edge), as before.
+  Boxes not marked keep their alphabetic baseline. Text keeps its
+  alphabetic geometry (the strut's line-height box is the same around both). WPT css-inline
+  `initial-letter-raise-initial-vlr/-vrl`, `initial-letter-sunk-initial-vlr`; `crates/pyro-render/tests/vertical_lines_and_controls.rs`.
+- `layout/line_break.rs` (round 4 lane F): a line that wraps inside a run keeps no legacy `kern` pair across its end:
+  HarfBuzz splits a pair between the two glyphs (half on the first's advance, half on the second's offset and advance;
+  parley_engine `ShapedText::legacy_kern_across` recovers both from the `hmtx` advance, for fonts with a `kern` table and
+  no `GPOS`), and both glyphs lose their parts (`shift_edge_cluster`, restored before the next break). Blink shapes line
+  edges again where shaping was not safe to break, so its wrapped lines start at the content edge (macOS Times and
+  Helvetica). WPT CSS2 `bidi-002` (RLO run broken after a space), css-text `hyphens-auto-001` (space|W pairs).
+- Round 4 lane F, `shape/upright.rs` + `StyleProperty::Upright`: upright glyphs (CSS `text-orientation: upright`) of a font without vertical metrics advance by the font's height (ascent + descent, HarfBuzz's default vertical advance), their hyphens too (WPT css-values `ch-unit-002`, `-011`).

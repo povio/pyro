@@ -1645,6 +1645,45 @@ pub struct ComputedValues {
     pseudo: Option<PseudoElement>,
 }
 
+#[cfg(feature = "servo")]
+impl ComputedValues {
+    /// pyro: whether every inherited style struct and every other inherited
+    /// input (flags, zoom, writing mode) of `self` equals `other`'s: what a
+    /// child inherits but custom properties.
+    pub fn inherited_except_custom_eq(&self, other: &Self) -> bool {
+        self.inner.flags.maybe_inherited() == other.inner.flags.maybe_inherited()
+            && self.inner.effective_zoom == other.inner.effective_zoom
+            && self.inner.writing_mode == other.inner.writing_mode
+        % for style_struct in data.active_style_structs():
+        % if style_struct.inherited:
+            && (Arc::ptr_eq(&self.inner.${style_struct.ident}, &other.inner.${style_struct.ident})
+                || *self.inner.${style_struct.ident} == *other.inner.${style_struct.ident})
+        % endif
+        % endfor
+    }
+
+    /// pyro: whether every style struct of `self` is the very one of `other`.
+    pub fn same_style_structs(&self, other: &Self) -> bool {
+        true
+        % for style_struct in data.active_style_structs():
+            && Arc::ptr_eq(&self.inner.${style_struct.ident}, &other.inner.${style_struct.ident})
+        % endfor
+    }
+
+    /// pyro: this style with the inherited custom properties of `parent`
+    /// (see `ElementDataFlags::CUSTOM_PROPERTIES_ONLY_CHANGED`).
+    pub fn with_inherited_custom_properties_of(&self, parent: &ComputedValues) -> Arc<ComputedValues> {
+        let mut values = self.clone();
+        values.inner.custom_properties.inherited = parent.inner.custom_properties.inherited.clone();
+        Arc::new(values)
+    }
+
+    /// pyro: whether this style has a visited style or `attr()` references.
+    pub fn has_visited_or_attr_references(&self) -> bool {
+        self.inner.visited_style.is_some() || self.inner.attribute_references.is_some()
+    }
+}
+
 impl ComputedValues {
     /// Returns the pseudo-element that this style represents.
     #[cfg(feature = "servo")]

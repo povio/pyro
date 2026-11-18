@@ -201,3 +201,6 @@ parley which characters justification passes over and which scripts it does not 
   `GSUB`, `GPOS` and a legacy `kern` table breaks runs at every space and no-break space. Chrome 147 kerns across spaces
   in the macOS Times and Helvetica (legacy `kern`), so those fonts shape whole runs; a no-break space is shaped as a
   space, as Blink normalizes it, so it kerns as the space does (WPT CSS2 `color-applies-to-*`).
+- `shape/shaped_text.rs` `legacy_kern_across`, `cluster_is_rtl` (round 4 lane F): see parley's README (legacy `kern`
+  pairs across line breaks).
+- Round 4 lane F, `shape/shaped_text.rs`: `default_vertical_advance`, `ShapedRun::upright_advance` / `set_run_upright_advance` (hyphens and `glyph_of` in upright runs).

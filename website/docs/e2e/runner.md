@@ -229,6 +229,7 @@ Everything below is exported from `@povio/pyro/e2e`. Signatures follow `bun:test
 | `defer(fn)` | Cleanup after what is running now |
 | `setupResult<T>()` | What the setup module's `setup()` returned |
 | `testInfo()` | `{ file, name, titlePath }` of the running test, or `undefined` |
+| `currentFile()` | the running spec file (relative path), also in `beforeAll`/`afterAll`; `undefined` outside a spec file |
 | `expect` | Bun's `expect` |
 
 Hooks and tests can be async, or take a `done` callback. `beforeEach` hooks run outer first, `afterEach` inner first. Registering a test from inside a test or hook throws.

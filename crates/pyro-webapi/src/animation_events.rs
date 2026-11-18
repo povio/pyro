@@ -93,6 +93,9 @@ pub(crate) struct Timeline {
     /// between (the property's value before and after the style change).
     easing: Option<String>,
     keyframes: Option<std::sync::Arc<pyro_dom::animation::TextKeyframes>>,
+    /// A transition: the before-change and after-change styles it runs between
+    /// (`getComputedStyle` interpolates them, `animation_frame::Source::transition_value`).
+    pub(crate) styles: Option<(StyleSnapshot, StyleSnapshot)>,
 }
 
 impl Timeline {
@@ -114,6 +117,10 @@ impl Timeline {
     }
     pub(crate) fn is_live(&self) -> bool {
         self.live.get()
+    }
+    /// Its `end` event fired.
+    pub(crate) fn has_ended(&self) -> bool {
+        self.ended.get()
     }
     pub(crate) fn is_paused(&self) -> bool {
         self.paused_at.is_some()
@@ -159,6 +166,9 @@ pub(crate) struct State {
     /// animations and transitions script controls), as script reported them
     /// (`animation_frame::report`).
     pub(crate) scripted: RefCell<FxHashMap<u64, crate::animation_frame::Scripted>>,
+    /// The CSS animations and transitions whose `Animation` object lost its effect
+    /// (`effect = null`): `getComputedStyle` reports no transition value for them.
+    pub(crate) effect_removed: RefCell<FxHashSet<u64>>,
     /// The layout engine samples the page's animated values
     /// (`StyleEngine::set_animation_source` was called).
     source_installed: Cell<bool>,
@@ -205,6 +215,7 @@ impl State {
         dom.has_animation_listeners()
             || self.listed.get()
             || dom.smil_seen()
+            || dom.inline_transitions_seen()
             || self.rules(dom, style).animates()
             || self.inline_animations(dom, style, doc)
     }
@@ -223,7 +234,10 @@ impl State {
         found
     }
     fn transitions_tracked(&self, dom: &pyro_dom::Dom, style: &pyro_dom::style::StyleEngine) -> bool {
-        dom.has_transition_listeners() || self.listed.get() || self.rules(dom, style).animates()
+        dom.has_transition_listeners()
+            || self.listed.get()
+            || dom.inline_transitions_seen()
+            || self.rules(dom, style).animates()
     }
     fn bump(&self) {
         self.generation.set(self.generation.get().wrapping_add(1));
@@ -520,6 +534,7 @@ fn update(page: &Rc<PageDom>, defer: bool) {
                 progress: Rc::new(Cell::new(0)),
                 easing: None,
                 keyframes: None,
+                styles: None,
             };
             // Held at 0 when paused: it starts only where a negative delay
             // put it in its active phase already, and goes no further.
@@ -556,6 +571,7 @@ fn update(page: &Rc<PageDom>, defer: bool) {
             state.install_source(page, style);
         }
     }
+    finish_overlay_exits(page);
     schedule(page, planned, defer);
 }
 
@@ -727,8 +743,55 @@ pub(crate) fn style_flush(page: &Rc<PageDom>, read: Option<NodeId>) {
         if let Some(el) = read {
             style_read_hidden_content(state, &dom, style, el);
         }
+        // The read that follows reports the transitions just started (`transition_value`).
+        if state.transitions.try_borrow().is_ok_and(|t| !t.is_empty()) {
+            state.install_source(page, style);
+        }
     }
+    finish_overlay_exits(page);
     schedule(page, planned, true);
+}
+
+/// Whether hiding `el` (a popover or modal dialog) may start an `overlay` transition, which keeps
+/// it in the top layer until it ends: a transition of `overlay` (or `all`) with
+/// `transition-behavior: allow-discrete` (css-position-4 §4.1).
+pub(crate) fn may_transition_overlay(page: &Rc<PageDom>, el: NodeId) -> bool {
+    let (Ok(dom), Some(layout)) = (page.dom.try_borrow(), page.try_layout()) else { return false };
+    let style = layout.style();
+    let rules = page.animation_events.rules(&dom, style);
+    if !rules.animates() {
+        return false;
+    }
+    let style_of = |e: NodeId| style.stylo_style(&dom, e);
+    rules
+        .element(&dom, el, &style_of)
+        .transitions
+        .iter()
+        .any(|t| t.allow_discrete && matches!(t.property.as_str(), "overlay" | "all"))
+}
+
+/// The elements kept in the top layer after leaving it ([`pyro_dom::Dom::keep_in_top_layer`])
+/// whose `overlay` transition did not start or is over leave it now.
+fn finish_overlay_exits(page: &Rc<PageDom>) {
+    let leaving = match page.dom.try_borrow() {
+        Ok(dom) => dom.top_layer_leaving(),
+        Err(_) => return,
+    };
+    if leaving.is_empty() {
+        return;
+    }
+    let done: Vec<NodeId> = {
+        let transitions = page.animation_events.transitions.borrow();
+        leaving
+            .into_iter()
+            .filter(|&el| !transitions.iter().any(|t| t.el == el && t.name == "overlay" && t.live.get() && !t.ended.get()))
+            .collect()
+    };
+    if let Ok(mut dom) = page.dom.try_borrow_mut() {
+        for el in done {
+            dom.finish_top_layer_exit(el);
+        }
+    }
 }
 
 /// Script read layout (a box, an offset, a scroll position) of `el`: the
@@ -784,6 +847,13 @@ fn transitions_from_changes(
             start_transitions(state, dom, style, &rules, el, &before, &now, now_ms, &mut starting);
             continue;
         }
+        // A box going `display: none` with a discrete `display` transition stays rendered while it
+        // runs (css-display-4 §2.1, `transition-behavior: allow-discrete`): its transitions start.
+        // (One without its own `display` change, inside such a box, has no rendered box to animate.)
+        if !was_none && is_none && transitions_display(dom, style, &rules, el, &now) {
+            start_transitions(state, dom, style, &rules, el, &before, &now, now_ms, &mut starting);
+            continue;
+        }
         // `display: none` at either style change event: not rendered then, so
         // no transitions (and no before-change style once shown), unless the
         // engine's `display: none` is Chrome's `content-visibility: hidden`
@@ -801,9 +871,31 @@ fn transitions_from_changes(
         }
         if (content || !is_none) && (was_content || content || !was_none) {
             start_transitions(state, dom, style, &rules, el, &before, &now, now_ms, &mut starting);
+        } else if was_none && !is_none && !was_content {
+            // Shown from `display: none`: no before-change style, but its starting style
+            // (`@starting-style`) stands for one (css-transitions-2 §3.2).
+            if let Some(start) = style.starting_style(dom, el) {
+                start_transitions(state, dom, style, &rules, el, &start, &now, now_ms, &mut starting);
+            }
         }
     }
     starting.commit(state, planned);
+}
+
+/// Whether `el` (after-change style `now`) runs a discrete transition of `display` (or `all`).
+fn transitions_display(
+    dom: &pyro_dom::Dom,
+    style: &pyro_dom::style::StyleEngine,
+    rules: &TimingRules,
+    el: NodeId,
+    now: &StyleSnapshot,
+) -> bool {
+    let style_of = |e: NodeId| if e == el { Some(now.clone()) } else { style.stylo_style(dom, e) };
+    rules
+        .element(dom, el, &style_of)
+        .transitions
+        .iter()
+        .any(|t| t.allow_discrete && matches!(t.property.as_str(), "display" | "all"))
 }
 
 /// Whether the engine's `display: none` of `el` is where Chrome has
@@ -1114,6 +1206,7 @@ fn start_transitions(
                 progress: Rc::new(Cell::new(0)),
                 easing: transition.easing.clone(),
                 keyframes: pyro_dom::timing::transition_keyframes(before, now, longhand).map(std::sync::Arc::new),
+                styles: Some((before.clone(), now.clone())),
             };
             let (delay, duration) = (transition.delay_ms, transition.duration_ms);
             let event = |ty: &'static str, at_ms: f64, elapsed_ms: f64, ends: bool| Planned {
@@ -1183,6 +1276,12 @@ fn fire(page: &Rc<PageDom>, event: &Planned) {
     }
     if let Some(ended) = &event.ends {
         ended.set(true);
+    }
+    // An `overlay` transition that ends lets its element leave the top layer.
+    if event.transition && event.name == "overlay" && matches!(event.ty, "transitionend" | "transitioncancel") {
+        if let Ok(mut dom) = page.dom.try_borrow_mut() {
+            dom.finish_top_layer_exit(event.el);
+        }
     }
     if let Some((progress, step)) = &event.step {
         progress.set(progress.get().max(*step));

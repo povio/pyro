@@ -306,6 +306,48 @@ impl BaseDocument {
             })
     }
 
+    /// pyro: the starting style of element `id` (its style with its `@starting-style` rules,
+    /// css-transitions-2 §3.2): the before-change style of a box that had none (it was
+    /// `display: none`). `None`: no `@starting-style` rule applies to it, or it is not styled.
+    pub fn starting_style(&self, id: crate::NodeId) -> Option<ServoArc<ComputedValues>> {
+        let node = self.nodes.get(id)?;
+        let style = node.primary_styles().map(|s| (*s).clone())?;
+        if !style::rule_tree::RuleTree::has_starting_style(style.rules()) {
+            return None;
+        }
+        let _layout_thread_scope = crate::stylo::LayoutThreadScope::enter();
+        let guard = &self.guard;
+        let guards = StylesheetGuards { author: &guard.read(), ua_or_user: &guard.read() };
+        let shared = SharedStyleContext {
+            traversal_flags: TraversalFlags::empty(),
+            stylist: &self.stylist,
+            options: GLOBAL_STYLE_DATA.options.clone(),
+            guards,
+            visited_styles_enabled: false,
+            animations: self.animations.clone(),
+            current_time_for_animations: 0.0,
+            snapshot_map: &self.snapshots,
+            registered_speculative_painters: &crate::stylo::RegisteredPaintersImpl,
+        };
+        let mut thread_local = ThreadLocalStyleContext::new();
+        let mut context = StyleContext { shared: &shared, thread_local: &mut thread_local };
+        context.thread_local.current_dom_depth = TNode::depth(&node);
+        let mut resolver = StyleResolverForElement::new(
+            node,
+            &mut context,
+            RuleInclusion::All,
+            PseudoElementResolution::IfApplicable,
+        );
+        let inputs = CascadeInputs {
+            rules: Some(style.rules().clone()),
+            visited_rules: None,
+            flags: style.flags.for_cascade_inputs(),
+            included_cascade_flags: RuleCascadeFlags::STARTING_STYLE,
+        };
+        let starting = resolver.cascade_style_and_visited_with_default_parents(inputs).0;
+        (!starting.get_box().display.is_none()).then_some(starting)
+    }
+
     /// After a style traversal: resolves the keyframes of the elements whose
     /// base style changed (or that had none before), samples them again and
     /// marks those whose values changed for restyle. `true`: another
@@ -898,12 +940,20 @@ fn sample_property(
                     progress: transformed,
                 },
             )
-            .unwrap_or_else(|_| {
-                if transformed < 0.5 {
-                    start.value.clone()
-                } else {
-                    end.value.clone()
+            .unwrap_or_else(|_| match (&start.value, &end.value) {
+                // pyro: `display` to or from `none` shows the other value throughout, `none` only
+                // at its end (css-display-4 §2.1; Stylo's `Animate for Display`, which the
+                // discrete path skips).
+                (AnimationValue::Display(a), AnimationValue::Display(b)) if a.is_none() != b.is_none() => {
+                    let other = if b.is_none() { transformed < 1.0 } else { transformed <= 0.0 };
+                    if other {
+                        start.value.clone()
+                    } else {
+                        end.value.clone()
+                    }
                 }
+                _ if transformed < 0.5 => start.value.clone(),
+                _ => end.value.clone(),
             }),
     )
 }

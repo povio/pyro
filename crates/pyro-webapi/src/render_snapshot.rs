@@ -179,7 +179,11 @@ fn snapshot_of(
         };
         let (html, tree) = match form {
             Form::Html => {
-                (dom.render_html_scrolled(document, &opts, &layout.scrolled_elements()).unwrap_or_default(), None)
+                (
+                dom.render_html_positioned(document, &opts, &layout.scrolled_elements(), &layout.sticky_offsets(dom))
+                    .unwrap_or_default(),
+                None,
+            )
             }
             Form::Tree => (String::new(), Some(dom.render_tree(document, &opts).unwrap_or_default())),
             Form::None => (String::new(), None),

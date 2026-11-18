@@ -53,7 +53,7 @@ mod tree_scope;
 pub mod xml;
 pub mod xpath;
 
-pub use dom::{attr_name_hash, position, CollectionWatch, Dom, ScriptName};
+pub use dom::{attr_name_hash, position, CollectionWatch, Dom, FrameDocument, ScriptName};
 pub use top_layer::PopoverStack;
 pub use window_names::window_name_hash;
 pub use error::{DomError, DomErrorKind, DomResult};

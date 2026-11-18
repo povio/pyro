@@ -591,6 +591,59 @@ impl Page {
         }
     }
 
+    /// Gives each iframe of the page the document it shows as the renderer paints it (its render
+    /// HTML, URL and scroll position; see [`pyro_dom::FrameDocument`]), innermost frames first so a
+    /// frame's HTML holds its own frames' documents. Returns the texts of the frames' style sheets
+    /// by URL, which the render snapshot serves with its own.
+    pub fn update_frame_documents(&self) -> std::collections::HashMap<String, String> {
+        let mut sheets = std::collections::HashMap::new();
+        if !self.frames.has_children() {
+            if let Some(page_dom) = &self.main_frame.page_dom {
+                if let Ok(mut dom) = page_dom.dom.try_borrow_mut() {
+                    dom.set_frame_documents(Vec::new());
+                }
+            }
+            return sheets;
+        }
+        let depth = |mut key: frames::FrameKey| {
+            let mut depth = 0;
+            while key.child.is_some() && depth < 64 {
+                key = self.frames.parent_key(key);
+                depth += 1;
+            }
+            depth
+        };
+        let mut keys: Vec<(usize, frames::FrameKey)> =
+            self.frames.keys().into_iter().filter(|k| k.child.is_some()).map(|k| (depth(k), k)).collect();
+        keys.sort_by(|a, b| b.0.cmp(&a.0));
+        let mut documents = Vec::new();
+        for (_, key) in keys {
+            let Some((owner, page_dom, base_url, url)) =
+                self.frames.with_frame(key, |f| (f.owner, f.page_dom.clone(), f.base_url.clone(), f.url.clone()))
+            else {
+                continue;
+            };
+            let (Some(owner), Some(page_dom)) = (owner, page_dom) else { continue };
+            // Each frame's HTML is taken after its own frames' documents are set (deeper first).
+            let snapshot = page_dom.render_snapshot(&base_url, None);
+            sheets.extend(snapshot.sheets);
+            let base = if base_url.is_empty() { url } else { base_url };
+            let document =
+                pyro_dom::FrameDocument { html: snapshot.html, url: base, scroll: (snapshot.scroll_x, snapshot.scroll_y) };
+            if let Ok(mut dom) = page_dom.dom.try_borrow_mut() {
+                dom.set_frame_document(owner, Some(document.clone()));
+            }
+            documents.push((owner, document));
+        }
+        let store = self.main_frame.page_dom.as_ref().map(|p| p.dom.clone());
+        if let Some(store) = store {
+            if let Ok(mut dom) = store.try_borrow_mut() {
+                dom.set_frame_documents(documents);
+            }
+        }
+        sheets
+    }
+
     /// Copies the page's own request options (extra headers, cache bypass)
     /// into `defaults`, e.g. those derived from a user agent override.
     fn apply_request_options(&self, defaults: &mut pyro_net::RequestDefaults) {

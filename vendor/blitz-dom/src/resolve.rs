@@ -206,7 +206,9 @@ impl BaseDocument {
             // pyro: the active scroll markers and the scroll buttons' states follow the layout
             // and the scroll positions (`layout::scroll_markers`): a change styles them again.
             let scroll_states_changed = !container_sizes_changed && self.update_target_current();
-            if (!container_sizes_changed && !scroll_states_changed) || pass == 31 {
+            // pyro: a marker's content that reads counters was met: they are evaluated now.
+            let marker_counters = std::mem::take(&mut self.marker_counters_pending);
+            if (!container_sizes_changed && !scroll_states_changed && !marker_counters) || pass == 31 {
                 break;
             }
             if !container_sizes_changed {
@@ -265,7 +267,21 @@ impl BaseDocument {
         let mut subdoc_is_animating = false;
         for &node_id in &self.sub_document_nodes {
             let node = &mut self.nodes[node_id];
-            let size = node.final_layout().size;
+            // pyro: the frame's viewport is its content box (Blitz took the border box), and a
+            // frame document from the render snapshot keeps its scroll position.
+            let layout = node.final_layout();
+            let size = taffy::Size {
+                width: (layout.size.width - layout.border.left - layout.border.right - layout.padding.left - layout.padding.right)
+                    .max(0.0),
+                height: (layout.size.height - layout.border.top - layout.border.bottom - layout.padding.top - layout.padding.bottom)
+                    .max(0.0),
+            };
+            let frame_scroll = node
+                .attr(markup5ever::LocalName::from("data-pyro-frame-scroll"))
+                .and_then(|value| {
+                    let mut parts = value.split(' ').map(|part| part.parse::<f64>().ok().filter(|v| v.is_finite()));
+                    Some((parts.next()??, parts.next()??))
+                });
             if let Some(mut sub_doc) = node.subdoc_mut().map(|doc| doc.inner_mut()) {
                 // Set viewport
                 // viewport_mut handles change detection. So we just unconditionally set the values;
@@ -280,6 +296,9 @@ impl BaseDocument {
                 drop(sub_viewport);
 
                 sub_doc.resolve(current_time_for_animations);
+                if let Some((x, y)) = frame_scroll {
+                    sub_doc.set_viewport_scroll(crate::Point { x, y });
+                }
 
                 subdoc_is_animating |= sub_doc.is_animating();
             }

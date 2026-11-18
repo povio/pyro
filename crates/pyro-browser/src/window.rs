@@ -178,6 +178,13 @@ impl WindowData {
         (timers, frames)
     }
 
+    /// `setTimeout`s (not intervals) due by `deadline`: a redirect or a
+    /// render the page has scheduled, for a caller that waits longer than
+    /// [`TIMER_HORIZON`] (a fork template before it runs a profile's setup).
+    pub fn timeouts_due_by(&self, deadline: Instant) -> usize {
+        self.timers.borrow().values().filter(|(_, due)| due.is_some_and(|d| d <= deadline)).count()
+    }
+
     /// Grows with every timer this window's script sets and every animation
     /// frame it requests (the handles given out): two equal readings mean it
     /// asked for neither between them.

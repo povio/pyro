@@ -861,6 +861,9 @@ pub struct StyleEngine {
     /// stamp of those the engine's styles have, and of those its layout has
     /// (a style-only sync restyles without laying out).
     animation_source: RefCell<Option<crate::animation::SharedAnimationSource>>,
+    /// A style `stylo_style` answers for one element instead of the engine's while
+    /// `getComputedStyle` serializes a transition's value ([`Self::with_style_override`]).
+    style_override: RefCell<Option<(NodeId, style::servo_arc::Arc<style::properties::ComputedValues>)>>,
     animation_synced: Cell<Option<u64>>,
     animation_laid_out: Cell<Option<u64>>,
     /// Debug builds: the last [`StyleEngine::author_sheets_key`] and a hash
@@ -935,6 +938,7 @@ impl StyleEngine {
             revisions: 0,
             track_style_changes: Cell::new(false),
             animation_source: RefCell::new(None),
+            style_override: RefCell::new(None),
             animation_synced: Cell::new(None),
             animation_laid_out: Cell::new(None),
             #[cfg(debug_assertions)]
@@ -1023,6 +1027,35 @@ impl StyleEngine {
         self.animation_laid_out.set(stamp);
     }
 
+    /// The value a running CSS transition of `longhand` gives `el` now
+    /// ([`crate::animation::AnimationSource::transition_value`]).
+    pub fn transition_value(&self, el: NodeId, longhand: &str) -> Option<crate::animation::TransitionValue> {
+        let source = self.animation_source.try_borrow().ok()?.clone()?;
+        source.transition_value(el, longhand)
+    }
+
+    /// Runs `f` with `style` standing for `el`'s computed style (`stylo_style`); `None` while
+    /// another override runs.
+    pub fn with_style_override<R>(
+        &self,
+        el: NodeId,
+        style: style::servo_arc::Arc<style::properties::ComputedValues>,
+        f: impl FnOnce() -> R,
+    ) -> Option<R> {
+        if self.style_override.borrow().is_some() {
+            return None;
+        }
+        *self.style_override.borrow_mut() = Some((el, style));
+        let out = f();
+        *self.style_override.borrow_mut() = None;
+        Some(out)
+    }
+
+    /// Whether a style override runs ([`Self::with_style_override`]).
+    pub fn style_overridden(&self) -> bool {
+        self.style_override.borrow().is_some()
+    }
+
     /// The animated values for a sync of the layout engine, now; `None`
     /// without an animation source.
     pub fn take_animation_frame(&self) -> Option<crate::animation::AnimationFrame> {
@@ -1102,9 +1135,26 @@ impl StyleEngine {
         dom: &Dom,
         el: NodeId,
     ) -> Option<style::servo_arc::Arc<style::properties::ComputedValues>> {
+        if let Some((at, style)) = &*self.style_override.borrow() {
+            if *at == el {
+                return Some(style.clone());
+            }
+        }
         self.engine_styled(dom)?;
         let external = self.external.borrow();
         external.as_ref()?.0.element_style(crate::snapshot::render_key(el))
+    }
+
+    /// `el`'s starting style (`@starting-style`) from the layout engine (`None`: none applies).
+    pub fn starting_style(
+        &self,
+        dom: &Dom,
+        el: NodeId,
+    ) -> Option<style::servo_arc::Arc<style::properties::ComputedValues>> {
+        self.owns(dom, el)?;
+        self.engine_styled(dom)?;
+        let external = self.external.borrow();
+        external.as_ref()?.0.element_starting_style(crate::snapshot::render_key(el))
     }
 
     /// Makes `source` (the document's layout engine) the source of computed

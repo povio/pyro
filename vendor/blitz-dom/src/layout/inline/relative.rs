@@ -129,6 +129,33 @@ impl BaseDocument {
         (offset.x, offset.y)
     }
 
+    /// pyro: the positioned (relative or sticky) inline boxes that are not atomic from `node_id`
+    /// up to the inline root `root_id`, innermost first: their content paints with them, after
+    /// the in-flow content (CSS 2.1 Appendix E step 8), not in the root's text.
+    pub fn inline_span_positioned_chain(&self, node_id: NodeId, root_id: NodeId) -> Vec<NodeId> {
+        let root = &self.nodes[root_id];
+        let root_parent = root.is_anonymous().then_some(root.parent).flatten();
+        let mut chain = Vec::new();
+        let mut current = Some(node_id);
+        while let Some(id) = current {
+            if id == root_id || Some(id) == root_parent {
+                break;
+            }
+            let Some(node) = self.nodes.get(id) else { break };
+            if let Some(style) = node.primary_styles() {
+                let display = style.clone_display();
+                if !display.is_inline_flow() && !display.is_contents() {
+                    break;
+                }
+                if matches!(style.clone_position(), Position::Relative | Position::Sticky) && display.is_inline_flow() {
+                    chain.push(id);
+                }
+            }
+            current = node.parent;
+        }
+        chain
+    }
+
     /// pyro: whether some inline box (not atomic) the inline root `root_id` lays out is
     /// relatively positioned, so its content is painted moved (see [`inline_span_offset`]).
     pub fn inline_root_has_relative_spans(&self, root_id: NodeId) -> bool {

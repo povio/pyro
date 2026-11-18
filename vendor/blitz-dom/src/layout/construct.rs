@@ -1241,7 +1241,11 @@ pub(crate) fn flush_pseudo_elements(doc: &mut BaseDocument, node_id: NodeId) {
     // pyro: an optgroup's label row, as Chromium's
     // `-internal-optgroup-label` box, in the `::before` slot when the
     // optgroup has no `::before` of its own.
-    let label = before_style.is_none().then(|| optgroup_label(doc, node_id)).flatten();
+    let label = before_style
+        .is_none()
+        .then(|| optgroup_label(doc, node_id))
+        .flatten()
+        .or_else(|| file_selector_button(doc, node_id));
     let (before_style, label_text) = match label {
         Some((style, text)) => (Some(style), Some(text)),
         None => (before_style, None),
@@ -1379,6 +1383,39 @@ fn optgroup_label(
         None,
     )?;
     Some((style, text))
+}
+
+/// pyro: the button of an `<input type=file>`, the box of its `::file-selector-button`
+/// ("Choose file", as Chromium's), in the `::before` slot (an input has no `::before`).
+fn file_selector_button(
+    doc: &BaseDocument,
+    node_id: NodeId,
+) -> Option<(style::servo_arc::Arc<style::properties::ComputedValues>, String)> {
+    use style::selector_parser::PseudoElement;
+    use style::stylist::RuleInclusion;
+    if cfg!(feature = "file-input") {
+        return None;
+    }
+    let node = &doc.nodes[node_id];
+    let el = node.data.downcast_element()?;
+    if el.name.local != local_name!("input")
+        || !el.attr(local_name!("type")).is_some_and(|t| t.eq_ignore_ascii_case("file"))
+    {
+        return None;
+    }
+    let parent_style = node.primary_styles()?;
+    let read_guard = doc.guard.read();
+    let guards = StylesheetGuards::same(&read_guard);
+    let style = doc.stylist.lazily_compute_pseudo_element_style::<&Node>(
+        &guards,
+        node,
+        &PseudoElement::FileSelectorButton,
+        RuleInclusion::All,
+        &parent_style,
+        false,
+        None,
+    )?;
+    Some((style, "Choose file".to_string()))
 }
 
 /// Handles the cases where there are text nodes or inline nodes that need to be wrapped in an anonymous block node

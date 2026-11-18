@@ -1396,6 +1396,10 @@ impl<S: CheapCloneStr> FlexboxContainerStyle for Style<S> {
 #[cfg(feature = "flexbox")]
 impl<T: FlexboxContainerStyle> FlexboxContainerStyle for &'_ T {
     #[inline(always)]
+    fn block_baseline_synthesis(&self) -> f32 {
+        (*self).block_baseline_synthesis()
+    }
+    #[inline(always)]
     fn flex_direction(&self) -> FlexDirection {
         (*self).flex_direction()
     }

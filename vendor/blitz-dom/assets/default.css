@@ -216,6 +216,31 @@ input[type="file"] {
     background-color: transparent;
 }
 
+/* pyro: Chromium's file input: its label clips at its box, after its button, the box of its
+   `::file-selector-button` (a `button`: the button rules above, and its own). */
+input[type="file" i] {
+    overflow: clip !important;
+    text-overflow: ellipsis;
+    text-align: start !important;
+    white-space: pre;
+}
+
+input[type="file" i]::file-selector-button {
+    border: 1px solid #999;
+    border-radius: 1px;
+    padding: 1px 6px;
+    color: black;
+    background-color: #EFEFEF;
+    text-align: center;
+    display: inline-block;
+    box-sizing: border-box;
+    white-space: nowrap;
+    margin: 0;
+    margin-inline-end: 4px;
+    font-size: inherit;
+    font-family: system-ui, sans-serif;
+}
+
 /* pyro: an image button is replaced content laid out like <img>
    at its image's intrinsic size, without the text-input border, padding and
    background (Chromium's UA sheet: padding/border/background-color initial). */
@@ -1303,6 +1328,13 @@ dialog:popover-open {
 
 :popover-open {
     -moz-top-layer: top;
+}
+
+/* pyro: css-position-4 overlay: what is in the top layer is rendered there (a discrete
+   transition of it keeps an element there past its removal). Not `!important` as in the spec:
+   the sampled transition values rank below important declarations here. */
+dialog:modal, :popover-open {
+    overlay: auto;
 }
 
 :popover-open::backdrop {

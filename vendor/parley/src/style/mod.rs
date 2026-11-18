@@ -479,6 +479,8 @@ pub enum StyleProperty<'a, B: Brush> {
     TextSpacingTrim(TextSpacingTrim),
     /// pyro: where space is added between ideographs and other characters.
     TextAutospace(TextAutospace),
+    /// pyro: upright glyphs in a vertical line (`text-orientation: upright`).
+    Upright(bool),
     /// pyro: where justification adds space.
     TextJustify(TextJustify),
     /// pyro: which of the letter and word spacing scale with the font size.
@@ -566,6 +568,9 @@ pub struct TextStyle<'family, 'settings, B: Brush> {
     /// pyro: where this style's text spaces ideographs from letters and numerals (CSS
     /// `text-autospace`).
     pub text_autospace: TextAutospace,
+    /// pyro: this style's glyphs stand upright in vertical lines (CSS `text-orientation:
+    /// upright`): a glyph without a vertical advance (`vmtx`) advances by the font's height.
+    pub upright: bool,
     /// pyro: where justification adds space in this style's text (CSS `text-justify`).
     pub text_justify: TextJustify,
     /// pyro: which of this style's letter and word spacing scale with its font size (CSS
@@ -661,6 +666,7 @@ impl<B: Brush> Default for TextStyle<'static, 'static, B> {
             language_override: None,
             text_spacing_trim: TextSpacingTrim::default(),
             text_autospace: TextAutospace::default(),
+            upright: false,
             text_justify: TextJustify::default(),
             spacing_scales: SpacingScales::default(),
             annotation_space: AnnotationSpace::default(),

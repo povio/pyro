@@ -307,7 +307,29 @@ impl crate::document::BaseDocument {
     /// (styling any unstyled ancestors along the way) without storing it on the
     /// node. Returns `None` for non-elements and elements outside the document.
     pub fn resolve_undisplayed_style(&self, node_id: NodeId) -> Option<Arc<ComputedValues>> {
-        Some(self.resolve_undisplayed_styles(node_id)?.primary().clone())
+        Some(self.resolve_undisplayed_styles(node_id, None)?.primary().clone())
+    }
+
+    /// pyro: [`Self::resolve_undisplayed_style`] with caches the caller keeps
+    /// while the document does not change: each undisplayed ancestor's style
+    /// (an element inherits its parent's instead of every read matching the
+    /// whole chain from the `display: none` root again) and the selector
+    /// caches (`:has()` filters and results, nth-index), built once instead
+    /// of walking the subtree again for every element read. The caller must
+    /// clear `caches` whenever the document's nodes, states or sheets change.
+    pub fn resolve_undisplayed_style_cached(
+        &self,
+        node_id: NodeId,
+        caches: &mut UndisplayedCaches,
+    ) -> Option<Arc<ComputedValues>> {
+        let node = self.nodes.get(node_id)?;
+        if !node.is_element() || !node.flags.is_in_document() {
+            return None;
+        }
+        if let Some(style) = caches.styles.get(&selectors::OpaqueElement::new(node)) {
+            return Some(style.clone());
+        }
+        Some(self.resolve_undisplayed_styles(node_id, Some(caches))?.primary().clone())
     }
 
     /// pyro: `false` while no style traversal has kept a
@@ -349,7 +371,7 @@ impl crate::document::BaseDocument {
         let (primary, eager) = match stored {
             Some(styles) => styles,
             None => {
-                let styles = self.resolve_undisplayed_styles(node_id)?;
+                let styles = self.resolve_undisplayed_styles(node_id, None)?;
                 let eager = if pseudo.is_eager() { styles.pseudos.get(pseudo).cloned() } else { None };
                 (styles.primary().clone(), eager)
             }
@@ -446,7 +468,11 @@ impl crate::document::BaseDocument {
 
     /// The styles [`Self::resolve_undisplayed_style`] resolves, eagerly
     /// cascaded pseudo-elements included.
-    fn resolve_undisplayed_styles(&self, node_id: NodeId) -> Option<style::data::ElementStyles> {
+    fn resolve_undisplayed_styles(
+        &self,
+        node_id: NodeId,
+        caches: Option<&mut UndisplayedCaches>,
+    ) -> Option<style::data::ElementStyles> {
         let node = self.nodes.get(node_id)?;
         if !node.is_element() || !node.flags.is_in_document() {
             return None;
@@ -471,16 +497,42 @@ impl crate::document::BaseDocument {
             registered_speculative_painters: &RegisteredPaintersImpl,
         };
         // The thread-local context's sequential task list asserts the LAYOUT state when dropped
+        let mut caches = caches;
         let styles = {
             let mut thread_local = ThreadLocalStyleContext::new();
-            let mut context = StyleContext {
-                shared: &shared,
-                thread_local: &mut thread_local,
+            if let Some(selectors) = caches.as_deref_mut().and_then(|c| c.selectors.take()) {
+                thread_local.selector_caches = selectors;
+            }
+            let styles = {
+                let mut context = StyleContext {
+                    shared: &shared,
+                    thread_local: &mut thread_local,
+                };
+                resolve_style(&mut context, node, RuleInclusion::All, None, caches.as_deref_mut().map(|c| &mut c.styles))
             };
-            resolve_style(&mut context, node, RuleInclusion::All, None, None)
+            if let Some(caches) = caches.as_deref_mut() {
+                caches.selectors = Some(std::mem::take(&mut thread_local.selector_caches));
+            }
+            styles
         };
 
         Some(styles)
+    }
+}
+
+/// pyro: what [`BaseDocument::resolve_undisplayed_style_cached`] keeps
+/// between reads while the document stays the same.
+#[derive(Default)]
+pub struct UndisplayedCaches {
+    styles: style::traversal::UndisplayedStyleCache,
+    selectors: Option<selectors::context::SelectorCaches>,
+}
+
+impl UndisplayedCaches {
+    /// Forgets everything: the document changed.
+    pub fn clear(&mut self) {
+        self.styles.clear();
+        self.selectors = None;
     }
 }
 
@@ -774,9 +826,13 @@ impl selectors::Element for BlitzNode<'_> {
             NonTSPseudoClass::CustomState(ref state) => self.has_lp_custom_state(&state.0),
             // pyro: every link, visited or not, as browsers match `:link` for an element's style
             // (only the colours a visited link paints come from `:visited`).
-            NonTSPseudoClass::Link => self
-                .element_state()
-                .intersects(ElementState::VISITED_OR_UNVISITED),
+            // A visited link's highlight styles (`::selection`) take it as visited, as Chromium's
+            // visited style (WPT css-pseudo `selection-link-002`; `crate::dom_selection`).
+            NonTSPseudoClass::Link => {
+                self.element_state().intersects(ElementState::VISITED_OR_UNVISITED)
+                    && !(crate::dom_selection::LINKS_AS_VISITED.get()
+                        && self.element_state().contains(ElementState::VISITED))
+            }
             NonTSPseudoClass::PlaceholderShown => {
                 self.element_state().contains(ElementState::PLACEHOLDER_SHOWN)
             }

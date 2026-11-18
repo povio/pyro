@@ -144,3 +144,4 @@ mod unicode_bidi;
 mod vertical_text_decorations;
 mod vertical_writing_mode;
 mod viewport_overflow;
+mod vertical_lines_and_controls;

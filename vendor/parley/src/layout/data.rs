@@ -279,6 +279,8 @@ pub(crate) struct LayoutData<B: Brush> {
     pub(crate) tab_min_advance: f32,
     /// pyro: [`crate::Layout::set_line_height_quirk`].
     pub(crate) line_height_quirk: bool,
+    /// pyro: [`crate::Layout::set_central_baseline`].
+    pub(crate) central_baseline: bool,
     /// pyro: the soft hyphens that show a hyphen (their lines end at them): each one's shaped
     /// cluster with the glyphs it was shaped with.
     pub(crate) shown_hyphens: Vec<(u32, parley_engine::ClusterGlyphs)>,
@@ -325,6 +327,7 @@ impl<B: Brush> Default for LayoutData<B> {
             tab_space: -1.0,
             tab_min_advance: 0.0,
             line_height_quirk: false,
+            central_baseline: false,
             shown_hyphens: Vec::new(),
             edge_clusters: Vec::new(),
             autospace: Vec::new(),
@@ -395,6 +398,7 @@ impl<B: Brush> LayoutData<B> {
         self.tab_space = -1.0;
         self.tab_min_advance = 0.0;
         self.line_height_quirk = false;
+        self.central_baseline = false;
         self.shown_hyphens.clear();
         self.edge_clusters.clear();
         self.autospace.clear();

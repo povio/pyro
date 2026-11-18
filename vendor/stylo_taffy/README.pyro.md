@@ -85,3 +85,4 @@ Round 4 lane B: `aspect-ratio` is `None` on internal table boxes (rows, row grou
 for layout and keeps its content-based automatic minimum (Blink; WPT css-grid `stretch-grid-item-text-input-overflow`).
 - `convert.rs` (`establishes_fixed_containing_block`): `container-type` alone makes no containing block (a size
   container has no layout containment in CSS Conditional 5, as in Blink).
+- `block_baseline_synthesis`: 0 (block-start) in sideways `vertical-lr`, whose line-under side is the left.

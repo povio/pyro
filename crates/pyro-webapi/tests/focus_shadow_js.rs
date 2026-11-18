@@ -374,6 +374,10 @@ fn active_restyles_only_when_a_sheet_uses_it() {
          <body style='margin:0'><button id=b style='left:0;top:0'>b</button></body>");
     let r = &e.main;
     eval(r, "b.focus(); b.getBoundingClientRect()");
+    // The pointer arrives first: a press where it was not reconciles hover too (boundary events,
+    // as Chromium does for a pointer that moved without a move event), which is not what this
+    // checks.
+    mouse(&e.page, input::MouseKind::Moved, 10.0, 10.0, 0);
     // No sheet reads `:active`: the press changes the state, nothing else.
     let before = e.page.dom.borrow().version();
     mouse(&e.page, input::MouseKind::Pressed, 10.0, 10.0, 1);

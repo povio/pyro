@@ -646,3 +646,25 @@ of height 0, then clamped (css-tables `percentage-sizing-of-table-cell-007`). `t
   (transferred) limits and the ratio's height from it; a size the ratio gives from the other axis is at least the
   content's when `min-*` is `auto` (css-sizing `aspect-ratio/abspos-008/012/013`; `abspos-017`'s `min-width: 0` keeps
   the ratio).
+- Round 4 lane F: `compute/block.rs` `perform_final_layout_on_in_flow_children`: a block container's
+  `Baselines::dominant_first`/`dominant_last` come from the children that give its first and last baselines (none from a
+  scroll container or a child without one), so an inline-block whose lines sit in a nested block still has a central
+  baseline in a vertical line. `compute/flexbox.rs` `calculate_children_base_lines`: in a container on a central baseline
+  (`FlexboxContainerStyle::block_baseline_synthesis` 0.5: vertical writing modes, text not sideways) an item's baseline is
+  its central one (`dominant_first`), else its baseline, else synthesized in its middle (WPT css-flexbox
+  `baseline-synthesis-004` with vertical lines that centre their atomic inlines). Such a row container exports the same
+  item's central baseline as its `dominant_first` (`FlexItem::dominant_baseline`; WPT `synthesize-vrl-baseline`).
+
+Round 4 lane G: flexbox transfers min/max sizes through an item's ratio via its ratio inset (`transfer_through_ratio`;
+WPT css-sizing `flex-aspect-ratio-025/026`), and a column container of indefinite width measures a non-replaced ratio
+item without its content-based height (no definite basis or height, no growing) for its hypothetical width
+(`flex-aspect-ratio-026`).
+- Round 4 lane G: grid items honour `min-width: min-content | max-content` (`GridItemStyle::grid_min_size_keyword`,
+  `grid_item::keyword_min_width`): in their known size and final clamp, their min-/max-content contributions and their
+  minimum contribution (WPT css-grid `grid-items/grid-intrinsic-maximums`).
+- Round 4 lane G (baselines): flexbox synthesizes a baseline at `height * block_baseline_synthesis` (0 in sideways
+  vertical-lr, the line-under side); a column table item's flex base size from its `height` is measured at that
+  height (captions added); grid `baseline.rs` synthesizes an orthogonal item's missing inline-axis baseline at its
+  physical left (line-under).
+- Flexbox: `baseline` items in an rtl column share a baseline at their line-left edges, their group at the cross
+  start (`max_baseline_cross` in `align_flex_items_along_cross_axis`; WPT `flexbox-align-self-vert-rtl-001..003,005`).
