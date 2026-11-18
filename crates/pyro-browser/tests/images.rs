@@ -93,14 +93,16 @@ fn src_changes_reload_once_and_report_pending_state() {
         eval(&thread, page, "events.filter(e => e.startsWith('a:')).join('|')"),
         "a:load:true:3x2|a:load:true:800x600"
     );
-    // Setting the same source again does not request it again.
+    // Setting the same source again does not request it again; as a relevant mutation it fires
+    // `load` again, from the image already loaded (HTML's list of available images).
     eval(&thread, page, "document.getElementById('a').src = '/b.gif'; 1");
     settle(&mut thread);
     assert_eq!(loader.log.borrow().iter().filter(|u| u.ends_with("b.gif")).count(), 1);
+    assert_eq!(eval(&thread, page, "events.filter(e => e.startsWith('a:')).length"), "3");
     // Removing src clears the image without an event.
     eval(&thread, page, "document.getElementById('a').removeAttribute('src'); 1");
     settle(&mut thread);
-    assert_eq!(eval(&thread, page, "[document.getElementById('a').naturalWidth, events.length].join()"), "0,3");
+    assert_eq!(eval(&thread, page, "[document.getElementById('a').naturalWidth, events.length].join()"), "0,4");
 }
 
 #[test]
