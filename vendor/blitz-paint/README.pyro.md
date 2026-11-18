@@ -1118,3 +1118,6 @@ frame's whole transform, clipped to the content box (upstream applied the transl
   native look, not a computed radius. WPT css-ui `compute-kind-widget-generated/*` (153 pages).
   `pyro-render/tests/button_native_corners.rs`.
 - Lane F1, `highlight.rs` `selection_style`: a visited link's `::selection` style is computed lazily with it taken as visited before looking for an eager one (an eager one matched as unvisited is missing when only `:visited` rules apply).
+- Round 4 lane S4, `render.rs` `combined_text_compression` (in `node_transform`): a `text-combine-upright: all` box
+  (Stylo's `adjust_for_text_combine_upright`) whose text is wider than its 1em square is scaled horizontally to fit,
+  from the line's start edge (right in right-to-left text). `pyro-render/tests/text_combine_upright.rs`.

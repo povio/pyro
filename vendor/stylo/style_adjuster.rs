@@ -484,6 +484,48 @@ impl<'a, 'b: 'a> StyleAdjuster<'a, 'b> {
         }
     }
 
+    /// pyro: `text-combine-upright: all` on an inline box in a vertical (not sideways) line: its
+    /// text is combined into one upright 1em square (CSS Writing Modes 4 § 9.1.1). Laid out as an
+    /// inline-block of `horizontal-tb` writing (`adjust_for_writing_mode` below makes it one), 1em
+    /// by 1em, on one centred line; blitz-paint compresses it horizontally to 1em when wider.
+    /// Its descendants inherit `horizontal-tb`, so they combine with it rather than on their own.
+    #[cfg(feature = "servo")]
+    fn adjust_for_text_combine_upright(&mut self, layout_parent_style: &ComputedValues) {
+        use crate::computed_values::writing_mode::T as WritingModeProperty;
+        use crate::values::computed::{Length, LengthPercentage, Size, TextCombineUpright};
+        use crate::values::generics::NonNegative;
+        use crate::values::specified::text::TextWrapMode;
+        if self.style.get_inherited_text().text_combine_upright != TextCombineUpright::All {
+            return;
+        }
+        let parent = layout_parent_style.writing_mode;
+        if !parent.is_vertical() || parent.is_sideways() || *self.style.get_box().get_display() != Display::Inline {
+            return;
+        }
+        // Emphasis marks of combined text go beside the composition, as for one glyph of the
+        // vertical line, which an inline-block's own text cannot draw: such text is left as it
+        // was (upright glyphs), until the line marks combined boxes itself.
+        if !matches!(
+            self.style.get_inherited_text().text_emphasis_style,
+            crate::values::computed::TextEmphasisStyle::None
+        ) {
+            return;
+        }
+        let em = self.style.get_font().slow_clone_font_size().computed_size();
+        self.style.mutate_inherited_box().set_writing_mode(WritingModeProperty::HorizontalTb);
+        self.style.writing_mode = crate::logical_geometry::WritingMode::new(self.style.get_inherited_box());
+        let text = self.style.mutate_inherited_text();
+        text.set_text_wrap_mode(TextWrapMode::Nowrap);
+        text.set_text_align(crate::values::computed::TextAlign::Center);
+        let one_em = || Size::LengthPercentage(NonNegative(LengthPercentage::new_length(em)));
+        let pos = self.style.mutate_position();
+        pos.set_width(one_em());
+        pos.set_height(one_em());
+        self.style
+            .mutate_font()
+            .set_line_height(crate::values::computed::LineHeight::Length(NonNegative(Length::new(em.px()))));
+    }
+
     /// CSS overflow-x and overflow-y require some fixup as well in some cases.
     /// https://drafts.csswg.org/css-overflow-3/#overflow-properties
     /// "Computed value: as specified, except with `visible`/`clip` computing to
@@ -1271,6 +1313,8 @@ impl<'a, 'b: 'a> StyleAdjuster<'a, 'b> {
         }
         self.adjust_for_justify_items();
         self.adjust_for_table_text_align();
+        #[cfg(feature = "servo")]
+        self.adjust_for_text_combine_upright(layout_parent_style);
         self.adjust_for_writing_mode(layout_parent_style);
         #[cfg(feature = "gecko")]
         self.adjust_for_ruby(element);

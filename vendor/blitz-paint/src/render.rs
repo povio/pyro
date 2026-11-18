@@ -579,6 +579,43 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             * self.table_part_transform(node)
             * Affine::translate(Vec2::new(location.x as f64, location.y as f64) * self.scale + sticky)
             * node.transform().as_deref().copied().unwrap_or_default()
+            * self.combined_text_compression(node)
+    }
+
+    /// pyro: `text-combine-upright: all` text wider than its 1em square (an inline-block of
+    /// `horizontal-tb` writing in a vertical line, Stylo's `adjust_for_text_combine_upright`) is
+    /// compressed horizontally to fit it, from its left edge (CSS Writing Modes 4 § 9.1.1: the UA
+    /// may scale the text; Blink scales it).
+    fn combined_text_compression(&self, node: &Node) -> Affine {
+        let Some(style) = node.primary_styles() else {
+            return Affine::IDENTITY;
+        };
+        if style.get_inherited_text().text_combine_upright != style::values::computed::TextCombineUpright::All
+            || style.writing_mode.is_vertical()
+        {
+            return Affine::IDENTITY;
+        }
+        let parent_vertical = node
+            .layout_parent
+            .get()
+            .and_then(|parent| self.dom.get_node(parent))
+            .and_then(|parent| parent.primary_styles())
+            .is_some_and(|parent| parent.writing_mode.is_vertical() && !parent.writing_mode.is_sideways());
+        if !parent_vertical {
+            return Affine::IDENTITY;
+        }
+        let Some(text) = node.element_data().and_then(|el| el.inline_layout_data.as_deref()) else {
+            return Affine::IDENTITY;
+        };
+        let box_width = node.final_layout().size.width as f64;
+        let text_width = text.layout.width() as f64 / text.layout.scale().max(f32::EPSILON) as f64;
+        if box_width <= 0.0 || text_width <= box_width {
+            return Affine::IDENTITY;
+        }
+        // An overflowing line starts at its start edge: the right one in right-to-left text.
+        let scale = box_width / text_width;
+        let start = if style.writing_mode.is_bidi_ltr() { 0.0 } else { (box_width - text_width) * self.scale };
+        Affine::translate((-start * scale, 0.0)) * Affine::scale_non_uniform(scale, 1.0)
     }
 
     /// pyro: the transforms of a table cell's row group and row, which are no boxes of their own
