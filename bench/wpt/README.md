@@ -441,6 +441,33 @@ The 3 errors are one pyro bug, not a crash: `Page.captureScreenshot` answers `th
 and do not get are missing in WPT too (`/fonts/DoulosSIL-R.woff`, `/fonts/GentiumPlus-R.woff2`,
 `css/css-pseudo/highlight-cascade/support/selections.js` and ten others).
 
+Added on 2026-11-18 to `LAYOUT_DIRS` (and `wpt-paths.txt`): eight directories that pass most of their reftests, 3,407
+reftests in all. Two local runs at `--jobs 4` of the integration build (not a baseline; the baseline comes from CI)
+completed every page but one hang and agreed on every page but
+`css/css-contain/content-visibility/content-visibility-with-popover-top-layer-005.html` (passed in one run, hung in
+the other). They hold about 270 s of page time, which is about 35 s of wall time on each of the two `lp-m1` reftest
+shards at 4 jobs (twice that on the first run after the addition, which reruns each new pass):
+
+| directory | reftests | reference files | no reference | crash tests | manual | print | wptserve | pyro (local) | Chrome |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| css/css-writing-modes | 1,165 | 478 | 75 | 13 | 54 | 0 | 0 | 947 | 1,122 |
+| css/css-ui | 963 | 106 | 0 | 6 | 94 | 0 | 0 | 744 | 947 |
+| css/css-contain | 433 | 223 | 0 | 64 | 0 | 1 | 2 | 295-296 | 424 |
+| css/css-multicol | 462 | 216 | 1 | 165 | 1 | 4 | 1 | 253 | 457 |
+| css/css-will-change | 47 | 16 | 0 | 1 | 0 | 0 | 0 | 42 | 47 |
+| css/WOFF2 | 298 | 298 | 3 | 0 | 0 | 0 | 0 | 293 | 292 |
+| css/css-namespaces | 23 | 8 | 1 | 0 | 0 | 0 | 0 | 22 | 23 |
+| css/css-style-attr | 16 | 4 | 0 | 0 | 0 | 0 | 0 | 15 | 16 |
+| **added 2026-11-18** | **3,407** | 1,349 | 80 | 249 | 149 | 5 | 3 | 2,612 | 3,328 |
+
+Chrome is wpt.fyi's Chrome 157 stable run nearest the pinned revision (`chrome-compare.mjs`). pyro fails 218
+css-writing-modes reftests (191 of them pass in Chrome). The largest groups: 55 `forms/*` controls in vertical modes,
+25 `text-combine-upright-*` and `tcy-*`, 24 `abs-pos-non-replaced-icb-*` (each test is an `<object type="text/html">`
+whose nested document pyro does not render, so it paints the fallback), 24 percentage sizes of orthogonal flows
+(`sizing-orthog*`), 12 `vertical-alignment-*` (`vertical-align: top | text-top | text-bottom | bottom` is ignored
+in vertical lines) and 12 tables in vertical modes (`border-conflict-element-*`, `caption-side-*`: a collapsed-border
+table of empty cells paints nothing).
+
 Left out, counted by reason in the run's `excluded`: reference files (named or linked as one, no links of their own),
 markup with no reference (CSS2's visual tests, support pages), crash tests, manual tests (by name, or by CSS flags
 such as `interact`), print reftests, pages whose page or references need what `serve.mjs` lacks (`.sub` substitutions,
@@ -608,8 +635,8 @@ bench/wpt/fetch-wpt.sh --all ~/wpt-full                     # the whole revision
 bun bench/wpt/coverage.mjs --wpt ~/wpt-full                 # downloads the manifest from wpt.fyi once (40 MB)
 ```
 
-At a421f2fe, of 132,204 manifest items: testharness 39,989 (gate 3,537, runnable 19,495), reftest 29,212 (gate
-18,158, runnable 9,640), crashtest 2,105 (gate 2,031). Not run: testharness worker variants 4,320, wptserve names
+At a421f2fe, of 132,204 manifest items: testharness 39,989 (gate 5,011, runnable 18,021), reftest 29,212 (gate
+21,836, runnable 5,962), crashtest 2,105 (gate 2,031). Not run: testharness worker variants 4,320, wptserve names
 7,048, Python handlers 2,748, testdriver 2,701; reftests needing wptserve 418, testdriver 83, masonry 911; and
 test262 53,814, manual 3,047, visual 2,714, wdspec 685, print reftests 448, aamtest 190. `discoveredNotInManifest`
 lists what discovery takes that the manifest classifies otherwise (45 `-crash` pages as testharness, 4 SVG reftests):

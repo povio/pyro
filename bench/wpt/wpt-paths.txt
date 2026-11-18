@@ -66,6 +66,14 @@ css/css-text/
 css/css-fonts/
 css/css-inline/
 css/css-borders/
+css/css-writing-modes/
+css/css-ui/
+css/css-contain/
+css/css-multicol/
+css/css-will-change/
+css/WOFF2/
+css/css-namespaces/
+css/css-style-attr/
 # Support files those tests load (from serve.mjs's request log, WPT_SERVE_LOG, over a full run; for the reftests,
 # from the URLs their pages, references and stylesheets name):
 resources/

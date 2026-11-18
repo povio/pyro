@@ -139,6 +139,10 @@ export const LAYOUT_DIRS = [
   'css/css-inline', 'css/css-borders',
   // pyro: css-shapes (238 reftests; shape-outside, lane F1).
   'css/css-shapes',
+  // pyro: writing modes, UI (outline, box-sizing, cursor, appearance), containment, multi-column, will-change, WOFF2
+  // fonts, namespaces and style attributes (3,407 reftests, 2,612 pass locally; README "Reftests").
+  'css/css-writing-modes', 'css/css-ui', 'css/css-contain', 'css/css-multicol', 'css/css-will-change', 'css/WOFF2',
+  'css/css-namespaces', 'css/css-style-attr',
 ];
 // scroll-animations: scroll-driven animations' reftests (lane F2; 33 pages, 18 pass).
 export const REFTEST_DIRS = [...PAINT_DIRS, 'css/selectors', 'html/dom', 'shadow-dom', 'dom', 'encoding', ...LAYOUT_DIRS, 'scroll-animations'];
