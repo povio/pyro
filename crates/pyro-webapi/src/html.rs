@@ -1403,7 +1403,8 @@ impl JsClass for HtmlElement {
                     _ => cur = dom.parent_element(c).js()?,
                 }
             }
-            Ok(s.boolean(false))
+            // `designMode` makes the body's content editable.
+            Ok(s.boolean(crate::editing::in_design_mode_content(&dom, n.id)))
         });
         def.getter("dataset", |s, n| Ok(collections::dataset(s, n.page(), n.id)?.value()));
         // [PutForwards=cssText]

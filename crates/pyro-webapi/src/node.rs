@@ -1921,6 +1921,26 @@ impl JsClass for Document {
         });
         def.method("elementFromPoint", 2, crate::html::element_from_point);
         def.method("elementsFromPoint", 2, crate::html::elements_from_point);
+        // HTML `designMode`: "on" makes the whole document editable; turning it on puts the
+        // selection at the start of the document.
+        def.accessor(
+            "designMode",
+            |s, n| Ok(s.string(if n.page().dom.borrow().design_mode(n.id) { "on" } else { "off" })),
+            |_s, n, v| {
+                let value = crate::util::dom_string(v)?.to_ascii_lowercase();
+                let on = match value.as_str() {
+                    "on" => true,
+                    "off" => false,
+                    _ => return Ok(()),
+                };
+                let was = n.page().dom.borrow().design_mode(n.id);
+                n.page().dom.borrow_mut().set_design_mode(n.id, on).js()?;
+                if on && !was && n.page().document() == n.id {
+                    crate::editing::set_selection(n.page(), (n.id, 0), (n.id, 0));
+                }
+                Ok(())
+            },
+        );
         def.method("startViewTransition", 0, |s, n, a| {
             let doc = wrap_node(s, n.page(), n.id)?.value();
             let root = n.page().dom.borrow().document_element(n.id).js()?;

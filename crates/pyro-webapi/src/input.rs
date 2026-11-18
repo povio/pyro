@@ -1225,6 +1225,22 @@ fn press_char(page: &Rc<PageDom>, target: NodeId, k: &KeyInput) {
 
 /// The contenteditable host the focused element edits, if any.
 fn editing_host_of(page: &PageDom, target: NodeId) -> Option<NodeId> {
+    // In a designMode document typing goes where the selection is (the focus stays on the body
+    // or the document): the editing host of the selection's start, when it is in the document.
+    let design = {
+        let dom = page.dom.borrow();
+        dom.node_document(target).ok().filter(|&doc| dom.design_mode(doc))
+    };
+    if let Some(doc) = design {
+        if let Some((start, _)) = crate::editing::selection_range(page) {
+            let dom = page.dom.borrow();
+            if dom.node_document(start.0).ok() == Some(doc) {
+                if let Some(host) = crate::editing::editing_host(&dom, start.0) {
+                    return Some(host);
+                }
+            }
+        }
+    }
     crate::editing::editing_host(&page.dom.borrow(), target)
 }
 

@@ -889,6 +889,7 @@ impl Dom {
             hovered: NIL,
             activated: NIL,
             focus_visible: false,
+            design_mode: false,
             document_element: NIL,
             head: NIL,
             body: NIL,
@@ -902,6 +903,21 @@ impl Dom {
         self.n_mut(idx).set_tree_flags(tree_flags::CONNECTED);
         self.doc_data_mut(idx).owned = 1;
         self.id_of(idx)
+    }
+
+    /// HTML `document.designMode` of `doc`: whether the whole document is editable.
+    pub fn design_mode(&self, doc: NodeId) -> bool {
+        self.check(doc).ok().is_some_and(|i| matches!(&self.n(i).kind, NodeKind::Document(d) if d.design_mode))
+    }
+
+    /// Sets `doc`'s `designMode` (`on`).
+    pub fn set_design_mode(&mut self, doc: NodeId, on: bool) -> DomResult<()> {
+        let i = self.check(doc)?;
+        match &mut self.n_mut(i).kind {
+            NodeKind::Document(d) => d.design_mode = on,
+            _ => return Err(DomError::Type("not a document")),
+        }
+        Ok(())
     }
 
     /// Marks a document as displayed by a browsing context; active documents

@@ -93,3 +93,37 @@ fn window_find_selects_matches() {
         "true|AAA|true|12|false|false|true|4"
     );
 }
+
+/// `document.designMode`: the document's tree is editable (not shadow trees), the body is the
+/// editing host of its content (`delete` after `selectAll` empties it, it is not removed), and a
+/// line break in a `<script>` of the head is a linefeed (WPT editing designMode crashtests,
+/// insertparagraph-in-child-of-head).
+#[test]
+fn design_mode_edits_the_document() {
+    let env = Env::new("http://svg.test/");
+    assert_eq!(
+        env.eval(
+            r#"(() => {
+              document.body.innerHTML = "<p>one</p><div id=h></div>";
+              const p = document.querySelector("p");
+              const shadow = document.getElementById("h").attachShadow({ mode: "open" });
+              shadow.innerHTML = "<span>s</span>";
+              const out = [document.designMode, p.isContentEditable];
+              document.designMode = "ON";
+              out.push(document.designMode, p.isContentEditable, shadow.firstChild.isContentEditable);
+              document.execCommand("selectAll");
+              document.execCommand("delete");
+              out.push(document.body !== null, document.body.textContent);
+              const s = document.createElement("script");
+              document.head.appendChild(s);
+              getSelection().collapse(s, 0);
+              document.execCommand("insertParagraph");
+              out.push(JSON.stringify(s.textContent), s.children.length);
+              document.designMode = "off";
+              out.push(document.designMode, document.body.isContentEditable);
+              return out.join("|");
+            })()"#
+        ),
+        "off|false|on|true|false|true||\"\\n\"|0|off|false"
+    );
+}

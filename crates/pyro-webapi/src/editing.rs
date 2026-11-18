@@ -185,7 +185,17 @@ pub fn is_editable(dom: &Dom, node: NodeId) -> bool {
         }
         cur = dom.parent_element(c).ok().flatten();
     }
-    false
+    in_design_mode_content(dom, node)
+}
+
+/// Whether `node` is content a designMode document makes editable: the document element and
+/// what is in it, in the document's own tree (not a shadow tree).
+pub fn in_design_mode_content(dom: &Dom, node: NodeId) -> bool {
+    let Ok(doc) = dom.node_document(node) else { return false };
+    if !dom.design_mode(doc) {
+        return false;
+    }
+    dom.document_element(doc).ok().flatten().is_some_and(|root| dom.contains(root, node).unwrap_or(false))
 }
 
 /// The editing host of `node`: the outermost editable ancestor-or-self.
@@ -204,6 +214,14 @@ pub fn editing_host(dom: &Dom, node: NodeId) -> Option<NodeId> {
             break;
         }
         host = Some(c);
+        // In a designMode document the body is the editing host of its content, as in browsers
+        // (HTML names the document element; Chromium and Gecko edit inside the body and never
+        // remove it): `delete` after `selectAll` empties the body, it does not remove it.
+        if editable_attr(dom, c).is_none()
+            && dom.node_document(c).is_ok_and(|doc| dom.design_mode(doc) && dom.body(doc).ok().flatten() == Some(c))
+        {
+            break;
+        }
         cur = dom.parent_element(c).ok().flatten();
     }
     host
@@ -714,8 +732,25 @@ pub fn insert_paragraph(page: &Rc<PageDom>, host: NodeId) {
     });
 }
 
+/// Whether `node` is in (or is) an HTML element whose content is text only (raw text and
+/// escapable raw text elements, `<textarea>`): a line break there is a linefeed, not a `<br>`.
+fn in_text_only_element(dom: &Dom, node: NodeId) -> bool {
+    let el = match dom.node_type(node).ok() {
+        Some(NodeType::Element) => Some(node),
+        _ => dom.parent_element(node).ok().flatten(),
+    };
+    el.and_then(|el| dom.element(el).ok().filter(|e| e.is_html()).map(|e| e.local_name().clone())).is_some_and(|name| {
+        matches!(&*name, "script" | "style" | "title" | "textarea" | "xmp" | "iframe" | "noembed" | "noframes")
+    })
+}
+
 fn split_block(dom: &mut Dom, host: NodeId, caret: Point) -> Point {
     let caret = insertion_point(dom, caret);
+    // Content that is text only (a `<script>` or `<style>` in the head of a designMode
+    // document) gets a linefeed, as in browsers: no element goes into it.
+    if in_text_only_element(dom, caret.0) {
+        return insert_at(dom, caret, "\n");
+    }
     let block = block_of(dom, caret.0, host);
     let Ok(doc) = dom.node_document(host) else { return caret };
     if block == host {
@@ -1030,7 +1065,8 @@ fn br_between(dom: &Dom, within: NodeId, a: NodeId, b: NodeId) -> bool {
 /// its line so the new line shows, as Chromium does.
 pub fn insert_line_break(page: &Rc<PageDom>, host: NodeId) {
     let (start, end) = host_range(page, host);
-    let newline = crate::edit_commands::newlines_significant(page, start.0);
+    let newline = crate::edit_commands::newlines_significant(page, start.0)
+        || in_text_only_element(&page.dom.borrow(), start.0);
     edit(page, host, "insertLineBreak", None, |page| {
         let caret = {
             let mut dom = page.dom.borrow_mut();

@@ -824,24 +824,25 @@ complete:
   `insertRule`, srcdoc reload, `window.find`, and a `KeyframeEffect` target from another
   document.
 
-2,014 of 2,031 complete locally. These 17 are **known incomplete**: each needs a feature pyro does not have. They stay
+Feature lane F3a (2026-11-18) completed 4 more: customized built-in elements (the two `abort-insertion` pages, which
+also hung on a cycle the parser made), `document.designMode` (`designMode-caret-change`) and `selectstart` from
+`selectAll` and `find()` (`selectall-and-find-svg-text-on-selectstart`).
+
+2,018 of 2,031 complete locally (with the font and Typed OM lanes). These 13 are **known incomplete**: each needs a feature pyro does not have. They stay
 failing entries of the baseline, not flaky entries, and none of them crashes, panics or hangs:
 
 | page | needs |
 |---|---|
 | `scroll-animations/crashtests/` (4 pages) | scroll and view timelines (`animation-timeline`, `ScrollTimeline`) |
-| `custom-elements/custom-button-abort-insertion-crash.html`, `custom-image-abort-insertion-crash.html` | customized built-in elements (`is=`, `extends`) |
 | `service-workers/service-worker/messageport-transfer-crash.html` | `SharedWorker` |
 | `trusted-types/navigate-to-javascript-url-007-crash.html` | Trusted Types (`trustedTypes`) |
 | `html/semantics/embedded-content/the-img-element/image-loading-lazy-subframe-detached-crash.html` | IntersectionObserver across pages (another frame's document) |
 | `streams/readable-byte-streams/crashtests/from-cross-realm.html` | a synchronous about:blank document in the window `window.open()` returns (Chrome times out on this page too, per wpt.fyi) |
 | `html/semantics/permission-element/geolocation-element/iframe-use-after-free-crash.html` | DOM calls on a navigated-away iframe document (its realm is disposed; browsers allow them) |
-| `editing/crashtests/designMode-caret-change.html` | `document.designMode`. A first version made `selectall-containing-textarea-and-subscript` (passing today) loop: in a designMode document, `delete` after `selectAll` removed `<body>`, and the commands then changed the selection without end |
-| `editing/crashtests/designMode-document-will-be-blurred-by-focus-event-listener.html` | `document.designMode`, and a `focus` event at an iframe's Window from `contentWindow.focus()` |
+| `editing/crashtests/designMode-document-will-be-blurred-by-focus-event-listener.html` | a `focus` event at an iframe's Window from `contentWindow.focus()` (`document.designMode` exists since lane F3a) |
 | `editing/crashtests/inserthorizontalrule-in-textarea-in-editor-and-undo-on-error-events.html` | `<object>` load and error events (this page relies on Chromium's `error` for an `<object>` without data) |
 | `css/css-conditional/container-queries/crashtests/chrome-bug-439886903-crash.html` | `<object>` load events (`<object data=svg>`) |
 | `css/selectors/crashtests/chrome-bug-565742178.html` | `<use>` shadow trees with live clones (an `error` event from the cloned image) |
-| `selection/crashtests/selectall-and-find-svg-text-on-selectstart.html` | `selectstart` from `execCommand("selectAll")` and `find()` |
 
 ### CI
 

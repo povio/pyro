@@ -106,6 +106,8 @@ pub struct DocumentData {
     /// The focused element matches `:focus-visible` (Chrome's heuristics,
     /// decided by the bindings when focus moves).
     pub(crate) focus_visible: bool,
+    /// HTML `document.designMode` is "on": the whole document is editable.
+    pub(crate) design_mode: bool,
     /// The document element (first element child), its first HTML `head`
     /// child and its first HTML `body` or `frameset` child; NIL for none.
     /// Kept by `tree_linked`/`tree_unlinking`, which every link and unlink
