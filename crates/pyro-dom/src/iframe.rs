@@ -32,6 +32,12 @@ pub struct IframeEvent {
 pub(crate) struct IframeQueue {
     documents: FxHashSet<NodeId>,
     events: FxHashMap<NodeId, Vec<IframeEvent>>,
+    /// `<object>`/`<embed>` elements whose fetched resource turned out to be a document (its
+    /// Content-Type; [`Dom::set_object_document`]), until their `data`/`src` or `type` changes.
+    document_objects: FxHashSet<NodeId>,
+    /// `<object>`/`<embed>` elements with a child navigable (their `Connected` queued, not yet
+    /// their `Disconnected`): what an attribute change compares against.
+    object_frames: FxHashSet<NodeId>,
 }
 impl Dom {
     /// Registers a browsing-context document and queues its existing iframes.
@@ -70,13 +76,27 @@ impl Dom {
         (self.iframes.documents.contains(&doc) && self.is_connected_idx(idx)).then_some(doc)
     }
     fn iframe_element(&self, idx: u32) -> bool {
-        // `<frame>` creates a child navigable like `<iframe>` does, and so does an `<object>`
-        // whose `data` is a document.
+        // `<frame>` creates a child navigable like `<iframe>` does, and so does an `<object>` or
+        // `<embed>` whose resource is a document.
         self.n(idx).element().is_some_and(|e| {
             e.is_html()
                 && (matches!(e.name.local, local_name!("iframe") | local_name!("frame"))
-                    || (e.name.local == local_name!("object") && object_hosts_document(e)))
+                    || (is_object_or_embed(e)
+                        && (object_hosts_document(e) || self.iframes.document_objects.contains(&self.id_of(idx)))
+                        && !self.in_media_element(idx)))
         })
+    }
+    /// Whether `idx` has an ancestor media element: an `<object>` or `<embed>` in one represents
+    /// nothing (HTML "the embed element", "the object element").
+    fn in_media_element(&self, idx: u32) -> bool {
+        let mut i = self.n(idx).parent;
+        while i != NIL {
+            if self.n(i).element().is_some_and(|e| e.is_html() && matches!(e.name.local, local_name!("video") | local_name!("audio"))) {
+                return true;
+            }
+            i = self.n(i).parent;
+        }
+        false
     }
     fn iframe_event(&mut self, document: NodeId, idx: u32, change: IframeChange) {
         // A `<use>` instance's frames load nothing and its scripts never run.
@@ -84,6 +104,17 @@ impl Dom {
             return;
         }
         let node = self.id_of(idx);
+        if self.n(idx).element().is_some_and(is_object_or_embed) {
+            match change {
+                IframeChange::Connected => {
+                    self.iframes.object_frames.insert(node);
+                }
+                IframeChange::Disconnected => {
+                    self.iframes.object_frames.remove(&node);
+                }
+                _ => {}
+            }
+        }
         self.add_ref(node).expect("live iframe");
         self.iframes.events.entry(document).or_default().push(IframeEvent { node, change });
         self.touch_hook();
@@ -183,13 +214,18 @@ impl Dom {
         }
     }
     pub(crate) fn iframes_after_attr(&mut self, idx: u32, local: &str) {
+        if let Some(url_attribute) = self.n(idx).element().filter(|e| is_object_or_embed(e)).map(resource_attribute) {
+            // HTML "the object element" / "the embed element": a change of the resource's URL or
+            // type runs the steps again, so a child navigable may come or go.
+            if local == url_attribute || local == "type" {
+                self.object_steps_again(idx, local == url_attribute);
+            }
+            return;
+        }
         if !self.iframe_element(idx) {
             return;
         }
-        let object = self.n(idx).element().is_some_and(|e| e.name.local == local_name!("object"));
         let attribute = match local {
-            "data" if object => IframeAttribute::Src,
-            "src" | "srcdoc" if object => return,
             "src" => IframeAttribute::Src,
             "srcdoc" => IframeAttribute::Srcdoc,
             "name" => IframeAttribute::Name,
@@ -202,14 +238,15 @@ impl Dom {
     }
 }
 
-/// Whether an HTML `<object>` shows its `data` as a nested document (a child navigable, as an
+/// Whether an HTML `<object>` shows its `data` (an `<embed>` its `src`) as a nested document (a child navigable, as an
 /// `<iframe>`'s `src`): its `type` is an HTML or XHTML document type, or without a `type` its
-/// URL's file extension names one. The type a response declares is not waited for: other objects
-/// keep showing an image or their fallback content (`blitz-dom` `object_loads_image`), as does one
-/// without `data`.
+/// URL's file extension names one. Other objects are fetched first and become one when the
+/// response's Content-Type is a document ([`Dom::set_object_document`]); until then they show an
+/// image or their fallback content (`blitz-dom` `object_loads_image`), as one without `data` does.
 pub fn object_hosts_document(e: &crate::node::ElementData) -> bool {
-    // Without `data` an object shows its fallback content.
-    if e.attr("data").is_none_or(|data| data.trim().is_empty()) {
+    let url = e.attr(resource_attribute(e));
+    // Without `data` an object shows its fallback content (an embed without `src`, nothing).
+    if url.is_none_or(|url| url.trim().is_empty()) {
         return false;
     }
     match e.attr("type").map(str::trim) {
@@ -217,7 +254,7 @@ pub fn object_hosts_document(e: &crate::node::ElementData) -> bool {
             let essence = mime.split(';').next().unwrap_or_default().trim();
             essence.eq_ignore_ascii_case("text/html") || essence.eq_ignore_ascii_case("application/xhtml+xml")
         }
-        _ => e.attr("data").is_some_and(|data| {
+        _ => url.is_some_and(|data| {
             let path = data.split(['?', '#']).next().unwrap_or_default();
             let extension = path.rsplit_once('.').map_or("", |(_, ext)| ext);
             ["html", "htm", "xhtml", "xht"].iter().any(|known| extension.eq_ignore_ascii_case(known))
@@ -225,9 +262,58 @@ pub fn object_hosts_document(e: &crate::node::ElementData) -> bool {
     }
 }
 
+fn is_object_or_embed(e: &crate::node::ElementData) -> bool {
+    e.is_html() && matches!(e.name.local, local_name!("object") | local_name!("embed"))
+}
+
+/// The attribute naming an `<object>`'s (`data`) or `<embed>`'s (`src`) resource.
+fn resource_attribute(e: &crate::node::ElementData) -> &'static str {
+    if e.name.local == local_name!("embed") {
+        "src"
+    } else {
+        "data"
+    }
+}
+
 impl Dom {
-    /// Whether `node` is an HTML `<object>` that hosts a nested document ([`object_hosts_document`]).
+    /// Whether `node` is an HTML `<object>` or `<embed>` showing a nested document: by its `type`
+    /// or URL ([`object_hosts_document`]), or by its response's Content-Type
+    /// ([`Dom::set_object_document`]).
     pub fn is_document_object(&self, node: NodeId) -> bool {
-        self.element(node).is_ok_and(|e| e.is_html() && e.name.local == local_name!("object") && object_hosts_document(e))
+        self.check(node).is_ok_and(|idx| self.n(idx).element().is_some_and(is_object_or_embed) && self.iframe_element(idx))
+    }
+
+    /// The fetched resource of the `<object>`/`<embed>` `node` is a document (its response's
+    /// Content-Type): it gets a child navigable, as an iframe does, which loads it.
+    pub fn set_object_document(&mut self, node: NodeId) {
+        let Ok(idx) = self.check(node) else { return };
+        if !self.n(idx).element().is_some_and(is_object_or_embed) {
+            return;
+        }
+        self.iframes.document_objects.insert(node);
+        if !self.iframes.object_frames.contains(&node) {
+            if let Some(document) = self.iframe_document(idx) {
+                self.iframe_event(document, idx, IframeChange::Connected);
+            }
+        }
+    }
+
+    /// The `<object>`/`<embed>` `idx` changed its resource URL (`url_changed`) or `type`: the
+    /// Content-Type of the old resource no longer decides, and a child navigable comes (a
+    /// document now), goes (no longer), or navigates to the new URL.
+    fn object_steps_again(&mut self, idx: u32, url_changed: bool) {
+        let node = self.id_of(idx);
+        self.iframes.document_objects.remove(&node);
+        let was = self.iframes.object_frames.contains(&node);
+        let now = self.iframe_element(idx);
+        let Some(document) = self.iframe_document(idx) else { return };
+        match (was, now) {
+            (false, true) => self.iframe_event(document, idx, IframeChange::Connected),
+            (true, false) => self.iframe_event(document, idx, IframeChange::Disconnected),
+            (true, true) if url_changed => {
+                self.iframe_event(document, idx, IframeChange::AttributeChanged(IframeAttribute::Src))
+            }
+            _ => {}
+        }
     }
 }

@@ -571,6 +571,15 @@ impl FrameHost {
             {
                 return Ok(());
             }
+            // An `<object>` or `<embed>` that is not being rendered (`display: none`) represents
+            // nothing: no child navigable (HTML "the embed element", "the object element").
+            if dom.is_document_object(node) {
+                if let Some(page_dom) = ancestor.page_dom.as_ref() {
+                    if !page_dom.layout().check_visibility(&dom, node, Default::default()) {
+                        return Ok(());
+                    }
+                }
+            }
             (
                 dom.get_attribute(node, "name").ok().flatten().unwrap_or("").to_owned(),
                 Sandbox::parse(dom.get_attribute(node, "sandbox").ok().flatten()),
@@ -1391,10 +1400,12 @@ impl Browser {
             if !dom.is_connected(owner).unwrap_or(false) {
                 return;
             }
-            // An `<object>` hosting a document navigates to its `data` (it has no `srcdoc`).
-            let object = dom.is_document_object(owner);
+            // An `<object>` hosting a document navigates to its `data`, an `<embed>` to its `src`
+            // (neither has `srcdoc`).
+            let embedded = dom.is_document_object(owner);
+            let object = embedded && dom.element(owner).is_ok_and(|e| &*e.name.local == "object");
             (
-                dom.get_attribute(owner, "srcdoc").ok().flatten().filter(|_| !object).map(str::to_owned),
+                dom.get_attribute(owner, "srcdoc").ok().flatten().filter(|_| !embedded).map(str::to_owned),
                 dom.get_attribute(owner, if object { "data" } else { "src" }).ok().flatten().map(str::to_owned),
                 // `<base href>` aware.
                 crate::loader::node_base_url(&dom, owner),

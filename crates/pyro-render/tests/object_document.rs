@@ -53,3 +53,14 @@ fn an_inline_object_sized_by_its_attributes_paints_its_frame_document() {
     assert_eq!(pixel(&img, 199, 99), [0, 128, 0]);
     assert_eq!(pixel(&img, 201, 50), [255, 255, 255]);
 }
+
+#[test]
+fn an_embed_with_a_frame_document_paints_it() {
+    let doc = "&lt;body style='margin:0;background:#008000'&gt;";
+    let img = render(&format!(
+        "<embed type='text/html' srcdoc=\"{doc}\" data-pyro-frame-url='http://test/d.html' width=200 height=100 style='vertical-align:top'>"
+    ));
+    assert_eq!(pixel(&img, 10, 10), [0, 128, 0]);
+    assert_eq!(pixel(&img, 199, 99), [0, 128, 0]);
+    assert_eq!(pixel(&img, 201, 50), [255, 255, 255]);
+}

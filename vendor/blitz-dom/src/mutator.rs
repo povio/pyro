@@ -554,6 +554,7 @@ impl DocumentMutator<'_> {
         } else if (tag, attr) == tag_and_attr!("iframe", "src")
             || (tag, attr) == tag_and_attr!("iframe", "srcdoc")
             || (tag, attr) == tag_and_attr!("object", "srcdoc")
+            || (tag, attr) == tag_and_attr!("embed", "srcdoc")
         {
             self.load_iframe(node_id);
         }
@@ -699,7 +700,7 @@ impl DocumentMutator<'_> {
         } else if (tag, attr) == tag_and_attr!("iframe", "srcdoc") && node_is_in_document {
             // Fall back to loading from the `src` attribute (if any)
             self.load_iframe(node_id);
-        } else if (tag, attr) == tag_and_attr!("object", "srcdoc") {
+        } else if (tag, attr) == tag_and_attr!("object", "srcdoc") || (tag, attr) == tag_and_attr!("embed", "srcdoc") {
             // pyro: the object's frame document is gone: its image or fallback again.
             self.remove_sub_document(node_id);
             self.load_image(node_id);
@@ -1609,8 +1610,12 @@ impl<'doc> DocumentMutator<'doc> {
                         .push(SpecialOp::ProcessButtonInput(node_id));
                     self.form_nodes.insert(node_id);
                 }
-                // pyro: an `<embed>` shows the image its `src` names, as an `<img>` does (nested
-                // documents and plugins in it are not done).
+                // pyro: an `<embed>` shows the image its `src` names, as an `<img>` does, or the frame
+                // document the render snapshot gives it (`srcdoc`) as an iframe does (plugins are
+                // not done).
+                "embed" if element.attr(local_name!("srcdoc")).is_some() => {
+                    self.eager_op_queue.push(SpecialOp::LoadIframe(node_id))
+                }
                 "embed" => self.eager_op_queue.push(SpecialOp::LoadImage(node_id)),
                 "iframe" => self.eager_op_queue.push(SpecialOp::LoadIframe(node_id)),
                 // pyro: an `<object>` loads the image its `data` names (`load_image`), and is a

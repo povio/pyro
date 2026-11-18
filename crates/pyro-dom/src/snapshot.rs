@@ -448,7 +448,9 @@ impl Dom {
                                 ("link", "href") => href.is_some(),
                                 ("iframe" | "frame", "src" | "srcdoc") => html,
                                 // An `<object>` showing a frame document: its `data` is not an image.
-                                ("object", "data" | "srcdoc") => html && self.frame_documents.contains_key(&n),
+                                ("object", "data" | "srcdoc") | ("embed", "src" | "srcdoc") => {
+                                    html && self.frame_documents.contains_key(&n)
+                                }
                                 ("img", "src") => image_source.is_some(),
                                 _ => false,
                             };
@@ -486,7 +488,7 @@ impl Dom {
                             }
                         }
                     }
-                    if html && matches!(local, "iframe" | "frame" | "object") {
+                    if html && matches!(local, "iframe" | "frame" | "object" | "embed") {
                         if let Some(frame) = self.frame_documents.get(&n) {
                             attrs.push(RAttr { name: plain("srcdoc"), value: Cow::Borrowed(&frame.html), valueless: false });
                             attrs.push(RAttr {
@@ -771,7 +773,7 @@ impl Dom {
             // A frame's own attributes (its children are not rendered, it is).
             let is_frame = matches!(&self.n(i).kind, NodeKind::Element(e)
                 if e.is_html() && (matches!(&*e.name.local, "iframe" | "frame")
-                    || (&*e.name.local == "object" && self.frame_documents.contains_key(&i))));
+                    || (matches!(&*e.name.local, "object" | "embed") && self.frame_documents.contains_key(&i))));
             let own_attributes = is_style || is_frame || textarea_attributes.get(&i) == Some(&true);
             let place =
                 if own_attributes && self.n(i).parent != NIL { rendered(self.n(i).parent) } else { rendered(i) };

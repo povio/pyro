@@ -862,3 +862,43 @@ fn an_object_showing_a_document_is_a_frame() {
         "2|inner|42|true|second|||2"
     );
 }
+
+/// HTML "the object element" processing: without a document `type` or URL, the response's
+/// Content-Type decides (an extensionless URL served as HTML, or `type` saying an image of an
+/// HTML response, is a document); `data`/`type` changes run the steps again (a child navigable
+/// comes, navigates or goes); an `<embed>` with an HTML `src` shows the document too.
+#[test]
+fn object_content_type_and_attribute_changes_decide_its_navigable() {
+    let mut t = crate::browser_thread().unwrap();
+    let page = t.browser.create_page().unwrap();
+    let loader = Rc::new(pyro_browser::StaticLoader::default());
+    loader.insert(
+        "http://site.test/",
+        "text/html",
+        "<object id=a data='/page'>fallback</object><object id=b type='image/png' data='/page'></object>\
+         <object id=c data='/pic.png'></object><embed id=e src='/doc.html'>\
+         <script>globalThis.loads = 0; for (const id of ['a', 'b']) document.getElementById(id).onload = () => loads++;</script>",
+        Duration::ZERO,
+    );
+    loader.insert("http://site.test/page", "text/html", "<p id=p>page</p>", Duration::ZERO);
+    loader.insert("http://site.test/doc.html", "text/html", "<p id=p>doc</p>", Duration::ZERO);
+    loader.insert("http://site.test/other.html", "text/html", "<p id=p>other</p>", Duration::ZERO);
+    loader.insert("http://site.test/pic.png", "image/png", "not really a png", Duration::ZERO);
+    t.browser.set_loader(Some(loader.clone()));
+    t.browser.navigate(page, NavigateOpts::address_bar("http://site.test/")).unwrap();
+    settle(&mut t);
+    let root = main_realm(&t, page);
+    assert_eq!(
+        eval(
+            &root,
+            "globalThis.o = id => document.getElementById(id); globalThis.text = id => o(id).contentDocument?.getElementById('p')?.textContent ?? 'none'; \
+             globalThis.frameTexts = () => [...Array(window.length)].map((_, i) => window[i].document.getElementById('p')?.textContent).sort().join(','); \
+             [loads, text('a'), text('b'), text('c'), frameTexts()].join('|')"
+        ),
+        "2|page|page|none|doc,page,page"
+    );
+    // `c` turns into a document object, `a` loses its document, `b` navigates elsewhere.
+    eval(&root, "o('c').type = 'text/html'; o('c').data = '/other.html'; o('a').data = '/pic.png'; o('b').data = '/doc.html';");
+    settle(&mut t);
+    assert_eq!(eval(&root, "[text('a'), text('b'), text('c'), frameTexts()].join('|')"), "none|doc|other|doc,doc,other");
+}

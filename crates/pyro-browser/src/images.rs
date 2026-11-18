@@ -515,6 +515,21 @@ impl Browser {
                 p.frames.layout_bodies.provide(&url, &r.body);
             }
         }
+        // HTML "the object element": the response's Content-Type decides what the object shows.
+        // A document gets a child navigable (which loads it and fires the element's `load`), as
+        // when `type` says so.
+        if !image {
+            if let Some(r) = result.as_ref().ok().filter(|r| (200..300).contains(&r.status)) {
+                let essence = r.mime.split(';').next().unwrap_or_default().trim().to_ascii_lowercase();
+                if matches!(essence.as_str(), "text/html" | "application/xhtml+xml") {
+                    bindings.dom.borrow_mut().set_object_document(node);
+                    drop(hold);
+                    self.drain_dom_resources(page);
+                    self.maybe_fire_load(page);
+                    return;
+                }
+            }
+        }
         let ok = result.is_ok_and(|r| {
             (200..300).contains(&r.status)
                 && (!image || {
