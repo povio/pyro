@@ -1,0 +1,6 @@
+{
+ "css/css-transforms/3d-point-mapping-2-transforminterop.html": "Linux x64 fails the hit test of box12 in both bootstrap runs (run 44275075490); macOS arm64 passes all 12. Deterministic, at a box edge: floating point differs between the platforms (x86-64 glibc libm vs macOS arm64), not timing.",
+ "css/css-transforms/3d-point-mapping-origins.html": "Linux x64 fails the hit test of bottom-right-medium-gray in both bootstrap runs (run 44275075490); macOS arm64 passes all 12. Same edge-of-box floating point difference as 3d-point-mapping-2-transforminterop.html.",
+ "css/css-transforms/animation/transform-interpolation-005.html": "Timing, not platform: the 'transition: all ... matrix(1, 0, 0, 1, 0, -6) to matrix(0, 7, -1, 0, 6, 0) at (2)' subtest passed in the first Linux bootstrap run and failed in the second (run 44275075490), so the bootstrap baseline (passes in both runs) leaves it out. Re-add from a later Linux run that passes it twice.",
+ "html/dom/render-blocking/script-inserted-style-element.html": "Timing, not platform: 'Rendering is blocked before render-blocking resources are loaded' passed in the first Linux bootstrap run and failed in the second (run 44275075490, --jobs 8 on 4 CPUs). Render-blocking race as in wpt-gate-flaky-evidence; check before listing it in flaky.json."
+}
