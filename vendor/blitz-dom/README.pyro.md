@@ -2726,3 +2726,13 @@ span's (WPT CSS2 `before-after-positioned-001`, whose reference uses spans).
 beside a non-zero `width` and a `viewBox` has no natural height, as in Blink: the ratio gives it
 (`width="20px" height="0px" viewBox="0 0 50 100"` is 20x40; WPT css-grid `grid-item-aspect-ratio-stretch-4`). A zero
 `width` beside a height stays (`-stretch-3`). Covered by `crates/pyro-render/tests/svg_image_natural_size.rs`.
+
+## Inline containing blocks across directions (WPT round 4, lane S1)
+
+`src/layout/inline/layout.rs` (`span_padding_box`): the containing block an inline box makes for absolutely positioned
+boxes (CSS 2.1 § 10.1 4.1) takes the start edge of its first fragment and the end edge of its last in the lines'
+direction (the block container's), not the span's own, as Blink: an `rtl` span in an `ltr` line contains from the left
+of its first fragment to the right of its last. The collapsible white space hanging past the end of a left-to-right
+line (`LineMetrics::collapsed_advance`) is in no fragment. WPT css-position `multicol/{vlr,vrl}-{ltr-rtl,rtl-ltr}-in-multicols`.
+Covered by `an_rtl_span_in_an_ltr_line_contains_by_the_lines_direction` in
+`crates/pyro-render/tests/split_inline_containing_block.rs`.

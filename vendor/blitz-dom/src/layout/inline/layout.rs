@@ -2641,7 +2641,18 @@ fn span_padding_box(
                 None => (x0, x1, own),
             });
         }
-        if let Some((x0, x1, own)) = fragment {
+        if let Some((x0, mut x1, own)) = fragment {
+            // pyro: the collapsible white space hanging past the end of a left-to-right line is in
+            // no box (`LineMetrics::collapsed_advance`): a right-to-left span whose run ends the
+            // line holds it all the same, which put its edge past the line's (WPT css-position
+            // `multicol/*-ltr-rtl-in-multicols`).
+            let metrics = line.metrics();
+            if !layout.is_rtl() && metrics.collapsed_advance > 0.0 {
+                let content_end = metrics.offset + metrics.advance - metrics.collapsed_advance;
+                if x1 > content_end && x1 - content_end <= metrics.collapsed_advance + 0.01 {
+                    x1 = content_end.max(x0);
+                }
+            }
             let (top, bottom) = if line_has_content {
                 let (top, bottom) = line.span_box_area(own);
                 (top - padding_top, bottom + padding_bottom)
@@ -2654,7 +2665,11 @@ fn span_padding_box(
         }
     }
     let (first, last) = (first?, last?);
-    let (left, right) = if rtl { (last.0, first.1) } else { (first.0, last.1) };
+    // pyro: the start edge of the first fragment and the end edge of the last are those of the
+    // lines' direction, the block container's, not the span's own (Blink: an `rtl` span in an
+    // `ltr` line contains from the left of its first fragment to the right of its last; WPT
+    // css-position `multicol/*-ltr-rtl-in-multicols`, `*-rtl-ltr-*`).
+    let (left, right) = if layout.is_rtl() { (last.0, first.1) } else { (first.0, last.1) };
     let (top, bottom) = (first.2, last.3);
     Some((left / scale, top / scale, (right - left).max(0.0) / scale, (bottom - top).max(0.0) / scale))
 }
