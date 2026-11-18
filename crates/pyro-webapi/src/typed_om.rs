@@ -112,5 +112,14 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
         })
     })?;
     natives.set_atom("parse", f.value())?;
+    // namedColor(name): [r, g, b] of a CSS named color, or null.
+    let f = s.function("namedColor", |s, _this, a| {
+        let name = crate::util::dom_string(a.get(0))?.to_ascii_lowercase();
+        Ok(match cssparser::color::parse_named_color(&name) {
+            Ok((r, g, b)) => s.array(&[s.number(f64::from(r)), s.number(f64::from(g)), s.number(f64::from(b))])?.value(),
+            Err(()) => s.null(),
+        })
+    })?;
+    natives.set_atom("namedColor", f.value())?;
     Ok(natives)
 }

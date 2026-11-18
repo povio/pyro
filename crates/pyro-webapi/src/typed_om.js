@@ -6,7 +6,7 @@
 // text. Not yet: CSSTransformValue, CSSImageValue, CSSColorValue (reified as plain CSSStyleValue).
 (native => {
   'use strict';
-  const { parse, kind } = native;
+  const { parse, kind, namedColor } = native;
   const apply = Reflect.apply;
   const DE = DOMException;
   const freeze = Object.freeze;
@@ -27,13 +27,13 @@
   def('resolution', 'dppx', [['dppx', 1], ['dpi', 1 / 96], ['dpcm', 2.54 / 96], ['x', 1]]);
   def('flex', 'fr', [['fr', 1]]);
   const TYPES = ['length', 'angle', 'time', 'frequency', 'resolution', 'flex', 'percent'];
-  // The unit as `unit` reports it (`Q`, `Hz`, `kHz` keep their case).
+  // The factory names that are not the unit's (`CSS.Q()` makes `q`).
   const CASED = { q: 'Q', hz: 'Hz', khz: 'kHz' };
   const unitName = (u) => {
     const l = `${u}`.toLowerCase();
     if (l === 'number' || l === 'percent') return l;
     if (!(l in UNITS)) return null;
-    return CASED[l] || l;
+    return l;
   };
   const unitInfo = (u) => UNITS[u.toLowerCase()];
   const typeOf = (unit) => {
@@ -249,7 +249,7 @@
     equals(...values) { return values.map((v) => rectify(v, 'equals')).every((v) => equal(this, v)); }
     to(unit) {
       const u = unitName(unit);
-      if (u === null) throw new SyntaxError(`Failed to execute 'to' on 'CSSNumericValue': Invalid unit for conversion`);
+      if (u === null) throw new DE("Failed to execute 'to' on 'CSSNumericValue': Invalid unit for conversion", 'SyntaxError');
       const sum = sumValues(this);
       if (!sum || sum.length !== 1) throw new TypeError("Failed to execute 'to' on 'CSSNumericValue': Cannot convert to the given unit");
       const r = convert(sum[0], u);
@@ -257,7 +257,7 @@
       return r;
     }
     toSum(...units) {
-      const names = units.map((u) => { const n = unitName(u); if (n === null) throw new SyntaxError("Failed to execute 'toSum' on 'CSSNumericValue': Invalid unit"); return n; });
+      const names = units.map((u) => { const n = unitName(u); if (n === null) throw new DE("Failed to execute 'toSum' on 'CSSNumericValue': Invalid unit", 'SyntaxError'); return n; });
       const sum = sumValues(this);
       if (!sum) throw new TypeError("Failed to execute 'toSum' on 'CSSNumericValue': Cannot convert to a sum");
       if (!names.length) {
@@ -345,7 +345,7 @@
     #values;
     constructor(...args) {
       super(ILLEGAL);
-      if (args.length < minArgs) throw new SyntaxError(`Failed to construct '${name}': Must specify at least one argument.`);
+      if (args.length < minArgs) throw new DE(`Failed to construct '${name}': Must specify at least one argument.`, 'SyntaxError');
       const values = args.map((v) => rectify(v, name));
       this.#values = new CSSNumericArray(ILLEGAL, values);
       if (name !== 'CSSMathProduct' && !numericType(this)) throw new TypeError(`Failed to construct '${name}': Incompatible types`);
@@ -467,7 +467,7 @@
   const sumValues = (v) => {
     if (isUnit(v)) {
       const info = v.unit === 'number' || v.unit === 'percent' ? null : unitInfo(v.unit);
-      if (info && info.f !== null) return [new CSSUnitValue(v.value * info.f, info.canonical === 'hz' ? 'Hz' : info.canonical)];
+      if (info && info.f !== null) return [new CSSUnitValue(v.value * info.f, info.canonical)];
       return [new CSSUnitValue(v.value, v.unit)];
     }
     if (v instanceof CSSMathSum) {
@@ -531,10 +531,12 @@
   const mathText = (v, nested, paren) => {
     if (isUnit(v)) return v.toString();
     const wrap = (s) => (nested ? `(${s})` : `calc(${s})`);
+    // A function's arguments are calculations themselves: no calc() and no parentheses.
+    const arg = (x) => (x instanceof CSSMathSum || x instanceof CSSMathProduct ? mathText(x, true).slice(1, -1) : mathText(x, false));
     if (v instanceof CSSMathMin || v instanceof CSSMathMax) {
-      return `${v instanceof CSSMathMin ? 'min' : 'max'}(${[...v.values].map((x) => mathText(x, false)).join(', ')})`;
+      return `${v instanceof CSSMathMin ? 'min' : 'max'}(${[...v.values].map(arg).join(', ')})`;
     }
-    if (v instanceof CSSMathClamp) return `clamp(${mathText(v.lower, false)}, ${mathText(v.value, false)}, ${mathText(v.upper, false)})`;
+    if (v instanceof CSSMathClamp) return `clamp(${arg(v.lower)}, ${arg(v.value)}, ${arg(v.upper)})`;
     if (v instanceof CSSMathNegate) return nested ? `(-${mathText(v.value, true)})` : `calc(-${mathText(v.value, true)})`;
     if (v instanceof CSSMathInvert) return nested ? `(1 / ${mathText(v.value, true)})` : `calc(1 / ${mathText(v.value, true)})`;
     if (v instanceof CSSMathSum) {
@@ -886,6 +888,12 @@
       const k = noneKeyword(v); if (k) return k;
       throw colorError(what);
     },
+    // CSSHWB's hue: a CSSNumericValue angle only (a TypeError for anything else).
+    angle(v, what) {
+      if (!(v instanceof CSSNumericValue)) throw new TypeError(`Failed to ${what}: The provided value is not of type 'CSSNumericValue'.`);
+      if (isNumericOf(v, 'angle')) return v;
+      throw colorError(what);
+    },
     hue(v, what) {
       if (typeof v === 'number') return new CSSUnitValue(v, 'deg');
       if (v === undefined) return new CSSKeywordValue('undefined');
@@ -918,11 +926,13 @@
       }
       static {
         channels.forEach((c, i) => {
-          Object.defineProperty(this.prototype, c, {
-            get() { return this.#values[c]; },
-            set(v) { this.#values[c] = CHANNEL[kinds[i]](v, `set the '${c}' property on '${name}'`); },
-            enumerable: true, configurable: true,
-          });
+          const accessors = {
+            get [c]() { return this.#values[c]; },
+            set [c](v) { this.#values[c] = CHANNEL[kinds[i]](v, `set the '${c}' property on '${name}'`); },
+          };
+          const desc = Object.getOwnPropertyDescriptor(accessors, c);
+          desc.enumerable = true;
+          Object.defineProperty(this.prototype, c, desc);
         });
       }
       toString() {
@@ -936,19 +946,20 @@
   };
   const CSSRGB = colorClass('CSSRGB', 'rgb', ['r', 'g', 'b', 'alpha'], ['rgb', 'rgb', 'rgb', 'pct']);
   const CSSHSL = colorClass('CSSHSL', 'hsl', ['h', 's', 'l', 'alpha'], ['hue', 'pct', 'pct', 'pct']);
-  const CSSHWB = colorClass('CSSHWB', 'hwb', ['h', 'w', 'b', 'alpha'], ['hue', 'pct', 'pct', 'pct']);
+  const CSSHWB = colorClass('CSSHWB', 'hwb', ['h', 'w', 'b', 'alpha'], ['angle', 'pct', 'pct', 'pct']);
   const CSSLab = colorClass('CSSLab', 'lab', ['l', 'a', 'b', 'alpha'], ['pct', 'num', 'num', 'pct']);
-  const CSSLCH = colorClass('CSSLCH', 'lch', ['l', 'c', 'h', 'alpha'], ['pct', 'num', 'hue', 'pct']);
+  const CSSLCH = colorClass('CSSLCH', 'lch', ['l', 'c', 'h', 'alpha'], ['pct', 'pct', 'hue', 'pct']);
   const CSSOKLab = colorClass('CSSOKLab', 'oklab', ['l', 'a', 'b', 'alpha'], ['pct', 'num', 'num', 'pct']);
-  const CSSOKLCH = colorClass('CSSOKLCH', 'oklch', ['l', 'c', 'h', 'alpha'], ['pct', 'num', 'hue', 'pct']);
-  // `rgb()`/`rgba()`, `#hex`, `hsl()`/`hsla()`, `hwb()` and system colors (keywords); named colors
-  // are not parsed yet.
+  const CSSOKLCH = colorClass('CSSOKLCH', 'oklch', ['l', 'c', 'h', 'alpha'], ['pct', 'pct', 'hue', 'pct']);
+  // `rgb()`/`rgba()`, `#hex`, named colors, `hsl()`/`hsla()`, `hwb()` and system colors (keywords).
   const SYSTEM_COLORS = new Set(['accentcolor', 'accentcolortext', 'activetext', 'buttonborder', 'buttonface', 'buttontext', 'canvas',
     'canvastext', 'field', 'fieldtext', 'graytext', 'highlight', 'highlighttext', 'linktext', 'mark', 'marktext', 'selecteditem',
     'selecteditemtext', 'visitedtext', 'currentcolor']);
   const parseColor = (text) => {
     const lower = text.toLowerCase();
     if (SYSTEM_COLORS.has(lower)) return new CSSKeywordValue(lower);
+    const named = lower === 'transparent' ? [0, 0, 0] : /^[a-z]+$/.test(lower) ? namedColor(lower) : null;
+    if (named) return new CSSRGB(CSS_N(named[0]), CSS_N(named[1]), CSS_N(named[2]), lower === 'transparent' ? new CSSUnitValue(0, 'percent') : undefined);
     const hex = /^#([0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/i.exec(text);
     if (hex) {
       let h = hex[1];
@@ -1058,6 +1069,11 @@
     'peru pink plum powderblue purple rebeccapurple red rosybrown royalblue saddlebrown salmon sandybrown seagreen seashell sienna silver ' +
     'skyblue slateblue slategray slategrey snow springgreen steelblue tan teal thistle tomato turquoise violet wheat white whitesmoke yellow ' +
     'yellowgreen transparent').split(' '));
+  // Longhands whose values are several components ({1,2}, {1,4}) or whose grammar level 1 does not
+  // reify (as in Chromium): always a plain CSSStyleValue.
+  const UNREIFIED = new Set(['border-top-left-radius', 'border-top-right-radius', 'border-bottom-left-radius',
+    'border-bottom-right-radius', 'border-image-width', 'border-image-outset', 'border-image-slice', 'border-image-repeat',
+    'border-spacing', 'column-rule-width', 'vertical-align']);
   const CSS_WIDE = /^(inherit|initial|unset|revert|revert-layer|default)$/i;
   const LIST_VALUED = new Set(['transition', 'transition-property', 'transition-duration', 'transition-timing-function',
     'transition-delay', 'transition-behavior', 'animation', 'animation-name', 'animation-duration', 'animation-timing-function',
@@ -1093,6 +1109,9 @@
   const reifyOne = (property, text, custom, shorthand = false) => {
     if (custom || /var\(/i.test(text)) return unparsedFrom(text);
     if (CSS_WIDE.test(text)) return new CSSKeywordValue(text.toLowerCase());
+    if (UNREIFIED.has(property)) return plain(text);
+    // A grid line's number (with or without a name) is no single numeric value.
+    if (/^grid-(row|column)-(start|end)$/.test(property) && !/^[A-Za-z_-][A-Za-z0-9_-]*$/.test(text)) return plain(text);
     if (/^-?[A-Za-z_][A-Za-z0-9_-]*$/.test(text)) return NAMED_COLORS.has(text.toLowerCase()) ? plain(text) : new CSSKeywordValue(text);
     if (property === 'transform') { const t = transformFrom(text); if (t) return t; }
     if (!shorthand && /^url\((?:"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|[^()'"\s]*)\)$/i.test(text)) return new CSSImageValue(ILLEGAL, text);
@@ -1118,7 +1137,10 @@
     if (!k) throw new TypeError(`Failed to execute '${what}' on 'CSSStyleValue': Invalid property name`);
     const text = parse(k[0], cssText);
     if (text === null) throw new TypeError(`Failed to execute '${what}' on 'CSSStyleValue': The value provided ('${cssText}') could not be parsed as a '${property}'.`);
-    if (k[1] === 2) return [unparsedFrom(cssText.trim())];
+    if (k[1] === 2) {
+      if (cssText.trim() === '') throw new TypeError(`Failed to execute '${what}' on 'CSSStyleValue': The value provided ('${cssText}') could not be parsed as a '${property}'.`);
+      return [unparsedFrom(cssText.trim())];
+    }
     if (text === '') return [plain(cssText.trim())];
     return reify(k[0], text, all);
   }
@@ -1227,6 +1249,9 @@
       if (values.length !== 1 && (which !== 0 || !LIST_VALUED.has(name))) {
         if (values.length === 0 || which === 2 || !LIST_VALUED.has(name)) throw new TypeError("Failed to execute 'set' on 'StylePropertyMap': Invalid type for property");
       }
+      if (values.length > 1 && values.some((v) => v instanceof CSSUnparsedValue || (typeof v === 'string' && /var\(/i.test(v)))) {
+        throw new TypeError("Failed to execute 'set' on 'StylePropertyMap': Invalid type for property");
+      }
       const texts = values.map((v) => valueText(name, which, v, 'set'));
       const text = texts.join(', ');
       if (values.length > 1 && parse(name, text) === null) throw new TypeError("Failed to execute 'set' on 'StylePropertyMap': Invalid type for property");
@@ -1240,7 +1265,9 @@
       if (!values.length) return;
       const current = src.get(name);
       if (CSS_WIDE.test(current) || /var\(/i.test(current)) throw new TypeError("Failed to execute 'append' on 'StylePropertyMap': Invalid type for property");
-      if (values.some((v) => v instanceof CSSUnparsedValue)) throw new TypeError("Failed to execute 'append' on 'StylePropertyMap': Invalid type for property");
+      if (values.some((v) => v instanceof CSSUnparsedValue || (typeof v === 'string' && /var\(/i.test(v)))) {
+        throw new TypeError("Failed to execute 'append' on 'StylePropertyMap': Invalid type for property");
+      }
       const texts = values.map((v) => valueText(name, which, v, 'append'));
       src.set(name, [current, ...texts].filter((t) => t !== '').join(', '));
     }
@@ -1273,7 +1300,7 @@
       names: () => {
         const seen = new Set();
         for (let i = 0; i < d.length; i++) seen.add(d.item(i));
-        return [...seen].sort((a, b) => (a.startsWith('--') - b.startsWith('--')) || (a < b ? -1 : a > b ? 1 : 0));
+        return [...seen].sort((a, b) => (b.startsWith('--') - a.startsWith('--')) || (a < b ? -1 : a > b ? 1 : 0));
       },
     });
     styleMaps.set(d, m);
@@ -1289,17 +1316,17 @@
         const s = cs();
         const names = [];
         for (let i = 0; i < s.length; i++) names.push(s.item(i));
-        return names.sort((a, b) => (a.startsWith('--') - b.startsWith('--')) || (a < b ? -1 : a > b ? 1 : 0));
+        return names.sort((a, b) => (b.startsWith('--') - a.startsWith('--')) || (a < b ? -1 : a > b ? 1 : 0));
       },
     });
   };
 
   // The CSS.* numeric factories.
   const factories = {};
-  for (const unit of ['number', 'percent', ...Object.keys(UNITS).map((u) => CASED[u] || u)]) {
+  for (const unit of ['number', 'percent', ...Object.keys(UNITS)]) {
     if (unit === 'x') continue;
-    const f = { [unit](value) { return new CSSUnitValue(value, unit); } }[unit];
-    factories[unit] = f;
+    const name = CASED[unit] || unit;
+    factories[name] = { [name](value) { return new CSSUnitValue(value, unit); } }[name];
   }
 
   const enumerate = (proto, names) => {

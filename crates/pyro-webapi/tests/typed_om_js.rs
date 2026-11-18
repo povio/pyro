@@ -92,7 +92,7 @@ fn eval(realm: &Realm, src: &str) -> String {
 fn values_parse_reify_and_serialize() {
     let e = env("<!doctype html><div id=d style='width: 10px; color: red'></div>");
     let r = &e.main;
-    assert_eq!(eval(r, "[CSS.px(5).toString(), CSS.percent(50) + '', CSS.number(2).unit, CSS.Q(1).unit].join()"), "5px,50%,number,Q");
+    assert_eq!(eval(r, "[CSS.px(5).toString(), CSS.percent(50) + '', CSS.number(2).unit, CSS.Q(1).unit].join()"), "5px,50%,number,q");
     assert_eq!(eval(r, "CSS.px(1).add(CSS.px(2)).toString()"), "3px");
     assert_eq!(eval(r, "CSS.px(1).add(CSS.em(2)).toString()"), "calc(1px + 2em)");
     assert_eq!(eval(r, "CSS.cm(1).to('mm').value"), "10");
@@ -140,3 +140,4 @@ fn out_of_range_calc_colors_and_unsupported_values() {
     assert_eq!(eval(r, "new CSSHSL(180, 0.5, CSS.percent(20)).s.value"), "50");
     assert_eq!(eval(r, "try { new CSSRGB(CSS.deg(1), 0, 0) } catch (e) { e.name }"), "SyntaxError");
 }
+
