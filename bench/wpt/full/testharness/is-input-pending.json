@@ -1,0 +1,20 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "is-input-pending/idlharness.window.html": {"status":"complete","ms":270,"n":25,"fail":["Navigator interface: attribute scheduling","Scheduling interface object length","Scheduling interface object name","Scheduling interface: calling isInputPending(optional IsInputPendingOptions) on navigator.scheduling with too few arguments must throw TypeError","Scheduling interface: existence and properties of interface object","Scheduling interface: existence and properties of interface prototype object","Scheduling interface: existence and properties of interface prototype object's \"constructor\" property","Scheduling interface: existence and properties of interface prototype object's @@unscopables property","Scheduling interface: navigator.scheduling must inherit property \"isInputPending(optional IsInputPendingOptions)\" with the proper type","Scheduling interface: operation isInputPending(optional IsInputPendingOptions)","Scheduling must be primary interface of navigator.scheduling","Stringification of navigator.scheduling"],"h":"c3f46d26"},
+  "is-input-pending/security/cross-origin-subframe-complex-clip.sub.html": {"status":"complete","ms":10000,"n":1,"pass":[]},
+  "is-input-pending/security/cross-origin-subframe-masked-pointer-events-mixed-2.sub.html": {"status":"timeout","ms":15000,"n":0,"pass":[]},
+  "is-input-pending/security/cross-origin-subframe-masked-pointer-events-mixed.sub.html": {"status":"complete","ms":10000,"n":1,"pass":[]},
+  "is-input-pending/security/cross-origin-subframe-masked-pointer-events-none.sub.html": {"status":"complete","ms":10000,"n":1,"pass":[]},
+  "is-input-pending/security/cross-origin-subframe-pointer-events-none.sub.html": {"status":"timeout","ms":10000,"n":1,"pass":[]},
+  "is-input-pending/security/cross-origin-subframe-transformed.sub.html": {"status":"complete","ms":60,"n":2,"pass":[]},
+  "is-input-pending/security/cross-origin-subframe.sub.html": {"status":"complete","ms":10000,"n":1,"pass":[]},
+  "is-input-pending/tentative/toplevel.html": {"status":"timeout","ms":15000,"n":0,"pass":[]}
+ }
+}

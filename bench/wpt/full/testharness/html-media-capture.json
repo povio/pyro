@@ -1,0 +1,13 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "html-media-capture/capture_reflect.html": {"status":"complete","ms":10,"n":6,"pass":[]},
+  "html-media-capture/idlharness.window.html": {"status":"complete","ms":70,"n":16,"fail":["HTMLInputElement interface: attribute capture","HTMLInputElement interface: input must inherit property \"capture\" with the proper type"],"h":"58b86227"}
+ }
+}

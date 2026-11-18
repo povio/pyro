@@ -1,0 +1,19 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "page-visibility/iframe-unload.html": {"status":"complete","ms":10000,"n":1,"pass":[]},
+  "page-visibility/minimize.html": {"status":"complete","ms":10,"n":3,"pass":[]},
+  "page-visibility/onvisibilitychange.html": {"status":"complete","ms":10000,"n":1,"pass":[]},
+  "page-visibility/test_child_document.html": {"status":"complete","ms":50,"n":14,"fail":[],"h":"db1de793"},
+  "page-visibility/test_default_view.html": {"status":"complete","ms":20,"n":7,"fail":["hidden == true for windowless subdocuments with a null default view","visibilityState == hidden for windowless subdocuments with a null default view"],"h":"20e6c8a1"},
+  "page-visibility/test_read_only.html": {"status":"complete","ms":10,"n":4,"fail":[],"h":"392914bf"},
+  "page-visibility/unload.html": {"status":"complete","ms":40,"n":1,"fail":[],"h":"946213bf"},
+  "page-visibility/visibility-state-entry.tentative.html": {"status":"complete","ms":20,"n":1,"pass":[]}
+ }
+}

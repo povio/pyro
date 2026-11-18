@@ -1,0 +1,16 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "."
+ ],
+ "tests": {
+  "fullscreen/crashtests/backdrop-list-item.html": {"status":"complete","ms":50,"n":1,"fail":[],"h":"22f2a845"},
+  "fullscreen/crashtests/chrome-1312699.html": {"status":"timeout","ms":15000,"n":0,"pass":[]},
+  "fullscreen/crashtests/content-visibility-2-crash.html": {"status":"timeout","ms":15000,"n":0,"pass":[]},
+  "fullscreen/crashtests/content-visibility-crash.html": {"status":"timeout","ms":15000,"n":0,"pass":[]},
+  "fullscreen/crashtests/frameset-crash.html": {"status":"timeout","ms":15000,"n":0,"pass":[]}
+ }
+}

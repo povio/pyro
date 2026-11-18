@@ -1,0 +1,20 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "webrtc-extensions/RTCConfiguration-rtpHeaderEncryptionPolicy.html": {"status":"complete","ms":10,"n":22,"pass":[]},
+  "webrtc-extensions/RTCOAuthCredential.html": {"status":"complete","ms":10,"n":4,"pass":[]},
+  "webrtc-extensions/RTCRtpCorruptionDetection-headerExtensionControl.html": {"status":"complete","ms":10,"n":4,"pass":[]},
+  "webrtc-extensions/RTCRtpEncodingParameters-scaleResolutionDownTo.https.html": {"status":"complete","ms":10,"n":14,"pass":[]},
+  "webrtc-extensions/RTCRtpParameters-adaptivePtime.html": {"status":"complete","ms":10,"n":2,"pass":[]},
+  "webrtc-extensions/RTCRtpSynchronizationSource-captureTimestamp.html": {"status":"complete","ms":10,"n":7,"pass":[]},
+  "webrtc-extensions/RTCRtpSynchronizationSource-senderCaptureTimeOffset.html": {"status":"complete","ms":10,"n":7,"pass":[]},
+  "webrtc-extensions/targetLatency.html": {"status":"complete","ms":10,"n":3,"pass":[]},
+  "webrtc-extensions/transfer-datachannel-service-worker.https.html": {"status":"complete","ms":10000,"n":1,"pass":[]}
+ }
+}

@@ -1,0 +1,15 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "https-upgrades/tentative/fallback.sub.html": {"status":"complete","ms":10,"n":1,"fail":[],"h":"62f1e3ae"},
+  "https-upgrades/tentative/http-redirecting-to-http.https.sub.html": {"status":"complete","ms":10100,"n":1,"pass":[]},
+  "https-upgrades/tentative/http-redirecting-to-https.https.sub.html": {"status":"timeout","ms":15000,"n":0,"pass":[]},
+  "https-upgrades/tentative/referrer.https.sub.html": {"status":"complete","ms":10100,"n":1,"pass":[]}
+ }
+}

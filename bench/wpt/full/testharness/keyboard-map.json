@@ -1,0 +1,17 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "keyboard-map/navigator-keyboard-map-allowed-from-cross-origin-iframe.https.html": {"status":"timeout","ms":10000,"n":1,"pass":[]},
+  "keyboard-map/navigator-keyboard-map-allowed-from-iframe.https.html": {"status":"complete","ms":10000,"n":1,"pass":[]},
+  "keyboard-map/navigator-keyboard-map-blocked-from-cross-origin-iframe.https.html": {"status":"complete","ms":10000,"n":1,"pass":[]},
+  "keyboard-map/navigator-keyboard-map-two-parallel-requests.https.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "keyboard-map/navigator-keyboard-map-two-sequential-requests.https.html": {"status":"complete","ms":40,"n":1,"pass":[]},
+  "keyboard-map/navigator-keyboard-map.https.html": {"status":"complete","ms":10,"n":4,"pass":["navigator.keyboard SameObject"]}
+ }
+}

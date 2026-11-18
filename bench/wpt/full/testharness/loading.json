@@ -1,0 +1,51 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "loading/early-hints/404-with-early-hints.h2.window.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "loading/early-hints/arbitrary-header-in-early-hints.h2.window.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "loading/early-hints/coep-early-hints-none-final-require-corp.h2.window.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "loading/early-hints/csp-early-hints-absent-final-absent.h2.window.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "loading/early-hints/csp-early-hints-absent-final-allowed.h2.window.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "loading/early-hints/csp-early-hints-absent-final-disallowed.h2.window.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "loading/early-hints/csp-early-hints-allowed-final-allowed.h2.window.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "loading/early-hints/csp-early-hints-allowed-final-disallowed.h2.window.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "loading/early-hints/csp-early-hints-disallowed-final-absent.h2.window.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "loading/early-hints/csp-early-hints-disallowed-final-disallowed.h2.window.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "loading/early-hints/early-hints-response-time.h2.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "loading/early-hints/embed-object.h2.window.html": {"status":"complete","ms":20,"n":2,"pass":[]},
+  "loading/early-hints/iframe-coep-disallow.h2.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "loading/early-hints/iframe-x-frame-options-deny.h2.window.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "loading/early-hints/invalid-headers-in-early-hints.h2.window.html": {"status":"complete","ms":2000,"n":2,"pass":[]},
+  "loading/early-hints/modulepreload-as-worker-cross-origin.h2.window.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "loading/early-hints/modulepreload-cross-origin.h2.window.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "loading/early-hints/modulepreload-in-early-hints.h2.window.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "loading/early-hints/multiple-early-hints-responses.h2.window.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "loading/early-hints/preload-fetch.h2.window.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "loading/early-hints/preload-fetchpriority.h2.window.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "loading/early-hints/preload-finished-before-final-response.h2.window.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "loading/early-hints/preload-in-flight-when-consumed.h2.window.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "loading/early-hints/preload-initiator-type.h2.window.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "loading/early-hints/preload-integrity-mismatch.h2.window.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "loading/early-hints/preload-with-csp-document-disallow.h2.window.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "loading/early-hints/preload-with-invalid-as.h2.window.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "loading/early-hints/preload-without-as.h2.window.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "loading/early-hints/redirect-cross-origin-between-early-hints.h2.window.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "loading/early-hints/redirect-cross-origin.h2.window.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "loading/early-hints/redirect-same-origin-between-early-hints.h2.window.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "loading/early-hints/referrer-policy-no-referrer.h2.window.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "loading/early-hints/referrer-policy-origin-when-cross-origin.h2.window.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "loading/early-hints/referrer-policy-origin.h2.window.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "loading/early-hints/referrer-policy-unsafe-url.h2.window.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "loading/preloader-css-import-no-quote.html": {"status":"complete","ms":1000,"n":1,"pass":[]},
+  "loading/preloader-css-import-no-semicolon.html": {"status":"complete","ms":1000,"n":1,"pass":[]},
+  "loading/preloader-css-import-single-quote.html": {"status":"complete","ms":1000,"n":1,"pass":[]},
+  "loading/preloader-css-import.html": {"status":"complete","ms":1000,"n":1,"pass":[]},
+  "loading/preloader-link-media.html": {"status":"complete","ms":1000,"n":1,"pass":[]}
+ }
+}

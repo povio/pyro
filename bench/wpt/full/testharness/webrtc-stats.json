@@ -1,0 +1,18 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "webrtc-stats/RTCDataChannel-stats.html": {"status":"complete","ms":20,"n":15,"pass":[]},
+  "webrtc-stats/getStats-remote-candidate-ufrag.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "webrtc-stats/hardware-capability-stats.https.html": {"status":"complete","ms":10,"n":12,"pass":[]},
+  "webrtc-stats/idlharness.window.html": {"status":"complete","ms":20,"n":2,"fail":[],"h":"c34860c1"},
+  "webrtc-stats/outbound-rtp.https.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "webrtc-stats/stats-creation.html": {"status":"complete","ms":10,"n":5,"pass":[]},
+  "webrtc-stats/video-psnr.https.html": {"status":"complete","ms":10,"n":2,"pass":[]}
+ }
+}

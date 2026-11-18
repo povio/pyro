@@ -1,0 +1,13 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "periodic-background-sync/idlharness.https.any.html": {"status":"complete","ms":80,"n":33,"pass":["Partial interface ServiceWorkerGlobalScope: member names are unique","Partial interface ServiceWorkerGlobalScope: original interface defined","Partial interface ServiceWorkerRegistration: member names are unique","Partial interface ServiceWorkerRegistration: original interface defined","Partial interface ServiceWorkerRegistration: valid exposure set","PeriodicSyncEvent interface: existence and properties of interface object","ServiceWorkerGlobalScope interface: self must not have property \"onperiodicsync\"","WorkerGlobalScope includes WindowOrWorkerGlobalScope: member names are unique","idl_test setup","idl_test validation"]},
+  "periodic-background-sync/periodicsync.https.window.html": {"status":"complete","ms":30,"n":2,"pass":[]}
+ }
+}

@@ -1,0 +1,15 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "file-system-access/getDirectory.https.any.html": {"status":"complete","ms":10,"n":2,"pass":[]},
+  "file-system-access/idlharness.https.any.html": {"status":"complete","ms":70,"n":28,"fail":["DataTransferItem interface: operation getAsFileSystemHandle()","FileSystemHandle interface: operation queryPermission(optional FileSystemHandlePermissionDescriptor)","FileSystemHandle interface: operation requestPermission(optional FileSystemHandlePermissionDescriptor)","Window interface: calling showDirectoryPicker(optional DirectoryPickerOptions) on window with too few arguments must throw TypeError","Window interface: calling showOpenFilePicker(optional OpenFilePickerOptions) on window with too few arguments must throw TypeError","Window interface: calling showSaveFilePicker(optional SaveFilePickerOptions) on window with too few arguments must throw TypeError","Window interface: operation showDirectoryPicker(optional DirectoryPickerOptions)","Window interface: operation showOpenFilePicker(optional OpenFilePickerOptions)","Window interface: operation showSaveFilePicker(optional SaveFilePickerOptions)","Window interface: window must inherit property \"showDirectoryPicker(optional DirectoryPickerOptions)\" with the proper type","Window interface: window must inherit property \"showOpenFilePicker(optional OpenFilePickerOptions)\" with the proper type","Window interface: window must inherit property \"showSaveFilePicker(optional SaveFilePickerOptions)\" with the proper type"],"h":"7253f0a9"},
+  "file-system-access/opaque-origin.https.window.html": {"status":"complete","ms":30,"n":4,"pass":["FileSystemDirectoryHandle must be undefined for data URI iframes.","showDirectoryPicker() must be undefined for data URI iframes."]},
+  "file-system-access/showPicker-errors.https.window.html": {"status":"complete","ms":10,"n":71,"pass":[]}
+ }
+}

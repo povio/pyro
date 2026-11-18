@@ -1,0 +1,20 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "payment-method-manifest/fetch-options.https.window.html": {"status":"complete","ms":30,"n":4,"pass":[]},
+  "payment-method-manifest/link-header-parsing.https.window.html": {"status":"complete","ms":20,"n":5,"pass":[]},
+  "payment-method-manifest/link-header-selection.https.window.html": {"status":"complete","ms":20,"n":5,"pass":[]},
+  "payment-method-manifest/pmi-http-status.https.window.html": {"status":"complete","ms":40,"n":3,"pass":[]},
+  "payment-method-manifest/pmi-redirects.https.window.html": {"status":"complete","ms":20,"n":4,"pass":[]},
+  "payment-method-manifest/pmm-default-applications.https.window.html": {"status":"complete","ms":10,"n":10,"pass":[]},
+  "payment-method-manifest/pmm-redirect-disallowed.https.window.html": {"status":"complete","ms":30,"n":1,"pass":[]},
+  "payment-method-manifest/pmm-supported-origins.https.window.html": {"status":"complete","ms":10,"n":13,"pass":[]},
+  "payment-method-manifest/wam-redirect-disallowed.https.window.html": {"status":"complete","ms":10,"n":1,"pass":[]}
+ }
+}

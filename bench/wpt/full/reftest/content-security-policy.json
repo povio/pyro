@@ -1,0 +1,19 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "content-security-policy/generic/image-document-ignores-csp-for-loading-main-image.tentative.html": {"status":"complete","ms":110,"n":1,"fail":[],"h":"0e440bf2"},
+  "content-security-policy/img-src/shared-stylesheet-image-cache-bypass-strict-first.html": {"status":"complete","ms":120,"n":1,"fail":[],"h":"0e440bf2"},
+  "content-security-policy/img-src/shared-stylesheet-image-cache-bypass.html": {"status":"complete","ms":120,"n":1,"fail":[],"h":"0e440bf2"},
+  "content-security-policy/img-src/shared-stylesheet-image-set-cache-bypass-strict-first.html": {"status":"complete","ms":130,"n":1,"fail":[],"h":"0e440bf2"},
+  "content-security-policy/img-src/shared-stylesheet-image-set-cache-bypass.html": {"status":"complete","ms":130,"n":1,"fail":[],"h":"0e440bf2"},
+  "content-security-policy/img-src/shared-stylesheet-mask-cache-bypass-strict-first.html": {"status":"complete","ms":130,"n":1,"fail":[],"h":"0e440bf2"},
+  "content-security-policy/img-src/shared-stylesheet-mask-cache-bypass.html": {"status":"complete","ms":110,"n":1,"fail":[],"h":"0e440bf2"},
+  "content-security-policy/svg/svg-inline-without-scripting.html": {"status":"complete","ms":120,"n":1,"fail":[],"h":"0e440bf2"}
+ }
+}

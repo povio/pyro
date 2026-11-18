@@ -1,0 +1,12 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "acid/acid3/numbered-tests.html": {"status":"complete","ms":7300,"n":100,"fail":["Test 14","Test 38","Test 42","Test 69","Test 70","Test 71","Test 72","Test 74","Test 75","Test 77","Test 79"],"h":"73485921"}
+ }
+}

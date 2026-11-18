@@ -21,7 +21,7 @@ on:
       - .github/workflows/docs.yml
       - bench/wpt/status-export.mjs
   workflow_run:
-    workflows: [WPT]
+    workflows: [WPT, WPT full]
     types: [completed]
     branches: [main]
   workflow_dispatch:
@@ -35,7 +35,8 @@ concurrency:
 
 jobs:
   build:
-    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
+    # WPT full exports from its own status job, which runs even when a shard failed.
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' || github.event.workflow_run.name == 'WPT full' }}
     runs-on: ubuntu-24.04
     defaults:
       run:

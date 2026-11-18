@@ -1,0 +1,14 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "proximity/ProximitySensor-iframe-access.https.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "proximity/ProximitySensor_insecure_context.html": {"status":"complete","ms":10,"n":1,"fail":[],"h":"157a9ea0"},
+  "proximity/idlharness.https.window.html": {"status":"complete","ms":60,"n":16,"pass":["idl_test setup","idl_test validation"]}
+ }
+}

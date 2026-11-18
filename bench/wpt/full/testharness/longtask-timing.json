@@ -1,0 +1,27 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "longtask-timing/buffered-flag.window.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "longtask-timing/containerNames.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "longtask-timing/idlharness.window.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "longtask-timing/long-microtask.window.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "longtask-timing/longtask-attributes.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "longtask-timing/longtask-detach-frame.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "longtask-timing/longtask-in-childiframe-crossorigin.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "longtask-timing/longtask-in-childiframe.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "longtask-timing/longtask-in-parentiframe.html": {"status":"complete","ms":80,"n":1,"pass":[]},
+  "longtask-timing/longtask-in-raf.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "longtask-timing/longtask-in-sibling-iframe-crossorigin.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "longtask-timing/longtask-promise.html": {"status":"complete","ms":10,"n":4,"pass":[]},
+  "longtask-timing/longtask-sync-xhr.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "longtask-timing/longtask-tojson.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "longtask-timing/spin-eventloop-not-longtask.html": {"status":"complete","ms":1000,"n":1,"pass":[]},
+  "longtask-timing/supported-longtask-types.window.html": {"status":"complete","ms":10000,"n":2,"pass":[]}
+ }
+}

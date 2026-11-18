@@ -1,0 +1,26 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "animation-worklet/worklet-animation-cancel.https.html": {"status":"timeout","ms":15000,"n":0,"pass":[]},
+  "animation-worklet/worklet-animation-get-timing-on-worklet-thread.https.html": {"status":"timeout","ms":15000,"n":0,"pass":[]},
+  "animation-worklet/worklet-animation-local-time-after-duration.https.html": {"status":"timeout","ms":15000,"n":0,"pass":[]},
+  "animation-worklet/worklet-animation-local-time-before-start.https.html": {"status":"timeout","ms":15000,"n":0,"pass":[]},
+  "animation-worklet/worklet-animation-local-time-null-2.https.html": {"status":"timeout","ms":45000,"n":0,"pass":[]},
+  "animation-worklet/worklet-animation-pause-immediately.https.html": {"status":"timeout","ms":15000,"n":0,"pass":[]},
+  "animation-worklet/worklet-animation-pause-resume.https.html": {"status":"timeout","ms":15000,"n":0,"pass":[]},
+  "animation-worklet/worklet-animation-set-keyframes.https.html": {"status":"timeout","ms":15000,"n":0,"pass":[]},
+  "animation-worklet/worklet-animation-set-timing.https.html": {"status":"timeout","ms":15000,"n":0,"pass":[]},
+  "animation-worklet/worklet-animation-start-delay.https.html": {"status":"timeout","ms":15000,"n":0,"pass":[]},
+  "animation-worklet/worklet-animation-with-non-ascii-name.https.html": {"status":"timeout","ms":15000,"n":0,"pass":[]},
+  "animation-worklet/worklet-animation-with-scroll-timeline-and-display-none.https.html": {"status":"timeout","ms":15000,"n":0,"pass":[]},
+  "animation-worklet/worklet-animation-with-scroll-timeline-and-overflow-hidden.https.html": {"status":"timeout","ms":15000,"n":0,"pass":[]},
+  "animation-worklet/worklet-animation-with-scroll-timeline-root-scroller.https.html": {"status":"timeout","ms":15000,"n":0,"pass":[]},
+  "animation-worklet/worklet-animation-with-scroll-timeline.https.html": {"status":"timeout","ms":15000,"n":0,"pass":[]}
+ }
+}

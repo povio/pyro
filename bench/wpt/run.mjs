@@ -64,7 +64,8 @@ const [SHARD, SHARDS] = (opt('--shard', '0/1')).split('/').map(Number);
 const REUSE = argv.includes('--reuse-context');
 const REPEAT = Number(opt('--repeat', 1));
 // A run over part of the suite: the gate does not report baseline pages it did not run as missing.
-const RESTRICTED = DIRS.join(',') !== KIND_DIRS.join(',') || !!opt('--match') || !!opt('--tests') || SAMPLE !== 1;
+// --dirs all is every page there is: not a restricted run (a whole-suite baseline can start from it).
+const RESTRICTED = (opt('--dirs') !== 'all' && DIRS.join(',') !== KIND_DIRS.join(',')) || !!opt('--match') || !!opt('--tests') || SAMPLE !== 1;
 if (GATE && !BASELINE) throw new Error('--gate needs --baseline');
 if (!(SHARD >= 0 && SHARD < SHARDS)) throw new Error(`--shard ${opt('--shard')}: expected I/N with 0 <= I < N`);
 if (!(REPEAT >= 1)) throw new Error(`--repeat ${opt('--repeat')}: expected N >= 1`);
@@ -122,7 +123,24 @@ function baseFor(url) {
 }
 
 // ---------- browser ----------
-async function freePort() { return new Promise((r) => { const s = net.createServer(); s.listen(0, '127.0.0.1', () => { const p = s.address().port; s.close(() => r(p)); }); }); }
+// A free port. With the machine out of ephemeral ports (a stash-polling page, see drainPorts) listening fails too:
+// try again for up to 2 minutes rather than leave the runner without a browser.
+function freePortOnce() {
+  return new Promise((resolve, reject) => {
+    const s = net.createServer();
+    s.once('error', reject);
+    s.listen(0, '127.0.0.1', () => { const p = s.address().port; s.close(() => resolve(p)); });
+  });
+}
+async function freePort() {
+  for (let i = 0; ; i++) {
+    try { return await freePortOnce(); } catch (e) {
+      if (i >= 60) throw e;
+      if (i === 0) console.error(`${LABEL}: no free port (${e.code}); waiting`);
+      await new Promise((r) => setTimeout(r, 2000));
+    }
+  }
+}
 let child, endpoint, generation = 0, browserCpuS = 0;
 // Crashtests read the browser's stderr: a Rust panic the process survives (caught at a binding, or on a worker
 // thread) prints `thread '...' panicked at <file>:<line>:<col>:` and its message on the next line. `panics` counts
@@ -326,16 +344,27 @@ let watchdogKills = 0;
 const watchdog = setInterval(() => {
   const now = Date.now();
   for (const [w, p] of inflight) {
-    if (p.killed || now - p.since < (p.limit ?? TIMEOUT) + 15000 + WATCHDOG_MS) continue;
-    p.killed = true;
+    // Again after another WATCHDOG_MS when the worker is still stuck after a replacement.
+    if (now - (p.killedAt ?? p.since) < (p.killedAt ? WATCHDOG_MS : (p.limit ?? TIMEOUT) + 15000 + WATCHDOG_MS)) continue;
+    p.killedAt = now;
     watchdogKills++;
     console.error(`${LABEL}: watchdog: worker ${w} stuck ${((now - p.since) / 1000).toFixed(0)} s on ${p.url}; replacing the browser`);
     trace(`watchdog ${w} ${p.url}`);
     killBrowser();
     restartBrowser(generation);
   }
+  // The runner as a whole: no page finished for STALL_MS (every worker stuck, the browser unable to start) ends the
+  // run with what it has, the pages without a result recorded as errors, rather than holding the CI job (a shard
+  // once sat 2 h after a failed browser start). The gate then sees every planned page.
+  if (now - lastFinish > STALL_MS && results.length < PLAN.length) {
+    console.error(`${LABEL}: no page finished for ${STALL_MS / 60000} min; ending the run`);
+    trace('stalled');
+    finish('runner stalled');
+  }
 }, 5000);
 watchdog.unref();
+const STALL_MS = Number(process.env.WPT_STALL_MS ?? 10 * 60000);
+let lastFinish = Date.now();
 // Progress at least every 30 s (a slow run looks the same as a hung one otherwise).
 let lastProgress = Date.now();
 
@@ -344,6 +373,20 @@ await startBrowser();
 const results = [];
 let next = 0, done = 0, restarts = 0;
 const t0 = Date.now();
+// Resolves once a TCP connect to the proxy (or the server) succeeds again, after at most 90 s.
+let portsDrained = null;
+async function drainPorts() {
+  const port = proxy?.port ?? Number(new URL(BASE).port);
+  const t0 = Date.now();
+  while (Date.now() - t0 < 90000) {
+    const ok = await new Promise((resolve) => {
+      const c = net.connect(port, '127.0.0.1', () => { c.destroy(); resolve(true); });
+      c.on('error', () => resolve(false));
+    });
+    if (ok) { await sleep(5000); return; }
+    await sleep(2000);
+  }
+}
 let workers = 0;
 async function worker() {
   const slot = {};
@@ -362,6 +405,17 @@ async function worker() {
     catch (e) {
       r = { status: 'error', error: String(e.message ?? e).split('\n')[0].slice(0, 200) };
       await resetSlot(slot);
+      // Out of ephemeral ports: a page polling a wptserve stash handler in a tight loop (the scroll-to-text-fragment
+      // pages wait for a popup's results that never come) makes ~1,000 requests a second, each a new connection from
+      // wptserve to its stash manager, and macOS's 16,384 ports sit in TIME_WAIT for 30 s. Every connect then fails
+      // (88 pages in a row in the first nightly, as ERR_PROXY_CONNECTION_FAILED). Wait until a connect works again,
+      // then run the page again.
+      if (/ERR_PROXY_CONNECTION_FAILED|EADDRNOTAVAIL/.test(r.error) && (t.retried ?? 0) < 3) {
+        console.error(`${LABEL}: ${t.url}: connections fail (ports exhausted?); waiting for them to drain`);
+        inflight.delete(w);
+        await (portsDrained ??= drainPorts().finally(() => { portsDrained = null; }));
+        t.retried = (t.retried ?? 0) + 1; tests.push(t); continue;
+      }
       const lost = gen !== generation || /ECONNREFUSED|has been closed/.test(r.error);
       // Whether this page's browser died (or was replaced): a lost connection can arrive before its exit does.
       const died = gen !== generation || (lost ? await exited(child) : child.exitCode != null || !!child.signalCode);
@@ -394,6 +448,7 @@ async function worker() {
     inflight.delete(w);
     trace(`end ${w} ${t.url} ${r.status} ${r.ms ?? ''}`);
     results.push({ ...meta, status: r.status, ms: r.ms, error: r.error, subtests: r.subtests ?? parse(r.log) });
+    lastFinish = Date.now();
     if (++done % 100 === 0 || Date.now() - lastProgress > 30000) {
       lastProgress = Date.now();
       if (OUT) fs.writeFileSync(OUT + '.partial', JSON.stringify({ label: LABEL, results }));
@@ -403,15 +458,23 @@ async function worker() {
   await resetSlot(slot);
 }
 await Promise.all(Array.from({ length: JOBS }, worker));
+finish();
+// Writes the results and exits. `stalled`: the reason pages that have no result are recorded as errors.
+function finish(stalled) {
+  if (stalled) {
+    const have = new Set(results.map((t) => t.url));
+    for (const t of tests) if (!have.has(t.url)) { have.add(t.url); results.push({ dir: t.dir, url: t.url, status: 'error', error: stalled, subtests: [] }); }
+  }
 const wallMs = Date.now() - t0;
 killBrowser();
 const serverCpuS = server ? cpuOf(server.pid) : 0;
 const ru = process.resourceUsage();
 const run = {
-  label: LABEL, bin: BIN, kind: KIND, mode: GATE ? 'gate' : 'full', shard: `${SHARD}/${SHARDS}`, dirs: DIRS, jobs: JOBS,
+  label: LABEL, bin: BIN, kind: KIND, mode: GATE ? 'gate' : 'full', shard: `${SHARD}/${SHARDS}`, dirs: opt('--dirs') === 'all' ? ['all'] : DIRS, jobs: JOBS,
   restricted: RESTRICTED, reuseContext: REUSE, wptRevision: WPT_REVISION, discovered, plan: PLAN, skipped,
   wallMs, browserCpuS, runnerCpuS: (ru.userCPUTime + ru.systemCPUTime) / 1e6, serverCpuS, restarts, watchdogKills, excluded, ...(info ? { info } : {}), results,
 };
 if (OUT) { fs.writeFileSync(OUT, JSON.stringify(run)); try { fs.unlinkSync(OUT + '.partial'); } catch {} }
 console.error(`${LABEL}: done ${PLAN.length} pages in ${(wallMs / 1000).toFixed(1)} s (CPU: browser ${browserCpuS.toFixed(1)} s, runner ${run.runnerCpuS.toFixed(1)} s, server ${serverCpuS.toFixed(1)} s), restarts ${restarts}`);
 process.exit(0);
+}

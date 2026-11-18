@@ -700,7 +700,7 @@ jobs:
   # site rebuilds when this workflow completes (docs.yml, workflow_run).
   status:
     needs: [gate, reftest-gate, crashtest]
-    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.gate.result == 'success' && needs.reftest-gate.result == 'success' && needs.crashtest.result == 'success' }}
+    if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.gate.result == 'success' && needs.reftest-gate.result == 'success' && needs.crashtest.result == 'success' }}
     runs-on: ubuntu-24.04
     permissions:
       contents: write

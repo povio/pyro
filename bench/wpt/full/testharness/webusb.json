@@ -1,0 +1,35 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "webusb/getDevices/reject_opaque_origin.https.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "webusb/idlharness.https.any.html": {"status":"complete","ms":90,"n":279,"pass":["Navigator includes NavigatorConcurrentHardware: member names are unique","Navigator includes NavigatorContentUtils: member names are unique","Navigator includes NavigatorCookies: member names are unique","Navigator includes NavigatorID: member names are unique","Navigator includes NavigatorLanguage: member names are unique","Navigator includes NavigatorOnLine: member names are unique","Navigator includes NavigatorPlugins: member names are unique","Partial interface Navigator: member names are unique","Partial interface Navigator: original interface defined","Partial interface Navigator: valid exposure set","Partial interface Navigator[2]: member names are unique","Partial interface Navigator[3]: member names are unique","Partial interface WorkerNavigator: member names are unique","Partial interface WorkerNavigator: original interface defined","Partial interface WorkerNavigator: valid exposure set","Partial interface WorkerNavigator[2]: member names are unique","Partial interface mixin NavigatorID: member names are unique","WorkerNavigator includes NavigatorConcurrentHardware: member names are unique","WorkerNavigator includes NavigatorID: member names are unique","WorkerNavigator includes NavigatorLanguage: member names are unique","WorkerNavigator includes NavigatorOnLine: member names are unique","idl_test setup","idl_test validation"]},
+  "webusb/insecure-context.any.html": {"status":"complete","ms":10,"n":14,"fail":[],"h":"bacc28f0"},
+  "webusb/protected-interface-classes.https.any.html": {"status":"complete","ms":30,"n":7,"pass":[]},
+  "webusb/requestDevice/reject_opaque_origin.https.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "webusb/usb-allowed-by-permissions-policy-attribute-redirect-on-load.https.sub.html": {"status":"complete","ms":10000,"n":4,"pass":[]},
+  "webusb/usb-allowed-by-permissions-policy-attribute.https.sub.html": {"status":"complete","ms":10000,"n":5,"pass":[]},
+  "webusb/usb-allowed-by-permissions-policy.https.sub.html": {"status":"complete","ms":10000,"n":6,"pass":[]},
+  "webusb/usb-disabled-by-permissions-policy.https.sub.html": {"status":"complete","ms":10000,"n":7,"pass":["Permissions-Policy header usb=() disallows cross-origin iframes.","Permissions-Policy header usb=() disallows same-origin iframes."]},
+  "webusb/usb-garbage-collection.https.window.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "webusb/usb-supported-by-permissions-policy.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "webusb/usb.https.window.html": {"status":"complete","ms":20,"n":7,"pass":[]},
+  "webusb/usb.serviceworker.https.html": {"status":"complete","ms":10000,"n":1,"pass":[]},
+  "webusb/usbAlternateInterface.https.any.html": {"status":"complete","ms":20,"n":2,"pass":[]},
+  "webusb/usbConnectionEvent.https.any.html": {"status":"complete","ms":20,"n":2,"pass":[]},
+  "webusb/usbDevice-iframe.https.html": {"status":"complete","ms":30,"n":3,"pass":[]},
+  "webusb/usbDevice-same-objecct.https.any.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "webusb/usbDevice.https.any.html": {"status":"complete","ms":20,"n":65,"pass":[]},
+  "webusb/usbEndpoint.https.any.html": {"status":"complete","ms":10,"n":2,"pass":[]},
+  "webusb/usbInTransferResult.https.any.html": {"status":"complete","ms":30,"n":4,"pass":[]},
+  "webusb/usbInterface.https.any.html": {"status":"complete","ms":30,"n":4,"pass":[]},
+  "webusb/usbIsochronousInTransferResult.https.any.html": {"status":"complete","ms":10,"n":3,"pass":[]},
+  "webusb/usbIsochronousOutTransferPacket.https.any.html": {"status":"complete","ms":20,"n":3,"pass":[]},
+  "webusb/usbIsochronousOutTransferResult.https.any.html": {"status":"complete","ms":10,"n":2,"pass":[]}
+ }
+}

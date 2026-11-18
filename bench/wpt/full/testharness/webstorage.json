@@ -1,0 +1,51 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "webstorage/defineProperty.window.html": {"status":"complete","ms":200,"n":12,"pass":[]},
+  "webstorage/event_basic.html": {"status":"complete","ms":240,"n":2,"fail":[],"h":"30c891f2"},
+  "webstorage/event_body_attribute.html": {"status":"complete","ms":240,"n":2,"fail":[],"h":"5fd730f8"},
+  "webstorage/event_constructor.window.html": {"status":"complete","ms":20,"n":6,"fail":[],"h":"23e07edd"},
+  "webstorage/event_initstorageevent.window.html": {"status":"complete","ms":20,"n":5,"fail":[],"h":"aa4d85b3"},
+  "webstorage/event_local_key.html": {"status":"complete","ms":200,"n":1,"fail":[],"h":"6f745406"},
+  "webstorage/event_local_oldvalue.html": {"status":"complete","ms":20,"n":1,"fail":[],"h":"72cac024"},
+  "webstorage/event_local_removeitem.html": {"status":"complete","ms":20,"n":1,"fail":[],"h":"a7f70d44"},
+  "webstorage/event_local_storagearea.html": {"status":"complete","ms":200,"n":1,"fail":[],"h":"61ce2bfb"},
+  "webstorage/event_local_window_open_oldvalue.html": {"status":"complete","ms":20,"n":1,"fail":[],"h":"19412e8c"},
+  "webstorage/event_no_duplicates.html": {"status":"complete","ms":30,"n":8,"fail":[],"h":"9f6af9c9"},
+  "webstorage/event_session_key.html": {"status":"complete","ms":30,"n":1,"fail":[],"h":"0c4bd019"},
+  "webstorage/event_session_oldvalue.html": {"status":"complete","ms":20,"n":1,"fail":[],"h":"50c45ea9"},
+  "webstorage/event_session_removeitem.html": {"status":"complete","ms":20,"n":1,"fail":[],"h":"081d9462"},
+  "webstorage/event_session_storagearea.html": {"status":"complete","ms":30,"n":1,"fail":[],"h":"4574b13e"},
+  "webstorage/event_session_window_open_scope.html": {"status":"complete","ms":520,"n":1,"fail":[],"h":"00c7f925"},
+  "webstorage/event_setattribute.html": {"status":"complete","ms":230,"n":2,"fail":[],"h":"c7eda198"},
+  "webstorage/localstorage-about-blank-3P-iframe-opens-3P-window.partitioned.html": {"status":"complete","ms":40,"n":1,"pass":[]},
+  "webstorage/localstorage-basic-partitioned.sub.html": {"status":"complete","ms":10000,"n":1,"pass":[]},
+  "webstorage/localstorage-share-data-unrelated-origins.html": {"status":"complete","ms":40,"n":1,"fail":[],"h":"49744e13"},
+  "webstorage/missing_arguments.window.html": {"status":"complete","ms":20,"n":10,"fail":[],"h":"19e5fdcd"},
+  "webstorage/sessionStorage-basic-partitioned.sub.html": {"status":"complete","ms":10000,"n":1,"pass":[]},
+  "webstorage/storage_builtins.window.html": {"status":"complete","ms":10,"n":2,"fail":[],"h":"5b872d5f"},
+  "webstorage/storage_clear.window.html": {"status":"complete","ms":20,"n":2,"fail":[],"h":"bcd49cf0"},
+  "webstorage/storage_enumerate.window.html": {"status":"complete","ms":20,"n":4,"pass":["localStorage: enumerate a Storage object and get only the keys as a result and the built-in properties of the Storage object should be ignored","sessionStorage: enumerate a Storage object and get only the keys as a result and the built-in properties of the Storage object should be ignored"]},
+  "webstorage/storage_getitem.window.html": {"status":"complete","ms":10,"n":8,"fail":[],"h":"0ac7aa0e"},
+  "webstorage/storage_in.window.html": {"status":"complete","ms":10,"n":4,"fail":[],"h":"fd5cc8b4"},
+  "webstorage/storage_indexing.window.html": {"status":"complete","ms":30,"n":8,"fail":[],"h":"3c428637"},
+  "webstorage/storage_key_empty_string.window.html": {"status":"complete","ms":10,"n":2,"fail":[],"h":"96842f16"},
+  "webstorage/storage_length.window.html": {"status":"complete","ms":10,"n":4,"fail":[],"h":"c7d95e3a"},
+  "webstorage/storage_local_quota_independent_from_session.window.html": {"status":"complete","ms":60,"n":1,"fail":[],"h":"84444102"},
+  "webstorage/storage_local_window_open.window.html": {"status":"complete","ms":20,"n":1,"fail":[],"h":"1aa49dbc"},
+  "webstorage/storage_removeitem.window.html": {"status":"complete","ms":10,"n":8,"fail":[],"h":"773c7e69"},
+  "webstorage/storage_session_quota_independent_from_local.window.html": {"status":"complete","ms":70,"n":1,"fail":[],"h":"c935610e"},
+  "webstorage/storage_session_window_noopener.window.html": {"status":"complete","ms":30,"n":1,"fail":[],"h":"1f038fdb"},
+  "webstorage/storage_session_window_open.window.html": {"status":"complete","ms":20,"n":1,"fail":[],"h":"6527f7dd"},
+  "webstorage/storage_session_window_reopen.window.html": {"status":"complete","ms":30,"n":1,"pass":[]},
+  "webstorage/storage_setitem.window.html": {"status":"complete","ms":40,"n":1106,"fail":[],"h":"a757ab4c"},
+  "webstorage/storage_string_conversion.window.html": {"status":"complete","ms":10,"n":2,"fail":[],"h":"c7f61f87"},
+  "webstorage/storage_supported_property_names.window.html": {"status":"complete","ms":20,"n":4,"fail":[],"h":"072da3eb"}
+ }
+}

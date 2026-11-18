@@ -1,0 +1,29 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "notifications/constructor-basic.https.html": {"status":"complete","ms":10,"n":4,"fail":[],"h":"dd2b15d7"},
+  "notifications/constructor-invalid.https.html": {"status":"complete","ms":20,"n":1,"fail":[],"h":"6d2bf526"},
+  "notifications/constructor-non-secure.html": {"status":"complete","ms":10,"n":1,"fail":[],"h":"0706534a"},
+  "notifications/cross-origin-same-site-request.tentative.https.sub.html": {"status":"complete","ms":160,"n":1,"pass":[]},
+  "notifications/cross-origin-serviceworker.tentative.https.sub.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "notifications/event-onclose.https.html": {"status":"complete","ms":10,"n":2,"pass":[]},
+  "notifications/fetch-url-resolve.https.window.html": {"status":"complete","ms":40,"n":2,"pass":[]},
+  "notifications/getnotifications-across-processes.https.window.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "notifications/historical.any.html": {"status":"complete","ms":10,"n":2,"pass":["Notification.get is obsolete"]},
+  "notifications/icon-url-encoding-euc-kr.https.html": {"status":"complete","ms":50,"n":1,"fail":[],"h":"67f8808c"},
+  "notifications/idlharness.https.any.html": {"status":"complete","ms":100,"n":65,"fail":["Notification interface object length","Notification interface: attribute actions","Notification interface: attribute badge","Notification interface: attribute body","Notification interface: attribute data","Notification interface: attribute dir","Notification interface: attribute icon","Notification interface: attribute image","Notification interface: attribute lang","Notification interface: attribute navigate","Notification interface: attribute onclick","Notification interface: attribute onclose","Notification interface: attribute onerror","Notification interface: attribute onshow","Notification interface: attribute renotify","Notification interface: attribute requireInteraction","Notification interface: attribute silent","Notification interface: attribute tag","Notification interface: attribute timestamp","Notification interface: attribute title","Notification interface: existence and properties of interface object","Notification interface: notification must inherit property \"navigate\" with the proper type","Notification interface: operation close()","Notification interface: operation requestPermission(optional NotificationPermissionCallback)","ServiceWorkerRegistration interface: operation getNotifications(optional GetNotificationOptions)","ServiceWorkerRegistration interface: operation showNotification(DOMString, optional NotificationOptions)"],"h":"ff3f9596"},
+  "notifications/instance.https.window.html": {"status":"complete","ms":20,"n":12,"pass":[]},
+  "notifications/permission.html": {"status":"complete","ms":30,"n":1,"fail":[],"h":"fcafd043"},
+  "notifications/permissions-non-secure.html": {"status":"complete","ms":10100,"n":3,"pass":[]},
+  "notifications/registration-association.https.window.html": {"status":"complete","ms":20,"n":2,"pass":[]},
+  "notifications/shownotification-without-permission.https.window.html": {"status":"complete","ms":50,"n":1,"fail":[],"h":"7fe42dd0"},
+  "notifications/shownotification.https.window.html": {"status":"complete","ms":20,"n":11,"pass":[]},
+  "notifications/tag.https.html": {"status":"complete","ms":10,"n":2,"pass":[]}
+ }
+}

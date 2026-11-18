@@ -1,0 +1,22 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "forced-colors-mode/accent-color-keyword-forced-colors.html": {"status":"complete","ms":10,"n":3,"fail":["AccentColor mirrors accent-color when forced-color-adjust is none"],"h":"642c832f"},
+  "forced-colors-mode/forced-colors-mode-09.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "forced-colors-mode/forced-colors-mode-10.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "forced-colors-mode/forced-colors-mode-11.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "forced-colors-mode/forced-colors-mode-21.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "forced-colors-mode/forced-colors-mode-27.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "forced-colors-mode/forced-colors-mode-40.html": {"status":"complete","ms":10,"n":17,"pass":[]},
+  "forced-colors-mode/forced-colors-mode-50.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "forced-colors-mode/forced-colors-mode-51.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "forced-colors-mode/forced-colors-mode-54.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "forced-colors-mode/forced-colors-mode-61.html": {"status":"complete","ms":10,"n":1,"fail":[],"h":"e8f08a9a"}
+ }
+}

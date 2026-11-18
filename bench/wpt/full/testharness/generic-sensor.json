@@ -1,0 +1,14 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "generic-sensor/SensorErrorEvent-constructor.https.html": {"status":"complete","ms":10,"n":2,"pass":[]},
+  "generic-sensor/generic-sensor-permission.https.html": {"status":"complete","ms":30,"n":8,"pass":[]},
+  "generic-sensor/idlharness.https.window.html": {"status":"complete","ms":90,"n":36,"pass":["idl_test setup","idl_test validation"]}
+ }
+}

@@ -1,0 +1,39 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "user-timing/buffered-flag.any.html": {"status":"complete","ms":10,"n":2,"fail":[],"h":"e56ca94f"},
+  "user-timing/case-sensitivity.any.html": {"status":"complete","ms":10,"n":1,"fail":[],"h":"de3b3f5a"},
+  "user-timing/clearMarks.html": {"status":"complete","ms":10,"n":57,"fail":[],"h":"2cb2c016"},
+  "user-timing/clear_all_marks.any.html": {"status":"complete","ms":10,"n":1,"fail":[],"h":"8059b88d"},
+  "user-timing/clear_all_measures.any.html": {"status":"complete","ms":10,"n":1,"fail":[],"h":"8059b88d"},
+  "user-timing/clear_non_existent_mark.any.html": {"status":"complete","ms":10,"n":1,"fail":[],"h":"f255992d"},
+  "user-timing/clear_one_mark.any.html": {"status":"complete","ms":10,"n":1,"fail":[],"h":"0035ed92"},
+  "user-timing/clear_one_measure.any.html": {"status":"complete","ms":10,"n":1,"fail":[],"h":"750f2472"},
+  "user-timing/entry_type.any.html": {"status":"complete","ms":10,"n":2,"fail":[],"h":"50ff740f"},
+  "user-timing/idlharness.any.html": {"status":"complete","ms":40,"n":36,"fail":[],"h":"6372c81f"},
+  "user-timing/invoke_without_parameter.html": {"status":"complete","ms":10,"n":2,"fail":[],"h":"e5f676a4"},
+  "user-timing/mark-entry-constructor.any.html": {"status":"complete","ms":10,"n":6,"fail":[],"h":"9f2cdd45"},
+  "user-timing/mark-errors.any.html": {"status":"complete","ms":10,"n":10,"fail":[],"h":"aee0d086"},
+  "user-timing/mark-measure-feature-detection.html": {"status":"complete","ms":10,"n":2,"fail":[],"h":"0c702f91"},
+  "user-timing/mark-measure-return-objects.any.html": {"status":"complete","ms":10,"n":5,"fail":[],"h":"64994fda"},
+  "user-timing/mark.any.html": {"status":"complete","ms":10,"n":22,"fail":[],"h":"4e3569ae"},
+  "user-timing/mark_exceptions.html": {"status":"complete","ms":10,"n":22,"fail":[],"h":"6172bd80"},
+  "user-timing/measure-exceptions.html": {"status":"complete","ms":10,"n":13,"fail":["Passing 51.15 as a mark to measure API should cause error."],"h":"185cca70"},
+  "user-timing/measure-l3.any.html": {"status":"complete","ms":10,"n":3,"fail":[],"h":"b7578c90"},
+  "user-timing/measure.html": {"status":"complete","ms":210,"n":38,"fail":[],"h":"4dc65e82"},
+  "user-timing/measure_associated_with_navigation_timing.html": {"status":"complete","ms":20,"n":8,"fail":["Measure from most recent mark to navigationStart should have longer duration."],"h":"6b32cc71"},
+  "user-timing/measure_exception.html": {"status":"complete","ms":10,"n":10,"fail":[],"h":"5cd44e1c"},
+  "user-timing/measure_navigation_timing.html": {"status":"complete","ms":210,"n":17,"fail":[],"h":"9768d5ec"},
+  "user-timing/measure_syntax_err.any.html": {"status":"complete","ms":10,"n":5,"fail":[],"h":"fe580c01"},
+  "user-timing/measures.html": {"status":"complete","ms":10,"n":119,"fail":[],"h":"e44a9d60"},
+  "user-timing/supported-usertiming-types.any.html": {"status":"complete","ms":10,"n":3,"fail":[],"h":"acf0166e"},
+  "user-timing/user-timing-tojson.html": {"status":"complete","ms":10,"n":2,"fail":[],"h":"c016dce5"},
+  "user-timing/user_timing_exists.any.html": {"status":"complete","ms":10,"n":4,"fail":[],"h":"e4698326"}
+ }
+}

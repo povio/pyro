@@ -1,0 +1,23 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "beacon/beacon-basic.https.window.html": {"status":"complete","ms":410,"n":25,"fail":[],"h":"1f86e89d"},
+  "beacon/beacon-navigate.https.window.html": {"status":"complete","ms":50,"n":4,"fail":[],"h":"ad8cb423"},
+  "beacon/beacon-redirect.https.window.html": {"status":"complete","ms":230,"n":8,"fail":[],"h":"8616b099"},
+  "beacon/beacon-url-encoding-euc-kr.https.html": {"status":"complete","ms":220,"n":1,"pass":[]},
+  "beacon/headers/header-content-type-and-body.html": {"status":"complete","ms":340,"n":6,"fail":[],"h":"0f57b663"},
+  "beacon/headers/header-referrer-no-referrer-when-downgrade.https.html": {"status":"complete","ms":240,"n":2,"fail":[],"h":"84a12e18"},
+  "beacon/headers/header-referrer-no-referrer.html": {"status":"complete","ms":120,"n":1,"fail":[],"h":"be862d53"},
+  "beacon/headers/header-referrer-origin-when-cross-origin.html": {"status":"complete","ms":240,"n":2,"fail":[],"h":"e5809a0a"},
+  "beacon/headers/header-referrer-same-origin.html": {"status":"complete","ms":230,"n":2,"fail":[],"h":"a002d207"},
+  "beacon/headers/header-referrer-strict-origin-when-cross-origin.https.html": {"status":"complete","ms":230,"n":2,"fail":[],"h":"4f04e2b1"},
+  "beacon/headers/header-referrer-strict-origin.https.html": {"status":"complete","ms":230,"n":2,"fail":[],"h":"84a12e18"},
+  "beacon/idlharness.any.html": {"status":"complete","ms":70,"n":16,"fail":[],"h":"564fdf54"}
+ }
+}

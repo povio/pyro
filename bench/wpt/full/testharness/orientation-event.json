@@ -1,0 +1,31 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "orientation-event/device-orientation-events-unavailable-on-insecure-origins.html": {"status":"complete","ms":30,"n":4,"pass":[]},
+  "orientation-event/idlharness.https.window.html": {"status":"complete","ms":70,"n":76,"fail":["DeviceMotionEvent interface: operation requestPermission()","DeviceMotionEventAcceleration interface object length","DeviceMotionEventAcceleration interface object name","DeviceMotionEventAcceleration interface: attribute x","DeviceMotionEventAcceleration interface: attribute y","DeviceMotionEventAcceleration interface: attribute z","DeviceMotionEventAcceleration interface: existence and properties of interface object","DeviceMotionEventAcceleration interface: existence and properties of interface prototype object","DeviceMotionEventAcceleration interface: existence and properties of interface prototype object's \"constructor\" property","DeviceMotionEventAcceleration interface: existence and properties of interface prototype object's @@unscopables property","DeviceMotionEventRotationRate interface object length","DeviceMotionEventRotationRate interface object name","DeviceMotionEventRotationRate interface: attribute alpha","DeviceMotionEventRotationRate interface: attribute beta","DeviceMotionEventRotationRate interface: attribute gamma","DeviceMotionEventRotationRate interface: existence and properties of interface object","DeviceMotionEventRotationRate interface: existence and properties of interface prototype object","DeviceMotionEventRotationRate interface: existence and properties of interface prototype object's \"constructor\" property","DeviceMotionEventRotationRate interface: existence and properties of interface prototype object's @@unscopables property","DeviceOrientationEvent interface: calling requestPermission(optional boolean) on new DeviceOrientationEvent(\"foo\") with too few arguments must throw TypeError","DeviceOrientationEvent interface: operation requestPermission(optional boolean)","Window interface: attribute ondevicemotion","Window interface: attribute ondeviceorientation","Window interface: attribute ondeviceorientationabsolute","Window interface: window must inherit property \"ondevicemotion\" with the proper type","Window interface: window must inherit property \"ondeviceorientation\" with the proper type","Window interface: window must inherit property \"ondeviceorientationabsolute\" with the proper type"],"h":"225951d9"},
+  "orientation-event/motion/add-during-dispatch.https.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "orientation-event/motion/add-listener-from-callback.https.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "orientation-event/motion/multiple-event-listeners.https.html": {"status":"complete","ms":40,"n":1,"pass":[]},
+  "orientation-event/motion/null-values.https.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "orientation-event/motion/optional-event-properties.https.html": {"status":"complete","ms":20,"n":17,"pass":["Tests DeviceMotionEvent default constructor.","Tests creating a DeviceMotionEvent."]},
+  "orientation-event/motion/permission-denied.https.html": {"status":"complete","ms":50,"n":1,"pass":[]},
+  "orientation-event/motion/requestPermission.https.window.html": {"status":"complete","ms":20,"n":4,"pass":[]},
+  "orientation-event/motion/rounding.https.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "orientation-event/orientation/add-listener-from-callback.https.html": {"status":"complete","ms":70,"n":1,"pass":[]},
+  "orientation-event/orientation/basic-operation-absolute.https.html": {"status":"complete","ms":20,"n":2,"pass":[]},
+  "orientation-event/orientation/basic-operation.https.html": {"status":"complete","ms":20,"n":2,"pass":[]},
+  "orientation-event/orientation/multiple-event-listeners.https.html": {"status":"complete","ms":50,"n":1,"pass":[]},
+  "orientation-event/orientation/no-synchronous-events.https.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "orientation-event/orientation/null-values.https.html": {"status":"complete","ms":20,"n":2,"pass":[]},
+  "orientation-event/orientation/page-visibility.https.html": {"status":"complete","ms":70,"n":1,"pass":[]},
+  "orientation-event/orientation/permission-denied.https.html": {"status":"complete","ms":20,"n":2,"pass":[]},
+  "orientation-event/orientation/requestPermission.https.window.html": {"status":"complete","ms":20,"n":4,"pass":[]},
+  "orientation-event/orientation/updates.https.html": {"status":"complete","ms":60,"n":2,"pass":[]}
+ }
+}

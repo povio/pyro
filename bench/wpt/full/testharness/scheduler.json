@@ -1,0 +1,40 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "scheduler/post-task-delay.any.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "scheduler/post-task-multiple-scheduler-order.window.html": {"status":"complete","ms":10,"n":2,"fail":[],"h":"74864117"},
+  "scheduler/post-task-result-success.any.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "scheduler/post-task-run-order.any.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "scheduler/post-task-then-detach.html": {"status":"complete","ms":10000,"n":1,"pass":[]},
+  "scheduler/post-task-with-abort-signal-in-handler.any.html": {"status":"complete","ms":10,"n":2,"pass":[]},
+  "scheduler/post-task-with-aborted-signal.any.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "scheduler/post-task-with-signal-and-priority.any.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "scheduler/post-task-with-signal-from-detached-iframe.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "scheduler/scheduler-replaceable.any.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "scheduler/task-controller-abort-completed-tasks.any.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "scheduler/task-controller-abort-signal-and-priority.any.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "scheduler/task-controller-abort2.any.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "scheduler/task-controller-setPriority-delayed-task.any.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "scheduler/task-controller-setPriority-recursive.any.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "scheduler/task-controller-setPriority1.any.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "scheduler/task-controller-setPriority2.any.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "scheduler/task-signal-any-abort.tentative.any.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "scheduler/task-signal-any-priority.tentative.any.html": {"status":"complete","ms":10,"n":11,"pass":[]},
+  "scheduler/task-signal-onprioritychange.any.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "scheduler/tentative/yield/yield-abort.any.html": {"status":"complete","ms":10,"n":3,"pass":[]},
+  "scheduler/tentative/yield/yield-inherit-abort-across-settled-promises.any.html": {"status":"complete","ms":10,"n":8,"pass":[]},
+  "scheduler/tentative/yield/yield-inherit-across-promises.any.html": {"status":"complete","ms":10,"n":8,"pass":[]},
+  "scheduler/tentative/yield/yield-inherit-across-settled-promises.any.html": {"status":"complete","ms":10,"n":9,"pass":[]},
+  "scheduler/tentative/yield/yield-priority-posttask.any.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "scheduler/tentative/yield/yield-priority-timers.any.html": {"status":"complete","ms":10000,"n":1,"pass":[]},
+  "scheduler/tentative/yield/yield-same-origin-propagation.html": {"status":"complete","ms":10000,"n":1,"pass":[]},
+  "scheduler/tentative/yield/yield-scripted-subframe-propagation.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "scheduler/tentative/yield/yield-then-detach.html": {"status":"complete","ms":10,"n":1,"pass":[]}
+ }
+}

@@ -1,0 +1,51 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "long-animation-frame/conditional-measure-iframe-time-origin.tentative.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "long-animation-frame/conditional-user-timing-basic.tentative.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "long-animation-frame/conditional-user-timing-buffer-limit.tentative.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "long-animation-frame/conditional-user-timing-cross-origin-measure.tentative.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "long-animation-frame/conditional-user-timing-detached-window.tentative.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "long-animation-frame/conditional-user-timing-same-origin.tentative.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "long-animation-frame/loaf-basic.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "long-animation-frame/loaf-bound-function-opaque-sanitization.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "long-animation-frame/loaf-buffered.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "long-animation-frame/loaf-congested-moment-worker.tentative.html": {"status":"timeout","ms":45000,"n":5,"pass":[]},
+  "long-animation-frame/loaf-cross-origin-isolated.https.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "long-animation-frame/loaf-duration-clamping.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "long-animation-frame/loaf-event-blocking-duration.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "long-animation-frame/loaf-event-listener.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "long-animation-frame/loaf-forced-layout-duration.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "long-animation-frame/loaf-forced-style-duration.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "long-animation-frame/loaf-idle.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "long-animation-frame/loaf-iframe-same-origin.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "long-animation-frame/loaf-iframe-self.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "long-animation-frame/loaf-layout-duration.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "long-animation-frame/loaf-paint-mixin.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "long-animation-frame/loaf-pause-duration.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "long-animation-frame/loaf-pointer-without-render-iframe.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "long-animation-frame/loaf-popup.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "long-animation-frame/loaf-promise-import.tentative.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "long-animation-frame/loaf-promise-scheduled-render.html": {"status":"timeout","ms":45000,"n":1,"pass":[]},
+  "long-animation-frame/loaf-script-block.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "long-animation-frame/loaf-script-count.tentative.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "long-animation-frame/loaf-script-detached-window.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "long-animation-frame/loaf-script-window-attribution.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "long-animation-frame/loaf-source-location-redirect.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "long-animation-frame/loaf-source-location.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "long-animation-frame/loaf-stream.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "long-animation-frame/loaf-style-and-layout-duration-bounds.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "long-animation-frame/loaf-style-duration.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "long-animation-frame/loaf-timeline.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "long-animation-frame/loaf-toJSON.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "long-animation-frame/loaf-ui-event-render-start.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "long-animation-frame/loaf-visibility.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "long-animation-frame/performance-bind.tentative.html": {"status":"complete","ms":10,"n":1,"pass":[]}
+ }
+}
