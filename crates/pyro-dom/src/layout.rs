@@ -3646,6 +3646,13 @@ impl Layout {
                 return value;
             }
         }
+        // pyro: a list keeps no function that does nothing (`perspective(none)`, an identity matrix: what
+        // composing and interpolating lists leave), as Chromium's one resolved matrix shows none of them
+        if name == "transform" {
+            if let Some(value) = declared.as_deref().and_then(without_identity_transforms) {
+                return value;
+            }
+        }
         // pyro: a grid container's template resolves to its used tracks, each listed (css-grid-1 §7.2.6), and a
         // subgrid's to `subgrid` with each of its lines' names (css-grid-2 §7.2.6.2): only its layout knows
         // them (`repeat(auto-fill, …)` counts, implicit tracks, how many tracks a subgrid spans)
@@ -3711,6 +3718,36 @@ fn margin_side(name: &str) -> Option<usize> {
         "margin-left" => Some(LEFT),
         _ => None,
     }
+}
+
+/// A computed transform list without its functions that do nothing (`perspective(none)`, an
+/// identity `matrix()`/`matrix3d()`), when it has others; `None`: nothing to leave out.
+fn without_identity_transforms(value: &str) -> Option<String> {
+    const NOOPS: [&str; 3] = [
+        "perspective(none)",
+        "matrix(1, 0, 0, 1, 0, 0)",
+        "matrix3d(1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1)",
+    ];
+    if !NOOPS.iter().any(|n| value.contains(n)) {
+        return None;
+    }
+    // The list's functions, split at the spaces outside parentheses.
+    let mut items = Vec::new();
+    let (mut depth, mut start) = (0usize, 0usize);
+    for (i, b) in value.bytes().enumerate() {
+        match b {
+            b'(' => depth += 1,
+            b')' => depth = depth.saturating_sub(1),
+            b' ' if depth == 0 => {
+                items.push(&value[start..i]);
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    items.push(&value[start..]);
+    let kept: Vec<&str> = items.iter().copied().filter(|item| !NOOPS.contains(item)).collect();
+    (!kept.is_empty() && kept.len() < items.len()).then(|| kept.join(" "))
 }
 
 /// A property name ASCII-lowercased, borrowed when it is lowercase already
