@@ -6935,7 +6935,8 @@ fn driver_run_release_delivers_before_the_next_step() {
 /// sends the request here stays busy until the backend has answered: the
 /// `held` step, served right after that task, reads the parked response
 /// before the loop reads the request's announcement. A request announced
-/// between two runs (the loop runs without reading it) is not the next run's.
+/// between two runs (the loop runs without reading it) is not one of the next
+/// run's own: that run reports it once, with `previousRun: true`.
 #[test]
 fn driver_run_lists_the_requests_announced_while_it_ran() {
     let address = driver_api_site();
@@ -6979,7 +6980,15 @@ fn driver_run_lists_the_requests_announced_while_it_ran() {
     h.browser.host_mut().run_until_work(Some(Instant::now() + Duration::from_millis(400)), || false);
     let r = h.page("Pyro.run", json!({"steps": [{"held": {"hold": "poll", "count": 3, "status": 200}}]}));
     assert!(r.get("error").is_none(), "{r}");
-    assert_eq!(listed(&r, "/api?between"), 0, "{r}");
+    let between: Vec<&Value> = r["result"]["requests"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{r}"))
+        .iter()
+        .filter(|q| q["url"].as_str().is_some_and(|u| u.ends_with("/api?between")))
+        .collect();
+    assert_eq!(between.len(), 1, "{r}");
+    assert_eq!(between[0]["previousRun"], true, "{r}");
+    assert_eq!((listed(&r, "/api?first"), listed(&r, "/api?second")), (0, 0), "{r}");
 }
 
 /// A chain of tasks that counts them (`n`): the count moves between two
@@ -10821,4 +10830,50 @@ fn has_anchors_follow_inserted_subtrees_with_repeated_and_sibling_compounds() {
     assert_eq!(reads["before"], json!(["rgb(0, 0, 0)", "rgb(0, 0, 0)", "rgb(0, 0, 0)"]), "{r}");
     assert_eq!(reads["inserted"], json!(["rgb(200, 0, 0)", "rgb(0, 150, 0)", "rgb(0, 0, 220)"]), "{r}");
     assert_eq!(reads["removed"], json!(["rgb(0, 0, 0)", "rgb(0, 0, 0)", "rgb(0, 0, 0)"]), "{r}");
+}
+
+/// A request still in flight when a `Pyro.run` replies is listed there
+/// unfinished; the next run reports how it finished (here a mocked 500 the
+/// page shows), once, marked `previousRun`, and the run after that does not
+/// list it again.
+#[test]
+fn run_reports_requests_that_finish_after_it_ended() {
+    let address = driver_api_site();
+    let mut h = Harness::new();
+    let r = h.page(
+        "Pyro.run",
+        json!({"steps": [
+            {"goto": {"url": format!("http://{address}/")}},
+            {"mock": {"url": "/late", "status": 500, "body": "down", "delay": 2500}},
+            {"eval": {"expression": "fetch('/late').then(r => { const p = document.createElement('p'); p.id = 'late'; p.textContent = 'status ' + r.status; document.body.append(p) }); 1"}},
+        ]}),
+    );
+    assert!(r.get("error").is_none(), "{r}");
+    let late = |r: &Value| -> Vec<Value> {
+        let requests = r["result"]["requests"].as_array().unwrap_or_else(|| panic!("{r}"));
+        requests.iter().filter(|q| q["url"].as_str().is_some_and(|u| u.ends_with("/late"))).cloned().collect()
+    };
+    // Run 1 lists it unfinished, or not at all when the network thread
+    // announced it only after the reply.
+    let first = late(&r);
+    assert!(first.len() <= 1, "{r}");
+    for q in &first {
+        assert_eq!(q["status"], Value::Null, "still in flight when run 1 replied: {r}");
+        assert_eq!(q["error"], Value::Null, "{r}");
+        assert!(q.get("previousRun").is_none(), "{r}");
+    }
+
+    let r = h.page(
+        "Pyro.run",
+        json!({"steps": [{"check": {"locator": {"css": "#late"}, "assert": "text", "expected": "status 500"}}]}),
+    );
+    assert!(r.get("error").is_none(), "{r}");
+    let second = late(&r);
+    assert_eq!(second.len(), 1, "{r}");
+    assert_eq!(second[0]["status"], 500, "{r}");
+    assert_eq!(second[0]["previousRun"], true, "{r}");
+
+    let r = h.page("Pyro.run", json!({"steps": [{"eval": {"expression": "1"}}]}));
+    assert!(r.get("error").is_none(), "{r}");
+    assert!(late(&r).is_empty(), "reported once: {r}");
 }

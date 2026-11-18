@@ -130,8 +130,20 @@ export type RunResult = {
   screenshots: Record<string, ScreenshotResult>;
   /** One entry per step: what a check saw, a request it matched, settle time. */
   results: unknown[];
-  /** Requests the page made during the run. */
-  requests: { method: string; url: string; status: number | null; error: string | null; ms: number | null }[];
+  /**
+   * Requests the page made during the run (`status`/`error` `null` while
+   * still in flight), then any that started earlier and were not reported in
+   * their final state yet (`previousRun: true`): a request still in flight
+   * when a run ends is reported again, once, by a later run after it finishes.
+   */
+  requests: {
+    method: string;
+    url: string;
+    status: number | null;
+    error: string | null;
+    ms: number | null;
+    previousRun?: true;
+  }[];
   /** Time in the browser. */
   ms: number;
 };

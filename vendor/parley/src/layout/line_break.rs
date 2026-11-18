@@ -1096,6 +1096,7 @@ impl<'a, B: Brush> BreakLines<'a, B> {
         layout.data.height = 0.;
         // pyro: line edges are decided again from the shaped clusters.
         layout.data.restore_edge_clusters();
+        layout.data.restore_shown_hyphens();
         // pyro: and `text-fit` scales again.
         layout.data.line_style_metrics.clear();
         let mut lines = LineLayout::default();

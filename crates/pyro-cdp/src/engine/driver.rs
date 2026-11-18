@@ -2458,7 +2458,9 @@ fn labelable(dom: &Dom, id: NodeId) -> bool {
 }
 
 /// The `<label>`s of a form control: `label[for=id]` in document order and
-/// the nearest enclosing label without `for`.
+/// the nearest enclosing label without `for` whose labeled control it is (its
+/// first labelable descendant, HTML §4.10.4): a button after the checkbox a
+/// label wraps is not named by that label.
 pub(super) fn labels(dom: &Dom, doc: NodeId, id: NodeId) -> Vec<NodeId> {
     let mut out = Vec::new();
     if !labelable(dom, id) {
@@ -2472,7 +2474,7 @@ pub(super) fn labels(dom: &Dom, doc: NodeId, id: NodeId) -> Vec<NodeId> {
         }
     }
     if let Some(p) = self_and_ancestors(dom, id).skip(1).find(|p| local(dom, *p) == Some("label")) {
-        if attr(dom, p, "for").is_none() && !out.contains(&p) {
+        if attr(dom, p, "for").is_none() && !out.contains(&p) && dom.labeled_control(p).ok().flatten() == Some(id) {
             out.push(p);
         }
     }
@@ -5420,7 +5422,12 @@ impl EngineHost {
                         // The loop serves the waiters before it reads what the
                         // net thread announced: a request sent in the turn that
                         // ended the run (a `held` step may have read its parked
-                        // response already) is one of the run's.
+                        // response already) is one of the run's. The collector
+                        // also holds response observations released when the
+                        // page's fetch read them: drained here, ahead of the
+                        // reply queued behind them anyway, the log has how the
+                        // requests the page has seen finish ended.
+                        self.drain_collector();
                         self.flush_network();
                         let requests = self.logged_requests(&w.job);
                         return Ok(Drive::Done(w.job.reply(requests)));
@@ -6178,15 +6185,17 @@ impl EngineHost {
         Attempt::Done(json!({ "targetId": id_of(&self.thread.browser, job.pid), "url": url }))
     }
 
-    /// The requests a run saw on the page it started on, for its reply.
-    fn logged_requests(&self, job: &Job) -> Vec<Value> {
+    /// The requests a run saw on the page it started on, for its reply,
+    /// after those an earlier run reported unfinished that have finished
+    /// since ([`super::network::RequestLog::report_since`]).
+    fn logged_requests(&mut self, job: &Job) -> Vec<Value> {
         let (page, from) = match job.parked.iter().find(|c| c.page == job.home) {
             Some(c) => (c.page, c.log_from),
             None => (job.page, job.log_from),
         };
-        let log = self.pages.get(&page).and_then(|p| p.network.log.as_ref());
+        let log = self.pages.get_mut(&page).and_then(|p| p.network.log.as_mut());
         match (log, from) {
-            (Some(log), Some(from)) => log.since(from).iter().map(|r| r.to_json()).collect(),
+            (Some(log), Some(from)) => log.report_since(from),
             _ => Vec::new(),
         }
     }
