@@ -52,19 +52,16 @@ rule_types_allowed = ["style", "keyframe", "page", "position-try"]
 kind = "two_properties"
 
 [scroll-padding]
-engine = "gecko"
 sub_properties = ["scroll-padding-top", "scroll-padding-right", "scroll-padding-bottom", "scroll-padding-left"]
 spec = "https://drafts.csswg.org/css-scroll-snap-1/#propdef-scroll-padding"
 kind = "four_sides"
 
 [scroll-padding-block]
-engine = "gecko"
 sub_properties = ["scroll-padding-block-start", "scroll-padding-block-end"]
 spec = "https://drafts.csswg.org/css-scroll-snap-1/#propdef-scroll-padding-block"
 kind = "two_properties"
 
 [scroll-padding-inline]
-engine = "gecko"
 sub_properties = ["scroll-padding-inline-start", "scroll-padding-inline-end"]
 spec = "https://drafts.csswg.org/css-scroll-snap-1/#propdef-scroll-padding-inline"
 kind = "two_properties"
@@ -230,7 +227,6 @@ sub_properties = ["break-inside"]
 spec = "https://drafts.csswg.org/css-break-3/#page-break-properties"
 
 [offset]
-engine = "gecko"
 sub_properties = ["offset-path", "offset-distance", "offset-rotate", "offset-anchor", "offset-position"]
 spec = "https://drafts.fxtf.org/motion-1/#offset-shorthand"
 
@@ -338,7 +334,6 @@ sub_properties = ["position-try-order", "position-try-fallbacks"]
 spec = "https://drafts.csswg.org/css-anchor-position-1/#position-try-prop"
 
 [marker]
-engine = "gecko"
 sub_properties = ["marker-start", "marker-end", "marker-mid"]
 spec = "https://svgwg.org/svg2-draft/painting.html#MarkerShorthand"
 

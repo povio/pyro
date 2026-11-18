@@ -644,7 +644,6 @@ pub mod vertical_align {
     }
 }
 
-#[cfg(feature = "gecko")]
 pub mod offset {
     use super::*;
     use crate::Zero;
@@ -710,7 +709,12 @@ pub mod offset {
         {
             // The basic concept is: we must serialize offset-position or offset-path group.
             // offset-path group means "offset-path offset-distance offset-rotate".
-            let must_serialize_path = *self.offset_path != OffsetPath::None
+            // `offset-path` is behind a pref in Servo (pyro turns it on): without it, no shorthand.
+            #[cfg(feature = "servo")]
+            let Some(offset_path) = self.offset_path else { return Ok(()) };
+            #[cfg(feature = "gecko")]
+            let offset_path = self.offset_path;
+            let must_serialize_path = *offset_path != OffsetPath::None
                 || (!self.offset_distance.is_zero() || !self.offset_rotate.is_auto());
             let position_is_default = matches!(self.offset_position, OffsetPosition::Normal);
             if !position_is_default || !must_serialize_path {
@@ -721,7 +725,7 @@ pub mod offset {
                 if !position_is_default {
                     dest.write_char(' ')?;
                 }
-                self.offset_path.to_css(dest)?;
+                offset_path.to_css(dest)?;
             }
 
             if !self.offset_distance.is_zero() {
@@ -1180,7 +1184,6 @@ pub mod gap {
     }
 }
 
-#[cfg(feature = "gecko")]
 pub mod marker {
     pub use crate::properties::generated::shorthands::marker::*;
 
