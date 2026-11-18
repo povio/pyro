@@ -922,8 +922,11 @@ impl FloatContext {
                     margin_insets[lead]
                 };
                 stretch_insets[lead] = fit_insets[lead];
-                fit_insets[trail] = if has_trail_float || beside_float {
+                fit_insets[trail] = if has_trail_float {
                     insets[trail].max(containing_block_insets[trail])
+                } else if beside_float {
+                    // (no float on this side: its segment inset is no edge)
+                    containing_block_insets[trail]
                 } else {
                     // A positive trailing margin may overflow the containing block edge (it does
                     // not affect fit), but a negative one widens the space for the border box

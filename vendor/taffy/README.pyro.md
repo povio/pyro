@@ -315,7 +315,9 @@ Upstream's float and block-formatting-context fixes since v0.15.1 (#1384, #1385,
 Beside a float, negative margins on a side with no float no longer widen the band (`find_bfc_slot`): the box is no
 wider than the band, and one that they make wider moves down (Chromium, measured; WPT `floats-wrap-bfc-with-margin-001`,
 `-001a`, `-002`, which every browser passes). This loses `floats-wrap-bfc-with-margin-006/007.tentative`, which assert the
-opposite and every browser fails (`crates/pyro-render/tests/floats.rs`).
+opposite and every browser fails (`crates/pyro-render/tests/floats.rs`). The side with no float is bounded by the
+containing block alone: its segment inset (a float that ended, in another container) is no edge (pyro-layout
+`flow::floats_like_chromium`, `#c6`).
 
 Not done: `max-height` separating a
 last child's bottom margin (WPT `max-height-separates-margin`, Chromium and Gecko): `margin-collapse-038` (Safari only,
