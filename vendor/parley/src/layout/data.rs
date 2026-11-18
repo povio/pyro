@@ -553,14 +553,22 @@ impl<B: Brush> LayoutData<B> {
     ///   whitespace hangs in full.
     pub(crate) fn calculate_content_widths(&self) -> ContentWidths {
         // pyro: the shaped clusters, not what the last break's line edges made of them.
-        if !self.edge_clusters.is_empty() {
+        if !self.edge_clusters.is_empty() || !self.shown_hyphens.is_empty() {
             let mut data = self.clone();
             data.restore_edge_clusters();
+            data.restore_shown_hyphens();
             return data.calculate_content_widths();
         }
         let mut measurer = ContentWidthsMeasurer::new(self.indent_amount, self.indent_options);
         measurer.tabs = self.tab_stops();
         measurer.measure(self)
+    }
+
+    /// Start measurements and new line breaks from the original shaped clusters.
+    pub(crate) fn restore_shown_hyphens(&mut self) {
+        for (cluster, saved) in self.shown_hyphens.drain(..) {
+            self.shaped_text.restore_cluster(cluster, saved);
+        }
     }
 
     /// pyro: the layout's tab stops, if tabs go to stops.

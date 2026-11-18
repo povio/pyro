@@ -4972,3 +4972,26 @@ fn touch_media_rules_change_geometry_in_existing_documents() {
     p.layout.set_viewport(viewport);
     assert_eq!(p.metrics("box")[2], 42.0);
 }
+
+#[test]
+fn soft_hyphen_line_breaks_preserve_intrinsic_widths() {
+    // A displayed soft hyphen belongs to the current line, not to max-content.
+    // Repeated flex measurements must not count it or mutate cached shaping.
+    let mut p = page(
+        "<!doctype html><style>body{font:20px/40px monospace}main{display:flex;flex-direction:column;align-items:center;width:300px}button{display:inline-flex;width:auto;max-width:90px;padding:2px 12px;border:1px solid;font:inherit}span{hyphens:manual}</style><main><button id=b><span>Izberi da&shy;tote&shy;ko</span></button></main><span id=plain style='display:inline-block'>Izberi datoteko</span>",
+    );
+    let narrow = p.metrics("b");
+    assert!(narrow[2] > 0.0 && narrow[2] <= 90.0, "narrow button {narrow:?}");
+    assert!(narrow[3] > 46.0, "constrained text must wrap: {narrow:?}");
+    let b = p.id("b");
+    p.dom.set_attribute(b, "style", "max-width:none").unwrap();
+    let wide = p.metrics("b");
+    let plain = p.metrics("plain");
+    assert!(
+        (wide[2] - plain[2] - 26.0).abs() < 0.02,
+        "soft hyphens add no intrinsic width: button {wide:?}, plain {plain:?}"
+    );
+    assert_eq!(wide[3], 46.0, "unconstrained text occupies one line");
+    p.dom.set_attribute(b, "style", "max-width:90px").unwrap();
+    assert_eq!(p.metrics("b"), narrow, "narrowing again preserves the same wrapping");
+}
