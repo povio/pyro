@@ -2686,7 +2686,8 @@ impl LayoutPassState<'_> {
         // (x0, y0, x1, y1) of a piece, from the parent's border box.
         // (An anonymous block next to the box holds the head or the tail; when the span starts or
         // ends with a block-level box, its empty fragment is on that block's line all the same.)
-        let piece = |anonymous: NodeId, last: bool| -> Option<(f32, f32, f32, f32)> {
+        // (The flag says whether the piece is a fragment of the span, not a point.)
+        let piece = |anonymous: NodeId, last: bool| -> Option<(f32, f32, f32, f32, bool)> {
             let node = &self.nodes[anonymous];
             if !node.is_anonymous() {
                 return None;
@@ -2695,7 +2696,7 @@ impl LayoutPassState<'_> {
             let location = node.unrounded_layout().location;
             let origin = (location.x, location.y + text_layout.line_box_top);
             if let Some((x, y, width, height)) = span_padding_box(&self.nodes, text_layout, span, scale) {
-                return Some((origin.0 + x, origin.1 + y, origin.0 + x + width, origin.1 + y + height));
+                return Some((origin.0 + x, origin.1 + y, origin.0 + x + width, origin.1 + y + height, true));
             }
             let line = if last { text_layout.layout.lines().last() } else { text_layout.layout.lines().next() };
             let metrics = *line?.metrics();
@@ -2704,20 +2705,28 @@ impl LayoutPassState<'_> {
             // The end of the last line (in the line's direction), the start of the first.
             let x = if last != rtl { end } else { start };
             let (top, bottom) = (metrics.block_min_coord / scale, metrics.block_max_coord / scale);
-            Some((origin.0 + x, origin.1 + top, origin.0 + x, origin.1 + bottom))
+            Some((origin.0 + x, origin.1 + top, origin.0 + x, origin.1 + bottom, false))
         };
         let head = at
             .checked_sub(1)
             .and_then(|before| piece(children[before], true))
-            .unwrap_or((own_x, own_y, own_x, own_y));
+            .unwrap_or((own_x, own_y, own_x, own_y, false));
         let tail = children
             .get(at + 1)
             .and_then(|&after| piece(after, false))
-            .unwrap_or((own_x, own_y + own.size.height, own_x, own_y + own.size.height));
+            .unwrap_or((own_x, own_y + own.size.height, own_x, own_y + own.size.height, false));
         // The start edge and the top of the first fragment, the end edge and the bottom of the last
         // (CSS 2.1 § 10.1 4.1: left/top of the first box, right/bottom of the last, in `ltr`); the
         // tail's line can start left of the head's (WPT `position-absolute-in-inline-007b`).
-        let (x0, x1) = if rtl { (tail.0, head.2) } else { (head.0, tail.2) };
+        // An empty piece (a point) gives no inline edge when the other piece is a fragment: a span
+        // that ends (starts) with its block-level box spans its head (tail) alone (Chromium; WPT
+        // `abspos-in-block-in-inline-in-relpos-inline-002`).
+        let (first, last) = match (head.4, tail.4) {
+            (true, false) => (head, head),
+            (false, true) => (tail, tail),
+            _ => (head, tail),
+        };
+        let (x0, x1) = if rtl { (last.0, first.2) } else { (first.0, last.2) };
         let (y0, y1) = (head.1, tail.3);
         let x1 = x1.max(x0);
         Some((
