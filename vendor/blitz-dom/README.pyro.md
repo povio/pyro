@@ -2651,3 +2651,4 @@ Round 4 lane G:
   8,860 → 4,226.
 - Round 4 lane F, `document.rs`: `set_text_input_selection` (UTF-16 range of a text input's value, as the page DOM has it: pyro-render applies the focused control's selection once laid out).
 - Round 4 lane F, `dom_selection.rs`/`node/svg_css.rs`: `inline_svg_with_selection` serializes an inline `<svg>` again with its selected text wrapped in `<tspan>`s carrying the `::selection` `fill`/`stroke`/`stroke-width`, read from the declarations (`declared_css`: stylo's cascade keeps only colours for highlight pseudo-elements) (WPT css-pseudo `textpath-selection-011`). `svg_css` is `pub(crate)` for it.
+- Round 4 lane F, `layout/first_letter.rs`: an Indic conjunct (consonant, virama, consonant…, Unicode 15.1 grapheme rule GB9c) is one first letter (WPT css-pseudo `first-letter-hi-001`, `-002`).
