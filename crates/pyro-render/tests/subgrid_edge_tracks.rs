@@ -1,7 +1,8 @@
 //! A subgrid's margin, border and padding at an edge where none of its items lies go into its edge
 //! track alone, not across the empty tracks before it (Chromium; Taffy grid `subgrid`
 //! `collect_virtual_items` edge spacers). WPT css-grid `subgrid/grid-gap-002`,
-//! `orthogonal-writing-mode-002`, `-003`.
+//! `orthogonal-writing-mode-002`, `-003`. A percentage gap of a subgrid counts as zero while its
+//! parent sizes the tracks and resolves against the subgrid's content box after (`subgrid/grid-gap-008`).
 use std::sync::Arc;
 
 use pyro_render::*;
@@ -54,4 +55,22 @@ fn subgrid_end_border_goes_into_its_last_track() {
     }
     assert_eq!(pixel(&img, 5, 59), WHITE);
     assert_eq!(pixel(&img, 5, 62), [0, 128, 0], "row 5 starts after the 40px border");
+}
+
+/// A subgrid's percentage row gap counts as zero while its parent sizes the rows (two 20px rows),
+/// then resolves against the subgrid's content height (20% of 40px = 8px): the second item starts
+/// 4px into its row, past half the gap, so its blue background begins at y = 24 (a gap of 20% of
+/// the 100px column would put it at y = 40).
+#[test]
+fn subgrid_percentage_gap_resolves_against_its_final_size() {
+    let img = render(
+        "<div style='display:grid;grid-template-columns:100px;place-content:start'>\
+           <div style='display:grid;grid-template-rows:subgrid;grid-row:1/span 2;row-gap:20%'>\
+             <div style='height:20px'></div>\
+             <div style='height:20px;background:blue;align-self:start'></div>\
+           </div>\
+         </div>",
+    );
+    assert_eq!(pixel(&img, 5, 22), WHITE, "half the gap before the second item");
+    assert_eq!(pixel(&img, 5, 25), BLUE);
 }

@@ -459,7 +459,9 @@ fn child_context<Tree: LayoutGridContainer>(
         *context.axis_mut(own) = Some(SubgridAxisContext {
             track_count,
             line_names,
-            gap: subgrid_gap(tree, node, own, parent.gap.get_abs(axis), parent.percent_basis),
+            // (A percentage gap counts as zero while the parent sizes its tracks: the subgrid's size it resolves
+            // against is not known yet; `update_subgrid_track_sizes` resolves it once it is)
+            gap: subgrid_gap(tree, node, own, parent.gap.get_abs(axis), None),
             reversed,
             track_sizes,
             track_spans,
@@ -1016,6 +1018,23 @@ pub(super) fn update_subgrid_track_sizes<Tree: LayoutGridContainer>(
             .collect();
         let content_start = spans[0].0 + edge_start;
         let content_end = spans[count - 1].1 - edge_end;
+        // pyro: a percentage gap resolves against the subgrid's content box, now that the parent's tracks give it
+        // (Chromium: the tracks were sized with it as zero, so items can overflow; WPT css-grid
+        // `subgrid/grid-gap-003`)
+        let gap_changed = {
+            let style = tree.get_grid_container_style(item.node);
+            let gap = (!style.gap_is_normal().get_abs(own)).then(|| style.gap().get_abs(own));
+            drop(style);
+            match gap {
+                Some(gap) if gap.0.uses_percentage() => {
+                    let resolved = gap.resolve_or_zero(Some((content_end - content_start).max(0.0)), |val, basis| tree.calc(val, basis));
+                    let changed = resolved != sub.gap;
+                    sub.gap = resolved;
+                    changed
+                }
+                _ => false,
+            }
+        };
         for span in &mut sub_spans {
             *span = if sub.reversed {
                 (content_end - span.1, content_end - span.0)
@@ -1027,7 +1046,7 @@ pub(super) fn update_subgrid_track_sizes<Tree: LayoutGridContainer>(
             sub_spans.reverse();
         }
         let sizes: Vec<f32> = sub_spans.iter().map(|(start, end)| (end - start).max(0.0)).collect();
-        if sub.track_sizes.as_ref() != Some(&sizes) || sub.track_spans.as_ref() != Some(&sub_spans) {
+        if gap_changed || sub.track_sizes.as_ref() != Some(&sizes) || sub.track_spans.as_ref() != Some(&sub_spans) {
             sub.track_sizes = Some(sizes);
             sub.track_spans = Some(sub_spans);
             tree.set_subgrid_context(item.node, Some(context));

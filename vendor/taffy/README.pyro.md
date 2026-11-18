@@ -375,7 +375,10 @@ grid container in flow with neither layout nor paint containment, in its parent'
   the subgrid lies at an edge (or it has none), an item of no size in its edge track alone carries the edge's margin,
   border and padding, so the empty tracks between it and the edge-most item stay empty (as Blink, measured: WPT
   `subgrid-no-items-on-edges-001`, `subgrid/grid-gap-002`, `orthogonal-writing-mode-002`, `-003`;
-  `crates/pyro-render/tests/subgrid_edge_tracks.rs`). The virtual items are dropped before the items are positioned;
+  `crates/pyro-render/tests/subgrid_edge_tracks.rs`). A percentage gap of the subgrid counts as zero for its parent's
+  track sizing and resolves against the subgrid's content box once the parent's tracks give it
+  (`update_subgrid_track_sizes`; Blink, measured: items may overflow; WPT `subgrid/grid-gap-008`). The virtual items
+  are dropped before the items are positioned;
 - stretches the subgrid in its subgridded axes, whatever its alignment, size, minimum and maximum size and aspect ratio.
 
 The subgrid's own layout places its items as the grid placed them for sizing (`place_subgrid_items`): the spanned
