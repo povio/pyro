@@ -1453,6 +1453,11 @@ impl LayoutPassState<'_> {
                 // floats before it are all placed: a float met after one left for below its line
                 // is left for below it too.)
                 let mut placed_through: Option<usize> = None;
+                // pyro: the initial letter placed on the first line, until that line ends: its box
+                // and the margin box `place_initial_letter` excluded, which move down with the
+                // line's text when the line's annotations need more room than the letter's raise
+                // left (see `LineMetrics::annotation_shift`).
+                let mut letter_on_line: Option<(NodeId, Point<f32>, Size<f32>, taffy::FloatDirection)> = None;
                 let state = breaker.state_mut();
                 state.set_layout_max_advance(max_advance);
                 if let Some(limit) = balance_limit {
@@ -1521,6 +1526,24 @@ impl LayoutPassState<'_> {
                             }
                             line_bottoms[line_count_so_far % 2] = line_break_data.line_y_end;
                             line_count_so_far += 1;
+
+                            // pyro: the initial letter's cap height stays on its first line's text
+                            // (Blink places it after the line, `PostPlaceInitialLetterBox`): what
+                            // the line's annotations push the text down by beyond the room the
+                            // letter's raise left moves the letter, and its exclusion, too (WPT
+                            // css-inline `initial-letter-block-position-*-over-ruby*`).
+                            if let Some((letter_id, at, size, direction)) = letter_on_line.take() {
+                                let metrics = &line_break_data.metrics;
+                                let extra = (metrics.annotation_overflow[0] - metrics.annotation_shift) / scale;
+                                if extra > 0.0 {
+                                    self.nodes[letter_id].update_unrounded_layout(|layout| layout.location.y += extra);
+                                    block_ctx.place_initial_letter(
+                                        at,
+                                        Size { width: size.width, height: size.height + extra },
+                                        direction,
+                                    );
+                                }
+                            }
 
                             let state = breaker.state_mut();
 
@@ -1651,11 +1674,14 @@ impl LayoutPassState<'_> {
                                     let left = slot.x + indent;
                                     (left, left + margin.left)
                                 };
-                                block_ctx.place_initial_letter(
+                                let excluded = (
+                                    node_id,
                                     Point { x, y: line_top + extent_top },
                                     Size { width: margin_box_width, height: (extent_bottom - extent_top).max(0.0) },
                                     if rtl { taffy::FloatDirection::Right } else { taffy::FloatDirection::Left },
                                 );
+                                block_ctx.place_initial_letter(excluded.1, excluded.2, excluded.3);
+                                letter_on_line = Some(excluded);
                                 let location = Point {
                                     x: border_x + container_pb.left,
                                     y: line_top + drawn_top + container_pb.top,
@@ -1668,6 +1694,10 @@ impl LayoutPassState<'_> {
                                 placed_through = placed_through.max(Some(item));
                                 let line_y = line_top + shift;
                                 state.set_line_y(f64::from(line_y * scale));
+                                // An annotation over the line's text takes the room the raise
+                                // leaves before the text moves further (Blink's
+                                // `BlockStartAnnotationSpace`).
+                                state.set_annotation_space(shift * scale);
                                 line_slot = block_ctx.find_content_slot(line_y, 0.0, Clear::None, None);
                                 has_active_floats = line_slot.segment_id.is_some();
                                 set_line_slot(state, &line_slot, scale, slack, mirror_slots);

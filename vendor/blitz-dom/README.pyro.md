@@ -1973,6 +1973,11 @@ Covered by `crates/pyro-render/tests/phantom_line_boxes.rs`.
   sideways glyphs), an exclusion from the line's top to its margin box's bottom; raised and sunken letters move
   the line's text down (not under `text-box-trim` at the start). A block with an initial letter starts below the
   earlier ones.
+  A raise's shift is room the first line's annotations take before its text moves further
+  (`BreakerState::set_annotation_space`, Blink's `BlockStartAnnotationSpace`); when the line's annotations push
+  its text down beyond that room (`LineMetrics::annotation_overflow` less `annotation_shift`), the letter and its
+  exclusion move down as much once the line ends (`letter_on_line`), so its cap height stays on the text (WPT
+  css-inline `initial-letter-block-position-*-ruby*`).
 - `src/font_metrics.rs`: `BlitzFontMetricsProvider::extents_for` (ascent, descent, line gap, cap height).
 
 Covered by `crates/pyro-render/tests/initial_letter.rs`.

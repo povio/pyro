@@ -12706,7 +12706,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
          }
  
          // Out-of-flow candidates bubbled up from this container and its in-flow subtree.
-@@ -808,166 +1352,433 @@
+@@ -808,166 +1352,463 @@
          let mut line_bottoms = [0.0f64; 2];
          #[cfg(feature = "floats")]
          let mut line_count_so_far = 0usize;
@@ -12846,6 +12846,11 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
 +                // floats before it are all placed: a float met after one left for below its line
 +                // is left for below it too.)
 +                let mut placed_through: Option<usize> = None;
++                // pyro: the initial letter placed on the first line, until that line ends: its box
++                // and the margin box `place_initial_letter` excluded, which move down with the
++                // line's text when the line's annotations need more room than the letter's raise
++                // left (see `LineMetrics::annotation_shift`).
++                let mut letter_on_line: Option<(NodeId, Point<f32>, Size<f32>, taffy::FloatDirection)> = None;
 +                let state = breaker.state_mut();
 +                state.set_layout_max_advance(max_advance);
 +                if let Some(limit) = balance_limit {
@@ -12914,6 +12919,24 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
 +                            }
 +                            line_bottoms[line_count_so_far % 2] = line_break_data.line_y_end;
 +                            line_count_so_far += 1;
++
++                            // pyro: the initial letter's cap height stays on its first line's text
++                            // (Blink places it after the line, `PostPlaceInitialLetterBox`): what
++                            // the line's annotations push the text down by beyond the room the
++                            // letter's raise left moves the letter, and its exclusion, too (WPT
++                            // css-inline `initial-letter-block-position-*-over-ruby*`).
++                            if let Some((letter_id, at, size, direction)) = letter_on_line.take() {
++                                let metrics = &line_break_data.metrics;
++                                let extra = (metrics.annotation_overflow[0] - metrics.annotation_shift) / scale;
++                                if extra > 0.0 {
++                                    self.nodes[letter_id].update_unrounded_layout(|layout| layout.location.y += extra);
++                                    block_ctx.place_initial_letter(
++                                        at,
++                                        Size { width: size.width, height: size.height + extra },
++                                        direction,
++                                    );
++                                }
++                            }
 +
 +                            let state = breaker.state_mut();
 +
@@ -13047,11 +13070,14 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
 +                                    let left = slot.x + indent;
 +                                    (left, left + margin.left)
 +                                };
-+                                block_ctx.place_initial_letter(
++                                let excluded = (
++                                    node_id,
 +                                    Point { x, y: line_top + extent_top },
 +                                    Size { width: margin_box_width, height: (extent_bottom - extent_top).max(0.0) },
 +                                    if rtl { taffy::FloatDirection::Right } else { taffy::FloatDirection::Left },
 +                                );
++                                block_ctx.place_initial_letter(excluded.1, excluded.2, excluded.3);
++                                letter_on_line = Some(excluded);
 +                                let location = Point {
 +                                    x: border_x + container_pb.left,
 +                                    y: line_top + drawn_top + container_pb.top,
@@ -13064,6 +13090,10 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
 +                                placed_through = placed_through.max(Some(item));
 +                                let line_y = line_top + shift;
 +                                state.set_line_y(f64::from(line_y * scale));
++                                // An annotation over the line's text takes the room the raise
++                                // leaves before the text moves further (Blink's
++                                // `BlockStartAnnotationSpace`).
++                                state.set_annotation_space(shift * scale);
 +                                line_slot = block_ctx.find_content_slot(line_y, 0.0, Clear::None, None);
 +                                has_active_floats = line_slot.segment_id.is_some();
 +                                set_line_slot(state, &line_slot, scale, slack, mirror_slots);
@@ -13136,7 +13166,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
 -                            }
 -                            has_active_floats = true;
 -                        }
- 
+-
 -                        if has_active_floats {
 -                            let min_y = state.line_y() / scale as f64;
 -                            line_slot =
@@ -13147,7 +13177,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
 -                            state.set_line_x(0.0);
 -                            state.set_line_max_advance(max_advance);
 -                        }
--
+ 
 -                        line_start_state = has_active_floats.then(|| breaker.state().clone());
 -                        continue;
 -                    }
@@ -13274,7 +13304,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
          }
  
          // Propagate the height consumed by floats placed within this container to the
-@@ -989,6 +1800,16 @@
+@@ -989,6 +1830,16 @@
              })
              .unwrap_or((parley::layout::Alignment::Start, None));
  
@@ -13291,7 +13321,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
          inline_layout.layout.align(
              alignment,
              AlignmentOptions {
-@@ -1000,8 +1821,21 @@
+@@ -1000,8 +1851,21 @@
          // Parley lays out empty text as a single strut-height line (text-editor semantics),
          // but a line box containing no text, inline boxes or other in-flow content is a
          // zero-height line box in CSS (CSS2 §9.4.2).
@@ -13315,7 +13345,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
  
          let mut height = if has_inline_content {
              inline_layout.layout.height()
-@@ -1047,6 +1881,34 @@
+@@ -1047,6 +1911,34 @@
              }
          }
  
@@ -13350,7 +13380,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
          #[cfg(feature = "floats")]
          {
              if is_bfc_root {
-@@ -1073,12 +1935,32 @@
+@@ -1073,12 +1965,32 @@
              .or(node_size)
              .unwrap_or(measured_size + content_box_inset.sum_axes())
              .maybe_clamp(node_min_size, node_max_size);
@@ -13384,7 +13414,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
                      .unwrap_or(0.0),
              ),
          }
-@@ -1097,8 +1979,25 @@
+@@ -1097,8 +2009,25 @@
                  final_size.height - content_box_inset.vertical_axis_sum() - measured_size.height;
              taffy::compute_block_align_content_offset(align_content, free_space)
          };
@@ -13410,7 +13440,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
  
          // Store sizes and positions of inline boxes. Walking a line's items builds every
          // glyph run on it, so lines are only walked when there are boxes to find.
-@@ -1113,6 +2012,13 @@
+@@ -1113,6 +2042,13 @@
                      line_has_in_flow_content |= run.advance() > 0.0;
                  }
                  if let parley::layout::PositionedLayoutItem::InlineBox(ibox) = item {
@@ -13424,7 +13454,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
                      let order = ibox_order;
                      ibox_order += 1;
                      if inputs.run_mode == RunMode::PerformLayout {
-@@ -1172,7 +2078,7 @@
+@@ -1172,7 +2108,7 @@
                              .bottom
                              .maybe_resolve(container_content_size.height, resolve_calc_value),
                      };
@@ -13433,7 +13463,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
                      drop(style);
  
                      if is_absolute {
-@@ -1186,10 +2092,20 @@
+@@ -1186,10 +2122,20 @@
                          //   box, or below it if in-flow content precedes it on the line (its
                          //   hypothetical box would start a new line after that content).
                          let line_metrics = line.metrics();
@@ -13457,7 +13487,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
                              (
                                  taffy::Line { start: x, end: x },
                                  taffy::Line {
-@@ -1198,21 +2114,55 @@
+@@ -1198,21 +2144,55 @@
                                  },
                              )
                          } else {
@@ -13472,7 +13502,8 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
 +                                    .find(|candidate| candidate.id == ibox.id)
 +                                    .map_or(0, |candidate| candidate.index);
 +                                first_in_flow_index(&line, &inline_layout.layout).is_some_and(|first| first < at)
-+                            } else {
+                             } else {
+-                                line_top
 +                                line_has_in_flow_content
 +                            };
 +                            // pyro: the static-position rectangle is the line box's block
@@ -13483,8 +13514,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
 +                            let y = if preceded { line_bottom } else { line_top };
 +                            let x = if container_direction.is_rtl() {
 +                                final_size.width - container_pb.right + span_offset.x
-                             } else {
--                                line_top
++                            } else {
 +                                container_pb.left + span_offset.x
                              };
                              (
@@ -13522,7 +13552,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
                              node: taffy::NodeId::from(ibox.id),
                              order,
                              position,
-@@ -1220,11 +2170,11 @@
+@@ -1220,11 +2200,11 @@
                                  x: AxisStaticPosition::from_alignment(
                                      justify_self.resolve_self_relative(
                                          item_direction,
@@ -13536,7 +13566,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
                                  ),
                                  y: AxisStaticPosition::from_alignment(
                                      align_self.resolve_self_relative(
-@@ -1238,10 +2188,11 @@
+@@ -1238,10 +2218,11 @@
                              },
                          });
                      } else if is_floated {
@@ -13552,7 +13582,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
                      } else {
                          line_has_in_flow_content = true;
                          // Re-measure the box to get its border-box size (this hits the layout
-@@ -1250,6 +2201,14 @@
+@@ -1250,6 +2231,14 @@
                          let mut output =
                              self.compute_child_layout(taffy::NodeId::from(ibox.id), box_inputs);
                          let size = output.size;
@@ -13567,7 +13597,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
                          let node = &mut self.nodes[NodeId::from_u64(ibox.id)];
  
                          let is_relative = position == taffy::Position::Relative;
-@@ -1266,23 +2225,44 @@
+@@ -1266,23 +2255,44 @@
                              taffy::Point::ZERO
                          };
  
@@ -13625,7 +13655,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
                              output.oof_candidates.translate(location);
                              oof_candidates.append(&mut output.oof_candidates);
                          }
-@@ -1297,20 +2277,126 @@
+@@ -1297,20 +2307,126 @@
          // println!("known_dimensions: w: {:?} h: {:?}", inputs.known_dimensions.width, inputs.known_dimensions.height);
          // println!("\n");
  
@@ -13755,7 +13785,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
          }
  
          // Put layout back
-@@ -1360,14 +2446,19 @@
+@@ -1360,14 +2476,19 @@
                  )
              },
              baselines: taffy::Baselines {
@@ -13778,7 +13808,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
              oof_candidates,
              oof_positioning_area: Some(OofPositioningArea {
                  size: final_size - oof_position_inset.sum_axes(),
-@@ -1384,3 +2475,291 @@
+@@ -1384,3 +2505,291 @@
  fn f32_max(a: f32, b: f32) -> f32 {
      a.max(b)
  }

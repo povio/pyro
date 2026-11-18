@@ -38,6 +38,8 @@ pub(crate) struct LineStart {
     pub(crate) text_wrap_mode: TextWrapMode,
     pub(crate) line_x: f32,
     pub(crate) line_y: f64,
+    /// pyro: `BreakerState::annotation_space` at the line's start.
+    pub(crate) annotation_space: f32,
     pub(crate) layout_max_advance: f32,
     pub(crate) line_max_advance: f32,
     pub(crate) line_max_height: f32,

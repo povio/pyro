@@ -110,6 +110,9 @@ pub(crate) struct StyleMetrics {
     pub(crate) font: Option<FontMetrics>,
     /// pyro: the space over and under the content area that annotations (emphasis marks) take.
     pub(crate) annotation: [f32; 2],
+    /// pyro: [`Self::over`] and [`Self::under`] before annotations grew them (see
+    /// `LineMetrics::annotation_overflow`).
+    pub(crate) bare: [f32; 2],
 }
 
 /// Resolve the [`StyleMetrics`] of every style in `styles`, in table order.
@@ -194,6 +197,7 @@ pub(crate) fn resolve_style_metrics<B: Brush>(
         // leaves too little (CSS Ruby 1, 4.4).
         let space = style.annotation_space;
         metrics.annotation = [space.over, space.under];
+        metrics.bare = [metrics.over, metrics.under];
         if space.over > 0. {
             metrics.over = metrics.over.max(metrics.ascent + space.over);
         }
@@ -279,6 +283,7 @@ pub(crate) fn scale_style_metrics<B: Brush>(
         }
         let [over, under] = base.annotation;
         metrics.annotation = [over * scale, under * scale];
+        metrics.bare = [metrics.over, metrics.under];
         if over > 0. {
             metrics.over = metrics.over.max(metrics.ascent + over * scale);
         }
@@ -349,6 +354,11 @@ pub(crate) struct BoxMetrics {
     pub(crate) over: f32,
     /// Distance from the baseline to the bottom of the line-height expanded box.
     pub(crate) under: f32,
+    /// pyro: [`Self::over`] and [`Self::under`] without the room annotations take.
+    pub(crate) bare: [f32; 2],
+    /// pyro: the extent of what is drawn over and under the baseline: the content area and the
+    /// annotations beyond it.
+    pub(crate) marks: [f32; 2],
 }
 
 impl BoxMetrics {
@@ -374,11 +384,27 @@ impl BoxMetrics {
         } else {
             ascent + half_leading
         };
+        Self::new(ascent, descent, over, line_height - over)
+    }
+
+    /// pyro: a box without annotations.
+    pub(crate) fn new(ascent: f32, descent: f32, over: f32, under: f32) -> Self {
+        Self { ascent, descent, over, under, bare: [over, under], marks: [ascent, descent] }
+    }
+
+    /// pyro: a span's box, with the room its annotations take (`StyleMetrics::annotation`).
+    pub(crate) fn span(metrics: &StyleMetrics) -> Self {
+        let [over, under] = metrics.annotation;
         Self {
-            ascent,
-            descent,
-            over,
-            under: line_height - over,
+            ascent: metrics.ascent,
+            descent: metrics.descent,
+            over: metrics.over,
+            under: metrics.under,
+            bare: metrics.bare,
+            marks: [
+                metrics.ascent + over.max(0.),
+                metrics.descent + under.max(0.),
+            ],
         }
     }
 }
@@ -411,6 +437,7 @@ impl StyleMetrics {
             font_size: 0.,
             font: None,
             annotation: [0.; 2],
+            bare: [box_metrics.over, box_metrics.under],
         }
     }
 }

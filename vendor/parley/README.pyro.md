@@ -144,6 +144,17 @@ are smaller (CSS Ruby 1, 4.4), so the line box holds the annotations. It is part
 build cache's key. Zero by default: nothing else changes. Covered by
 `emphasis_marks_and_annotations_take_room_in_the_line` in `crates/pyro-render/tests/text_emphasis_ruby.rs`.
 
+`layout/line_break.rs` (`BreakerState::annotation_space`, `set_annotation_space`, `SubtreeExtents::{bare_box,
+marks_box}`, `finish_line`), `layout/style_metrics.rs` (`StyleMetrics::bare`, `BoxMetrics::{bare, marks, new, span}`),
+`layout/line.rs` (`LineMetrics::{annotation_overflow, annotation_shift}`), `layout/resume.rs`
+(`LineStart::annotation_space`): an annotation that overflows its line box takes the room the neighbouring line leaves
+beyond its content (with the annotations drawn there) on that side, as Blink's `InlineLayoutAlgorithm` does with
+`BlockStartAnnotationSpace`: one under a line's text takes the half-leading over the next line's, one over a line's
+text the half-leading under the previous line's, and the line moves up by that much (`annotation_shift`; the layout's
+height takes it off). The caller can give the first line such room (`set_annotation_space`: blitz-dom gives it an
+initial letter's raise). Lines without annotations do not move. Covered by
+`crates/pyro-render/tests/ruby_annotation_space.rs` and the raised-letter test in `initial_letter.rs`.
+
 `resolve/tree.rs` (`push_bidi_control`, `push_empty_box_strut`, `deferred_controls`, `resolve_unspaced_style_id`),
 `builder.rs`: blitz-dom pushes the bidi formatting characters an inline element's `unicode-bidi` stands for (U+202A to
 U+202E, U+2066 to U+2069) and the strut of an empty inline box (U+2061) as text of the current span, in its style
