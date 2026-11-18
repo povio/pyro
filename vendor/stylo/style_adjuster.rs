@@ -959,15 +959,20 @@ impl<'a, 'b: 'a> StyleAdjuster<'a, 'b> {
     /// pyro: `content-visibility: auto` turns on layout, style and paint containment (CSS
     /// Contain 2 § 4.1). Every element is taken as relevant to the user: no size containment, its
     /// contents laid out and painted. `hidden` is not supported (no containment, contents shown,
-    /// as before servo parsed the property).
+    /// as before servo parsed the property). pyro, round 4 lane S4: `hidden` adds size containment
+    /// as well, and blitz-dom skips its contents.
     #[cfg(feature = "servo")]
     fn adjust_for_content_visibility(&mut self) {
         use crate::values::specified::box_::{Contain, ContentVisibility};
         let box_style = self.style.get_box();
-        if box_style.slow_clone_content_visibility() != ContentVisibility::Auto {
-            return;
-        }
-        let contain = box_style.slow_clone_contain() | Contain::LAYOUT | Contain::STYLE | Contain::PAINT;
+        let contain = match box_style.slow_clone_content_visibility() {
+            ContentVisibility::Auto => Contain::LAYOUT | Contain::STYLE | Contain::PAINT,
+            // pyro: `hidden` skips the element's contents (blitz-dom builds no boxes for them) and
+            // turns on size containment besides (CSS Contain 2 § 4.1).
+            ContentVisibility::Hidden => Contain::SIZE | Contain::LAYOUT | Contain::STYLE | Contain::PAINT,
+            _ => return,
+        };
+        let contain = box_style.slow_clone_contain() | contain;
         self.style.mutate_box().set_contain(contain);
     }
 

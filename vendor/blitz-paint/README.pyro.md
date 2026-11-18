@@ -1112,3 +1112,8 @@ frame's whole transform, clipped to the content box (upstream applied the transl
   central baseline in vertical lines). Before, every run was re-centred on the line's one central baseline. WPT
   css-writing-modes `vertical-alignment-*` (24 of 24). `pyro-render/tests/vertical_align_orthogonal_sizes.rs`.
 - Lane F1, `render/form_controls.rs` `draw_bar_widget`: `<input type=range>`, `<progress>` and `<meter>` as headless Chrome draws them (measured): an 8px pill track (`#efefef`, dark `#3b3b3b`, disabled `#fafafa`) filled up to the value with the accent colour (default `#0075ff`, dark `#99c8ff`; a meter's optimum/suboptimal/even-less-good region `#107c10`/`#ffb900`/`#d83b01`), a 1px border over it (`#767676` at 50%, dark `#858585`, meter `#cbcbcb`), and for a range a 16px thumb of the accent colour at the value (min/max/step/value attributes; disabled `#cbcbcb`). An indeterminate progress bar shows the track only (Chrome animates a segment). Horizontal only; `appearance: none` is not honoured yet.
+- Round 4 lane S4, `render.rs` `create_css_rect_with_corners` (`native_button`): a button of native appearance
+  (`-moz-default-appearance: button` from the UA sheet, any `appearance` but `none`, Stylo's
+  `HAS_AUTHOR_OR_USER_SPECIFIED_BORDER_BACKGROUND` unset) has 1px corners where its `border-radius` is 0: Chromium's
+  native look, not a computed radius. WPT css-ui `compute-kind-widget-generated/*` (153 pages).
+  `pyro-render/tests/button_native_corners.rs`.

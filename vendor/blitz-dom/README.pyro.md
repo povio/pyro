@@ -2736,3 +2736,12 @@ of its first fragment to the right of its last. The collapsible white space hang
 line (`LineMetrics::collapsed_advance`) is in no fragment. WPT css-position `multicol/{vlr,vrl}-{ltr-rtl,rtl-ltr}-in-multicols`.
 Covered by `an_rtl_span_in_an_ltr_line_contains_by_the_lines_direction` in
 `crates/pyro-render/tests/split_inline_containing_block.rs`.
+- Round 4 lane S4, `assets/default.css`: buttons (`button`, button `input`s, `::file-selector-button`) no longer have
+  `border-radius: 1px`: they are `-moz-default-appearance: button; appearance: auto`, and blitz-paint rounds those of
+  native appearance (Chromium's computed radius is 0 too). An author-styled button and one of `appearance: none` are
+  square alike, as css-ui-4's appearance-disabling properties make them (WPT css-ui `compute-kind-widget-generated/*`).
+- Round 4 lane S4, `layout/construct.rs` (`collect_layout_children_with_wrap`): an element of `content-visibility:
+  hidden` gets no layout children, so its contents are neither laid out nor painted (CSS Contain 2 § 4.1; Stylo adds
+  size, layout, style and paint containment). Not for form controls (their contents are their own), non-atomic inline
+  boxes or `display: contents` (containment does not apply). Top-layer descendants of a skipped subtree are not shown.
+  WPT css-contain `content-visibility/*` (+38). `pyro-render/tests/content_visibility_hidden.rs`.

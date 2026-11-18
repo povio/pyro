@@ -218,7 +218,13 @@ input[type="submit"],
 input[type="reset"],
 input[type="button"] {
     border: 1px solid #999;
-    border-radius: 1px;
+    /* pyro: Chromium's native look rounds a button's corners by 1px. Not a `border-radius` here
+       (Chromium's computed one is 0): blitz-paint rounds a button of native appearance
+       (`-moz-default-appearance: button`, `appearance: auto`, no author border or background),
+       so that an author-styled one and one of `appearance: none` are square alike (css-ui-4's
+       appearance-disabling properties; WPT css-ui `compute-kind-widget-generated/*`). */
+    -moz-default-appearance: button;
+    appearance: auto;
     padding: 1px 6px;
     color: black;
     background-color: #EFEFEF;
@@ -255,7 +261,8 @@ input[type="file" i] {
 
 input[type="file" i]::file-selector-button {
     border: 1px solid #999;
-    border-radius: 1px;
+    -moz-default-appearance: button;
+    appearance: auto;
     padding: 1px 6px;
     color: black;
     background-color: #EFEFEF;

@@ -6614,6 +6614,29 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 -                self.node.id,
 -                &mut draw_text_context,
 -            );
+-        }
+-    }
+-
+-    fn draw_text_input_text(&self, scene: &mut impl PaintScene, pos: Point) {
+-        // Render the text in text inputs
+-        if let Some(input_data) = self.text_input {
+-            // For single-line inputs, add an offset to vertically center the text input layout
+-            // within the content box of it's node.
+-            let y_offset = self.node.text_input_v_centering_offset(self.scale);
+-            let subpixel_offset = input_data.content_box_subpixel_offset;
+-            let pos = Point {
+-                x: pos.x + subpixel_offset.x as f64,
+-                y: pos.y + subpixel_offset.y as f64 + y_offset,
+-            };
+-
+-            // Apply the scroll offset (stored in CSS pixels, scaled here to device pixels) so
+-            // that the caret stays visible. Single-line inputs scroll horizontally; multi-line
+-            // inputs scroll vertically.
+-            let scroll_offset = input_data.scroll_offset as f64 * self.scale;
+-            let (scroll_x, scroll_y) = if input_data.is_multiline {
+-                (0.0, scroll_offset)
+-            } else {
+-                (scroll_offset, 0.0)
 +        if cx.context.backgrounds && !hidden {
 +            cx.draw_table_row_backgrounds(scene);
 +        }
@@ -9651,34 +9674,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                FlowPhase::All
 +            } else {
 +                continue;
-+            };
-+            self.context.flow_phase.set(child_phase);
-+            self.draw_paint_child(scene, child_id, parent_style_transform, clip_rect);
-+            self.context.flow_phase.set(FlowPhase::All);
-         }
-     }
- 
--    fn draw_text_input_text(&self, scene: &mut impl PaintScene, pos: Point) {
--        // Render the text in text inputs
--        if let Some(input_data) = self.text_input {
--            // For single-line inputs, add an offset to vertically center the text input layout
--            // within the content box of it's node.
--            let y_offset = self.node.text_input_v_centering_offset(self.scale);
--            let subpixel_offset = input_data.content_box_subpixel_offset;
--            let pos = Point {
--                x: pos.x + subpixel_offset.x as f64,
--                y: pos.y + subpixel_offset.y as f64 + y_offset,
--            };
--
--            // Apply the scroll offset (stored in CSS pixels, scaled here to device pixels) so
--            // that the caret stays visible. Single-line inputs scroll horizontally; multi-line
--            // inputs scroll vertically.
--            let scroll_offset = input_data.scroll_offset as f64 * self.scale;
--            let (scroll_x, scroll_y) = if input_data.is_multiline {
--                (0.0, scroll_offset)
--            } else {
--                (scroll_offset, 0.0)
--            };
+             };
 -
 -            let transform = self.transform
 -                * Affine::translate((pos.x * self.scale - scroll_x, pos.y * self.scale - scroll_y));
@@ -9708,6 +9704,55 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 -                        None,
 -                        &convert_rect(&cursor),
 -                    );
+-                };
+-            }
+-
+-            // Render text
+-            let mut draw_text_context = self.context.draw_text_context.borrow_mut();
+-            crate::text::stroke_text(
+-                scene,
+-                input_data.editor.try_layout().unwrap().lines(),
+-                self.context.dom,
+-                transform,
+-                TextPaintOptions {
+-                    scale: self.scale,
+-                    brush_override: None,
+-                },
+-                self.node.id,
+-                &mut draw_text_context,
+-            );
++            self.context.flow_phase.set(child_phase);
++            self.draw_paint_child(scene, child_id, parent_style_transform, clip_rect);
++            self.context.flow_phase.set(FlowPhase::All);
+         }
+     }
+ 
+-    fn draw_marker(&self, scene: &mut impl PaintScene, pos: Point) {
+-        if let Some(ListItemLayout {
+-            marker,
+-            position: ListItemLayoutPosition::Outside(layout),
+-            content_box_subpixel_offset,
+-        }) = self.list_item
+-        {
+-            // Right align and pad the bullet when rendering outside
+-            let x_padding = match marker {
+-                Marker::Char(_) => 8.0,
+-                Marker::String(_) => 0.0,
+-            };
+-            // Outside markers are placed outside the list item's border box
+-            // (`pos` is the origin of its content box)
+-            let item_layout = self.node.final_layout();
+-            let x_offset = -(layout.full_width() / layout.scale()
+-                + x_padding
+-                + item_layout.padding.left
+-                + item_layout.border.left);
+-
+-            // Align the marker with the baseline of the first line of text in the list item
+-            let y_offset = if let Some((text_layout, first_text_line)) = &self
+-                .element
+-                .inline_layout_data
+-                .as_ref()
+-                .and_then(|text_layout| Some((text_layout, text_layout.layout.lines().next()?)))
 +    /// The overflow clips a box hoisted to this stacking context (a positioned descendant with a
 +    /// `z-index`) is painted in, outermost first: those of the boxes between it and this one
 +    /// that are its containing-block ancestors. pyro: such a box makes no stacking context, so
@@ -9740,66 +9785,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +            between.1 += location.y - scroll.y as f32;
 +            if let Some(styles) = node.primary_styles().filter(|_| node.element_data().is_some())
 +                && self.context.should_clip_node(node, &styles)
-+            {
-+                let origin = Vec2::new(
-+                    f64::from(position.x - between.0 + location.x) * self.scale,
-+                    f64::from(position.y - between.1 + location.y) * self.scale,
-+                );
-+                let frame = create_css_rect(&styles, node.final_layout(), self.scale);
-+                let clip = if node.element_data().is_some_and(|el| el.text_input_data().is_some()) {
-+                    frame.text_input_clip_path()
-+                } else {
-+                    box_shadow::overflow_clip_path(&frame, &styles, self.scale)
-                 };
-+                clips.push((id, parent_style_transform.pre_translate(origin), clip));
-             }
--
--            // Render text
--            let mut draw_text_context = self.context.draw_text_context.borrow_mut();
--            crate::text::stroke_text(
--                scene,
--                input_data.editor.try_layout().unwrap().lines(),
--                self.context.dom,
--                transform,
--                TextPaintOptions {
--                    scale: self.scale,
--                    brush_override: None,
--                },
--                self.node.id,
--                &mut draw_text_context,
--            );
-+            current = node.containing_block();
-         }
-+        Vec::new()
-     }
- 
--    fn draw_marker(&self, scene: &mut impl PaintScene, pos: Point) {
--        if let Some(ListItemLayout {
--            marker,
--            position: ListItemLayoutPosition::Outside(layout),
--            content_box_subpixel_offset,
--        }) = self.list_item
--        {
--            // Right align and pad the bullet when rendering outside
--            let x_padding = match marker {
--                Marker::Char(_) => 8.0,
--                Marker::String(_) => 0.0,
--            };
--            // Outside markers are placed outside the list item's border box
--            // (`pos` is the origin of its content box)
--            let item_layout = self.node.final_layout();
--            let x_offset = -(layout.full_width() / layout.scale()
--                + x_padding
--                + item_layout.padding.left
--                + item_layout.border.left);
--
--            // Align the marker with the baseline of the first line of text in the list item
--            let y_offset = if let Some((text_layout, first_text_line)) = &self
--                .element
--                .inline_layout_data
--                .as_ref()
--                .and_then(|text_layout| Some((text_layout, text_layout.layout.lines().next()?)))
--            {
+             {
 -                (first_text_line.metrics().baseline
 -                    - layout.lines().next().unwrap().metrics().baseline)
 -                    / layout.scale()
@@ -9829,9 +9815,23 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 -                self.node.id,
 -                &mut draw_text_context,
 -            );
--        }
--    }
--
++                let origin = Vec2::new(
++                    f64::from(position.x - between.0 + location.x) * self.scale,
++                    f64::from(position.y - between.1 + location.y) * self.scale,
++                );
++                let frame = create_css_rect(&styles, node.final_layout(), self.scale);
++                let clip = if node.element_data().is_some_and(|el| el.text_input_data().is_some()) {
++                    frame.text_input_clip_path()
++                } else {
++                    box_shadow::overflow_clip_path(&frame, &styles, self.scale)
++                };
++                clips.push((id, parent_style_transform.pre_translate(origin), clip));
++            }
++            current = node.containing_block();
+         }
++        Vec::new()
+     }
+ 
 -    fn draw_children(
 +    /// Paints boxes hoisted to this stacking context, in order, where their layout put them,
 +    /// each inside its [`Self::hoisted_child_clips`]. pyro: the clip layers stay pushed from one
@@ -10631,7 +10631,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
      // Resolve and rescale
      // We have to scale since document pixels are not same same as rendered pixels
      let width: f64 = layout.size.width as f64;
-@@ -1457,12 +5284,188 @@
+@@ -1457,12 +5284,205 @@
          }
      };
      let s_border = style.get_border();
@@ -10648,7 +10648,24 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +            resolve_radii(radius)
 +        }
 +    };
-+    let kept = |keep: bool, radius: Vec2| if keep { radius } else { Vec2::ZERO };
++    // pyro: a button of native appearance (the UA sheet's `-moz-default-appearance: button`,
++    // any `appearance` but `none` (the compat keywords and `textfield` act as `auto` on a
++    // button), no author or user border or background) has Chromium's native look's 1px corners,
++    // which are not its computed `border-radius` (0, as Chromium's): one an author styles, or of
++    // `appearance: none`, is square (css-ui-4's appearance-disabling properties).
++    let native_button = {
++        use style::computed_values::appearance::T as Appearance;
++        let box_style = style.get_box();
++        *box_style.get__moz_default_appearance() == Appearance::Button
++            && *box_style.get_appearance() != Appearance::None
++            && !style
++                .flags
++                .contains(style::computed_value_flags::ComputedValueFlags::HAS_AUTHOR_OR_USER_SPECIFIED_BORDER_BACKGROUND)
++    };
++    let native = |radius: Vec2| {
++        if native_button && radius == Vec2::ZERO && !border_shape { Vec2::new(scale, scale) } else { radius }
++    };
++    let kept = |keep: bool, radius: Vec2| if keep { native(radius) } else { Vec2::ZERO };
      let border_radii = NonUniformRoundedRectRadii {
 -        top_left: resolve_radii(&s_border.border_top_left_radius),
 -        top_right: resolve_radii(&s_border.border_top_right_radius),

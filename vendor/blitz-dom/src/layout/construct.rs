@@ -615,6 +615,24 @@ fn collect_layout_children_with_wrap(
 
     flush_pseudo_elements(doc, container_node_id);
 
+    // pyro: `content-visibility: hidden` skips the element's contents: no boxes are built for them,
+    // so they are neither laid out nor painted (CSS Contain 2 § 4.1; Stylo adds the size
+    // containment). Form controls build their own contents and keep them; an element containment
+    // does not apply to (an inline box, `display: contents`) is not affected.
+    let skips_contents = doc.nodes[container_node_id].data.downcast_element().is_some_and(|el| {
+        !matches!(el.name.local.as_ref(), "input" | "textarea" | "select")
+    }) && doc.nodes[container_node_id].display_style().is_some_and(|display| {
+        !display.is_contents()
+            && !display.is_none()
+            && !(display.outside() == style::values::specified::box_::DisplayOutside::Inline
+                && display.inside() == DisplayInside::Flow)
+    }) && doc.nodes[container_node_id].primary_styles().is_some_and(|style| {
+        style.get_box().slow_clone_content_visibility() == style::values::specified::box_::ContentVisibility::Hidden
+    });
+    if skips_contents {
+        return;
+    }
+
     // pyro: a select that was a drop-down had its options'
     // construct damage cleared (below); as a list box they must build their
     // boxes again.

@@ -297,7 +297,8 @@ slotted rules of a pseudo-element. blitz-dom keeps shadow trees' styles (its REA
 - `style_adjuster.rs`: a `::scroll-marker-group` always has layout containment, and size containment unless it is
   absolutely positioned (CSS Overflow 5's recommended `contain: size !important`; Chromium contains its layout too).
   `content-visibility` is parsed for servo; `auto` adds layout, style and paint containment to the computed `contain`
-  (every element is taken as relevant to the user: no size containment), `hidden` does nothing yet.
+  (every element is taken as relevant to the user: no size containment); `hidden` adds size containment as well
+  (round 4 lane S4; blitz-dom skips its contents).
 - `style_adjuster.rs` (`adjust_for_author_styled_button`): a button (`button`, `input` of type `button`, `submit`
   or `reset`, `::scroll-button()`) whose border or background an author or user styles has square corners unless
   one rounds them: pyro's UA sheet rounds buttons by 1px for Chromium's native look, which Chromium drops then

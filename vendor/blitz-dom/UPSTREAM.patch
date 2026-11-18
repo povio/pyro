@@ -187,7 +187,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  /* https://html.spec.whatwg.org/multipage/rendering.html#form-controls */
  input,
  button,
-@@ -121,6 +201,18 @@
+@@ -121,17 +201,37 @@
      outline: 2px solid #4D90FE;
  }
  
@@ -206,7 +206,18 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  button,
  input[type="submit"],
  input[type="reset"],
-@@ -132,6 +224,8 @@
+ input[type="button"] {
+     border: 1px solid #999;
+-    border-radius: 1px;
++    /* pyro: Chromium's native look rounds a button's corners by 1px. Not a `border-radius` here
++       (Chromium's computed one is 0): blitz-paint rounds a button of native appearance
++       (`-moz-default-appearance: button`, `appearance: auto`, no author border or background),
++       so that an author-styled one and one of `appearance: none` are square alike (css-ui-4's
++       appearance-disabling properties; WPT css-ui `compute-kind-widget-generated/*`). */
++    -moz-default-appearance: button;
++    appearance: auto;
+     padding: 1px 6px;
+     color: black;
      background-color: #EFEFEF;
      text-align: center;
      display: inline-block;
@@ -215,7 +226,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  }
  
  /* Button-flavored inputs clip their contents to the border box and never
-@@ -150,6 +244,40 @@
+@@ -150,6 +250,41 @@
      background-color: transparent;
  }
  
@@ -230,7 +241,8 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
 +
 +input[type="file" i]::file-selector-button {
 +    border: 1px solid #999;
-+    border-radius: 1px;
++    -moz-default-appearance: button;
++    appearance: auto;
 +    padding: 1px 6px;
 +    color: black;
 +    background-color: #EFEFEF;
@@ -256,7 +268,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  /* https://html.spec.whatwg.org/#the-fieldset-and-legend-elements */
  fieldset {
      display: block;
-@@ -169,8 +297,40 @@
+@@ -169,8 +304,40 @@
      padding-inline-end: 2px;
  }
  
@@ -298,7 +310,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  }
  
  source {
-@@ -249,15 +409,16 @@
+@@ -249,15 +416,16 @@
      unicode-bidi: isolate;
  }
  
@@ -320,7 +332,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
      unicode-bidi: plaintext;
  }
  
-@@ -569,6 +730,19 @@
+@@ -569,6 +737,19 @@
      text-align: center;
  }
  
@@ -340,7 +352,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  table[align="center"]>caption {
      margin-inline-start: auto;
      margin-inline-end: auto;
-@@ -838,6 +1012,31 @@
+@@ -838,6 +1019,31 @@
      border-radius: 0 ! important;
  }
  
@@ -372,7 +384,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  iframe {
      border: 2px inset;
  }
-@@ -851,6 +1050,10 @@
+@@ -851,6 +1057,10 @@
      user-select: none;
  }
  
@@ -383,7 +395,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  iframe:focus-visible,
  body:focus-visible,
  html:focus-visible {
-@@ -886,14 +1089,15 @@
+@@ -886,14 +1096,15 @@
      display: none;
  }
  
@@ -402,7 +414,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
      padding: unset !important;
  }
  
-@@ -1128,37 +1332,42 @@
+@@ -1128,37 +1339,42 @@
  }
  
  /* Popover UA style, https://html.spec.whatwg.org/#flow-content-3 */
@@ -5578,7 +5590,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
  }
  
  fn collect_layout_children_with_wrap(
-@@ -410,31 +591,59 @@
+@@ -410,31 +591,77 @@
          *doc.nodes[container_node_id].display_constructed_as_mut() = display;
      }
  
@@ -5609,6 +5621,24 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
  
      flush_pseudo_elements(doc, container_node_id);
  
++    // pyro: `content-visibility: hidden` skips the element's contents: no boxes are built for them,
++    // so they are neither laid out nor painted (CSS Contain 2 § 4.1; Stylo adds the size
++    // containment). Form controls build their own contents and keep them; an element containment
++    // does not apply to (an inline box, `display: contents`) is not affected.
++    let skips_contents = doc.nodes[container_node_id].data.downcast_element().is_some_and(|el| {
++        !matches!(el.name.local.as_ref(), "input" | "textarea" | "select")
++    }) && doc.nodes[container_node_id].display_style().is_some_and(|display| {
++        !display.is_contents()
++            && !display.is_none()
++            && !(display.outside() == style::values::specified::box_::DisplayOutside::Inline
++                && display.inside() == DisplayInside::Flow)
++    }) && doc.nodes[container_node_id].primary_styles().is_some_and(|style| {
++        style.get_box().slow_clone_content_visibility() == style::values::specified::box_::ContentVisibility::Hidden
++    });
++    if skips_contents {
++        return;
++    }
++
 +    // pyro: a select that was a drop-down had its options'
 +    // construct damage cleared (below); as a list box they must build their
 +    // boxes again.
@@ -5646,7 +5676,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
              ) {
                  create_text_editor(doc, container_node_id, false);
                  return;
-@@ -444,17 +653,74 @@
+@@ -444,17 +671,74 @@
              }
          }
  
@@ -5726,7 +5756,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
                      doc.get_node_mut(container_node_id)
                          .unwrap()
                          .element_data_mut()
-@@ -488,13 +754,37 @@
+@@ -488,13 +772,37 @@
          } else {
              (0, false)
          };
@@ -5766,7 +5796,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
              return;
          }
      }
-@@ -530,7 +820,9 @@
+@@ -530,7 +838,9 @@
                  .any(|child| {
                      let display = child.display_style().unwrap_or(Display::inline());
                      let node_kind = child.data.kind();
@@ -5777,7 +5807,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
                  });
  
              if !has_text_node_or_contents {
-@@ -553,9 +845,9 @@
+@@ -553,9 +863,9 @@
          }
  
          DisplayInside::Table => {
@@ -5789,7 +5819,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
              doc.nodes[container_node_id]
                  .flags
                  .insert(NodeFlags::IS_TABLE_ROOT);
-@@ -564,13 +856,10 @@
+@@ -564,13 +874,10 @@
                  .downcast_element_mut()
                  .unwrap()
                  .special_data = data;
@@ -5807,7 +5837,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
          }
  
          // Flow, FlowRoot and TableCell, plus internal table displays (row,
-@@ -581,9 +870,25 @@
+@@ -581,9 +888,25 @@
          // layout children (text nodes carry no style and cannot be laid out
          // as block/flex/grid items).
          _ => {
@@ -5833,7 +5863,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
              // Inline box whose in-flow content is block-level only: it is laid out as block
              // boxes, so paint must not draw its own box over them.
              if doc.nodes[container_node_id]
-@@ -597,7 +902,10 @@
+@@ -597,7 +920,10 @@
                      .insert(NodeFlags::IS_INLINE_WITH_ONLY_BLOCK_CHILDREN);
              }
  
@@ -5845,7 +5875,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
                  // Contents-transparent: a display:contents child may be
                  // holding the out-of-flow elements (otherwise the contents
                  // node itself would be pushed as a layout box).
-@@ -609,18 +917,39 @@
+@@ -609,18 +935,39 @@
              }
  
              // TODO: fix display:contents
@@ -5897,7 +5927,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
                  doc.nodes[container_node_id]
                      .flags
                      .insert(NodeFlags::IS_INLINE_ROOT);
-@@ -629,6 +958,14 @@
+@@ -629,6 +976,14 @@
                  return;
              }
  
@@ -5912,7 +5942,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
              // If the children are either all inline or all block then simply return the regular children
              // as the layout children
              if classification.all_block & !classification.has_contents {
-@@ -651,29 +988,234 @@
+@@ -651,29 +1006,234 @@
      }
  }
  
@@ -6164,7 +6194,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
      let (before_style, after_style, before_node_id, after_node_id) = {
          let node = &doc.nodes[node_id];
  
-@@ -689,8 +1231,27 @@
+@@ -689,8 +1249,27 @@
              .as_ref()
              .and_then(|d| d.styles.pseudos.as_array()[0].clone());
  
@@ -6192,7 +6222,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
  
      // Sync pseudo element
      // TODO: Make incremental
-@@ -719,11 +1280,11 @@
+@@ -719,11 +1298,11 @@
                      .insert(NodeFlags::IS_IN_DOCUMENT);
              }
  
@@ -6209,7 +6239,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
  
              doc.nodes[new_node_id].record_out_of_flow(pe_style);
              let mut element_data = StyloElementData::default();
-@@ -733,6 +1294,11 @@
+@@ -733,6 +1312,11 @@
              *doc.nodes[new_node_id]
                  .stylo_element_data_mut()
                  .ensure_init_mut() = element_data;
@@ -6221,7 +6251,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
  
              let node = &mut doc.nodes[node_id];
              node.set_pe_by_index(idx, Some(new_node_id));
-@@ -750,53 +1316,110 @@
+@@ -750,53 +1334,110 @@
              // the style-pointer comparison below, as the pseudo-element's style may
              // already have been updated by `sync_pseudo_element_styles` during the
              // style traversal without the text having been updated.
@@ -6370,7 +6400,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
  /// Handles the cases where there are text nodes or inline nodes that need to be wrapped in an anonymous block node
  fn collect_complex_layout_children(
      doc: &mut BaseDocument,
-@@ -805,9 +1428,86 @@
+@@ -805,9 +1446,86 @@
      hide_whitespace: bool,
      needs_wrap: fn(NodeKind, DisplayOutside) -> bool,
  ) {
@@ -6459,7 +6489,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
  
          // Get Display style. Default to inline because nodes without styles are probably text nodes
          let contains_block = doc.nodes[child_id].is_or_contains_block();
-@@ -827,9 +1527,24 @@
+@@ -827,9 +1545,24 @@
          // Taffy knows how to deal with `Display::None` children.
          //
          // Also hide all-whitespace flexbox children as these should be ignored
@@ -6485,7 +6515,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
          // Recurse into `Display::Contents` nodes, wrapping hoisted text and
          // inline children as if they were direct children of this container
          else if display_inside == DisplayInside::Contents {
-@@ -844,23 +1559,95 @@
+@@ -844,23 +1577,95 @@
          else if needs_wrap(child_node_kind, display_outside) {
              out.push_wrapped(container_node_id, child_id, doc);
          }
@@ -6585,7 +6615,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
      let alignment = node
          .primary_styles()
          .map(|s| stylo_to_parley::text_align(s.clone_text_align()))
-@@ -875,6 +1662,22 @@
+@@ -875,6 +1680,22 @@
      } else {
          node.attr(local_name!("value")).unwrap_or("").to_string()
      };
@@ -6608,7 +6638,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
      let is_focussed = node.is_focussed();
      let element = &mut node.data.downcast_element_mut().unwrap();
      if !matches!(element.special_data, SpecialElementData::TextInput(_)) {
-@@ -894,6 +1697,9 @@
+@@ -894,6 +1715,9 @@
          unreachable!();
      };
  
@@ -6618,7 +6648,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
      let editor = &mut text_input_data.editor;
      editor.set_scale(doc.viewport.scale_f64() as f32);
      editor.set_width(None);
-@@ -923,6 +1729,69 @@
+@@ -923,6 +1747,69 @@
      editor.refresh_layout(&mut doc.font_ctx.lock().unwrap(), &mut doc.layout_ctx);
  }
  
@@ -6688,7 +6718,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
  fn create_checkbox_input(doc: &mut BaseDocument, input_element_id: NodeId) {
      let node = &mut doc.nodes[input_element_id];
  
-@@ -944,6 +1813,25 @@
+@@ -944,6 +1831,25 @@
  ) {
      flush_inline_pseudos_recursive(doc, inline_context_root_node_id);
  
@@ -6714,7 +6744,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
      iter_children_and_pseudos!(doc.nodes[inline_context_root_node_id], |child_id| {
          find_inline_layout_embedded_boxes_recursive(
              &mut doc.nodes,
-@@ -953,10 +1841,41 @@
+@@ -953,10 +1859,41 @@
          );
      });
  
@@ -6757,7 +6787,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
                  .display_style()
                  .unwrap_or(Display::inline());
              let do_recurse = match (display.outside(), display.inside()) {
-@@ -965,16 +1884,33 @@
+@@ -965,16 +1902,33 @@
                  (_, _) => false,
              };
              if do_recurse {
@@ -6792,7 +6822,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
      ) {
          let node = &mut nodes[node_id];
  
-@@ -992,50 +1928,89 @@
+@@ -992,50 +1946,89 @@
  
                  let display = node.display_style().unwrap_or(Display::inline());
  

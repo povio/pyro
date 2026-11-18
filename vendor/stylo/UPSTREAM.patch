@@ -2635,8 +2635,8 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
      }
 diff -ruN a/style_adjuster.rs b/style_adjuster.rs
 --- a/style_adjuster.rs	2026-11-11 19:55:57
-+++ b/style_adjuster.rs	2026-11-17 00:12:05
-@@ -184,8 +184,86 @@
++++ b/style_adjuster.rs	2026-11-18 23:08:06
+@@ -184,6 +184,84 @@
          self.style
              .mutate_box()
              .set_adjusted_display(new_display, false);
@@ -2702,8 +2702,8 @@ diff -ruN a/style_adjuster.rs b/style_adjuster.rs
 +        if clamps {
 +            self.style.add_flags(ComputedValueFlags::WEBKIT_LINE_CLAMP_APPLIES);
 +        }
-     }
- 
++    }
++
 +    /// pyro: a child of a legacy horizontal `-webkit-box` (laid out as flex) flexes by
 +    /// `-webkit-box-flex`, growing and shrinking alike, and its `align-self` does nothing (the
 +    /// box's `-webkit-box-align` aligns it): Blink's `LayoutDeprecatedFlexibleBox`.
@@ -2718,11 +2718,9 @@ diff -ruN a/style_adjuster.rs b/style_adjuster.rs
 +        pos.set_flex_grow(flex);
 +        pos.set_flex_shrink(flex);
 +        pos.set_align_self(SelfAlignment::auto());
-+    }
-+
+     }
+ 
      /// CSS 2.1 section 9.7:
-     ///
-     ///    If 'position' has the value 'absolute' or 'fixed', [...] the computed
 @@ -419,9 +497,16 @@
          }
  
@@ -2742,7 +2740,7 @@ diff -ruN a/style_adjuster.rs b/style_adjuster.rs
          }
      }
  
-@@ -821,6 +906,90 @@
+@@ -821,6 +906,95 @@
      /// for web-compat reasons.
      /// We intentionally don't check 'list-style-image' below since we want it to use
      /// the same font as its fallback ('list-style-type') in case it fails to load.
@@ -2799,15 +2797,20 @@ diff -ruN a/style_adjuster.rs b/style_adjuster.rs
 +    /// pyro: `content-visibility: auto` turns on layout, style and paint containment (CSS
 +    /// Contain 2 § 4.1). Every element is taken as relevant to the user: no size containment, its
 +    /// contents laid out and painted. `hidden` is not supported (no containment, contents shown,
-+    /// as before servo parsed the property).
++    /// as before servo parsed the property). pyro, round 4 lane S4: `hidden` adds size containment
++    /// as well, and blitz-dom skips its contents.
 +    #[cfg(feature = "servo")]
 +    fn adjust_for_content_visibility(&mut self) {
 +        use crate::values::specified::box_::{Contain, ContentVisibility};
 +        let box_style = self.style.get_box();
-+        if box_style.slow_clone_content_visibility() != ContentVisibility::Auto {
-+            return;
-+        }
-+        let contain = box_style.slow_clone_contain() | Contain::LAYOUT | Contain::STYLE | Contain::PAINT;
++        let contain = match box_style.slow_clone_content_visibility() {
++            ContentVisibility::Auto => Contain::LAYOUT | Contain::STYLE | Contain::PAINT,
++            // pyro: `hidden` skips the element's contents (blitz-dom builds no boxes for them) and
++            // turns on size containment besides (CSS Contain 2 § 4.1).
++            ContentVisibility::Hidden => Contain::SIZE | Contain::LAYOUT | Contain::STYLE | Contain::PAINT,
++            _ => return,
++        };
++        let contain = box_style.slow_clone_contain() | contain;
 +        self.style.mutate_box().set_contain(contain);
 +    }
 +
@@ -2833,7 +2836,7 @@ diff -ruN a/style_adjuster.rs b/style_adjuster.rs
      #[cfg(feature = "gecko")]
      fn adjust_for_marker_pseudo(&mut self, author_or_user_specified_properties: &LonghandIdSet) {
          use crate::values::computed::counters::Content;
-@@ -1064,6 +1233,11 @@
+@@ -1064,6 +1238,11 @@
          //     "Should always have an element around for non-pseudo styles"
          // );
  
@@ -2845,7 +2848,7 @@ diff -ruN a/style_adjuster.rs b/style_adjuster.rs
          self.adjust_for_links(element);
          self.adjust_for_prohibited_display_contents(element);
          #[cfg(feature = "gecko")]
-@@ -1090,6 +1264,12 @@
+@@ -1090,6 +1269,12 @@
          self.adjust_for_appearance(element);
          #[cfg(feature = "gecko")]
          self.adjust_for_marker_pseudo(author_or_user_specified_properties);

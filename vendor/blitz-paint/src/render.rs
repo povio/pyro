@@ -5297,7 +5297,24 @@ fn create_css_rect_with_corners(style: &ComputedValues, layout: &Layout, scale: 
             resolve_radii(radius)
         }
     };
-    let kept = |keep: bool, radius: Vec2| if keep { radius } else { Vec2::ZERO };
+    // pyro: a button of native appearance (the UA sheet's `-moz-default-appearance: button`,
+    // any `appearance` but `none` (the compat keywords and `textfield` act as `auto` on a
+    // button), no author or user border or background) has Chromium's native look's 1px corners,
+    // which are not its computed `border-radius` (0, as Chromium's): one an author styles, or of
+    // `appearance: none`, is square (css-ui-4's appearance-disabling properties).
+    let native_button = {
+        use style::computed_values::appearance::T as Appearance;
+        let box_style = style.get_box();
+        *box_style.get__moz_default_appearance() == Appearance::Button
+            && *box_style.get_appearance() != Appearance::None
+            && !style
+                .flags
+                .contains(style::computed_value_flags::ComputedValueFlags::HAS_AUTHOR_OR_USER_SPECIFIED_BORDER_BACKGROUND)
+    };
+    let native = |radius: Vec2| {
+        if native_button && radius == Vec2::ZERO && !border_shape { Vec2::new(scale, scale) } else { radius }
+    };
+    let kept = |keep: bool, radius: Vec2| if keep { native(radius) } else { Vec2::ZERO };
     let border_radii = NonUniformRoundedRectRadii {
         top_left: kept(keep[0], shaped(&s_border.border_top_left_radius, s_border.corner_top_left_shape.k)),
         top_right: kept(keep[1], shaped(&s_border.border_top_right_radius, s_border.corner_top_right_shape.k)),
