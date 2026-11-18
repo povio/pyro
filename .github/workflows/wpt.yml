@@ -654,7 +654,7 @@ jobs:
             echo "verdict=fail" >> "$GITHUB_OUTPUT"
             exit 1
           fi
-          args=(--baseline bench/wpt/baseline-linux.json)
+          args=(--baseline bench/wpt/baseline-linux.json --artifact wpt-linux-baseline)
           if [ "$EVENT" = pull_request ]; then
             if git show HEAD^1:bench/wpt/baseline-linux.json > "$RUNNER_TEMP/base-baseline.json" 2>/dev/null; then
               args+=(--base-baseline "$RUNNER_TEMP/base-baseline.json")

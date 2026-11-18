@@ -50,7 +50,8 @@ const SUITES = {
   crashtest: { title: 'WPT crashtest gate', baseline: 'crashtest-baseline.json', flaky: 'crashtest-flaky.json', artifact: 'wpt-crashtest-baseline', regression: 'WPT crashtest regression' },
 };
 if (!Object.hasOwn(SUITES, KIND)) { console.error(`gate.mjs: --kind ${KIND}: expected ${Object.keys(SUITES).join(', ')}`); process.exit(2); }
-const SUITE = SUITES[KIND];
+// --artifact NAME: the CI artifact the messages name (the Linux testharness gate uploads wpt-linux-baseline).
+const SUITE = { ...SUITES[KIND], ...(opt('--artifact') ? { artifact: opt('--artifact') } : {}) };
 const BASELINE_FILE = path.resolve(opt('--baseline', path.join(HERE, SUITE.baseline)));
 const FLAKY_FILE = path.resolve(opt('--flaky', path.join(HERE, SUITE.flaky)));
 const B = path.basename(BASELINE_FILE), F = path.basename(FLAKY_FILE);
