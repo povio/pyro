@@ -453,3 +453,11 @@ Covered by `crates/pyro-render/tests/text_inline_round4.rs` and `soft_hyphens.rs
 - Round 4 lane S4, `layout/line.rs` `GlyphRun::vertical_align` and `GlyphRun::edge_aligned`: a run's own
   `vertical-align`, and whether its span or one around it is aligned by an edge of its box (`top`, `bottom`,
   `text-top`, `text-bottom`), for blitz-paint's runs on a central baseline. WPT css-writing-modes `vertical-alignment-*`.
+
+## Font selection: characters HarfBuzz shapes in a font without them (WPT round 4, lane S1)
+
+`shape/mod.rs` (the coverage closure of font selection, `hidden_default_ignorable`): a font covers U+2011 NON-BREAKING
+HYPHEN when it has U+2010 HYPHEN, and covers the default-ignorable code points HarfBuzz hides, so they keep the font
+as in Blink (harfrust draws U+2011 as the font's U+2010 and hides the ignorables). Variation selectors, ZWJ, the
+Mongolian variation selectors and U+00AD are left out: they choose glyphs and fonts. WPT css-text
+`line-break-anywhere-overrides-uax-behavior-011/013/014`. Covered by `crates/pyro-render/tests/font_coverage_hidden.rs`.

@@ -28,6 +28,7 @@ mod filter_drop_shadow;
 mod filter_image_function;
 mod first_line;
 mod flex_collapse;
+mod font_coverage_hidden;
 mod object_document;
 mod quirky_body_and_ratio_keywords;
 mod grid_flex_round4;
