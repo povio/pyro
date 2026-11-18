@@ -125,3 +125,18 @@ fn attribute_style_map_reads_and_writes_the_inline_style() {
     assert_eq!(eval(r, "[...d.attributeStyleMap.keys()].join()"), "height,margin-top");
     assert_eq!(eval(r, "d.attributeStyleMap.clear(); d.attributeStyleMap.size"), "0");
 }
+
+#[test]
+fn out_of_range_calc_colors_and_unsupported_values() {
+    let e = env("<!doctype html><div id=d></div>");
+    let r = &e.main;
+    assert_eq!(eval(r, "const m = document.getElementById('d').attributeStyleMap; m.set('width', CSS.em(-3)); d.style.width"), "calc(-3em)");
+    assert_eq!(eval(r, "const w = m.get('width'); [w.constructor.name, w.values[0].value].join()"), "CSSMathSum,-3");
+    assert_eq!(eval(r, "try { m.set('width', CSS.number(0)) } catch (e) { e.name }"), "TypeError", "unitless 0 is a number, not a length");
+    assert_eq!(eval(r, "CSSStyleValue.parse('width', 'calc(10px)').constructor.name"), "CSSMathSum");
+    assert_eq!(eval(r, "CSSStyleValue.parse('color', 'red').constructor.name"), "CSSStyleValue");
+    assert_eq!(eval(r, "CSSStyleValue.parse('margin', '1px 2px').constructor.name"), "CSSStyleValue");
+    assert_eq!(eval(r, "const c = CSSColorValue.parse('#00bfff'); [c.constructor.name, c.g.value].join()"), "CSSRGB,191");
+    assert_eq!(eval(r, "new CSSHSL(180, 0.5, CSS.percent(20)).s.value"), "50");
+    assert_eq!(eval(r, "try { new CSSRGB(CSS.deg(1), 0, 0) } catch (e) { e.name }"), "SyntaxError");
+}

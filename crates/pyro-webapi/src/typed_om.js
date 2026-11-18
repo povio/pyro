@@ -852,6 +852,130 @@
     return out.length ? new CSSTransformValue(out) : null;
   };
 
+  // ---------- CSSImageValue ----------
+  // An opaque image (`url()`), as Typed OM level 1 reifies <image> values; not constructible.
+  class CSSImageValue extends CSSStyleValue {
+    constructor(token, text) { if (token !== ILLEGAL) throw illegal(); super(ILLEGAL, text); }
+  }
+
+  // ---------- CSSColorValue and its subclasses ----------
+  const colorError = (what) => new DE(`Failed to ${what}: Invalid color channel value`, 'SyntaxError');
+  const isNumericOf = (v, t) => v instanceof CSSNumericValue && typeIs(v, t);
+  const noneKeyword = (v) => {
+    const k = typeof v === 'string' ? (v === 'none' ? new CSSKeywordValue('none') : null) : v instanceof CSSKeywordValue && v.value === 'none' ? v : null;
+    return k;
+  };
+  // Channel conversions (CSS Typed OM §4.7.1): `pct` CSSColorPercent, `num` CSSColorNumber,
+  // `rgb` CSSColorRGBComp (number or percent), `hue` CSSColorAngle.
+  const CHANNEL = {
+    pct(v, what) {
+      if (typeof v === 'number') return new CSSUnitValue(v * 100, 'percent');
+      if (isNumericOf(v, 'percent') || (v instanceof CSSMathValue && typeIs(v, 'percent', true))) return v;
+      const k = noneKeyword(v); if (k) return k;
+      throw colorError(what);
+    },
+    num(v, what) {
+      if (typeof v === 'number') return new CSSUnitValue(v, 'number');
+      if (isNumericOf(v, 'number')) return v;
+      const k = noneKeyword(v); if (k) return k;
+      throw colorError(what);
+    },
+    rgb(v, what) {
+      if (typeof v === 'number') return new CSSUnitValue(v * 100, 'percent');
+      if (v instanceof CSSNumericValue && (typeIs(v, 'number') || typeIs(v, 'percent', true))) return v;
+      const k = noneKeyword(v); if (k) return k;
+      throw colorError(what);
+    },
+    hue(v, what) {
+      if (typeof v === 'number') return new CSSUnitValue(v, 'deg');
+      if (v === undefined) return new CSSKeywordValue('undefined');
+      if (isNumericOf(v, 'angle')) return v;
+      const k = noneKeyword(v); if (k) return k;
+      throw colorError(what);
+    },
+  };
+  class CSSColorValue extends CSSStyleValue {
+    constructor(token) { if (token !== ILLEGAL) throw illegal(); super(ILLEGAL, null); }
+    static parse(cssText) {
+      if (arguments.length < 1) throw new TypeError("Failed to execute 'parse' on 'CSSColorValue': 1 argument required, but only 0 present.");
+      const v = parseColor(`${cssText}`.trim());
+      if (!v) throw new DE(`Failed to execute 'parse' on 'CSSColorValue': Invalid color string '${cssText}'`, 'SyntaxError');
+      return v;
+    }
+  }
+  // A color class of named channels, each converted as `kinds` says; the last is alpha (100% when absent).
+  const colorClass = (name, fn, channels, kinds) => {
+    const cls = class extends CSSColorValue {
+      #values = {};
+      constructor(...args) {
+        if (args.length < channels.length - 1) throw new TypeError(`Failed to construct '${name}': ${channels.length - 1} arguments required, but only ${args.length} present.`);
+        super(ILLEGAL);
+        channels.forEach((c, i) => {
+          const v = args[i];
+          if (i === channels.length - 1 && v === undefined) { this.#values[c] = new CSSUnitValue(100, 'percent'); return; }
+          this.#values[c] = CHANNEL[kinds[i]](v, `construct '${name}'`);
+        });
+      }
+      static {
+        channels.forEach((c, i) => {
+          Object.defineProperty(this.prototype, c, {
+            get() { return this.#values[c]; },
+            set(v) { this.#values[c] = CHANNEL[kinds[i]](v, `set the '${c}' property on '${name}'`); },
+            enumerable: true, configurable: true,
+          });
+        });
+      }
+      toString() {
+        const v = channels.map((c) => String(this.#values[c]));
+        const alpha = v.pop();
+        return `${fn}(${v.join(' ')}${alpha === '100%' ? '' : ' / ' + alpha})`;
+      }
+    };
+    Object.defineProperty(cls, 'name', { value: name });
+    return cls;
+  };
+  const CSSRGB = colorClass('CSSRGB', 'rgb', ['r', 'g', 'b', 'alpha'], ['rgb', 'rgb', 'rgb', 'pct']);
+  const CSSHSL = colorClass('CSSHSL', 'hsl', ['h', 's', 'l', 'alpha'], ['hue', 'pct', 'pct', 'pct']);
+  const CSSHWB = colorClass('CSSHWB', 'hwb', ['h', 'w', 'b', 'alpha'], ['hue', 'pct', 'pct', 'pct']);
+  const CSSLab = colorClass('CSSLab', 'lab', ['l', 'a', 'b', 'alpha'], ['pct', 'num', 'num', 'pct']);
+  const CSSLCH = colorClass('CSSLCH', 'lch', ['l', 'c', 'h', 'alpha'], ['pct', 'num', 'hue', 'pct']);
+  const CSSOKLab = colorClass('CSSOKLab', 'oklab', ['l', 'a', 'b', 'alpha'], ['pct', 'num', 'num', 'pct']);
+  const CSSOKLCH = colorClass('CSSOKLCH', 'oklch', ['l', 'c', 'h', 'alpha'], ['pct', 'num', 'hue', 'pct']);
+  // `rgb()`/`rgba()`, `#hex`, `hsl()`/`hsla()`, `hwb()` and system colors (keywords); named colors
+  // are not parsed yet.
+  const SYSTEM_COLORS = new Set(['accentcolor', 'accentcolortext', 'activetext', 'buttonborder', 'buttonface', 'buttontext', 'canvas',
+    'canvastext', 'field', 'fieldtext', 'graytext', 'highlight', 'highlighttext', 'linktext', 'mark', 'marktext', 'selecteditem',
+    'selecteditemtext', 'visitedtext', 'currentcolor']);
+  const parseColor = (text) => {
+    const lower = text.toLowerCase();
+    if (SYSTEM_COLORS.has(lower)) return new CSSKeywordValue(lower);
+    const hex = /^#([0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/i.exec(text);
+    if (hex) {
+      let h = hex[1];
+      if (h.length <= 4) h = [...h].map((c) => c + c).join('');
+      const n = (i) => parseInt(h.slice(i, i + 2), 16);
+      return new CSSRGB(CSS_N(n(0)), CSS_N(n(2)), CSS_N(n(4)), h.length === 8 ? new CSSUnitValue(n(6) / 255 * 100, 'percent') : undefined);
+    }
+    const m = /^(rgba?|hsla?|hwb)\((.*)\)$/i.exec(text);
+    if (!m) return null;
+    const parts = m[2].replace(/\s*\/\s*/, ' / ').split(/\s*,\s*|\s+/).filter((p) => p !== '');
+    const slash = parts.indexOf('/');
+    let alphaText = null;
+    if (slash >= 0) { alphaText = parts[slash + 1]; parts.splice(slash); }
+    else if (parts.length === 4) alphaText = parts.pop();
+    if (parts.length !== 3) return null;
+    const vals = parts.map((p) => parseNumeric(p));
+    if (vals.some((v) => !v)) return null;
+    const alpha = alphaText === null ? undefined : (() => { const a = parseNumeric(alphaText); return a && isUnit(a) && a.unit === 'number' ? new CSSUnitValue(a.value * 100, 'percent') : a; })();
+    try {
+      const f = m[1].toLowerCase();
+      if (f.startsWith('rgb')) return new CSSRGB(vals[0], vals[1], vals[2], alpha);
+      const hue = isUnit(vals[0]) && vals[0].unit === 'number' ? new CSSUnitValue(vals[0].value, 'deg') : vals[0];
+      return new (f === 'hwb' ? CSSHWB : CSSHSL)(hue, vals[1], vals[2], alpha);
+    } catch (e) { return null; }
+  };
+  const CSS_N = (n) => new CSSUnitValue(n, 'number');
+
   // ---------- Parsing numeric text (dimensions and math functions) ----------
   const NUM = /^([+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)(%|[a-zA-Z]+)?/;
   const parseNumeric = (text) => {
@@ -912,6 +1036,8 @@
       if (p.i !== p.s.length) return null;
       // A bare sum or product is no CSS value: only inside a math function.
       if (!top && !isUnit(v)) return null;
+      // calc() of a single value is still a math value (a CSSMathSum of it).
+      if (/^calc\(/i.test(text) && !(v instanceof CSSMathValue)) return new CSSMathSum(v);
       return v;
     } catch (e) {
       return null;
@@ -919,6 +1045,19 @@
   };
 
   // ---------- Reification (normalized text to CSSStyleValue) ----------
+  // Named colors (and `transparent`): <color> values, which Typed OM level 1 does not reify.
+  const NAMED_COLORS = new Set(('aliceblue antiquewhite aqua aquamarine azure beige bisque black blanchedalmond blue blueviolet brown burlywood ' +
+    'cadetblue chartreuse chocolate coral cornflowerblue cornsilk crimson cyan darkblue darkcyan darkgoldenrod darkgray darkgreen darkgrey ' +
+    'darkkhaki darkmagenta darkolivegreen darkorange darkorchid darkred darksalmon darkseagreen darkslateblue darkslategray darkslategrey ' +
+    'darkturquoise darkviolet deeppink deepskyblue dimgray dimgrey dodgerblue firebrick floralwhite forestgreen fuchsia gainsboro ghostwhite ' +
+    'gold goldenrod gray green greenyellow grey honeydew hotpink indianred indigo ivory khaki lavender lavenderblush lawngreen lemonchiffon ' +
+    'lightblue lightcoral lightcyan lightgoldenrodyellow lightgray lightgreen lightgrey lightpink lightsalmon lightseagreen lightskyblue ' +
+    'lightslategray lightslategrey lightsteelblue lightyellow lime limegreen linen magenta maroon mediumaquamarine mediumblue mediumorchid ' +
+    'mediumpurple mediumseagreen mediumslateblue mediumspringgreen mediumturquoise mediumvioletred midnightblue mintcream mistyrose moccasin ' +
+    'navajowhite navy oldlace olive olivedrab orange orangered orchid palegoldenrod palegreen paleturquoise palevioletred papayawhip peachpuff ' +
+    'peru pink plum powderblue purple rebeccapurple red rosybrown royalblue saddlebrown salmon sandybrown seagreen seashell sienna silver ' +
+    'skyblue slateblue slategray slategrey snow springgreen steelblue tan teal thistle tomato turquoise violet wheat white whitesmoke yellow ' +
+    'yellowgreen transparent').split(' '));
   const CSS_WIDE = /^(inherit|initial|unset|revert|revert-layer|default)$/i;
   const LIST_VALUED = new Set(['transition', 'transition-property', 'transition-duration', 'transition-timing-function',
     'transition-delay', 'transition-behavior', 'animation', 'animation-name', 'animation-duration', 'animation-timing-function',
@@ -927,6 +1066,16 @@
     'background-position-y', 'background-size', 'background-repeat', 'background-attachment', 'background-origin', 'background-clip',
     'mask', 'mask-image', 'mask-position', 'mask-size', 'mask-repeat', 'mask-origin', 'mask-clip', 'mask-composite', 'mask-mode',
     'box-shadow', 'text-shadow', 'will-change', 'font-family']);
+  const splitSpaces = (text) => {
+    const out = [];
+    let d = 0, cur = '';
+    for (const c of text.trim()) {
+      if (c === '(') d++; else if (c === ')') d--;
+      if (c === ' ' && !d) { if (cur) out.push(cur); cur = ''; } else cur += c;
+    }
+    if (cur) out.push(cur);
+    return out;
+  };
   const splitTop = (text) => {
     const out = [];
     let d = 0, start = 0, q = null;
@@ -941,11 +1090,12 @@
     out.push(text.slice(start).trim());
     return out;
   };
-  const reifyOne = (property, text, custom) => {
+  const reifyOne = (property, text, custom, shorthand = false) => {
     if (custom || /var\(/i.test(text)) return unparsedFrom(text);
     if (CSS_WIDE.test(text)) return new CSSKeywordValue(text.toLowerCase());
-    if (/^-?[A-Za-z_][A-Za-z0-9_-]*$/.test(text)) return new CSSKeywordValue(text);
+    if (/^-?[A-Za-z_][A-Za-z0-9_-]*$/.test(text)) return NAMED_COLORS.has(text.toLowerCase()) ? plain(text) : new CSSKeywordValue(text);
     if (property === 'transform') { const t = transformFrom(text); if (t) return t; }
+    if (!shorthand && /^url\((?:"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|[^()'"\s]*)\)$/i.test(text)) return new CSSImageValue(ILLEGAL, text);
     const n = parseNumeric(text);
     if (n) return n;
     return plain(text);
@@ -955,7 +1105,10 @@
     if (!k) return null;
     const [name, which] = k;
     if (which === 2) return [unparsedFrom(text)];
-    if (which === 1 || CSS_WIDE.test(text) || /var\(/i.test(text)) return [reifyOne(name, text, false)];
+    if (CSS_WIDE.test(text) || /var\(/i.test(text)) return [reifyOne(name, text, false)];
+    // A shorthand's value of several components is not reified (a plain CSSStyleValue); one
+    // component is, as a longhand's.
+    if (which === 1) return [splitSpaces(text).length > 1 ? plain(text) : reifyOne(name, text, false, true)];
     const parts = LIST_VALUED.has(name) ? splitTop(text) : [text];
     const values = parts.map((t) => reifyOne(name, t, false));
     return all ? values : values.slice(0, 1);
@@ -1035,8 +1188,27 @@
         return v.toString();
       }
       const text = v.toString();
-      if (parse(name, text) === null) throw new TypeError(`Failed to execute '${what}' on 'StylePropertyMap': Invalid type for property`);
-      return text;
+      const typed = !(v instanceof CSSUnparsedValue) && v.constructor !== CSSStyleValue && !(v instanceof CSSKeywordValue && CSS_WIDE.test(v.value));
+      // A number is no length: unitless 0 parses as one, so a property that takes numbers must take 1.
+      if (isUnit(v) && v.unit === 'number' && v.value === 0 && parse(name, '1') === null) {
+        throw new TypeError(`Failed to execute '${what}' on 'StylePropertyMap': Invalid type for property`);
+      }
+      // A shorthand takes a typed value only where it stands for the whole shorthand (one component).
+      if (typed && which === 1) {
+        const normalized = parse(name, text);
+        if (normalized === null || splitSpaces(normalized).length > 1) throw new TypeError(`Failed to execute '${what}' on 'StylePropertyMap': Invalid type for property`);
+        return text;
+      }
+      if (parse(name, text) !== null) return text;
+      // A value of the right type outside the property's range is kept, in calc() (which clamps).
+      // (Only below the range: its absolute value must be valid, so a non-integer stays invalid for an integer.)
+      const below = v.value < 0 ? parse(name, unitText(-v.value, v.unit)) !== null : v.unit === 'number' && parse(name, '1') !== null && (Number.isInteger(v.value) || parse(name, '1.5') !== null)
+        // A grid line's 0 is no range violation: it is not a line at all.
+        && !/^grid-(row|column)-(start|end)$/.test(name);
+      if (isUnit(v) && below && parse(name, `calc(${text})`) !== null) {
+        return `calc(${text})`;
+      }
+      throw new TypeError(`Failed to execute '${what}' on 'StylePropertyMap': Invalid type for property`);
     }
     const text = `${v}`;
     if (parse(name, text) === null) throw new TypeError(`Failed to execute '${what}' on 'StylePropertyMap': Invalid type for property`);
@@ -1068,6 +1240,7 @@
       if (!values.length) return;
       const current = src.get(name);
       if (CSS_WIDE.test(current) || /var\(/i.test(current)) throw new TypeError("Failed to execute 'append' on 'StylePropertyMap': Invalid type for property");
+      if (values.some((v) => v instanceof CSSUnparsedValue)) throw new TypeError("Failed to execute 'append' on 'StylePropertyMap': Invalid type for property");
       const texts = values.map((v) => valueText(name, which, v, 'append'));
       src.set(name, [current, ...texts].filter((t) => t !== '').join(', '));
     }
@@ -1140,7 +1313,8 @@
   const classes = { CSSStyleValue, CSSUnparsedValue, CSSVariableReferenceValue, CSSKeywordValue, CSSNumericValue,
     CSSUnitValue, CSSMathValue, CSSMathSum, CSSMathProduct, CSSMathNegate, CSSMathInvert, CSSMathMin, CSSMathMax,
     CSSMathClamp, CSSNumericArray, StylePropertyMapReadOnly, StylePropertyMap, CSSTransformValue, CSSTransformComponent,
-    CSSTranslate, CSSRotate, CSSScale, CSSSkew, CSSSkewX, CSSSkewY, CSSPerspective, CSSMatrixComponent };
+    CSSTranslate, CSSRotate, CSSScale, CSSSkew, CSSSkewX, CSSSkewY, CSSPerspective, CSSMatrixComponent,
+    CSSImageValue, CSSColorValue, CSSRGB, CSSHSL, CSSHWB, CSSLab, CSSLCH, CSSOKLab, CSSOKLCH };
   for (const [name, cls] of Object.entries(classes)) {
     const names = Object.getOwnPropertyNames(cls.prototype).filter((n) => n !== 'constructor');
     enumerate(cls.prototype, names);

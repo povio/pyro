@@ -53,6 +53,15 @@ where
         "CSSSkewY",
         "CSSPerspective",
         "CSSMatrixComponent",
+        "CSSImageValue",
+        "CSSColorValue",
+        "CSSRGB",
+        "CSSHSL",
+        "CSSHWB",
+        "CSSLab",
+        "CSSLCH",
+        "CSSOKLab",
+        "CSSOKLCH",
     );
 }
 
