@@ -285,14 +285,17 @@ fn the_buffer_fills_fires_its_event_and_observers_see_every_entry() {
            .observe({ type: 'resource', buffered: true });",
     );
     until(&mut thread, page, "late !== null");
+    // The buffer keeps the first two entries to complete: the four fetches run in parallel, so
+    // which two is up to the network (entries are added as responses end).
     assert_eq!(
         eval(
             &thread,
             page,
-            "[performance.getEntriesByType('resource').map(e => e.name.split('/').pop()).sort().join(' '), full > 0, fullEvent, \
+            "globalThis.kept = performance.getEntriesByType('resource').map(e => e.name.split('/').pop()); \
+             [kept.length == 2 && new Set(kept).size == 2 && kept.every(n => seen.includes(n)), full > 0, fullEvent, \
               seen.sort().join(' '), late, buffered >= 4, PerformanceObserver.supportedEntryTypes.join(' ')].join()"
         ),
-        "n1 n2,true,resourcetimingbufferfull,false,true,n1 n2 n3 n4,2,true,mark measure navigation paint resource"
+        "true,true,resourcetimingbufferfull,false,true,n1 n2 n3 n4,2,true,mark measure navigation paint resource"
     );
     // A handler that makes room keeps the waiting entries.
     eval(
