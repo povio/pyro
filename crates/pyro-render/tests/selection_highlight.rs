@@ -86,6 +86,7 @@ fn render_highlighted(body: &str, selection: Option<Ends>, highlights: &[(Option
         selection,
         highlights,
         control_selection: None,
+        selected_replaced: Vec::new(),
         ..Default::default()
     };
     let fetcher: Arc<dyn Fetcher> = Arc::new(AhemFetch);

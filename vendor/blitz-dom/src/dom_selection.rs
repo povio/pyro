@@ -220,6 +220,16 @@ impl BaseDocument {
         })
     }
 
+    /// pyro: the replaced elements the selection holds, painted with its tint from now on.
+    pub fn set_selected_replaced(&mut self, nodes: Vec<NodeId>) {
+        self.selected_replaced = nodes;
+    }
+
+    /// pyro: whether the selection holds the replaced element `node_id`.
+    pub fn is_selected_replaced(&self, node_id: NodeId) -> bool {
+        self.selected_replaced.contains(&node_id)
+    }
+
     /// pyro: the selection painted from now on (`None`: none), in place of blitz's own.
     pub fn set_dom_selection(&mut self, selection: Option<DomSelection>) {
         self.dom_selection = selection;

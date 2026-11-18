@@ -1414,6 +1414,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
                 cx.draw_svg(scene);
                 if !hidden {
                     cx.draw_image(scene);
+                    cx.draw_selection_tint(scene);
                     cx.draw_content_gradient(scene);
                     #[cfg(feature = "custom-widget")]
                     cx.draw_custom_widget(scene);
@@ -4812,6 +4813,23 @@ impl ElementCx<'_, '_> {
         scene.fill(Fill::NonZero, transform, anyrender::Paint::Gradient(&gradient), gradient_transform, &tile);
     }
 
+    /// pyro: a replaced element the selection holds (`BaseDocument::is_selected_replaced`) is
+    /// painted over with its `::selection` background, an opaque one made translucent as Blink's
+    /// `Color::BlendWithWhite` (WPT css-pseudo `active-selection-041`).
+    fn draw_selection_tint(&self, scene: &mut impl PaintScene) {
+        if !self.context.dom.is_selected_replaced(self.node.id) || self.context.draw_text_context.borrow().runs.is_some() {
+            return;
+        }
+        let text = self.style.get_inherited_text().color.as_srgb_color();
+        let (background, _) = crate::highlight::control_selection_colors(self.context.dom, self.node.id, text);
+        let tint = blend_with_white(background);
+        if tint.components[3] <= 0.0 {
+            return;
+        }
+        let rect = self.frame.content_box;
+        scene.fill(Fill::NonZero, self.transform, tint, None, &rect);
+    }
+
     fn draw_image(&self, scene: &mut impl PaintScene) {
         if let Some(image) = self.element.raster_image_data() {
             let width = self.frame.content_box.width() as u32;
@@ -5186,3 +5204,25 @@ fn hides_empty_cell(dom: &blitz_dom::BaseDocument, node: &blitz_dom::Node) -> bo
         && node.after().is_none()
 }
 
+
+/// pyro: Blink's `Color::BlendWithWhite`: an opaque colour as the most transparent one (alpha 60%
+/// to 73%, in steps) that gives it over white; a translucent colour as it is.
+fn blend_with_white(color: Color) -> Color {
+    let [r, g, b, a] = color.to_rgba8().to_u8_array();
+    if a != 255 {
+        return color;
+    }
+    let blend = |c: u8, alpha: u8| -> i32 { ((i32::from(c) - (255 - i32::from(alpha))) as f32 / (f32::from(alpha) / 255.0)) as i32 };
+    let mut out = (r as i32, g as i32, b as i32, 255u8);
+    let mut alpha = 153u8;
+    while alpha < 204 {
+        let (nr, ng, nb) = (blend(r, alpha), blend(g, alpha), blend(b, alpha));
+        out = (nr, ng, nb, alpha);
+        if [nr, ng, nb].iter().all(|v| (0..=255).contains(v)) {
+            break;
+        }
+        alpha += 17;
+    }
+    let clamp = |v: i32| v.clamp(0, 255) as u8;
+    Color::from_rgba8(clamp(out.0), clamp(out.1), clamp(out.2), out.3)
+}

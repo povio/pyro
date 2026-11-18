@@ -612,6 +612,8 @@ pub struct BaseDocument {
     pub(crate) first_line_changed: Vec<NodeId>,
     /// pyro: the embedder's selection, painted in place of `text_selection` (`dom_selection`).
     pub(crate) dom_selection: Option<crate::DomSelection>,
+    /// pyro: the replaced elements the selection holds (painted with its tint).
+    pub(crate) selected_replaced: Vec<NodeId>,
     /// pyro: the embedder's highlights (custom highlights and the target text), bottom first
     /// (`dom_highlights`).
     pub(crate) dom_highlights: Vec<(crate::HighlightName, Vec<crate::DomSelection>)>,
@@ -862,6 +864,7 @@ impl BaseDocument {
             first_line_styles: false,
             first_line_changed: Vec::new(),
             dom_selection: None,
+            selected_replaced: Vec::new(),
             dom_highlights: Vec::new(),
             first_line_reparented: Default::default(),
             generated_counters: false,

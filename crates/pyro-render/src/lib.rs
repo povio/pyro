@@ -254,6 +254,8 @@ pub struct Snapshot {
     /// The focused text control's selection: its node key and start and end in UTF-16 code
     /// units of its value, painted in screenshots of a [`Live`] document.
     pub control_selection: Option<(u64, u32, u32)>,
+    /// The replaced elements the selection holds (their node keys), painted with its tint.
+    pub selected_replaced: Vec<u64>,
 }
 
 /// A highlight of a page ([`Snapshot::highlights`]): a custom highlight's name (`None`: the
@@ -1048,6 +1050,13 @@ impl Renderer {
                             })
                         });
                         m.doc.set_dom_selection(selection);
+                        let replaced = snap
+                            .selected_replaced
+                            .iter()
+                            .filter(|_| selection_paint)
+                            .filter_map(|&key| m.node(key))
+                            .collect();
+                        m.doc.set_selected_replaced(replaced);
                         // The focused text control's selection.
                         control = snap
                             .control_selection

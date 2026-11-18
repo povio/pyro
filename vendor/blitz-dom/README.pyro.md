@@ -2661,3 +2661,4 @@ Round 4 lane G:
   synthesized at its right edge, and a zero-height line holding one had its baseline 10px from the left (WPT
   css-flexbox `baseline-synthesis-003`, css-grid `grid-self-baseline-004`, `-horiz-007`, `-vertical-lr-002/-007`).
   `crates/pyro-render/tests/sideways_vertical_lr_baselines.rs`.
+- Round 4 lane F, `dom_selection.rs`: `set_selected_replaced` / `is_selected_replaced` (the replaced elements a selection holds, from the page: pyro-render passes them on).

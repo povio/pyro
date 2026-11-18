@@ -380,6 +380,7 @@ impl EngineHost {
                 })
                 .collect(),
             control_selection: s.control_selection,
+            selected_replaced: s.selected_replaced,
         })
     }
 
