@@ -121,7 +121,11 @@ impl<ValueType: ColorComponentType> ColorComponent<ValueType> {
                 let channel_value = origin_color
                     .and_then(|c| c.get_component_by_channel_keyword(*channel_keyword).ok());
                 match channel_value {
-                    Some(value) => Self::Value(ValueType::from_value(value.unwrap_or(0.0))),
+                    // pyro: a channel the origin color is missing (`none`, or powerless after the
+                    // conversion into this function's color space) stays missing (css-color-5
+                    // relative colors, as Chromium); calc() still reads it as zero.
+                    Some(Some(value)) => Self::Value(ValueType::from_value(value)),
+                    Some(None) => Self::None,
                     // If the color needs to get resolved later (there's no absolute origin color),
                     // or the channel is invalid, we still keep the channel keyword around.
                     None => Self::ChannelKeyword(*channel_keyword),

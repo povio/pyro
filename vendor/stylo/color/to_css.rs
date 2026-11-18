@@ -77,7 +77,12 @@ impl ToCss for AbsoluteColor {
         W: Write,
     {
         match self.color_space {
-            ColorSpace::Srgb if self.flags.contains(ColorFlags::IS_LEGACY_SRGB) => {
+            // pyro: legacy sRGB with a missing component serializes as `color(srgb ...)`, which
+            // can say `none` (as Chromium), below.
+            ColorSpace::Srgb
+                if self.flags.contains(ColorFlags::IS_LEGACY_SRGB) &&
+                    !self.flags.intersects(ColorFlags::NONE_FLAGS) =>
+            {
                 // The "none" keyword is not supported in the rgb/rgba legacy syntax.
                 let has_alpha = self.alpha != OPAQUE;
 
@@ -140,8 +145,9 @@ impl ToCss for AbsoluteColor {
                 match self.color_space {
                     ColorSpace::Srgb => {
                         debug_assert!(
-                            !self.flags.contains(ColorFlags::IS_LEGACY_SRGB),
-                            "legacy srgb is not a color function"
+                            !self.flags.contains(ColorFlags::IS_LEGACY_SRGB) ||
+                                self.flags.intersects(ColorFlags::NONE_FLAGS),
+                            "legacy srgb is not a color function unless a component is missing"
                         );
                     },
                     ColorSpace::SrgbLinear

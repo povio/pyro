@@ -416,3 +416,26 @@ fn color_mix_with_zero_percentages_is_an_equal_transparent_mix() {
         "color(srgb 0.5 0 0.5 / 0)|color(srgb 0.5 0 0.5 / 0)|color(srgb 0.5 0 0.5)"
     );
 }
+
+/// Relative colors keep the origin's missing components (`none`, and hues that become powerless in
+/// the conversion), and legacy `rgb()` with `none` serializes as `color(srgb ...)` (WPT css-color
+/// color-computed-none, color-computed-relative-color, color-computed-rgb).
+#[test]
+fn relative_colors_keep_missing_components() {
+    let env = Env::new("http://color.test/");
+    assert_eq!(
+        env.eval(
+            r#"(() => {
+              const el = document.createElement("div");
+              document.body.appendChild(el);
+              const out = [];
+              for (const v of ["lab(from lab(none none none) l a b)", "rgb(128 none none)", "lch(from hsl(180 50% 0) l c h)", "hsl(from hsl(180 0 50%) h s l)"]) {
+                el.style.color = v;
+                out.push(getComputedStyle(el).color);
+              }
+              return out.join("|");
+            })()"#
+        ),
+        "lab(none none none)|color(srgb 0.501961 none none)|lch(0 0 none)|color(srgb 0.501961 0.501961 0.501961)"
+    );
+}

@@ -1,3 +1,67 @@
+diff -ruN a/color/color_function.rs b/color/color_function.rs
+--- a/color/color_function.rs	2026-11-11 19:55:57
++++ b/color/color_function.rs	2026-11-19 00:02:08
+@@ -199,6 +199,31 @@
+         // Builds a variant where the origin is converted to `$space` (the
+         // function's color space) before its channels are read.
+         macro_rules! convert {
++            ($variant:ident, $space:expr, $c0:expr, $c1:expr, $c2:expr, $alpha:expr, legacy_hue) => {{
++                // pyro: the hue a legacy sRGB origin (`rgb()`, a hex color or a keyword) has
++                // when it is achromatic reads as 0 rather than missing. pyro's CSSOM keeps inline
++                // styles as text, so an `hsl()`/`hwb()` origin comes back as `rgb()` and its
++                // authored hue would otherwise be lost to the conversion.
++                let converted = abs_origin.map(|o| {
++                    let mut c = o.to_color_space($space);
++                    if o.color_space == ColorSpace::Srgb
++                        && o.flags.contains(ColorFlags::IS_LEGACY_SRGB)
++                        && !o.flags.intersects(ColorFlags::NONE_FLAGS)
++                        && c.c0().is_none()
++                    {
++                        c.components.0 = 0.0;
++                        c.flags.remove(ColorFlags::C0_IS_NONE);
++                    }
++                    c
++                });
++                ColorFunction::$variant(
++                    Optional::from(origin),
++                    $c0.to_computed_value(context, converted.as_ref())?,
++                    $c1.to_computed_value(context, converted.as_ref())?,
++                    $c2.to_computed_value(context, converted.as_ref())?,
++                    $alpha.to_computed_value(context, converted.as_ref())?,
++                )
++            }};
+             ($variant:ident, $space:expr, $c0:expr, $c1:expr, $c2:expr, $alpha:expr) => {{
+                 let converted = abs_origin.map(|o| o.to_color_space($space));
+                 ColorFunction::$variant(
+@@ -234,10 +259,10 @@
+                 )
+             },
+             ColorFunction::Hsl(_, c0, c1, c2, alpha) => {
+-                convert!(Hsl, ColorSpace::Hsl, c0, c1, c2, alpha)
++                convert!(Hsl, ColorSpace::Hsl, c0, c1, c2, alpha, legacy_hue)
+             },
+             ColorFunction::Hwb(_, c0, c1, c2, alpha) => {
+-                convert!(Hwb, ColorSpace::Hwb, c0, c1, c2, alpha)
++                convert!(Hwb, ColorSpace::Hwb, c0, c1, c2, alpha, legacy_hue)
+             },
+             ColorFunction::Lab(_, c0, c1, c2, alpha) => {
+                 convert!(Lab, ColorSpace::Lab, c0, c1, c2, alpha)
+diff -ruN a/color/component.rs b/color/component.rs
+--- a/color/component.rs	2026-11-11 19:55:57
++++ b/color/component.rs	2026-11-18 23:58:11
+@@ -121,7 +121,11 @@
+                 let channel_value = origin_color
+                     .and_then(|c| c.get_component_by_channel_keyword(*channel_keyword).ok());
+                 match channel_value {
+-                    Some(value) => Self::Value(ValueType::from_value(value.unwrap_or(0.0))),
++                    // pyro: a channel the origin color is missing (`none`, or powerless after the
++                    // conversion into this function's color space) stays missing (css-color-5
++                    // relative colors, as Chromium); calc() still reads it as zero.
++                    Some(Some(value)) => Self::Value(ValueType::from_value(value)),
++                    Some(None) => Self::None,
+                     // If the color needs to get resolved later (there's no absolute origin color),
+                     // or the channel is invalid, we still keep the channel keyword around.
+                     None => Self::ChannelKeyword(*channel_keyword),
 diff -ruN a/color/mix.rs b/color/mix.rs
 --- a/color/mix.rs	2026-11-11 19:55:57
 +++ b/color/mix.rs	2026-11-18 22:37:34
@@ -67,6 +131,35 @@ diff -ruN a/color/mix.rs b/color/mix.rs
              weight_scale = 1.0 / sum;
              if sum < 1.0 {
                  alpha_multiplier = sum;
+diff -ruN a/color/to_css.rs b/color/to_css.rs
+--- a/color/to_css.rs	2026-11-11 19:55:57
++++ b/color/to_css.rs	2026-11-18 23:58:11
+@@ -77,7 +77,12 @@
+         W: Write,
+     {
+         match self.color_space {
+-            ColorSpace::Srgb if self.flags.contains(ColorFlags::IS_LEGACY_SRGB) => {
++            // pyro: legacy sRGB with a missing component serializes as `color(srgb ...)`, which
++            // can say `none` (as Chromium), below.
++            ColorSpace::Srgb
++                if self.flags.contains(ColorFlags::IS_LEGACY_SRGB) &&
++                    !self.flags.intersects(ColorFlags::NONE_FLAGS) =>
++            {
+                 // The "none" keyword is not supported in the rgb/rgba legacy syntax.
+                 let has_alpha = self.alpha != OPAQUE;
+ 
+@@ -140,8 +145,9 @@
+                 match self.color_space {
+                     ColorSpace::Srgb => {
+                         debug_assert!(
+-                            !self.flags.contains(ColorFlags::IS_LEGACY_SRGB),
+-                            "legacy srgb is not a color function"
++                            !self.flags.contains(ColorFlags::IS_LEGACY_SRGB) ||
++                                self.flags.intersects(ColorFlags::NONE_FLAGS),
++                            "legacy srgb is not a color function unless a component is missing"
+                         );
+                     },
+                     ColorSpace::SrgbLinear
 diff -ruN a/data.rs b/data.rs
 --- a/data.rs	2026-11-11 19:55:57
 +++ b/data.rs	2026-11-17 23:56:40
