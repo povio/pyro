@@ -4,6 +4,7 @@
 
 pub mod animation;
 mod attr_node;
+pub mod color_well;
 pub mod computed;
 pub mod direction;
 pub mod dom;

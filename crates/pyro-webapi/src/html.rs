@@ -421,6 +421,8 @@ const FORM_ENCTYPE_OVERRIDE: EnumAttr =
 const METHOD_KEYWORDS: &[&str] = &["get", "post", "dialog"];
 const FORM_METHOD: EnumAttr = EnumAttr { keywords: METHOD_KEYWORDS, missing: "get", invalid: "get" };
 const FORM_METHOD_OVERRIDE: EnumAttr = EnumAttr { keywords: METHOD_KEYWORDS, missing: "", invalid: "get" };
+const COLOR_SPACE: EnumAttr =
+    EnumAttr { keywords: &["limited-srgb", "display-p3"], missing: "limited-srgb", invalid: "limited-srgb" };
 const FORM_AUTOCOMPLETE: EnumAttr = EnumAttr { keywords: &["on", "off"], missing: "on", invalid: "on" };
 const CELL_SCOPE: EnumAttr = EnumAttr { keywords: &["row", "col", "rowgroup", "colgroup"], missing: "", invalid: "" };
 const LINK_AS: EnumAttr = EnumAttr {
@@ -1732,6 +1734,22 @@ fn define_validation<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
     });
 }
 
+/// A text control's selection: start, end and direction.
+fn selection_state(n: &NodeData) -> Option<(u32, u32, Option<bool>)> {
+    let dom = n.page().dom.borrow();
+    let (start, end) = dom.selection(n.id).ok()?;
+    Some((start, end, dom.selection_direction(n.id).ok()?))
+}
+
+/// HTML "set the selection range": when the start, end or direction changed,
+/// queue an element task that fires `select` (bubbling, not cancelable).
+/// Setting the same range again fires nothing.
+fn queue_select_if_changed(n: &NodeData, before: Option<(u32, u32, Option<bool>)>) {
+    if selection_state(n) != before {
+        crate::input::queue_simple(n.page(), n.id, "select", true, false);
+    }
+}
+
 fn define_text_selection<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
     def.accessor(
         "selectionStart",
@@ -1743,6 +1761,10 @@ fn define_text_selection<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
         },
         |_s, n, v| {
             let st = to_u32(v)?;
+            if !has_selection(n) {
+                return Err(JsError::dom("InvalidStateError", "The input element's type does not support selection."));
+            }
+            let before = selection_state(n);
             {
                 let mut dom = n.page().dom.borrow_mut();
                 let (_, e) = dom.selection(n.id).js()?;
@@ -1751,6 +1773,7 @@ fn define_text_selection<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
                 dom.set_selection_direction(n.id, direction).js()?;
             }
             crate::editing::queue_control_selectionchange(n.page(), n.id);
+            queue_select_if_changed(n, before);
             Ok(())
         },
     );
@@ -1764,6 +1787,10 @@ fn define_text_selection<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
         },
         |_s, n, v| {
             let end = to_u32(v)?;
+            if !has_selection(n) {
+                return Err(JsError::dom("InvalidStateError", "The input element's type does not support selection."));
+            }
+            let before = selection_state(n);
             {
                 let mut dom = n.page().dom.borrow_mut();
                 let (st, _) = dom.selection(n.id).js()?;
@@ -1772,6 +1799,7 @@ fn define_text_selection<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
                 dom.set_selection_direction(n.id, direction).js()?;
             }
             crate::editing::queue_control_selectionchange(n.page(), n.id);
+            queue_select_if_changed(n, before);
             Ok(())
         },
     );
@@ -1792,7 +1820,10 @@ fn define_text_selection<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
                 return Err(JsError::dom("InvalidStateError", "The input element's type does not support selection."));
             }
             let direction = selection_direction(&dom_string(v)?);
-            n.page().dom.borrow_mut().set_selection_direction(n.id, direction).js()
+            let before = selection_state(n);
+            n.page().dom.borrow_mut().set_selection_direction(n.id, direction).js()?;
+            queue_select_if_changed(n, before);
+            Ok(())
         },
     );
     def.method("setSelectionRange", 2, |s, n, a| {
@@ -1802,12 +1833,14 @@ fn define_text_selection<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
         let arg0 = to_u32(a.get(0))?;
         let arg1 = to_u32(a.get(1))?;
         let direction = if a.get(2).is_undefined() { None } else { selection_direction(&dom_string(a.get(2))?) };
+        let before = selection_state(n);
         {
             let mut dom = n.page().dom.borrow_mut();
             dom.set_selection_range(n.id, arg0, arg1).js()?;
             dom.set_selection_direction(n.id, direction).js()?;
         }
         crate::editing::queue_control_selectionchange(n.page(), n.id);
+        queue_select_if_changed(n, before);
         Ok(s.undefined())
     });
     def.method("select", 0, |s, n, _a| {
@@ -1816,6 +1849,7 @@ fn define_text_selection<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
         // (Playwright fill: select(), then Input.insertText) replaces it.
         let number = n.page().dom.borrow().input_type(n.id).is_ok_and(|t| t == InputType::Number);
         if has_selection(n) || number {
+            let before = selection_state(n);
             let mut dom = n.page().dom.borrow_mut();
             let len = pyro_dom::dom::utf16_len(&dom.value(n.id).js()?);
             dom.set_selection_range(n.id, 0, len).js()?;
@@ -1830,7 +1864,7 @@ fn define_text_selection<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
                 dom.set_selection_range(n.id, 0, len).js()?;
             }
             crate::editing::queue_control_selectionchange(n.page(), n.id);
-            crate::input::fire_simple(n.page(), n.id, "select", true, false);
+            queue_select_if_changed(n, before);
         }
         Ok(s.undefined())
     });
@@ -1871,11 +1905,30 @@ fn define_text_selection<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
         if start > end {
             return Err(JsError::dom("IndexSizeError", "The provided start value is larger than the end value."));
         }
+        let before = selection_state(n);
         n.page().dom.borrow_mut().set_range_text(n.id, &text, start, end, mode).js()?;
         crate::editing::queue_control_selectionchange(n.page(), n.id);
-        crate::input::queue_simple(n.page(), n.id, "select", true, false);
+        queue_select_if_changed(n, before);
         Ok(s.undefined())
     });
+}
+
+/// `autocomplete` of `input`, `select` and `textarea`: the attribute's
+/// IDL-exposed autofill value on getting, the attribute on setting.
+fn define_autocomplete<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
+    def.accessor(
+        "autocomplete",
+        |s, n| {
+            let dom = n.page().dom.borrow();
+            let anchor = dom.element(n.id).is_ok_and(|e| &*e.name.local == "input")
+                && dom.input_type(n.id).is_ok_and(|t| t == InputType::Hidden);
+            Ok(s.string(&pyro_dom::forms::autofill_idl_value(dom.get_attribute(n.id, "autocomplete").js()?, anchor)))
+        },
+        |_s, n, v| {
+            let arg0 = dom_string(v)?;
+            n.page().dom.borrow_mut().set_attribute(n.id, "autocomplete", &arg0).js()
+        },
+    );
 }
 
 /// A `selectionDirection` keyword: backward (`Some(true)`), forward, or
@@ -1910,7 +1963,7 @@ simple_class!(HtmlInputElement, "HTMLInputElement", HtmlElement, |def| {
     reflect_str!(def, "pattern", "pattern");
     reflect_str!(def, "accept", "accept");
     reflect_str!(def, "alt", "alt");
-    reflect_str!(def, "autocomplete", "autocomplete");
+    define_autocomplete(def);
     reflect_str!(def, "dirName", "dirname");
     reflect_str!(def, "formTarget", "formtarget");
     reflect_str!(def, "align", "align");
@@ -1924,6 +1977,8 @@ simple_class!(HtmlInputElement, "HTMLInputElement", HtmlElement, |def| {
     reflect_bool!(def, "required", "required");
     reflect_bool!(def, "multiple", "multiple");
     reflect_bool!(def, "formNoValidate", "formnovalidate");
+    reflect_bool!(def, "alpha", "alpha");
+    reflect_enum!(def, "colorSpace", "colorspace", COLOR_SPACE);
     reflect_limited_long!(def, "maxLength", "maxlength");
     reflect_limited_long!(def, "minLength", "minlength");
     reflect_positive_ulong!(def, "size", "size", 20);
@@ -2041,7 +2096,7 @@ simple_class!(HtmlTextAreaElement, "HTMLTextAreaElement", HtmlElement, |def| {
     define_text_selection(def);
     reflect_str!(def, "name", "name");
     reflect_str!(def, "placeholder", "placeholder");
-    reflect_str!(def, "autocomplete", "autocomplete");
+    define_autocomplete(def);
     reflect_str!(def, "wrap", "wrap");
     reflect_str!(def, "dirName", "dirname");
     reflect_bool!(def, "disabled", "disabled");
@@ -2078,7 +2133,7 @@ simple_class!(HtmlSelectElement, "HTMLSelectElement", HtmlElement, |def| {
     define_labels(def);
     define_validation(def);
     reflect_str!(def, "name", "name");
-    reflect_str!(def, "autocomplete", "autocomplete");
+    define_autocomplete(def);
     reflect_bool!(def, "disabled", "disabled");
     reflect_bool!(def, "required", "required");
     reflect_bool!(def, "multiple", "multiple");

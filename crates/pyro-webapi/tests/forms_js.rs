@@ -255,6 +255,78 @@ fn select_add_and_set_range_text() {
     e.page.dispose();
 }
 
+/// `select` fires as a queued task, and only when a selection member changes
+/// the selection (html/semantics/forms/textfieldselection/select-event.html);
+/// selectionStart/End of a control without a selection throw.
+#[test]
+fn select_event_is_queued_only_when_the_selection_changes() {
+    let e = env(r#"<body><input id=t value=foobar><input id=c type=color></body>"#);
+    e.eval(
+        "const t = document.getElementById('t'); var fired = [];
+         t.addEventListener('select', ev => fired.push(ev.isTrusted + ':' + ev.bubbles + ':' + ev.cancelable));
+         t.setSelectionRange(0, 0);",
+    );
+    e.run_tasks();
+    assert_eq!(e.eval("fired.length = 0; t.selectionStart = 1; String(fired.length)"), "0");
+    e.run_tasks();
+    assert_eq!(e.eval("String(fired)"), "true:true:false");
+    // Setting the same selection again, select() twice, setSelectionRange twice: one event each.
+    assert_eq!(e.eval("fired.length = 0; t.selectionStart = 1; t.select(); t.select(); t.selectionDirection = 'backward'; t.selectionDirection = 'backward'; String(fired.length)"), "0");
+    e.run_tasks();
+    assert_eq!(e.eval("String(fired.length)"), "2");
+    assert_eq!(
+        e.eval(
+            "const c = document.getElementById('c'); const out = [];
+             try { c.selectionStart = 1; } catch (err) { out.push(err.name); }
+             try { c.selectionEnd = 1; } catch (err) { out.push(err.name); }
+             out.join()"
+        ),
+        "InvalidStateError,InvalidStateError"
+    );
+    e.page.dispose();
+}
+
+/// `<input type=color>` takes any CSS color and serializes it in its
+/// `colorspace`, with its alpha when it has `alpha`
+/// (html/semantics/forms/the-input-element/color{,.window}.html).
+#[test]
+fn color_input_value_follows_alpha_and_colorspace() {
+    let e = env("<body></body>");
+    assert_eq!(
+        e.eval(
+            "const c = document.createElement('input'); c.type = 'color'; const out = [c.value, c.colorSpace, c.alpha];
+             c.value = ' crimson '; out.push(c.value);
+             c.alpha = true; c.value = 'rgb(1 1 1 / 0.5)'; out.push(c.value);
+             c.setAttribute('colorspace', 'DISPLAY-P3'); out.push(c.colorSpace, c.value);
+             c.alpha = false; out.push(c.value);
+             c.value = 'nope'; out.push(c.value);
+             out.join('|')"
+        ),
+        "#000000|limited-srgb|false|#dc143c|color(srgb 0.003922 0.003922 0.003922 / 0.501961)|display-p3|color(display-p3 0.003922 0.003922 0.003922 / 0.501961)|color(display-p3 0.003922 0.003922 0.003922)|color(display-p3 0 0 0)"
+    );
+    e.page.dispose();
+}
+
+/// The `autocomplete` IDL attribute of form controls returns the attribute's
+/// autofill value (html/semantics/forms/the-form-element/form-autocomplete.html).
+#[test]
+fn autocomplete_returns_the_autofill_value() {
+    let e = env("<body></body>");
+    assert_eq!(
+        e.eval(
+            "const out = []; const t = document.createElement('textarea');
+             for (const v of [' NAME\t', 'section-A shipping HOME tel', 'off', 'work name', 'username webauthn']) {
+               t.setAttribute('autocomplete', v); out.push(t.autocomplete);
+             }
+             const h = document.createElement('input'); h.type = 'hidden'; h.setAttribute('autocomplete', 'on');
+             out.push(h.autocomplete, h.getAttribute('autocomplete'));
+             out.join('|')"
+        ),
+        "name|section-a shipping home tel|off||username webauthn||on"
+    );
+    e.page.dispose();
+}
+
 #[test]
 fn implicit_submission_follows_chrome() {
     let e = env(r#"<body>
