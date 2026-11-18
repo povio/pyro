@@ -761,6 +761,9 @@ jobs:
           key: ${{ needs.prepare.outputs.browser-key }}
           fail-on-cache-miss: true
       - run: tar -xzf browser.tgz
+      # Power mode, thermal state, memory pressure, swap and load before, during (every 5 s) and after the shard.
+      - name: Machine diagnostics (before)
+        run: bench/wpt/ci-diag.sh start
       - name: Run reftest shard ${{ strategy.job-index }} of ${{ strategy.job-total }}
         env:
           SHARD: ${{ strategy.job-index }}/${{ strategy.job-total }}
@@ -774,6 +777,12 @@ jobs:
           # Rendering is CPU-bound: one page per CPU. Earlier arguments win, so reftest-args can override --jobs.
           bun bench/wpt/gate.mjs run --kind reftest "${extra[@]}" --wpt wpt --bin browser/pyro --jobs "$(sysctl -n hw.ncpu)" \
             --shard "$SHARD" "${full[@]}" --out "$OUT" --no-check
+          # CPU share of the machine: (browser + runner CPU) / (wall x CPUs); event loop lag of the runner.
+          bun -e 'const r = JSON.parse(require("fs").readFileSync(process.argv[1])); const n = require("os").cpus().length;
+            console.log(`utilization: ${(100 * (r.browserCpuS + r.runnerCpuS) / (r.wallMs / 1000 * n)).toFixed(0)}% of ${n} CPUs over ${(r.wallMs / 1000).toFixed(0)} s at --jobs ${r.jobs} (browser ${r.browserCpuS.toFixed(0)} s, runner ${r.runnerCpuS.toFixed(0)} s); event loop lag ${JSON.stringify(r.loopLagMs ?? {})}`)' "$OUT"
+      - name: Machine diagnostics (after)
+        if: ${{ always() }}
+        run: bench/wpt/ci-diag.sh stop
       - uses: actions/upload-artifact@v4
         if: ${{ !cancelled() }}
         with:
@@ -912,9 +921,12 @@ jobs:
       - run: tar -xzf browser.tgz
       - name: Discovery tests
         run: bun test bench/wpt/crashtest.test.mjs
+      - name: Machine diagnostics (before)
+        run: bench/wpt/ci-diag.sh start
       - name: Run the crashtests
         env:
           RUNNER_ARGS: ${{ inputs.crashtest-args }}
+          OUT: wpt-crashtest-shard-0.json
         run: |
           read -r -a extra <<< "$RUNNER_ARGS"
           full=()
@@ -922,6 +934,12 @@ jobs:
           # One page per CPU (layout and paint are CPU-bound). Earlier arguments win, so crashtest-args can override.
           bun bench/wpt/gate.mjs run --kind crashtest "${extra[@]}" --wpt wpt --bin browser/pyro --jobs "$(sysctl -n hw.ncpu)" \
             "${full[@]}" --out wpt-crashtest-shard-0.json --no-check
+          # CPU share of the machine: (browser + runner CPU) / (wall x CPUs); event loop lag of the runner.
+          bun -e 'const r = JSON.parse(require("fs").readFileSync(process.argv[1])); const n = require("os").cpus().length;
+            console.log(`utilization: ${(100 * (r.browserCpuS + r.runnerCpuS) / (r.wallMs / 1000 * n)).toFixed(0)}% of ${n} CPUs over ${(r.wallMs / 1000).toFixed(0)} s at --jobs ${r.jobs} (browser ${r.browserCpuS.toFixed(0)} s, runner ${r.runnerCpuS.toFixed(0)} s); event loop lag ${JSON.stringify(r.loopLagMs ?? {})}`)' "$OUT"
+      - name: Machine diagnostics (after)
+        if: ${{ always() }}
+        run: bench/wpt/ci-diag.sh stop
       - uses: actions/upload-artifact@v4
         if: ${{ !cancelled() }}
         with:
