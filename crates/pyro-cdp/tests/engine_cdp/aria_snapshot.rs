@@ -419,3 +419,23 @@ fn selects_sit_on_the_baseline_as_in_chromium() {
     let va = eval_value(&mut h, "[...document.querySelectorAll('select')].map(s => getComputedStyle(s).verticalAlign)");
     assert_eq!(va, json!(["baseline", "baseline", "baseline", "text-bottom", "text-bottom"]));
 }
+
+/// A `<label>` without `for` labels only its first labelable descendant
+/// (HTML §4.10.4, HTML-AAM): a button after the checkbox it wraps is named
+/// by its own content, as in Chrome, not by the whole label's text.
+#[test]
+fn label_names_only_its_labeled_control() {
+    let mut h = Harness::new();
+    load_html(
+        &mut h,
+        r#"<!doctype html><body><label><input type=checkbox id=c style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)"> Strinjam se s pogoji. <button type=button>Več informacij</button></label></body>"#,
+    );
+    let count = |h: &mut Harness, locator: Value| {
+        let r = h.page("Pyro.query", json!({"locator": locator, "read": "count"}));
+        r["result"]["value"].as_u64().unwrap_or_else(|| panic!("{r}"))
+    };
+    assert_eq!(count(&mut h, json!({"role": "button", "name": "Več informacij", "exact": true})), 1);
+    assert_eq!(count(&mut h, json!({"role": "button", "name": "Strinjam se"})), 0);
+    assert_eq!(count(&mut h, json!({"role": "checkbox", "name": "Strinjam se s pogoji."})), 1);
+    assert_eq!(count(&mut h, json!({"label": "Strinjam se s pogoji."})), 1);
+}

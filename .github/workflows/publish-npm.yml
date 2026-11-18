@@ -481,8 +481,30 @@ jobs:
           path: npm-package
       - name: Publish the tested tarball
         env:
+          VERSION: ${{ needs.release.outputs.version }}
           DIST_TAG: ${{ needs.release.outputs.dist-tag }}
           # Optional bootstrap token; omit after configuring npm trusted publishing.
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        # Retried: npm signs the provenance with Sigstore and records it in the
+        # Rekor transparency log before it uploads. A record call that timed out
+        # on the client after Rekor stored it makes npm's own retry fail with
+        # TLOG_CREATE_ENTRY_ERROR 409 "an equivalent entry already exists" (the
+        # v0.0.45 run), and nothing reached the registry. A new attempt signs
+        # with a new key, so it is a new entry. A version already on the
+        # registry (an attempt whose reply was lost, or a re-run of this job)
+        # counts as published: npm versions are immutable.
         # The ./ prefix makes npm treat this as a local tarball, not owner/repo.
-        run: npm publish ./npm-package/*.tgz --access public --tag "$DIST_TAG"
+        run: |
+          published() { [ "$(npm view "@povio/pyro@$VERSION" version 2>/dev/null)" = "$VERSION" ]; }
+          for attempt in 1 2 3 4; do
+            if published; then
+              echo "@povio/pyro@$VERSION is on the registry"
+              exit 0
+            fi
+            if npm publish ./npm-package/*.tgz --access public --tag "$DIST_TAG"; then
+              exit 0
+            fi
+            echo "::warning::npm publish attempt $attempt failed"
+            sleep $((attempt * 30))
+          done
+          published || { echo "::error::@povio/pyro@$VERSION was not published"; exit 1; }

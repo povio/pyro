@@ -99,6 +99,14 @@ Use a new version for each publication: npm versions cannot be reused.
 If a job fails before publication, re-run the failed workflow jobs after fixing
 external configuration, or create a new version/tag for source changes.
 
+The publish step tries `npm publish` up to four times and succeeds once the
+version is on the registry, so re-running it after a partial failure is safe.
+A transient Sigstore failure (npm `TLOG_CREATE_ENTRY_ERROR`, 409 "an equivalent
+entry already exists in the transparency log": a provenance record that timed
+out on the client after Rekor stored it) happens before the upload and is
+retried with a new signature. v0.0.45 failed that way with no retry: its GitHub
+release has every asset, but npm never got 0.0.45.
+
 ## Local package checks
 
 Local `npm publish` uses the version in the local manifest; it does not infer a
