@@ -1069,6 +1069,8 @@
     'peru pink plum powderblue purple rebeccapurple red rosybrown royalblue saddlebrown salmon sandybrown seagreen seashell sienna silver ' +
     'skyblue slateblue slategray slategrey snow springgreen steelblue tan teal thistle tomato turquoise violet wheat white whitesmoke yellow ' +
     'yellowgreen transparent').split(' '));
+  // Properties whose percentages are only another way to write a number (see valueText).
+  const NUMBER_ONLY = new Set(['shape-image-threshold']);
   // Longhands whose values are several components ({1,2}, {1,4}) or whose grammar level 1 does not
   // reify (as in Chromium): always a plain CSSStyleValue.
   const UNREIFIED = new Set(['border-top-left-radius', 'border-top-right-radius', 'border-bottom-left-radius',
@@ -1208,6 +1210,11 @@
       if (which === 2) {
         if (!(v instanceof CSSUnparsedValue)) throw new TypeError(`Failed to execute '${what}' on 'StylePropertyMap': Invalid type for property`);
         return v.toString();
+      }
+      // A property whose CSS grammar takes a percentage that it only stands for a number
+      // (`shape-image-threshold: 50%` is 0.5): its Typed OM type is <number>, as in Chromium.
+      if (NUMBER_ONLY.has(name) && v instanceof CSSNumericValue && typeIs(v, 'percent', true)) {
+        throw new TypeError(`Failed to execute '${what}' on 'StylePropertyMap': Invalid type for property`);
       }
       const text = v.toString();
       const typed = !(v instanceof CSSUnparsedValue) && v.constructor !== CSSStyleValue && !(v instanceof CSSKeywordValue && CSS_WIDE.test(v.value));
