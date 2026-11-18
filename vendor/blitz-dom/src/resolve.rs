@@ -1580,7 +1580,13 @@ impl ContainingTransform {
             *self
         } else {
             ContainingTransform {
-                context: TransformContext { scroll: self.context.scroll, ..Default::default() },
+                context: TransformContext {
+                    scroll: self.context.scroll,
+                    cb_size: self.context.cb_size,
+                    cb_border: self.context.cb_border,
+                    cb_padding: self.context.cb_padding,
+                    ..Default::default()
+                },
                 ..*self
             }
         }

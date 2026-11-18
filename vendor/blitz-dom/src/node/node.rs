@@ -189,6 +189,11 @@ pub struct TransformContext {
     pub preserve_3d: Option<Context3D>,
     /// Its scroll offset (CSS px): its children move by it, its perspective origin does not.
     pub scroll: (f64, f64),
+    /// pyro: its border box size, border widths and paddings (top, right, bottom, left), for the
+    /// `offset-path: ray()` of the boxes it contains (`MotionContainingBlock`).
+    pub cb_size: (f64, f64),
+    pub cb_border: [f64; 4],
+    pub cb_padding: [f64; 4],
 }
 
 /// pyro: a 3D rendering context as an element of it gives it to its children
@@ -879,8 +884,13 @@ impl Node {
         accumulated: Option<Context3D>,
     ) -> TransformContext {
         let scroll = self.scroll_offset();
+        let layout = self.final_layout();
+        let edges = |r: taffy::Rect<f32>| [r.top, r.right, r.bottom, r.left].map(f64::from);
         let mut context = TransformContext {
             scroll: (scroll.x, scroll.y),
+            cb_size: (layout.size.width as f64, layout.size.height as f64),
+            cb_border: edges(layout.border),
+            cb_padding: edges(layout.padding),
             ..Default::default()
         };
         let Some(s) = self.primary_styles() else {
@@ -924,7 +934,21 @@ impl Node {
             let size = (layout.size.width as f64, layout.size.height as f64);
             let box_styles = s.get_box();
             let reference_box = self.transform_reference_box(box_styles.transform_box);
+            // pyro: the containing block's geometry for `offset-path: ray()`, around the box.
+            let motion = matches!(box_styles.offset_path, style::values::generics::motion::GenericOffsetPath::OffsetPath { .. })
+                .then(|| crate::stylo_to_kurbo::MotionContainingBlock {
+                    border_box: kurbo::Rect::new(
+                        -layout.location.x as f64,
+                        -layout.location.y as f64,
+                        parent.cb_size.0 - layout.location.x as f64,
+                        parent.cb_size.1 - layout.location.y as f64,
+                    ),
+                    border: parent.cb_border,
+                    padding: parent.cb_padding,
+                });
+            let previous = crate::stylo_to_kurbo::MOTION_CONTAINING_BLOCK.with(|c| c.replace(motion));
             let resolved = crate::stylo_to_kurbo::resolve_transform(box_styles, reference_box);
+            crate::stylo_to_kurbo::MOTION_CONTAINING_BLOCK.with(|c| c.set(previous));
             // pyro: an anonymous box has no `transform-style` of its own: it is in its parent's
             // 3D rendering context, if any, and passes it on (CSS Transforms 2 WPT
             // transform-table-011: anonymous table boxes around a preserve-3d cell).
