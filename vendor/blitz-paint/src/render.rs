@@ -2027,10 +2027,33 @@ fn line_truncation<'a>(
     index: usize,
     scale: f32,
 ) -> Option<LineTruncation<'a>> {
+    // pyro: none while the text is being edited: its editing host (the nearest element with
+    // `contenteditable` other than `false`) has the focus, as Chromium shows the whole text
+    // (CSS Overflow 3 § ellipsis interaction; WPT css-overflow
+    // `text-overflow-ellipsis-editable-div-with-caret`).
+    if editing_host_focused(node) {
+        return None;
+    }
     // The lines were broken in the unrounded box: a line as wide as the box (a
     // box sized to its text) must not count as overflowing it by a rounding.
     let width = node.unrounded_layout().content_box_width() * scale;
     line_truncation_at(text_layout, line, index, scale, width)
+}
+
+/// pyro: whether `node` is in an editing host (`contenteditable` other than `false`, the
+/// nearest such element up its ancestors) that has the focus.
+fn editing_host_focused(node: &Node) -> bool {
+    let mut current = Some(node);
+    while let Some(n) = current {
+        if let Some(value) = n.attr(local_name!("contenteditable")) {
+            if value.eq_ignore_ascii_case("false") {
+                return false;
+            }
+            return n.is_focussed();
+        }
+        current = n.parent.map(|id| &n.tree()[id]);
+    }
+    false
 }
 
 /// pyro: [`line_truncation`] at an inline size `width` (device px).
