@@ -2455,6 +2455,12 @@ impl Layout {
     pub fn window_scroll_to(&mut self, dom: &Dom, left: Option<i32>, top: Option<i32>) -> bool {
         // A scroll without a target (CSS Overflow 5 § 2.1).
         self.scroll_targets.remove(&None);
+        // pyro: the viewport's snap positions (CSS Scroll Snap 1 § 6.2).
+        let current = (self.window_scroll.0 as i32, self.window_scroll.1 as i32);
+        let (left, top) = {
+            let (l, t) = self.snap_scroll(dom, None, current, left.map(i64::from), top.map(i64::from));
+            (l.map(|v| v.clamp(i32::MIN as i64, i32::MAX as i64) as i32), t.map(|v| v.clamp(i32::MIN as i64, i32::MAX as i64) as i32))
+        };
         let (max_x, max_y) = if left.is_some_and(|l| l > 0) || top.is_some_and(|t| t > 0) {
             let (w, h) = self.document_scroll_size(dom);
             (scroll_limit(w, self.inner_width()), scroll_limit(h, self.inner_height()))
@@ -2546,10 +2552,15 @@ impl Layout {
         let current = self.element_scroll.get(&el).copied().unwrap_or((0, 0));
         let mut x = current.0;
         let mut y = current.1;
-        if let Some(t) = write.target(Axis::Width, current.0) {
+        // pyro: the scroll lands on a snap position (CSS Scroll Snap 1 § 6.2), as Chromium snaps
+        // programmatic scrolls.
+        let tx = write.target(Axis::Width, current.0);
+        let ty = write.target(Axis::Height, current.1);
+        let (tx, ty) = self.snap_scroll(dom, Some(el), current, tx, ty);
+        if let Some(t) = tx {
             x = self.clamp_scroll(dom, el, Axis::Width, t);
         }
-        if let Some(t) = write.target(Axis::Height, current.1) {
+        if let Some(t) = ty {
             y = self.clamp_scroll(dom, el, Axis::Height, t);
         }
         if (x, y) == current {
@@ -2560,6 +2571,122 @@ impl Layout {
         self.push_scroll();
         self.capture_scroll_anchor(dom, el);
         true
+    }
+
+    /// pyro: the scroll offsets `scroller` (`None`: the viewport) lands on for the targets `tx`,
+    /// `ty` (`None`: that axis is not written) when it has `scroll-snap-type`: on each snapping
+    /// axis, the snap position nearest the target among those of the boxes whose nearest scroll
+    /// container it is (`scroll-snap-align` in the snapport, the scroll container's padding box
+    /// less `scroll-padding`, their boxes grown by `scroll-margin`). `mandatory` always snaps;
+    /// `proximity` within a third of the snapport, as Chromium. The targets as given otherwise.
+    fn snap_scroll(
+        &self,
+        dom: &Dom,
+        scroller: Option<NodeId>,
+        current: (i32, i32),
+        tx: Option<i64>,
+        ty: Option<i64>,
+    ) -> (Option<i64>, Option<i64>) {
+        if tx.is_none() && ty.is_none() {
+            return (tx, ty);
+        }
+        let doc = self.style.document();
+        let Some(styled) = scroller.or_else(|| dom.document_element(doc).ok().flatten()) else { return (tx, ty) };
+        let value = |el: NodeId, name: &str| self.style.computed_value(dom, el, name).unwrap_or_default();
+        let snap_type = value(styled, "scroll-snap-type");
+        if snap_type.is_empty() || snap_type == "none" {
+            return (tx, ty);
+        }
+        let words: Vec<&str> = snap_type.split_whitespace().collect();
+        let (snap_x, snap_y) = match words.first().copied() {
+            Some("x") | Some("inline") => (true, false),
+            Some("y") | Some("block") => (false, true),
+            Some("both") => (true, true),
+            _ => return (tx, ty),
+        };
+        let mandatory = words.get(1).copied() == Some("mandatory");
+        // The scroller's padding box in client coordinates and its size.
+        let px = |v: &str, basis: f64| -> f64 {
+            let v = v.trim();
+            if let Some(p) = v.strip_suffix('%') {
+                p.parse::<f64>().map_or(0.0, |p| p * basis / 100.0)
+            } else {
+                v.trim_end_matches("px").parse::<f64>().unwrap_or(0.0)
+            }
+        };
+        let (origin_x, origin_y, width, height) = match scroller {
+            Some(el) => {
+                let r = self.bounding_client_rect(dom, el);
+                let bl = px(&value(el, "border-left-width"), 0.0);
+                let bt = px(&value(el, "border-top-width"), 0.0);
+                (r.x + bl - current.0 as f64, r.y + bt - current.1 as f64, self.client_width(dom, el), self.client_height(dom, el))
+            }
+            None => (-(current.0 as f64), -(current.1 as f64), self.inner_width() as f64, self.inner_height() as f64),
+        };
+        let pad = |side: &str, basis: f64| {
+            let v = value(styled, &format!("scroll-padding-{side}"));
+            if v == "auto" { 0.0 } else { px(&v, basis) }
+        };
+        let (pt, pr, pb, pl) = (pad("top", height), pad("right", width), pad("bottom", height), pad("left", width));
+        let mut best: [Option<f64>; 2] = [None, None];
+        let target = [tx.map(|v| v as f64), ty.map(|v| v as f64)];
+        let Ok(nodes) = dom.descendants(scroller.unwrap_or(doc)) else { return (tx, ty) };
+        let axes = crate::style::ScrollAxes { x: true, y: true };
+        for id in nodes {
+            if dom.element(id).is_err() || Some(id) == scroller {
+                continue;
+            }
+            let align = value(id, "scroll-snap-align");
+            if align.is_empty() || align == "none" {
+                continue;
+            }
+            let owner = match dom.parent_element(id).ok().flatten() { Some(p) => self.scroll_container(dom, p, axes), None => ScrollTarget::Viewport };
+            let owned = match (owner, scroller) {
+                (ScrollTarget::Container(c), Some(s)) => c == s,
+                (ScrollTarget::Viewport, None) => true,
+                _ => false,
+            };
+            if !owned {
+                continue;
+            }
+            let r = self.bounding_client_rect(dom, id);
+            let margin = |side: &str| px(&value(id, &format!("scroll-margin-{side}")), 0.0);
+            let (top, bottom) = (r.y - origin_y - margin("top"), r.y + r.height - origin_y + margin("bottom"));
+            let (left, right) = (r.x - origin_x - margin("left"), r.x + r.width - origin_x + margin("right"));
+            let mut parts = align.split_whitespace();
+            let block = parts.next().unwrap_or("none");
+            let inline = parts.next().unwrap_or(block);
+            let position = |a: &str, start: f64, end: f64, pad_start: f64, pad_end: f64, size: f64| match a {
+                "start" => Some(start - pad_start),
+                "end" => Some(end - (size - pad_end)),
+                "center" => Some((start + end) / 2.0 - (pad_start + (size - pad_start - pad_end) / 2.0)),
+                _ => None,
+            };
+            let candidates = [
+                snap_x.then(|| position(inline, left, right, pl, pr, width)).flatten(),
+                snap_y.then(|| position(block, top, bottom, pt, pb, height)).flatten(),
+            ];
+            // A snap area larger than the snapport on an axis can be scrolled within: any target
+            // that keeps the snapport inside it is a snap position (CSS Scroll Snap 1 § 6.2.1).
+            let covering = [
+                snap_x && right - left > width - pl - pr,
+                snap_y && bottom - top > height - pt - pb,
+            ];
+            let spans = [(left - pl, right - (width - pr)), (top - pt, bottom - (height - pb))];
+            for axis in 0..2 {
+                let (Some(c), Some(t)) = (candidates[axis], target[axis]) else { continue };
+                let c = if covering[axis] && t >= spans[axis].0 && t <= spans[axis].1 { t } else { c };
+                let c = c.max(0.0);
+                if best[axis].is_none_or(|b| (c - t).abs() < (b - t).abs()) {
+                    best[axis] = Some(c);
+                }
+            }
+        }
+        let snap = |axis: usize, t: Option<i64>, size: f64| match (t, best[axis]) {
+            (Some(t), Some(b)) if mandatory || (b - t as f64).abs() <= size / 3.0 => Some(b.round() as i64),
+            _ => t,
+        };
+        (snap(0, tx, width), snap(1, ty, height))
     }
 
     /// Whether any element or the window is scrolled away from the origin.
