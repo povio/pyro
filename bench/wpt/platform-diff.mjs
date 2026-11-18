@@ -3,8 +3,11 @@
 // baseline.json was recorded on macOS. A page that passes less on Linux must be explained in platform-split.json
 // ({ "<url>": "<reason>" }), so coverage never drops silently when the gate moves platforms.
 //
-//   bun bench/wpt/platform-diff.mjs MAC.json LINUX.json [--split platform-split.json] [--summary FILE] [--out FILE]
-//       [--strict]
+//   bun bench/wpt/platform-diff.mjs MAC.json LINUX.json [--split platform-split.json] [--flaky flaky-linux.json]
+//       [--summary FILE] [--out FILE] [--strict]
+//
+// --flaky: the Linux-only flaky list. gate.mjs update leaves a flaky subtest out of the baseline, so such a page passes
+// less in baseline-linux.json by design; its flaky entry (with the evidence) is the explanation.
 //
 // --strict exits 1 when a page passes fewer subtests on Linux than on macOS and platform-split.json does not list it.
 import fs from 'node:fs';
@@ -21,6 +24,8 @@ const [mac, linux] = files.map((f) => readBaselineAt(f));
 if (!mac || !linux) { console.error(`platform-diff: missing baseline (${!mac ? files[0] : files[1]})`); process.exit(2); }
 const splitFile = opt('--split', path.join(HERE, 'platform-split.json'));
 const split = fs.existsSync(splitFile) ? JSON.parse(fs.readFileSync(splitFile, 'utf8')) : {};
+const flakyFile = opt('--flaky');
+const flaky = flakyFile && fs.existsSync(flakyFile) ? JSON.parse(fs.readFileSync(flakyFile, 'utf8')).tests ?? {} : {};
 
 // The subtests an entry names as passing, when it can be told by name: a `pass` list, or a `fail` list whose names
 // hash (h) equals the other side's (the same subtests reported). null when only counts compare.
@@ -47,7 +52,7 @@ for (const url of [...new Set([...Object.keys(mac.tests), ...Object.keys(linux.t
     if (same) continue;
   }
   row.lessOnLinux = !l || (m && (row.linux.pass < row.mac.pass || (m.status === 'complete' && l.status !== 'complete') || row.macOnly?.length > 0));
-  row.reason = split[url] ?? null;
+  row.reason = split[url] ?? (flaky[url] ? `${path.basename(flakyFile)}: ${flaky[url].reason}` : null);
   rows.push(row);
 }
 const less = rows.filter((r) => r.lessOnLinux), unexplained = less.filter((r) => !r.reason);

@@ -697,7 +697,7 @@ jobs:
       # Fails when a page passes less on Linux than in the macOS baseline and platform-split.json does not say why.
       - name: Linux and macOS
         if: ${{ !cancelled() && steps.refresh.outcome == 'success' }}
-        run: bun bench/wpt/platform-diff.mjs bench/wpt/baseline.json baseline-linux.json --strict --summary "$GITHUB_STEP_SUMMARY" --out platform-diff.json
+        run: bun bench/wpt/platform-diff.mjs bench/wpt/baseline.json baseline-linux.json --flaky bench/wpt/flaky-linux.json --strict --summary "$GITHUB_STEP_SUMMARY" --out platform-diff.json
       - uses: actions/upload-artifact@v4
         if: ${{ !cancelled() && steps.refresh.outputs.changed == 'true' }}
         with:
