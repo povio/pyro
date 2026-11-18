@@ -10720,3 +10720,24 @@ fn styling_detached_clones_between_reads_keeps_layout_and_observers_right() {
     assert_eq!(reads["inserted"], json!([249, "rgb(1, 2, 3)"]), "{r}");
     assert_eq!(reads["recs"], json!(["one:1", "two:1"]), "{r}");
 }
+
+#[test]
+fn a_clone_given_an_animation_while_detached_animates_once_inserted() {
+    // Changes outside the document count for nothing in the animation candidates (a screenshot
+    // library copies `animation-*` onto its clones); inserting the clone still starts its
+    // animation, and a <style> added while clones change still applies (Chromium: the same).
+    let mut h = Harness::new();
+    load_html(
+        &mut h,
+        r#"<!doctype html><style>@keyframes spin{to{transform:rotate(1turn)}}</style><p id=p>a</p><div id=host></div>"#,
+    );
+    let r = h.page(
+        "Pyro.run",
+        json!({"steps": [
+            {"eval": {"expression": "window.started = []; document.addEventListener('animationstart', e => started.push(e.target.id)); const c = p.cloneNode(true); c.id = 'c'; for (let i = 0; i < 20; i++) { getComputedStyle(p).getPropertyValue('animation-name'); c.style.setProperty('animation', i % 2 ? 'spin 1s' : 'none'); } c.style.animation = 'spin 1s'; window.c = c; document.head.append(Object.assign(document.createElement('style'), {textContent: '#p{animation:spin 2s}'})); getComputedStyle(p).getPropertyValue('animation-name'); host.append(c); null"}},
+            {"eval": {"expression": "new Promise(r => requestAnimationFrame(() => requestAnimationFrame(() => r([started.slice().sort(), getComputedStyle(p).animationName, getComputedStyle(c).animationName]))))", "as": "got"}}
+        ]}),
+    );
+    assert!(r.get("error").is_none(), "{r}");
+    assert_eq!(r["result"]["reads"]["got"], json!([["c", "p"], "spin", "spin"]), "{r}");
+}

@@ -389,7 +389,19 @@ impl TimingRules {
     fn only_text_or_style_since(&self, dom: &Dom, since: u64, inline: &FxHashSet<NodeId>) -> bool {
         let Some(changes) = dom.changes_since(since) else { return false };
         let style = crate::dom::attr_name_hash("style");
+        // Nodes outside the document are never candidates (they are looked up under `doc`):
+        // their changes, such as a screenshot library copying `animation-*` onto clones, count
+        // for nothing. A removal from or an insertion into a connected parent still counts.
+        let outside = |i: u32| dom.slot_live(i) && !dom.n(i).is_connected();
         for change in changes {
+            let skip = match change {
+                crate::dom::Change::Attr(i, _, _) | crate::dom::Change::Text(i) | crate::dom::Change::State(i) => outside(i),
+                crate::dom::Change::Inserted(p, _) | crate::dom::Change::Removed(p, _, _) => outside(p),
+                _ => false,
+            };
+            if skip {
+                continue;
+            }
             match change {
                 crate::dom::Change::Text(_) => {}
                 // A text or comment node inserted or removed (`textContent = …`): no selector sees

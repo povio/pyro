@@ -848,6 +848,8 @@ pub struct StyleEngine {
     /// for the [`StyleEngine::author_sheets_key`] (and the unregistered
     /// `<style>` elements, with their text revisions) they were read at.
     timing_rules: RefCell<Option<(AuthorSheetsKey, Vec<(NodeId, u64)>, Rc<crate::timing::TimingRules>)>>,
+    /// [`StyleEngine::unregistered_style_elements`] as of a DOM version and sheet generation.
+    unregistered: RefCell<Option<(u64, (u64, usize), Vec<NodeId>)>>,
     /// Sheet revisions handed out so far.
     revisions: u64,
     /// Called before the layout engine computes styles anew (CSS rule
@@ -935,6 +937,7 @@ impl StyleEngine {
             active_styled: Cell::new(true),
             gecko_rules: RefCell::new(None),
             timing_rules: RefCell::new(None),
+            unregistered: RefCell::new(None),
             revisions: 0,
             track_style_changes: Cell::new(false),
             animation_source: RefCell::new(None),
@@ -1911,15 +1914,28 @@ impl StyleEngine {
 
     /// The document's HTML `<style>` elements no sheet is registered for yet, in tree order.
     fn unregistered_style_elements(&self, dom: &Dom) -> Vec<NodeId> {
+        // pyro: asked on every transition/animation property read (`timing_value`) while resource
+        // events wait; the walk over the document is kept per DOM version and sheet generation,
+        // and across changes made only outside the document (a screenshot library styling clones).
+        let (version, generation) = (dom.version(), (self.generation, self.sheets.len()));
+        if let Some((v, g, list)) = self.unregistered.borrow_mut().as_mut() {
+            if *g == generation && (*v == version || dom.only_detached_changes_since(*v)) {
+                *v = version;
+                return list.clone();
+            }
+        }
         let Ok(desc) = dom.descendants(self.doc) else { return Vec::new() };
-        desc.filter(|&n| {
-            dom.node(n)
-                .ok()
-                .and_then(|n| n.element())
-                .is_some_and(|e| e.is_html() && e.name.local == local_name!("style"))
-                && !self.sheets.iter().any(|s| s.owner == n)
-        })
-        .collect()
+        let list: Vec<NodeId> = desc
+            .filter(|&n| {
+                dom.node(n)
+                    .ok()
+                    .and_then(|n| n.element())
+                    .is_some_and(|e| e.is_html() && e.name.local == local_name!("style"))
+                    && !self.sheets.iter().any(|s| s.owner == n)
+            })
+            .collect();
+        *self.unregistered.borrow_mut() = Some((version, generation, list.clone()));
+        list
     }
 
     /// `getComputedStyle` of the transition and animation properties the
