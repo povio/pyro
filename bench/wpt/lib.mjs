@@ -426,7 +426,7 @@ export function plan(tests, baseline, { gate = false, timeout, longTimeout }) {
   for (const t of tests) {
     const b = baseline?.tests?.[t.url];
     const def = t.long ? longTimeout : timeout;
-    const p = { ...t, limit: def, est: b ? Math.max(b.ms, 20) : t.long ? 3000 : 500 };
+    const p = { ...t, limit: def, est: b ? Math.max(b.ms, 20) : t.long ? 3000 : 500, known: b?.status };
     if (gate && b) {
       if (skippable(b)) { skipped.push(t.url); continue; }
       if (b.status === 'complete') p.limit = Math.min(def, Math.max(10 * b.ms, 10000));

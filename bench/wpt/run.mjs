@@ -13,6 +13,7 @@
 // --tests FILE: only these URLs (a JSON array of URLs, or a results or baseline file).
 // --repeat N: run every selected page N times (the gate's reruns), one result each; copies run side by side.
 // --baseline: per-page durations order the run longest first and balance --shard I/N (0-based).
+// --slow-jobs N: the baseline's timed-out pages run on N more workers beside --jobs (see SLOW_JOBS).
 // --gate: the PR gate's plan (lib.mjs plan()): skip pages with no coverage to protect, and bound the timeout of a
 //   page that completed in the baseline by 10x its duration (at least 10 s).
 // Every page gets a new browser context, so a page's result does not depend on the page that ran before it in the
@@ -371,7 +372,7 @@ let lastProgress = Date.now();
 const PLAN = tests.map((t) => t.url);
 await startBrowser();
 const results = [];
-let next = 0, done = 0, restarts = 0;
+let done = 0, restarts = 0;
 const t0 = Date.now();
 // Resolves once a TCP connect to the proxy (or the server) succeeds again, after at most 90 s.
 let portsDrained = null;
@@ -387,12 +388,19 @@ async function drainPorts() {
     await sleep(2000);
   }
 }
+// --slow-jobs N: pages that timed out in the baseline (`known: 'timeout'`, lib.mjs plan()) wait out their full
+// timeout, nearly idle (the 149 timeouts of a nightly testharness shard were 1.7% of its pages and 47% of its page
+// time). They go to a queue of their own served by N more workers, beside the --jobs workers, so they neither hold
+// those workers nor get a shorter cap: they still run to their timeout and stay in the results as they come out.
+const SLOW_JOBS = Number(opt('--slow-jobs', 0));
+const isSlow = (t) => SLOW_JOBS > 0 && t.known === 'timeout';
+const queues = { main: { list: tests.filter((t) => !isSlow(t)), next: 0 }, slow: { list: tests.filter(isSlow), next: 0 } };
 let workers = 0;
-async function worker() {
+async function worker(q) {
   const slot = {};
   const w = workers++;
-  while (next < tests.length) {
-    const t = tests[next++];
+  while (q.next < q.list.length) {
+    const t = q.list[q.next++];
     let r;
     if (restarting) await restarting;
     const leave = RENDERS ? await enter(t) : () => {};
@@ -414,7 +422,7 @@ async function worker() {
         console.error(`${LABEL}: ${t.url}: connections fail (ports exhausted?); waiting for them to drain`);
         inflight.delete(w);
         await (portsDrained ??= drainPorts().finally(() => { portsDrained = null; }));
-        t.retried = (t.retried ?? 0) + 1; tests.push(t); continue;
+        t.retried = (t.retried ?? 0) + 1; q.list.push(t); continue;
       }
       const lost = gen !== generation || /ECONNREFUSED|has been closed/.test(r.error);
       // Whether this page's browser died (or was replaced): a lost connection can arrive before its exit does.
@@ -423,7 +431,7 @@ async function worker() {
       // browser that was killed for it, until the new one is spawned.)
       if (gen === generation && died) { restarts++; await restartBrowser(gen); }
       if (RENDERS && lost) {
-        if (!t.solo) { t.solo = true; tests.push(t); continue; }
+        if (!t.solo) { t.solo = true; q.list.push(t); continue; }
         if (died) {
           r.status = 'crash';
           // The browser's last words (a panic that aborted, an assertion), read once its stderr has drained.
@@ -431,13 +439,13 @@ async function worker() {
         }
       }
       // The browser was replaced under this page (another slot's page hung it): run the page again.
-      else if (lost && (t.retried ?? 0) < 3) { t.retried = (t.retried ?? 0) + 1; tests.push(t); continue; }
+      else if (lost && (t.retried ?? 0) < 3) { t.retried = (t.retried ?? 0) + 1; q.list.push(t); continue; }
     } finally { leave(); inflight.delete(w); }
     if (KIND === 'crashtest' && r.status !== 'crash' && r.status !== 'hang') {
       // A panic's lines may still be in the pipe when the page's last answer arrives.
       await sleep(10);
       if (panics !== panicsBefore) {
-        if (!t.solo) { t.solo = true; tests.push(t); await resetSlot(slot); continue; }
+        if (!t.solo) { t.solo = true; q.list.push(t); await resetSlot(slot); continue; }
         r = { status: 'panic', ms: r.ms, error: lastPanic, subtests: [] };
         await resetSlot(slot);
       }
@@ -457,7 +465,11 @@ async function worker() {
   }
   await resetSlot(slot);
 }
-await Promise.all(Array.from({ length: JOBS }, worker));
+if (queues.slow.list.length) console.error(`${LABEL}: ${queues.slow.list.length} page(s) that timed out in the baseline run on ${Math.min(SLOW_JOBS, queues.slow.list.length)} more worker(s)`);
+await Promise.all([
+  ...Array.from({ length: JOBS }, () => worker(queues.main)),
+  ...Array.from({ length: Math.min(SLOW_JOBS, queues.slow.list.length) }, () => worker(queues.slow)),
+]);
 finish();
 // Writes the results and exits. `stalled`: the reason pages that have no result are recorded as errors.
 function finish(stalled) {

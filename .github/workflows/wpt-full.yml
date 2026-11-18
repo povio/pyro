@@ -13,18 +13,17 @@ name: WPT full
 #
 # It must not starve the pull request runs (wpt.yml), which share lp-m1's two machines:
 # - Its shards run one at a time (max-parallel: 1), so one lp-m1 machine always stays free for other jobs.
-# - The shards are small (15): a self-hosted runner takes queued jobs roughly first come, first served, so a pull
-#   request job queued meanwhile goes before the next shard; that is how the nightly yields.
-# - Serial, it takes about 3 h 35 min (run 44264192510, --jobs 16 and reruns: a testharness quarter 34 min, a reftest
-#   third 16 min, crashtests ~12; so 8 testharness shards ~17 min, 6 reftest ~8, plus ~1.5 min setup per shard).
-#   It starts at 01:37 UTC (02:37 CET) to end around 05:15 UTC (06:15 CET), before the working day at 07:00 CET.
-#   Run history 2026-11-13..18: 01:00-02:59 UTC has some late pushes, which the free second machine takes; the
-#   01:17 start blocked a pull request only because the old nightly held both machines. Under CEST (UTC+2), move it
-#   an hour earlier (00:37 UTC).
+# - The shards are small (7, about 8 minutes each): a self-hosted runner takes queued jobs roughly first come,
+#   first served, so a pull request job queued meanwhile goes before the next shard; that is how the nightly yields.
+# - Serial, it takes about 70 min: pages that timed out in the committed baseline run on extra workers (--slow-jobs),
+#   and only pages whose result differs from it run again. Before (run 44235329366: every page twice, timeouts in
+#   the --jobs pool), a testharness quarter took 28-34 min, so 15 serial shards needed ~3 h 35 min.
+#   It starts at 03:07 UTC (04:07 CET), the quietest hour in the run history (2026-11-13..18: no other workflow
+#   started 03:00-04:00 on four of six days), and ends long before the working day (07:00 CET).
 
 on:
   schedule:
-    - cron: '37 1 * * *'
+    - cron: '7 3 * * *'
   workflow_dispatch:
     inputs:
       runner:
@@ -129,7 +128,7 @@ jobs:
     needs: prepare
     if: github.event_name != 'pull_request'
     runs-on: ${{ needs.prepare.outputs.runner }}
-    # A shard is an eighth (testharness) or sixth (reftest) of the suite; the runner ends itself after 10 min without
+    # A shard is a quarter (testharness) or half (reftest) of the suite, ~8 min; the runner ends itself after 10 min without
     # progress (run.mjs STALL_MS), so this only bounds what that misses.
     timeout-minutes: 60
     strategy:
@@ -138,20 +137,12 @@ jobs:
       max-parallel: 1
       matrix:
         include:
-          - { kind: testharness, shard: 0, of: 8 }
-          - { kind: testharness, shard: 1, of: 8 }
-          - { kind: testharness, shard: 2, of: 8 }
-          - { kind: testharness, shard: 3, of: 8 }
-          - { kind: testharness, shard: 4, of: 8 }
-          - { kind: testharness, shard: 5, of: 8 }
-          - { kind: testharness, shard: 6, of: 8 }
-          - { kind: testharness, shard: 7, of: 8 }
-          - { kind: reftest, shard: 0, of: 6 }
-          - { kind: reftest, shard: 1, of: 6 }
-          - { kind: reftest, shard: 2, of: 6 }
-          - { kind: reftest, shard: 3, of: 6 }
-          - { kind: reftest, shard: 4, of: 6 }
-          - { kind: reftest, shard: 5, of: 6 }
+          - { kind: testharness, shard: 0, of: 4 }
+          - { kind: testharness, shard: 1, of: 4 }
+          - { kind: testharness, shard: 2, of: 4 }
+          - { kind: testharness, shard: 3, of: 4 }
+          - { kind: reftest, shard: 0, of: 2 }
+          - { kind: reftest, shard: 1, of: 2 }
           - { kind: crashtest, shard: 0, of: 1 }
     steps:
       - uses: actions/checkout@v6
@@ -181,7 +172,7 @@ jobs:
       - name: Run ${{ matrix.kind }} shard ${{ matrix.shard }} of ${{ matrix.of }}
         env:
           RUNNER_ARGS: ${{ inputs.runner-args }}
-          # Scheduled runs rerun every page (a baseline needs two runs of each, and the nightly records one).
+          # Scheduled runs rerun the pages whose result differs from the committed whole-suite baseline (bench/wpt/full/).
           RERUNS: ${{ github.event_name == 'schedule' || inputs.reruns }}
           OUT: wpt-full-${{ matrix.kind }}-${{ matrix.shard }}.json
         run: |
@@ -191,12 +182,18 @@ jobs:
           if [ "$RERUNS" = true ]; then rerun=(); fi
           # Pages side by side: testharness pages mostly wait (timers, timeouts; the browser used 12-14% of one core at
           # --jobs 4 in the first nightly, ~1 h per shard), so 16; reftests and crashtests render, one per CPU.
-          jobs=$(sysctl -n hw.ncpu)
-          if [ ${{ matrix.kind }} = testharness ]; then jobs=16; fi
-          # No baseline yet for the whole suite (a missing --baseline file): every page runs as in a full run.
+          # --slow-jobs: the pages that timed out in the baseline run to their full timeout on that many more workers,
+          # nearly idle, beside the others (run.mjs SLOW_JOBS): in a testharness shard they were 1.7% of the pages and
+          # 47% of the page time, holding 16 workers for 45 s each.
+          jobs=$(sysctl -n hw.ncpu); slow=8
+          if [ ${{ matrix.kind }} = testharness ]; then jobs=16; slow=24; fi
+          # The committed whole-suite baseline (bench/wpt/full/<kind>/) orders and balances the pages by duration, and
+          # only the pages whose result differs from it run again (in run 44235329366, 8,875 of a shard's 8,892
+          # reruns of every page matched their first run). For a WPT revision it does not cover, gate.mjs runs every
+          # page twice (bootstrap).
           bun bench/wpt/gate.mjs run --kind ${{ matrix.kind }} "${extra[@]}" --wpt wpt-full --bin browser/pyro \
-            --server wptserve --testdriver --dirs all --baseline full-baseline-none.json --jobs "$jobs" \
-            --shard ${{ matrix.shard }}/${{ matrix.of }} "${rerun[@]}" --out "$OUT" --no-check
+            --server wptserve --testdriver --dirs all --baseline bench/wpt/full/${{ matrix.kind }}/ --full --jobs "$jobs" \
+            --slow-jobs "$slow" --shard ${{ matrix.shard }}/${{ matrix.of }} "${rerun[@]}" --out "$OUT" --no-check
           gzip -9 "$OUT"
       # Twice: GitHub's artifact service timed out on reftest shard 0's upload in the first nightly (5 attempts in
       # 50 s), which lost the shard's 12 minutes of results.
@@ -277,9 +274,11 @@ jobs:
         run: |
           for k in testharness reftest crashtest; do
             ls shards/wpt-full-$k-*.json >/dev/null 2>&1 || continue
-            # From scratch each night (a directory that does not exist yet): the baseline is what tonight's two runs
-            # agree on. A lost shard leaves its pages out (--missing-shards) instead of losing the whole kind.
-            bun bench/wpt/gate.mjs update --kind $k --missing-shards --baseline full-baselines/$k/ --out full-baselines/$k/ shards/wpt-full-$k-*.json
+            # Tonight's results replace each page's entry (--replace --match .): a page that matched the committed
+            # baseline ran once (two agreeing observations, last commit and tonight), one that differed ran three times
+            # and takes their consensus. A lost shard keeps its pages' committed entries (--missing-shards).
+            bun bench/wpt/gate.mjs update --kind $k --missing-shards --replace --match . --baseline bench/wpt/full/$k/ \
+              --out full-baselines/$k/ shards/wpt-full-$k-*.json
           done
           du -sh full-baselines/* || true
       - uses: actions/upload-artifact@v4
