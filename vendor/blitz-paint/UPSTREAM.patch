@@ -410,10 +410,14 @@ diff --git a/packages/blitz-paint/src/broken_image_icon.rs b/packages/blitz-pain
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-paint/src/broken_image_icon.rs
-@@ -0,0 +1,70 @@
-+//! pyro: Chromium's 16x16 broken-image icon (its `IDR_BROKENIMAGE` resource, Chromium BSD licence)
+@@ -0,0 +1,74 @@
++//! pyro: Chromium's 16x16 broken-image icon: its `IDR_BROKENIMAGE` resource
++//! (https://chromium.googlesource.com/chromium/src/, `ui/resources/default_100_percent/common/`),
 +//! as Chrome draws it at 1x, captured over white and over black to recover its alpha: RGBA8,
 +//! straight alpha, row by row.
++//!
++//! Copyright 2015 The Chromium Authors. Used under Chromium's BSD-style (3-clause) license; the
++//! full notice is in the repository's NOTICE file.
 +
 +pub(crate) const BROKEN_IMAGE_16: [u8; 1024] = [
 +    0xad, 0xaf, 0xb2, 0xff, 0xc0, 0xc4, 0xcb, 0xff, 0xc2, 0xc6, 0xcd, 0xff, 0xc2, 0xc6, 0xcd, 0xff,
