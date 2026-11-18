@@ -431,3 +431,7 @@ without a style context (custom properties left as they are): pyro serializes a 
   with it), 1em by 1em with `line-height` 1em, one centred line (`text-wrap-mode: nowrap`, `text-align: center`);
   blitz-paint compresses text wider than 1em. Not where `text-emphasis-style` is set (the marks of combined text go
   beside it in the vertical line; left upright as before). WPT css-writing-modes `text-combine-upright-*` (+12).
+- Round 4 lane S4, css-multicol-2 `column-height` (`auto | <length>`, `values::specified::column` `NonNegativeLengthOrAuto`)
+  and `column-wrap` (`auto | nowrap | wrap`, `ColumnWrap`, a `Copy` type in `data.py`) longhands, servo only, behind
+  `layout.css.columns.enabled`; `columns` takes `[ / <'column-height'> ]` (serialized when not `auto`); a
+  `column-height` other than `auto` makes a multi-column container (`is_multicol`). blitz-dom lays them out.

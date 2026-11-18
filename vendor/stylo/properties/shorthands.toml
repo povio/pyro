@@ -459,7 +459,8 @@ sub_properties = ["outline-color", "outline-style", "outline-width"]
 spec = "https://drafts.csswg.org/css-ui/#propdef-outline"
 
 [columns]
-sub_properties = ["column-width", "column-count"]
+# pyro: css-multicol-2 `[ / <column-height> ]`.
+sub_properties = ["column-width", "column-count", "column-height"]
 spec = "https://drafts.csswg.org/css-multicol/#propdef-columns"
 servo_pref = "layout.css.columns.enabled"
 

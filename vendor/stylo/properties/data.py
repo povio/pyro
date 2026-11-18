@@ -617,6 +617,7 @@ class Longhand(Property):
                 "MathShift",
                 "ColumnSpan",
                 "ColumnFill",
+                "ColumnWrap",
                 "Orient",
                 "BackfaceVisibility",
                 "Isolation",

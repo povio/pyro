@@ -2774,3 +2774,9 @@ all, and a combining mark the transform removed (Greek uppercase drops the acute
   counter made outside makes a new counter (`counter()` and `counters()` still read the outer one), and the quote
   depth is restored after the subtree. WPT css-contain `contain-style-counters-*`, `counter-scoping-*`,
   `quote-scoping-*`. `pyro-render/tests/containment_and_svg_background.rs`.
+- Round 4 lane S4, `layout/multicol.rs`: css-multicol-2 `column-height` and `column-wrap`. A `column-height` is every
+  column's height (no balancing); with `column-wrap: wrap` (or `auto` beside a `column-height`) each `count` columns
+  make a row, rows `row-gap` apart (`normal` 0), the container's auto height covering them. `column-wrap: wrap` with
+  `column-height: auto` wraps at the container's definite height, its last row balanced under `column-fill: balance`.
+  WPT css-multicol `column-height-*` 14 of 30 (abspos in a positioned multicol container and `column-height: 0` are
+  not done). `pyro-render/tests/multicol_column_height.rs`.

@@ -401,6 +401,13 @@ struct Multicol {
     font_size: f32,
     fill: ColumnFill,
     rtl: bool,
+    /// pyro: `column-height` (css-multicol-2): the height of every column, unbalanced.
+    height: Option<f32>,
+    /// pyro: `column-wrap` (`auto` wraps when `column-height` is given): columns that do not
+    /// fit a row go to a new row below, `row-gap` apart.
+    wrap: bool,
+    /// `row-gap` (`normal` is 0 here).
+    row_gap: style::values::computed::length::NonNegativeLengthPercentageOrNormal,
 }
 
 impl Multicol {
@@ -419,7 +426,27 @@ impl Multicol {
             font_size: style.slow_clone_font_size().used_size().px(),
             fill: column.column_fill,
             rtl: style.clone_direction() == style::computed_values::direction::T::Rtl,
+            height: match column.column_height {
+                LengthPercentageOrAuto::LengthPercentage(height) => Some(height.0.px()),
+                LengthPercentageOrAuto::Auto => None,
+            },
+            wrap: match column.column_wrap {
+                style::values::computed::ColumnWrap::Wrap => true,
+                style::values::computed::ColumnWrap::Nowrap => false,
+                style::values::computed::ColumnWrap::Auto => !matches!(column.column_height, LengthPercentageOrAuto::Auto),
+            },
+            row_gap: style.get_position().row_gap.clone(),
         }
+    }
+
+    /// pyro: the used row gap between rows of columns: `normal` is 0; a percentage resolves
+    /// against `basis` (the content box height when known).
+    fn row_gap(&self, basis: Option<f32>) -> f32 {
+        match &self.row_gap {
+            LengthPercentageOrNormal::Normal => 0.0,
+            LengthPercentageOrNormal::LengthPercentage(lp) => lp.0.resolve(Length::new(basis.unwrap_or(0.0))).px(),
+        }
+        .max(0.0)
     }
 
     /// The used column gap: `normal` is 1em; a percentage of an unknown width is none.
@@ -585,26 +612,58 @@ impl LayoutPassState<'_> {
             let run_end = spanners.get(part).map_or(breaks.end, |s| s.0);
             if run_end > run_start + EPSILON || (part == spanners.len() && fragments.is_empty()) {
                 let run = Breaks { start: run_start, end: run_end, ..breaks.clone() };
-                let column_height = if spanners.is_empty() && fill_auto {
+                // pyro: `column-wrap: wrap` with `column-height: auto` wraps columns as tall as
+                // the container's definite height.
+                let fixed_height = multicol.height.or(definite_height.filter(|_| multicol.wrap));
+                let column_height = if let Some(height) = fixed_height {
+                    height.max(0.0)
+                } else if spanners.is_empty() && fill_auto {
                     definite_height.unwrap_or(0.0)
                 } else {
                     run.balance(count, if spanners.is_empty() { limit } else { None })
                 };
-                for (i, (start, end)) in run.fill(column_height, MAX_COLUMNS).columns.into_iter().enumerate() {
-                    let x = column_x(i);
+                // pyro: `column-wrap: wrap`: each `count` columns make a row (css-multicol-2).
+                let per_row = if fixed_height.is_some() && multicol.wrap { count.max(1) } else { usize::MAX };
+                let row_gap = multicol.row_gap(definite_height);
+                let mut columns = run.fill(column_height, MAX_COLUMNS).columns;
+                let rows = columns.len().div_ceil(per_row).max(1);
+                // pyro: wrapping at the container's height (`column-height: auto`), `column-fill:
+                // balance` balances the last row (of at most `count` columns), that height its
+                // limit; an explicit `column-height` keeps every row at it.
+                let last_row = (rows - 1).saturating_mul(per_row.min(columns.len().max(1)));
+                let mut last_height = column_height;
+                if fixed_height.is_some()
+                    && multicol.height.is_none()
+                    && matches!(multicol.fill, ColumnFill::Balance)
+                    && columns.len() - last_row.min(columns.len()) <= count
+                    && let Some(&(tail_start, _)) = columns.get(last_row)
+                {
+                    let tail = Breaks { start: tail_start, end: run_end, ..breaks.clone() };
+                    let height = tail.balance(count, Some(column_height)).min(column_height);
+                    let refilled = tail.fill(height, MAX_COLUMNS).columns;
+                    if refilled.len() <= count {
+                        columns.truncate(last_row);
+                        columns.extend(refilled);
+                        last_height = height;
+                    }
+                }
+                for (i, (start, end)) in columns.into_iter().enumerate() {
+                    let (row, index) = if per_row == usize::MAX { (0, i) } else { (i / per_row, i % per_row) };
+                    let x = column_x(index);
+                    let top = snap(row_top + row as f32 * (column_height + row_gap));
                     let start = snap(start);
                     fragments.push(ColumnFragment {
                         start,
                         end: snap(end),
                         x,
                         width: column_width,
-                        top: row_top,
-                        height: column_height,
-                        offset: Point { x: x - pb.left, y: snap(row_top - start) },
+                        top,
+                        height: if row + 1 == rows { last_height } else { column_height },
+                        offset: Point { x: x - pb.left, y: snap(top - start) },
                         spanner: false,
                     });
                 }
-                row_top += column_height;
+                row_top += (rows - 1) as f32 * (column_height + row_gap) + last_height;
             }
             if let Some(&(start, end)) = spanners.get(part) {
                 let (start, end) = (snap(start), snap(end));

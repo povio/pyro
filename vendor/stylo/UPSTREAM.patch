@@ -369,7 +369,7 @@ diff -ruN a/properties/counted_unknown_properties.py b/properties/counted_unknow
      "-webkit-app-region",
 diff -ruN a/properties/data.py b/properties/data.py
 --- a/properties/data.py	2026-11-11 19:55:57
-+++ b/properties/data.py	2026-11-17 14:09:52
++++ b/properties/data.py	2026-11-19 00:45:22
 @@ -342,9 +342,19 @@
          allow_quirks=False,
          ignored_when_colors_disabled=False,
@@ -399,7 +399,12 @@ diff -ruN a/properties/data.py b/properties/data.py
                  "FlexDirection",
                  "ListStylePosition",
                  "TextWrapStyle",
-@@ -610,6 +621,8 @@
+@@ -606,10 +617,13 @@
+                 "MathShift",
+                 "ColumnSpan",
+                 "ColumnFill",
++                "ColumnWrap",
+                 "Orient",
                  "BackfaceVisibility",
                  "Isolation",
                  "ScrollBehavior",
@@ -408,7 +413,7 @@ diff -ruN a/properties/data.py b/properties/data.py
                  "TopLayer",
                  "FloatEdge",
                  "ImageLayerAttachment",
-@@ -686,6 +699,7 @@
+@@ -686,6 +700,7 @@
                  "TextAlign",
                  "TextAlignLast",
                  "TextAutospace",
@@ -416,7 +421,7 @@ diff -ruN a/properties/data.py b/properties/data.py
                  "TextBoxEdge",
                  "TextBoxTrim",
                  "TextDecorationLine",
-@@ -1323,8 +1337,17 @@
+@@ -1323,8 +1338,17 @@
                  "cursor",
                  "direction",
                  "hyphens",
@@ -492,7 +497,7 @@ diff -ruN a/properties/helpers.mako.rs b/properties/helpers.mako.rs
                              if !context.builder.effective_zoom_for_inheritance.is_one() {
 diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 --- a/properties/longhands.toml	2026-11-11 19:55:57
-+++ b/properties/longhands.toml	2026-11-18 17:22:58
++++ b/properties/longhands.toml	2026-11-19 00:44:34
 @@ -129,7 +129,6 @@
  type = "ColorOrAuto"
  initial = "generics::color::ColorOrAuto::Auto"
@@ -523,18 +528,18 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  struct = "box"
 -engine = "gecko"
  spec = "https://drafts.csswg.org/css-break/#propdef-break-inside"
- animation_type = "discrete"
- affects = "layout"
- 
++animation_type = "discrete"
++affects = "layout"
++
 +[orphans]
 +type = "PositiveInteger"
 +initial = "From::from(2)"
 +struct = "inherited_text"
 +spec = "https://drafts.csswg.org/css-break/#propdef-orphans"
-+animation_type = "discrete"
+ animation_type = "discrete"
 +servo_restyle_damage = "repaint"
-+affects = "layout"
-+
+ affects = "layout"
+ 
 +[widows]
 +type = "PositiveInteger"
 +initial = "From::from(2)"
@@ -954,12 +959,10 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://compat.spec.whatwg.org/#the-webkit-text-stroke-width"
  animation_type = "discrete"
  affects = "overflow"
-@@ -2597,6 +2614,28 @@
- gecko_pref = "layout.css.text-autospace.enabled"
- has_effect_on_gecko_scrollbars = false
+@@ -2599,6 +2616,28 @@
  spec = "https://drafts.csswg.org/css-text-4/#text-autospace-property"
-+affects = "layout"
-+
+ affects = "layout"
+ 
 +# pyro: CSS Text 4 `text-spacing-trim` (fullwidth punctuation trimming), for Servo: blitz-dom
 +# passes it to parley's shaping and line breaking.
 +[text-spacing-trim]
@@ -980,9 +983,11 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +engine = "servo"
 +animation_type = "discrete"
 +spec = "https://drafts.csswg.org/css-text-5/#text-fit-property"
- affects = "layout"
- 
++affects = "layout"
++
  [text-autospace-size]
+ type = "Number"
+ initial = "0.125"
 @@ -2635,7 +2674,6 @@
  type = "TextDecorationSkipInk"
  initial = "computed::TextDecorationSkipInk::Auto"
@@ -999,12 +1004,10 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  affects = "overflow"
  
  [text-underline-offset]
-@@ -3171,6 +3210,15 @@
- boxed = true
- logical_group = "border-radius"
+@@ -3173,6 +3212,15 @@
  logical = true
-+affects = "paint"
-+
+ affects = "paint"
+ 
 +[border-shape]
 +type = "basic_shape::BorderShape"
 +initial = "generics::basic_shape::BorderShape::None"
@@ -1012,9 +1015,11 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +animation_type = "none"
 +boxed = true
 +spec = "https://drafts.csswg.org/css-borders-4/#propdef-border-shape"
- affects = "paint"
- 
++affects = "paint"
++
  [corner-top-left-shape]
+ type = "CornerShape"
+ initial = "computed::CornerShape::round()"
 @@ -3383,9 +3431,9 @@
  type = "MarginTrim"
  initial = "computed::MarginTrim::empty()"
@@ -1181,7 +1186,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  affects = "layout"
  type = "TopLayer"
  initial = "computed::TopLayer::None"
-@@ -3770,7 +3815,6 @@
+@@ -3770,12 +3815,30 @@
  
  [column-fill]
  struct = "column"
@@ -1189,7 +1194,31 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/css-multicol/#propdef-column-fill"
  animation_type = "discrete"
  affects = "layout"
-@@ -3901,9 +3945,9 @@
+ type = "ColumnFill"
+ initial = "computed::ColumnFill::Balance"
++
++# pyro: css-multicol-2 `column-height` and `column-wrap` (blitz-dom lays them out: multicol.rs).
++[column-height]
++type = "length::NonNegativeLengthOrAuto"
++initial = "computed::length::NonNegativeLengthOrAuto::auto()"
++struct = "column"
++servo_pref = "layout.css.columns.enabled"
++spec = "https://drafts.csswg.org/css-multicol-2/#ch"
++servo_restyle_damage = "rebuild_box"
++affects = "layout"
++
++[column-wrap]
++struct = "column"
++spec = "https://drafts.csswg.org/css-multicol-2/#cwr"
++animation_type = "discrete"
++affects = "layout"
++servo_pref = "layout.css.columns.enabled"
++type = "ColumnWrap"
++initial = "computed::ColumnWrap::Auto"
+ 
+ [column-span]
+ struct = "column"
+@@ -3901,9 +3964,9 @@
  type = "TextOrientation"
  initial = "computed::TextOrientation::Mixed"
  
@@ -1200,7 +1229,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/css-images/#propdef-image-orientation"
  animation_type = "discrete"
  affects = "layout"
-@@ -3912,7 +3956,6 @@
+@@ -3912,7 +3975,6 @@
  
  [text-anchor]
  struct = "inherited_svg"
@@ -1208,7 +1237,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://svgwg.org/svg2-draft/text.html#TextAnchorProperty"
  animation_type = "discrete"
  affects = "layout"
-@@ -3921,7 +3964,6 @@
+@@ -3921,7 +3983,6 @@
  
  [color-interpolation]
  struct = "inherited_svg"
@@ -1216,7 +1245,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://svgwg.org/svg2-draft/painting.html#ColorInterpolationProperty"
  animation_type = "discrete"
  affects = "paint"
-@@ -3930,7 +3972,6 @@
+@@ -3930,7 +3991,6 @@
  
  [color-interpolation-filters]
  struct = "inherited_svg"
@@ -1224,7 +1253,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://svgwg.org/svg2-draft/painting.html#ColorInterpolationFiltersProperty"
  animation_type = "discrete"
  affects = "paint"
-@@ -3939,7 +3980,6 @@
+@@ -3939,7 +3999,6 @@
  
  [shape-rendering]
  struct = "inherited_svg"
@@ -1232,7 +1261,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://svgwg.org/svg2-draft/painting.html#ShapeRenderingProperty"
  animation_type = "discrete"
  affects = "paint"
-@@ -4093,6 +4133,17 @@
+@@ -4093,6 +4152,17 @@
  type = "BoxSizing"
  initial = "computed::BoxSizing::ContentBox"
  
@@ -1250,7 +1279,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  [object-fit]
  struct = "position"
  spec = "https://drafts.csswg.org/css-images/#propdef-object-fit"
-@@ -4249,7 +4300,7 @@
+@@ -4249,7 +4319,7 @@
  
  [field-sizing]
  struct = "ui"
@@ -1259,10 +1288,11 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/css-ui/#field-sizing"
  animation_type = "discrete"
  affects = "layout"
-@@ -4290,6 +4341,61 @@
+@@ -4289,7 +4359,62 @@
+ aliases = ["-webkit-box-orient"]
  type = "BoxOrient"
  initial = "computed::BoxOrient::Horizontal"
- 
++
 +# pyro: `-webkit-box-orient` for the servo engine (the gecko one is `-moz-box-orient`'s alias):
 +# with `display: -webkit-box` and `-webkit-line-clamp` it makes the legacy line clamp apply
 +# (`StyleAdjuster::adjust_for_webkit_box`).
@@ -1287,7 +1317,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +servo_restyle_damage = "rebuild_box"
 +type = "BoxAlign"
 +initial = "computed::BoxAlign::Stretch"
-+
+ 
 +[-webkit-box-pack]
 +struct = "box"
 +engine = "servo"
@@ -1321,7 +1351,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  [-moz-box-pack]
  struct = "xul"
  engine = "gecko"
-@@ -4344,8 +4450,8 @@
+@@ -4344,8 +4469,8 @@
  type = "ScopedName"
  initial = "computed::ScopedName::none()"
  struct = "ui"
@@ -1333,8 +1363,18 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  affects = ""
 diff -ruN a/properties/properties.mako.rs b/properties/properties.mako.rs
 --- a/properties/properties.mako.rs	2026-11-11 19:55:57
-+++ b/properties/properties.mako.rs	2026-11-18 23:31:01
-@@ -1621,6 +1621,12 @@
++++ b/properties/properties.mako.rs	2026-11-19 00:47:25
+@@ -1557,7 +1557,8 @@
+             /// Whether this is a multicol style.
+             #[cfg(feature = "servo")]
+             pub fn is_multicol(&self) -> bool {
+-                !self.column_width.is_auto() || !self.column_count.is_auto()
++                // pyro: `column-height` makes a multi-column container too (css-multicol-2).
++                !self.column_width.is_auto() || !self.column_count.is_auto() || !self.column_height.is_auto()
+             }
+         % endif
+     }
+@@ -1621,6 +1622,12 @@
      /// relevant link for this element. A element's "relevant link" is the
      /// element being matched if it is a link or the nearest ancestor link.
      visited_style: Option<Arc<ComputedValues>>,
@@ -1347,7 +1387,7 @@ diff -ruN a/properties/properties.mako.rs b/properties/properties.mako.rs
  }
  
  /// The struct that Servo uses to represent computed values.
-@@ -1643,6 +1649,45 @@
+@@ -1643,6 +1650,45 @@
  
      /// The pseudo-element that we're using.
      pseudo: Option<PseudoElement>,
@@ -1393,7 +1433,7 @@ diff -ruN a/properties/properties.mako.rs b/properties/properties.mako.rs
  }
  
  impl ComputedValues {
-@@ -1883,6 +1928,7 @@
+@@ -1883,6 +1929,7 @@
                  writing_mode,
                  rules,
                  visited_style,
@@ -1401,12 +1441,10 @@ diff -ruN a/properties/properties.mako.rs b/properties/properties.mako.rs
                  effective_zoom,
                  flags,
              % for style_struct in data.active_style_structs():
-@@ -1891,6 +1937,19 @@
-             },
-             pseudo: pseudo.cloned(),
+@@ -1893,6 +1940,19 @@
          })
-+    }
-+
+     }
+ 
 +    /// pyro: this style as `getComputedStyle` reports it: for a visited link and its contents,
 +    /// the visited-dependent properties unvisited (`pyro_unvisited`); `None` for any other.
 +    pub fn pyro_unvisited_view(&self) -> Option<ComputedValues> {
@@ -1418,10 +1456,12 @@ diff -ruN a/properties/properties.mako.rs b/properties/properties.mako.rs
 +        % endif
 +        % endfor
 +        Some(view)
-     }
- 
++    }
++
      /// Get the initial computed values.
-@@ -1923,6 +1982,7 @@
+     pub fn initial_values_with_font_override(default_font: super::style_structs::Font) -> Arc<Self> {
+         use crate::computed_value_flags::ComputedValueFlags;
+@@ -1923,6 +1983,7 @@
                  writing_mode: WritingMode::empty(),
                  rules: None,
                  visited_style: None,
@@ -1429,7 +1469,7 @@ diff -ruN a/properties/properties.mako.rs b/properties/properties.mako.rs
                  effective_zoom: crate::values::computed::Zoom::ONE,
                  flags: ComputedValueFlags::empty(),
              },
-@@ -2013,6 +2073,7 @@
+@@ -2013,6 +2074,7 @@
                  writing_mode: self.writing_mode.clone(),
                  rules: self.rules.clone(),
                  visited_style: self.visited_style.clone(),
@@ -1437,15 +1477,15 @@ diff -ruN a/properties/properties.mako.rs b/properties/properties.mako.rs
                  flags,
                  effective_zoom: self.effective_zoom.clone(),
                  % for style_struct in data.active_style_structs():
-@@ -2027,6 +2088,7 @@
-     pub fn visited_style(&self) -> Option<&ComputedValues> {
+@@ -2028,6 +2090,7 @@
          self.visited_style.as_deref()
      }
-+
  
++
      % for style_struct in data.active_style_structs():
          /// Clone the ${style_struct.name} struct.
-@@ -2234,6 +2296,8 @@
+         #[inline]
+@@ -2234,6 +2297,8 @@
      /// for this element.  A element's "relevant link" is the element being
      /// matched if it is a link or the nearest ancestor link.
      pub visited_style: Option<Arc<ComputedValues>>,
@@ -1454,7 +1494,7 @@ diff -ruN a/properties/properties.mako.rs b/properties/properties.mako.rs
      % for style_struct in data.active_style_structs():
          ${style_struct.ident}: StyleStructRef<'a, style_structs::${style_struct.name}>,
      % endfor
-@@ -2271,6 +2335,7 @@
+@@ -2271,6 +2336,7 @@
              color_scheme: inherited_style.get_inherited_ui().color_scheme_bits(),
              flags: Cell::new(flags),
              visited_style: None,
@@ -1462,7 +1502,7 @@ diff -ruN a/properties/properties.mako.rs b/properties/properties.mako.rs
              % for style_struct in data.active_style_structs():
              % if style_struct.inherited:
              ${style_struct.ident}: StyleStructRef::Borrowed(inherited_style.get_${style_struct.name_lower}()),
-@@ -2317,12 +2382,57 @@
+@@ -2317,6 +2383,7 @@
              color_scheme: style_to_derive_from.get_inherited_ui().color_scheme_bits(),
              flags: Cell::new(style_to_derive_from.flags),
              visited_style: None,
@@ -1470,11 +1510,10 @@ diff -ruN a/properties/properties.mako.rs b/properties/properties.mako.rs
              % for style_struct in data.active_style_structs():
              ${style_struct.ident}: StyleStructRef::Borrowed(
                  style_to_derive_from.get_${style_struct.name_lower}()
-             ),
-             % endfor
-+        }
-+    }
-+
+@@ -2325,6 +2392,50 @@
+         }
+     }
+ 
 +    /// pyro: a visited link's (and its contents') used values of the visited-dependent properties
 +    /// (the colours Chromium takes from `:visited` rules) come from its visited style. Every other
 +    /// property keeps the style of the link as unvisited (CSS Selectors 4 § 7.2, privacy).
@@ -1500,7 +1539,7 @@ diff -ruN a/properties/properties.mako.rs b/properties/properties.mako.rs
 +            % else:
 +            unvisited.mutate_${property.style_struct.name_lower}().copy_${property.ident}_from(mine);
 +            % endif
-         }
++        }
 +        % endif
 +        % endfor
 +        self.pyro_unvisited = Some(Arc::new(unvisited));
@@ -1517,10 +1556,12 @@ diff -ruN a/properties/properties.mako.rs b/properties/properties.mako.rs
 +        }
 +        % endif
 +        % endfor
-     }
- 
++    }
++
      /// Copy the reset properties from `style`.
-@@ -2550,7 +2660,8 @@
+     pub fn copy_reset_from(&mut self, style: &'a ComputedValues) {
+         % for style_struct in data.active_style_structs():
+@@ -2550,7 +2661,8 @@
  
      /// Turns this `StyleBuilder` into a proper `ComputedValues` instance.
      pub fn build(self) -> Arc<ComputedValues> {
@@ -1530,7 +1571,7 @@ diff -ruN a/properties/properties.mako.rs b/properties/properties.mako.rs
              self.pseudo,
              self.substitution_functions.custom_properties,
              self.attribute_references,
-@@ -2562,7 +2673,13 @@
+@@ -2562,7 +2674,13 @@
              % for style_struct in data.active_style_structs():
              self.${style_struct.ident}.build(),
              % endfor
@@ -1545,7 +1586,7 @@ diff -ruN a/properties/properties.mako.rs b/properties/properties.mako.rs
      }
  
      /// Get the substitution function maps if necessary.
-@@ -2769,7 +2886,8 @@
+@@ -2769,7 +2887,8 @@
  #[cfg(feature = "gecko")]
  size_of_test!(ComputedValues, 248);
  #[cfg(feature = "servo")]
@@ -1557,7 +1598,7 @@ diff -ruN a/properties/properties.mako.rs b/properties/properties.mako.rs
  size_of_test!(Option<Arc<ComputedValues>>, 8);
 diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
 --- a/properties/shorthands.rs	2026-11-11 19:55:57
-+++ b/properties/shorthands.rs	2026-11-18 18:23:06
++++ b/properties/shorthands.rs	2026-11-19 00:47:51
 @@ -542,7 +542,6 @@
      }
  }
@@ -1612,7 +1653,65 @@ diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
              }
  
              if !self.offset_distance.is_zero() {
-@@ -810,7 +817,6 @@
+@@ -744,7 +751,7 @@
+     pub use crate::properties::generated::shorthands::columns::*;
+ 
+     use super::*;
+-    use crate::properties::longhands::{column_count, column_width};
++    use crate::properties::longhands::{column_count, column_height, column_width};
+ 
+     pub fn parse_value(
+         context: &ParserContext,
+@@ -783,13 +790,19 @@
+ 
+         let values = autos + column_count.iter().len() + column_width.iter().len();
+         if values == 0 || values > 2 {
+-            Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError))
+-        } else {
+-            Ok(expanded! {
+-                column_count: unwrap_or_initial!(column_count),
+-                column_width: unwrap_or_initial!(column_width),
+-            })
++            return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError));
+         }
++        // pyro: css-multicol-2 `columns: <'column-width'> || <'column-count'> [ / <'column-height'> ]`.
++        let column_height = if input.try_parse(|input| input.expect_delim('/')).is_ok() {
++            Some(column_height::parse(context, input)?)
++        } else {
++            None
++        };
++        Ok(expanded! {
++            column_count: unwrap_or_initial!(column_count),
++            column_width: unwrap_or_initial!(column_width),
++            column_height: unwrap_or_initial!(column_height),
++        })
+     }
+ 
+     impl<'a> ToCss for LonghandsToSerialize<'a> {
+@@ -798,19 +811,24 @@
+             W: fmt::Write,
+         {
+             if self.column_width.is_auto() {
+-                return self.column_count.to_css(dest);
++                self.column_count.to_css(dest)?;
++            } else {
++                self.column_width.to_css(dest)?;
++                if !self.column_count.is_auto() {
++                    dest.write_char(' ')?;
++                    self.column_count.to_css(dest)?;
++                }
+             }
+-            self.column_width.to_css(dest)?;
+-            if !self.column_count.is_auto() {
+-                dest.write_char(' ')?;
+-                self.column_count.to_css(dest)?;
++            // pyro: `column-height`, after a slash when it is not `auto`.
++            if !self.column_height.is_auto() {
++                dest.write_str(" / ")?;
++                self.column_height.to_css(dest)?;
+             }
+             Ok(())
+         }
      }
  }
  
@@ -1620,7 +1719,7 @@ diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
  pub mod column_rule {
      pub use crate::properties::generated::shorthands::column_rule::*;
  
-@@ -1000,7 +1006,7 @@
+@@ -1000,7 +1018,7 @@
      }
  }
  
@@ -1629,7 +1728,7 @@ diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
  pub mod _webkit_text_stroke {
      pub use crate::properties::generated::shorthands::_webkit_text_stroke::*;
  
-@@ -1178,7 +1184,6 @@
+@@ -1178,7 +1196,6 @@
      }
  }
  
@@ -1637,7 +1736,7 @@ diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
  pub mod marker {
      pub use crate::properties::generated::shorthands::marker::*;
  
-@@ -1653,7 +1658,7 @@
+@@ -1653,7 +1670,7 @@
      }
  }
  
@@ -1646,7 +1745,7 @@ diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
  pub mod scroll_timeline {
      pub use crate::properties::generated::shorthands::scroll_timeline::*;
  
-@@ -1710,7 +1715,7 @@
+@@ -1710,7 +1727,7 @@
      }
  }
  
@@ -1655,7 +1754,7 @@ diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
  pub mod view_timeline {
      pub use crate::properties::generated::shorthands::view_timeline::*;
  
-@@ -1797,7 +1802,7 @@
+@@ -1797,7 +1814,7 @@
      }
  }
  
@@ -1664,7 +1763,7 @@ diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
  pub mod animation_range {
      pub use crate::properties::generated::shorthands::animation_range::*;
  
-@@ -3399,8 +3404,9 @@
+@@ -3399,8 +3416,9 @@
                      dest.write_str(", ")?;
                  }
  
@@ -1676,7 +1775,7 @@ diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
                  let has_timing_function = !self.animation_timing_function.0[i].is_ease();
                  let has_delay = !self.animation_delay.0[i].is_zero();
                  let has_iteration_count = !self.animation_iteration_count.0[i].is_one();
-@@ -3682,18 +3688,8 @@
+@@ -3682,18 +3700,8 @@
                      writer.item(repeat)?;
                  }
  
@@ -1699,7 +1798,7 @@ diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
                  if has_clip && *clip != From::from(*origin) {
 diff -ruN a/properties/shorthands.toml b/properties/shorthands.toml
 --- a/properties/shorthands.toml	2026-11-11 19:55:57
-+++ b/properties/shorthands.toml	2026-11-18 17:22:58
++++ b/properties/shorthands.toml	2026-11-19 00:47:51
 @@ -19,19 +19,16 @@
  kind = "two_properties"
  
@@ -1817,7 +1916,14 @@ diff -ruN a/properties/shorthands.toml b/properties/shorthands.toml
  
  [list-style]
  sub_properties = ["list-style-position", "list-style-image", "list-style-type"]
-@@ -476,7 +464,6 @@
+@@ -471,12 +459,12 @@
+ spec = "https://drafts.csswg.org/css-ui/#propdef-outline"
+ 
+ [columns]
+-sub_properties = ["column-width", "column-count"]
++# pyro: css-multicol-2 `[ / <column-height> ]`.
++sub_properties = ["column-width", "column-count", "column-height"]
+ spec = "https://drafts.csswg.org/css-multicol/#propdef-columns"
  servo_pref = "layout.css.columns.enabled"
  
  [column-rule]
@@ -1825,7 +1931,7 @@ diff -ruN a/properties/shorthands.toml b/properties/shorthands.toml
  sub_properties = ["column-rule-width", "column-rule-style", "column-rule-color"]
  spec = "https://drafts.csswg.org/css-multicol/#propdef-column-rule"
  derive_serialize = true
-@@ -550,13 +537,11 @@
+@@ -550,13 +538,11 @@
  derive_value_info = false
  
  [-webkit-text-stroke]
@@ -3841,6 +3947,18 @@ diff -ruN a/values/computed/box.rs b/values/computed/box.rs
  
  /// A computed value for the `-moz-scrollbar-inset-block` / `-inline` properties.
  pub type ScrollbarInset = GenericScrollbarInset<NonNegativeLength>;
+diff -ruN a/values/computed/column.rs b/values/computed/column.rs
+--- a/values/computed/column.rs	2026-11-11 19:55:57
++++ b/values/computed/column.rs	2026-11-19 00:44:34
+@@ -6,7 +6,7 @@
+ 
+ use crate::values::computed::PositiveInteger;
+ use crate::values::generics::column::GenericColumnCount;
+-pub use crate::values::specified::column::{ColumnFill, ColumnSpan};
++pub use crate::values::specified::column::{ColumnFill, ColumnSpan, ColumnWrap};
+ 
+ /// A computed type for `column-count` values.
+ pub type ColumnCount = GenericColumnCount<PositiveInteger>;
 diff -ruN a/values/computed/effects.rs b/values/computed/effects.rs
 --- a/values/computed/effects.rs	2026-11-11 19:55:57
 +++ b/values/computed/effects.rs	2026-11-14 18:55:29
@@ -3918,8 +4036,8 @@ diff -ruN a/values/computed/length.rs b/values/computed/length.rs
          }
 diff -ruN a/values/computed/mod.rs b/values/computed/mod.rs
 --- a/values/computed/mod.rs	2026-11-11 19:55:57
-+++ b/values/computed/mod.rs	2026-11-17 14:08:59
-@@ -69,7 +69,7 @@
++++ b/values/computed/mod.rs	2026-11-19 00:44:34
+@@ -69,14 +69,14 @@
      ContainIntrinsicSize, ContainerName, ContainerType, ContentVisibility, DirectionProperty,
      Display, DominantBaseline, Float, ImageOrientation, Isolation, LineClamp, MarginTrim, Orient,
      Overflow, OverflowAnchor, OverflowClipMargin, OverscrollBehavior, Perspective,
@@ -3928,6 +4046,14 @@ diff -ruN a/values/computed/mod.rs b/values/computed/mod.rs
      ScrollSnapStrictness, ScrollSnapType, ScrollbarGutter, ScrollbarInset, TextOrientation,
      TopLayer, TouchAction, Visibility, WillChange, WritingModeProperty, Zoom,
  };
+ pub use self::color::{
+     Color, ColorOrAuto, ColorPropertyValue, ColorScheme, ForcedColorAdjust, PrintColorAdjust,
+ };
+-pub use self::column::{ColumnCount, ColumnFill, ColumnSpan};
++pub use self::column::{ColumnCount, ColumnFill, ColumnSpan, ColumnWrap};
+ pub use self::corner_shape::{CornerShape, CornerShapeRect};
+ pub use self::counters::{Content, ContentItem, CounterIncrement, CounterReset, CounterSet};
+ pub use self::easing::TimingFunction;
 @@ -106,7 +106,7 @@
  pub use self::param::LinkParameters;
  pub use self::percentage::{NonNegativePercentage, Percentage};
@@ -5132,6 +5258,44 @@ diff -ruN a/values/specified/calc.rs b/values/specified/calc.rs
      /// Convenience parsing function for `<time>`.
      pub fn parse_time(
          context: &ParserContext,
+diff -ruN a/values/specified/column.rs b/values/specified/column.rs
+--- a/values/specified/column.rs	2026-11-11 19:55:57
++++ b/values/specified/column.rs	2026-11-19 00:44:34
+@@ -38,6 +38,34 @@
+     Auto,
+ }
+ 
++/// pyro: https://drafts.csswg.org/css-multicol-2/#cwr
++#[allow(missing_docs)]
++#[derive(
++    Clone,
++    Copy,
++    Debug,
++    Deserialize,
++    Eq,
++    FromPrimitive,
++    Hash,
++    MallocSizeOf,
++    Parse,
++    PartialEq,
++    Serialize,
++    SpecifiedValueInfo,
++    ToComputedValue,
++    ToCss,
++    ToResolvedValue,
++    ToShmem,
++    ToTyped,
++)]
++#[repr(u8)]
++pub enum ColumnWrap {
++    Auto,
++    Nowrap,
++    Wrap,
++}
++
+ /// https://drafts.csswg.org/css-multicol/#propdef-column-span
+ #[allow(missing_docs)]
+ #[derive(
 diff -ruN a/values/specified/counters.rs b/values/specified/counters.rs
 --- a/values/specified/counters.rs	2026-11-11 19:55:57
 +++ b/values/specified/counters.rs	2026-11-15 09:17:37
@@ -5622,7 +5786,7 @@ diff -ruN a/values/specified/length.rs b/values/specified/length.rs
  
 diff -ruN a/values/specified/mod.rs b/values/specified/mod.rs
 --- a/values/specified/mod.rs	2026-11-11 19:55:57
-+++ b/values/specified/mod.rs	2026-11-18 13:37:25
++++ b/values/specified/mod.rs	2026-11-19 00:44:34
 @@ -48,7 +48,7 @@
      ContainIntrinsicSize, ContainerName, ContainerType, ContentVisibility, DirectionProperty,
      Display, DominantBaseline, Float, ImageOrientation, Isolation, LineClamp, MarginTrim, Orient,
@@ -5632,6 +5796,15 @@ diff -ruN a/values/specified/mod.rs b/values/specified/mod.rs
      ScrollSnapStrictness, ScrollSnapType, ScrollbarGutter, ScrollbarInset, TextOrientation,
      TopLayer, TouchAction, Visibility, WillChange, WillChangeBits, WritingModeProperty, Zoom,
  };
+@@ -56,7 +56,7 @@
+ pub use self::color::{
+     Color, ColorOrAuto, ColorPropertyValue, ColorScheme, ForcedColorAdjust, PrintColorAdjust,
+ };
+-pub use self::column::{ColumnCount, ColumnFill, ColumnSpan};
++pub use self::column::{ColumnCount, ColumnFill, ColumnSpan, ColumnWrap};
+ pub use self::corner_shape::{CornerShape, CornerShapeRect, SuperellipseArg};
+ pub use self::counters::{Content, ContentItem, CounterIncrement, CounterReset, CounterSet};
+ pub use self::easing::TimingFunction;
 @@ -96,7 +96,7 @@
  pub use self::param::LinkParameters;
  pub use self::percentage::{NoCalcPercentage, NonNegativePercentage, Percentage};

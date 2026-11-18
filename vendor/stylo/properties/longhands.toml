@@ -3821,6 +3821,25 @@ affects = "layout"
 type = "ColumnFill"
 initial = "computed::ColumnFill::Balance"
 
+# pyro: css-multicol-2 `column-height` and `column-wrap` (blitz-dom lays them out: multicol.rs).
+[column-height]
+type = "length::NonNegativeLengthOrAuto"
+initial = "computed::length::NonNegativeLengthOrAuto::auto()"
+struct = "column"
+servo_pref = "layout.css.columns.enabled"
+spec = "https://drafts.csswg.org/css-multicol-2/#ch"
+servo_restyle_damage = "rebuild_box"
+affects = "layout"
+
+[column-wrap]
+struct = "column"
+spec = "https://drafts.csswg.org/css-multicol-2/#cwr"
+animation_type = "discrete"
+affects = "layout"
+servo_pref = "layout.css.columns.enabled"
+type = "ColumnWrap"
+initial = "computed::ColumnWrap::Auto"
+
 [column-span]
 struct = "column"
 spec = "https://drafts.csswg.org/css-multicol/#propdef-column-span"
