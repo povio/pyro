@@ -93,7 +93,15 @@ macro_rules! handler_accessors {
     };
 }
 
+/// Fullscreen API handlers, on Document and Element.
+macro_rules! fullscreen_events {
+    ($callback:ident!($($args:tt)*)) => {
+        $callback!($($args)* ["fullscreenchange", "fullscreenerror"])
+    };
+}
+
 pub(crate) const GLOBAL: &[&str] = global_events!(event_list!());
+pub(crate) const FULLSCREEN: &[&str] = fullscreen_events!(event_list!());
 pub(crate) const WINDOW: &[&str] = window_events!(event_list!());
 pub(crate) const DOCUMENT: &[&str] = document_events!(event_list!());
 
@@ -105,7 +113,7 @@ pub(crate) fn is_handler_attribute(local: &str) -> Option<&'static str> {
     }
     // The first two bytes are ASCII: a char boundary follows them.
     let ty = &local[2..];
-    GLOBAL.iter().chain(WINDOW).chain(DOCUMENT).find(|t| t.eq_ignore_ascii_case(ty)).copied()
+    GLOBAL.iter().chain(WINDOW).chain(DOCUMENT).chain(FULLSCREEN).find(|t| t.eq_ignore_ascii_case(ty)).copied()
 }
 
 /// Elements and Document: GlobalEventHandlers.
@@ -115,6 +123,15 @@ where
     C::Data: HasTarget,
 {
     global_events!(handler_accessors!(def, <C::Data as HasTarget>::event_target_data,));
+}
+
+/// Fullscreen API: `onfullscreenchange` and `onfullscreenerror` (Document and Element).
+pub(crate) fn define_fullscreen<C>(def: &mut ClassDef<C>)
+where
+    C: JsClass,
+    C::Data: HasTarget,
+{
+    fullscreen_events!(handler_accessors!(def, <C::Data as HasTarget>::event_target_data,));
 }
 
 /// Document-only handlers (plus GlobalEventHandlers via `define_global`).

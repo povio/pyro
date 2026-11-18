@@ -439,3 +439,49 @@ fn relative_colors_keep_missing_components() {
         "lab(none none none)|color(srgb 0.501961 none none)|lch(0 0 none)|color(srgb 0.501961 0.501961 0.501961)"
     );
 }
+
+/// DOM IDL details (WPT dom/idlharness): operations throw a TypeError when called with fewer
+/// arguments than they require; Range and StaticRange inherit their boundary points from
+/// AbstractRange; Element's `slot` is unscopable; the Fullscreen API exists, with nothing ever
+/// fullscreen (requests and exits reject).
+#[test]
+fn dom_idl_arguments_abstract_range_and_fullscreen() {
+    let env = Env::new("http://idl.test/");
+    assert_eq!(
+        env.eval(
+            r#"(() => {
+              const out = [];
+              const name = (f) => { try { f(); return "ok"; } catch (e) { return e.name; } };
+              out.push(name(() => document.body.contains()), name(() => document.body.isEqualNode()),
+                       name(() => document.lookupPrefix()), name(() => document.body.classList.contains()),
+                       name(() => document.body.children.item()), name(() => document.createTextNode("ab").splitText()),
+                       name(() => document.evaluate("/")), name(() => AbortSignal.timeout()));
+              out.push(name(() => document.body.contains(null)));
+              const r = document.createRange();
+              out.push(Object.getPrototypeOf(Range.prototype) === AbstractRange.prototype,
+                       Object.getPrototypeOf(StaticRange.prototype) === AbstractRange.prototype,
+                       !Object.hasOwn(Range.prototype, "startOffset"), r.collapsed, r.startContainer === document);
+              const sr = new StaticRange({ startContainer: document.body, startOffset: 0, endContainer: document.body, endOffset: 0 });
+              out.push(sr.collapsed, sr.endContainer === document.body);
+              out.push(name(() => Object.getOwnPropertyDescriptor(AbstractRange.prototype, "startOffset").get.call({})));
+              out.push(Element.prototype[Symbol.unscopables].slot, Document.prototype[Symbol.unscopables].fullscreen);
+              out.push(document.fullscreenEnabled, document.fullscreen, document.fullscreenElement, "onfullscreenchange" in document.body);
+              return out.join("|");
+            })()"#
+        ),
+        "TypeError|TypeError|TypeError|TypeError|TypeError|TypeError|TypeError|TypeError|ok|true|true|true|true|true|true|true|TypeError|true|true|false|false||true"
+    );
+    assert_eq!(
+        env.eval(
+            r#"(async () => {
+              const out = [];
+              try { await document.body.requestFullscreen(); out.push("resolved"); } catch (e) { out.push(e.name); }
+              try { await document.exitFullscreen(); out.push("resolved"); } catch (e) { out.push(e.name); }
+              globalThis.fsOut = out.join("|");
+            })(), "started""#
+        ),
+        "started"
+    );
+    env.until("globalThis.fsOut !== undefined");
+    assert_eq!(env.eval("fsOut"), "TypeError|TypeError");
+}

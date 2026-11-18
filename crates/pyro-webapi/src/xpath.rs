@@ -336,6 +336,7 @@ fn create_ns_resolver<'s>(s: &Scope<'s>, a: &Args<'s>, what: &str) -> JsResult<V
 
 /// `document.evaluate(expression, contextNode, resolver, type, result)`.
 pub(crate) fn document_evaluate<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) -> JsResult<Value<'s>> {
+    a.require(2, "Document.evaluate")?;
     // Argument conversions (which may run JS: resolver, valueOf) happen
     // before the context node is resolved to a DOM position.
     let source = arg_string(&a, 0, "Document.evaluate")?;

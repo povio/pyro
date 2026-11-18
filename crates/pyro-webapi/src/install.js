@@ -193,7 +193,8 @@
     headers: [headersHelpers, headersPopulated],
     urlSearchParams,
     structuredClone: structuredCloneFactory,
-    unscopables: [unscopable([...child, ...parent]), unscopable(child), unscopable(child), unscopable(parent), unscopable(parent)],
+    // Element's own [Unscopable] `slot` (DOM) joins ChildNode's and ParentNode's.
+    unscopables: [unscopable([...child, ...parent, 'slot']), unscopable(child), unscopable(child), unscopable([...parent, 'fullscreen']), unscopable(parent)],
     // An enumerable, configurable getter on the global (pyro-browser's
     // `window[0]`.. frame indices).
     accessor: (global, key, get) => defineProperty(global, key, { get, enumerable: true, configurable: true }),

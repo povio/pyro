@@ -148,6 +148,7 @@ impl JsClass for NodeList {
     fn define(def: &mut ClassDef<Self>) {
         def.pure_getter_typed("length", pyro_js::GetterResult::Number, |s, l| Ok(s.number(l.len() as f64)));
         def.pure_method("item", 1, |s, l, a| {
+            a.require(1, "NodeList.item")?;
             let i = to_u32(a.get(0))? as usize;
             match l.get(i) {
                 Some((p, id)) => Ok(wrap_node(s, p, id)?.value()),
@@ -548,6 +549,7 @@ impl JsClass for HtmlCollection {
             Ok(s.number(c.with_items(|v| v.len()) as f64))
         });
         def.pure_method("item", 1, |s, c, a| {
+            a.require(1, "HTMLCollection.item")?;
             let i = to_u32(a.get(0))? as usize;
             let id = c.with_items(|v| v.get(i).copied());
             match id {
@@ -556,6 +558,7 @@ impl JsClass for HtmlCollection {
             }
         });
         def.pure_method("namedItem", 1, |s, c, a| {
+            a.require(1, "HTMLCollection.namedItem")?;
             let name = dom_string(a.get(0))?;
             match c.named(&name) {
                 Some(id) => Ok(wrap_node(s, &c.root.page, id)?.value()),
@@ -886,6 +889,7 @@ impl JsClass for DomTokenList {
         );
         def.pure_method("toString", 0, |s, t, _a| t.value(s));
         def.pure_method("item", 1, |s, t, a| {
+            a.require(1, "DOMTokenList.item")?;
             let i = to_u32(a.get(0))? as usize;
             Ok(t.token(s, &t.el.page.dom.borrow(), i).unwrap_or_else(|| s.null()))
         });
@@ -893,6 +897,7 @@ impl JsClass for DomTokenList {
         def.indexed(|s, t, i| Ok(t.token(s, &t.el.page.dom.borrow(), i as usize)));
 
         def.pure_method("contains", 1, |s, t, a| {
+            a.require(1, "DOMTokenList.contains")?;
             let v = a.get(0);
             Ok(s.boolean(t.contains(&str_of(&v)?)))
         });

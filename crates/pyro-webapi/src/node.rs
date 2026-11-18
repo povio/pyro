@@ -538,6 +538,7 @@ impl JsClass for Node {
             Ok(wrap_node(s, n.page(), c)?.value())
         });
         def.pure_method("contains", 1, |s, n, a| {
+            a.require(1, "Node.contains")?;
             let Some(o) = opt_node_arg(s, a.get(0), "contains")? else { return Ok(s.boolean(false)) };
             Ok(s.boolean(n.page().dom.borrow().contains(n.id, o).js()?))
         });
@@ -547,10 +548,12 @@ impl JsClass for Node {
             Ok(s.number(n.page().dom.borrow().compare_document_position(n.id, o).js()? as f64))
         });
         def.pure_method("isSameNode", 1, |s, n, a| {
+            a.require(1, "Node.isSameNode")?;
             let o = opt_node_arg(s, a.get(0), "isSameNode")?;
             Ok(s.boolean(o == Some(n.id)))
         });
         def.pure_method("isEqualNode", 1, |s, n, a| {
+            a.require(1, "Node.isEqualNode")?;
             let Some(o) = opt_node_arg(s, a.get(0), "isEqualNode")? else { return Ok(s.boolean(false)) };
             Ok(s.boolean(n.page().dom.borrow().is_equal_node(n.id, o).js()?))
         });
@@ -559,6 +562,7 @@ impl JsClass for Node {
             Ok(s.undefined())
         });
         def.pure_method("lookupPrefix", 1, |s, n, a| {
+            a.require(1, "Node.lookupPrefix")?;
             let namespace = opt_dom_string(a.get(0))?;
             let dom = n.page().dom.borrow();
             Ok(match dom.lookup_prefix(n.id, namespace.as_deref()).js()? {
@@ -567,6 +571,7 @@ impl JsClass for Node {
             })
         });
         def.pure_method("lookupNamespaceURI", 1, |s, n, a| {
+            a.require(1, "Node.lookupNamespaceURI")?;
             let prefix = opt_dom_string(a.get(0))?;
             let dom = n.page().dom.borrow();
             Ok(match dom.lookup_namespace_uri(n.id, prefix.as_deref()).js()? {
@@ -575,6 +580,7 @@ impl JsClass for Node {
             })
         });
         def.pure_method("isDefaultNamespace", 1, |s, n, a| {
+            a.require(1, "Node.isDefaultNamespace")?;
             let namespace = opt_dom_string(a.get(0))?;
             let dom = n.page().dom.borrow();
             Ok(s.boolean(dom.lookup_namespace_uri(n.id, None).js()? == namespace.as_deref().filter(|s| !s.is_empty())))
@@ -848,6 +854,7 @@ impl JsClass for Text {
         });
         def.getter("assignedSlot", assigned_slot);
         def.method("splitText", 1, |s, n, a| {
+            a.require(1, "Text.splitText")?;
             let off = to_u32(a.get(0))?;
             let t = n.page().dom.borrow_mut().split_text(n.id, off).js()?;
             Ok(wrap_node(s, n.page(), t)?.value())
@@ -1040,6 +1047,8 @@ impl JsClass for ShadowRoot {
     type Data = NodeData;
     type Parent = DocumentFragment;
     fn define(def: &mut ClassDef<Self>) {
+        // Fullscreen API: nothing is ever fullscreen.
+        def.getter("fullscreenElement", |s, _n| Ok(s.null()));
         def.getter("host", |s, n| {
             let h = n.page().dom.borrow().fragment_host(n.id).js()?;
             node_value(s, n.page(), h)
@@ -1120,6 +1129,15 @@ impl JsClass for Element {
         define_parent_node(def);
         define_child_node(def);
         define_non_doctype_child(def);
+        // Fullscreen API: pyro never shows an element fullscreen, so a request is denied the way
+        // Chromium denies one it may not grant (a TypeError); the handlers exist for pages to set.
+        crate::handlers::define_fullscreen(def);
+        def.method("requestFullscreen", 0, |s, _n, _a| {
+            let d = s.deferred()?;
+            let promise = d.promise.get(s);
+            d.reject(s, JsError::Type("Permissions check failed".into()).to_value(s))?;
+            Ok(promise)
+        });
         // CSS Typed OM: the element's computed values as a StylePropertyMapReadOnly.
         def.method("computedStyleMap", 0, |s, n, _a| {
             let el = crate::node::wrap_node(s, n.page(), n.id)?.value();
@@ -1356,6 +1374,7 @@ impl JsClass for Element {
             ))
         });
         def.pure_method("hasAttributeNS", 2, |s, n, a| {
+            a.require(2, "Element.hasAttributeNS")?;
             let ns = opt_dom_string(a.get(0))?;
             let local = dom_string(a.get(1))?;
             Ok(s.boolean(n.page().dom.borrow().get_attribute_ns(n.id, ns.as_deref(), &local).js()?.is_some()))
@@ -1574,6 +1593,18 @@ impl JsClass for Document {
         define_parent_node(def);
         crate::handlers::define_global(def);
         crate::handlers::define_document(def);
+        crate::handlers::define_fullscreen(def);
+        // Fullscreen API: pyro shows nothing fullscreen, so fullscreen is not enabled, no element
+        // is fullscreen, and exitFullscreen() rejects as it does with no fullscreen element.
+        def.getter("fullscreenEnabled", |s, _n| Ok(s.boolean(false)));
+        def.getter("fullscreen", |s, _n| Ok(s.boolean(false)));
+        def.getter("fullscreenElement", |s, _n| Ok(s.null()));
+        def.method("exitFullscreen", 0, |s, _n, _a| {
+            let d = s.deferred()?;
+            let promise = d.promise.get(s);
+            d.reject(s, JsError::Type("Document not active or no fullscreen element".into()).to_value(s))?;
+            Ok(promise)
+        });
         crate::html::define_document_reflection(def);
         def.constructor(0, |s, nt, _a| {
             let page = page_of(s)?;
