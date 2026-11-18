@@ -124,6 +124,15 @@ pub trait AnimationSource {
     fn transition_value(&self, _el: crate::NodeId, _longhand: &str) -> Option<TransitionValue> {
         None
     }
+    /// [`AnimationSource::transition_value`] of `el`'s `::before`/`::after`.
+    fn pseudo_transition_value(
+        &self,
+        _el: crate::NodeId,
+        _pseudo: crate::style::PseudoElement,
+        _longhand: &str,
+    ) -> Option<TransitionValue> {
+        None
+    }
 }
 
 pub type SharedAnimationSource = Rc<dyn AnimationSource>;

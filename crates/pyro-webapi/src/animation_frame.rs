@@ -224,6 +224,15 @@ impl Pseudo {
         }
     }
 
+    /// The target of an animation of `pseudo` (`None`: the element).
+    pub(crate) fn of(pseudo: Option<pyro_dom::style::PseudoElement>) -> Pseudo {
+        match pseudo {
+            None => Pseudo::None,
+            Some(pyro_dom::style::PseudoElement::Before) => Pseudo::Before,
+            Some(pyro_dom::style::PseudoElement::After) => Pseudo::After,
+        }
+    }
+
     /// `ElementAnimations::pseudos`' index of `::before`/`::after`.
     pub(crate) fn generated_index(self) -> Option<usize> {
         match self {
@@ -439,7 +448,6 @@ enum Level {
     Marker,
     /// In effect on the element's `::before` (0) or `::after` (1), at the transitions or the
     /// animations level (`ElementAnimations::pseudos`).
-    #[allow(dead_code)] // (CSS transitions on pseudo-elements: the next step.)
     PseudoTransition(usize),
     PseudoAnimation(usize),
 }
@@ -513,6 +521,11 @@ fn walk_at(page: &PageDom, clock: Clock, transitions: bool, visit: &mut dyn FnMu
             Some(s) if !s.keyframes.frames.is_empty() => (s.el.unwrap_or(t.el()), s.keyframes.clone()),
             _ => (t.el(), keyframes),
         };
+        // On the element's `::before`/`::after`: at its transitions level.
+        let level = match Pseudo::of(t.pseudo()).generated_index() {
+            Some(i) => Level::PseudoTransition(i),
+            None => Level::Transition,
+        };
         let effect = Effect {
             keyframes: Keyframes::Text(keyframes),
             progress: p.progress,
@@ -520,7 +533,7 @@ fn walk_at(page: &PageDom, clock: Clock, transitions: bool, visit: &mut dyn FnMu
             easing,
             composite: Composite::Replace,
         };
-        visit(el, Level::Transition, effect);
+        visit(el, level, effect);
     }
     // SMIL `<animate>` elements, under the CSS animations of their targets.
     let now_or_settled = (!settled).then_some(now);
@@ -565,11 +578,7 @@ fn walk_at(page: &PageDom, clock: Clock, transitions: bool, visit: &mut dyn FnMu
         // reported it): its values in effect only.
         let pseudo = match overrides.get(&t.id()) {
             Some(s) if s.el.is_some() => s.pseudo,
-            _ => match t.pseudo() {
-                None => Pseudo::None,
-                Some(pyro_dom::style::PseudoElement::Before) => Pseudo::Before,
-                Some(pyro_dom::style::PseudoElement::After) => Pseudo::After,
-            },
+            _ => Pseudo::of(t.pseudo()),
         };
         let level = match (pseudo.generated_index(), level) {
             (None, level) => level,
@@ -629,11 +638,12 @@ pub(crate) fn animates(
     state: &crate::animation_events::State,
     rules: &pyro_dom::timing::TimingRules,
     el: NodeId,
+    pseudo: Option<pyro_dom::style::PseudoElement>,
     longhand: &str,
 ) -> bool {
-    // (Animations of the element itself, not of its pseudo-elements.)
+    // (Animations of the same target: the element, or the same pseudo-element of it.)
     let css = state.animations().iter().any(|t| {
-        t.is_live() && t.el() == el && t.pseudo().is_none() && rules.keyframes_declare(t.name(), longhand)
+        t.is_live() && t.el() == el && t.pseudo() == pseudo && rules.keyframes_declare(t.name(), longhand)
     });
     if css {
         return true;
@@ -642,7 +652,7 @@ pub(crate) fn animates(
     scripted.values().any(|s| {
         s.css.is_none()
             && s.el == Some(el)
-            && s.pseudo == Pseudo::None
+            && s.pseudo == Pseudo::of(pseudo)
             && s.keyframes
                 .frames
                 .iter()
@@ -711,11 +721,31 @@ impl pyro_dom::animation::AnimationSource for Source {
     }
 
     fn transition_value(&self, el: NodeId, longhand: &str) -> Option<pyro_dom::animation::TransitionValue> {
+        self.transition_value_of(el, None, longhand)
+    }
+
+    fn pseudo_transition_value(
+        &self,
+        el: NodeId,
+        pseudo: pyro_dom::style::PseudoElement,
+        longhand: &str,
+    ) -> Option<pyro_dom::animation::TransitionValue> {
+        self.transition_value_of(el, Some(pseudo), longhand)
+    }
+}
+
+impl Source {
+    fn transition_value_of(
+        &self,
+        el: NodeId,
+        pseudo: Option<pyro_dom::style::PseudoElement>,
+        longhand: &str,
+    ) -> Option<pyro_dom::animation::TransitionValue> {
         let page = self.page.upgrade().filter(|page| !page.is_disposed())?;
         let now = self.now(&page);
         let state = &page.animation_events;
         let (_, transitions) = state.try_timelines()?;
-        let t = transitions.iter().rev().find(|t| t.is_live() && t.el() == el && t.name() == longhand)?;
+        let t = transitions.iter().rev().find(|t| t.is_live() && t.el() == el && t.pseudo() == pseudo && t.name() == longhand)?;
         // (One script controls through its `CSSTransition` object follows that object: left out.)
         if t.has_ended()
             || state.scripted.try_borrow().ok()?.values().any(|s| s.css == Some(t.id()))
@@ -729,7 +759,12 @@ impl pyro_dom::animation::AnimationSource for Source {
         {
             let dom = page.dom.try_borrow().ok()?;
             // (An element going `display: none` has no style of the engine's to compare.)
-            if let Some(current) = page.try_layout()?.style().stylo_style(&dom, el) {
+            let style = page.try_layout()?;
+            let current = match pseudo {
+                None => style.style().stylo_style(&dom, el),
+                Some(pseudo) => style.style().pseudo_style(&dom, el, pseudo, false),
+            };
+            if let Some(current) = current {
                 if !pyro_dom::animation::same_computed_value(longhand, &current, after) {
                     return None;
                 }

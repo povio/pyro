@@ -917,7 +917,7 @@ impl GeometrySource for BlitzGeometry {
 
     fn take_style_changes(
         &self,
-    ) -> Vec<(u64, style::servo_arc::Arc<style::properties::ComputedValues>, style::servo_arc::Arc<style::properties::ComputedValues>)>
+    ) -> Vec<(u64, u8, style::servo_arc::Arc<style::properties::ComputedValues>, style::servo_arc::Arc<style::properties::ComputedValues>)>
     {
         RENDERER.with(|r| {
             r.try_borrow_mut()

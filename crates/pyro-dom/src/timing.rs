@@ -860,6 +860,13 @@ fn animation_shorthand(lists: &TimingLists) -> String {
 pub type StyleSnapshot = style::servo_arc::Arc<style::properties::ComputedValues>;
 
 /// Whether `style` is `display: none` (the element is not rendered).
+/// Whether a `::before`/`::after` style generates a box: not `display: none`, and `content` not
+/// `normal` or `none`.
+pub fn generates_pseudo_box(style: &StyleSnapshot) -> bool {
+    use style::values::computed::counters::Content;
+    !displays_none(style) && !matches!(style.get_counters().content, Content::Normal | Content::None)
+}
+
 pub fn displays_none(style: &StyleSnapshot) -> bool {
     style.get_box().display.is_none()
 }

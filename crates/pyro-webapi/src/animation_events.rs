@@ -865,10 +865,20 @@ fn transitions_from_changes(
     }
     let rules = state.rules(dom, style);
     let mut starting = Starting::default();
-    for (el, before, now) in changes {
+    for (el, pseudo, before, now) in changes {
         // The document's own tree only: the rules are the document's (a
         // document rule does not style a shadow tree's elements).
         if !dom.in_document_tree(el) {
+            continue;
+        }
+        // A `::before`/`::after` whose style changed while both styles generate a box (its
+        // element's style change event is its own; one that comes or goes has no before-change
+        // style, css-transitions-1 §3).
+        if let Some(pseudo) = pseudo {
+            let generates = pyro_dom::timing::generates_pseudo_box;
+            if generates(&before) && generates(&now) && !displays_none_or_hidden(dom, style, el) {
+                start_transitions_of(state, dom, style, &rules, el, Some(pseudo), &before, &now, now_ms, &mut starting);
+            }
             continue;
         }
         let (was_none, is_none) = (displays_none(&before), displays_none(&now));
@@ -1133,16 +1143,16 @@ fn is_ancestor(dom: &pyro_dom::Dom, ancestor: NodeId, node: NodeId) -> bool {
 struct Starting {
     timelines: Vec<Timeline>,
     /// The properties started, by element, with their index in `timelines`.
-    keys: FxHashMap<NodeId, Vec<(&'static str, usize)>>,
+    keys: FxHashMap<(NodeId, Option<PseudoElement>), Vec<(&'static str, usize)>>,
     /// Their events, planned after the cancel events of the transitions
     /// they replace.
     events: Vec<Planned>,
 }
 
-fn cancel_event(el: NodeId, name: &str) -> Planned {
+fn cancel_event(el: NodeId, pseudo: Option<PseudoElement>, name: &str) -> Planned {
     Planned {
         el,
-        pseudo: "",
+        pseudo: pseudo_name(pseudo),
         ty: "transitioncancel",
         transition: true,
         name: name.to_owned(),
@@ -1164,11 +1174,13 @@ impl Starting {
         }
         let mut running = state.transitions.borrow_mut();
         running.retain(|known| {
-            let same =
-                self.keys.get(&known.el).is_some_and(|started| started.iter().any(|(name, _)| *name == known.name));
+            let same = self
+                .keys
+                .get(&(known.el, known.pseudo))
+                .is_some_and(|started| started.iter().any(|(name, _)| *name == known.name));
             if same && known.live.get() && !known.ended.get() {
                 known.live.set(false);
-                planned.push(cancel_event(known.el, &known.name));
+                planned.push(cancel_event(known.el, known.pseudo, &known.name));
             }
             !same
         });
@@ -1193,12 +1205,30 @@ fn start_transitions(
     now_ms: f64,
     starting: &mut Starting,
 ) {
+    start_transitions_of(state, dom, style, rules, el, None, before, now, now_ms, starting);
+}
+
+/// [`start_transitions`] of `el`'s `pseudo` (`None`: of `el`).
+#[allow(clippy::too_many_arguments)]
+fn start_transitions_of(
+    state: &State,
+    dom: &pyro_dom::Dom,
+    style: &pyro_dom::style::StyleEngine,
+    rules: &TimingRules,
+    el: NodeId,
+    pseudo: Option<PseudoElement>,
+    before: &StyleSnapshot,
+    now: &StyleSnapshot,
+    now_ms: f64,
+    starting: &mut Starting,
+) {
     if StyleSnapshot::ptr_eq(before, now) {
         return;
     }
-    // The after-change style's custom properties resolve `var()`.
-    let style_of = |e: NodeId| if e == el { Some(now.clone()) } else { style.stylo_style(dom, e) };
-    let ElementTiming { transitions, .. } = rules.element(dom, el, &style_of);
+    // The after-change style's custom properties resolve `var()` (a pseudo-element's: the
+    // element's).
+    let style_of = |e: NodeId| if e == el && pseudo.is_none() { Some(now.clone()) } else { style.stylo_style(dom, e) };
+    let ElementTiming { transitions, .. } = rules.element_for(dom, el, pseudo, &style_of);
     let mut started: Vec<&'static str> = Vec::new();
     for transition in &transitions {
         let changed =
@@ -1210,17 +1240,17 @@ fn start_transitions(
             started.push(longhand);
             // A property a CSS or script animation drives does not
             // transition: its value changes with the animation's.
-            if crate::animation_frame::animates(state, rules, el, longhand) {
+            if crate::animation_frame::animates(state, rules, el, pseudo, longhand) {
                 continue;
             }
             // Started already in this style change event (an element of a
             // revealed root that changed too): that one is replaced.
             let index = starting.timelines.len();
-            let keys = starting.keys.entry(el).or_default();
+            let keys = starting.keys.entry((el, pseudo)).or_default();
             match keys.iter_mut().find(|(name, _)| *name == longhand) {
                 Some((_, first)) => {
                     starting.timelines[*first].live.set(false);
-                    starting.events.push(cancel_event(el, longhand));
+                    starting.events.push(cancel_event(el, pseudo, longhand));
                     *first = index;
                 }
                 None => keys.push((longhand, index)),
@@ -1232,7 +1262,7 @@ fn start_transitions(
                 duration_ms: transition.duration_ms,
                 iterations: 1.0,
                 el,
-                pseudo: None,
+                pseudo,
                 name: longhand.to_owned(),
                 live: Rc::new(Cell::new(true)),
                 ended: Rc::new(Cell::new(false)),
@@ -1247,7 +1277,7 @@ fn start_transitions(
             let (delay, duration) = (transition.delay_ms, transition.duration_ms);
             let event = |ty: &'static str, at_ms: f64, elapsed_ms: f64, ends: bool| Planned {
                 el,
-                pseudo: "",
+                pseudo: pseudo_name(pseudo),
                 ty,
                 transition: true,
                 name: longhand.to_owned(),
@@ -1345,4 +1375,9 @@ fn pseudo_name(pseudo: Option<PseudoElement>) -> &'static str {
         Some(PseudoElement::Before) => "::before",
         Some(PseudoElement::After) => "::after",
     }
+}
+
+/// Whether `el` is not rendered (`display: none` or no style): its pseudo-elements have no boxes.
+fn displays_none_or_hidden(dom: &pyro_dom::Dom, style: &pyro_dom::style::StyleEngine, el: NodeId) -> bool {
+    style.stylo_style(dom, el).is_none_or(|s| displays_none(&s))
 }

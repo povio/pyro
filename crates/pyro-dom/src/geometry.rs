@@ -345,11 +345,12 @@ pub trait GeometrySource {
         None
     }
     /// The elements whose style was replaced since the last call, by key,
-    /// with the style before and after; recorded while the engine's
+    /// with the style before and after (and 1 or 2 for a change of its `::before` or `::after`, 0
+    /// of its own); recorded while the engine's
     /// [`crate::style::StyleEngine::track_style_changes`] is on.
     fn take_style_changes(
         &self,
-    ) -> Vec<(u64, style::servo_arc::Arc<style::properties::ComputedValues>, style::servo_arc::Arc<style::properties::ComputedValues>)>
+    ) -> Vec<(u64, u8, style::servo_arc::Arc<style::properties::ComputedValues>, style::servo_arc::Arc<style::properties::ComputedValues>)>
     {
         Vec::new()
     }

@@ -1544,12 +1544,13 @@ impl Renderer {
         page: u64,
     ) -> Vec<(
         u64,
+        u8,
         style::servo_arc::Arc<style::properties::ComputedValues>,
         style::servo_arc::Arc<style::properties::ComputedValues>,
     )> {
         let Some(m) = self.mirrors.get_mut(&page) else { return Vec::new() };
         let changes = m.doc.take_style_changes();
-        changes.into_iter().filter_map(|c| Some((m.key_of(c.node)?, c.before, c.after))).collect()
+        changes.into_iter().filter_map(|c| Some((m.key_of(c.node)?, c.pseudo, c.before, c.after))).collect()
     }
 
     /// The computed style of pseudo-element `pseudo` of the element keyed

@@ -636,6 +636,8 @@ impl ComputedData {
                 page.layout().computed_style_value(&page.dom.borrow(), self.el.id, name)
             }
             PseudoArg::Pseudo(pseudo) => {
+                // A style flush too: the pseudo-element's transitions start at it.
+                crate::animation_events::observe(page, self.el.id);
                 page.layout().computed_pseudo_style_value(&page.dom.borrow(), self.el.id, pseudo, name)
             }
             PseudoArg::Invalid => String::new(),

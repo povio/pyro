@@ -74,7 +74,7 @@ pub enum Display {
 }
 
 /// The tree-abiding pseudo-elements the style engine computes styles for.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum PseudoElement {
     Before,
     After,
@@ -1044,6 +1044,17 @@ impl StyleEngine {
         source.transition_value(el, longhand)
     }
 
+    /// [`Self::transition_value`] of `el`'s `::before`/`::after`.
+    pub fn pseudo_transition_value(
+        &self,
+        el: NodeId,
+        pseudo: PseudoElement,
+        longhand: &str,
+    ) -> Option<crate::animation::TransitionValue> {
+        let source = self.animation_source.try_borrow().ok()?.clone()?;
+        source.pseudo_transition_value(el, pseudo, longhand)
+    }
+
     /// Runs `f` with `style` standing for `el`'s computed style (`stylo_style`); `None` while
     /// another override runs.
     pub fn with_style_override<R>(
@@ -1083,16 +1094,21 @@ impl StyleEngine {
     pub fn take_style_changes(
         &self,
         dom: &Dom,
-    ) -> Vec<(NodeId, crate::timing::StyleSnapshot, crate::timing::StyleSnapshot)> {
+    ) -> Vec<(NodeId, Option<PseudoElement>, crate::timing::StyleSnapshot, crate::timing::StyleSnapshot)> {
         let external = self.external.borrow();
         let Some((source, _)) = &*external else { return Vec::new() };
         source
             .take_style_changes()
             .into_iter()
-            .filter_map(|(key, before, after)| {
+            .filter_map(|(key, pseudo, before, after)| {
                 let el = crate::geometry::node_of(dom, key)?;
                 self.owns(dom, el)?;
-                Some((el, before, after))
+                let pseudo = match pseudo {
+                    1 => Some(PseudoElement::Before),
+                    2 => Some(PseudoElement::After),
+                    _ => None,
+                };
+                Some((el, pseudo, before, after))
             })
             .collect()
     }
@@ -1973,6 +1989,12 @@ impl StyleEngine {
     /// the layout engine's cascade has them all `none` (its animation engine
     /// stays off). `None` for other properties.
     pub fn timing_value(&self, dom: &Dom, el: NodeId, name: &str) -> Option<String> {
+        self.timing_value_for(dom, el, None, name)
+    }
+
+    /// [`Self::timing_value`] of `el`'s `pseudo` (`getComputedStyle(el, '::before')`; `None`: of
+    /// `el`).
+    pub fn timing_value_for(&self, dom: &Dom, el: NodeId, pseudo: Option<PseudoElement>, name: &str) -> Option<String> {
         if !(name.contains("transition") || name.contains("animation")) {
             return None;
         }
@@ -1980,7 +2002,7 @@ impl StyleEngine {
         // A style flush first: it registers the `<style>` sheets inserted since.
         self.engine_styled(dom)?;
         let style_of = |e: NodeId| self.stylo_style(dom, e);
-        self.timing_rules(dom).computed_value(dom, el, name, &style_of)
+        self.timing_rules(dom).computed_value_for(dom, el, pseudo, name, &style_of)
     }
 
     /// A property the engine's Stylo does not parse ([`crate::gecko_only`]),

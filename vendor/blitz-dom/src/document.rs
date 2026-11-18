@@ -330,14 +330,14 @@ pub enum DocumentEvent {
 /// first old style and takes the new one.
 pub(crate) fn note_style_changes(
     changes: &mut Vec<StyleChange>,
-    index: &mut HashMap<NodeId, usize>,
+    index: &mut HashMap<(NodeId, u8), usize>,
     new: Vec<StyleChange>,
 ) {
     for change in new {
-        match index.get(&change.node) {
+        match index.get(&(change.node, change.pseudo)) {
             Some(&i) => changes[i].after = change.after,
             None => {
-                index.insert(change.node, changes.len());
+                index.insert((change.node, change.pseudo), changes.len());
                 changes.push(change);
             }
         }
@@ -349,6 +349,8 @@ pub(crate) fn note_style_changes(
 #[derive(Clone)]
 pub struct StyleChange {
     pub node: NodeId,
+    /// pyro: 0 for the element's own style, 1 its `::before`'s, 2 its `::after`'s.
+    pub pseudo: u8,
     pub before: style::servo_arc::Arc<style::properties::ComputedValues>,
     pub after: style::servo_arc::Arc<style::properties::ComputedValues>,
 }
@@ -523,7 +525,7 @@ pub struct BaseDocument {
     /// finds an element's entry, so one restyled twice keeps its first old and
     /// its last new style.
     pub(crate) style_changes: Vec<StyleChange>,
-    pub(crate) style_change_index: HashMap<NodeId, usize>,
+    pub(crate) style_change_index: HashMap<(NodeId, u8), usize>,
     pub(crate) track_style_changes: bool,
     /// pyro: the boxes that left a container's list (`Node::layout_child_of`) during
     /// `resolve_layout_children`; those no container collected again by its end leave the layout

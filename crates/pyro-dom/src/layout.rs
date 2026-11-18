@@ -3220,6 +3220,27 @@ impl Layout {
         }
         let Some(style) = self.style.stylo_pseudo_style(dom, el, pseudo, false) else { return String::new() };
         let name = if name.starts_with("--") { Cow::Borrowed(name) } else { lowercase(name) };
+        // The animation and transition properties of a `::before`/`::after`, from the page's own
+        // timing cascade (the engine's has them all `none`), as the element's are.
+        let timing_pseudo = match pseudo {
+            style::selector_parser::PseudoElement::Before => Some(crate::style::PseudoElement::Before),
+            style::selector_parser::PseudoElement::After => Some(crate::style::PseudoElement::After),
+            _ => None,
+        };
+        if let Some(value) = timing_pseudo.and_then(|p| self.style.timing_value_for(dom, el, Some(p), &name)) {
+            return value;
+        }
+        // A running CSS transition of the pseudo-element: its value now (the layout engine samples
+        // none), in the after-change style.
+        if let Some(p) = timing_pseudo.filter(|_| !name.starts_with("--")) {
+            match self.style.pseudo_transition_value(el, p, &name) {
+                Some(crate::animation::TransitionValue::Text(v)) => return v,
+                Some(crate::animation::TransitionValue::Style(style)) => {
+                    return crate::stylo::serialize(&style, &name).unwrap_or_default();
+                }
+                None => {}
+            }
+        }
         let value = crate::stylo::serialize(&style, &name).unwrap_or_default();
         if name == "content" && pseudo.is_before_or_after() && value == "normal" {
             return "none".into();

@@ -1197,3 +1197,28 @@ fn smil_animate_of_css_properties() {
         "rgb(0, 0, 255) rgb(0, 128, 0) rgb(255, 0, 0) rgb(255, 0, 0) rgb(0, 128, 0)"
     );
 }
+
+#[test]
+fn a_pseudo_element_transitions_with_its_pseudo_element_in_the_events() {
+    // A `::before` whose width changes transitions on its own: the events go to the element with
+    // `pseudoElement` set, the element's own width does not transition, `getComputedStyle(el,
+    // '::before')` reads the transition's value and its `transition-duration`, and
+    // `getAnimations()` lists a CSSTransition whose effect targets the pseudo-element.
+    let (mut t, root) = transition_page(
+        "#a { height: 10px } #a::before { content: \"\"; display: block; width: 100px; transition: width 10s linear } #a.w::before { width: 200px }",
+    );
+    eval(
+        &root,
+        "globalThis.plog = [];
+         addEventListener('transitionrun', e => plog.push(e.propertyName + ':' + e.pseudoElement));
+         globalThis.a = el('a'); getComputedStyle(a, '::before').width; a.classList.add('w'); 0",
+    );
+    run_until(&mut t, &root, "plog.length > 0");
+    assert_eq!(eval(&root, "plog.join(' ')"), "width:::before");
+    assert_eq!(eval(&root, "getComputedStyle(a, '::before').transitionDuration"), "10s");
+    assert_eq!(eval(&root, "getComputedStyle(a).transitionDuration"), "0s");
+    let listed = eval(&root, "a.getAnimations({subtree: true}).map(x => x.constructor.name + ':' + x.effect.pseudoElement).join(' ')");
+    assert_eq!(listed, "CSSTransition:::before");
+    let width: f64 = eval(&root, "parseFloat(getComputedStyle(a, '::before').width)").parse().unwrap();
+    assert!((100.0..200.0).contains(&width), "under way: {width}");
+}

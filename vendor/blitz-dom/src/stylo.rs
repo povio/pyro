@@ -2411,9 +2411,38 @@ impl<'dom> DomTraversal<BlitzNode<'dom>> for RecalcStyle<'_> {
                 false => data.styles.pseudos.get(&style::selector_parser::PseudoElement::FirstLine).cloned(),
             };
             // pyro: what counters and quotes read of the element before the restyle.
+            // pyro: the `::before`/`::after` styles before the restyle, for the embedder's transitions.
+            let old_generated_boxes = (self.track_style_changes && !data.styles.pseudos.is_empty()).then(|| {
+                [style::selector_parser::PseudoElement::Before, style::selector_parser::PseudoElement::After]
+                    .map(|pseudo| data.styles.pseudos.get(&pseudo).cloned())
+            });
             let old_generated = (self.track_counters && !self.counters_changed.load(std::sync::atomic::Ordering::Relaxed))
                 .then(|| crate::layout::counters::CounterInputs::of(&data.styles));
             recalc_style_at(self, context, el, &mut data, note_child);
+            // pyro: a replaced `::before`/`::after` style is a style change of the pseudo-element
+            // (before its sampled values are cascaded in, as the element's own).
+            if let Some(old) = old_generated_boxes {
+                for (i, pseudo) in
+                    [style::selector_parser::PseudoElement::Before, style::selector_parser::PseudoElement::After]
+                        .iter()
+                        .enumerate()
+                {
+                    let new = match data.styles.pseudos.is_empty() {
+                        true => None,
+                        false => data.styles.pseudos.get(pseudo),
+                    };
+                    if let (Some(old), Some(new)) = (&old[i], new) {
+                        if !Arc::ptr_eq(old, new) {
+                            self.style_changes.lock().unwrap().push(crate::StyleChange {
+                                node: el.id,
+                                pseudo: i as u8 + 1,
+                                before: old.clone(),
+                                after: new.clone(),
+                            });
+                        }
+                    }
+                }
+            }
             // pyro: the animated values of the element's `::before`/`::after`.
             crate::animation::cascade_sampled_pseudos(el, context, &mut data);
             if let Some(old) = old_generated {
@@ -2434,6 +2463,7 @@ impl<'dom> DomTraversal<BlitzNode<'dom>> for RecalcStyle<'_> {
                 if let (Some(old), Some(new)) = (&old_primary, new_primary) {
                     self.style_changes.lock().unwrap().push(crate::StyleChange {
                         node: el.id,
+                        pseudo: 0,
                         before: old.clone(),
                         after: new.clone(),
                     });
