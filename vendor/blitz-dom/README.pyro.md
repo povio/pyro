@@ -2756,3 +2756,10 @@ Covered by `an_rtl_span_in_an_ltr_line_contains_by_the_lines_direction` in
   size, layout, style and paint containment). Not for form controls (their contents are their own), non-atomic inline
   boxes or `display: contents` (containment does not apply). Top-layer descendants of a skipped subtree are not shown.
   WPT css-contain `content-visibility/*` (+38). `pyro-render/tests/content_visibility_hidden.rs`.
+
+## Selections over transformed text (WPT round 4, lane S1)
+
+`src/dom_selection.rs` (`produced_offset`, `is_combining_mark`): a selection's DOM offsets map to the laid-out text
+across `text-transform` case mappings that change the length: a character mapped to several (`ß` to `SS`) covers them
+all, and a combining mark the transform removed (Greek uppercase drops the acute) covers none (WPT css-text
+`text-transform-upperlower-105`, `-106`). Covered by `offsets_follow_case_mappings_that_change_the_length`.

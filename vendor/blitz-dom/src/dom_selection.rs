@@ -409,8 +409,19 @@ fn produced_offset(content: &str, produced: &str, utf16: usize) -> usize {
             }
             // Collapsed white space, or text the layout changed (`text-transform`).
             _ if c.is_whitespace() => {}
-            Some(_) => {
-                out.next();
+            // pyro: a combining mark `text-transform` removed (Greek uppercase drops the acute
+            // accent and the tonos; WPT css-text `text-transform-upperlower-106`).
+            Some(&(_, p)) if is_combining_mark(c) && !is_combining_mark(p) => {}
+            Some(&(index, _)) => {
+                // pyro: a character that `text-transform` mapped to several (`ß` to `SS`) produced
+                // them all (WPT css-text `text-transform-upperlower-105`).
+                let rest = &produced[index..];
+                let expanded = [c.to_uppercase().collect::<String>(), c.to_lowercase().collect::<String>()]
+                    .into_iter()
+                    .find(|mapped| mapped.chars().count() > 1 && rest.starts_with(mapped.as_str()));
+                for _ in 0..expanded.map_or(1, |mapped| mapped.chars().count()) {
+                    out.next();
+                }
             }
             None => break,
         }
@@ -418,9 +429,24 @@ fn produced_offset(content: &str, produced: &str, utf16: usize) -> usize {
     out.peek().map_or(produced.len(), |&(index, _)| index)
 }
 
+/// pyro: whether `c` is in a block of combining diacritical marks.
+fn is_combining_mark(c: char) -> bool {
+    matches!(c as u32, 0x0300..=0x036F | 0x1AB0..=0x1AFF | 0x1DC0..=0x1DFF | 0x20D0..=0x20FF | 0xFE20..=0xFE2F)
+}
+
 #[cfg(test)]
 mod tests {
     use super::produced_offset;
+
+    #[test]
+    fn offsets_follow_case_mappings_that_change_the_length() {
+        // `ß` uppercased to "SS": one source character covers both.
+        assert_eq!(produced_offset("\u{DF}", "SS", 1), 2);
+        assert_eq!(produced_offset("a\u{DF}b", "ASSB", 2), 3);
+        // Greek uppercase drops the acute: "Ϊ́Ρ" to "Ϊ̈Ρ"; the first three source characters are
+        // the first letter.
+        assert_eq!(produced_offset("\u{399}\u{308}\u{301}\u{3A1}", "\u{399}\u{308}\u{3A1}", 3), 4);
+    }
 
     #[test]
     fn offsets_follow_collapsed_white_space() {
