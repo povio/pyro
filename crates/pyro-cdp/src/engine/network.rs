@@ -145,6 +145,11 @@ pub(super) struct RequestLog {
     pub(super) capture_bodies: bool,
     /// Bytes of the kept response bodies.
     body_bytes: usize,
+    /// Sequence numbers of requests a run's reply listed unfinished
+    /// ([`Self::report_since`]).
+    reported_unfinished: Vec<usize>,
+    /// Requests below this sequence number were listed by a run's reply.
+    reported_through: usize,
 }
 
 /// Longest request body a logged request keeps (`postDataTruncated` past it).
@@ -304,6 +309,47 @@ impl RequestLog {
     /// Requests started at or after `seq`.
     pub(super) fn since(&self, seq: usize) -> &[LoggedRequest] {
         &self.entries[seq.saturating_sub(self.dropped).min(self.entries.len())..]
+    }
+
+    /// A run's `requests`, each request reported once in its final state:
+    /// those no earlier reply listed (started at or after `seq`, when the run
+    /// began, or announced after the previous reply), and those an earlier
+    /// reply listed unfinished that have finished since. Requests that
+    /// started before the run have `previousRun: true`. Requests still
+    /// unfinished are listed again by a later reply once they finish.
+    pub(super) fn report_since(&mut self, seq: usize) -> Vec<Value> {
+        let start = self.reported_through.min(seq);
+        let mut out = Vec::new();
+        let mut carried = Vec::new();
+        for s in std::mem::take(&mut self.reported_unfinished) {
+            // Gone from the log, or listed below anyway.
+            if s < self.dropped || s >= start {
+                continue;
+            }
+            match self.entries.get(s - self.dropped) {
+                Some(e) if e.done => {
+                    let mut v = e.to_json();
+                    v["previousRun"] = json!(true);
+                    out.push(v);
+                }
+                Some(_) => carried.push(s),
+                None => {}
+            }
+        }
+        let first = start.max(self.dropped);
+        for (i, e) in self.since(start).iter().enumerate() {
+            if !e.done {
+                carried.push(first + i);
+            }
+            let mut v = e.to_json();
+            if first + i < seq {
+                v["previousRun"] = json!(true);
+            }
+            out.push(v);
+        }
+        self.reported_unfinished = carried;
+        self.reported_through = self.reported_through.max(self.seq());
+        out
     }
 
     fn observe(&mut self, event: &NetEvent) {

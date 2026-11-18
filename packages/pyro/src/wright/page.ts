@@ -76,6 +76,7 @@ type LogEntry = {
   responseHeaders?: Record<string, string> | null;
   postData?: string;
   postDataBase64?: boolean;
+  previousRun?: true;
 };
 
 /**
@@ -2007,18 +2008,20 @@ export class Page extends Scope {
    * its loader id either way.
    */
   private documentResponse(r: RunReply, target: string): Response | null {
-    const first = r.requests.findIndex((q) => withoutHash(q.url) === withoutHash(target));
+    // Requests of an earlier run that finished since are not this navigation's.
+    const requests = r.requests.filter((q) => !q.previousRun);
+    const first = requests.findIndex((q) => withoutHash(q.url) === withoutHash(target));
     if (first < 0) return null;
     const doc = this._document;
     if (doc && doc._id === this._loaderId && doc._response) return doc._response;
     // The document now shown, after the redirects from `target` (the hops between).
     const shown = withoutHash(this._url);
     let last = first;
-    if (withoutHash(r.requests[first].url) !== shown) {
-      const i = r.requests.findIndex((q, j) => j > first && withoutHash(q.url) === shown);
+    if (withoutHash(requests[first].url) !== shown) {
+      const i = requests.findIndex((q, j) => j > first && withoutHash(q.url) === shown);
       if (i > first) last = i;
     }
-    const hops = r.requests.slice(first, last + 1).filter((q, k) => k === 0 || k === last - first || (q.status !== null && q.status >= 300 && q.status < 400));
+    const hops = requests.slice(first, last + 1).filter((q, k) => k === 0 || k === last - first || (q.status !== null && q.status >= 300 && q.status < 400));
     let response: Response | null = null;
     let previous: Request | null = null;
     for (const [k, entry] of hops.entries()) {

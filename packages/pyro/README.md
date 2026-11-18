@@ -99,7 +99,9 @@ test.concurrent('closes a position', async () => {
   the request log. Each step has its own timeout (5 s default,
   `page.run(steps, { timeout })` or per step).
 - **The reply** has `values` (reads), `results` (per step), `requests` (every
-  request the page made during the run), `screenshots` and `ms`. A failure
+  request the page made during the run; one still in flight when the run
+  ended is listed again, once, by a later run after it finishes, with
+  `previousRun: true` and its final `status`/`error`), `screenshots` and `ms`. A failure
   throws `RunError` naming the step and why it was still waiting.
 - **Screenshots** (a browser built with the `render` feature):
   `matchScreenshot('home')`, `css('#card').matchScreenshot('card')` or

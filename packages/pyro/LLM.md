@@ -264,6 +264,10 @@ wait for what a later step needs with a `check`, not with an `evaluate`.
 - A `RegExp` anywhere (locators, `mock`, `waitForUrl`, `check.request`) runs
   with JavaScript semantics: look-ahead `(?=…)`, negative look-ahead `(?!…)`,
   look-behind, backreferences and named groups work; flags `i`, `m`, `s`.
+- The reply's `requests` lists each request with `status`/`error` `null`
+  while still in flight; once it finishes, a later run's `requests` reports
+  it again, once, with `previousRun: true` (a fetch started at the end of one
+  run and failing during the next is reported by the next).
 - `check.request(…)` and the reply's `requests` carry `requestHeaders`,
   `postData` (text; base64 with `postDataBase64: true` when not UTF-8; cut at
   1 MiB with `postDataTruncated: true`) and `responseHeaders`.
