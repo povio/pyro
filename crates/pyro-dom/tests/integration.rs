@@ -6,6 +6,7 @@ mod animation_events;
 mod adoption;
 mod attr_nodes;
 mod custom_reactions;
+mod detached_changes;
 mod dispatch_targets;
 mod forms_values;
 mod id_index;

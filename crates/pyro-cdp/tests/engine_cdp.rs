@@ -10693,3 +10693,30 @@ fn a_resized_query_container_restyles_its_subtree_and_leaves_the_rest() {
     assert_eq!(reads["wide"], json!(["rgb(0, 128, 0)", 300, "rgb(0, 0, 255)", "rgb(0, 0, 0)", 150]), "{r}");
     assert_eq!(reads["back"], json!(["rgb(0, 0, 0)", 150, "rgb(0, 0, 0)", "rgb(0, 0, 0)", 150]), "{r}");
 }
+
+#[test]
+fn styling_detached_clones_between_reads_keeps_layout_and_observers_right() {
+    // modern-screenshot reads each element's computed style and writes it onto a detached clone.
+    // Writes outside the document must not change what reads see, a clone inserted afterwards
+    // must lay out with its styles, and two observers of one target both get their records
+    // (Chromium: the same reads).
+    let mut h = Harness::new();
+    load_html(
+        &mut h,
+        r#"<!doctype html><body style="margin:0"><div id=src style="width:120px;height:30px;color:rgb(1, 2, 3)">a</div><div id=host></div>"#,
+    );
+    let r = h.page(
+        "Pyro.run",
+        json!({"steps": [
+            {"eval": {"expression": "window.recs = []; for (const k of ['one', 'two']) new MutationObserver(l => recs.push(k + ':' + l.length)).observe(host, {childList: true}); null"}},
+            {"eval": {"as": "copy", "expression": "(() => { const src = document.getElementById('src'); const clone = src.cloneNode(true); const out = []; for (let i = 0; i < 50; i++) { const cs = getComputedStyle(src); out.push(cs.width + ' ' + cs.color); clone.style.setProperty('width', (200 + i) + 'px'); clone.style.setProperty('color', cs.color); } window.clone = clone; return [out[0], out[49], src.getBoundingClientRect().width]; })()"}},
+            {"eval": {"as": "inserted", "expression": "(() => { host.appendChild(clone); const r = clone.getBoundingClientRect(); return [r.width, getComputedStyle(clone).color]; })()"}},
+            {"eval": {"as": "recs", "expression": "new Promise(r => setTimeout(() => r(recs.slice().sort()), 0))"}}
+        ]}),
+    );
+    assert!(r.get("error").is_none(), "{r}");
+    let reads = &r["result"]["reads"];
+    assert_eq!(reads["copy"], json!(["120px rgb(1, 2, 3)", "120px rgb(1, 2, 3)", 120]), "{r}");
+    assert_eq!(reads["inserted"], json!([249, "rgb(1, 2, 3)"]), "{r}");
+    assert_eq!(reads["recs"], json!(["one:1", "two:1"]), "{r}");
+}

@@ -547,6 +547,20 @@ impl Layout {
     pub fn synced_geometry_source(&self, dom: &Dom) -> Option<&Rc<dyn GeometrySource>> {
         let source = self.external.as_ref().filter(|s| s.active())?;
         let key = self.sync_key(dom);
+        // pyro: changes made only to nodes outside the document (detached clones styled one
+        // property at a time between computed-style reads) need no sync.
+        if let Some(old) = self.external_synced.get() {
+            let ((v0, g0, f0, h0), vp0) = old;
+            let ((v1, g1, f1, h1), vp1) = key;
+            if v0 != v1
+                && (g0, f0, h0, vp0) == (g1, f1, h1, vp1)
+                && !source.stale()
+                && !self.style.animations_changed_for_layout()
+                && dom.only_detached_changes_since(v0)
+            {
+                self.external_synced.set(Some(key));
+            }
+        }
         if self.external_synced.get() != Some(key) || source.stale() || self.style.animations_changed_for_layout() {
             self.style.before_recalc(dom);
             source.sync(dom, self);

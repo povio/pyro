@@ -1196,6 +1196,7 @@ impl StyleEngine {
             return None;
         }
         let stamp = self.observation_stamp(dom);
+        let mut skip = false;
         let source = {
             let external = self.external.borrow();
             let (source, at) = external.as_ref()?;
@@ -1205,8 +1206,23 @@ impl StyleEngine {
             if !source.active() {
                 return None;
             }
+            // pyro: only nodes outside the document changed (`Dom::only_detached_changes_since`):
+            // their styles and boxes are not the engine's, nothing to sync.
+            if let Some((v0, g0, f0, h0)) = *at {
+                skip = v0 != stamp.0
+                    && (g0, f0, h0) == (stamp.1, stamp.2, stamp.3)
+                    && !source.stale()
+                    && !self.animations_changed()
+                    && dom.only_detached_changes_since(v0);
+            }
             source.clone()
         };
+        if skip {
+            if let Some((_, at)) = self.external.borrow_mut().as_mut() {
+                *at = Some(stamp);
+            }
+            return Some(stamp);
+        }
         self.before_recalc(dom);
         self.external_syncing.set(true);
         source.sync_styles(dom, self);

@@ -1890,6 +1890,30 @@ impl Dom {
     }
 
     /// `Node.isConnected` (shadow-including).
+    /// pyro: whether every change since `version` was made outside the document tree: to
+    /// nodes, or the child lists of nodes, that are not connected to a document (a clone a
+    /// screenshot library styles, a fragment being built). Such changes cannot reach layout or
+    /// computed styles, so the layout engine need not sync for them. `false` when the journal no
+    /// longer covers `version`, or for unannotated changes and focus/hover changes. A node that
+    /// was connected when it changed and is detached now was removed, which shows as a removal
+    /// from a connected parent; one detached when it changed and connected since was inserted,
+    /// which shows as an insertion into a connected parent: both answer `false`.
+    pub fn only_detached_changes_since(&self, version: u64) -> bool {
+        let Some(changes) = self.changes_since(version) else { return false };
+        let detached = |i: u32| self.slot_live(i) && !self.n(i).is_connected();
+        for change in changes {
+            let outside = match change {
+                Change::Attr(i, _, _) | Change::State(i) | Change::Text(i) => detached(i),
+                Change::Inserted(parent, _) | Change::Removed(parent, _, _) => detached(parent),
+                Change::Pseudo | Change::Unknown(_) => false,
+            };
+            if !outside {
+                return false;
+            }
+        }
+        true
+    }
+
     pub fn is_connected(&self, id: NodeId) -> DomResult<bool> {
         let (i, n) = self.live(id)?;
         debug_assert_eq!(n.is_connected(), self.connected_by_walk(i));
