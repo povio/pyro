@@ -189,7 +189,7 @@ jobs:
           # --slow-jobs: the pages that timed out in the baseline run to their full timeout on that many more workers,
           # nearly idle, beside the others (run.mjs SLOW_JOBS): in a testharness shard they were 1.7% of the pages and
           # 47% of the page time, holding 16 workers for 45 s each.
-          jobs=$(sysctl -n hw.ncpu); slow=8
+          jobs=${PYRO_CI_CPUS:-$(sysctl -n hw.ncpu)}; slow=8
           if [ ${{ matrix.kind }} = testharness ]; then jobs=16; slow=32; fi
           # The committed whole-suite baseline (bench/wpt/full/<kind>/) orders and balances the pages by duration, and
           # only the pages whose result differs from it run again (in run 44235329366, 8,875 of a shard's 8,892

@@ -511,6 +511,8 @@ Measured on the pull request that added the job (all 9,341 reftests; a run witho
 | `macos-15` (GitHub: M2 Pro, 5 vCPUs, 14 GB, macOS 15.8) | 2 x 5 | 53 s, 65 s | 2:04, 2:22 | every page |
 | `macos-15` | 3 x 5 | 34-37 s (70 s with the crash) | 1:28-2:35 | every page |
 | `lp-m1` (M1, 8 CPUs, 8 GB, macOS 26.7) | 1 x 8 | 72 s (9,300 pages), 115-131 s with the timeouts' tail | 4:55 | all but 5 pages, which a runner bug (since fixed) recorded as crashes |
+
+Since 2026-11-18 `lp-m1` also includes `worker-4-studio` (Mac Studio, M5 Max, 18 cores, 36 GB). Its runner `.env` sets `PYRO_CI_CPUS=4`, and every CPU-sized `--jobs`/`-j` in the workflows reads `PYRO_CI_CPUS` before `hw.ncpu`, so it does about an M1 runner's share; it runs at nice 10.
 | `macos-15`, a pull request's gate run (baseline committed) | 2 x 5 | 35 s, 40 s | 0:52, 0:55 | (2 pages rerun) |
 
 The 11 pages that time out (15 s each) and the crash run last in a run without a baseline; a pull request's run skips
