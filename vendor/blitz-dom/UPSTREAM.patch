@@ -19091,7 +19091,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
          }
  
          let node = &mut self.nodes[node_id];
-@@ -408,6 +721,221 @@
+@@ -408,6 +721,229 @@
          }
      }
  
@@ -19114,11 +19114,19 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
 +        let mut positioned: Vec<NodeId> = Vec::new();
 +        for line in layout.layout.lines() {
 +            for item in line.items() {
-+                if let parley::PositionedLayoutItem::GlyphRun(run) = item {
-+                    for id in self.inline_span_positioned_chain(run.style().brush.id, root_id) {
-+                        if !positioned.contains(&id) {
-+                            positioned.push(id);
++                // (An atomic inline box counts from its parent: it is no inline box itself.)
++                let chain = match item {
++                    parley::PositionedLayoutItem::GlyphRun(run) => self.inline_span_positioned_chain(run.style().brush.id, root_id),
++                    parley::PositionedLayoutItem::InlineBox(inline_box) => {
++                        match self.nodes.get(NodeId::from_u64(inline_box.id)).and_then(|node| node.parent) {
++                            Some(parent) => self.inline_span_positioned_chain(parent, root_id),
++                            None => Vec::new(),
 +                        }
++                    }
++                };
++                for id in chain {
++                    if !positioned.contains(&id) {
++                        positioned.push(id);
 +                    }
 +                }
 +            }
@@ -19128,7 +19136,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
 +        let start = if root.is_anonymous() { root.parent.unwrap_or(root_id) } else { root_id };
 +        let mut order = std::collections::HashMap::new();
 +        let mut spans = Vec::with_capacity(positioned.len());
-+        let mut stack: Vec<NodeId> = self.nodes[start].children.iter().rev().copied().collect();
++        let mut stack: Vec<NodeId> = tree_order_children(&self.nodes[start]).into_iter().rev().collect();
 +        while let Some(id) = stack.pop() {
 +            order.insert(id, order.len());
 +            let node = &mut self.nodes[id];
@@ -19139,7 +19147,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
 +            } else {
 +                node.flags.remove(NodeFlags::INLINE_PASS_ENTRY);
 +            }
-+            stack.extend(self.nodes[id].children.iter().rev().copied());
++            stack.extend(tree_order_children(&self.nodes[id]).into_iter().rev());
 +        }
 +        (!spans.is_empty()).then_some((spans, order))
 +    }
@@ -19189,10 +19197,10 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
 +            return;
 +        }
 +        let mut order = std::collections::HashMap::new();
-+        let mut stack: Vec<NodeId> = self.nodes[node_id].children.iter().rev().copied().collect();
++        let mut stack: Vec<NodeId> = tree_order_children(&self.nodes[node_id]).into_iter().rev().collect();
 +        while let Some(id) = stack.pop() {
 +            order.insert(id, order.len());
-+            stack.extend(self.nodes[id].children.iter().rev().copied());
++            stack.extend(tree_order_children(&self.nodes[id]).into_iter().rev());
 +        }
 +        let mut list: Vec<((i32, i32), NodeId)> = self.scratch.keyed_children.drain(keyed_base..).collect();
 +        let spans: Vec<((i32, i32), NodeId)> =
@@ -19313,7 +19321,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
      /// The layout child of `node_id` whose subtree contains `id`, following
      /// `layout_parent`.
      fn layout_child_containing(&self, node_id: NodeId, id: NodeId) -> Option<NodeId> {
-@@ -426,15 +954,20 @@
+@@ -426,15 +962,20 @@
      /// the enclosing stacking context like any other z-indexed positioned
      /// child, the rest join `paint_children` at the same paint level as other
      /// positioned boxes (the caller's stable sort keeps tree order).
@@ -19335,7 +19343,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
                  true => None,
                  false => Some(entries),
              },
-@@ -443,11 +976,112 @@
+@@ -443,11 +984,112 @@
          let z_index = self.nodes[child_id].z_index();
          if z_index != 0 {
              entries.push(HoistedPaintChild::new(child_id, z_index));
@@ -19448,7 +19456,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
  }
  
  impl Node {
-@@ -471,22 +1105,158 @@
+@@ -471,22 +1113,158 @@
                      || e.sub_doc_data().is_some()
                      || e.text_input_data().is_some()
              })
@@ -19614,7 +19622,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
      pub fn lifted_paint_offset(&self, painter_id: NodeId) -> Option<Point<f32>> {
          match self.containing_block() {
              Some(id) if id == painter_id => None,
-@@ -496,6 +1266,15 @@
+@@ -496,6 +1274,21 @@
      }
  }
  
@@ -19627,10 +19635,16 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
 +    contribution: Vec<(NodeId, i32)>,
 +}
 +
++/// pyro: a node's children in tree order with its `::before` and `::after` boxes (kept apart from
++/// `Node::children`), for the walks that order positioned inline boxes (`positioned_inline_spans`).
++fn tree_order_children(node: &Node) -> Vec<NodeId> {
++    node.before().into_iter().chain(node.children.iter().copied()).chain(node.after()).collect()
++}
++
  #[inline(always)]
  fn position_to_order(pos: Position) -> i32 {
      match pos {
-@@ -539,3 +1318,116 @@
+@@ -539,3 +1332,116 @@
          )
      }
  }

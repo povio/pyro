@@ -82,3 +82,24 @@ fn z_index_sorts_a_relative_span() {
     );
     assert_eq!(pixel(&img, 20, 10), RED, "z-index -1 under the absolute box");
 }
+
+/// An inline-block in a relative span (a badge) paints with the span, in the positioned layer: over an
+/// absolutely positioned box earlier in the tree, under one later in it. Also when the span holds
+/// nothing else.
+#[test]
+fn inline_block_in_a_relative_span_paints_with_the_span() {
+    let img = render(
+        "<div style='position:relative'>\
+           <div style='position:absolute;top:0;left:0;width:40px;height:20px;background:red'></div>\
+           <span style='position:relative'><span style='display:inline-block;width:40px;height:20px;vertical-align:top;background:green'></span></span>\
+         </div>",
+    );
+    assert_eq!(pixel(&img, 20, 10), GREEN, "over the earlier absolute box");
+    let img = render(
+        "<div style='position:relative'>\
+           <span style='position:relative'><span style='display:inline-block;width:40px;height:20px;vertical-align:top;background:red'></span></span>\
+           <div style='position:absolute;top:0;left:0;width:40px;height:20px;background:green'></div>\
+         </div>",
+    );
+    assert_eq!(pixel(&img, 20, 10), GREEN, "under the later absolute box");
+}

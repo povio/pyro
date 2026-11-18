@@ -1695,6 +1695,52 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         let Some(root) = self.dom.get_node(root_id) else { return };
         let cx = self.element_cx(root, root.final_layout().clone(), transform, None);
         cx.draw_inline_pass(scene, pos, span_id);
+        // Then the atomic inline boxes in it (badges), which its root skipped (`draw_paint_child`), moved
+        // by the sticky offsets of the inline boxes around them (layout placed them with the relative ones).
+        let children: Vec<NodeId> = root.paint_children.borrow().iter().flatten().copied().collect();
+        for child_id in children {
+            let Some(child) = self.dom.get_node(child_id) else { continue };
+            if self.inline_entry_owner(child, root_id) != Some(span_id) {
+                continue;
+            }
+            let mut sticky = (0.0f64, 0.0f64);
+            let mut current = child.parent;
+            while let Some(id) = current.filter(|&id| id != root_id) {
+                let Some(node) = self.dom.get_node(id) else { break };
+                let Some(style) = node.primary_styles() else { break };
+                if !style.clone_display().is_inline_flow() {
+                    break;
+                }
+                if style.clone_position() == style::computed_values::position::T::Sticky {
+                    let own = node.sticky_offset();
+                    sticky = (sticky.0 + own.x, sticky.1 + own.y);
+                }
+                current = node.parent;
+            }
+            let child_transform = transform.pre_translate(Vec2::new(sticky.0 * self.scale, sticky.1 * self.scale));
+            let everything = Rect::new(f64::NEG_INFINITY, f64::NEG_INFINITY, f64::INFINITY, f64::INFINITY);
+            self.render_node(scene, child_id, child_transform, everything);
+        }
+    }
+
+    /// pyro: the positioned inline box (`NodeFlags::INLINE_PASS_ENTRY`) whose content the atomic inline
+    /// box `child`, laid out by the inline root `root_id`, is part of: the innermost relative or sticky
+    /// inline box around it. `None` for any other box (a float, a positioned or block-level box).
+    fn inline_entry_owner(&self, child: &Node, root_id: NodeId) -> Option<NodeId> {
+        let style = child.primary_styles()?;
+        if style.clone_position() != style::computed_values::position::T::Static
+            || style.clone_float() != style::computed_values::float::T::None
+            || !style.clone_display().is_inline_flow() && style.clone_display().outside() != style::values::specified::box_::DisplayOutside::Inline
+        {
+            return None;
+        }
+        drop(style);
+        let parent = child.parent?;
+        let span = *self.dom.inline_span_positioned_chain(parent, root_id).first()?;
+        self.dom
+            .get_node(span)
+            .is_some_and(|node| node.flags.contains(blitz_dom::node::NodeFlags::INLINE_PASS_ENTRY))
+            .then_some(span)
     }
 
     fn element_cx(
@@ -3271,12 +3317,19 @@ impl ElementCx<'_, '_> {
         let mut order: Vec<NodeId> = Vec::new();
         for line in text_layout.layout.lines() {
             for item in line.items() {
-                if let parley::PositionedLayoutItem::GlyphRun(run) = item {
-                    let chain = doc.inline_span_positioned_chain(run.style().brush.id, self.node.id);
-                    for id in chain.into_iter().rev() {
-                        if !order.contains(&id) {
-                            order.push(id);
+                // pyro: and atomic inline boxes (badges), from their parent.
+                let chain = match item {
+                    parley::PositionedLayoutItem::GlyphRun(run) => doc.inline_span_positioned_chain(run.style().brush.id, self.node.id),
+                    parley::PositionedLayoutItem::InlineBox(inline_box) => {
+                        match doc.get_node(NodeId::from_u64(inline_box.id)).and_then(|node| node.parent) {
+                            Some(parent) => doc.inline_span_positioned_chain(parent, self.node.id),
+                            None => Vec::new(),
                         }
+                    }
+                };
+                for id in chain.into_iter().rev() {
+                    if !order.contains(&id) {
+                        order.push(id);
                     }
                 }
             }
@@ -4154,6 +4207,13 @@ impl ElementCx<'_, '_> {
         // pyro: so does one lifted here from a containing block that is no
         // layer root (a `backdrop-filter` box): it is placed by its offset.
         let child = &self.context.dom.as_ref().tree()[child_id];
+        // pyro: an atomic inline box in a positioned inline box this inline root left to its paint-tree
+        // entry paints there, with the box's content (`draw_inline_pass_entry`).
+        if self.context.inline_entry_owner(child, self.node.id).is_some_and(|span| {
+            self.context.inline_pass_entries.borrow().get(&span).is_some_and(|entry| entry.0 == self.node.id)
+        }) {
+            return;
+        }
         // pyro: moved with a sticky inline containing block (`inline_sticky_containing_block_offset`).
         let sticky = child.inline_sticky_containing_block_offset();
         let parent_style_transform = if sticky.x == 0.0 && sticky.y == 0.0 {

@@ -740,11 +740,19 @@ impl BaseDocument {
         let mut positioned: Vec<NodeId> = Vec::new();
         for line in layout.layout.lines() {
             for item in line.items() {
-                if let parley::PositionedLayoutItem::GlyphRun(run) = item {
-                    for id in self.inline_span_positioned_chain(run.style().brush.id, root_id) {
-                        if !positioned.contains(&id) {
-                            positioned.push(id);
+                // (An atomic inline box counts from its parent: it is no inline box itself.)
+                let chain = match item {
+                    parley::PositionedLayoutItem::GlyphRun(run) => self.inline_span_positioned_chain(run.style().brush.id, root_id),
+                    parley::PositionedLayoutItem::InlineBox(inline_box) => {
+                        match self.nodes.get(NodeId::from_u64(inline_box.id)).and_then(|node| node.parent) {
+                            Some(parent) => self.inline_span_positioned_chain(parent, root_id),
+                            None => Vec::new(),
                         }
+                    }
+                };
+                for id in chain {
+                    if !positioned.contains(&id) {
+                        positioned.push(id);
                     }
                 }
             }
@@ -754,7 +762,7 @@ impl BaseDocument {
         let start = if root.is_anonymous() { root.parent.unwrap_or(root_id) } else { root_id };
         let mut order = std::collections::HashMap::new();
         let mut spans = Vec::with_capacity(positioned.len());
-        let mut stack: Vec<NodeId> = self.nodes[start].children.iter().rev().copied().collect();
+        let mut stack: Vec<NodeId> = tree_order_children(&self.nodes[start]).into_iter().rev().collect();
         while let Some(id) = stack.pop() {
             order.insert(id, order.len());
             let node = &mut self.nodes[id];
@@ -765,7 +773,7 @@ impl BaseDocument {
             } else {
                 node.flags.remove(NodeFlags::INLINE_PASS_ENTRY);
             }
-            stack.extend(self.nodes[id].children.iter().rev().copied());
+            stack.extend(tree_order_children(&self.nodes[id]).into_iter().rev());
         }
         (!spans.is_empty()).then_some((spans, order))
     }
@@ -815,10 +823,10 @@ impl BaseDocument {
             return;
         }
         let mut order = std::collections::HashMap::new();
-        let mut stack: Vec<NodeId> = self.nodes[node_id].children.iter().rev().copied().collect();
+        let mut stack: Vec<NodeId> = tree_order_children(&self.nodes[node_id]).into_iter().rev().collect();
         while let Some(id) = stack.pop() {
             order.insert(id, order.len());
-            stack.extend(self.nodes[id].children.iter().rev().copied());
+            stack.extend(tree_order_children(&self.nodes[id]).into_iter().rev());
         }
         let mut list: Vec<((i32, i32), NodeId)> = self.scratch.keyed_children.drain(keyed_base..).collect();
         let spans: Vec<((i32, i32), NodeId)> =
@@ -1273,6 +1281,12 @@ struct PaintTreeEntry {
     paint_children: Option<Vec<NodeId>>,
     stacking_context: Option<(Vec<(NodeId, i32)>, u32, Vec<(NodeId, i32)>)>,
     contribution: Vec<(NodeId, i32)>,
+}
+
+/// pyro: a node's children in tree order with its `::before` and `::after` boxes (kept apart from
+/// `Node::children`), for the walks that order positioned inline boxes (`positioned_inline_spans`).
+fn tree_order_children(node: &Node) -> Vec<NodeId> {
+    node.before().into_iter().chain(node.children.iter().copied()).chain(node.after()).collect()
 }
 
 #[inline(always)]

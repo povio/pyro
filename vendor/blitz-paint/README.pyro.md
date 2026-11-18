@@ -1099,3 +1099,7 @@ frame's whole transform, clipped to the content box (upstream applied the transl
   painting every pass themselves. Hoisted boxes add `inline_sticky_containing_block_offset`.
 - Round 4 lane F, `light-dark()` in SVG images: usvg does not parse it (the paint fell back to black). An SVG image is parsed with each `light-dark(a, b)` as `a` (`svg_refs::resolve_light_dark`); `SvgImageData::for_color_scheme` parses the dark variant, which a border image draws when the element's used colour scheme is dark and the image's own `color-scheme` allows dark (blitz-paint `ElementCx::dark_color_scheme`). WPT css-borders `border-image-color-scheme`.
 - Round 4 lane F, `background-clip: border-area text`: layers cut to it form a text-clip run of their own whose `DestIn` mask fills the border area besides the text (`end_text_clip_group`). WPT css-backgrounds `clip-border-area-text`.
+  painting every pass themselves. Hoisted boxes add `inline_sticky_containing_block_offset`. Atomic inline boxes in
+  such a box (badges: `inline_entry_owner`, the innermost positioned inline box around them) are skipped by the root
+  (`draw_paint_child`) and painted at the box's entry after its text, moved by the sticky offsets of the inline boxes
+  around them (`positioned_passes` also follows atomic inline boxes, from their parent). `tests/positioned_inline_paint_order.rs`.

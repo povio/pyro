@@ -2687,7 +2687,10 @@ Round 4 lane G:
   Appendix E step 8). blitz-paint paints its content there (`draw_inline_pass_entry`); hit testing passes over the
   entry (the root hit-tests its text). `Node::inline_sticky_containing_block_offset`: an absolutely positioned box whose
   containing block is a sticky inline box moves with it when painted (not memoised with the hoisted position: it
-  changes on scroll). Not covered: atomic inline boxes in a positioned inline box still paint with the in-flow content.
+  changes on scroll). A box whose only content is an atomic inline box (a badge) is listed too (its chain is followed
+from the atomic box's parent). The tree-order walks take `::before` and `::after` boxes in their place
+(`tree_order_children`): a positioned pseudo-element's content (an image in `content`) paints at its entry like a
+span's (WPT CSS2 `before-after-positioned-001`, whose reference uses spans).
   WPT css-position `position-sticky-inline`, `position-sticky-nested-inline`; `crates/pyro-render/src/lib.rs`
   `positioned_inline_spans_are_paint_tree_entries_in_tree_order`, `tests/positioned_inline_paint_order.rs`.
 - Round 4 lane F, `light-dark()` in SVG images: usvg does not parse it (the paint fell back to black). An SVG image is parsed with each `light-dark(a, b)` as `a` (`svg_refs::resolve_light_dark`); `SvgImageData::for_color_scheme` parses the dark variant, which a border image draws when the element's used colour scheme is dark and the image's own `color-scheme` allows dark (blitz-paint `ElementCx::dark_color_scheme`). WPT css-borders `border-image-color-scheme`.
