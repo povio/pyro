@@ -200,6 +200,19 @@ text, which can drop passes without a conflict).
 instead of keeping the committed ones. blitz-paint's, parley_engine's and stylo's sections are macOS `diff -u` output:
 elsewhere the regenerated sections can align differently (they still apply).
 
+## Linux and macOS
+
+The testharness gate moves to GitHub's Linux runners (wpt.yml `build-linux`, `wpt-linux`, `gate-linux`; ubuntu-latest
+x64, three shards), off the two lp-m1 Macs: testharness compares no pixels. Its baseline is `baseline-linux.json`,
+bootstrapped from a CI run's `wpt-linux-baseline` artifact (never edited by hand). Until that file is committed the
+Linux jobs only report and the macOS `wpt`/`gate` jobs keep gating; once it is committed, the macOS testharness jobs
+stop. Reftests, crashtests and the client job stay on lp-m1.
+
+`platform-diff.mjs baseline.json baseline-linux.json` lists every page whose results differ between the platforms
+(also in `gate-linux`'s summary and its `wpt-platform-diff` artifact). A page that passes less on Linux is recorded,
+with the reason, in `platform-split.json` (`{ "<url>": "<reason>" }`); `--strict` fails on any that is not, so
+moving the gate never drops coverage silently.
+
 ## Before making it a required check
 
 The gate's false failures come from pages whose results depend on load. `flaky.json` started with the six such pages
