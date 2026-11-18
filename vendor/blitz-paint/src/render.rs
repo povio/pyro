@@ -3389,9 +3389,14 @@ impl ElementCx<'_, '_> {
             let subpixel_offset = input_data.content_box_subpixel_offset;
             // pyro: the value, placeholder and caret at the content box's layout-unit x, as
             // inline text (`fractional_text_x_of_node`).
+            // pyro: `pos` is the content box less the element's scroll offset, which this
+            // element's transform (scrolled for its content) applies already: the offset is added
+            // back, or `scrollLeft` moved a control's text twice (WPT css-overflow
+            // `scrollable-overflow-input-001`: 80px for 40).
+            let scroll = self.node.scroll_offset();
             let content_origin = Point {
-                x: pos.x + subpixel_offset.x as f64 + self.fractional_text_x_of_node() / self.scale,
-                y: pos.y + subpixel_offset.y as f64,
+                x: pos.x + scroll.x + subpixel_offset.x as f64 + self.fractional_text_x_of_node() / self.scale,
+                y: pos.y + scroll.y + subpixel_offset.y as f64,
             };
             let pos = Point {
                 x: content_origin.x,
@@ -3401,7 +3406,11 @@ impl ElementCx<'_, '_> {
             // Apply the scroll offset (stored in CSS pixels, scaled here to device pixels) so
             // that the caret stays visible. Single-line inputs scroll horizontally; multi-line
             // inputs scroll vertically.
-            let scroll_offset = input_data.scroll_offset as f64 * self.scale;
+            // pyro: only in a focused control, which follows its caret; an unfocused one shows
+            // its text where the element's own scroll offset (`scrollLeft`, applied with its
+            // content) puts it, as Chromium: both moved its text twice (WPT css-overflow
+            // `scrollable-overflow-input-001`: 80px for `scrollLeft` 40).
+            let scroll_offset = if self.node.is_focussed() { input_data.scroll_offset as f64 * self.scale } else { 0.0 };
             let (scroll_x, scroll_y) = if input_data.is_multiline {
                 (0.0, scroll_offset)
             } else {
