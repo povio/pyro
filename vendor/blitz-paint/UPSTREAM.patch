@@ -19120,7 +19120,7 @@ new file mode 100644
 diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 --- a/packages/blitz-paint/src/text.rs
 +++ b/packages/blitz-paint/src/text.rs
-@@ -1,18 +1,281 @@
+@@ -1,19 +1,307 @@
  use anyrender::PaintScene;
 +use anyrender::filters::{Filter, FilterEffect};
  use blitz_dom::CopyStyleGetters;
@@ -19154,6 +19154,9 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 +    /// The line's central baseline, which `text-orientation: mixed` and `upright` align runs to; `sideways`
 +    /// keeps the alphabetic baseline.
 +    central: Option<f32>,
++    /// pyro: the x-height of the run that sets the central baseline, half of which a
++    /// `vertical-align: middle` run is centred over it.
++    central_x_height: f32,
 +    /// `text-orientation: upright`: every glyph stands upright.
 +    all_upright: bool,
 +    /// pyro: the line is turned a quarter counterclockwise (`sideways-lr`).
@@ -19164,11 +19167,14 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 +    pub(crate) fn new(line: &Line<'_, TextBrush>, sideways: bool, all_upright: bool) -> Self {
 +        // A fragment's box is its whole-pixel ascent and descent, around the middle of which the
 +        // tallest fragment in the line (the one that sets its height) has the central baseline.
++        let mut central_x_height = 0.0;
 +        let central = (!sideways)
 +            .then(|| {
 +                line.items()
 +                    .filter_map(|item| match item {
-+                        PositionedLayoutItem::GlyphRun(run) => Some(run),
++                        // pyro: a run aligned by its box's edge keeps its own place
++                        // (`VerticalLine::central_for`).
++                        PositionedLayoutItem::GlyphRun(run) if !run.edge_aligned() => Some(run),
 +                        _ => None,
 +                    })
 +                    .max_by_key(|run| {
@@ -19177,11 +19183,12 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 +                    })
 +                    .map(|run| {
 +                        let metrics = run.run().font_metrics();
++                        central_x_height = metrics.x_height.unwrap_or(run.run().font_size() / 2.0);
 +                        run.baseline() - (metrics.ascent.round() - metrics.descent.round()) / 2.0
 +                    })
 +            })
 +            .flatten();
-+        Self { central, all_upright, counterclockwise: false }
++        Self { central, central_x_height, all_upright, counterclockwise: false }
 +    }
 +
 +    /// pyro: for a line turned a quarter counterclockwise (`sideways-lr`).
@@ -19240,9 +19247,27 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 +        })
 +    }
 +
++    /// pyro: the central baseline a run is centred on: the line's, or for a run aligned by its
++    /// box's edge (`vertical-align: top | bottom | text-top | text-bottom`, which Parley has
++    /// already placed against the line or its parent's content area) the middle of its own
++    /// fragment box, so that it stays where the line put it.
++    fn central_for(self, run: &parley::GlyphRun<'_, TextBrush>) -> Option<f32> {
++        let central = self.central?;
++        if !run.edge_aligned() {
++            // `middle`: the box's middle goes half the parent's x-height over the central
++            // baseline (as Blink, which aligns on the central baseline in vertical lines).
++            if run.vertical_align().alignment == parley::AlignmentBaseline::Middle {
++                return Some(central - self.central_x_height / 2.0);
++            }
++            return Some(central);
++        }
++        let metrics = run.run().font_metrics();
++        Some(run.baseline() - (metrics.ascent.round() - metrics.descent.round()) / 2.0)
++    }
++
 +    /// Moves a run's fragment box from the alphabetic baseline to the central one.
 +    fn fragment_shift(self, run: &parley::GlyphRun<'_, TextBrush>) -> Affine {
-+        let Some(central) = self.central else {
++        let Some(central) = self.central_for(run) else {
 +            return Affine::IDENTITY;
 +        };
 +        let metrics = run.run().font_metrics();
@@ -19258,7 +19283,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 +        run: &parley::GlyphRun<'_, TextBrush>,
 +        source: Option<&str>,
 +    ) -> (Affine, Option<Affine>) {
-+        let Some(central) = self.central else {
++        let Some(central) = self.central_for(run) else {
 +            return (Affine::IDENTITY, None);
 +        };
 +        let metrics = run.run().font_metrics();
@@ -19384,7 +19409,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 +        }
 +    }
 +}
-+
+ 
 +/// pyro: whether a decorating box's underline goes on the line-over side (and its overline on
 +/// the line-under side) in text on a central baseline: Blink's `ResolveUnderlinePosition`
 +/// (`kOver`): for Japanese and Korean unless `text-underline-position: left`, otherwise only
@@ -19403,10 +19428,11 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 +        position.contains(TextUnderlinePosition::RIGHT)
 +    }
 +}
- 
++
  /// Draw the backgrounds of inline elements (e.g. `<span style="background: ...">`).
  ///
-@@ -29,72 +292,81 @@
+ /// Each glyph run carries the node id of the innermost inline element it belongs to
+@@ -29,72 +317,81 @@
      doc: &BaseDocument,
      transform: Affine,
      inline_root_id: NodeId,
@@ -19529,7 +19555,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
  /// Mirrors Blink's `SelectBestDashGap`: choose the gap length (as close as possible to
  /// `gap_length`) that fits a whole number of `dash_length` dashes across `stroke_length`,
  /// so dashes are evenly distributed and a dash lands at each end of the line.
-@@ -126,7 +398,7 @@
+@@ -126,7 +423,7 @@
  /// decorating box. The `text-decoration-inset` and `text-underline-offset` values
  /// depend on the run's advance/font-size and are resolved lazily when drawing.
  #[derive(Clone)]
@@ -19538,7 +19564,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
      line: TextDecorationLine,
      style: TextDecorationStyle,
      color: Color,
-@@ -137,8 +409,25 @@
+@@ -137,8 +434,25 @@
      underline_under: bool,
      /// Whether `text-underline-position: from-font` is in effect.
      underline_from_font: bool,
@@ -19566,7 +19592,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
  }
  
  /// An element on the current ancestor path (inline root -> run node), caching the
-@@ -151,8 +440,101 @@
+@@ -151,8 +465,101 @@
      fill_color: Color,
      /// The decoration this node introduces as a decorating box, if any.
      decoration: Option<ResolvedDecoration>,
@@ -19668,7 +19694,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
  /// Resolve the cached style values for a single node into a [`DecorationStackEntry`].
  fn resolve_decoration_entry(doc: &BaseDocument, node_id: NodeId) -> DecorationStackEntry {
      let Some(styles) = doc.get_node(node_id).and_then(|node| node.primary_styles()) else {
-@@ -160,56 +542,56 @@
+@@ -160,56 +567,56 @@
              node_id,
              fill_color: Color::BLACK,
              decoration: None,
@@ -19705,7 +19731,18 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 -            .as_absolute()
 -            .map(ToColorColor::as_color_color)
 -            .unwrap_or(text_color);
--
++    let shadows = itext
++        .text_shadow
++        .0
++        .iter()
++        .map(|shadow| TextShadow {
++            color: shadow.color.resolve_to_absolute(&itext.color).as_srgb_color(),
++            x: f64::from(shadow.horizontal.px()),
++            y: f64::from(shadow.vertical.px()),
++            blur: f64::from(shadow.blur.px()),
++        })
++        .collect();
+ 
 -        ResolvedDecoration {
 -            line,
 -            style: text.text_decoration_style,
@@ -19721,18 +19758,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 -            inset: text.text_decoration_inset.clone(),
 -        }
 -    });
-+    let shadows = itext
-+        .text_shadow
-+        .0
-+        .iter()
-+        .map(|shadow| TextShadow {
-+            color: shadow.color.resolve_to_absolute(&itext.color).as_srgb_color(),
-+            x: f64::from(shadow.horizontal.px()),
-+            y: f64::from(shadow.vertical.px()),
-+            blur: f64::from(shadow.blur.px()),
-+        })
-+        .collect();
- 
+-
      DecorationStackEntry {
          node_id,
          fill_color,
@@ -19759,7 +19785,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
  /// The run-dependent geometry used to position and size a decoration, captured from a
  /// single glyph run. Firefox draws a decoration once for the whole decorating box using
  /// the box's own font, so we prefer the values from a run whose innermost node *is* the
-@@ -219,14 +601,17 @@
+@@ -219,14 +626,17 @@
      /// The baseline the decoration is positioned from (the run's own, `vertical-align`
      /// shifted, baseline).
      baseline: f32,
@@ -19781,7 +19807,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
  }
  
  /// A decoration accumulated across the runs of a single line for one decorating box.
-@@ -237,15 +622,59 @@
+@@ -237,15 +647,59 @@
  struct LineDecoration {
      node_id: NodeId,
      deco: ResolvedDecoration,
@@ -19841,7 +19867,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
  /// Reusable scratch storage for drawing text across all inline formatting contexts in a
  /// document. The vectors are cleared between uses without releasing their allocations.
  #[derive(Default)]
-@@ -253,38 +682,367 @@
+@@ -253,38 +707,367 @@
      stack: Vec<DecorationStackEntry>,
      path_scratch: Vec<NodeId>,
      deco_boxes: Vec<LineDecoration>,
@@ -20230,7 +20256,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
  /// across renderers.
  ///
  /// `double_dir` points away from the text (`+1` = down, `-1` = up) and is used to place the
-@@ -296,24 +1054,21 @@
+@@ -296,24 +1079,21 @@
      scale: f64,
      x0: f64,
      width: f64,
@@ -20261,7 +20287,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
      let butt_stroke = Stroke::new(size).with_caps(Cap::Butt);
  
      match deco_style {
-@@ -399,203 +1154,597 @@
+@@ -399,26 +1179,83 @@
  pub(crate) struct TextPaintOptions {
      pub scale: f64,
      pub brush_override: Option<Color>,
@@ -20280,31 +20306,6 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 -    inline_root_id: NodeId,
 -    line_baseline: f32,
 -) {
--    let TextPaintOptions {
--        scale,
--        brush_override,
--    } = options;
--    // Draw innermost boxes first so ancestors' decorations paint on top, matching the
--    // per-run drawing order this replaced (`stack.iter().rev()`).
--    for acc in deco_boxes.iter().rev() {
--        let deco = &acc.deco;
--        // Prefer the decorating box's own font; fall back to the first run it covers.
--        let geom = match (&acc.own, &acc.first) {
--            (Some(own), _) => own.clone(),
--            (None, Some(first)) => {
--                let mut geom = first.clone();
--                // A descendant run's baseline may be shifted by `vertical-align`, but the
--                // decoration is positioned from the decorating box's own baseline. For the
--                // inline root that is the line's baseline.
--                if acc.node_id == inline_root_id {
--                    geom.baseline = line_baseline;
--                }
--                geom
--            }
--            (None, None) => continue,
--        };
--        let geom = &geom;
--        let width = acc.max_x - acc.min_x;
 +/// pyro: what [`flush_line_decorations`] draws of a line's decorations.
 +#[derive(Clone, Copy, PartialEq, Eq)]
 +enum DecorationPhase {
@@ -20352,11 +20353,14 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 +    source: Option<&str>,
 +    vertical: Option<VerticalLine>,
 +) {
-+    let TextPaintOptions {
-+        scale,
-+        brush_override,
+     let TextPaintOptions {
+         scale,
+         brush_override,
 +        ..
-+    } = options;
+     } = options;
+-    // Draw innermost boxes first so ancestors' decorations paint on top, matching the
+-    // per-run drawing order this replaced (`stack.iter().rev()`).
+-    for acc in deco_boxes.iter().rev() {
 +    let wanted = match phase {
 +        DecorationPhase::Shadow(_) => {
 +            TextDecorationLine::UNDERLINE | TextDecorationLine::OVERLINE | TextDecorationLine::LINE_THROUGH
@@ -20368,7 +20372,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 +    // Chromium paints a text fragment's applied decorations (WPT
 +    // `text-shadow/decorations-multiple-zorder`).
 +    for acc in deco_boxes.iter() {
-+        let deco = &acc.deco;
+         let deco = &acc.deco;
 +        if !deco.line.intersects(wanted) {
 +            continue;
 +        }
@@ -20377,13 +20381,16 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 +            Some(shift) => transform * Affine::translate(shift),
 +            None => transform,
 +        };
-+        // Prefer the decorating box's own font; fall back to the first run it covers.
-+        let geom = match (&acc.own, &acc.first) {
-+            (Some(own), _) => own.clone(),
-+            (None, Some(first)) => {
-+                let mut geom = first.clone();
-+                // A descendant run's baseline may be shifted by `vertical-align`, but the
-+                // decoration is positioned from the decorating box's own baseline. For the
+         // Prefer the decorating box's own font; fall back to the first run it covers.
+         let geom = match (&acc.own, &acc.first) {
+             (Some(own), _) => own.clone(),
+@@ -426,9 +1263,14 @@
+                 let mut geom = first.clone();
+                 // A descendant run's baseline may be shifted by `vertical-align`, but the
+                 // decoration is positioned from the decorating box's own baseline. For the
+-                // inline root that is the line's baseline.
+-                if acc.node_id == inline_root_id {
+-                    geom.baseline = line_baseline;
 +                // inline root (and a block it is in) that is the line's baseline, and its font
 +                // (pyro) the root's: the line's strut. (In a vertical line Blink places a
 +                // decoration from the text it decorates, the run's own fragment.)
@@ -20392,16 +20399,10 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 +                    geom.content_ascent = strut.ascent;
 +                    geom.content_descent = strut.descent;
 +                    geom.css_font_size = strut.css_font_size;
-+                }
-+                geom
-+            }
-+            (None, None) => continue,
-+        };
-+        let geom = &geom;
-+        let width = acc.max_x - acc.min_x;
-         if width <= 0.0 {
-             continue;
-         }
+                 }
+                 geom
+             }
+@@ -442,160 +1284,492 @@
          let brush = anyrender::Paint::from(brush_override.unwrap_or(deco.color));
  
          // `text-decoration-inset` shortens (or, when negative, extends) the line from the
@@ -21021,7 +21022,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
      stack.clear();
      path_scratch.clear();
      deco_boxes.clear();
-@@ -608,152 +1757,849 @@
+@@ -608,152 +1782,849 @@
      // for each run, only resolve styles for the nodes newly descended into (popping
      // as we ascend). `path_scratch` is a reusable buffer for the run's node path.
      for line in lines {
@@ -21987,7 +21988,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
      selection_start: usize,
      selection_end: usize,
  ) {
-@@ -761,12 +2607,54 @@
+@@ -761,12 +2632,54 @@
      let focus = Cursor::from_byte_index(layout, selection_end, Affinity::Downstream);
      let selection = Selection::new(anchor, focus);
  
@@ -22044,7 +22045,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
  /// Approximates macOS font smoothing (stem dilation). CoreGraphics dilates each side by an amount
  /// in device pixels that grows with the device ppem up to 0.3px (fitted to Safari's ink at 9-72px
  /// and 1x-3x scale), and keeps dilating at large sizes, so there is no ppem cutoff. glifo applies
-@@ -803,4 +2691,240 @@
+@@ -803,4 +2716,240 @@
          prev = *point;
      }
      prev.1

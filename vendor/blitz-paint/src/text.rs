@@ -27,6 +27,9 @@ pub(crate) struct VerticalLine {
     /// The line's central baseline, which `text-orientation: mixed` and `upright` align runs to; `sideways`
     /// keeps the alphabetic baseline.
     central: Option<f32>,
+    /// pyro: the x-height of the run that sets the central baseline, half of which a
+    /// `vertical-align: middle` run is centred over it.
+    central_x_height: f32,
     /// `text-orientation: upright`: every glyph stands upright.
     all_upright: bool,
     /// pyro: the line is turned a quarter counterclockwise (`sideways-lr`).
@@ -37,11 +40,14 @@ impl VerticalLine {
     pub(crate) fn new(line: &Line<'_, TextBrush>, sideways: bool, all_upright: bool) -> Self {
         // A fragment's box is its whole-pixel ascent and descent, around the middle of which the
         // tallest fragment in the line (the one that sets its height) has the central baseline.
+        let mut central_x_height = 0.0;
         let central = (!sideways)
             .then(|| {
                 line.items()
                     .filter_map(|item| match item {
-                        PositionedLayoutItem::GlyphRun(run) => Some(run),
+                        // pyro: a run aligned by its box's edge keeps its own place
+                        // (`VerticalLine::central_for`).
+                        PositionedLayoutItem::GlyphRun(run) if !run.edge_aligned() => Some(run),
                         _ => None,
                     })
                     .max_by_key(|run| {
@@ -50,11 +56,12 @@ impl VerticalLine {
                     })
                     .map(|run| {
                         let metrics = run.run().font_metrics();
+                        central_x_height = metrics.x_height.unwrap_or(run.run().font_size() / 2.0);
                         run.baseline() - (metrics.ascent.round() - metrics.descent.round()) / 2.0
                     })
             })
             .flatten();
-        Self { central, all_upright, counterclockwise: false }
+        Self { central, central_x_height, all_upright, counterclockwise: false }
     }
 
     /// pyro: for a line turned a quarter counterclockwise (`sideways-lr`).
@@ -113,9 +120,27 @@ impl VerticalLine {
         })
     }
 
+    /// pyro: the central baseline a run is centred on: the line's, or for a run aligned by its
+    /// box's edge (`vertical-align: top | bottom | text-top | text-bottom`, which Parley has
+    /// already placed against the line or its parent's content area) the middle of its own
+    /// fragment box, so that it stays where the line put it.
+    fn central_for(self, run: &parley::GlyphRun<'_, TextBrush>) -> Option<f32> {
+        let central = self.central?;
+        if !run.edge_aligned() {
+            // `middle`: the box's middle goes half the parent's x-height over the central
+            // baseline (as Blink, which aligns on the central baseline in vertical lines).
+            if run.vertical_align().alignment == parley::AlignmentBaseline::Middle {
+                return Some(central - self.central_x_height / 2.0);
+            }
+            return Some(central);
+        }
+        let metrics = run.run().font_metrics();
+        Some(run.baseline() - (metrics.ascent.round() - metrics.descent.round()) / 2.0)
+    }
+
     /// Moves a run's fragment box from the alphabetic baseline to the central one.
     fn fragment_shift(self, run: &parley::GlyphRun<'_, TextBrush>) -> Affine {
-        let Some(central) = self.central else {
+        let Some(central) = self.central_for(run) else {
             return Affine::IDENTITY;
         };
         let metrics = run.run().font_metrics();
@@ -131,7 +156,7 @@ impl VerticalLine {
         run: &parley::GlyphRun<'_, TextBrush>,
         source: Option<&str>,
     ) -> (Affine, Option<Affine>) {
-        let Some(central) = self.central else {
+        let Some(central) = self.central_for(run) else {
             return (Affine::IDENTITY, None);
         };
         let metrics = run.run().font_metrics();

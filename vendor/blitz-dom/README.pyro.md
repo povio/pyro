@@ -2710,3 +2710,11 @@ span's (WPT CSS2 `before-after-positioned-001`, whose reference uses spans).
 - Lane F1, `node/svg_css.rs`: author CSS `stop-color`, `stop-opacity`, `paint-order`, `marker-start/-mid/-end`, `flood-color`, `flood-opacity`, `lighting-color`, `clip-rule`, `shape-rendering`, `text-anchor` and `color-interpolation-filters` are written for usvg too (`paint-order`, `clip-rule` and `text-anchor` also inherited from the HTML parent of the `<svg>`). `vector-effect: non-scaling-stroke` is not rendered (usvg lacks it).
 - Lane F1, `stylo_to_kurbo.rs` `offset_transform`: `offset-path: path()` with `offset-distance` (closed paths wrap, open ones clamp) and `offset-rotate` (`auto`/`reverse` follow the tangent) moves a box in the 2D transform chain after `scale` and before `transform` (CSS Motion Path 1). `ray()`, `url()`, basic shapes, `offset-anchor`/`offset-position` and 3D transforms do not use it yet. WPT css/motion `offset-distance-*`, `offset-path-string-*`, `offset-rotate-003`.
 - Lane F2, `BaseDocument::has_scroll_driven_animations`: pyro-render's style-only resolves (style reads) lay the document out when a scroll-driven animation is sampled, since its values depend on the layout (a view timeline subject inserted since the last layout sampled no geometry: WPT `animation-timeline-view-functional-notation` flaked on the Linux gate).
+- Round 4 lane S4, `layout/writing_mode.rs` `compute_orthogonal_child_layout`: an orthogonal box whose containing
+  block's size in the box's inline axis is indefinite resolves its percentages in that axis against the initial
+  containing block (css-writing-modes-3 §7.3; the parent size passed down is the ICB's), and its auto inline size is the
+  available size less its margins in that axis (percentages of the containing block's inline size). WPT
+  css-writing-modes `sizing-orthog-prct-*` and `sizing-orthogonal-percentage-margin-*` (24). Both in block flow only:
+  a grid or flex item's area is left unknown on purpose by intrinsic sizing passes, and an out-of-flow box's available
+  space already excludes its margins (css-grid `grid-item-percentage-sizes-*`, `orthogonal-positioned-grid-items-*`).
+  `pyro-render/tests/vertical_align_orthogonal_sizes.rs`.

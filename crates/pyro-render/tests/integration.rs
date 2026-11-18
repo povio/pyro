@@ -148,5 +148,6 @@ mod transform_3d;
 mod unicode_bidi;
 mod vertical_text_decorations;
 mod vertical_writing_mode;
+mod vertical_align_orthogonal_sizes;
 mod viewport_overflow;
 mod vertical_lines_and_controls;

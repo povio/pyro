@@ -450,3 +450,6 @@ Covered by `crates/pyro-render/tests/text_inline_round4.rs` and `soft_hyphens.rs
   edges again where shaping was not safe to break, so its wrapped lines start at the content edge (macOS Times and
   Helvetica). WPT CSS2 `bidi-002` (RLO run broken after a space), css-text `hyphens-auto-001` (space|W pairs).
 - Round 4 lane F, `shape/upright.rs` + `StyleProperty::Upright`: upright glyphs (CSS `text-orientation: upright`) of a font without vertical metrics advance by the font's height (ascent + descent, HarfBuzz's default vertical advance), their hyphens too (WPT css-values `ch-unit-002`, `-011`).
+- Round 4 lane S4, `layout/line.rs` `GlyphRun::vertical_align` and `GlyphRun::edge_aligned`: a run's own
+  `vertical-align`, and whether its span or one around it is aligned by an edge of its box (`top`, `bottom`,
+  `text-top`, `text-bottom`), for blitz-paint's runs on a central baseline. WPT css-writing-modes `vertical-alignment-*`.

@@ -435,6 +435,36 @@ impl<'a, B: Brush> GlyphRun<'a, B> {
         self.style_index
     }
 
+    /// pyro: the `vertical-align` of the run's own span.
+    pub fn vertical_align(&self) -> crate::style::VerticalAlign {
+        self.style().vertical_align
+    }
+
+    /// pyro: whether the run's span, or a span around it, is aligned by an edge of its box
+    /// (`vertical-align: top | bottom | text-top | text-bottom`) rather than by a baseline. On a
+    /// central baseline (vertical writing modes) such a run keeps the place the line gave it,
+    /// where a baseline-aligned run moves to the line's central baseline.
+    pub fn edge_aligned(&self) -> bool {
+        use crate::style::{AlignmentBaseline, BaselineShift};
+        let styles = self.run.layout.styles();
+        let mut index = self.style_index;
+        loop {
+            let Some(style) = styles.get(usize::from(index)) else {
+                return false;
+            };
+            let align = style.vertical_align;
+            if matches!(align.shift, BaselineShift::Top | BaselineShift::Bottom)
+                || matches!(align.alignment, AlignmentBaseline::TextTop | AlignmentBaseline::TextBottom)
+            {
+                return true;
+            }
+            if style.parent == index {
+                return false;
+            }
+            index = style.parent;
+        }
+    }
+
     /// Returns the offset to the baseline.
     pub fn baseline(&self) -> f32 {
         self.baseline

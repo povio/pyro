@@ -1105,3 +1105,9 @@ frame's whole transform, clipped to the content box (upstream applied the transl
   around them (`positioned_passes` also follows atomic inline boxes, from their parent). `tests/positioned_inline_paint_order.rs`.
 - Lane F1, `render/form_controls.rs` `draw_input`: a checkbox's or radio's accent is `accent-color` (text `color` for `auto`); a (partly) transparent one is precomposed over the used colour scheme's `Canvas` system colour (CSS UI 4 § 6.1). WPT css-ui `accent-color-*`, `transparent-accent-color-*`. Range and progress are not painted yet. A `:visited` rule's `accent-color` still applies (Chrome ignores it; `accent-color-visited` fails).
 - Lane F1: `render/clip_path.rs` `svg_path_to_bezpath` moved to blitz-dom `shape_path.rs` (shared with `shape-outside` float layout).
+- Round 4 lane S4, `src/text.rs` `VerticalLine::central_for`: on a vertical line's central baseline, a run aligned by
+  its box's edge (`vertical-align: top | bottom | text-top | text-bottom`, parley `GlyphRun::edge_aligned`) keeps the
+  place the line gave it (centred on its own fragment box) and does not set the line's central baseline; a `middle`
+  run is centred half the x-height of the run that sets it over the central baseline (Blink aligns `middle` on the
+  central baseline in vertical lines). Before, every run was re-centred on the line's one central baseline. WPT
+  css-writing-modes `vertical-alignment-*` (24 of 24). `pyro-render/tests/vertical_align_orthogonal_sizes.rs`.
