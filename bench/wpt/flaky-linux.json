@@ -24,6 +24,12 @@
    "subtests": [
     "CSS Transitions with transition: all: property <transform> from [matrix(1, 0, 0, 1, 0, -6)] to [matrix(0, 7, -1, 0, 6, 0)] at (2) should be [matrix(-13, 0, 0, -1, 12, 6)]"
    ]
+  },
+  "scroll-animations/css/animation-timeline-view-functional-notation.tentative.html": {
+   "reason": "Timing on the Linux runners (2026-11-18): failed its first run and passed reruns in runs 44393445146 and 44396535093, and the view(inline 50px) change subtest passed in 44396535093 only, with no code change between. Scroll-driven sampling around the first layout (lane F2 is looking for the race). Remove once fixed.",
+   "subtests": [
+    "animation-timeline: view(inline) changes to view(inline 50px), withouttimeline range name"
+   ]
   }
  }
 }
