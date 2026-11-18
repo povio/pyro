@@ -709,8 +709,10 @@ const PREWARM_HTML: &str = r#"<!doctype html><html><body style="font-family: sys
 <p>Aa 0 €<b>b</b><i>i</i> Ωж 中文 العربية</p><input value="x"><button>b</button>
 <svg width="8" height="8"><text x="0" y="8">s</text></svg></body></html>"#;
 
-/// UA rule that settles transitions and animations at their end values.
-const NO_TRANSITIONS: &str = "*, *::before, *::after { transition: none !important; animation: none !important; }";
+/// UA rule that settles transitions and animations at their end values (the page samples them in).
+/// `animation-name` only, not the `animation` shorthand: that would also reset `animation-timeline`
+/// and `animation-range`, which the scroll-driven animations read from these styles.
+const NO_TRANSITIONS: &str = "*, *::before, *::after { transition: none !important; animation-name: none !important; }";
 /// Chrome's `<input type=file>` box ("Choose File · No file chosen"): Blitz
 /// lays the control out with no content to size it by, so it would be
 /// zero-sized and never visible or clickable.
@@ -777,6 +779,9 @@ pub struct Renderer {
     /// Animated values to sample into a page's persistent document at its
     /// next sync ([`Renderer::set_animations`]).
     animations: HashMap<u64, Arc<AnimationFrame>>,
+    /// The page's scroll offsets (scrolled elements by key, the viewport's), for scroll-driven
+    /// animations: handed to the page's document at its next sync or render.
+    timeline_scroll: HashMap<u64, (Vec<(u64, (f64, f64))>, (f64, f64))>,
     pdf_cache: pdf::PdfCache,
     /// Layout queries of persistent documents, by page (present once the
     /// page's document has been laid out for them).
@@ -827,6 +832,7 @@ impl Renderer {
             resources: net::ResourceCache::default(),
             mirrors: HashMap::new(),
             animations: HashMap::new(),
+            timeline_scroll: HashMap::new(),
             pdf_cache: pdf::PdfCache::default(),
             geometry: HashMap::new(),
             sprites: HashMap::new(),
@@ -861,7 +867,17 @@ impl Renderer {
 
     /// Hands `page`'s pending animated values to its document, which restyles
     /// the elements whose values changed at its next resolve.
+    /// The page's scroll offsets for its scroll-driven animations (`BaseDocument::set_timeline_scroll`),
+    /// applied at its next sync or render.
+    pub fn set_timeline_scroll(&mut self, page: u64, elements: Vec<(u64, (f64, f64))>, viewport: (f64, f64)) {
+        self.timeline_scroll.insert(page, (elements, viewport));
+    }
+
     fn apply_animations(&mut self, page: u64) {
+        if let (Some(m), Some((elements, viewport))) = (self.mirrors.get_mut(&page), self.timeline_scroll.remove(&page)) {
+            let map = elements.iter().filter_map(|&(key, o)| Some((m.node(key)?, o))).collect();
+            m.doc.set_timeline_scroll(map, viewport);
+        }
         let Some(m) = self.mirrors.get_mut(&page) else { return };
         let Some(frame) = self.animations.remove(&page) else { return };
         if frame.is_empty() && !m.doc.has_sampled_animations() {
@@ -1000,6 +1016,9 @@ impl Renderer {
             Some(live) => {
                 let stats = self.mirror(snap, live, fetcher);
                 timings.mirror = Some(stats);
+                if let Some(offsets) = &snap.element_scroll {
+                    self.timeline_scroll.insert(live.page, (offsets.clone(), (snap.scroll_x, snap.scroll_y)));
+                }
                 if let Some(frame) = &snap.animations {
                     self.animations.insert(live.page, frame.clone());
                 }

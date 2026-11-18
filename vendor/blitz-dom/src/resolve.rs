@@ -123,6 +123,8 @@ impl BaseDocument {
 
         phase_profile::resolved();
         self.resolve_scroll_animation();
+        // pyro: scroll-driven animations follow the scroll position.
+        let _ = self.resample_scroll_driven();
 
         // Drop scrollbar-activity entries whose fade-out has finished (also
         // sheds entries for removed nodes).
@@ -209,7 +211,12 @@ impl BaseDocument {
             let scroll_states_changed = !container_sizes_changed && self.update_target_current();
             // pyro: a marker's content that reads counters was met: they are evaluated now.
             let marker_counters = std::mem::take(&mut self.marker_counters_pending);
-            if (!container_sizes_changed && !scroll_states_changed && !marker_counters) || pass == 31 {
+            // pyro: scroll-driven animations at this layout (the first sample of a new document
+            // had none: no scroll range yet); a change styles and lays out once more.
+            let timelines_changed = !container_sizes_changed && pass < 2 && self.resample_scroll_driven();
+            if (!container_sizes_changed && !scroll_states_changed && !marker_counters && !timelines_changed)
+                || pass == 31
+            {
                 break;
             }
             if !container_sizes_changed {

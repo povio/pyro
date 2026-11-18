@@ -2468,6 +2468,7 @@ impl Layout {
         }
         self.window_scroll = (new_x, new_y);
         self.scroll_generation = self.scroll_generation.wrapping_add(1);
+        self.push_scroll();
         true
     }
 
@@ -2480,6 +2481,19 @@ impl Layout {
     }
 
     // ----- element scroll ----------------------------------------------------
+
+    /// Changes at every scroll (of the window or an element).
+    pub fn scroll_generation(&self) -> u64 {
+        self.scroll_generation as u64
+    }
+
+    /// Tells the geometry source the scroll offsets now (scroll-driven animations follow them).
+    fn push_scroll(&self) {
+        if let Some(source) = self.external.as_ref() {
+            let window = (self.window_scroll.0 as f64, self.window_scroll.1 as f64);
+            source.set_scroll(self.scrolled_elements(), window);
+        }
+    }
 
     /// `scrollTop` (Element.zig:1757-1761).
     pub fn scroll_top(&self, el: NodeId) -> i32 {
@@ -2543,6 +2557,7 @@ impl Layout {
         }
         self.element_scroll.insert(el, (x, y));
         self.scroll_generation = self.scroll_generation.wrapping_add(1);
+        self.push_scroll();
         self.capture_scroll_anchor(dom, el);
         true
     }
@@ -2664,6 +2679,7 @@ impl Layout {
             if ny != y {
                 self.element_scroll.insert(el, (x, ny));
                 self.scroll_generation = self.scroll_generation.wrapping_add(1);
+        self.push_scroll();
                 moved.push(ScrollTarget::Container(el));
             }
         }
@@ -2736,6 +2752,7 @@ impl Layout {
             if (nx, ny) != (x, y) {
                 self.element_scroll.insert(el, (nx, ny));
                 self.scroll_generation = self.scroll_generation.wrapping_add(1);
+        self.push_scroll();
                 if !moved.contains(&ScrollTarget::Container(el)) {
                     moved.push(ScrollTarget::Container(el));
                 }
@@ -2753,6 +2770,7 @@ impl Layout {
             if clamped != self.window_scroll {
                 self.window_scroll = clamped;
                 self.scroll_generation = self.scroll_generation.wrapping_add(1);
+        self.push_scroll();
                 moved.push(ScrollTarget::Viewport);
             }
         }

@@ -3331,6 +3331,16 @@ mod style_change_tests {
     use crate::{Attribute, BaseDocument, DocumentConfig, qual_name};
     use blitz_traits::shell::{ColorScheme, Viewport};
 
+    #[test]
+    fn animation_timeline_cascades() {
+        let (doc, div) = make_doc(".a { animation: g 1s; animation-timeline: scroll(nearest); scroll-timeline-name: --t }", "atl");
+        let style = doc.nodes[div].primary_styles().unwrap();
+        use style_traits::ToCss;
+        let ui = style.get_ui();
+        assert_eq!(ui.animation_timeline_at(0).to_css_string(), "scroll()");
+        assert_eq!(ui.scroll_timeline_name_at(0).to_css_string(), "--t");
+    }
+
     /// `<html><head><style>{css}</style></head><body><div class=a>`, resolved.
     fn make_doc(css: &str, tag: &str) -> (BaseDocument, NodeId) {
         let mut doc = BaseDocument::new(DocumentConfig {

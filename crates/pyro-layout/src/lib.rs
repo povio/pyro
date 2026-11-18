@@ -271,6 +271,15 @@ pub fn animation_frame(frame: &pyro_dom::animation::AnimationFrame) -> pyro_rend
         before: e.before,
         easing: e.easing.clone(),
         composite: composite(e.composite),
+        timeline: e.timeline.map(|t| b::TimelineDriven {
+            index: t.index,
+            iterations: t.iterations,
+            direction: t.direction,
+            fill: t.fill,
+            delay_ms: t.delay_ms,
+            duration_ms: t.duration_ms,
+            pseudo: t.pseudo,
+        }),
     };
     frame
         .elements
@@ -762,6 +771,14 @@ impl GeometrySource for BlitzGeometry {
         if let Some(t) = t {
             profile::add(0, t.elapsed());
         }
+    }
+
+    fn set_scroll(&self, elements: Vec<(u64, (f64, f64))>, viewport: (f64, f64)) {
+        RENDERER.with(|r| {
+            if let Ok(mut r) = r.try_borrow_mut() {
+                r.get_or_insert_with(Renderer::new).set_timeline_scroll(self.page, elements, viewport);
+            }
+        });
     }
 
     fn sync_styles(&self, dom: &Dom, style: &StyleEngine) {

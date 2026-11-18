@@ -532,6 +532,7 @@ fn walk_at(page: &PageDom, clock: Clock, transitions: bool, visit: &mut dyn FnMu
             before: p.before,
             easing,
             composite: Composite::Replace,
+            timeline: None,
         };
         visit(el, level, effect);
     }
@@ -541,6 +542,55 @@ fn walk_at(page: &PageDom, clock: Clock, transitions: bool, visit: &mut dyn FnMu
     // CSS animations, in each element's `animation-name` order.
     for t in animations.iter().filter(|t| t.is_live()) {
         let Some((own_timing, style)) = css_animation_timing(t) else { continue };
+        // Driven by a scroll or view progress timeline: the layout engine places it at the scroll
+        // position (`TimelineDriven`); its time does not matter.
+        if t.driven && !overrides.contains_key(&t.id()) {
+            let pseudo = Pseudo::of(t.pseudo());
+            let index = t.timing().map_or(0, |timing| timing.index);
+            let effect = Effect {
+                keyframes: Keyframes::Css {
+                    name: Arc::from(t.name()),
+                    easing: style.easing.as_deref().map(Arc::from),
+                    composite: Composite::parse(&style.composition).unwrap_or_default(),
+                },
+                progress: 0.0,
+                before: false,
+                easing: None,
+                composite: Composite::Replace,
+                timeline: Some(pyro_dom::animation::TimelineDriven {
+                    index,
+                    iterations: own_timing.iterations,
+                    direction: match style.direction.as_str() {
+                        "reverse" => 1,
+                        "alternate" => 2,
+                        "alternate-reverse" => 3,
+                        _ => 0,
+                    },
+                    fill: match style.fill.as_str() {
+                        "forwards" => 1,
+                        "backwards" => 2,
+                        "both" => 3,
+                        _ => 0,
+                    },
+                    delay_ms: own_timing.delay,
+                    duration_ms: match t.timing().is_some_and(|timing| timing.duration_auto) {
+                        true => None,
+                        false => Some(own_timing.duration),
+                    },
+                    pseudo: match pseudo {
+                        Pseudo::Before => 1,
+                        Pseudo::After => 2,
+                        _ => 0,
+                    },
+                }),
+            };
+            let level = match pseudo.generated_index() {
+                Some(i) => Level::PseudoAnimation(i),
+                None => Level::Animation,
+            };
+            visit(t.el(), level, effect);
+            continue;
+        }
         let (local, rate, timing, held) = match overrides.get(&t.id()) {
             Some(s) => match s.current(now) {
                 Some(local) => (local, s.rate, s.timing.clone(), s.hold.is_some() || s.rate == 0.0),
@@ -559,6 +609,7 @@ fn walk_at(page: &PageDom, clock: Clock, transitions: bool, visit: &mut dyn FnMu
                 before: p.before,
                 easing: s.easing.clone(),
                 composite: s.composite,
+                timeline: None,
             },
             _ => Effect {
                 keyframes: Keyframes::Css {
@@ -571,6 +622,7 @@ fn walk_at(page: &PageDom, clock: Clock, transitions: bool, visit: &mut dyn FnMu
                 // The object's effect easing (`linear` unless script set one).
                 easing: overrides.get(&t.id()).and_then(|s| s.easing.clone()),
                 composite: Composite::Replace,
+                timeline: None,
             },
         };
         let el = overrides.get(&t.id()).and_then(|s| s.el).unwrap_or(t.el());
@@ -602,6 +654,7 @@ fn walk_at(page: &PageDom, clock: Clock, transitions: bool, visit: &mut dyn FnMu
             before: p.before,
             easing: s.easing.clone(),
             composite: s.composite,
+            timeline: None,
         };
         // An effect on a pseudo-element: its values in effect only.
         let level = match (s.pseudo, level) {
@@ -624,7 +677,14 @@ pub(crate) fn stamp(page: &PageDom, now: f64) -> u64 {
     let moving = walk(page, now, false, &mut |_, _, _| {});
     // The `<animate>` elements as last read (after the walk read them).
     let generation = page.animation_events.generation.get() ^ crate::smil::version(page).rotate_left(29);
-    let generation = generation.wrapping_mul(0x9E37_79B9_7F4A_7C15).rotate_left(17);
+    let mut generation = generation.wrapping_mul(0x9E37_79B9_7F4A_7C15).rotate_left(17);
+    // Scroll-driven animations move with the scroll position: each scroll is a new frame.
+    let driven = page.animation_events.try_timelines().is_some_and(|(animations, _)| animations.iter().any(|t| t.driven && t.is_live()));
+    if driven {
+        if let Some(layout) = page.try_layout() {
+            generation ^= layout.scroll_generation().wrapping_mul(0xD6E8_FEB8_6659_FD93).rotate_left(7);
+        }
+    }
     if moving {
         generation ^ ((now / FRAME_MS).floor() as i64 as u64).wrapping_add(1)
     } else {

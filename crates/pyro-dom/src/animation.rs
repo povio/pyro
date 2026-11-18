@@ -72,6 +72,26 @@ pub struct Effect {
     /// The effect's easing (`None`: `linear`).
     pub easing: Option<Arc<str>>,
     pub composite: Composite,
+    /// A CSS animation driven by a scroll or view progress timeline: the layout engine takes its
+    /// progress from the scroll position (`progress` is unused).
+    pub timeline: Option<TimelineDriven>,
+}
+
+/// A scroll-driven CSS animation's index in its target's `animation-*` lists and its timing.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TimelineDriven {
+    pub index: usize,
+    pub iterations: f64,
+    /// 0 `normal`, 1 `reverse`, 2 `alternate`, 3 `alternate-reverse`.
+    pub direction: u8,
+    /// 0 `none`, 1 `forwards`, 2 `backwards`, 3 `both`.
+    pub fill: u8,
+    /// `animation-delay` (ms) and `animation-duration` (ms; `None`: `auto`): on a progress-based
+    /// timeline they are shares of the whole (Web Animations 2, "converting time values").
+    pub delay_ms: f64,
+    pub duration_ms: Option<f64>,
+    /// 0 the element, 1 its `::before`, 2 its `::after`.
+    pub pseudo: u8,
 }
 
 /// One element's effects, each list in composite order: `transitions` at the

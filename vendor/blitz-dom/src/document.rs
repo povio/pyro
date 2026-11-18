@@ -525,6 +525,11 @@ pub struct BaseDocument {
     /// finds an element's entry, so one restyled twice keeps its first old and
     /// its last new style.
     pub(crate) style_changes: Vec<StyleChange>,
+    /// pyro: the page's scroll offsets for scroll-driven animations (`scroll_timeline`): its
+    /// scrolled elements' and the viewport's. Layout queries do not move the nodes' own scroll
+    /// offsets (a capture does), so scroll timelines read the page's here.
+    /// `None` (a document made for one capture): the nodes' own offsets and the viewport's.
+    pub(crate) timeline_scroll: Option<(std::collections::HashMap<NodeId, (f64, f64)>, (f64, f64))>,
     pub(crate) style_change_index: HashMap<(NodeId, u8), usize>,
     pub(crate) track_style_changes: bool,
     /// pyro: the boxes that left a container's list (`Node::layout_child_of`) during
@@ -840,6 +845,7 @@ impl BaseDocument {
             oof_hoisted: HashSet::new(),
             sticky_nodes: HashSet::new(),
             style_changes: Vec::new(),
+            timeline_scroll: Default::default(),
             style_change_index: HashMap::new(),
             track_style_changes: false,
             left_layout_lists: Vec::new(),
@@ -1996,6 +2002,11 @@ impl BaseDocument {
     /// the first replacement and after the last: a transition's before-change
     /// and after-change styles. An element styled for the first time, or whose
     /// styles were dropped, is no change. O(elements restyled), not a scan.
+    /// pyro: the page's scroll offsets that scroll-driven animations follow (`timeline_scroll`).
+    pub fn set_timeline_scroll(&mut self, elements: std::collections::HashMap<NodeId, (f64, f64)>, viewport: (f64, f64)) {
+        self.timeline_scroll = Some((elements, viewport));
+    }
+
     pub fn take_style_changes(&mut self) -> Vec<StyleChange> {
         self.style_change_index.clear();
         std::mem::take(&mut self.style_changes)

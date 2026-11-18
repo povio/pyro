@@ -72,6 +72,7 @@ fn css(name: &str, easing: Option<&str>, progress: f64) -> Effect {
         before: false,
         easing: None,
         composite: Composite::Replace,
+        timeline: None,
     }
 }
 
@@ -92,6 +93,7 @@ fn text(frames: &[(f64, &str)], progress: f64, easing: Option<&str>) -> Effect {
         before: false,
         easing: easing.map(Arc::from),
         composite: Composite::Replace,
+        timeline: None,
     }
 }
 

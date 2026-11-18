@@ -1342,7 +1342,7 @@ diff -ruN a/properties/properties.mako.rs b/properties/properties.mako.rs
      pub fn pseudo(&self) -> Option<PseudoElement> {
 diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
 --- a/properties/shorthands.rs	2026-11-11 19:55:57
-+++ b/properties/shorthands.rs	2026-11-18 17:23:33
++++ b/properties/shorthands.rs	2026-11-18 18:23:06
 @@ -542,7 +542,6 @@
      }
  }
@@ -1449,19 +1449,29 @@ diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
  pub mod animation_range {
      pub use crate::properties::generated::shorthands::animation_range::*;
  
-@@ -3680,20 +3685,10 @@
+@@ -3399,8 +3404,9 @@
+                     dest.write_str(", ")?;
+                 }
  
-                 if has_repeat {
+-                let has_duration = !self.animation_duration.0[i].is_auto()
+-                    && !self.animation_duration.0[i].is_zero();
++                // pyro: the initial duration is `auto` (css-animations-2): `0s` is serialized, so
++                // that the value round-trips (a scroll-driven animation's `0s` is not `auto`).
++                let has_duration = !self.animation_duration.0[i].is_auto();
+                 let has_timing_function = !self.animation_timing_function.0[i].is_ease();
+                 let has_delay = !self.animation_delay.0[i].is_zero();
+                 let has_iteration_count = !self.animation_iteration_count.0[i].is_one();
+@@ -3682,18 +3688,8 @@
                      writer.item(repeat)?;
--                }
--
+                 }
+ 
 -                #[cfg(feature = "gecko")]
 -                {
 -                    if has_origin || (has_clip && *clip != Clip::NoClip) {
 -                        writer.item(origin)?;
 -                    }
-                 }
- 
+-                }
+-
 -                #[cfg(feature = "servo")]
 -                {
 -                    if has_origin || has_clip {

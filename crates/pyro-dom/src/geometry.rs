@@ -224,6 +224,9 @@ pub trait GeometrySource {
     /// the next [`GeometrySource::sync`] ([`GeometrySource::element_style`]
     /// answers from it).
     fn sync_styles(&self, _dom: &Dom, _style: &crate::style::StyleEngine) {}
+    /// The page scrolled: its scrolled elements' offsets (by key) and the viewport's, which
+    /// scroll-driven animations follow.
+    fn set_scroll(&self, _elements: Vec<(u64, (f64, f64))>, _viewport: (f64, f64)) {}
     /// One element's box as of the last sync (`None`: not rendered).
     fn element_box(&self, key: u64) -> Option<ExternalBox>;
     /// The engine's resolved value of one element's `property` as of the last sync (`None`: the engine

@@ -3404,8 +3404,9 @@ pub mod animation {
                     dest.write_str(", ")?;
                 }
 
-                let has_duration = !self.animation_duration.0[i].is_auto()
-                    && !self.animation_duration.0[i].is_zero();
+                // pyro: the initial duration is `auto` (css-animations-2): `0s` is serialized, so
+                // that the value round-trips (a scroll-driven animation's `0s` is not `auto`).
+                let has_duration = !self.animation_duration.0[i].is_auto();
                 let has_timing_function = !self.animation_timing_function.0[i].is_ease();
                 let has_delay = !self.animation_delay.0[i].is_zero();
                 let has_iteration_count = !self.animation_iteration_count.0[i].is_one();

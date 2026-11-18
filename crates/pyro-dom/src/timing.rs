@@ -222,6 +222,10 @@ fn has_parts(dom: &Dom, el: NodeId, names: &[String]) -> bool {
 #[derive(Clone, Debug, PartialEq)]
 pub struct AnimationTiming {
     pub name: String,
+    /// `animation-duration: auto` (which `duration_ms` shows as 0).
+    pub duration_auto: bool,
+    /// Its index in the element's `animation-name` list (the other `animation-*` lists repeat to it).
+    pub index: usize,
     pub duration_ms: f64,
     pub delay_ms: f64,
     /// `f64::INFINITY` for `infinite`.
@@ -673,6 +677,10 @@ impl TimingRules {
                 let easing = lists.item(Longhand::AnimationTimingFunction, i);
                 out.animations.push(AnimationTiming {
                     name: name.clone(),
+                    // (Not declared: `auto`, css-animations-2's initial value; shown as `0s`.)
+                    duration_auto: lists.get(Longhand::AnimationDuration).is_none()
+                        || lists.item(Longhand::AnimationDuration, i) == "auto",
+                    index: i,
                     duration_ms: time_ms(lists.item(Longhand::AnimationDuration, i)).unwrap_or(0.0).max(0.0),
                     delay_ms: time_ms(lists.item(Longhand::AnimationDelay, i)).unwrap_or(0.0),
                     iterations: match lists.item(Longhand::AnimationIterationCount, i) {
@@ -752,6 +760,7 @@ impl TimingRules {
 /// are not one).
 fn shown(longhand: Longhand, item: &str) -> String {
     match longhand {
+        Longhand::AnimationDuration if item == "auto" => "0s".to_owned(),
         Longhand::AnimationDuration
         | Longhand::AnimationDelay
         | Longhand::TransitionDuration
@@ -865,6 +874,14 @@ pub type StyleSnapshot = style::servo_arc::Arc<style::properties::ComputedValues
 pub fn generates_pseudo_box(style: &StyleSnapshot) -> bool {
     use style::values::computed::counters::Content;
     !displays_none(style) && !matches!(style.get_counters().content, Content::Normal | Content::None)
+}
+
+/// Whether the animation at `index` of `style` is driven by a scroll or view progress timeline
+/// (`animation-timeline` other than `auto`): its progress follows a scroll position.
+pub fn timeline_driven(style: &StyleSnapshot, index: usize) -> bool {
+    let ui = style.get_ui();
+    let count = ui.animation_timeline_count();
+    count > 0 && !ui.animation_timeline_at(index % count).is_auto()
 }
 
 pub fn displays_none(style: &StyleSnapshot) -> bool {
@@ -1219,7 +1236,9 @@ fn computed_item(longhand: Longhand, item: &str) -> String {
     let lower = item.to_ascii_lowercase();
     let inner = lower.strip_prefix("calc(").and_then(|v| v.strip_suffix(')')).map(str::trim).unwrap_or(&lower);
     match longhand {
-        Longhand::AnimationDuration if inner == "auto" => "0s".to_owned(),
+        // (`auto` is kept: a scroll-driven animation's duration fills its range; `shown` and the
+        // time-based timing read it as 0s.)
+        Longhand::AnimationDuration if inner == "auto" => "auto".to_owned(),
         Longhand::AnimationDuration
         | Longhand::AnimationDelay
         | Longhand::TransitionDuration

@@ -115,6 +115,77 @@ pub struct Effect {
     pub easing: Option<Arc<str>>,
     /// The effect's composite operation (keyframes without one of their own).
     pub composite: Composite,
+    /// pyro: a CSS animation driven by a scroll or view progress timeline (`animation-timeline`):
+    /// its progress comes from the scroll position at each sample (`scroll_timeline`), not from
+    /// `progress`.
+    pub timeline: Option<TimelineDriven>,
+}
+
+/// pyro: what a scroll-driven CSS animation's progress needs besides the scroll position: the index
+/// of the animation in its target's `animation-*` lists, and its timing.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TimelineDriven {
+    pub index: usize,
+    pub iterations: f64,
+    /// 0 `normal`, 1 `reverse`, 2 `alternate`, 3 `alternate-reverse`.
+    pub direction: u8,
+    /// 0 `none`, 1 `forwards`, 2 `backwards`, 3 `both`.
+    pub fill: u8,
+    /// `animation-delay` (ms) and `animation-duration` (ms; `None`: `auto`): on a progress-based
+    /// timeline they are shares of the whole (Web Animations 2, "converting time values").
+    pub delay_ms: f64,
+    pub duration_ms: Option<f64>,
+    /// On the element's `::before` (1) or `::after` (2), or the element itself (0).
+    pub pseudo: u8,
+}
+
+impl TimelineDriven {
+    /// The iteration progress at `p` through the attachment range, and the before flag; `None`
+    /// outside the range without a fill that covers it.
+    fn iteration_progress(&self, p: f64) -> Option<(f64, bool)> {
+        let n = if self.iterations.is_finite() { self.iterations.max(0.0) } else { 1.0 };
+        let backwards = self.fill & 2 != 0;
+        let forwards = self.fill & 1 != 0;
+        // The start delay and the iteration duration as shares of the timeline: an `auto` duration
+        // fills it (no delay); times are proportions of delay + duration x iterations.
+        let (delay, iteration) = match self.duration_ms {
+            None => (0.0, if n > 0.0 { 1.0 / n } else { 0.0 }),
+            Some(duration) => {
+                let total = self.delay_ms + duration * n;
+                if total > 0.0 { (self.delay_ms / total, duration / total) } else { (0.0, 0.0) }
+            }
+        };
+        let active = iteration * n;
+        let local = p - delay;
+        let overall = if local < 0.0 && !(active == 0.0 && p >= 0.0) {
+            if !backwards {
+                return None;
+            }
+            0.0
+        } else if local > active || (active == 0.0 && local >= 0.0) || (active == 0.0 && p >= 0.0) {
+            if !forwards {
+                return None;
+            }
+            n
+        } else {
+            local / iteration
+        };
+        let mut iteration = overall.floor();
+        let mut fraction = overall - iteration;
+        if fraction == 0.0 && overall > 0.0 && overall >= n {
+            iteration -= 1.0;
+            fraction = 1.0;
+        }
+        let odd = iteration as i64 % 2 == 1;
+        let reversed = match self.direction {
+            1 => true,
+            2 => odd,
+            3 => !odd,
+            _ => false,
+        };
+        let fraction = if n == 0.0 { 0.0 } else { fraction };
+        Some((if reversed { 1.0 - fraction } else { fraction }, local < 0.0))
+    }
 }
 
 /// The effects of one element, each list in composite order: `transitions`
@@ -196,6 +267,9 @@ impl SampledAnimations {
 
 #[derive(Default)]
 struct ElementState {
+    /// pyro: the effects as the page gave them (scroll-driven ones with their timeline).
+    given: ElementEffects,
+    /// The effects in effect now: the given ones, scroll-driven ones at their progress now.
     effects: ElementEffects,
     /// Keyframes resolved against `base`, by effect keyframes.
     resolved: Vec<(Keyframes, Resolved)>,
@@ -279,7 +353,8 @@ impl BaseDocument {
                 continue;
             }
             let mut element = state.elements.remove(&id).unwrap_or_default();
-            element.effects = effects;
+            element.effects = self.drive(id, &effects);
+            element.given = effects;
             element.resolved.retain(|(k, _)| element.effects.all().any(|e| e.keyframes == *k));
             for (state, effects) in element.pseudos.iter_mut().zip(&element.effects.pseudos) {
                 state.resolved.retain(|(k, _)| effects.all().any(|e| e.keyframes == *k));
@@ -603,6 +678,96 @@ impl BaseDocument {
             data.may_have_animations.store(true, Ordering::Relaxed);
         }
         node.set_restyle_hint(RestyleHint::RESTYLE_SELF);
+    }
+}
+
+impl BaseDocument {
+    /// pyro: `effects` with each scroll-driven one at its progress now (`scroll_timeline`), and
+    /// those outside their range without a fill (or on an inactive timeline) left out.
+    fn drive(&self, id: NodeId, effects: &ElementEffects) -> ElementEffects {
+        let driven = |e: &Effect| e.timeline.is_some();
+        let any = effects.animations.iter().any(driven)
+            || effects.pseudos.iter().any(|p| p.animations.iter().any(driven));
+        if !any {
+            return effects.clone();
+        }
+        let node = self.get_node(id);
+        let style_of = |pseudo: u8| -> Option<ServoArc<ComputedValues>> {
+            let node = node?;
+            match pseudo {
+                0 => node.primary_styles().map(|s| (*s).clone()),
+                i => {
+                    let data = node.borrow_data()?;
+                    data.styles.pseudos.get(&PSEUDOS[usize::from(i - 1)]).cloned()
+                }
+            }
+        };
+        let place = |list: &[Effect]| -> Vec<Effect> {
+            list.iter()
+                .filter_map(|e| match e.timeline {
+                    None => Some(e.clone()),
+                    Some(t) => {
+                        let style = style_of(t.pseudo)?;
+                        let p = crate::scroll_timeline::progress(self, id, &style, t.index)?;
+                        let (progress, before) = t.iteration_progress(p)?;
+                        Some(Effect { progress, before, ..e.clone() })
+                    }
+                })
+                .collect()
+        };
+        let mut out = effects.clone();
+        out.animations = place(&effects.animations);
+        for (o, p) in out.pseudos.iter_mut().zip(&effects.pseudos) {
+            o.animations = place(&p.animations);
+        }
+        out
+    }
+
+    /// pyro: at each resolve, the scroll-driven animations at the scroll position now (scrolling
+    /// changes no page state the page's frame would show): elements whose values change are
+    /// marked for restyle.
+    /// `true`: an element's values changed (marked for restyle).
+    pub(crate) fn resample_scroll_driven(&mut self) -> bool {
+        if self.sampled_animations.is_empty() {
+            return false;
+        }
+        let mut changed = false;
+        let mut state = std::mem::take(&mut self.sampled_animations);
+        let ids: Vec<NodeId> = state
+            .elements
+            .iter()
+            .filter(|(_, e)| {
+                e.given.animations.iter().any(|x| x.timeline.is_some())
+                    || e.given.pseudos.iter().any(|p| p.animations.iter().any(|x| x.timeline.is_some()))
+            })
+            .map(|(id, _)| *id)
+            .collect();
+        for id in ids {
+            let element = state.elements.get_mut(&id).unwrap();
+            let effects = self.drive(id, &element.given);
+            if effects == element.effects {
+                continue;
+            }
+            element.effects = effects;
+            let resolved = element.base.is_some()
+                && element.effects.all().all(|e| element.resolved.iter().any(|(k, _)| *k == e.keyframes))
+                && element.pseudos.iter().zip(&element.effects.pseudos).all(|(s, e)| e.is_empty() || s.resolved_all(e));
+            changed = true;
+            if !resolved {
+                state.pending = true;
+                if let Some(node) = self.nodes.get_mut(id) {
+                    node.set_restyle_hint(RestyleHint::RESTYLE_SELF);
+                }
+                continue;
+            }
+            let sampled = sample(element, &mut state.easings);
+            if sampled != element.sampled {
+                element.sampled = sampled;
+                self.apply_sampled(id, element.sampled.clone());
+            }
+        }
+        self.sampled_animations = state;
+        changed
     }
 }
 

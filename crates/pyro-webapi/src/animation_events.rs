@@ -72,6 +72,9 @@ pub(crate) struct Timeline {
     el: NodeId,
     /// Its target's `::before`/`::after` (`None`: the element itself).
     pseudo: Option<PseudoElement>,
+    /// A CSS animation driven by a scroll or view progress timeline: no time-based events, and the
+    /// layout engine takes its progress from the scroll position.
+    pub(crate) driven: bool,
     /// The animation's name, or the transitioning longhand.
     name: String,
     /// Cleared to cancel the events not fired yet.
@@ -518,6 +521,8 @@ fn update(page: &Rc<PageDom>, defer: bool) {
                 // A change of how it plays: paused holds its local time,
                 // running again goes on from there, and its events follow
                 // (unless script controls it: then its object's state does).
+                // (Its timeline may have changed: `animation-timeline` is not part of the run.)
+                known.driven = timeline_driven_now(&style_of_target(style, &dom, el, pseudo), animation.index);
                 let timing = known.timing.as_mut().unwrap();
                 if timing.style != animation.style {
                     let replan = match (known.paused_at, animation.style.paused) {
@@ -551,6 +556,7 @@ fn update(page: &Rc<PageDom>, defer: bool) {
                 iterations: animation.iterations,
                 el,
                 pseudo,
+                driven: timeline_driven_now(&style_of_target(style, &dom, el, pseudo), animation.index),
                 name: animation.name.clone(),
                 live: Rc::new(Cell::new(true)),
                 ended: Rc::new(Cell::new(false)),
@@ -564,8 +570,11 @@ fn update(page: &Rc<PageDom>, defer: bool) {
                 styles: None,
             };
             // Held at 0 when paused: it starts only where a negative delay
-            // put it in its active phase already, and goes no further.
-            plan_animation(&mut timeline, 0.0, 1.0, paused, &mut planned);
+            // put it in its active phase already, and goes no further. (A scroll-driven one has
+            // no time-based events.)
+            if !timeline.driven {
+                plan_animation(&mut timeline, 0.0, 1.0, paused, &mut planned);
+            }
             animations.push(timeline);
         }
         drop(animations);
@@ -1263,6 +1272,7 @@ fn start_transitions_of(
                 iterations: 1.0,
                 el,
                 pseudo,
+                driven: false,
                 name: longhand.to_owned(),
                 live: Rc::new(Cell::new(true)),
                 ended: Rc::new(Cell::new(false)),
@@ -1380,4 +1390,21 @@ fn pseudo_name(pseudo: Option<PseudoElement>) -> &'static str {
 /// Whether `el` is not rendered (`display: none` or no style): its pseudo-elements have no boxes.
 fn displays_none_or_hidden(dom: &pyro_dom::Dom, style: &pyro_dom::style::StyleEngine, el: NodeId) -> bool {
     style.stylo_style(dom, el).is_none_or(|s| displays_none(&s))
+}
+
+/// The style of an animation's target: the element's, or its `pseudo`'s.
+fn style_of_target(
+    style: &pyro_dom::style::StyleEngine,
+    dom: &pyro_dom::Dom,
+    el: NodeId,
+    pseudo: Option<PseudoElement>,
+) -> Option<StyleSnapshot> {
+    match pseudo {
+        None => style.stylo_style(dom, el),
+        Some(p) => style.pseudo_style(dom, el, p, false),
+    }
+}
+
+fn timeline_driven_now(style: &Option<StyleSnapshot>, index: usize) -> bool {
+    style.as_ref().is_some_and(|s| pyro_dom::timing::timeline_driven(s, index))
 }

@@ -328,6 +328,7 @@ pub(crate) fn walk(page: &PageDom, now: Option<f64>, visit: &mut dyn FnMut(NodeI
             before: false,
             easing: None,
             composite: Composite::Replace,
+            timeline: None,
         };
         let constant = |v: &str| {
             let frame = |offset| TextKeyframe { offset, easing: None, composite: None, declarations: declaration(v) };

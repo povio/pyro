@@ -79,6 +79,8 @@ mod direction;
 mod shadow;
 pub use shadow::{ASSIGNED_SLOT_ATTR, SHADOW_HOST_ATTR};
 /// pyro: SVG reference cycles usvg does not break.
+/// pyro: scroll-driven animations (`animation-timeline`).
+pub mod scroll_timeline;
 #[cfg(feature = "svg")]
 mod svg_refs;
 /// Implementations that interact with servo's style engine
