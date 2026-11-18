@@ -2714,7 +2714,7 @@ fn global_event_handler_attributes() {
     // First/last entries of each single-source family: IDL accessor and
     // content-attribute recognition agree.
     assert_eq!(
-        eval(r, "['abort','transitioncancel'].every(t=>{const x=document.createElement('p'); x.setAttribute('on'+t,'1'); return ('on'+t) in x && typeof x['on'+t]==='function'}) && ['afterprint','unload'].every(t=>('on'+t) in window) && ['readystatechange','visibilitychange'].every(t=>('on'+t) in document) && !('onunload' in document.body)"),
+        eval(r, "['abort','transitioncancel'].every(t=>{const x=document.createElement('p'); x.setAttribute('on'+t,'1'); return ('on'+t) in x && typeof x['on'+t]==='function'}) && ['afterprint','unload'].every(t=>('on'+t) in window) && ['readystatechange','visibilitychange'].every(t=>('on'+t) in document) && ('onunload' in document.body) && document.body.onunload === null"),
         "true"
     );
     let out = eval(
@@ -6449,6 +6449,25 @@ fn invalid_urls_throw_from_send_beacon_and_window_open_and_response_form_data_pa
     eval(&e.main, "globalThis.got='';new Response('a=1&b=%F0%9F%90%BC+c&a',{headers:{'Content-Type':'application/x-www-form-urlencoded;charset=shift_jis'}}).formData().then(f=>{got=[...f].join('|')+'|'+(f instanceof FormData)});new Response('a=1').formData().catch(x=>{got2=x.name})");
     assert_eq!(eval(&e.main, "got"), "a,1|b,\u{1F43C} c|a,|true");
     assert_eq!(eval(&e.main, "got2"), "TypeError");
+    e.page.dispose();
+}
+
+/// `<body>`'s WindowEventHandlers and window-reflecting handlers forward to
+/// the Window; a windowless body's are null and ignore sets
+/// (html/webappapis/scripting/events/event-handler-attributes-*body*).
+#[test]
+fn body_window_event_handlers_forward_to_the_window() {
+    let e = env("<body></body>");
+    assert_eq!(
+        eval(
+            &e.main,
+            "const f = () => 0, g = () => 1; document.body.onpopstate = f; window.onload = g;
+             const wb = document.implementation.createHTMLDocument('').body; wb.onmessage = f; wb.onload = f;
+             [window.onpopstate === f, document.body.onload === g, wb.onmessage, wb.onload,
+              document.createElement('div').onload === null].join()"
+        ),
+        "true,true,,,true"
+    );
     e.page.dispose();
 }
 

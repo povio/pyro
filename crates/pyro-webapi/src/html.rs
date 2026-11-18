@@ -1600,6 +1600,7 @@ simple_class!(HtmlHtmlElement, "HTMLHtmlElement", HtmlElement, |def| {
 });
 simple_class!(HtmlHeadElement, "HTMLHeadElement", HtmlElement);
 simple_class!(HtmlBodyElement, "HTMLBodyElement", HtmlElement, |def| {
+    crate::handlers::define_window_reflecting(def);
     reflect_str_nn!(def, "text", "text");
     reflect_str_nn!(def, "link", "link");
     reflect_str_nn!(def, "vLink", "vlink");
@@ -3218,6 +3219,7 @@ simple_class!(HtmlMarqueeElement, "HTMLMarqueeElement", HtmlElement, |def| {
     reflect_str!(def, "width", "width");
 });
 simple_class!(HtmlFrameSetElement, "HTMLFrameSetElement", HtmlElement, |def| {
+    crate::handlers::define_window_reflecting(def);
     reflect_str!(def, "cols", "cols");
     reflect_str!(def, "rows", "rows");
 });

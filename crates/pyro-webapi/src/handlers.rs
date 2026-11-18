@@ -140,6 +140,46 @@ where
     window_events!(handler_accessors!(def, window_target::<W::Data>,));
 }
 
+/// The Window's handlers for a `<body>`/`<frameset>` of the page's document;
+/// `None` for one in a document without a browsing context.
+fn body_window(n: &crate::node::NodeData) -> Option<EventTargetData> {
+    let page = n.page();
+    if page.dom.borrow().node_document(n.id).ok() != Some(page.document()) {
+        return None;
+    }
+    page.window_target().map(|w| EventTargetData::window(page, w))
+}
+
+macro_rules! window_reflecting_accessors {
+    ($def:expr, [$($ty:literal),* $(,)?]) => {
+        $(
+            $def.accessor(
+                concat!("on", $ty),
+                |s, n| match body_window(n) {
+                    Some(target) => event_handler(s, &target, $ty),
+                    None => Ok(s.null()),
+                },
+                |s, n, v| match body_window(n) {
+                    Some(target) => set_event_handler(s, &target, $ty, v),
+                    None => Ok(()),
+                },
+            );
+        )*
+    };
+}
+
+/// `<body>` and `<frameset>`: WindowEventHandlers and the Window-reflecting
+/// body element event handler set (blur, error, focus, load, resize,
+/// scroll) shadow the element's own handlers and forward to the Window; in a
+/// document without one they are null and setting them does nothing.
+pub(crate) fn define_window_reflecting<C>(def: &mut ClassDef<C>)
+where
+    C: JsClass<Data = crate::node::NodeData>,
+{
+    window_reflecting_accessors!(def, ["blur", "error", "focus", "load", "resize", "scroll"]);
+    window_events!(window_reflecting_accessors!(def,));
+}
+
 /// `setAttribute('on<type>', body)` on an element: compiles and installs the
 /// handler; `None` (removeAttribute) clears it.
 pub(crate) fn content_attribute_changed(

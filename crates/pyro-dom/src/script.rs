@@ -432,7 +432,8 @@ impl Dom {
         let i = self.check(script)?;
         let e = self.n(i).element().ok_or(DomError::Type("not an element"))?;
         let ty = e.attr_local(&local_name!("type"));
-        let lang = e.attr_local(&local_name!("language"));
+        // `language` is an attribute of HTML's `<script>` only: an SVG one ignores it.
+        let lang = if e.is_html() { e.attr_local(&local_name!("language")) } else { None };
         let kind = match ty {
             Some(t) if !t.is_empty() => {
                 let t = t.trim().to_ascii_lowercase();
@@ -506,5 +507,31 @@ impl Dom {
         let e = self.n_mut(i).element_mut().ok_or(DomError::Type("not an element"))?;
         e.flags &= !element_flags::PARSER_INSERTED;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod language_attribute_tests {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    use super::ScriptKind;
+    use crate::parse::{parse_document, DomRef};
+    use crate::Dom;
+
+    /// `language` makes an HTML `<script>` a data block, never an SVG one
+    /// (html/semantics/scripting-1/the-script-element/script-type-and-language-js-svg.svg).
+    #[test]
+    fn only_html_scripts_read_language() {
+        let dom_ref: DomRef = Rc::new(RefCell::new(Dom::new()));
+        let doc = parse_document(
+            &dom_ref,
+            "http://test/",
+            "<!doctype html><script id=h language=javascript1.9></script><svg><script id=s language=javascript1.9></script></svg>",
+        );
+        let dom = dom_ref.borrow();
+        let kind = |id: &str| dom.script_info(dom.get_element_by_id(doc, id).unwrap().unwrap()).unwrap().kind;
+        assert_eq!(kind("h"), ScriptKind::Data);
+        assert_eq!(kind("s"), ScriptKind::Classic);
     }
 }
