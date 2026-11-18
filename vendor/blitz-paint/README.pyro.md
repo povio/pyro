@@ -1078,3 +1078,4 @@ frame's whole transform, clipped to the content box (upstream applied the transl
 - Round 4 lane F, `render.rs`: an inline `<svg>` with selected text paints `inline_svg_with_selection`'s source (not in recording paints).
 - Round 4 lane F, `render.rs`: upright vertical lines take the highlight path too (`::selection` colours; WPT css-pseudo `active-selection-031`).
 - Round 4 lane F, `highlight.rs`: the parts of unselected glyphs that reach into a selection stretch (italic overhang) are painted before its background, as Chromium (WPT css-pseudo `selection-background-painting-order`).
+- Round 4 lane F, `highlight.rs`: a line's shadows paint before all its text (the originating text's outside the stretches, then each highlight's), and text in several highlights casts every layer's shadows, the bottom layer's on top (WPT css-pseudo `highlight-painting-shadows-horizontal`, `-vertical`). The overhang pass draws glyphs only, on horizontal lines.

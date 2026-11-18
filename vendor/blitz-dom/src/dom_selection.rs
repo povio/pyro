@@ -165,7 +165,6 @@ impl BaseDocument {
     ) -> Option<String> {
         use style::properties::{PropertyDeclaration, PropertyDeclarationId};
         use style::stylesheets::Origin;
-        use style_traits::ToCss;
         let guard = self.guard.read();
         for node in style.rules().self_and_ancestors() {
             if node.cascade_level().origin().origin() == Origin::UserAgent {

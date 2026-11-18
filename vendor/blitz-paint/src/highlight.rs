@@ -116,7 +116,10 @@ impl HighlightCache {
         let mut backgrounds = SmallVec::new();
         let mut color: Option<Color> = None;
         let mut top: Option<LayerStyle> = None;
-        let mut shadow_style: Option<Style> = None;
+        // pyro: each layer's shadows, the bottom layer's first (on top, as Chromium stacks them:
+        // the reference lists the target text's shadow before the selection's; WPT css-pseudo
+        // `highlight-painting-shadows-horizontal`).
+        let mut shadows: Vec<crate::text::TextShadow> = Vec::new();
         for layer in 0..self.layers.len() {
             if mask & (1 << layer) == 0 {
                 continue;
@@ -125,7 +128,12 @@ impl HighlightCache {
             if let Some(c) = style.color {
                 color = Some(c);
             }
-            shadow_style = style.style.clone();
+            if let Some(layer_style) = &style.style {
+                shadows.extend(crate::text::highlight_shadows(
+                    layer_style,
+                    color.unwrap_or_else(|| own_color(doc, node_id)),
+                ));
+            }
             backgrounds.push(match style.background {
                 Background::Color(c) => c,
                 Background::Current => color.unwrap_or_else(|| own_color(doc, node_id)),
@@ -141,10 +149,7 @@ impl HighlightCache {
             decoration: top
                 .decoration
                 .map(|decoration| Rc::new((*decoration).clone().with_current_color(color.unwrap_or_else(|| own_color(doc, node_id))))),
-            shadows: shadow_style.and_then(|style| {
-                let shadows = crate::text::highlight_shadows(&style, color.unwrap_or_else(|| own_color(doc, node_id)));
-                (!shadows.is_empty()).then(|| Rc::new(shadows))
-            }),
+            shadows: (!shadows.is_empty()).then(|| Rc::new(shadows)),
         });
         (backgrounds, highlight)
     }
@@ -538,33 +543,32 @@ pub(crate) fn stroke_highlighted_text<S: PaintScene>(
         }
         outside.extend(Rect::new(x, -FAR, FAR, FAR).path_elements(0.1));
         context.highlights = std::mem::take(&mut cache);
-        scene.push_clip_layer(Fill::NonZero, transform, &outside);
-        stroke_text(
-            scene,
-            std::iter::once(line),
-            doc,
-            transform,
-            options,
-            root,
-            Some(text),
-            context,
-            turned,
-            Some(layout),
-        );
-        scene.pop_layer();
         let mut masks: SmallVec<[u32; 4]> = sorted.iter().map(|(_, mask)| *mask).collect();
         masks.sort_unstable();
         masks.dedup();
-        for mask in masks {
-            let mut inside = BezPath::new();
-            for (rect, _) in sorted.iter().filter(|(_, m)| *m == mask) {
-                inside.extend(Rect::new(rect.x0, -FAR, rect.x1, FAR).path_elements(0.1));
-            }
-            context.highlights.mask = mask;
-            context.highlighting = true;
-            // The highlight's shadows, cast by its glyphs alone (unclipped), then its text.
-            if options.shadows {
-                context.shadows_only = true;
+        // pyro: the shadows first, all text after them (as Chromium: unselected text paints over
+        // the highlights' shadows; WPT css-pseudo `highlight-painting-shadows-horizontal`): the
+        // shadows of the text outside the stretches, then each highlight's, cast by its glyphs
+        // alone (unclipped).
+        if options.shadows {
+            context.shadows_only = true;
+            scene.push_clip_layer(Fill::NonZero, transform, &outside);
+            stroke_text(
+                scene,
+                std::iter::once(line),
+                doc,
+                transform,
+                options,
+                root,
+                Some(text),
+                context,
+                turned,
+                Some(layout),
+            );
+            scene.pop_layer();
+            for &mask in &masks {
+                context.highlights.mask = mask;
+                context.highlighting = true;
                 context.glyph_spans = Some(
                     pieces.iter().filter(|piece| piece.mask == mask).map(|piece| (piece.x0, piece.x1)).collect(),
                 );
@@ -580,9 +584,32 @@ pub(crate) fn stroke_highlighted_text<S: PaintScene>(
                     turned,
                     Some(layout),
                 );
-                context.shadows_only = false;
                 context.glyph_spans = None;
+                context.highlighting = false;
             }
+            context.shadows_only = false;
+        }
+        scene.push_clip_layer(Fill::NonZero, transform, &outside);
+        stroke_text(
+            scene,
+            std::iter::once(line),
+            doc,
+            transform,
+            TextPaintOptions { shadows: false, ..options },
+            root,
+            Some(text),
+            context,
+            turned,
+            Some(layout),
+        );
+        scene.pop_layer();
+        for mask in masks {
+            let mut inside = BezPath::new();
+            for (rect, _) in sorted.iter().filter(|(_, m)| *m == mask) {
+                inside.extend(Rect::new(rect.x0, -FAR, rect.x1, FAR).path_elements(0.1));
+            }
+            context.highlights.mask = mask;
+            context.highlighting = true;
             scene.push_clip_layer(Fill::NonZero, transform, &inside);
             let selected = TextPaintOptions { shadows: false, ..options };
             stroke_text(

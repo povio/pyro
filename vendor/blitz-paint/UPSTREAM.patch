@@ -2165,7 +2165,7 @@ diff --git a/packages/blitz-paint/src/highlight.rs b/packages/blitz-paint/src/hi
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-paint/src/highlight.rs
-@@ -0,0 +1,603 @@
+@@ -0,0 +1,633 @@
 +//! pyro: the document selection painted as Chromium paints it (CSS Pseudo-Elements 4 § 3,
 +//! highlight painting).
 +//!
@@ -2284,7 +2284,10 @@ new file mode 100644
 +        let mut backgrounds = SmallVec::new();
 +        let mut color: Option<Color> = None;
 +        let mut top: Option<LayerStyle> = None;
-+        let mut shadow_style: Option<Style> = None;
++        // pyro: each layer's shadows, the bottom layer's first (on top, as Chromium stacks them:
++        // the reference lists the target text's shadow before the selection's; WPT css-pseudo
++        // `highlight-painting-shadows-horizontal`).
++        let mut shadows: Vec<crate::text::TextShadow> = Vec::new();
 +        for layer in 0..self.layers.len() {
 +            if mask & (1 << layer) == 0 {
 +                continue;
@@ -2293,7 +2296,12 @@ new file mode 100644
 +            if let Some(c) = style.color {
 +                color = Some(c);
 +            }
-+            shadow_style = style.style.clone();
++            if let Some(layer_style) = &style.style {
++                shadows.extend(crate::text::highlight_shadows(
++                    layer_style,
++                    color.unwrap_or_else(|| own_color(doc, node_id)),
++                ));
++            }
 +            backgrounds.push(match style.background {
 +                Background::Color(c) => c,
 +                Background::Current => color.unwrap_or_else(|| own_color(doc, node_id)),
@@ -2309,10 +2317,7 @@ new file mode 100644
 +            decoration: top
 +                .decoration
 +                .map(|decoration| Rc::new((*decoration).clone().with_current_color(color.unwrap_or_else(|| own_color(doc, node_id))))),
-+            shadows: shadow_style.and_then(|style| {
-+                let shadows = crate::text::highlight_shadows(&style, color.unwrap_or_else(|| own_color(doc, node_id)));
-+                (!shadows.is_empty()).then(|| Rc::new(shadows))
-+            }),
++            shadows: (!shadows.is_empty()).then(|| Rc::new(shadows)),
 +        });
 +        (backgrounds, highlight)
 +    }
@@ -2646,8 +2651,9 @@ new file mode 100644
 +        }
 +        // pyro: the glyphs outside the stretches where they reach into one (an italic glyph's
 +        // overhang), under its background: Chromium paints the highlight over them (WPT css-pseudo
-+        // `selection-background-painting-order`).
-+        {
++        // `selection-background-painting-order`). Not in vertical lines, whose turned runs place
++        // glyphs off their layout positions (`glyph_spans` would take selected ones too).
++        if turned.is_none() {
 +            let mut spans: SmallVec<[(f32, f32); 4]> = pieces.iter().map(|p| (p.x0, p.x1)).collect();
 +            spans.sort_by(|p, q| p.0.total_cmp(&q.0));
 +            let mut gaps: SmallVec<[(f32, f32); 4]> = SmallVec::new();
@@ -2666,6 +2672,7 @@ new file mode 100644
 +            scene.push_clip_layer(Fill::NonZero, transform, &inside);
 +            context.highlights = std::mem::take(&mut cache);
 +            context.glyph_spans = Some(gaps);
++            context.glyphs_only = true;
 +            stroke_text(
 +                scene,
 +                std::iter::once(line.clone()),
@@ -2679,6 +2686,7 @@ new file mode 100644
 +                Some(layout),
 +            );
 +            context.glyph_spans = None;
++            context.glyphs_only = false;
 +            cache = std::mem::take(&mut context.highlights);
 +            scene.pop_layer();
 +        }
@@ -2703,33 +2711,32 @@ new file mode 100644
 +        }
 +        outside.extend(Rect::new(x, -FAR, FAR, FAR).path_elements(0.1));
 +        context.highlights = std::mem::take(&mut cache);
-+        scene.push_clip_layer(Fill::NonZero, transform, &outside);
-+        stroke_text(
-+            scene,
-+            std::iter::once(line),
-+            doc,
-+            transform,
-+            options,
-+            root,
-+            Some(text),
-+            context,
-+            turned,
-+            Some(layout),
-+        );
-+        scene.pop_layer();
 +        let mut masks: SmallVec<[u32; 4]> = sorted.iter().map(|(_, mask)| *mask).collect();
 +        masks.sort_unstable();
 +        masks.dedup();
-+        for mask in masks {
-+            let mut inside = BezPath::new();
-+            for (rect, _) in sorted.iter().filter(|(_, m)| *m == mask) {
-+                inside.extend(Rect::new(rect.x0, -FAR, rect.x1, FAR).path_elements(0.1));
-+            }
-+            context.highlights.mask = mask;
-+            context.highlighting = true;
-+            // The highlight's shadows, cast by its glyphs alone (unclipped), then its text.
-+            if options.shadows {
-+                context.shadows_only = true;
++        // pyro: the shadows first, all text after them (as Chromium: unselected text paints over
++        // the highlights' shadows; WPT css-pseudo `highlight-painting-shadows-horizontal`): the
++        // shadows of the text outside the stretches, then each highlight's, cast by its glyphs
++        // alone (unclipped).
++        if options.shadows {
++            context.shadows_only = true;
++            scene.push_clip_layer(Fill::NonZero, transform, &outside);
++            stroke_text(
++                scene,
++                std::iter::once(line),
++                doc,
++                transform,
++                options,
++                root,
++                Some(text),
++                context,
++                turned,
++                Some(layout),
++            );
++            scene.pop_layer();
++            for &mask in &masks {
++                context.highlights.mask = mask;
++                context.highlighting = true;
 +                context.glyph_spans = Some(
 +                    pieces.iter().filter(|piece| piece.mask == mask).map(|piece| (piece.x0, piece.x1)).collect(),
 +                );
@@ -2745,9 +2752,32 @@ new file mode 100644
 +                    turned,
 +                    Some(layout),
 +                );
-+                context.shadows_only = false;
 +                context.glyph_spans = None;
++                context.highlighting = false;
 +            }
++            context.shadows_only = false;
++        }
++        scene.push_clip_layer(Fill::NonZero, transform, &outside);
++        stroke_text(
++            scene,
++            std::iter::once(line),
++            doc,
++            transform,
++            TextPaintOptions { shadows: false, ..options },
++            root,
++            Some(text),
++            context,
++            turned,
++            Some(layout),
++        );
++        scene.pop_layer();
++        for mask in masks {
++            let mut inside = BezPath::new();
++            for (rect, _) in sorted.iter().filter(|(_, m)| *m == mask) {
++                inside.extend(Rect::new(rect.x0, -FAR, rect.x1, FAR).path_elements(0.1));
++            }
++            context.highlights.mask = mask;
++            context.highlighting = true;
 +            scene.push_clip_layer(Fill::NonZero, transform, &inside);
 +            let selected = TextPaintOptions { shadows: false, ..options };
 +            stroke_text(
@@ -19104,7 +19134,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
  /// Reusable scratch storage for drawing text across all inline formatting contexts in a
  /// document. The vectors are cleared between uses without releasing their allocations.
  #[derive(Default)]
-@@ -253,38 +682,365 @@
+@@ -253,38 +682,367 @@
      stack: Vec<DecorationStackEntry>,
      path_scratch: Vec<NodeId>,
      deco_boxes: Vec<LineDecoration>,
@@ -19154,6 +19184,8 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 +    /// pyro: the next `stroke_text` draws the text's shadows alone (no glyphs, no decoration
 +    /// lines but their shadows): those of highlighted text, under the highlights' backgrounds.
 +    pub(crate) shadows_only: bool,
++    /// pyro: draw the glyphs alone, without decorations (`highlight`: unselected glyphs' overhang).
++    pub(crate) glyphs_only: bool,
 +    /// pyro: the next `stroke_text` draws only the glyphs whose middle is in one of these
 +    /// stretches (layout x): a highlight's shadows are cast by its glyphs alone.
 +    pub(crate) glyph_spans: Option<SmallVec<[(f32, f32); 4]>>,
@@ -19491,7 +19523,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
  /// across renderers.
  ///
  /// `double_dir` points away from the text (`+1` = down, `-1` = up) and is used to place the
-@@ -296,24 +1052,21 @@
+@@ -296,24 +1054,21 @@
      scale: f64,
      x0: f64,
      width: f64,
@@ -19522,7 +19554,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
      let butt_stroke = Stroke::new(size).with_caps(Cap::Butt);
  
      match deco_style {
-@@ -399,203 +1152,595 @@
+@@ -399,203 +1154,597 @@
  pub(crate) struct TextPaintOptions {
      pub scale: f64,
      pub brush_override: Option<Color>,
@@ -19566,10 +19598,6 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 -        };
 -        let geom = &geom;
 -        let width = acc.max_x - acc.min_x;
--        if width <= 0.0 {
--            continue;
--        }
--        let brush = anyrender::Paint::from(brush_override.unwrap_or(deco.color));
 +/// pyro: what [`flush_line_decorations`] draws of a line's decorations.
 +#[derive(Clone, Copy, PartialEq, Eq)]
 +enum DecorationPhase {
@@ -19580,19 +19608,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 +    /// Line-throughs, over the text.
 +    LineThrough,
 +}
- 
--        // `text-decoration-inset` shortens (or, when negative, extends) the line from the
--        // inline-start/end edges. Percentages resolve against the decoration line length
--        // (the box's total advance on this line); `auto` is no inset.
--        let (inset_start, inset_end) = match &deco.inset {
--            GenericTextDecorationInset::LengthPercentage { start, end } => {
--                // The extent is in device pixels; convert to CSS pixels so the resolved
--                // result can be scaled back.
--                let line_length = Length::new((width / scale) as f32);
--                (
--                    start.resolve(line_length).px() as f64 * scale,
--                    end.resolve(line_length).px() as f64 * scale,
--                )
++
 +/// pyro: the inline root's own font on a line (its strut), which places the decorations of the
 +/// root and of the blocks it is in where the root has no text of its own on the line.
 +struct StrutGeometry {
@@ -19671,17 +19687,32 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 +                    geom.css_font_size = strut.css_font_size;
 +                }
 +                geom
-             }
--            GenericTextDecorationInset::Auto => (0.0, 0.0),
++            }
 +            (None, None) => continue,
-         };
++        };
 +        let geom = &geom;
 +        let width = acc.max_x - acc.min_x;
-+        if width <= 0.0 {
-+            continue;
-+        }
-+        let brush = anyrender::Paint::from(brush_override.unwrap_or(deco.color));
+         if width <= 0.0 {
+             continue;
+         }
+         let brush = anyrender::Paint::from(brush_override.unwrap_or(deco.color));
  
+         // `text-decoration-inset` shortens (or, when negative, extends) the line from the
+-        // inline-start/end edges. Percentages resolve against the decoration line length
+-        // (the box's total advance on this line); `auto` is no inset.
+-        let (inset_start, inset_end) = match &deco.inset {
+-            GenericTextDecorationInset::LengthPercentage { start, end } => {
+-                // The extent is in device pixels; convert to CSS pixels so the resolved
+-                // result can be scaled back.
+-                let line_length = Length::new((width / scale) as f32);
+-                (
+-                    start.resolve(line_length).px() as f64 * scale,
+-                    end.resolve(line_length).px() as f64 * scale,
+-                )
+-            }
+-            GenericTextDecorationInset::Auto => (0.0, 0.0),
+-        };
+-
 -        if deco.line.contains(TextDecorationLine::UNDERLINE) {
 -            let size = decoration_size(
 -                &deco.thickness,
@@ -19711,7 +19742,6 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 -                0.0
 -            } else {
 -                geom.underline_offset
-+        // `text-decoration-inset` shortens (or, when negative, extends) the line from the
 +        // left and right ends (pyro: resolved per box in `stroke_text`, see `line_insets`).
 +        let (inset_start, inset_end) = (acc.inset_left, acc.inset_right);
 +        // pyro: the shadow this phase draws over each part of the line: the runs' shadows, in
@@ -20241,9 +20271,11 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 +        highlighting,
 +        highlights,
 +        shadows_only,
++        glyphs_only,
 +        glyph_spans,
      } = context;
 +    let shadows_only = *shadows_only;
++    let undecorated = shadows_only || *glyphs_only;
 +    let positioned_pass = *positioned_pass;
 +    let glyph_spans = glyph_spans.as_ref();
 +    let shift = *text_shift;
@@ -20282,7 +20314,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
      stack.clear();
      path_scratch.clear();
      deco_boxes.clear();
-@@ -608,152 +1753,846 @@
+@@ -608,152 +1757,846 @@
      // for each run, only resolve styles for the nodes newly descended into (popping
      // as we ascend). `path_scratch` is a reusable buffer for the run's node path.
      for line in lines {
@@ -20943,7 +20975,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 +                }
 +            }
          }
-+        if !deco_boxes.is_empty() && !shadows_only {
++        if !deco_boxes.is_empty() && !undecorated {
 +            flush(scene, DecorationPhase::UnderOver);
 +        }
 +        for (glyph_run, paint) in glyph_runs.iter().zip(run_paints.iter()).filter(|(_, paint)| paint.drawn) {
@@ -20954,7 +20986,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 +            }
 +            draw_run(scene, glyph_run, paint, None, runs);
 +        }
-+        if !deco_boxes.is_empty() && !shadows_only {
++        if !deco_boxes.is_empty() && !undecorated {
 +            flush(scene, DecorationPhase::LineThrough);
 +        }
 +    }
@@ -21245,7 +21277,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
      selection_start: usize,
      selection_end: usize,
  ) {
-@@ -761,12 +2600,54 @@
+@@ -761,12 +2604,54 @@
      let focus = Cursor::from_byte_index(layout, selection_end, Affinity::Downstream);
      let selection = Selection::new(anchor, focus);
  
@@ -21302,7 +21334,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
  /// Approximates macOS font smoothing (stem dilation). CoreGraphics dilates each side by an amount
  /// in device pixels that grows with the device ppem up to 0.3px (fitted to Safari's ink at 9-72px
  /// and 1x-3x scale), and keeps dilating at large sizes, so there is no ppem cutoff. glifo applies
-@@ -804,3 +2685,239 @@
+@@ -804,3 +2689,239 @@
      }
      prev.1
  }

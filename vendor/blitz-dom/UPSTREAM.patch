@@ -3457,7 +3457,7 @@ diff --git a/packages/blitz-dom/src/dom_selection.rs b/packages/blitz-dom/src/do
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/dom_selection.rs
-@@ -0,0 +1,411 @@
+@@ -0,0 +1,410 @@
 +//! pyro: the page's selection, a DOM range the embedder keeps (pyro-webapi's document
 +//! selection), painted as highlighted text. The embedder sets it before a paint
 +//! ([`BaseDocument::set_dom_selection`]); blitz-paint reads it as the inline roots' selected byte
@@ -3625,7 +3625,6 @@ new file mode 100644
 +    ) -> Option<String> {
 +        use style::properties::{PropertyDeclaration, PropertyDeclarationId};
 +        use style::stylesheets::Origin;
-+        use style_traits::ToCss;
 +        let guard = self.guard.read();
 +        for node in style.rules().self_and_ancestors() {
 +            if node.cascade_level().origin().origin() == Origin::UserAgent {
