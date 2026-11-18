@@ -1408,6 +1408,11 @@ impl JsClass for HtmlElement {
         def.getter("dataset", |s, n| Ok(collections::dataset(s, n.page(), n.id)?.value()));
         // [PutForwards=cssText]
         def.put_forwards("style", |s, n| Ok(crate::css::inline_style(s, n.page(), n.id)?.value()), "cssText");
+        // CSS Typed OM: the inline declarations as a StylePropertyMap.
+        def.getter("attributeStyleMap", |s, n| {
+            let el = crate::node::wrap_node(s, n.page(), n.id)?.value();
+            crate::typed_om::attribute_style_map(s, n.page(), el)
+        });
         def.accessor("innerText", crate::layout_api::inner_text, crate::layout_api::set_inner_text);
         def.accessor("outerText", crate::layout_api::inner_text, crate::layout_api::set_outer_text);
         def.getter("offsetParent", crate::layout_api::offset_parent);
@@ -3073,6 +3078,11 @@ impl JsClass for SvgElement {
         def.getter("dataset", |s, n| Ok(collections::dataset(s, n.page(), n.id)?.value()));
         // [PutForwards=cssText]
         def.put_forwards("style", |s, n| Ok(crate::css::inline_style(s, n.page(), n.id)?.value()), "cssText");
+        // CSS Typed OM: the inline declarations as a StylePropertyMap.
+        def.getter("attributeStyleMap", |s, n| {
+            let el = crate::node::wrap_node(s, n.page(), n.id)?.value();
+            crate::typed_om::attribute_style_map(s, n.page(), el)
+        });
         def.getter("ownerSVGElement", |s, n| {
             let dom = n.page().dom.borrow();
             let mut p = dom.parent_element(n.id).js()?;
@@ -3115,6 +3125,11 @@ impl JsClass for MathMlElement {
         def.getter("dataset", |s, n| Ok(collections::dataset(s, n.page(), n.id)?.value()));
         // [PutForwards=cssText]
         def.put_forwards("style", |s, n| Ok(crate::css::inline_style(s, n.page(), n.id)?.value()), "cssText");
+        // CSS Typed OM: the inline declarations as a StylePropertyMap.
+        def.getter("attributeStyleMap", |s, n| {
+            let el = crate::node::wrap_node(s, n.page(), n.id)?.value();
+            crate::typed_om::attribute_style_map(s, n.page(), el)
+        });
         def.method("focus", 0, focus_element);
         def.method("blur", 0, |s, n, _a| {
             crate::input::blur_element(n.page(), n.id);

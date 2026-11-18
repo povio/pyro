@@ -13,6 +13,7 @@ webstorage/
 # Feature directories (lib.mjs FEATURE_DIRS): testharness pages only.
 custom-elements/
 css/css-font-loading/
+css/css-typed-om/
 # Paint directories (lib.mjs PAINT_DIRS). Both kinds run every directory above and below: run.mjs runs their testharness
 # pages, run.mjs --kind reftest their reftests.
 css/css-backgrounds/

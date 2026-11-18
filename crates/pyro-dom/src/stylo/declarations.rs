@@ -164,6 +164,25 @@ pub fn property_name(name: &str) -> Option<String> {
     })
 }
 
+/// What the property `name` names: its canonical name and whether it is a longhand (0), a
+/// shorthand (1) or a custom property (2) (CSS Typed OM).
+pub fn property_kind(name: &str) -> Option<(String, u8)> {
+    let id = property_id(name)?;
+    Some(match &id {
+        PropertyId::NonCustom(n) => (n.name().to_owned(), if n.as_shorthand().is_some() { 1 } else { 0 }),
+        PropertyId::Custom(_) => (name.to_owned(), 2),
+    })
+}
+
+/// `value` parsed as the property `name` and serialized as a declaration block of it alone
+/// serializes the property (CSS Typed OM `CSSStyleValue.parse`): `None` when `name` is no property
+/// or `value` is invalid for it; `Some("")` when a shorthand's value has no serialization.
+pub fn normalized_value(name: &str, value: &str) -> Option<String> {
+    let mut block = DeclarationBlock(PropertyDeclarationBlock::new());
+    block.set(name, value, false)?;
+    Some(block.value(name))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

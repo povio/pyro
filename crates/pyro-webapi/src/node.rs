@@ -1113,6 +1113,11 @@ impl JsClass for Element {
         define_parent_node(def);
         define_child_node(def);
         define_non_doctype_child(def);
+        // CSS Typed OM: the element's computed values as a StylePropertyMapReadOnly.
+        def.method("computedStyleMap", 0, |s, n, _a| {
+            let el = crate::node::wrap_node(s, n.page(), n.id)?.value();
+            crate::typed_om::computed_style_map(s, n.page(), el)
+        });
         def.pure_getter_typed("tagName", pyro_js::GetterResult::String, |s, n| {
             let dom = n.page().dom.borrow();
             Ok(match dom.tag_name_parts(n.id).js()? {

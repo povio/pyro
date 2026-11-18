@@ -183,6 +183,7 @@ where
     crate::indexeddb::define_globals(def);
     crate::editing_globals::define_globals(def);
     crate::font_loading::define_globals(def);
+    crate::typed_om::define_globals(def);
     // `Highlight` and `HighlightRegistry` (CSS Custom Highlight API), made on first use.
     def.global_value_accessor(
         "Highlight",
@@ -200,6 +201,7 @@ where
         "CSS",
         |s, w| {
             let value = css_namespace(s)?;
+            crate::typed_om::add_factories(s, w.page(), value)?;
             css_namespace_property(s, w.page(), value)?;
             Ok(value)
         },

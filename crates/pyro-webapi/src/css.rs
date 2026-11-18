@@ -897,6 +897,19 @@ impl JsClass for CssStyleRule {
                 StyleData { source }.set_css_text(&dom_string(v)?)
             },
         );
+        // CSS Typed OM: the declaration block as a StylePropertyMap.
+        def.getter("styleMap", |s, r| {
+            let key = IdentityKey(r.node.identity.0 | (1 << 55), r.node.identity.1);
+            let style = match s.lookup_identity(key) {
+                Some(o) => o.value(),
+                None => {
+                    let source = StyleSource::Rule { owner: r.owner.hold()?, node: r.node.clone() };
+                    s.wrap::<CssStyleDeclaration>(StyleData { source }, Some(key))?.value()
+                }
+            };
+            let page = crate::target::page_of(s)?;
+            crate::typed_om::declaration_map(s, &page, style)
+        });
         def.accessor(
             "selectorText",
             |s, r| match &r.node.kind {

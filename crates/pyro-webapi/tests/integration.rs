@@ -35,6 +35,7 @@ mod support;
 mod svg_animated_enumeration_js;
 mod thread_state;
 mod traversal_js;
+mod typed_om_js;
 mod uievents_js;
 mod url_conformance;
 mod url_params_js;

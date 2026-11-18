@@ -824,14 +824,11 @@ complete:
   `insertRule`, srcdoc reload, `window.find`, and a `KeyframeEffect` target from another
   document.
 
-2,010 of 2,031 complete locally. These 21 are **known incomplete**: each needs a feature pyro does not have. They stay
+2,014 of 2,031 complete locally. These 17 are **known incomplete**: each needs a feature pyro does not have. They stay
 failing entries of the baseline, not flaky entries, and none of them crashes, panics or hangs:
 
 | page | needs |
 |---|---|
-| `css/css-font-loading/fontface-from-arraybuffer-crash.html` | `FontFace` (CSS Font Loading); `document.fonts` is a stand-in object |
-| `html/canvas/offscreen/manual/the-offscreen-canvas/offscreencanvas-worker-font-load-crash.html` | font loading (`FontFace`) in workers |
-| `css/css-typed-om/crashtests/chrome-575201060.html`, `chrome-575201475.html` | CSS Typed OM (`CSSUnparsedValue`) in workers |
 | `scroll-animations/crashtests/` (4 pages) | scroll and view timelines (`animation-timeline`, `ScrollTimeline`) |
 | `custom-elements/custom-button-abort-insertion-crash.html`, `custom-image-abort-insertion-crash.html` | customized built-in elements (`is=`, `extends`) |
 | `service-workers/service-worker/messageport-transfer-crash.html` | `SharedWorker` |
