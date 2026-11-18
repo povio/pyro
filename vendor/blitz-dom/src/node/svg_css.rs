@@ -388,11 +388,6 @@ fn author_longhands(style: &ComputedValues, guard: &SharedRwLockReadGuard) -> Ve
 
 /// A computed value as CSS, with `url(...)` references reduced to their
 /// fragment (`url(#id)`), the only form usvg follows.
-/// pyro: a paint property's computed value as an SVG attribute value.
-pub(crate) fn paint_value(style: &ComputedValues, id: LonghandId) -> String {
-    computed_value(style, id)
-}
-
 fn computed_value(style: &ComputedValues, id: LonghandId) -> String {
     let value = style.computed_value_to_string(PropertyDeclarationId::Longhand(id));
     local_urls(&value)

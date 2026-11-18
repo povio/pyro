@@ -2666,3 +2666,4 @@ Round 4 lane G:
   last line box that is not a phantom one (`LineMetrics::invisible`, CSS Inline 3 § 4.1): a line after a `<br>` holding
   only a float and collapsed white space gave an inline-block the bottom of its first line as baseline (WPT
   css-flexbox `flexbox-baseline-multi-line-vert-001/-002`). `crates/pyro-render/tests/phantom_last_line_baseline.rs`.
+- Round 4 lane F, `node/svg_css.rs`: unused `paint_value` removed (selection fill/stroke read from declarations).

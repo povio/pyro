@@ -347,3 +347,42 @@ fn a_fixed_background_under_an_identity_transform_scrolls() {
         assert_near(pixel(&img, 1.0, 55.0, 55.0), GRID[0], transform);
     }
 }
+
+/// `inset`/`outset` sides and the halves of `groove`/`ridge` take Blink's shades
+/// (`BoxBorderPainter::CalculateInsetOutsetColor`: `Color::Dark` on the darkened sides,
+/// `Color::Light` on the others, very dark colours lightened on both and very light ones kept).
+/// The expected values are Chrome's (measured 2026-11-18). The light sides kept the base
+/// colour before (`#888` outset's top was 136, Chrome's 221).
+#[test]
+fn bevelled_border_sides_take_chrome_shades() {
+    let boxes = "<style>div{position:absolute;width:40px;height:40px;border-width:20px}</style>\
+        <div style='left:0;top:0;border-style:inset;border-color:#888'></div>\
+        <div style='left:100px;top:0;border-style:outset;border-color:#888'></div>\
+        <div style='left:200px;top:0;border-style:inset;border-color:black'></div>\
+        <div style='left:300px;top:0;border-style:inset;border-color:white'></div>\
+        <div style='left:0;top:100px;border-style:inset;border-color:rgb(255,0,0)'></div>\
+        <div style='left:100px;top:100px;border-style:groove;border-color:rgb(0,128,0)'></div>\
+        <div style='left:200px;top:100px;border-style:ridge;border-color:rgb(0,0,255)'></div>\
+        <div style='left:300px;top:100px;border-style:outset;border-color:rgb(20,20,20)'></div>";
+    let img = render(boxes, 1.0);
+    // (box origin, top outer half, top inner half, bottom inner half): Chrome's colours.
+    let chrome: [((f64, f64), [u8; 3], [u8; 3], [u8; 3]); 8] = [
+        ((0.0, 0.0), [52, 52, 52], [52, 52, 52], [221, 221, 221]),
+        ((100.0, 0.0), [221, 221, 221], [221, 221, 221], [52, 52, 52]),
+        ((200.0, 0.0), [84, 84, 84], [84, 84, 84], [168, 168, 168]),
+        ((300.0, 0.0), [171, 171, 171], [171, 171, 171], [255, 255, 255]),
+        ((0.0, 100.0), [171, 0, 0], [171, 0, 0], [255, 0, 0]),
+        // A groove's bottom inner half is shaded as an inset's top (the halves swap at the
+        // bottom and right: their outer half is the inner edge's opposite).
+        ((100.0, 100.0), [0, 44, 0], [0, 212, 0], [0, 44, 0]),
+        ((200.0, 100.0), [0, 0, 255], [0, 0, 171], [0, 0, 255]),
+        ((300.0, 100.0), [188, 188, 188], [188, 188, 188], [104, 104, 104]),
+    ];
+    for ((x, y), top_outer, top_inner, bottom_inner) in chrome {
+        let at = |dx, dy| pixel(&img, 1.0, x + dx, y + dy);
+        assert_near(at(40.0, 5.0), top_outer, &format!("box at {x},{y}: top, outer half"));
+        assert_near(at(40.0, 15.0), top_inner, &format!("box at {x},{y}: top, inner half"));
+        assert_near(at(40.0, 65.0), bottom_inner, &format!("box at {x},{y}: bottom, inner half"));
+        assert_near(at(5.0, 40.0), top_outer, &format!("box at {x},{y}: left, outer half"));
+    }
+}

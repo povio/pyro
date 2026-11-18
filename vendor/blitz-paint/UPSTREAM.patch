@@ -12233,16 +12233,136 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
  use peniko::{Color, Fill};
  use smallvec::SmallVec;
  use style::{
-@@ -11,7 +11,7 @@
+@@ -10,73 +10,80 @@
+ };
  
  use crate::{
-     color::{ToColorColor as _, contrast_ratio},
+-    color::{ToColorColor as _, contrast_ratio},
 -    kurbo_css::Edge,
++    color::ToColorColor as _,
 +    kurbo_css::{CssBox, Edge, NonUniformRoundedRectRadii},
      render::{ElementCx, PhysicalTracks},
  };
  
-@@ -90,64 +90,405 @@
+-/// A darker version of a colour (mirrors WebKit/Blink's `Color::Dark`): the
+-/// brightest channel is reduced by a fixed amount and the others scaled to match,
+-/// preserving hue.
++/// pyro: Blink's `QuantizeTo8Bit`: a channel times the largest float under 256, truncated to an
++/// 8-bit value.
++fn quantize_to_8bit(v: f32) -> f32 {
++    const SCALE: f32 = 255.999_98; // nextafterf(256.0, 0.0)
++    ((v * SCALE) as i32) as f32 / 255.0
++}
++
++/// A darker version of a colour: Blink's `Color::Dark` (`platform/graphics/color.cc`): opaque
++/// white is rgb(171, 171, 171); otherwise the brightest channel loses 0.33 and the others
++/// scale with it, quantized to 8 bits, alpha kept.
+ fn darken(color: Color) -> Color {
+     let [r, g, b, a] = color.components;
+-    let v = r.max(g).max(b);
+-    if v == 0.0 {
+-        return color;
++    if [r, g, b, a] == [1.0, 1.0, 1.0, 1.0] {
++        return Color::from_rgb8(171, 171, 171);
+     }
+-    let multiplier = ((v - 0.33) / v).max(0.0);
+-    Color::new([r * multiplier, g * multiplier, b * multiplier, a])
++    let v = r.max(g).max(b);
++    let multiplier = if v == 0.0 { 0.0 } else { ((v - 0.33) / v).max(0.0) };
++    Color::new([
++        quantize_to_8bit(r * multiplier),
++        quantize_to_8bit(g * multiplier),
++        quantize_to_8bit(b * multiplier),
++        a,
++    ])
+ }
+ 
+-/// A lighter version of a colour (mirrors WebKit/Blink's `Color::Light`): the
+-/// brightest channel is increased by a fixed amount and the others scaled to
+-/// match, preserving hue.
++/// A lighter version of a colour: Blink's `Color::Light`: black is rgb(84, 84, 84) (with its
++/// alpha); otherwise the brightest channel gains 0.33 (up to 1) and the others scale with it,
++/// quantized to 8 bits, alpha kept.
+ fn lighten(color: Color) -> Color {
+     let [r, g, b, a] = color.components;
+     let v = r.max(g).max(b);
+     if v == 0.0 {
+-        // Pure black: WebKit uses a fixed dark grey (0x545454).
+-        return Color::new([0.33, 0.33, 0.33, a]);
++        let grey = 84.0 / 255.0;
++        return Color::new([grey, grey, grey, a]);
+     }
+     let multiplier = (v + 0.33).min(1.0) / v;
+-    Color::new([r * multiplier, g * multiplier, b * multiplier, a])
++    Color::new([
++        quantize_to_8bit(r * multiplier),
++        quantize_to_8bit(g * multiplier),
++        quantize_to_8bit(b * multiplier),
++        a,
++    ])
+ }
+ 
+-/// The colour of a single edge of an `inset`/`outset` border.
+-///
+-/// An `outset` border is raised: the top/left edges use the "lighter" shade and
+-/// the bottom/right edges the "darker" shade (`inset` is the reverse). The exact
+-/// shading matches Chrome's `CalculateInsetOutsetColor`:
+-///
+-/// * The darker edge is always darkened.
+-/// * The lighter edge keeps the base colour unchanged, *except* for colours dark
+-///   enough that the darkened edge wouldn't have enough contrast against the base
+-///   colour, which are lightened instead so the bevel stays visible.
+-fn beveled_edge_color(color: Color, edge: Edge, inset: bool) -> Color {
+-    let top_or_left = matches!(edge, Edge::Top | Edge::Left);
+-    let should_darken = top_or_left == inset;
++/// pyro: the WCAG relative luminance of a colour (`color_utils::GetRelativeLuminance4f`).
++fn relative_luminance(color: Color) -> f32 {
++    let linear = |c: f32| if c <= 0.04045 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) };
++    let [r, g, b, _] = color.components;
++    0.2126 * linear(r) + 0.7152 * linear(g) + 0.0722 * linear(b)
++}
+ 
+-    let dark_color = darken(color);
+-    if should_darken {
+-        return dark_color;
++/// The colour of a single edge of an `inset`/`outset` border: Blink's
++/// `BoxBorderPainter::CalculateInsetOutsetColor` with `DarkenBoxSide` (an `inset` border darkens
++/// its top and left sides, an `outset` one its bottom and right). A colour as dark as
++/// rgb(32, 32, 32) or darker is lightened on the darkened sides and lightened twice on the
++/// others; otherwise the darkened sides take `Color::Dark` and the others `Color::Light`, but a
++/// colour as light as rgb(235, 235, 235) or lighter stays as it is there.
++fn beveled_edge_color(color: Color, edge: Edge, inset: bool) -> Color {
++    const BASE_DARK_COLOR_LUMINANCE: f32 = 0.014_443_844; // rgb(32, 32, 32)
++    const BASE_LIGHT_COLOR_LUMINANCE: f32 = 0.830_77; // rgb(235, 235, 235)
++    let is_darken = matches!(edge, Edge::Top | Edge::Left) == inset;
++    let luminance = relative_luminance(color);
++    if luminance <= BASE_DARK_COLOR_LUMINANCE {
++        return if is_darken { lighten(color) } else { lighten(lighten(color)) };
+     }
+-
+-    // Lighter edge. Chrome uses the base colour as-is unless the colour is dark
+-    // enough that the darkened edge lacks contrast against it. The red/green
+-    // shortcut mirrors Chrome: for those colours the contrast is always
+-    // sufficient, so the base colour is used without a contrast check.
+-    let [r, g, _, _] = color.components;
+-    if r >= 150.0 / 255.0 || g >= 92.0 / 255.0 {
+-        return color;
++    if is_darken {
++        return darken(color);
+     }
+-
+-    // Lighten only when the darkened edge would be too low-contrast to read.
+-    const MIN_CONTRAST_RATIO: f32 = 1.75;
+-    if contrast_ratio(color, dark_color) < MIN_CONTRAST_RATIO {
+-        lighten(color)
+-    } else {
+-        color
+-    }
++    if luminance > BASE_LIGHT_COLOR_LUMINANCE { color } else { lighten(color) }
+ }
+ 
+ /// The (outer half, inner half) colours of a single edge of a `groove`/`ridge`
+@@ -90,64 +97,405 @@
      (outer, inner)
  }
  
@@ -12345,6 +12465,7 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
 -        PathEl::ClosePath => {
 -            if let Some(&first) = poly.first() {
 -                poly.push(first);
+-            }
 +/// The marks of one dotted or dashed straight side, appended to `path`, as
 +/// Blink's `GraphicsContext::DrawLine` places them.
 +///
@@ -12375,9 +12496,14 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
 +    let mut rect = |from: f64, to: f64| {
 +        if to > from {
 +            path.extend(Rect::from_points(at(from, 0.0), at(to, thickness)).path_elements(0.1));
-+        }
+         }
+-        _ => {}
+-    });
 +    };
-+
+ 
+-    let mut points = Vec::with_capacity(count);
+-    if poly.len() < 2 {
+-        return points;
 +    if !stroke_is_dashed(width, style) {
 +        // Round dots, the first and the last touching the ends of the side.
 +        let radius = thickness / 2.0;
@@ -12387,14 +12513,12 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
 +            if !dots.iter().any(same) {
 +                dots.push((center, radius));
 +                path.extend(Circle::new(center, radius).path_elements(0.1));
-             }
++            }
 +        };
 +        if len <= width {
 +            dot(len / 2.0);
 +            return;
-         }
--        _ => {}
--    });
++        }
 +        let period = dot_period(len, width, false);
 +        let mut distance = 0.0;
 +        while distance < len - width {
@@ -12402,11 +12526,17 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
 +            distance += period;
 +        }
 +        return;
-+    }
+     }
  
--    let mut points = Vec::with_capacity(count);
--    if poly.len() < 2 {
--        return points;
+-    let mut seg = 0;
+-    let mut seg_start = 0.0;
+-    let mut seg_len = (poly[1] - poly[0]).hypot();
+-    for i in 0..count {
+-        let target = i as f64 * spacing;
+-        while seg + 2 < poly.len() && target > seg_start + seg_len {
+-            seg_start += seg_len;
+-            seg += 1;
+-            seg_len = (poly[seg + 1] - poly[seg]).hypot();
 +    let (mut start, mut end) = (0.0, len);
 +    if style == BorderStyle::Dotted {
 +        // `EnforceDotsAtEndpoints`: dots and gaps of exactly the width leave a
@@ -12418,7 +12548,11 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
 +        let (mut end_dot, mut end_growth) = (false, 0.0);
 +        if (width == 1.0 && mod_2 == 0.0) || (width == 3.0 && mod_6 == 0.0) {
 +            (start_dot, start_growth, start_offset) = (true, 1.0, 1.0);
-+        }
+         }
+-        let t = if seg_len > 0.0 {
+-            ((target - seg_start) / seg_len).clamp(0.0, 1.0)
+-        } else {
+-            0.0
 +        if (width == 2.0 && (mod_4 == 0.0 || mod_4 == 1.0))
 +            || (width == 3.0 && (mod_6 == 1.0 || mod_6 == 2.0))
 +        {
@@ -12443,17 +12577,7 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
 +            rect(len - width - end_growth, len);
 +            end = len - (width + end_growth + 1.0);
 +        }
-     }
--
--    let mut seg = 0;
--    let mut seg_start = 0.0;
--    let mut seg_len = (poly[1] - poly[0]).hypot();
--    for i in 0..count {
--        let target = i as f64 * spacing;
--        while seg + 2 < poly.len() && target > seg_start + seg_len {
--            seg_start += seg_len;
--            seg += 1;
--            seg_len = (poly[seg + 1] - poly[seg]).hypot();
++    }
 +    match dash_pattern(len, width, style, false) {
 +        None => rect(start, end),
 +        Some((dash, gap)) => {
@@ -12462,9 +12586,7 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
 +                rect(from, (from + dash).min(end));
 +                from += dash + gap;
 +            }
-         }
--        let t = if seg_len > 0.0 {
--            ((target - seg_start) / seg_len).clamp(0.0, 1.0)
++        }
 +    }
 +}
 +
@@ -12499,8 +12621,7 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
 +        if depth < 20 && off.x.abs().max(off.y.abs()) > tolerance {
 +            halve(points, (t0, p0), (half_t, half), tolerance, depth + 1, chords);
 +            halve(points, (half_t, half), (t1, p1), tolerance, depth + 1, chords);
-         } else {
--            0.0
++        } else {
 +            let distance = chords.last().map_or(0.0, |&(_, distance)| distance);
 +            chords.push((t1, distance + (p1 - p0).hypot()));
 +        }
@@ -12688,7 +12809,7 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
          let style = &*self.style;
          let border = style.get_border();
          let current_color = style.clone_color();
-@@ -196,7 +537,11 @@
+@@ -196,7 +544,11 @@
                      // `r`, inner radius `r - width`, concentric). For 0 < r < width CSS
                      // draws a rounded outer edge against a sharp inner corner, which a
                      // stroke can't represent — leave those to the per-edge fill.
@@ -12701,7 +12822,7 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
                      let stroke_is_exact = is_exact(radii.top_left)
                          && is_exact(radii.top_right)
                          && is_exact(radii.bottom_right)
-@@ -227,6 +572,39 @@
+@@ -227,6 +579,39 @@
              }
          }
  
@@ -12741,7 +12862,7 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
          // (colour, path) pairs to be filled. Several entries may share a colour;
          // they are grouped before filling so that adjacent same-coloured regions
          // are drawn together, avoiding anti-aliasing seams between them.
-@@ -234,6 +612,7 @@
+@@ -234,6 +619,7 @@
          // At most 8 entries: 4 edges, each of which can contribute 2 (the outer
          // and inner halves of a `groove`/`ridge`).
          let mut borders: SmallVec<[(Color, BezPath); 8]> = SmallVec::new();
@@ -12749,7 +12870,7 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
  
          for &edge in &[Edge::Top, Edge::Right, Edge::Bottom, Edge::Left] {
              let (color, edge_style) = match edge {
-@@ -244,7 +623,11 @@
+@@ -244,7 +630,11 @@
              };
              let color = color.resolve_to_absolute(&current_color).as_srgb_color();
  
@@ -12762,7 +12883,7 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
                  continue;
              }
  
-@@ -253,10 +636,9 @@
+@@ -253,10 +643,9 @@
                  // guard against drawing them anyway.
                  BorderStyle::None | BorderStyle::Hidden => {}
  
@@ -12776,10 +12897,12 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
  
                  // A double border is two solid lines separated by a gap, splitting
                  // the border width into three equal parts (outer line / gap / inner
-@@ -315,6 +697,20 @@
+@@ -313,6 +702,20 @@
+                     borders.push((color, self.frame.border_edge_shape(edge)));
+                 }
              }
-         }
- 
++        }
++
 +        if has_marks {
 +            let side = |color: &style::values::computed::Color, style: BorderStyle, edge: Edge| {
 +                (!style.none_or_hidden() && self.edge_width(edge) > 0.0)
@@ -12792,18 +12915,13 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
 +                side(&border.border_left_color, border.border_left_style, Edge::Left),
 +            ];
 +            self.draw_dotted_dashed_sides(scene, &self.frame, sides);
-+        }
-+
-         if borders.is_empty() {
-             return;
          }
-@@ -338,7 +734,152 @@
-             }
-             scene.fill(Fill::NonZero, self.transform, color, None, &path);
-             start = next;
-+        }
-+    }
-+
+ 
+         if borders.is_empty() {
+@@ -341,6 +744,151 @@
+         }
+     }
+ 
 +    /// pyro: the area this element's border paints, which `background-clip: border-area` (CSS
 +    /// Backgrounds 4) clips to: each side with a style and a width, all of it whatever its
 +    /// colour; a `double` side its two lines; a dotted or dashed side its marks when the corners
@@ -12945,12 +13063,14 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
 +            path.close_path();
 +            scene.fill(Fill::NonZero, self.transform, color, None, &path);
 +            painted[i] = true;
-         }
++        }
 +        true
-     }
- 
++    }
++
      /// The border width (in device pixels) of a single edge.
-@@ -351,163 +892,152 @@
+     fn edge_width(&self, edge: Edge) -> f64 {
+         match edge {
+@@ -351,163 +899,152 @@
          }
      }
  
@@ -13248,7 +13368,7 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
      }
  
      pub(crate) fn draw_table_borders(&self, scene: &mut impl PaintScene) {
-@@ -522,6 +1052,10 @@
+@@ -522,6 +1059,10 @@
          let Some(grid_info) = &mut *table.computed_grid_info.borrow_mut() else {
              return;
          };
@@ -13259,7 +13379,7 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
          let Some(border_style) = table.border_style.as_deref() else {
              return;
          };
-@@ -531,35 +1065,57 @@
+@@ -531,35 +1072,57 @@
          let cols = PhysicalTracks::from_tracks(&grid_info.columns);
          let rows = PhysicalTracks::from_tracks(&grid_info.rows);
  
@@ -13333,7 +13453,7 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
          };
  
          // Horizontal borders: the outer edges, then the gutters between adjacent row tracks.
-@@ -571,12 +1127,12 @@
+@@ -571,12 +1134,12 @@
              fill(left, bottom - border_width.height, right, bottom);
          }
          for (prev, next) in rows.iter().zip(rows.iter().skip(1)) {
@@ -13348,7 +13468,7 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
              if outer_border_style.border_left_style != BorderStyle::Hidden {
                  fill(left, y0, left + border_width.width, y1);
              }
-@@ -589,8 +1145,157 @@
+@@ -589,8 +1152,157 @@
          }
      }
  
@@ -13508,7 +13628,7 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
      /// ✅ solid - Defines a solid border
      /// ❌ double - Defines a double border
      /// ❌ groove - Defines a 3D grooved border. The effect depends on the border-color value
-@@ -600,33 +1305,92 @@
+@@ -600,33 +1312,92 @@
      /// ✅ none - Defines no border
      /// ✅ hidden - Defines a hidden border
      pub(crate) fn draw_outline(&self, scene: &mut impl PaintScene) {
