@@ -20460,7 +20460,7 @@ diff --git a/packages/blitz-dom/src/layout/scroll_markers.rs b/packages/blitz-do
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/layout/scroll_markers.rs
-@@ -0,0 +1,1395 @@
+@@ -0,0 +1,1471 @@
 +//! pyro: CSS Overflow 5's scroll markers and scroll buttons: the boxes of `::scroll-marker-group`,
 +//! `::scroll-marker` and `::scroll-button()`, and `:target-current`.
 +//!
@@ -21301,12 +21301,88 @@ new file mode 100644
 +        };
 +        // Scroll offsets grow towards the bottom and right (on a reversed axis they are negative).
 +        const EPSILON: f64 = 0.5;
++        // pyro: with mandatory snapping on the axis, a scroll goes no further than the last snap
++        // position in that direction (Chromium disables the button there).
++        let horizontal = matches!(side, PhysicalSide::Left | PhysicalSide::Right);
++        if let Some(positions) = self.mandatory_snap_positions(node_id, horizontal) {
++            let (cur, lo, hi) = if horizontal { (offset.x, min.x, max.x) } else { (offset.y, min.y, max.y) };
++            let reachable = |p: f64| p.clamp(lo, hi);
++            return match side {
++                PhysicalSide::Top | PhysicalSide::Left => positions.iter().any(|&p| reachable(p) < cur - EPSILON),
++                PhysicalSide::Bottom | PhysicalSide::Right => positions.iter().any(|&p| reachable(p) > cur + EPSILON),
++            };
++        }
 +        match side {
 +            PhysicalSide::Top => offset.y > min.y + EPSILON,
 +            PhysicalSide::Bottom => offset.y < max.y - EPSILON,
 +            PhysicalSide::Left => offset.x > min.x + EPSILON,
 +            PhysicalSide::Right => offset.x < max.x - EPSILON,
 +        }
++    }
++}
++
++impl BaseDocument {
++    /// pyro: the snap positions of `scroller` on one axis when its `scroll-snap-type` snaps that
++    /// axis mandatorily (`None` otherwise): `scroll-snap-align` of the boxes laid out in it, in
++    /// its padding box (scroll-padding and scroll-margin left out).
++    fn mandatory_snap_positions(&self, scroller: NodeId, horizontal: bool) -> Option<Vec<f64>> {
++        use style::values::computed::BorderStyle;
++        use style_traits::ToCss as _;
++        let node = &self.nodes[scroller];
++        let style = node.primary_styles()?;
++        let snap = style.get_box().scroll_snap_type.to_css_string();
++        let mut words = snap.split_whitespace();
++        let axis = words.next()?;
++        let on_axis = match axis {
++            "both" => true,
++            "x" | "inline" => horizontal,
++            "y" | "block" => !horizontal,
++            _ => false,
++        };
++        if !on_axis || words.next() != Some("mandatory") {
++            return None;
++        }
++        let b = style.get_border();
++        let side = |w: app_units::Au, s: BorderStyle| if s.none_or_hidden() { 0.0 } else { w.to_f64_px() };
++        let (start_border, end_border) = if horizontal {
++            (side(b.border_left_width.0, b.border_left_style), side(b.border_right_width.0, b.border_right_style))
++        } else {
++            (side(b.border_top_width.0, b.border_top_style), side(b.border_bottom_width.0, b.border_bottom_style))
++        };
++        drop(style);
++        let layout = node.final_layout();
++        let size = if horizontal { layout.size.width } else { layout.size.height } as f64 - start_border - end_border;
++        let mut positions = Vec::new();
++        // The boxes laid out in the scroller, their positions relative to its border box.
++        let mut stack: Vec<(NodeId, f64)> = node.layout_children.borrow().iter().flatten().map(|&c| (c, 0.0)).collect();
++        while let Some((id, base)) = stack.pop() {
++            let child = &self.nodes[id];
++            let l = child.final_layout();
++            let start = base + if horizontal { l.location.x } else { l.location.y } as f64;
++            let extent = if horizontal { l.size.width } else { l.size.height } as f64;
++            if let Some(cs) = child.primary_styles() {
++                let align = cs.get_box().scroll_snap_align.to_css_string();
++                let mut parts = align.split_whitespace();
++                let block = parts.next().unwrap_or("none");
++                let inline = parts.next().unwrap_or(block);
++                let keyword = if horizontal { inline } else { block };
++                let (lo, hi) = (start - start_border, start - start_border + extent);
++                match keyword {
++                    "start" => positions.push(lo),
++                    "end" => positions.push(hi - size),
++                    "center" => positions.push((lo + hi) / 2.0 - size / 2.0),
++                    _ => {}
++                }
++                // Not into nested scroll containers.
++                if is_scroll_container(&cs) {
++                    continue;
++                }
++            }
++            for &c in child.layout_children.borrow().iter().flatten() {
++                stack.push((c, start));
++            }
++        }
++        (!positions.is_empty()).then_some(positions)
 +    }
 +}
 +

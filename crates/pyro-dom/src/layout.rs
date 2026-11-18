@@ -240,6 +240,9 @@ pub struct Layout {
     /// was last settled in, to select its anchor in when the layout next
     /// changes.
     scroll_anchors: FxHashMap<NodeId, Rc<LayoutResult>>,
+    /// pyro: the box each scroller (`None`: the viewport) last snapped to on each axis (x, y), to
+    /// snap to again after layout changes (CSS Scroll Snap 1 § 6.2.3).
+    snapped: FxHashMap<Option<NodeId>, [Option<NodeId>; 2]>,
     /// The engine laying the document out.
     external: Option<Rc<dyn GeometrySource>>,
     /// The observation stamp and viewport the engine was last synced at.
@@ -519,6 +522,7 @@ impl Layout {
             element_scroll: FxHashMap::default(),
             scroll_targets: FxHashMap::default(),
             scroll_anchors: FxHashMap::default(),
+            snapped: FxHashMap::default(),
             external,
             external_synced: std::cell::Cell::new(None),
             syncs: std::cell::Cell::new(0),
@@ -2580,29 +2584,51 @@ impl Layout {
     /// less `scroll-padding`, their boxes grown by `scroll-margin`). `mandatory` always snaps;
     /// `proximity` within a third of the snapport, as Chromium. The targets as given otherwise.
     fn snap_scroll(
-        &self,
+        &mut self,
         dom: &Dom,
         scroller: Option<NodeId>,
         current: (i32, i32),
         tx: Option<i64>,
         ty: Option<i64>,
     ) -> (Option<i64>, Option<i64>) {
+        let (x, y, chosen) = self.snap_positions(dom, scroller, current, tx, ty, None);
+        if chosen.iter().any(Option::is_some) {
+            self.snapped.insert(scroller, chosen);
+        } else {
+            self.snapped.remove(&scroller);
+        }
+        (x, y)
+    }
+
+    /// [`Self::snap_scroll`]'s positions and the boxes they snap to on each axis; `only` limits
+    /// an axis's candidates to one box (re-snapping to it).
+    fn snap_positions(
+        &self,
+        dom: &Dom,
+        scroller: Option<NodeId>,
+        current: (i32, i32),
+        tx: Option<i64>,
+        ty: Option<i64>,
+        only: Option<[Option<NodeId>; 2]>,
+    ) -> (Option<i64>, Option<i64>, [Option<NodeId>; 2]) {
+        let none = [None, None];
+        let unchanged = (tx, ty, none);
         if tx.is_none() && ty.is_none() {
-            return (tx, ty);
+            return unchanged;
         }
         let doc = self.style.document();
-        let Some(styled) = scroller.or_else(|| dom.document_element(doc).ok().flatten()) else { return (tx, ty) };
+        let Some(styled) = scroller.or_else(|| dom.document_element(doc).ok().flatten()) else { return unchanged };
         let value = |el: NodeId, name: &str| self.style.computed_value(dom, el, name).unwrap_or_default();
         let snap_type = value(styled, "scroll-snap-type");
         if snap_type.is_empty() || snap_type == "none" {
-            return (tx, ty);
+            return unchanged;
         }
         let words: Vec<&str> = snap_type.split_whitespace().collect();
         let (snap_x, snap_y) = match words.first().copied() {
             Some("x") | Some("inline") => (true, false),
             Some("y") | Some("block") => (false, true),
             Some("both") => (true, true),
-            _ => return (tx, ty),
+            _ => return unchanged,
         };
         let mandatory = words.get(1).copied() == Some("mandatory");
         // The scroller's padding box in client coordinates and its size.
@@ -2628,10 +2654,11 @@ impl Layout {
             if v == "auto" { 0.0 } else { px(&v, basis) }
         };
         let (pt, pr, pb, pl) = (pad("top", height), pad("right", width), pad("bottom", height), pad("left", width));
-        let mut best: [Option<f64>; 2] = [None, None];
+        let mut best: [Option<(f64, NodeId)>; 2] = [None, None];
+        // Every box's snap position on each axis, to break ties (below).
+        let mut all: Vec<(NodeId, [Option<f64>; 2])> = Vec::new();
         let target = [tx.map(|v| v as f64), ty.map(|v| v as f64)];
-        let Ok(nodes) = dom.descendants(scroller.unwrap_or(doc)) else { return (tx, ty) };
-        let axes = crate::style::ScrollAxes { x: true, y: true };
+        let Ok(nodes) = dom.descendants(scroller.unwrap_or(doc)) else { return unchanged };
         for id in nodes {
             if dom.element(id).is_err() || Some(id) == scroller {
                 continue;
@@ -2640,11 +2667,33 @@ impl Layout {
             if align.is_empty() || align == "none" {
                 continue;
             }
-            let owner = match dom.parent_element(id).ok().flatten() { Some(p) => self.scroll_container(dom, p, axes), None => ScrollTarget::Viewport };
-            let owned = match (owner, scroller) {
+            // Its nearest scroll container: as user scrolls find it (which handles the root and
+            // body), or, `overflow: hidden` being one too, its nearest ancestor that clips.
+            let by_user = match dom.parent_element(id).ok().flatten() {
+                Some(p) => self.scroll_container(dom, p, crate::style::ScrollAxes { x: true, y: true }),
+                None => ScrollTarget::Viewport,
+            };
+            let by_user = match (by_user, scroller) {
                 (ScrollTarget::Container(c), Some(s)) => c == s,
                 (ScrollTarget::Viewport, None) => true,
                 _ => false,
+            };
+            let owned = by_user || {
+                let mut cur = dom.parent_element(id).ok().flatten();
+                loop {
+                    match cur {
+                        None => break scroller.is_none(),
+                        Some(p) if Some(p) == scroller => break true,
+                        Some(p) if dom.parent_element(p).ok().flatten().is_none() => break scroller.is_none(),
+                        Some(p) => {
+                            let scrolls = |v: String| !matches!(v.as_str(), "" | "visible" | "clip");
+                            if scrolls(value(p, "overflow-x")) || scrolls(value(p, "overflow-y")) {
+                                break false;
+                            }
+                            cur = dom.parent_element(p).ok().flatten();
+                        }
+                    }
+                }
             };
             if !owned {
                 continue;
@@ -2673,20 +2722,102 @@ impl Layout {
                 snap_y && bottom - top > height - pt - pb,
             ];
             let spans = [(left - pl, right - (width - pr)), (top - pt, bottom - (height - pb))];
+            let mut mine = [None, None];
             for axis in 0..2 {
+                if only.is_some_and(|o| o[axis].is_some_and(|el| el != id)) {
+                    continue;
+                }
                 let (Some(c), Some(t)) = (candidates[axis], target[axis]) else { continue };
                 let c = if covering[axis] && t >= spans[axis].0 && t <= spans[axis].1 { t } else { c };
                 let c = c.max(0.0);
-                if best[axis].is_none_or(|b| (c - t).abs() < (b - t).abs()) {
-                    best[axis] = Some(c);
+                mine[axis] = Some(c);
+                if best[axis].is_none_or(|(b, _)| (c - t).abs() < (b - t).abs()) {
+                    best[axis] = Some((c, id));
+                }
+            }
+            all.push((id, mine));
+        }
+        // Several boxes at the same position on an axis: the box at the snap position on both axes
+        // wins (Chromium picks a box aligned on both before one aligned on a single axis).
+        let picked = [best[0].map(|b| b.0), best[1].map(|b| b.0)];
+        for axis in 0..2 {
+            let other = 1 - axis;
+            let (Some(p), Some(q)) = (picked[axis], picked[other]) else { continue };
+            let close = |a: Option<f64>, b: f64| a.is_some_and(|a| (a - b).abs() < 0.5);
+            if let Some((id, _)) = all.iter().find(|(_, c)| close(c[axis], p) && close(c[other], q)) {
+                best[axis] = Some((p, *id));
+            }
+        }
+        let mut chosen = none;
+        let mut snap = |axis: usize, t: Option<i64>, size: f64| match (t, best[axis]) {
+            (Some(t), Some((b, id))) if mandatory || only.is_some() || (b - t as f64).abs() <= size / 3.0 => {
+                chosen[axis] = Some(id);
+                Some(b.round() as i64)
+            }
+            _ => t,
+        };
+        let x = snap(0, tx, width);
+        let y = snap(1, ty, height);
+        (x, y, chosen)
+    }
+
+    /// pyro: after a layout change, each scroller that snapped snaps again to the box it snapped
+    /// to (or, when that box no longer has a snap position, to the nearest one), as Chromium
+    /// re-snaps (CSS Scroll Snap 1 § 6.2.3). Adds the scrollers that moved to `moved`.
+    fn resnap(&mut self, dom: &Dom, moved: &mut Vec<ScrollTarget>) {
+        let mut snapped: Vec<(Option<NodeId>, [Option<NodeId>; 2])> = self.snapped.iter().map(|(k, v)| (*k, *v)).collect();
+        snapped.sort_by_key(|(k, _)| k.map(|k| (k.idx, k.gen)));
+        for (scroller, targets) in snapped {
+            if let Some(el) = scroller {
+                if !dom.is_connected(el).unwrap_or(false) || !self.is_visible(dom, el) {
+                    self.snapped.remove(&scroller);
+                    continue;
+                }
+            }
+            let current = match scroller {
+                Some(el) => self.element_scroll.get(&el).copied().unwrap_or((0, 0)),
+                None => (self.window_scroll.0 as i32, self.window_scroll.1 as i32),
+            };
+            let (tx, ty) = (Some(current.0 as i64), Some(current.1 as i64));
+            let alive = targets.map(|t| t.filter(|el| dom.is_connected(*el).unwrap_or(false)));
+            let (mut x, mut y, mut chosen) = self.snap_positions(dom, scroller, current, tx, ty, Some(alive));
+            // The box it snapped to has no snap position any more: the nearest one.
+            if chosen[0].is_none() && chosen[1].is_none() {
+                (x, y, chosen) = self.snap_positions(dom, scroller, current, tx, ty, None);
+            }
+            if chosen.iter().all(Option::is_none) {
+                self.snapped.remove(&scroller);
+                continue;
+            }
+            self.snapped.insert(scroller, chosen);
+            let (x, y) = (x.unwrap_or(current.0 as i64), y.unwrap_or(current.1 as i64));
+            match scroller {
+                Some(el) => {
+                    let next = (self.clamp_scroll(dom, el, Axis::Width, x), self.clamp_scroll(dom, el, Axis::Height, y));
+                    if next != current {
+                        self.element_scroll.insert(el, next);
+                        self.scroll_generation = self.scroll_generation.wrapping_add(1);
+                        self.push_scroll();
+                        if !moved.contains(&ScrollTarget::Container(el)) {
+                            moved.push(ScrollTarget::Container(el));
+                        }
+                    }
+                }
+                None => {
+                    let (w, h) = self.document_scroll_size(dom);
+                    let max = (scroll_limit(w, self.inner_width()), scroll_limit(h, self.inner_height()));
+                    let next = ((x.max(0) as u32).min(max.0), (y.max(0) as u32).min(max.1));
+                    if next != self.window_scroll {
+                        self.window_scroll = next;
+                        self.scroll_generation = self.scroll_generation.wrapping_add(1);
+                        self.push_scroll();
+                        if !moved.contains(&ScrollTarget::Viewport) {
+                            moved.push(ScrollTarget::Viewport);
+                        }
+                    }
                 }
             }
         }
-        let snap = |axis: usize, t: Option<i64>, size: f64| match (t, best[axis]) {
-            (Some(t), Some(b)) if mandatory || (b - t as f64).abs() <= size / 3.0 => Some(b.round() as i64),
-            _ => t,
-        };
-        (snap(0, tx, width), snap(1, ty, height))
     }
 
     /// Whether any element or the window is scrolled away from the origin.
@@ -2847,7 +2978,7 @@ impl Layout {
     }
 
     pub fn has_scroll_offsets(&self) -> bool {
-        self.window_scroll != (0, 0) || self.element_scroll.values().any(|&o| o != (0, 0))
+        self.window_scroll != (0, 0) || self.element_scroll.values().any(|&o| o != (0, 0)) || !self.snapped.is_empty()
     }
 
     /// Re-clamps scroll offsets to the current scrollable extents and
@@ -2862,6 +2993,9 @@ impl Layout {
             return moved;
         }
         self.apply_scroll_anchors(dom, &mut moved);
+        if !self.snapped.is_empty() {
+            self.resnap(dom, &mut moved);
+        }
         let mut scrolled: Vec<(NodeId, (i32, i32))> =
             self.element_scroll.iter().filter(|(_, &o)| o != (0, 0)).map(|(&k, &v)| (k, v)).collect();
         scrolled.sort_by_key(|(k, _)| (k.idx, k.gen));
