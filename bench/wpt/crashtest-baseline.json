@@ -816,7 +816,7 @@
   "css/css-overflow/overflow-clip-001-crash.html": {"status":"complete","ms":50,"n":1,"fail":[],"h":"22f2a845"},
   "css/css-overflow/overflow-clip-002-crash.html": {"status":"complete","ms":50,"n":1,"fail":[],"h":"22f2a845"},
   "css/css-overflow/scroll-markers/chrome-421199213-crash.html": {"status":"complete","ms":40,"n":1,"fail":[],"h":"22f2a845"},
-  "css/css-overflow/scroll-markers/chrome-555280390-crash.html": {"status":"timeout","ms":15000,"n":0,"pass":[]},
+  "css/css-overflow/scroll-markers/chrome-555280390-crash.html": {"status":"complete","ms":170,"n":1,"fail":[],"h":"22f2a845"},
   "css/css-overflow/scroll-markers/chrome-570167919-crash.html": {"status":"complete","ms":40,"n":1,"fail":[],"h":"22f2a845"},
   "css/css-overflow/scroll-markers/column-scroll-marker-015-crash.html": {"status":"complete","ms":50,"n":1,"fail":[],"h":"22f2a845"},
   "css/css-overflow/scroll-markers/column-scroll-marker-manual-slot-recalc-crash.html": {"status":"complete","ms":50,"n":1,"fail":[],"h":"22f2a845"},

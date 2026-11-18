@@ -271,6 +271,12 @@ timeout with no result, for a page that was about to complete too.
 
 ## Timings
 
+`run.mjs` prints progress every 100 pages or 30 s. A watchdog replaces the browser when a worker is stuck on a page
+for its limit plus 75 s once the page has started (not while it waits for a solo page or a restart; outside the per-page guard: a context that never closes, a browser that never starts) and
+logs the page (`watchdogKills` in the results). `WPT_TRACE=FILE` appends `start`/`end` lines per page, to find a hang
+afterwards. The one apparent hang of a wptserve sample (2026-11-17, 213 pages at `--jobs 2`, no output for 11 min)
+was the old progress interval: the same pages in chunks of 20 took 670 s for 160 of them, and none hung.
+
 The slowest pages are slow by design or by a known engine gap, not by the runner:
 
 - `dom/nodes/NodeList-static-length-getter-tampered-*.html` (6 long pages, 22-29 s each on a loaded machine): 50 x
@@ -572,6 +578,105 @@ Paint (the paint directories and CSS2's backgrounds, borders, colors, visufx, ui
 17 more paint features have 119 between them. CSS2's other subdirectories account for the other 1,358: selectors 380
 (339 of them `first-letter-punctuation-*`), tables 199, normal-flow 127, lists 120 (counters and the `*-applies-to`
 pages), generated-content 105, text 101, bidi-text 55, positioning 48 and fewer elsewhere.
+
+## Coverage
+
+`coverage.json` counts every test in WPT's own manifest (`MANIFEST.json`, version 9, as wpt.fyi publishes it per
+revision) at the pinned revision, by kind (the manifest's item type) and area (`css/<spec>`, `html/<section>`,
+`svg/<section>`, else the top-level directory). Each test is `gate` (CI runs it today), `runnable` (this runner's
+discovery takes it, but no CI plan runs it yet) or not run for a reason (`notRun`: discovery's reason, or the kind has
+no runner: print reftests, manual, visual, wdspec, aamtest, test262). `total = gate + runnable + sum(notRun)`; every
+URL counts once (variants separately). The status site reads it for its "not run" denominators.
+
+```sh
+bench/wpt/fetch-wpt.sh --all ~/wpt-full                     # the whole revision, about 1.1 GB, ~90 s
+bun bench/wpt/coverage.mjs --wpt ~/wpt-full                 # downloads the manifest from wpt.fyi once (40 MB)
+```
+
+At a421f2fe, of 132,204 manifest items: testharness 39,989 (gate 3,537, runnable 19,495), reftest 29,212 (gate
+18,158, runnable 9,640), crashtest 2,105 (gate 2,031). Not run: testharness worker variants 4,320, wptserve names
+7,048, Python handlers 2,748, testdriver 2,701; reftests needing wptserve 418, testdriver 83, masonry 911; and
+test262 53,814, manual 3,047, visual 2,714, wdspec 685, print reftests 448, aamtest 190. `discoveredNotInManifest`
+lists what discovery takes that the manifest classifies otherwise (45 `-crash` pages as testharness, 4 SVG reftests):
+none of them is in a gate directory but four crashtests the testharness gate has always run. Top-level `tools/`,
+`resources/` and `conformance-checkers/` hold no tests (`lib.mjs` `NON_TEST_TOP`).
+
+`run.mjs --dirs all` runs every directory of a whole checkout (`allDirs()`: the kind's own directories first, so their
+pages keep their rules, then the fewest others that cover the rest). Testharness pages outside the ten older
+directories run in wptrunner's 800x600. It finds 23,077 testharness pages and 27,802 reftests: the `gate` and
+`runnable` counts above, plus the 49 in `discoveredNotInManifest`. A local sample of 1 in 40 of the pages no gate runs
+(2026-11-17, `--jobs 2`, load 33, CI browser of a028229b; not a baseline) found no crash, no hang and no browser
+restart: testharness 487 of 492 completed (5 timeouts, 285 s wall, 1.06 s per page), reftests 233 of 242 completed
+(9 timeouts, 108 s wall, 0.70 s per page). Timeouts are about half the page time.
+
+## wptserve
+
+`run.mjs --server wptserve` (and `gate.mjs run --server wptserve`) serves the pages with WPT's own server instead of
+`serve.mjs` (`wptserve.mjs`): every origin a test names (`web-platform.test`, `www`/`www1`/`www2` and the IDN
+subdomains, `not-web-platform.test`; http, https with WPT's test certificates, ws, wss; no h2), the Python handlers,
+substitutions and all pipes. Discovery then keeps the pages that need them: at a421f2fe testharness 23,077 -> 31,590
+pages, reftests 27,802 -> 28,219, crashtests 2,031 -> 2,076 (with `--dirs all`). Testdriver pages stay out.
+
+- wptserve binds 127.0.0.1 (`server_host`, `check_subdomains: false`), so no hosts file is needed. The browser
+  reaches the names through a forward proxy (`startProxy()`) that every context gets as its `proxyServer`: it
+  connects any host a request names to 127.0.0.1 on the same port, what wptrunner's `--host-resolver-rules` does for
+  Chrome. Contexts ignore certificate errors (WPT's test CA).
+- Every port is picked free per run; subtest names that hold one are recorded with wptserve's default port (8000,
+  8001, 8443, 8444, 8888, 8889), as `serve.mjs`'s origin already is.
+- `testharnessreport.js` is ours (a file alias in the generated config), as wptrunner serves its own.
+- It needs Python 3.9+ with `tools/serve/requirements.txt` (today `cryptography`): `fetch-wpt.sh --venv DIR` makes
+  `DIR/.git/pyro-venv`, which `wptserve.mjs` uses (`WPT_PYTHON` overrides). macOS's `/usr/bin/python3` is 3.9.6.
+- It covers what `serve.mjs` does by hand: `/resources/WebIDLParser.js`, `?pipe=trickle`, `xhr/resources/delay.py`.
+- Pages load from the origin their name asks for, as wptrunner loads them: `.https.` and `.serviceworker.` over https,
+  `.www.` from the www subdomain.
+- https through wptserve needed a pyro-net fix (2026-11-17): its responses carry no `Content-Length` and end when
+  the connection closes, and Python's TLS closes without `close_notify`, which pyro read as a cut body (every https
+  load failed with `error reading a body from connection`). Such an end now reads as the end of the stream, as in
+  Chromium. In a sample of 212 of the pages wptserve adds (1 in 40, `--jobs 2`): before, 27 failed to load and 25
+  timed out (6.6 s per page); after, 202 completed, 10 timed out, none failed to load, 113 of 118 `.https.` pages
+  completed, 3.4 s per page, 366 s wall, no browser restart. 51 pages passed every subtest, 1,535 of 2,716
+  subtests passed.
+
+The PR gate keeps `serve.mjs` and its plan until a CI run records baselines for the whole suite.
+
+## Whole suite
+
+`.github/workflows/wpt-full.yml` runs everything nightly (01:17 UTC, and by hand): `gate.mjs run --dirs all
+--server wptserve` for each kind, 4 testharness, 3 reftest and 1 crashtest shards on lp-m1 (or macos-15), with the
+newest main build's `wpt-browser`. It only reports for now: per-kind counts in the job summary and every shard's
+results as `wpt-full-results`. A pull request that changes the workflow, `wptserve.mjs` or `fetch-wpt.sh` runs its
+`smoke` job instead (a few wptserve pages on lp-m1, and the runner's Python version).
+
+## testdriver
+
+`--testdriver` (with `--server wptserve`) runs the pages that load `/resources/testdriver.js`. wptserve serves our
+`testdriver-vendor.js` in place of the checkout's empty one (a file alias, as wptrunner serves Chrome's). It sets
+`test_driver_internal.in_automation` and sends each call to the runner through a binding on every context
+(`testdriver.mjs`), which performs it with Playwright's input APIs over CDP, as wptrunner performs WebDriver commands:
+
+- `click` (and with it `bless`): a mouse click at the element's in-view center, after scrolling it into view.
+- `send_keys`: focus, then the keys typed one by one (WebDriver's Private Use Area codes as key names, modifiers held
+  until pressed again or the end).
+- `action_sequence` (`new test_driver.Actions()`): tick by tick, pointer (mouse; touch and pen as mouse), key, wheel
+  and pause sources; element origins become the element's center.
+- Elements in frames: the frame's content-box offset in the page is added.
+
+`set_permission` sends `Browser.setPermission` for the document's origin on the page's session (its browser context).
+`get_computed_role` and `get_computed_label` read the element's node from Playwright's accessibility engine
+(`locator.ariaSnapshot()`: role and name of its first line; nothing in the tree gives `""`), finding the element by a
+`data-pyro-testdriver` attribute held for the call only (pyro's CDP has no Accessibility domain). Presses of the same
+button at the same spot within 500 ms count up (`clickCount`), as Chrome's WebDriver counts a double click.
+`delete_all_cookies` clears the browser context's cookies (`cookies/value/value-ctl.html`: 0 -> 63 of 66).
+Everything else (`get_named_cookie`, BiDi, virtual authenticators, payment and wallet modes, ...) rejects as "not
+implemented", as testdriver.js does with no vendor. At a421f2fe 3,206 of the 3,462 files that load testdriver call
+only `click`, `send_keys`, `Actions` or `bless`; the next by use are all implemented too: `set_permission` (165
+calls), `get_computed_role` (114), `get_computed_label` (77), `delete_all_cookies` (41). A sample of 50 testdriver
+pages (1 in 80, before `delete_all_cookies`): 48 completed, 12 passed every subtest. With `--dirs all --server wptserve --testdriver`: testharness 35,562 pages,
+reftests 28,303, crashtests 2,105 (every crashtest in the manifest). In a first local check, 6 of 10 testdriver pages
+in uievents, css/selectors and html/user-activation passed every subtest. Of the other four, three fail on pyro
+gaps (no `navigator.userActivation`; `mouseenter.composed` is true; no mouseover when layout moves an element
+under a still pointer) and `uievents/mouse/cancel-mousedown-in-subframe.html` times out; `auxclick_event.html` passes
+since click counting. Six wai-aria/accname/html-aam pages: 46 of 52 subtests pass.
 
 ## Crashtests
 

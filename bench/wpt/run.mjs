@@ -4,9 +4,12 @@
 // nor hung).
 // Usage: bun run.mjs --wpt DIR --bin label=/path/to/serve-compatible-binary --out results.json
 //          [--kind testharness|reftest|crashtest] [--base http://127.0.0.1:9415]   (default: start serve.mjs on a free port)
-//          [--dirs dom,url,...] [--jobs 6] [--timeout 15000] [--long-timeout 45000]
+//          [--server static|wptserve] [--dirs dom,url,...|all] [--jobs 6] [--timeout 15000] [--long-timeout 45000]
 //          [--sample-encoding N] [--match REGEX] [--tests FILE] [--list]
 //          [--baseline baseline.json [--gate]] [--shard I/N] [--reuse-context] [--repeat N]
+// --server wptserve: WPT's own server (wptserve.mjs) instead of serve.mjs, every context behind its host-mapping
+//   proxy; discovery then keeps the pages that need wptserve (names, Python handlers, pipes). README "wptserve".
+// --testdriver: with --server wptserve, testdriver pages too (testdriver.mjs).
 // --tests FILE: only these URLs (a JSON array of URLs, or a results or baseline file).
 // --repeat N: run every selected page N times (the gate's reruns), one result each; copies run side by side.
 // --baseline: per-page durations order the run longest first and balance --shard I/N (0-based).
@@ -23,9 +26,11 @@ import net from 'node:net';
 import path from 'node:path';
 import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
-import { DEFAULT_DIRS, REFTEST_DIRS, discover, discoverReftests, plan, shard, readJson } from './lib.mjs';
+import { DEFAULT_DIRS, REFTEST_DIRS, allDirs, discover, discoverReftests, plan, shard, readBaselineAt, readJson } from './lib.mjs';
 import { REFTEST_CONTEXT, ahemEnv, reftestEnv, runReftest } from './reftest.mjs';
 import { CRASHTEST_DIRS, discoverCrashtests, runCrashtest } from './crashtest.mjs';
+import { BROWSER_HOST, startProxy, startWptserve } from './wptserve.mjs';
+import { installTestdriver } from './testdriver.mjs';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const require = createRequire(path.join(HERE, '..', 'package.json'));
 const { chromium } = require('playwright-core');
@@ -40,13 +45,21 @@ if (!['testharness', 'reftest', 'crashtest'].includes(KIND)) throw new Error(`--
 const KIND_DIRS = KIND === 'reftest' ? REFTEST_DIRS : KIND === 'crashtest' ? CRASHTEST_DIRS : DEFAULT_DIRS;
 // Reftests and crashtests render: the reftest environment and viewport, and a page whose browser died runs again alone.
 const RENDERS = KIND !== 'testharness';
-const DIRS = opt('--dirs', KIND_DIRS.join(',')).split(',');
+// --dirs all: every directory of the checkout (fetch-wpt.sh --all), the kind's own first.
+const DIRS = opt('--dirs') === 'all' ? (KIND_DIRS.includes('.') ? KIND_DIRS : allDirs(WPT, KIND_DIRS)) : opt('--dirs', KIND_DIRS.join(',')).split(',');
 const JOBS = Number(opt('--jobs', 6));
 const TIMEOUT = Number(opt('--timeout', 15000));
 const LONG = Number(opt('--long-timeout', 45000));
 const SAMPLE = Number(opt('--sample-encoding', 1));
 const GATE = argv.includes('--gate');
-const BASELINE = opt('--baseline') && readJson(opt('--baseline'));
+const SERVER = opt('--server', 'static');
+if (!['static', 'wptserve'].includes(SERVER)) throw new Error(`--server ${SERVER}: expected static or wptserve`);
+const WPTSERVE = SERVER === 'wptserve';
+// --testdriver (with --server wptserve): testdriver pages run, testdriver-vendor.js driving the browser through the
+// runner (testdriver.mjs). README "testdriver".
+const TESTDRIVER = argv.includes('--testdriver');
+if (TESTDRIVER && !WPTSERVE) throw new Error('--testdriver needs --server wptserve');
+const BASELINE = opt('--baseline') && readBaselineAt(opt('--baseline'));
 const [SHARD, SHARDS] = (opt('--shard', '0/1')).split('/').map(Number);
 const REUSE = argv.includes('--reuse-context');
 const REPEAT = Number(opt('--repeat', 1));
@@ -57,7 +70,7 @@ if (!(SHARD >= 0 && SHARD < SHARDS)) throw new Error(`--shard ${opt('--shard')}:
 if (!(REPEAT >= 1)) throw new Error(`--repeat ${opt('--repeat')}: expected N >= 1`);
 
 function selectTests() {
-  const { tests, excluded, info } = KIND === 'reftest' ? discoverReftests(WPT, DIRS) : KIND === 'crashtest' ? discoverCrashtests(WPT, DIRS) : discover(WPT, DIRS, { sampleEncoding: SAMPLE });
+  const { tests, excluded, info } = KIND === 'reftest' ? discoverReftests(WPT, DIRS, { wptserve: WPTSERVE, testdriver: TESTDRIVER }) : KIND === 'crashtest' ? discoverCrashtests(WPT, DIRS, { wptserve: WPTSERVE, testdriver: TESTDRIVER }) : discover(WPT, DIRS, { sampleEncoding: SAMPLE, wptserve: WPTSERVE, testdriver: TESTDRIVER });
   let sel = tests;
   const M = opt('--match') && new RegExp(opt('--match'));
   if (M) sel = sel.filter((t) => M.test(t.url));
@@ -84,14 +97,28 @@ const WPT_REVISION = gitRev.status === 0 ? gitRev.stdout.trim() : null;
 
 // ---------- WPT server ----------
 let BASE = opt('--base');
-let server;
-if (!BASE) {
+let server, wptserve, proxy;
+if (!BASE && WPTSERVE) {
+  wptserve = await startWptserve(WPT);
+  proxy = await startProxy();
+  BASE = wptserve.base;
+} else if (!BASE) {
   server = spawn(process.execPath, [path.join(HERE, 'serve.mjs'), WPT, '0'], { stdio: ['ignore', 'pipe', 'inherit'] });
   const line = await new Promise((r, j) => {
     readline.createInterface({ input: server.stdout }).once('line', r);
     server.once('exit', () => j(new Error('serve.mjs exited')));
   });
   BASE = `http://127.0.0.1:${line.match(/(\d+)$/)[1]}`;
+}
+
+// The origin a page loads from, as wptrunner picks it from the file name under wptserve: `.https.` (and
+// `.serviceworker.`) pages over https, `.www.` pages from the www subdomain. h2 is not served (wptserve --no-h2).
+function baseFor(url) {
+  if (!wptserve) return BASE;
+  const name = url.replace(/[?#].*$/, '').split('/').pop();
+  const https = /\.(https|serviceworker)\./.test(name);
+  const host = /\.www\./.test(name) ? `www.${BROWSER_HOST}` : BROWSER_HOST;
+  return https ? `https://${host}:${wptserve.ports.https}` : `http://${host}:${wptserve.ports.http}`;
 }
 
 // ---------- browser ----------
@@ -141,7 +168,7 @@ async function startBrowser() {
   }
   throw new Error('browser did not start');
 }
-process.on('exit', () => { try { process.kill(-child.pid, 'SIGKILL'); } catch {} try { server?.kill('SIGKILL'); } catch {} });
+process.on('exit', () => { try { process.kill(-child.pid, 'SIGKILL'); } catch {} try { server?.kill('SIGKILL'); } catch {} wptserve?.stop(); });
 
 // Runs in the page: resolves once the harness completes (an add_completion_callback, no polling), or after `ms`.
 // `report` is the shim's object; until testharness.js and the shim have loaded, look again every 5 ms.
@@ -178,7 +205,12 @@ async function openPage(slot, t) {
   }
   if (!slot.browser) { slot.gen = generation; slot.browser = await chromium.connectOverCDP(endpoint, { timeout: 15000 }); }
   if (!slot.page) {
-    slot.ctx = await slot.browser.newContext(RENDERS ? REFTEST_CONTEXT : t.viewport ? { viewport: t.viewport, deviceScaleFactor: 1 } : undefined);
+    const viewport = RENDERS ? REFTEST_CONTEXT : t.viewport ? { viewport: t.viewport, deviceScaleFactor: 1 } : {};
+    // wptserve: its hosts through the proxy (no bypass: localhost too, as Chrome's host rules map every name), and
+    // WPT's test certificates.
+    const served = proxy ? { proxy: { server: `http://127.0.0.1:${proxy.port}`, bypass: '<-loopback>' }, ignoreHTTPSErrors: true } : {};
+    slot.ctx = await slot.browser.newContext({ ...viewport, ...served });
+    if (TESTDRIVER) await installTestdriver(slot.ctx);
     slot.page = await slot.ctx.newPage();
     slot.page.on('dialog', (d) => d.dismiss().catch(() => {}));
   }
@@ -193,10 +225,10 @@ async function openPage(slot, t) {
 // `gen`: the browser (`generation`) the page runs in.
 async function runOne(slot, t, gen) {
   const page = await openPage(slot, t);
-  if (KIND === 'reftest') return runReftest(page, t, BASE, t.limit);
-  if (KIND === 'crashtest') return runCrashtest(page, t, BASE, t.limit);
+  if (KIND === 'reftest') return runReftest(page, t, baseFor(t.url), t.limit);
+  if (KIND === 'crashtest') return runCrashtest(page, t, baseFor(t.url), t.limit);
   const t0 = Date.now();
-  await page.goto(`${BASE}/${t.url}`, { waitUntil: 'commit', timeout: t.limit });
+  await page.goto(`${baseFor(t.url)}/${t.url}`, { waitUntil: 'commit', timeout: t.limit });
   // The wait also fails when the browser is gone, replaced because another slot's page hung it. It would fail until
   // the timeout and record a page that was about to complete as timed out with no result: the worker runs it again.
   const replaced = () => { if (gen !== generation) throw new Error('the browser was replaced under this page'); };
@@ -240,7 +272,9 @@ async function resetSlot(slot) {
 // A subtest name that holds a URL the page resolved (interpolation pages name their url() values) holds this
 // server's origin, whose port differs from run to run: named by wptserve's origin instead, so the name is the same
 // in every run (the baseline keys passes by name).
-const stableName = (s) => s.replaceAll(BASE, 'http://web-platform.test:8000');
+// Under wptserve every port is free-picked: each is named by wptserve's default for it.
+const PORT_NAMES = wptserve ? [[wptserve.ports.http, 8000], [wptserve.ports.http2, 8001], [wptserve.ports.https, 8443], [wptserve.ports.https2, 8444], [wptserve.ports.ws, 8888], [wptserve.ports.wss, 8889]] : [];
+const stableName = (s) => PORT_NAMES.reduce((x, [from, to]) => x.replaceAll(`:${from}`, `:${to}`), s.replaceAll(BASE, 'http://web-platform.test:8000'));
 const LINE = /^(.*?)\|(Pass|Fail|Timeout|Not Run|Optional Feature Unsupported)(?:\|(.*))?$/s;
 function parse(log) {
   const subs = [];
@@ -280,13 +314,40 @@ async function exited(proc) {
   return proc.exitCode != null || !!proc.signalCode;
 }
 
+// Watchdog: every page in flight, by worker. guarded() bounds a page's own run; this catches a worker stuck anywhere
+// else (a context that never closes, a browser that never starts) or a page whose guard did not fire. Past its
+// limit plus WATCHDOG_MS the browser is killed and replaced, which fails every wait on it, and the stuck page is
+// logged. WPT_TRACE=FILE appends `start|end <worker> <url> [status ms]` per page (find a hang after the fact).
+const WATCHDOG_MS = 60000;
+const inflight = new Map();
+const TRACE = process.env.WPT_TRACE && fs.createWriteStream(process.env.WPT_TRACE, { flags: 'a' });
+const trace = (line) => TRACE?.write(`${new Date().toISOString()} ${line}\n`);
+let watchdogKills = 0;
+const watchdog = setInterval(() => {
+  const now = Date.now();
+  for (const [w, p] of inflight) {
+    if (p.killed || now - p.since < (p.limit ?? TIMEOUT) + 15000 + WATCHDOG_MS) continue;
+    p.killed = true;
+    watchdogKills++;
+    console.error(`${LABEL}: watchdog: worker ${w} stuck ${((now - p.since) / 1000).toFixed(0)} s on ${p.url}; replacing the browser`);
+    trace(`watchdog ${w} ${p.url}`);
+    killBrowser();
+    restartBrowser(generation);
+  }
+}, 5000);
+watchdog.unref();
+// Progress at least every 30 s (a slow run looks the same as a hung one otherwise).
+let lastProgress = Date.now();
+
 const PLAN = tests.map((t) => t.url);
 await startBrowser();
 const results = [];
 let next = 0, done = 0, restarts = 0;
 const t0 = Date.now();
+let workers = 0;
 async function worker() {
   const slot = {};
+  const w = workers++;
   while (next < tests.length) {
     const t = tests[next++];
     let r;
@@ -294,6 +355,9 @@ async function worker() {
     const leave = RENDERS ? await enter(t) : () => {};
     if (restarting) await restarting;
     const gen = generation, panicsBefore = panics, tail = stderrTail;
+    // In flight from here: waiting for a solo page or a restart above is not being stuck.
+    inflight.set(w, { url: t.url, since: Date.now(), limit: t.limit });
+    trace(`start ${w} ${t.url}`);
     try { r = await guarded(slot, t, gen); }
     catch (e) {
       r = { status: 'error', error: String(e.message ?? e).split('\n')[0].slice(0, 200) };
@@ -314,7 +378,7 @@ async function worker() {
       }
       // The browser was replaced under this page (another slot's page hung it): run the page again.
       else if (lost && (t.retried ?? 0) < 3) { t.retried = (t.retried ?? 0) + 1; tests.push(t); continue; }
-    } finally { leave(); }
+    } finally { leave(); inflight.delete(w); }
     if (KIND === 'crashtest' && r.status !== 'crash' && r.status !== 'hang') {
       // A panic's lines may still be in the pipe when the page's last answer arrives.
       await sleep(10);
@@ -327,8 +391,11 @@ async function worker() {
     if (r.status === 'hang') { slot.browser = slot.ctx = slot.page = null; restarts++; await restartBrowser(gen); }
     if (r.status === 'timeout') await resetSlot(slot);
     const { est, limit, retried, solo: alone, refs, fuzzy, viewport, ...meta } = t;
+    inflight.delete(w);
+    trace(`end ${w} ${t.url} ${r.status} ${r.ms ?? ''}`);
     results.push({ ...meta, status: r.status, ms: r.ms, error: r.error, subtests: r.subtests ?? parse(r.log) });
-    if (++done % 100 === 0) {
+    if (++done % 100 === 0 || Date.now() - lastProgress > 30000) {
+      lastProgress = Date.now();
       if (OUT) fs.writeFileSync(OUT + '.partial', JSON.stringify({ label: LABEL, results }));
       console.error(`${LABEL}: ${done}/${PLAN.length} (${((Date.now() - t0) / 1000).toFixed(0)} s)`);
     }
@@ -343,7 +410,7 @@ const ru = process.resourceUsage();
 const run = {
   label: LABEL, bin: BIN, kind: KIND, mode: GATE ? 'gate' : 'full', shard: `${SHARD}/${SHARDS}`, dirs: DIRS, jobs: JOBS,
   restricted: RESTRICTED, reuseContext: REUSE, wptRevision: WPT_REVISION, discovered, plan: PLAN, skipped,
-  wallMs, browserCpuS, runnerCpuS: (ru.userCPUTime + ru.systemCPUTime) / 1e6, serverCpuS, restarts, excluded, ...(info ? { info } : {}), results,
+  wallMs, browserCpuS, runnerCpuS: (ru.userCPUTime + ru.systemCPUTime) / 1e6, serverCpuS, restarts, watchdogKills, excluded, ...(info ? { info } : {}), results,
 };
 if (OUT) { fs.writeFileSync(OUT, JSON.stringify(run)); try { fs.unlinkSync(OUT + '.partial'); } catch {} }
 console.error(`${LABEL}: done ${PLAN.length} pages in ${(wallMs / 1000).toFixed(1)} s (CPU: browser ${browserCpuS.toFixed(1)} s, runner ${run.runnerCpuS.toFixed(1)} s, server ${serverCpuS.toFixed(1)} s), restarts ${restarts}`);
