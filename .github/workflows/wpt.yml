@@ -594,18 +594,21 @@ jobs:
         env:
           SHARD: ${{ strategy.job-index }}/${{ strategy.job-total }}
           RUNNER_ARGS: ${{ inputs.runner-args }}
-          # Pages mostly wait (timers): in the macOS gate run of 44260229617, at --jobs 4, 124 pages of 1-9 s were 66%
-          # of the page time, timeouts 1%, and the browser used 1.7 cores. Twice the runner's 4 CPUs, chosen before the
-          # Linux baseline is recorded so that it is recorded under this load.
-          JOBS: '8'
+          # One page per CPU of the 4-CPU runner. At --jobs 8 (68b8650ff) three render-blocking subtests and one
+          # transition subtest flipped in 9 of 9 runs (flaky-linux.json); the baseline is recorded at this --jobs.
+          JOBS: '4'
           OUT: wpt-linux-shard-${{ strategy.job-index }}.json
         run: |
           echo "$(nproc) CPUs, $(free -g | awk '/^Mem:/{print $2}') GB, $(. /etc/os-release && echo "$PRETTY_NAME")"
           read -r -a extra <<< "$RUNNER_ARGS"
           full=()
           if [ "$FULL" = true ]; then full=(--full); fi
-          bun bench/wpt/gate.mjs run "${extra[@]}" --baseline bench/wpt/baseline-linux.json --wpt wpt --bin browser/pyro \
-            --jobs "$JOBS" --shard "$SHARD" "${full[@]}" --out "$OUT" --no-check
+          # flaky.json plus the Linux-only entries (flaky-linux.json): macOS keeps gating what only Linux's timing breaks.
+          merge_flaky() { bun -e 'const fs = require("fs"); const r = (f) => (fs.existsSync(f) && fs.statSync(f).size ? JSON.parse(fs.readFileSync(f)).tests : {});
+            fs.writeFileSync(process.argv[3], JSON.stringify({ tests: { ...r(process.argv[1]), ...r(process.argv[2]) } }));' "$@"; }
+          merge_flaky bench/wpt/flaky.json bench/wpt/flaky-linux.json "$RUNNER_TEMP/flaky.json"
+          bun bench/wpt/gate.mjs run "${extra[@]}" --baseline bench/wpt/baseline-linux.json --flaky "$RUNNER_TEMP/flaky.json" \
+            --wpt wpt --bin browser/pyro --jobs "$JOBS" --shard "$SHARD" "${full[@]}" --out "$OUT" --no-check
       - uses: actions/upload-artifact@v4
         if: ${{ !cancelled() }}
         with:
@@ -654,13 +657,18 @@ jobs:
             echo "verdict=fail" >> "$GITHUB_OUTPUT"
             exit 1
           fi
-          args=(--baseline bench/wpt/baseline-linux.json --artifact wpt-linux-baseline)
+          # flaky.json plus the Linux-only entries (flaky-linux.json): macOS keeps gating what only Linux's timing breaks.
+          merge_flaky() { bun -e 'const fs = require("fs"); const r = (f) => (fs.existsSync(f) && fs.statSync(f).size ? JSON.parse(fs.readFileSync(f)).tests : {});
+            fs.writeFileSync(process.argv[3], JSON.stringify({ tests: { ...r(process.argv[1]), ...r(process.argv[2]) } }));' "$@"; }
+          merge_flaky bench/wpt/flaky.json bench/wpt/flaky-linux.json "$RUNNER_TEMP/flaky.json"
+          args=(--baseline bench/wpt/baseline-linux.json --flaky "$RUNNER_TEMP/flaky.json" --artifact wpt-linux-baseline)
           if [ "$EVENT" = pull_request ]; then
             if git show HEAD^1:bench/wpt/baseline-linux.json > "$RUNNER_TEMP/base-baseline.json" 2>/dev/null; then
               args+=(--base-baseline "$RUNNER_TEMP/base-baseline.json")
-              if git show HEAD^1:bench/wpt/flaky.json > "$RUNNER_TEMP/base-flaky.json" 2>/dev/null; then
-                args+=(--base-flaky "$RUNNER_TEMP/base-flaky.json")
-              fi
+              git show HEAD^1:bench/wpt/flaky.json > "$RUNNER_TEMP/base-flaky-mac.json" 2>/dev/null || true
+              git show HEAD^1:bench/wpt/flaky-linux.json > "$RUNNER_TEMP/base-flaky-linux.json" 2>/dev/null || true
+              merge_flaky "$RUNNER_TEMP/base-flaky-mac.json" "$RUNNER_TEMP/base-flaky-linux.json" "$RUNNER_TEMP/base-flaky.json"
+              args+=(--base-flaky "$RUNNER_TEMP/base-flaky.json")
             fi
             if labels="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR" --jq '.labels[].name')"; then
               if grep -qx wpt-accept-loss <<< "$labels"; then args+=(--accept-loss); fi
@@ -677,7 +685,8 @@ jobs:
         run: |
           flags=()
           if [ "$DURATIONS" = true ]; then flags+=(--durations); fi
-          bun bench/wpt/gate.mjs update wpt-linux-shard-*.json --baseline bench/wpt/baseline-linux.json --out baseline-linux.json "${flags[@]}"
+          bun bench/wpt/gate.mjs update wpt-linux-shard-*.json --baseline bench/wpt/baseline-linux.json --flaky "$RUNNER_TEMP/flaky.json" \
+            --out baseline-linux.json "${flags[@]}"
           if [ -f bench/wpt/baseline-linux.json ] && cmp -s baseline-linux.json bench/wpt/baseline-linux.json; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
           else
