@@ -3279,7 +3279,9 @@ impl Layout {
         // Resolve percentages against the renderer's actual reference box, also
         // for a sampled transition. Keep the sampled style read-only: the live
         // document must not be restyled to an intermediate animation value.
-        if name == "transform" {
+        // Only percentages need the reference box; everything else keeps the declared-value serialization, whose
+        // rounding the WPT transform-composition expectations depend on.
+        if name == "transform" && declared.as_deref().is_some_and(|value| value.contains('%')) {
             if let Some(value) = self.synced_geometry_source(dom).and_then(|source| {
                 let style = self.style.stylo_style(dom, el)?;
                 source.resolved_transform_value(crate::snapshot::render_key(el), &style)
