@@ -372,9 +372,10 @@ grid container in flow with neither layout nor paint containment, in its parent'
   nested subgrids too), each with that margin, border and padding at the subgrid's edges and that half gap difference
   elsewhere as an extra margin (`GridItem::extra_margin`). The subgrid itself takes no part in sizing in its subgridded
   axes (`GridItem::excluded`); a virtual item takes none in the axes its subgrid has tracks of its own. Where no item of
-  the subgrid lies at an edge, the items at the edge-most occupied track are also given stretched to it with the edge's
-  margin, border and padding; an empty subgrid gives an item of no size spanning its tracks with them at both edges (as
-  Blink, WPT `subgrid-no-items-on-edges-001`). The virtual items are dropped before the items are positioned;
+  the subgrid lies at an edge (or it has none), an item of no size in its edge track alone carries the edge's margin,
+  border and padding, so the empty tracks between it and the edge-most item stay empty (as Blink, measured: WPT
+  `subgrid-no-items-on-edges-001`, `subgrid/grid-gap-002`, `orthogonal-writing-mode-002`, `-003`;
+  `crates/pyro-render/tests/subgrid_edge_tracks.rs`). The virtual items are dropped before the items are positioned;
 - stretches the subgrid in its subgridded axes, whatever its alignment, size, minimum and maximum size and aspect ratio.
 
 The subgrid's own layout places its items as the grid placed them for sizing (`place_subgrid_items`): the spanned

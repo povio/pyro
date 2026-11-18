@@ -666,8 +666,9 @@ fn collect_virtual_items<Tree: LayoutGridContainer>(
         };
         let span = area.get(axis);
         let (edge_start, edge_end) = edge_margins(axis);
-        if !out[first_new..].iter().any(|item| !excluded_in(item)) {
-            // An empty subgrid: its margin, border and padding over its tracks
+        // A zero-size item over `lines` of the subgrid's tracks that carries its margin, border and padding
+        // (`start`, `end`) into track sizing
+        let spacer_over = |lines: Line<OriginZeroLine>, start: f32, end: f32| {
             let mut spacer = GridItem::new_with_style_and_order(
                 node,
                 tree.get_grid_child_style(node),
@@ -679,13 +680,13 @@ fn collect_virtual_items<Tree: LayoutGridContainer>(
             match axis {
                 AbsoluteAxis::Horizontal => {
                     spacer.size.width = Dimension::length(0.0);
-                    spacer.column = span;
+                    spacer.column = lines;
                     spacer.row = area.vertical;
                     spacer.excluded = Size { width: false, height: true };
                 }
                 AbsoluteAxis::Vertical => {
                     spacer.size.height = Dimension::length(0.0);
-                    spacer.row = span;
+                    spacer.row = lines;
                     spacer.column = area.horizontal;
                     spacer.excluded = Size { width: true, height: false };
                 }
@@ -704,54 +705,33 @@ fn collect_virtual_items<Tree: LayoutGridContainer>(
             spacer.is_virtual = true;
             spacer.subgrid_owner = Some(node);
             let mut extra = Rect::ZERO;
-            set_extra(&mut extra, axis, edge_start, edge_end);
+            set_extra(&mut extra, axis, start, end);
             spacer.extra_margin = extra;
-            out.push(spacer);
-            continue;
-        }
-        // The edge items: where no item of the subgrid starts at its start (ends at its end), its items at
-        // the edge-most occupied track, stretched to the edge with the subgrid's margin, border and padding there
+            spacer
+        };
+        // Where no item of the subgrid starts at its start (ends at its end), its margin, border and padding
+        // there go into its edge track alone, not across the empty tracks between it and the edge-most item;
+        // an empty subgrid has both in its edge tracks (Chromium; WPT css-grid `subgrid/grid-gap-002`,
+        // `orthogonal-writing-mode-002`, `-003`)
+        let empty = !out[first_new..].iter().any(|item| !excluded_in(item));
         let own: Vec<usize> = direct.iter().copied().filter(|&index| !excluded_in(&out[index])).collect();
-        if own.is_empty() {
+        if own.is_empty() && !empty {
             continue;
         }
-        let first = own.iter().map(|&index| lines_of(&out[index]).start.0).min().unwrap();
-        let last = own.iter().map(|&index| lines_of(&out[index]).end.0).max().unwrap();
-        for (at_start, edge, edge_line, extra_at_edge) in
-            [(true, first, span.start.0, edge_start), (false, last, span.end.0, edge_end)]
-        {
-            if edge == edge_line || extra_at_edge == 0.0 {
-                continue;
-            }
-            for &index in &own {
-                let lines = lines_of(&out[index]);
-                if (at_start && lines.start.0 != edge) || (!at_start && lines.end.0 != edge) {
-                    continue;
-                }
-                let mut stretched = out[index].clone();
-                let new_lines = if at_start {
-                    Line { start: span.start, end: lines.end }
-                } else {
-                    Line { start: lines.start, end: span.end }
-                };
-                match axis {
-                    AbsoluteAxis::Horizontal => stretched.column = new_lines,
-                    AbsoluteAxis::Vertical => stretched.row = new_lines,
-                }
-                let mut extra = stretched.extra_margin;
-                let (old_start, old_end) = match axis {
-                    AbsoluteAxis::Horizontal if rtl => (extra.right, extra.left),
-                    AbsoluteAxis::Horizontal => (extra.left, extra.right),
-                    AbsoluteAxis::Vertical => (extra.top, extra.bottom),
-                };
-                if at_start {
-                    set_extra(&mut extra, axis, extra_at_edge, old_end);
-                } else {
-                    set_extra(&mut extra, axis, old_start, extra_at_edge);
-                }
-                stretched.extra_margin = extra;
-                out.push(stretched);
-            }
+        let first = own.iter().map(|&index| lines_of(&out[index]).start.0).min().unwrap_or(span.end.0);
+        let last = own.iter().map(|&index| lines_of(&out[index]).end.0).max().unwrap_or(span.start.0);
+        if span.span() == 1 && first != span.start.0 && last != span.end.0 {
+            // (one track holds both edges)
+            out.push(spacer_over(span, edge_start, edge_end));
+            continue;
+        }
+        if first != span.start.0 && edge_start != 0.0 {
+            let lines = Line { start: span.start, end: OriginZeroLine(span.start.0 + 1) };
+            out.push(spacer_over(lines, edge_start, 0.0));
+        }
+        if last != span.end.0 && edge_end != 0.0 {
+            let lines = Line { start: OriginZeroLine(span.end.0 - 1), end: span.end };
+            out.push(spacer_over(lines, 0.0, edge_end));
         }
     }
 }
