@@ -1387,6 +1387,19 @@ impl Renderer {
         Some(m.doc.resolved_style_value(id, property))
     }
 
+    /// Resolves a sampled transform against the mirrored element's layout,
+    /// leaving the mirror's own style unchanged.
+    pub fn resolved_transform_value(
+        &self,
+        page: u64,
+        key: u64,
+        style: &style::properties::ComputedValues,
+    ) -> Option<String> {
+        let m = self.mirrors.get(&page)?;
+        let id = m.node(key)?;
+        Some(m.doc.resolved_transform_value(id, style))
+    }
+
     /// The computed style of the element keyed `key` in `page`'s persistent
     /// document as of the last sync; one under `display: none` (which the
     /// traversal does not style) is resolved now. `None`: not mirrored.

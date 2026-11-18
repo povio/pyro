@@ -5227,7 +5227,7 @@ fn driver_css_read_and_check_accept_cssom_property_names() {
     load_html(
         &mut h,
         r#"<!doctype html><style>
-        :root { --gap: 12px }
+        :root { --gap: 12px; --mixedCase: 17px }
         .list button { scroll-margin-bottom: 3.5rem; background-color: rgb(1, 2, 3); float: left }
         #plain { scroll-margin-bottom: 0 }
         </style><body><div class=list><button id=b>Act</button></div><button id=plain>Plain</button></body>"#,
@@ -5248,6 +5248,8 @@ fn driver_css_read_and_check_accept_cssom_property_names() {
         ("cssFloat", "left"),
         ("float", "left"),
         ("--gap", "12px"),
+        ("--mixedCase", "17px"),
+        ("--mixedcase", ""),
         ("notAProperty", ""),
     ] {
         assert_eq!(read(&mut h, "#b", property), expected, "read css {property}");

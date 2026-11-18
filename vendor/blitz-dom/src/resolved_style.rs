@@ -342,6 +342,21 @@ impl BaseDocument {
     /// `transform-origin`, `grid-template-rows`/`columns`) resolve to *used* values, so [`resolve`](Self::resolve) should be called
     /// before this method to ensure layout is up to date.
     pub fn resolved_style_value(&self, node_id: NodeId, property_name: &str) -> String {
+        self.resolved_style_value_with_style(node_id, property_name, None)
+    }
+
+    /// Resolve a sampled transform against the existing layout without mutating
+    /// the document (used for CSS transition transform readback).
+    pub fn resolved_transform_value(&self, node_id: NodeId, style: &ComputedValues) -> String {
+        self.resolved_style_value_with_style(node_id, "transform", Some(style))
+    }
+
+    fn resolved_style_value_with_style(
+        &self,
+        node_id: NodeId,
+        property_name: &str,
+        sampled_style: Option<&ComputedValues>,
+    ) -> String {
         let Some(node) = self.get_node(node_id) else {
             return String::new();
         };
@@ -364,6 +379,7 @@ impl BaseDocument {
             },
         };
 
+        let styles = sampled_style.unwrap_or(styles);
         let display = styles.clone_display();
         // Non-atomic inline elements are laid out as style spans within their
         // inline root's text layout rather than as boxes of their own, so their

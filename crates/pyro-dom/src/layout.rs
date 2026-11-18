@@ -3276,6 +3276,17 @@ impl Layout {
             return v;
         }
         let declared = self.style.computed_value(dom, el, name);
+        // Resolve percentages against the renderer's actual reference box, also
+        // for a sampled transition. Keep the sampled style read-only: the live
+        // document must not be restyled to an intermediate animation value.
+        if name == "transform" {
+            if let Some(value) = self.synced_geometry_source(dom).and_then(|source| {
+                let style = self.style.stylo_style(dom, el)?;
+                source.resolved_transform_value(crate::snapshot::render_key(el), &style)
+            }) {
+                return value;
+            }
+        }
         // pyro: a grid container's template resolves to its used tracks, each listed (css-grid-1 §7.2.6), and a
         // subgrid's to `subgrid` with each of its lines' names (css-grid-2 §7.2.6.2): only its layout knows
         // them (`repeat(auto-fill, …)` counts, implicit tracks, how many tracks a subgrid spans)

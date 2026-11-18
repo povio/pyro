@@ -8,9 +8,10 @@ const bin = process.env.PYRO_BIN ?? join(import.meta.dir, '../../../target/debug
 for (const spares of ['0', '2']) test(`spares=${spares}: a profile-specific fork keeps only its rendered document, including derived snapshots`, async () => {
   const previous = process.env.PYRO_FORK_SPARES;
   process.env.PYRO_FORK_SPARES = spares;
-  const browser = await Pyro.launch({ bin, args: ['--fork'] });
-  if (previous === undefined) delete process.env.PYRO_FORK_SPARES;
-  else process.env.PYRO_FORK_SPARES = previous;
+  const browser = await Pyro.launch({ bin, args: ['--fork'] }).finally(() => {
+    if (previous === undefined) delete process.env.PYRO_FORK_SPARES;
+    else process.env.PYRO_FORK_SPARES = previous;
+  });
   try {
     for (let i = 0; i < 19; i++) {
       await browser.profile(`p${i}`, {
@@ -35,11 +36,14 @@ for (const spares of ['0', '2']) test(`spares=${spares}: a profile-specific fork
       const expression = "({boot: window.boot, text: document.querySelector('#state').textContent, ticks: window.ticks})";
       const a = (await first.run([evaluate(expression, 'state')])).values.state as { boot: number; text: string; ticks: number };
       const b = (await second.run([evaluate(expression, 'state')])).values.state as { boot: number; text: string; ticks: number };
+      expect(typeof a.boot).toBe('number');
       expect(a.boot).toBe(b.boot); // the rendered snapshot was inherited, not booted again
+      expect(b.text).toBe(a.text);
       expect(a.text).toBe(name === 'derived' ? 'derived' : `rendered ${name.slice(1)}`);
       await first.run([evaluate('new Promise(resolve => setTimeout(resolve, 35))')]);
       const later = (await first.run([evaluate('window.ticks', 'ticks')])).values.ticks as number;
       expect(later).toBeGreaterThan(a.ticks); // the selected document remains live
     }
+    expect(browser.stats).toEqual({ prepared: 6, preparedBooting: 0, fresh: 0 });
   } finally { browser.close(); }
 }, 20000);
