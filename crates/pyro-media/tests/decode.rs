@@ -147,3 +147,30 @@ fn a_cut_body_lists_the_samples_it_holds() {
     let track = video::demux::video_track(&data[..data.len() * 3 / 4]).unwrap();
     assert!(!track.samples.is_empty() && track.samples.len() < 10, "{}", track.samples.len());
 }
+
+/// A version 0 `ctts` box with negative offsets (common: WPT `media/white.mp4`) orders frames as
+/// a signed one does: read unsigned, the negative offsets put their frames past the end and no
+/// frame after the first decoded (a black `<video>` in screenshots taken once it could play).
+#[test]
+#[cfg(feature = "h264")]
+fn a_version_0_ctts_with_negative_offsets_is_signed() {
+    let mut bytes = fixture("frames-h264.mp4");
+    let at = bytes.windows(4).position(|w| w == b"ctts").unwrap();
+    assert_eq!(bytes[at + 4], 0, "the fixture's ctts is version 0");
+    let entries = u32::from_be_bytes(bytes[at + 8..at + 12].try_into().unwrap()) as usize;
+    // Every offset 2048 lower (order unchanged, some now negative), the version left at 0.
+    for k in 0..entries {
+        let o = at + 16 + 8 * k;
+        let off = i32::from_be_bytes(bytes[o..o + 4].try_into().unwrap()) - 2048;
+        bytes[o..o + 4].copy_from_slice(&off.to_be_bytes());
+    }
+    let mut shifted = Player::open(Bytes::from(bytes)).expect("a player");
+    assert_eq!(shifted.frame_count(), 10);
+    // Each frame, at its own presentation time, is the frame it was.
+    for index in 0..10 {
+        let t = shifted.frame_time(index);
+        let frame = shifted.frame_at(t).unwrap_or_else(|| panic!("no frame {index} at {t}"));
+        assert_eq!(frame.index, index, "frame at {t}");
+        assert_eq!(frame_of(&frame.rgba[(24 * 64 + 32) * 4..]), index, "pixel of frame {index}");
+    }
+}
