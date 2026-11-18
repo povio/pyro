@@ -129,7 +129,7 @@ jobs:
           } | tee -a "$GITHUB_OUTPUT"
           # The Linux x64 browser for the testharness pages (jsc.yml's linux job keys its JavaScriptCore the same way).
           linux_jsc_key="patched-jsc-static-linux-x64-$jsc_dir-$(sha256sum scripts/linux/setup.sh | cut -c1-8)"
-          linux_browser_key="wpt-browser-linux-x64-$(printf '%s\n' "$inputs" "${toolchain%% *}" "$linux_jsc_key" | sha256sum | cut -c1-16)"
+          linux_browser_key="wpt-browser-linux-x64-$(printf '%s\n' "$inputs" "${toolchain%% *}" "$linux_jsc_key" ubuntu-24.04 | sha256sum | cut -c1-16)"
           # Once bench/wpt/baseline-linux.json is committed, the testharness gate runs on Linux only (see `wpt-linux`).
           linux_baseline=false
           if [ -f bench/wpt/baseline-linux.json ]; then linux_baseline=true; fi
@@ -463,7 +463,10 @@ jobs:
   build-linux:
     needs: prepare
     if: ${{ !cancelled() && needs.prepare.outputs.linux-browser-cached != 'true' && inputs.suites != 'reftest' && inputs.suites != 'crashtest' }}
-    runs-on: ubuntu-latest
+    # Ubuntu 24.04, as jsc.yml's linux job and linux-build.yml: the cached JavaScriptCore archive was compiled against
+    # that release's ICU 74 (symbols u_tolower_74, ...), and ubuntu-latest's newer image has ICU 78, so linking there
+    # fails. The browser then carries ICU 74 beside it (bundle-icu-linux.sh).
+    runs-on: ubuntu-24.04
     timeout-minutes: 90
     concurrency:
       group: wpt-build-linux-${{ github.event.pull_request.number || github.ref }}
@@ -546,7 +549,7 @@ jobs:
   wpt-linux:
     needs: [prepare, build-linux]
     if: ${{ !cancelled() && !failure() && !contains(needs.*.result, 'cancelled') && inputs.suites != 'reftest' && inputs.suites != 'crashtest' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     concurrency:
       group: wpt-linux-${{ matrix.shard }}-${{ github.event.pull_request.number || github.ref }}
