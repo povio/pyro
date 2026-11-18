@@ -9,6 +9,11 @@ workspace `Cargo.toml`. License: Apache-2.0 OR MIT, as upstream. `.cargo_vcs_inf
 
 `UPSTREAM.patch` is the whole diff.
 
+`layout/data.rs`, `layout/line_break.rs`: intrinsic widths and new line breaks restore displayed
+soft-hyphen clusters as well as line-edge clusters before measuring. A hyphen shown at a previous line break must not inflate max-content
+width or invalidate cached shaped-text widths. Covered by
+`soft_hyphen_line_breaks_preserve_intrinsic_widths` in `crates/pyro-layout/tests/flow.rs`.
+
 `build_cache.rs`, `builder.rs` and `context.rs`: a build cache in `LayoutContext`. Building a layout
 (text analysis, shaping, style metrics) depends on the text, the resolved styles and style runs, the
 scale and the base direction; the styles' brushes only matter when painting. `build_into_layout`
