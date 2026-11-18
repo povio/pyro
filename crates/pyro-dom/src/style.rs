@@ -1077,6 +1077,21 @@ impl StyleEngine {
         self.style_override.borrow().is_some()
     }
 
+    /// A script scroll or view progress timeline's state as of the layout engine's last sync (no sync
+    /// now: the animated values of a sync read it): scroll offset, start and end offsets.
+    pub fn timeline_state(
+        &self,
+        source: Option<NodeId>,
+        subject: Option<NodeId>,
+        axis: u8,
+        inset: [(u8, f64); 2],
+    ) -> Option<(f64, f64, f64)> {
+        let external = self.external.borrow();
+        let (engine, _) = external.as_ref()?;
+        let key = crate::snapshot::render_key;
+        engine.timeline_state(source.map(key), subject.map(key), axis, inset).map(|(o, s, e, _)| (o, s, e))
+    }
+
     /// The animated values for a sync of the layout engine, now; `None`
     /// without an animation source.
     pub fn take_animation_frame(&self) -> Option<crate::animation::AnimationFrame> {

@@ -255,6 +255,19 @@ fn reported(s: &Scope<'_>, o: Object<'_>) -> JsResult<crate::animation_frame::Re
         composite: pyro_dom::animation::Composite::parse(&at(15)?.to_string()?).unwrap_or_default(),
         gone: num(16)? != 0.0,
         pseudo: crate::animation_frame::Pseudo::from_code(num(17)?),
+        scroll: match at(18)?.as_object() {
+            None => None,
+            Some(r) => {
+                let n = |i: u32| -> JsResult<f64> { r.get_index(i)?.to_number() };
+                Some(crate::animation_frame::ScrollRef {
+                    source: crate::node::opt_node_arg(s, r.get_index(0)?, "report")?,
+                    subject: crate::node::opt_node_arg(s, r.get_index(1)?, "report")?,
+                    axis: n(2)? as u8,
+                    inset: [(n(3)? as u8, n(4)?), (n(5)? as u8, n(6)?)],
+                    inactive: n(7)? != 0.0,
+                })
+            }
+        },
     })
 }
 

@@ -201,6 +201,55 @@ pub(crate) struct Scripted {
     gone: bool,
     /// Its effect's target: the element, or one of its pseudo-elements.
     pseudo: Pseudo,
+    /// Its timeline is a scroll or view progress timeline: times are percentages of it, and its
+    /// time is the scroll position's.
+    scroll: Option<ScrollRef>,
+}
+
+/// A script animation's scroll or view progress timeline (`ScrollTimeline`, `ViewTimeline`).
+#[derive(Clone, Debug)]
+pub(crate) struct ScrollRef {
+    /// The scroll container (`None`: the viewport) of a scroll timeline.
+    pub source: Option<NodeId>,
+    /// A view timeline's subject.
+    pub subject: Option<NodeId>,
+    /// 0 block, 1 inline, 2 x, 3 y.
+    pub axis: u8,
+    /// (0 auto, 1 px, 2 fraction, value), start and end.
+    pub inset: [(u8, f64); 2],
+    /// A scroll timeline whose source is null: never active.
+    pub inactive: bool,
+}
+
+/// A progress-based timeline's current time now (a percentage), from the engine's last layout;
+/// `None` while inactive.
+fn scroll_time(page: &PageDom, r: &ScrollRef) -> Option<f64> {
+    if r.inactive {
+        return None;
+    }
+    let layout = page.try_layout()?;
+    let (offset, start, end) = layout.style().timeline_state(r.source, r.subject, r.axis, r.inset)?;
+    if end > start {
+        Some((offset - start) / (end - start) * 100.0)
+    } else if r.subject.is_some() {
+        Some(if offset >= end { 100.0 } else { 0.0 })
+    } else {
+        None
+    }
+}
+
+impl Scripted {
+    /// The current time at `now`: on a progress-based timeline, from the scroll position.
+    fn current_on(&self, page: &PageDom, now: f64) -> Option<f64> {
+        let Some(r) = &self.scroll else { return self.current(now) };
+        if self.gone {
+            return None;
+        }
+        if let Some(hold) = self.hold {
+            return Some(hold);
+        }
+        Some((scroll_time(page, r)? - self.start?) * self.rate)
+    }
 }
 
 /// The pseudo-element an effect targets.
@@ -287,6 +336,7 @@ pub(crate) fn report(page: &Rc<PageDom>, seq: u64, state: Option<ReportedState>)
                         seq,
                         gone: s.gone,
                         pseudo: s.pseudo,
+                        scroll: s.scroll,
                     },
                 );
             }
@@ -322,6 +372,7 @@ pub(crate) struct ReportedState {
     pub composite: Composite,
     pub gone: bool,
     pub pseudo: Pseudo,
+    pub scroll: Option<ScrollRef>,
 }
 
 impl ReportedState {
@@ -592,8 +643,8 @@ fn walk_at(page: &PageDom, clock: Clock, transitions: bool, visit: &mut dyn FnMu
             continue;
         }
         let (local, rate, timing, held) = match overrides.get(&t.id()) {
-            Some(s) => match s.current(now) {
-                Some(local) => (local, s.rate, s.timing.clone(), s.hold.is_some() || s.rate == 0.0),
+            Some(s) => match s.current_on(page, now) {
+                Some(local) => (local, s.rate, s.timing.clone(), s.hold.is_some() || s.rate == 0.0 || s.scroll.is_some()),
                 None => continue,
             },
             None => (t.local_ms(now), 1.0, own_timing, t.is_paused()),
@@ -644,10 +695,11 @@ fn walk_at(page: &PageDom, clock: Clock, transitions: bool, visit: &mut dyn FnMu
     script.sort_by_key(|s| s.seq);
     for s in script {
         let Some(el) = s.el else { continue };
-        let Some(local) = s.current(now) else { continue };
+        let Some(local) = s.current_on(page, now) else { continue };
         let Some(local) = clock.local(&s.timing, local, s.rate) else { continue };
         let Some((p, level)) = in_effect_or_current(&s.timing, local, s.rate, settled) else { continue };
-        moving |= p.moving && s.hold.is_none() && s.rate != 0.0;
+        // (One on a progress-based timeline moves with scrolling: the stamp follows the scroll.)
+        moving |= p.moving && s.hold.is_none() && s.rate != 0.0 && s.scroll.is_none();
         let effect = Effect {
             keyframes: Keyframes::Text(s.keyframes.clone()),
             progress: p.progress,
@@ -679,7 +731,8 @@ pub(crate) fn stamp(page: &PageDom, now: f64) -> u64 {
     let generation = page.animation_events.generation.get() ^ crate::smil::version(page).rotate_left(29);
     let mut generation = generation.wrapping_mul(0x9E37_79B9_7F4A_7C15).rotate_left(17);
     // Scroll-driven animations move with the scroll position: each scroll is a new frame.
-    let driven = page.animation_events.try_timelines().is_some_and(|(animations, _)| animations.iter().any(|t| t.driven && t.is_live()));
+    let driven = page.animation_events.try_timelines().is_some_and(|(animations, _)| animations.iter().any(|t| t.driven && t.is_live()))
+        || page.animation_events.scripted.try_borrow().is_ok_and(|s| s.values().any(|s| s.scroll.is_some() && !s.gone));
     if driven {
         if let Some(layout) = page.try_layout() {
             generation ^= layout.scroll_generation().wrapping_mul(0xD6E8_FEB8_6659_FD93).rotate_left(7);

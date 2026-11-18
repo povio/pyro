@@ -949,11 +949,52 @@
   function schedulePending(a, kind) {
     a.pending = kind;
     const gen = ++a.pendingGen;
-    schedule(0, () => {
+    let tries = 0;
+    const attempt = () => {
       if (a.pendingGen !== gen || a.pending !== kind) return;
-      // The timeline must be active for the task to run.
-      if (timelineTime(a.timeline) === null) return;
+      // The timeline must be active for the task to run. A progress-based one may become active
+      // later (laid out, shown, made scrollable): tried again at the next frames for a while, and
+      // at every scroll (`progressChanged`).
+      if (timelineTime(a.timeline) === null) {
+        if (progressBased(a) && tries++ < 120) {
+          watchProgress(a);
+          schedule(16, attempt);
+        }
+        return;
+      }
       if (kind === 'play') runPendingPlay(a); else runPendingPause(a);
+    };
+    schedule(0, attempt);
+  }
+
+  // Animations on progress-based timelines whose state may change as the page scrolls (their
+  // finished state, a pending task waiting for an active timeline): looked at again after each
+  // scroll, as a browser does at the frame after it.
+  const progressWatched = new Set();
+  let progressListening = false;
+  let progressQueued = false;
+  function watchProgress(a) {
+    progressWatched.add(a);
+    if (progressListening) return;
+    progressListening = true;
+    apply(addListener, globalThis, ['scroll', progressChanged, { capture: true, passive: true }]);
+  }
+  function progressChanged() {
+    if (progressQueued) return;
+    progressQueued = true;
+    schedule(0, () => {
+      progressQueued = false;
+      for (const a of [...progressWatched]) {
+        if (!isRelevant(a) && a.pending === null) {
+          progressWatched.delete(a);
+          continue;
+        }
+        if (a.pending !== null && timelineTime(a.timeline) !== null) {
+          if (a.pending === 'play') runPendingPlay(a); else runPendingPause(a);
+          continue;
+        }
+        updateFinished(a, false, false);
+      }
     });
   }
 
@@ -1081,6 +1122,7 @@
       }
     }
     if (!finished && a.finished.settled) a.finished = deferred();
+    if (progressBased(a) && isRelevant(a)) watchProgress(a);
     // Only animations getAnimations() may list stay referenced from here.
     if (isRelevant(a)) live.add(a.self); else live.delete(a.self);
     plan(a);
@@ -1125,7 +1167,13 @@
       return;
     }
     if (!e) return;
-    const t = e.timing;
+    // (On a progress-based timeline: the timing in percentages, and the timeline the engine
+    // reads the scroll position of.)
+    const t = timingOn(e);
+    const tst = a.timeline !== null ? timelines.get(a.timeline) : null;
+    const scrollRef = tst && tst.scroll
+      ? [tst.subject === null ? tst.source : null, tst.subject, AXES.indexOf(tst.axis), tst.inset[0][0], tst.inset[0][1], tst.inset[1][0], tst.inset[1][1], tst.subject === null && tst.source === null ? 1 : 0]
+      : null;
     // A CSS animation's or transition's own effect has no keyframes (the
     // engine's are the CSS ones); one script gave it has.
     const frames = e.frames.map(f => {
@@ -1138,7 +1186,7 @@
       target, a.css !== undefined ? a.cssId : -1, frames, a.startTime, a.holdTime, a.rate, origin,
       t.delay, t.endDelay, t.fill === 'auto' ? 'none' : t.fill, t.iterationStart, t.iterations,
       iterationDuration(t), t.direction, t.easing.text === 'linear' ? null : t.easing.text, e.composite,
-      gone ? 1 : 0, pseudo,
+      gone ? 1 : 0, pseudo, scrollRef,
     ]);
   }
 

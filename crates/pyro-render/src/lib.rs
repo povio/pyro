@@ -870,6 +870,12 @@ impl Renderer {
     /// The page's scroll offsets for its scroll-driven animations (`BaseDocument::set_timeline_scroll`),
     /// applied at its next sync or render.
     pub fn set_timeline_scroll(&mut self, page: u64, elements: Vec<(u64, (f64, f64))>, viewport: (f64, f64)) {
+        // A document that exists takes them now: the animated values of the next sync are computed
+        // (from its scroll timelines) before that sync applies anything.
+        if let Some(m) = self.mirrors.get_mut(&page) {
+            let map = elements.iter().filter_map(|&(key, o)| Some((m.node(key)?, o))).collect();
+            m.doc.set_timeline_scroll(map, viewport);
+        }
         self.timeline_scroll.insert(page, (elements, viewport));
     }
 
