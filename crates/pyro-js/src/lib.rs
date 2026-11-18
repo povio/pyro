@@ -42,3 +42,9 @@ pub use value::{Args, JsType, Object, StringUnits, Value};
 
 /// Raw FFI, for code that needs an entry point not wrapped here.
 pub use pyro_jsc_sys as sys;
+
+/// Whether this JavaScriptCore has the Trusted Types hooks for eval and Function
+/// (patch 0035, [`Scope::set_compile_strings_hooks`]).
+pub fn compile_strings_hooks_available() -> bool {
+    pyro_jsc_sys::spi::get().set_compile_strings_callbacks.is_some()
+}

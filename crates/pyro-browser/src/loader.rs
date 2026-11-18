@@ -139,9 +139,10 @@ pub struct Resource {
     pub content_disposition: Option<String>,
     /// The response carried a `Content-Security-Policy` header (the policy
     /// itself is not enforced; a document delivered with one hides nonces).
-    /// pyro: the values of its `Content-Security-Policy` headers, joined by `,` (each a
-    /// policy). Only their Trusted Types directives are read (`Dom::set_trusted_types_policies`);
-    /// other directives are not enforced.
+    /// pyro: the values of its `Content-Security-Policy` headers joined by `,` (each a policy),
+    /// a newline, and those of its `Content-Security-Policy-Report-Only` headers. Only the
+    /// Trusted Types directives are acted on (`Dom::set_trusted_types_policies`); other
+    /// directives are not enforced.
     pub header_csp: Option<String>,
     /// The `Refresh` response header (HTML declarative refresh), if any.
     pub refresh: Option<String>,
@@ -526,13 +527,14 @@ impl ResourceLoader for NetLoader {
                             .and_then(|v| v.to_str().ok())
                             .map(str::to_owned),
                         header_csp: {
-                            let values: Vec<&str> = h
-                                .headers
-                                .get_all(http::header::CONTENT_SECURITY_POLICY)
-                                .iter()
-                                .filter_map(|v| v.to_str().ok())
-                                .collect();
-                            (!values.is_empty()).then(|| values.join(","))
+                            let joined = |name: http::header::HeaderName| -> String {
+                                let values: Vec<&str> =
+                                    h.headers.get_all(name).iter().filter_map(|v| v.to_str().ok()).collect();
+                                values.join(",")
+                            };
+                            let enforce = joined(http::header::CONTENT_SECURITY_POLICY);
+                            let report_only = joined(http::header::CONTENT_SECURITY_POLICY_REPORT_ONLY);
+                            (!enforce.is_empty() || !report_only.is_empty()).then(|| format!("{enforce}\n{report_only}"))
                         },
                         // Only a document honours it; other kinds skip the lookup.
                         refresh: document
@@ -1284,8 +1286,11 @@ impl Browser {
         let doc = page_dom.document();
         // A page that bypasses CSP (`Page.setBypassCSP`) records no policy.
         if let Some(csp) = resource.header_csp.as_deref().filter(|_| !self.page(page.page).is_some_and(|p| p.bypass_csp)) {
-            let _ = dom.borrow_mut().set_header_csp(doc, true);
-            let _ = dom.borrow_mut().set_trusted_types_policies(doc, csp);
+            let (enforce, report_only) = csp.split_once('\n').unwrap_or((csp, ""));
+            if !enforce.is_empty() {
+                let _ = dom.borrow_mut().set_header_csp(doc, true);
+            }
+            let _ = dom.borrow_mut().set_trusted_types_policies(doc, enforce, report_only);
         }
         if let Some(refresh) = resource.refresh.as_deref() {
             self.refresh_header(page, refresh);
@@ -2135,6 +2140,7 @@ impl Browser {
         let outer = bindings.as_ref().and_then(|dom| dom.current_script());
         if let Some(dom) = &bindings {
             dom.set_current_script(Some(element.node));
+            pyro_webapi::trusted_types::sync_compile_strings(&scope, dom);
         }
         if let Err(e) = scope.eval(text, Some(url), 1) {
             scope.report_exception(&e);
@@ -2402,6 +2408,7 @@ pub(crate) fn prepare_inserted_script(frame: &crate::Frame, node: NodeId) {
     let Ok(scope) = realm.scope() else { return };
     let outer = bindings.current_script();
     bindings.set_current_script(Some(node));
+    pyro_webapi::trusted_types::sync_compile_strings(&scope, &bindings);
     realm.reenter_native_callback_hook(|| {
         if let Err(e) = scope.eval(&text, Some(&frame.base_url), 1) {
             scope.report_exception(&e);

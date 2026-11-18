@@ -287,3 +287,67 @@ fn filter_primitives_reflect_animated_attributes() {
         "true|true|1|SourceAlpha|SourceAlpha|true|r1|0|3|3|3|3 1.5|4|5|TypeError|3|3|false|5|2|true|true|1|1|#a|1"
     );
 }
+
+/// Trusted Types violations fire `securitypolicyviolation` (a SecurityPolicyViolationEvent) at the
+/// document in a later task: sink violations with blockedURI "trusted-types-sink" and the sink
+/// and a sample, policy creation violations with "trusted-types-policy" and the name.
+#[test]
+fn trusted_types_violations_are_reported() {
+    let env = Env::new("http://svg.test/");
+    env.page.dom.borrow_mut().set_resource_tracking(true);
+    env.eval(
+        r#"globalThis.reports = [];
+           document.addEventListener("securitypolicyviolation", e => reports.push([e instanceof SecurityPolicyViolationEvent, e.blockedURI, e.effectiveDirective, e.sample, e.disposition].join(",")));
+           const meta = document.createElement("meta");
+           meta.setAttribute("http-equiv", "Content-Security-Policy");
+           meta.setAttribute("content", "require-trusted-types-for 'script'; trusted-types a");
+           document.head.appendChild(meta);
+           try { document.createElement("div").innerHTML = "<b>x</b>"; } catch (e) {}
+           try { trustedTypes.createPolicy("b", {}); } catch (e) {}
+           String(reports.length)"#,
+    );
+    env.until("reports.length === 2");
+    assert_eq!(
+        env.eval("reports.join('|')"),
+        "true,trusted-types-sink,require-trusted-types-for,Element innerHTML|<b>x</b>,enforce|true,trusted-types-policy,trusted-types,b,enforce"
+    );
+}
+
+/// Trusted Types for eval and Function (JSC patch 0035): under `require-trusted-types-for
+/// 'script'` a string is refused with an EvalError unless the default policy gives it back
+/// unchanged; a TrustedScript is evaluated as its text; a Function of TrustedScripts compiles.
+#[test]
+fn trusted_types_guard_eval_and_function() {
+    if !pyro_js::compile_strings_hooks_available() {
+        eprintln!("skipped: JavaScriptCore without patch 0035");
+        return;
+    }
+    let env = Env::new("http://svg.test/");
+    env.page.dom.borrow_mut().set_resource_tracking(true);
+    assert_eq!(env.eval("eval(trustedTypes.createPolicy('p0', { createScript: s => s }).createScript('6 * 7'))"), "42");
+    env.eval(
+        r#"const meta = document.createElement("meta");
+           meta.setAttribute("http-equiv", "Content-Security-Policy");
+           meta.setAttribute("content", "require-trusted-types-for 'script'");
+           document.head.appendChild(meta);
+           globalThis.p = trustedTypes.createPolicy("p", { createScript: s => s });
+           globalThis.outcome = (f) => { try { return String(f()); } catch (e) { return e.name; } };"#,
+    );
+    // The level follows the document before the next classic script; set it as one would.
+    {
+        let scope = env.realm.scope().unwrap();
+        pyro_webapi::trusted_types::sync_compile_strings(&scope, &env.page);
+    }
+    assert_eq!(
+        env.eval(
+            r#"[outcome(() => eval("1 + 1")), outcome(() => (0, eval)("1 + 2")), outcome(() => new Function("return 3")()),
+                outcome(() => eval(p.createScript("1 + 3"))), outcome(() => new Function(p.createScript("return 5"))())].join()"#
+        ),
+        "EvalError,EvalError,EvalError,4,5"
+    );
+    env.eval(r#"trustedTypes.createPolicy("default", { createScript: s => s.includes("ok") ? s : s + ";bad" })"#);
+    assert_eq!(
+        env.eval(r#"[outcome(() => eval("'ok'")), outcome(() => eval("'no'"))].join()"#),
+        "ok,EvalError"
+    );
+}

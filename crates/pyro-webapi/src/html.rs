@@ -4096,6 +4096,7 @@ fn eval_parser_script(page: &Rc<PageDom>, doc: NodeId, node: NodeId, text: &str,
     page.set_current_script(Some(node));
     page.script_nesting.set(page.script_nesting.get() + 1);
     with_parser(page, doc, |p| p.open_insertion_point());
+    crate::trusted_types::sync_compile_strings(&scope, page);
     if let Err(e) = scope.eval(text, Some(url), 1) {
         scope.report_exception(&e);
     }

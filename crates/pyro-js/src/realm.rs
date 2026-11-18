@@ -393,6 +393,9 @@ pub(crate) struct RealmInner {
     /// proxies, and the interface objects as seen by script (the proxies).
     /// Three protections per realm instead of three per class.
     interfaces: RefCell<Option<[Persistent; 3]>>,
+    /// Trusted Types for eval and Function (patched JSC 0035): the functions
+    /// [`Scope::set_compile_strings_hooks`] installed.
+    compile_hooks: RefCell<Option<[Persistent; 2]>>,
     /// Whether each class's members are installed in this realm.
     populated: RefCell<Vec<bool>>,
     identity: RefCell<rustc_hash::FxHashMap<IdentityKey, sys::JSWeakRef>>,
@@ -646,6 +649,7 @@ impl RealmInner {
             }
         }
         self.interfaces.borrow_mut().take();
+        self.compile_hooks.borrow_mut().take();
         self.populated.borrow_mut().clear();
         self.helpers.borrow_mut().take();
         self.helper_cache.borrow_mut().clear();
@@ -1139,6 +1143,75 @@ pub(crate) fn realm_for_ctx(ctx: sys::JSContextRef) -> Option<Rc<RealmInner>> {
     }
 }
 
+thread_local! {
+    /// Depth of [`Scope::compile_exempt`] calls on this thread.
+    static COMPILE_EXEMPT: Cell<u32> = const { Cell::new(0) };
+}
+
+/// The realm's compile-strings hook `index` (0 code for eval, 1 can compile),
+/// protected for the call: the call may replace it or dispose the realm.
+fn compile_hook(ctx: sys::JSContextRef, index: usize) -> Option<Persistent> {
+    let realm = realm_for_ctx(ctx)?;
+    let hooks = realm.compile_hooks.borrow();
+    hooks.as_ref().map(|h| h[index].clone())
+}
+
+unsafe extern "C" fn code_for_eval_hook(
+    ctx: sys::JSContextRef,
+    value: sys::JSObjectRef,
+    exception: *mut sys::JSValueRef,
+) -> sys::JSStringRef {
+    let Some(f) = compile_hook(ctx, 0) else { return std::ptr::null_mut() };
+    let arg = value as sys::JSValueRef;
+    // SAFETY: JSC calls this with the lock held, `ctx` live and `exception`
+    // writable; `f` is a protected function of this realm.
+    unsafe {
+        let r = sys::JSObjectCallAsFunction(ctx, f.as_raw() as sys::JSObjectRef, std::ptr::null_mut(), 1, &arg, exception);
+        if r.is_null() || !(*exception).is_null() || !sys::JSValueIsString(ctx, r) {
+            return std::ptr::null_mut();
+        }
+        sys::JSValueToStringCopy(ctx, r, exception)
+    }
+}
+
+unsafe extern "C" fn can_compile_strings_hook(
+    ctx: sys::JSContextRef,
+    compilation_type: std::os::raw::c_int,
+    code: sys::JSStringRef,
+    argument_count: usize,
+    arguments: *const sys::JSValueRef,
+    exception: *mut sys::JSValueRef,
+) -> bool {
+    if COMPILE_EXEMPT.with(Cell::get) > 0 {
+        return true;
+    }
+    let Some(f) = compile_hook(ctx, 1) else { return true };
+    let kind: &[u8] = match compilation_type {
+        0 => b"Function\0",
+        1 => b"eval\0",
+        _ => b"indirect-eval\0",
+    };
+    // SAFETY: as in `code_for_eval_hook`; `arguments` holds `argument_count`
+    // values (any count with a null pointer when zero).
+    unsafe {
+        let kind = sys::JSStringCreateWithUTF8CString(kind.as_ptr().cast());
+        let mut args = vec![sys::JSValueMakeString(ctx, kind), sys::JSValueMakeString(ctx, code)];
+        sys::JSStringRelease(kind);
+        if argument_count > 0 && !arguments.is_null() {
+            args.extend_from_slice(std::slice::from_raw_parts(arguments, argument_count));
+        }
+        let r = sys::JSObjectCallAsFunction(
+            ctx,
+            f.as_raw() as sys::JSObjectRef,
+            std::ptr::null_mut(),
+            args.len(),
+            args.as_ptr(),
+            exception,
+        );
+        !r.is_null() && (*exception).is_null() && sys::JSValueToBoolean(ctx, r)
+    }
+}
+
 /// `candidate`, if it is what [`realm_for_ctx`] would find for `ctx`: a live
 /// realm of a live engine whose global context is `ctx` (only the thread's
 /// current engine is live, and a realm whose context is set is in its
@@ -1163,6 +1236,54 @@ impl<'s> Scope<'s> {
 
     pub fn ctx(&self) -> sys::JSContextRef {
         self.ctx
+    }
+
+    /// Trusted Types for string compilation (patched JSC 0035). `code_for_eval`
+    /// is called with an object passed to eval and returns its code (a
+    /// TrustedScript's data) or null, which leaves it unevaluated.
+    /// `can_compile` is called as (type, code, ...Function arguments), type
+    /// "Function", "eval" (direct) or "indirect-eval", while the enforcement
+    /// ([`Self::set_trusted_types_enforcement`]) is not none; it returns
+    /// whether the code may compile, or throws. False without the patch.
+    pub fn set_compile_strings_hooks(&self, code_for_eval: Object<'_>, can_compile: Object<'_>) -> bool {
+        let Some(set) = sys::spi::get().set_compile_strings_callbacks else { return false };
+        let ctx = self.realm.ctx.get();
+        if ctx.is_null() {
+            return false;
+        }
+        *self.realm.compile_hooks.borrow_mut() =
+            Some([Persistent::new(self, code_for_eval.value()), Persistent::new(self, can_compile.value())]);
+        // SAFETY: the realm's live global context; the callbacks find the
+        // functions through the realm of the context they are called with.
+        unsafe { set(ctx, Some(code_for_eval_hook), Some(can_compile_strings_hook)) }
+    }
+
+    /// Runs `f` with string compilation exempt from the compile-strings hook: the
+    /// embedder's own compiles of code it already checked (an event handler
+    /// content attribute through the Function constructor).
+    pub fn compile_exempt<R>(&self, f: impl FnOnce() -> R) -> R {
+        struct Reset;
+        impl Drop for Reset {
+            fn drop(&mut self) {
+                COMPILE_EXEMPT.with(|c| c.set(c.get() - 1));
+            }
+        }
+        COMPILE_EXEMPT.with(|c| c.set(c.get() + 1));
+        let _reset = Reset;
+        f()
+    }
+
+    /// The realm's `require-trusted-types-for 'script'` state for eval and
+    /// Function: 0 none, 1 report-only, 2 enforced. False without patch 0035.
+    pub fn set_trusted_types_enforcement(&self, level: i32) -> bool {
+        let Some(set) = sys::spi::get().set_trusted_types_enforcement else { return false };
+        let ctx = self.realm.ctx.get();
+        if ctx.is_null() {
+            return false;
+        }
+        // SAFETY: the realm's live global context.
+        unsafe { set(ctx, level) };
+        true
     }
 
     pub fn realm(&self) -> Realm {
@@ -2364,6 +2485,7 @@ fn allocate(engine: &Rc<EngineInner>, options: RealmOptions) -> JsResult<Realm> 
         protos: RefCell::new(Vec::new()),
         shapes: RefCell::new(Vec::new()),
         interfaces: RefCell::new(None),
+        compile_hooks: RefCell::new(None),
         populated: RefCell::new(Vec::new()),
         identity: RefCell::new(rustc_hash::FxHashMap::default()),
         shared_strings: RefCell::new(rustc_hash::FxHashMap::default()),

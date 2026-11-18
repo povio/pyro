@@ -283,6 +283,9 @@ pub struct PageDom {
     pub(crate) script_parser_active: Cell<bool>,
     pub(crate) script_parser_close: Cell<bool>,
     pub(crate) script_nesting: Cell<u32>,
+    /// The eval/Function Trusted Types enforcement last given to the main realm
+    /// (`trusted_types::sync_compile_strings`): 0 none, 1 report-only, 2 enforced.
+    pub(crate) tt_eval_level: Cell<u8>,
     /// The network parser, lent by the loader while a script it reached runs:
     /// that script's `document.write`s parse at its insertion point.
     pub(crate) network_parser: RefCell<Option<pyro_dom::parse::DocumentParser>>,
@@ -790,6 +793,7 @@ impl PageDom {
             script_parser_active: Cell::new(false),
             script_parser_close: Cell::new(false),
             script_nesting: Cell::new(0),
+            tt_eval_level: Cell::new(0),
             network_parser: RefCell::new(None),
             network_parser_lent: Cell::new(false),
             written_scripts: RefCell::new(Vec::new()),

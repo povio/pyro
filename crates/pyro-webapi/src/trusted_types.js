@@ -5,6 +5,7 @@
 // name is allowed, more than once.
 (native => {
   'use strict';
+  const global = globalThis;
   const freeze = Object.freeze;
   const defineProperty = Object.defineProperty;
   const apply = Reflect.apply;
@@ -109,7 +110,7 @@
       if (arguments.length < 1) throw new TypeError("Failed to execute 'createPolicy' on 'TrustedTypePolicyFactory': 1 argument required, but only 0 present.");
       const name = String_(policyName);
       // CSP "Should Trusted Type policy creation be blocked by Content Security Policy?"
-      const blocked = native.policyBlocked(name, created.includes(name));
+      const blocked = policyCreationBlocked(name, created.includes(name));
       if (blocked) {
         throw new TypeError(`Failed to execute 'createPolicy' on 'TrustedTypePolicyFactory': Policy "${name}" disallowed.`);
       }
@@ -167,14 +168,131 @@
     return null;
   }
 
-  return {
-    TrustedHTML, TrustedScript, TrustedScriptURL, TrustedTypePolicy, TrustedTypePolicyFactory,
+  // CSP violation reports (CSP 3 "report a violation", for the Trusted Types directives only):
+  // a SecurityPolicyViolationEvent fired at the document (the worker global in a worker), in a
+  // task, bubbling and composed.
+  const EventBase = Event;
+  const violationFields = ['documentURI', 'referrer', 'blockedURI', 'effectiveDirective', 'violatedDirective',
+    'originalPolicy', 'sourceFile', 'sample', 'disposition', 'statusCode', 'lineNumber', 'columnNumber'];
+  const violationData = new WeakMap();
+  class SecurityPolicyViolationEvent extends EventBase {
+    constructor(type, init) {
+      if (arguments.length < 1) throw new TypeError("Failed to construct 'SecurityPolicyViolationEvent': 1 argument required, but only 0 present.");
+      super(type, init);
+      const i = init ?? {};
+      const d = {};
+      for (const f of violationFields) {
+        if (f === 'statusCode' || f === 'lineNumber' || f === 'columnNumber') d[f] = Number(i[f] ?? 0) >>> 0;
+        else if (f === 'disposition') d[f] = i[f] === 'report' ? 'report' : 'enforce';
+        else d[f] = i[f] === undefined ? '' : String_(i[f]);
+      }
+      if (i.violatedDirective === undefined && i.effectiveDirective !== undefined) d.violatedDirective = d.effectiveDirective;
+      violationData.set(this, d);
+    }
+  }
+  for (const f of violationFields) {
+    defineProperty(SecurityPolicyViolationEvent.prototype, f, {
+      get() {
+        const d = violationData.get(this);
+        if (d === undefined) throw new TypeError(`Illegal invocation: SecurityPolicyViolationEvent.${f}`);
+        return d[f];
+      },
+      enumerable: true, configurable: true,
+    });
+  }
+  defineProperty(SecurityPolicyViolationEvent.prototype, Symbol.toStringTag, { value: 'SecurityPolicyViolationEvent', configurable: true });
+  const setTimeoutFn = global.setTimeout;
+  function report(policy, directive, blockedURI, sample) {
+    const target = typeof global.document === 'object' && global.document !== null ? global.document : global;
+    const init = {
+      bubbles: true, composed: true,
+      documentURI: target === global ? String_(global.location?.href ?? '') : String_(target.URL ?? ''),
+      referrer: target === global ? '' : String_(target.referrer ?? ''),
+      blockedURI, effectiveDirective: directive, violatedDirective: directive,
+      originalPolicy: policy.text, sample: String_(sample),
+      disposition: policy.reportOnly ? 'report' : 'enforce', statusCode: 0,
+    };
+    apply(setTimeoutFn, global, [() => target.dispatchEvent(new SecurityPolicyViolationEvent('securitypolicyviolation', init)), 0]);
+  }
+  function cspPolicies() {
+    return native.policies().map(([text, reportOnly]) => ({ text, reportOnly, directives: directivesOf(text) }));
+  }
+  function directivesOf(text) {
+    const out = new Map();
+    for (const part of text.split(';')) {
+      const tokens = part.trim().split(/[\t\n\f\r ]+/).filter(Boolean);
+      if (tokens.length === 0) continue;
+      const name = tokens[0].toLowerCase();
+      if (!out.has(name)) out.set(name, tokens.slice(1));
+    }
+    return out;
+  }
+  // "Should Trusted Type policy creation be blocked": each policy's `trusted-types` directive must
+  // list the name (or `*`) and, for a name already created, `'allow-duplicates'`.
+  function policyCreationBlocked(name, duplicate) {
+    let blocked = false;
+    for (const policy of cspPolicies()) {
+      const values = policy.directives.get('trusted-types');
+      if (values === undefined) continue;
+      const lower = values.map(v => v.toLowerCase());
+      const violates = (duplicate && !lower.includes("'allow-duplicates'")) || !values.some(v => v === '*' || v === name);
+      if (violates) {
+        report(policy, 'trusted-types', 'trusted-types-policy', name.slice(0, 40));
+        if (!policy.reportOnly) blocked = true;
+      }
+    }
+    return blocked;
+  }
+
+  const exports = {
+    TrustedHTML, TrustedScript, TrustedScriptURL, TrustedTypePolicy, TrustedTypePolicyFactory, SecurityPolicyViolationEvent,
+    // A sink violation ("Should sink type mismatch violation be blocked"): reported to each
+    // policy with `require-trusted-types-for 'script'`; whether one of them is enforced.
+    sinkViolation(sink, input) {
+      let enforced = false;
+      for (const policy of cspPolicies()) {
+        const values = policy.directives.get('require-trusted-types-for');
+        if (values === undefined || !values.includes("'script'")) continue;
+        report(policy, 'require-trusted-types-for', 'trusted-types-sink', `${sink}|${String_(input).slice(0, 40)}`);
+        if (!policy.reportOnly) enforced = true;
+      }
+      return enforced;
+    },
     trustedTypes: factory,
     // For native sinks (slice 2): the trusted value's text, or null.
     trustedData(kind, value) {
       const d = data.get(value);
       const Ctor = kind === 'html' ? TrustedHTML : kind === 'script' ? TrustedScript : TrustedScriptURL;
       return d !== undefined && d.kind === Ctor ? d.value : null;
+    },
+    // JSC patch 0035, eval and Function: a TrustedScript passed to eval is its text.
+    codeForEval(value) {
+      const d = data.get(value);
+      return d !== undefined && d.kind === TrustedScript ? d.value : null;
+    },
+    // Trusted Types' HostEnsureCanCompileStrings: whether `code` may compile, for `kind`
+    // "Function" (with the constructor's arguments), "eval" or "indirect-eval". A Function
+    // made of TrustedScripts only passes; else the default policy's createScript must give the
+    // code back unchanged, or the violation is reported (and blocks under an enforced policy).
+    canCompile(kind, code, ...args) {
+      const sink = kind === 'Function' ? 'Function' : 'eval';
+      if (kind === 'Function' && args.length > 0 && args.every((a) => {
+        const d = data.get(a);
+        return d !== undefined && d.kind === TrustedScript;
+      })) return true;
+      let value;
+      if (defaultPolicy !== null) value = policyValue(policies.get(defaultPolicy), 'createScript', code, ['TrustedScript', sink], false);
+      if (value === undefined || value === null) {
+        let enforced = false;
+        for (const policy of cspPolicies()) {
+          const values = policy.directives.get('require-trusted-types-for');
+          if (values === undefined || !values.includes("'script'")) continue;
+          report(policy, 'require-trusted-types-for', 'trusted-types-sink', `${sink}|${String_(code).slice(0, 40)}`);
+          if (!policy.reportOnly) enforced = true;
+        }
+        return !enforced;
+      }
+      return String_(value) === code;
     },
     // The default policy's value for a sink, called with the trusted type's name and the sink
     // ("get Trusted Type compliant string"); undefined without a default policy, null when it
@@ -184,4 +302,7 @@
       return policyValue(policies.get(defaultPolicy), method, input, [typeName, sink], false);
     },
   };
+  // eval and Function go through these (JSC patch 0035; a no-op without it).
+  native.installCompileHooks(exports.codeForEval, exports.canCompile);
+  return exports;
 })

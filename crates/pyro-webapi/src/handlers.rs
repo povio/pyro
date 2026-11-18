@@ -164,7 +164,10 @@ pub(crate) fn content_attribute_changed(
                 dom.key_node(target.key).and_then(|n| dom.element(n).ok()).is_some_and(|e| &*e.name.ns == "http://www.w3.org/2000/svg")
             };
             let param = if svg { "evt" } else { "event" };
-            let f = ctor.as_object().expect("Function constructor").construct(&[s.string(param), s.string(&scoped)])?;
+            // The body passed the Trusted Types attribute check already.
+            let f = s.compile_exempt(|| {
+                ctor.as_object().expect("Function constructor").construct(&[s.string(param), s.string(&scoped)])
+            })?;
             f.value()
         }
         None => s.null(),

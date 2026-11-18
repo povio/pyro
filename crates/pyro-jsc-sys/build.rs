@@ -45,6 +45,7 @@ fn main() {
     println!("cargo::rustc-check-cfg=cfg(pyro_jsc_static)");
     println!("cargo::rustc-check-cfg=cfg(pyro_jsc_adopt_global_proxy)");
     println!("cargo::rustc-check-cfg=cfg(pyro_jsc_custom_value)");
+    println!("cargo::rustc-check-cfg=cfg(pyro_jsc_compile_strings)");
 
     if target_os == "linux" {
         let Some(dir) = source_jsc(&inputs, &["libJavaScriptCore.a"], &linux_cache, false) else {
@@ -125,6 +126,11 @@ fn link_static(lib: &Path) {
     // Patch 0034 (JSObjectSetCustomValue), the same way.
     if lib.parent().is_some_and(|dir| dir.join("inputs/patches/0034-custom-values.patch").is_file()) {
         println!("cargo:rustc-cfg=pyro_jsc_custom_value");
+    }
+    // Patch 0035 (JSGlobalContextSetCompileStringsCallbacks, Trusted Types for eval and
+    // Function), the same way.
+    if lib.parent().is_some_and(|dir| dir.join("inputs/patches/0035-compile-strings-hooks.patch").is_file()) {
+        println!("cargo:rustc-cfg=pyro_jsc_compile_strings");
     }
 }
 

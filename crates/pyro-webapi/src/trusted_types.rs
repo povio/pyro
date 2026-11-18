@@ -1,9 +1,11 @@
 //! Trusted Types: `trustedTypes` (`TrustedTypePolicyFactory`), `TrustedTypePolicy` and the
 //! `TrustedHTML` / `TrustedScript` / `TrustedScriptURL` values, made in JS (trusted_types.js) on a
-//! realm's first use, on windows and workers. The document's CSP (headers and `<meta>`; only
-//! the Trusted Types directives are read, no other directive is enforced): `trusted-types`
-//! limits policy names, `require-trusted-types-for 'script'` makes the HTML and script sinks
-//! take Trusted Types values ([`compliant_string`]).
+//! realm's first use, on windows and workers. The document's CSP (headers, report-only headers
+//! and `<meta>`; only the Trusted Types directives are acted on, no other directive is
+//! enforced): `trusted-types` limits policy names, `require-trusted-types-for 'script'` makes
+//! the HTML and script sinks take Trusted Types values ([`compliant_string`]); a violation fires
+//! `securitypolicyviolation` (SecurityPolicyViolationEvent) at the document, and blocks only
+//! under an enforced policy.
 
 use std::rc::Rc;
 
@@ -35,28 +37,77 @@ where
         "TrustedScriptURL",
         "TrustedTypePolicy",
         "TrustedTypePolicyFactory",
+        "SecurityPolicyViolationEvent",
     );
 }
 
 fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
     let natives = s.object();
-    let blocked = s.function("policyBlocked", |s, _this, a| {
-        let name = crate::util::dom_string(a.get(0))?;
-        let duplicate = a.get(1).to_bool();
-        let policies = match crate::target::page_of(s) {
-            Ok(page) => policies_of(&page),
-            Err(_) => Vec::new(),
-        };
-        Ok(s.boolean(policy_creation_blocked(&policies, &name, duplicate)))
+    // The policies of the realm's document that have Trusted Types directives: [text, report-only].
+    let policies = s.function("policies", |s, _this, _a| {
+        let mut entries = Vec::new();
+        if let Ok(page) = crate::target::page_of(s) {
+            let policies: Vec<pyro_dom::CspPolicy> = page.dom.borrow().trusted_types_policies(page.document()).to_vec();
+            for policy in policies {
+                entries.push(s.array(&[s.string(&policy.text), s.boolean(policy.report_only)])?.value());
+            }
+        }
+        Ok(s.array(&entries)?.value())
     })?;
-    natives.set_atom("policyBlocked", blocked.value())?;
+    natives.set_atom("policies", policies.value())?;
+    // eval and Function through the module's hooks (patched JSC 0035), and the document's
+    // enforcement for them.
+    let install = s.function("installCompileHooks", |s, _this, a| {
+        if let (Some(code_for_eval), Some(can_compile)) = (a.get(0).as_object(), a.get(1).as_object()) {
+            s.set_compile_strings_hooks(code_for_eval, can_compile);
+            if let Ok(page) = crate::target::page_of(s) {
+                let level = eval_level(&page);
+                page.tt_eval_level.set(level);
+                s.set_trusted_types_enforcement(level as i32);
+            }
+        }
+        Ok(s.undefined())
+    })?;
+    natives.set_atom("installCompileHooks", install.value())?;
     Ok(natives)
 }
 
-/// The Trusted Types directives of the document's policies: its `Content-Security-Policy`
-/// headers and the `<meta http-equiv="Content-Security-Policy">` elements that joined its head.
-fn policies_of(page: &PageDom) -> Vec<String> {
-    page.dom.borrow().trusted_types_policies(page.document()).iter().map(|p| p.to_string()).collect()
+/// The eval/Function enforcement the document's policies ask for: 2 when an enforced policy
+/// has `require-trusted-types-for 'script'`, 1 when only report-only ones do, else 0.
+fn eval_level(page: &PageDom) -> u8 {
+    let dom = page.dom.borrow();
+    let mut level = 0;
+    for policy in dom.trusted_types_policies(page.document()) {
+        let requires = policy.text.split(';').any(|directive| {
+            let mut tokens = directive.split_ascii_whitespace();
+            tokens.next().is_some_and(|d| d.eq_ignore_ascii_case("require-trusted-types-for"))
+                && tokens.any(|v| v == "'script'")
+        });
+        if requires {
+            level = level.max(if policy.report_only { 1 } else { 2 });
+        }
+    }
+    level
+}
+
+/// Before a classic script of the page runs in its main realm `s`: eval and Function follow the
+/// document's `require-trusted-types-for` (a `<meta>` CSP can add it while the document parses).
+/// Makes the Trusted Types module (which installs the hooks) when a policy first asks.
+pub fn sync_compile_strings(s: &Scope<'_>, page: &Rc<PageDom>) {
+    if page.dom.borrow().trusted_types_policies(page.document()).is_empty() && page.tt_eval_level.get() == 0 {
+        return;
+    }
+    let level = eval_level(page);
+    if level == page.tt_eval_level.get() {
+        return;
+    }
+    if MODULE.existing(s, page).ok().flatten().is_none() {
+        // Loading it installs the hooks with the current level.
+        let _ = MODULE.module(s, page);
+        return;
+    }
+    page.tt_eval_level.set(level);
+    s.set_trusted_types_enforcement(level as i32);
 }
 
 /// Whether the document's policies have `require-trusted-types-for 'script'`: the script sinks
@@ -71,7 +122,7 @@ pub(crate) fn requires_for_script(page: &PageDom) -> bool {
 pub(crate) fn requires_for_script_in(page: &PageDom, doc: pyro_dom::NodeId) -> bool {
     let dom = page.dom.borrow();
     dom.trusted_types_policies(doc).iter().any(|policy| {
-        policy.split(';').any(|directive| {
+        policy.text.split(';').any(|directive| {
             let mut tokens = directive.split_ascii_whitespace();
             tokens.next().is_some_and(|d| d.eq_ignore_ascii_case("require-trusted-types-for"))
                 && tokens.any(|v| v == "'script'")
@@ -213,47 +264,13 @@ pub(crate) fn compliant_string_in(
     let input = plain(value)?;
     let result = call("defaultPolicyValue", &[s.string(method), s.string(&input), s.string(name), s.string(sink)])?;
     if result.is_null() || result.is_undefined() {
-        return Err(JsError::Type(format!("Failed to set '{sink}': This document requires '{name}' assignment.").into()));
+        // A violation, reported to every policy that requires Trusted Types; blocked when one
+        // of them is enforced (report-only ones let the string through).
+        let enforced = call("sinkViolation", &[s.string(sink), s.string(&input)])?.to_bool();
+        if enforced {
+            return Err(JsError::Type(format!("Failed to set '{sink}': This document requires '{name}' assignment.").into()));
+        }
+        return Ok(input);
     }
     crate::util::dom_string(result)
-}
-
-/// Trusted Types "Should Trusted Type policy creation be blocked by Content Security Policy?":
-/// each policy's `trusted-types` directive must list `name` (or `*`), and allow a name already
-/// created only with `'allow-duplicates'`. A directive without names (or `'none'`) allows none.
-pub(crate) fn policy_creation_blocked(policies: &[String], name: &str, duplicate: bool) -> bool {
-    for policy in policies {
-        for directive in policy.split(';') {
-            let mut tokens = directive.split_ascii_whitespace();
-            if !tokens.next().is_some_and(|d| d.eq_ignore_ascii_case("trusted-types")) {
-                continue;
-            }
-            let values: Vec<&str> = tokens.collect();
-            if duplicate && !values.iter().any(|v| v.eq_ignore_ascii_case("'allow-duplicates'")) {
-                return true;
-            }
-            if !values.iter().any(|v| *v == "*" || *v == name) {
-                return true;
-            }
-        }
-    }
-    false
-}
-
-#[cfg(test)]
-mod tests {
-    use super::policy_creation_blocked;
-
-    #[test]
-    fn trusted_types_directive_names_policies() {
-        let p = |s: &str| vec![s.to_owned()];
-        assert!(!policy_creation_blocked(&[], "a", true));
-        assert!(policy_creation_blocked(&p("trusted-types"), "a", false));
-        assert!(policy_creation_blocked(&p("trusted-types 'none'"), "default", false));
-        assert!(!policy_creation_blocked(&p("script-src 'self'; trusted-types a b"), "b", false));
-        assert!(policy_creation_blocked(&p("trusted-types a"), "A", false));
-        assert!(!policy_creation_blocked(&p("trusted-types *"), "x", false));
-        assert!(policy_creation_blocked(&p("trusted-types *"), "x", true));
-        assert!(!policy_creation_blocked(&p("trusted-types * 'allow-duplicates'"), "x", true));
-    }
 }

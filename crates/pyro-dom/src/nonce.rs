@@ -11,15 +11,24 @@ use crate::dom::Dom;
 use crate::error::DomResult;
 use crate::node::NodeId;
 
+/// A Content Security Policy of a document (as delivered: its serialization), and whether it is
+/// report-only (`Content-Security-Policy-Report-Only`).
+#[derive(Clone, Debug)]
+pub struct CspPolicy {
+    pub text: Box<str>,
+    pub report_only: bool,
+}
+
 #[derive(Default)]
 pub(crate) struct NonceState {
     /// Documents whose response carried a Content-Security-Policy header.
     csp_documents: FxHashSet<NodeId>,
     /// The nonce of each element whose attribute was emptied.
     hidden: FxHashMap<NodeId, Box<str>>,
-    /// The Trusted Types directives (`trusted-types`, `require-trusted-types-for`) of each
-    /// header-delivered policy of a document, one string per policy.
-    trusted_types: FxHashMap<NodeId, Vec<Box<str>>>,
+    /// The policies of a document that have a Trusted Types directive (`trusted-types`,
+    /// `require-trusted-types-for`), with whether each is report-only. No other directive of
+    /// them is enforced.
+    trusted_types: FxHashMap<NodeId, Vec<CspPolicy>>,
 }
 
 impl Dom {
@@ -34,39 +43,38 @@ impl Dom {
         Ok(())
     }
 
-    /// Records the Trusted Types directives of `doc`'s header-delivered policies (`csp`: the
-    /// `Content-Security-Policy` header values joined by `,`). No other directive is kept.
-    pub fn set_trusted_types_policies(&mut self, doc: NodeId, csp: &str) -> DomResult<()> {
+    /// Records `doc`'s header-delivered policies that have Trusted Types directives: `enforce`,
+    /// the `Content-Security-Policy` header values joined by `,`, and `report_only`, the
+    /// `Content-Security-Policy-Report-Only` ones.
+    pub fn set_trusted_types_policies(&mut self, doc: NodeId, enforce: &str, report_only: &str) -> DomResult<()> {
         self.check(doc)?;
         self.nonces.trusted_types.remove(&doc);
-        self.add_csp_policies(doc, csp);
+        self.add_csp_policies(doc, enforce, false);
+        self.add_csp_policies(doc, report_only, true);
         Ok(())
     }
 
-    /// Adds the Trusted Types directives of the policies in `csp` to `doc`'s (a header, or a
+    /// Adds the policies in `csp` that have a Trusted Types directive to `doc`'s (a header, or a
     /// `<meta http-equiv="Content-Security-Policy">` that joined the head).
-    pub(crate) fn add_csp_policies(&mut self, doc: NodeId, csp: &str) {
-        let policies: Vec<Box<str>> = csp
+    pub(crate) fn add_csp_policies(&mut self, doc: NodeId, csp: &str, report_only: bool) {
+        let policies: Vec<CspPolicy> = csp
             .split(',')
-            .filter_map(|policy| {
-                let kept: Vec<&str> = policy
-                    .split(';')
-                    .map(str::trim)
-                    .filter(|d| {
-                        let name = d.split_ascii_whitespace().next().unwrap_or("");
-                        name.eq_ignore_ascii_case("trusted-types") || name.eq_ignore_ascii_case("require-trusted-types-for")
-                    })
-                    .collect();
-                (!kept.is_empty()).then(|| kept.join("; ").into())
+            .map(str::trim)
+            .filter(|policy| {
+                policy.split(';').any(|d| {
+                    let name = d.split_ascii_whitespace().next().unwrap_or("");
+                    name.eq_ignore_ascii_case("trusted-types") || name.eq_ignore_ascii_case("require-trusted-types-for")
+                })
             })
+            .map(|policy| CspPolicy { text: policy.into(), report_only })
             .collect();
         if !policies.is_empty() {
             self.nonces.trusted_types.entry(doc).or_default().extend(policies);
         }
     }
 
-    /// The Trusted Types directives of `doc`'s policies (headers and `<meta>`).
-    pub fn trusted_types_policies(&self, doc: NodeId) -> &[Box<str>] {
+    /// `doc`'s policies that have Trusted Types directives (headers and `<meta>`).
+    pub fn trusted_types_policies(&self, doc: NodeId) -> &[CspPolicy] {
         self.nonces.trusted_types.get(&doc).map_or(&[], |v| v.as_slice())
     }
 

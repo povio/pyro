@@ -1002,7 +1002,7 @@ impl Dom {
             let in_head = self.doc_data(doc).head != NIL && n.parent == self.doc_data(doc).head;
             if let (true, Some(content)) = (in_head, e.attr_local(&local_name!("content")).map(str::to_owned)) {
                 let doc = self.id_of(doc);
-                self.add_csp_policies(doc, &content);
+                self.add_csp_policies(doc, &content, false);
             }
             return;
         }

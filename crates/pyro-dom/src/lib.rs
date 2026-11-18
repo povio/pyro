@@ -25,6 +25,7 @@ pub mod custom;
 mod internals;
 mod moving;
 mod nonce;
+pub use nonce::CspPolicy;
 pub mod picture;
 pub mod prescan;
 mod details;
