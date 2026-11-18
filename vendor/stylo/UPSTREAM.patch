@@ -4164,7 +4164,7 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
 +}
 diff -ruN a/values/specified/calc.rs b/values/specified/calc.rs
 --- a/values/specified/calc.rs	2026-11-11 19:55:57
-+++ b/values/specified/calc.rs	2026-11-16 23:22:52
++++ b/values/specified/calc.rs	2026-11-18 13:37:07
 @@ -305,6 +305,9 @@
          const ANCHOR = 1 << 0;
          /// `anchor-size()` function.
@@ -4187,10 +4187,11 @@ diff -ruN a/values/specified/calc.rs b/values/specified/calc.rs
                  Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError))
              },
              &Token::Percentage { unit_value, .. } => {
-@@ -970,6 +978,15 @@
+@@ -969,6 +977,15 @@
+             Token::Function(name) => {
                  let function = CalcNode::math_function(context, name)?;
                  CalcNode::parse(context, input, function, flags)
-             },
++            },
 +            Token::Ident(ident)
 +                if flags.additional_functions.intersects(AdditionalFunctions::CALC_SIZE)
 +                    && ident.eq_ignore_ascii_case("size") =>
@@ -4199,10 +4200,9 @@ diff -ruN a/values/specified/calc.rs b/values/specified/calc.rs
 +                    1.0,
 +                    Optional::Some(NumericBaseType::Length),
 +                ))))
-+            },
+             },
              Token::Ident(ident) => {
                  let leaf = match_ignore_ascii_case! { &**ident,
-                     "e" => Leaf::Number(NoCalcNumber::new(std::f32::consts::E)),
 @@ -1631,6 +1648,22 @@
              .map_err(|()| ParseError::custom(StyleParseErrorKind::UnspecifiedError))
      }
@@ -4225,6 +4225,37 @@ diff -ruN a/values/specified/calc.rs b/values/specified/calc.rs
 +
      /// Convenience parsing function for percentages.
      pub fn parse_percentage(
+         context: &ParserContext,
+@@ -1703,6 +1736,30 @@
+         .map_err(|()| ParseError::custom(StyleParseErrorKind::UnspecifiedError))
+     }
+ 
++    /// pyro: a math function of angles and percentages where a percentage is that fraction of a
++    /// full turn (a conic gradient's stop positions, CSS Images 4: `calc(0deg + 100%)` is
++    /// 360deg), as an angle: each percentage becomes the angle it stands for (WPT css-images
++    /// `conic-gradient-calc-angle-percentage`; a mixed value dropped the whole background).
++    pub fn parse_angle_percentage_of_turn(
++        context: &ParserContext,
++        input: &mut Parser,
++        function: MathFunction,
++    ) -> Result<CalcNumeric, ParseError> {
++        let mut node = Self::parse(
++            context,
++            input,
++            function,
++            CalcParseFlags::new(PercentageContext::allowed_with_hint(NumericBaseType::Angle)),
++        )?;
++        node.visit_depth_first(|n| {
++            if let CalcNode::Leaf(Leaf::Percentage(p)) = n {
++                *n = CalcNode::Leaf(Leaf::Angle(NoCalcAngle::from_degrees(p.value.get() * 360.0)));
++            }
++        });
++        node.into_angle(AllowedNumericType::All)
++            .map_err(|()| ParseError::custom(StyleParseErrorKind::UnspecifiedError))
++    }
++
+     /// Convenience parsing function for `<time>`.
+     pub fn parse_time(
          context: &ParserContext,
 diff -ruN a/values/specified/counters.rs b/values/specified/counters.rs
 --- a/values/specified/counters.rs	2026-11-11 19:55:57
@@ -4716,7 +4747,7 @@ diff -ruN a/values/specified/length.rs b/values/specified/length.rs
  
 diff -ruN a/values/specified/mod.rs b/values/specified/mod.rs
 --- a/values/specified/mod.rs	2026-11-11 19:55:57
-+++ b/values/specified/mod.rs	2026-11-17 14:08:59
++++ b/values/specified/mod.rs	2026-11-18 13:37:25
 @@ -48,7 +48,7 @@
      ContainIntrinsicSize, ContainerName, ContainerType, ContentVisibility, DirectionProperty,
      Display, DominantBaseline, Float, ImageOrientation, Isolation, LineClamp, MarginTrim, Orient,
@@ -4744,6 +4775,26 @@ diff -ruN a/values/specified/mod.rs b/values/specified/mod.rs
  pub use self::text::{TextBoxEdge, TextBoxTrim};
  pub use self::text::{
      TextDecorationInset, TextDecorationLength, TextDecorationSkipInk, TextJustify, TextTransform,
+@@ -201,6 +201,19 @@
+         if let Ok(per) = input.try_parse(|i| Percentage::parse(context, i)) {
+             return Ok(AngleOrPercentage::Percentage(per));
+         }
++        // pyro: a math function mixing angles and percentages, a percentage being that fraction
++        // of a full turn (the only use of this type is a conic gradient's stops).
++        if let Ok(angle) = input.try_parse(|i| -> Result<Angle, ParseError> {
++            let name = match i.next()? {
++                Token::Function(name) => name.clone(),
++                _ => return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError)),
++            };
++            let function = calc::CalcNode::math_function(context, &name)?;
++            calc::CalcNode::parse_angle_percentage_of_turn(context, i, function)
++                .map(|calc| Angle::new_calc(Box::new(calc)))
++        }) {
++            return Ok(AngleOrPercentage::Angle(angle));
++        }
+ 
+         Angle::parse_internal(context, input, allow_unitless_zero).map(AngleOrPercentage::Angle)
+     }
 diff -ruN a/values/specified/number.rs b/values/specified/number.rs
 --- a/values/specified/number.rs	2026-11-11 19:55:57
 +++ b/values/specified/number.rs	2026-11-16 15:05:29

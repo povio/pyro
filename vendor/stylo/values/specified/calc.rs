@@ -1736,6 +1736,30 @@ impl CalcNode {
         .map_err(|()| ParseError::custom(StyleParseErrorKind::UnspecifiedError))
     }
 
+    /// pyro: a math function of angles and percentages where a percentage is that fraction of a
+    /// full turn (a conic gradient's stop positions, CSS Images 4: `calc(0deg + 100%)` is
+    /// 360deg), as an angle: each percentage becomes the angle it stands for (WPT css-images
+    /// `conic-gradient-calc-angle-percentage`; a mixed value dropped the whole background).
+    pub fn parse_angle_percentage_of_turn(
+        context: &ParserContext,
+        input: &mut Parser,
+        function: MathFunction,
+    ) -> Result<CalcNumeric, ParseError> {
+        let mut node = Self::parse(
+            context,
+            input,
+            function,
+            CalcParseFlags::new(PercentageContext::allowed_with_hint(NumericBaseType::Angle)),
+        )?;
+        node.visit_depth_first(|n| {
+            if let CalcNode::Leaf(Leaf::Percentage(p)) = n {
+                *n = CalcNode::Leaf(Leaf::Angle(NoCalcAngle::from_degrees(p.value.get() * 360.0)));
+            }
+        });
+        node.into_angle(AllowedNumericType::All)
+            .map_err(|()| ParseError::custom(StyleParseErrorKind::UnspecifiedError))
+    }
+
     /// Convenience parsing function for `<time>`.
     pub fn parse_time(
         context: &ParserContext,
