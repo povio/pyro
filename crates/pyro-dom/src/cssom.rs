@@ -35,7 +35,10 @@ pub fn normalize_selector(text: &str, namespaces: &Namespaces) -> Option<String>
 }
 
 fn parse_list(p: &mut Parser<'_>, namespaces: &mut Namespaces, top: bool) -> Vec<ParsedRule> {
-    let mut rules = Vec::new();
+    let mut rules: Vec<ParsedRule> = Vec::new();
+    // `@import` and `@namespace` only count before every other rule (`@layer`
+    // statements aside); later ones are dropped, as browsers drop them.
+    let mut past_prologue = false;
     loop {
         let start = p.position();
         let Ok(token) = p.next_including_whitespace_and_comments().cloned() else { return rules };
@@ -45,7 +48,19 @@ fn parse_list(p: &mut Parser<'_>, namespaces: &mut Namespaces, top: bool) -> Vec
             Token::AtKeyword(name) => parse_at_rule(p, &name, namespaces),
             token => parse_style_rule(p, start, &token, namespaces),
         };
-        rules.extend(rule);
+        let Some(rule) = rule else { continue };
+        if top {
+            let prologue = match &rule {
+                ParsedRule::Other { rule_type: 3 | 10, .. } => true,
+                ParsedRule::Other { rule_type: 0, text } => text.starts_with("@layer") && text.ends_with(';'),
+                _ => false,
+            };
+            if prologue && past_prologue && matches!(rule, ParsedRule::Other { rule_type: 3 | 10, .. }) {
+                continue;
+            }
+            past_prologue |= !prologue;
+        }
+        rules.push(rule);
     }
 }
 
@@ -111,6 +126,88 @@ fn collapse(text: &str) -> String {
     text.split_ascii_whitespace().collect::<Vec<_>>().join(" ")
 }
 
+/// An `@import` prelude with its URL serialized as CSSOM does: `url("...")`.
+fn import_url_form(prelude: &str) -> String {
+    let mut p = Parser::new(prelude);
+    let url = match p.next() {
+        Ok(Token::QuotedString(v)) | Ok(Token::UnquotedUrl(v)) => v.to_string(),
+        Ok(Token::Function(f)) if f.eq_ignore_ascii_case("url") => {
+            let inner: Result<String, ParseError<()>> =
+                p.parse_nested_block(|n| n.expect_string().map(|v| v.to_string()).map_err(Into::into));
+            match inner {
+                Ok(v) => v,
+                Err(_) => return prelude.to_owned(),
+            }
+        }
+        _ => return prelude.to_owned(),
+    };
+    let mut out = String::from("url(");
+    let _ = cssparser::serialize_string(&url, &mut out);
+    out.push(')');
+    // The layer and supports() parts as written, the media queries serialized.
+    let (head, media) = import_split(prelude);
+    let modifiers = head[head.len().min(p.position().byte_index())..].trim().to_owned();
+    let modifiers = if head.len() >= p.position().byte_index() { modifiers } else { String::new() };
+    for part in [modifiers, if media.is_empty() { String::new() } else { serialize_media_list(&media) }] {
+        if !part.is_empty() {
+            out.push(' ');
+            out.push_str(&part);
+        }
+    }
+    out
+}
+
+/// A `layer()` argument that names a layer: dot-separated identifiers.
+pub fn valid_layer_name(inner: &str) -> bool {
+    let inner = inner.trim();
+    !inner.is_empty()
+        && inner.split('.').all(|part| {
+            !part.is_empty() && part.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_' || !c.is_ascii())
+        })
+}
+
+/// An `@import` prelude split before its media queries: the URL, `layer`
+/// and `supports()` parts, and the media query text.
+pub fn import_split(prelude: &str) -> (String, String) {
+    let mut p = cssparser::Parser::new(prelude);
+    let mut end = p.position();
+    let mut first = true;
+    loop {
+        let state = p.state();
+        let Ok(token) = p.next().cloned() else { break };
+        let keep = match &token {
+            _ if first => true,
+            cssparser::Token::Ident(i) => i.eq_ignore_ascii_case("layer"),
+            cssparser::Token::Function(f) => f.eq_ignore_ascii_case("layer") || f.eq_ignore_ascii_case("supports"),
+            _ => false,
+        };
+        if !keep {
+            p.reset(&state);
+            break;
+        }
+        if let cssparser::Token::Function(f) = &token {
+            let inner_start = p.position();
+            let _: Result<(), cssparser::ParseError<()>> = p.parse_nested_block(|n| {
+                while n.next().is_ok() {}
+                Ok(())
+            });
+            // An invalid `layer()` starts the media queries.
+            let inner = p.slice_from(inner_start);
+            if !first && f.eq_ignore_ascii_case("layer") && !valid_layer_name(inner.strip_suffix(')').unwrap_or(inner)) {
+                p.reset(&state);
+                break;
+            }
+        }
+        first = false;
+        end = p.position();
+    }
+    let head = prelude[..end.byte_index()].trim().to_owned();
+    let media = prelude[end.byte_index()..].trim().to_owned();
+    (head, media)
+}
+
+
+
 fn parse_at_rule(p: &mut Parser<'_>, name: &str, namespaces: &mut Namespaces) -> Option<ParsedRule> {
     let lower = name.to_ascii_lowercase();
     let start = p.position();
@@ -136,9 +233,20 @@ fn parse_at_rule(p: &mut Parser<'_>, name: &str, namespaces: &mut Namespaces) ->
     if lower == "namespace" {
         namespaces.push(parse_namespace(&prelude)?);
     }
+    // `@name prelude {block}`, without a second space when the prelude is empty.
+    let prelude = collapse(&prelude);
+    let prelude = if lower == "import" { import_url_form(&prelude) } else { prelude };
+    let head = if prelude.is_empty() { format!("@{name}") } else { format!("@{name} {prelude}") };
     let text = match block {
-        Some(block) => format!("@{name} {} {{{block}}}", collapse(&prelude)),
-        None => format!("@{name} {};", collapse(&prelude)),
+        // An empty descriptor block serializes as `{ }`.
+        Some(block)
+            if block.trim().is_empty()
+                && matches!(lower.as_str(), "page" | "font-face" | "property" | "counter-style" | "font-palette-values" | "position-try" | "view-transition") =>
+        {
+            format!("{head} {{ }}")
+        }
+        Some(block) => format!("{head} {{{block}}}"),
+        None => format!("{head};"),
     };
     Some(ParsedRule::Other { rule_type, text })
 }
@@ -340,8 +448,8 @@ mod tests {
         assert_eq!(
             rules,
             [
-                ParsedRule::Other { rule_type: 0, text: "@position-try --opt {}".into() },
-                ParsedRule::Other { rule_type: 0, text: "@view-transition  { navigation: auto }".into() },
+                ParsedRule::Other { rule_type: 0, text: "@position-try --opt { }".into() },
+                ParsedRule::Other { rule_type: 0, text: "@view-transition { navigation: auto }".into() },
             ]
         );
     }

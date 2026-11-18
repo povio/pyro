@@ -6501,7 +6501,37 @@ fn css_rule_interfaces_rule_lists_and_rule_media() {
              rs[7].selectorText = 'named:FIRST'; rs[7].selectorText = 'bad::x';
              [rs[3].media.mediaText, rs[3].conditionText, rs[0].cssText, rs[7].selectorText].join('|')"
         ),
-        "not print, not all|not print, not all|@import url(x.css) layer(L) tv;|named:first"
+        "not print, not all|not print, not all|@import url(\"x.css\") layer(L) tv;|named:first"
+    );
+    e.page.dispose();
+}
+
+/// CSSOM interface shapes (css/cssom/idlharness.html): StyleSheet carries the
+/// sheet attributes, styles are CSSStyleProperties, required arguments are
+/// required (a bare `deleteRule()` must not delete rule 0), and an `@import`
+/// serializes its URL as `url("...")` with its layer and supports() parts.
+#[test]
+fn cssom_interface_shapes_and_import_parts() {
+    let e = env(concat!(
+        "<style id=s>@import \"a.css\" layer(x.y) supports(display: grid) SCREEN; @page {} b { color: red }",
+        " @import url(c.css) layer() print;</style>"
+    ));
+    assert_eq!(
+        eval(
+            &e.main,
+            "const sh = document.getElementById('s').sheet, rs = sh.cssRules; const out = [];
+             out.push(['type','href','ownerNode','title','media','disabled','parentStyleSheet'].every(k => Object.getOwnPropertyDescriptor(StyleSheet.prototype, k)));
+             out.push(Object.prototype.toString.call(rs[2].style), Object.prototype.toString.call(document.body.style),
+                      Object.prototype.toString.call(getComputedStyle(document.body)), 'cssFloat' in CSSStyleProperties.prototype);
+             for (const f of [() => sh.deleteRule(), () => rs.item(), () => sh.media.item(), () => rs[2].style.setProperty('color')]) {
+               try { f(); out.push('none'); } catch (x) { out.push(x.name); }
+             }
+             out.push(rs.length, rs[0].cssText, rs[0].layerName, rs[0].supportsText, rs[0].media.mediaText, rs[1].cssText,
+                      rs[2] instanceof CSSGroupingRule, rs[1].cssRules.length, CSS.escape.length);
+             out.join('|')"
+        ),
+        "true|[object CSSStyleProperties]|[object CSSStyleProperties]|[object CSSStyleProperties]|true|TypeError|TypeError|TypeError|TypeError|3|\
+         @import url(\"a.css\") layer(x.y) supports(display: grid) screen;|x.y|display: grid|screen|@page { }|true|0|1"
     );
     e.page.dispose();
 }

@@ -687,6 +687,11 @@ pub fn css_namespace<'s>(s: &Scope<'s>) -> JsResult<Value<'s>> {
         Ok(s.string(&out))
     })?;
     o.set_atom("escape", escape.value())?;
+    // escape(CSSOMString ident): length 1.
+    let define = s.global().get_atom("Object")?.as_object().expect("Object").get_atom("defineProperty")?;
+    let descriptor = s.object();
+    descriptor.set_atom("value", s.number(1.0))?;
+    define.as_object().expect("Object.defineProperty").call(None, &[escape.value(), s.string("length"), descriptor.value()])?;
     let register = s.function("registerProperty", |s, _this, a| {
         let page = crate::target::page_of(s)?;
         let def = a.get(0);

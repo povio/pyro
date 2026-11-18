@@ -774,7 +774,8 @@ fn computed_read_only<'s>(_s: &Scope<'s>, _c: &ComputedData, _v: Value<'s>) -> J
 
 pub struct ComputedStyle;
 impl JsClass for ComputedStyle {
-    const NAME: &'static str = "CSSStyleDeclaration";
+    // CSSOM: a computed style is a `CSSStyleProperties`.
+    const NAME: &'static str = "CSSStyleProperties";
     type Data = ComputedData;
     type Parent = NoParent;
     fn define(def: &mut ClassDef<Self>) {
