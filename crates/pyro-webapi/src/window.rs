@@ -904,6 +904,11 @@ fn find_text(page: &Rc<PageDom>, needle: &str, case_sensitive: bool, backwards: 
             true => (lo..=hi).rev().find(|&at| matches(text, at)),
         };
         if let Some(at) = found {
+            // As Chromium: selecting the match starts a selection (`selectstart` at its text, which
+            // a listener may cancel).
+            if !crate::input::fire_simple(page, *node, "selectstart", true, true) {
+                return false;
+            }
             crate::editing::set_selection(page, (*node, at as u32), (*node, (at + needle.len()) as u32));
             return true;
         }

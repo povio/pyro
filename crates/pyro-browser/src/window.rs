@@ -70,6 +70,10 @@ struct AnimationFrame {
     callbacks: Vec<(u32, Persistent, u32)>,
     native_callbacks: Vec<Rc<Cell<bool>>>,
     timer: Option<TimerId>,
+    /// With an eager frame (an idle timer, run when nothing else is ready): the frame interval's
+    /// timer that runs the frame anyway when tasks keep coming (HTML updates the rendering
+    /// between tasks whatever their number), so a page whose tasks never stop still gets frames.
+    backup: Option<TimerId>,
     /// Chain depth of the frame callback running now, if any.
     running: Option<u32>,
 }
@@ -629,6 +633,12 @@ fn schedule_animation_frame(s: &Scope<'_>, w: &WindowData, frame: &mut Animation
         // including after a client command replenishes the eager-frame budget.
         let animation_interval = w.target.page.moving_animation_frame_interval();
         frame.timer = Some(if animation_interval.is_none() && take_eager_frame() {
+            let realm_weak = s.realm().downgrade();
+            frame.backup = Some(w.sched.set_timer(Duration::from_millis(FRAME_MS), false, true, move |_browser: &mut Browser| {
+                let Some(realm) = realm_weak.upgrade() else { return };
+                let Ok(scope) = realm.scope() else { return };
+                run_animation_frame(&scope);
+            }));
             w.sched.set_idle_timer(true, run)
         } else {
             w.sched.set_timer(animation_interval.unwrap_or(Duration::from_millis(FRAME_MS)), false, true, run)
@@ -656,13 +666,21 @@ pub(crate) fn request_frame(realm: &Realm) {
     schedule_animation_frame(&scope, window, &mut frame);
 }
 
+/// Forgets the frame's timers (the one that fired, and the other of an eager frame's pair).
+fn clear_frame_timers(w: &WindowData) {
+    let mut frame = w.animation.borrow_mut();
+    for id in [frame.timer.take(), frame.backup.take()].into_iter().flatten() {
+        w.sched.clear_timer(id);
+    }
+}
+
 fn run_animation_frame(scope: &Scope<'_>) {
     let Some(w) = scope.global_data::<Window>() else { return };
     // A render-blocked document (a pending render-blocking stylesheet or
     // script, an unresolved `<link rel=expect>`) has no rendering
     // opportunity: the frame runs as soon as rendering is unblocked.
     if w.target.page.render_blocked() {
-        w.animation.borrow_mut().timer = None;
+        clear_frame_timers(w);
         let realm_weak = scope.realm().downgrade();
         w.target.page.when_render_unblocked(Box::new(move || {
             let Some(realm) = realm_weak.upgrade() else { return };
@@ -689,8 +707,8 @@ fn run_animation_frame(scope: &Scope<'_>) {
     // for a document that neither animates nor transitions, or did not change.
     w.target.page.update_animations();
     let (handles, native): (Vec<u32>, _) = {
+        clear_frame_timers(w);
         let mut frame = w.animation.borrow_mut();
-        frame.timer = None;
         (frame.callbacks.iter().map(|(h, _, _)| *h).collect(), std::mem::take(&mut frame.native_callbacks))
     };
     let now_ms = w.now_ms();
@@ -733,7 +751,7 @@ fn clear_timer<'s>(s: &Scope<'s>, w: &WindowData, a: Args<'s>) -> JsResult<Value
             if let Some(i) = frame.callbacks.iter().position(|(h, _, _)| *h == handle) {
                 frame.callbacks.remove(i);
                 if frame.callbacks.is_empty() && frame.native_callbacks.is_empty() {
-                    if let Some(id) = frame.timer.take() {
+                    for id in [frame.timer.take(), frame.backup.take()].into_iter().flatten() {
                         w.sched.clear_timer(id);
                     }
                 }
@@ -758,7 +776,7 @@ pub(crate) fn cancel_timers(realm: &Realm) {
         for ready in frame.native_callbacks.drain(..) {
             ready.set(true);
         }
-        if let Some(id) = frame.timer.take() {
+        for id in [frame.timer.take(), frame.backup.take()].into_iter().flatten() {
             w.sched.clear_timer(id);
         }
         drop(frame);

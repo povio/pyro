@@ -1075,7 +1075,24 @@ pub(crate) fn exec_command(page: &Rc<PageDom>, command: &str, value: &str) -> bo
         "undo" => return undo(page, true),
         "redo" => return undo(page, false),
         "selectall" => {
-            match command_target(page) {
+            let target = command_target(page);
+            // Editing "the selectAll command": `selectstart` (bubbling, cancelable) at the editing
+            // host, else the body, else the document element; canceled, nothing is selected.
+            let at = match &target {
+                Some(Target::Control(c)) => Some(*c),
+                Some(Target::Host(h)) => Some(*h),
+                _ => {
+                    let dom = page.dom.borrow();
+                    let doc = page.document();
+                    dom.body(doc).ok().flatten().or_else(|| dom.document_element(doc).ok().flatten())
+                }
+            };
+            if let Some(at) = at {
+                if !crate::input::fire_simple(page, at, "selectstart", true, true) {
+                    return true;
+                }
+            }
+            match target {
                 Some(Target::Control(c)) => control_select_all(page, c),
                 Some(Target::Host(h)) => editing::select_all(page, h),
                 _ => select_document(page),
