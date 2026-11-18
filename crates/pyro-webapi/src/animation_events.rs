@@ -205,6 +205,8 @@ pub(crate) struct Run {
     pub el: NodeId,
     /// Its target's `::before`/`::after` (`None`: the element).
     pub pseudo: Option<PseudoElement>,
+    /// A scroll-driven animation's `animation-timeline` (`scroll()`, `view()`, `--name`).
+    pub timeline: Option<String>,
     pub transition: bool,
     /// The animation's name, or the transitioning property.
     pub name: String,
@@ -716,6 +718,13 @@ pub(crate) fn runs(page: &Rc<PageDom>) -> Vec<Run> {
                 id: t.id,
                 el: t.el,
                 pseudo: t.pseudo,
+                timeline: (t.driven && !transition)
+                    .then(|| {
+                        let layout = page.try_layout()?;
+                        let style = style_of_target(layout.style(), &dom, t.el, t.pseudo)?;
+                        Some(pyro_dom::timing::timeline_text(&style, t.timing.as_ref().map_or(0, |x| x.index)))
+                    })
+                    .flatten(),
                 transition,
                 name: t.name.clone(),
                 start_ms: t.start_ms,

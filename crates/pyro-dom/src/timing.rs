@@ -884,6 +884,18 @@ pub fn timeline_driven(style: &StyleSnapshot, index: usize) -> bool {
     count > 0 && !ui.animation_timeline_at(index % count).is_auto()
 }
 
+/// The `animation-timeline` of the animation at `index` of `style`, serialized (`scroll()`,
+/// `view(inline)`, `--name`).
+pub fn timeline_text(style: &StyleSnapshot, index: usize) -> String {
+    use style_traits::ToCss;
+    let ui = style.get_ui();
+    let count = ui.animation_timeline_count();
+    if count == 0 {
+        return "auto".to_owned();
+    }
+    ui.animation_timeline_at(index % count).to_css_string()
+}
+
 pub fn displays_none(style: &StyleSnapshot) -> bool {
     style.get_box().display.is_none()
 }

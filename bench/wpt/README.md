@@ -829,12 +829,11 @@ also hung on a cycle the parser made), `document.designMode` (`designMode-caret-
 `selectAll` and `find()` (`selectall-and-find-svg-text-on-selectstart`), and `<object>` load and error events
 (`container-queries/crashtests/chrome-bug-439886903-crash`).
 
-2,023 of 2,031 complete locally (with the font and Typed OM lanes; lane F3b: navigated-away iframe documents and IntersectionObserver across documents, `SharedWorker`; lane F2: `ScrollTimeline`). These 8 are **known incomplete**: each needs a feature pyro does not have. They stay
+2,026 of 2,031 complete locally (with the font and Typed OM lanes; lane F3b: navigated-away iframe documents and IntersectionObserver across documents, `SharedWorker`; lane F2: scroll-driven animations). These 5 are **known incomplete**: each needs a feature pyro does not have. They stay
 failing entries of the baseline, not flaky entries, and none of them crashes, panics or hangs:
 
 | page | needs |
 |---|---|
-| `scroll-animations/crashtests/` (3 pages: `clip-path-with-view-timeline`, `remove-pseudo-element-subject`, `scroll-timeline-resize`) | animations on scroll and view timelines in `getAnimations()` (`CSSAnimation.timeline`, `ready`) |
 | `trusted-types/navigate-to-javascript-url-007-crash.html` | Trusted Types (`trustedTypes`) |
 | `streams/readable-byte-streams/crashtests/from-cross-realm.html` | none in pyro: Chrome times out on it too (wpt.fyi); the popup's synchronous about:blank document it needs exists since lane F3b |
 | `editing/crashtests/designMode-document-will-be-blurred-by-focus-event-listener.html` | a `focus` event at an iframe's Window from `contentWindow.focus()` (`document.designMode` exists since lane F3a) |

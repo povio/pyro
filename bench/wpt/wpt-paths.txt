@@ -17,6 +17,7 @@ css/css-typed-om/
 html/semantics/embedded-content/the-object-element/
 intersection-observer/
 workers/
+scroll-animations/
 # Paint directories (lib.mjs PAINT_DIRS). Both kinds run every directory above and below: run.mjs runs their testharness
 # pages, run.mjs --kind reftest their reftests.
 css/css-backgrounds/

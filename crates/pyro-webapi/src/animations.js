@@ -566,7 +566,15 @@
   const documentTimeline = new DocumentTimeline();
   // (A scroll or view progress timeline's time is a percentage: animations on one stay unresolved
   // for now.)
-  const timelineTime = tl => (tl === null || timelines.get(tl).scroll ? null : tl.currentTime);
+  const timelineTime = tl => {
+    if (tl === null) return null;
+    if (!timelines.get(tl).scroll) return tl.currentTime;
+    // A scroll or view progress timeline's time: a percentage (the times of animations on it
+    // are percentages too, Web Animations 2 "progress-based timelines").
+    const t = tl.currentTime;
+    return t === null ? null : t.value;
+  };
+  const progressBased = a => a.timeline !== null && timelines.get(a.timeline).scroll === true;
   // ----- scroll and view progress timelines (Scroll-driven Animations 1) ----
 
   // A timeline's times are percentages (`CSSUnitValue`s, CSS Typed OM). The scroll position
@@ -717,13 +725,16 @@
     }
     getComputedTiming() {
       const st = brand(effects, this, 'an AnimationEffect');
-      const t = st.timing;
+      const t = timingOn(st);
       const c = computedTimingOf(st);
+      const onProgress = st.animation && progressBased(st.animation);
+      const time = v => (onProgress && v !== null ? percent(v) : v);
+      // (The delays as specified, as Chromium reports them; the rest in percentages.)
       return {
-        delay: t.delay, endDelay: t.endDelay, fill: t.fill === 'auto' ? 'none' : t.fill,
-        iterationStart: t.iterationStart, iterations: t.iterations, duration: iterationDuration(t),
-        direction: t.direction, easing: t.easing.text, endTime: c.end, activeDuration: c.active,
-        localTime: c.localTime, progress: c.progress, currentIteration: c.currentIteration,
+        delay: st.timing.delay, endDelay: st.timing.endDelay, fill: t.fill === 'auto' ? 'none' : t.fill,
+        iterationStart: t.iterationStart, iterations: t.iterations, duration: time(iterationDuration(t)),
+        direction: t.direction, easing: t.easing.text, endTime: time(c.end), activeDuration: time(c.active),
+        localTime: time(c.localTime), progress: c.progress, currentIteration: c.currentIteration,
       };
     }
     updateTiming(timing) {
@@ -736,11 +747,27 @@
     }
   }
 
+  // An effect's timing on a progress-based timeline, in percentages of it: an `auto` duration
+  // fills it (iterations share it); times are proportions of delay + duration x iterations +
+  // end delay (Web Animations 2, "converting time values to proportions").
+  function timingOn(effect) {
+    const t = effect.timing;
+    const anim = effect.animation;
+    if (!anim || !progressBased(anim)) return t;
+    if (t.duration === 'auto') {
+      return { ...t, delay: 0, endDelay: 0, duration: t.iterations > 0 && t.iterations !== Infinity ? 100 / t.iterations : 0 };
+    }
+    const total = t.delay + t.duration * t.iterations + t.endDelay;
+    if (!(total > 0) || total === Infinity) return { ...t, delay: 0, endDelay: 0, duration: 0 };
+    const k = 100 / total;
+    return { ...t, delay: t.delay * k, endDelay: t.endDelay * k, duration: t.duration * k };
+  }
+
   function computedTimingOf(effect) {
     const anim = effect.animation;
     const localTime = anim ? currentTimeOf(anim) : null;
     const rate = anim ? anim.rate : 1;
-    const c = computeTiming(effect.timing, localTime, rate);
+    const c = computeTiming(timingOn(effect), localTime, rate);
     c.localTime = localTime;
     return c;
   }
@@ -887,7 +914,7 @@
     return (t - a.startTime) * a.rate;
   }
   const effectiveRate = a => (a.pendingRate !== null ? a.pendingRate : a.rate);
-  const endOf = a => (a.effect ? endTime(a.effect.timing) : 0);
+  const endOf = a => (a.effect ? endTime(timingOn(a.effect)) : 0);
   function applyPendingRate(a) {
     if (a.pendingRate === null) return;
     a.rate = a.pendingRate;
@@ -932,6 +959,19 @@
 
   function runPendingPlay(a) {
     const ready = timelineTime(a.timeline);
+    // On a progress-based timeline the start time aligns with its start (or end, playing
+    // backwards): the animation's progress is the timeline's (Web Animations 2, auto-aligned
+    // start time), unless script seeked it.
+    if (progressBased(a) && a.autoAlign) {
+      applyPendingRate(a);
+      a.startTime = a.rate >= 0 ? 0 : 100;
+      a.holdTime = null;
+      a.autoAlign = false;
+      a.pending = null;
+      settle(a.ready, a.self, false);
+      updateFinished(a, false, false);
+      return;
+    }
     if (a.holdTime !== null) {
       applyPendingRate(a);
       a.startTime = a.rate === 0 ? ready : ready - a.holdTime / a.rate;
@@ -964,6 +1004,8 @@
     const rate = effectiveRate(a);
     const ct = currentTimeOf(a);
     const end = endOf(a);
+    // (A progress-based timeline's play always aligns the start time with the timeline.)
+    if (progressBased(a) && autoRewind) a.autoAlign = true;
     if (autoRewind && rate >= 0 && (ct === null || ct < 0 || ct >= end)) seek = 0;
     else if (autoRewind && rate < 0 && (ct === null || ct <= 0 || ct > end)) {
       if (end === Infinity) throw invalidState('Cannot play reversed Animation with infinite target effect end.');
@@ -1119,6 +1161,8 @@
   function plan(a) {
     const gen = ++a.timerGen;
     if (a.pending !== null || a.holdTime !== null || a.startTime === null || a.rate === 0) return;
+    // (A progress-based timeline moves with scrolling, not with time.)
+    if (progressBased(a)) return;
     const ct = currentTimeOf(a);
     if (ct === null) return;
     const target = a.rate > 0 ? endOf(a) : 0;
@@ -1197,6 +1241,34 @@
   }
 
   const HANDLERS = ['finish', 'cancel', 'remove'];
+  // A time given to an animation (CSSNumberish): a percentage on a progress-based timeline, else
+  // milliseconds (a CSSUnitValue in ms or s, or a number).
+  function timeArg(a, v, what) {
+    const unit = typeof CSSUnitValue === 'function' && v instanceof CSSUnitValue ? v.unit : null;
+    if (progressBased(a)) {
+      if (unit === 'percent') return v.value;
+      throw new TypeError(`Failed to set the '${what}' property on 'Animation': CSSNumberish must be a percentage for progress-based animations.`);
+    }
+    if (unit === 'ms') return v.value;
+    if (unit === 's') return v.value * 1000;
+    if (unit !== null) throw new TypeError(`Failed to set the '${what}' property on 'Animation': Invalid unit`);
+    return toDouble(v, what);
+  }
+
+  // Sets the current time (in the animation's units) as the `currentTime` setter does.
+  function seekTo(a, seek) {
+    silentlySetCurrentTime(a, seek);
+    if (a.pending === 'pause') {
+      a.holdTime = seek;
+      applyPendingRate(a);
+      a.startTime = null;
+      cancelPending(a);
+      settle(a.ready, a.self, false);
+    }
+    track(a);
+    updateFinished(a, true, false);
+  }
+
   class Animation extends ET {
     constructor(effect, timeline) {
       super();
@@ -1243,11 +1315,15 @@
       }
       updateFinished(a, false, false);
     }
-    get startTime() { return brand(animations, this, 'an Animation').startTime; }
+    get startTime() {
+      const a = brand(animations, this, 'an Animation');
+      return progressBased(a) && a.startTime !== null ? percent(a.startTime) : a.startTime;
+    }
     set startTime(v) {
       const a = brand(animations, this, 'an Animation');
       a.scripted = true;
-      const start = v === null ? null : toDouble(v, 'startTime');
+      a.autoAlign = false;
+      const start = v === null ? null : timeArg(a, v, 'startTime');
       const tt = timelineTime(a.timeline);
       if (tt === null && start !== null) a.holdTime = null;
       const previous = currentTimeOf(a);
@@ -1262,21 +1338,16 @@
       track(a);
       updateFinished(a, true, false);
     }
-    get currentTime() { return currentTimeOf(brand(animations, this, 'an Animation')); }
+    get currentTime() {
+      const a = brand(animations, this, 'an Animation');
+      const ct = currentTimeOf(a);
+      return progressBased(a) && ct !== null ? percent(ct) : ct;
+    }
     set currentTime(v) {
       const a = brand(animations, this, 'an Animation');
       a.scripted = true;
-      const seek = v === null ? null : toDouble(v, 'currentTime');
-      silentlySetCurrentTime(a, seek);
-      if (a.pending === 'pause') {
-        a.holdTime = seek;
-        applyPendingRate(a);
-        a.startTime = null;
-        cancelPending(a);
-        settle(a.ready, this, false);
-      }
-      track(a);
-      updateFinished(a, true, false);
+      a.autoAlign = false;
+      seekTo(a, v === null ? null : timeArg(a, v, 'currentTime'));
     }
     get playbackRate() { return brand(animations, this, 'an Animation').rate; }
     set playbackRate(v) {
@@ -1286,7 +1357,7 @@
       a.pendingRate = null;
       const previous = currentTimeOf(a);
       a.rate = rate;
-      if (previous !== null) this.currentTime = previous;
+      if (previous !== null) seekTo(a, previous);
       else updateFinished(a, false, false);
     }
     get playState() { return playStateOf(brand(animations, this, 'an Animation')); }
@@ -1440,7 +1511,56 @@
     constructor() { throw illegal(); }
     get transitionProperty() { return brand(animations, this, 'a CSSTransition').cssName; }
   }
-  function cssRun([id, target, transition, name, start, delay, duration, iterations, direction, fill, easing, held, pseudo]) {
+  // The timeline of a scroll-driven CSS animation (`animation-timeline`, serialized): an anonymous
+  // `scroll()` or `view()` timeline, or the scroll or view timeline a name declares on the target
+  // or an ancestor; `null` (inactive) when none does.
+  const isScrollContainer = el => {
+    const cs = computedStyle(el);
+    return /^(auto|scroll|hidden)$/.test(cs.overflowX) || /^(auto|scroll|hidden)$/.test(cs.overflowY);
+  };
+  function nearestScroller(el) {
+    for (let p = el.parentElement; p !== null; p = p.parentElement) {
+      if (p === document.documentElement || p === document.body) break;
+      if (isScrollContainer(p)) return p;
+    }
+    return scrollingElement();
+  }
+  function cssTimeline(text, target) {
+    const t = String(text).trim();
+    const axisIn = s => (/\b(inline|x|y)\b/.exec(s) || ['block'])[0];
+    let m = /^scroll\((.*)\)$/.exec(t);
+    if (m) {
+      const args = m[1];
+      const source = /\bself\b/.test(args) ? target : /\broot\b/.test(args) ? scrollingElement() : nearestScroller(target);
+      return new ScrollTimeline({ source, axis: axisIn(args) });
+    }
+    m = /^view\((.*)\)$/.exec(t);
+    if (m) {
+      const args = m[1].replace(/\b(block|inline|x|y)\b/, '').trim();
+      return new ViewTimeline({ subject: target, axis: axisIn(m[1]), inset: args === '' ? 'auto' : args });
+    }
+    if (t.startsWith('--')) {
+      for (let el = target; el !== null; el = el.parentElement) {
+        const cs = computedStyle(el);
+        const names = s => String(s || '').split(',').map(x => x.trim());
+        const scrollNames = names(cs.getPropertyValue('scroll-timeline-name'));
+        let i = scrollNames.indexOf(t);
+        if (i >= 0) {
+          const axes = names(cs.getPropertyValue('scroll-timeline-axis'));
+          return new ScrollTimeline({ source: el, axis: axes[i % axes.length] || 'block' });
+        }
+        const viewNames = names(cs.getPropertyValue('view-timeline-name'));
+        i = viewNames.indexOf(t);
+        if (i >= 0) {
+          const axes = names(cs.getPropertyValue('view-timeline-axis'));
+          const insets = names(cs.getPropertyValue('view-timeline-inset'));
+          return new ViewTimeline({ subject: el, axis: axes[i % axes.length] || 'block', inset: insets[i % insets.length] || 'auto' });
+        }
+      }
+    }
+    return null;
+  }
+  function cssRun([id, target, transition, name, start, delay, duration, iterations, direction, fill, easing, held, pseudo, timelineText]) {
     // The engine hands over computed easings; one it could not compute is
     // the initial `ease`, as an easing invalid at computed-value time is.
     let parsed;
@@ -1448,12 +1568,27 @@
     const timing = { delay, duration, iterations, fill, direction, easing: parsed.text };
     // (A run on the target's `::before`/`::after`: its effect's pseudo-element.)
     if (pseudo !== null && pseudo !== undefined) timing.pseudoElement = pseudo;
+    const scrollDriven = timelineText !== null && timelineText !== undefined;
+    if (scrollDriven && timing.duration === 0) timing.duration = 'auto';
     const effect = new KeyframeEffect(target, null, timing);
-    const object = Reflect.construct(Animation, [effect, documentTimeline], transition ? CSSTransition : CSSAnimation);
+    // A scroll-driven one: on its scroll or view timeline, its `auto` duration filling it, its
+    // start time at the timeline's start.
+    const timeline = scrollDriven ? cssTimeline(timelineText, target) : documentTimeline;
+    const object = Reflect.construct(Animation, [effect, timeline], transition ? CSSTransition : CSSAnimation);
     const a = animations.get(object);
     a.css = transition ? CSS_TRANSITION : CSS_ANIMATION;
     a.cssName = name;
     a.cssId = id;
+    if (scrollDriven) {
+      a.scrollDriven = true;
+      a.startTime = timeline !== null && timelineTime(timeline) !== null ? 0 : null;
+      a.holdTime = held !== null && a.startTime !== null ? null : (a.startTime === null ? 0 : null);
+      a.ready = deferred();
+      if (a.startTime !== null) settle(a.ready, object, false); else { a.pending = null; schedulePending(a, 'play'); a.autoAlign = true; }
+      track(a);
+      updateFinished(a, true, false);
+      return object;
+    }
     // As the engine's timeline: started then, or held by
     // `animation-play-state: paused`. One the style started this frame
     // waits for the frame to start it (play-pending, its time held at 0),
@@ -1503,7 +1638,7 @@
   // (`animation-play-state` paused or running again).
   function cssFollow(object, run) {
     const a = animations.get(object);
-    if (a.scripted || a.pending !== null) return;
+    if (a.scripted || a.pending !== null || a.scrollDriven) return;
     const start = run[4], held = run[11];
     if (held !== null) {
       if (a.startTime === null && a.holdTime === held) return;
