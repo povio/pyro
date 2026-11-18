@@ -1302,44 +1302,7 @@ impl Browser {
             )
         };
         let result = if let Some(html) = srcdoc {
-            let loader = LoaderId(format!("{:032X}", self.next()));
-            let opts = NavigateOpts {
-                post: None,
-                url: "about:srcdoc".into(),
-                reason: NavigationReason::InitialFrameNavigation,
-                cdp_request_id: None,
-                referrer: Some(parent.url),
-            };
-            self.emit(
-                key.page,
-                PageEvent::FrameNavigate {
-                    frame_id: frame.id,
-                    loader_id: loader.clone(),
-                    url: opts.url.clone(),
-                    reason: opts.reason,
-                    cdp_request_id: None,
-                },
-            );
-            self.begin_document(
-                key,
-                &opts,
-                loader,
-                Resource {
-                    url: opts.url.clone(),
-                    status: 200,
-                    mime: "text/html".into(),
-                    charset: None,
-                    body: html.into_bytes(),
-                    content_disposition: None,
-                    header_csp: false,
-                    refresh: None,
-                    content_language: None,
-                    referrer_policy: None,
-                    timing: None,
-                    partial: None,
-                },
-                HistoryHandling::Replace,
-            )
+            self.begin_srcdoc(key, frame.id.clone(), html, parent.url, HistoryHandling::Replace).map(|_| ())
         } else {
             let raw = src.unwrap_or_default();
             let url = if raw.trim().is_empty() {
@@ -1379,6 +1342,73 @@ impl Browser {
                 }
             }
         }
+    }
+}
+
+impl Browser {
+    /// Loads `html`, the `srcdoc` of the iframe of `key`, as its document
+    /// `about:srcdoc` (the initial navigation, and a navigation to
+    /// `about:srcdoc` such as `location.reload()` of that document).
+    pub(crate) fn begin_srcdoc(
+        &mut self,
+        key: FrameKey,
+        frame_id: FrameId,
+        html: String,
+        referrer: String,
+        history: HistoryHandling,
+    ) -> Result<LoaderId, JsError> {
+        let loader = LoaderId(format!("{:032X}", self.next()));
+        let opts = NavigateOpts {
+            post: None,
+            url: "about:srcdoc".into(),
+            reason: NavigationReason::InitialFrameNavigation,
+            cdp_request_id: None,
+            referrer: Some(referrer),
+        };
+        self.emit(
+            key.page,
+            PageEvent::FrameNavigate {
+                frame_id,
+                loader_id: loader.clone(),
+                url: opts.url.clone(),
+                reason: opts.reason,
+                cdp_request_id: None,
+            },
+        );
+        self.begin_document(
+            key,
+            &opts,
+            loader.clone(),
+            Resource {
+                url: opts.url.clone(),
+                status: 200,
+                mime: "text/html".into(),
+                charset: None,
+                body: html.into_bytes(),
+                content_disposition: None,
+                header_csp: false,
+                refresh: None,
+                content_language: None,
+                referrer_policy: None,
+                timing: None,
+                partial: None,
+            },
+            history,
+        )?;
+        Ok(loader)
+    }
+
+    /// The `srcdoc` of the connected iframe that holds the frame of `key`, if it has one.
+    pub(crate) fn srcdoc_of(&self, key: FrameKey) -> Option<(FrameId, String)> {
+        let host = self.page(key.page).map(|p| p.frames.clone())?;
+        let frame = host.frame(key)?;
+        let owner = frame.owner?;
+        let dom = host.dom.borrow();
+        if !dom.is_connected(owner).unwrap_or(false) {
+            return None;
+        }
+        let html = dom.get_attribute(owner, "srcdoc").ok().flatten()?.to_owned();
+        Some((frame.id, html))
     }
 }
 

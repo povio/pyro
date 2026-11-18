@@ -48,6 +48,23 @@ fn initial_blank_is_synchronous_and_srcdoc_owns_its_document_and_worlds() {
     assert_eq!(eval(&root, "f.contentDocument.querySelector('#inside').textContent"), "shared");
 }
 
+/// A srcdoc document's `location.reload()` loads the iframe's `srcdoc` again (its URL
+/// `about:srcdoc` is never fetched); WPT notifications/global-teardown-crash reloads one.
+#[test]
+fn srcdoc_document_reloads_its_srcdoc() {
+    let mut t = crate::browser_thread().unwrap();
+    let page = t.browser.create_page().unwrap();
+    let root = main_realm(&t, page);
+    eval(
+        &root,
+        "globalThis.loads=0; globalThis.f=document.createElement('iframe'); \
+         f.srcdoc='<script>onload=()=>{parent.loads++; if (parent.loads===1) location.reload()}</script>'; \
+         document.body.appendChild(f)",
+    );
+    settle(&mut t);
+    assert_eq!(eval(&root, "loads + ':' + f.contentDocument.URL"), "2:about:srcdoc");
+}
+
 #[test]
 fn sandboxed_srcdoc_keeps_inspector_realms_but_blocks_author_script_and_parent_access() {
     let mut t = crate::browser_thread().unwrap();

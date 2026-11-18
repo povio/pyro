@@ -1655,6 +1655,15 @@ impl Browser {
                 opts.url = unreachable.url;
             }
         }
+        // `about:srcdoc` is the iframe's `srcdoc`, never fetched: navigating
+        // to it (a srcdoc document's `location.reload()`) loads it again.
+        if opts.url == "about:srcdoc" {
+            if let Some((frame_id, html)) = self.srcdoc_of(page) {
+                self.cancel_pending_document(page);
+                let referrer = opts.referrer.clone().unwrap_or_default();
+                return self.begin_srcdoc(page, frame_id, html, referrer, history);
+            }
+        }
         let loader_id = LoaderId(format!("{:032X}", self.next()));
         // Invalidate the previous fetch even for blank or failed navigation.
         self.cancel_pending_document(page);
