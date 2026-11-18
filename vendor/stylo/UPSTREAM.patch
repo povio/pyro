@@ -450,8 +450,8 @@ diff -ruN a/properties/helpers.mako.rs b/properties/helpers.mako.rs
                          % if property.is_zoom_dependent():
                              if !context.builder.effective_zoom_for_inheritance.is_one() {
 diff -ruN a/properties/longhands.toml b/properties/longhands.toml
---- a/properties/longhands.toml
-+++ b/properties/longhands.toml
+--- a/properties/longhands.toml	2026-11-11 19:55:57
++++ b/properties/longhands.toml	2026-11-18 16:24:32
 @@ -473,7 +473,6 @@
  type = "BreakBetween"
  initial = "computed::BreakBetween::Auto"
@@ -474,18 +474,18 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  struct = "box"
 -engine = "gecko"
  spec = "https://drafts.csswg.org/css-break/#propdef-break-inside"
-+animation_type = "discrete"
-+affects = "layout"
-+
+ animation_type = "discrete"
+ affects = "layout"
+ 
 +[orphans]
 +type = "PositiveInteger"
 +initial = "From::from(2)"
 +struct = "inherited_text"
 +spec = "https://drafts.csswg.org/css-break/#propdef-orphans"
- animation_type = "discrete"
++animation_type = "discrete"
 +servo_restyle_damage = "repaint"
- affects = "layout"
-
++affects = "layout"
++
 +[widows]
 +type = "PositiveInteger"
 +initial = "From::from(2)"
@@ -609,12 +609,15 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +animation_type = "discrete"
 +spec = "https://drafts.csswg.org/css-images-5/#the-object-view-box"
  affects = "layout"
-
+ 
  [offset-anchor]
-@@ -1857,6 +1882,26 @@
- animation_type = "discrete"
- affects = "paint"
-
+@@ -1854,7 +1879,27 @@
+ struct = "box"
+ engine = "gecko"
+ spec = "https://drafts.csswg.org/css-scroll-snap-1/#scroll-snap-stop"
++animation_type = "discrete"
++affects = "paint"
++
 +[scroll-marker-group]
 +type = "ScrollMarkerGroup"
 +initial = "computed::ScrollMarkerGroup::NONE"
@@ -630,14 +633,12 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +initial = "computed::ScrollTargetGroup::None"
 +struct = "box"
 +engine = "servo"
-+animation_type = "discrete"
+ animation_type = "discrete"
 +servo_restyle_damage = "repaint"
 +spec = "https://drafts.csswg.org/css-overflow-5/#scroll-target-group"
-+affects = "paint"
-+
+ affects = "paint"
+ 
  [scroll-snap-type]
- type = "ScrollSnapType"
- initial = "computed::ScrollSnapType::none()"
 @@ -2117,7 +2162,6 @@
  type = "TransformBox"
  initial = "computed::TransformBox::ViewBox"
@@ -646,6 +647,66 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/css-transforms/#transform-box"
  animation_type = "discrete"
  affects = "overflow"
+@@ -2272,10 +2316,10 @@
+ type = "ScrollAxis"
+ initial = "computed::ScrollAxis::default()"
+ struct = "ui"
+-engine = "gecko"
+ vector = { need_index = true }
+ animation_type = "none"
+ gecko_pref = "layout.css.scroll-driven-animations.enabled"
++servo_pref = "layout.css.scroll-driven-animations.enabled"
+ spec = "https://drafts.csswg.org/scroll-animations-1/#scroll-timeline-axis"
+ rule_types_allowed = ["style"]
+ affects = ""
+@@ -2284,10 +2328,10 @@
+ type = "TimelineName"
+ initial = "computed::TimelineName::none()"
+ struct = "ui"
+-engine = "gecko"
+ vector = { need_index = true }
+ animation_type = "none"
+ gecko_pref = "layout.css.scroll-driven-animations.enabled"
++servo_pref = "layout.css.scroll-driven-animations.enabled"
+ spec = "https://drafts.csswg.org/scroll-animations-1/#scroll-timeline-name"
+ rule_types_allowed = ["style"]
+ affects = ""
+@@ -2296,10 +2340,10 @@
+ type = "ScrollAxis"
+ initial = "computed::ScrollAxis::default()"
+ struct = "ui"
+-engine = "gecko"
+ vector = { need_index = true }
+ animation_type = "none"
+ gecko_pref = "layout.css.scroll-driven-animations.enabled"
++servo_pref = "layout.css.scroll-driven-animations.enabled"
+ spec = "https://drafts.csswg.org/scroll-animations-1/#view-timeline-axis"
+ rule_types_allowed = ["style"]
+ affects = ""
+@@ -2308,10 +2352,10 @@
+ type = "ViewTimelineInset"
+ initial = "computed::ViewTimelineInset::default()"
+ struct = "ui"
+-engine = "gecko"
+ vector = { need_index = true }
+ animation_type = "none"
+ gecko_pref = "layout.css.scroll-driven-animations.enabled"
++servo_pref = "layout.css.scroll-driven-animations.enabled"
+ spec = "https://drafts.csswg.org/scroll-animations-1/#view-timeline-axis"
+ rule_types_allowed = ["style"]
+ affects = ""
+@@ -2320,10 +2364,10 @@
+ type = "TimelineName"
+ initial = "computed::TimelineName::none()"
+ struct = "ui"
+-engine = "gecko"
+ vector = { need_index = true }
+ animation_type = "none"
+ gecko_pref = "layout.css.scroll-driven-animations.enabled"
++servo_pref = "layout.css.scroll-driven-animations.enabled"
+ spec = "https://drafts.csswg.org/scroll-animations-1/#view-timeline-name"
+ rule_types_allowed = ["style"]
+ affects = ""
 @@ -2521,7 +2565,6 @@
  type = "Color"
  initial = "computed_value::T::currentcolor()"
@@ -710,7 +771,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 @@ -3173,6 +3237,15 @@
  logical = true
  affects = "paint"
-
+ 
 +[border-shape]
 +type = "basic_shape::BorderShape"
 +initial = "generics::basic_shape::BorderShape::None"
@@ -806,10 +867,14 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  animation_type = "discrete"
  affects = "layout"
  type = "BoxDecorationBreak"
-@@ -3730,6 +3796,18 @@
- type = "TopLayer"
- initial = "computed::TopLayer::None"
- 
+@@ -3726,6 +3792,18 @@
+ spec = "Internal (not web-exposed)"
+ animation_type = "none"
+ enabled_in = "ua"
++affects = "layout"
++type = "TopLayer"
++initial = "computed::TopLayer::None"
++
 +# pyro: css-position-4 `overlay`, for Servo: whether an element in the top layer is rendered there
 +# (`auto`). The UA sheet sets it on top-layer elements; a discrete transition keeps it, and the element in
 +# the top layer, past their removal (pyro-dom, blitz-paint).
@@ -818,13 +883,9 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +engine = "servo"
 +spec = "https://drafts.csswg.org/css-position-4/#overlay"
 +animation_type = "discrete"
-+affects = "layout"
-+type = "TopLayer"
-+initial = "computed::TopLayer::None"
-+
- [scroll-behavior]
- struct = "box"
- servo_pref = "layout.css.scroll-behavior.enabled"
+ affects = "layout"
+ type = "TopLayer"
+ initial = "computed::TopLayer::None"
 @@ -3770,7 +3848,6 @@
  
  [column-fill]
@@ -844,11 +905,10 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/css-images/#propdef-image-orientation"
  animation_type = "discrete"
  affects = "layout"
-@@ -4092,6 +4169,17 @@
- servo_restyle_damage = "rebuild_box"
+@@ -4093,6 +4170,17 @@
  type = "BoxSizing"
  initial = "computed::BoxSizing::ContentBox"
-+
+ 
 +# pyro: css-sizing-4 `frame-sizing` (responsive iframes), for Servo: blitz-dom gives an iframe the height of
 +# its embedded document's content (`data-pyro-frame-content-height`, from pyro) for `content-height`.
 +[frame-sizing]
@@ -859,11 +919,12 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +affects = "layout"
 +type = "FrameSizing"
 +initial = "computed::FrameSizing::Auto"
-
++
  [object-fit]
  struct = "position"
+ spec = "https://drafts.csswg.org/css-images/#propdef-object-fit"
 @@ -4249,7 +4337,7 @@
-
+ 
  [field-sizing]
  struct = "ui"
 -engine = "gecko"
@@ -874,7 +935,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 @@ -4290,6 +4378,61 @@
  type = "BoxOrient"
  initial = "computed::BoxOrient::Horizontal"
-
+ 
 +# pyro: `-webkit-box-orient` for the servo engine (the gecko one is `-moz-box-orient`'s alias):
 +# with `display: -webkit-box` and `-webkit-line-clamp` it makes the legacy line clamp apply
 +# (`StyleAdjuster::adjust_for_webkit_box`).
@@ -933,6 +994,16 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  [-moz-box-pack]
  struct = "xul"
  engine = "gecko"
+@@ -4344,8 +4487,8 @@
+ type = "ScopedName"
+ initial = "computed::ScopedName::none()"
+ struct = "ui"
+-engine = "gecko"
+ animation_type = "none"
+ gecko_pref = "layout.css.scroll-driven-animations.enabled"
++servo_pref = "layout.css.scroll-driven-animations.enabled"
+ spec = "https://drafts.csswg.org/scroll-animations-1/#timeline-scope"
+ affects = ""
 diff -ruN a/properties/properties.mako.rs b/properties/properties.mako.rs
 --- a/properties/properties.mako.rs	2026-11-11 19:55:57
 +++ b/properties/properties.mako.rs	2026-11-17 23:56:40
@@ -985,7 +1056,7 @@ diff -ruN a/properties/properties.mako.rs b/properties/properties.mako.rs
      pub fn pseudo(&self) -> Option<PseudoElement> {
 diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
 --- a/properties/shorthands.rs	2026-11-11 19:55:57
-+++ b/properties/shorthands.rs	2026-11-17 10:10:29
++++ b/properties/shorthands.rs	2026-11-18 16:25:23
 @@ -542,7 +542,6 @@
      }
  }
@@ -1026,6 +1097,33 @@ diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
  pub mod _webkit_text_stroke {
      pub use crate::properties::generated::shorthands::_webkit_text_stroke::*;
  
+@@ -1653,7 +1655,7 @@
+     }
+ }
+ 
+-#[cfg(feature = "gecko")]
++// pyro: scroll-driven animations on servo too.
+ pub mod scroll_timeline {
+     pub use crate::properties::generated::shorthands::scroll_timeline::*;
+ 
+@@ -1710,7 +1712,7 @@
+     }
+ }
+ 
+-#[cfg(feature = "gecko")]
++// pyro: scroll-driven animations on servo too.
+ pub mod view_timeline {
+     pub use crate::properties::generated::shorthands::view_timeline::*;
+ 
+@@ -1797,7 +1799,7 @@
+     }
+ }
+ 
+-#[cfg(feature = "gecko")]
++// pyro: scroll-driven animations on servo too.
+ pub mod animation_range {
+     pub use crate::properties::generated::shorthands::animation_range::*;
+ 
 @@ -3680,20 +3682,10 @@
  
                  if has_repeat {
@@ -1050,23 +1148,23 @@ diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
  
                  if has_clip && *clip != From::from(*origin) {
 diff -ruN a/properties/shorthands.toml b/properties/shorthands.toml
---- a/properties/shorthands.toml
-+++ b/properties/shorthands.toml
+--- a/properties/shorthands.toml	2026-11-11 19:55:57
++++ b/properties/shorthands.toml	2026-11-18 16:24:32
 @@ -19,19 +19,16 @@
  kind = "two_properties"
-
+ 
  [scroll-margin]
 -engine = "gecko"
  sub_properties = ["scroll-margin-top", "scroll-margin-right", "scroll-margin-bottom", "scroll-margin-left"]
  spec = "https://drafts.csswg.org/css-scroll-snap-1/#propdef-scroll-margin"
  kind = "four_sides"
-
+ 
  [scroll-margin-block]
 -engine = "gecko"
  sub_properties = ["scroll-margin-block-start", "scroll-margin-block-end"]
  spec = "https://drafts.csswg.org/css-scroll-snap-1/#propdef-scroll-margin-block"
  kind = "two_properties"
-
+ 
  [scroll-margin-inline]
 -engine = "gecko"
  sub_properties = ["scroll-margin-inline-start", "scroll-margin-inline-end"]
@@ -1109,6 +1207,32 @@ diff -ruN a/properties/shorthands.toml b/properties/shorthands.toml
  sub_properties = ["contain-intrinsic-width", "contain-intrinsic-height"]
  spec = "https://drafts.csswg.org/css-sizing-4/#intrinsic-size-override"
  kind = "two_properties"
+@@ -361,22 +354,22 @@
+ rule_types_allowed = ["style"]
+ 
+ [scroll-timeline]
+-engine = "gecko"
+ sub_properties = ["scroll-timeline-name", "scroll-timeline-axis"]
+ spec = "https://drafts.csswg.org/scroll-animations-1/#scroll-timeline-shorthand"
+ gecko_pref = "layout.css.scroll-driven-animations.enabled"
++servo_pref = "layout.css.scroll-driven-animations.enabled"
+ 
+ [view-timeline]
+-engine = "gecko"
+ sub_properties = ["view-timeline-name", "view-timeline-axis", "view-timeline-inset"]
+ spec = "https://drafts.csswg.org/scroll-animations-1/#view-timeline-shorthand"
+ gecko_pref = "layout.css.scroll-driven-animations.enabled"
++servo_pref = "layout.css.scroll-driven-animations.enabled"
+ 
+ [animation-range]
+-engine = "gecko"
+ sub_properties = ["animation-range-start", "animation-range-end"]
+ spec = "https://drafts.csswg.org/scroll-animations-1/#animation-range"
+ gecko_pref = "layout.css.scroll-driven-animations.enabled"
++servo_pref = "layout.css.scroll-driven-animations.enabled"
+ 
+ [list-style]
+ sub_properties = ["list-style-position", "list-style-image", "list-style-type"]
 @@ -476,7 +469,6 @@
  servo_pref = "layout.css.columns.enabled"
  
