@@ -10741,3 +10741,33 @@ fn a_clone_given_an_animation_while_detached_animates_once_inserted() {
     assert!(r.get("error").is_none(), "{r}");
     assert_eq!(r["result"]["reads"]["got"], json!([["c", "p"], "spin", "spin"]), "{r}");
 }
+
+#[test]
+fn has_anchors_follow_inserted_subtrees_with_repeated_and_sibling_compounds() {
+    // `:has()` insertion invalidation collapses dependencies of one selector that share a
+    // compound; inserting and removing subtrees that match through nested and sibling
+    // compounds still restyles the anchors (Chromium: the same reads).
+    let mut h = Harness::new();
+    load_html(
+        &mut h,
+        r#"<!doctype html><style>
+#one:has(.a .a .a){color:rgb(200, 0, 0)} #two:has(> .x + .x){color:rgb(0, 150, 0)} #three:has(.k){color:rgb(0, 0, 220)}
+</style><div id=one><div class=a></div></div><div id=two><i class=x></i></div><div id=three></div>"#,
+    );
+    let read = "['one','two','three'].map(id => getComputedStyle(document.getElementById(id)).color)";
+    let r = h.page(
+        "Pyro.run",
+        json!({"steps": [
+            {"eval": {"expression": read, "as": "before"}},
+            {"eval": {"expression": "window.t = document.createElement('div'); t.innerHTML = '<div class=a><div class=a><span class=k></span></div></div>' + '<p class=a></p>'.repeat(20); one.firstElementChild.appendChild(t); window.x = document.createElement('i'); x.className = 'x'; two.appendChild(x); three.appendChild(document.createElement('b')).className = 'k'; null"}},
+            {"eval": {"expression": read, "as": "inserted"}},
+            {"eval": {"expression": "t.remove(); x.remove(); three.firstElementChild.remove(); null"}},
+            {"eval": {"expression": read, "as": "removed"}}
+        ]}),
+    );
+    assert!(r.get("error").is_none(), "{r}");
+    let reads = &r["result"]["reads"];
+    assert_eq!(reads["before"], json!(["rgb(0, 0, 0)", "rgb(0, 0, 0)", "rgb(0, 0, 0)"]), "{r}");
+    assert_eq!(reads["inserted"], json!(["rgb(200, 0, 0)", "rgb(0, 150, 0)", "rgb(0, 0, 220)"]), "{r}");
+    assert_eq!(reads["removed"], json!(["rgb(0, 0, 0)", "rgb(0, 0, 0)", "rgb(0, 0, 0)"]), "{r}");
+}

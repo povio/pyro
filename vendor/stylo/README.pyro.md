@@ -396,3 +396,9 @@ without a style context (custom properties left as they are): pyro serializes a 
   `servo/restyle_damage.rs`: identical style structs compute no damage, and a custom-property-only change adds no
   REPAINT (no paint worklets here; a `var()` whose value changes damages through the computed value). A custom property
   written on a scroller over a 3,000-cell table: 820 → 495 ms per 200 writes (Chromium 472).
+- `invalidation/element/relative_selector.rs`: `RelativeSelectorDependencyCollector::insert_invalidation` looks up
+  the invalidations it may collapse with through an index by (relative invalidation kind, `SelectorKey`), the two
+  things `invalidation_can_collapse` requires equal, instead of scanning every collected invalidation for every
+  dependency of every element of an inserted subtree. Same first match (the index keeps insertion order; an update
+  keeps the entry's kind and selector). Mounting a 1,089-element lab canvas tile 20 times: 23,950 → 22,008 M
+  instructions.
