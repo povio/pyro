@@ -103,6 +103,9 @@ export function discover(wpt, dirs, { sampleEncoding = 1, reasons, wptserve = fa
       if (!wptserve && /\.sub\.|\.https\.|\.h2\.|\.www\./.test(base)) { exclude('needs wptserve substitution/https/h2'); continue; }
       if (!testdriver && /testdriver\.js|testdriver-vendor/.test(src)) { exclude('needs testdriver'); continue; }
       if (!wptserve && (/\.py\b/.test(code) || SERVER_PAGES.some((re) => re.test(rel)) || SERVER_HELPERS.test(code))) { exclude('needs wptserve python handler'); continue; }
+      // wasm/core/: the spec interpreter's tests, compiled and run in the page (CPU-bound, 0.5-10 s alone): beside 15
+      // other pages (wpt-full.yml --jobs 16) the larger SIMD ones outran the normal timeout, so they get the long one.
+      if (rel.startsWith('wasm/core/')) long = true;
       const viewport = LEGACY_VIEWPORT_DIRS.includes(d) ? {} : { viewport: WPTRUNNER_VIEWPORT };
       for (const v of variants) tests.push({ dir: d, url: url + v, long, ...viewport });
     }

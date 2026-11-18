@@ -659,6 +659,12 @@ hangs, 1 renderer panic in a reftest screenshot, 1 crashtest panic. 88 testharne
 `ERR_PROXY_CONNECTION_FAILED` after an EventSource page until the browser was replaced; the runner now replaces it
 at the first such failure. Reftest shard 0 lost its results to an artifact-service timeout; uploads run again.
 
+At `--jobs 16` with reruns (run 44235329366, testharness shard 3 of 4): 13.5 min per pass, 28 min for both (51 min
+for one pass at 4), crashtests 11.5 min for both. Against the nightly's 4-job pass of the same shard: 18 pages
+passed fewer subtests (1,284 of 422,251), nearly all `wasm/core/simd` pages that timed out under the load; `wasm/core/`
+pages get the long timeout since. Estimated wall for a scheduled run with reruns on lp-m1's two machines: ~85 min
+(4 x 28 testharness, 3 x ~16 reftest, 12 crashtest).
+
 A pull request that changes the workflow, `wptserve.mjs`, `fetch-wpt.sh` or the testdriver files runs its `smoke`
 job instead (a few wptserve and testdriver pages on lp-m1).
 
