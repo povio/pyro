@@ -62,10 +62,14 @@ on:
 permissions:
   contents: read
 
-# A new push to a pull request cancels its previous run.
-concurrency:
-  group: wpt-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+# Concurrency is per job, not per run, so that a run whose tests have started always finishes:
+# - jsc and build (group wpt-build-<PR or ref>): a new push to a pull request cancels the previous run's build, queued
+#   or in progress (that run's tests and gates then skip). Pushes to main and manual runs queue instead.
+# - every test job (wpt, client, reftest per shard, crashtest) has its own group, wpt-<job>-<PR or ref>, never
+#   cancelled in progress: a newer run's job waits for the running one, and GitHub keeps one waiting job per group,
+#   so a third push replaces the second's waiting jobs. Under pushes every few minutes each run that reaches its
+#   tests completes (about 15 minutes on the two lp-m1 machines), and superseded runs end with their gates skipped.
+# A gate whose shards were cancelled (superseded) skips rather than fails.
 
 env:
   FULL: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.full) }}
@@ -139,6 +143,9 @@ jobs:
   jsc:
     needs: prepare
     if: needs.prepare.outputs.browser-cached != 'true' && needs.prepare.outputs.jsc-cached != 'true'
+    concurrency:
+      group: wpt-jsc-${{ github.event.pull_request.number || github.ref }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
     uses: ./.github/workflows/jsc.yml
 
   build:
@@ -146,6 +153,9 @@ jobs:
     if: ${{ !cancelled() && !failure() && needs.prepare.outputs.browser-cached != 'true' }}
     # The self-hosted Apple Silicon runner (label lp-m1), as the jsc job.
     runs-on: lp-m1
+    concurrency:
+      group: wpt-build-${{ github.event.pull_request.number || github.ref }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
     timeout-minutes: 45
     env:
       JSC_DIR: ${{ needs.prepare.outputs.jsc-dir }}
@@ -215,9 +225,12 @@ jobs:
 
   wpt:
     needs: [prepare, build]
-    if: ${{ !cancelled() && !failure() && inputs.suites != 'reftest' && inputs.suites != 'crashtest' }}
+    if: ${{ !cancelled() && !failure() && !contains(needs.*.result, 'cancelled') && inputs.suites != 'reftest' && inputs.suites != 'crashtest' }}
     runs-on: lp-m1
     timeout-minutes: 30
+    concurrency:
+      group: wpt-wpt-${{ matrix.shard }}-${{ github.event.pull_request.number || github.ref }}
+      cancel-in-progress: false
     strategy:
       fail-fast: false
       matrix:
@@ -291,9 +304,12 @@ jobs:
   # (`pyro run`), which no other pull request job runs. ffmpeg (Playwright's build) lets the video tests run.
   client:
     needs: [prepare, build]
-    if: ${{ !cancelled() && !failure() && inputs.suites != 'reftest' && inputs.suites != 'crashtest' }}
+    if: ${{ !cancelled() && !failure() && !contains(needs.*.result, 'cancelled') && inputs.suites != 'reftest' && inputs.suites != 'crashtest' }}
     runs-on: lp-m1
     timeout-minutes: 25
+    concurrency:
+      group: wpt-client-${{ github.event.pull_request.number || github.ref }}
+      cancel-in-progress: false
     defaults:
       run:
         working-directory: packages/pyro
@@ -332,7 +348,7 @@ jobs:
 
   gate:
     needs: [prepare, jsc, build, wpt]
-    if: ${{ !cancelled() && inputs.suites != 'reftest' && inputs.suites != 'crashtest' }}
+    if: ${{ !cancelled() && !contains(needs.*.result, 'cancelled') && inputs.suites != 'reftest' && inputs.suites != 'crashtest' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -415,9 +431,12 @@ jobs:
   # The paint reftests: bench/wpt/gate.mjs run --kind reftest, the browser and the WPT checkout as the shards above.
   reftest:
     needs: [prepare, build]
-    if: ${{ !cancelled() && !failure() && needs.prepare.outputs.reftest-shards != '[]' }}
+    if: ${{ !cancelled() && !failure() && !contains(needs.*.result, 'cancelled') && needs.prepare.outputs.reftest-shards != '[]' }}
     runs-on: ${{ needs.prepare.outputs.reftest-runner }}
     timeout-minutes: 30
+    concurrency:
+      group: wpt-reftest-${{ matrix.shard }}-${{ github.event.pull_request.number || github.ref }}
+      cancel-in-progress: false
     strategy:
       fail-fast: false
       matrix:
@@ -482,7 +501,7 @@ jobs:
   # The reftest gate: as `gate`, with --kind reftest (bench/wpt/reftest-baseline.json and reftest-flaky.json).
   reftest-gate:
     needs: [prepare, jsc, build, reftest]
-    if: ${{ !cancelled() && inputs.suites != 'testharness' && inputs.suites != 'crashtest' }}
+    if: ${{ !cancelled() && !contains(needs.*.result, 'cancelled') && inputs.suites != 'testharness' && inputs.suites != 'crashtest' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -562,9 +581,12 @@ jobs:
   # takes a second, and lp-m1 has git, bun and gh for the base branch's files and the label.
   crashtest:
     needs: [prepare, build]
-    if: ${{ !cancelled() && !failure() && inputs.suites != 'testharness' && inputs.suites != 'reftest' }}
+    if: ${{ !cancelled() && !failure() && !contains(needs.*.result, 'cancelled') && inputs.suites != 'testharness' && inputs.suites != 'reftest' }}
     runs-on: lp-m1
     timeout-minutes: 30
+    concurrency:
+      group: wpt-crashtest-${{ github.event.pull_request.number || github.ref }}
+      cancel-in-progress: false
     permissions:
       contents: read
       pull-requests: read # the wpt-accept-loss label
