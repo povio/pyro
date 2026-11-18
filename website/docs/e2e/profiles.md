@@ -13,6 +13,8 @@ await pyro.profile('employee', {
 await using page = await pyro.page({ as: 'employee', route: `/positions/${id}` });
 ```
 
+In fork mode, a connection requested for a specific profile keeps that profile's rendered snapshot and closes inherited waiting pages from other profiles, including their contexts. The selected page is not rendered again; its DOM, JavaScript state, and timers are preserved. The template still owns the other profiles for subsequent tests.
+
 ## `pyro.profile(name, profile)`
 
 Declares the profile and starts booting its pages. It resolves once the server has registered it, not when the pages are booted (use [`warm`](#warm) for that). In fork mode a profile with `setup` or `base` resolves once its setup ran, and rejects with a `ProfileSetupError` when a step fails. See [Setup steps](/e2e/fork#setup-steps).

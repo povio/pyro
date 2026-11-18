@@ -339,6 +339,14 @@ impl EngineHost {
             device_scale_factor: s.device_scale_factor,
             dark: s.dark,
             print: s.print,
+            input: pyro_render::InputCapabilities {
+                pointer: match page.viewport().pointer {
+                    pyro_dom::media::Pointer::None => pyro_render::Pointer::None,
+                    pyro_dom::media::Pointer::Fine => pyro_render::Pointer::Fine,
+                    pyro_dom::media::Pointer::Coarse => pyro_render::Pointer::Coarse,
+                },
+                hover: page.viewport().hover,
+            },
             scroll_x: s.scroll_x,
             scroll_y: s.scroll_y,
             resource_scope: frame.loader_id.0.clone(),

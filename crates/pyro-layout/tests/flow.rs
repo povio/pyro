@@ -2756,6 +2756,56 @@ fn scroll_into_view_if_needed_centers_only_when_needed_like_chromium() {
 }
 
 #[test]
+fn focus_scroll_is_unchanged_by_a_scroll_margin_that_cannot_matter() {
+    // `scroll-margin-*` now parse and compute (vendor/stylo/README.pyro.md); focus scrolling does not read them
+    // yet (the border box is what must be visible), so a margin changes no scroll position. These are the
+    // cases where Chromium agrees whatever the margin is, as SloSki's club roster (`scroll-margin-bottom: 56px`
+    // on a phone) relies on: a margin box that is fully visible leaves the scroll alone, and one whose margin
+    // is zero (or is on a side the box does not need) reveals a hidden box as it does without the property.
+    // 800x600 viewport, body margin 0. (name, style, spacer above, [window y])
+    type Case = (&'static str, &'static str, u32, u32);
+    let cases: [Case; 7] = [
+        ("no margin, visible", "", 540, 0),
+        ("zero margin, visible", "scroll-margin-bottom:0", 540, 0),
+        // border box 540..590; the margin box 540..600 still fits the 600px viewport.
+        ("margin that fits", "scroll-margin-bottom:10px", 540, 0),
+        ("top margin that fits", "scroll-margin:5px", 100, 0),
+        ("logical margin that fits", "scroll-margin-block-end:10px", 540, 0),
+        // hidden below: centred on 2000 + 50 / 2 - 300.
+        ("no margin, hidden", "", 2000, 1725),
+        ("zero margin, hidden", "scroll-margin:0", 2000, 1725),
+    ];
+    for (name, style, above, window_y) in cases {
+        let html = format!(
+            "<!doctype html><body style=\"margin:0\"><div style=\"height:{above}px\"></div>\
+             <div id=t style=\"height:50px;width:50px;{style}\"></div><div style=\"height:5000px\"></div></body>"
+        );
+        let mut p = page(&html);
+        let t = p.id("t");
+        let moved = p.layout.reveal_for_focus(&p.dom, t);
+        assert_eq!([p.layout.scroll_x(), p.layout.scroll_y()], [0, window_y], "{name}");
+        assert_eq!(moved.is_empty(), window_y == 0, "{name}: targets report exactly the moved scrollers");
+    }
+    // Inside an overflow container: the 200px scroller's box at 100..150 is visible; at 400 it is centred.
+    for (name, style, offset, scroller) in [
+        ("visible", "scroll-margin-bottom:10px", 100, 0),
+        ("hidden, zero margin", "scroll-margin:0", 400, 325),
+        ("hidden, no margin", "", 400, 325),
+    ] {
+        let html = format!(
+            "<!doctype html><body style=\"margin:0\"><div id=s style=\"height:200px;overflow:auto\">\
+             <div style=\"height:{offset}px\"></div><div id=t style=\"height:50px;{style}\"></div>\
+             <div style=\"height:2000px\"></div></div></body>"
+        );
+        let mut p = page(&html);
+        let (s, t) = (p.id("s"), p.id("t"));
+        p.layout.reveal_for_focus(&p.dom, t);
+        assert_eq!(p.layout.scroll_top(s) as u32, scroller, "{name}");
+        assert_eq!(p.layout.scroll_y(), 0, "{name}: the window stays");
+    }
+}
+
+#[test]
 fn css_zoom_scales_used_lengths_like_chromium() {
     // TOS AWB editor (positions-awb-customs "zooms the document"): the
     // article is `width: 96rem` with `zoom: calc(var(--document-editor-scale)
@@ -4852,4 +4902,73 @@ fn deep_nesting_of_each_algorithm_lays_out_on_any_stack() {
         .unwrap()
         .join()
         .expect("no stack overflow");
+}
+
+#[test]
+fn content_sized_textarea_tracks_text_wrapping_and_placeholder() {
+    let mut p = page(
+        r#"<!doctype html><style>
+        textarea { font: 16px/24px monospace; padding: 0; border: 0; width: 100px; field-sizing: content }
+        #fixed { field-sizing: fixed }
+        #min { min-height: 72px } #max { max-height: 48px }
+        </style><textarea id=empty rows=5></textarea><textarea id=one rows=5>word</textarea>
+        <textarea id=lines>a
+b
+c</textarea><textarea id=wrap>one two three four five six seven</textarea>
+        <textarea id=placeholder placeholder="a&#10;b&#10;c"></textarea>
+        <textarea id=fixed>word</textarea><textarea id=min>word</textarea>
+        <textarea id=auto style="width:auto" cols=80>word</textarea>
+        <textarea id=explicit style="height:36px">a
+b
+c</textarea>
+        <textarea id=max>a
+b
+c</textarea>"#,
+    );
+    for (id, height) in [
+        ("empty", 24.0),
+        ("one", 24.0),
+        ("lines", 72.0),
+        ("wrap", 96.0),
+        ("placeholder", 72.0),
+        ("fixed", 48.0),
+        ("min", 72.0),
+        ("max", 48.0),
+        ("explicit", 36.0),
+    ] {
+        assert_eq!(p.metrics(id)[3], height, "#{id}");
+    }
+    assert!(p.metrics("auto")[2] > 20.0 && p.metrics("auto")[2] < 60.0, "auto width follows text, ignoring cols");
+    p.dom.set_value(p.id("one"), "a\nb\nc").unwrap();
+    assert_eq!(p.metrics("one")[3], 72.0);
+    p.dom.set_value(p.id("one"), "a").unwrap();
+    assert_eq!(p.metrics("one")[3], 24.0);
+    p.dom.set_value(p.id("placeholder"), "value").unwrap();
+    assert_eq!(p.metrics("placeholder")[3], 24.0);
+    assert_eq!(p.layout.style().stylo_value(&p.dom, p.id("one"), "field-sizing").as_deref(), Some("content"));
+}
+
+#[test]
+fn touch_media_rules_change_geometry_in_existing_documents() {
+    use pyro_dom::media::Pointer;
+    let mut p = page(
+        r#"<!doctype html><style>
+        #box { width: 42px; height: 10px }
+        @media (pointer: coarse) and (hover: none) and (any-pointer: coarse) and (any-hover: none) { #box { width: 91px } }
+        @media (pointer: none) { #box { width: 17px } }
+        </style><div id=box></div>"#,
+    );
+    assert_eq!(p.metrics("box")[2], 42.0);
+    let mut viewport = p.layout.style().viewport().clone();
+    viewport.pointer = Pointer::Coarse;
+    viewport.hover = false;
+    p.layout.set_viewport(viewport.clone());
+    assert_eq!(p.metrics("box")[2], 91.0);
+    viewport.pointer = Pointer::None;
+    p.layout.set_viewport(viewport.clone());
+    assert_eq!(p.metrics("box")[2], 17.0);
+    viewport.pointer = Pointer::Fine;
+    viewport.hover = true;
+    p.layout.set_viewport(viewport);
+    assert_eq!(p.metrics("box")[2], 42.0);
 }

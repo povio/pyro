@@ -5216,6 +5216,57 @@ fn driver_run_resizes_the_viewport_and_emulates_media() {
     }
 }
 
+/// `read css` and `check css` take the property as `getComputedStyle(el)[name]` does: the CSS spelling
+/// (`scroll-margin-bottom`) or the camel-cased CSSOM attribute (`scrollMarginBottom`, `backgroundColor`,
+/// `cssFloat`, `webkitTransform`). SloSki's club roster reads its row action's `scrollMarginBottom`
+/// (`[&_button]:scroll-mb-14`, 3.5rem) and expects `56px`; the camel-cased name used to reach the style
+/// engine as it was and read `""`. A custom property keeps its own name.
+#[test]
+fn driver_css_read_and_check_accept_cssom_property_names() {
+    let mut h = Harness::new();
+    load_html(
+        &mut h,
+        r#"<!doctype html><style>
+        :root { --gap: 12px; --mixedCase: 17px }
+        .list button { scroll-margin-bottom: 3.5rem; background-color: rgb(1, 2, 3); float: left }
+        #plain { scroll-margin-bottom: 0 }
+        </style><body><div class=list><button id=b>Act</button></div><button id=plain>Plain</button></body>"#,
+    );
+    let read = |h: &mut Harness, selector: &str, property: &str| -> serde_json::Value {
+        let r = h.page("Pyro.query", json!({"locator": {"css": selector}, "read": "css", "property": property}));
+        assert!(r.get("error").is_none(), "{r}");
+        r["result"]["value"].clone()
+    };
+    for (property, expected) in [
+        ("scrollMarginBottom", "56px"),
+        ("scroll-margin-bottom", "56px"),
+        ("scrollMarginTop", "0px"),
+        ("scrollMarginBlockEnd", "56px"),
+        ("scrollMargin", "0px 0px 56px"),
+        ("backgroundColor", "rgb(1, 2, 3)"),
+        ("background-color", "rgb(1, 2, 3)"),
+        ("cssFloat", "left"),
+        ("float", "left"),
+        ("--gap", "12px"),
+        ("--mixedCase", "17px"),
+        ("--mixedcase", ""),
+        ("notAProperty", ""),
+    ] {
+        assert_eq!(read(&mut h, "#b", property), expected, "read css {property}");
+    }
+    assert_eq!(read(&mut h, "#plain", "scrollMarginBottom"), "0px", "an id beats the descendant rule");
+    let r = h.page(
+        "Pyro.run",
+        json!({"steps": [
+            {"check": {"locator": {"css": "#b"}, "assert": "css", "property": "scrollMarginBottom", "expected": "56px"}},
+            {"check": {"locator": {"css": "#b"}, "assert": "css", "property": "scroll-margin-bottom", "expected": "56px"}},
+            {"read": {"locator": {"css": "#b"}, "read": "css", "property": "scrollMarginBottom", "as": "margin"}},
+        ]}),
+    );
+    assert!(r.get("error").is_none(), "{r}");
+    assert_eq!(r["result"]["reads"]["margin"], "56px", "{r}");
+}
+
 /// `Pyro.run`: mocks answer requests from the context (json/body, delay for a
 /// loading state, abort for a failure, `times`), `url` waits for a route,
 /// `reload` reloads, and the element steps hover, dblclick, blur, type,

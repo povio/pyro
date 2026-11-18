@@ -80,8 +80,31 @@ pub enum ColorScheme {
     Dark,
 }
 
+/// The primary pointing device exposed by CSS interaction media features.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Pointer {
+    None,
+    #[default]
+    Fine,
+    Coarse,
+}
+
+/// Input capabilities shared by style and rendering devices.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InputCapabilities {
+    pub pointer: Pointer,
+    pub hover: bool,
+}
+
+impl Default for InputCapabilities {
+    fn default() -> Self {
+        Self { pointer: Pointer::Fine, hover: true }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Viewport {
+    pub input: InputCapabilities,
     pub color_scheme: ColorScheme,
     pub window_size: (u32, u32),
     pub hidpi_scale: f32,
@@ -95,6 +118,7 @@ impl Default for Viewport {
             hidpi_scale: 1.0,
             zoom: 1.0,
             color_scheme: ColorScheme::Light,
+            input: InputCapabilities::default(),
         }
     }
 }
@@ -111,6 +135,7 @@ impl Viewport {
             hidpi_scale: scale_factor,
             zoom: 1.0,
             color_scheme,
+            input: InputCapabilities::default(),
         }
     }
 

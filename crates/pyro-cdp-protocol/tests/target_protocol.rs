@@ -844,3 +844,19 @@ fn named_profiles_carry_their_status_on_the_wire() {
     assert!(wire.get("error").is_none());
     assert_eq!(serde_json::from_value::<NamedProfile>(wire).unwrap(), booting);
 }
+
+#[test]
+fn selected_fork_snapshot_closes_sibling_documents_and_contexts() {
+    let profiles = (0..3).map(|i| serde_json::from_value(json!({"url": format!("http://app.test/{i}")})).unwrap()).collect();
+    let mut browser = Browser::with_prepared(Recorder::loaded(), profiles);
+    browser.host_mut().calls.clear();
+    browser.retain_prepared_snapshot(1);
+    assert_eq!(browser.prepared_pages(), vec![(1, 4)]);
+    let mut calls = browser.host().calls.clone();
+    calls.sort();
+    assert_eq!(calls, ["close_page 2", "close_page 6", "dispose_context 1", "dispose_context 5"]);
+    browser.host_mut().calls.clear();
+    let result = send(&mut browser, json!({"id":1,"method":"Pyro.acquirePreparedPage","params":{"profileId":1}}));
+    assert_eq!(result[0]["result"]["ready"], true);
+    assert!(browser.host().calls.is_empty(), "acquiring the selected snapshot must not navigate or boot again");
+}

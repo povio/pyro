@@ -1730,9 +1730,9 @@ fn create_text_editor(doc: &mut BaseDocument, input_element_id: NodeId, is_multi
 /// pyro: the `placeholder` attribute of an `<input>` or `<textarea>` laid out
 /// in its `::placeholder` style, as Chromium paints it while the value is
 /// empty: a single-line input's text loses its line breaks (HTML), and the UA
-/// sheet's `line-height: initial !important` makes its line `normal` (Stylo
-/// applies no author `line-height` to `::placeholder` either). `None` when the
-/// element has no placeholder text.
+/// sheet makes a single-line input's placeholder line `normal`. A textarea's
+/// placeholder uses the editor's line height, including for content sizing.
+/// `None` when the element has no placeholder text.
 fn input_placeholder(
     doc: &mut BaseDocument,
     node_id: NodeId,
@@ -1769,7 +1769,11 @@ fn input_placeholder(
         None => &input_style,
     };
     let mut text_style = stylo_to_parley::style(node_id, style);
-    text_style.line_height = parley::LineHeight::NORMAL;
+    text_style.line_height = if is_multiline {
+        stylo_to_parley::style(node_id, &input_style).line_height
+    } else {
+        parley::LineHeight::NORMAL
+    };
     let mut color = style.clone_color();
     color.alpha *= style.get_effects().opacity;
     let mut placeholder = Box::new(crate::node::InputPlaceholder {

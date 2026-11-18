@@ -109,6 +109,8 @@ pub struct PageNav {
     /// URL of a synchronous same-document commit not yet copied to
     /// `Frame::url` (done at the next checkpoint, outside JavaScript).
     pending_frame_url: RefCell<Option<String>>,
+    /// Latest queued script navigation; a later request supersedes earlier work.
+    script_navigation: Cell<u64>,
     sched: Scheduler<Browser>,
     state: RefCell<NavState>,
     /// Current document in the page's DOM (keeps `document.URL` in sync).
@@ -163,6 +165,7 @@ impl PageNav {
             frame_id,
             observer,
             pending_frame_url: RefCell::new(None),
+            script_navigation: Cell::new(0),
             sched,
             state: RefCell::new(NavState {
                 url: "about:blank".into(),
@@ -452,6 +455,8 @@ impl PageNav {
     }
 
     fn navigate(&self, url: String, history: HistoryHandling) {
+        let sequence = self.script_navigation.get().wrapping_add(1);
+        self.script_navigation.set(sequence);
         let page = self.page;
         let (document, stops) = {
             let st = self.state.borrow();
@@ -463,7 +468,7 @@ impl PageNav {
             // Another document, or this one was opened since (stop loading).
             if !b.doc(page).is_some_and(|p| {
                 let st = p.nav.state.borrow();
-                st.doc_seq == document && st.stops == stops
+                st.doc_seq == document && st.stops == stops && p.nav.script_navigation.get() == sequence
             }) {
                 return;
             }

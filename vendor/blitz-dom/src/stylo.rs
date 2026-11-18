@@ -1757,17 +1757,22 @@ impl Node {
             let name = &attr.name.local;
             let value = attr.value.as_str();
 
-            // pyro: an SVG element's `clip-path` and `transform-origin` attributes are
-            // the CSS properties' presentation attributes (a basic shape, CSS lengths
-            // and keywords): blitz-dom's SVG serializer (`node/svg_css.rs`) writes their
-            // computed values for usvg, which knows neither form. Its `overflow` is the
-            // property's too: `overflow="visible"` on an inline `<svg>` overrides the UA
-            // sheet's `hidden` (its viewport clip, blitz-paint's `draw_svg`).
+            // SVG presentation attributes enter the author cascade with zero
+            // specificity. This also resolves custom properties and currentColor
+            // before SVG serialization, text measurement, and getComputedStyle.
+            // Geometry attributes have their own mapping below.
             if elem.name.ns == ns!(svg)
                 && attr.name.ns == ns!()
-                && (*name == local_name!("clip-path")
-                    || *name == local_name!("transform-origin")
-                    || *name == local_name!("overflow"))
+                && matches!(&**name,
+                    "clip-path" | "transform-origin" | "overflow"
+                    | "fill" | "fill-opacity" | "fill-rule"
+                    | "stroke" | "stroke-width" | "stroke-opacity" | "stroke-linecap"
+                    | "stroke-linejoin" | "stroke-miterlimit" | "stroke-dasharray" | "stroke-dashoffset"
+                    | "opacity" | "color" | "visibility" | "display"
+                    | "font-family" | "font-size" | "font-weight" | "font-style" | "font-stretch"
+                    | "letter-spacing" | "word-spacing" | "text-anchor" | "text-decoration"
+                    | "dominant-baseline" | "alignment-baseline" | "baseline-shift"
+                    | "paint-order" | "vector-effect" | "shape-rendering" | "text-rendering")
             {
                 for declaration in parse_svg_presentation_attr(&**name, value) {
                     push_style(declaration);
