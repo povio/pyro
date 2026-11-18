@@ -829,7 +829,7 @@ also hung on a cycle the parser made), `document.designMode` (`designMode-caret-
 `selectAll` and `find()` (`selectall-and-find-svg-text-on-selectstart`), and `<object>` load and error events
 (`container-queries/crashtests/chrome-bug-439886903-crash`).
 
-2,019 of 2,031 complete locally (with the font and Typed OM lanes). These 12 are **known incomplete**: each needs a feature pyro does not have. They stay
+2,021 of 2,031 complete locally (with the font and Typed OM lanes; lane F3b: navigated-away iframe documents and IntersectionObserver across documents). These 10 are **known incomplete**: each needs a feature pyro does not have. They stay
 failing entries of the baseline, not flaky entries, and none of them crashes, panics or hangs:
 
 | page | needs |
@@ -837,9 +837,7 @@ failing entries of the baseline, not flaky entries, and none of them crashes, pa
 | `scroll-animations/crashtests/` (4 pages) | scroll and view timelines (`animation-timeline`, `ScrollTimeline`) |
 | `service-workers/service-worker/messageport-transfer-crash.html` | `SharedWorker` |
 | `trusted-types/navigate-to-javascript-url-007-crash.html` | Trusted Types (`trustedTypes`) |
-| `html/semantics/embedded-content/the-img-element/image-loading-lazy-subframe-detached-crash.html` | IntersectionObserver across pages (another frame's document) |
 | `streams/readable-byte-streams/crashtests/from-cross-realm.html` | a synchronous about:blank document in the window `window.open()` returns (Chrome times out on this page too, per wpt.fyi) |
-| `html/semantics/permission-element/geolocation-element/iframe-use-after-free-crash.html` | DOM calls on a navigated-away iframe document (its realm is disposed; browsers allow them) |
 | `editing/crashtests/designMode-document-will-be-blurred-by-focus-event-listener.html` | a `focus` event at an iframe's Window from `contentWindow.focus()` (`document.designMode` exists since lane F3a) |
 | `editing/crashtests/inserthorizontalrule-in-textarea-in-editor-and-undo-on-error-events.html` | none in pyro: it waits for an `error` event at an `<object>` without `data`, which Chromium fires and HTML does not (no data shows the fallback content; `<object>` load and error events exist since lane F3a) |
 | `css/selectors/crashtests/chrome-bug-565742178.html` | `<use>` shadow trees with live clones (an `error` event from the cloned image) |

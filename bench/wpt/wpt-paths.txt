@@ -15,6 +15,7 @@ custom-elements/
 css/css-font-loading/
 css/css-typed-om/
 html/semantics/embedded-content/the-object-element/
+intersection-observer/
 # Paint directories (lib.mjs PAINT_DIRS). Both kinds run every directory above and below: run.mjs runs their testharness
 # pages, run.mjs --kind reftest their reftests.
 css/css-backgrounds/

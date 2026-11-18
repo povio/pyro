@@ -695,3 +695,45 @@ fn documents_of_a_navigating_frame_are_released() {
     }
     assert_eq!(engine.lingering_realms(), 0, "every previous document was released");
 }
+
+/// IntersectionObserver across documents: the parent observes an element of
+/// its iframe's document (implicit root: the top-level viewport). The
+/// target is clipped by the iframe's viewport and placed through the owner
+/// element; the entry reports it in the target document's coordinates. A
+/// removed frame's target stops intersecting (WPT
+/// image-loading-lazy-subframe-detached-crash.html removes it from the
+/// callback).
+#[test]
+fn intersection_observer_sees_targets_in_child_documents() {
+    let mut t = crate::browser_thread().unwrap();
+    let page = t.browser.create_page().unwrap();
+    let root = main_realm(&t, page);
+    eval(
+        &root,
+        "document.body.style.margin='0'; globalThis.f=document.createElement('iframe'); \
+         f.style.cssText='position:absolute; left:100px; top:50px; width:200px; height:100px; border:0'; \
+         f.srcdoc='<body style=\"margin:0\"><div id=near style=\"height:50px;width:50px\"></div>\
+           <div style=\"height:500px\"></div><div id=far style=\"height:50px;width:50px\"></div></body>'; \
+         document.body.appendChild(f)",
+    );
+    settle(&mut t);
+    eval(
+        &root,
+        "globalThis.seen=[]; globalThis.io=new IntersectionObserver(es => { for (const e of es) \
+           seen.push([e.target.id, e.isIntersecting, e.intersectionRatio, e.intersectionRect.x, e.intersectionRect.y, \
+             e.rootBounds.width].join(':')) }); \
+         io.observe(f.contentDocument.getElementById('near')); io.observe(f.contentDocument.getElementById('far'))",
+    );
+    settle(&mut t);
+    assert_eq!(eval(&root, "seen.sort().join(' ')"), "far:false:0:0:0:1920 near:true:1:0:0:1920");
+    // Scrolled to the end (500 px), `far` intersects; the owner's
+    // position does not leak into the target document's coordinates.
+    eval(&root, "seen.length=0; f.contentWindow.scrollTo(0, 520); io.takeRecords(); document.body.offsetTop");
+    eval(&root, "document.body.appendChild(document.createElement('p'))");
+    settle(&mut t);
+    assert_eq!(eval(&root, "seen.sort().join(' ')"), "far:true:1:0:50:1920 near:false:0:0:0:1920");
+    // The frame goes: its targets intersect nothing.
+    eval(&root, "seen.length=0; f.remove()");
+    settle(&mut t);
+    assert_eq!(eval(&root, "seen.map(s => s.split(':').slice(0, 2).join(':')).sort().join(' ')"), "far:false");
+}

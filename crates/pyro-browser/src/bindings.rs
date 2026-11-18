@@ -57,6 +57,23 @@ struct Hooks {
 }
 
 impl PageHooks for Hooks {
+    fn container(&self) -> pyro_webapi::FrameContainer {
+        use pyro_webapi::FrameContainer;
+        let Some(host) = self.frames.upgrade() else { return FrameContainer::Detached };
+        if !host.matches(self.page, &self.loader) {
+            return FrameContainer::Detached;
+        }
+        if self.page.child.is_none() {
+            return FrameContainer::Top;
+        }
+        let Some(owner) = host.with_frame(self.page, |f| f.owner).flatten() else { return FrameContainer::Detached };
+        let parent = host.parent_key(self.page);
+        match host.page_dom(parent) {
+            Some(dom) if !dom.is_detached() => FrameContainer::Frame(dom, owner),
+            _ => FrameContainer::Detached,
+        }
+    }
+
     fn frame_detached(&self) -> bool {
         // Only a child frame can leave its page.
         self.page.child.is_some()

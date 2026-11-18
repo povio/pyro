@@ -491,8 +491,25 @@ pub enum FocusTarget {
     Blur(NodeId),
 }
 
+/// Where a document is shown ([`PageHooks::container`]).
+pub enum FrameContainer {
+    /// The document of a top-level browsing context.
+    Top,
+    /// A child frame's document: the parent document and the frame's owner
+    /// element in it.
+    Frame(Rc<PageDom>, NodeId),
+    /// Not shown in a page any more (its frame was removed or navigated).
+    Detached,
+}
+
 /// Embedder (pyro-browser) services the bindings need.
 pub trait PageHooks {
+    /// Where the document is shown: geometry across frames (an
+    /// IntersectionObserver's implicit root is the top-level document's
+    /// viewport) walks up through it.
+    fn container(&self) -> FrameContainer {
+        FrameContainer::Top
+    }
     /// Observation-only (no JS): the frame that showed this document was
     /// removed from its page (its iframe left the document). Such a document
     /// is no longer fully active although script of it may still be running.
@@ -1801,6 +1818,16 @@ impl PageDom {
     }
     pub(crate) fn navigation_requests(&self) -> u32 {
         self.navigation_requests.get()
+    }
+    /// Where the document is shown ([`PageHooks::container`]).
+    pub(crate) fn container(&self) -> FrameContainer {
+        if self.disposed.get() || self.detached.get() {
+            return FrameContainer::Detached;
+        }
+        match self.hooks() {
+            Some(h) => h.container(),
+            None => FrameContainer::Detached,
+        }
     }
     pub(crate) fn navigate(&self, req: NavigationRequest) {
         if req.target.as_deref().is_none_or(|t| t.is_empty() || t.eq_ignore_ascii_case("_self")) {

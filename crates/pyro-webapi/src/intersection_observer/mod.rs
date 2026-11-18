@@ -43,6 +43,11 @@ impl NodeLease {
         Ok(Self { page: Rc::downgrade(page), id })
     }
 }
+impl NodeLease {
+    fn is(&self, page: &Rc<PageDom>, id: NodeId) -> bool {
+        self.id == id && std::ptr::eq(self.page.as_ptr(), Rc::as_ptr(page))
+    }
+}
 impl Drop for NodeLease {
     fn drop(&mut self) {
         if let Some(page) = self.page.upgrade() {
@@ -94,15 +99,14 @@ impl Observer {
         }
         Ok(())
     }
-    fn node(&self, s: &Scope<'_>, value: Value<'_>) -> JsResult<NodeId> {
-        let page = self.page()?;
+    /// The target element and the document bindings it belongs to: any
+    /// document's element can be observed (an iframe's, from its parent).
+    fn node(&self, s: &Scope<'_>, value: Value<'_>) -> JsResult<(Rc<PageDom>, NodeId)> {
+        self.page()?;
         let node = s
             .unwrap::<crate::node::Element>(value)
             .ok_or_else(|| JsError::Type("IntersectionObserver target must be an Element".into()))?;
-        if node.page().id() != page.id() {
-            return Err(JsError::dom("NotSupportedError", "Cross-PageDom observation is not implemented"));
-        }
-        Ok(node.id)
+        Ok((node.page().clone(), node.id))
     }
 }
 pub struct IntersectionObserver;
@@ -172,10 +176,10 @@ impl JsClass for IntersectionObserver {
         def.getter("trackVisibility", |s, _| Ok(s.boolean(false)));
         def.method("observe", 1, |s, o, args| {
             args.require(1, "IntersectionObserver.observe")?;
-            let id = o.node(s, args.get(0))?;
+            let (target_page, id) = o.node(s, args.get(0))?;
             let page = o.page()?;
-            if !o.targets.borrow().iter().any(|t| t.node.id == id) {
-                let node = NodeLease::new(&page, id)?;
+            if !o.targets.borrow().iter().any(|t| t.node.is(&target_page, id)) {
+                let node = NodeLease::new(&target_page, id)?;
                 o.targets.borrow_mut().push(Observation { node, previous: None });
                 page.intersections.stamp.set(None);
                 o.reconcile(&page)?;
@@ -184,9 +188,9 @@ impl JsClass for IntersectionObserver {
         });
         def.method("unobserve", 1, |s, o, args| {
             args.require(1, "IntersectionObserver.unobserve")?;
-            let id = o.node(s, args.get(0))?;
+            let (target_page, id) = o.node(s, args.get(0))?;
             let page = o.page()?;
-            o.targets.borrow_mut().retain(|t| t.node.id != id);
+            o.targets.borrow_mut().retain(|t| !t.node.is(&target_page, id));
             o.reconcile(&page)?;
             Ok(s.undefined())
         });
@@ -200,7 +204,7 @@ impl JsClass for IntersectionObserver {
             let page = o.page()?;
             let records = o.records.take();
             o.reconcile(&page)?;
-            entries(s, &page, records)
+            entries(s, records)
         });
     }
 }
@@ -225,10 +229,12 @@ impl JsClass for IntersectionObserverEntry {
         def.getter("rootBounds", |s, d| crate::layout_api::rect_value(s, d.geometry.bounds));
     }
 }
-fn entries<'s>(s: &Scope<'s>, page: &Rc<PageDom>, records: Vec<PendingEntry>) -> JsResult<Value<'s>> {
+fn entries<'s>(s: &Scope<'s>, records: Vec<PendingEntry>) -> JsResult<Value<'s>> {
     let mut values = pyro_js::RootedVec::new();
     for record in records {
-        let target = crate::collections::NodeHold::new(page, record.target.id)?;
+        // A target whose document went away is reported no more.
+        let Some(page) = record.target.page.upgrade() else { continue };
+        let target = crate::collections::NodeHold::new(&page, record.target.id)?;
         let entry = s.wrap::<IntersectionObserverEntry>(
             EntryData { target, geometry: record.geometry, time: record.time },
             None,
@@ -243,18 +249,26 @@ pub(crate) fn after_task(page: &PageDom) {
     }
     let Some(owner) = page.intersections.owner.borrow().upgrade() else { return };
     let stamp = (page.document(), page.layout().observation_stamp(&page.dom.borrow()));
-    if page.intersections.stamp.replace(Some(stamp)) != Some(stamp) {
+    // Geometry that depends on another document's layout (a target in a
+    // frame, or this document shown in one: the implicit root is the
+    // top-level viewport) is measured after every task.
+    let across = !matches!(page.container(), crate::page::FrameContainer::Top)
+        || page.intersections.observers.borrow().iter().filter_map(Weak::upgrade).any(|o| {
+            o.targets.borrow().iter().any(|t| !std::ptr::eq(t.node.page.as_ptr(), page))
+        });
+    if page.intersections.stamp.replace(Some(stamp)) != Some(stamp) || across {
         let observers: Vec<_> = page.intersections.observers.borrow().iter().filter_map(Weak::upgrade).collect();
         for observer in observers {
             if !observer.live.get() {
                 continue;
             }
             for target in observer.targets.borrow_mut().iter_mut() {
-                let geometry = geometry::measure(page, &observer.options, target.node.id);
+                let Some(target_page) = target.node.page.upgrade() else { continue };
+                let geometry = geometry::measure(page, &observer.options, &target_page, target.node.id);
                 let index = observer.options.thresholds.partition_point(|threshold| *threshold <= geometry.ratio);
                 let state = (index, geometry.intersecting);
                 if target.previous.replace(state) != Some(state) {
-                    if let Ok(node) = NodeLease::new(&owner, target.node.id) {
+                    if let Ok(node) = NodeLease::new(&target_page, target.node.id) {
                         let time = page.intersections.origin.get().map_or(0.0, |t| t.elapsed().as_secs_f64() * 1000.0);
                         observer.records.borrow_mut().push(PendingEntry { target: node, geometry, time });
                     }
@@ -309,7 +323,7 @@ fn notify(page: &Rc<PageDom>) {
             observer.reconcile(page)?;
             let callback =
                 s.get_hidden(wrapper, CALLBACK)?.and_then(|v| v.as_object()).ok_or(JsError::ContextDestroyed)?;
-            let list = entries(&s, page, records)?;
+            let list = entries(&s, records)?;
             callback.call(Some(wrapper), &[list, wrapper.value()])?;
             Ok(())
         })();
