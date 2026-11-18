@@ -71,6 +71,20 @@ const STYLE_PROPERTIES: &[(LonghandId, &str)] = &[
     (LonghandId::FontWeight, "font-weight"),
     (LonghandId::LetterSpacing, "letter-spacing"),
     (LonghandId::WordSpacing, "word-spacing"),
+    // pyro: SVG properties Stylo parses for servo since lane F1 (they were dropped with the sheet).
+    (LonghandId::StopColor, "stop-color"),
+    (LonghandId::StopOpacity, "stop-opacity"),
+    (LonghandId::PaintOrder, "paint-order"),
+    (LonghandId::MarkerStart, "marker-start"),
+    (LonghandId::MarkerMid, "marker-mid"),
+    (LonghandId::MarkerEnd, "marker-end"),
+    (LonghandId::FloodColor, "flood-color"),
+    (LonghandId::FloodOpacity, "flood-opacity"),
+    (LonghandId::LightingColor, "lighting-color"),
+    (LonghandId::ClipRule, "clip-rule"),
+    (LonghandId::ShapeRendering, "shape-rendering"),
+    (LonghandId::TextAnchor, "text-anchor"),
+    (LonghandId::ColorInterpolationFilters, "color-interpolation-filters"),
 ];
 
 /// The properties of `STYLE_PROPERTIES` written on the root `<svg>`: those
@@ -95,6 +109,14 @@ const ROOT_PROPERTIES: &[LonghandId] = &[
     LonghandId::FontWeight,
     LonghandId::LetterSpacing,
     LonghandId::WordSpacing,
+    LonghandId::PaintOrder,
+    LonghandId::MarkerStart,
+    LonghandId::MarkerMid,
+    LonghandId::MarkerEnd,
+    LonghandId::ClipRule,
+    LonghandId::ShapeRendering,
+    LonghandId::TextAnchor,
+    LonghandId::ColorInterpolationFilters,
 ];
 
 /// Inherited properties whose values the root gets from its HTML ancestors,
@@ -118,6 +140,9 @@ const INHERITED_FROM_HTML: &[(LonghandId, &str, &str)] = &[
     (LonghandId::FontFamily, "font-family", "\"Times New Roman\""),
     (LonghandId::FontWeight, "font-weight", "400"),
     (LonghandId::FontStyle, "font-style", "normal"),
+    (LonghandId::PaintOrder, "paint-order", "normal"),
+    (LonghandId::ClipRule, "clip-rule", "nonzero"),
+    (LonghandId::TextAnchor, "text-anchor", "start"),
 ];
 
 /// The properties that make up an SVG element's transform.

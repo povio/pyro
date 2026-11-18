@@ -19,11 +19,22 @@ impl ElementCx<'_, '_> {
         let type_attr = self.node.attr(local_name!("type"));
         let disabled = self.node.attr(local_name!("disabled")).is_some();
 
-        // TODO this should be coming from css accent-color, but I couldn't find how to retrieve it
+        // pyro: `accent-color` when it is a colour (Stylo parses it for servo since lane F1), else
+        // the text colour as before.
         let accent_color = if disabled {
             Color::from_rgba8(209, 209, 209, 255)
         } else {
-            self.style.clone_color().as_srgb_color()
+            match &self.style.get_inherited_ui().accent_color {
+                // A (partly) transparent accent colour is precomposed over the canvas colour of
+                // the used colour scheme (CSS UI 4 § 6.1), the `Canvas` system colour (stylo device/servo.rs).
+                style::values::generics::color::GenericColorOrAuto::Color(c) => {
+                    let [r, g, b, a] = c.resolve_to_absolute(&self.style.clone_color()).as_srgb_color().components;
+                    let canvas = if self.dark_color_scheme() { 30.0 / 255.0 } else { 1.0 };
+                    let over = |v: f32| v * a + canvas * (1.0 - a);
+                    Color::new([over(r), over(g), over(b), 1.0])
+                }
+                style::values::generics::color::GenericColorOrAuto::Auto => self.style.clone_color().as_srgb_color(),
+            }
         };
 
         let width = self.frame.border_box.width();

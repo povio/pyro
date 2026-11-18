@@ -3,8 +3,8 @@
 //! (`BlockContext::place_shaped_floated_box`): line boxes beside the float wrap around the shape.
 //!
 //! Basic shapes (`circle()`, `ellipse()`, `inset()`, `polygon()`) in their reference box and the
-//! box keywords (the reference box itself, corners square) and `path()`, grown by `shape-margin`.
-//! Images and `shape()` keep the margin box.
+//! box keywords (the reference box itself, corners square), `path()` and `shape()`, grown by
+//! `shape-margin`. Images keep the margin box.
 
 use kurbo::{BezPath, PathEl, Point, Rect, Shape as _};
 use style::properties::ComputedValues;
@@ -110,14 +110,25 @@ fn area(style: &ComputedValues, margin_box: Rect, margin: [f64; 4], border: [f64
                 }
                 GenericBasicShape::PathOrShape(GenericPathOrShapeFunction::Path(path)) => {
                     // `path()`: SVG path data in CSS px from the reference box's origin.
-                    let mut d = String::new();
-                    let _ = path.path.to_css(&mut style_traits::CssWriter::new(&mut d), false);
-                    let mut bez = BezPath::from_svg(&d).ok()?;
+                    let px = |v: &f32| *v as f64;
+                    let mut bez = crate::shape_path::svg_path_to_bezpath(path.commands(), px, px, px, |a: &f32| *a as f64)?;
                     bez.apply_affine(kurbo::Affine::translate((r.x0, r.y0)));
                     bez
                 }
-                // `shape()`: the margin box (not yet).
-                GenericBasicShape::PathOrShape(_) => return None,
+                GenericBasicShape::PathOrShape(GenericPathOrShapeFunction::Shape(shape)) => {
+                    // `shape()`: percentages of the reference box; a single arc radius of its
+                    // direction-agnostic size (as `clip-path`).
+                    let agnostic = w.hypot(h) / std::f64::consts::SQRT_2;
+                    let mut bez = crate::shape_path::svg_path_to_bezpath(
+                        &shape.commands,
+                        |v: &LengthPercentage| lp(v, w),
+                        |v: &LengthPercentage| lp(v, h),
+                        |v: &LengthPercentage| lp(v, agnostic),
+                        |a: &style::values::computed::Angle| a.degrees() as f64,
+                    )?;
+                    bez.apply_affine(kurbo::Affine::translate((r.x0, r.y0)));
+                    bez
+                }
             })
         }
     }

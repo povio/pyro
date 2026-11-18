@@ -264,6 +264,8 @@ impl<T: Deref<Target = ComputedValues>> taffy::CoreStyle for TaffyStyloStyle<T> 
         self.layout_wm().logical_point(overflow)
     }
 
+    // pyro: scrollbars overlay content (as headless Chrome, and Chrome with overlay scrollbars):
+    // no box reserves scrollbar space, so `scrollbar-gutter` (parsed, computed) changes no layout.
     #[inline]
     fn scrollbar_width(&self) -> f32 {
         0.0

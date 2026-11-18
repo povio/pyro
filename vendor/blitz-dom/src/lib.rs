@@ -65,6 +65,7 @@ pub use resolve::phase_profile;
 /// Computation of resolved CSS property values (`getComputedStyle()`)
 mod resolved_style;
 /// Scrolling of nodes and the viewport, and scroll animations.
+pub mod shape_path;
 mod scrolling;
 mod selection;
 /// pyro: the embedder's document selection, painted as highlighted text.

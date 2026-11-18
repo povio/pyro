@@ -118,10 +118,10 @@ pub fn resolve_transform(
         Affine::new([t.m11, t.m12, t.m21, t.m22, t.m41, t.m42].map(|v| v as f64))
     });
 
-    // TODO: support the "offset" property
-    // <https://developer.mozilla.org/en-US/docs/Web/CSS/Reference/Properties/offset>
+    // pyro: the offset transform (CSS Motion Path 1 § 4) of an `offset-path: path()`.
+    let offset = offset_transform(box_styles);
 
-    if translate.is_none() && rotate.is_none() && scale_transform.is_none() && transform.is_none() {
+    if translate.is_none() && rotate.is_none() && scale_transform.is_none() && transform.is_none() && offset.is_none() {
         return ResolvedTransform::Flat(None);
     }
 
@@ -157,6 +157,11 @@ pub fn resolve_transform(
         resolved *= Affine::scale_non_uniform(scale_transform.x, scale_transform.y)
     }
 
+    // The offset transform comes after the individual transform properties, before `transform`.
+    if let Some(offset) = offset {
+        resolved *= offset;
+    }
+
     if let Some(transform) = transform {
         resolved *= transform;
     }
@@ -179,6 +184,62 @@ pub fn resolve_transform(
     resolved = origin_translation * resolved * origin_translation.inverse();
 
     ResolvedTransform::Flat((resolved != Affine::IDENTITY).then_some(resolved))
+}
+
+/// pyro: the offset transform of `offset-path: path()` with `offset-distance` and `offset-rotate`,
+/// in the frame of the transform origin, which stands for the anchor point (`offset-anchor: auto`):
+/// the path's origin is the anchor's place without the offset, and the box moves along the path
+/// to the point `offset-distance` along it (a closed path wraps around, an open one clamps),
+/// turned by the path's direction there (`auto`, `reverse`) plus the angle. `ray()`, `url()`, other
+/// shapes and an explicit `offset-anchor` are not laid out (no offset transform).
+fn offset_transform(box_styles: &BoxStyleStruct) -> Option<Affine> {
+    use kurbo::{ParamCurve, ParamCurveArclen, ParamCurveDeriv, PathSeg};
+    use style::values::generics::basic_shape::{GenericBasicShape, GenericPathOrShapeFunction};
+    use style::values::generics::motion::{GenericOffsetPath, GenericOffsetPathFunction};
+    let GenericOffsetPath::OffsetPath { path, .. } = &box_styles.offset_path else { return None };
+    let GenericOffsetPathFunction::Shape(shape) = &**path else { return None };
+    let GenericBasicShape::PathOrShape(GenericPathOrShapeFunction::Path(path)) = shape else { return None };
+    let mut d = String::new();
+    let _ = path.path.to_css(&mut style_traits::CssWriter::new(&mut d), false);
+    let bez = kurbo::BezPath::from_svg(&d).ok()?;
+    let closed = bez.elements().iter().any(|el| matches!(el, kurbo::PathEl::ClosePath));
+    let segments: Vec<PathSeg> = bez.segments().collect();
+    const ACCURACY: f64 = 1e-3;
+    let lengths: Vec<f64> = segments.iter().map(|s| s.arclen(ACCURACY)).collect();
+    let total: f64 = lengths.iter().sum();
+    let distance = box_styles.offset_distance.resolve(CSSPixelLength::new(total as f32)).px() as f64;
+    let distance = if closed && total > 0.0 { distance.rem_euclid(total) } else { distance.clamp(0.0, total) };
+    // The point and direction `distance` along the path.
+    let (point, direction) = if segments.is_empty() {
+        let start = match bez.elements().first() {
+            Some(kurbo::PathEl::MoveTo(p)) => *p,
+            _ => kurbo::Point::ZERO,
+        };
+        (start, 0.0)
+    } else {
+        let mut left = distance;
+        let mut found = None;
+        for (seg, len) in segments.iter().zip(&lengths) {
+            if left <= *len || std::ptr::eq(seg, segments.last().unwrap()) {
+                let t = if *len > 0.0 { seg.inv_arclen(left.min(*len), ACCURACY) } else { 0.0 };
+                let tangent = match seg {
+                    PathSeg::Line(l) => l.deriv().eval(t).to_vec2(),
+                    PathSeg::Quad(q) => q.deriv().eval(t).to_vec2(),
+                    PathSeg::Cubic(c) => c.deriv().eval(t).to_vec2(),
+                };
+                found = Some((seg.eval(t), tangent.y.atan2(tangent.x)));
+                break;
+            }
+            left -= len;
+        }
+        found?
+    };
+    let rotate = &box_styles.offset_rotate;
+    let mut angle = rotate.angle.radians64();
+    if rotate.auto {
+        angle += direction;
+    }
+    Some(Affine::translate(point.to_vec2()) * Affine::rotate(angle))
 }
 
 /// pyro: a linear coefficient within 1e-12 of 0, 1 or -1 is that value, and a translation

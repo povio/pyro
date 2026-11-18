@@ -4265,8 +4265,8 @@ diff -ruN a/values/specified/background.rs b/values/specified/background.rs
  }
 diff -ruN a/values/specified/basic_shape.rs b/values/specified/basic_shape.rs
 --- a/values/specified/basic_shape.rs	2026-11-11 19:55:57
-+++ b/values/specified/basic_shape.rs	2026-11-18 21:17:14
-@@ -37,8 +37,54 @@
++++ b/values/specified/basic_shape.rs	2026-11-18 21:54:57
+@@ -37,9 +37,55 @@
  /// A specified `clip-path` value.
  pub type ClipPath = generic::GenericClipPath<BasicShape, SpecifiedUrl>;
  
@@ -4291,7 +4291,7 @@ diff -ruN a/values/specified/basic_shape.rs b/values/specified/basic_shape.rs
 +
  /// A specified `shape-outside` value.
  pub type ShapeOutside = generic::GenericShapeOutside<BasicShape, Image>;
-+
+ 
 +/// pyro: a specified value of `border-shape`.
 +pub type BorderShape = generic::GenericBorderShape<BasicShape>;
 +
@@ -4318,16 +4318,17 @@ diff -ruN a/values/specified/basic_shape.rs b/values/specified/basic_shape.rs
 +        }
 +    }
 +}
- 
++
  /// A specified basic shape.
  pub type BasicShape =
-@@ -191,14 +237,16 @@
+     generic::GenericBasicShape<Angle, AxisPosition, Position, LengthPercentage, BasicShapeRect>;
+@@ -191,14 +237,17 @@
              Self::PATH.bits() |
              Self::SHAPE.bits();
  
 -        /// For shape-outside.
-+        /// For shape-outside. pyro: `path()` too (CSS Shapes 2, as Chromium; pyro lays floats
-+        /// out around it).
++        /// For shape-outside. pyro: `path()` and `shape()` too (CSS Shapes 2, as Chromium; pyro
++        /// lays floats out around them).
          const SHAPE_OUTSIDE =
              Self::INSET.bits() |
              Self::XYWH.bits() |
@@ -4336,7 +4337,8 @@ diff -ruN a/values/specified/basic_shape.rs b/values/specified/basic_shape.rs
              Self::ELLIPSE.bits() |
 -            Self::POLYGON.bits();
 +            Self::POLYGON.bits() |
-+            Self::PATH.bits();
++            Self::PATH.bits() |
++            Self::SHAPE.bits();
      }
  }
  

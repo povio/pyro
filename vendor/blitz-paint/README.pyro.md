@@ -1103,3 +1103,5 @@ frame's whole transform, clipped to the content box (upstream applied the transl
   such a box (badges: `inline_entry_owner`, the innermost positioned inline box around them) are skipped by the root
   (`draw_paint_child`) and painted at the box's entry after its text, moved by the sticky offsets of the inline boxes
   around them (`positioned_passes` also follows atomic inline boxes, from their parent). `tests/positioned_inline_paint_order.rs`.
+- Lane F1, `render/form_controls.rs` `draw_input`: a checkbox's or radio's accent is `accent-color` (text `color` for `auto`); a (partly) transparent one is precomposed over the used colour scheme's `Canvas` system colour (CSS UI 4 § 6.1). WPT css-ui `accent-color-*`, `transparent-accent-color-*`. Range and progress are not painted yet. A `:visited` rule's `accent-color` still applies (Chrome ignores it; `accent-color-visited` fails).
+- Lane F1: `render/clip_path.rs` `svg_path_to_bezpath` moved to blitz-dom `shape_path.rs` (shared with `shape-outside` float layout).
