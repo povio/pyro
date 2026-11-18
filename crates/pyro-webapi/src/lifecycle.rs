@@ -197,7 +197,12 @@ pub fn report_exception(s: &Scope<'_>, exception: &JsException) -> bool {
     }
     page.error_reporting.set(true);
     page.error_event_world.set(Some((ev.id, s.realm_id())));
-    let not_canceled = fire(&page, target, &ev);
+    // Every listener runs before the microtasks they queue (the error is
+    // reported inside the script's run, before its clean-up checkpoint).
+    let not_canceled = {
+        let (p, e) = (page.clone(), ev.clone());
+        s.in_script_frame(move |_s| fire(&p, target, &e)).unwrap_or_else(|_| fire(&page, target, &ev))
+    };
     page.error_event_world.set(None);
     page.error_reporting.set(false);
     !not_canceled

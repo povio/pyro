@@ -1578,6 +1578,31 @@ impl<'s> Scope<'s> {
         }
     }
 
+    /// Runs `f` inside a JavaScript frame (a helper calls it), so the
+    /// microtasks the callbacks it invokes queue run when the frame returns,
+    /// not after each callback (JavaScriptCore performs a checkpoint when the
+    /// outermost call returns). HTML "report the error" fires every `error`
+    /// listener before the checkpoint.
+    pub fn in_script_frame<R: 'static>(&self, f: impl for<'a> FnOnce(&Scope<'a>) -> R + 'static) -> JsResult<R> {
+        let f = std::cell::RefCell::new(Some(f));
+        let out: std::rc::Rc<std::cell::RefCell<Option<R>>> = std::rc::Rc::default();
+        let slot = out.clone();
+        let native = self.function("", move |s, _this, _a| {
+            if let Some(f) = f.borrow_mut().take() {
+                *slot.borrow_mut() = Some(f(s));
+            }
+            Ok(s.undefined())
+        })?;
+        let call = self.realm.cached_helper(self, "callWith")?;
+        let called = call.call(None, &[native.value(), self.undefined()]);
+        let result = out.borrow_mut().take();
+        match (result, called) {
+            (Some(r), _) => Ok(r),
+            (None, Err(e)) => Err(e),
+            (None, Ok(_)) => Err(JsError::Type("in_script_frame: the callback did not run".into())),
+        }
+    }
+
     /// Creates a function backed by a Rust closure (may capture state).
     pub fn function(
         &self,

@@ -118,6 +118,27 @@ impl Env {
     }
 }
 
+/// HTML "report the error": every `error` listener runs before the
+/// microtasks they queue (html/semantics/scripting-1/the-script-element/
+/// microtasks/checkpoint-after-window-onerror.html).
+#[test]
+fn error_listeners_run_before_their_microtasks() {
+    let e = env("<body><div id=d></div></body>");
+    let r = &e.main;
+    eval(
+        r,
+        "globalThis.log = []; \
+         addEventListener('error', ev => { ev.preventDefault(); log.push('h1'); Promise.resolve().then(() => log.push('p1')); }); \
+         addEventListener('error', () => { log.push('h2'); Promise.resolve().then(() => log.push('p2')); }); \
+         d.addEventListener('click', () => { throw new Error('x'); });",
+    );
+    // A listener invoked from outside script (no JavaScript on the stack) throws.
+    let d = e.page.dom.borrow().get_element_by_id(e.page.document(), "d").unwrap().unwrap();
+    let ev = pyro_webapi::event::EventCore::trusted(&e.page, pyro_webapi::event::EventInterface::Event, "click", true, false);
+    pyro_webapi::target::fire_at_node(&e.page, d, &ev);
+    assert_eq!(eval(r, "log.join()"), "h1,h2,p1,p2");
+}
+
 #[test]
 fn listener_exception_fires_error_event_at_window_then_reports() {
     let e = env("<body><div id=d></div></body>");

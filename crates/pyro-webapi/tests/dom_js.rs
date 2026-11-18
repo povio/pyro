@@ -6506,6 +6506,21 @@ fn css_rule_interfaces_rule_lists_and_rule_media() {
     e.page.dispose();
 }
 
+/// ImageData is structured-cloneable (html/webappapis/structured-clone).
+#[test]
+fn image_data_structured_clones() {
+    let e = env("<body></body>");
+    assert_eq!(
+        eval(
+            &e.main,
+            "const d = new ImageData(new Uint8ClampedArray([1, 2, 3, 4]), 1, 1); const c = structuredClone(d);
+             [c instanceof ImageData, c !== d, c.data !== d.data, c.width, c.height, c.colorSpace, [...c.data]].join('|')"
+        ),
+        "true|true|true|1|1|srgb|1,2,3,4"
+    );
+    e.page.dispose();
+}
+
 /// CSSOM interface shapes (css/cssom/idlharness.html): StyleSheet carries the
 /// sheet attributes, styles are CSSStyleProperties, required arguments are
 /// required (a bare `deleteRule()` must not delete rule 0), and an `@import`
