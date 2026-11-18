@@ -351,3 +351,68 @@ fn trusted_types_guard_eval_and_function() {
         "ok,EvalError"
     );
 }
+
+/// Length attributes are `SVGAnimatedLength`s whose `SVGLength`s reflect the attribute: units,
+/// `value` in user units (percentages of the nearest `svg` viewBox, `em` of the font size),
+/// `valueAsString`, `newValueSpecifiedUnits`, `convertToSpecifiedUnits`, initial values, and a
+/// read-only `animVal`. rect/circle/ellipse/line are SVGGeometryElements.
+#[test]
+fn length_attributes_reflect_as_svg_lengths() {
+    let env = Env::new("http://svg.test/");
+    assert_eq!(
+        env.eval(
+            r##"(() => {
+              const ns = "http://www.w3.org/2000/svg";
+              const svg = document.createElementNS(ns, "svg");
+              svg.setAttribute("viewBox", "0 0 200 100");
+              const rect = document.createElementNS(ns, "rect");
+              svg.appendChild(rect);
+              document.body.appendChild(svg);
+              const out = [rect instanceof SVGGeometryElement, rect instanceof SVGGraphicsElement, rect.width === rect.width, rect.width.baseVal === rect.width.baseVal];
+              rect.setAttribute("width", "50%");
+              const w = rect.width.baseVal;
+              out.push(w.unitType === SVGLength.SVG_LENGTHTYPE_PERCENTAGE, w.valueInSpecifiedUnits, w.value, w.valueAsString);
+              w.newValueSpecifiedUnits(SVGLength.SVG_LENGTHTYPE_IN, 1);
+              out.push(rect.getAttribute("width"), w.value);
+              w.convertToSpecifiedUnits(SVGLength.SVG_LENGTHTYPE_PX);
+              out.push(rect.getAttribute("width"));
+              w.valueAsString = "2cm";
+              out.push(w.unitType, rect.width.animVal.valueAsString);
+              try { w.valueAsString = "nope"; out.push("no throw"); } catch (e) { out.push(e.name); }
+              try { rect.width.animVal.value = 3; out.push("no throw"); } catch (e) { out.push(e.name); }
+              rect.setAttribute("rx", "2em");
+              out.push(rect.rx.baseVal.value);
+              w.value = 10;
+              out.push(rect.getAttribute("width"));
+              const filter = document.createElementNS(ns, "filter");
+              out.push(filter.x.baseVal.valueAsString, filter.width.baseVal.valueAsString);
+              out.push(document.createElementNS(ns, "feFlood").height.baseVal.valueAsString);
+              out.push(document.createElementNS(ns, "circle").r.baseVal.unitType);
+              return out.join("|");
+            })()"##
+        ),
+        "true|true|true|true|true|50|100|50%|1in|96|96px|6|2cm|SyntaxError|NoModificationAllowedError|32|0.26458332cm|-10%|120%|100%|1"
+    );
+}
+
+/// `color-mix()` percentages that sum to zero mix the colors equally into a fully transparent color
+/// (css-color-5), rather than transparent black (WPT css-color color-computed-color-mix-function).
+#[test]
+fn color_mix_with_zero_percentages_is_an_equal_transparent_mix() {
+    let env = Env::new("http://color.test/");
+    assert_eq!(
+        env.eval(
+            r#"(() => {
+              const el = document.createElement("div");
+              document.body.appendChild(el);
+              const out = [];
+              for (const v of ["color-mix(in srgb, red 0%, blue 0%)", "color-mix(in srgb, red calc(0%), blue calc(0%))", "color-mix(in srgb, red 50%, blue 50%)"]) {
+                el.style.color = v;
+                out.push(getComputedStyle(el).color);
+              }
+              return out.join("|");
+            })()"#
+        ),
+        "color(srgb 0.5 0 0.5 / 0)|color(srgb 0.5 0 0.5 / 0)|color(srgb 0.5 0 0.5)"
+    );
+}

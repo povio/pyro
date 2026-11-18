@@ -172,11 +172,12 @@ pub fn mix_many(
     items: impl IntoIterator<Item = ColorMixItem>,
     flags: ColorMixFlags,
 ) -> AbsoluteColor {
-    let items = items.into_iter().collect::<ColorMixItemList<_>>();
+    let mut items = items.into_iter().collect::<ColorMixItemList<_>>();
 
     // Convert a mix result into the syntax required by the flags:
     // - modern syntax when requested (converting legacy spaces like hsl/hwb to srgb), otherwise;
     // - legacy srgb when every mixed color used legacy syntax.
+    let all_legacy = items.iter().all(|item| item.color.is_legacy_syntax());
     let finalize = |result: AbsoluteColor| -> AbsoluteColor {
         if flags.contains(ColorMixFlags::RESULT_IN_MODERN_SYNTAX) {
             if result.is_legacy_syntax() {
@@ -188,7 +189,7 @@ pub fn mix_many(
             } else {
                 result
             }
-        } else if items.iter().all(|item| item.color.is_legacy_syntax()) {
+        } else if all_legacy {
             result.into_srgb_legacy()
         } else {
             result
@@ -207,9 +208,14 @@ pub fn mix_many(
         // https://drafts.csswg.org/css-color-5/#color-mix-percent-norm
         let sum: f32 = items.iter().map(|item| item.weight).sum();
         if sum == 0.0 {
-            return finalize(AbsoluteColor::TRANSPARENT_BLACK.to_color_space(interpolation.space));
-        }
-        if (sum - 1.0).abs() > f32::EPSILON {
+            // pyro: percentages that sum to zero mix the colors equally into a fully transparent
+            // result (css-color-5 "normalize mix percentages": the alpha multiplier is the sum).
+            let equal = 1.0 / items.len() as f32;
+            for item in items.iter_mut() {
+                item.weight = equal;
+            }
+            alpha_multiplier = 0.0;
+        } else if (sum - 1.0).abs() > f32::EPSILON {
             weight_scale = 1.0 / sum;
             if sum < 1.0 {
                 alpha_multiplier = sum;
