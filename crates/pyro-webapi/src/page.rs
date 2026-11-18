@@ -45,6 +45,10 @@ pub struct PageDom {
     pub dom: DomRef,
     id: u64,
     disposed: Cell<bool>,
+    /// Navigations of the document's frame this document started (links,
+    /// forms, `location`, `navigation.navigate`): a form submission whose
+    /// `formdata` event started one is dropped (`form_submission`).
+    navigation_requests: Cell<u32>,
     document: Cell<NodeId>,
     scripting_disabled: Cell<bool>,
     /// The document's origin is opaque although its URL's is not (a sandboxed
@@ -656,6 +660,7 @@ impl PageDom {
             dom,
             id: NEXT_PAGE.fetch_add(1, Ordering::Relaxed),
             disposed: Cell::new(false),
+            navigation_requests: Cell::new(0),
             document: Cell::new(document),
             scripting_disabled: Cell::new(false),
             opaque_origin: Cell::new(false),
@@ -1713,7 +1718,19 @@ impl PageDom {
             h.download(request);
         }
     }
+    /// The embedder started a navigation of this document's frame on the
+    /// document's behalf (script `location`/`navigation.navigate`), outside
+    /// [`PageDom::navigate`].
+    pub fn note_navigation_request(&self) {
+        self.navigation_requests.set(self.navigation_requests.get().wrapping_add(1));
+    }
+    pub(crate) fn navigation_requests(&self) -> u32 {
+        self.navigation_requests.get()
+    }
     pub(crate) fn navigate(&self, req: NavigationRequest) {
+        if req.target.as_deref().is_none_or(|t| t.is_empty() || t.eq_ignore_ascii_case("_self")) {
+            self.note_navigation_request();
+        }
         if self.scripting_disabled() && pyro_net::Url::parse(&req.url).is_ok_and(|url| url.scheme() == "javascript") {
             return;
         }

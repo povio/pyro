@@ -455,6 +455,9 @@ impl PageNav {
     }
 
     fn navigate(&self, url: String, history: HistoryHandling) {
+        if let Some(page) = self.page_dom.borrow().upgrade() {
+            page.note_navigation_request();
+        }
         let sequence = self.script_navigation.get().wrapping_add(1);
         self.script_navigation.set(sequence);
         let page = self.page;

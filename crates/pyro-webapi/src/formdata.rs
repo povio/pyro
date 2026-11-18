@@ -375,7 +375,14 @@ pub(crate) fn form_submission(
         };
         (form_encoding(&dom, form), method)
     };
+    let navigations = page.navigation_requests();
     let entries = submission_entries(page, form, submitter, enc.name())?;
+    // A `formdata` listener that navigated the document's frame itself
+    // (`navigation.navigate`, `location`) supersedes the submission, as in
+    // Chromium: the form does not navigate after it.
+    if page.navigation_requests() != navigations {
+        return None;
+    }
     let dom = page.dom.borrow();
     // A `formdata` listener can disconnect the form: it cannot navigate.
     if !dom.is_connected(form).unwrap_or(false) {

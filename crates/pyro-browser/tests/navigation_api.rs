@@ -140,3 +140,37 @@ fn navigate_and_traverse_promises() {
     settle(&mut t);
     assert_eq!(eval(&t, page, "typeof marker + ' ' + !!document.getElementById('other')"), "undefined true");
 }
+
+/// navigation-api/navigate-event/navigate-form-onformdata-navigate-crash.html:
+/// a navigation the `formdata` listener starts supersedes the form's own
+/// submission, as in Chromium (which never sends the POST). Before, the form
+/// POSTed after it, so a page submitting itself on load never stopped.
+#[test]
+fn a_navigation_from_formdata_supersedes_the_submission() {
+    let (mut t, page, loader) = load(APP);
+    loader.insert("http://site.test/posted", "text/html", "<p id=posted>posted</p>", Duration::ZERO);
+    eval(
+        &t,
+        page,
+        "const f = document.createElement('form'); f.method = 'POST'; f.action = '/posted'; \
+         f.onformdata = () => navigation.navigate('/other'); document.body.append(f); f.requestSubmit();",
+    );
+    settle(&mut t);
+    assert_eq!(eval(&t, page, "location.pathname + '|' + !!document.getElementById('other')"), "/other|true");
+    let log = loader.log.borrow().join(" ");
+    assert!(!log.contains("posted"), "the form did not submit after the formdata navigation: {log}");
+}
+
+#[test]
+fn a_formdata_listener_that_does_not_navigate_keeps_the_submission() {
+    let (mut t, page, loader) = load(APP);
+    loader.insert("http://site.test/posted", "text/html", "<p id=posted>posted</p>", Duration::ZERO);
+    eval(
+        &t,
+        page,
+        "const f = document.createElement('form'); f.method = 'POST'; f.action = '/posted'; \
+         f.onformdata = e => e.formData.append('a', '1'); document.body.append(f); f.requestSubmit();",
+    );
+    settle(&mut t);
+    assert_eq!(eval(&t, page, "location.pathname + '|' + !!document.getElementById('posted')"), "/posted|true");
+}
