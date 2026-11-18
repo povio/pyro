@@ -18,8 +18,9 @@ export const PAINT_DIRS = [
 // constraint validation, text selection, form submission); css/cssom: 270 pages (CSSOM, getComputedStyle);
 // css/css-cascade: 106 pages (cascade layers, @scope, revert). Their reftests run in LAYOUT_DIRS too. trusted-types:
 // 207 pages (policies, HTML/script/attribute sinks, eval and Function with JSC patch 0035, violation reports; lane
-// F3a), less the pages in TESTHARNESS_SKIP.
-export const FEATURE_DIRS = ['custom-elements', 'css/css-font-loading', 'css/css-typed-om', 'html/semantics/embedded-content/the-object-element', 'intersection-observer', 'workers', 'scroll-animations', 'css/css-scroll-snap', 'css/css-shapes', 'html/semantics/forms', 'css/cssom', 'css/css-cascade', 'trusted-types'];
+// F3a), less the pages in TESTHARNESS_SKIP. navigation-api: the Navigation API (lane F3b), less its pages that time
+// out (TESTHARNESS_SKIP).
+export const FEATURE_DIRS = ['custom-elements', 'css/css-font-loading', 'css/css-typed-om', 'html/semantics/embedded-content/the-object-element', 'intersection-observer', 'workers', 'scroll-animations', 'css/css-scroll-snap', 'css/css-shapes', 'html/semantics/forms', 'css/cssom', 'css/css-cascade', 'trusted-types', 'navigation-api'];
 export const DEFAULT_DIRS = [
   'dom', 'html/dom', 'encoding', 'url', 'fetch/api/basic', 'xhr', 'css/selectors', 'uievents', 'shadow-dom', 'webstorage',
   ...PAINT_DIRS,
@@ -96,6 +97,87 @@ export const TESTHARNESS_SKIP = [
   'trusted-types/trusted-types-navigation.html',
   'trusted-types/trusted-types-reporting.html',
 ].map((path) => ({ path, why: CONNECT_SRC_MARKER }));
+
+//   navigation-api/: pages that time out (lane F3b, measured with the gate's static server; each costs the page timeout).
+const NAV_CROSS = "cross-window and cross-origin navigations: the static server has no other origins, and a same-origin frame's initial about:blank Window is not reused by its first document";
+const NAV_BFCACHE = 'needs the back/forward cache';
+const NAV_OTHER = 'times out in pyro (lane F3b leftover: javascript:/srcdoc/meta refresh/history.go(0), reentrant intercepts, multi-frame traversal, sandboxed back)';
+const NAV_DOWNLOAD = 'needs downloads (anchor download attribute)';
+const NAV_FORM = 'form submission navigate events (formData, reload, traversal, targets) not done';
+const NAV_DETACH = 'an iframe removed during a traversal or navigate event: the traversal never settles';
+const NAVIGATION_API_SKIP = [
+  ['navigation-api/navigate-event/cross-window/click-crossdocument-crossorigin.html', NAV_CROSS],
+  ['navigation-api/navigate-event/cross-window/click-samedocument-crossorigin.html', NAV_CROSS],
+  ['navigation-api/navigate-event/cross-window/click-samedocument-sameorigin.html', NAV_CROSS],
+  ['navigation-api/navigate-event/cross-window/location-crossdocument-crossorigin.html', NAV_CROSS],
+  ['navigation-api/navigate-event/cross-window/location-crossdocument-sameorigin.html', NAV_CROSS],
+  ['navigation-api/navigate-event/cross-window/location-samedocument-crossorigin.html', NAV_CROSS],
+  ['navigation-api/navigate-event/cross-window/location-samedocument-sameorigin.html', NAV_CROSS],
+  ['navigation-api/navigate-event/cross-window/open-crossdocument-crossorigin.html', NAV_CROSS],
+  ['navigation-api/navigate-event/cross-window/open-crossdocument-sameorigin.html', NAV_CROSS],
+  ['navigation-api/navigate-event/cross-window/open-samedocument-crossorigin.html', NAV_CROSS],
+  ['navigation-api/navigate-event/cross-window/open-samedocument-sameorigin.html', NAV_CROSS],
+  ['navigation-api/navigate-event/cross-window/submit-crossdocument-crossorigin.html', NAV_CROSS],
+  ['navigation-api/navigate-event/cross-window/submit-crossdocument-sameorigin.html', NAV_CROSS],
+  ['navigation-api/navigate-event/cross-window/submit-samedocument-crossorigin.html', NAV_CROSS],
+  ['navigation-api/navigate-event/cross-window/submit-samedocument-sameorigin.html', NAV_CROSS],
+  ['navigation-api/navigate-event/defer/tentative/defer-cross-origin.html', NAV_CROSS],
+  ['navigation-api/navigate-event/navigate-navigation-navigate-cross-site-preventDefault.html', NAV_CROSS],
+  ['navigation-api/navigation-history-entry/entries-across-origins.html', NAV_CROSS],
+  ['navigation-api/navigation-history-entry/key-id-location-replace-cross-origin.html', NAV_CROSS],
+  ['navigation-api/navigation-methods/navigate-replace-cross-site.html', NAV_CROSS],
+  ['navigation-api/navigate-event/dangling-navigate-event-after-bfcache-restore.html', NAV_BFCACHE],
+  ['navigation-api/navigate-event/defer/tentative/restore-after-bfcache.html', NAV_BFCACHE],
+  ['navigation-api/navigate-event/intercepted-navigation-after-bfcache-restore.html', NAV_BFCACHE],
+  ['navigation-api/navigate-event/navigate-history-back-bfcache.html', NAV_BFCACHE],
+  ['navigation-api/navigation-activation/activation-after-bfcache-cross-origin-clears-from.html', NAV_BFCACHE],
+  ['navigation-api/navigation-activation/activation-after-bfcache-cross-origin.html', NAV_BFCACHE],
+  ['navigation-api/navigation-activation/activation-after-bfcache.html', NAV_BFCACHE],
+  ['navigation-api/navigation-history-entry/entries-after-bfcache-in-iframe.html', NAV_BFCACHE],
+  ['navigation-api/navigation-history-entry/entries-after-bfcache.html', NAV_BFCACHE],
+  ['navigation-api/per-entry-events/dispose-after-bfcache.html', NAV_BFCACHE],
+  ['navigation-api/navigate-event/defer/tentative/defer-restore-callback-abort.html', NAV_OTHER],
+  ['navigation-api/navigate-event/defer/tentative/defer-same-document.html', NAV_OTHER],
+  ['navigation-api/navigate-event/navigate-anchor-same-origin-cross-document.html', NAV_OTHER],
+  ['navigation-api/navigate-event/navigate-history-go-0.html', NAV_OTHER],
+  ['navigation-api/navigate-event/navigate-meta-refresh.html', NAV_OTHER],
+  ['navigation-api/navigate-event/navigate-svg-anchor-fragment.html', NAV_OTHER],
+  ['navigation-api/navigate-event/navigate-to-javascript.html', NAV_OTHER],
+  ['navigation-api/navigate-event/navigate-to-srcdoc.html', NAV_OTHER],
+  ['navigation-api/navigate-event/navigation-traverseTo-navigates-top-and-same-doc-child-and-cross-doc-child.html', NAV_OTHER],
+  ['navigation-api/navigate-event/replaceState-inside-back-handler-infinite.optional.html', NAV_OTHER],
+  ['navigation-api/navigate-event/signal-abort-reentry-navigate-api-tracker.html', NAV_OTHER],
+  ['navigation-api/navigate-event/signal-abort-window-stop-in-onnavigate.html', NAV_OTHER],
+  ['navigation-api/navigation-history-entry/entries-after-javascript-url-navigation.html', NAV_OTHER],
+  ['navigation-api/navigation-methods/back-forward-multiple-frames.html', NAV_OTHER],
+  ['navigation-api/navigation-methods/forward-to-pruned-entry.html', NAV_OTHER],
+  ['navigation-api/navigation-methods/return-value/navigate-file-url.html', NAV_OTHER],
+  ['navigation-api/navigation-methods/sandboxing-back-parent.html', NAV_OTHER],
+  ['navigation-api/navigation-methods/sandboxing-back-sibling.html', NAV_OTHER],
+  ['navigation-api/ordering-and-transition/location-href-intercept-reentrant.html', NAV_OTHER],
+  ['navigation-api/ordering-and-transition/navigate-intercept-precommitHandler-reject.tentative.html', NAV_OTHER],
+  ['navigation-api/ordering-and-transition/navigate-intercept-stop.html', NAV_OTHER],
+  ['navigation-api/ordering-and-transition/transition-to.html', NAV_OTHER],
+  ['navigation-api/per-entry-events/dispose-for-full-session-history.tentative.html', NAV_OTHER],
+  ['navigation-api/per-entry-events/dispose-skip-current-on-truncate.html', NAV_OTHER],
+  ['navigation-api/precommit-handler/precommitHandler-javascript-url-before-commit.html', NAV_OTHER],
+  ['navigation-api/state/cross-document-away-and-back.html', NAV_OTHER],
+  ['navigation-api/navigate-event/navigate-anchor-download.html', NAV_DOWNLOAD],
+  ['navigation-api/ordering-and-transition/anchor-download-intercept-reject.html', NAV_DOWNLOAD],
+  ['navigation-api/ordering-and-transition/anchor-download-intercept.html', NAV_DOWNLOAD],
+  ['navigation-api/navigate-event/navigate-form-reload.html', NAV_FORM],
+  ['navigation-api/navigate-event/navigate-form-requestSubmit.html', NAV_FORM],
+  ['navigation-api/navigate-event/navigate-form-traverse.html', NAV_FORM],
+  ['navigation-api/navigate-event/navigate-form-with-target.html', NAV_FORM],
+  ['navigation-api/navigate-event/navigate-form.html', NAV_FORM],
+  ['navigation-api/navigation-methods/return-value/reload-detach-in-onnavigate.html', NAV_DETACH],
+  ['navigation-api/navigation-methods/return-value/traverseTo-detach-cross-document-before-navigate-event.html', NAV_DETACH],
+  ['navigation-api/navigation-methods/return-value/traverseTo-detach-cross-document.html', NAV_DETACH],
+  ['navigation-api/navigation-methods/return-value/traverseTo-detach-same-document-before-navigate-event.html', NAV_DETACH],
+  ['navigation-api/navigation-methods/traverseTo-detach-between-navigate-and-navigatesuccess.html', NAV_DETACH],
+  ['navigation-api/per-entry-events/dispose-for-navigation-in-sibling-detach-frame.html', NAV_DETACH],
+].map(([path, why]) => ({ path, why }));
+TESTHARNESS_SKIP.push(...NAVIGATION_API_SKIP);
 
 // Every testharness page under `dirs` that our static server can run, one entry per variant.
 // `excluded` counts what was left out and why (identical for every binary).

@@ -23,6 +23,7 @@ intersection-observer/
 workers/
 scroll-animations/
 trusted-types/
+navigation-api/
 # Paint directories (lib.mjs PAINT_DIRS). Both kinds run every directory above and below: run.mjs runs their testharness
 # pages, run.mjs --kind reftest their reftests.
 css/css-backgrounds/
