@@ -408,3 +408,23 @@ fn a_broken_image_shows_its_alt_text() {
     assert!(ink(&format!("<img alt='Broken' {style}>")) > 100, "no source");
     assert_eq!(ink(&format!("<img src='missing.png' alt='' {style}>")), 0, "empty alt");
 }
+
+/// A broken image draws Chromium's broken-image icon: before its alt text, and, given a size
+/// without alt text, 2px inside a 1px rgb(192, 192, 192) border round its box (measured in
+/// Chrome 2026-11-18). Neither was drawn.
+#[test]
+fn a_broken_image_draws_the_broken_image_icon() {
+    let img = render(
+        "<img src='missing.png' width=100 height=40 style='position:absolute;left:10px;top:10px'>\
+         <img src='missing.png' alt='Text' style='position:absolute;left:10px;top:100px;font:16px serif'>",
+        1.0,
+    );
+    let at = |x: f64, y: f64| pixel(&img, 1.0, x, y);
+    assert_eq!(at(50.0, 10.0), [192, 192, 192], "the border's top");
+    assert_eq!(at(10.0, 30.0), [192, 192, 192], "the border's left");
+    assert_eq!(at(109.0, 30.0), [192, 192, 192], "the border's right");
+    // The icon's grass (green) near its bottom left corner, in both.
+    let green = |p: [u8; 3]| p[1] > 120 && p[0] < 150 && p[2] < 150;
+    assert!((0..16).any(|d| green(at(12.0 + f64::from(d), 25.0))), "icon in the sized box");
+    assert!((0..16).any(|d| green(at(10.0 + f64::from(d), 113.0))), "icon before the alt text");
+}

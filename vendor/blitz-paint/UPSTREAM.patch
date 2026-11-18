@@ -406,6 +406,81 @@ new file mode 100644
 +        assert!(!fold_opacity(&mut layered.commands, 0.5));
 +    }
 +}
+diff --git a/packages/blitz-paint/src/broken_image_icon.rs b/packages/blitz-paint/src/broken_image_icon.rs
+new file mode 100644
+--- /dev/null
++++ b/packages/blitz-paint/src/broken_image_icon.rs
+@@ -0,0 +1,70 @@
++//! pyro: Chromium's 16x16 broken-image icon (its `IDR_BROKENIMAGE` resource, Chromium BSD licence)
++//! as Chrome draws it at 1x, captured over white and over black to recover its alpha: RGBA8,
++//! straight alpha, row by row.
++
++pub(crate) const BROKEN_IMAGE_16: [u8; 1024] = [
++    0xad, 0xaf, 0xb2, 0xff, 0xc0, 0xc4, 0xcb, 0xff, 0xc2, 0xc6, 0xcd, 0xff, 0xc2, 0xc6, 0xcd, 0xff,
++    0xc2, 0xc6, 0xcd, 0xff, 0xc2, 0xc6, 0xcd, 0xff, 0xc2, 0xc6, 0xcd, 0xff, 0xc2, 0xc6, 0xcd, 0xff,
++    0xc2, 0xc6, 0xcd, 0xff, 0xc2, 0xc6, 0xcd, 0xff, 0xbc, 0xbf, 0xc5, 0xff, 0xa2, 0xa2, 0xa4, 0xb0,
++    0x96, 0x96, 0x96, 0x22, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
++    0xb8, 0xbd, 0xc6, 0xff, 0xd1, 0xdf, 0xf6, 0xff, 0xd3, 0xe2, 0xfb, 0xff, 0xd3, 0xe2, 0xfb, 0xff,
++    0xd3, 0xe2, 0xfb, 0xff, 0xd3, 0xe2, 0xfb, 0xff, 0xd3, 0xe2, 0xfb, 0xff, 0xd3, 0xe2, 0xfb, 0xff,
++    0xd3, 0xe2, 0xfb, 0xff, 0xd3, 0xe2, 0xfb, 0xff, 0xd0, 0xdb, 0xec, 0xff, 0xd6, 0xd7, 0xda, 0xff,
++    0xc5, 0xc5, 0xc7, 0xc7, 0x98, 0x98, 0x98, 0x2a, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
++    0xb5, 0xbc, 0xc5, 0xff, 0xcc, 0xdc, 0xf5, 0xff, 0xce, 0xdf, 0xf9, 0xff, 0xce, 0xdf, 0xf9, 0xff,
++    0xce, 0xdf, 0xf9, 0xff, 0xce, 0xdf, 0xf9, 0xff, 0xce, 0xdf, 0xf9, 0xff, 0xce, 0xdf, 0xf9, 0xff,
++    0xce, 0xdf, 0xf9, 0xff, 0xce, 0xdf, 0xf9, 0xff, 0xcd, 0xd9, 0xeb, 0xff, 0xdd, 0xde, 0xe0, 0xff,
++    0xf4, 0xf4, 0xf4, 0xff, 0xce, 0xce, 0xce, 0xde, 0x98, 0x98, 0x98, 0x39, 0x00, 0x00, 0x00, 0x00,
++    0xb4, 0xba, 0xc5, 0xff, 0xcb, 0xda, 0xf4, 0xff, 0xcd, 0xdd, 0xf8, 0xff, 0xd6, 0xe3, 0xf9, 0xff,
++    0xf1, 0xf5, 0xfd, 0xff, 0xfc, 0xfd, 0xff, 0xff, 0xef, 0xf4, 0xfc, 0xff, 0xd1, 0xe0, 0xf8, 0xff,
++    0xcd, 0xdd, 0xf8, 0xff, 0xcd, 0xdd, 0xf8, 0xff, 0xcd, 0xd8, 0xeb, 0xff, 0xdc, 0xdd, 0xe0, 0xff,
++    0xf8, 0xf8, 0xf9, 0xff, 0xf4, 0xf4, 0xf5, 0xff, 0xd4, 0xd4, 0xd4, 0xef, 0x97, 0x97, 0x97, 0x51,
++    0xb4, 0xba, 0xc4, 0xff, 0xc9, 0xd9, 0xf3, 0xff, 0xd4, 0xe1, 0xf9, 0xff, 0xf0, 0xf4, 0xfd, 0xff,
++    0xfe, 0xfe, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xfd, 0xfd, 0xff, 0xff, 0xe4, 0xec, 0xfb, 0xff,
++    0xcc, 0xdc, 0xf7, 0xff, 0xcb, 0xdb, 0xf7, 0xff, 0xcd, 0xda, 0xf0, 0xff, 0xbb, 0xc1, 0xca, 0xff,
++    0xb9, 0xbd, 0xc4, 0xff, 0xb9, 0xbd, 0xc4, 0xff, 0xb8, 0xbb, 0xc2, 0xff, 0xa8, 0xa9, 0xac, 0xff,
++    0xb3, 0xb8, 0xc3, 0xff, 0xcd, 0xdc, 0xf3, 0xff, 0xf5, 0xf8, 0xfd, 0xff, 0xff, 0xff, 0xff, 0xff,
++    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xfa, 0xfc, 0xfe, 0xff,
++    0xcb, 0xdc, 0xf6, 0xff, 0xc9, 0xdb, 0xf6, 0xff, 0xca, 0xdc, 0xf6, 0xff, 0xcd, 0xdd, 0xf6, 0xff,
++    0xce, 0xde, 0xf6, 0xff, 0xce, 0xde, 0xf6, 0xff, 0xcc, 0xdb, 0xf2, 0xff, 0xb4, 0xb9, 0xc3, 0xff,
++    0xb2, 0xb7, 0xc2, 0xff, 0xcc, 0xda, 0xf2, 0xff, 0xe0, 0xe9, 0xf9, 0xff, 0xe3, 0xeb, 0xfa, 0xff,
++    0xe3, 0xeb, 0xfa, 0xff, 0xe3, 0xeb, 0xfa, 0xff, 0xe2, 0xeb, 0xfa, 0xff, 0xd6, 0xe3, 0xf8, 0xff,
++    0xc8, 0xd9, 0xf5, 0xff, 0xc8, 0xd8, 0xf5, 0xff, 0xc8, 0xd8, 0xf5, 0xff, 0xc8, 0xd8, 0xf5, 0xff,
++    0xc8, 0xd8, 0xf5, 0xff, 0xc8, 0xd8, 0xf5, 0xff, 0xc6, 0xd6, 0xf1, 0xff, 0xb2, 0xb7, 0xc2, 0xff,
++    0xb0, 0xb6, 0xc2, 0xff, 0xc4, 0xd5, 0xf0, 0xff, 0xc6, 0xd7, 0xf4, 0xff, 0xc6, 0xd7, 0xf4, 0xff,
++    0xc6, 0xd7, 0xf4, 0xff, 0xc6, 0xd7, 0xf4, 0xff, 0xc6, 0xd7, 0xf4, 0xff, 0xc6, 0xd7, 0xf4, 0xff,
++    0xc6, 0xd7, 0xf4, 0xff, 0xc6, 0xd7, 0xf4, 0xff, 0xc6, 0xd7, 0xf4, 0xff, 0xc6, 0xd7, 0xf4, 0xff,
++    0xc6, 0xd7, 0xf4, 0xff, 0xc6, 0xd7, 0xf4, 0xff, 0xc4, 0xd5, 0xf0, 0xff, 0xb0, 0xb6, 0xc2, 0xff,
++    0xaf, 0xb5, 0xc0, 0xff, 0xc2, 0xd3, 0xef, 0xff, 0xc4, 0xd5, 0xf3, 0xff, 0xc4, 0xd5, 0xf3, 0xff,
++    0xc4, 0xd5, 0xf3, 0xff, 0xc4, 0xd5, 0xf3, 0xff, 0xc4, 0xd5, 0xf3, 0xff, 0xc4, 0xd5, 0xf3, 0xff,
++    0xc4, 0xd5, 0xf3, 0xff, 0xc4, 0xd5, 0xf3, 0xff, 0xc4, 0xd5, 0xf3, 0xff, 0xc4, 0xd5, 0xf3, 0xff,
++    0xc4, 0xd5, 0xf3, 0xff, 0xc4, 0xd5, 0xf3, 0xff, 0xc5, 0xd6, 0xf4, 0xec, 0xd6, 0xe4, 0xfa, 0x38,
++    0xae, 0xb4, 0xbf, 0xff, 0xc0, 0xd1, 0xee, 0xff, 0xc2, 0xd4, 0xf2, 0xff, 0xc2, 0xd4, 0xf2, 0xff,
++    0xc2, 0xd4, 0xf2, 0xff, 0xc2, 0xd4, 0xf2, 0xff, 0xc1, 0xd4, 0xf0, 0xff, 0xb7, 0xd0, 0xdf, 0xff,
++    0xbc, 0xd2, 0xe7, 0xff, 0xc1, 0xd4, 0xf1, 0xff, 0xc2, 0xd4, 0xf2, 0xff, 0xc2, 0xd4, 0xf2, 0xff,
++    0xc2, 0xd4, 0xf2, 0xff, 0xc2, 0xd4, 0xf2, 0xd9, 0xbd, 0xd3, 0xf0, 0x23, 0x00, 0x00, 0x00, 0x00,
++    0xad, 0xb3, 0xbe, 0xff, 0xbf, 0xcf, 0xec, 0xff, 0xc0, 0xd2, 0xf0, 0xff, 0xc0, 0xd2, 0xf0, 0xff,
++    0xb6, 0xcf, 0xde, 0xff, 0x8c, 0xc0, 0x95, 0xff, 0x62, 0xb1, 0x4b, 0xff, 0x58, 0xae, 0x39, 0xff,
++    0x5a, 0xae, 0x3c, 0xff, 0x75, 0xb8, 0x6b, 0xff, 0xa7, 0xc9, 0xc3, 0xff, 0xbe, 0xd1, 0xec, 0xff,
++    0xc0, 0xd2, 0xf0, 0xbd, 0xbc, 0xd3, 0xe9, 0x17, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
++    0xab, 0xb2, 0xbd, 0xff, 0xbd, 0xce, 0xeb, 0xff, 0xbe, 0xd0, 0xef, 0xff, 0xa7, 0xc8, 0xc6, 0xff,
++    0x6f, 0xb6, 0x62, 0xff, 0x58, 0xae, 0x39, 0xff, 0x58, 0xae, 0x39, 0xff, 0x58, 0xae, 0x39, 0xff,
++    0x58, 0xae, 0x39, 0xff, 0x58, 0xae, 0x39, 0xff, 0x5c, 0xaf, 0x40, 0xff, 0x88, 0xbe, 0x8d, 0xa1,
++    0xbc, 0xc9, 0xe4, 0x13, 0x00, 0x00, 0x00, 0x00, 0xa1, 0xa1, 0xae, 0x13, 0xa0, 0xa4, 0xac, 0xc7,
++    0xaa, 0xb1, 0xbc, 0xff, 0xbc, 0xcd, 0xea, 0xff, 0xa6, 0xc7, 0xc5, 0xff, 0x69, 0xb4, 0x58, 0xff,
++    0x58, 0xae, 0x39, 0xff, 0x58, 0xae, 0x39, 0xff, 0x58, 0xae, 0x39, 0xff, 0x58, 0xae, 0x39, 0xff,
++    0x58, 0xae, 0x39, 0xff, 0x58, 0xae, 0x39, 0xff, 0x58, 0xae, 0x3a, 0x85, 0x5b, 0xb6, 0x37, 0x0e,
++    0x00, 0x00, 0x00, 0x00, 0xbe, 0xcb, 0xeb, 0x27, 0xbc, 0xcd, 0xe9, 0xdc, 0xaa, 0xb1, 0xbc, 0xff,
++    0xa9, 0xb0, 0xbc, 0xff, 0xac, 0xc6, 0xd1, 0xff, 0x69, 0xb3, 0x58, 0xff, 0x58, 0xae, 0x3a, 0xff,
++    0x58, 0xae, 0x39, 0xff, 0x58, 0xae, 0x39, 0xff, 0x58, 0xae, 0x39, 0xff, 0x58, 0xae, 0x39, 0xff,
++    0x58, 0xae, 0x39, 0xff, 0x57, 0xaf, 0x38, 0x69, 0x66, 0xb3, 0x33, 0x0a, 0x00, 0x00, 0x00, 0x00,
++    0x7c, 0xb9, 0x7c, 0x42, 0xa6, 0xc6, 0xc7, 0xe8, 0xb9, 0xca, 0xe9, 0xff, 0xa9, 0xb0, 0xbc, 0xff,
++    0xa4, 0xae, 0xb5, 0xff, 0x70, 0xb4, 0x64, 0xff, 0x5a, 0xaf, 0x3d, 0xff, 0x58, 0xae, 0x39, 0xff,
++    0x58, 0xae, 0x39, 0xff, 0x58, 0xae, 0x39, 0xff, 0x58, 0xae, 0x39, 0xff, 0x58, 0xae, 0x39, 0xf9,
++    0x58, 0xad, 0x38, 0x4e, 0x55, 0xaa, 0x2b, 0x06, 0x00, 0x00, 0x00, 0x00, 0x57, 0xae, 0x39, 0x5e,
++    0x59, 0xae, 0x3a, 0xec, 0x6c, 0xb4, 0x5e, 0xff, 0xaf, 0xc7, 0xd7, 0xff, 0xa8, 0xaf, 0xbb, 0xff,
++    0x7e, 0x8c, 0x7d, 0xff, 0x68, 0x91, 0x5b, 0xff, 0x66, 0x91, 0x57, 0xff, 0x66, 0x91, 0x57, 0xff,
++    0x66, 0x91, 0x57, 0xff, 0x66, 0x91, 0x57, 0xff, 0x66, 0x92, 0x56, 0xec, 0x5a, 0xaf, 0x39, 0x36,
++    0x80, 0x80, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x6f, 0x80, 0x6b, 0x7a, 0x67, 0x8f, 0x59, 0xf1,
++    0x66, 0x91, 0x57, 0xff, 0x68, 0x92, 0x5a, 0xff, 0x7a, 0x98, 0x78, 0xff, 0x8e, 0x94, 0x97, 0xff,
++];
 diff --git a/packages/blitz-paint/src/debug_overlay.rs b/packages/blitz-paint/src/debug_overlay.rs
 --- a/packages/blitz-paint/src/debug_overlay.rs
 +++ b/packages/blitz-paint/src/debug_overlay.rs
@@ -4483,9 +4558,11 @@ diff --git a/packages/blitz-paint/src/layers.rs b/packages/blitz-paint/src/layer
 diff --git a/packages/blitz-paint/src/lib.rs b/packages/blitz-paint/src/lib.rs
 --- a/packages/blitz-paint/src/lib.rs
 +++ b/packages/blitz-paint/src/lib.rs
-@@ -4,12 +4,15 @@
+@@ -3,13 +3,17 @@
+ 
  #![allow(clippy::collapsible_if)]
  
++mod broken_image_icon;
  mod blend;
 +mod bounds;
  mod color;
@@ -4499,7 +4576,7 @@ diff --git a/packages/blitz-paint/src/lib.rs b/packages/blitz-paint/src/lib.rs
  mod render;
  mod sizing;
  mod text;
-@@ -26,6 +29,11 @@
+@@ -26,6 +30,11 @@
      all(feature = "apple-font-embolden", target_os = "ios"),
  ));
  
@@ -4511,7 +4588,7 @@ diff --git a/packages/blitz-paint/src/lib.rs b/packages/blitz-paint/src/lib.rs
  /// The default color for text selection highlights
  const SELECTION_COLOR: Color = Color::from_rgb8(180, 213, 255);
  
-@@ -50,6 +58,90 @@
+@@ -50,6 +59,90 @@
      x_offset: u32,
      y_offset: u32,
  ) {
@@ -4602,7 +4679,7 @@ diff --git a/packages/blitz-paint/src/lib.rs b/packages/blitz-paint/src/lib.rs
      // Run `.paint()` on every custom widget in the document (and all subdocuments) ahead of time.
      // This helps us avoid borrow-checker issues as we recurse down the tree (`.paint()` require `&mut self`).
      //
-@@ -59,7 +151,7 @@
+@@ -59,7 +152,7 @@
      #[cfg(feature = "custom-widget")]
      build_custom_widget_scenes(&mut custom_widget_scenes, doc, scene, scale);
  
@@ -4611,7 +4688,7 @@ diff --git a/packages/blitz-paint/src/lib.rs b/packages/blitz-paint/src/lib.rs
          doc,
          scale,
          width,
-@@ -68,6 +160,10 @@
+@@ -68,6 +161,10 @@
          y_offset as f64,
          &custom_widget_scenes,
      );
@@ -4622,12 +4699,10 @@ diff --git a/packages/blitz-paint/src/lib.rs b/packages/blitz-paint/src/lib.rs
      generator.paint_scene(scene);
  
      // println!(
-@@ -76,8 +172,136 @@
-     //     CLIP_DEPTH_USED.load(atomic::Ordering::SeqCst),
-     //     CLIPS_WANTED.load(atomic::Ordering::SeqCst)
+@@ -78,6 +175,134 @@
      // );
-+}
-+
+ }
+ 
 +/// One glyph run [`paint_scene_recording_text`] drew.
 +#[derive(Clone, Debug)]
 +pub struct TextRun {
@@ -4643,8 +4718,8 @@ diff --git a/packages/blitz-paint/src/lib.rs b/packages/blitz-paint/src/lib.rs
 +    pub glyph_text: Vec<std::ops::Range<u32>>,
 +    /// The run's content area (ascent to descent), in the scene's coordinates.
 +    pub bounds: kurbo::Rect,
- }
- 
++}
++
 +impl TextRun {
 +    /// The run's glyphs in `kept` (indices in drawing order; pyro: `text-overflow` draws a
 +    /// part), whose atoms span `extent` (layout x).
@@ -6507,6 +6582,22 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 -                    sel_start,
 -                    sel_end,
 -                );
+-            }
+-
+-            // Render text
+-            let mut draw_text_context = self.context.draw_text_context.borrow_mut();
+-            crate::text::stroke_text(
+-                scene,
+-                text_layout.layout.lines(),
+-                self.context.dom,
+-                transform,
+-                TextPaintOptions {
+-                    scale: self.scale,
+-                    brush_override: None,
+-                },
+-                self.node.id,
+-                &mut draw_text_context,
+-            );
 +        if cx.context.backgrounds && !hidden {
 +            cx.draw_table_row_backgrounds(scene);
 +        }
@@ -9368,44 +9459,11 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                if self.paint_level(&tree[child_id]) == 2 {
 +                    self.draw_paint_child(scene, child_id, parent_style_transform, clip_rect);
 +                }
-             }
--
--            // Render text
--            let mut draw_text_context = self.context.draw_text_context.borrow_mut();
--            crate::text::stroke_text(
--                scene,
--                text_layout.layout.lines(),
--                self.context.dom,
--                transform,
--                TextPaintOptions {
--                    scale: self.scale,
--                    brush_override: None,
--                },
--                self.node.id,
--                &mut draw_text_context,
--            );
-         }
++            }
++        }
 +        self.draw_pos_z_children(scene, parent_style_transform, clip_rect);
-     }
- 
--    fn draw_text_input_text(&self, scene: &mut impl PaintScene, pos: Point) {
--        // Render the text in text inputs
--        if let Some(input_data) = self.text_input {
--            // For single-line inputs, add an offset to vertically center the text input layout
--            // within the content box of it's node.
--            let y_offset = self.node.text_input_v_centering_offset(self.scale);
--            let subpixel_offset = input_data.content_box_subpixel_offset;
--            let pos = Point {
--                x: pos.x + subpixel_offset.x as f64,
--                y: pos.y + subpixel_offset.y as f64 + y_offset,
--            };
--
--            // Apply the scroll offset (stored in CSS pixels, scaled here to device pixels) so
--            // that the caret stays visible. Single-line inputs scroll horizontally; multi-line
--            // inputs scroll vertically.
--            let scroll_offset = input_data.scroll_offset as f64 * self.scale;
--            let (scroll_x, scroll_y) = if input_data.is_multiline {
--                (0.0, scroll_offset)
++    }
++
 +    /// pyro: one phase (`FlowPhase::Background` or `Foreground`) of the in-flow `paint_children`
 +    /// of a node painted in phases: a block box of the normal flow
 +    /// (`Node::paints_in_ancestor_phases`) in that phase, any other block-level box whole with
@@ -9434,10 +9492,36 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                continue;
 +            } else if child.is_inline_level() == (phase == FlowPhase::Foreground) {
 +                FlowPhase::All
-             } else {
--                (scroll_offset, 0.0)
++            } else {
 +                continue;
-             };
++            };
++            self.context.flow_phase.set(child_phase);
++            self.draw_paint_child(scene, child_id, parent_style_transform, clip_rect);
++            self.context.flow_phase.set(FlowPhase::All);
+         }
+     }
+ 
+-    fn draw_text_input_text(&self, scene: &mut impl PaintScene, pos: Point) {
+-        // Render the text in text inputs
+-        if let Some(input_data) = self.text_input {
+-            // For single-line inputs, add an offset to vertically center the text input layout
+-            // within the content box of it's node.
+-            let y_offset = self.node.text_input_v_centering_offset(self.scale);
+-            let subpixel_offset = input_data.content_box_subpixel_offset;
+-            let pos = Point {
+-                x: pos.x + subpixel_offset.x as f64,
+-                y: pos.y + subpixel_offset.y as f64 + y_offset,
+-            };
+-
+-            // Apply the scroll offset (stored in CSS pixels, scaled here to device pixels) so
+-            // that the caret stays visible. Single-line inputs scroll horizontally; multi-line
+-            // inputs scroll vertically.
+-            let scroll_offset = input_data.scroll_offset as f64 * self.scale;
+-            let (scroll_x, scroll_y) = if input_data.is_multiline {
+-                (0.0, scroll_offset)
+-            } else {
+-                (scroll_offset, 0.0)
+-            };
 -
 -            let transform = self.transform
 -                * Affine::translate((pos.x * self.scale - scroll_x, pos.y * self.scale - scroll_y));
@@ -9467,55 +9551,6 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 -                        None,
 -                        &convert_rect(&cursor),
 -                    );
--                };
--            }
--
--            // Render text
--            let mut draw_text_context = self.context.draw_text_context.borrow_mut();
--            crate::text::stroke_text(
--                scene,
--                input_data.editor.try_layout().unwrap().lines(),
--                self.context.dom,
--                transform,
--                TextPaintOptions {
--                    scale: self.scale,
--                    brush_override: None,
--                },
--                self.node.id,
--                &mut draw_text_context,
--            );
-+            self.context.flow_phase.set(child_phase);
-+            self.draw_paint_child(scene, child_id, parent_style_transform, clip_rect);
-+            self.context.flow_phase.set(FlowPhase::All);
-         }
-     }
- 
--    fn draw_marker(&self, scene: &mut impl PaintScene, pos: Point) {
--        if let Some(ListItemLayout {
--            marker,
--            position: ListItemLayoutPosition::Outside(layout),
--            content_box_subpixel_offset,
--        }) = self.list_item
--        {
--            // Right align and pad the bullet when rendering outside
--            let x_padding = match marker {
--                Marker::Char(_) => 8.0,
--                Marker::String(_) => 0.0,
--            };
--            // Outside markers are placed outside the list item's border box
--            // (`pos` is the origin of its content box)
--            let item_layout = self.node.final_layout();
--            let x_offset = -(layout.full_width() / layout.scale()
--                + x_padding
--                + item_layout.padding.left
--                + item_layout.border.left);
--
--            // Align the marker with the baseline of the first line of text in the list item
--            let y_offset = if let Some((text_layout, first_text_line)) = &self
--                .element
--                .inline_layout_data
--                .as_ref()
--                .and_then(|text_layout| Some((text_layout, text_layout.layout.lines().next()?)))
 +    /// The overflow clips a box hoisted to this stacking context (a positioned descendant with a
 +    /// `z-index`) is painted in, outermost first: those of the boxes between it and this one
 +    /// that are its containing-block ancestors. pyro: such a box makes no stacking context, so
@@ -9548,7 +9583,66 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +            between.1 += location.y - scroll.y as f32;
 +            if let Some(styles) = node.primary_styles().filter(|_| node.element_data().is_some())
 +                && self.context.should_clip_node(node, &styles)
-             {
++            {
++                let origin = Vec2::new(
++                    f64::from(position.x - between.0 + location.x) * self.scale,
++                    f64::from(position.y - between.1 + location.y) * self.scale,
++                );
++                let frame = create_css_rect(&styles, node.final_layout(), self.scale);
++                let clip = if node.element_data().is_some_and(|el| el.text_input_data().is_some()) {
++                    frame.text_input_clip_path()
++                } else {
++                    box_shadow::overflow_clip_path(&frame, &styles, self.scale)
+                 };
++                clips.push((id, parent_style_transform.pre_translate(origin), clip));
+             }
+-
+-            // Render text
+-            let mut draw_text_context = self.context.draw_text_context.borrow_mut();
+-            crate::text::stroke_text(
+-                scene,
+-                input_data.editor.try_layout().unwrap().lines(),
+-                self.context.dom,
+-                transform,
+-                TextPaintOptions {
+-                    scale: self.scale,
+-                    brush_override: None,
+-                },
+-                self.node.id,
+-                &mut draw_text_context,
+-            );
++            current = node.containing_block();
+         }
++        Vec::new()
+     }
+ 
+-    fn draw_marker(&self, scene: &mut impl PaintScene, pos: Point) {
+-        if let Some(ListItemLayout {
+-            marker,
+-            position: ListItemLayoutPosition::Outside(layout),
+-            content_box_subpixel_offset,
+-        }) = self.list_item
+-        {
+-            // Right align and pad the bullet when rendering outside
+-            let x_padding = match marker {
+-                Marker::Char(_) => 8.0,
+-                Marker::String(_) => 0.0,
+-            };
+-            // Outside markers are placed outside the list item's border box
+-            // (`pos` is the origin of its content box)
+-            let item_layout = self.node.final_layout();
+-            let x_offset = -(layout.full_width() / layout.scale()
+-                + x_padding
+-                + item_layout.padding.left
+-                + item_layout.border.left);
+-
+-            // Align the marker with the baseline of the first line of text in the list item
+-            let y_offset = if let Some((text_layout, first_text_line)) = &self
+-                .element
+-                .inline_layout_data
+-                .as_ref()
+-                .and_then(|text_layout| Some((text_layout, text_layout.layout.lines().next()?)))
+-            {
 -                (first_text_line.metrics().baseline
 -                    - layout.lines().next().unwrap().metrics().baseline)
 -                    / layout.scale()
@@ -9578,23 +9672,9 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 -                self.node.id,
 -                &mut draw_text_context,
 -            );
-+                let origin = Vec2::new(
-+                    f64::from(position.x - between.0 + location.x) * self.scale,
-+                    f64::from(position.y - between.1 + location.y) * self.scale,
-+                );
-+                let frame = create_css_rect(&styles, node.final_layout(), self.scale);
-+                let clip = if node.element_data().is_some_and(|el| el.text_input_data().is_some()) {
-+                    frame.text_input_clip_path()
-+                } else {
-+                    box_shadow::overflow_clip_path(&frame, &styles, self.scale)
-+                };
-+                clips.push((id, parent_style_transform.pre_translate(origin), clip));
-+            }
-+            current = node.containing_block();
-         }
-+        Vec::new()
-     }
- 
+-        }
+-    }
+-
 -    fn draw_children(
 +    /// Paints boxes hoisted to this stacking context, in order, where their layout put them,
 +    /// each inside its [`Self::hoisted_child_clips`]. pyro: the clip layers stay pushed from one
@@ -10147,7 +10227,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              BlendMode::default(),
              1.0,
              self.transform,
-@@ -1312,6 +4830,47 @@
+@@ -1312,7 +4830,97 @@
          );
      }
  
@@ -10175,6 +10255,30 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +        scene.fill(Fill::NonZero, transform, anyrender::Paint::Gradient(&gradient), gradient_transform, &tile);
 +    }
 +
++    /// pyro: Chromium's 16x16 broken-image icon (its `IDR_BROKENIMAGE` resource, as Chrome draws it at
++    /// 1x, captured with its alpha) with its top-left corner at `at` (device px), cut to `clip`.
++    fn draw_broken_image_icon(&self, scene: &mut impl PaintScene, at: Point, clip: Rect) {
++        static ICON: std::sync::OnceLock<peniko::ImageBrush> = std::sync::OnceLock::new();
++        let brush = ICON.get_or_init(|| peniko::ImageBrush {
++            image: ImageData {
++                data: peniko::Blob::new(std::sync::Arc::new(crate::broken_image_icon::BROKEN_IMAGE_16.to_vec())),
++                format: peniko::ImageFormat::Rgba8,
++                width: 16,
++                height: 16,
++                alpha_type: peniko::ImageAlphaType::Alpha,
++            },
++            sampler: ImageSampler {
++                x_extend: peniko::Extend::Pad,
++                y_extend: peniko::Extend::Pad,
++                quality: peniko::ImageQuality::Medium,
++                alpha: 1.0,
++            },
++        });
++        scene.push_clip_layer(Fill::NonZero, self.transform, &clip);
++        scene.draw_image(brush.as_ref(), self.transform * Affine::translate(at.to_vec2()) * Affine::scale(self.scale));
++        scene.pop_layer();
++    }
++
 +    /// pyro: a replaced element the selection holds (`BaseDocument::is_selected_replaced`) is
 +    /// painted over with its `::selection` background, an opaque one made translucent as Blink's
 +    /// `Color::BlendWithWhite` (WPT css-pseudo `active-selection-041`).
@@ -10193,9 +10297,35 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +    }
 +
      fn draw_image(&self, scene: &mut impl PaintScene) {
++        // pyro: the icon box before a broken image's alt text (`BaseDocument::show_image_alt_text`).
++        if self.element.attrs().iter().any(|a| &*a.name.local == "pyro-broken-image-icon") {
++            let content = self.frame.content_box;
++            self.draw_broken_image_icon(scene, content.origin(), content);
++            return;
++        }
++        // pyro: a broken image without alt text, given a size: Chromium's 1px rgb(192, 192, 192)
++        // border round its content box and its broken-image icon 2px in (`draw_broken_image_icon`).
++        if self.element.image_failed && !self.element.image_broken {
++            let content = self.frame.content_box;
++            if content.width() > 0.0 && content.height() > 0.0 {
++                let line = self.scale;
++                let silver = Color::from_rgb8(192, 192, 192);
++                for rect in [
++                    Rect::new(content.x0, content.y0, content.x1, content.y0 + line),
++                    Rect::new(content.x0, content.y1 - line, content.x1, content.y1),
++                    Rect::new(content.x0, content.y0 + line, content.x0 + line, content.y1 - line),
++                    Rect::new(content.x1 - line, content.y0 + line, content.x1, content.y1 - line),
++                ] {
++                    scene.fill(Fill::NonZero, self.transform, silver, None, &rect);
++                }
++                self.draw_broken_image_icon(scene, Point::new(content.x0 + 2.0 * line, content.y0 + 2.0 * line), content);
++            }
++            return;
++        }
          if let Some(image) = self.element.raster_image_data() {
              let width = self.frame.content_box.width() as u32;
-@@ -1329,9 +4888,22 @@
+             let height = self.frame.content_box.height() as u32;
+@@ -1329,9 +4937,22 @@
                  width: width as f32,
                  height: height as f32,
              };
@@ -10221,7 +10351,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              };
              let paint_size = compute_object_fit(container_size, Some(object_size), object_fit);
  
-@@ -1347,10 +4919,28 @@
+@@ -1347,10 +4968,28 @@
  
              let x_scale = paint_size.width as f64 / object_size.width as f64;
              let y_scale = paint_size.height as f64 / object_size.height as f64;
@@ -10250,7 +10380,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
  
              self.with_replaced_content_clip(
                  scene,
-@@ -1358,8 +4948,23 @@
+@@ -1358,8 +4997,23 @@
                  paint_size,
                  x_offset.px(),
                  y_offset.px(),
@@ -10275,7 +10405,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
                  },
              );
          }
-@@ -1383,22 +4988,27 @@
+@@ -1383,22 +5037,27 @@
              let width = self.frame.content_box.width() as u32;
              let height = self.frame.content_box.height() as u32;
  
@@ -10312,7 +10442,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          }
      }
  
-@@ -1427,6 +5037,14 @@
+@@ -1427,6 +5086,14 @@
      }
  }
  
@@ -10327,7 +10457,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
  fn insets_from_taffy_rect(input: taffy::Rect<f64>) -> Insets {
      Insets {
          x0: input.left,
-@@ -1438,6 +5056,13 @@
+@@ -1438,6 +5105,13 @@
  
  /// Convert Stylo and Taffy types into Kurbo types
  fn create_css_rect(style: &ComputedValues, layout: &Layout, scale: f64) -> CssBox {
@@ -10341,7 +10471,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
      // Resolve and rescale
      // We have to scale since document pixels are not same same as rendered pixels
      let width: f64 = layout.size.width as f64;
-@@ -1457,12 +5082,188 @@
+@@ -1457,12 +5131,188 @@
          }
      };
      let s_border = style.get_border();

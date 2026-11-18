@@ -4854,6 +4854,30 @@ impl ElementCx<'_, '_> {
         scene.fill(Fill::NonZero, transform, anyrender::Paint::Gradient(&gradient), gradient_transform, &tile);
     }
 
+    /// pyro: Chromium's 16x16 broken-image icon (its `IDR_BROKENIMAGE` resource, as Chrome draws it at
+    /// 1x, captured with its alpha) with its top-left corner at `at` (device px), cut to `clip`.
+    fn draw_broken_image_icon(&self, scene: &mut impl PaintScene, at: Point, clip: Rect) {
+        static ICON: std::sync::OnceLock<peniko::ImageBrush> = std::sync::OnceLock::new();
+        let brush = ICON.get_or_init(|| peniko::ImageBrush {
+            image: ImageData {
+                data: peniko::Blob::new(std::sync::Arc::new(crate::broken_image_icon::BROKEN_IMAGE_16.to_vec())),
+                format: peniko::ImageFormat::Rgba8,
+                width: 16,
+                height: 16,
+                alpha_type: peniko::ImageAlphaType::Alpha,
+            },
+            sampler: ImageSampler {
+                x_extend: peniko::Extend::Pad,
+                y_extend: peniko::Extend::Pad,
+                quality: peniko::ImageQuality::Medium,
+                alpha: 1.0,
+            },
+        });
+        scene.push_clip_layer(Fill::NonZero, self.transform, &clip);
+        scene.draw_image(brush.as_ref(), self.transform * Affine::translate(at.to_vec2()) * Affine::scale(self.scale));
+        scene.pop_layer();
+    }
+
     /// pyro: a replaced element the selection holds (`BaseDocument::is_selected_replaced`) is
     /// painted over with its `::selection` background, an opaque one made translucent as Blink's
     /// `Color::BlendWithWhite` (WPT css-pseudo `active-selection-041`).
@@ -4872,6 +4896,31 @@ impl ElementCx<'_, '_> {
     }
 
     fn draw_image(&self, scene: &mut impl PaintScene) {
+        // pyro: the icon box before a broken image's alt text (`BaseDocument::show_image_alt_text`).
+        if self.element.attrs().iter().any(|a| &*a.name.local == "pyro-broken-image-icon") {
+            let content = self.frame.content_box;
+            self.draw_broken_image_icon(scene, content.origin(), content);
+            return;
+        }
+        // pyro: a broken image without alt text, given a size: Chromium's 1px rgb(192, 192, 192)
+        // border round its content box and its broken-image icon 2px in (`draw_broken_image_icon`).
+        if self.element.image_failed && !self.element.image_broken {
+            let content = self.frame.content_box;
+            if content.width() > 0.0 && content.height() > 0.0 {
+                let line = self.scale;
+                let silver = Color::from_rgb8(192, 192, 192);
+                for rect in [
+                    Rect::new(content.x0, content.y0, content.x1, content.y0 + line),
+                    Rect::new(content.x0, content.y1 - line, content.x1, content.y1),
+                    Rect::new(content.x0, content.y0 + line, content.x0 + line, content.y1 - line),
+                    Rect::new(content.x1 - line, content.y0 + line, content.x1, content.y1 - line),
+                ] {
+                    scene.fill(Fill::NonZero, self.transform, silver, None, &rect);
+                }
+                self.draw_broken_image_icon(scene, Point::new(content.x0 + 2.0 * line, content.y0 + 2.0 * line), content);
+            }
+            return;
+        }
         if let Some(image) = self.element.raster_image_data() {
             let width = self.frame.content_box.width() as u32;
             let height = self.frame.content_box.height() as u32;

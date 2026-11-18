@@ -1884,6 +1884,7 @@ impl<'doc> DocumentMutator<'doc> {
             }
             if let Some(element) = self.doc.nodes[target_id].element_data_mut() {
                 element.image_broken = false;
+                element.image_failed = false;
             }
             self.doc.nodes[target_id].clear_layout_cache();
             self.doc.nodes[target_id].insert_damage(ALL_DAMAGE);

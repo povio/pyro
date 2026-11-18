@@ -2065,6 +2065,7 @@ impl BaseDocument {
         let Some(alt) = element.attr(local_name!("alt")).filter(|alt| !alt.is_empty()).map(str::to_owned) else {
             return;
         };
+        let failed = element.image_failed;
         let node = &mut self.nodes[node_id];
         if let Some(element) = node.element_data_mut() {
             element.image_broken = true;
@@ -2073,6 +2074,20 @@ impl BaseDocument {
         node.clear_layout_cache();
         {
             let mut mutator = self.mutate();
+            // pyro: an image that failed to load shows Chromium's broken-image icon before its
+            // alt text: a 16px square box blitz-paint draws it in (`draw_broken_image_icon`).
+            if failed {
+                let style = crate::node::Attribute {
+                    name: markup5ever::QualName::new(None, markup5ever::ns!(), local_name!("style")),
+                    value: "display:inline-block;width:16px;height:16px;vertical-align:top".to_string(),
+                };
+                let marker = crate::node::Attribute {
+                    name: markup5ever::QualName::new(None, markup5ever::ns!(), LocalName::from("pyro-broken-image-icon")),
+                    value: String::new(),
+                };
+                let icon = mutator.create_element(markup5ever::QualName::new(None, markup5ever::ns!(html), local_name!("span")), vec![style, marker]);
+                mutator.append_children(node_id, &[icon]);
+            }
             let text = mutator.create_text_node(&alt);
             mutator.append_children(node_id, &[text]);
         }
@@ -2100,6 +2115,12 @@ impl BaseDocument {
                     // pyro: a broken `<img>` with alt text shows that text.
                     for (node_id, image_type) in &waiting_nodes {
                         if matches!(image_type, ImageType::Image) {
+                            if let Some(element) = self.nodes.get_mut(*node_id).and_then(|n| n.element_data_mut()) {
+                                if element.name.local == local_name!("img") {
+                                    element.image_failed = true;
+                                }
+                            }
+                            self.nodes[*node_id].insert_damage(ALL_DAMAGE);
                             self.show_image_alt_text(*node_id);
                         }
                     }

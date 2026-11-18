@@ -1090,3 +1090,4 @@ frame's whole transform, clipped to the content box (upstream applied the transl
 - Round 4 lane G (`render.rs` `render_node`): a positioned inline box's paint-tree entry (blitz-dom
   `NodeFlags::INLINE_PASS_ENTRY`) paints nothing yet; its inline root paints its content (`positioned_passes`).
 - Round 4 lane F, `render.rs`: a broken image showing its alt text is clipped as a box (not as replaced content).
+- Round 4 lane F, `render.rs` `draw_broken_image_icon` (+ `broken_image_icon.rs`: Chromium's `IDR_BROKENIMAGE` as Chrome draws it at 1x, captured over white and black for its alpha; Chromium BSD licence): the icon before a broken image's alt text, and for a sized broken image without alt text a 1px rgb(192, 192, 192) border with the icon 2px inside, as Chrome.

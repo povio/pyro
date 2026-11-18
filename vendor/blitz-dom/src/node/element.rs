@@ -97,6 +97,9 @@ pub struct ElementData {
     /// `alt` text: it represents its alt text, laid out as a non-replaced box holding it
     /// (HTML rendering § images; `BaseDocument::show_image_alt_text`).
     pub image_broken: bool,
+    /// pyro: an `<img>` whose image failed to load (whatever its `alt`): painted with Chromium's
+    /// broken-image icon (and, when it has no alt text, a border round its box).
+    pub image_failed: bool,
     /// pyro: this box (an element or a `::before`/`::after`) shows the gradient its `content` is
     /// in place of content, as an image without a natural size (`util::content_gradient`).
     pub content_gradient: bool,
@@ -419,6 +422,7 @@ impl Clone for ElementData {
             list_style_images: self.list_style_images.clone(),
             content_image: self.content_image.clone(),
             image_broken: self.image_broken,
+            image_failed: self.image_failed,
             content_gradient: self.content_gradient,
             reference_images: self.reference_images.clone(),
             inline_layout_data: self.inline_layout_data.clone(),
@@ -552,6 +556,7 @@ impl ElementData {
             list_style_images: ThinVec::new(),
             content_image: None,
             image_broken: false,
+            image_failed: false,
             content_gradient: false,
             reference_images: ThinVec::new(),
 
