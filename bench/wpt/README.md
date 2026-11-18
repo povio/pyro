@@ -814,11 +814,38 @@ transition page): 1,967 of 2,031 passed. 12 pages failed for a defect in pyro, 1
 | 2 | no screenshot, `the page's tree has a repeated key`: every `<slot>` of one name (and every slot of a `slotAssignment: "manual"` root) rendered the host's children | pyro-dom's render tree gives them to the slot DOM's "find a slot" names |
 | 1 | crash, stack overflow in usvg: a `<pattern>` cycle through `href` (`svg/crashtests/chrome-bug-565674533.html`) | `svg_refs.rs` breaks pattern cycles as it does clip path, mask and filter cycles |
 | 1 | panic, `Duration::from_secs_f64` on an animation of `duration: 95903184853313357582278077554606` | timer delays from a page saturate (`delay_from_ms`) |
-| 1 | **open**: `custom-elements/many-slots-crash.html` hangs (no answer for 30 s). A custom element whose shadow tree holds another of itself recurses; Chrome ends it with a stack overflow `RangeError`. pyro's page thread was sampled in `Dom::collect_garbage` (`component_root`) under `PageDom::sweep_released_nodes`, from the mutation-observer microtask inside `custom::run_reactions`: each level sweeps the nodes released so far | |
+| 1 | hang, `custom-elements/many-slots-crash.html`: a custom element whose shadow tree holds another of itself recursed without end (Chrome ends it with a stack overflow `RangeError`); pyro runs a callback's reactions in the next batch, so it looped | the batch depth stands for HTML's reaction nesting: past 256 a callback reports a `RangeError` (`custom::run_reactions`); blitz-dom skips `:has()` invalidation without `:has()` rules |
 
-The other 52 time out without a crash: 51 wait in `test-wait` for something pyro does not do (20 of them view
-transitions; scroll timelines, typed OM, editing commands), and one navigates without end. They are failing entries
-of the baseline, skipped by a pull request's run.
+The other 52 timed out without a crash. Round 4 (lane R4CR, 2026-11-18) fixed one more panic (a `::first-letter`
+box inside a `::first-line` box had no originating element) and the many-slots hang, and made 30 of the timeouts
+complete:
+- view transitions: a lifecycle-only `startViewTransition` (20 pages);
+- `MathMLElement`, SVG time control (`setCurrentTime` and the rest), `commitStyles` on SVG, `@position-try` in
+  `insertRule`, srcdoc reload, `window.find`, and a `KeyframeEffect` target from another
+  document.
+
+2,009 of 2,031 complete locally. These 22 are **known incomplete**: each needs a feature pyro does not have. They stay
+failing entries of the baseline, not flaky entries, and none of them crashes, panics or hangs:
+
+| page | needs |
+|---|---|
+| `css/css-font-loading/fontface-from-arraybuffer-crash.html` | `FontFace` (CSS Font Loading); `document.fonts` is a stand-in object |
+| `html/canvas/offscreen/manual/the-offscreen-canvas/offscreencanvas-worker-font-load-crash.html` | font loading (`FontFace`) in workers |
+| `css/css-typed-om/crashtests/chrome-575201060.html`, `chrome-575201475.html` | CSS Typed OM (`CSSUnparsedValue`) in workers |
+| `scroll-animations/crashtests/` (4 pages) | scroll and view timelines (`animation-timeline`, `ScrollTimeline`) |
+| `custom-elements/custom-button-abort-insertion-crash.html`, `custom-image-abort-insertion-crash.html` | customized built-in elements (`is=`, `extends`) |
+| `service-workers/service-worker/messageport-transfer-crash.html` | `SharedWorker` |
+| `trusted-types/navigate-to-javascript-url-007-crash.html` | Trusted Types (`trustedTypes`) |
+| `html/semantics/embedded-content/the-img-element/image-loading-lazy-subframe-detached-crash.html` | IntersectionObserver across pages (another frame's document) |
+| `streams/readable-byte-streams/crashtests/from-cross-realm.html` | a synchronous about:blank document in the window `window.open()` returns |
+| `html/semantics/permission-element/geolocation-element/iframe-use-after-free-crash.html` | DOM calls on a navigated-away iframe document (its realm is disposed; browsers allow them) |
+| `navigation-api/navigate-event/navigate-form-onformdata-navigate-crash.html` | none in pyro: the page POSTs to itself on every load, so it never stops navigating |
+| `editing/crashtests/designMode-caret-change.html` | `document.designMode`. A first version made `selectall-containing-textarea-and-subscript` (passing today) loop: in a designMode document, `delete` after `selectAll` removed `<body>`, and the commands then changed the selection without end |
+| `editing/crashtests/designMode-document-will-be-blurred-by-focus-event-listener.html` | `document.designMode`, and a `focus` event at an iframe's Window from `contentWindow.focus()` |
+| `editing/crashtests/inserthorizontalrule-in-textarea-in-editor-and-undo-on-error-events.html` | `<object>` load and error events (this page relies on Chromium's `error` for an `<object>` without data) |
+| `css/css-conditional/container-queries/crashtests/chrome-bug-439886903-crash.html` | `<object>` load events (`<object data=svg>`) |
+| `css/selectors/crashtests/chrome-bug-565742178.html` | `<use>` shadow trees with live clones (an `error` event from the cloned image) |
+| `selection/crashtests/selectall-and-find-svg-text-on-selectstart.html` | `selectstart` from `execCommand("selectAll")` and `find()` |
 
 ### CI
 
