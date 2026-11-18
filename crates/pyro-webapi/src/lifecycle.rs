@@ -221,6 +221,14 @@ pub fn popstate(page: &Rc<PageDom>, state: Option<Persistent>) {
     fire(page, w, &ev);
 }
 
+/// HTML "focus update steps" for a document entering (`focus`) or leaving (`blur`) the page's
+/// focus chain: a FocusEvent at its Window, which does not bubble.
+pub fn window_focus(page: &Rc<PageDom>, focused: bool) {
+    let Some(w) = page.window_target() else { return };
+    let ev = EventCore::trusted(page, EventInterface::FocusEvent, if focused { "focus" } else { "blur" }, false, false);
+    fire(page, w, &ev);
+}
+
 /// `hashchange` at the window.
 pub fn hashchange(page: &Rc<PageDom>, old_url: &str, new_url: &str) {
     let Some(w) = page.window_target() else { return };
