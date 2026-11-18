@@ -1,0 +1,16 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "keyboard-lock/navigator-keyboard-lock-blocked-from-cross-origin-iframe.https.html": {"status":"complete","ms":10000,"n":1,"pass":[]},
+  "keyboard-lock/navigator-keyboard-lock-blocked-from-iframe.https.html": {"status":"complete","ms":10000,"n":1,"pass":[]},
+  "keyboard-lock/navigator-keyboard-lock-two-sequential-requests.https.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "keyboard-lock/navigator-keyboard-lock.https.html": {"status":"complete","ms":40,"n":5,"pass":["navigator.keyboard SameObject"]},
+  "keyboard-lock/navigator-keyboard-unlock.https.html": {"status":"complete","ms":20,"n":1,"pass":[]}
+ }
+}

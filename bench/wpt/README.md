@@ -671,6 +671,20 @@ passed fewer subtests (1,284 of 422,251), nearly all `wasm/core/simd` pages that
 pages get the long timeout since. Estimated wall for a scheduled run with reruns on lp-m1's two machines: ~85 min
 (4 x 28 testharness, 3 x ~16 reftest, 12 crashtest).
 
+The committed `bench/wpt/full/` comes from run 44235329366 (`--jobs 16`, reruns; 2026-11-18), `gate.mjs update
+--missing-shards` over its CI shard results: testharness shard 0 of 4 never finished (below), so its pages (8,887 of
+35,562) have no entry until a nightly records them; nothing gates on these files, and each nightly records its
+baselines from scratch. Shards: testharness 28-33 min each, reftests 15-17 min, crashtests 11.5 min (both runs each).
+Recorded: testharness 26,675 pages, 26,196 completed, 10,956 passing every subtest, 1,280,632 of 1,444,333 subtests;
+reftests 21,630 of 28,303 pass; crashtests 2,035 of 2,105 pass. 15 MB in all (testharness 11 MB, largest
+`editing.json` 3.3 MB).
+
+Testharness shard 0 of that run held its runner for 2 h: the stash-polling page exhausted the ports (that run had
+the browser-restart workaround, not the drain-wait), the restart could not listen on a port (`EADDRNOTAVAIL`), and
+with no browser every worker waited; the watchdog fired once and never again. Since then a failed listen retries for
+2 minutes, the watchdog acts again while a worker stays stuck, a run with no page finished for 10 min ends itself
+with the rest recorded as `runner stalled` (`WPT_STALL_MS`), and shard jobs time out after 60 min.
+
 A pull request that changes the workflow, `wptserve.mjs`, `fetch-wpt.sh` or the testdriver files runs its `smoke`
 job instead (a few wptserve and testdriver pages on lp-m1).
 

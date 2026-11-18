@@ -1,0 +1,19 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "audio-output/enumerateDevices-permissions-policy.https.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "audio-output/enumerateDevices-with-selectAudioOutput.https.html": {"status":"complete","ms":10,"n":3,"pass":[]},
+  "audio-output/removeTrack-after-setSinkId.https.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "audio-output/secure-context.html": {"status":"complete","ms":10,"n":2,"fail":[],"h":"04e81685"},
+  "audio-output/selectAudioOutput-permissions-policy.https.sub.html": {"status":"complete","ms":60,"n":5,"pass":[]},
+  "audio-output/setSinkId-permissions-policy.https.sub.html": {"status":"complete","ms":50,"n":5,"pass":[]},
+  "audio-output/setSinkId-with-selectAudioOutput.https.html": {"status":"complete","ms":20,"n":4,"pass":[]},
+  "audio-output/setSinkId.https.html": {"status":"complete","ms":10,"n":3,"pass":[]}
+ }
+}

@@ -1,0 +1,16 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "svg-aam/name/comp_host_language_label.html": {"status":"complete","ms":50,"n":18,"fail":["[xlink:title][xlink:href] > circle","[xlink:title][xlink:href] > g","[xlink:title][xlink:href] > polygon","[xlink:title][xlink:href] > rect","circle > title","g > title","polygon > title","rect > title"],"h":"640d858a"},
+  "svg-aam/name/comp_labelledby.html": {"status":"complete","ms":50,"n":9,"fail":[],"h":"62ec0540"},
+  "svg-aam/role/role-img.tentative.html": {"status":"complete","ms":30,"n":7,"pass":["Label: el-image (empty label due to missing image>title element)","Label: el-image (label from w/ aria-label)"]},
+  "svg-aam/role/roles-generic.html": {"status":"complete","ms":30,"n":9,"fail":[],"h":"ef8b63ad"},
+  "svg-aam/role/roles.tentative.html": {"status":"complete","ms":30,"n":3,"pass":[]}
+ }
+}

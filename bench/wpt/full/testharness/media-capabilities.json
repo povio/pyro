@@ -1,0 +1,17 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "media-capabilities/decodingInfo-webrtc.any.html": {"status":"complete","ms":160,"n":16,"pass":[]},
+  "media-capabilities/decodingInfoEncryptedMedia.http.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "media-capabilities/decodingInfoEncryptedMedia.https.html": {"status":"complete","ms":10,"n":21,"pass":[]},
+  "media-capabilities/encodingInfo-webrtc.any.html": {"status":"complete","ms":20,"n":15,"pass":[]},
+  "media-capabilities/encodingInfo.any.html": {"status":"complete","ms":10,"n":30,"pass":[]},
+  "media-capabilities/idlharness.any.html": {"status":"complete","ms":130,"n":38,"fail":["MediaCapabilities interface object length","MediaCapabilities interface object name","MediaCapabilities interface: calling decodingInfo(MediaDecodingConfiguration) on navigator.mediaCapabilities with too few arguments must throw TypeError","MediaCapabilities interface: calling encodingInfo(MediaEncodingConfiguration) on navigator.mediaCapabilities with too few arguments must throw TypeError","MediaCapabilities interface: existence and properties of interface object","MediaCapabilities interface: existence and properties of interface prototype object","MediaCapabilities interface: existence and properties of interface prototype object's \"constructor\" property","MediaCapabilities interface: existence and properties of interface prototype object's @@unscopables property","MediaCapabilities interface: navigator.mediaCapabilities must inherit property \"decodingInfo(MediaDecodingConfiguration)\" with the proper type","MediaCapabilities interface: navigator.mediaCapabilities must inherit property \"encodingInfo(MediaEncodingConfiguration)\" with the proper type","MediaCapabilities interface: operation decodingInfo(MediaDecodingConfiguration)","MediaCapabilities interface: operation encodingInfo(MediaEncodingConfiguration)","MediaCapabilities must be primary interface of navigator.mediaCapabilities","Navigator interface: attribute mediaCapabilities","Navigator interface: navigator must inherit property \"mediaCapabilities\" with the proper type","Stringification of navigator.mediaCapabilities"],"h":"73a31e6d"}
+ }
+}

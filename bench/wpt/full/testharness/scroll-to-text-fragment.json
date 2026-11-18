@@ -1,0 +1,39 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "scroll-to-text-fragment/drag-selection-over-target-text.html": {"status":"complete","ms":80,"n":1,"fail":[],"h":"2872e61d"},
+  "scroll-to-text-fragment/find-range-from-text-directive.html?1-4": {"status":"complete","ms":120,"n":4,"pass":["Prefix doesn't exist.","Prefix must start on a word boundary."]},
+  "scroll-to-text-fragment/find-range-from-text-directive.html?13-16": {"status":"complete","ms":130,"n":4,"pass":["prefix with non-existent exact match.","prefix with non-existent range match."]},
+  "scroll-to-text-fragment/find-range-from-text-directive.html?21-24": {"status":"complete","ms":100,"n":4,"fail":["no-prefix; suffix means |start| need not end on word boundary."],"h":"193390ab"},
+  "scroll-to-text-fragment/find-range-from-text-directive.html?25-28": {"status":"complete","ms":120,"n":4,"pass":["non-existent range match."]},
+  "scroll-to-text-fragment/find-range-from-text-directive.html?29-32": {"status":"complete","ms":130,"n":4,"fail":["suffix means |end| need not be end bounded."],"h":"6142141a"},
+  "scroll-to-text-fragment/find-range-from-text-directive.html?37-40": {"status":"complete","ms":100,"n":4,"pass":["Suffix comes before |end|.","Suffix must be end bounded."]},
+  "scroll-to-text-fragment/find-range-from-text-directive.html?41-44": {"status":"complete","ms":120,"n":4,"pass":["Content appears between match and suffix.","Non-existent suffix."]},
+  "scroll-to-text-fragment/find-range-from-text-directive.html?45-48": {"status":"complete","ms":130,"n":4,"pass":["`start` element contains hidden text, which is a block boundary."]},
+  "scroll-to-text-fragment/find-range-from-text-directive.html?5-8": {"status":"complete","ms":100,"n":4,"pass":["Prefix overlaps match text."]},
+  "scroll-to-text-fragment/find-range-from-text-directive.html?9-12": {"status":"complete","ms":120,"n":4,"fail":["Search invisible content between prefix and match."],"h":"2e176afe"},
+  "scroll-to-text-fragment/force-load-at-top.html": {"status":"complete","ms":150,"n":8,"pass":["force-load-at-top must block scroll on load from element fragment.","force-load-at-top must block scroll on load from history scroll restoration.","force-load-at-top must block scroll on load from text fragment with element fallback.","force-load-at-top must block scroll on load from text fragment."]},
+  "scroll-to-text-fragment/idlharness.window.html": {"status":"complete","ms":150,"n":21,"fail":["Document interface: attribute fragmentDirective","Document interface: document must inherit property \"fragmentDirective\" with the proper type","FragmentDirective interface object length","FragmentDirective interface object name","FragmentDirective interface: existence and properties of interface object","FragmentDirective interface: existence and properties of interface prototype object","FragmentDirective interface: existence and properties of interface prototype object's \"constructor\" property","FragmentDirective interface: existence and properties of interface prototype object's @@unscopables property","FragmentDirective must be primary interface of document.fragmentDirective","Stringification of document.fragmentDirective"],"h":"ae71e063"},
+  "scroll-to-text-fragment/iframe-scroll.sub.html": {"status":"complete","ms":10000,"n":2,"pass":[]},
+  "scroll-to-text-fragment/multi-directive-scroll.html": {"status":"complete","ms":40,"n":2,"pass":[]},
+  "scroll-to-text-fragment/non-html-documents-json.html": {"status":"complete","ms":10000,"n":1,"pass":[]},
+  "scroll-to-text-fragment/non-html-documents.html": {"status":"timeout","ms":45000,"n":5,"pass":[]},
+  "scroll-to-text-fragment/redirects.html": {"status":"complete","ms":240,"n":14,"pass":[]},
+  "scroll-to-text-fragment/same-document-test-sync-load.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "scroll-to-text-fragment/same-document-tests-force-load-at-top.html": {"status":"complete","ms":10,"n":4,"pass":[]},
+  "scroll-to-text-fragment/same-document-tests-no-force-load-at-top.html": {"status":"complete","ms":10,"n":4,"pass":[]},
+  "scroll-to-text-fragment/scroll-to-text-fragment-api.html": {"status":"complete","ms":20,"n":2,"pass":[]},
+  "scroll-to-text-fragment/scroll-to-text-fragment-cross-window.html": {"status":"complete","ms":30,"n":1,"fail":[],"h":"ab017c88"},
+  "scroll-to-text-fragment/scroll-to-text-fragment-same-doc.html": {"status":"complete","ms":10,"n":2,"pass":[]},
+  "scroll-to-text-fragment/scroll-to-text-fragment-scroll-to-center.html": {"status":"complete","ms":20,"n":1,"fail":[],"h":"97da1fc5"},
+  "scroll-to-text-fragment/scroll-to-text-fragment-security-replacestate.sub.html": {"status":"complete","ms":320,"n":7,"fail":["Sanity check: noopener with no replaceState scrolls to text fragment","Sanity check: noopener with replaceState in head scrolls to text fragment"],"h":"18d91e83"},
+  "scroll-to-text-fragment/scroll-to-text-fragment-security.sub.html": {"status":"complete","ms":80,"n":5,"pass":[]},
+  "scroll-to-text-fragment/text-directive-mime-type-parameter.html": {"status":"complete","ms":10000,"n":2,"pass":[]}
+ }
+}

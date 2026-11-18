@@ -1,0 +1,12 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "permissions-revoke/idlharness.any.html": {"status":"complete","ms":60,"n":7,"fail":["Permissions interface: calling revoke(object) on navigator.permissions with too few arguments must throw TypeError","Permissions interface: navigator.permissions must inherit property \"revoke(object)\" with the proper type","Permissions interface: operation revoke(object)"],"h":"700b1319"}
+ }
+}

@@ -1,0 +1,19 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "magnetometer/Magnetometer-disabled-by-permissions-policy.https.html": {"status":"complete","ms":30,"n":6,"pass":[]},
+  "magnetometer/Magnetometer-enabled-by-permissions-policy-attribute.https.html": {"status":"complete","ms":20,"n":4,"pass":[]},
+  "magnetometer/Magnetometer-enabled-by-permissions-policy.https.html": {"status":"complete","ms":10,"n":6,"pass":[]},
+  "magnetometer/Magnetometer-enabled-on-self-origin-by-permissions-policy.https.html": {"status":"complete","ms":10,"n":6,"pass":[]},
+  "magnetometer/Magnetometer-supported-by-permissions-policy.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "magnetometer/Magnetometer.https.html": {"status":"complete","ms":20,"n":40,"pass":["Magnetometer: throw 'TypeError' if frequency is invalid.","UncalibratedMagnetometer: throw 'TypeError' if frequency is invalid."]},
+  "magnetometer/Magnetometer_insecure_context.html": {"status":"complete","ms":10,"n":2,"fail":[],"h":"edc83229"},
+  "magnetometer/idlharness.https.window.html": {"status":"complete","ms":40,"n":36,"pass":["idl_test setup","idl_test validation"]}
+ }
+}

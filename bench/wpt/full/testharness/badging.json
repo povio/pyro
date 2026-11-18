@@ -1,0 +1,15 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "badging/badge-error.https.any.html": {"status":"complete","ms":10,"n":2,"pass":[]},
+  "badging/badge-success.https.any.html": {"status":"complete","ms":10,"n":6,"pass":[]},
+  "badging/idlharness.https.any.html": {"status":"complete","ms":150,"n":22,"fail":["Navigator interface: calling setAppBadge(optional unsigned long long) on navigator with too few arguments must throw TypeError","Navigator interface: navigator must inherit property \"clearAppBadge()\" with the proper type","Navigator interface: navigator must inherit property \"setAppBadge(optional unsigned long long)\" with the proper type","Navigator interface: operation clearAppBadge()","Navigator interface: operation setAppBadge(optional unsigned long long)"],"h":"05194df0"},
+  "badging/setAppBadge_cross_origin.sub.https.html": {"status":"complete","ms":70,"n":6,"pass":[]}
+ }
+}

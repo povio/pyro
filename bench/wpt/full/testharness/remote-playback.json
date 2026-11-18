@@ -1,0 +1,18 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "remote-playback/cancel-watch-availability.html": {"status":"complete","ms":20,"n":2,"pass":[]},
+  "remote-playback/disable-remote-playback-prompt-throws.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "remote-playback/disable-remote-playback-watch-availability-throws.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "remote-playback/idlharness.window.html": {"status":"complete","ms":90,"n":38,"pass":["Element includes ChildNode: member names are unique","Element includes NonDocumentTypeChildNode: member names are unique","Element includes ParentNode: member names are unique","Element includes Slottable: member names are unique","HTMLElement includes ElementContentEditable: member names are unique","HTMLElement includes GlobalEventHandlers: member names are unique","HTMLElement includes HTMLOrSVGOrMathMLElement: member names are unique","Partial interface Element: member names are unique","Partial interface HTMLMediaElement: member names are unique","Partial interface HTMLMediaElement: original interface defined","idl_test setup","idl_test validation"]},
+  "remote-playback/prompt-in-detached-iframe.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "remote-playback/watch-availability-initial-callback.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "remote-playback/watch-availability-promise-return-callback-id.html": {"status":"complete","ms":20,"n":1,"pass":[]}
+ }
+}

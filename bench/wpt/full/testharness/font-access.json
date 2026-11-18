@@ -1,0 +1,20 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "font-access/font_access_basic.tentative.https.window.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "font-access/font_access_detached_iframe.tentative.https.window.html": {"status":"complete","ms":10,"n":3,"pass":[]},
+  "font-access/font_access_permission.tentative.https.window.html": {"status":"complete","ms":20,"n":3,"pass":[]},
+  "font-access/font_access_query_select.tentative.https.window.html": {"status":"complete","ms":30,"n":15,"pass":[]},
+  "font-access/permissions-policy/local-fonts-allowed-by-permissions-policy-attribute.https.sub.html": {"status":"complete","ms":40,"n":2,"pass":[]},
+  "font-access/permissions-policy/local-fonts-allowed-by-permissions-policy.https.sub.html": {"status":"complete","ms":40,"n":3,"pass":["permissions policy header: local-fonts * disallows cross-origin iframes."]},
+  "font-access/permissions-policy/local-fonts-default-permissions-policy.https.sub.html": {"status":"complete","ms":40,"n":3,"pass":["Default \"local-fonts\" permissions policy [\"self\"] disallows cross-origin iframes."]},
+  "font-access/permissions-policy/local-fonts-disabled-by-permissions-policy.https.sub.html": {"status":"complete","ms":50,"n":3,"fail":["local-fonts-disabled-by-permissions-policy"],"h":"e694057d"},
+  "font-access/permissions-policy/local-fonts-supported-by-permissions-policy.html": {"status":"complete","ms":10,"n":1,"pass":[]}
+ }
+}

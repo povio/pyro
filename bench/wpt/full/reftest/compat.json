@@ -1,0 +1,38 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "compat/webkit-background-origin-text.html": {"status":"complete","ms":120,"n":1,"fail":[],"h":"0e440bf2"},
+  "compat/webkit-box-align-001.html": {"status":"complete","ms":120,"n":1,"fail":[],"h":"0e440bf2"},
+  "compat/webkit-box-blockify.html": {"status":"complete","ms":100,"n":1,"fail":[],"h":"0e440bf2"},
+  "compat/webkit-box-clamp-bottom-border.html": {"status":"complete","ms":110,"n":1,"fail":[],"h":"0e440bf2"},
+  "compat/webkit-box-clamp-visibility-change.html": {"status":"complete","ms":120,"n":1,"fail":[],"h":"0e440bf2"},
+  "compat/webkit-box-fieldset.html": {"status":"complete","ms":100,"n":1,"pass":[]},
+  "compat/webkit-box-horizontal-reverse-variants.html": {"status":"complete","ms":110,"n":1,"fail":[],"h":"0e440bf2"},
+  "compat/webkit-box-horizontal-rtl-variants.html": {"status":"complete","ms":120,"n":1,"fail":[],"h":"0e440bf2"},
+  "compat/webkit-box-ignores-flex-wrap.tentative.html": {"status":"complete","ms":50,"n":1,"fail":[],"h":"0e440bf2"},
+  "compat/webkit-box-rtl-flex.html": {"status":"complete","ms":100,"n":1,"pass":[]},
+  "compat/webkit-box-z-index-002.html": {"status":"complete","ms":120,"n":1,"fail":[],"h":"0e440bf2"},
+  "compat/webkit-box-z-index.html": {"status":"complete","ms":50,"n":1,"fail":[],"h":"0e440bf2"},
+  "compat/webkit-input-placeholder.html": {"status":"complete","ms":100,"n":1,"pass":[]},
+  "compat/webkit-linear-gradient-diff-unprefixed.html": {"status":"complete","ms":120,"n":1,"fail":[],"h":"0e440bf2"},
+  "compat/webkit-linear-gradient-line-bottom.html": {"status":"complete","ms":50,"n":1,"pass":[]},
+  "compat/webkit-linear-gradient-line-left.html": {"status":"complete","ms":100,"n":1,"pass":[]},
+  "compat/webkit-linear-gradient-line-right.html": {"status":"complete","ms":60,"n":1,"pass":[]},
+  "compat/webkit-linear-gradient-line-top.html": {"status":"complete","ms":50,"n":1,"pass":[]},
+  "compat/webkit-text-fill-color-property-001a.html": {"status":"complete","ms":100,"n":1,"fail":[],"h":"0e440bf2"},
+  "compat/webkit-text-fill-color-property-001b.html": {"status":"complete","ms":110,"n":1,"fail":[],"h":"0e440bf2"},
+  "compat/webkit-text-fill-color-property-001c.html": {"status":"complete","ms":100,"n":1,"fail":[],"h":"0e440bf2"},
+  "compat/webkit-text-fill-color-property-001d.html": {"status":"complete","ms":100,"n":1,"fail":[],"h":"0e440bf2"},
+  "compat/webkit-text-fill-color-property-002.html": {"status":"complete","ms":110,"n":1,"fail":[],"h":"0e440bf2"},
+  "compat/webkit-text-fill-color-property-003.html": {"status":"complete","ms":100,"n":1,"fail":[],"h":"0e440bf2"},
+  "compat/webkit-text-fill-color-property-004.html": {"status":"complete","ms":100,"n":1,"fail":[],"h":"0e440bf2"},
+  "compat/webkit-text-fill-color-property-005.html": {"status":"complete","ms":110,"n":1,"fail":[],"h":"0e440bf2"},
+  "compat/webkit-text-fill-color-property-006.html": {"status":"complete","ms":110,"n":1,"fail":[],"h":"0e440bf2"}
+ }
+}

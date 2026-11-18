@@ -1,0 +1,31 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "density-size-correction/density-corrected-image-svg-aspect-ratio-cross-origin.sub.html": {"status":"complete","ms":120,"n":1,"fail":[],"h":"0e440bf2"},
+  "density-size-correction/density-corrected-image-svg-aspect-ratio.html": {"status":"complete","ms":160,"n":1,"fail":[],"h":"0e440bf2"},
+  "density-size-correction/density-corrected-image-svg-cross-origin.sub.html": {"status":"complete","ms":160,"n":1,"fail":[],"h":"0e440bf2"},
+  "density-size-correction/density-corrected-image-svg.html": {"status":"complete","ms":150,"n":1,"fail":[],"h":"0e440bf2"},
+  "density-size-correction/density-corrected-size-bg-cross-origin.sub.html": {"status":"complete","ms":130,"n":1,"pass":[]},
+  "density-size-correction/density-corrected-size-bg-with-radius.html": {"status":"complete","ms":140,"n":1,"pass":[]},
+  "density-size-correction/density-corrected-size-bg.html": {"status":"complete","ms":140,"n":1,"pass":[]},
+  "density-size-correction/density-corrected-size-img-cross-origin.sub.html": {"status":"complete","ms":130,"n":1,"pass":[]},
+  "density-size-correction/density-corrected-size-img.html": {"status":"complete","ms":140,"n":1,"pass":[]},
+  "density-size-correction/density-corrected-size-pseudo-elements-cross-origin.sub.html": {"status":"complete","ms":140,"n":1,"pass":[]},
+  "density-size-correction/density-corrected-size-pseudo-elements.html": {"status":"complete","ms":130,"n":1,"pass":[]},
+  "density-size-correction/density-corrected-various-elements-cross-origin.sub.html": {"status":"complete","ms":130,"n":1,"pass":[]},
+  "density-size-correction/density-corrected-various-elements.html": {"status":"complete","ms":130,"n":1,"pass":[]},
+  "density-size-correction/image-set-001-cross-origin.sub.html": {"status":"complete","ms":130,"n":1,"fail":[],"h":"0e440bf2"},
+  "density-size-correction/image-set-001.html": {"status":"complete","ms":110,"n":1,"fail":[],"h":"0e440bf2"},
+  "density-size-correction/image-set-002-cross-origin.sub.html": {"status":"complete","ms":130,"n":1,"pass":[]},
+  "density-size-correction/image-set-002.html": {"status":"complete","ms":120,"n":1,"pass":[]},
+  "density-size-correction/image-set-003.html": {"status":"complete","ms":130,"n":1,"fail":[],"h":"0e440bf2"},
+  "density-size-correction/srcset-cross-origin.sub.html": {"status":"complete","ms":130,"n":1,"pass":[]},
+  "density-size-correction/srcset.html": {"status":"complete","ms":120,"n":1,"pass":[]}
+ }
+}

@@ -1,0 +1,12 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "scroll-performance-timing/tentative/supported-entry-types.window.html": {"status":"complete","ms":10,"n":2,"pass":[]}
+ }
+}

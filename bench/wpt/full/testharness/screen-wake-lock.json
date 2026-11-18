@@ -1,0 +1,24 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "screen-wake-lock/chrome-bug-1348019.https.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "screen-wake-lock/idlharness.https.window.html": {"status":"complete","ms":90,"n":42,"pass":["Navigator includes NavigatorConcurrentHardware: member names are unique","Navigator includes NavigatorContentUtils: member names are unique","Navigator includes NavigatorCookies: member names are unique","Navigator includes NavigatorID: member names are unique","Navigator includes NavigatorLanguage: member names are unique","Navigator includes NavigatorOnLine: member names are unique","Navigator includes NavigatorPlugins: member names are unique","Partial interface Navigator: member names are unique","Partial interface Navigator: original interface defined","Partial interface Navigator[2]: member names are unique","Partial interface mixin NavigatorID: member names are unique","idl_test validation"]},
+  "screen-wake-lock/wakelock-active-document.https.window.html": {"status":"complete","ms":40,"n":3,"pass":[]},
+  "screen-wake-lock/wakelock-disabled-by-permissions-policy.https.html": {"status":"complete","ms":10000,"n":3,"pass":[]},
+  "screen-wake-lock/wakelock-enabled-by-permissions-policy-attribute-redirect-on-load.https.html": {"status":"complete","ms":10000,"n":2,"pass":[]},
+  "screen-wake-lock/wakelock-enabled-by-permissions-policy-attribute.https.html": {"status":"complete","ms":10000,"n":2,"pass":[]},
+  "screen-wake-lock/wakelock-enabled-by-permissions-policy.https.html": {"status":"complete","ms":10000,"n":3,"pass":[]},
+  "screen-wake-lock/wakelock-insecure-context.any.html": {"status":"complete","ms":10,"n":1,"fail":[],"h":"53a17a7e"},
+  "screen-wake-lock/wakelock-onrelease.https.html": {"status":"complete","ms":20,"n":3,"pass":[]},
+  "screen-wake-lock/wakelock-released.https.html": {"status":"complete","ms":30,"n":1,"pass":[]},
+  "screen-wake-lock/wakelock-supported-by-permissions-policy.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "screen-wake-lock/wakelock-type.https.window.html": {"status":"complete","ms":10,"n":2,"pass":[]},
+  "screen-wake-lock/wakelockpermissiondescriptor.https.html": {"status":"complete","ms":10,"n":1,"pass":[]}
+ }
+}

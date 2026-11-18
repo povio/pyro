@@ -1,0 +1,41 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "focus/activeelement-after-calling-window-focus.sub.html": {"status":"complete","ms":110,"n":5,"pass":[]},
+  "focus/activeelement-after-focusing-different-site-iframe-contentwindow.html": {"status":"complete","ms":1500,"n":3,"fail":["Check trailing events"],"h":"415dab86"},
+  "focus/activeelement-after-focusing-different-site-iframe-then-immediately-focusing-back.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "focus/activeelement-after-focusing-same-site-iframe-contentwindow.html": {"status":"complete","ms":1500,"n":2,"pass":["Check result"]},
+  "focus/activeelement-after-focusing-same-site-iframe.html": {"status":"complete","ms":1500,"n":2,"pass":["Check result"]},
+  "focus/activeelement-after-immediately-focusing-different-site-iframe-contentwindow.html": {"status":"complete","ms":1500,"n":1,"fail":[],"h":"4578a5e1"},
+  "focus/activeelement-after-immediately-focusing-same-site-iframe-contentwindow.html": {"status":"complete","ms":1500,"n":1,"fail":[],"h":"4578a5e1"},
+  "focus/activeelement-after-immediately-focusing-same-site-iframe.html": {"status":"complete","ms":1500,"n":1,"fail":[],"h":"4578a5e1"},
+  "focus/activeelement-after-nested-loses-focus.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "focus/anchor-remove-href.html": {"status":"complete","ms":10,"n":1,"fail":[],"h":"b46680d3"},
+  "focus/cross-origin-ancestor-activeelement-after-child-lose-focus.sub.html": {"status":"complete","ms":40,"n":1,"fail":[],"h":"bc4d73ab"},
+  "focus/focus-already-focused-iframe-deep-different-site.html": {"status":"complete","ms":1500,"n":1,"fail":[],"h":"4578a5e1"},
+  "focus/focus-already-focused-iframe-different-site.html": {"status":"complete","ms":1500,"n":1,"fail":[],"h":"4578a5e1"},
+  "focus/focus-already-focused-iframe-same-site.html": {"status":"complete","ms":1500,"n":1,"fail":[],"h":"4578a5e1"},
+  "focus/focus-centers-element.html": {"status":"complete","ms":20,"n":1,"fail":[],"h":"f15cd9e4"},
+  "focus/focus-double-sync-calls.html": {"status":"complete","ms":10,"n":1,"fail":[],"h":"f62e289a"},
+  "focus/focus-event-after-focusing-iframes.html": {"status":"complete","ms":40,"n":2,"pass":[]},
+  "focus/focus-event-after-iframe-gets-focus.html": {"status":"complete","ms":50,"n":3,"pass":[]},
+  "focus/focus-restoration-in-different-site-iframes-window.html": {"status":"complete","ms":3500,"n":1,"pass":[]},
+  "focus/focus-restoration-in-different-site-iframes.html": {"status":"complete","ms":3500,"n":1,"pass":[]},
+  "focus/focus-restoration-in-same-site-iframes-window.html": {"status":"complete","ms":3500,"n":1,"pass":[]},
+  "focus/hasfocus-different-site.html": {"status":"complete","ms":30,"n":1,"pass":[]},
+  "focus/hasfocus-same-site.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "focus/iframe-activeelement-after-focusing-out-iframes.html": {"status":"complete","ms":70,"n":2,"pass":[]},
+  "focus/iframe-contentwindow-focus-with-same-as-top-intermediate-frame.html": {"status":"complete","ms":2000,"n":1,"pass":[]},
+  "focus/iframe-focus-with-different-site-intermediate-frame.html": {"status":"complete","ms":3000,"n":1,"pass":[]},
+  "focus/iframe-focus-with-same-as-top-intermediate-frame.html": {"status":"complete","ms":2100,"n":1,"pass":[]},
+  "focus/iframe-focuses-parent-same-site.html": {"status":"complete","ms":530,"n":1,"fail":[],"h":"4578a5e1"},
+  "focus/nested-focus-within-iframe-focus-event.html": {"status":"complete","ms":20,"n":1,"fail":[],"h":"62e76186"},
+  "focus/scroll-matches-focus.html": {"status":"complete","ms":30,"n":1,"fail":[],"h":"2b48e85d"}
+ }
+}

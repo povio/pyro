@@ -1,0 +1,21 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "measure-memory/detached.https.window.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "measure-memory/iframe.cross-origin.https.window.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "measure-memory/iframe.same-origin.https.window.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "measure-memory/main-frame-and-worker.https.window.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "measure-memory/main-frame.https.window.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "measure-memory/redirect.client.https.window.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "measure-memory/redirect.server.https.window.html": {"status":"complete","ms":130,"n":1,"pass":[]},
+  "measure-memory/window-open.cross-origin.https.window.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "measure-memory/window-open.mix.https.window.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "measure-memory/window-open.same-origin.https.window.html": {"status":"complete","ms":130,"n":1,"pass":[]}
+ }
+}

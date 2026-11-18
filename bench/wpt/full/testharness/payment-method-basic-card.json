@@ -1,0 +1,14 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "payment-method-basic-card/historical.https.html": {"status":"complete","ms":20,"n":1,"pass":[]},
+  "payment-method-basic-card/payment-request-canmakepayment-method.https.html": {"status":"complete","ms":10,"n":3,"pass":[]},
+  "payment-method-basic-card/steps_for_selecting_the_payment_handler.html": {"status":"timeout","ms":15000,"n":1,"pass":[]}
+ }
+}

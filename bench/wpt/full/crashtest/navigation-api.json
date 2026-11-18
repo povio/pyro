@@ -1,0 +1,14 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "."
+ ],
+ "tests": {
+  "navigation-api/navigate-event/navigate-form-onformdata-navigate-crash.html": {"status":"complete","ms":60,"n":1,"fail":[],"h":"22f2a845"},
+  "navigation-api/navigate-event/potentially-reset-focus-no-document-element-crash.html": {"status":"complete","ms":50,"n":1,"fail":[],"h":"22f2a845"},
+  "navigation-api/navigate-event/signal-abort-replaceState-crash.html": {"status":"complete","ms":50,"n":1,"fail":[],"h":"22f2a845"}
+ }
+}

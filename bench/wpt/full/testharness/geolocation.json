@@ -1,0 +1,29 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "geolocation/PositionOptions.https.html": {"status":"complete","ms":10,"n":6,"pass":[]},
+  "geolocation/clearWatch_TypeError.https.html": {"status":"complete","ms":20,"n":7,"fail":[],"h":"4953ebd8"},
+  "geolocation/disabled-by-permissions-policy.https.sub.html": {"status":"complete","ms":20,"n":3,"pass":[]},
+  "geolocation/enabled-by-permission-policy-attribute-redirect-on-load.https.sub.html": {"status":"complete","ms":20,"n":2,"pass":[]},
+  "geolocation/enabled-by-permissions-policy.https.sub.html": {"status":"complete","ms":20,"n":3,"pass":[]},
+  "geolocation/enabled-on-self-origin-by-permissions-policy.https.sub.html": {"status":"complete","ms":20,"n":3,"pass":[]},
+  "geolocation/getCurrentPosition-accuracyMode-cache.https.html": {"status":"complete","ms":20,"n":2,"pass":[]},
+  "geolocation/getCurrentPosition-error.https.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "geolocation/getCurrentPosition-success.https.html": {"status":"complete","ms":10,"n":2,"pass":[]},
+  "geolocation/getCurrentPosition_TypeError.https.html": {"status":"complete","ms":20,"n":7,"fail":["Call getCurrentPosition() with wrong type for second argument. Exception expected.","Call getCurrentPosition() with wrong type for third argument. Exception expected.","Calling getCurrentPosition() with a legacy event handler objects."],"h":"cb6af1f9"},
+  "geolocation/heading-stationary.https.html": {"status":"complete","ms":20,"n":2,"pass":[]},
+  "geolocation/idlharness.https.window.html": {"status":"complete","ms":90,"n":68,"pass":["Geolocation interface: calling getCurrentPosition(PositionCallback, optional PositionErrorCallback?, optional PositionOptions) on navigator.geolocation with too few arguments must throw TypeError","Geolocation interface: calling watchPosition(PositionCallback, optional PositionErrorCallback?, optional PositionOptions) on navigator.geolocation with too few arguments must throw TypeError","Geolocation interface: navigator.geolocation must inherit property \"clearWatch(long)\" with the proper type","Geolocation interface: navigator.geolocation must inherit property \"getCurrentPosition(PositionCallback, optional PositionErrorCallback?, optional PositionOptions)\" with the proper type","Geolocation interface: navigator.geolocation must inherit property \"watchPosition(PositionCallback, optional PositionErrorCallback?, optional PositionOptions)\" with the proper type","Navigator includes NavigatorConcurrentHardware: member names are unique","Navigator includes NavigatorContentUtils: member names are unique","Navigator includes NavigatorCookies: member names are unique","Navigator includes NavigatorID: member names are unique","Navigator includes NavigatorLanguage: member names are unique","Navigator includes NavigatorOnLine: member names are unique","Navigator includes NavigatorPlugins: member names are unique","Navigator interface: attribute geolocation","Partial interface Navigator: member names are unique","Partial interface Navigator: original interface defined","Partial interface Navigator[2]: member names are unique","Partial interface mixin NavigatorID: member names are unique","Stringification of navigator.geolocation","idl_test setup","idl_test validation"]},
+  "geolocation/non-fully-active.https.html": {"status":"complete","ms":20,"n":4,"pass":[]},
+  "geolocation/non-secure-contexts.http.html": {"status":"complete","ms":10,"n":4,"fail":[],"h":"620dd30f"},
+  "geolocation/permission.https.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "geolocation/tojson.https.window.html": {"status":"complete","ms":30,"n":1,"pass":[]},
+  "geolocation/watchPosition_permission_deny.https.html": {"status":"complete","ms":20,"n":2,"pass":[]},
+  "geolocation/watchposition-timeout.https.window.html": {"status":"complete","ms":20,"n":1,"pass":[]}
+ }
+}

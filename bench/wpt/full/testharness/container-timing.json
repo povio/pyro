@@ -1,0 +1,34 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "container-timing/tentative/containertiming-and-ignore-on-text-itself.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "container-timing/tentative/containertiming-body-with-child-img.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "container-timing/tentative/containertiming-img-already-loaded.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "container-timing/tentative/containertiming-largest-painted-element-own-area.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "container-timing/tentative/containertiming-largest-painted-element.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "container-timing/tentative/containertiming-observe-after-paint-with-buffering.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "container-timing/tentative/containertiming-observe-after-paint-without-buffering.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "container-timing/tentative/containertiming-observe-after-paints-with-buffering.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "container-timing/tentative/containertiming-observe-no-paint.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "container-timing/tentative/containertiming-text-itself.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "container-timing/tentative/containertiming-with-child-ignore-and-child-img.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "container-timing/tentative/containertiming-with-child-img.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "container-timing/tentative/containertiming-with-child-text.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "container-timing/tentative/iframe-isolation-cross-origin.sub.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "container-timing/tentative/iframe-isolation-same-origin.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "container-timing/tentative/ignore-with-containertiming-and-child-img.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "container-timing/tentative/nested-containertiming-and-ignore-on-img.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "container-timing/tentative/nested-containertiming-and-ignore-on-text.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "container-timing/tentative/nested-containertiming-child-img-with-ignore.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "container-timing/tentative/nested-containertiming-on-img-without-ignore.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "container-timing/tentative/nested-containertiming-with-ignore.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "container-timing/tentative/pseudo-background-image-before-in-container-timing.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "container-timing/tentative/pseudo-with-text-content-in-container-timing.html": {"status":"complete","ms":10,"n":1,"pass":[]}
+ }
+}

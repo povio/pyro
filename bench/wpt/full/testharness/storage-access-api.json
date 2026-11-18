@@ -1,0 +1,42 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "storage-access-api/hasStorageAccess-ABA.sub.https.window.html": {"status":"complete","ms":10000,"n":1,"pass":[]},
+  "storage-access-api/hasStorageAccess-insecure.sub.window.html": {"status":"complete","ms":10000,"n":9,"pass":[]},
+  "storage-access-api/idlharness.window.html": {"status":"complete","ms":30,"n":12,"fail":["Document interface: document must inherit property \"hasStorageAccess()\" with the proper type","Document interface: document must inherit property \"requestStorageAccess()\" with the proper type","Document interface: operation hasStorageAccess()","Document interface: operation requestStorageAccess()"],"h":"344cf4df"},
+  "storage-access-api/requestStorageAccess-ABA.sub.https.window.html": {"status":"complete","ms":10000,"n":1,"pass":[]},
+  "storage-access-api/requestStorageAccess-cross-origin-fetch.sub.https.window.html": {"status":"complete","ms":10000,"n":2,"pass":[]},
+  "storage-access-api/requestStorageAccess-cross-origin-iframe-navigation.sub.https.window.html": {"status":"timeout","ms":45000,"n":4,"pass":[]},
+  "storage-access-api/requestStorageAccess-cross-site-fetch.sub.https.window.html": {"status":"complete","ms":10000,"n":1,"pass":[]},
+  "storage-access-api/requestStorageAccess-cross-site-iframe.sub.https.window.html": {"status":"complete","ms":10000,"n":1,"pass":[]},
+  "storage-access-api/requestStorageAccess-cross-site-sibling-iframes.sub.https.window.html": {"status":"timeout","ms":45000,"n":2,"pass":[]},
+  "storage-access-api/requestStorageAccess-dedicated-worker.sub.https.window.html": {"status":"complete","ms":10000,"n":2,"pass":[]},
+  "storage-access-api/requestStorageAccess-nested-cross-origin-iframe.sub.https.window.html": {"status":"complete","ms":10000,"n":1,"pass":[]},
+  "storage-access-api/requestStorageAccess-nested-cross-site-iframe.sub.https.window.html": {"status":"complete","ms":10100,"n":1,"pass":[]},
+  "storage-access-api/requestStorageAccess-nested-same-origin-iframe.sub.https.window.html": {"status":"complete","ms":10000,"n":4,"pass":[]},
+  "storage-access-api/requestStorageAccess-same-site-iframe.sub.https.window.html": {"status":"complete","ms":10000,"n":1,"pass":[]},
+  "storage-access-api/requestStorageAccess-sandboxed-iframe-allow-storage-access.sub.https.window.html": {"status":"complete","ms":10000,"n":1,"pass":[]},
+  "storage-access-api/requestStorageAccess-sandboxed-iframe-no-storage-access.sub.https.window.html": {"status":"complete","ms":10000,"n":1,"pass":[]},
+  "storage-access-api/requestStorageAccess-shared-worker.sub.https.tentative.window.html": {"status":"complete","ms":10000,"n":3,"pass":[]},
+  "storage-access-api/requestStorageAccess-web-socket.sub.https.window.html": {"status":"complete","ms":10000,"n":2,"pass":[]},
+  "storage-access-api/requestStorageAccess.sub.https.window.html": {"status":"complete","ms":50,"n":4,"pass":[]},
+  "storage-access-api/storage-access-beyond-cookies.BlobURLSharedWorker.sub.https.tentative.window.html": {"status":"complete","ms":10000,"n":1,"pass":[]},
+  "storage-access-api/storage-access-beyond-cookies.BroadcastChannel.sub.https.window.html": {"status":"complete","ms":10000,"n":1,"pass":[]},
+  "storage-access-api/storage-access-beyond-cookies.SharedWorker.sub.https.window.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "storage-access-api/storage-access-beyond-cookies.caches.sub.https.window.html": {"status":"complete","ms":10000,"n":1,"pass":[]},
+  "storage-access-api/storage-access-beyond-cookies.cookies.sub.https.window.html": {"status":"complete","ms":10000,"n":1,"pass":[]},
+  "storage-access-api/storage-access-beyond-cookies.estimate.sub.https.window.html": {"status":"complete","ms":10000,"n":1,"pass":[]},
+  "storage-access-api/storage-access-beyond-cookies.indexedDB.sub.https.window.html": {"status":"complete","ms":10000,"n":1,"pass":[]},
+  "storage-access-api/storage-access-beyond-cookies.localStorage.sub.https.window.html": {"status":"complete","ms":10000,"n":1,"pass":[]},
+  "storage-access-api/storage-access-beyond-cookies.locks.sub.https.window.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "storage-access-api/storage-access-beyond-cookies.sessionStorage.sub.https.window.html": {"status":"complete","ms":10000,"n":1,"pass":[]},
+  "storage-access-api/storage-access-beyond-cookies.thirdPartyBlobStorage.sub.https.window.html": {"status":"complete","ms":10000,"n":1,"pass":[]},
+  "storage-access-api/storage-access-permission.sub.https.window.html": {"status":"complete","ms":10000,"n":3,"pass":[]}
+ }
+}

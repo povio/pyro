@@ -1,0 +1,44 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "scroll-animations/animation-trigger/animation-trigger-fill-mode-both.tentative.html": {"status":"complete","ms":130,"n":1,"pass":[]},
+  "scroll-animations/animation-trigger/animation-trigger-fill-mode-none.tentative.html": {"status":"complete","ms":130,"n":1,"pass":[]},
+  "scroll-animations/css/animation-fill-outside-range-test.html": {"status":"complete","ms":130,"n":1,"pass":[]},
+  "scroll-animations/css/animation-inactive-outside-range-test.html": {"status":"complete","ms":110,"n":1,"fail":[],"h":"0e440bf2"},
+  "scroll-animations/css/animation-range-smooth-scroll.html": {"status":"complete","ms":110,"n":1,"pass":[]},
+  "scroll-animations/css/animation-range-visual-test.html": {"status":"complete","ms":110,"n":1,"pass":[]},
+  "scroll-animations/css/deferred-timeline-composited.html": {"status":"complete","ms":110,"n":1,"pass":[]},
+  "scroll-animations/css/scroll-animation-initial-offset.html": {"status":"complete","ms":240,"n":1,"pass":[]},
+  "scroll-animations/css/scroll-timeline-default-iframe.html": {"status":"complete","ms":160,"n":1,"fail":[],"h":"0e440bf2"},
+  "scroll-animations/css/scroll-timeline-default-quirks-mode.html": {"status":"complete","ms":240,"n":1,"pass":[]},
+  "scroll-animations/css/scroll-timeline-default-writing-mode-rl.html": {"status":"complete","ms":260,"n":1,"pass":[]},
+  "scroll-animations/css/scroll-timeline-default.html": {"status":"complete","ms":250,"n":1,"pass":[]},
+  "scroll-animations/css/scroll-timeline-frame-size-changed.html": {"status":"complete","ms":230,"n":1,"pass":[]},
+  "scroll-animations/css/scroll-timeline-inline-orientation.html": {"status":"complete","ms":250,"n":1,"pass":[]},
+  "scroll-animations/css/scroll-timeline-on-pseudo-002.html": {"status":"complete","ms":50,"n":1,"pass":[]},
+  "scroll-animations/css/scroll-timeline-update-reversed-animation.html": {"status":"complete","ms":220,"n":1,"pass":[]},
+  "scroll-animations/css/view-timeline-pseudo-on-scroller-002.html": {"status":"complete","ms":110,"n":1,"pass":[]},
+  "scroll-animations/css/view-timeline-range-update-reversed-animation.html": {"status":"complete","ms":200,"n":1,"pass":[]},
+  "scroll-animations/css/view-timeline-range-update.html": {"status":"complete","ms":210,"n":1,"pass":[]},
+  "scroll-animations/css/view-timeline-subject-bounds-update.html": {"status":"complete","ms":210,"n":1,"pass":[]},
+  "scroll-animations/responsive/repaint-after-finished.html": {"status":"complete","ms":110,"n":1,"pass":[]},
+  "scroll-animations/scroll-timelines/animation-with-animatable-interface.html": {"status":"timeout","ms":15000,"n":0,"pass":[]},
+  "scroll-animations/scroll-timelines/animation-with-display-none.html": {"status":"timeout","ms":15000,"n":0,"pass":[]},
+  "scroll-animations/scroll-timelines/animation-with-overflow-hidden.html": {"status":"timeout","ms":15000,"n":0,"pass":[]},
+  "scroll-animations/scroll-timelines/animation-with-root-scroller.html": {"status":"timeout","ms":15000,"n":0,"pass":[]},
+  "scroll-animations/scroll-timelines/animation-with-transform.html": {"status":"timeout","ms":15000,"n":0,"pass":[]},
+  "scroll-animations/scroll-timelines/custom-property.html": {"status":"complete","ms":100,"n":1,"pass":[]},
+  "scroll-animations/scroll-timelines/layout-changes-on-percentage-based-timeline.html": {"status":"timeout","ms":15000,"n":0,"pass":[]},
+  "scroll-animations/scroll-timelines/progress-based-effect-delay.tentative.html": {"status":"timeout","ms":15000,"n":0,"pass":[]},
+  "scroll-animations/scroll-timelines/set-current-time-before-play.html": {"status":"timeout","ms":15000,"n":0,"pass":[]},
+  "scroll-animations/scroll-timelines/two-animations-attach-to-same-scroll-timeline-cancel-one.html": {"status":"timeout","ms":15000,"n":0,"pass":[]},
+  "scroll-animations/scroll-timelines/two-animations-attach-to-same-scroll-timeline.html": {"status":"timeout","ms":15000,"n":0,"pass":[]},
+  "scroll-animations/view-timelines/range-boundary.tentative.html": {"status":"complete","ms":100,"n":1,"pass":[]}
+ }
+}

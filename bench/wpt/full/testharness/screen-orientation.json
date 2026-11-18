@@ -1,0 +1,22 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "screen-orientation/active-lock.html": {"status":"complete","ms":30,"n":3,"pass":[]},
+  "screen-orientation/fullscreen-interactions.html": {"status":"complete","ms":20,"n":2,"pass":[]},
+  "screen-orientation/hidden_document.html": {"status":"complete","ms":20,"n":4,"pass":[]},
+  "screen-orientation/idlharness.window.html": {"status":"complete","ms":70,"n":25,"fail":["ScreenOrientation interface: calling lock(OrientationLockType) on screen.orientation with too few arguments must throw TypeError","ScreenOrientation interface: operation lock(OrientationLockType)"],"h":"a94ab141"},
+  "screen-orientation/lock-bad-argument.html": {"status":"complete","ms":10,"n":2,"pass":[]},
+  "screen-orientation/lock-sandboxed-iframe.html": {"status":"complete","ms":40,"n":2,"pass":[]},
+  "screen-orientation/lock-unlock-check.html": {"status":"complete","ms":10,"n":2,"pass":[]},
+  "screen-orientation/nested-documents.html": {"status":"complete","ms":30,"n":2,"pass":[]},
+  "screen-orientation/onchange-event-subframe.html": {"status":"complete","ms":20,"n":2,"pass":[]},
+  "screen-orientation/onchange-event.html": {"status":"complete","ms":10,"n":2,"pass":[]},
+  "screen-orientation/orientation-reading.html": {"status":"complete","ms":20,"n":6,"pass":["Test that ScreenOrientation is always the same object","Test that ScreenOrientation properties are not writable","screen.orientation attributes are present"]}
+ }
+}

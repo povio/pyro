@@ -1,0 +1,16 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "video-rvfc/request-video-frame-callback-before-xr-session.https.html": {"status":"complete","ms":10,"n":4,"pass":[]},
+  "video-rvfc/request-video-frame-callback-during-xr-session.https.html": {"status":"complete","ms":10,"n":2,"pass":[]},
+  "video-rvfc/request-video-frame-callback-parallel.html": {"status":"complete","ms":10,"n":2,"pass":["Test callbacks get the same information."]},
+  "video-rvfc/request-video-frame-callback-repeating.html": {"status":"complete","ms":470,"n":2,"fail":[],"h":"3c1839a2"},
+  "video-rvfc/request-video-frame-callback.html": {"status":"complete","ms":10000,"n":5,"fail":["Test video.rVFC callbacks run before window.rAF callbacks.","Test video.rVFC does not stop when switching sources."],"h":"9d7d1d18"}
+ }
+}

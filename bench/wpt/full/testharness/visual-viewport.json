@@ -1,0 +1,25 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "visual-viewport/resize-event-order.html": {"status":"complete","ms":120,"n":2,"pass":["iframe: DOMWindow resize fired before VisualViewport."]},
+  "visual-viewport/scroll-event-order.html": {"status":"complete","ms":80,"n":1,"pass":[]},
+  "visual-viewport/viewport-no-resize-event-on-overflow-recalc.html": {"status":"complete","ms":10,"n":1,"fail":[],"h":"3260ae3b"},
+  "visual-viewport/viewport-read-size-in-iframe-causes-layout.html": {"status":"complete","ms":10,"n":1,"fail":[],"h":"d46eae1d"},
+  "visual-viewport/viewport-resize-event-on-iframe-show.html": {"status":"complete","ms":10,"n":1,"fail":[],"h":"92e67472"},
+  "visual-viewport/viewport-resize-event-on-iframe-size-change.html": {"status":"complete","ms":10,"n":1,"fail":[],"h":"2fc7d928"},
+  "visual-viewport/viewport-scale-clamped.html": {"status":"complete","ms":80,"n":1,"fail":[],"h":"19bb834e"},
+  "visual-viewport/viewport-scrollbars-cause-resize-in-iframe.html": {"status":"complete","ms":10,"n":1,"fail":[],"h":"dccea87a"},
+  "visual-viewport/viewport-scrollbars-cause-resize.html": {"status":"complete","ms":10,"n":3,"fail":[],"h":"2166b823"},
+  "visual-viewport/viewport-unscaled-scale-iframe.html": {"status":"complete","ms":10,"n":1,"fail":[],"h":"abb8fee1"},
+  "visual-viewport/viewport-unscaled-scale.html": {"status":"complete","ms":10,"n":1,"fail":[],"h":"9b20a687"},
+  "visual-viewport/viewport-unscaled-scroll-iframe.html": {"status":"complete","ms":10,"n":4,"fail":[],"h":"344c6b2b"},
+  "visual-viewport/viewport-unscaled-size-iframe.html": {"status":"complete","ms":10,"n":4,"fail":[],"h":"e852d0f4"},
+  "visual-viewport/viewport-unscaled-size.html": {"status":"complete","ms":10,"n":4,"fail":[],"h":"6dee1c43"}
+ }
+}

@@ -118,7 +118,9 @@ jobs:
     needs: prepare
     if: github.event_name != 'pull_request'
     runs-on: ${{ needs.prepare.outputs.runner }}
-    timeout-minutes: 180
+    # A shard takes ~30 min with reruns (testharness at --jobs 16, 2026-11-18); the runner ends itself after 10 min
+    # without progress (run.mjs STALL_MS), so this only bounds what that misses.
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -255,7 +257,9 @@ jobs:
         run: |
           for k in testharness reftest crashtest; do
             ls shards/wpt-full-$k-*.json >/dev/null 2>&1 || continue
-            bun bench/wpt/gate.mjs update --kind $k --baseline full-baselines/$k/ --out full-baselines/$k/ shards/wpt-full-$k-*.json
+            # From scratch each night (a directory that does not exist yet): the baseline is what tonight's two runs
+            # agree on. A lost shard leaves its pages out (--missing-shards) instead of losing the whole kind.
+            bun bench/wpt/gate.mjs update --kind $k --missing-shards --baseline full-baselines/$k/ --out full-baselines/$k/ shards/wpt-full-$k-*.json
           done
           du -sh full-baselines/* || true
       - uses: actions/upload-artifact@v4

@@ -1,0 +1,23 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "old-tests/submission/Microsoft/foreigncontent/foreign_content_014.html": {"status":"complete","ms":20,"n":1,"fail":[],"h":"88dc3bce"},
+  "old-tests/submission/Microsoft/foreigncontent/foreign_content_015.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "old-tests/submission/Microsoft/history/history_000.htm": {"status":"complete","ms":40,"n":25,"fail":["history.pushState clears forward entries"],"h":"bfb41383"},
+  "old-tests/submission/Microsoft/selection/collapseToEnd.htm": {"status":"complete","ms":30,"n":1,"fail":[],"h":"6354b467"},
+  "old-tests/submission/Microsoft/selection/collapseToStart.htm": {"status":"complete","ms":10,"n":1,"fail":[],"h":"7b3c2fd0"},
+  "old-tests/submission/Microsoft/selection/deleteFromDocument.htm": {"status":"complete","ms":10,"n":1,"fail":[],"h":"ce6c5c93"},
+  "old-tests/submission/Microsoft/selection/insertNodeIntoSelection.htm": {"status":"complete","ms":30,"n":1,"pass":[]},
+  "old-tests/submission/Microsoft/selection/removeAllRanges.htm": {"status":"complete","ms":10,"n":1,"fail":[],"h":"13b3ef88"},
+  "old-tests/submission/Microsoft/selection/removeRange.htm": {"status":"complete","ms":10,"n":1,"fail":[],"h":"2b87d4e7"},
+  "old-tests/submission/Microsoft/selection/selectAllChildren.htm": {"status":"complete","ms":30,"n":1,"fail":[],"h":"04705a62"},
+  "old-tests/submission/Microsoft/selection/selectionStartEnd.htm": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "old-tests/submission/Microsoft/selection/setSelectionRange.htm": {"status":"complete","ms":10,"n":1,"pass":[]}
+ }
+}

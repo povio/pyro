@@ -1,0 +1,29 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "web-animations/animation-model/keyframe-effects/effect-value-opacity-replaced-effect-in-shadow-root.html": {"status":"complete","ms":120,"n":1,"fail":[],"h":"0e440bf2"},
+  "web-animations/animation-model/keyframe-effects/effect-value-opacity-replaced-effect.html": {"status":"complete","ms":110,"n":1,"fail":[],"h":"0e440bf2"},
+  "web-animations/animation-model/keyframe-effects/transform-and-opacity-on-inline-001.html": {"status":"complete","ms":130,"n":1,"fail":[],"h":"0e440bf2"},
+  "web-animations/animation-model/side-effects-of-animations-current.html": {"status":"complete","ms":140,"n":1,"pass":[]},
+  "web-animations/animation-model/side-effects-of-animations-in-effect.html": {"status":"complete","ms":120,"n":1,"fail":[],"h":"0e440bf2"},
+  "web-animations/animation-model/side-effects-of-animations-none.html": {"status":"complete","ms":110,"n":1,"fail":[],"h":"0e440bf2"},
+  "web-animations/responsive/background-color-animation-plus-opacity.html": {"status":"complete","ms":140,"n":1,"fail":[],"h":"0e440bf2"},
+  "web-animations/responsive/multiple-properties-delayed-important.html": {"status":"complete","ms":120,"n":1,"fail":[],"h":"0e440bf2"},
+  "web-animations/responsive/neutral-keyframe.html": {"status":"complete","ms":130,"n":1,"fail":[],"h":"0e440bf2"},
+  "web-animations/responsive/opacity-with-delayed-important.html": {"status":"complete","ms":130,"n":1,"fail":[],"h":"0e440bf2"},
+  "web-animations/responsive/toggle-animated-iframe-visibility.html": {"status":"complete","ms":120,"n":1,"fail":[],"h":"0e440bf2"},
+  "web-animations/responsive/tramsform-with-delayed-important.html": {"status":"complete","ms":130,"n":1,"fail":[],"h":"0e440bf2"},
+  "web-animations/timing-model/animations/document-timeline-animation.html": {"status":"complete","ms":110,"n":1,"fail":[],"h":"0e440bf2"},
+  "web-animations/timing-model/animations/infinite-duration-animation.html": {"status":"complete","ms":240,"n":1,"fail":[],"h":"0e440bf2"},
+  "web-animations/timing-model/animations/reverse-running-animation.html": {"status":"complete","ms":210,"n":1,"fail":[],"h":"0e440bf2"},
+  "web-animations/timing-model/animations/sync-start-times.html": {"status":"complete","ms":130,"n":1,"pass":[]},
+  "web-animations/timing-model/animations/update-playback-rate-fast.html": {"status":"complete","ms":690,"n":1,"fail":[],"h":"0e440bf2"},
+  "web-animations/timing-model/animations/update-playback-rate-zero.html": {"status":"complete","ms":1200,"n":1,"fail":[],"h":"0e440bf2"}
+ }
+}

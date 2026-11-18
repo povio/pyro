@@ -1,0 +1,14 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "."
+ ],
+ "tests": {
+  "service-workers/cache-storage/crashtests/cache-response-clone.https.html": {"status":"complete","ms":50,"n":1,"fail":[],"h":"22f2a845"},
+  "service-workers/service-worker/detached-register-crash.https.html": {"status":"complete","ms":50,"n":1,"fail":[],"h":"22f2a845"},
+  "service-workers/service-worker/messageport-transfer-crash.html": {"status":"timeout","ms":15000,"n":0,"pass":[]}
+ }
+}

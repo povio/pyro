@@ -18,6 +18,7 @@
 //       With no baseline anywhere it only reports (bootstrap). --base-baseline/--base-flaky: the base branch's
 //       files; coverage this branch's files drop is an error unless --accept-loss (the `wpt-accept-loss` label).
 //   bun bench/wpt/gate.mjs update FILE... [--out FILE] [--replace --match RE|--tests FILE] [--prune] [--durations]
+//                              [--missing-shards]   (record the shards given when some of N are missing)
 //       Writes the results into the baseline, only adding: a subtest passes if it passed in the baseline or in every
 //       run of the page; a page whose runs are a regression keeps its entry. --replace takes the pages that --match
 //       or --tests name as they are (accepting their losses); --prune drops pages no shard discovered. Durations
@@ -38,7 +39,7 @@ import {
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const [cmd, ...argv] = process.argv.slice(2);
-const FLAGS = ['--testdriver', '--full', '--no-rerun', '--no-check', '--replace', '--prune', '--durations', '--reuse-context', '--accept-loss', '--suggest'];
+const FLAGS = ['--missing-shards', '--testdriver', '--full', '--no-rerun', '--no-check', '--replace', '--prune', '--durations', '--reuse-context', '--accept-loss', '--suggest'];
 const opt = (k, d) => { const i = argv.indexOf(k); return i >= 0 ? argv[i + 1] : d; };
 const flag = (k) => argv.includes(k);
 const positional = () => argv.filter((a, i) => !a.startsWith('--') && !(argv[i - 1]?.startsWith('--') && !FLAGS.includes(argv[i - 1])));
@@ -145,7 +146,12 @@ function load(files) {
   const parsed = runs.map((r) => (r.shard ?? '0/1').split('/').map(Number));
   const n = parsed[0][1];
   const indexes = new Set(parsed.map(([i, m]) => (m === n ? i : NaN)));
-  if (runs.length !== n || indexes.size !== n || ![...indexes].every((i) => i >= 0 && i < n)) {
+  // --missing-shards (update only): record the shards there are, e.g. a whole-suite run with a shard lost; the
+  // pages of the lost shard simply have no entry (the next run's baseline covers them).
+  const partial = cmd === 'update' && flag('--missing-shards');
+  if (partial && (indexes.size !== runs.length || ![...indexes].every((i) => i >= 0 && i < n))) {
+    problems.push(`shards: got ${runs.map((r) => r.shard).join(', ')}, which are not distinct shards of ${n}`);
+  } else if (!partial && (runs.length !== n || indexes.size !== n || ![...indexes].every((i) => i >= 0 && i < n))) {
     problems.push(`shards: expected ${Array.from({ length: n }, (_, i) => `${i}/${n}`).join(', ')}; got ${runs.map((r) => r.shard).join(', ')}`);
   }
   const kinds = [...new Set(runs.map((r) => r.kind ?? 'testharness'))];
@@ -331,7 +337,9 @@ function update(files) {
     for (const u of Object.keys(tests)) if (!L.planned.has(u) && !L.skipped.has(u)) { lost += passCount(tests[u]); delete tests[u]; changed++; }
   }
   // A run that changes nothing writes the file as it was, so CI can tell that nothing changed.
-  const head = { wpt: { repo: WPT_REPO, revision: baseline.wpt.revision }, dirs: L.restricted ? baseline.dirs ?? L.runs[0].dirs : L.runs[0].dirs };
+  // A whole-suite run (--dirs all) records its directories as ['all'] (older results name every one of them).
+  const ranDirs = L.runs[0].dirs?.length > 100 ? ['all'] : L.runs[0].dirs;
+  const head = { wpt: { repo: WPT_REPO, revision: baseline.wpt.revision }, dirs: L.restricted ? baseline.dirs ?? ranDirs : ranDirs };
   // path.resolve drops a trailing '/', which asks for a directory of files.
   const outFile = path.resolve(opt('--out', BASELINE_FILE)) + (opt('--out', '').endsWith('/') ? '/' : '');
   writeBaseline(outFile, head, tests);

@@ -1,0 +1,13 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "contenteditable/designmode-iscontenteditable.html": {"status":"complete","ms":10,"n":4,"fail":["isContentEditable for contenteditable=inherit in design mode"],"h":"f9ca5016"},
+  "contenteditable/plaintext-only.html": {"status":"complete","ms":10,"n":2,"fail":[],"h":"9f2b9890"}
+ }
+}

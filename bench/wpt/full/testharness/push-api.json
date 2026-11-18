@@ -1,0 +1,18 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "push-api/cross-origin-nested.tentative.https.sub.window.html": {"status":"complete","ms":20,"n":4,"pass":[]},
+  "push-api/cross-origin-serviceworker.tentative.https.sub.window.html": {"status":"complete","ms":30,"n":1,"pass":[]},
+  "push-api/idlharness.https.any.html": {"status":"complete","ms":90,"n":59,"pass":["Partial interface ServiceWorkerGlobalScope: member names are unique","Partial interface ServiceWorkerGlobalScope: original interface defined","Partial interface ServiceWorkerGlobalScope: valid exposure set","Partial interface Window: member names are unique","PushEvent interface: existence and properties of interface object","PushMessageData interface: existence and properties of interface object","PushSubscriptionChangeEvent interface: existence and properties of interface object","ServiceWorkerRegistration includes PushManagerAttribute: member names are unique","Window includes AnimationFrameProvider: member names are unique","Window includes GlobalEventHandlers: member names are unique","Window includes PushManagerAttribute: member names are unique","Window includes WindowEventHandlers: member names are unique","Window includes WindowLocalStorage: member names are unique","Window includes WindowOrWorkerGlobalScope: member names are unique","Window includes WindowSessionStorage: member names are unique","WorkerGlobalScope includes WindowOrWorkerGlobalScope: member names are unique","idl_test setup","idl_test validation"]},
+  "push-api/permission.https.html": {"status":"complete","ms":40,"n":3,"pass":[]},
+  "push-api/subscribe-with-faulty-applicationServerKey.https.window.html": {"status":"complete","ms":20,"n":5,"pass":[]},
+  "push-api/window-pushManager-non-secure-context.http.html": {"status":"complete","ms":10,"n":2,"fail":[],"h":"9cf087a5"},
+  "push-api/worker-subscribe.https.window.html": {"status":"complete","ms":20,"n":1,"pass":[]}
+ }
+}

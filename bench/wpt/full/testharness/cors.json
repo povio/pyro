@@ -1,0 +1,30 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "cors/304.htm": {"status":"complete","ms":5000,"n":4,"fail":[],"h":"ce27a4a9"},
+  "cors/access-control-expose-headers-parsing.window.html": {"status":"complete","ms":20,"n":16,"pass":["Loading JSON…","Parsing: Access-Control-Expose-Headers%3A%0D%0AAccess-Control-Expose-Headers%3A%20bb-8","Parsing: Access-Control-Expose-Headers%3A%20%2Cbb-8","Parsing: Access-Control-Expose-Headers%3A%20'bb-8'","Parsing: Access-Control-Expose-Headers%3A%20'bb-8'%2Cbb-8","Parsing: Access-Control-Expose-Headers%3A%20bb-8%0D%0AAccess-Control-Expose-Headers%3A%20no","Parsing: Access-Control-Expose-Headers%3A%20no%0D%0AAccess-Control-Expose-Headers%3A%20bb-8","Parsing: access-control-expose-headers%3A%20BB-8"]},
+  "cors/client-hint-request-headers-2.tentative.htm": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "cors/client-hint-request-headers.htm": {"status":"complete","ms":20,"n":8,"fail":[],"h":"d85e9e2f"},
+  "cors/cors-safelisted-request-header.any.html": {"status":"complete","ms":90,"n":49,"fail":["No preflight for {\"range\":\"bytes=100-200\"}","No preflight for {\"range\":\"bytes=200-\"}","Preflight for {\"content-type\":\"application/x-www-form-urlencoded;\"}","Preflight for {\"content-type\":\"text/plain;garbage\\u0001\\u0002\"}","Preflight for {\"content-type\":\"text/plain\\f\"}","Preflight for {\"content-type\":\"text/plain\\u000b\"}","Preflight for {\"range\":\"bytes=100-200\\f\"}","Preflight for {\"range\":\"bytes=100-\\f200\"}","Preflight for {\"range\":\"bytes=100\\f-200\"}","Preflight for {\"range\":\"bytes=\\f100-200\"}","Preflight for {\"range\":\"bytes\\f=100-200\"}"],"h":"b4e50feb"},
+  "cors/image-tainting-in-cross-origin-iframe.sub.html": {"status":"complete","ms":10,"n":1,"fail":[],"h":"836043ff"},
+  "cors/late-upload-events.htm": {"status":"complete","ms":10,"n":2,"fail":[],"h":"bdf37f4f"},
+  "cors/origin.htm": {"status":"complete","ms":70,"n":64,"fail":["Disallow multiple headers (*, )","Disallow multiple headers (*, *)","Disallow multiple headers (*, http://web-platform.test:8000)","Disallow multiple headers (http://web-platform.test:8000, http://web-platform.test:8000)"],"h":"8f241f80"},
+  "cors/preflight-cache-partitioning.sub.window.html": {"status":"complete","ms":10000,"n":1,"pass":[]},
+  "cors/redirect-origin.htm": {"status":"complete","ms":60,"n":43,"fail":[],"h":"bd723d73"},
+  "cors/redirect-preflight-2.htm": {"status":"complete","ms":10,"n":2,"fail":[],"h":"6e2080c4"},
+  "cors/redirect-preflight.htm": {"status":"complete","ms":50,"n":5,"fail":[],"h":"0749ec81"},
+  "cors/remote-origin.htm": {"status":"complete","ms":40,"n":45,"fail":[],"h":"e3c8de31"},
+  "cors/request-headers.htm": {"status":"complete","ms":10,"n":6,"fail":[],"h":"1e6be54f"},
+  "cors/response-headers.htm": {"status":"complete","ms":60,"n":17,"pass":[]},
+  "cors/simple-requests-ch.tentative.htm": {"status":"complete","ms":10,"n":3,"pass":[]},
+  "cors/simple-requests.htm": {"status":"complete","ms":40,"n":24,"fail":[],"h":"e10d1716"},
+  "cors/status-async.htm": {"status":"complete","ms":30,"n":24,"fail":["Status on CHICKEN 200"],"h":"4afdedc7"},
+  "cors/status-preflight.htm": {"status":"complete","ms":40,"n":16,"fail":["CORS - status after preflight on CHICKEN 501"],"h":"59b9ecc8"}
+ }
+}

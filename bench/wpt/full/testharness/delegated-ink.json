@@ -1,0 +1,14 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "delegated-ink/exception-thrown-bad-color.tentative.html": {"status":"complete","ms":10,"n":1,"pass":[]},
+  "delegated-ink/exception-thrown-diameter-less-than-or-equal-to-0.tentative.html": {"status":"complete","ms":20,"n":4,"pass":[]},
+  "delegated-ink/exception-thrown-untrusted-event.tentative.window.html": {"status":"complete","ms":190,"n":1,"pass":[]}
+ }
+}

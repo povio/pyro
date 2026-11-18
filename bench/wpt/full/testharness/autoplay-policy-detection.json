@@ -1,0 +1,13 @@
+{
+ "wpt": {
+  "repo": "https://github.com/web-platform-tests/wpt",
+  "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+ },
+ "dirs": [
+  "all"
+ ],
+ "tests": {
+  "autoplay-policy-detection/autoplaypolicy.html": {"status":"complete","ms":10,"n":3,"pass":[]},
+  "autoplay-policy-detection/idlharness.window.html": {"status":"complete","ms":70,"n":17,"fail":["Navigator interface: operation getAutoplayPolicy(AudioContext)","Navigator interface: operation getAutoplayPolicy(AutoplayPolicyMediaType)","Navigator interface: operation getAutoplayPolicy(HTMLMediaElement)"],"h":"d9107ad3"}
+ }
+}
