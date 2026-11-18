@@ -4041,7 +4041,7 @@ index 4eccc6c..9dc98a3 100644
  
          gaps
 diff --git a/src/layout/style_metrics.rs b/src/layout/style_metrics.rs
-index 7b7b147..3808b6e 100644
+index 7b7b147..fa256af 100644
 --- a/src/layout/style_metrics.rs
 +++ b/src/layout/style_metrics.rs
 @@ -56,7 +56,7 @@ use fontique::{Query, QueryFamily};
@@ -4190,7 +4190,7 @@ index 7b7b147..3808b6e 100644
              metrics.baseline_offset = 0.;
              metrics.exact_baseline_offset = 0.;
              metrics.aligned_subtree_root = 0;
-@@ -156,7 +232,8 @@ pub(crate) fn resolve_style_metrics<B: Brush>(
+@@ -156,12 +232,13 @@ pub(crate) fn resolve_style_metrics<B: Brush>(
                  metrics.exact_baseline_offset = 0.;
                  metrics.aligned_subtree_root = index as u16;
              } else {
@@ -4200,6 +4200,12 @@ index 7b7b147..3808b6e 100644
                  metrics.exact_baseline_offset = parent.exact_baseline_offset + shift;
                  // Rounded once from the accumulated offset (not per level) so the total error
                  // stays within half a pixel.
+                 metrics.baseline_offset = if quantize {
+-                    metrics.exact_baseline_offset.round()
++                    round_half_up(metrics.exact_baseline_offset)
+                 } else {
+                     metrics.exact_baseline_offset
+                 };
 @@ -173,6 +250,68 @@ pub(crate) fn resolve_style_metrics<B: Brush>(
      }
  }
@@ -4255,7 +4261,7 @@ index 7b7b147..3808b6e 100644
 +                let shift = shift_from_parent(align, metrics.over, metrics.under, own, parent);
 +                metrics.exact_baseline_offset = parent.exact_baseline_offset + shift;
 +                metrics.baseline_offset = if quantize {
-+                    metrics.exact_baseline_offset.round()
++                    round_half_up(metrics.exact_baseline_offset)
 +                } else {
 +                    metrics.exact_baseline_offset
 +                };
@@ -4456,13 +4462,25 @@ index 7b7b147..3808b6e 100644
          aligned_subtree_root: parent.aligned_subtree_root,
          baseline_offset: if quantize {
 -            baseline_offset.round()
-+            baseline_offset.round() + central_shift
++            round_half_up(baseline_offset) + central_shift
          } else {
 -            baseline_offset
 +            baseline_offset + central_shift
          },
          ascent,
          descent,
+@@ -366,3 +587,11 @@ fn first_available_font<B: Brush>(
+         synthesis: font.synthesis,
+     })
+ }
++
++/// pyro: rounds to the nearest whole unit, halves up (towards positive infinity), as Blink snaps
++/// a layout position to a pixel: an empty inline-block with `vertical-align: -7.5px` and
++/// `margin-bottom: 7.5px` sits on the baseline, where rounding halves away from zero put it a
++/// pixel low (WPT CSS2 `visudet/inline-block-baseline-011`, `-014`).
++fn round_half_up(value: f32) -> f32 {
++    (value + 0.5).floor()
++}
 diff --git a/src/layout/whitespace.rs b/src/layout/whitespace.rs
 index 2b2ae69..e43eda0 100644
 --- a/src/layout/whitespace.rs

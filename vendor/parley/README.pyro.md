@@ -461,3 +461,11 @@ HYPHEN when it has U+2010 HYPHEN, and covers the default-ignorable code points H
 as in Blink (harfrust draws U+2011 as the font's U+2010 and hides the ignorables). Variation selectors, ZWJ, the
 Mongolian variation selectors and U+00AD are left out: they choose glyphs and fonts. WPT css-text
 `line-break-anywhere-overrides-uax-behavior-011/013/014`. Covered by `crates/pyro-render/tests/font_coverage_hidden.rs`.
+
+## Baseline offsets round halves up (WPT round 4, lane S1)
+
+`layout/style_metrics.rs` (`round_half_up`): quantized baseline offsets of span boxes and inline boxes round halves up
+(towards positive infinity), as Blink snaps a layout position to a pixel, not away from zero: an empty inline-block
+with `vertical-align: -7.5px` and `margin-bottom: 7.5px` sits on the baseline (WPT CSS2
+`visudet/inline-block-baseline-011`, `-014`). Covered by `a_negative_half_pixel_shift_rounds_up` in
+`crates/pyro-render/tests/alignment_baseline.rs`.

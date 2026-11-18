@@ -238,7 +238,7 @@ pub(crate) fn resolve_style_metrics<B: Brush>(
                 // Rounded once from the accumulated offset (not per level) so the total error
                 // stays within half a pixel.
                 metrics.baseline_offset = if quantize {
-                    metrics.exact_baseline_offset.round()
+                    round_half_up(metrics.exact_baseline_offset)
                 } else {
                     metrics.exact_baseline_offset
                 };
@@ -301,7 +301,7 @@ pub(crate) fn scale_style_metrics<B: Brush>(
                 let shift = shift_from_parent(align, metrics.over, metrics.under, own, parent);
                 metrics.exact_baseline_offset = parent.exact_baseline_offset + shift;
                 metrics.baseline_offset = if quantize {
-                    metrics.exact_baseline_offset.round()
+                    round_half_up(metrics.exact_baseline_offset)
                 } else {
                     metrics.exact_baseline_offset
                 };
@@ -554,7 +554,7 @@ pub(crate) fn inline_box_placement(
     InlineBoxPlacement {
         aligned_subtree_root: parent.aligned_subtree_root,
         baseline_offset: if quantize {
-            baseline_offset.round() + central_shift
+            round_half_up(baseline_offset) + central_shift
         } else {
             baseline_offset + central_shift
         },
@@ -586,4 +586,12 @@ fn first_available_font<B: Brush>(
         },
         synthesis: font.synthesis,
     })
+}
+
+/// pyro: rounds to the nearest whole unit, halves up (towards positive infinity), as Blink snaps
+/// a layout position to a pixel: an empty inline-block with `vertical-align: -7.5px` and
+/// `margin-bottom: 7.5px` sits on the baseline, where rounding halves away from zero put it a
+/// pixel low (WPT CSS2 `visudet/inline-block-baseline-011`, `-014`).
+fn round_half_up(value: f32) -> f32 {
+    (value + 0.5).floor()
 }
