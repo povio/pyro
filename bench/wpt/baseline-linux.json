@@ -4373,7 +4373,7 @@
   "scroll-animations/view-timelines/view-timeline-range-large-subject.html": {"status":"complete","ms":20,"n":1,"fail":[],"h":"303adfe8"},
   "scroll-animations/view-timelines/view-timeline-range.html": {"status":"complete","ms":70,"n":7,"fail":["View timeline range accepts absolute units.","View timeline with range as <name> <percent+px> pair.","View timeline with range as strings."],"h":"e8facaa0"},
   "scroll-animations/view-timelines/view-timeline-relative-ancestor.html": {"status":"complete","ms":20,"n":1,"fail":[],"h":"3c1c9df5"},
-  "scroll-animations/view-timelines/view-timeline-relative-subject.html": {"status":"complete","ms":40,"n":2,"pass":["View timeline with a negatively offset relatively positioned subject."]},
+  "scroll-animations/view-timelines/view-timeline-relative-subject.html": {"status":"complete","ms":40,"n":2,"fail":[],"h":"27245489"},
   "scroll-animations/view-timelines/view-timeline-root-source.html": {"status":"complete","ms":20,"n":1,"fail":[],"h":"2e12dc63"},
   "scroll-animations/view-timelines/view-timeline-snapport.html": {"status":"complete","ms":10,"n":1,"pass":[]},
   "scroll-animations/view-timelines/view-timeline-source-single-axis-inner.html": {"status":"complete","ms":20,"n":1,"fail":[],"h":"322d3156"},
