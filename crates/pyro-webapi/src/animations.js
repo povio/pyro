@@ -927,10 +927,12 @@
       ]);
       return;
     }
-    // (An effect on a list item's `::marker` is reported with the item, flagged: the engine
-    // samples it into the marker's style. Other pseudo-elements' effects show nothing.)
-    const marker = !!e && e.pseudo === '::marker';
-    const target = e && e.keyframe && (e.pseudo === null || marker) ? e.target : null;
+    // (An effect on a list item's `::marker`, or on an element's `::before`/`::after`, is
+    // reported with the element and the pseudo-element (1, 2, 3): the engine samples it into the
+    // pseudo-element's style. Other pseudo-elements' effects show nothing.)
+    const pseudo = !e || e.pseudo === null ? 0
+      : ({ '::marker': 1, '::before': 2, ':before': 2, '::after': 3, ':after': 3 })[e.pseudo] || -1;
+    const target = e && e.keyframe && pseudo >= 0 ? e.target : null;
     const timing = e && computedTimingOf(e);
     const inEffect = timing && timing.activeTime !== null;
     const coming = a.pending !== null || playStateOf(a) === 'running';
@@ -957,7 +959,7 @@
       target, a.css !== undefined ? a.cssId : -1, frames, a.startTime, a.holdTime, a.rate, origin,
       t.delay, t.endDelay, t.fill === 'auto' ? 'none' : t.fill, t.iterationStart, t.iterations,
       iterationDuration(t), t.direction, t.easing.text === 'linear' ? null : t.easing.text, e.composite,
-      gone ? 1 : 0, marker ? 1 : 0,
+      gone ? 1 : 0, pseudo,
     ]);
   }
 

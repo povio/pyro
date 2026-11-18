@@ -2414,6 +2414,8 @@ impl<'dom> DomTraversal<BlitzNode<'dom>> for RecalcStyle<'_> {
             let old_generated = (self.track_counters && !self.counters_changed.load(std::sync::atomic::Ordering::Relaxed))
                 .then(|| crate::layout::counters::CounterInputs::of(&data.styles));
             recalc_style_at(self, context, el, &mut data, note_child);
+            // pyro: the animated values of the element's `::before`/`::after`.
+            crate::animation::cascade_sampled_pseudos(el, context, &mut data);
             if let Some(old) = old_generated {
                 if old != crate::layout::counters::CounterInputs::of(&data.styles) {
                     self.counters_changed.store(true, std::sync::atomic::Ordering::Relaxed);

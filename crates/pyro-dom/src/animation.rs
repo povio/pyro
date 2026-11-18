@@ -91,6 +91,16 @@ pub struct ElementAnimations {
     /// Script animations in effect on the element's `::marker` (`pseudoElement: '::marker'`), in
     /// composite order: their values go into the marker's style.
     pub marker: Vec<Effect>,
+    /// Effects on the element's `::before` (`[0]`) and `::after` (`[1]`): their values go into
+    /// the pseudo-element's style.
+    pub pseudos: [PseudoAnimations; 2],
+}
+
+/// The effects on one of an element's `::before`/`::after`, each list in composite order.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct PseudoAnimations {
+    pub transitions: Vec<Effect>,
+    pub animations: Vec<Effect>,
 }
 
 /// The document's animated elements at one moment.

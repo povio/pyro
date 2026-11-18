@@ -444,7 +444,7 @@ diff --git a/packages/blitz-dom/src/animation.rs b/packages/blitz-dom/src/animat
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/animation.rs
-@@ -0,0 +1,979 @@
+@@ -0,0 +1,1151 @@
 +//! pyro: animated values the embedder samples into the cascade.
 +//!
 +//! pyro keeps the timing of every animation (CSS animations, CSS transitions
@@ -578,11 +578,39 @@ new file mode 100644
 +    /// pyro: animations in effect on the element's `::marker` (a list item's): their values go
 +    /// into the marker's style (`ElementData::sampled_marker`, `layout::list`), not the element's.
 +    pub marker: Vec<Effect>,
++    /// pyro: the effects on the element's `::before` (`[0]`) and `::after` (`[1]`): resolved
++    /// against the pseudo-element's own style and cascaded into it.
++    pub pseudos: [PseudoEffects; 2],
 +}
++
++/// pyro: the effects on one of an element's `::before`/`::after`, each list in composite order.
++#[derive(Clone, Debug, Default, PartialEq)]
++pub struct PseudoEffects {
++    pub transitions: Vec<Effect>,
++    pub animations: Vec<Effect>,
++}
++
++impl PseudoEffects {
++    pub fn is_empty(&self) -> bool {
++        self.transitions.is_empty() && self.animations.is_empty()
++    }
++
++    fn all(&self) -> impl Iterator<Item = &Effect> {
++        self.animations.iter().chain(&self.transitions)
++    }
++}
++
++/// pyro: `::before` and `::after`, as `ElementEffects::pseudos` indexes them.
++const PSEUDOS: [style::selector_parser::PseudoElement; 2] =
++    [style::selector_parser::PseudoElement::Before, style::selector_parser::PseudoElement::After];
 +
 +impl ElementEffects {
 +    pub fn is_empty(&self) -> bool {
-+        self.transitions.is_empty() && self.animations.is_empty() && self.current.is_empty() && self.marker.is_empty()
++        self.transitions.is_empty()
++            && self.animations.is_empty()
++            && self.current.is_empty()
++            && self.marker.is_empty()
++            && self.pseudos.iter().all(PseudoEffects::is_empty)
 +    }
 +
 +    /// pyro: every effect, in effect or only current.
@@ -619,16 +647,33 @@ new file mode 100644
 +    /// Keyframes resolved against `base`, by effect keyframes.
 +    resolved: Vec<(Keyframes, Resolved)>,
 +    base: Option<BaseKey>,
++    /// pyro: the same for the element's `::before` and `::after` (`ElementEffects::pseudos`).
++    pseudos: [PseudoState; 2],
 +    /// The values sampled into the element's cascade.
 +    sampled: Sampled,
 +}
 +
-+#[derive(Default, PartialEq)]
++/// pyro: the resolved keyframes of the effects on one pseudo-element, against its base style.
++#[derive(Default)]
++struct PseudoState {
++    resolved: Vec<(Keyframes, Resolved)>,
++    base: Option<BaseKey>,
++}
++
++impl PseudoState {
++    fn resolved_all(&self, effects: &PseudoEffects) -> bool {
++        self.base.is_some() && effects.all().all(|e| self.resolved.iter().any(|(k, _)| *k == e.keyframes))
++    }
++}
++
++#[derive(Clone, Default, PartialEq)]
 +struct Sampled {
 +    animations: Option<AnimationValueMap>,
 +    transitions: Option<AnimationValueMap>,
 +    /// pyro: the values of the effects on the element's `::marker`.
 +    marker: Option<AnimationValueMap>,
++    /// pyro: the values of the effects on `::before` and `::after` (animations, transitions).
++    pseudos: [(Option<AnimationValueMap>, Option<AnimationValueMap>); 2],
 +    /// pyro: an effect animates a property that makes a stacking context
 +    /// (`ElementData::animation_stacking_context`).
 +    stacking_context: bool,
@@ -680,6 +725,9 @@ new file mode 100644
 +            let mut element = state.elements.remove(&id).unwrap_or_default();
 +            element.effects = effects;
 +            element.resolved.retain(|(k, _)| element.effects.all().any(|e| e.keyframes == *k));
++            for (state, effects) in element.pseudos.iter_mut().zip(&element.effects.pseudos) {
++                state.resolved.retain(|(k, _)| effects.all().any(|e| e.keyframes == *k));
++            }
 +            next.insert(id, element);
 +        }
 +        // Elements without effects any more lose their values.
@@ -691,7 +739,10 @@ new file mode 100644
 +        for id in ids {
 +            let element = state.elements.get_mut(&id).unwrap();
 +            let resolved = element.base.is_some()
-+                && element.effects.all().all(|e| element.resolved.iter().any(|(k, _)| *k == e.keyframes));
++                && element.effects.all().all(|e| element.resolved.iter().any(|(k, _)| *k == e.keyframes))
++                && element.pseudos.iter().zip(&element.effects.pseudos).all(|(state, effects)| {
++                    effects.is_empty() || state.resolved_all(effects)
++                });
 +            if !resolved {
 +                // Resolved against the style the next traversal computes.
 +                state.pending = true;
@@ -703,13 +754,7 @@ new file mode 100644
 +            let sampled = sample(element, &mut state.easings);
 +            if sampled != element.sampled {
 +                element.sampled = sampled;
-+                let sampled = Sampled {
-+                    animations: element.sampled.animations.clone(),
-+                    transitions: element.sampled.transitions.clone(),
-+                    marker: element.sampled.marker.clone(),
-+                    stacking_context: element.sampled.stacking_context,
-+                };
-+                self.apply_sampled(id, sampled);
++                self.apply_sampled(id, element.sampled.clone());
 +            }
 +        }
 +        self.sampled_animations = state;
@@ -878,6 +923,38 @@ new file mode 100644
 +                    );
 +                    element.resolved.push((keyframes, resolved));
 +                }
++                // pyro: the keyframes of the effects on `::before`/`::after`, against the
++                // pseudo-element's style without the values sampled into it.
++                for (i, pseudo) in PSEUDOS.iter().enumerate() {
++                    if element.effects.pseudos[i].is_empty() {
++                        element.pseudos[i] = PseudoState::default();
++                        continue;
++                    }
++                    let Some(pseudo_style) = node.borrow_data().and_then(|d| d.styles.pseudos.get(pseudo).cloned()) else {
++                        continue;
++                    };
++                    let rules = shared.stylist.rule_tree().remove_animation_rules(pseudo_style.rules());
++                    let parent = &*style as *const ComputedValues as usize;
++                    let ps = &mut element.pseudos[i];
++                    if !ps.base.as_ref().is_some_and(|b| b.rules == rules && b.parent == parent) {
++                        let base_style = if rules == *pseudo_style.rules() {
++                            pseudo_style.clone()
++                        } else {
++                            cascade_pseudo(node, &mut context, rules.clone(), &pseudo_style, pseudo, &style)
++                        };
++                        ps.base = Some(BaseKey { rules, parent, base_style });
++                        ps.resolved.clear();
++                    }
++                    let base = ps.base.clone().unwrap();
++                    let effects: Vec<Keyframes> = element.effects.pseudos[i].all().map(|e| e.keyframes.clone()).collect();
++                    for keyframes in effects {
++                        if ps.resolved.iter().any(|(k, _)| *k == keyframes) {
++                            continue;
++                        }
++                        let resolved = resolve(self, node, &base, &keyframes, &mut context, &mut state.easings);
++                        ps.resolved.push((keyframes, resolved));
++                    }
++                }
 +                let sampled = sample(element, &mut state.easings);
 +                if sampled != element.sampled {
 +                    element.sampled = sampled;
@@ -887,14 +964,7 @@ new file mode 100644
 +            });
 +        }
 +        for id in &restyle {
-+            let element = &state.elements[id];
-+            let sampled = Sampled {
-+                animations: element.sampled.animations.clone(),
-+                transitions: element.sampled.transitions.clone(),
-+                marker: element.sampled.marker.clone(),
-+                stacking_context: element.sampled.stacking_context,
-+            };
-+            self.apply_sampled(*id, sampled);
++            self.apply_sampled(*id, state.elements[id].sampled.clone());
 +        }
 +        self.sampled_animations = state;
 +        !restyle.is_empty()
@@ -916,6 +986,8 @@ new file mode 100644
 +        };
 +        let (animations, transitions) = (block(sampled.animations), block(sampled.transitions));
 +        let marker = block(sampled.marker);
++        let [(before_a, before_t), (after_a, after_t)] = sampled.pseudos;
++        let pseudos = [(block(before_a), block(before_t)), (block(after_a), block(after_t))];
 +        let Some(data) = node.element_data_mut() else {
 +            return;
 +        };
@@ -933,6 +1005,20 @@ new file mode 100644
 +        let Some(node) = self.nodes.get_mut(id) else {
 +            return;
 +        };
++        let Some(data) = node.element_data_mut() else {
++            return;
++        };
++        // pyro: the values on `::before`/`::after`: the element's restyle cascades them into the
++        // pseudo-elements' styles (`cascade_sampled_pseudos`).
++        let pseudo_had = data.sampled_pseudos.iter().any(|(a, t)| a.is_some() || t.is_some());
++        let pseudo_has = pseudos.iter().any(|(a, t)| a.is_some() || t.is_some());
++        if pseudo_had || pseudo_has {
++            data.sampled_pseudos = pseudos;
++            if pseudo_has {
++                data.may_have_animations.store(true, Ordering::Relaxed);
++            }
++            node.set_restyle_hint(RestyleHint::RESTYLE_SELF);
++        }
 +        let Some(data) = node.element_data_mut() else {
 +            return;
 +        };
@@ -1216,14 +1302,13 @@ new file mode 100644
 +    element: &ElementState,
 +    easings: &mut FxHashMap<Arc<str>, Option<TimingFunction>>,
 +) -> Sampled {
-+    let level = |effects: &[Effect], easings: &mut FxHashMap<Arc<str>, Option<TimingFunction>>| {
++    let level_of = |all: &[(Keyframes, Resolved)], effects: &[Effect], easings: &mut FxHashMap<Arc<str>, Option<TimingFunction>>| {
 +        if effects.is_empty() {
 +            return None;
 +        }
 +        let mut map = AnimationValueMap::default();
 +        for effect in effects {
-+            let Some((_, resolved)) = element
-+                .resolved
++            let Some((_, resolved)) = all
 +                .iter()
 +                .find(|(k, _)| *k == effect.keyframes)
 +            else {
@@ -1270,10 +1355,21 @@ new file mode 100644
 +            })
 +        })
 +    });
++    let level = |effects: &[Effect], easings: &mut FxHashMap<Arc<str>, Option<TimingFunction>>| {
++        level_of(&element.resolved, effects, easings)
++    };
++    let pseudo = |i: usize, easings: &mut FxHashMap<Arc<str>, Option<TimingFunction>>| {
++        let (state, effects) = (&element.pseudos[i], &element.effects.pseudos[i]);
++        (
++            level_of(&state.resolved, &effects.animations, easings),
++            level_of(&state.resolved, &effects.transitions, easings),
++        )
++    };
 +    Sampled {
 +        animations: level(&element.effects.animations, easings),
 +        transitions: level(&element.effects.transitions, easings),
 +        marker: level(&element.effects.marker, easings),
++        pseudos: [pseudo(0, easings), pseudo(1, easings)],
 +        stacking_context,
 +    }
 +}
@@ -1421,8 +1517,84 @@ new file mode 100644
 +
 +/// Whether the element has sampled values (no style sharing).
 +pub(crate) fn has_sampled(node: &Node) -> bool {
-+    node.element_data()
-+        .is_some_and(|d| d.sampled_animations.is_some() || d.sampled_transitions.is_some())
++    node.element_data().is_some_and(|d| {
++        d.sampled_animations.is_some()
++            || d.sampled_transitions.is_some()
++            || d.sampled_pseudos.iter().any(|(a, t)| a.is_some() || t.is_some())
++    })
++}
++
++/// pyro: after the element's restyle, the values sampled for its `::before` and `::after`
++/// (`ElementData::sampled_pseudos`) cascaded into their styles, at the animations and
++/// transitions levels.
++pub(crate) fn cascade_sampled_pseudos<'a>(
++    node: &'a Node,
++    context: &mut StyleContext<'_, &'a Node>,
++    data: &mut style::data::ElementData,
++) {
++    let Some(element) = node.element_data() else { return };
++    if element.sampled_pseudos.iter().all(|(a, t)| a.is_none() && t.is_none()) {
++        return;
++    }
++    if data.styles.pseudos.is_empty() {
++        return;
++    }
++    let Some(primary) = data.styles.primary.clone() else { return };
++    for (i, pseudo) in PSEUDOS.iter().enumerate() {
++        let (animations, transitions) = &element.sampled_pseudos[i];
++        if animations.is_none() && transitions.is_none() {
++            continue;
++        }
++        let Some(style) = data.styles.pseudos.get(pseudo).cloned() else { continue };
++        let shared = context.shared;
++        let rule_tree = shared.stylist.rule_tree();
++        let mut rules = rule_tree.remove_animation_rules(style.rules());
++        let mut important_changed = false;
++        for (origin, block) in [(CascadeOrigin::Transitions, transitions), (CascadeOrigin::Animations, animations)] {
++            if let Some(block) = block {
++                if let Some(path) = rule_tree.update_rule_at_level(
++                    CascadeLevel::new(origin),
++                    LayerOrder::root(),
++                    Some(block.borrow_arc()),
++                    &rules,
++                    &shared.guards,
++                    &mut important_changed,
++                ) {
++                    rules = path;
++                }
++            }
++        }
++        if rules == *style.rules() {
++            continue;
++        }
++        let animated = cascade_pseudo(node, context, rules, &style, pseudo, &primary);
++        data.styles.pseudos.set(pseudo, animated);
++    }
++}
++
++/// pyro: `rules` cascaded as the `pseudo` of `node` (whose style is `primary`).
++fn cascade_pseudo<'a>(
++    node: &'a Node,
++    context: &mut StyleContext<'_, &'a Node>,
++    rules: StrongRuleNode,
++    style: &ComputedValues,
++    pseudo: &style::selector_parser::PseudoElement,
++    primary: &ServoArc<ComputedValues>,
++) -> ServoArc<ComputedValues> {
++    context.thread_local.current_dom_depth = TNode::depth(&node);
++    let mut resolver =
++        StyleResolverForElement::new(node, context, RuleInclusion::All, PseudoElementResolution::IfApplicable);
++    let inputs = CascadeInputs {
++        rules: Some(rules),
++        visited_rules: None,
++        flags: style.flags.for_cascade_inputs(),
++        included_cascade_flags: RuleCascadeFlags::empty(),
++    };
++    let primary = style::style_resolver::PrimaryStyle {
++        style: style::style_resolver::ResolvedStyle(primary.clone()),
++        reused_via_rule_node: false,
++    };
++    resolver.cascade_style_and_visited_for_pseudo_with_default_parents(inputs, pseudo, &primary).0
 +}
 diff --git a/packages/blitz-dom/src/config.rs b/packages/blitz-dom/src/config.rs
 --- a/packages/blitz-dom/src/config.rs
@@ -28528,7 +28700,20 @@ diff --git a/packages/blitz-dom/src/node/attributes.rs b/packages/blitz-dom/src/
 diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/node/element.rs
 --- a/packages/blitz-dom/src/node/element.rs
 +++ b/packages/blitz-dom/src/node/element.rs
-@@ -79,6 +79,31 @@
+@@ -46,6 +46,12 @@
+     value.split_ascii_whitespace().map(Atom::from).collect()
+ }
+ 
++/// pyro: sampled values at the animations and transitions levels.
++pub type SampledBlocks = (
++    Option<ServoArc<Locked<PropertyDeclarationBlock>>>,
++    Option<ServoArc<Locked<PropertyDeclarationBlock>>>,
++);
++
+ pub struct ElementData {
+     /// The elements tag name, namespace and prefix
+     pub name: QualName,
+@@ -79,6 +85,31 @@
  
      pub mask_images: ThinVec<Option<ImageResourceData>>,
  
@@ -28560,7 +28745,7 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
      /// Parley text layout (elements with inline inner display mode only)
      pub inline_layout_data: Option<Box<TextLayout>>,
  
-@@ -114,10 +139,34 @@
+@@ -114,10 +145,38 @@
      /// element (or its pseudo-elements). Lets Stylo skip the animation lookups
      /// for elements that have never animated.
      pub may_have_animations: AtomicBool,
@@ -28570,6 +28755,10 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
 +    /// pyro: the sampled values of the animations on the element's `::marker`
 +    /// (`ElementEffects::marker`): cascaded onto the marker's style (`layout::list`).
 +    pub sampled_marker: Option<ServoArc<Locked<PropertyDeclarationBlock>>>,
++    /// pyro: the sampled values of the effects on the element's `::before` (`[0]`) and `::after`
++    /// (`[1]`): at the animations level (`.0`) and the transitions level (`.1`) of the pseudo's
++    /// cascade (`animation::cascade_sampled_pseudos`).
++    pub sampled_pseudos: [SampledBlocks; 2],
 +    pub sampled_transitions: Option<ServoArc<Locked<PropertyDeclarationBlock>>>,
 +    /// pyro: an animation of this element that is current or in effect animates a property that
 +    /// makes a stacking context, which makes the element one (`animation.rs`).
@@ -28595,7 +28784,7 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
  
      /// Detailed layout information from the most recent layout (currently
      /// grid track sizing information for grid containers only). Used by
-@@ -129,6 +178,9 @@
+@@ -129,6 +188,9 @@
      /// Layout output state (`None` until layout first writes to this node).
      pub layout_data: Option<Box<LayoutData>>,
      pub transform: Option<Box<Affine>>,
@@ -28605,7 +28794,7 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
  }
  
  /// Taffy layout output state (cache, layouts, scroll offset and overflow).
-@@ -142,7 +194,40 @@
+@@ -142,7 +204,40 @@
      pub unrounded_layout: Layout,
      pub final_layout: Layout,
      pub scroll_offset: crate::Point<f64>,
@@ -28646,7 +28835,7 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
      /// The writing mode this node's layout algorithm ran in (the root takes it from `<body>`),
      /// recorded by the layout pass for CSSOM geometry lookups.
      #[cfg(feature = "writing-mode")]
-@@ -156,7 +241,16 @@
+@@ -156,7 +251,16 @@
              unrounded_layout: Layout::new(),
              final_layout: Layout::new(),
              scroll_offset: crate::Point::ZERO,
@@ -28663,7 +28852,7 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
              #[cfg(feature = "writing-mode")]
              writing_mode: stylo_taffy::WritingMode::empty(),
          }
-@@ -295,6 +389,9 @@
+@@ -295,6 +399,9 @@
              .field("special_data", &self.special_data)
              .field("background_images", &self.background_images)
              .field("mask_images", &self.mask_images)
@@ -28673,7 +28862,7 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
              .field("inline_layout_data", &self.inline_layout_data)
              .field("list_item_data", &self.list_item_data)
              .field("template_contents", &self.template_contents)
-@@ -321,6 +418,13 @@
+@@ -321,6 +428,13 @@
              special_data: self.special_data.clone(),
              background_images: self.background_images.clone(),
              mask_images: self.mask_images.clone(),
@@ -28687,12 +28876,13 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
              inline_layout_data: self.inline_layout_data.clone(),
              list_item_data: self.list_item_data.clone(),
              template_contents: self.template_contents,
-@@ -335,12 +439,21 @@
+@@ -335,12 +449,22 @@
              dirty_descendants: AtomicBool::new(true),
              damaged_descendants: AtomicBool::new(true),
              may_have_animations: AtomicBool::new(false),
 +            sampled_animations: None,
 +            sampled_marker: None,
++            sampled_pseudos: Default::default(),
 +            sampled_transitions: None,
 +            animation_stacking_context: false,
              before: None,
@@ -28709,7 +28899,7 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
          }
      }
  }
-@@ -417,7 +530,7 @@
+@@ -417,7 +541,7 @@
      pub fn new(name: QualName, attrs: Vec<Attribute>) -> Self {
          let id_attr_atom = attrs
              .iter()
@@ -28718,7 +28908,7 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
              .map(|attr| attr.value.as_ref())
              .map(|value: &str| Atom::from(value));
          let classes = attrs
-@@ -439,6 +552,13 @@
+@@ -439,6 +563,13 @@
              template_contents: None,
              background_images: ThinVec::new(),
              mask_images: ThinVec::new(),
@@ -28732,12 +28922,13 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
  
              stylo_element_data: Default::default(),
              selector_flags: Cell::new(ElementSelectorFlags::empty()),
-@@ -449,12 +569,21 @@
+@@ -449,12 +580,22 @@
              dirty_descendants: AtomicBool::new(true),
              damaged_descendants: AtomicBool::new(true),
              may_have_animations: AtomicBool::new(false),
 +            sampled_animations: None,
 +            sampled_marker: None,
++            sampled_pseudos: Default::default(),
 +            sampled_transitions: None,
 +            animation_stacking_context: false,
              before: None,
@@ -28754,7 +28945,7 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
          };
          data.flush_is_focussable();
          data.flush_link_state();
-@@ -470,6 +599,12 @@
+@@ -470,6 +611,12 @@
          {
              data.element_state.insert(ElementState::CHECKED);
          }
@@ -28767,7 +28958,7 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
  
          // The element state needs to be modified if the element can be disabled.
          if data.can_be_disabled() {
-@@ -529,6 +664,23 @@
+@@ -529,6 +676,23 @@
          }
      }
  
@@ -28791,7 +28982,7 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
      pub fn flush_open_state(&mut self) {
          let is_open = matches!(
              self.name.local,
-@@ -648,6 +800,24 @@
+@@ -648,6 +812,24 @@
          self.element_state.set(ElementState::CHECKED, checked);
      }
  
@@ -28816,7 +29007,7 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
      #[cfg(feature = "file-input")]
      pub fn file_data(&self) -> Option<&FileData> {
          match &self.special_data {
-@@ -875,6 +1045,9 @@
+@@ -875,6 +1057,9 @@
      pub height: u32,
      /// The raw image data in RGBA8 format
      pub data: Blob<u8>,
@@ -28826,7 +29017,7 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
  }
  impl RasterImageData {
      pub fn new(width: u32, height: u32, data: Arc<Vec<u8>>) -> Self {
-@@ -882,6 +1055,35 @@
+@@ -882,6 +1067,35 @@
              width,
              height,
              data: Blob::new(data),
@@ -28862,7 +29053,7 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
          }
      }
  }
-@@ -953,11 +1155,23 @@
+@@ -953,11 +1167,23 @@
  #[derive(Clone)]
  pub struct ListItemLayout {
      pub marker: Marker,
@@ -28886,7 +29077,7 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
  }
  
  //We seperate chars from strings in order to optimise rendering - ie not needing to
-@@ -966,6 +1180,9 @@
+@@ -966,6 +1192,9 @@
  pub enum Marker {
      Char(char),
      String(String),
@@ -38585,7 +38776,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  impl<'dom> DomTraversal<BlitzNode<'dom>> for RecalcStyle<'_> {
      fn process_preorder<F: FnMut(BlitzNode<'dom>)>(
          &self,
-@@ -1546,14 +2394,218 @@
+@@ -1546,14 +2394,220 @@
          node: BlitzNode<'dom>,
          note_child: F,
      ) {
@@ -38609,6 +38800,8 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
 +            let old_generated = (self.track_counters && !self.counters_changed.load(std::sync::atomic::Ordering::Relaxed))
 +                .then(|| crate::layout::counters::CounterInputs::of(&data.styles));
              recalc_style_at(self, context, el, &mut data, note_child);
++            // pyro: the animated values of the element's `::before`/`::after`.
++            crate::animation::cascade_sampled_pseudos(el, context, &mut data);
 +            if let Some(old) = old_generated {
 +                if old != crate::layout::counters::CounterInputs::of(&data.styles) {
 +                    self.counters_changed.store(true, std::sync::atomic::Ordering::Relaxed);
@@ -38804,7 +38997,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
              }
  
              if !data.damage.is_empty() {
-@@ -1597,6 +2649,12 @@
+@@ -1597,6 +2651,12 @@
      }
  }
  
@@ -38817,7 +39010,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  /// Flush updated pseudo-element (`::before`/`::after`) styles from the owning
  /// element's freshly-computed stylo data to the pseudo-element's anonymous node.
  ///
-@@ -1669,12 +2727,41 @@
+@@ -1669,12 +2729,41 @@
                      .push(pe_node_id);
              }
          }
@@ -38859,7 +39052,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  /// Whether a node's `background-image`/`mask-image` layers need flushing to
  /// dedicated storage on the node: the URLs referenced by the new style differ
  /// from the image data currently stored on the node.
-@@ -1689,11 +2776,12 @@
+@@ -1689,11 +2778,12 @@
              // (a style list of `none` layers and empty storage are in sync).
              return style_images
                  .iter()
@@ -38874,7 +39067,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
                  (Image::Url(ComputedUrl::Valid(url)), Some(data)) => **url != *data.url,
                  (Image::Url(ComputedUrl::Valid(_)), None) => true,
                  (_, Some(_)) => true,
-@@ -1707,6 +2795,26 @@
+@@ -1707,6 +2797,26 @@
              &style.get_background().background_image.0,
              &el.background_images,
          ) || out_of_sync(&style.get_svg().mask_image.0, &el.mask_images)
@@ -38901,7 +39094,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
      })
  }
  
-@@ -1737,3 +2845,734 @@
+@@ -1737,3 +2847,734 @@
  
      // let val = CSSInlineStyleDeclaration();
  }

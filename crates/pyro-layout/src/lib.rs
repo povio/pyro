@@ -283,6 +283,10 @@ pub fn animation_frame(frame: &pyro_dom::animation::AnimationFrame) -> pyro_rend
                     animations: el.animations.iter().map(effect).collect(),
                     current: el.current.iter().map(effect).collect(),
                     marker: el.marker.iter().map(effect).collect(),
+                    pseudos: std::array::from_fn(|i| b::PseudoEffects {
+                        transitions: el.pseudos[i].transitions.iter().map(effect).collect(),
+                        animations: el.pseudos[i].animations.iter().map(effect).collect(),
+                    }),
                 },
             )
         })

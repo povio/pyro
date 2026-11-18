@@ -46,6 +46,12 @@ pub(crate) fn parse_classes(value: &str) -> ThinVec<Atom> {
     value.split_ascii_whitespace().map(Atom::from).collect()
 }
 
+/// pyro: sampled values at the animations and transitions levels.
+pub type SampledBlocks = (
+    Option<ServoArc<Locked<PropertyDeclarationBlock>>>,
+    Option<ServoArc<Locked<PropertyDeclarationBlock>>>,
+);
+
 pub struct ElementData {
     /// The elements tag name, namespace and prefix
     pub name: QualName,
@@ -145,6 +151,10 @@ pub struct ElementData {
     /// pyro: the sampled values of the animations on the element's `::marker`
     /// (`ElementEffects::marker`): cascaded onto the marker's style (`layout::list`).
     pub sampled_marker: Option<ServoArc<Locked<PropertyDeclarationBlock>>>,
+    /// pyro: the sampled values of the effects on the element's `::before` (`[0]`) and `::after`
+    /// (`[1]`): at the animations level (`.0`) and the transitions level (`.1`) of the pseudo's
+    /// cascade (`animation::cascade_sampled_pseudos`).
+    pub sampled_pseudos: [SampledBlocks; 2],
     pub sampled_transitions: Option<ServoArc<Locked<PropertyDeclarationBlock>>>,
     /// pyro: an animation of this element that is current or in effect animates a property that
     /// makes a stacking context, which makes the element one (`animation.rs`).
@@ -441,6 +451,7 @@ impl Clone for ElementData {
             may_have_animations: AtomicBool::new(false),
             sampled_animations: None,
             sampled_marker: None,
+            sampled_pseudos: Default::default(),
             sampled_transitions: None,
             animation_stacking_context: false,
             before: None,
@@ -571,6 +582,7 @@ impl ElementData {
             may_have_animations: AtomicBool::new(false),
             sampled_animations: None,
             sampled_marker: None,
+            sampled_pseudos: Default::default(),
             sampled_transitions: None,
             animation_stacking_context: false,
             before: None,

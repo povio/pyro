@@ -199,8 +199,49 @@ pub(crate) struct Scripted {
     /// It shows nothing (a CSS animation's or transition's object canceled,
     /// finished without fill, or without a target).
     gone: bool,
-    /// Its effect's target is the element's `::marker`.
-    marker: bool,
+    /// Its effect's target: the element, or one of its pseudo-elements.
+    pseudo: Pseudo,
+}
+
+/// The pseudo-element an effect targets.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub(crate) enum Pseudo {
+    #[default]
+    None,
+    Marker,
+    Before,
+    After,
+}
+
+impl Pseudo {
+    /// animations.js's code: 0 none, 1 `::marker`, 2 `::before`, 3 `::after`.
+    pub(crate) fn from_code(code: f64) -> Pseudo {
+        match code as i32 {
+            1 => Pseudo::Marker,
+            2 => Pseudo::Before,
+            3 => Pseudo::After,
+            _ => Pseudo::None,
+        }
+    }
+
+    /// `ElementAnimations::pseudos`' index of `::before`/`::after`.
+    pub(crate) fn generated_index(self) -> Option<usize> {
+        match self {
+            Pseudo::Before => Some(0),
+            Pseudo::After => Some(1),
+            _ => None,
+        }
+    }
+
+    /// As `pseudoElement` reports it (`""` for the element).
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            Pseudo::None => "",
+            Pseudo::Marker => "::marker",
+            Pseudo::Before => "::before",
+            Pseudo::After => "::after",
+        }
+    }
 }
 
 impl Scripted {
@@ -246,7 +287,7 @@ pub(crate) fn report(page: &Rc<PageDom>, seq: u64, state: Option<ReportedState>)
                         composite: s.composite,
                         seq,
                         gone: s.gone,
-                        marker: s.marker,
+                        pseudo: s.pseudo,
                     },
                 );
             }
@@ -281,7 +322,7 @@ pub(crate) struct ReportedState {
     pub easing: Option<Arc<str>>,
     pub composite: Composite,
     pub gone: bool,
-    pub marker: bool,
+    pub pseudo: Pseudo,
 }
 
 impl ReportedState {
@@ -391,6 +432,8 @@ impl Builder {
             Level::Animation => e.animations.push(effect),
             Level::Current => e.current.push(effect),
             Level::Marker => e.marker.push(effect),
+            Level::PseudoTransition(i) => e.pseudos[i].transitions.push(effect),
+            Level::PseudoAnimation(i) => e.pseudos[i].animations.push(effect),
         }
     }
 }
@@ -404,6 +447,10 @@ enum Level {
     Current,
     /// pyro: in effect on the element's `::marker` (`ElementAnimations::marker`).
     Marker,
+    /// In effect on the element's `::before` (0) or `::after` (1), at the transitions or the
+    /// animations level (`ElementAnimations::pseudos`).
+    PseudoTransition(usize),
+    PseudoAnimation(usize),
 }
 
 /// When the effects are sampled.
@@ -541,11 +588,14 @@ fn walk_at(page: &PageDom, clock: Clock, transitions: bool, visit: &mut dyn FnMu
             easing: s.easing.clone(),
             composite: s.composite,
         };
-        // An effect on the element's `::marker`: its values in effect only.
-        let level = match (s.marker, level) {
-            (false, level) => level,
-            (true, Level::Animation) => Level::Marker,
-            (true, _) => continue,
+        // An effect on a pseudo-element: its values in effect only.
+        let level = match (s.pseudo, level) {
+            (Pseudo::None, level) => level,
+            (Pseudo::Marker, Level::Animation) => Level::Marker,
+            (pseudo, Level::Animation) if pseudo.generated_index().is_some() => {
+                Level::PseudoAnimation(pseudo.generated_index().unwrap())
+            }
+            _ => continue,
         };
         visit(el, level, effect);
     }

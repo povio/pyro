@@ -131,11 +131,39 @@ pub struct ElementEffects {
     /// pyro: animations in effect on the element's `::marker` (a list item's): their values go
     /// into the marker's style (`ElementData::sampled_marker`, `layout::list`), not the element's.
     pub marker: Vec<Effect>,
+    /// pyro: the effects on the element's `::before` (`[0]`) and `::after` (`[1]`): resolved
+    /// against the pseudo-element's own style and cascaded into it.
+    pub pseudos: [PseudoEffects; 2],
 }
+
+/// pyro: the effects on one of an element's `::before`/`::after`, each list in composite order.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct PseudoEffects {
+    pub transitions: Vec<Effect>,
+    pub animations: Vec<Effect>,
+}
+
+impl PseudoEffects {
+    pub fn is_empty(&self) -> bool {
+        self.transitions.is_empty() && self.animations.is_empty()
+    }
+
+    fn all(&self) -> impl Iterator<Item = &Effect> {
+        self.animations.iter().chain(&self.transitions)
+    }
+}
+
+/// pyro: `::before` and `::after`, as `ElementEffects::pseudos` indexes them.
+const PSEUDOS: [style::selector_parser::PseudoElement; 2] =
+    [style::selector_parser::PseudoElement::Before, style::selector_parser::PseudoElement::After];
 
 impl ElementEffects {
     pub fn is_empty(&self) -> bool {
-        self.transitions.is_empty() && self.animations.is_empty() && self.current.is_empty() && self.marker.is_empty()
+        self.transitions.is_empty()
+            && self.animations.is_empty()
+            && self.current.is_empty()
+            && self.marker.is_empty()
+            && self.pseudos.iter().all(PseudoEffects::is_empty)
     }
 
     /// pyro: every effect, in effect or only current.
@@ -172,16 +200,33 @@ struct ElementState {
     /// Keyframes resolved against `base`, by effect keyframes.
     resolved: Vec<(Keyframes, Resolved)>,
     base: Option<BaseKey>,
+    /// pyro: the same for the element's `::before` and `::after` (`ElementEffects::pseudos`).
+    pseudos: [PseudoState; 2],
     /// The values sampled into the element's cascade.
     sampled: Sampled,
 }
 
-#[derive(Default, PartialEq)]
+/// pyro: the resolved keyframes of the effects on one pseudo-element, against its base style.
+#[derive(Default)]
+struct PseudoState {
+    resolved: Vec<(Keyframes, Resolved)>,
+    base: Option<BaseKey>,
+}
+
+impl PseudoState {
+    fn resolved_all(&self, effects: &PseudoEffects) -> bool {
+        self.base.is_some() && effects.all().all(|e| self.resolved.iter().any(|(k, _)| *k == e.keyframes))
+    }
+}
+
+#[derive(Clone, Default, PartialEq)]
 struct Sampled {
     animations: Option<AnimationValueMap>,
     transitions: Option<AnimationValueMap>,
     /// pyro: the values of the effects on the element's `::marker`.
     marker: Option<AnimationValueMap>,
+    /// pyro: the values of the effects on `::before` and `::after` (animations, transitions).
+    pseudos: [(Option<AnimationValueMap>, Option<AnimationValueMap>); 2],
     /// pyro: an effect animates a property that makes a stacking context
     /// (`ElementData::animation_stacking_context`).
     stacking_context: bool,
@@ -233,6 +278,9 @@ impl BaseDocument {
             let mut element = state.elements.remove(&id).unwrap_or_default();
             element.effects = effects;
             element.resolved.retain(|(k, _)| element.effects.all().any(|e| e.keyframes == *k));
+            for (state, effects) in element.pseudos.iter_mut().zip(&element.effects.pseudos) {
+                state.resolved.retain(|(k, _)| effects.all().any(|e| e.keyframes == *k));
+            }
             next.insert(id, element);
         }
         // Elements without effects any more lose their values.
@@ -244,7 +292,10 @@ impl BaseDocument {
         for id in ids {
             let element = state.elements.get_mut(&id).unwrap();
             let resolved = element.base.is_some()
-                && element.effects.all().all(|e| element.resolved.iter().any(|(k, _)| *k == e.keyframes));
+                && element.effects.all().all(|e| element.resolved.iter().any(|(k, _)| *k == e.keyframes))
+                && element.pseudos.iter().zip(&element.effects.pseudos).all(|(state, effects)| {
+                    effects.is_empty() || state.resolved_all(effects)
+                });
             if !resolved {
                 // Resolved against the style the next traversal computes.
                 state.pending = true;
@@ -256,13 +307,7 @@ impl BaseDocument {
             let sampled = sample(element, &mut state.easings);
             if sampled != element.sampled {
                 element.sampled = sampled;
-                let sampled = Sampled {
-                    animations: element.sampled.animations.clone(),
-                    transitions: element.sampled.transitions.clone(),
-                    marker: element.sampled.marker.clone(),
-                    stacking_context: element.sampled.stacking_context,
-                };
-                self.apply_sampled(id, sampled);
+                self.apply_sampled(id, element.sampled.clone());
             }
         }
         self.sampled_animations = state;
@@ -431,6 +476,38 @@ impl BaseDocument {
                     );
                     element.resolved.push((keyframes, resolved));
                 }
+                // pyro: the keyframes of the effects on `::before`/`::after`, against the
+                // pseudo-element's style without the values sampled into it.
+                for (i, pseudo) in PSEUDOS.iter().enumerate() {
+                    if element.effects.pseudos[i].is_empty() {
+                        element.pseudos[i] = PseudoState::default();
+                        continue;
+                    }
+                    let Some(pseudo_style) = node.borrow_data().and_then(|d| d.styles.pseudos.get(pseudo).cloned()) else {
+                        continue;
+                    };
+                    let rules = shared.stylist.rule_tree().remove_animation_rules(pseudo_style.rules());
+                    let parent = &*style as *const ComputedValues as usize;
+                    let ps = &mut element.pseudos[i];
+                    if !ps.base.as_ref().is_some_and(|b| b.rules == rules && b.parent == parent) {
+                        let base_style = if rules == *pseudo_style.rules() {
+                            pseudo_style.clone()
+                        } else {
+                            cascade_pseudo(node, &mut context, rules.clone(), &pseudo_style, pseudo, &style)
+                        };
+                        ps.base = Some(BaseKey { rules, parent, base_style });
+                        ps.resolved.clear();
+                    }
+                    let base = ps.base.clone().unwrap();
+                    let effects: Vec<Keyframes> = element.effects.pseudos[i].all().map(|e| e.keyframes.clone()).collect();
+                    for keyframes in effects {
+                        if ps.resolved.iter().any(|(k, _)| *k == keyframes) {
+                            continue;
+                        }
+                        let resolved = resolve(self, node, &base, &keyframes, &mut context, &mut state.easings);
+                        ps.resolved.push((keyframes, resolved));
+                    }
+                }
                 let sampled = sample(element, &mut state.easings);
                 if sampled != element.sampled {
                     element.sampled = sampled;
@@ -440,14 +517,7 @@ impl BaseDocument {
             });
         }
         for id in &restyle {
-            let element = &state.elements[id];
-            let sampled = Sampled {
-                animations: element.sampled.animations.clone(),
-                transitions: element.sampled.transitions.clone(),
-                marker: element.sampled.marker.clone(),
-                stacking_context: element.sampled.stacking_context,
-            };
-            self.apply_sampled(*id, sampled);
+            self.apply_sampled(*id, state.elements[id].sampled.clone());
         }
         self.sampled_animations = state;
         !restyle.is_empty()
@@ -469,6 +539,8 @@ impl BaseDocument {
         };
         let (animations, transitions) = (block(sampled.animations), block(sampled.transitions));
         let marker = block(sampled.marker);
+        let [(before_a, before_t), (after_a, after_t)] = sampled.pseudos;
+        let pseudos = [(block(before_a), block(before_t)), (block(after_a), block(after_t))];
         let Some(data) = node.element_data_mut() else {
             return;
         };
@@ -486,6 +558,20 @@ impl BaseDocument {
         let Some(node) = self.nodes.get_mut(id) else {
             return;
         };
+        let Some(data) = node.element_data_mut() else {
+            return;
+        };
+        // pyro: the values on `::before`/`::after`: the element's restyle cascades them into the
+        // pseudo-elements' styles (`cascade_sampled_pseudos`).
+        let pseudo_had = data.sampled_pseudos.iter().any(|(a, t)| a.is_some() || t.is_some());
+        let pseudo_has = pseudos.iter().any(|(a, t)| a.is_some() || t.is_some());
+        if pseudo_had || pseudo_has {
+            data.sampled_pseudos = pseudos;
+            if pseudo_has {
+                data.may_have_animations.store(true, Ordering::Relaxed);
+            }
+            node.set_restyle_hint(RestyleHint::RESTYLE_SELF);
+        }
         let Some(data) = node.element_data_mut() else {
             return;
         };
@@ -769,14 +855,13 @@ fn sample(
     element: &ElementState,
     easings: &mut FxHashMap<Arc<str>, Option<TimingFunction>>,
 ) -> Sampled {
-    let level = |effects: &[Effect], easings: &mut FxHashMap<Arc<str>, Option<TimingFunction>>| {
+    let level_of = |all: &[(Keyframes, Resolved)], effects: &[Effect], easings: &mut FxHashMap<Arc<str>, Option<TimingFunction>>| {
         if effects.is_empty() {
             return None;
         }
         let mut map = AnimationValueMap::default();
         for effect in effects {
-            let Some((_, resolved)) = element
-                .resolved
+            let Some((_, resolved)) = all
                 .iter()
                 .find(|(k, _)| *k == effect.keyframes)
             else {
@@ -823,10 +908,21 @@ fn sample(
             })
         })
     });
+    let level = |effects: &[Effect], easings: &mut FxHashMap<Arc<str>, Option<TimingFunction>>| {
+        level_of(&element.resolved, effects, easings)
+    };
+    let pseudo = |i: usize, easings: &mut FxHashMap<Arc<str>, Option<TimingFunction>>| {
+        let (state, effects) = (&element.pseudos[i], &element.effects.pseudos[i]);
+        (
+            level_of(&state.resolved, &effects.animations, easings),
+            level_of(&state.resolved, &effects.transitions, easings),
+        )
+    };
     Sampled {
         animations: level(&element.effects.animations, easings),
         transitions: level(&element.effects.transitions, easings),
         marker: level(&element.effects.marker, easings),
+        pseudos: [pseudo(0, easings), pseudo(1, easings)],
         stacking_context,
     }
 }
@@ -974,6 +1070,82 @@ pub(crate) fn sampled_rule(
 
 /// Whether the element has sampled values (no style sharing).
 pub(crate) fn has_sampled(node: &Node) -> bool {
-    node.element_data()
-        .is_some_and(|d| d.sampled_animations.is_some() || d.sampled_transitions.is_some())
+    node.element_data().is_some_and(|d| {
+        d.sampled_animations.is_some()
+            || d.sampled_transitions.is_some()
+            || d.sampled_pseudos.iter().any(|(a, t)| a.is_some() || t.is_some())
+    })
+}
+
+/// pyro: after the element's restyle, the values sampled for its `::before` and `::after`
+/// (`ElementData::sampled_pseudos`) cascaded into their styles, at the animations and
+/// transitions levels.
+pub(crate) fn cascade_sampled_pseudos<'a>(
+    node: &'a Node,
+    context: &mut StyleContext<'_, &'a Node>,
+    data: &mut style::data::ElementData,
+) {
+    let Some(element) = node.element_data() else { return };
+    if element.sampled_pseudos.iter().all(|(a, t)| a.is_none() && t.is_none()) {
+        return;
+    }
+    if data.styles.pseudos.is_empty() {
+        return;
+    }
+    let Some(primary) = data.styles.primary.clone() else { return };
+    for (i, pseudo) in PSEUDOS.iter().enumerate() {
+        let (animations, transitions) = &element.sampled_pseudos[i];
+        if animations.is_none() && transitions.is_none() {
+            continue;
+        }
+        let Some(style) = data.styles.pseudos.get(pseudo).cloned() else { continue };
+        let shared = context.shared;
+        let rule_tree = shared.stylist.rule_tree();
+        let mut rules = rule_tree.remove_animation_rules(style.rules());
+        let mut important_changed = false;
+        for (origin, block) in [(CascadeOrigin::Transitions, transitions), (CascadeOrigin::Animations, animations)] {
+            if let Some(block) = block {
+                if let Some(path) = rule_tree.update_rule_at_level(
+                    CascadeLevel::new(origin),
+                    LayerOrder::root(),
+                    Some(block.borrow_arc()),
+                    &rules,
+                    &shared.guards,
+                    &mut important_changed,
+                ) {
+                    rules = path;
+                }
+            }
+        }
+        if rules == *style.rules() {
+            continue;
+        }
+        let animated = cascade_pseudo(node, context, rules, &style, pseudo, &primary);
+        data.styles.pseudos.set(pseudo, animated);
+    }
+}
+
+/// pyro: `rules` cascaded as the `pseudo` of `node` (whose style is `primary`).
+fn cascade_pseudo<'a>(
+    node: &'a Node,
+    context: &mut StyleContext<'_, &'a Node>,
+    rules: StrongRuleNode,
+    style: &ComputedValues,
+    pseudo: &style::selector_parser::PseudoElement,
+    primary: &ServoArc<ComputedValues>,
+) -> ServoArc<ComputedValues> {
+    context.thread_local.current_dom_depth = TNode::depth(&node);
+    let mut resolver =
+        StyleResolverForElement::new(node, context, RuleInclusion::All, PseudoElementResolution::IfApplicable);
+    let inputs = CascadeInputs {
+        rules: Some(rules),
+        visited_rules: None,
+        flags: style.flags.for_cascade_inputs(),
+        included_cascade_flags: RuleCascadeFlags::empty(),
+    };
+    let primary = style::style_resolver::PrimaryStyle {
+        style: style::style_resolver::ResolvedStyle(primary.clone()),
+        reused_via_rule_node: false,
+    };
+    resolver.cascade_style_and_visited_for_pseudo_with_default_parents(inputs, pseudo, &primary).0
 }
