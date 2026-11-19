@@ -1073,6 +1073,7 @@ impl BaseDocument {
                 new.push(Some(ImageResourceData { url, status: Status::Ok, image: ImageData::None }));
                 continue;
             }
+            let options = self.request_options(options);
             let key = options.cache_key(url.as_str());
             let url_str = key.as_str();
             let kind = ImageType::Reference(idx);
@@ -1119,6 +1120,12 @@ impl BaseDocument {
             _ => None,
         };
         let doc_id = self.id();
+        // pyro: requests made with other than the defaults are this (frame) document's
+        // (`BaseDocument::request_options`).
+        let client_options = self.request_options(blitz_traits::net::FetchOptions {
+            cors: Some(blitz_traits::net::CorsCredentials::SameOrigin),
+            ..Default::default()
+        });
         let node = self.nodes.get_mut(node_id).unwrap();
         // Clone the primary style `Arc` into an owned value so the immutable
         // borrow of `node` (held by the stylo element data guard) is released
@@ -1176,12 +1183,14 @@ impl BaseDocument {
                     // cross-origin one kept apart from the same URL fetched without (CSS Shapes 1
                     // § 4.1): one that fails the CORS check is no shape (`none`), and one loaded
                     // for an `<img>` never stands in for it. A same-origin (or `data:`) one is
-                    // the same response either way, and shares the cache.
+                    // the same response either way, and shares the cache. So is a `mask-image`
+                    // (CSS Masking 1 § 6.2: a potentially CORS-enabled fetch in "Anonymous" mode):
+                    // a cross-origin mask the CORS check does not pass is no mask image.
                     //
                     // pyro: a `url()` with request URL modifiers is fetched as they say (CSS Values 5
                     // § 4.5.4), its response kept apart from the same URL fetched otherwise.
                     let mut options = crate::net::url_fetch_options(modifiers.as_deref());
-                    if matches!(kind, ImageLayerKind::Shape) && options.cors.is_none() {
+                    if matches!(kind, ImageLayerKind::Shape | ImageLayerKind::Mask) && options.cors.is_none() {
                         options.cors = Some(blitz_traits::net::CorsCredentials::SameOrigin);
                     }
                     if options.cors.is_some()
@@ -1190,6 +1199,9 @@ impl BaseDocument {
                         && !crate::net::cors_checked(new_url, &self.url)
                     {
                         options = Default::default();
+                    }
+                    if !options.is_default() {
+                        options.client = client_options.client.clone();
                     }
                     let key = options.cache_key(new_url.as_str());
                     // Check cache first

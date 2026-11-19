@@ -1870,6 +1870,20 @@ impl BaseDocument {
         &self.url
     }
 
+    /// pyro: `options` for a request this document makes, with this document as the request's
+    /// client when it is a frame's (`FetchOptions::client`): a CORS check compares the response
+    /// with the frame document's origin, not the page's. Requests with the defaults stay the
+    /// page's.
+    pub(crate) fn request_options(
+        &self,
+        mut options: blitz_traits::net::FetchOptions,
+    ) -> blitz_traits::net::FetchOptions {
+        if self.subdocument_depth > 0 && !options.is_default() {
+            options.client = Some((*self.url).clone());
+        }
+        options
+    }
+
     /// pyro: what a link's `href` resolves against, and the document's own URL (without a
     /// fragment), which links to it are visited at (`ElementData::flush_link_visited`).
     pub(crate) fn link_urls(&self) -> (url::Url, url::Url) {

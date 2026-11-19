@@ -96,6 +96,9 @@ pub struct SubresourceOptions {
     pub referrer: Option<String>,
     /// The request's referrer policy; `None`: the document's.
     pub referrer_policy: Option<pyro_net::ReferrerPolicy>,
+    /// The URL of the frame document the request is made for (`None`: the page's document): the
+    /// request is that frame's, with its origin.
+    pub client: Option<String>,
 }
 
 fn subresource_request_with(
@@ -1253,8 +1256,25 @@ impl Browser {
         options: SubresourceOptions,
         done: FetchDone,
     ) {
-        let Some(request) = self.page(page).map(|p| subresource_request_with(&p.main_frame, page, url, kind, &options))
-        else {
+        let built = self.page(page).map(|p| {
+            // A frame document's request is its frame's (whose document has that URL), the page's
+            // otherwise.
+            let child = options.client.as_deref().filter(|client| *client != p.main_frame.url).and_then(|client| {
+                p.frames.keys().into_iter().filter(|key| key.child.is_some()).find_map(|key| {
+                    p.frames
+                        .with_frame(key, |f| {
+                            (f.url == client || f.base_url == client).then(|| {
+                                (subresource_request_with(f, page, url.clone(), kind, &options), f.origin.clone())
+                            })
+                        })
+                        .flatten()
+                })
+            });
+            child.unwrap_or_else(|| {
+                (subresource_request_with(&p.main_frame, page, url.clone(), kind, &options), p.main_frame.origin.clone())
+            })
+        });
+        let Some((request, origin)) = built else {
             self.scheduler().post(pyro_runtime::TaskSource::Networking, move |b| done(b, Err("page is gone".into())));
             return;
         };
@@ -1262,7 +1282,6 @@ impl Browser {
             None => done,
             Some(integrity) => {
                 let cors = options.crossorigin.is_some();
-                let origin = self.page(page).map(|p| p.main_frame.origin.clone()).unwrap_or_else(|| "null".into());
                 Box::new(move |b, result| {
                     let result = result.and_then(|r| match loader::integrity_error(&r, Some(&integrity), cors, &origin) {
                         Some(message) => Err(message),

@@ -87,6 +87,9 @@ pub struct FetchOptions {
     pub referrer_policy: Option<String>,
     /// The request's referrer (`None`: the document): the style sheet a `url()` was written in.
     pub referrer: Option<Url>,
+    /// The URL of the frame's document the request is made for (`None`: the page's own): its
+    /// origin is the request's, which a CORS check compares the response with.
+    pub client: Option<Url>,
 }
 
 impl FetchOptions {
@@ -103,7 +106,8 @@ impl FetchOptions {
         if self.is_default() {
             return url.to_owned();
         }
-        if self.integrity.is_none() && self.referrer_policy.is_none() && self.referrer.is_none() {
+        if self.integrity.is_none() && self.referrer_policy.is_none() && self.referrer.is_none() && self.client.is_none()
+        {
             return match self.cors {
                 Some(CorsCredentials::SameOrigin) => format!("cors-anonymous {url}"),
                 Some(CorsCredentials::Include) => format!("cors-use-credentials {url}"),
@@ -111,11 +115,12 @@ impl FetchOptions {
             };
         }
         format!(
-            "cors={:?} integrity={:?} referrer-policy={:?} referrer={:?} {url}",
+            "cors={:?} integrity={:?} referrer-policy={:?} referrer={:?} client={:?} {url}",
             self.cors,
             self.integrity,
             self.referrer_policy,
             self.referrer.as_ref().map(Url::as_str),
+            self.client.as_ref().map(Url::as_str),
         )
     }
 }

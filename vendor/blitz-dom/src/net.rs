@@ -65,6 +65,7 @@ pub fn url_fetch_options(modifiers: Option<&style::url::RequestUrlModifiers>) ->
         integrity: modifiers.integrity.clone(),
         referrer_policy: modifiers.referrer_policy.map(|policy| policy.as_str().to_owned()),
         referrer: modifiers.referrer.as_ref().map(|url| (**url).clone()),
+        client: None,
     }
 }
 
