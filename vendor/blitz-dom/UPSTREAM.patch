@@ -34550,7 +34550,7 @@ diff --git a/packages/blitz-dom/src/node/svg_css.rs b/packages/blitz-dom/src/nod
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/node/svg_css.rs
-@@ -0,0 +1,2670 @@
+@@ -0,0 +1,2791 @@
 +//! pyro: an inline `<svg>` subtree as a standalone SVG document for usvg, with
 +//! the page's CSS applied.
 +//!
@@ -35169,6 +35169,26 @@ new file mode 100644
 +    (!fragment.is_empty()).then(|| fragment.to_string())
 +}
 +
++/// pyro: whether the first element of the document `node` is in with the id `id` (in tree
++/// order, as `getElementById` finds it) is an SVG `<mask>`.
++fn is_document_svg_mask(node: &Node, id: &str) -> bool {
++    let tree = node.tree();
++    let mut top = node;
++    while let Some(parent) = top.parent {
++        top = &tree[parent];
++    }
++    let mut stack = vec![top];
++    while let Some(node) = stack.pop() {
++        if let Some(data) = node.element_data() {
++            if data.attr(local_name!("id")) == Some(id) {
++                return data.name.ns == ns!(svg) && &*data.name.local == "mask";
++            }
++        }
++        stack.extend(node.children.iter().rev().map(|&child| &tree[child]));
++    }
++    false
++}
++
 +/// Whether `value` is a transform list as SVG's grammar has it (and Chromium's parser): what
 +/// svgtypes reads, without a comma that separates nothing (`rotate(90,)`, `scale(,2)`,
 +/// `translate(1,,2)`, a list ending in one), which svgtypes lets through.
@@ -35499,6 +35519,13 @@ new file mode 100644
 +                    let _ = write!(declarations, "{name}:{value};");
 +                }
 +            }
++            // pyro: `vector-effect: non-scaling-stroke` (SVG 2 § 13.3), which usvg does not read:
++            // the stroke is as wide in the `<svg>`'s coordinates as `stroke-width` says, so in the
++            // element's own it is that over the scale of its transforms (when they scale alike in
++            // every direction).
++            if !is_root && let Some(width) = self.non_scaling_stroke_width(node, tag, style) {
++                let _ = write!(declarations, "stroke-width:{};", num(width));
++            }
 +            if let (Some(shadow), false) = (self.shadow_copy, is_root) {
 +                let own = [own_paint(data, style, &author, true), own_paint(data, style, &author, false)];
 +                let top = shadow.root == node.id;
@@ -35719,6 +35746,80 @@ new file mode 100644
 +        self.viewports.last().copied().unwrap_or((300.0, 150.0))
 +    }
 +
++    /// pyro: the `stroke-width` in its own user space of a shape with `vector-effect:
++    /// non-scaling-stroke`: its width over the scale its transforms and its ancestors' (up to
++    /// this `<svg>`) apply. `None` for any other element, a width that is no length, or
++    /// transforms that do not scale uniformly (a skew, a nested `<svg>`'s `viewBox` or this
++    /// one's), which keep the width as it is.
++    fn non_scaling_stroke_width(&self, node: &Node, tag: &str, style: &ComputedValues) -> Option<f64> {
++        use style::values::generics::svg::SVGLength;
++        use style::values::specified::svg::VectorEffect;
++        if !matches!(tag, "path" | "rect" | "circle" | "ellipse" | "line" | "polyline" | "polygon") {
++            return None;
++        }
++        let svg = style.get_svg();
++        if !svg.vector_effect.contains(VectorEffect::NON_SCALING_STROKE) {
++            return None;
++        }
++        let SVGLength::LengthPercentage(width) = &style.get_inherited_svg().stroke_width else {
++            return None;
++        };
++        let width = width.0.to_length()?.px() as f64;
++        // The linear part of an element's transform: its CSS transform, else its attribute.
++        let linear = |node: &Node, style: &ComputedValues| -> Option<Affine> {
++            let data = node.element_data()?;
++            let css = !style.get_box().transform.0.is_empty()
++                || !matches!(style.get_box().rotate, style::values::generics::transform::Rotate::None)
++                || !matches!(style.get_box().scale, style::values::generics::transform::Scale::None);
++            let transform = if css {
++                let zero = euclid::default::Rect::new(
++                    euclid::default::Point2D::new(CSSPixelLength::new(0.0), CSSPixelLength::new(0.0)),
++                    euclid::default::Size2D::new(CSSPixelLength::new(0.0), CSSPixelLength::new(0.0)),
++                );
++                match crate::stylo_to_kurbo::resolve_transform(style.get_box(), zero) {
++                    crate::stylo_to_kurbo::ResolvedTransform::Flat(transform) => transform.unwrap_or(Affine::IDENTITY),
++                    crate::stylo_to_kurbo::ResolvedTransform::Spatial(_) => return None,
++                }
++            } else {
++                data.attr(local_name!("transform"))
++                    .filter(|v| is_transform_list(v))
++                    .and_then(|v| v.parse::<svgtypes::Transform>().ok())
++                    .map_or(Affine::IDENTITY, |t| Affine::new([t.a, t.b, t.c, t.d, t.e, t.f]))
++            };
++            let [a, b, c, d, _, _] = transform.as_coeffs();
++            Some(Affine::new([a, b, c, d, 0.0, 0.0]))
++        };
++        let mut matrix = linear(node, style)?;
++        let tree = node.tree();
++        let mut parent = node.parent;
++        while let Some(id) = parent {
++            let ancestor = &tree[id];
++            let data = ancestor.element_data()?;
++            if data.name.ns != ns!(svg) {
++                return None;
++            }
++            if &*data.name.local == "svg" && data.attr(local_name!("viewBox")).is_some() {
++                return None;
++            }
++            if id == self.root.id {
++                break;
++            }
++            let ancestor_style = ancestor.primary_styles()?;
++            matrix = linear(ancestor, &ancestor_style)? * matrix;
++            parent = ancestor.parent;
++        }
++        let [a, b, c, d, _, _] = matrix.as_coeffs();
++        // A rotation and one scale: the columns orthogonal and of one length.
++        let (sx, sy) = ((a * a + b * b).sqrt(), (c * c + d * d).sqrt());
++        if !(sx > 1e-9) || (sx - sy).abs() > 1e-6 * sx || (a * c + b * d).abs() > 1e-6 * sx * sy {
++            return None;
++        }
++        if (sx - 1.0).abs() < 1e-12 {
++            return None;
++        }
++        Some(width / sx)
++    }
++
 +    /// The size, and whether it is the root's CSS box guessed before layout (see `viewport_guessed`).
 +    fn viewport_size(&self, data: &ElementData, style: Option<&ComputedValues>, is_root: bool) -> ((f64, f64), bool) {
 +        if let Some(view_box) = data.attr(local_name!("viewBox")) {
@@ -35904,6 +36005,17 @@ new file mode 100644
 +                Rect::new(0.0, 0.0, w, h)
 +            }
 +            TransformBox::FillBox | TransformBox::ContentBox => self.boxes(node, data, temp_id).fill,
++            // pyro: a non-scaling stroke's width is the `<svg>`'s, which the transform this box
++            // places would change: as in Chromium, its stroke box is its fill box (WPT
++            // css-transforms `svgbox-stroke-box-003`, `-004`).
++            TransformBox::StrokeBox | TransformBox::BorderBox
++                if style
++                    .get_svg()
++                    .vector_effect
++                    .contains(style::values::specified::svg::VectorEffect::NON_SCALING_STROKE) =>
++            {
++                self.boxes(node, data, temp_id).fill
++            }
 +            TransformBox::StrokeBox | TransformBox::BorderBox => self.boxes(node, data, temp_id).stroke,
 +        };
 +
@@ -36403,7 +36515,16 @@ new file mode 100644
 +        for (i, image) in images.iter().enumerate() {
 +            let source = match image {
 +                GenericImage::None => LayerSource::None,
-+                GenericImage::Url(_) => match local_mask(self, image) {
++                GenericImage::Url(_) => match local_mask(self, image).or_else(|| {
++                    // pyro: a `<mask>` of another `<svg>` of the page (no document of its own was
++                    // loaded for it), which `BaseDocument::with_cross_svg_references` copies into
++                    // this one's source.
++                    let loaded = data.mask_images.get(i).and_then(Option::as_ref).is_some_and(|resource| {
++                        resource.status == Status::Ok && matches!(resource.image, ImageData::Svg(_))
++                    });
++                    url_fragment(&image.to_css_string())
++                        .filter(|fragment| !loaded && is_document_svg_mask(self.root, fragment))
++                }) {
 +                    Some(fragment) => LayerSource::Mask(fragment),
 +                    None => match data.mask_images.get(i).and_then(Option::as_ref) {
 +                        Some(resource) if resource.status == Status::Ok => match &resource.image {
