@@ -243,7 +243,9 @@ pub struct Layout {
     /// CSS Scroll Anchoring: the layout each vertically scrolled element
     /// was last settled in, to select its anchor in when the layout next
     /// changes.
-    scroll_anchors: FxHashMap<NodeId, Rc<LayoutResult>>,
+    /// pyro: with the anchor selected in it and the suppression-trigger values of the anchor and
+    /// its ancestors then (`anchor_fingerprint`).
+    scroll_anchors: FxHashMap<NodeId, (Rc<LayoutResult>, Option<(NodeId, String)>)>,
     /// pyro: the box each scroller (`None`: the viewport) last snapped to on each axis (x, y), to
     /// snap to again after layout changes (CSS Scroll Snap 1 § 6.2.3).
     snapped: FxHashMap<Option<NodeId>, [Option<NodeId>; 2]>,
@@ -2968,7 +2970,33 @@ impl Layout {
             return;
         }
         let result = self.layout_result(dom);
-        self.scroll_anchors.insert(scroller, result);
+        let anchor = self
+            .scroll_anchor(dom, &result, scroller, &|_| true)
+            .map(|anchor| (anchor, self.anchor_fingerprint(dom, scroller, anchor)));
+        self.scroll_anchors.insert(scroller, (result, anchor));
+    }
+
+    /// pyro: the computed values of the properties whose change is a suppression trigger (CSS
+    /// Scroll Anchoring 1 § 2.4: position, insets, margin, padding, sizes, transforms) of `anchor`
+    /// and its ancestors up to `scroller`. A change between selecting the anchor and adjusting for
+    /// it suppresses the adjustment (WPT scroll-animations `view-timeline-subject-bounds-update`:
+    /// the anchor's own height and margin change).
+    fn anchor_fingerprint(&self, dom: &Dom, scroller: NodeId, anchor: NodeId) -> String {
+        const PROPERTIES: &[&str] = &[
+            "position", "top", "right", "bottom", "left", "margin-top", "margin-right", "margin-bottom",
+            "margin-left", "padding-top", "padding-right", "padding-bottom", "padding-left", "width", "height",
+            "min-width", "min-height", "max-width", "max-height", "transform", "translate", "rotate", "scale",
+        ];
+        let mut out = String::new();
+        let mut current = Some(anchor);
+        while let Some(el) = current.filter(|&el| el != scroller) {
+            for property in PROPERTIES {
+                out.push_str(&self.style.computed_value(dom, el, property).unwrap_or_default());
+                out.push('|');
+            }
+            current = dom.parent_element(el).ok().flatten();
+        }
+        out
     }
 
     /// The scroll anchor of a vertically scrolled `scroller` (CSS Scroll
@@ -3054,10 +3082,10 @@ impl Layout {
             return;
         }
         let flow = self.layout_result(dom);
-        let mut anchors: Vec<(NodeId, Rc<LayoutResult>)> =
-            self.scroll_anchors.iter().map(|(&k, v)| (k, v.clone())).collect();
-        anchors.sort_by_key(|(k, _)| (k.idx, k.gen));
-        for (el, old) in anchors {
+        let mut anchors: Vec<(NodeId, Rc<LayoutResult>, Option<(NodeId, String)>)> =
+            self.scroll_anchors.iter().map(|(&k, (v, a))| (k, v.clone(), a.clone())).collect();
+        anchors.sort_by_key(|(k, _, _)| (k.idx, k.gen));
+        for (el, old, captured) in anchors {
             if Rc::ptr_eq(&old, &flow) {
                 continue;
             }
@@ -3067,6 +3095,13 @@ impl Layout {
             }
             let keep = |n: NodeId| flow.get(n).is_some();
             let Some(anchor) = self.scroll_anchor(dom, &old, el, &keep) else { continue };
+            // A suppression trigger on the anchor or an ancestor since: no adjustment.
+            let suppressed = captured.as_ref().is_some_and(|(captured, fingerprint)| {
+                *captured == anchor && self.anchor_fingerprint(dom, el, anchor) != *fingerprint
+            });
+            if suppressed {
+                continue;
+            }
             let (Some(sb), Some(ab), Some(osb), Some(oab)) =
                 (flow.get(el), flow.get(anchor), old.get(el), old.get(anchor))
             else {
