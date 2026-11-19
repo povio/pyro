@@ -109,9 +109,12 @@ fn static_network_fallback_keeps_assets_and_fetches_missing_documents_at_exact_u
     let files = Files::new();
     for direct in [true, false] {
         let mut thread = crate::browser_thread().unwrap();
-        let static_files =
-            pyro_net::StaticFiles::new(vec![(server.origin.clone(), files.0.clone())]).unwrap().with_spa_fallback(false);
-        thread.enable_network(pyro_net::NetConfig { static_files, static_direct: direct, ..Default::default() }).unwrap();
+        let static_files = pyro_net::StaticFiles::new(vec![(server.origin.clone(), files.0.clone())])
+            .unwrap()
+            .with_spa_fallback(false);
+        thread
+            .enable_network(pyro_net::NetConfig { static_files, static_direct: direct, ..Default::default() })
+            .unwrap();
         let page = thread.browser.create_page().unwrap();
         navigate(&mut thread, page, &format!("{}/asset.txt", server.origin));
         assert_eq!(eval(&thread, page, "document.body.textContent"), "exact static file <b>literal</b>");
@@ -136,7 +139,9 @@ fn default_static_spa_fallback_is_unchanged() {
     for direct in [true, false] {
         let mut thread = crate::browser_thread().unwrap();
         let static_files = pyro_net::StaticFiles::new(vec![(server.origin.clone(), files.0.clone())]).unwrap();
-        thread.enable_network(pyro_net::NetConfig { static_files, static_direct: direct, ..Default::default() }).unwrap();
+        thread
+            .enable_network(pyro_net::NetConfig { static_files, static_direct: direct, ..Default::default() })
+            .unwrap();
         let page = thread.browser.create_page().unwrap();
         navigate(&mut thread, page, &format!("{}/deep/missing?query=retained", server.origin));
         assert_eq!(eval(&thread, page, "document.title"), "Mounted SPA");

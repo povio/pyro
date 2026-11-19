@@ -331,7 +331,9 @@ mod document_bodies_tests {
         let log = Arc::new(Mutex::new(Vec::new()));
         let files = |document: &'static str| LocalFiles {
             statics: pyro_net::StaticFiles::default(),
-            loader: Some(Arc::new(Loader { document, bodies: bodies.clone(), log: log.clone() }) as Arc<dyn SubresourceLoader>),
+            loader: Some(
+                Arc::new(Loader { document, bodies: bodies.clone(), log: log.clone() }) as Arc<dyn SubresourceLoader>
+            ),
             failed: Arc::default(),
         };
         let (a, b) = (files("A"), files("B"));

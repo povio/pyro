@@ -143,22 +143,29 @@ fn svg_reported_size(body: &[u8], density: f64) -> Option<((f64, f64), bool)> {
     // An absolute length (px or unitless); percentages and negative values are none.
     let length = |name: &str| raw(name)?.trim_end_matches("px").parse::<f64>().ok().filter(|v| *v >= 0.0);
     let ratio = raw("viewBox").and_then(|v| {
-        let n: Vec<f64> = v.split(|c: char| c == ',' || c.is_ascii_whitespace()).filter(|s| !s.is_empty()).filter_map(|s| s.parse().ok()).collect();
+        let n: Vec<f64> = v
+            .split(|c: char| c == ',' || c.is_ascii_whitespace())
+            .filter(|s| !s.is_empty())
+            .filter_map(|s| s.parse().ok())
+            .collect();
         (n.len() == 4 && n[2] > 0.0 && n[3] > 0.0).then(|| n[2] / n[3])
     });
     let d = if density > 0.0 { density } else { 1.0 };
     let (width, height) = (length("width"), length("height"));
     let intrinsic = width.is_some() || height.is_some();
-    Some((match (width, height, ratio) {
-        (Some(w), Some(h), _) => (w / d, h / d),
-        (Some(w), None, Some(r)) => (w / d, w / r / d),
-        (Some(w), None, None) => (w / d, 150.0),
-        (None, Some(h), Some(r)) => (h * r / d, h / d),
-        (None, Some(h), None) => (300.0, h / d),
-        (None, None, Some(r)) if r > 2.0 => (300.0, 300.0 / r),
-        (None, None, Some(r)) => (150.0 * r, 150.0),
-        (None, None, None) => (300.0, 150.0),
-    }, intrinsic))
+    Some((
+        match (width, height, ratio) {
+            (Some(w), Some(h), _) => (w / d, h / d),
+            (Some(w), None, Some(r)) => (w / d, w / r / d),
+            (Some(w), None, None) => (w / d, 150.0),
+            (None, Some(h), Some(r)) => (h * r / d, h / d),
+            (None, Some(h), None) => (300.0, h / d),
+            (None, None, Some(r)) if r > 2.0 => (300.0, 300.0 / r),
+            (None, None, Some(r)) => (150.0 * r, 150.0),
+            (None, None, None) => (300.0, 150.0),
+        },
+        intrinsic,
+    ))
 }
 
 fn svg_size(body: &[u8]) -> Option<(f64, f64)> {
@@ -208,7 +215,8 @@ impl Browser {
         drop(state);
         let (lazy, hidden, rendered_width, attr_width, auto_css_width) = {
             let dom = bindings.dom.borrow();
-            let lazy = dom.get_attribute(node, "loading").ok().flatten().is_some_and(|l| l.eq_ignore_ascii_case("lazy"));
+            let lazy =
+                dom.get_attribute(node, "loading").ok().flatten().is_some_and(|l| l.eq_ignore_ascii_case("lazy"));
             let connected = dom.is_connected(node).unwrap_or(false);
             // "Being rendered" from the last completed layout, never running layout here (this
             // runs per inserted image); its size only when that layout is current (free then).
@@ -223,23 +231,38 @@ impl Browser {
             // max(width, height x ratio), the ratio from `h` descriptors, else the dimension
             // attributes.
             let rendered = rendered.map(|(w, h)| {
-                let cover = bindings.layout().style().computed_value(&dom, node, "object-fit").is_some_and(|v| v == "cover");
+                let cover =
+                    bindings.layout().style().computed_value(&dom, node, "object-fit").is_some_and(|v| v == "cover");
                 let ratio = || {
                     let from_h = dom.get_attribute(node, "srcset").ok().flatten().and_then(|srcset| {
                         srcset.split(',').find_map(|c| {
                             let mut parts = c.split_ascii_whitespace().skip(1);
                             let (mut w, mut h) = (None, None);
                             for d in parts.by_ref() {
-                                if let Some(v) = d.strip_suffix('w') { w = v.parse::<f64>().ok(); }
-                                if let Some(v) = d.strip_suffix('h') { h = v.parse::<f64>().ok(); }
+                                if let Some(v) = d.strip_suffix('w') {
+                                    w = v.parse::<f64>().ok();
+                                }
+                                if let Some(v) = d.strip_suffix('h') {
+                                    h = v.parse::<f64>().ok();
+                                }
                             }
                             w.zip(h).filter(|(_, h)| *h > 0.0).map(|(w, h)| w / h)
                         })
                     });
-                    let attr = |n: &str| dom.get_attribute(node, n).ok().flatten().and_then(|v| v.trim().parse::<f64>().ok()).filter(|v| *v > 0.0);
+                    let attr = |n: &str| {
+                        dom.get_attribute(node, n)
+                            .ok()
+                            .flatten()
+                            .and_then(|v| v.trim().parse::<f64>().ok())
+                            .filter(|v| *v > 0.0)
+                    };
                     from_h.or_else(|| attr("width").zip(attr("height")).map(|(w, h)| w / h))
                 };
-                if cover { ratio().map_or(w, |r| w.max(h * r)) } else { w }
+                if cover {
+                    ratio().map_or(w, |r| w.max(h * r))
+                } else {
+                    w
+                }
             });
             let attr = dom.get_attribute(node, "width").ok().flatten().and_then(|w| w.trim().parse::<f64>().ok());
             // Lazy images only: the style read flushes style, which an eager image's insertion
@@ -273,7 +296,8 @@ impl Browser {
         // Not rendered as of the last layout (or detached): select now, fetch once rendered. Not
         // in that layout yet (inserted since): fetched now, as an eager image.
         let deferred_now = hidden;
-        let stored = self.doc_mut(page).and_then(|mut p| if deferred_now { None } else { p.images.deferred.remove(&node) });
+        let stored =
+            self.doc_mut(page).and_then(|mut p| if deferred_now { None } else { p.images.deferred.remove(&node) });
         let candidate = match stored {
             // `loading` stopped being lazy: the source selected while deferred is fetched.
             Some(selected) if !lazy && !restart => selected,
@@ -305,11 +329,18 @@ impl Browser {
             }
         };
         let request_state = image_request_state(&bindings.dom.borrow(), node);
-        let current =
-            state.images.entries.get(&node).map(|i| (i.url.clone(), i.pending, i.request_state == request_state, i.outcome));
+        let current = state
+            .images
+            .entries
+            .get(&node)
+            .map(|i| (i.url.clone(), i.pending, i.request_state == request_state, i.outcome));
         drop(state);
         let url = match source {
-            Source::Url(url) if current.as_ref().is_some_and(|(u, pending, same, _)| *u == url && *same && (!restart || *pending)) => {
+            Source::Url(url)
+                if current
+                    .as_ref()
+                    .is_some_and(|(u, pending, same, _)| *u == url && *same && (!restart || *pending)) =>
+            {
                 // Same request: a `decode()` made since waits for nothing.
                 if current.is_some_and(|(_, pending, _, _)| !pending) {
                     bindings.settle_image_decodes(node);
@@ -318,7 +349,11 @@ impl Browser {
             }
             // A restarted request for the image already loaded: HTML's list of available
             // images gives it again without fetching, and `load` (or `error`) fires again.
-            Source::Url(url) if current.as_ref().is_some_and(|(u, pending, same, outcome)| *u == url && *same && !pending && outcome.is_some()) => {
+            Source::Url(url)
+                if current
+                    .as_ref()
+                    .is_some_and(|(u, pending, same, outcome)| *u == url && *same && !pending && outcome.is_some()) =>
+            {
                 let ok = current.and_then(|(_, _, _, outcome)| outcome).unwrap_or(false);
                 let weak = Rc::downgrade(&bindings);
                 self.scheduler().post(TaskSource::DomManipulation, move |_b| {
@@ -384,7 +419,11 @@ impl Browser {
                 self.doc_mut(page).expect("page").images.entries.remove(&node);
                 bindings.set_image_state(node, None, false);
                 bindings.keep_loading_image(node, false);
-                { let mut dom = bindings.dom.borrow_mut(); dom.set_natural_size(node, None); dom.set_reported_natural_size(node, None); }
+                {
+                    let mut dom = bindings.dom.borrow_mut();
+                    dom.set_natural_size(node, None);
+                    dom.set_reported_natural_size(node, None);
+                }
                 if invalid {
                     self.image_error_task(page, loader, &bindings, node);
                 }
@@ -427,7 +466,11 @@ impl Browser {
         // (`None` would clear the image and reject pending `decode()`s).
         bindings.set_image_state(node, Some(raw_src.as_deref().unwrap_or("")), true);
         bindings.keep_loading_image(node, true);
-        { let mut dom = bindings.dom.borrow_mut(); dom.set_natural_size(node, None); dom.set_reported_natural_size(node, None); }
+        {
+            let mut dom = bindings.dom.borrow_mut();
+            dom.set_natural_size(node, None);
+            dom.set_reported_natural_size(node, None);
+        }
         let weak = Rc::downgrade(&bindings);
         let finish = move |b: &mut Browser, result| {
             let Some(bindings) = weak.upgrade() else { return };
@@ -450,7 +493,8 @@ impl Browser {
                     sent_referrer: None,
                     timing: None,
                     partial: None,
-                nosniff: false, opaque: false,
+                    nosniff: false,
+                    opaque: false,
                 })
                 .ok_or_else(|| "revoked or unknown blob URL".to_owned());
             self.scheduler().post(TaskSource::Networking, move |b| finish(b, result));
@@ -540,7 +584,9 @@ impl Browser {
         let decodable = decodable && outcome.is_some();
         // The density-corrected natural size (HTML): a `2x` candidate of 200 px is 100 px wide.
         let natural =
-            outcome.flatten().map(|(w, h)| if density > 0.0 && density != 1.0 { (w / density, h / density) } else { (w, h) });
+            outcome
+                .flatten()
+                .map(|(w, h)| if density > 0.0 && density != 1.0 { (w / density, h / density) } else { (w, h) });
         // An SVG with one natural dimension is laid out at its completed, density-corrected
         // size; one with none keeps sizing from its ratio in layout.
         let natural = natural.or(reported.filter(|(_, intrinsic)| *intrinsic).map(|(size, _)| size));
@@ -707,7 +753,8 @@ impl Browser {
         let unseen = host.hidden_objects.borrow().iter().any(|(page, node)| {
             self.doc(*page).and_then(|p| p.main_frame.page_dom.clone()).is_some_and(|b| {
                 let dom = b.dom.borrow();
-                dom.is_connected(*node).unwrap_or(false) && b.layout().style().displayed_as_synced(&dom, *node).is_none()
+                dom.is_connected(*node).unwrap_or(false)
+                    && b.layout().style().displayed_as_synced(&dom, *node).is_none()
             })
         });
         if let Some(stamp) = synced {
@@ -795,7 +842,9 @@ impl Browser {
                     dom.get_attribute(node, "href")
                         .ok()
                         .flatten()
-                        .or_else(|| dom.get_attribute_ns(node, Some("http://www.w3.org/1999/xlink"), "href").ok().flatten())
+                        .or_else(|| {
+                            dom.get_attribute_ns(node, Some("http://www.w3.org/1999/xlink"), "href").ok().flatten()
+                        })
                         .map(str::to_owned)
                 })
                 .flatten()
@@ -887,7 +936,30 @@ impl Browser {
         if url.starts_with("blob:") {
             let ok = bindings.blob_url(&url).is_some();
             self.scheduler().post(TaskSource::Networking, move |b| {
-                finish(b, if ok { Ok(Resource { url: String::new(), status: 200, mime: String::new(), charset: None, body: Vec::new(), content_disposition: None, header_csp: None, refresh: None, content_language: None, referrer_policy: None, sent_referrer: None, timing: None, partial: None, nosniff: false, opaque: false }) } else { Err("revoked or unknown blob URL".into()) })
+                finish(
+                    b,
+                    if ok {
+                        Ok(Resource {
+                            url: String::new(),
+                            status: 200,
+                            mime: String::new(),
+                            charset: None,
+                            body: Vec::new(),
+                            content_disposition: None,
+                            header_csp: None,
+                            refresh: None,
+                            content_language: None,
+                            referrer_policy: None,
+                            sent_referrer: None,
+                            timing: None,
+                            partial: None,
+                            nosniff: false,
+                            opaque: false,
+                        })
+                    } else {
+                        Err("revoked or unknown blob URL".into())
+                    },
+                )
             });
             return;
         }
@@ -949,7 +1021,9 @@ impl Browser {
         // it from there), clean only for a CORS response or a non-opaque one of the document's
         // origin, as an `<img>`'s.
         if image {
-            if let Some(r) = result.as_ref().ok().filter(|r| (200..300).contains(&r.status) && r.body.len() <= MAX_IMAGE_BYTES) {
+            if let Some(r) =
+                result.as_ref().ok().filter(|r| (200..300).contains(&r.status) && r.body.len() <= MAX_IMAGE_BYTES)
+            {
                 if let Some((w, h)) = pyro_dom::image::dimensions(&r.body) {
                     let clean = cors != 0 || (!r.opaque && self.image_origin_clean(page, &r.url));
                     bindings.remember_available_image(
@@ -967,7 +1041,9 @@ impl Browser {
         // The page's layout engine lays the element out from the same body
         // (an `<object>` image's size), which it would otherwise fetch on its
         // own and might not have when `load` fires and scripts measure.
-        if let Some(r) = result.as_ref().ok().filter(|r| (200..300).contains(&r.status) && r.body.len() <= MAX_IMAGE_BYTES) {
+        if let Some(r) =
+            result.as_ref().ok().filter(|r| (200..300).contains(&r.status) && r.body.len() <= MAX_IMAGE_BYTES)
+        {
             if let Some(p) = self.page(page.page) {
                 p.frames.layout_bodies.provide(&url, &r.body);
             }
@@ -999,17 +1075,18 @@ impl Browser {
         }
         // An `<embed>` fires `load` once its fetch is done, whatever came back.
         let embed = !image && bindings.dom.borrow().element(node).is_ok_and(|e| &*e.name.local == "embed");
-        let ok = embed || result.is_ok_and(|r| {
-            (200..300).contains(&r.status)
-                && (!image || {
-                    let body = &r.body[..r.body.len().min(MAX_IMAGE_BYTES)];
-                    !body.is_empty()
-                        && (pyro_dom::image::dimensions(body).is_some()
-                            || r.mime == "image/svg+xml"
-                            || body.trim_ascii_start().starts_with(b"<svg")
-                            || !matches!(r.mime.as_str(), "image/png" | "image/gif" | "image/jpeg" | "image/webp"))
-                })
-        });
+        let ok = embed
+            || result.is_ok_and(|r| {
+                (200..300).contains(&r.status)
+                    && (!image || {
+                        let body = &r.body[..r.body.len().min(MAX_IMAGE_BYTES)];
+                        !body.is_empty()
+                            && (pyro_dom::image::dimensions(body).is_some()
+                                || r.mime == "image/svg+xml"
+                                || body.trim_ascii_start().starts_with(b"<svg")
+                                || !matches!(r.mime.as_str(), "image/png" | "image/gif" | "image/jpeg" | "image/webp"))
+                    })
+            });
         pyro_webapi::lifecycle::resource_loaded(bindings, node, ok);
         drop(hold);
         self.maybe_fire_load(page);

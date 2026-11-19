@@ -200,18 +200,26 @@ fn an_import_rule_exposes_the_sheet_it_loaded() {
 /// response's URL).
 struct Redirected(Rc<StaticLoader>);
 impl pyro_browser::ResourceLoader for Redirected {
-    fn fetch(&self, browser: &mut pyro_browser::Browser, request: pyro_browser::FetchRequest, done: pyro_browser::FetchDone) {
+    fn fetch(
+        &self,
+        browser: &mut pyro_browser::Browser,
+        request: pyro_browser::FetchRequest,
+        done: pyro_browser::FetchDone,
+    ) {
         let redirected = request.url.ends_with("/a.css");
         self.0.fetch(
             browser,
             request,
             Box::new(move |b, result| {
-                done(b, result.map(|mut r| {
-                    if redirected {
-                        r.url = "http://site.test/dir/a.css".into();
-                    }
-                    r
-                }))
+                done(
+                    b,
+                    result.map(|mut r| {
+                        if redirected {
+                            r.url = "http://site.test/dir/a.css".into();
+                        }
+                        r
+                    }),
+                )
             }),
         );
     }

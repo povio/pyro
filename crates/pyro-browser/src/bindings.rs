@@ -18,6 +18,8 @@ struct LayoutLoader {
     handle: LoopHandle<Browser>,
     frame: FrameKey,
     loader: LoaderId,
+    /// pyro: the document's [`crate::layout_document`], which its bodies of own options are kept for.
+    document: String,
     bodies: Arc<pyro_dom::layout::SubresourceBodies>,
     /// The fonts this document's layout asked for (`document.fonts`, the load event).
     asked_fonts: std::sync::Mutex<std::collections::HashSet<String>>,
@@ -40,7 +42,8 @@ impl pyro_dom::layout::SubresourceLoader for LayoutLoader {
             pyro_dom::layout::SubresourceKind::Font => crate::ResourceKind::Font,
             pyro_dom::layout::SubresourceKind::Style => crate::ResourceKind::Stylesheet,
         };
-        let options = crate::SubresourceOptions { crossorigin: cors.then(|| "anonymous".to_owned()), ..Default::default() };
+        let options =
+            crate::SubresourceOptions { crossorigin: cors.then(|| "anonymous".to_owned()), ..Default::default() };
         let (frame, loader) = (self.frame, self.loader.clone());
         // A closed loop drops `done`: its document is gone with the browser.
         let _ = self.handle.post(move |b| b.fetch_layout_subresource(frame, &loader, url, kind, options, done));
@@ -77,9 +80,9 @@ impl pyro_dom::layout::SubresourceLoader for LayoutLoader {
         &self.bodies
     }
 
-    /// pyro: the document's loader id (unique per document).
+    /// pyro: the document's origin (an opaque one by its identity): `crate::layout_document`.
     fn document(&self) -> Option<String> {
-        Some(self.loader.0.clone())
+        Some(self.document.clone())
     }
 
     fn font_asked(&self, url: &str) {
@@ -152,7 +155,8 @@ impl PageHooks for Hooks {
         }
         // Descendants of the same origin as this document.
         let Some(me) = host.frame(self.page) else { return out };
-        let same = |f: &crate::Frame| f.origin == me.origin && (f.origin != "null" || f.opaque_origin == me.opaque_origin);
+        let same =
+            |f: &crate::Frame| f.origin == me.origin && (f.origin != "null" || f.opaque_origin == me.opaque_origin);
         let mut stack: Vec<FrameKey> = host.child_keys(self.page).into_iter().collect();
         while let Some(child) = stack.pop() {
             if let Some(f) = host.frame(child) {
@@ -335,11 +339,8 @@ impl PageHooks for Hooks {
         // HTML "navigate" runs on the target navigable.
         let mut cross_origin_target = false;
         let nav = self.frames.upgrade().filter(|host| host.matches(page, &loader)).and_then(|host| {
-            let key = if own_frame {
-                Some(page)
-            } else {
-                request.target.as_deref().and_then(|t| host.named_frame(page, t))
-            };
+            let key =
+                if own_frame { Some(page) } else { request.target.as_deref().and_then(|t| host.named_frame(page, t)) };
             cross_origin_target = key.is_some_and(|key| !host.same_origin(page, key));
             key.and_then(|key| host.nav(key))
         });
@@ -360,8 +361,7 @@ impl PageHooks for Hooks {
             // Navigation API: the document's `navigate` event may cancel
             // or intercept the load. A cross-document navigation a
             // cross-origin document starts fires none (HTML "navigate").
-            if let Some(nav) =
-                nav.as_ref().filter(|_| !request.url.starts_with("javascript:") && !cross_origin_target)
+            if let Some(nav) = nav.as_ref().filter(|_| !request.url.starts_with("javascript:") && !cross_origin_target)
             {
                 // HTML "navigate" with history handling "auto": a navigation
                 // to the document's own URL replaces its entry.
@@ -692,7 +692,9 @@ impl PageHooks for Hooks {
         host.document_value(scope, self.page, key).map(Some)
     }
     fn sibling_realms(&self, scope: &pyro_js::Scope<'_>) -> Vec<pyro_js::Realm> {
-        let Some(host) = self.frames.upgrade().filter(|h| h.has_children() || h.has_retired() || !h.dom_peers.borrow().is_empty()) else {
+        let Some(host) =
+            self.frames.upgrade().filter(|h| h.has_children() || h.has_retired() || !h.dom_peers.borrow().is_empty())
+        else {
             return Vec::new();
         };
         host.sibling_realms(self.page, scope.realm_id())
@@ -834,8 +836,9 @@ impl Browser {
             let find = |h: &crate::frames::FrameHost| {
                 h.keys().into_iter().find(|key| h.with_frame(*key, |f| f.document == document).unwrap_or(false))
             };
-            let Some((frame_host, target)) =
-                find(&host).map(|t| (host.clone(), t)).or_else(|| peers.iter().find_map(|p| find(p).map(|t| (p.clone(), t))))
+            let Some((frame_host, target)) = find(&host)
+                .map(|t| (host.clone(), t))
+                .or_else(|| peers.iter().find_map(|p| find(p).map(|t| (p.clone(), t))))
             else {
                 continue;
             };
@@ -951,7 +954,8 @@ fn fullscreen_allowed_in(host: &crate::frames::FrameHost, key: FrameKey, url: &s
     let Some(pd) = host.frame(parent).and_then(|f| f.page_dom.clone()) else { return false };
     // The container policy as it was when this navigation began.
     let container = frame.fullscreen_container.clone();
-    let parent_url = pd.dom.borrow().document_url_parsed(pd.document()).ok().flatten().map(|u| u.to_string()).unwrap_or_default();
+    let parent_url =
+        pd.dom.borrow().document_url_parsed(pd.document()).ok().flatten().map(|u| u.to_string()).unwrap_or_default();
     let parent_origin = frame_origin(host, parent, &parent_url, pd.has_opaque_origin());
     let child_origin = frame_origin(host, key, url, opaque);
     pyro_webapi::fullscreen::allowed_in_frame(
@@ -968,9 +972,12 @@ fn fullscreen_allowed_in(host: &crate::frames::FrameHost, key: FrameKey, url: &s
 /// container's `allow` declares `unload` for the frame's origin; no declaration, no `unload`).
 fn unload_allowed(host: &crate::frames::FrameHost, key: FrameKey) -> bool {
     let parent = host.parent_key(key);
-    let (Some(frame), Some(pd)) = (host.frame(key), host.frame(parent).and_then(|f| f.page_dom.clone())) else { return false };
+    let (Some(frame), Some(pd)) = (host.frame(key), host.frame(parent).and_then(|f| f.page_dom.clone())) else {
+        return false;
+    };
     let container = frame.fullscreen_container.clone();
-    let parent_url = pd.dom.borrow().document_url_parsed(pd.document()).ok().flatten().map(|u| u.to_string()).unwrap_or_default();
+    let parent_url =
+        pd.dom.borrow().document_url_parsed(pd.document()).ok().flatten().map(|u| u.to_string()).unwrap_or_default();
     let parent_origin = frame_origin(host, parent, &parent_url, pd.has_opaque_origin());
     let child_origin = frame_origin(host, key, &frame.url, frame.sandbox.opaque);
     pyro_webapi::fullscreen::container_allows(
@@ -998,7 +1005,9 @@ pub(crate) fn create(
         dom.borrow_mut().create_document(pyro_dom::DocumentKind::Html, url)
     };
     dom.borrow_mut().set_document_active(doc, true).map_err(|e| JsError::type_error(format!("{e:?}")))?;
-    dom.borrow_mut().set_allow_declarative_shadow_roots(doc, true).map_err(|e| JsError::type_error(format!("{e:?}")))?;
+    dom.borrow_mut()
+        .set_allow_declarative_shadow_roots(doc, true)
+        .map_err(|e| JsError::type_error(format!("{e:?}")))?;
     dom.borrow_mut().set_resource_tracking(true);
     dom.borrow_mut()
         .set_document_base_url(doc, matches!(url, "about:blank" | "about:srcdoc").then_some(frame.base_url.as_str()))
@@ -1010,6 +1019,7 @@ pub(crate) fn create(
         handle: host.handle.clone(),
         frame: page,
         loader: loader.clone(),
+        document: crate::layout_document(&frame),
         bodies: host.layout_bodies.clone(),
         asked_fonts: Default::default(),
         asked_images: Default::default(),

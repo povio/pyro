@@ -14,14 +14,22 @@ fn eval(thread: &BrowserThread, page: PageId, source: &str) -> String {
     scope.eval(source, None, 1).unwrap_or_else(|e| panic!("{}", e.details(&scope).text())).to_string().unwrap()
 }
 fn settle(thread: &mut BrowserThread) {
-    assert_ne!(thread.run_until_idle(Some(Instant::now() + Duration::from_secs(3))), pyro_runtime::RunOutcome::TimedOut);
+    assert_ne!(
+        thread.run_until_idle(Some(Instant::now() + Duration::from_secs(3))),
+        pyro_runtime::RunOutcome::TimedOut
+    );
 }
 fn load(script: &str) -> (BrowserThread, PageId) {
     let mut thread = crate::browser_thread().unwrap();
     let page = thread.browser.create_page().unwrap();
     let loader = Rc::new(StaticLoader::default());
     let prelude = "var log = []; addEventListener('unhandledrejection', e => { log.push('unhandled:' + e.reason); e.preventDefault(); }); addEventListener('rejectionhandled', e => log.push('handled:' + e.reason));";
-    loader.insert("http://site.test/", "text/html", &format!("<body><script>{prelude}{script}</script>"), Duration::ZERO);
+    loader.insert(
+        "http://site.test/",
+        "text/html",
+        &format!("<body><script>{prelude}{script}</script>"),
+        Duration::ZERO,
+    );
     thread.browser.set_loader(Some(loader));
     thread.browser.navigate(page, NavigateOpts::address_bar("http://site.test/")).unwrap();
     settle(&mut thread);

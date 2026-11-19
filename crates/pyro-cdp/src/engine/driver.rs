@@ -4061,7 +4061,9 @@ fn expect(
 /// A check's `{"regex": "...", "flags": "i"}` expected value.
 fn check_regex(expected: &Value, what: &str) -> CdpResult<Pattern> {
     match expected {
-        Value::Object(_) => serde_json::from_value(expected.clone()).map_err(|e| CdpError::invalid_params(e.to_string())),
+        Value::Object(_) => {
+            serde_json::from_value(expected.clone()).map_err(|e| CdpError::invalid_params(e.to_string()))
+        }
         _ => Err(CdpError::invalid_params(format!("{what} needs a string or a {{\"regex\"}} pattern"))),
     }
 }

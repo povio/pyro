@@ -489,7 +489,9 @@ impl PageNav {
             drop(doc);
             let (Some(realm), Some(page_dom)) = (realm, page_dom) else { return };
             let Ok(scope) = realm.scope() else { return };
-            let Some(source) = pyro_webapi::trusted_types::javascript_url_script(&scope, &page_dom, &source) else { return };
+            let Some(source) = pyro_webapi::trusted_types::javascript_url_script(&scope, &page_dom, &source) else {
+                return;
+            };
             if let Err(e) = scope.eval(&source, None, 1) {
                 scope.report_exception(&e);
             }
@@ -680,7 +682,7 @@ impl PageNav {
         }
     }
 
-        /// HTML "scroll to the fragment" of a same-document navigation to `target`.
+    /// HTML "scroll to the fragment" of a same-document navigation to `target`.
     fn scroll_to_fragment(&self, target: &Url) {
         let Some(fragment) = target.fragment() else { return };
         if let Some(page) = self.page_dom.borrow().upgrade() {
@@ -688,7 +690,7 @@ impl PageNav {
         }
     }
 
-        /// Queues `hashchange` at the window when a same-document navigation
+    /// Queues `hashchange` at the window when a same-document navigation
     /// changed only the fragment.
     fn queue_hashchange(&self, old_url: &str, new_url: &str) {
         let (Ok(old), Ok(new)) = (Url::parse(old_url), Url::parse(new_url)) else { return };

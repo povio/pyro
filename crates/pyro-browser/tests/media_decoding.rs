@@ -19,7 +19,10 @@ fn eval(thread: &BrowserThread, page: PageId, source: &str) -> String {
 }
 
 fn settle(thread: &mut BrowserThread) {
-    assert_ne!(thread.run_until_idle(Some(Instant::now() + Duration::from_secs(3))), pyro_runtime::RunOutcome::TimedOut);
+    assert_ne!(
+        thread.run_until_idle(Some(Instant::now() + Duration::from_secs(3))),
+        pyro_runtime::RunOutcome::TimedOut
+    );
 }
 
 fn wait_for(thread: &mut BrowserThread, page: PageId, condition: &str) {

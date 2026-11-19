@@ -882,7 +882,8 @@ fn user_activation_reaches_ancestors_and_is_consumed_across_frames() {
     events.extend(h.run_for(150));
     let frame = child(&mut h, "act")["frame"]["id"].as_str().unwrap().to_owned();
     let context = default_context(&events, &frame);
-    let request = "document.body.requestFullscreen().then(() => document.exitFullscreen().then(() => 'granted'), e => e.name)";
+    let request =
+        "document.body.requestFullscreen().then(() => document.exitFullscreen().then(() => 'granted'), e => e.name)";
     let fullscreen = |h: &mut Harness, context: Option<i64>| {
         let mut params = json!({"expression":request,"awaitPromise":true,"returnByValue":true});
         if let Some(context) = context {
@@ -892,7 +893,10 @@ fn user_activation_reaches_ancestors_and_is_consumed_across_frames() {
     };
     let click = |h: &mut Harness| {
         for (kind, buttons) in [("mousePressed", 1), ("mouseReleased", 0)] {
-            let r = h.page("Input.dispatchMouseEvent", json!({"type":kind,"x":50,"y":50,"button":"left","buttons":buttons,"clickCount":1}));
+            let r = h.page(
+                "Input.dispatchMouseEvent",
+                json!({"type":kind,"x":50,"y":50,"button":"left","buttons":buttons,"clickCount":1}),
+            );
             assert_eq!(r["result"], json!({}), "{r}");
         }
     };

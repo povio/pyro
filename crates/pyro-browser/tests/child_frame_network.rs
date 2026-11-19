@@ -257,11 +257,8 @@ fn a_renderer_request_is_the_frame_its_client_names() {
     let fetch = |t: &mut BrowserThread, path: &str, client: Option<String>| -> Result<(), String> {
         let result: Rc<RefCell<Option<Result<(), String>>>> = Rc::default();
         let slot = result.clone();
-        let options = pyro_browser::SubresourceOptions {
-            crossorigin: Some("anonymous".into()),
-            client,
-            ..Default::default()
-        };
+        let options =
+            pyro_browser::SubresourceOptions { crossorigin: Some("anonymous".into()), client, ..Default::default() };
         t.browser.fetch_subresource_options(
             page,
             format!("{}{path}", server.origin),
@@ -283,7 +280,8 @@ fn a_renderer_request_is_the_frame_its_client_names() {
     let stale = fetch(&mut t, "/img?stale", Some(format!("{}#not-its-document", plain.id.0)));
     assert!(stale.is_err(), "a client of a replaced document sends nothing");
     let seen = server.take();
-    let origin_of = |query: &str| seen.iter().find(|r| r.path.ends_with(query)).map(|r| r.get("origin").map(str::to_owned));
+    let origin_of =
+        |query: &str| seen.iter().find(|r| r.path.ends_with(query)).map(|r| r.get("origin").map(str::to_owned));
     assert_eq!(origin_of("?sandboxed"), Some(Some("null".to_owned())), "{seen:?}");
     assert_ne!(origin_of("?plain"), Some(Some("null".to_owned())), "{seen:?}");
     assert_eq!(origin_of("?unknown"), None, "{seen:?}");

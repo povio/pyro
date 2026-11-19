@@ -453,9 +453,8 @@ impl FrameHost {
         // The realm exists now, with its id and origin, for the events and
         // lookups; its context, bindings and init scripts (all empty) come
         // with its first `scope()`, wherever that happens.
-        let deferred = world.is_some()
-            && bindings.is_empty()
-            && scripts.iter().all(|script| script.source.trim().is_empty());
+        let deferred =
+            world.is_some() && bindings.is_empty() && scripts.iter().all(|script| script.source.trim().is_empty());
         if deferred {
             let host = Rc::downgrade(self);
             let (setup_nav, setup_dom, setup_world) = (nav, dom, world.clone());
@@ -718,7 +717,11 @@ impl FrameHost {
             dom_content_loaded: false,
             loaded: false,
             sandbox,
-            fullscreen_container: fullscreen_container(&self.dom.borrow(), node, (ancestor.origin != "null").then_some(ancestor.origin.as_str())),
+            fullscreen_container: fullscreen_container(
+                &self.dom.borrow(),
+                node,
+                (ancestor.origin != "null").then_some(ancestor.origin.as_str()),
+            ),
             unreachable: None,
         };
         self.dom.borrow_mut().add_ref(node).map_err(|e| JsError::type_error(format!("{e:?}")))?;
@@ -900,21 +903,28 @@ pub(crate) struct FullscreenContainer {
 
 /// `parent_origin`: the container document's origin as its frame has it (an about:blank or
 /// about:srcdoc document's is the origin it inherited, which its URL does not tell), `None` if opaque.
-pub(crate) fn fullscreen_container(dom: &pyro_dom::Dom, owner: NodeId, parent_origin: Option<&str>) -> FullscreenContainer {
+pub(crate) fn fullscreen_container(
+    dom: &pyro_dom::Dom,
+    owner: NodeId,
+    parent_origin: Option<&str>,
+) -> FullscreenContainer {
     let attr = |name: &str| dom.get_attribute(owner, name).ok().flatten().map(str::to_owned);
     let tuple = |url: &url::Url| {
         let origin = url.origin();
         origin.is_tuple().then(|| origin.ascii_serialization())
     };
     let parent_origin = || parent_origin.map(str::to_owned);
-    let sandboxed = attr("sandbox").is_some_and(|v| !v.split_ascii_whitespace().any(|t| t.eq_ignore_ascii_case("allow-same-origin")));
+    let sandboxed = attr("sandbox")
+        .is_some_and(|v| !v.split_ascii_whitespace().any(|t| t.eq_ignore_ascii_case("allow-same-origin")));
     let declared_origin = if sandboxed {
         None
     } else if attr("srcdoc").is_some() {
         parent_origin()
     } else {
         match attr("src").filter(|v| !v.trim().is_empty()) {
-            Some(src) => url::Url::parse(&pyro_webapi::html::resolve_url(dom, owner, &src)).ok().as_ref().and_then(tuple),
+            Some(src) => {
+                url::Url::parse(&pyro_webapi::html::resolve_url(dom, owner, &src)).ok().as_ref().and_then(tuple)
+            }
             None => parent_origin(),
         }
     };
@@ -1131,7 +1141,8 @@ impl FrameHost {
             let value = pyro_js::Persistent::new(&scope, scope.global().value());
             return Ok(value.get(s));
         }
-        let data = CrossWindowData { host: Rc::downgrade(self), source: Some(source), from: None, target, foreign: false };
+        let data =
+            CrossWindowData { host: Rc::downgrade(self), source: Some(source), from: None, target, foreign: false };
         Ok(s.wrap::<CrossWindow>(data, Some(pyro_js::IdentityKey(0x4652414d45505258, target.child.unwrap_or(0))))?
             .value())
     }
@@ -1224,10 +1235,8 @@ impl FrameHost {
             let value = pyro_js::Persistent::new(&scope, scope.global().value());
             return Ok(value.get(s));
         }
-        let key = pyro_js::IdentityKey(
-            0x464f_5245_4947_4e00 ^ u64::from(self.page.0),
-            target.child.unwrap_or(u64::MAX),
-        );
+        let key =
+            pyro_js::IdentityKey(0x464f_5245_4947_4e00 ^ u64::from(self.page.0), target.child.unwrap_or(u64::MAX));
         if let Some(o) = s.lookup_identity(key) {
             return Ok(o.value());
         }
@@ -1370,7 +1379,11 @@ pub(crate) fn post_message<'s>(
 
 /// A frame's origin key (`PageDom::origin_key`'s): its tuple origin, or `opaque:<token>`.
 fn frame_origin_key(f: &Frame) -> String {
-    if f.origin == "null" { format!("opaque:{}", f.opaque_origin) } else { f.origin.clone() }
+    if f.origin == "null" {
+        format!("opaque:{}", f.opaque_origin)
+    } else {
+        f.origin.clone()
+    }
 }
 
 pub(crate) struct CrossWindow;
@@ -1743,12 +1756,13 @@ impl Browser {
                     drop(doc);
                     // The check runs under the inserting document's policies (the request's
                     // policy container is snapshotted from it).
-                    let checker = parent_key.and_then(|k| b.doc(k)).and_then(|d| {
-                        Some((d.main_frame.main_realm().cloned()?, d.main_frame.page_dom.clone()?))
-                    });
+                    let checker = parent_key
+                        .and_then(|k| b.doc(k))
+                        .and_then(|d| Some((d.main_frame.main_realm().cloned()?, d.main_frame.page_dom.clone()?)));
                     if let (Some(realm), Some((parent_realm, parent_dom))) = (realm, checker) {
                         if let (Ok(scope), Ok(parent_scope)) = (realm.scope(), parent_realm.scope()) {
-                            let script = pyro_webapi::trusted_types::javascript_url_script(&parent_scope, &parent_dom, &source);
+                            let script =
+                                pyro_webapi::trusted_types::javascript_url_script(&parent_scope, &parent_dom, &source);
                             if !connected(b) {
                                 return;
                             }
@@ -1852,7 +1866,8 @@ impl Browser {
                 sent_referrer: None,
                 timing: None,
                 partial: None,
-                nosniff: false, opaque: false,
+                nosniff: false,
+                opaque: false,
             },
             history,
         )?;

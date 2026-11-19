@@ -87,6 +87,18 @@ pub fn document_client(frame: &Frame) -> String {
     format!("{}#{}", frame.id.0, frame.loader_id.0)
 }
 
+/// pyro: the requester a layout body fetched with request options of its own is kept for
+/// (`SubresourceOptions::body_key`): the frame document's origin, an opaque one by its identity.
+/// Documents of one origin (in one network identity) share those bodies, as an HTTP cache keyed
+/// by the request's origin does; a sandboxed or cross-origin document never gets another's.
+pub fn layout_document(frame: &Frame) -> String {
+    if frame.origin == "null" {
+        format!("opaque:{}", frame.opaque_origin)
+    } else {
+        frame.origin.clone()
+    }
+}
+
 /// pyro: what a renderer's sub-resource request carries beyond its URL, as a CSS `url()`'s
 /// request URL modifiers ask (CSS Values 5 § 4.5.4). The defaults are a sub-resource's: no-cors,
 /// no integrity metadata, the document as referrer with its policy.
@@ -644,8 +656,12 @@ impl Page {
 
     /// The documents of this page's frames (the store may hold other pages' too).
     fn frame_tree_documents(&self) -> Vec<pyro_dom::NodeId> {
-        let mut docs: Vec<pyro_dom::NodeId> =
-            self.frames.keys().into_iter().filter_map(|k| self.frames.with_frame(k, |f| f.document).flatten()).collect();
+        let mut docs: Vec<pyro_dom::NodeId> = self
+            .frames
+            .keys()
+            .into_iter()
+            .filter_map(|k| self.frames.with_frame(k, |f| f.document).flatten())
+            .collect();
         if let Some(d) = self.main_frame.page_dom.as_ref().map(|p| p.document()) {
             if !docs.contains(&d) {
                 docs.push(d);
@@ -683,8 +699,7 @@ impl Page {
         for (_, key) in keys {
             let Some((owner, page_dom, base_url, url, client)) = self.frames.with_frame(key, |f| {
                 (f.owner, f.page_dom.clone(), f.base_url.clone(), f.url.clone(), document_client(f))
-            })
-            else {
+            }) else {
                 continue;
             };
             let (Some(owner), Some(page_dom)) = (owner, page_dom) else { continue };
@@ -692,8 +707,12 @@ impl Page {
             let snapshot = page_dom.render_snapshot(&base_url, None);
             sheets.extend(snapshot.sheets);
             let base = if base_url.is_empty() { url } else { base_url };
-            let document =
-                pyro_dom::FrameDocument { html: snapshot.html, url: base, scroll: (snapshot.scroll_x, snapshot.scroll_y), client };
+            let document = pyro_dom::FrameDocument {
+                html: snapshot.html,
+                url: base,
+                scroll: (snapshot.scroll_x, snapshot.scroll_y),
+                client,
+            };
             if let Ok(mut dom) = page_dom.dom.try_borrow_mut() {
                 dom.set_frame_document(owner, Some(document.clone()));
             }
@@ -1031,11 +1050,7 @@ impl Browser {
                     if let Some(frame) = self.frame(page.id, &info.id) {
                         // A deferred realm's setup reads the clock's state when it is made.
                         for realm in frame.realms.iter().filter(|r| !r.realm.is_deferred()) {
-                            realm.realm.scope()?.eval(
-                                clock::DATE_SCRIPT,
-                                Some("pyro://internal/clock.js"),
-                                1,
-                            )?;
+                            realm.realm.scope()?.eval(clock::DATE_SCRIPT, Some("pyro://internal/clock.js"), 1)?;
                         }
                     }
                 }
@@ -1262,7 +1277,14 @@ impl Browser {
 
     /// [`Browser::fetch_subresource`], with `cors` in CORS mode with credentials only to the same
     /// origin (`crossorigin="anonymous"`, as `shape-outside` images load).
-    pub fn fetch_subresource_with(&mut self, page: PageId, url: String, kind: ResourceKind, cors: bool, done: FetchDone) {
+    pub fn fetch_subresource_with(
+        &mut self,
+        page: PageId,
+        url: String,
+        kind: ResourceKind,
+        cors: bool,
+        done: FetchDone,
+    ) {
         let options = SubresourceOptions { crossorigin: cors.then(|| "anonymous".to_owned()), ..Default::default() };
         self.fetch_subresource_options(page, url, kind, options, done)
     }
@@ -1301,9 +1323,8 @@ impl Browser {
                 let key = p.frames.key_of(frame_id)?;
                 p.frames
                     .with_frame(key, |f| {
-                        (f.loader_id.0 == loader).then(|| {
-                            (subresource_request_with(f, page, url.clone(), kind, &options), f.origin.clone())
-                        })
+                        (f.loader_id.0 == loader)
+                            .then(|| (subresource_request_with(f, page, url.clone(), kind, &options), f.origin.clone()))
                     })
                     .flatten()
             }
@@ -1317,10 +1338,11 @@ impl Browser {
             Some(integrity) => {
                 let cors = options.crossorigin.is_some();
                 Box::new(move |b, result| {
-                    let result = result.and_then(|r| match loader::integrity_error(&r, Some(&integrity), cors, &origin) {
-                        Some(message) => Err(message),
-                        None => Ok(r),
-                    });
+                    let result =
+                        result.and_then(|r| match loader::integrity_error(&r, Some(&integrity), cors, &origin) {
+                            Some(message) => Err(message),
+                            None => Ok(r),
+                        });
                     done(b, result)
                 })
             }
@@ -1401,6 +1423,16 @@ impl Browser {
         self.page(page).map(|p| p.frames.layout_bodies.clone())
     }
 
+    /// pyro: [`layout_document`] of each document of `page`, by its [`document_client`].
+    pub fn layout_documents(&self, page: PageId) -> std::collections::HashMap<String, String> {
+        let Some(p) = self.page(page) else { return Default::default() };
+        p.frames
+            .keys()
+            .into_iter()
+            .filter_map(|key| p.frames.with_frame(key, |f| (document_client(f), layout_document(f))))
+            .collect()
+    }
+
     /// pyro: the `Referrer-Policy` the style sheet at `sheet` of `frame`'s document was served
     /// with, if any.
     pub(crate) fn sheet_referrer_policy(&self, frame: FrameKey, sheet: &str) -> Option<pyro_net::ReferrerPolicy> {
@@ -1470,40 +1502,43 @@ impl Browser {
         frames.settings.borrow_mut().scripts = init_scripts.clone();
         // A popup made ahead (`create_page_with`) took its id earlier.
         let at = self.pages.partition_point(|p| p.id < id);
-        self.pages.insert(at, Page {
-            id,
-            context,
-            root_dirty: Cell::new(true),
-            init_scripts,
-            bindings: Vec::new(),
-            frames,
-            document: DocumentState {
-                main_frame: frame,
-                pending_loader: None,
-                pending_cancel: None,
-                pending_script: None,
-                nav,
-                load: None,
-                stylesheets: Default::default(),
-                images: Default::default(),
-                preloads: Default::default(),
-                refresh: Default::default(),
-                _owner_pin: None,
+        self.pages.insert(
+            at,
+            Page {
+                id,
+                context,
+                root_dirty: Cell::new(true),
+                init_scripts,
+                bindings: Vec::new(),
+                frames,
+                document: DocumentState {
+                    main_frame: frame,
+                    pending_loader: None,
+                    pending_cancel: None,
+                    pending_script: None,
+                    nav,
+                    load: None,
+                    stylesheets: Default::default(),
+                    images: Default::default(),
+                    preloads: Default::default(),
+                    refresh: Default::default(),
+                    _owner_pin: None,
+                },
+                session_storage,
+                popup: None,
+                opener_origin: None,
+                user_agent_override: None,
+                max_touch_points: 0,
+                script_execution_disabled: false,
+                bypass_csp: false,
+                extra_http_headers: Default::default(),
+                cache_disabled: false,
+                bypass_service_worker: false,
+                request_defaults: Default::default(),
+                viewport: Default::default(),
+                pending_resize: None,
             },
-            session_storage,
-            popup: None,
-            opener_origin: None,
-            user_agent_override: None,
-            max_touch_points: 0,
-            script_execution_disabled: false,
-            bypass_csp: false,
-            extra_http_headers: Default::default(),
-            cache_disabled: false,
-            bypass_service_worker: false,
-            request_defaults: Default::default(),
-            viewport: Default::default(),
-            pending_resize: None,
-        });
+        );
     }
 
     /// The popup page the opener's `window.open` made ahead (its ticket's
@@ -1536,16 +1571,22 @@ impl Browser {
         }
         let (frame_id, loader_id) = (p.main_frame.id.clone(), p.main_frame.loader_id.clone());
         let timestamp = self.timestamp();
-        self.emit(id, PageEvent::FrameNavigated {
-            frame_id: frame_id.clone(),
-            loader_id: loader_id.clone(),
-            url: "about:blank".into(),
-            reason: NavigationReason::InitialFrameNavigation,
-            cdp_request_id: None,
-            timestamp,
-            unreachable_url: None,
-        });
-        self.emit(id, PageEvent::FrameDomContentLoaded { frame_id: frame_id.clone(), loader_id: loader_id.clone(), timestamp });
+        self.emit(
+            id,
+            PageEvent::FrameNavigated {
+                frame_id: frame_id.clone(),
+                loader_id: loader_id.clone(),
+                url: "about:blank".into(),
+                reason: NavigationReason::InitialFrameNavigation,
+                cdp_request_id: None,
+                timestamp,
+                unreachable_url: None,
+            },
+        );
+        self.emit(
+            id,
+            PageEvent::FrameDomContentLoaded { frame_id: frame_id.clone(), loader_id: loader_id.clone(), timestamp },
+        );
         self.emit(id, PageEvent::FrameLoaded { frame_id, loader_id, timestamp });
         true
     }
@@ -2047,7 +2088,8 @@ impl Browser {
             p.main_frame.network_idle = NetworkIdle::default();
             // HTML Window reuse: the initial about:blank document of a frame,
             // replaced by a document of its own origin.
-            let blank_loaded = p.main_frame.loaded && p.main_frame.page_dom.as_ref().is_some_and(|d| d.blank_requested());
+            let blank_loaded =
+                p.main_frame.loaded && p.main_frame.page_dom.as_ref().is_some_and(|d| d.blank_requested());
             let initial_same_origin = !blank_loaded
                 && p.nav.is_initial_blank()
                 && previous_origin.as_deref() == Some(actual_origin.as_str())

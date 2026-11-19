@@ -188,11 +188,18 @@ struct PageFetcher {
     bodies: Option<Arc<pyro_dom::layout::SubresourceBodies>>,
     /// pyro: the URLs of the document's list of available images.
     available: std::collections::HashSet<String>,
+    /// pyro: each document's `pyro_browser::layout_document`, by its client.
+    documents: Arc<std::collections::HashMap<String, String>>,
 }
 
 /// pyro: the key of a renderer request (`options`, for the document `client` names) in the
 /// document's layout bodies, and whether it is an image's.
-fn layout_key(url: &str, options: &pyro_render::FetchOptions, client: &str) -> (String, bool) {
+fn layout_key(
+    url: &str,
+    options: &pyro_render::FetchOptions,
+    client: &str,
+    documents: &std::collections::HashMap<String, String>,
+) -> (String, bool) {
     let layout = pyro_dom::layout::SubresourceOptions {
         crossorigin: options.cors.map(|credentials| match credentials {
             pyro_render::CorsCredentials::SameOrigin => "anonymous".to_owned(),
@@ -203,8 +210,9 @@ fn layout_key(url: &str, options: &pyro_render::FetchOptions, client: &str) -> (
         referrer_policy: options.referrer_policy.clone(),
     };
     let client = options.client.as_deref().unwrap_or(client);
-    let document = client.split_once('#').map(|(_, loader)| loader);
-    let key = layout.body_key(url, document.filter(|_| layout != Default::default()));
+    // A client that is no document of the page's has no bodies: one never matches.
+    let document = documents.get(client).map(String::as_str).unwrap_or("unknown-document");
+    let key = layout.body_key(url, Some(document).filter(|_| layout != Default::default()));
     let image = pyro_render::is_plain_cors(options) || kind_of(url) == ResourceKind::Image;
     (key, image)
 }
@@ -214,7 +222,7 @@ impl Fetcher for PageFetcher {
     /// change since): Chrome paints it once it arrives, and a capture does not wait for it. One
     /// its layout fetched (or is fetching), or one in its list of available images, is waited for.
     fn defers(&self, url: &str, options: &pyro_render::FetchOptions) -> bool {
-        let (key, image) = layout_key(url, options, &self.client);
+        let (key, image) = layout_key(url, options, &self.client, &self.documents);
         image
             && self.loaded
             && !self.available.contains(url)
@@ -226,10 +234,8 @@ impl Fetcher for PageFetcher {
     }
 
     fn fetch_cors(&self, url: String, done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>) {
-        let options = pyro_render::FetchOptions {
-            cors: Some(pyro_render::CorsCredentials::SameOrigin),
-            ..Default::default()
-        };
+        let options =
+            pyro_render::FetchOptions { cors: Some(pyro_render::CorsCredentials::SameOrigin), ..Default::default() };
         self.request(url, &options, body_only(done))
     }
 
@@ -275,7 +281,7 @@ impl PageFetcher {
         let kind = if pyro_render::is_plain_cors(options) { ResourceKind::Image } else { kind_of(&url) };
         // pyro: the key of the same request in the document's layout bodies (its own fetch of the
         // image, made by its layout, `SubresourceOptions::body_key`).
-        let (key, _) = layout_key(&url, options, &self.client);
+        let (key, _) = layout_key(&url, options, &self.client, &self.documents);
         let cors = options.cors.is_some();
         let mut options = subresource_options(options);
         options.client.get_or_insert_with(|| self.client.clone());
@@ -557,7 +563,8 @@ impl EngineHost {
             .map(|d| d.available_image_urls().into_iter().collect())
             .unwrap_or_default();
         let bodies = browser.layout_bodies(pid);
-        Arc::new(PageFetcher { handle: self.thread.handle(), page: pid, client, loaded, bodies, available })
+        let documents = Arc::new(browser.layout_documents(pid));
+        Arc::new(PageFetcher { handle: self.thread.handle(), page: pid, client, loaded, bodies, available, documents })
     }
 
     /// `Page.captureScreenshot`: replied to from `flush_renders`.
@@ -724,22 +731,23 @@ impl EngineHost {
                 parse_page_ranges(ranges).ok_or_else(|| CdpError::invalid_params("Page range syntax error"))?
             }
         };
-        let opts = pyro_render::PdfOptions {
-            page_selector: ".pz-page".into(),
-            paper,
-            margins,
-            page_area: Some(page_area),
-            scale,
-            print_background: p.print_background,
-            page_ranges,
-            // `preferCSSPageSize` writes pages of the box's own size (close to Chrome's @page size).
-            place_on_paper: p.prefer_css_page_size != Some(true),
-            print_media: self.pages.get(&cmd.page).and_then(|state| state.emulated_media.as_ref()).is_none_or(|raw| {
-                !matches!(raw.get("media").and_then(|m| m.as_str()).map(str::trim), Some("screen"))
-            }),
-            // Chrome's default: tagged.
-            tagged: p.generate_tagged_pdf.unwrap_or(true),
-        };
+        let opts =
+            pyro_render::PdfOptions {
+                page_selector: ".pz-page".into(),
+                paper,
+                margins,
+                page_area: Some(page_area),
+                scale,
+                print_background: p.print_background,
+                page_ranges,
+                // `preferCSSPageSize` writes pages of the box's own size (close to Chrome's @page size).
+                place_on_paper: p.prefer_css_page_size != Some(true),
+                print_media: self.pages.get(&cmd.page).and_then(|state| state.emulated_media.as_ref()).is_none_or(
+                    |raw| !matches!(raw.get("media").and_then(|m| m.as_str()).map(str::trim), Some("screen")),
+                ),
+                // Chrome's default: tagged.
+                tagged: p.generate_tagged_pdf.unwrap_or(true),
+            };
         let pid = self.pages.get(&cmd.page).ok_or_else(|| CdpError::server("page is gone"))?.id;
         let started = Instant::now();
         let stream = p.transfer_mode.as_deref() == Some("ReturnAsStream");

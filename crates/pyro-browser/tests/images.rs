@@ -10,7 +10,10 @@ fn eval(thread: &BrowserThread, page: PageId, source: &str) -> String {
     scope.eval(source, None, 1).unwrap_or_else(|e| panic!("{}", e.details(&scope).text())).to_string().unwrap()
 }
 fn settle(thread: &mut BrowserThread) {
-    assert_ne!(thread.run_until_idle(Some(Instant::now() + Duration::from_secs(3))), pyro_runtime::RunOutcome::TimedOut);
+    assert_ne!(
+        thread.run_until_idle(Some(Instant::now() + Duration::from_secs(3))),
+        pyro_runtime::RunOutcome::TimedOut
+    );
 }
 /// PNG signature + IHDR with the given size.
 fn png(width: u32, height: u32) -> Vec<u8> {
@@ -398,7 +401,14 @@ fn natural_and_rendered_sizes_of_images() {
         ),
         "a 300 150 300 150|b 300 100 300 100|c 60 150 60 150|d 3 2 7 4|e 3 2 9 2|f 3 2 3 2"
     );
-    assert_eq!(eval(&thread, page, "const f = document.getElementById('f'); f.removeAttribute('src'); [f.width, f.height].join()"), "0,0");
+    assert_eq!(
+        eval(
+            &thread,
+            page,
+            "const f = document.getElementById('f'); f.removeAttribute('src'); [f.width, f.height].join()"
+        ),
+        "0,0"
+    );
 }
 
 /// HTML relevant mutations: setting `src` (even to its value) or changing the CORS settings state
@@ -449,16 +459,24 @@ fn sizes_auto_and_deferred_lazy_images() {
 /// pyro-net reports a no-cors redirect chain that went to another origin and came back).
 struct Opaquing(Rc<StaticLoader>);
 impl pyro_browser::ResourceLoader for Opaquing {
-    fn fetch(&self, browser: &mut pyro_browser::Browser, request: pyro_browser::FetchRequest, done: pyro_browser::FetchDone) {
+    fn fetch(
+        &self,
+        browser: &mut pyro_browser::Browser,
+        request: pyro_browser::FetchRequest,
+        done: pyro_browser::FetchDone,
+    ) {
         let detour = request.url.contains("detour");
         self.0.fetch(
             browser,
             request,
             Box::new(move |b, result| {
-                done(b, result.map(|mut r| {
-                    r.opaque |= detour;
-                    r
-                }))
+                done(
+                    b,
+                    result.map(|mut r| {
+                        r.opaque |= detour;
+                        r
+                    }),
+                )
             }),
         );
     }
@@ -482,9 +500,9 @@ fn an_opaque_image_at_the_documents_origin_taints_a_canvas() {
     );
     // A whole 2x2 opaque red PNG (`png()` writes only a header, which no canvas decodes).
     const RED: &[u8] = &[
-        137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 2, 0, 0, 0, 2, 8, 6, 0, 0, 0, 114, 182, 13,
-        36, 0, 0, 0, 17, 73, 68, 65, 84, 120, 156, 99, 248, 207, 192, 240, 31, 132, 25, 96, 12, 0, 71, 202, 7, 249, 103,
-        89, 110, 183, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130,
+        137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 2, 0, 0, 0, 2, 8, 6, 0, 0, 0, 114, 182,
+        13, 36, 0, 0, 0, 17, 73, 68, 65, 84, 120, 156, 99, 248, 207, 192, 240, 31, 132, 25, 96, 12, 0, 71, 202, 7, 249,
+        103, 89, 110, 183, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130,
     ];
     loader.insert_bytes("http://site.test/plain.png", "image/png", RED, Duration::ZERO);
     loader.insert_bytes("http://site.test/detour.png", "image/png", RED, Duration::ZERO);
@@ -513,9 +531,9 @@ fn an_svg_image_draws_to_a_canvas() {
          </script>",
     );
     const RED: &[u8] = &[
-        137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 2, 0, 0, 0, 2, 8, 6, 0, 0, 0, 114, 182, 13,
-        36, 0, 0, 0, 17, 73, 68, 65, 84, 120, 156, 99, 248, 207, 192, 240, 31, 132, 25, 96, 12, 0, 71, 202, 7, 249, 103,
-        89, 110, 183, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130,
+        137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 2, 0, 0, 0, 2, 8, 6, 0, 0, 0, 114, 182,
+        13, 36, 0, 0, 0, 17, 73, 68, 65, 84, 120, 156, 99, 248, 207, 192, 240, 31, 132, 25, 96, 12, 0, 71, 202, 7, 249,
+        103, 89, 110, 183, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130,
     ];
     loader.insert_bytes("http://site.test/plain.png", "image/png", RED, Duration::ZERO);
     loader.insert_bytes("http://site.test/detour.png", "image/png", RED, Duration::ZERO);

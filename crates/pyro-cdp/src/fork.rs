@@ -799,9 +799,11 @@ fn run_template(options: &ServeOptions, socket: &Path) -> Result<(), TemplateErr
         // polling page can keep that loop busy, so also notice registrations
         // on the control socket instead of waiting for the whole deadline.
         let control = t.spares.is_empty().then(|| t.listener.as_raw_fd());
-        let outcome = t.snapshot.browser.host_mut().run_until_work(Some(deadline), || {
-            watch.take_ready() || control.is_some_and(readable)
-        });
+        let outcome = t
+            .snapshot
+            .browser
+            .host_mut()
+            .run_until_work(Some(deadline), || watch.take_ready() || control.is_some_and(readable));
         t.snapshot.browser.host_mut().flush();
         t.snapshot.drain();
         if matches!(outcome, pyro_runtime::RunOutcome::Idle) {

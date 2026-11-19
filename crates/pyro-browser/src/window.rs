@@ -335,7 +335,9 @@ impl JsClass for Window {
             |s, w| {
                 crate::nav::observer_module(s, performance_object(s, w)?, &w.nav)?.get("PerformanceObserverEntryList")
             },
-            |s, w, v| pyro_webapi::window::replace_window_attribute(s, &w.target.page, "PerformanceObserverEntryList", v),
+            |s, w, v| {
+                pyro_webapi::window::replace_window_attribute(s, &w.target.page, "PerformanceObserverEntryList", v)
+            },
         );
         def.getter("top", |s, w| match (w.frames.upgrade(), w.frame) {
             (Some(host), Some(key)) => host.relation(s, key, true),
@@ -657,11 +659,12 @@ fn schedule_animation_frame(s: &Scope<'_>, w: &WindowData, frame: &mut Animation
         let animation_interval = w.target.page.moving_animation_frame_interval();
         frame.timer = Some(if animation_interval.is_none() && take_eager_frame() {
             let realm_weak = s.realm().downgrade();
-            frame.backup = Some(w.sched.set_frame_timer(Duration::from_millis(FRAME_MS), true, move |_browser: &mut Browser| {
-                let Some(realm) = realm_weak.upgrade() else { return };
-                let Ok(scope) = realm.scope() else { return };
-                run_animation_frame(&scope);
-            }));
+            frame.backup =
+                Some(w.sched.set_frame_timer(Duration::from_millis(FRAME_MS), true, move |_browser: &mut Browser| {
+                    let Some(realm) = realm_weak.upgrade() else { return };
+                    let Ok(scope) = realm.scope() else { return };
+                    run_animation_frame(&scope);
+                }));
             w.sched.set_idle_timer(true, run)
         } else {
             // A frame timer: once due the frame runs before the tasks and timers that are

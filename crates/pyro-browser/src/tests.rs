@@ -178,8 +178,8 @@ fn animation_frame_callbacks_share_a_frame_and_timestamp() {
 #[test]
 fn local_storage_seed_applies_to_existing_and_new_contexts() {
     let (mut t, _rec, _page) = setup();
-    let seed =
-        pyro_webapi::StorageSeed::new(vec![("http://app.test:3000".into(), vec![("token".into(), "t".into())])]).unwrap();
+    let seed = pyro_webapi::StorageSeed::new(vec![("http://app.test:3000".into(), vec![("token".into(), "t".into())])])
+        .unwrap();
     t.set_local_storage_seed(seed);
     let fresh = t.browser.create_context().unwrap();
     for context in [DEFAULT_CONTEXT, fresh] {

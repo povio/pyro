@@ -362,10 +362,16 @@ fn permission_commands_on_a_page_session_apply_to_its_context() {
     let mut h = Harness::new();
     let r = h.page("Browser.setPermission", json!({"permission": {"name": "notifications"}, "setting": "granted"}));
     assert_eq!(r["result"], json!({}), "{r}");
-    assert_eq!(eval_await(&mut h, "navigator.permissions.query({name: 'notifications'}).then(s => s.state)"), json!("granted"));
+    assert_eq!(
+        eval_await(&mut h, "navigator.permissions.query({name: 'notifications'}).then(s => s.state)"),
+        json!("granted")
+    );
     let r = h.page("Browser.resetPermissions", json!({}));
     assert_eq!(r["result"], json!({}), "{r}");
-    assert_eq!(eval_await(&mut h, "navigator.permissions.query({name: 'notifications'}).then(s => s.state)"), json!("prompt"));
+    assert_eq!(
+        eval_await(&mut h, "navigator.permissions.query({name: 'notifications'}).then(s => s.state)"),
+        json!("prompt")
+    );
 }
 
 #[test]

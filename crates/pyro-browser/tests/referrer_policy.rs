@@ -46,7 +46,10 @@ fn eval(thread: &BrowserThread, page: PageId, source: &str) -> String {
 }
 
 fn settle(thread: &mut BrowserThread) {
-    assert_ne!(thread.run_until_idle(Some(Instant::now() + Duration::from_secs(5))), pyro_runtime::RunOutcome::TimedOut);
+    assert_ne!(
+        thread.run_until_idle(Some(Instant::now() + Duration::from_secs(5))),
+        pyro_runtime::RunOutcome::TimedOut
+    );
 }
 
 /// A loader with the subresources of every target origin, and a page.
@@ -55,7 +58,12 @@ fn setup() -> (BrowserThread, PageId, Rc<StaticLoader>) {
     let page = thread.browser.create_page().unwrap();
     let loader = Rc::new(StaticLoader::default());
     for origin in [SAME, CROSS, DOWNGRADE] {
-        loader.insert(&format!("{origin}/s.js"), "text/javascript", "globalThis.scripts = (globalThis.scripts || 0) + 1;", Duration::ZERO);
+        loader.insert(
+            &format!("{origin}/s.js"),
+            "text/javascript",
+            "globalThis.scripts = (globalThis.scripts || 0) + 1;",
+            Duration::ZERO,
+        );
         loader.insert(&format!("{origin}/c.css"), "text/css", "p { color: green }", Duration::ZERO);
         loader.insert_bytes(&format!("{origin}/i.png"), "image/png", &png(), Duration::ZERO);
         loader.insert(&format!("{origin}/f.html"), "text/html", "<p>frame</p>", Duration::ZERO);
@@ -79,7 +87,8 @@ enum Source {
 fn check_subresources(source: Source, policy: &str, expected: [Option<&str>; 3]) {
     let (mut thread, page, loader) = setup();
     let attribute = if source == Source::Attribute { format!(" referrerpolicy=\"{policy}\"") } else { String::new() };
-    let meta = if source == Source::Meta { format!("<meta name=referrer content=\"{policy}\">") } else { String::new() };
+    let meta =
+        if source == Source::Meta { format!("<meta name=referrer content=\"{policy}\">") } else { String::new() };
     let mut body = String::new();
     for origin in [SAME, CROSS, DOWNGRADE] {
         body.push_str(&format!(
@@ -97,15 +106,21 @@ fn check_subresources(source: Source, policy: &str, expected: [Option<&str>; 3])
     for (origin, want) in [SAME, CROSS, DOWNGRADE].into_iter().zip(expected) {
         for file in ["s.js", "i.png", "c.css", "f.html"] {
             let url = format!("{origin}/{file}");
-            let sent = loader.referer_of(&url).unwrap_or_else(|| panic!("{source:?} {policy}: {url} was not requested"));
+            let sent =
+                loader.referer_of(&url).unwrap_or_else(|| panic!("{source:?} {policy}: {url} was not requested"));
             assert_eq!(sent.as_deref(), want, "{source:?} policy {policy:?}: Referer of {url}");
         }
     }
     // A frame's `document.referrer` is what its navigation request was sent.
     for (index, want) in expected.into_iter().enumerate() {
-        let frame = eval(&thread, page, &format!("try {{ frames[{index}].document.referrer }} catch (e) {{ 'cross-origin' }}"));
+        let frame =
+            eval(&thread, page, &format!("try {{ frames[{index}].document.referrer }} catch (e) {{ 'cross-origin' }}"));
         if index == 0 {
-            assert_eq!(frame, want.unwrap_or(""), "{source:?} policy {policy:?}: document.referrer of the same-origin frame");
+            assert_eq!(
+                frame,
+                want.unwrap_or(""),
+                "{source:?} policy {policy:?}: document.referrer of the same-origin frame"
+            );
         }
     }
 }
@@ -175,14 +190,19 @@ fn meta_sets_the_policy_when_processed_and_keeps_it_when_removed() {
     let mut request = |thread: &mut BrowserThread, step: &str| {
         let url = format!("https://other.test/s.js?{}", loader.referers.borrow().len());
         loader.insert(&url, "text/javascript", "", Duration::ZERO);
-        eval(thread, page, &format!("{step}; var s = document.createElement('script'); s.src = '{url}'; document.body.append(s); 0"));
+        eval(
+            thread,
+            page,
+            &format!("{step}; var s = document.createElement('script'); s.src = '{url}'; document.body.append(s); 0"),
+        );
         settle(thread);
         loader.referer_of(&url).unwrap_or_else(|| panic!("{url} was not requested"))
     };
     // The header's policy.
     assert_eq!(request(&mut thread, "0").as_deref(), FULL);
     // A meta in the body counts too.
-    let step = "var m = document.createElement('meta'); m.name = 'referrer'; m.content = 'origin'; document.body.append(m)";
+    let step =
+        "var m = document.createElement('meta'); m.name = 'referrer'; m.content = 'origin'; document.body.append(m)";
     assert_eq!(request(&mut thread, step).as_deref(), ORIGIN);
     // Unknown and empty values change nothing.
     assert_eq!(request(&mut thread, "m.content = 'bogus'").as_deref(), ORIGIN);
@@ -217,7 +237,11 @@ fn link_navigations_use_the_links_policy_and_noreferrer() {
         ("unsafe-url", "<a id=l href=\"https://other.test/n.html\" rel=\"nofollow NOREFERRER\">x</a>", None),
         ("", "<a id=l href=\"https://other.test/n.html\" rel=noreferrer referrerpolicy=unsafe-url>x</a>", None),
         ("", "<map><area id=l href=\"https://other.test/n.html\" referrerpolicy=unsafe-url></map>", FULL),
-        ("", "<svg><a id=l href=\"https://other.test/n.html\" referrerpolicy=unsafe-url><text>x</text></a></svg>", FULL),
+        (
+            "",
+            "<svg><a id=l href=\"https://other.test/n.html\" referrerpolicy=unsafe-url><text>x</text></a></svg>",
+            FULL,
+        ),
         ("unsafe-url", "<svg><a id=l href=\"https://other.test/n.html\"><text>x</text></a></svg>", FULL),
     ];
     for (document_policy, link, want) in cases {
@@ -231,7 +255,11 @@ fn link_navigations_use_the_links_policy_and_noreferrer() {
         eval(&thread, page, "document.getElementById('l').dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })); 0");
         settle(&mut thread);
         assert_eq!(eval(&thread, page, "location.href"), "https://other.test/n.html", "{link}");
-        assert_eq!(loader.referer_of("https://other.test/n.html"), Some(want.map(str::to_owned)), "{document_policy:?} {link}");
+        assert_eq!(
+            loader.referer_of("https://other.test/n.html"),
+            Some(want.map(str::to_owned)),
+            "{document_policy:?} {link}"
+        );
         assert_eq!(eval(&thread, page, "document.referrer"), want.unwrap_or(""), "{document_policy:?} {link}");
     }
 }
@@ -241,7 +269,8 @@ fn link_navigations_use_the_links_policy_and_noreferrer() {
 /// `document.referrer` follows.
 #[test]
 fn a_link_into_a_frame_uses_the_navigating_documents_policy() {
-    for (policy, same, cross) in [("same-origin", FULL, None), ("origin", ORIGIN, ORIGIN), ("no-referrer", None, None)] {
+    for (policy, same, cross) in [("same-origin", FULL, None), ("origin", ORIGIN, ORIGIN), ("no-referrer", None, None)]
+    {
         let (mut thread, page, loader) = setup();
         loader.set_referrer_policy(PAGE, policy);
         loader.insert(
@@ -279,7 +308,9 @@ fn a_srcdoc_document_inherits_its_containers_policy() {
          <iframe srcdoc=\"<meta name=referrer content=unsafe-url><img src='https://other.test/i.png?own'>\"></iframe></body>",
         Duration::ZERO,
     );
-    for url in ["https://other.test/i.png?inherited", "https://site.test/i.png?inherited", "https://other.test/i.png?own"] {
+    for url in
+        ["https://other.test/i.png?inherited", "https://site.test/i.png?inherited", "https://other.test/i.png?own"]
+    {
         loader.insert_bytes(url, "image/png", &png(), Duration::ZERO);
     }
     thread.browser.navigate(page, NavigateOpts::address_bar(PAGE)).unwrap();

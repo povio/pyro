@@ -858,8 +858,7 @@ fn playwright_utility_world_is_announced_at_commit_and_made_by_its_first_evaluat
     if !events.iter().any(|e| e["method"] == "Page.loadEventFired") {
         events.extend(h.run_for(100));
     }
-    let created: Vec<&Value> =
-        events.iter().filter(|m| m["method"] == "Runtime.executionContextCreated").collect();
+    let created: Vec<&Value> = events.iter().filter(|m| m["method"] == "Runtime.executionContextCreated").collect();
     let utility = created
         .iter()
         .find(|m| m["params"]["context"]["name"] == "__pw_utility")
@@ -1078,7 +1077,10 @@ fn document_network_events_precede_its_frame_navigated() {
             request.extend_from_slice(&chunk[..n]);
         }
         let body = b"<!doctype html><title>net order</title><p>hello";
-        let head = format!("HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len());
+        let head = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            body.len()
+        );
         stream.write_all(head.as_bytes()).unwrap();
         stream.write_all(body).unwrap();
     });
@@ -1090,7 +1092,9 @@ fn document_network_events_precede_its_frame_navigated() {
     let events = until_event(&mut h, "Page.loadEventFired");
     server.join().unwrap();
     let methods: Vec<&str> = events.iter().filter_map(|e| e["method"].as_str()).collect();
-    let at = |method: &str| methods.iter().position(|m| *m == method).unwrap_or_else(|| panic!("missing {method}: {methods:?}"));
+    let at = |method: &str| {
+        methods.iter().position(|m| *m == method).unwrap_or_else(|| panic!("missing {method}: {methods:?}"))
+    };
     assert!(at("Network.requestWillBeSent") < at("Network.responseReceived"), "{methods:?}");
     assert!(at("Network.responseReceived") < at("Network.dataReceived"), "{methods:?}");
     assert!(at("Network.dataReceived") < at("Network.loadingFinished"), "{methods:?}");
@@ -1864,10 +1868,7 @@ fn input_press_and_release_reconcile_hover_after_an_overlay_covers_the_pointer()
             globalThis.cover=()=>{const c=document.createElement('div');c.id='cover';c.style.cssText='position:fixed;inset:0;background:white';document.body.append(c)};0
         "#,
         );
-        h.page(
-            "Input.dispatchMouseEvent",
-            json!({"type":"mouseMoved","x":50,"y":40}),
-        );
+        h.page("Input.dispatchMouseEvent", json!({"type":"mouseMoved","x":50,"y":40}));
         eval_value(
             &mut h,
             match open_at {
@@ -1885,11 +1886,7 @@ fn input_press_and_release_reconcile_hover_after_an_overlay_covers_the_pointer()
         }
         if open_at == "click" {
             h.run_for(30);
-            assert_eq!(
-                eval_value(&mut h, "log"),
-                json!([]),
-                "not in the mutating task"
-            );
+            assert_eq!(eval_value(&mut h, "log"), json!([]), "not in the mutating task");
             h.run_for(150);
         }
         // Observed in Chromium: boundary events, without a synthetic move.
@@ -3918,7 +3915,10 @@ fn window_open_returns_a_minimal_popup_object() {
     // Of a cross-origin Location only the href setter and replace() are reachable (HTML
     // CrossOriginProperties, Chrome): assign() throws, replace() navigates.
     assert_eq!(
-        value(&mut h, "(() => { try { w.location.assign('data:text/html,<title>x</title>') } catch (e) { return e.name } })()"),
+        value(
+            &mut h,
+            "(() => { try { w.location.assign('data:text/html,<title>x</title>') } catch (e) { return e.name } })()"
+        ),
         json!("SecurityError")
     );
     value(&mut h, "w.location.replace('data:text/html,<title>third</title>'); 1");
@@ -3953,10 +3953,7 @@ fn window_open_returns_a_minimal_popup_object() {
     };
     assert_eq!(navigated["params"]["frame"]["url"], json!("about:blank"));
     let r = h.call(Some(&blank), "Runtime.evaluate", json!({ "expression": "document.getElementById('kept').textContent + ':' + (window.opener !== null)", "returnByValue": true }));
-    assert_eq!(
-        r["result"]["result"]["value"],
-        json!("kept:true")
-    );
+    assert_eq!(r["result"]["result"]["value"], json!("kept:true"));
     assert_eq!(value(&mut h, "x.document.getElementById('kept').textContent"), json!("kept"));
     h.call(None, "Target.closeTarget", json!({ "targetId": target }));
     assert_eq!(value(&mut h, "x.closed"), json!(true));
@@ -5324,8 +5321,10 @@ fn driver_run_mocks_requests_and_covers_the_new_element_steps() {
     assert_eq!(results[15], false, "{r}");
     let r = h.page("Pyro.query", json!({"locator": {"css": "#cell"}, "read": "css", "property": "display"}));
     assert_eq!(r["result"]["value"], "block", "{r}");
-    let r =
-        h.page("Pyro.run", json!({"steps": [{"check": {"locator": {"css": "#box"}, "assert": "css", "expected": "x"}}]}));
+    let r = h.page(
+        "Pyro.run",
+        json!({"steps": [{"check": {"locator": {"css": "#box"}, "assert": "css", "expected": "x"}}]}),
+    );
     assert!(r["error"]["message"].as_str().unwrap_or_default().contains("css needs a property"), "{r}");
 
     // Mocks on the site: a json mock, then a delayed one (loading state
@@ -6121,7 +6120,8 @@ fn driver_role_locators_skip_aria_hidden_but_not_inert_subtrees() {
     // its text stays in names; aria-hidden content does not.
     assert_eq!(reads["headers"], 2, "{reads}");
     assert_eq!(reads["buttons"], 2, "{reads}");
-    let r = h.page("Pyro.query", json!({"locator": {"role": "button", "name": "Go (y)", "exact": true}, "read": "name"}));
+    let r =
+        h.page("Pyro.query", json!({"locator": {"role": "button", "name": "Go (y)", "exact": true}, "read": "name"}));
     assert_eq!(r["result"]["value"], "Go (y)", "{r}");
 }
 
@@ -6166,8 +6166,10 @@ fn driver_checked_honours_aria_checked_roles() {
     assert!(r.get("error").is_none(), "{r}");
     let r = h.page("Pyro.run", json!({"timeout": 100, "steps": [{"check": {"locator": {"css": "#plain"}, "assert": "checked", "expected": false}}]}));
     assert!(r["error"]["message"].as_str().unwrap_or_default().contains("not a checkbox"), "{r}");
-    let r = h
-        .page("Pyro.run", json!({"timeout": 100, "steps": [{"act": {"locator": {"css": "#plain"}, "action": "check"}}]}));
+    let r = h.page(
+        "Pyro.run",
+        json!({"timeout": 100, "steps": [{"act": {"locator": {"css": "#plain"}, "action": "check"}}]}),
+    );
     assert!(r["error"]["message"].as_str().unwrap_or_default().contains("not a checkbox"), "{r}");
 }
 
@@ -6397,8 +6399,10 @@ fn driver_run_right_click_fires_contextmenu() {
     // Cancelable, bubbling, composed, button 2 held, a PointerEvent; the
     // target's handler canceled it.
     assert_eq!(r["result"]["reads"]["cm"], "true,true,true,2,true,true", "{r}");
-    let r = h
-        .page("Pyro.run", json!({"steps": [{"act": {"locator": {"css": "#target"}, "action": "click", "button": "x"}}]}));
+    let r = h.page(
+        "Pyro.run",
+        json!({"steps": [{"act": {"locator": {"css": "#target"}, "action": "click", "button": "x"}}]}),
+    );
     assert!(r["error"]["message"].as_str().unwrap_or_default().contains("button must be"), "{r}");
 }
 
@@ -6460,8 +6464,10 @@ fn driver_run_mouse_step_at_coordinates_position_and_force() {
     assert_eq!(moves, format!("7@{},{}", x + 30.0, y + 30.0), "{r}");
     // A move between `down` and `up` reports the held left button.
     assert_eq!(r["result"]["reads"]["held"], "1", "{r}");
-    let r =
-        h.page("Pyro.run", json!({"timeout": 50, "steps": [{"act": {"locator": {"css": "#under"}, "action": "click"}}]}));
+    let r = h.page(
+        "Pyro.run",
+        json!({"timeout": 50, "steps": [{"act": {"locator": {"css": "#under"}, "action": "click"}}]}),
+    );
     assert!(r["error"]["message"].as_str().unwrap_or_default().contains("intercepts pointer events"), "{r}");
     let r = h.page("Pyro.run", json!({"steps": [{"mouse": {"action": "click"}}]}));
     assert!(r["error"]["message"].as_str().unwrap_or_default().contains("needs x and y"), "{r}");
@@ -7337,8 +7343,9 @@ mod screenshot {
             "Page.printToPDF",
             json!({"paperWidth": 8.27, "paperHeight": 11.69, "marginTop": 0, "marginBottom": 0, "marginLeft": 0, "marginRight": 0}),
         );
-        let pdf = pyro_cdp::fetch_protocol::base64_decode(r["result"]["data"].as_str().unwrap_or_else(|| panic!("{r}")))
-            .unwrap();
+        let pdf =
+            pyro_cdp::fetch_protocol::base64_decode(r["result"]["data"].as_str().unwrap_or_else(|| panic!("{r}")))
+                .unwrap();
         let pdf = String::from_utf8_lossy(&pdf).into_owned();
         assert_eq!(pdf.matches("/MediaBox[").count(), 5, "pages");
         let mut got: Vec<Vec<f64>> = pdf
@@ -7967,7 +7974,10 @@ mod screenshot {
         assert_eq!(pixel(&before, 100, 100), [0x6d, 0x28, 0xd9, 255]);
         assert_eq!(pixel(&after, 100, 100), [0, 0, 255, 255]);
         // Typed text (form state) is applied too.
-        h.page("Pyro.run", json!({"steps": [{"act": {"locator": {"css": "#name"}, "action": "fill", "value": "Ada"}}]}));
+        h.page(
+            "Pyro.run",
+            json!({"steps": [{"act": {"locator": {"css": "#name"}, "action": "fill", "value": "Ada"}}]}),
+        );
         let r = h.page("Page.captureScreenshot", json!({}));
         assert_eq!(mirror_of(&r)["rebuilt"], Value::Null, "{r}");
         assert_ne!(png_of(&r["result"]["data"]), after, "typed text is rendered");
@@ -10335,7 +10345,9 @@ fn review_each_protocol_path_can_be_the_first_entry_of_a_deferred_world() {
         props["result"]["result"].as_array().unwrap().iter().filter_map(|p| p["name"].as_str()).collect();
     assert!(names.contains(&"document") && names.contains(&"Node") && names.contains(&"0"), "{names:?}");
     // DOM.resolveNode into a world that was never entered.
-    let object = h.page("Runtime.evaluate", json!({"expression": "document.getElementById('p')"}))["result"]["result"]["objectId"].clone();
+    let object = h.page("Runtime.evaluate", json!({"expression": "document.getElementById('p')"}))["result"]["result"]
+        ["objectId"]
+        .clone();
     let backend = h.page("DOM.describeNode", json!({"objectId": object}))["result"]["node"]["backendNodeId"].clone();
     let id = fresh!(&mut h);
     let resolved = h.page("DOM.resolveNode", json!({"backendNodeId": backend, "executionContextId": id}));
@@ -10348,7 +10360,8 @@ fn review_each_protocol_path_can_be_the_first_entry_of_a_deferred_world() {
     assert_eq!(r["result"]["result"]["value"], "paratrue", "{r}");
     // Console messages carry the world's context id.
     let id = fresh!(&mut h);
-    let events = h.page_with_events("Runtime.evaluate", json!({"expression": "console.log('from-world'); 1", "contextId": id}));
+    let events =
+        h.page_with_events("Runtime.evaluate", json!({"expression": "console.log('from-world'); 1", "contextId": id}));
     let mut events = events;
     if !events.iter().any(|m| m["method"] == "Runtime.consoleAPICalled") {
         events.extend(h.run_for(100));
@@ -10360,7 +10373,10 @@ fn review_each_protocol_path_can_be_the_first_entry_of_a_deferred_world() {
     let name = format!("fresh{n}");
     let r = h.page("Runtime.addBinding", json!({"name": "hostCall", "executionContextName": name}));
     assert_eq!(r["result"], json!({}), "{r}");
-    let events = h.page_with_events("Runtime.evaluate", json!({"expression": "hostCall('w'); typeof hostCall", "contextId": id, "returnByValue": true}));
+    let events = h.page_with_events(
+        "Runtime.evaluate",
+        json!({"expression": "hostCall('w'); typeof hostCall", "contextId": id, "returnByValue": true}),
+    );
     let mut events = events;
     if !events.iter().any(|m| m["method"] == "Runtime.bindingCalled") {
         events.extend(h.run_for(100));
@@ -10400,10 +10416,16 @@ fn review_closing_a_target_while_its_deferred_world_waits() {
     h.page("Page.addScriptToEvaluateOnNewDocument", json!({"source": "", "worldName": "__pw_utility"}));
     load_html(&mut h, "<!doctype html><p>x</p>");
     let frame = h.frame_id.clone();
-    let id = h.page("Page.createIsolatedWorld", json!({"frameId": frame, "worldName": "__pw_utility"}))["result"]["executionContextId"].clone();
+    let id = h.page("Page.createIsolatedWorld", json!({"frameId": frame, "worldName": "__pw_utility"}))["result"]
+        ["executionContextId"]
+        .clone();
     // A pending evaluation in the world (its first entry), then the close.
     let session = h.session.clone();
-    let pending = h.send(Some(&session), "Runtime.evaluate", json!({"expression": "new Promise(() => {})", "awaitPromise": true, "contextId": id}));
+    let pending = h.send(
+        Some(&session),
+        "Runtime.evaluate",
+        json!({"expression": "new Promise(() => {})", "awaitPromise": true, "contextId": id}),
+    );
     h.run_for(50);
     let target = h.frame_id.clone();
     let r = h.call(None, "Target.closeTarget", json!({"targetId": target}));
@@ -10469,7 +10491,8 @@ fn animation_frames_advance_moving_geometry_after_client_activity() {
         } else {
             "document.head.innerHTML = '<style>@keyframes move {from {transform:translateX(0px)} to {transform:translateX(1000px)}} #target {animation:move 10s linear infinite}</style>';"
         };
-        let expression = format!("new Promise(resolve => {{
+        let expression = format!(
+            "new Promise(resolve => {{
             document.body.innerHTML = '<div id=target>moving</div>';
             const target = document.getElementById('target');
             {animation}
@@ -10480,13 +10503,16 @@ fn animation_frames_advance_moving_geometry_after_client_activity() {
                 else resolve(xs);
             }};
             requestAnimationFrame(step);
-        }})");
-        let r = h.page("Runtime.evaluate",
-            json!({"expression": expression, "awaitPromise": true, "returnByValue": true}));
+        }})"
+        );
+        let r =
+            h.page("Runtime.evaluate", json!({"expression": expression, "awaitPromise": true, "returnByValue": true}));
         let xs = r["result"]["result"]["value"].as_array().expect("six frame positions");
         assert_eq!(xs.len(), 6, "{r}");
-        assert!(xs.windows(2).all(|pair| pair[1].as_f64().unwrap() > pair[0].as_f64().unwrap()),
-            "scripted={scripted}: {xs:?}");
+        assert!(
+            xs.windows(2).all(|pair| pair[1].as_f64().unwrap() > pair[0].as_f64().unwrap()),
+            "scripted={scripted}: {xs:?}"
+        );
     }
 }
 
@@ -10954,7 +10980,10 @@ fn devtools_evaluation_is_exempt_from_trusted_types() {
 #[test]
 fn post_message_slash_matches_opaque_origins_by_identity() {
     let mut h = Harness::new();
-    load_html(&mut h, "<!doctype html><title>opener</title><script>window.got = []; onmessage = (e) => got.push(e.data);</script>");
+    load_html(
+        &mut h,
+        "<!doctype html><title>opener</title><script>window.got = []; onmessage = (e) => got.push(e.data);</script>",
+    );
     let opener = h.frame_id.clone();
     let value = |h: &mut Harness, expression: &str| {
         let r = h.page("Runtime.evaluate", json!({ "expression": expression, "returnByValue": true }));
@@ -11002,7 +11031,14 @@ fn closing_the_opener_frees_its_document_in_the_shared_store() {
     h.until_response(id);
     let nodes = |h: &mut Harness, popup: &str| {
         let r = h.call(Some(popup), "Performance.getMetrics", json!({}));
-        r["result"]["metrics"].as_array().unwrap_or_else(|| panic!("{r}")).iter().find(|m| m["name"] == "Nodes").unwrap()["value"].as_f64().unwrap()
+        r["result"]["metrics"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{r}"))
+            .iter()
+            .find(|m| m["name"] == "Nodes")
+            .unwrap()["value"]
+            .as_f64()
+            .unwrap()
     };
     let before = nodes(&mut h, &popup);
     assert!(before > 600.0, "the opener's nodes are in the shared store: {before}");
@@ -11145,7 +11181,11 @@ fn paint_worklet_imports_use_the_graph_credentials_mode() {
             let (ty, body) = match path.as_str() {
                 "/m/root.js" => ("text/javascript", "import './dep.js'; import './shared.js';".to_owned()),
                 "/m/dep.js" | "/m/shared.js" => ("text/javascript", "export {};".to_owned()),
-                "/log" => ("text/plain", { let mut l = served.lock().unwrap().clone(); l.sort(); l.join(" ") }),
+                "/log" => ("text/plain", {
+                    let mut l = served.lock().unwrap().clone();
+                    l.sort();
+                    l.join(" ")
+                }),
                 _ => ("text/html", "<!doctype html><p>page</p>".to_owned()),
             };
             if path.starts_with("/m/") {
@@ -11182,7 +11222,10 @@ fn paint_worklet_imports_use_the_graph_credentials_mode() {
 #[test]
 fn post_message_reaches_a_navigated_popup() {
     let mut h = Harness::new();
-    load_html(&mut h, "<!doctype html><title>opener</title><script>window.got = []; onmessage = (e) => got.push(e.data);</script>");
+    load_html(
+        &mut h,
+        "<!doctype html><title>opener</title><script>window.got = []; onmessage = (e) => got.push(e.data);</script>",
+    );
     let opener = h.frame_id.clone();
     let value = |h: &mut Harness, expression: &str| {
         let r = h.page("Runtime.evaluate", json!({ "expression": expression, "returnByValue": true }));
@@ -11201,7 +11244,9 @@ fn post_message_reaches_a_navigated_popup() {
     // Wait for the navigation to the data: document (the initial about:blank reports a load of its own).
     let session = popup.clone();
     let navigated = |m: &Value| {
-        m["method"] == "Page.frameNavigated" && m["sessionId"] == json!(session) && m["params"]["frame"]["url"].as_str().is_some_and(|u| u.starts_with("data:"))
+        m["method"] == "Page.frameNavigated"
+            && m["sessionId"] == json!(session)
+            && m["params"]["frame"]["url"].as_str().is_some_and(|u| u.starts_with("data:"))
     };
     if !events.iter().any(navigated) {
         h.until_event(navigated);
@@ -11271,7 +11316,8 @@ onmessage = (e) => {
 #[test]
 fn broadcast_channel_matches_opaque_origins_by_identity() {
     let mut h = Harness::new();
-    let sandboxed = "<script>new BroadcastChannel('c').onmessage = (e) => parent.postMessage('sandboxed:' + e.data, '*')</script>";
+    let sandboxed =
+        "<script>new BroadcastChannel('c').onmessage = (e) => parent.postMessage('sandboxed:' + e.data, '*')</script>";
     load_html(
         &mut h,
         &format!(
@@ -11300,7 +11346,14 @@ fn closing_a_popup_frees_its_document_while_the_opener_keeps_its_handle() {
     load_html(&mut h, "<!doctype html><p>opener</p>");
     let nodes = |h: &mut Harness| {
         let r = h.page("Performance.getMetrics", json!({}));
-        r["result"]["metrics"].as_array().unwrap_or_else(|| panic!("{r}")).iter().find(|m| m["name"] == "Nodes").unwrap()["value"].as_f64().unwrap()
+        r["result"]["metrics"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{r}"))
+            .iter()
+            .find(|m| m["name"] == "Nodes")
+            .unwrap()["value"]
+            .as_f64()
+            .unwrap()
     };
     h.run_for(50);
     let before = nodes(&mut h);
@@ -11321,6 +11374,7 @@ fn closing_a_popup_frees_its_document_while_the_opener_keeps_its_handle() {
     }
     let after = nodes(&mut h);
     assert!(after < before + 100.0, "the closed popup's document is freed: before {before}, after {after}");
-    let r = h.page("Runtime.evaluate", json!({"expression": "[w.closed, typeof w.document].join()", "returnByValue": true}));
+    let r = h
+        .page("Runtime.evaluate", json!({"expression": "[w.closed, typeof w.document].join()", "returnByValue": true}));
     assert_eq!(r["result"]["result"]["value"], json!("true,undefined"), "{r}");
 }

@@ -354,7 +354,8 @@ fn a_rule_change_that_makes_an_element_a_candidate_transitions_and_tracks_it() {
     // §3), and a later change transitions again. `b`'s class brings its transition and width
     // auto -> 300px, then 300px -> auto: no browser interpolates `auto`, so it starts nothing
     // (`changed_longhands` asks Stylo to animate between the values, as since #283).
-    let (mut t, root) = transition_page("#a { width: 100px; height: 10px } .w { width: 300px } .t { transition: width 20ms }");
+    let (mut t, root) =
+        transition_page("#a { width: 100px; height: 10px } .w { width: 300px } .t { transition: width 20ms }");
     eval(
         &root,
         "globalThis.a = el('a'); a.offsetHeight;
@@ -386,7 +387,8 @@ fn an_element_inserted_with_a_transition_transitions_only_after_a_style_change_e
     // Inserted, read (a style change event), changed: a transition; so does
     // a change in a later task, the frame after the insertion being its
     // style change event.
-    let (mut t, root) = transition_page(".t { transition: width 20ms; width: 100px; height: 10px } .w { width: 200px }");
+    let (mut t, root) =
+        transition_page(".t { transition: width 20ms; width: 100px; height: 10px } .w { width: 200px }");
     eval(
         &root,
         "const b1 = el('b1', 't'); b1.classList.add('w');
@@ -415,7 +417,8 @@ fn a_style_change_on_an_element_without_a_transition_fires_nothing_until_it_gets
     // the flush; a sibling that may transition but did not change fires
     // nothing. Once a class gives it a transition (a snapshot, no event), the
     // next change transitions.
-    let (mut t, root) = transition_page(".n { width: 100px; height: 10px } .w { width: 200px } .t { transition: width 20ms }");
+    let (mut t, root) =
+        transition_page(".n { width: 100px; height: 10px } .w { width: 200px } .t { transition: width 20ms }");
     eval(
         &root,
         "globalThis.c = el('c', 'n'); el('ct', 't'); c.offsetHeight;
@@ -436,8 +439,9 @@ fn a_candidate_under_display_none_does_not_transition() {
     // while hidden, and styles it afresh when shown), and neither does
     // hiding together with a change; Chrome starts none of these. Once
     // shown, the next change transitions.
-    let (mut t, root) =
-        transition_page(".t { transition: width 20ms; width: 100px; height: 10px } .w { width: 200px } .h { display: none }");
+    let (mut t, root) = transition_page(
+        ".t { transition: width 20ms; width: 100px; height: 10px } .w { width: 200px } .h { display: none }",
+    );
     eval(
         &root,
         "const p1 = el('p1', 'h'); const d1 = el('d1', 't', p1); d1.offsetHeight; d1.classList.add('w');
@@ -456,7 +460,8 @@ fn a_candidate_under_display_none_does_not_transition() {
 // `display: none` change. Expectations are Chrome's (headless, checked by
 // the review harness).
 
-const TRANSITION_CSS: &str = ".t { transition: width 20ms; width: 100px; height: 10px } .w { width: 200px } .h { display: none }";
+const TRANSITION_CSS: &str =
+    ".t { transition: width 20ms; width: 100px; height: 10px } .w { width: 200px } .h { display: none }";
 
 /// Runs the page for `ms` and answers the log.
 fn quiet(t: &mut BrowserThread, root: &Realm, ms: u64) -> String {
@@ -485,7 +490,10 @@ fn review_a_hidden_element_changed_and_shown_in_one_task_transitions() {
 #[test]
 fn review_an_element_hidden_at_a_flush_then_changed_and_shown_does_not_transition() {
     let (mut t, root) = transition_page(TRANSITION_CSS);
-    eval(&root, "globalThis.a = el('a', 't'); globalThis.p = el('p'); globalThis.b = el('b', 't', p); a.offsetHeight; 0");
+    eval(
+        &root,
+        "globalThis.a = el('a', 't'); globalThis.p = el('p'); globalThis.b = el('b', 't', p); a.offsetHeight; 0",
+    );
     t.run_until_idle(Some(Instant::now() + Duration::from_millis(30)));
     eval(&root, "a.style.display = 'none'; p.hidden = true; getComputedStyle(a).width; b.offsetHeight; 0");
     t.run_until_idle(Some(Instant::now() + Duration::from_millis(30)));
@@ -533,7 +541,9 @@ fn review_inherited_custom_property_and_structural_selectors_reach_the_journal()
 fn review_many_style_flushes_in_one_task_keep_the_journal() {
     // Each flush takes the journal; the element changed at the end still
     // transitions, and only once.
-    let (mut t, root) = transition_page(".t { transition: width 20ms; width: 100px; height: 10px } .w { width: 200px } .k span { color: red }");
+    let (mut t, root) = transition_page(
+        ".t { transition: width 20ms; width: 100px; height: 10px } .w { width: 200px } .k span { color: red }",
+    );
     eval(&root, "for (let i = 0; i < 300; i++) el('s' + i, ''); globalThis.a = el('a', 't'); a.offsetHeight; 0");
     t.run_until_idle(Some(Instant::now() + Duration::from_millis(30)));
     eval(
@@ -551,8 +561,9 @@ fn review_a_journal_overflow_falls_back_to_every_candidate() {
     // One traversal restyles more than 65,536 elements: the journal is
     // dropped, the flush looks at every candidate, and the next flush is
     // journaled again.
-    let (mut t, root) =
-        transition_page(".t { transition: width 20ms; width: 100px; height: 10px } .w { width: 200px } .k span { color: red }");
+    let (mut t, root) = transition_page(
+        ".t { transition: width 20ms; width: 100px; height: 10px } .w { width: 200px } .k span { color: red }",
+    );
     eval(
         &root,
         "const f = document.createDocumentFragment(); for (let i = 0; i < 66000; i++) f.appendChild(document.createElement('span'));
@@ -661,7 +672,8 @@ fn review_hidden_until_found_content_transitions_when_revealed() {
 
 #[test]
 fn review_a_reversed_transition_cancels_and_runs_again() {
-    let (mut t, root) = transition_page(".t { transition: width 300ms; width: 100px; height: 10px } .w { width: 200px }");
+    let (mut t, root) =
+        transition_page(".t { transition: width 300ms; width: 100px; height: 10px } .w { width: 200px }");
     eval(&root, "globalThis.a = el('a', 't'); a.offsetHeight; 0");
     t.run_until_idle(Some(Instant::now() + Duration::from_millis(30)));
     eval(&root, "a.classList.add('w'); a.offsetHeight; 0");
@@ -1217,7 +1229,10 @@ fn a_pseudo_element_transitions_with_its_pseudo_element_in_the_events() {
     assert_eq!(eval(&root, "plog.join(' ')"), "width:::before");
     assert_eq!(eval(&root, "getComputedStyle(a, '::before').transitionDuration"), "10s");
     assert_eq!(eval(&root, "getComputedStyle(a).transitionDuration"), "0s");
-    let listed = eval(&root, "a.getAnimations({subtree: true}).map(x => x.constructor.name + ':' + x.effect.pseudoElement).join(' ')");
+    let listed = eval(
+        &root,
+        "a.getAnimations({subtree: true}).map(x => x.constructor.name + ':' + x.effect.pseudoElement).join(' ')",
+    );
     assert_eq!(listed, "CSSTransition:::before");
     let width: f64 = eval(&root, "parseFloat(getComputedStyle(a, '::before').width)").parse().unwrap();
     assert!((100.0..200.0).contains(&width), "under way: {width}");

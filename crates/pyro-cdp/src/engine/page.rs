@@ -268,9 +268,7 @@ impl EngineHost {
                 Err(CdpError::server("Page.captureScreenshot: pyro was built without the render feature"))
             }
             #[cfg(not(feature = "render"))]
-            "printToPDF" => {
-                Err(CdpError::server("Page.printToPDF: pyro was built without the render feature"))
-            }
+            "printToPDF" => Err(CdpError::server("Page.printToPDF: pyro was built without the render feature")),
             // screencast.rs
             "startScreencast" => self.start_screencast(cmd),
             "screencastFrameAck" => self.screencast_frame_ack(cmd),
