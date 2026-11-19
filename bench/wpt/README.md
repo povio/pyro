@@ -5,8 +5,10 @@ pull request and fails when coverage goes down. `baseline.json` records, per pag
 page completed, and how long it took. The same gate runs over WPT's reftests in the same directories and in 31 CSS layout
 directories (18,156 pages, 62% of WPT's 29,212 reftests; `reftest-baseline.json`): see [Reftests](#reftests), which
 also compares pyro's results with Chrome's.
-[What runs](#what-runs) lists the testharness pages by directory. And it runs over WPT's crashtests (2,031 pages,
-`crashtest-baseline.json`): see [Crashtests](#crashtests).
+[What runs](#what-runs) lists the testharness pages by directory. And it runs over WPT's crashtests (2,105 pages,
+`crashtest-baseline.json`): see [Crashtests](#crashtests). Reftests and crashtests are served by WPT's own server
+with testdriver, so none is left out for needing either ([Reftests and crashtests under
+wptserve](#reftests-and-crashtests-under-wptserve)); testharness pages by `serve.mjs`.
 
 ## How a run works
 
@@ -238,12 +240,14 @@ so the base-branch comparison catches accidental weakening of the baseline, not 
 
 ```sh
 (cd bench && bun install)
-bench/wpt/fetch-wpt.sh ~/wpt-pyro                    # a new directory: the pinned revision, ~15 s
+bench/wpt/fetch-wpt.sh --venv ~/wpt-pyro             # a new directory: the pinned revision and wptserve's venv, ~1 min
 cargo build --profile release-fast                 # with the patched JavaScriptCore (scripts/jsc/build.sh)
 bun bench/wpt/gate.mjs run --wpt ~/wpt-pyro --bin target/release-fast/pyro --out /tmp/wpt.json
 ```
 
-`fetch-wpt.sh` only touches a directory it made (it moves that one to a new pinned revision in place); a WPT checkout
+`--venv` makes the Python venv the reftest and crashtest gates serve their pages with ([wptserve](#wptserve)); without
+it wptserve runs on `python3` with a warning, and a Python handler that needs its requirements fails (`--server
+static` runs them under `serve.mjs`, leaving out the pages that need wptserve or testdriver). `fetch-wpt.sh` only touches a directory it made (it moves that one to a new pinned revision in place); a WPT checkout
 of yours is used as it is if it is at the pinned revision, and refused otherwise.
 
 That runs the whole gate plan (minutes) and reruns what differs. Faster loops:
@@ -470,8 +474,10 @@ table of empty cells paints nothing).
 
 Left out, counted by reason in the run's `excluded`: reference files (named or linked as one, no links of their own),
 markup with no reference (CSS2's visual tests, support pages), crash tests, manual tests (by name, or by CSS flags
-such as `interact`), print reftests, pages whose page or references need what `serve.mjs` lacks (`.sub` substitutions,
-`pipe=`, Python handlers), and testdriver. Testharness pages in these directories are not reftests: the testharness run takes
+such as `interact`), print reftests, and pages whose page or references are named `.h2.` (none at the pinned
+revision: wptserve runs without HTTP/2). The gate serves them with wptserve and testdriver; with `--server static`
+also the pages whose page or references need what `serve.mjs` lacks (`.sub` substitutions, `pipe=`, Python
+handlers; 78 at the pinned revision) and testdriver (9). Testharness pages in these directories are not reftests: the testharness run takes
 them ([What runs](#what-runs)). A reference that has references of its own (155 tests) is compared one level deep, as
 wptrunner does at this revision (`ReftestTest.from_manifest`); it is a test of its own as well, so the chain is covered
 link by link. `about:blank` references are supported.
@@ -509,7 +515,8 @@ As wptrunner does (`executors/base.py`, `test-wait.js`), in `reftest.mjs`:
 
 ### CI
 
-The `reftest` job runs `gate.mjs run --kind reftest` in one shard on the self-hosted `lp-m1`, one page per CPU, and
+The `reftest` job runs `gate.mjs run --kind reftest` (under wptserve, with its venv from `fetch-wpt.sh --venv`) in
+one shard on the self-hosted `lp-m1`, one page per CPU, and
 `reftest-gate` checks the result on Linux, as `wpt` and `gate` do. They share the `prepare` and `build` jobs (the
 browser, built on `lp-m1`) and the WPT checkout (`wpt-paths.txt` now lists the reftest directories and their support
 files; about 290 MB with its git directory). Manual runs take `suites` (`reftest` leaves the testharness shards and the client job out),
@@ -679,7 +686,37 @@ pages, reftests 27,802 -> 28,219, crashtests 2,031 -> 2,076 (with `--dirs all`).
   completed, 3.4 s per page, 366 s wall, no browser restart. 51 pages passed every subtest, 1,535 of 2,716
   subtests passed.
 
-The PR gate keeps `serve.mjs` and its plan until a CI run records baselines for the whole suite.
+### Reftests and crashtests under wptserve
+
+Since 2026-11-19 `gate.mjs run --kind reftest|crashtest` serves the pages with wptserve and testdriver by default
+(`lib.mjs` `serverFor`; `--server static` for `serve.mjs`), in CI, locally and in any script that runs the gate. The
+testharness gate still uses `serve.mjs` and its plan. Each result file records its `server` and `testdriver`; `check`
+fails on shards that ran with different servers and its summary names the server and what discovery left out, by
+reason. That adds every reftest and crashtest the gate used to leave out for the server: 87 reftests (78 that need
+wptserve, 9 testdriver) and 74 crashtests (47 wptserve, 27 testdriver). Measured locally at the pinned revision
+(round-6 start build, `--jobs 4` on a loaded 18-core machine, two runs of each agreed on every page):
+
+| | reftests | crashtests |
+|---|---:|---:|
+| pages under `serve.mjs` / wptserve + testdriver | 21,836 / 21,923 | 2,031 / 2,105 |
+| pages whose result changed under wptserve | 0 of 21,836 | 0 of 2,031 |
+| added pages that pass (Chrome 158 passes) | 28 of 87 (80) | 55 of 74 (67) |
+| wall, one full pass, `serve.mjs` / wptserve | 545 s / 581 s | 56 s / 153 s |
+
+The crashtests' extra wall time is the 19 new pages that time out (15 s each); a pull request's plan skips them once
+the baseline records them as failing. The one-pass alternative (the added pages as a second pass under wptserve, the
+rest under `serve.mjs`) would have needed two plans and two result sets per gate for no difference in any result.
+
+CI needs, beyond what the jobs had: the venv (`fetch-wpt.sh --venv`, run in the reftest and crashtest jobs whether
+the checkout came from the cache or not; it lives in the cached checkout, so the testharness job, which shares the
+cache key, makes it too) and wptserve's own files in `wpt-paths.txt` (the `wpt` entry point, the command manifests
+it reads, `tools/serve`, `tools/wptserve`, `tools/manifest`, `tools/certs` and the libraries it imports: 5 MB of the
+89 MB `tools/`). A checkout from `fetch-wpt.sh --venv` took 55 s and is 366 MB. The added pages' baselines come
+from the first CI run with the change (each new pass runs again before it is recorded).
+
+h2: no reftest or crashtest is named `.h2.` at the pinned revision; one that appears is left out, counted under
+`needs HTTP/2 (wptserve runs with --no-h2)`. Serving it would need wptserve's HTTP/2 server (`h2` ports, ALPN over
+TLS, the `h2`/`hpack`/`hyperframe` libraries, which `wpt-paths.txt` already has) and HTTP/2 in pyro's network stack.
 
 ## Whole suite
 
@@ -792,8 +829,10 @@ reftest directories; the other 1,805, with the 18 support files they load outsid
 from `serve.mjs`'s request log over a run of all of them, and from the URLs their sources name), add 8 MB in 1,925 files to the
 checkout (180 MB with its git directory), which is why all of them run rather than the 226.
 
-2,031 run. Left out, counted by reason in the run's `excluded`: 45 whose names need wptserve (`.sub`, `.https`,
-`.h2`, `.www`), 27 that load testdriver and 2 that name a Python handler or `pipe=`. A page's results are counted
+All 2,105 run, served by wptserve with testdriver (2,031 until 2026-11-19, under `serve.mjs`). Left out, counted by
+reason in the run's `excluded`: names with `.h2.` (none at the pinned revision; wptserve runs without HTTP/2). With
+`--server static` also 45 whose names need wptserve (`.sub`, `.https`, `.www`), 27 that load testdriver and 2 that
+name a Python handler or `pipe=`. A page's results are counted
 under its area (`css/css-multicol`, `html/semantics`, `dom`): the largest are css-multicol 164, editing 151,
 html/semantics 135, mathml 126 and css-break 116.
 
@@ -871,7 +910,7 @@ failing entries of the baseline, not flaky entries, and none of them crashes, pa
 ### CI
 
 One job, `crashtest`, on the self-hosted `lp-m1` (as every macOS job): it restores the browser and the WPT checkout
-the other jobs use, runs `gate.mjs run --kind crashtest` at one page per CPU, checks the result against
+the other jobs use, checks wptserve's venv (`fetch-wpt.sh --venv`), runs `gate.mjs run --kind crashtest` at one page per CPU, checks the result against
 `crashtest-baseline.json` in the same job (the base branch's files and the `wpt-accept-loss` label as the other
 gates read them) and uploads `wpt-crashtest-shard-0` and, when it changed, `wpt-crashtest-baseline`. It is one job
 and not a run job plus a Linux gate job because the check takes a second and the job already has what it needs;
