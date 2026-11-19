@@ -8039,7 +8039,7 @@ index 70838fe7..674c80a0 100644
      pub(crate) fn area_column_count(&self) -> u16 {
          self.area_column_count
 diff --git a/src/compute/mod.rs b/src/compute/mod.rs
-index bb954acf..4c8071d0 100644
+index bb954acf..6f5e03ce 100644
 --- a/src/compute/mod.rs
 +++ b/src/compute/mod.rs
 @@ -80,13 +80,24 @@ pub fn compute_root_layout(
@@ -8098,7 +8098,7 @@ index bb954acf..4c8071d0 100644
          }
      }
  }
-@@ -244,7 +265,41 @@ fn compute_in_flow_root_layout(
+@@ -244,7 +265,44 @@ fn compute_in_flow_root_layout(
              });
  
              // Block nodes automatically stretch fit their width to fit available space if available space is definite
@@ -8137,11 +8137,14 @@ index bb954acf..4c8071d0 100644
 +                    width
 +                }
 +            };
++            // pyro: the stretched width is clamped by `min-width` and `max-width` too (WPT
++            // scroll-animations `scroll-timeline-inline-orientation`: `html { min-width: 100% }`).
++            let stretch_width = stretch_width.map(|width| width.maybe_clamp(min_size.width, max_size.width));
 +            let available_space_based_size = Size { width: stretch_width, height: None };
  
              let styled_based_known_dimensions = known_dimensions
                  .or(min_max_definite_size)
-@@ -284,8 +339,10 @@ fn compute_in_flow_root_layout(
+@@ -284,8 +342,10 @@ fn compute_in_flow_root_layout(
      let is_rtl = style.direction().is_rtl();
  
      // The root's margin box is placed at the origin of the initial containing block
@@ -8153,7 +8156,7 @@ index bb954acf..4c8071d0 100644
              (true, Some(available_width)) => available_width - output.size.width - margin.right,
              _ => margin.left,
          },
-@@ -381,6 +438,9 @@ pub fn round_layout(tree: &mut impl RoundTree, node_id: NodeId) {
+@@ -381,6 +441,9 @@ pub fn round_layout(tree: &mut impl RoundTree, node_id: NodeId) {
      /// Recursive function to apply rounding to all descendents
      fn round_layout_inner(tree: &mut impl RoundTree, node_id: NodeId, cumulative_x: f32, cumulative_y: f32) {
          let unrounded_layout = tree.get_unrounded_layout(node_id);
@@ -8163,7 +8166,7 @@ index bb954acf..4c8071d0 100644
          let mut layout = unrounded_layout;
  
          let parent_x = cumulative_x;
-@@ -416,6 +476,7 @@ pub fn round_layout(tree: &mut impl RoundTree, node_id: NodeId) {
+@@ -416,6 +479,7 @@ pub fn round_layout(tree: &mut impl RoundTree, node_id: NodeId) {
          );
  
          tree.set_final_layout(node_id, &layout);
@@ -8171,7 +8174,7 @@ index bb954acf..4c8071d0 100644
  
          // Recurse into in-flow children. Out-of-flow (absolute/fixed) children are skipped here:
          // they are instead visited via their containing block's hoisted child list below, which
-@@ -489,7 +550,8 @@ pub fn compute_hidden_layout(tree: &mut (impl LayoutPartialTree + CacheTree), no
+@@ -489,7 +553,8 @@ pub fn compute_hidden_layout(tree: &mut (impl LayoutPartialTree + CacheTree), no
  pub mod detailed_info {
      #[cfg(feature = "grid")]
      pub use super::grid::{

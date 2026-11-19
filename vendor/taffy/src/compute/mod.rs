@@ -299,6 +299,9 @@ fn compute_in_flow_root_layout(
                     width
                 }
             };
+            // pyro: the stretched width is clamped by `min-width` and `max-width` too (WPT
+            // scroll-animations `scroll-timeline-inline-orientation`: `html { min-width: 100% }`).
+            let stretch_width = stretch_width.map(|width| width.maybe_clamp(min_size.width, max_size.width));
             let available_space_based_size = Size { width: stretch_width, height: None };
 
             let styled_based_known_dimensions = known_dimensions
