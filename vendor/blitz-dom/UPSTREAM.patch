@@ -8123,7 +8123,7 @@ diff --git a/packages/blitz-dom/src/layout/counters.rs b/packages/blitz-dom/src/
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/layout/counters.rs
-@@ -0,0 +1,1153 @@
+@@ -0,0 +1,1156 @@
 +//! pyro: CSS counters and quotes in generated content (CSS Lists 3 4, CSS 2.1 12.3-12.4).
 +//!
 +//! Before construction, a walk over the document in tree order applies each box's
@@ -8618,6 +8618,9 @@ new file mode 100644
 +                if let Some(marker) = super::list::marker_pseudo_style(doc, node_id, &style)
 +                    .filter(|marker| super::list::marker_reads_counters(marker))
 +                {
++                    // Its own `counter-reset`, `counter-increment` and `counter-set` first, a reset
++                    // instantiating the counter on the item itself (WPT css-lists `marker-counter`).
++                    walk.apply(&marker, parent, node_id, false, false);
 +                    let text = walk
 +                        .content(&marker, node_id)
 +                        .unwrap_or_default()

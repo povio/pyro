@@ -492,6 +492,9 @@ fn walk_element(doc: &BaseDocument, node_id: NodeId, parent: NodeId, walk: &mut 
                 if let Some(marker) = super::list::marker_pseudo_style(doc, node_id, &style)
                     .filter(|marker| super::list::marker_reads_counters(marker))
                 {
+                    // Its own `counter-reset`, `counter-increment` and `counter-set` first, a reset
+                    // instantiating the counter on the item itself (WPT css-lists `marker-counter`).
+                    walk.apply(&marker, parent, node_id, false, false);
                     let text = walk
                         .content(&marker, node_id)
                         .unwrap_or_default()
