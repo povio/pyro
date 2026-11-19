@@ -402,7 +402,7 @@ fn default_font() -> FontSpec {
 fn canvas_size(page: &PageDom, canvas: NodeId) -> (u32, u32) {
     let dom = page.dom.borrow();
     let attr = |name: &str, default: u32| {
-        dom.get_attribute(canvas, name).ok().flatten().and_then(|v| v.trim().parse::<u32>().ok()).unwrap_or(default)
+        crate::html::canvas_dimension(dom.get_attribute(canvas, name).ok().flatten().as_deref(), default)
     };
     (attr("width", 300), attr("height", 150))
 }

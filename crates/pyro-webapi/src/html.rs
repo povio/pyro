@@ -545,6 +545,16 @@ fn img_dimension(n: &NodeData, width: bool) -> JsResult<f64> {
     Ok(natural.map_or(0.0, |(w, h)| (if width { w } else { h }).trunc()))
 }
 
+/// A canvas dimension attribute's value: HTML's rules for parsing non-negative integers (`100px`
+/// is 100), the reflected `unsigned long`'s range, else `default`. One rule for `canvas.width`, the
+/// bitmap (`canvas::canvas_size`) and layout (blitz-dom `parse_non_negative_integer`).
+pub(crate) fn canvas_dimension(value: Option<&str>, default: u32) -> u32 {
+    value
+        .and_then(parse_html_int)
+        .filter(|v| (0..=MAX_REFLECTED_INT).contains(v))
+        .map_or(default, |v| v as u32)
+}
+
 fn int_attr(n: &NodeData, attr: &str, min: i64, default: impl Into<f64>) -> JsResult<f64> {
     let value = parsed_attr(n, attr, parse_html_int)?.filter(|v| (min..=MAX_REFLECTED_INT).contains(v));
     Ok(value.map_or_else(|| default.into(), |v| v as f64))
@@ -4909,5 +4919,22 @@ mod tests {
             resolve_simple(&base, "http://127.0.0.1:5173/assets/x.js").as_deref(),
             Some("http://127.0.0.1:5173/assets/x.js")
         );
+    }
+}
+
+#[cfg(test)]
+mod canvas_dimension_tests {
+    use super::canvas_dimension;
+
+    #[test]
+    fn canvas_dimensions_follow_the_rules_for_non_negative_integers_and_the_reflected_range() {
+        assert_eq!(canvas_dimension(Some("100px"), 300), 100);
+        assert_eq!(canvas_dimension(Some(" 40"), 150), 40);
+        assert_eq!(canvas_dimension(Some("-0"), 300), 0);
+        assert_eq!(canvas_dimension(Some("-5"), 300), 300);
+        assert_eq!(canvas_dimension(Some("px"), 300), 300);
+        assert_eq!(canvas_dimension(Some("2147483647"), 300), 2147483647);
+        assert_eq!(canvas_dimension(Some("4294967296"), 300), 300);
+        assert_eq!(canvas_dimension(None, 150), 150);
     }
 }

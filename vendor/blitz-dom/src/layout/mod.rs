@@ -92,16 +92,26 @@ fn tag_intrinsic_sizes(
 }
 
 /// pyro: HTML's rules for parsing non-negative integers: leading ASCII white space, an
-/// optional `+`, then the digits up to the first other character.
+/// optional sign, then the digits up to the first other character; out of the reflected range
+/// (over 2^31 - 1) is an error too (pyro-webapi `canvas_dimension`: the same rule).
 fn parse_non_negative_integer(value: &str) -> Option<u32> {
     let value = value.trim_start_matches(|c: char| c.is_ascii_whitespace());
-    let value = value.strip_prefix('+').unwrap_or(value);
+    let (negative, value) = match value.strip_prefix('-') {
+        Some(rest) => (true, rest),
+        None => (false, value.strip_prefix('+').unwrap_or(value)),
+    };
     let end = value.find(|c: char| !c.is_ascii_digit()).unwrap_or(value.len());
     let digits = &value[..end];
     if digits.is_empty() {
         return None;
     }
-    Some(digits.parse::<u64>().map_or(u32::MAX, |v| v.min(u32::MAX as u64) as u32))
+    // (`-0` is 0; any other negative number is an error.)
+    if negative {
+        return digits.bytes().all(|d| d == b'0').then_some(0);
+    }
+    // A value over 2^31 - 1 is out of the reflected `unsigned long`'s range: the default applies,
+    // as to `canvas.width` and the bitmap.
+    digits.parse::<u32>().ok().filter(|&v| v <= i32::MAX as u32)
 }
 
 /// pyro: whether `width` or `height` is `calc-size()` (`LayoutPassState::calc_size_inputs`).
