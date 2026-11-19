@@ -5,7 +5,7 @@
 // tab.location.href = url` and showed "The file couldn't be opened".
 import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { join } from 'node:path';
-import { Pyro, css, evaluate, popup, switchTo } from '../src/index';
+import { Pyro, css, evaluate, popup, switchTo, waitForUrl } from '../src/index';
 
 const bin = process.env.PYRO_BIN ?? join(import.meta.dir, '../../../target/debug/pyro');
 
@@ -34,7 +34,12 @@ beforeAll(() => {
         await Bun.sleep(Number(new URL(req.url).searchParams.get('ms') ?? 50));
         return Response.json({ url: '/doc' });
       }
-      if (path === '/doc') return new Response('<!doctype html><title>doc</title><p>document</p>', { headers: { 'content-type': 'text/html' } });
+      if (path === '/doc') {
+        // Late on purpose: the popup is still on its about:blank document
+        // when the opener's handler has finished.
+        await Bun.sleep(100);
+        return new Response('<!doctype html><title>doc</title><p>document</p>', { headers: { 'content-type': 'text/html' } });
+      }
       return new Response(app, { headers: { 'content-type': 'text/html' } });
     },
   });
@@ -50,6 +55,9 @@ test('popup.opener = null before navigating the popup', async () => {
       popup('tab'),
       evaluate('new Promise((r) => { const t = setInterval(() => { if (document.querySelector("#out").textContent) { clearInterval(t); r(document.querySelector("#out").textContent); } }, 10); })', 'out'),
       switchTo('tab'),
+      // An evaluation started in the popup's about:blank document dies when
+      // /doc commits: wait for the commit, then read the new document.
+      waitForUrl('/doc'),
       evaluate('new Promise((r) => { const t = setInterval(() => { if (location.pathname === "/doc" && document.readyState === "complete") { clearInterval(t); r([location.pathname, document.title, String(window.opener)]); } }, 10); })', 'tab'),
     ]);
     expect(r.values.out).toBe('opened null');
