@@ -1069,17 +1069,20 @@ impl LayoutPassState<'_> {
                 run_start = spanners[part].1;
             }
         }
-        // pyro: one row of columns in a box of a definite height: the column boxes (and their
-        // rules) are as tall as its content box, however short balancing made the content
-        // (Chromium; WPT css-multicol `multicol-rule-nested-balancing-001`).
+        // pyro: in a box of a definite height the last row of columns (after the last spanner)
+        // reaches the end of its content box, however short balancing made the content: the
+        // column boxes and their rules (Chromium; WPT css-multicol
+        // `multicol-rule-nested-balancing-001`, `multicol-span-all-rule-001`).
         if let Some(height) = definite_height
-            && spanners.is_empty()
             && nested_ctx.is_none()
             && multicol.height.is_none()
             && !multicol.wrap
+            && fragments.last().is_some_and(|f| !f.spanner)
         {
-            for fragment in &mut fragments {
-                fragment.height = fragment.height.max(height);
+            let end = content_top + height;
+            let last_top = fragments.last().map_or(0.0, |f| f.top);
+            for fragment in fragments.iter_mut().rev().take_while(|f| !f.spanner && f.top == last_top) {
+                fragment.height = fragment.height.max(end - fragment.top);
             }
         }
         // The first shows what lies above the strip, the last what lies below.
