@@ -16047,7 +16047,7 @@ diff --git a/packages/blitz-paint/src/render/border_shape.rs b/packages/blitz-pa
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-paint/src/render/border_shape.rs
-@@ -0,0 +1,328 @@
+@@ -0,0 +1,342 @@
 +//! pyro: `border-shape` (CSS Borders 4 §11), as Blink's `BorderShapePainter` draws it.
 +//!
 +//! With one shape the border is a stroke along it, as wide as the relevant side's border and in
@@ -16073,6 +16073,23 @@ new file mode 100644
 +
 +/// `path` with every subpath closed: a stroke draws the closing side (shapes built for fills,
 +/// such as a rectangle's, end at their last corner).
++/// pyro: the oval filling `rect`, drawn as a `border-radius: 50%` box is (as `ellipse()` is);
++/// `None` for an empty rectangle.
++fn oval_path(rect: Rect) -> Option<BezPath> {
++    if !(rect.width() > 0.0 && rect.height() > 0.0) {
++        return None;
++    }
++    let radius = kurbo::Vec2::new(rect.width() / 2.0, rect.height() / 2.0);
++    let radii = crate::kurbo_css::NonUniformRoundedRectRadii {
++        top_left: radius,
++        top_right: radius,
++        bottom_right: radius,
++        bottom_left: radius,
++    };
++    let insets = kurbo::Insets::ZERO;
++    Some(closed(&crate::kurbo_css::CssBox::new(rect, insets, insets, 0.0, radii).border_box_path()))
++}
++
 +fn closed(path: &BezPath) -> BezPath {
 +    let mut out = BezPath::new();
 +    let mut open = false;
@@ -16108,9 +16125,9 @@ new file mode 100644
 +    /// The outer shape (the only one in stroke mode).
 +    outer: BezPath,
 +    /// The inner shape, with two.
-+    inner: Option<BezPath>,
++    pub(super) inner: Option<BezPath>,
 +    /// The outer shape's box when it is a circle or an ellipse (Skia grows those as ovals).
-+    oval: Option<Rect>,
++    pub(super) oval: Option<Rect>,
 +    /// Whether the outer shape is all straight lines: its stroke's miters are then never cut.
 +    polygon: bool,
 +    /// The relevant side's border width (the stroke's width) and colour.
@@ -16165,7 +16182,14 @@ new file mode 100644
 +    /// What the background is clipped to: the inner shape, or the shape in stroke mode (the
 +    /// stroke is drawn over it).
 +    pub(super) fn background_clip(&self) -> BezPath {
-+        self.inner.clone().unwrap_or_else(|| self.outer.clone())
++        match (&self.inner, self.oval) {
++            (Some(inner), _) => inner.clone(),
++            // pyro: an oval as a `border-radius: 50%` box's edge (`oval_path`), as its shadow is
++            // drawn: another description of the curve took its anti-aliased pixels apart (WPT
++            // css-borders `border-shape-shadow-blur`).
++            (None, Some(oval)) => oval_path(oval).unwrap_or_else(|| self.outer.clone()),
++            (None, None) => self.outer.clone(),
++        }
 +    }
 +
 +    /// The outer edge moved out by `offset` (in, when negative), for shadows and outlines
@@ -16177,18 +16201,8 @@ new file mode 100644
 +            return self.outer.clone();
 +        }
 +        if let Some(oval) = self.oval {
-+            let grown = oval.inflate(total, total);
-+            if grown.width() > 0.0 && grown.height() > 0.0 {
-+                // (Drawn as a `border-radius: 50%` box is, as `ellipse()` is.)
-+                let radius = kurbo::Vec2::new(grown.width() / 2.0, grown.height() / 2.0);
-+                let radii = crate::kurbo_css::NonUniformRoundedRectRadii {
-+                    top_left: radius,
-+                    top_right: radius,
-+                    bottom_right: radius,
-+                    bottom_left: radius,
-+                };
-+                let insets = kurbo::Insets::ZERO;
-+                return closed(&crate::kurbo_css::CssBox::new(grown, insets, insets, 0.0, radii).border_box_path());
++            if let Some(path) = oval_path(oval.inflate(total, total)) {
++                return path;
 +            }
 +            return BezPath::new();
 +        }
@@ -16379,7 +16393,7 @@ new file mode 100644
 diff --git a/packages/blitz-paint/src/render/box_shadow.rs b/packages/blitz-paint/src/render/box_shadow.rs
 --- a/packages/blitz-paint/src/render/box_shadow.rs
 +++ b/packages/blitz-paint/src/render/box_shadow.rs
-@@ -1,17 +1,323 @@
+@@ -1,17 +1,342 @@
  use super::ElementCx;
  use crate::color::{Color, ToColorColor as _};
 +use crate::kurbo_css::{CssBox, NonUniformRoundedRectRadii};
@@ -16637,7 +16651,17 @@ diff --git a/packages/blitz-paint/src/render/box_shadow.rs b/packages/blitz-pain
 +        let current_color = self.style.clone_color();
 +        let box_shadow = &self.style.get_effects().box_shadow.0;
 +        let clip = if inset { shape.inner_path() } else { shape.outer_path() };
-+        let mut clipped = false;
++        // pyro: an outer shadow under a shape its opaque background fills (no inner shape: the
++        // background is clipped to the shape) needs no cut, as a box's (`draw_outset_box_shadow`):
++        // the shadow shows under the shape's anti-aliased edge as it does a `border-radius` box's
++        // (WPT css-borders `border-shape-shadow-blur`).
++        let covered = !inset && shape.inner.is_none() && {
++            let background = self.style.get_background().background_color.resolve_to_absolute(&current_color).as_srgb_color();
++            let canvas_background = self.context.root_element_id == Some(self.node.id)
++                || self.context.canvas_background == Some(self.node.id);
++            background.components[3] >= 1.0 && !canvas_background && self.style.get_effects().opacity >= 1.0
++        };
++        let mut clipped = covered;
 +        for shadow in box_shadow.iter().filter(|s| s.inset == inset).rev() {
 +            let color = shadow.base.color.resolve_to_absolute(&current_color).as_srgb_color();
 +            if color.components[3] <= 0.0 {
@@ -16655,11 +16679,20 @@ diff --git a/packages/blitz-paint/src/render/box_shadow.rs b/packages/blitz-pain
 +                } else {
 +                    // Everything but the outer edge's area.
 +                    let far = clip.bounding_box().inflate(1e5, 1e5);
-+                    let outside = boolean(
-+                        &[vec![rect_polygon(far)], flatten(&clip)],
-+                        |inside| inside[0] && !inside[1],
-+                    );
-+                    scene.push_clip_layer(Fill::NonZero, self.transform, &outside);
++                    if shape.oval.is_some() {
++                        // pyro: an oval's edge as its curve (one contour, even-odd), as a
++                        // `border-radius` box's shadow is cut: a flattened edge took its
++                        // anti-aliased pixels apart (WPT css-borders `border-shape-shadow-circle`).
++                        let mut outside = far.to_path(0.1);
++                        outside.extend(clip.iter());
++                        scene.push_clip_layer(Fill::EvenOdd, self.transform, &outside);
++                    } else {
++                        let outside = boolean(
++                            &[vec![rect_polygon(far)], flatten(&clip)],
++                            |inside| inside[0] && !inside[1],
++                        );
++                        scene.push_clip_layer(Fill::NonZero, self.transform, &outside);
++                    }
 +                }
 +                clipped = true;
 +            }
@@ -16686,7 +16719,7 @@ diff --git a/packages/blitz-paint/src/render/box_shadow.rs b/packages/blitz-pain
 +                self.fill_shadow_path(scene, &path, color, offset, blur);
 +            }
 +        }
-+        if clipped {
++        if clipped && !covered {
 +            scene.pop_layer();
 +        }
 +    }
@@ -16704,7 +16737,7 @@ diff --git a/packages/blitz-paint/src/render/box_shadow.rs b/packages/blitz-pain
  
          let current_color = self.style.clone_color();
          let opacity = self.style.get_effects().opacity;
-@@ -21,7 +327,11 @@
+@@ -21,7 +346,11 @@
              .background_color
              .resolve_to_absolute(&current_color)
              .as_srgb_color();
@@ -16717,7 +16750,7 @@ diff --git a/packages/blitz-paint/src/render/box_shadow.rs b/packages/blitz-pain
          let needs_clip = opacity < 1.0 || !bg_is_opaque;
  
          let max_shadow_rect = box_shadow.iter().fold(Rect::ZERO, |prev, shadow| {
-@@ -76,12 +386,51 @@
+@@ -76,12 +405,51 @@
                              continue;
                          }
  
@@ -16773,7 +16806,7 @@ diff --git a/packages/blitz-paint/src/render/box_shadow.rs b/packages/blitz-pain
                      }
                  }
              },
-@@ -95,8 +444,13 @@
+@@ -95,8 +463,13 @@
          if !has_inset_shadow {
              return;
          }
@@ -16787,7 +16820,7 @@ diff --git a/packages/blitz-paint/src/render/box_shadow.rs b/packages/blitz-pain
  
          for shadow in box_shadow.iter().filter(|s| s.inset) {
              let shadow_color = shadow
-@@ -104,17 +458,40 @@
+@@ -104,17 +477,40 @@
                  .color
                  .resolve_to_absolute(&current_color)
                  .as_srgb_color();
@@ -16835,7 +16868,7 @@ diff --git a/packages/blitz-paint/src/render/box_shadow.rs b/packages/blitz-pain
              scene.push_layer(
                  Fill::NonZero,
                  Mix::Normal,
-@@ -141,19 +518,35 @@
+@@ -141,19 +537,35 @@
                  None,
                  None,
              );

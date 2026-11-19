@@ -23,6 +23,23 @@ fn flatten(path: &BezPath) -> Vec<Vec<Point>> {
 
 /// `path` with every subpath closed: a stroke draws the closing side (shapes built for fills,
 /// such as a rectangle's, end at their last corner).
+/// pyro: the oval filling `rect`, drawn as a `border-radius: 50%` box is (as `ellipse()` is);
+/// `None` for an empty rectangle.
+fn oval_path(rect: Rect) -> Option<BezPath> {
+    if !(rect.width() > 0.0 && rect.height() > 0.0) {
+        return None;
+    }
+    let radius = kurbo::Vec2::new(rect.width() / 2.0, rect.height() / 2.0);
+    let radii = crate::kurbo_css::NonUniformRoundedRectRadii {
+        top_left: radius,
+        top_right: radius,
+        bottom_right: radius,
+        bottom_left: radius,
+    };
+    let insets = kurbo::Insets::ZERO;
+    Some(closed(&crate::kurbo_css::CssBox::new(rect, insets, insets, 0.0, radii).border_box_path()))
+}
+
 fn closed(path: &BezPath) -> BezPath {
     let mut out = BezPath::new();
     let mut open = false;
@@ -58,9 +75,9 @@ pub(super) struct BorderShape {
     /// The outer shape (the only one in stroke mode).
     outer: BezPath,
     /// The inner shape, with two.
-    inner: Option<BezPath>,
+    pub(super) inner: Option<BezPath>,
     /// The outer shape's box when it is a circle or an ellipse (Skia grows those as ovals).
-    oval: Option<Rect>,
+    pub(super) oval: Option<Rect>,
     /// Whether the outer shape is all straight lines: its stroke's miters are then never cut.
     polygon: bool,
     /// The relevant side's border width (the stroke's width) and colour.
@@ -115,7 +132,14 @@ impl BorderShape {
     /// What the background is clipped to: the inner shape, or the shape in stroke mode (the
     /// stroke is drawn over it).
     pub(super) fn background_clip(&self) -> BezPath {
-        self.inner.clone().unwrap_or_else(|| self.outer.clone())
+        match (&self.inner, self.oval) {
+            (Some(inner), _) => inner.clone(),
+            // pyro: an oval as a `border-radius: 50%` box's edge (`oval_path`), as its shadow is
+            // drawn: another description of the curve took its anti-aliased pixels apart (WPT
+            // css-borders `border-shape-shadow-blur`).
+            (None, Some(oval)) => oval_path(oval).unwrap_or_else(|| self.outer.clone()),
+            (None, None) => self.outer.clone(),
+        }
     }
 
     /// The outer edge moved out by `offset` (in, when negative), for shadows and outlines
@@ -127,18 +151,8 @@ impl BorderShape {
             return self.outer.clone();
         }
         if let Some(oval) = self.oval {
-            let grown = oval.inflate(total, total);
-            if grown.width() > 0.0 && grown.height() > 0.0 {
-                // (Drawn as a `border-radius: 50%` box is, as `ellipse()` is.)
-                let radius = kurbo::Vec2::new(grown.width() / 2.0, grown.height() / 2.0);
-                let radii = crate::kurbo_css::NonUniformRoundedRectRadii {
-                    top_left: radius,
-                    top_right: radius,
-                    bottom_right: radius,
-                    bottom_left: radius,
-                };
-                let insets = kurbo::Insets::ZERO;
-                return closed(&crate::kurbo_css::CssBox::new(grown, insets, insets, 0.0, radii).border_box_path());
+            if let Some(path) = oval_path(oval.inflate(total, total)) {
+                return path;
             }
             return BezPath::new();
         }

@@ -254,7 +254,17 @@ impl ElementCx<'_, '_> {
         let current_color = self.style.clone_color();
         let box_shadow = &self.style.get_effects().box_shadow.0;
         let clip = if inset { shape.inner_path() } else { shape.outer_path() };
-        let mut clipped = false;
+        // pyro: an outer shadow under a shape its opaque background fills (no inner shape: the
+        // background is clipped to the shape) needs no cut, as a box's (`draw_outset_box_shadow`):
+        // the shadow shows under the shape's anti-aliased edge as it does a `border-radius` box's
+        // (WPT css-borders `border-shape-shadow-blur`).
+        let covered = !inset && shape.inner.is_none() && {
+            let background = self.style.get_background().background_color.resolve_to_absolute(&current_color).as_srgb_color();
+            let canvas_background = self.context.root_element_id == Some(self.node.id)
+                || self.context.canvas_background == Some(self.node.id);
+            background.components[3] >= 1.0 && !canvas_background && self.style.get_effects().opacity >= 1.0
+        };
+        let mut clipped = covered;
         for shadow in box_shadow.iter().filter(|s| s.inset == inset).rev() {
             let color = shadow.base.color.resolve_to_absolute(&current_color).as_srgb_color();
             if color.components[3] <= 0.0 {
@@ -272,11 +282,20 @@ impl ElementCx<'_, '_> {
                 } else {
                     // Everything but the outer edge's area.
                     let far = clip.bounding_box().inflate(1e5, 1e5);
-                    let outside = boolean(
-                        &[vec![rect_polygon(far)], flatten(&clip)],
-                        |inside| inside[0] && !inside[1],
-                    );
-                    scene.push_clip_layer(Fill::NonZero, self.transform, &outside);
+                    if shape.oval.is_some() {
+                        // pyro: an oval's edge as its curve (one contour, even-odd), as a
+                        // `border-radius` box's shadow is cut: a flattened edge took its
+                        // anti-aliased pixels apart (WPT css-borders `border-shape-shadow-circle`).
+                        let mut outside = far.to_path(0.1);
+                        outside.extend(clip.iter());
+                        scene.push_clip_layer(Fill::EvenOdd, self.transform, &outside);
+                    } else {
+                        let outside = boolean(
+                            &[vec![rect_polygon(far)], flatten(&clip)],
+                            |inside| inside[0] && !inside[1],
+                        );
+                        scene.push_clip_layer(Fill::NonZero, self.transform, &outside);
+                    }
                 }
                 clipped = true;
             }
@@ -303,7 +322,7 @@ impl ElementCx<'_, '_> {
                 self.fill_shadow_path(scene, &path, color, offset, blur);
             }
         }
-        if clipped {
+        if clipped && !covered {
             scene.pop_layer();
         }
     }
