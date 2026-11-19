@@ -348,15 +348,27 @@ impl LayoutPassState<'_> {
         // content names (`layout::line_clamp`): a measuring run lays it out too, and what
         // that leaves on its content is not the layout a cached final run stands for.
         let line_clamp = self.line_clamp_of(dom_node_id(node_id));
+        let mut block_ctx = block_ctx;
         let mut output = match line_clamp {
             Some(_) if inputs.run_mode == RunMode::ComputeSize => {
                 let performed = taffy::tree::LayoutInput { run_mode: RunMode::PerformLayout, ..inputs };
-                let output = self.dispatch_child_layout(node_id, performed, block_ctx);
+                let output = self.dispatch_child_layout(node_id, performed, block_ctx.as_deref_mut());
                 self.nodes[dom_node_id(node_id)].clear_layout_cache();
                 output
             }
-            _ => self.dispatch_child_layout(node_id, inputs, block_ctx),
+            _ => self.dispatch_child_layout(node_id, inputs, block_ctx.as_deref_mut()),
         };
+        // pyro: a box of a known height with column spanners in it is that much taller in its
+        // multi-column container's strip: the spanners are rows of their own, which take none of
+        // its height (`layout::multicol`, Chromium; WPT css-multicol
+        // `multicol-span-all-children-height-004a`).
+        if line_clamp.is_none()
+            && let Some(extra) = self.spanner_extent_in(dom_node_id(node_id), inputs.known_dimensions.height)
+        {
+            let mut taller = inputs;
+            taller.known_dimensions.height = inputs.known_dimensions.height.map(|height| height + extra);
+            output = self.dispatch_child_layout(node_id, taller, block_ctx.as_deref_mut());
+        }
         match line_clamp {
             Some(max_lines) => self.clamp_lines(dom_node_id(node_id), max_lines, inputs, &mut output),
             None if self.nodes[dom_node_id(node_id)].flags.contains(NodeFlags::CLAMPS_LINES) => {

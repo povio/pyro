@@ -199,3 +199,17 @@ fn a_spanner_comes_after_the_floats_before_it() {
     );
     assert_eq!(rect(&p, "s"), [0.0, 90.0, 100.0, 10.0]);
 }
+
+/// pyro: a box of a fixed height with a column spanner in it spends its height on its columns
+/// only: the spanner is a row of its own (Chromium; WPT css-multicol
+/// `multicol-span-all-children-height-004a`).
+#[test]
+fn a_spanner_takes_none_of_its_boxs_height() {
+    let p = page(
+        "<!doctype html><body style='margin:0'><div style='columns:2;column-gap:0;width:200px'>\
+         <div id=c style='height:250px'><div style='height:200px'></div>\
+         <div id=s style='column-span:all;height:50px'></div><div id=b style='height:100px'></div></div></div>",
+    );
+    assert_eq!(rect(&p, "s"), [0.0, 100.0, 200.0, 50.0]);
+    assert_eq!(rect(&p, "b")[1], 150.0, "the box goes on below the spanner");
+}

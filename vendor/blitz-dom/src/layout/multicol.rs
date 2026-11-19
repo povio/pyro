@@ -1330,6 +1330,30 @@ fn is_spanner_style(style: &ComputedValues) -> bool {
 }
 
 impl LayoutPassState<'_> {
+    /// pyro: the margin-box heights of the column spanners inside box `node_id` of the strip being
+    /// laid out (`column_spanners`), when it has a `known_height` (its own: spanners take none of
+    /// it) and carries spanners. `None` when there are none.
+    pub(crate) fn spanner_extent_in(&self, node_id: crate::NodeId, known_height: Option<f32>) -> Option<f32> {
+        let (container, width) = self.column_spanners?;
+        known_height?;
+        if width < 0.0 || node_id == container || !self.doc.carries_spanners(node_id) {
+            return None;
+        }
+        let mut total = 0.0;
+        for (id, _) in self.doc.column_spanners_of(container) {
+            let mut at = self.nodes[id].layout_parent.get();
+            while let Some(parent) = at.filter(|&p| p != container) {
+                if parent == node_id {
+                    let layout = self.nodes[id].unrounded_layout();
+                    total += layout.size.height + layout.margin.top.max(0.0) + layout.margin.bottom.max(0.0);
+                    break;
+                }
+                at = self.nodes[parent].layout_parent.get();
+            }
+        }
+        (total > EPSILON).then_some(total)
+    }
+
     /// pyro: whether `node_id` is a column spanner of the multi-column container whose strip is
     /// being laid out (`column_spanners`).
     pub(crate) fn is_current_column_spanner(&self, node_id: crate::NodeId) -> bool {
