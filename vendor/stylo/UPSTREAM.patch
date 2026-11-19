@@ -4139,6 +4139,53 @@ diff -ruN a/stylesheets/rule_parser.rs b/stylesheets/rule_parser.rs
  
                  let (layer, supports) =
                      ImportRule::parse_layer_and_supports(input, &mut self.context);
+diff -ruN a/stylesheets/stylesheet.rs b/stylesheets/stylesheet.rs
+--- a/stylesheets/stylesheet.rs	2026-11-11 19:55:57
++++ b/stylesheets/stylesheet.rs	2026-11-19 19:38:22
+@@ -229,6 +229,9 @@
+     pub media: Arc<Locked<MediaList>>,
+     /// Whether this stylesheet should be disabled.
+     pub disabled: AtomicBool,
++    /// pyro: the implicit scope root of its prelude-less `@scope` rules (the owner node's parent
++    /// element, or the shadow host of a sheet at a shadow tree's top), as the document set it.
++    pub implicit_scope_root: Option<ImplicitScopeRoot>,
+ }
+ 
+ /// A trait to represent a given stylesheet in a document.
+@@ -279,7 +282,7 @@
+     }
+ 
+     fn implicit_scope_root(&self) -> Option<ImplicitScopeRoot> {
+-        None
++        self.implicit_scope_root
+     }
+ }
+ 
+@@ -309,7 +312,7 @@
+     }
+ 
+     fn implicit_scope_root(&self) -> Option<ImplicitScopeRoot> {
+-        None
++        self.0.implicit_scope_root
+     }
+ }
+ 
+@@ -523,6 +526,7 @@
+             shared_lock,
+             media,
+             disabled: AtomicBool::new(false),
++            implicit_scope_root: None,
+         }
+     }
+ 
+@@ -565,6 +569,7 @@
+             media,
+             shared_lock: lock,
+             disabled: AtomicBool::new(self.disabled.load(Ordering::SeqCst)),
++            implicit_scope_root: self.implicit_scope_root,
+         }
+     }
+ }
 diff -ruN a/stylesheets/supports_rule.rs b/stylesheets/supports_rule.rs
 --- a/stylesheets/supports_rule.rs	2026-11-11 19:55:57
 +++ b/stylesheets/supports_rule.rs	2026-11-17 11:03:09
@@ -4171,7 +4218,7 @@ diff -ruN a/stylesheets/supports_rule.rs b/stylesheets/supports_rule.rs
  /// supports_condition | declaration
 diff -ruN a/stylist.rs b/stylist.rs
 --- a/stylist.rs	2026-11-11 19:55:57
-+++ b/stylist.rs	2026-11-19 18:08:27
++++ b/stylist.rs	2026-11-19 19:38:22
 @@ -31,8 +31,8 @@
  use crate::parser::ParserContext;
  use crate::properties::StyleBuilder;
@@ -4197,12 +4244,10 @@ diff -ruN a/stylist.rs b/stylist.rs
      }
  
      /// Returns the number of selectors.
-@@ -1217,6 +1224,62 @@
-         }
- 
+@@ -1219,6 +1226,62 @@
          doc_author_rules_apply && f(&self.cascade_data.author)
-+    }
-+
+     }
+ 
 +    /// pyro: whether a rule that can make `pseudo` (`::before` or `::after`, eagerly
 +    /// cascaded for `element`) generate a box matches `element`, so that the full match and
 +    /// cascade of the pseudo-element can give a style that is kept. When this is `false`, every
@@ -4257,19 +4302,15 @@ diff -ruN a/stylist.rs b/stylist.rs
 +            }
 +        }
 +        false
-     }
- 
-     /// Execute callback for all applicable style rule data.
-@@ -1365,6 +1428,64 @@
-         Some(self.compute_pseudo_element_style_with_inputs(
-             cascade_inputs,
-             pseudo,
-+            guards,
-+            Some(originating_element_style),
-+            Some(element),
-+        ))
 +    }
 +
+     /// Execute callback for all applicable style rule data.
+     pub fn for_each_cascade_data_with_scope<'a, E, F>(&'a self, element: E, mut f: F)
+     where
+@@ -1371,6 +1434,64 @@
+         ))
+     }
+ 
 +    /// pyro: the style of a node that is a pseudo-element's box (`element.implemented_pseudo_element()`,
 +    /// which reaches its originating element through `pseudo_element_originating_element()`), whose
 +    /// rules are matched against the node itself in normal mode: state pseudo-classes after the
@@ -4322,9 +4363,15 @@ diff -ruN a/stylist.rs b/stylist.rs
 +        Some(self.compute_pseudo_element_style_with_inputs(
 +            inputs,
 +            &pseudo,
-             guards,
-             Some(originating_element_style),
-             Some(element),
++            guards,
++            Some(originating_element_style),
++            Some(element),
++        ))
++    }
++
+     /// Computes a pseudo-element style lazily using the given CascadeInputs.
+     /// This can be used for truly lazy pseudo-elements or to avoid redoing
+     /// selector matching for eager pseudo-elements when we need to recompute
 @@ -1623,10 +1744,9 @@
              &mut matching_context,
          );
@@ -4471,17 +4518,17 @@ diff -ruN a/stylist.rs b/stylist.rs
  /// The id of a given layer, a sequentially-increasing identifier.
  #[derive(Clone, Copy, Debug, Eq, MallocSizeOf, PartialEq, PartialOrd, Ord)]
  pub struct LayerId(u16);
-@@ -3360,6 +3589,10 @@
-     /// The data coming from normal style rules that apply to elements at this
+@@ -3361,6 +3590,10 @@
      /// cascade level.
      normal_rules: ElementAndPseudoRules,
-+
+ 
 +    /// pyro: the rules of `normal_rules` that can make a `::before` or `::after`
 +    /// generate a box.
 +    box_generating_pseudo_rules: BoxGeneratingPseudoRules,
- 
++
      /// The `:host` pseudo rules that are the rightmost selector (without
      /// accounting for pseudo-elements), or `:scope` rules that may match
+     /// the featureless host.
 @@ -3522,10 +3755,17 @@
  }
  
@@ -4572,7 +4619,21 @@ diff -ruN a/stylist.rs b/stylist.rs
                  let rules = if matches_featureless_host_only {
                      self.featureless_host_rules.get_or_insert_with(Box::default)
                  } else if rule.selector.is_slotted() {
-@@ -4817,6 +5096,7 @@
+@@ -4476,6 +4755,13 @@
+                                 | ImplicitScopeRoot::DocumentElement => {
+                                     StylistImplicitScopeRoot::Normal(root)
+                                 },
++                                // pyro: (servo) a sheet with an implicit scope root is its
++                                // owner's alone (Blitz parses it for that element: its cascade
++                                // data is not shared between shadow trees).
++                                #[cfg(feature = "servo")]
++                                ImplicitScopeRoot::ShadowHost(_)
++                                | ImplicitScopeRoot::InShadowTree(_) => StylistImplicitScopeRoot::Normal(root),
++                                #[cfg(not(feature = "servo"))]
+                                 ImplicitScopeRoot::ShadowHost(_)
+                                 | ImplicitScopeRoot::InShadowTree(_) => {
+                                     // Style data can be shared between shadow trees, so we must
+@@ -4817,6 +5103,7 @@
      /// Clears the cascade data, but not the invalidation data.
      fn clear_cascade_data(&mut self) {
          self.normal_rules.clear();

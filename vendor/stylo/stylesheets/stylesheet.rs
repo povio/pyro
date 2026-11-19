@@ -229,6 +229,9 @@ pub struct Stylesheet {
     pub media: Arc<Locked<MediaList>>,
     /// Whether this stylesheet should be disabled.
     pub disabled: AtomicBool,
+    /// pyro: the implicit scope root of its prelude-less `@scope` rules (the owner node's parent
+    /// element, or the shadow host of a sheet at a shadow tree's top), as the document set it.
+    pub implicit_scope_root: Option<ImplicitScopeRoot>,
 }
 
 /// A trait to represent a given stylesheet in a document.
@@ -279,7 +282,7 @@ impl StylesheetInDocument for Stylesheet {
     }
 
     fn implicit_scope_root(&self) -> Option<ImplicitScopeRoot> {
-        None
+        self.implicit_scope_root
     }
 }
 
@@ -309,7 +312,7 @@ impl StylesheetInDocument for DocumentStyleSheet {
     }
 
     fn implicit_scope_root(&self) -> Option<ImplicitScopeRoot> {
-        None
+        self.0.implicit_scope_root
     }
 }
 
@@ -523,6 +526,7 @@ impl Stylesheet {
             shared_lock,
             media,
             disabled: AtomicBool::new(false),
+            implicit_scope_root: None,
         }
     }
 
@@ -565,6 +569,7 @@ impl Clone for Stylesheet {
             media,
             shared_lock: lock,
             disabled: AtomicBool::new(self.disabled.load(Ordering::SeqCst)),
+            implicit_scope_root: self.implicit_scope_root,
         }
     }
 }

@@ -4755,6 +4755,13 @@ impl CascadeData {
                                 | ImplicitScopeRoot::DocumentElement => {
                                     StylistImplicitScopeRoot::Normal(root)
                                 },
+                                // pyro: (servo) a sheet with an implicit scope root is its
+                                // owner's alone (Blitz parses it for that element: its cascade
+                                // data is not shared between shadow trees).
+                                #[cfg(feature = "servo")]
+                                ImplicitScopeRoot::ShadowHost(_)
+                                | ImplicitScopeRoot::InShadowTree(_) => StylistImplicitScopeRoot::Normal(root),
+                                #[cfg(not(feature = "servo"))]
                                 ImplicitScopeRoot::ShadowHost(_)
                                 | ImplicitScopeRoot::InShadowTree(_) => {
                                     // Style data can be shared between shadow trees, so we must

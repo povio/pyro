@@ -1825,11 +1825,48 @@ impl BaseDocument {
         // pyro: a `media` attribute is the sheet's media list (HTML `<style media>`): a sheet
         // whose media do not match applies nothing. Parsed apart (not the shared sheet of its
         // text, whose media list is empty).
-        let sheet = match self.node_media_list(target_id) {
-            Some(media) => DocumentStyleSheet(ServoArc::new(self.parse_stylesheet_with_media(&css, Origin::Author, media))),
-            None => self.make_stylesheet_in(&css, Origin::Author, host),
+        // pyro: a sheet with `@scope` rules is parsed for its element alone, with the implicit
+        // scope root of its prelude-less ones (CSS Cascade 6 § 2.5: the element's parent, or the
+        // shadow host when the element is at its shadow tree's top), not shared with other
+        // elements or shadow trees (WPT css-cascade `scope-part`, `scope-shadow-sharing`).
+        let implicit_scope_root = css.contains("@scope").then(|| self.implicit_scope_root_of(target_id));
+        let sheet = match (self.node_media_list(target_id), implicit_scope_root) {
+            (media, Some(root)) => {
+                let mut sheet =
+                    self.parse_stylesheet_with_media(&css, Origin::Author, media.unwrap_or_else(MediaList::empty));
+                sheet.implicit_scope_root = root;
+                DocumentStyleSheet(ServoArc::new(sheet))
+            }
+            (Some(media), None) => {
+                DocumentStyleSheet(ServoArc::new(self.parse_stylesheet_with_media(&css, Origin::Author, media)))
+            }
+            (None, None) => self.make_stylesheet_in(&css, Origin::Author, host),
         };
         self.add_stylesheet_for_node(sheet, target_id);
+    }
+
+    /// pyro: the implicit scope root of the `@scope` rules in the sheet of `owner` (a `<style>`):
+    /// its parent element (`InLightTree`/`InShadowTree`), the host of the shadow tree whose top
+    /// it is in (`ShadowHost`), or none (a `<style>` that is no element's child).
+    fn implicit_scope_root_of(&self, owner: NodeId) -> Option<style::stylesheets::scope_rule::ImplicitScopeRoot> {
+        use style::stylesheets::scope_rule::ImplicitScopeRoot;
+        let opaque = |id: NodeId| {
+            selectors::OpaqueElement::from_ptr(
+                std::ptr::NonNull::new((id.as_u64() as usize).wrapping_add(1) as *mut ()).unwrap(),
+            )
+        };
+        let node = &self.nodes[owner];
+        let parent = node.parent?;
+        if node.parent_is_shadow_root() {
+            return Some(ImplicitScopeRoot::ShadowHost(opaque(parent)));
+        }
+        if !self.nodes[parent].is_element() {
+            return None;
+        }
+        Some(match node.containing_shadow_host_id() {
+            Some(_) => ImplicitScopeRoot::InShadowTree(opaque(parent)),
+            None => ImplicitScopeRoot::InLightTree(opaque(parent)),
+        })
     }
 
     /// pyro: a `<link>`'s `media` changed: its sheet (each fetch parses its own) takes the new
