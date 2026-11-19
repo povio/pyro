@@ -654,7 +654,7 @@ index 25f0b3b..056dbc8 100644
  
      /// Returns `true` if this is a right-to-left cluster.
 diff --git a/src/layout/data.rs b/src/layout/data.rs
-index e6ab383..77f90ed 100644
+index e6ab383..77d1b2c 100644
 --- a/src/layout/data.rs
 +++ b/src/layout/data.rs
 @@ -4,6 +4,7 @@
@@ -1018,7 +1018,7 @@ index e6ab383..77f90ed 100644
      }
  }
  
-@@ -429,6 +646,43 @@ struct ContentWidthsMeasurer {
+@@ -429,6 +646,47 @@ struct ContentWidthsMeasurer {
      /// Indents for lines following a soft/hard wrap.
      soft_indent: f32,
      hard_indent: f32,
@@ -1033,6 +1033,10 @@ index e6ab383..77f90ed 100644
 +    /// pyro: the last item measured is a span's start edge ([`InlineBoxKind::SpanStart`]): the
 +    /// soft wrap opportunity before the content that follows was taken before the edge.
 +    after_span_start: bool,
++
++    /// pyro: the last atom measured has `overflow-wrap: anywhere`: there is an opportunity after
++    /// it (the characters on either side of an opportunity give it, as in Blink).
++    after_anywhere: bool,
 +}
 +
 +/// pyro: whether a line may wrap before the content that `items` starts with: text with a soft
@@ -1062,7 +1066,7 @@ index e6ab383..77f90ed 100644
  }
  
  impl ContentWidthsMeasurer {
-@@ -445,7 +699,10 @@ impl ContentWidthsMeasurer {
+@@ -445,7 +703,11 @@ impl ContentWidthsMeasurer {
              text_wrap_mode: TextWrapMode::Wrap,
              soft_indent: indent_options.indent_following_soft_wrap_break(indent_amount),
              hard_indent: indent_options.indent_following_forced_line_break(indent_amount),
@@ -1070,10 +1074,11 @@ index e6ab383..77f90ed 100644
 +            line_indent: first_line_indent,
              line_has_content: false,
 +            after_span_start: false,
++            after_anywhere: false,
          }
      }
  
-@@ -457,13 +714,14 @@ impl ContentWidthsMeasurer {
+@@ -457,13 +719,14 @@ impl ContentWidthsMeasurer {
      /// indent is "hanging" (see [`IndentOptions::hanging`]).
      #[inline(always)]
      fn soft_break(&mut self, line_has_content: bool) {
@@ -1089,7 +1094,7 @@ index e6ab383..77f90ed 100644
      }
  
      /// Ends the current line at a forced break.
-@@ -485,6 +743,7 @@ impl ContentWidthsMeasurer {
+@@ -485,6 +748,7 @@ impl ContentWidthsMeasurer {
          self.line_has_content = false;
          self.running_min_width = self.hard_indent;
          self.running_max_width = self.hard_indent;
@@ -1097,7 +1102,7 @@ index e6ab383..77f90ed 100644
      }
  
      #[inline(always)]
-@@ -499,7 +758,7 @@ impl ContentWidthsMeasurer {
+@@ -499,7 +763,7 @@ impl ContentWidthsMeasurer {
                      // bidi reordering. We don't currently apply UAX #9 L1 (resetting trailing
                      // whitespace to paragraph level), so only logically-last items that match the
                      // paragraph level are guaranteed to be at that edge.
@@ -1106,7 +1111,7 @@ index e6ab383..77f90ed 100644
                      let is_rtl = item.bidi_level.is_rtl();
  
                      if run_spacing.is_zero() {
-@@ -522,6 +781,27 @@ impl ContentWidthsMeasurer {
+@@ -522,6 +786,27 @@ impl ContentWidthsMeasurer {
                  }
                  LayoutItemKind::InlineBox => {
                      let inline_box = &layout_data.inline_boxes[item.index].inline_box;
@@ -1134,19 +1139,23 @@ index e6ab383..77f90ed 100644
                      if inline_box.kind == InlineBoxKind::InFlow {
                          let next = items.as_slice().iter().find(|next| {
                              next.kind == LayoutItemKind::TextRun
-@@ -596,7 +876,11 @@ impl ContentWidthsMeasurer {
+@@ -596,8 +881,15 @@ impl ContentWidthsMeasurer {
                  skip_atom = false;
                  let prev_text_wrap_mode = self.text_wrap_mode;
                  self.text_wrap_mode = style.text_wrap_mode;
 +                // pyro: the opportunity before text after a span's start edge was taken before
 +                // the edge.
 +                let after_span_start = core::mem::take(&mut self.after_span_start);
++                let after_anywhere =
++                    core::mem::replace(&mut self.after_anywhere, style.overflow_wrap == OverflowWrap::Anywhere);
                  if prev_text_wrap_mode == TextWrapMode::Wrap
 +                    && !after_span_start
                      && (cluster.is_soft_wrap_opportunity_before()
++                        || after_anywhere
                          || style.overflow_wrap == OverflowWrap::Anywhere)
                  {
-@@ -611,7 +895,15 @@ impl ContentWidthsMeasurer {
+                     self.soft_break(i != empty_at);
+@@ -611,7 +903,15 @@ impl ContentWidthsMeasurer {
                      continue;
                  }
                  if SPACED {
@@ -1163,7 +1172,7 @@ index e6ab383..77f90ed 100644
                  }
              } else if skip_atom {
                  // The next line starts after the whole newline atom.
-@@ -620,6 +912,15 @@ impl ContentWidthsMeasurer {
+@@ -620,6 +920,15 @@ impl ContentWidthsMeasurer {
              }
  
              let mut advance = cluster.advance;
@@ -1179,7 +1188,7 @@ index e6ab383..77f90ed 100644
              if SPACED {
                  let owns_gap = if is_rtl {
                      is_atom_start
-@@ -630,9 +931,10 @@ impl ContentWidthsMeasurer {
+@@ -630,9 +939,10 @@ impl ContentWidthsMeasurer {
                  };
                  if owns_gap {
                      advance += gap;
@@ -1191,7 +1200,7 @@ index e6ab383..77f90ed 100644
              self.running_max_width += advance;
  
              // A cluster hangs if all of its characters hang. Its first character is checked via the
-@@ -657,13 +959,19 @@ impl ContentWidthsMeasurer {
+@@ -657,13 +967,19 @@ impl ContentWidthsMeasurer {
                  self.running_hanging_whitespace = 0.0;
              }
          }
@@ -1634,7 +1643,7 @@ index 1569071..8f285ed 100644
                  }
                  LineItem::Run(run) => {
 diff --git a/src/layout/line_break.rs b/src/layout/line_break.rs
-index 3c3798c..c900a56 100644
+index 3c3798c..69af0ae 100644
 --- a/src/layout/line_break.rs
 +++ b/src/layout/line_break.rs
 @@ -10,7 +10,8 @@ use alloc::vec::Vec;
@@ -2817,7 +2826,7 @@ index 3c3798c..c900a56 100644
                          // Retrieve metadata about the atom
                          let first_character = &atom.characters()[0];
                          let whitespace = first_character.whitespace;
-@@ -1161,34 +1894,119 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+@@ -1161,34 +1894,124 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                                  max_advance,
                                  line_indent,
                              );
@@ -2854,7 +2863,13 @@ index 3c3798c..c900a56 100644
 +                            self.state.mark_phrase_break_opportunity();
                          } else if
                          // This text can contribute "emergency" line breaks.
-                         style.overflow_wrap != OverflowWrap::Normal
+-                        style.overflow_wrap != OverflowWrap::Normal
++                        // pyro: the characters on either side of the opportunity give it, as in
++                        // Blink (WPT css-text `overflow-wrap-anywhere-inline-003/004`).
++                        (style.overflow_wrap != OverflowWrap::Normal
++                            || self.state.line.last_char.is_some_and(|(last, _)| {
++                                self.layout.data.styles[usize::from(last)].overflow_wrap != OverflowWrap::Normal
++                            }))
                          && text_wrap_mode == TextWrapMode::Wrap
                          // If we're at the start of the line, this particular atom will never fit, so it's not a valid emergency break opportunity.
                          && self.state.line.x != 0.0
@@ -2942,7 +2957,7 @@ index 3c3798c..c900a56 100644
                              if max_height_exceeded {
                                  return self.max_height_break_data(line_height);
                              }
-@@ -1216,7 +2034,7 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+@@ -1216,7 +2039,7 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                                  spacing,
                                  item.bidi_level.is_rtl(),
                              );
@@ -2951,7 +2966,7 @@ index 3c3798c..c900a56 100644
                                  if max_height_exceeded {
                                      return self.max_height_break_data(line_height);
                                  }
-@@ -1228,6 +2046,24 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+@@ -1228,6 +2051,24 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                                      is_separator,
                                  );
                              }
@@ -2976,7 +2991,7 @@ index 3c3798c..c900a56 100644
                              // Case: we have previously encountered a REGULAR line-breaking opportunity in the current line
                              //
                              // We "take" the line-breaking opportunity by starting a new line and resetting our
-@@ -1244,6 +2080,16 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+@@ -1244,6 +2085,16 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                              //
                              // We "take" the line-breaking opportunity by starting a new line and resetting our
                              // item/run/cluster iteration state back to how it was when the line-breaking opportunity was encountered
@@ -2993,7 +3008,7 @@ index 3c3798c..c900a56 100644
                              else if let Some(prev_emergency) =
                                  self.state.emergency_boundary.take()
                              {
-@@ -1283,6 +2129,8 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+@@ -1283,6 +2134,8 @@ impl<'a, B: Brush> BreakLines<'a, B> {
          if self.state.line.items.end == 0 {
              self.state.line.items.end = 1;
          }
@@ -3002,7 +3017,7 @@ index 3c3798c..c900a56 100644
          self.done = true;
          self.start_new_line(BreakReason::None, max_advance, line_indent)
      }
-@@ -1300,6 +2148,8 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+@@ -1300,6 +2153,8 @@ impl<'a, B: Brush> BreakLines<'a, B> {
      /// ligature or a multi-character grapheme), the whole atom is placed on the line before
      /// breaking.
      pub fn break_next_with_length(&mut self, max_chars: u32) -> Option<()> {
@@ -3011,7 +3026,7 @@ index 3c3798c..c900a56 100644
          if self.done {
              return None;
          }
-@@ -1318,7 +2168,13 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+@@ -1318,7 +2173,13 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                      let inline_box = &self.layout.data.inline_boxes[item.index].inline_box;
  
                      if inline_box.kind != InlineBoxKind::InFlow {
@@ -3026,7 +3041,7 @@ index 3c3798c..c900a56 100644
                          continue;
                      }
  
-@@ -1469,12 +2325,16 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+@@ -1469,12 +2330,16 @@ impl<'a, B: Brush> BreakLines<'a, B> {
      }
  
      fn finish_line(&mut self, line_idx: usize, line_height: f32, invisible: bool) -> f32 {
@@ -3043,7 +3058,7 @@ index 3c3798c..c900a56 100644
  
          if line.item_range.is_empty() {
              line.text_range = self.layout.data.text_len..self.layout.data.text_len;
-@@ -1599,6 +2459,33 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+@@ -1599,6 +2464,33 @@ impl<'a, B: Brush> BreakLines<'a, B> {
              );
          }
  
@@ -3077,7 +3092,7 @@ index 3c3798c..c900a56 100644
          let top = if quantize {
              self.state.line_y.round() as f32
          } else {
-@@ -1617,6 +2504,9 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+@@ -1617,6 +2509,9 @@ impl<'a, B: Brush> BreakLines<'a, B> {
          } else {
              line.metrics.baseline + line_box_extents.under
          };
@@ -3087,7 +3102,7 @@ index 3c3798c..c900a56 100644
          line.metrics.content_block_min_coord = line.metrics.baseline - content_box_extents.over;
          line.metrics.content_block_max_coord = line.metrics.baseline + content_box_extents.under;
  
-@@ -1628,6 +2518,10 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+@@ -1628,6 +2523,10 @@ impl<'a, B: Brush> BreakLines<'a, B> {
  
  impl<B: Brush> Drop for BreakLines<'_, B> {
      fn drop(&mut self) {
@@ -3098,7 +3113,7 @@ index 3c3798c..c900a56 100644
          // Compute the overall width and height of the entire layout
          // The "width" excludes hanging whitespace. The "full_width" includes it.
          let mut layout_width = 0_f32;
-@@ -1639,6 +2533,8 @@ impl<B: Brush> Drop for BreakLines<'_, B> {
+@@ -1639,6 +2538,8 @@ impl<B: Brush> Drop for BreakLines<'_, B> {
              layout_full_width = layout_full_width.max(line_max);
              layout_width = layout_width.max(line_max - line.metrics.hanging_advance);
              height += line.metrics.line_height as f64;
@@ -3107,7 +3122,7 @@ index 3c3798c..c900a56 100644
          }
  
          // If laying out with infinite width constraint, then set all lines' "max_width"
-@@ -1773,6 +2669,12 @@ fn commit_line<B: Brush>(
+@@ -1773,6 +2674,12 @@ fn commit_line<B: Brush>(
              }
          }
      }
@@ -3120,7 +3135,7 @@ index 3c3798c..c900a56 100644
      // let end_run_idx = lines.line_items.last().map(|item| item.index).unwrap_or(0);
      let end_item_idx = lines.line_items.len();
  
-@@ -1789,19 +2691,53 @@ fn commit_line<B: Brush>(
+@@ -1789,19 +2696,53 @@ fn commit_line<B: Brush>(
          BreakReason::Regular | BreakReason::Emergency => f32::INFINITY,
          BreakReason::Explicit | BreakReason::None => state.x - max_advance,
      };
@@ -3176,7 +3191,7 @@ index 3c3798c..c900a56 100644
      }
  
      lines.lines.push(LineData {
-@@ -1812,15 +2748,19 @@ fn commit_line<B: Brush>(
+@@ -1812,15 +2753,19 @@ fn commit_line<B: Brush>(
          num_justification_opportunities,
          justification: Justification {
              justification_end_cluster,
@@ -3196,7 +3211,7 @@ index 3c3798c..c900a56 100644
      });
  
      // Reset state for the new line
-@@ -1866,8 +2806,11 @@ fn hanging_whitespace<B: Brush>(
+@@ -1866,8 +2811,11 @@ fn hanging_whitespace<B: Brush>(
      layout: &Layout<B>,
      line_items: &[LineItemData],
      overflow: f32,
@@ -3209,7 +3224,7 @@ index 3c3798c..c900a56 100644
      // Atoms with shaped clusters before this index may be stretched by justification.
      let mut justification_end_cluster = u32::MAX;
      let mut hanging_opportunities = 0;
-@@ -1888,8 +2831,8 @@ fn hanging_whitespace<B: Brush>(
+@@ -1888,8 +2836,8 @@ fn hanging_whitespace<B: Brush>(
              LayoutItemKind::InlineBox => {
                  let item = &layout.data.inline_boxes[line_item.index].inline_box;
  
@@ -3220,7 +3235,7 @@ index 3c3798c..c900a56 100644
                      break;
                  }
              }
-@@ -1898,7 +2841,7 @@ fn hanging_whitespace<B: Brush>(
+@@ -1898,7 +2846,7 @@ fn hanging_whitespace<B: Brush>(
                  // reordering. We don't currently apply UAX #9 L1 (resetting trailing whitespace to
                  // paragraph level), so only logically-last items that match the paragraph level are
                  // guaranteed to be at that edge.
@@ -3229,7 +3244,7 @@ index 3c3798c..c900a56 100644
                      break;
                  }
  
-@@ -1943,12 +2886,32 @@ fn hanging_whitespace<B: Brush>(
+@@ -1943,12 +2891,32 @@ fn hanging_whitespace<B: Brush>(
                          }
                      }
                      hanging_whitespace_advance += hanging;
@@ -3263,7 +3278,7 @@ index 3c3798c..c900a56 100644
                      if !all_hang {
                          break 'items;
                      }
-@@ -1965,9 +2928,253 @@ fn hanging_whitespace<B: Brush>(
+@@ -1965,9 +2933,253 @@ fn hanging_whitespace<B: Brush>(
          hanging_whitespace_advance,
          justification_end_cluster,
          hanging_opportunities,
@@ -3517,7 +3532,7 @@ index 3c3798c..c900a56 100644
  /// Reorder items within line according to the bidi levels of the items
  fn reorder_line_items(runs: &mut [LineItemData]) {
      let run_count = runs.len();
-@@ -2015,12 +3222,7 @@ mod tests {
+@@ -2015,12 +3227,7 @@ mod tests {
  
      #[test]
      fn subtree_extents_restored_at_break_opportunities() {

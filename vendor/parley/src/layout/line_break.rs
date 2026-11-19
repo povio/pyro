@@ -1925,7 +1925,12 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                             self.state.mark_phrase_break_opportunity();
                         } else if
                         // This text can contribute "emergency" line breaks.
-                        style.overflow_wrap != OverflowWrap::Normal
+                        // pyro: the characters on either side of the opportunity give it, as in
+                        // Blink (WPT css-text `overflow-wrap-anywhere-inline-003/004`).
+                        (style.overflow_wrap != OverflowWrap::Normal
+                            || self.state.line.last_char.is_some_and(|(last, _)| {
+                                self.layout.data.styles[usize::from(last)].overflow_wrap != OverflowWrap::Normal
+                            }))
                         && text_wrap_mode == TextWrapMode::Wrap
                         // If we're at the start of the line, this particular atom will never fit, so it's not a valid emergency break opportunity.
                         && self.state.line.x != 0.0

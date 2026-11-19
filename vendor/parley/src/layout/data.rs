@@ -657,6 +657,10 @@ struct ContentWidthsMeasurer {
     /// pyro: the last item measured is a span's start edge ([`InlineBoxKind::SpanStart`]): the
     /// soft wrap opportunity before the content that follows was taken before the edge.
     after_span_start: bool,
+
+    /// pyro: the last atom measured has `overflow-wrap: anywhere`: there is an opportunity after
+    /// it (the characters on either side of an opportunity give it, as in Blink).
+    after_anywhere: bool,
 }
 
 /// pyro: whether a line may wrap before the content that `items` starts with: text with a soft
@@ -703,6 +707,7 @@ impl ContentWidthsMeasurer {
             line_indent: first_line_indent,
             line_has_content: false,
             after_span_start: false,
+            after_anywhere: false,
         }
     }
 
@@ -879,9 +884,12 @@ impl ContentWidthsMeasurer {
                 // pyro: the opportunity before text after a span's start edge was taken before
                 // the edge.
                 let after_span_start = core::mem::take(&mut self.after_span_start);
+                let after_anywhere =
+                    core::mem::replace(&mut self.after_anywhere, style.overflow_wrap == OverflowWrap::Anywhere);
                 if prev_text_wrap_mode == TextWrapMode::Wrap
                     && !after_span_start
                     && (cluster.is_soft_wrap_opportunity_before()
+                        || after_anywhere
                         || style.overflow_wrap == OverflowWrap::Anywhere)
                 {
                     self.soft_break(i != empty_at);
