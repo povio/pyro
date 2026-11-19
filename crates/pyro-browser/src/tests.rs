@@ -1519,6 +1519,39 @@ fn secure_context_follows_potentially_trustworthy_urls_of_the_frame_chain() {
     );
 }
 
+/// A popup's initial about:blank document has its creator's origin, which decides its secure context
+/// (not its trustworthy about:blank URL): an http page's popup gets no [SecureContext] members. A
+/// same-origin child without `allowfullscreen` may use fullscreen (the default allowlist, 'self',
+/// as in Chrome), also the about:blank child of a top-level blank popup, whose origin is inherited.
+#[test]
+fn a_blank_popup_takes_its_creators_secure_context_and_origin() {
+    let (mut t, rec, page) = setup();
+    let loader = Rc::new(StaticLoader::default());
+    loader.insert("http://insecure.test/", "text/html", "<p>opener</p>", Duration::ZERO);
+    loader.insert("https://secure.test/", "text/html", "<p>opener</p>", Duration::ZERO);
+    t.browser.set_loader(Some(loader));
+    let probe = "const w = window.open(); \
+                 console.log('popup', w.isSecureContext, 'locks' in w.navigator, 'paintWorklet' in w.CSS, 'LockManager' in w); \
+                 w.document.body.innerHTML = '<iframe></iframe>'; document.body.innerHTML = '<iframe></iframe>'; \
+                 console.log('page', document.querySelector('iframe').contentDocument.fullscreenEnabled); \
+                 console.log('fullscreen', w.document.fullscreenEnabled, w.document.querySelector('iframe').contentDocument.fullscreenEnabled);";
+    goto(&mut t, page, "http://insecure.test/");
+    eval(&t, page, probe);
+    goto(&mut t, page, "https://secure.test/");
+    eval(&t, page, probe);
+    assert_eq!(
+        *rec.console.borrow(),
+        [
+            "log:popup false false false false",
+            "log:page true",
+            "log:fullscreen true true",
+            "log:popup true true true true",
+            "log:page true",
+            "log:fullscreen true true",
+        ]
+    );
+}
+
 #[test]
 fn idle_callbacks_requested_in_an_idle_period_wait_for_the_next() {
     let (mut t, rec, page) = setup();

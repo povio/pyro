@@ -464,7 +464,7 @@ fn trustworthy_url(url: &str) -> bool {
 /// document are potentially trustworthy (also the page's `[SecureContext]` members,
 /// `PageHooks::is_secure_context`).
 pub(crate) fn frame_chain_secure(host: &crate::frames::FrameHost, mut key: crate::frames::FrameKey, url: &str) -> bool {
-    if !trustworthy_url(url) {
+    if !document_trustworthy(host, key, url) {
         return false;
     }
     while key.child.is_some() {
@@ -473,11 +473,26 @@ pub(crate) fn frame_chain_secure(host: &crate::frames::FrameHost, mut key: crate
             break;
         }
         key = parent;
-        if !host.nav(key).is_some_and(|nav| trustworthy_url(&nav.url())) {
+        if !host.nav(key).is_some_and(|nav| document_trustworthy(host, key, &nav.url())) {
             return false;
         }
     }
     true
+}
+
+/// Whether the document of frame `key` at `url` is potentially trustworthy: by its tuple origin
+/// (HTML "secure context" asks of the environment's origin), which an about:blank document inherits
+/// from its creator (a popup's initial document from an http page is not trustworthy, though
+/// about:blank URLs are); an opaque origin by its URL (data:, a sandboxed frame).
+fn document_trustworthy(host: &crate::frames::FrameHost, key: crate::frames::FrameKey, url: &str) -> bool {
+    let origin = host
+        .with_frame(key, |f| pyro_net::Url::parse(&f.origin).ok().map(|u| u.origin()))
+        .flatten()
+        .filter(|o| o.is_tuple());
+    match origin {
+        Some(origin) => pyro_net::is_potentially_trustworthy_origin(&origin),
+        None => trustworthy_url(url),
+    }
 }
 
 fn set_timer<'s>(s: &Scope<'s>, w: &WindowData, a: Args<'s>, repeat: bool) -> JsResult<Value<'s>> {

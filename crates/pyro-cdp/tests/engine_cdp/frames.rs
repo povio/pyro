@@ -1022,7 +1022,8 @@ fn moving_an_iframe_reloads_it_unless_moved_from_its_own_load() {
 
 /// Fullscreen delegation through a parent that inherited its origin: a nested srcdoc frame with
 /// `allow="fullscreen"` ('src') inside a srcdoc frame of an http page has that page's origin as its
-/// declared origin (its about:srcdoc parent's inherited one), so it may use fullscreen.
+/// declared origin (its about:srcdoc parent's inherited one), so it may use fullscreen. A plain one
+/// may too: the default allowlist, 'self', admits a same-origin frame (Chrome).
 #[test]
 fn fullscreen_delegates_through_an_inherited_origin_parent() {
     let (addr, server) = serve_html(1, "<!doctype html><body>top");
@@ -1046,5 +1047,5 @@ fn fullscreen_delegates_through_an_inherited_origin_parent() {
             }, 400);
           })"#, "awaitPromise": true, "returnByValue": true}),
     );
-    assert_eq!(r["result"]["result"]["value"], json!([true, true, false]), "{r}");
+    assert_eq!(r["result"]["result"]["value"], json!([true, true, true]), "{r}");
 }

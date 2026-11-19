@@ -935,7 +935,9 @@ fn frame_origin(host: &crate::frames::FrameHost, key: FrameKey, url: &str, opaqu
     if url.starts_with("about:") {
         let parent = host.parent_key(key);
         if parent == key {
-            return None;
+            // A top-level about: document (a popup's initial one): the origin it inherited from
+            // its creator, which the frame records.
+            return host.with_frame(key, |f| f.origin.clone()).filter(|o| o != "null");
         }
         let pd = host.frame(parent).and_then(|f| f.page_dom.clone())?;
         let parent_url = pd.dom.borrow().document_url_parsed(pd.document()).ok().flatten().map(|u| u.to_string())?;

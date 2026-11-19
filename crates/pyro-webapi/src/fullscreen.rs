@@ -30,9 +30,9 @@ pub(crate) fn enabled(page: &PageDom) -> bool {
 /// attribute's `fullscreen` directive (an allowlist of `*`, `'self'` (the parent's origin),
 /// `'src'` (the container's declared origin: its `src` URL's, see pyro-browser's
 /// `FullscreenContainer`; the default with no tokens), `'none'` and origins), else
-/// `fullscreen *` when it has `allowfullscreen`. A container with neither denies fullscreen to
-/// every frame, same-origin ones included, as browsers do (HTML's legacy `allowfullscreen`
-/// behavior; WPT fullscreen/api/document-fullscreen-enabled-*, navigate-iframe). Origins are
+/// `fullscreen *` when it has `allowfullscreen`. A container with neither admits the feature's
+/// default allowlist, 'self': a child document at its parent's origin, not a cross-origin one
+/// (Chrome; WPT fullscreen/api/document-fullscreen-enabled*, navigate-iframe). Origins are
 /// ASCII serializations; `None` is opaque (a sandboxed frame), which matches only `*`.
 pub fn allowed_in_frame(
     parent_allowed: bool,
@@ -45,7 +45,10 @@ pub fn allowed_in_frame(
     if !parent_allowed {
         return false;
     }
-    container_allows("fullscreen", allow, parent_origin, declared_origin, child_origin).unwrap_or(allowfullscreen)
+    // Without a declaration for it: `fullscreen *` with `allowfullscreen`, else the feature's default
+    // allowlist, 'self': a child at its parent's origin may (Chrome; WPT document-fullscreen-enabled).
+    let same_origin = parent_origin.is_some() && parent_origin == child_origin;
+    container_allows("fullscreen", allow, parent_origin, declared_origin, child_origin).unwrap_or(allowfullscreen || same_origin)
 }
 
 /// A frame container's `allow` attribute on `feature` for a child document at `child_origin`:
@@ -223,12 +226,14 @@ mod tests {
     const B: Option<&str> = Some("http://b.test");
 
     #[test]
-    fn no_container_policy_denies() {
-        // Neither allowfullscreen nor an `allow` declaration: no frame, same-origin included.
-        assert!(!allowed(true, false, None, A, A, A));
+    fn no_container_policy_admits_same_origin_only() {
+        // Neither allowfullscreen nor an `allow` declaration: the default allowlist, 'self' (Chrome).
+        assert!(allowed(true, false, None, A, A, A));
         assert!(!allowed(true, false, None, A, B, B));
-        assert!(!allowed(true, false, Some("camera *"), A, A, A));
+        assert!(!allowed(true, false, None, A, A, B));
+        assert!(allowed(true, false, Some("camera *"), A, A, A));
         assert!(!allowed(true, false, None, A, None, None));
+        assert!(!allowed(true, false, None, None, None, None));
         // A parent that may not use fullscreen allows no frame, whatever the container says.
         assert!(!allowed(false, true, Some("fullscreen *"), A, A, A));
     }
