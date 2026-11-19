@@ -129,7 +129,12 @@ impl ElementCx<'_, '_> {
                 None,
             );
             self.transform = transform;
+            let outer_inline_range = self
+                .context
+                .inline_column_range
+                .replace((!single && vertical.is_none()).then_some((fragment.start, fragment.end)));
             self.draw_inline_layout(scene, pos);
+            self.context.inline_column_range.set(outer_inline_range);
             self.draw_marker(scene, pos);
             // pyro: the container's boxes are not clipped to the column in the block axis, as in
             // Chromium: a box the column holds whole is painted with what overflows it, above or

@@ -216,6 +216,9 @@ pub struct BlitzDomPainter<'dom, 'a> {
     /// pyro: a box hoisted out of a multi-column container (a stacking context painted by an
     /// ancestor) is being painted in one of the container's columns (`draw_paint_child`).
     pub(crate) hoisted_in_column: std::cell::Cell<bool>,
+    /// pyro: while a multi-column inline root paints its lines in a column: the column's strip
+    /// range (CSS px), for the positioned boxes left to their paint-tree entries.
+    pub(crate) inline_column_range: std::cell::Cell<Option<(f32, f32)>>,
     /// Paint background colors and images (false: printing without them).
     pub backgrounds: bool,
     /// Print: text at its layout-unit x, not its box's whole-pixel x (Chromium keeps the fraction in the
@@ -337,6 +340,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             spanner_row_spanner: std::cell::Cell::new(None),
             spanner_row_except: std::cell::Cell::new(None),
             hoisted_in_column: std::cell::Cell::new(false),
+            inline_column_range: std::cell::Cell::new(None),
             paint_clip: std::cell::Cell::new(Rect::new(f64::NEG_INFINITY, f64::NEG_INFINITY, f64::INFINITY, f64::INFINITY)),
             backgrounds: true,
             fractional_text_x: false,
@@ -3771,7 +3775,20 @@ impl ElementCx<'_, '_> {
                         node.flags.contains(blitz_dom::node::NodeFlags::INLINE_PASS_ENTRY)
                     })
                 {
-                    self.context.inline_pass_entries.borrow_mut().insert(span, (self.node.id, self.transform, pos_before_offset));
+                    // pyro: in a multi-column inline root, the column that shows the box records it
+                    // (`PaintContext::inline_column_range`).
+                    let shown_here = self.context.inline_column_range.get().is_none_or(|(start, end)| {
+                        fragments.iter().find(|fragment| fragment.node == span).is_none_or(|fragment| {
+                            // (Its line's top in the root's box: the strip.)
+                            let layout = &text_layout.layout;
+                            let line_top = layout.get(fragment.line).map_or(0.0, |line| line.metrics().block_min_coord / layout.scale());
+                            let y = (pos_before_offset.y / self.scale) as f32 + text_layout.block_offset + line_top;
+                            y >= start - 0.5 && y < end - 0.5
+                        })
+                    });
+                    if shown_here {
+                        self.context.inline_pass_entries.borrow_mut().insert(span, (self.node.id, self.transform, pos_before_offset));
+                    }
                     continue;
                 }
                 for fragment in fragments.iter().filter(|fragment| self.fragment_in_pass(fragment.node, Some(pass))) {
