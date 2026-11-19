@@ -1139,7 +1139,10 @@ impl LayoutPassState<'_> {
                         extended: 0.0,
                     });
                     top = spanner_top + (end - start);
-                    if after {
+                    // (After the last of its content the break is after the container, the outer
+                    // container's to make.)
+                    let last = part + 1 == spanners.len() && breaks.end <= spanners[part].1 + EPSILON;
+                    if after && !last {
                         top = next_column(top);
                     }
                     run_start = spanners[part].1 - spanner_leads.get(part).copied().unwrap_or(0.0);
@@ -1402,7 +1405,24 @@ impl LayoutPassState<'_> {
         }
         let right = fragments.iter().map(|f| f.x + f.width).fold(width - border.right, f32::max);
         let left = fragments.iter().map(|f| f.x).fold(border.left, f32::min);
-        let bottom = (content_top + columns_height).max(height - border.bottom);
+        // pyro: and what overflows its spanners below, shown under their rows (their rows paint
+        // them unclipped; WPT css-multicol `spanner-fragmentation-004`).
+        let spanner_overflow = if spanners.is_empty() {
+            f32::NEG_INFINITY
+        } else {
+            let rows: Vec<&ColumnFragment> = fragments.iter().filter(|f| f.spanner).collect();
+            self.doc
+                .column_spanners_of(dom_id)
+                .into_iter()
+                .zip(rows)
+                .map(|((id, offset), row)| {
+                    let layout = self.nodes[id].unrounded_layout();
+                    let y = offset.y + layout.location.y;
+                    y + layout.size.height.max(layout.scrollable_overflow_rect.bottom().abs()) + row.offset.y
+                })
+                .fold(f32::NEG_INFINITY, f32::max)
+        };
+        let bottom = (content_top + columns_height).max(height - border.bottom).max(spanner_overflow);
         let overflow = ScrollableOverflow::new(
             Rect {
                 left: (left - border.left).min(0.0),
@@ -1764,6 +1784,33 @@ impl BaseDocument {
         false
     }
 
+    /// pyro: whether a forced break after the last in-flow descendants of box `id` (no border or
+    /// padding between) goes after it.
+    fn last_descendant_forces_break_after(&self, id: crate::NodeId) -> bool {
+        let mut at = id;
+        for _ in 0..8 {
+            let layout = self.nodes[at].unrounded_layout();
+            if (layout.border.bottom > 0.0 || layout.padding.bottom > 0.0) && at != id {
+                return false;
+            }
+            let children = self.nodes[at].layout_children.borrow();
+            let Some(&last) = children.iter().flatten().rev().find(|&&c| {
+                let node = &self.nodes[c];
+                !node.is_out_of_flow() && node.primary_styles().is_some_and(|s| !s.get_box().display.is_none())
+            }) else {
+                return false;
+            };
+            drop(children);
+            let Some(style) = self.nodes[last].primary_styles() else { return false };
+            use style::values::computed::BreakBetween as B;
+            if matches!(style.get_box().break_after, B::Column | B::Always) {
+                return true;
+            }
+            at = last;
+        }
+        false
+    }
+
     /// pyro: how far down `container`'s strip the content before spanner `spanner` reaches
     /// (container coordinates): the boxes before it in the flow and what overflows them, not the
     /// boxes it is in (their own size), nor out-of-flow boxes.
@@ -2023,7 +2070,7 @@ impl BaseDocument {
     /// pyro: `nested_breakable`: the multi-column containers nested in the strip's flow are
     /// fragmented by its columns (`Breaks::nested`), not monolithic.
     fn multicol_breaks(&self, container: crate::NodeId, start: f32, end: Option<f32>, nested_breakable: bool) -> Breaks {
-        let mut found = Found { nested_breakable, ..Found::default() };
+        let mut found = Found { nested_breakable, container: Some(container), ..Found::default() };
         let trims = self.nodes[container]
             .primary_styles()
             .map_or((false, false), |style| super::text_box::fragment_trims(&style));
@@ -2347,7 +2394,11 @@ impl BaseDocument {
                 {
                     found.forced.push(child_top - layout.margin.top.max(0.0));
                 }
-                if forces(style.get_box().break_after) {
+                // pyro: and its last descendants', which a box the columns do not look into takes
+                // as its own (WPT css-multicol `spanner-fragmentation-011`).
+                if forces(style.get_box().break_after)
+                    || (!fragmentable(child, &style) && self.last_descendant_forces_break_after(child_id))
+                {
                     found.forced_after.push(child_bottom + layout.margin.bottom.max(0.0));
                 }
                 // pyro: `break-before: avoid` (and the previous sibling's `break-after: avoid`)
@@ -2395,6 +2446,8 @@ impl BaseDocument {
                 self.multicol_cells(child_id, child_top, 0, &mut cells);
             }
             if nested && found.nested_breakable && style.clone_float() == Float::None && fragmentable_but_multicol(child, &style) {
+                // (What overflows it is content of these columns too.)
+                found.bottom = found.bottom.max(child_top + layout.scrollable_overflow_rect.bottom().abs());
                 // pyro: fragmented by the columns (`Breaks::nested`): breakable through, unless
                 // it avoids breaks inside.
                 found.nested.push((child_id, child_top));
@@ -2420,7 +2473,12 @@ impl BaseDocument {
                     found.loose.push(head);
                     found.whole.push(head);
                 }
-                crate::util::ensure_stack(|| self.collect_breaks(child_id, child_top, found, None, trims));
+                // pyro: not into a column spanner: it is a row of its own, and what overflows it
+                // is no content of the columns after it (WPT css-multicol
+                // `spanner-fragmentation-005`).
+                if !found.container.is_some_and(|container| self.is_column_spanner_of(container, child_id)) {
+                    crate::util::ensure_stack(|| self.collect_breaks(child_id, child_top, found, None, trims));
+                }
             } else if let Some(bands) = (!held_whole(child, &style))
                 .then(|| self.grid_row_bands(child_id, child_top))
                 .flatten()
@@ -2467,6 +2525,8 @@ struct Found {
     nested: Vec<(crate::NodeId, f32)>,
     /// pyro: see [`BaseDocument::multicol_breaks`].
     nested_breakable: bool,
+    /// pyro: the multi-column container whose strip this is.
+    container: Option<crate::NodeId>,
     loose: Vec<(f32, f32)>,
     gaps: Vec<(f32, f32)>,
     /// pyro: see [`Breaks::trims`].

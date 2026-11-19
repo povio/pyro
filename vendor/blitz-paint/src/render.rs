@@ -5302,7 +5302,9 @@ impl ElementCx<'_, '_> {
         }
         // (What overflows it below counts: it goes on in the columns after.)
         let overflow = child.final_layout().scrollable_overflow_rect.bottom().abs();
-        let bottom = top + size.height.max(overflow);
+        // (A nested multi-column container may show content in any later column: its spanners'
+        // overflow is not in its overflow rectangle.)
+        let bottom = if child.column_fragments().is_some() { f32::INFINITY } else { top + size.height.max(overflow) };
         const EPS: f32 = 0.01;
         if top >= start - EPS && top < end - EPS {
             // (Starts in the column.)
