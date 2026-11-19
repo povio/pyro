@@ -105,6 +105,9 @@ jobs:
             scripts/linux
             scripts/ci
             bench/wpt
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.4.4'
       - name: Build plan
         id: plan
         env:
@@ -116,8 +119,8 @@ jobs:
           else
             git fetch --no-tags --depth=1 origin "$BASE_SHA"
           fi
-          node --test scripts/ci/plan.test.mjs
-          node scripts/ci/plan.mjs "$BASE_SHA"
+          bun test --timeout 30000 scripts/ci/plan.test.mjs
+          bun scripts/ci/plan.mjs "$BASE_SHA"
       - name: Cache keys
         id: keys
         env:

@@ -64,3 +64,8 @@ Release smoke jobs budget artifact transfer separately (15 minutes) from install
 a 25-minute job limit. This prevents a slow package download consuming the entire test budget; it does not claim to
 fix transfer throughput. The v0.0.48 attempt spent 9m14s downloading its package and hit the former 10-minute job limit
 only 39 seconds into the test step. The release still cannot publish until all installed-package checks pass.
+
+Bun is the default runtime for our CI helper scripts, helper tests, release stamping and TypeScript checks. The
+helper-test command has a 30-second per-test limit because Python venv creation can exceed Bun's five-second
+default. Node remains explicit where a check verifies Node consumer compatibility or an existing external tool
+requires it (including npm trusted publishing). GitHub's JavaScript actions also use their declared Node runtime.
