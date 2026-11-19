@@ -1299,6 +1299,17 @@ impl Node {
         }
         let display = self.display_style().unwrap_or(StyloDisplay::inline());
         match display.outside() {
+            // pyro: a `display: contents` element's children (and `::before`/`::after`) are its
+            // parent's for box generation, so a block among them is a block in that parent (an
+            // inline holding one is split around it).
+            DisplayOutside::None if display.inside() == DisplayInside::Contents => {
+                self.has_block_level_pseudo_element()
+                    || self
+                        .children
+                        .iter()
+                        .copied()
+                        .any(|child_id| crate::util::ensure_stack(|| self.tree()[child_id].is_or_contains_block()))
+            }
             DisplayOutside::None => false,
             DisplayOutside::Block => true,
             _ => {
