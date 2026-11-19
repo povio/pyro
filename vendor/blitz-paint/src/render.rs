@@ -207,6 +207,12 @@ pub struct BlitzDomPainter<'dom, 'a> {
     /// pyro: while a multi-column container paints a spanner's row: the container, whose boxes
     /// that carry the spanner do not paint their own box there (the row is no part of them).
     pub(crate) spanner_row_container: std::cell::Cell<Option<NodeId>>,
+    /// pyro: the spanner that row shows: the row paints it alone (and the boxes it is in, which
+    /// paint no box of their own there), what overflows it below too.
+    pub(crate) spanner_row_spanner: std::cell::Cell<Option<NodeId>>,
+    /// pyro: the spanner a last spanner row's second pass leaves out (that row shows what comes
+    /// after it too, clipped at its start).
+    pub(crate) spanner_row_except: std::cell::Cell<Option<NodeId>>,
     /// Paint background colors and images (false: printing without them).
     pub backgrounds: bool,
     /// Print: text at its layout-unit x, not its box's whole-pixel x (Chromium keeps the fraction in the
@@ -325,6 +331,8 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             column_pass_container: std::cell::Cell::new(None),
             column_range: std::cell::Cell::new(None),
             spanner_row_container: std::cell::Cell::new(None),
+            spanner_row_spanner: std::cell::Cell::new(None),
+            spanner_row_except: std::cell::Cell::new(None),
             paint_clip: std::cell::Cell::new(Rect::new(f64::NEG_INFINITY, f64::NEG_INFINITY, f64::INFINITY, f64::INFINITY)),
             backgrounds: true,
             fractional_text_x: false,
@@ -5393,6 +5401,36 @@ impl ElementCx<'_, '_> {
                     return;
                 }
             }
+        }
+        // pyro: a spanner's row paints that spanner alone, whole (`spanner_row_spanner`), and the
+        // boxes it is in (their own boxes left out: `spanner_row_container`).
+        if let (Some(container), Some(spanner)) =
+            (self.context.spanner_row_container.get(), self.context.spanner_row_spanner.get())
+        {
+            let dom = self.context.dom.as_ref();
+            if child_id == spanner {
+                self.context.spanner_row_container.set(None);
+                self.context.spanner_row_spanner.set(None);
+                self.draw_paint_child(scene, child_id, parent_style_transform, clip_rect);
+                self.context.spanner_row_container.set(Some(container));
+                self.context.spanner_row_spanner.set(Some(spanner));
+                return;
+            }
+            let mut at = dom.tree()[spanner].layout_parent.get();
+            let mut on_path = false;
+            while let Some(node) = at.filter(|&n| n != container) {
+                if node == child_id {
+                    on_path = true;
+                    break;
+                }
+                at = dom.tree()[node].layout_parent.get();
+            }
+            if !on_path {
+                return;
+            }
+        }
+        if self.context.spanner_row_except.get() == Some(child_id) {
+            return;
         }
         // pyro: a column spanner is painted in its own row, not in a column that reaches it (its
         // outline over the row's edge would show in the column before it).

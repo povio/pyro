@@ -44,6 +44,8 @@ impl ElementCx<'_, '_> {
         // pyro: the out-of-flow boxes the container is the containing block of are placed against
         // it, not in a column: painted once, after the columns (`multicol_skips`).
         let outer_pass = self.context.multicol_pass.replace(Some((self.node.id, false)));
+        let row_spanners = self.context.dom.as_ref().column_spanners_in_order(self.node.id);
+        let mut spanner_row = 0usize;
         for fragment in &columns.fragments {
             let (start, end) = (fragment.start as f64, fragment.end as f64);
             let (offset, range) = match vertical {
@@ -76,12 +78,32 @@ impl ElementCx<'_, '_> {
                 ),
             };
             // pyro: a spanner's row shows its outline over the row's edges too.
-            let range = if fragment.spanner && vertical.is_none() {
+            // pyro: a spanner's row paints its spanner alone (`spanner_row_spanner`), unclipped in
+            // the block axis: what overflows it shows (the rows are in the spanners' order).
+            let row_spanner = if fragment.spanner && vertical.is_none() {
+                spanner_row += 1;
+                row_spanners.get(spanner_row - 1).copied()
+            } else {
+                None
+            };
+            // (A spanner's row that is the last fragment shows what comes after it too: a second
+            // pass, clipped at its start, without the spanner.)
+            let last_row_rest = row_spanner.filter(|_| fragment.end.is_infinite()).map(|spanner| {
                 let outline = self.spanner_ink_outset() * scale;
-                Rect::new(range.x0, range.y0 - outline, range.x1, range.y1 + outline)
+                (spanner, Rect::new(range.x0, range.y0 - outline, range.x1, UNBOUNDED))
+            });
+            let range = if fragment.spanner && vertical.is_none() {
+                match row_spanner {
+                    Some(_) => Rect::new(range.x0, -UNBOUNDED, range.x1, UNBOUNDED),
+                    None => {
+                        let outline = self.spanner_ink_outset() * scale;
+                        Rect::new(range.x0, range.y0 - outline, range.x1, range.y1 + outline)
+                    }
+                }
             } else {
                 range
             };
+            let outer_row_spanner = self.context.spanner_row_spanner.replace(row_spanner);
             let outer_column_pass = self
                 .context
                 .column_pass_container
@@ -124,11 +146,25 @@ impl ElementCx<'_, '_> {
                 .replace(unclipped.then_some((self.node.id, fragment.start, fragment.end, transform, range)));
             self.draw_children(scene, transform, if single || unclipped { clip_rect } else { column_clip });
             self.context.column_range.set(outer_range);
+            if let Some((spanner, rest_range)) = last_row_rest {
+                let outer_row_spanner = self.context.spanner_row_spanner.replace(None);
+                let outer_except = self.context.spanner_row_except.replace(Some(spanner));
+                // (Sorted as a column's boxes: what starts in the row shows its overflow above.)
+                let outer_range = self
+                    .context
+                    .column_range
+                    .replace(Some((self.node.id, fragment.start, fragment.end, transform, rest_range)));
+                self.draw_children(scene, transform, clip_rect);
+                self.context.column_range.set(outer_range);
+                self.context.spanner_row_except.set(outer_except);
+                self.context.spanner_row_spanner.set(outer_row_spanner);
+            }
             if !unclipped {
                 self.context.layer_manager.maybe_pop_layer(scene, pushed);
             }
             self.context.column_pass_container.set(outer_column_pass);
             self.context.spanner_row_container.set(outer_spanner_row);
+            self.context.spanner_row_spanner.set(outer_row_spanner);
             // pyro: a box broken at the column's end fills the rest of the column (its fragment
             // is as tall as the column: Chromium; WPT css-multicol `multicol-fill-balance-041`).
             // (Not in the rows of an explicit `column-height`, where Chromium keeps a broken box

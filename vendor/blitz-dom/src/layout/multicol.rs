@@ -876,6 +876,10 @@ impl LayoutPassState<'_> {
         let nested_ctx = (spanners.is_empty() && multicol.height.is_none() && !vertical)
             .then(|| self.nested_fragmentation.get(&dom_id).copied())
             .flatten();
+        // pyro: so nested, with column spanners.
+        let nested_span_ctx = (!spanners.is_empty() && multicol.height.is_none() && !vertical)
+            .then(|| self.nested_fragmentation.get(&dom_id).copied())
+            .flatten();
         // pyro: so nested with an explicit `column-height` and wrapping rows (css-multicol-2).
         let nested_rows_ctx = (spanners.is_empty() && multicol.height.is_some() && multicol.wrap && !vertical)
             .then(|| self.nested_fragmentation.get(&dom_id).copied())
@@ -1053,8 +1057,72 @@ impl LayoutPassState<'_> {
                 }
             }
         }
+        // pyro: nested in another container's columns, with spanners (`nested_span_ctx`): its
+        // parts in turn from the top, each run of columns in rows that end where the outer
+        // columns do (the run's last row balanced), each spanner after the run before it, cut
+        // where the outer columns end (Chromium; WPT css-multicol `spanner-fragmentation-*`).
+        if let Some((outer_height, offset)) = nested_span_ctx {
+            let boundary = |y: f32| ((offset + y) / outer_height + 1e-4).floor() * outer_height + outer_height - offset;
+            let mut top = content_top;
+            let mut run_start = breaks.start;
+            'parts: for part in 0..=spanners.len() {
+                let run_end = spanners.get(part).map_or(breaks.end, |s| s.0 + lift(part));
+                let mut start = run_start;
+                while run_end > start + EPSILON {
+                    if fragments.len() + count + 2 >= fragment_cap {
+                        break 'parts;
+                    }
+                    let available = (boundary(top) - top).max(1.0);
+                    let run = breaks.fill_range(start, run_end, available, count + 1);
+                    let (columns, height, next) = if run.columns.len() <= count {
+                        let height = breaks.balance_range(start, run_end, count, Some(available)).min(available);
+                        (breaks.fill_range(start, run_end, height, count).columns, height, None)
+                    } else {
+                        (run.columns[..count].to_vec(), available, Some(run.columns[count].0))
+                    };
+                    for (index, (a, b)) in columns.into_iter().enumerate() {
+                        let x = column_x(index);
+                        let a = snap(a);
+                        fragments.push(ColumnFragment {
+                            start: a,
+                            end: snap(b),
+                            x,
+                            width: column_width,
+                            top,
+                            height,
+                            offset: Point { x: x - pb.left, y: top - a },
+                            spanner: false,
+                            extended: 0.0,
+                        });
+                    }
+                    top += height;
+                    match next {
+                        Some(next) => start = next,
+                        None => break,
+                    }
+                }
+                if let Some(&(start, end, indent)) = spanners.get(part) {
+                    let (start, end) = (snap(start), snap(end));
+                    let spanner_top = top - lift(part);
+                    fragments.push(ColumnFragment {
+                        start,
+                        end,
+                        x: pb.left,
+                        width: content_width,
+                        top: spanner_top,
+                        height: end - start,
+                        offset: Point { x: pb.left - indent, y: spanner_top - start },
+                        spanner: true,
+                        extended: 0.0,
+                    });
+                    top = spanner_top + (end - start);
+                    run_start = spanners[part].1 - spanner_leads.get(part).copied().unwrap_or(0.0);
+                }
+            }
+            row_top = top;
+        }
         for part in 0..=spanners.len() {
-            if nested_ctx.is_some() || nested_rows_ctx.is_some() {
+            if nested_ctx.is_some() || nested_rows_ctx.is_some() || nested_span_ctx.is_some() {
                 break;
             }
             // pyro: once the cap is reached (a part and a spanner need room), the rest of the
@@ -1326,7 +1394,7 @@ impl LayoutPassState<'_> {
         // pyro: the baselines are where their lines are shown, in their columns (Chromium takes
         // the first baseline from the first column with a line; WPT css-multicol `baseline-001`).
         let mut baselines = strip.baselines;
-        let columns = ColumnFragments { fragments, nested: nested_ctx.or(nested_rows_ctx), pushed };
+        let columns = ColumnFragments { fragments, nested: nested_ctx.or(nested_rows_ctx).or(nested_span_ctx), pushed };
         if columns.fragments.len() > 1 && !vertical {
             for candidate in oof_candidates.as_mut_slice() {
                 if candidate.containing_block.is_some() {
@@ -1692,7 +1760,12 @@ impl BaseDocument {
                 let child_top = top + layout.location.y;
                 // (Its border box, less a negative bottom margin, and its overflow: positive
                 // margins collapse with the spanner's; WPT css-multicol `spanner-fragmentation-007`.)
-                let overflow = layout.scrollable_overflow_rect.bottom().abs();
+                // (A spanner before it: its own box only, Chromium; `spanner-fragmentation-004`.)
+                let overflow = if self.is_column_spanner_of(container, child_id) {
+                    0.0
+                } else {
+                    layout.scrollable_overflow_rect.bottom().abs()
+                };
                 bottom = bottom.max(child_top + (layout.size.height + layout.margin.bottom.min(0.0)).max(overflow));
             }
             drop(children);
@@ -1718,6 +1791,11 @@ impl BaseDocument {
             at = self.nodes[node].layout_parent.get();
         }
         true
+    }
+
+    /// pyro: the column spanners of `container`, in the order of their rows.
+    pub fn column_spanners_in_order(&self, container: crate::NodeId) -> Vec<crate::NodeId> {
+        self.column_spanners_of(container).into_iter().map(|(id, _)| id).collect()
     }
 
     /// pyro: whether `id` is a column spanner of multi-column container `container` (painted in
