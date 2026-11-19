@@ -585,7 +585,10 @@ impl BaseDocument {
         let columns_base =
             self.nodes[node_id].column_fragments().is_some().then(|| std::mem::replace(&mut overflow, Rect::ZERO));
         // pyro: so does a vertical writing mode's (its columns shown by paint only).
-        let vertical_columns_base = (columns_base.is_none() && self.nodes[node_id].vertical_column_fragments().is_some())
+        // (Classic scrollbars only: overlay mode keeps its results.)
+        let vertical_columns_base = (self.nodes.classic_scrollbars
+            && columns_base.is_none()
+            && self.nodes[node_id].vertical_column_fragments().is_some())
             .then(|| std::mem::replace(&mut overflow, Rect::ZERO));
 
         let layout_children = std::mem::take(self.nodes[node_id].layout_children.get_mut());
@@ -752,7 +755,10 @@ impl BaseDocument {
         // descendants it collapses through (Chrome: WPT css-overflow
         // `overflow-negative-margin-dynamic`, a -20px margin through a 10px one: -10px).
         let mut child = child;
-        child.margin.bottom = self.collapsed_end_margin(child_id, child.margin.bottom, 0);
+        // (Classic scrollbars only: overlay mode keeps its results.)
+        if self.nodes.classic_scrollbars {
+            child.margin.bottom = self.collapsed_end_margin(child_id, child.margin.bottom, 0);
+        }
         let pad = |padding: f32, margin: f32| (padding + margin).max(0.0) as f64;
         let (x, y) = (child.location.x as f64, child.location.y as f64);
         let (w, h) = (child.size.width as f64, child.size.height as f64);
@@ -831,7 +837,9 @@ impl BaseDocument {
         // pyro: the clamp line of a clamp that discarded lines ends at its block ellipsis, which
         // goes inside the line box: what it hides past it is no overflow (Chrome: WPT css-overflow
         // `line-clamp/block-ellipsis-013`, a `white-space: pre` line wider than the viewport).
-        let clamp_line = (kept != usize::MAX && text_layout.len() > kept).then(|| kept.saturating_sub(1));
+        // (Classic scrollbars only: overlay mode keeps its results.)
+        let clamp_line = (self.nodes.classic_scrollbars && kept != usize::MAX && text_layout.len() > kept)
+            .then(|| kept.saturating_sub(1));
         let content_width = (l.size.width - l.border.left - l.border.right - l.padding.left - l.padding.right).max(0.0) as f64 * scale;
         let width = text_layout
             .lines()
@@ -1032,7 +1040,11 @@ impl BaseDocument {
                 let display = style.clone_display();
                 display.outside() == DisplayOutside::Inline && display.inside() == DisplayInside::Flow
             };
-            let paint_only = contain.contains(Contain::PAINT) && !contain.contains(Contain::LAYOUT) && !inline_flow;
+            // (Classic scrollbars only, as the clip-margin contributions below: overlay mode keeps
+            // its results.)
+            let classic = self.nodes.classic_scrollbars;
+            let paint_only =
+                classic && contain.contains(Contain::PAINT) && !contain.contains(Contain::LAYOUT) && !inline_flow;
             if contain.intersects(Contain::LAYOUT | Contain::PAINT) && !paint_only && !inline_flow {
                 return border_box;
             }
@@ -1044,7 +1056,7 @@ impl BaseDocument {
                 // pyro: an `overflow: clip` axis shows its overflow up to its overflow clip edge
                 // (`overflow-clip-margin`), which is part of what it contributes (Chrome:
                 // WPT css-overflow `overflow-clip-margin-002`).
-                let edge = (ox == Overflow::Clip || oy == Overflow::Clip).then(|| {
+                let edge = (classic && (ox == Overflow::Clip || oy == Overflow::Clip)).then(|| {
                     use style::values::generics::box_::OverflowClipMarginBox;
                     let layout = self.nodes[node_id].final_layout();
                     let clip_margin = &style.get_margin().overflow_clip_margin;

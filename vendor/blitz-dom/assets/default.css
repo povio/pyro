@@ -162,8 +162,6 @@ textarea {
     border: 1px solid #999;
     padding: 2px;
     background-color: Field;
-    /* pyro: Blink's StyleAdjuster: a textarea's `overflow: visible` is `auto`. */
-    overflow: auto;
 }
 
 /* Chromium's `font: -webkit-small-control`: form controls default to 13.333px. */

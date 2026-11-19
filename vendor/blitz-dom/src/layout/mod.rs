@@ -1228,6 +1228,7 @@ impl LayoutPassState<'_> {
                         let content_width = (output.size.width - pb.horizontal_axis_sum() - gutter).max(0.0);
                         let doc = &mut *self.doc;
                         let scale = doc.viewport.scale();
+                        let classic = doc.nodes.classic_scrollbars;
                         let node = &mut doc.nodes[dom_node_id(node_id)];
                         if let Some(input) = node
                             .data
@@ -1248,7 +1249,12 @@ impl LayoutPassState<'_> {
                             let text_width = input.editor.try_layout().map_or(0.0, |layout| layout.width() / scale);
                             // pyro: and lines below its content box (Chrome scrolls a textarea
                             // to them: a classic `overflow: auto` scrollbar shows).
-                            let text_height = input.editor.try_layout().map_or(0.0, |layout| layout.height() / scale);
+                            // (Classic scrollbars only: overlay mode keeps its results.)
+                            let text_height = if classic {
+                                input.editor.try_layout().map_or(0.0, |layout| layout.height() / scale)
+                            } else {
+                                0.0
+                            };
                             let content_height = (output.size.height - pb.vertical_axis_sum()).max(0.0);
                             if text_width > content_width || text_height > content_height + 0.5 {
                                 let mut output = output;
@@ -2449,7 +2455,8 @@ impl LayoutPassState<'_> {
         // pyro: the body's top margin as it collapsed with its first child's (Chrome: a `<p>`'s
         // 16px margin through the body's 8px leaves 576px of a 600px viewport, not 584: WPT
         // css-overflow `line-clamp/block-ellipsis-quirk-001` under classic scrollbars).
-        if is_body {
+        // (Classic scrollbars only: overlay mode keeps its results.)
+        if is_body && self.tree().classic_scrollbars {
             let pb = style.padding().resolve_or_zero(width, resolve_calc_value).top
                 + style.border().resolve_or_zero(width, resolve_calc_value).top;
             drop(style);
