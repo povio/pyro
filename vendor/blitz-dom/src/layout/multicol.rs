@@ -1837,6 +1837,29 @@ impl BaseDocument {
         }
     }
 
+    /// pyro: the block ranges of table `id`'s rows (its border box at strip position `top`): its
+    /// cells' ranges, those that overlap (row spans) merged.
+    fn table_row_bands(&self, id: crate::NodeId, top: f32) -> Vec<(f32, f32)> {
+        fn cells(doc: &BaseDocument, id: crate::NodeId, top: f32, depth: usize, out: &mut Vec<(f32, f32)>) {
+            let children = doc.nodes[id].layout_children.borrow();
+            let Some(children) = children.as_deref() else { return };
+            for &child_id in children {
+                let child = &doc.nodes[child_id];
+                let Some(style) = child.primary_styles() else { continue };
+                let layout = child.unrounded_layout();
+                let child_top = top + layout.location.y;
+                if style.clone_display().inside() == DisplayInside::TableCell {
+                    out.push((child_top, child_top + layout.size.height));
+                } else if depth < 3 && !child.is_out_of_flow() {
+                    cells(doc, child_id, child_top, depth + 1, out);
+                }
+            }
+        }
+        let mut ranges = Vec::new();
+        cells(self, id, top, 0, &mut ranges);
+        merge(ranges)
+    }
+
     /// pyro: whether anonymous block `id` comes right after, and right before, a split inline's
     /// block-level box among its parent's layout children.
     fn split_inline_neighbours(&self, id: crate::NodeId) -> (bool, bool) {
@@ -2077,6 +2100,15 @@ impl BaseDocument {
                     found.whole.push(head);
                 }
                 crate::util::ensure_stack(|| self.collect_breaks(child_id, child_top, found, None, trims));
+            } else if let Some(bands) = child.flags.is_table_root().then(|| self.table_row_bands(child_id, child_top)).filter(|b| b.len() > 1) {
+                // pyro: a table breaks between its rows (Chromium fragments tables): each row,
+                // and its first and last rows with the table's edges, kept together.
+                for &band in &bands {
+                    found.strict.push(band);
+                    found.loose.push(band);
+                }
+                found.strict.push((child_top, bands[0].1));
+                found.strict.push((bands[bands.len() - 1].0, child_bottom));
             } else {
                 found.strict.push((child_top, child_bottom));
                 found.loose.push((child_top, child_bottom));
